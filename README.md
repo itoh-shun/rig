@@ -62,6 +62,7 @@ claude --plugin-dir .
 | `release-flow` | intake→design?→implement→verify→review?→pr→merge (size-aware; `?` steps are conditional) |
 | `design-first` | design-heavy flow |
 | `hotfix` | shortest path (intake→implement→verify→pr) |
+| `adversarial-review` | adversarial review — eliminate AI tics, dead comments; enforce human readability (lazy-senior / cognitive-economist) |
 
 ## Flags
 
@@ -76,6 +77,8 @@ claude --plugin-dir .
 | `--workflow` | use the ultracode Workflow execution backend (opt-in; heavy multi-stage only) |
 | `--save-recipe <name>` | save the composed harness as a recipe (`--user` for the user tier) |
 | `--capture` | persist run learnings to the knowledge layer without the confirm dialog (proposal + report are never skipped) |
+| `--list` | list available bricks/recipes/flags and stop (no run) |
+| `--adversarial` | add an adversarial-review step (AI-slop elimination + human readability) |
 
 ## How it works
 

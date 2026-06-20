@@ -51,6 +51,8 @@ claude --plugin-dir .
 | `security-reviewer` | `agents/security-reviewer.md` | セキュリティ観点の read-only レビュー |
 | `design-reviewer` | `agents/design-reviewer.md` | 設計・アーキテクチャ観点のレビュー |
 | `test-reviewer` | `agents/test-reviewer.md` | テスト品質観点のレビュー |
+| `lazy-senior-reviewer` | `agents/lazy-senior-reviewer.md` | 怠惰な優秀シニア視点（消せるコード/不要コメント/過剰防御） |
+| `cognitive-economist-reviewer` | `agents/cognitive-economist-reviewer.md` | 思考節約視点（命名/論理の素直さ/可読性） |
 
 ### facets/personas（agent フォールバック）
 
@@ -62,6 +64,8 @@ claude --plugin-dir .
 | `design-reviewer` | `skills/rig/facets/personas/design-reviewer.md` |
 | `test-reviewer` | `skills/rig/facets/personas/test-reviewer.md` |
 | `debugger` | `skills/rig/facets/personas/debugger.md` |
+| `lazy-senior` | `skills/rig/facets/personas/lazy-senior.md` |
+| `cognitive-economist` | `skills/rig/facets/personas/cognitive-economist.md` |
 
 ### facets/instructions（薄い委譲）
 
@@ -75,6 +79,7 @@ claude --plugin-dir .
 | `visual-verify` | `skills/rig/facets/instructions/visual-verify.md` |
 | `pr` | `skills/rig/facets/instructions/pr.md` |
 | `merge` | `skills/rig/facets/instructions/merge.md` |
+| `adversarial-review` | `skills/rig/facets/instructions/adversarial-review.md` |
 
 ### facets/policies（末尾注入のガードレール）
 
@@ -121,6 +126,7 @@ claude --plugin-dir .
 | `release-flow` | `skills/rig/recipes/release-flow.md` | 実装→検証→レビュー→PR→マージのフルフロー |
 | `design-first` | `skills/rig/recipes/design-first.md` | 設計フェーズ優先フロー |
 | `hotfix` | `skills/rig/recipes/hotfix.md` | 緊急修正向け軽量フロー |
+| `adversarial-review` | `skills/rig/recipes/adversarial-review.md` | 敵対的レビューのみ（AIの癖排除・可読性） |
 
 ### manifests
 
@@ -146,6 +152,8 @@ claude --plugin-dir .
 | `--save-recipe <name> --user` | user 層（`~/.claude/rig/recipes/<name>.md`）に保存 |
 | `--workflow` | 実行バックエンドを Workflow（ultracode）に切り替える。**明示 opt-in 必須** |
 | `--capture` | capture（knowledge への蓄積）の確認ダイアログを省略（提案表示と事後報告は省略しない） |
+| `--list` | 利用可能なブリック・recipe・flag を一覧表示して停止 |
+| `--adversarial` | 敵対的レビュー step を追加（AIの癖排除・人間可読性・不要コメント除去） |
 
 ## クイック例
 
