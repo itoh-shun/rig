@@ -24,8 +24,6 @@
 
 各 subagent の出力形式は `output-contracts/deal-verdict`（① 観点レビュアー出力）に従わせること。
 
-> reviewer agent（`agents/sales-*-reviewer`）は将来の任意拡張。現状は persona facet 合成で動かす。
-
 ### ④ 集約（`gate: acceptance-gate`）
 
 5つの観点 verdict が揃ったら `acceptance-gate` で受け入れ基準（全観点が判定済み・改善必須点が実行可能な粒度・情報不足が明示済み）を満たすまで収束させる。判定行・根拠・改善必須点だけを読み（記録全文を親 context に抱えない）、`output-contracts/deal-verdict`（② 親の集約レポート）の形式で営業向けレポートを組み立てる。

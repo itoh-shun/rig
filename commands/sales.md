@@ -15,11 +15,7 @@ $ARGUMENTS
 
 ## やること
 
-1. 引数（商談記録の本文 or ファイルパス）を商談記録として受理する。決まった形でなくてよい（バラバラなメモでも可）。
-2. `deal-review` recipe を RESOLVE/COMPOSE する（5観点 reviewer ＋ acceptance-gate ＋ deal-verdict）。
-3. `parallel-fanout` で hearing / needs / proposal / closing / next-action を **subagent 並列 dispatch**（context-minimal: 親は dispatch と集約のみ）。
-4. `acceptance-gate` で「全観点判定済み・改善必須点が実行可能・情報不足明示」へ収束。
-5. 総合評価（S/A/B/C）＋観点別テーブル＋次回の具体アクション＋情報不足を提示する。
+引数（商談記録の本文 or ファイルパス、バラバラなメモ可）を `deal-review` recipe に渡す。手順本体（5観点 `parallel-fanout` → `acceptance-gate` → 総合評価 S/A/B/C ＋観点別 ＋次回アクション ＋情報不足の集約提示）は `facets/instructions/deal-review` に従う。
 
 ## 入力
 
@@ -43,8 +39,3 @@ $ARGUMENTS
 /rig:sales "ACME社 初回。情シス3名。課題は…"          # メモ貼り付けで即レビュー
 /rig:sales --plan ./deals/acme.md                   # レビュー構成をドライラン確認
 ```
-
-## 規則（skill が正典）
-
-- **context-minimal（ハードルール）** … 各観点 reviewer は subagent dispatch。親は dispatch＋集約＋ゲート判断のみ。記録全文を親 context に引き込まない。
-- **推測補完の禁止** … 記録に無い項目を親が埋めない。欠落は「情報不足」として返す。
