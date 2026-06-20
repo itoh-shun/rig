@@ -44,6 +44,7 @@ claude --plugin-dir .
 
 - **Command**: `/rig:dev` — the dev-flow entry point you type, with args. e.g. `/rig:dev --plan --only review "current changes"`
 - **Command**: `/rig:sales` — the sales-domain entry point: review a deal record across 5 perspectives. e.g. `/rig:sales ./deals/acme.md`
+- **Command**: `/rig:talk` — a JARVIS-style conversational mode: speak naturally, it routes your intent to the right rig flow (dev/sales) and runs it. e.g. `/rig:talk just review my current changes`
 - **Skill**: `/rig:rig` — the engine; also **auto-invoked** when you say things like "implement…", "review my changes", "finish the PR".
 
 ## Quick start
@@ -70,6 +71,7 @@ claude --plugin-dir .
 The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate machinery runs non-dev domains by adding a *pack* (entry command + recipe + persona/instruction/output-contract facets) without touching the engine.
 
 - **sales** — `/rig:sales <deal record>` runs the `deal-review` recipe: 5 perspectives (hearing / needs / proposal / closing / next-action) evaluated in parallel, converged via acceptance-gate, into an overall grade (S/A/B/C) + per-perspective verdict + concrete next actions + info gaps. Company-specifics (product strengths, ICP, pricing, competitors, winning patterns) live in [`facets/knowledge/sales-domain/`](./skills/rig/facets/knowledge/sales-domain/) — swap them and the pack transfers to another company. Input template: [`templates/deal-record.md`](./skills/rig/templates/deal-record.md).
+- **talk** — `/rig:talk` is a conversational front-end (text in v1): speak in natural language and it normalizes intent, dynamically routes to the best `/rig:*` command, confirms before consequential actions, and replies in short spoken-style sentences. The engine is untouched — talk is just a thin natural-language layer in front of `PARSE`. Voice I/O (TTS/STT, user-selectable engines) is a future layer.
 
 ## Flags
 

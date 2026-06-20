@@ -41,9 +41,10 @@ claude --plugin-dir .
 
 - **コマンド**: `/rig:dev` — 開発フローの入口。例: `/rig:dev --plan --only review "現在の変更"`
 - **コマンド**: `/rig:sales` — sales ドメインの入口。商談記録を5観点で評価する。例: `/rig:sales ./deals/acme.md`
+- **コマンド**: `/rig:talk` — JARVIS 的な会話モード。話しかけると意図を汲んで適切な rig フロー(dev/sales)へ橋渡しして実行する。例: `/rig:talk 今の変更だけ軽くレビューして`
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
-> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインが乗る。`sales` pack（`/rig:sales`）がその最初の実証で、engine 本体は一切書き換えていない。
+> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モードが乗る。`sales` pack（`/rig:sales`）と `talk` モード（`/rig:talk`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層（v1 はテキスト会話。音声 I/O は将来層・エンジン選択可能）。
 
 ## ブリック目録
 
@@ -70,6 +71,7 @@ claude --plugin-dir .
 | `lazy-senior` | `skills/rig/facets/personas/lazy-senior.md` |
 | `cognitive-economist` | `skills/rig/facets/personas/cognitive-economist.md` |
 | `sales/hearing-reviewer` 他4観点 | `skills/rig/facets/personas/sales/`（sales pack：ヒアリング/ニーズ/提案/クロージング/ネクストアクション） |
+| `talk-assistant` | `skills/rig/facets/personas/talk-assistant.md`（talk pack：会話人格） |
 
 ### facets/instructions（薄い委譲）
 
@@ -85,6 +87,7 @@ claude --plugin-dir .
 | `merge` | `skills/rig/facets/instructions/merge.md` |
 | `adversarial-review` | `skills/rig/facets/instructions/adversarial-review.md` |
 | `deal-review` | `skills/rig/facets/instructions/deal-review.md`（sales pack） |
+| `talk-loop` | `skills/rig/facets/instructions/talk-loop.md`（talk pack：見極め→ルーティング→確認→委譲→継続） |
 
 ### facets/policies（末尾注入のガードレール）
 
