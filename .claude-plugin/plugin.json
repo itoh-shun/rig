@@ -1,7 +1,7 @@
 {
   "name": "rig",
-  "version": "0.2.0",
-  "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness for dev-flow orchestration (review, implement, PR, and more). Claude Code native; no heavy DSL engine.",
+  "version": "0.3.0",
+  "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness. Domain-agnostic engine: dev-flow orchestration (review, implement, PR) plus pluggable domain packs (e.g. sales deal-review). Claude Code native; no heavy DSL engine.",
   "author": {
     "name": "itoshun"
   }

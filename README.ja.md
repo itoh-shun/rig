@@ -39,8 +39,11 @@ claude --plugin-dir .
 
 スラッシュコマンドはプラグイン名で namespace される：
 
-- **コマンド**: `/rig:dev` — 引数つきで叩く入口。例: `/rig:dev --plan --only review "現在の変更"`
+- **コマンド**: `/rig:dev` — 開発フローの入口。例: `/rig:dev --plan --only review "現在の変更"`
+- **コマンド**: `/rig:sales` — sales ドメインの入口。商談記録を5観点で評価する。例: `/rig:sales ./deals/acme.md`
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
+
+> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインが乗る。`sales` pack（`/rig:sales`）がその最初の実証で、engine 本体は一切書き換えていない。
 
 ## ブリック目録
 
@@ -66,6 +69,7 @@ claude --plugin-dir .
 | `debugger` | `skills/rig/facets/personas/debugger.md` |
 | `lazy-senior` | `skills/rig/facets/personas/lazy-senior.md` |
 | `cognitive-economist` | `skills/rig/facets/personas/cognitive-economist.md` |
+| `sales/hearing-reviewer` 他4観点 | `skills/rig/facets/personas/sales/`（sales pack：ヒアリング/ニーズ/提案/クロージング/ネクストアクション） |
 
 ### facets/instructions（薄い委譲）
 
@@ -80,6 +84,7 @@ claude --plugin-dir .
 | `pr` | `skills/rig/facets/instructions/pr.md` |
 | `merge` | `skills/rig/facets/instructions/merge.md` |
 | `adversarial-review` | `skills/rig/facets/instructions/adversarial-review.md` |
+| `deal-review` | `skills/rig/facets/instructions/deal-review.md`（sales pack） |
 
 ### facets/policies（末尾注入のガードレール）
 
@@ -96,6 +101,7 @@ claude --plugin-dir .
 | 名前 | パス |
 |---|---|
 | `review-verdict` | `skills/rig/facets/output-contracts/review-verdict.md` |
+| `deal-verdict` | `skills/rig/facets/output-contracts/deal-verdict.md`（sales pack） |
 
 ### facets/knowledge
 
@@ -104,6 +110,7 @@ claude --plugin-dir .
 | `_layer`（構造定義） | `skills/rig/facets/knowledge/_layer.md` |
 | `harness-engineering` | `skills/rig/facets/knowledge/harness-engineering.md` |
 | `orchestration-patterns` | `skills/rig/facets/knowledge/orchestration-patterns.md` |
+| `sales-domain`（自社固有・記入用） | `skills/rig/facets/knowledge/sales-domain/`（sales pack） |
 
 ### patterns（制御フロー）
 
@@ -127,6 +134,7 @@ claude --plugin-dir .
 | `design-first` | `skills/rig/recipes/design-first.md` | 設計フェーズ優先フロー |
 | `hotfix` | `skills/rig/recipes/hotfix.md` | 緊急修正向け軽量フロー |
 | `adversarial-review` | `skills/rig/recipes/adversarial-review.md` | 敵対的レビューのみ（AIの癖排除・可読性） |
+| `deal-review` | `skills/rig/recipes/deal-review.md` | 商談を5観点で並列評価→総合評価＋改善アクション（sales pack） |
 
 ### manifests
 

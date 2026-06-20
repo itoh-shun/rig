@@ -42,7 +42,8 @@ claude --plugin-dir .
 
 ### Invocation (namespaced)
 
-- **Command**: `/rig:dev` — the entry point you type, with args. e.g. `/rig:dev --plan --only review "current changes"`
+- **Command**: `/rig:dev` — the dev-flow entry point you type, with args. e.g. `/rig:dev --plan --only review "current changes"`
+- **Command**: `/rig:sales` — the sales-domain entry point: review a deal record across 5 perspectives. e.g. `/rig:sales ./deals/acme.md`
 - **Skill**: `/rig:rig` — the engine; also **auto-invoked** when you say things like "implement…", "review my changes", "finish the PR".
 
 ## Quick start
@@ -63,6 +64,12 @@ claude --plugin-dir .
 | `design-first` | design-heavy flow |
 | `hotfix` | shortest path (intake→implement→verify→pr) |
 | `adversarial-review` | adversarial review — eliminate AI tics, dead comments; enforce human readability (lazy-senior / cognitive-economist) |
+
+## Domain packs (beyond dev)
+
+The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate machinery runs non-dev domains by adding a *pack* (entry command + recipe + persona/instruction/output-contract facets) without touching the engine.
+
+- **sales** — `/rig:sales <deal record>` runs the `deal-review` recipe: 5 perspectives (hearing / needs / proposal / closing / next-action) evaluated in parallel, converged via acceptance-gate, into an overall grade (S/A/B/C) + per-perspective verdict + concrete next actions + info gaps. Company-specifics (product strengths, ICP, pricing, competitors, winning patterns) live in [`facets/knowledge/sales-domain/`](./skills/rig/facets/knowledge/sales-domain/) — swap them and the pack transfers to another company. Input template: [`templates/deal-record.md`](./skills/rig/templates/deal-record.md).
 
 ## Flags
 

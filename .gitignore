@@ -1,0 +1,2 @@
+# ローカル開発用の CC 設定・worktree（プラグイン本体は root の commands/ skills/ agents/ .claude-plugin/）
+.claude/
