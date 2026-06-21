@@ -45,6 +45,7 @@ claude --plugin-dir .
 - **Command**: `/rig:dev` — the dev-flow entry point you type, with args. e.g. `/rig:dev --plan --only review "current changes"`
 - **Command**: `/rig:sales` — the sales-domain entry point: review a deal record across 5 perspectives. e.g. `/rig:sales ./deals/acme.md`
 - **Command**: `/rig:talk` — a JARVIS-style conversational mode: speak naturally, it routes your intent to the right rig flow (dev/sales) and runs it. e.g. `/rig:talk just review my current changes`
+- **Command**: `/rig:goal` — a goal-driven loop: state a high-level goal and it converts it into acceptance criteria, then loops (assess → next step → delegate to an existing flow → check) until the goal is met. e.g. `/rig:goal "fix the login bug with regression coverage, through review"`
 - **Skill**: `/rig:rig` — the engine; also **auto-invoked** when you say things like "implement…", "review my changes", "finish the PR".
 
 ## Quick start
@@ -65,6 +66,7 @@ claude --plugin-dir .
 | `design-first` | design-heavy flow |
 | `hotfix` | shortest path (intake→implement→verify→pr) |
 | `adversarial-review` | adversarial review — eliminate AI tics, dead comments; enforce human readability (lazy-senior / cognitive-economist) |
+| `goal-loop` | goal-driven loop — turn a high-level goal into acceptance criteria, then converge to it by delegating existing flows each round (acceptance-gate + autonomous-loop) |
 
 ## Domain packs (beyond dev)
 
@@ -72,6 +74,7 @@ The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `P
 
 - **sales** — `/rig:sales <deal record>` runs the `deal-review` recipe: 5 perspectives (hearing / needs / proposal / closing / next-action) evaluated in parallel, converged via acceptance-gate, into an overall grade (S/A/B/C) + per-perspective verdict + concrete next actions + info gaps. Company-specifics (product strengths, ICP, pricing, competitors, winning patterns) live in [`facets/knowledge/sales-domain/`](./skills/rig/facets/knowledge/sales-domain/) — swap them and the pack transfers to another company. Input template: [`templates/deal-record.md`](./skills/rig/templates/deal-record.md).
 - **talk** — `/rig:talk` is a conversational front-end (text in v1): speak in natural language and it normalizes intent, dynamically routes to the best `/rig:*` command, confirms before consequential actions, and replies in short spoken-style sentences. The engine is untouched — talk is just a thin natural-language layer in front of `PARSE`. Voice I/O (TTS/STT, user-selectable engines) is a future layer.
+- **goal** — `/rig:goal "<goal>"` runs the `goal-loop` recipe: it converts the goal into a machine/criteria-checkable **acceptance contract**, then drives a closed loop — *assess gap → pick the smallest next step → delegate it to an existing flow (`/rig:dev`, …) → check against the contract* — converging until the goal is met (and stopping there — no over-build) or escalating after two no-progress rounds. It's the marriage of two existing patterns: `acceptance-gate` (the goal **is** the contract) + `autonomous-loop` (hands-free continuation under `--autonomous`). The engine is untouched — goal is a thin loop driver around `RUN`. Unlike `talk` (a one-shot natural-language router), `goal` keeps looping until the goal converges.
 
 ## Flags
 

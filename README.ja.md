@@ -42,9 +42,10 @@ claude --plugin-dir .
 - **コマンド**: `/rig:dev` — 開発フローの入口。例: `/rig:dev --plan --only review "現在の変更"`
 - **コマンド**: `/rig:sales` — sales ドメインの入口。商談記録を5観点で評価する。例: `/rig:sales ./deals/acme.md`
 - **コマンド**: `/rig:talk` — JARVIS 的な会話モード。話しかけると意図を汲んで適切な rig フロー(dev/sales)へ橋渡しして実行する。例: `/rig:talk 今の変更だけ軽くレビューして`
+- **コマンド**: `/rig:goal` — ゴール駆動ループ。高レベルな目標を渡すと受け入れ基準に変換し「現状把握→次手→既存フローへ委譲→照合」を達成まで回す。例: `/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"`
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
-> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モードが乗る。`sales` pack（`/rig:sales`）と `talk` モード（`/rig:talk`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層（v1 はテキスト会話。音声 I/O は将来層・エンジン選択可能）。
+> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動が乗る。`sales` pack（`/rig:sales`）・`talk` モード（`/rig:talk`）・`goal` モード（`/rig:goal`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。
 
 ## ブリック目録
 
@@ -72,6 +73,7 @@ claude --plugin-dir .
 | `cognitive-economist` | `skills/rig/facets/personas/cognitive-economist.md` |
 | `sales/hearing-reviewer` 他4観点 | `skills/rig/facets/personas/sales/`（sales pack：ヒアリング/ニーズ/提案/クロージング/ネクストアクション） |
 | `talk-assistant` | `skills/rig/facets/personas/talk-assistant.md`（talk pack：会話人格） |
+| `goal-driver` | `skills/rig/facets/personas/goal-driver.md`（goal pack：収束志向のループ・ドライバ） |
 
 ### facets/instructions（薄い委譲）
 
@@ -88,6 +90,7 @@ claude --plugin-dir .
 | `adversarial-review` | `skills/rig/facets/instructions/adversarial-review.md` |
 | `deal-review` | `skills/rig/facets/instructions/deal-review.md`（sales pack） |
 | `talk-loop` | `skills/rig/facets/instructions/talk-loop.md`（talk pack：見極め→ルーティング→確認→委譲→継続） |
+| `goal-loop` | `skills/rig/facets/instructions/goal-loop.md`（goal pack：基準化→現状把握→次手→委譲→照合→周回/停止） |
 
 ### facets/policies（末尾注入のガードレール）
 
@@ -138,6 +141,7 @@ claude --plugin-dir .
 | `hotfix` | `skills/rig/recipes/hotfix.md` | 緊急修正向け軽量フロー |
 | `adversarial-review` | `skills/rig/recipes/adversarial-review.md` | 敵対的レビューのみ（AIの癖排除・可読性） |
 | `deal-review` | `skills/rig/recipes/deal-review.md` | 商談を5観点で並列評価→総合評価＋改善アクション（sales pack） |
+| `goal-loop` | `skills/rig/recipes/goal-loop.md` | ゴールを受け入れ基準に変換し既存フローへの委譲ループで達成まで収束（goal pack。acceptance-gate＋autonomous-loop） |
 
 ### manifests
 
