@@ -276,15 +276,41 @@ RUN フェーズは2つのバックエンドを持つ。**既定は manual**。
 - 親コンテキストに**長い tool 出力やコード本文を引き込まない**。subagent には `output-contracts/review-verdict` 等の機械抽出可能な structured-report を返させ、親は判定行だけ読む。
 - 並列可能な独立観点は `patterns/parallel-fanout` で**1メッセージ多 dispatch**。集約は `patterns/review-gate`。
 
+### run-continuity（可視マーカー＋再アンカー）— 中断後も駆動を切らさない
+
+RUN 規律は SKILL.md 指示の recency に依存するため、**途中で質疑・脱線が挟まると親が静かに red flag（直接実装・ゲート省略）へ逸れ**、しかもそれが画面に出ず user が「rig が駆動中か」を見分けられない。これを常時 ON の規律で防ぐ。**opt-in ではない。** 出力増は1行ヘッダ＋ step 境界に限定し、軽さ既定・context-minimal を壊さない。
+
+**① run-status ヘッダ** — RUN がアクティブな**各ターンの冒頭**に現在のハーネス状態を1行で再掲する。
+
+```
+▸ rig | recipe: <name|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```
+
+- `recipe`：`--recipe`/manifest 由来名。対話合成なら `ad-hoc`。`step`：現 step の id と位置（`--only`/`--from` スライス時はスライス後の N）。`gate`：現 step のゲート状態。
+- これにより「**rig が今ここを駆動中**」が常に可視化される。
+
+**② 再アンカー規則** — 質疑・脱線で**1ターン抜けた直後の作業ターン**は、作業に入る前に必ず：(1) ① のヘッダを再掲、(2) アクティブなハーネス状態を1行で再宣言（どの recipe のどの step を、どの委譲先で再開するか）、(3) **現 step から再開**する。**素の直接作業・ゲート省略へ静かに切り替えない**（下記 red flag に明示適用）。
+
+**③ step 境界バナー** — step の開始/委譲/ゲート/完了で印を1行出し、subagent dispatch とゲートが実際に起きていることを可視化する。
+
+```
+── step <id> ▸ dispatch → <agent|subagent>
+── step <id> ▸ gate: <acceptance-gate|review-gate> [<pending→passed|REJECT>]
+── step <id> ▸ done
+```
+
+> **会話モード（talk）の例外**：talk 自身の地の会話ターンにはヘッダを出さない（短い話し言葉を保つ）。talk が委譲した先のフローが RUN に入ったら、その RUN に①〜③が適用される。
+
 ### **red flags（STOP→委譲）**
 
-- 親が**直接コードを書き始める** / **再実装する**。
+- 親が**直接コードを書き始める** / **再実装する**（**中断・質疑の直後に素の作業へ静かに戻る**場合を含む）。
 - 親が長い diff・ログ・ファイル全文を**自分の context に読み込む**。
 - 軽い変更を**過剰に重く**（不要な design/review/tdd を）回す。
 - `--only` / `--from` を無視して**部分実行せず全部やる**。
 - agent / subagent を使わず**親が全部書く**。
 - 親が `--workflow` / ultracode なしに Workflow を**無断起動する**。
 - 親が承認なしに memory / knowledge layer に**サイレント書き込みする**。
+- 中断後に **run-status ヘッダの再掲・ハーネス状態の再宣言を省いて**作業を再開する。
 
 ### step ゲートと詰まりガード
 
@@ -390,6 +416,7 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 | 「ultracode 指定ないけど Workflow が便利」 | --workflow フラグまたは ultracode on が明示されない限り、Workflow バックエンドを起動してはならない。opt-in 必須。 | manual バックエンドで実行する |
 | 「--autonomous だから capture も自動でいい」 | --autonomous は step ゲートを解除するだけ。capture ゲートは常に承認が必要（--capture フラグ明示の場合のみ確認ダイアログ省略）。 | capture 提案を表示し、承認を待つ |
 | 「1ファイルだけだから直接 review する方が早い」 | 親が直接 review しても結果は同じに見えるが、context を汚染し structured-report が欠けるため、gate 判断の一貫性が失われる。 | reviewer subagent に dispatch して structured-report を受け取る |
+| 「さっき質問に答えたし、流れで自分で直していい」 | 質疑で recency が奪われた直後こそ red flag（直接実装・ゲート省略）へ逸れやすい。中断は規律解除の理由にならない。 | run-status ヘッダを再掲しハーネス状態を再宣言してから、現 step に委譲で戻る（§6 run-continuity） |
 
 ## 10. 参照表（どのブリックをいつ読むか）
 
@@ -405,3 +432,4 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 | 品質を毎回一定にする（非決定→決定品質） | `patterns/acceptance-gate` |
 | AI の癖排除・可読性を厳しく見る（敵対レビュー） | `facets/instructions/adversarial-review` ＋ `recipes/adversarial-review` |
 | 親の越権（直接実装・無断 Workflow・サイレント書込）を止める | §6 red flags ＋ §9 アンチパターン表／§9.1 rationalization 表 |
+| 中断・質疑の後も rig 駆動を切らさない（可視化・再アンカー） | §6 run-continuity（run-status ヘッダ／再アンカー規則／step 境界バナー） |

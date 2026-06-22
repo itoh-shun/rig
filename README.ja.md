@@ -4,6 +4,8 @@
 
 ブリック（facet / pattern / step）を起動時に動的に組み合わせ、タスクに最適化されたエージェント・ハーネスを engineering する汎用開発フロー・オーケストレータ。3-Stage フロー（計画→実装→検証）は数あるレシピの1つに過ぎず、プラグインそのものは特定フローに縛られない。Claude Code ネイティブ（command + skill + agents）として動作し、重い DSL エンジンや外部依存は持たない。ブリックを追加するだけで任意のフローを組み立てられる軽量な設計を原則とする。
 
+**run-continuity（中断後も駆動を切らさない）**: 開発の途中で質疑・脱線が挟まっても rig が静かに「素の Claude」へ戻らないよう、RUN 中は各ターン冒頭に状態ヘッダ（`▸ rig | recipe … | step … | gate …`）を再掲し、中断後は必ず再アンカーしてから現 step に戻る。step 境界にも印を出すので、**rig が今も駆動中だと常に目で確認できる**（詳細は `SKILL.md` §6）。
+
 ## install
 
 本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、marketplace 経由でインストールできる（CC のバージョンにより手順が異なる場合がある）。プラグイン名は `rig`、marketplace 名は `itoshun-local-plugins`。

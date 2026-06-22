@@ -1,6 +1,6 @@
 {
   "name": "rig",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness. Domain-agnostic engine: dev-flow orchestration (review, implement, PR), pluggable domain packs (e.g. sales deal-review), a conversational mode (rig:talk) that routes natural language to the right flow, and a goal-driven loop (rig:goal) that converges a high-level goal to its acceptance criteria. Claude Code native; no heavy DSL engine.",
   "author": {
     "name": "itoshun"
