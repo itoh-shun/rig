@@ -49,6 +49,7 @@ claude --plugin-dir .
 - **Command**: `/rig:goal` — a goal-driven loop: state a high-level goal and it converts it into acceptance criteria, then loops (assess → next step → delegate to an existing flow → check) until the goal is met. e.g. `/rig:goal "fix the login bug with regression coverage, through review"`
 - **Command**: `/rig:pr` — review an existing open PR: fetch it via GitHub MCP and run the 3-way (security/design/test) review to a structured verdict. e.g. `/rig:pr 1234 --adversarial`
 - **Command**: `/rig:init` — scaffold a repo for rig: a manifest (`.claude/rig.md`), knowledge dirs, and a CLAUDE.md "Compact Instructions" section (so a rig run survives context compaction). Writes are always confirmed; idempotent.
+- **Command**: `/rig:persona` — generate a reviewer persona from a description and save it per-product (project tier) or globally (`--user`), then inject it into a review with `--persona <name>`. e.g. `/rig:persona "a reviewer who understands 80s music"`
 - **Skill**: `/rig:rig` — the engine; also **auto-invoked** when you say things like "implement…", "review my changes", "finish the PR".
 
 ## Quick start
@@ -97,6 +98,7 @@ The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `P
 | `--list` | list available bricks/recipes/flags and stop (no run) |
 | `--validate` | doctor: check recipe→facet references, frontmatter schema, and §2 inventory drift; report and stop (no run) |
 | `--adversarial` | add an adversarial-review step (AI-slop elimination + human readability) |
+| `--persona <name>` | inject a named custom reviewer persona into the review fan-out (resolves project→user→shipped; pairs with `/rig:persona`) |
 
 ## How it works
 

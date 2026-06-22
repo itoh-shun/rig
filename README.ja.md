@@ -47,6 +47,7 @@ claude --plugin-dir .
 - **コマンド**: `/rig:goal` — ゴール駆動ループ。高レベルな目標を渡すと受け入れ基準に変換し「現状把握→次手→既存フローへ委譲→照合」を達成まで回す。例: `/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"`
 - **コマンド**: `/rig:pr` — 既存 PR レビュー。PR 番号/URL を GitHub MCP で取得し security/design/test の3観点で並列評価して structured verdict を返す。例: `/rig:pr 1234 --adversarial`
 - **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
+- **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
 > engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。
@@ -98,6 +99,7 @@ claude --plugin-dir .
 | `validate` | `skills/rig/facets/instructions/validate.md`（doctor：参照切れ・スキーマ・目録ドリフト検査） |
 | `pr-review` | `skills/rig/facets/instructions/pr-review.md`（pr-review pack：PR 取得→3観点並列→verdict／任意で PR コメント） |
 | `init` | `skills/rig/facets/instructions/init.md`（manifest・知識層 dir・CLAUDE.md Compact Instructions を scaffold・確認必須・冪等） |
+| `persona-gen` | `skills/rig/facets/instructions/persona-gen.md`（説明文→persona facet を project/user 層に生成・確認必須・冪等・捏造禁止） |
 
 ### facets/policies（末尾注入のガードレール）
 
@@ -178,6 +180,7 @@ claude --plugin-dir .
 | `--list` | 利用可能なブリック・recipe・flag を一覧表示して停止 |
 | `--validate` | doctor: recipe→facet 参照切れ・frontmatter スキーマ・§2 目録ドリフトを検査して停止（実行しない） |
 | `--adversarial` | 敵対的レビュー step を追加（AIの癖排除・人間可読性・不要コメント除去） |
+| `--persona <name>` | review fan-out に名前指定のカスタム reviewer persona を追加（複数可・tier 解決 project→user→shipped・`/rig:persona` と対） |
 
 ## クイック例
 

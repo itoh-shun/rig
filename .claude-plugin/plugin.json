@@ -1,7 +1,7 @@
 {
   "name": "rig",
-  "version": "0.8.0",
-  "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness. Domain-agnostic engine: dev-flow orchestration (review, implement, PR), pluggable packs — sales deal-review, a conversational mode (rig:talk), a goal-driven loop (rig:goal), and existing-PR review (rig:pr) — plus a --validate doctor, a /rig:init scaffolder, and run-continuity that survives context compaction via a shipped PreCompact hook. Claude Code native; no heavy DSL engine.",
+  "version": "0.9.0",
+  "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness. Domain-agnostic engine: dev-flow orchestration (review, implement, PR), pluggable packs — sales deal-review, a conversational mode (rig:talk), a goal-driven loop (rig:goal), and existing-PR review (rig:pr) — plus a --validate doctor, a /rig:init scaffolder, a /rig:persona generator (project/global reviewer personas, tier-resolved), and run-continuity that survives context compaction via a shipped PreCompact hook. Claude Code native; no heavy DSL engine.",
   "author": {
     "name": "itoshun"
   }
