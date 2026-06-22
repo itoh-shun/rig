@@ -7,7 +7,7 @@ steps:
     instruction: de-ai-smell
     pattern: serial
     gate: acceptance-gate
-    acceptance: ["表層(A〜I)・深層(J〜P)とも指摘が 0、または直すと原意が変わる残置のみ", "深層: 還元不可能な具体(N)が在る/無ければ実例を要求して停止、人物・立場(P/E)が在る、形が不均一(J/M/O)", "原意・事実・ニュアンスが保持されている", "新たな鋳型を作っていない(K 強調乱用/L 演じた砕けが無い・逆AI臭なし)"]
+    acceptance: ["表層(A〜I)・深層(J〜P)・言語(Q〜U)とも指摘が 0、または直すと原意が変わる残置のみ", "深層: 還元不可能な具体(N)が在る/無ければ実例を要求して停止、人物・立場(P/E)が在る、形が不均一(J/M/O)", "言語(日本語時): 音読して翻訳調・不自然な漢語/カタカナ・辞書語が無い(Q〜U)", "原意・事実・ニュアンスが保持されている", "新たな鋳型を作っていない(K/L・逆AI臭なし)"]
     personas: [ai-smell-reviewer]
     output_contract: review-verdict
 autonomy: interactive
