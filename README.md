@@ -74,6 +74,7 @@ claude --plugin-dir .
 | `adversarial-review` | adversarial review — eliminate AI tics, dead comments; enforce human readability (lazy-senior / cognitive-economist) |
 | `goal-loop` | goal-driven loop — turn a high-level goal into acceptance criteria, then converge to it by delegating existing flows each round (acceptance-gate + autonomous-loop) |
 | `pr-review` | review an existing open PR (fetched via GitHub MCP) with the 3-way (security/design/test) review + optional adversarial pass |
+| `de-ai-smell` | strip "AI smell" from prose (articles, READMEs, commit/PR text, posts) — `ai-smell-reviewer` removes hype/hedging/filler/template structure against a marker catalog (`ai-writing-smells`), preserving meaning, converged via acceptance-gate |
 
 ## Domain packs (beyond dev)
 
