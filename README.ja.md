@@ -93,6 +93,7 @@ claude --plugin-dir .
 | `deal-review` | `skills/rig/facets/instructions/deal-review.md`（sales pack） |
 | `talk-loop` | `skills/rig/facets/instructions/talk-loop.md`（talk pack：見極め→ルーティング→確認→委譲→継続） |
 | `goal-loop` | `skills/rig/facets/instructions/goal-loop.md`（goal pack：基準化→現状把握→次手→委譲→照合→周回/停止） |
+| `validate` | `skills/rig/facets/instructions/validate.md`（doctor：参照切れ・スキーマ・目録ドリフト検査） |
 
 ### facets/policies（末尾注入のガードレール）
 
@@ -170,6 +171,7 @@ claude --plugin-dir .
 | `--workflow` | 実行バックエンドを Workflow（ultracode）に切り替える。**明示 opt-in 必須** |
 | `--capture` | capture（knowledge への蓄積）の確認ダイアログを省略（提案表示と事後報告は省略しない） |
 | `--list` | 利用可能なブリック・recipe・flag を一覧表示して停止 |
+| `--validate` | doctor: recipe→facet 参照切れ・frontmatter スキーマ・§2 目録ドリフトを検査して停止（実行しない） |
 | `--adversarial` | 敵対的レビュー step を追加（AIの癖排除・人間可読性・不要コメント除去） |
 
 ## クイック例

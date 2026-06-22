@@ -1,6 +1,6 @@
 ---
 description: rig — LEGO-style dev-flow orchestrator. Compose facet/pattern/step/recipe bricks at invocation into a task-specific agent harness (review / implement / PR, etc.). レゴ式ハーネス・オーケストレータ。
-argument-hint: [--recipe review-only|release-flow|design-first|hotfix] [--only <step>] [--from <step>] [--issue <id>] [--design] [--review] [--tdd] [--visual] [--autonomous] [--workflow] [--plan] [--save-recipe <name>] [--capture] [--list] [--adversarial] [自由記述]
+argument-hint: [--recipe review-only|release-flow|design-first|hotfix] [--only <step>] [--from <step>] [--issue <id>] [--design] [--review] [--tdd] [--visual] [--autonomous] [--workflow] [--plan] [--save-recipe <name>] [--capture] [--list] [--validate] [--adversarial] [自由記述]
 ---
 
 # rig — dev-flow orchestrator

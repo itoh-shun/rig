@@ -91,6 +91,7 @@ The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `P
 | `--save-recipe <name>` | save the composed harness as a recipe (`--user` for the user tier) |
 | `--capture` | persist run learnings to the knowledge layer without the confirm dialog (proposal + report are never skipped) |
 | `--list` | list available bricks/recipes/flags and stop (no run) |
+| `--validate` | doctor: check recipe→facet references, frontmatter schema, and §2 inventory drift; report and stop (no run) |
 | `--adversarial` | add an adversarial-review step (AI-slop elimination + human readability) |
 
 ## How it works

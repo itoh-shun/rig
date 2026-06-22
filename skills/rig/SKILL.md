@@ -23,11 +23,21 @@ user-invocable: true
 | **policy facet** | 末尾注入のガードレール | `facets/policies/pr-hygiene` `facets/policies/pre-push-review` `facets/policies/ci-cost` `facets/policies/branch-strategy` `facets/policies/risk-based-testing` |
 | **knowledge facet** | subagent prompt に注入する知識層ブリック | `facets/knowledge/orchestration-patterns` `facets/knowledge/harness-engineering` `facets/knowledge/_layer` |
 | **pattern**（制御フロー） | step の実行制御テンプレ | `patterns/parallel-fanout` `patterns/review-gate` `patterns/structured-report` `patterns/serial` `patterns/autonomous-loop` `patterns/monitor` `patterns/workflow-backend` `patterns/acceptance-gate` |
-| **recipe**（step の束） | step＋pattern＋facet を固定したテンプレ workflow | `recipes/review-only` `recipes/release-flow` `recipes/design-first` `recipes/hotfix` `recipes/adversarial-review`（全 5 件 shipped） |
+| **recipe**（step の束） | step＋pattern＋facet を固定したテンプレ workflow | `recipes/review-only` `recipes/release-flow` `recipes/design-first` `recipes/hotfix` `recipes/adversarial-review`（dev-core 5 件。pack 追加分は下記） |
 | **manifest** | プロジェクト設定・既定値テンプレ | `manifests/_template` |
 | **step** | フローの単位。instruction facet として library 化済み | intake / design / implement / verify / visual-verify / pr / merge（parallel-review を含む全 8 件） |
 
 > ブリック参照は skill ディレクトリ相対（facets/ patterns/ recipes/ manifests/）。agent はファイルパスでなく subagent_type 名で起動。
+>
+> **上表は engine / dev-core 在庫。** ドメイン/モード pack は engine を改変せず**ブリックを上乗せ**する（§8 Native-first）。**新 pack を足したらこの pack 追加分に追記する**（dev-core 行は安定させる）。`--validate` はこの目録と実ファイルの突き合わせを検査する。
+>
+> **pack 追加分（engine 不変で上乗せ）:**
+>
+> | pack | 追加ブリック |
+> |---|---|
+> | **sales**（`/rig:sales`） | persona `facets/personas/sales/{hearing,needs,proposal,closing,next-action}-reviewer` ／ instruction `facets/instructions/deal-review` ／ output-contract `facets/output-contracts/deal-verdict` ／ recipe `recipes/deal-review` ／ knowledge `facets/knowledge/sales-domain/` |
+> | **talk**（`/rig:talk`） | persona `facets/personas/talk-assistant` ／ instruction `facets/instructions/talk-loop`（recipe なし＝既存コマンドへ委譲） |
+> | **goal**（`/rig:goal`） | persona `facets/personas/goal-driver` ／ instruction `facets/instructions/goal-loop` ／ recipe `recipes/goal-loop` |
 
 ## 3. PARSE — 起動文字列の解釈
 
@@ -51,9 +61,11 @@ user-invocable: true
 | `--workflow` | 実行バックエンドを **workflow**（ultracode Workflow ツール）に切り替える。既定は **manual**（`patterns/workflow-backend` 参照） |
 | `--capture` | capture（学びの知識層への蓄積）を承認ダイアログなしで実行（提案表示と事後報告は省略しない）。既定は capture 提案時に承認を求める |
 | `--list` | 利用可能なブリック(§2)・shipped recipe・flag を一覧表示して停止（RESOLVE/COMPOSE/RUN しない） |
+| `--validate` | ブリック整合チェック（doctor）。recipe→facet 参照切れ・frontmatter スキーマ逸脱・§2 目録と実ファイルのドリフトを検査し、レポートして停止（RESOLVE/COMPOSE/RUN しない）。手順は `facets/instructions/validate` |
 | `--adversarial` | 敵対的レビュー step（lazy-senior / cognitive-economist で AI の癖排除・人間可読性・不要コメント除去）を合成に追加 |
 
 **`--list` 指定時** → §2 のブリック目録（shipped recipe 一覧を含む）・flag 一覧を提示して**停止**（解決も実行もしない）。
+**`--validate` 指定時** → `facets/instructions/validate` の手順でブリック整合（参照切れ／frontmatter スキーマ／目録ドリフト）を検査し、結果を提示して**停止**（解決も実行もしない）。`--list` と同じく副作用なしの点検モード。
 **`--adversarial` 指定時** → 合成ハーネスの review/verify の後に `adversarial-review` step（instruction: adversarial-review / personas: lazy-senior, cognitive-economist / gate: acceptance-gate）を追加する。recipe `adversarial-review` は敵対レビューのみを回す。
 
 ### 引数なし / 曖昧な場合 → 対話 composition
