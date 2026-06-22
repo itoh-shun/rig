@@ -1,0 +1,65 @@
+name: release
+
+# v* タグを push したら、その版の CHANGELOG 節を本文にして GitHub Release を自動作成する。
+# CHANGELOG に該当節が無ければ Git 履歴から自動生成ノートにフォールバックする。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # Release 作成に必要
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 自動生成ノート用に全履歴を取得
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          # CHANGELOG.md から「## [VERSION] …」〜 次の「## [」直前までを抜き出す
+          awk -v ver="$VERSION" '
+            BEGIN { gsub(/\./, "\\.", ver); hdr = "^## \\[" ver "\\]" }
+            $0 ~ hdr { flag = 1; next }
+            flag && /^## \[/ { flag = 0 }
+            flag { print }
+          ' CHANGELOG.md > notes.md || true
+          # 前後の空行を整理
+          sed -i -e '/./,$!d' notes.md 2>/dev/null || true
+          if [ -s notes.md ]; then
+            echo "source=changelog" >> "$GITHUB_OUTPUT"
+            echo "CHANGELOG から $VERSION の節を抽出しました"
+          else
+            echo "source=auto" >> "$GITHUB_OUTPUT"
+            echo "::notice::CHANGELOG に $VERSION の節が無いため自動生成ノートを使用します"
+          fi
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="rig ${TAG}"
+          if [ "${{ steps.notes.outputs.source }}" = "changelog" ]; then
+            BODY_ARGS=(--notes-file notes.md)
+          else
+            BODY_ARGS=(--generate-notes)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG は既存。本文を更新します。"
+            if [ "${{ steps.notes.outputs.source }}" = "changelog" ]; then
+              gh release edit "$TAG" --title "$TITLE" --notes-file notes.md
+            else
+              gh release edit "$TAG" --title "$TITLE"
+            fi
+          else
+            gh release create "$TAG" --title "$TITLE" "${BODY_ARGS[@]}"
+          fi
