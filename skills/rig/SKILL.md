@@ -42,6 +42,7 @@ user-invocable: true
 > | **init**（`/rig:init`・utility） | instruction `facets/instructions/init`（manifest・知識層 dir・CLAUDE.md "Compact Instructions" を scaffold） |
 > | **persona-gen**（`/rig:persona`・generator） | instruction `facets/instructions/persona-gen`（説明文→persona facet を project/user 層に生成。`--persona <name>` で投入。v2 Phase 1） |
 > | **knowledge-gen**（`/rig:knowledge`・generator） | instruction `facets/instructions/knowledge-gen` ／ knowledge `facets/knowledge/_wiki`（説明文/`--auto` repo 解析→wiki ページを global/project に生成。persona は `inject: [[slug]]` で参照。v2 Phase 2） |
+> | **catalog**（`/rig:catalog`・`--list --global`・utility） | instruction `facets/instructions/catalog`（全 tier 走査→domain×pack×persona×wiki×recipe の横断レジストリ地図。派生・読み取り専用。v2 Phase 3） |
 > | **hooks**（プラグイン同梱） | `hooks/hooks.json` → `hooks/preserve-rig-state.sh`（`PreCompact`：圧縮で run-state を保全。§6 run-continuity ④） |
 
 ## 3. PARSE — 起動文字列の解釈
@@ -69,9 +70,10 @@ user-invocable: true
 | `--validate` | ブリック整合チェック（doctor）。recipe→facet 参照切れ・frontmatter スキーマ逸脱・§2 目録と実ファイルのドリフトを検査し、レポートして停止（RESOLVE/COMPOSE/RUN しない）。手順は `facets/instructions/validate` |
 | `--adversarial` | 敵対的レビュー step（lazy-senior / cognitive-economist で AI の癖排除・人間可読性・不要コメント除去）を合成に追加 |
 | `--persona <name>` | review fan-out に名前指定のカスタム reviewer persona を追加（複数可）。tier 解決（project→user→shipped・§5）で名前解決。`/rig:persona` で生成した persona をそのまま投入できる |
+| `--global` | `--list` / `--validate` のスコープを **tier 横断**（shipped＋user(global)＋project）に広げる。`--list --global` は横断レジストリ地図（`/rig:catalog` 相当）、`--validate --global` は tier 横断の衛生点検。手順は `facets/instructions/catalog` |
 
-**`--list` 指定時** → §2 のブリック目録（shipped recipe 一覧を含む）・flag 一覧を提示して**停止**（解決も実行もしない）。
-**`--validate` 指定時** → `facets/instructions/validate` の手順でブリック整合（参照切れ／frontmatter スキーマ／目録ドリフト）を検査し、結果を提示して**停止**（解決も実行もしない）。`--list` と同じく副作用なしの点検モード。
+**`--list` 指定時** → §2 のブリック目録（shipped recipe 一覧を含む）・flag 一覧を提示して**停止**（解決も実行もしない）。**`--global` 併用時**は shipped に加え user(global)・project 層も走査し、横断レジストリ地図（`facets/instructions/catalog`）を提示。
+**`--validate` 指定時** → `facets/instructions/validate` の手順でブリック整合（参照切れ／frontmatter スキーマ／目録ドリフト／wiki 衛生）を検査し、結果を提示して**停止**（解決も実行もしない）。`--list` と同じく副作用なしの点検モード。**`--global` 併用時**は tier 横断で点検する（全 tier の orphan・リンク切れ・参照欠落・重複）。
 **`--adversarial` 指定時** → 合成ハーネスの review/verify の後に `adversarial-review` step（instruction: adversarial-review / personas: lazy-senior, cognitive-economist / gate: acceptance-gate）を追加する。recipe `adversarial-review` は敵対レビューのみを回す。
 
 ### 引数なし / 曖昧な場合 → 対話 composition

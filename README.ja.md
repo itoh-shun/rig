@@ -49,6 +49,7 @@ claude --plugin-dir .
 - **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
 - **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
 - **コマンド**: `/rig:knowledge` — ドメイン知識を **LLM-wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として生成。説明文 or `--auto`(repo 解析)から、global(既定・全プロダクト共有)/project overlay に保存。persona は事実を埋め込まず `inject: [[slug]]` で参照＝暗黙知化させない。例: `/rig:knowledge --auto`
+- **コマンド**: `/rig:catalog` — 横断レジストリ(`--list --global`)。全 tier(shipped＋global＋project)を走査し `domain×pack×persona×wiki×recipe` の地図を tier つきで表示＝「誰がどこで何してるか」を取り戻す。派生・読み取り専用。`--validate --global` は tier 横断の衛生点検。
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
 > engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。
@@ -102,6 +103,7 @@ claude --plugin-dir .
 | `init` | `skills/rig/facets/instructions/init.md`（manifest・知識層 dir・CLAUDE.md Compact Instructions を scaffold・確認必須・冪等） |
 | `persona-gen` | `skills/rig/facets/instructions/persona-gen.md`（説明文→persona facet を project/user 層に生成・確認必須・冪等・捏造禁止） |
 | `knowledge-gen` | `skills/rig/facets/instructions/knowledge-gen.md`（説明文/`--auto`→wiki ページを global/project に生成・確認必須・冪等・捏造禁止） |
+| `catalog` | `skills/rig/facets/instructions/catalog.md`（全 tier 走査→横断レジストリ地図・派生・読み取り専用） |
 
 ### facets/policies（末尾注入のガードレール）
 
@@ -181,7 +183,8 @@ claude --plugin-dir .
 | `--workflow` | 実行バックエンドを Workflow（ultracode）に切り替える。**明示 opt-in 必須** |
 | `--capture` | capture（knowledge への蓄積）の確認ダイアログを省略（提案表示と事後報告は省略しない） |
 | `--list` | 利用可能なブリック・recipe・flag を一覧表示して停止 |
-| `--validate` | doctor: recipe→facet 参照切れ・frontmatter スキーマ・§2 目録ドリフトを検査して停止（実行しない） |
+| `--validate` | doctor: recipe→facet 参照切れ・frontmatter スキーマ・§2 目録ドリフト・wiki 衛生を検査して停止（実行しない） |
+| `--global` | `--list`/`--validate` を tier 横断(shipped＋global＋project)に拡張。`--list --global`=横断レジストリ地図(`/rig:catalog`)、`--validate --global`=横断衛生点検 |
 | `--adversarial` | 敵対的レビュー step を追加（AIの癖排除・人間可読性・不要コメント除去） |
 | `--persona <name>` | review fan-out に名前指定のカスタム reviewer persona を追加（複数可・tier 解決 project→user→shipped・`/rig:persona` と対） |
 
