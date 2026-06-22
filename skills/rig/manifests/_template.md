@@ -51,6 +51,12 @@ knowledge:
 # 汎用既定: interactive（毎回ユーザーに recipe を選択させる）
 default_recipe: "interactive"  # 例: "review-only" / "full-flow" / "interactive"
 
+# ── デフォルト persona（製品ごとに常時投入する reviewer） ──
+# review 時に毎回自動投入する persona 名。`--persona` を毎回打たずに
+# この製品のドメイン reviewer を常駐させる。tier 解決(project→user→shipped)で名前解決。
+# 汎用既定: [] （自動投入なし＝組み込み reviewer＋--persona 指定分のみ）
+default_personas: []  # 例: ["house-authenticity", "mix-engineer"]  （VST 製品）
+
 # ── worktree 運用 （任意） ────────────────────────────────
 # 汎用既定: worktree を使わず、現作業ブランチのまま進む
 worktree:
@@ -92,6 +98,14 @@ Knowledge facet が注入するドキュメントの場所を指す。
 裸の `/rig:dev "X"` 実行時に使う recipe 名。
 `interactive`（または未設定）の場合は毎回ユーザーに選択を求める。
 recipe の詳細スキーマは `SKILL.md §3.5` を参照。
+
+### default_personas
+この製品の review/adversarial step に毎回自動投入する reviewer persona 名のリスト。
+各名は tier 解決（project → user → shipped）で `/rig:persona` 生成 persona 等を名前解決する。
+解決した persona が `inject: [[slug]]` を宣言していれば wiki も同伴注入される。
+最終 reviewer は「組み込み reviewer ＋ recipe `personas[]` ＋ default_personas ＋ `--persona`」の
+名前和集合（dedup）。この run だけ外すには `--no-default-personas`。
+未設定（`[]`）は自動投入なし。詳細は `SKILL.md §5「manifest default_personas の自動投入」`。
 
 ### worktree
 `enabled: true` にすると、`root` パターンに従って git worktree を作成してからフローを開始する。
