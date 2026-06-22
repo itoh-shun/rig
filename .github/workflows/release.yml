@@ -1,14 +1,21 @@
 name: release
 
-# v* タグを push したら、その版の CHANGELOG 節を本文にして GitHub Release を自動作成する。
-# CHANGELOG に該当節が無ければ Git 履歴から自動生成ノートにフォールバックする。
+# リリース自動化（タグ push 不要）。
+# - master に version bump が入ったら、plugin.json の version から v<version> タグ＋Release を
+#   サーバ側（GITHUB_TOKEN）で自動作成する。手元での `git push --tags` は不要。
+# - 手動で v* タグを push した場合もフォールバックで Release を作る。
+# - どちらの経路も、その版の Release が既にあればスキップ（冪等＝同じ版を二重に作らない）。
+#
+# 仕組み: `gh release create v<version> --target <sha>` はタグと Release を1発で作る。
+# クライアントからのタグ push は環境ポリシーで 403 だが、Actions 内の GITHUB_TOKEN は
+# contents:write でタグ/Release を作成できるため、この経路なら通る。
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [master]
+    tags: ['v*']
 
 permissions:
-  contents: write   # Release 作成に必要
+  contents: write
 
 jobs:
   release:
@@ -16,50 +23,72 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 自動生成ノート用に全履歴を取得
+          fetch-depth: 0   # CHANGELOG 抽出 / 自動生成ノート用に全履歴
+
+      - name: Resolve target version and ref
+        id: target
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # 手動タグ push 経路: タグ名から版を取り、既存タグをそのまま使う
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${GITHUB_REF_NAME}"
+            TARGET="${GITHUB_REF_NAME}"
+          else
+            # master push 経路: plugin.json の version を読み、この push のコミットにタグを作る
+            VERSION="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])")"
+            TAG="v${VERSION}"
+            TARGET="${GITHUB_SHA}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET"   >> "$GITHUB_OUTPUT"
+
+      - name: Skip if release already exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${{ steps.target.outputs.tag }}" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release ${{ steps.target.outputs.tag }} は既存 — スキップ"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Extract release notes from CHANGELOG
+        if: steps.exists.outputs.skip == 'false'
         id: notes
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          # CHANGELOG.md から「## [VERSION] …」〜 次の「## [」直前までを抜き出す
+          VERSION="${{ steps.target.outputs.version }}"
           awk -v ver="$VERSION" '
             BEGIN { gsub(/\./, "\\.", ver); hdr = "^## \\[" ver "\\]" }
             $0 ~ hdr { flag = 1; next }
             flag && /^## \[/ { flag = 0 }
             flag { print }
           ' CHANGELOG.md > notes.md || true
-          # 前後の空行を整理
           sed -i -e '/./,$!d' notes.md 2>/dev/null || true
           if [ -s notes.md ]; then
             echo "source=changelog" >> "$GITHUB_OUTPUT"
-            echo "CHANGELOG から $VERSION の節を抽出しました"
           else
             echo "source=auto" >> "$GITHUB_OUTPUT"
-            echo "::notice::CHANGELOG に $VERSION の節が無いため自動生成ノートを使用します"
+            echo "::notice::CHANGELOG に $VERSION 節なし — 自動生成ノートを使用"
           fi
 
-      - name: Create or update GitHub Release
+      - name: Create tag + release
+        if: steps.exists.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ steps.target.outputs.tag }}"
+          TARGET="${{ steps.target.outputs.target }}"
           TITLE="rig ${TAG}"
           if [ "${{ steps.notes.outputs.source }}" = "changelog" ]; then
-            BODY_ARGS=(--notes-file notes.md)
+            gh release create "$TAG" --target "$TARGET" --title "$TITLE" --notes-file notes.md
           else
-            BODY_ARGS=(--generate-notes)
+            gh release create "$TAG" --target "$TARGET" --title "$TITLE" --generate-notes
           fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG は既存。本文を更新します。"
-            if [ "${{ steps.notes.outputs.source }}" = "changelog" ]; then
-              gh release edit "$TAG" --title "$TITLE" --notes-file notes.md
-            else
-              gh release edit "$TAG" --title "$TITLE"
-            fi
-          else
-            gh release create "$TAG" --title "$TITLE" "${BODY_ARGS[@]}"
-          fi
+          echo "::notice::Created $TAG at $TARGET"
