@@ -50,6 +50,7 @@ claude --plugin-dir .
 - **Command**: `/rig:pr` — review an existing open PR: fetch it via GitHub MCP and run the 3-way (security/design/test) review to a structured verdict. e.g. `/rig:pr 1234 --adversarial`
 - **Command**: `/rig:init` — scaffold a repo for rig: a manifest (`.claude/rig.md`), knowledge dirs, and a CLAUDE.md "Compact Instructions" section (so a rig run survives context compaction). Writes are always confirmed; idempotent.
 - **Command**: `/rig:persona` — generate a reviewer persona from a description and save it per-product (project tier) or globally (`--user`), then inject it into a review with `--persona <name>`. e.g. `/rig:persona "a reviewer who understands 80s music"`
+- **Command**: `/rig:knowledge` — generate domain knowledge as **LLM-wiki pages** (one canonical, cross-linked `[[page]]` per concept) from a description or `--auto` (repo scan), saved globally (default, shared across products) or as a project overlay. Personas reference pages via `inject: [[slug]]` instead of embedding facts — so knowledge is shared, not siloed as each agent's tacit knowledge. e.g. `/rig:knowledge --auto`
 - **Skill**: `/rig:rig` — the engine; also **auto-invoked** when you say things like "implement…", "review my changes", "finish the PR".
 
 ## Quick start

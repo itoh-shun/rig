@@ -36,6 +36,17 @@
 - 実ファイルが在るが**目録に載っていない**もの → pack 追加分への追記漏れの可能性として warning（dev-core は安定前提なので especially recipe/instruction/persona を見る）。
 - README.md / README.ja.md の recipe / instruction / persona 一覧表も同様に実ファイルと突き合わせ、抜け・古い記載を warning する。
 
+### ④ wiki 衛生（`facets/knowledge/_wiki`）
+
+wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowledge/wiki/`）を点検する。ディレクトリが無ければスキップ。
+
+- **リンク切れ** → 本文/`links:`/persona の `inject:` にある `[[slug]]` が、どの tier のページにも解決しない → FAIL。
+- **参照欠落** → persona facet の `inject:` 先ページが存在しない → FAIL。
+- **orphan** → どこからも `[[リンク]]`/`inject:` されないページ → WARN（孤立知識）。
+- **重複/矛盾** → 同一 `title` または `aliases` を持つ別 slug の `canonical` ページが複数 → WARN（正準化が必要）。
+- **frontmatter 欠落** → `slug`（ファイル名一致）/`title`/`status` が無い、`status` が `canonical|draft|deprecated` 以外 → WARN。
+- **INDEX ドリフト** → `INDEX.md` と実ファイル/タグ/backlink の乖離 → WARN（再生成を提案）。
+
 ## レポート形式
 
 機械抽出しやすい構造で、合否を1行ずつ出す。
