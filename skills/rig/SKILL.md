@@ -40,6 +40,7 @@ user-invocable: true
 > | **goal**（`/rig:goal`） | persona `facets/personas/goal-driver` ／ instruction `facets/instructions/goal-loop` ／ recipe `recipes/goal-loop` |
 > | **pr-review**（`/rig:pr`） | instruction `facets/instructions/pr-review` ／ recipe `recipes/pr-review`（reviewer agent・persona・`review-verdict` は dev 共用） |
 > | **de-ai-smell**（`/rig:dev --recipe de-ai-smell`） | persona `facets/personas/ai-smell-reviewer` ／ instruction `facets/instructions/de-ai-smell` ／ knowledge `facets/knowledge/ai-writing-smells` ／ recipe `recipes/de-ai-smell`（散文の AI 臭除去。`review-verdict` は dev 共用） |
+> | **sns-x**（`/rig:dev --recipe sns-x-post`） | persona `facets/personas/sns-post-reviewer` ／ instruction `facets/instructions/sns-post` ／ knowledge `facets/knowledge/sns-x-conventions` ／ recipe `recipes/sns-x-post`（X 半自動ポスト運用。声 persona は運用者が `/rig:persona`＋`default_personas` で投入。de-ai-smell・`review-verdict` 共用） |
 > | **init**（`/rig:init`・utility） | instruction `facets/instructions/init`（manifest・知識層 dir・CLAUDE.md "Compact Instructions" を scaffold） |
 > | **persona-gen**（`/rig:persona`・generator） | instruction `facets/instructions/persona-gen`（説明文→persona facet を project/user 層に生成。`--persona <name>` で都度投入、manifest `default_personas` で製品ごと常時自動投入。v2 Phase 1） |
 > | **knowledge-gen**（`/rig:knowledge`・generator） | instruction `facets/instructions/knowledge-gen` ／ knowledge `facets/knowledge/_wiki`（説明文/`--auto` repo 解析→wiki ページを global/project に生成。persona は `inject: [[slug]]` で参照。v2 Phase 2） |

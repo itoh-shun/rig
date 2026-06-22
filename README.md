@@ -75,6 +75,7 @@ claude --plugin-dir .
 | `goal-loop` | goal-driven loop — turn a high-level goal into acceptance criteria, then converge to it by delegating existing flows each round (acceptance-gate + autonomous-loop) |
 | `pr-review` | review an existing open PR (fetched via GitHub MCP) with the 3-way (security/design/test) review + optional adversarial pass |
 | `de-ai-smell` | strip "AI smell" from prose (articles, READMEs, commit/PR text, posts) — `ai-smell-reviewer` removes hype/hedging/filler/template structure against a marker catalog (`ai-writing-smells`), preserving meaning, converged via acceptance-gate |
+| `sns-x-post` | semi-automated X (Twitter) posting for solo creators (e.g. song covers) — draft in your account voice → de-ai-smell → `sns-post-reviewer` judges hook/brand/risk and classifies routine-vs-needs-approval; routine auto-queues, judgment calls stop for you |
 
 ## Domain packs (beyond dev)
 
