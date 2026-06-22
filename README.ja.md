@@ -4,7 +4,7 @@
 
 ブリック（facet / pattern / step）を起動時に動的に組み合わせ、タスクに最適化されたエージェント・ハーネスを engineering する汎用開発フロー・オーケストレータ。3-Stage フロー（計画→実装→検証）は数あるレシピの1つに過ぎず、プラグインそのものは特定フローに縛られない。Claude Code ネイティブ（command + skill + agents）として動作し、重い DSL エンジンや外部依存は持たない。ブリックを追加するだけで任意のフローを組み立てられる軽量な設計を原則とする。
 
-**run-continuity（中断後も駆動を切らさない）**: 開発の途中で質疑・脱線が挟まっても rig が静かに「素の Claude」へ戻らないよう、RUN 中は各ターン冒頭に状態ヘッダ（`▸ rig | recipe … | step … | gate …`）を再掲し、中断後は必ず再アンカーしてから現 step に戻る。step 境界にも印を出すので、**rig が今も駆動中だと常に目で確認できる**（詳細は `SKILL.md` §6）。
+**run-continuity（中断後も駆動を切らさない）**: 開発の途中で質疑・脱線が挟まっても rig が静かに「素の Claude」へ戻らないよう、RUN 中は各ターン冒頭に状態ヘッダ（`▸ rig | recipe … | step … | gate …`）を再掲し、中断後は必ず再アンカーしてから現 step に戻る。step 境界にも印を出すので、**rig が今も駆動中だと常に目で確認できる**。**コンテキスト自動圧縮も生き延びる**：同梱の `PreCompact` フック（`hooks/`）が圧縮時に run-state の保全指示を注入し、`/rig:init` は同じ保全文を CLAUDE.md "Compact Instructions" にも置ける（詳細は `SKILL.md` §6 run-continuity）。
 
 ## install
 
@@ -46,6 +46,7 @@ claude --plugin-dir .
 - **コマンド**: `/rig:talk` — JARVIS 的な会話モード。話しかけると意図を汲んで適切な rig フロー(dev/sales)へ橋渡しして実行する。例: `/rig:talk 今の変更だけ軽くレビューして`
 - **コマンド**: `/rig:goal` — ゴール駆動ループ。高レベルな目標を渡すと受け入れ基準に変換し「現状把握→次手→既存フローへ委譲→照合」を達成まで回す。例: `/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"`
 - **コマンド**: `/rig:pr` — 既存 PR レビュー。PR 番号/URL を GitHub MCP で取得し security/design/test の3観点で並列評価して structured verdict を返す。例: `/rig:pr 1234 --adversarial`
+- **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
 > engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。
@@ -96,6 +97,7 @@ claude --plugin-dir .
 | `goal-loop` | `skills/rig/facets/instructions/goal-loop.md`（goal pack：基準化→現状把握→次手→委譲→照合→周回/停止） |
 | `validate` | `skills/rig/facets/instructions/validate.md`（doctor：参照切れ・スキーマ・目録ドリフト検査） |
 | `pr-review` | `skills/rig/facets/instructions/pr-review.md`（pr-review pack：PR 取得→3観点並列→verdict／任意で PR コメント） |
+| `init` | `skills/rig/facets/instructions/init.md`（manifest・知識層 dir・CLAUDE.md Compact Instructions を scaffold・確認必須・冪等） |
 
 ### facets/policies（末尾注入のガードレール）
 

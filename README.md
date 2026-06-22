@@ -9,7 +9,7 @@
 - **LEGO composition** — don't run one fixed workflow. Assemble the bricks you need per task: `PARSE → RESOLVE → COMPOSE → RUN`. The classic intake→design→implement→verify→review→pr→merge flow is just *one recipe*.
 - **determinism-by-gate** — agent execution is non-deterministic (same input, varying output/quality). rig wraps quality-critical steps in **explicit acceptance gates** (`acceptance-gate`): the *path* varies, but the *output quality converges to the same bar every run*. Generation is non-deterministic; the result is deterministic in quality.
 - **context-minimal** — the orchestrator dispatches all real work to subagents and only aggregates structured reports + makes gate decisions. The parent context stays clean.
-- **run-continuity** — a mid-flow question won't quietly drop you out of the harness. Every RUN turn re-prints a one-line status header (`▸ rig | recipe … | step … | gate …`), re-anchors after any interruption, and marks step boundaries — so you can always *see* rig is still driving, and the orchestrator can't silently slide into direct, un-gated work.
+- **run-continuity** — a mid-flow question won't quietly drop you out of the harness. Every RUN turn re-prints a one-line status header (`▸ rig | recipe … | step … | gate …`), re-anchors after any interruption, and marks step boundaries — so you can always *see* rig is still driving, and the orchestrator can't silently slide into direct, un-gated work. This even survives **context compaction**: a shipped `PreCompact` hook injects instructions to preserve the run-state, and `/rig:init` can mirror them into your CLAUDE.md "Compact Instructions".
 - **native-first** — instruction facets are thin and delegate to existing skills/commands/agents. The engine routes and gates; it does not reimplement.
 - **lightness by default** — interactive, size-aware, manual backend by default. Heavy machinery (autonomous loops, the Workflow backend, multi-stage fan-out) is opt-in.
 - **grows with you** — a two-tier knowledge layer (methodology + AI quirks) is injected into every run and accumulates learnings, so the system gets better over time.
@@ -48,6 +48,7 @@ claude --plugin-dir .
 - **Command**: `/rig:talk` — a JARVIS-style conversational mode: speak naturally, it routes your intent to the right rig flow (dev/sales) and runs it. e.g. `/rig:talk just review my current changes`
 - **Command**: `/rig:goal` — a goal-driven loop: state a high-level goal and it converts it into acceptance criteria, then loops (assess → next step → delegate to an existing flow → check) until the goal is met. e.g. `/rig:goal "fix the login bug with regression coverage, through review"`
 - **Command**: `/rig:pr` — review an existing open PR: fetch it via GitHub MCP and run the 3-way (security/design/test) review to a structured verdict. e.g. `/rig:pr 1234 --adversarial`
+- **Command**: `/rig:init` — scaffold a repo for rig: a manifest (`.claude/rig.md`), knowledge dirs, and a CLAUDE.md "Compact Instructions" section (so a rig run survives context compaction). Writes are always confirmed; idempotent.
 - **Skill**: `/rig:rig` — the engine; also **auto-invoked** when you say things like "implement…", "review my changes", "finish the PR".
 
 ## Quick start

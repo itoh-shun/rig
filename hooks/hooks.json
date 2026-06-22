@@ -1,0 +1,16 @@
+{
+  "description": "rig run-continuity — preserve the active harness run-state across context compaction (PreCompact stdout becomes custom compaction instructions).",
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/preserve-rig-state.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
