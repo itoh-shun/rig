@@ -368,10 +368,10 @@ steps: 7（うち condition 付き=2 / gate=2）| RUN はしない
 - 各行は**解決済みの最終 step 順**（extends 適用後・flag override 後）の1 step。空の任意フィールドは `—`。
 - **condition 列はフラグ成分を先行評価して注記を付す**（フラグは PARSE 済みなので評価コストゼロ）：フラグのみの条件 → `[✓ 実行]` / `[✗ スキップ]`。size のみ → `[TBD: size 確定待ち]`（RUN 開始後に判定）。混合（`--flag または size L+`）→ フラグ真なら `[✓ 実行: <flag> 解決]`、偽なら `[TBD: size L+ のみで有効]`。condition なしは注記なし。例: `--design または size L+ [✓ 実行: --design 解決]`。
 - `--only` / `--from` 指定時は**スライス後の step だけ**を表に出し、ヘッダ `slice:` に範囲を記す。
-- ヘッダ行に、解決した recipe 名 / autonomy / backend と、recipe を変えた flag（`--review` 等）を出す。
-- **personas 列は解決済みの最終 persona 集合を表示する**（recipe `personas[]` ＋ manifest `default_personas` ＋ `--persona` 指定分を名前で和集合・dedup。§5「manifest default_personas の自動投入」と同じ集合）＝ **`--plan` の personas ＝ 実行時 reviewer**（差異ゼロを spec で保証）。出所を明示するため manifest `default_personas` 由来に `★`、`--persona` 由来に `†` を付し、表末尾に凡例を1行（`★ = manifest default_personas ／ † = --persona`）。例: `security-reviewer, house-authenticity★, my-custom†`。`default_personas` も `--persona` も無ければ凡例行は省略（ノイズを出さない）。
+- ヘッダ行に、解決した recipe 名 / autonomy / backend と、recipe を変えた flag（`--review` 等）を出す。**recipe 名の直後に解決元 `[tier]`（`project`/`user`/`shipped`）を付す（#25）**＝ `recipe: release-flow [project]`（project が shipped を shadow していても見える）。`shipped` のみは省略可（新規ユーザーには静かでよい）、対話合成は `recipe: ad-hoc`（tier なし）。`--list` の tier 別表示と同じ語彙を使う。
+- **personas 列は解決済みの最終 persona 集合を表示する**（recipe `personas[]` ＋ manifest `default_personas` ＋ `--persona` 指定分を名前で和集合・dedup。§5「manifest default_personas の自動投入」と同じ集合）＝ **`--plan` の personas ＝ 実行時 reviewer**（差異ゼロを spec で保証）。出所を明示するため manifest `default_personas` 由来に `★`、`--persona` 由来に `†` を付す。**さらに各 persona の直後に解決元 `[tier]`（`project`/`user`/`shipped`/`agent`、未解決は `[WARN: 未解決]`）を付す（#24）**＝ COMPOSE と同じ tier 解決の結果を見せる。例: `security-reviewer [agent], house-authenticity★ [user], my-custom† [project]`。表末尾に凡例1行（`★ = manifest default_personas ／ † = --persona ／ [tier] = 解決先（project/user/shipped/agent）`）。`default_personas` も `--persona` も無く全て shipped/agent なら凡例・tier 表示は省略可。`[WARN: 未解決]` は `--validate ①` が FAIL するケースと1対1（`--plan` だけで「実行したら validate が落ちる」を予見できる）。
 - **`gate: acceptance-gate` の step が1つ以上あるとき**、表の後に「### Gate: 受け入れ基準」ブロックを出す（無ければブロックごと省略）。各 step を `id` で見出し化し `acceptance[]` をチェックリスト（`- [ ]`）で列挙、見出し横に `（max_retries: N）`（未指定は既定 2 を表示）。`acceptance[]` が空/未定義なら `（基準未定義 — WARN: ゲートが常時通過する可能性）` と注記する（`--validate` ③ の警告と同分類）。これで `--plan` 段階でゲートの中身（何を満たせば合格か）まで確認できる。
-- **`extends` 継承の出所表示（#17）**：recipe が `extends: <親>` を持つときのみ、ヘッダ行に `extends: <親>` フィールドを足し、表の直後に1行サマリ `> extends: <親> / overridden: <子が同 id で上書きした step…> / inherited: <親から継承した step…>` を出す（§4.2.2 の判定と同定義）。`extends` 無しの recipe では両方とも省略（差分ゼロ）。
+- **`extends` 継承の出所表示（#17）**：recipe が `extends: <親>` を持つときのみ、ヘッダ行に `extends: <親> [tier]` フィールドを足し、表の直後に1行サマリ `> extends: <親> [tier] / overridden: <子が同 id で上書きした step…> / inherited: <親から継承した step…>` を出す（§4.2.2 の判定と同定義。親 recipe の解決元 `[tier]` も #25 と同様に付す）。`extends` 無しの recipe では両方とも省略（差分ゼロ）。
 - **`### Knowledge: 注入予定ソース` ブロック（#19）**：Gate ブロックの後に、各 knowledge tier（methodology / ai-quirks / domain / accumulated）の状態を出す（`✓ N files` / `（なし）`）。manifest `knowledge.*`（context_file / adr_dir / design_docs[]）が設定されていれば各パスと実在確認（✓ / WARN）を補記、未設定ならそのセクションを省略。全 tier なし＋manifest 未設定なら `（knowledge なし — 汎用動作）` の1行のみ。`--validate`（#14 のパス WARN）が「実在」を保証し、本ブロックが「注入される一覧」を見せる相補関係。
 
 ## 6. RUN — 実行（context-minimal が絶対条件）
@@ -485,7 +485,13 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 |---|---|---|
 | **ai-quirk** | `~/.claude/rig/knowledge/ai-quirks/`（user 層） | **記述形＋導出規範形のペアとして保存**（二相。§5 の ai-quirks 二相注入と対応）。記述ファイル（`<name>-descriptive.md`）と規範ファイル（`<name>-policy.md`）を1セットで作成 |
 | **プロジェクト・ドメイン学び（pitfall / decision / convention / stuck-twice）** | `<repo>/.claude/rig/knowledge/accumulated/` **および/または** `~/.claude/projects/<proj>/memory/`（`type=project` または `type=knowledge`） | **書き分けルール**：クロスプロジェクトで再利用価値のある学び → memory store（`~/.claude/projects/<proj>/memory/`）に `[[クロスリンク]]` 付きで記録（必要なら ai-quirks にも）。プロジェクト固有のドメイン学び → `<repo>/.claude/rig/knowledge/accumulated/` のみ。**両方に該当する場合のみ両方へ書き込む**（既定は片方への書き込み）。 |
-| **MEMORY.md インデックス** | `~/.claude/projects/<proj>/memory/MEMORY.md` | memory store に追記した各ファイルへの**1行ポインタ**を MEMORY.md に追加する |
+| **MEMORY.md インデックス** | `~/.claude/projects/<proj>/memory/MEMORY.md` | memory store に追記した各ファイルへの**1行ポインタ**を追加する（正準フォーマットは下記・#26） |
+
+> **MEMORY.md 1行ポインタの正準フォーマット（#26）**：`- [<category>] <filename> — <1行サマリ> (<YYYY-MM-DD>)`
+> - `<category>`：§7.1 の5値のうち memory store に書くもの（`pitfall` / `decision` / `convention` / `stuck-twice`）。`ai-quirk` は user 層へ書き memory store に記録しないのでポインタ対象外。
+> - `<filename>`：memory store 内の相対パス。`<1行サマリ>`：蒸留した学びの1文（§7.4 提案の内容草案から抽出）。`<日付>`：書き込み日（ISO 8601）。
+> - 例：`- [pitfall] pitfall-jwt-refresh.md — リフレッシュ後に旧トークンが1秒残る (2026-06-23)`
+> - MEMORY.md が無ければ見出し（`## captured learnings`）を作って初期化、あれば末尾に追記。run をまたいで**同一フォーマット**で積む（書式が揺れるとインデックスとして読めなくなる）。
 
 > **役割の区別**（混同しないこと）:
 > - **memory store**（`~/.claude/projects/<proj>/memory/`）= 横断的な個人・フィードバック・プロジェクト事実のレコード。永続的なプロジェクト記憶。
