@@ -16,6 +16,9 @@ steps:
   - id: verify
     instruction: verify
     pattern: serial
+    gate: acceptance-gate
+    acceptance: ["build が成功", "lint 0 件"]
+    max_retries: 1
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]
   - id: pr
@@ -38,8 +41,12 @@ autonomy: interactive
 
 1. **intake** — 障害の内容・影響範囲・修正方針を確定する。サイズは原則 S 扱い。
 2. **implement** — 最小限の修正を実施する。`risk-based-testing` ポリシーに従いリグレッションリスクを判断する。
-3. **verify** — ビルド・lint・最小テストを実行し、修正が壊れていないことを確認する。
+3. **verify** — `acceptance-gate`（`build が成功` / `lint 0 件`・`max_retries: 1`）でビルドが通ることを機械的に保証する。緊急対応こそ「ビルドが壊れたまま PR」が起きやすいため、最低限の品質ゲートだけは残す。
 4. **pr** — `pr-hygiene` / `branch-strategy` に従い push してプルリクエストを開く。
+
+## verify の acceptance-gate を `release-flow` より軽くした理由
+
+`release-flow` の verify は `build / lint / 全テスト green`・`max_retries: 2`。hotfix は速度最優先のため **テスト green を必須にせず**（`risk-based-testing` でリスク判断）、基準を `build`・`lint` の2点、再試行を `max_retries: 1` に絞る。「緊急だから品質を妥協」ではなく「緊急だからこそビルドが通ることだけは機械的に保証」という設計（determinism-by-gate / SKILL §1）。
 
 ## 注意
 
