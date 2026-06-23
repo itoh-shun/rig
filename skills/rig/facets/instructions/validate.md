@@ -19,6 +19,20 @@
 | `pattern` / `gate` | `patterns/<name>.md` | 任意・あれば |
 | `extends` | 親 recipe（§4.2.1 tier 検索順・bare 名） | あれば |
 
+**`extends` 子 step ID 突き合わせ（#41）** — recipe に `extends: <parent>` が宣言されている場合、以下の追加チェックを行う。
+
+1. 親 recipe を §4.2.1 tier 検索順で解決し、`steps[].id` をリスト化する。
+2. 子 `steps[].id` のうち**親リストに存在しない ID** を抽出する。
+3. 該当 ID がある場合 → **WARN** を出す。
+
+```
+[WARN] my-flow (extends: release-flow) — child step `implementt` は parent に存在しません。
+        override のタイポの可能性があります。
+        新規 step として追加する意図なら無視してください（SKILL.md §4.2.2）。
+```
+
+> **WARN とする理由（FAIL にしない）**：子に意図的な新規 step を追加するケースも §4.2.2 で正当（「子のみに存在する step は親の末尾に追加」）。FAIL にすると正当な extension も通らなくなる。WARN にすることで「気づかせる」だけにとどめ、ユーザーが判断する。`--validate --global` 時は全 tier の `extends` recipe を対象に同チェックを実施する。
+
 > **`personas[]` は COMPOSE（§5「persona facet の tier 解決」）と同じ経路で解決する**（shipped 層だけ見ない）。順に：①project `<repo>/.claude/rig/personas/<name>.md` → ②user `~/.claude/rig/personas/<name>.md` → ③shipped `skills/rig/facets/personas/<name>.md` → ④agent `<repo>/agents/<name>.md`。**いずれにも無い場合のみ参照切れ FAIL**。shipped 層だけ見ると `/rig:persona` で project/user に生成したカスタム persona を参照する recipe が**偽 FAIL** する（同 instruction の `instruction`/`policies[]`/`output_contract` は当面 shipped 基準で可・persona ほど tier 運用が一般的でないため）。
 > **agent のベースパスはリポジトリルート**（`git rev-parse --show-toplevel` で得る `<repo>/agents/<name>.md`）。shipped ブリック（`facets/`・`patterns/` 等が `skills/rig/` 相対）とは非対称なので、`skills/rig/agents/` ではなく `<repo>/agents/` を見る（ここを誤ると reviewer agent を使う recipe が軒並み偽 FAIL になる）。
 
