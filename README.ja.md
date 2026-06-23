@@ -46,13 +46,14 @@ claude --plugin-dir .
 - **コマンド**: `/rig:talk` — JARVIS 的な会話モード。話しかけると意図を汲んで適切な rig フロー(dev/sales)へ橋渡しして実行する。例: `/rig:talk 今の変更だけ軽くレビューして`
 - **コマンド**: `/rig:goal` — ゴール駆動ループ。高レベルな目標を渡すと受け入れ基準に変換し「現状把握→次手→既存フローへ委譲→照合」を達成まで回す。例: `/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"`
 - **コマンド**: `/rig:pr` — 既存 PR レビュー。PR 番号/URL を GitHub MCP で取得し security/design/test の3観点で並列評価して structured verdict を返す。例: `/rig:pr 1234 --adversarial`
+- **コマンド**: `/rig:magi` — エヴァの MAGI を模した3賢者合議モード。「やるべきか？」の決定を Melchior-1（科学者＝正しさ）/ Balthasar-2（母＝守り）/ Casper-3（女＝価値）の直交3観点に並列で諮り、**決定論的な多数決**で go/no-go を MAGI コンソールに裁定する。例: `/rig:magi この破壊的変更を今リリースしていいか`
 - **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
 - **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
 - **コマンド**: `/rig:knowledge` — ドメイン知識を **LLM-wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として生成。説明文 or `--auto`(repo 解析)から、global(既定・全プロダクト共有)/project overlay に保存。persona は事実を埋め込まず `inject: [[slug]]` で参照＝暗黙知化させない。例: `/rig:knowledge --auto`
 - **コマンド**: `/rig:catalog` — 横断レジストリ(`--list --global`)。全 tier(shipped＋global＋project)を走査し `domain×pack×persona×wiki×recipe` の地図を tier つきで表示＝「誰がどこで何してるか」を取り戻す。派生・読み取り専用。`--validate --global` は tier 横断の衛生点検。
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
-> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。
+> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。`magi`（`/rig:magi`）はコードの逐条レビューでなく**採否そのもの**を裁く decision pack で、3 persona（`magi/{melchior,balthasar,casper}`）＋集約 pattern（`magi-consensus`）を足すだけ＝engine 不変。正しさ（科学者）・守り（母）・価値（女）の直交3観点を多数決にかけ、「正しいだけのコードが現実には通らない」を構造化する。
 
 ## ブリック目録
 
@@ -157,6 +158,7 @@ claude --plugin-dir .
 | `deal-review` | `skills/rig/recipes/deal-review.md` | 商談を5観点で並列評価→総合評価＋改善アクション（sales pack） |
 | `goal-loop` | `skills/rig/recipes/goal-loop.md` | ゴールを受け入れ基準に変換し既存フローへの委譲ループで達成まで収束（goal pack。acceptance-gate＋autonomous-loop） |
 | `pr-review` | `skills/rig/recipes/pr-review.md` | 既存 PR を GitHub MCP 取得→3観点並列レビュー＋(任意)敵対レビュー→structured verdict（pr-review pack） |
+| `magi` | `skills/rig/recipes/magi.md` | エヴァ MAGI 模倣の3賢者 decision。Melchior(科学者=正しさ)/Balthasar(母=守り)/Casper(女=価値)に並列諮問→多数決(`magi-consensus`)で go/no-go 裁定（magi pack） |
 
 ### manifests
 
