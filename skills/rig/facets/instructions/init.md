@@ -16,7 +16,10 @@
 
 - `<repo>/.claude/rig/knowledge/domain/` … ドメイン設計・ユビキタス言語・ADR を置く場所。
 - `<repo>/.claude/rig/knowledge/accumulated/` … capture（§7）が学びを蓄積する場所。
+- `<repo>/.claude/rig/recipes/` … `--save-recipe`（§4.3.2）の保存先（project tier のカスタム recipe）。
+- `<repo>/.claude/rig/personas/` … project tier の `/rig:persona`（§5）の生成先。
 - 各ディレクトリに用途を1行書いた `README.md`（または `.gitkeep`）を置いて空ディレクトリを成立させる。
+- これで `/rig:init` 直後から `--save-recipe` / `/rig:persona` の書き込み先が存在し、「保存→一覧（`--list`）→再利用の輪」が初回から繋がる（保存先 dir 不在による失敗を防ぐ）。
 - `.claude/` は `.gitignore` 対象のことがある。**コミットして共有したい場合は知識層を除外しないよう** `.gitignore` を確認し、必要なら除外解除を**提案**する（勝手に書き換えない）。
 
 ### ③ CLAUDE.md "Compact Instructions" 節（圧縮で rig 状態を失わない第2経路）
