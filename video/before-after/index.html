@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<!--
+  rig — before / after（HyperFrames composition・HTML→決定論的 MP4）
+  仕様: heygen-com/hyperframes。アニメは GSAP タイムライン(paused:true)を window.__timelines["rig-ba"] に登録（renderer が seek する）。
+  プレビュー: npx hyperframes preview   /   レンダー: npx hyperframes render --output renders/out.mp4
+  ※この環境では render しない（Node22+/FFmpeg/headless Chrome が要る・README.md 参照）。
+-->
+<style>
+  :root{ --txt:#eaf0ff; --dim:#8a93ad; --neon:#00e5ff; --gold:#ffcf33; --hot:#ff3b6b; --green:#39d98a; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  #root{ position:relative; width:1920px; height:1080px; overflow:hidden; background:#05070d;
+    font-family:"Segoe UI",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; color:var(--txt); }
+  #bg{ position:absolute; inset:0; background:radial-gradient(1600px 900px at 50% 18%,#101a2e,#05070d 70%); }
+  #bg::after{ content:""; position:absolute; inset:0; box-shadow:inset 0 0 220px #000c; background:repeating-linear-gradient(0deg,#0000 0 3px,#ffffff05 3px 4px); }
+  .scene{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:9%; opacity:0; }
+  .kicker{ font-size:30px; letter-spacing:.45em; color:var(--dim); text-transform:uppercase; margin-bottom:24px; }
+  .kicker.bad{ color:var(--hot); } .kicker.good{ color:var(--green); }
+  .title{ font-size:104px; font-weight:900; line-height:1.06;
+    background:linear-gradient(90deg,#fff,#cfe8ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub{ font-size:40px; color:var(--dim); margin-top:34px; max-width:1320px; }
+  .bar{ width:200px; height:8px; border-radius:5px; margin:34px auto 0; background:var(--neon); transform-origin:left center; }
+  .emoji{ font-size:150px; }
+  ul.items{ list-style:none; margin-top:34px; display:flex; flex-direction:column; gap:24px; }
+  ul.items li{ font-size:44px; }
+  ul.items li b{ color:var(--gold); }
+  .cta code{ display:inline-block; margin-top:16px; padding:26px 40px; border:1px solid #2a3550; border-radius:18px;
+    background:#0c1424cc; color:var(--green); font-size:50px; font-weight:800; box-shadow:0 0 70px #00e5ff22; }
+  .term{ width:1500px; border-radius:16px; overflow:hidden; border:1px solid #263150; box-shadow:0 30px 100px #000a, 0 0 80px #00e5ff18; }
+  .term.bad{ border-color:#5a2230; box-shadow:0 30px 100px #000a, 0 0 80px #ff3b6b22; }
+  .term .top{ display:flex; align-items:center; gap:10px; padding:14px 18px; background:#161c2b; border-bottom:1px solid #222b40; }
+  .term .top i{ width:15px; height:15px; border-radius:50%; display:inline-block; }
+  .term .top .r{background:#ff5f57}.term .top .y{background:#febc2e}.term .top .g{background:#28c840}
+  .term .top .t{ margin-left:12px; color:var(--dim); font-size:22px; font-family:monospace; }
+  .term .body{ background:#0a0e16; padding:28px 32px; text-align:left;
+    font-family:"SFMono-Regular",Menlo,Consolas,monospace; font-size:29px; line-height:1.7; color:#d6e2f5; min-height:440px; }
+  .term .line{ opacity:0; white-space:pre-wrap; }
+  .term .cmd{ color:#fff; }.term .cmd .p{ color:var(--green); font-weight:700; }
+  .term .ok{ color:var(--green); }.term .ac{ color:var(--gold); }.term .bad{ color:#ff6b81; }
+  .credit{ position:absolute; left:30px; bottom:28px; font-size:22px; color:#56607a; letter-spacing:.12em; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="rig-ba" data-start="0" data-width="1920" data-height="1080">
+
+  <div id="bg" class="clip" data-start="0" data-duration="44" data-track-index="0"></div>
+
+  <!-- s1 title -->
+  <div id="s1" class="scene clip" data-start="0" data-duration="4" data-track-index="1">
+    <div class="kicker">developer experience</div>
+    <div class="title">rig で、何が変わる？</div>
+    <div class="sub">同じ変更を — rig なし → rig あり で見てみる。</div>
+  </div>
+
+  <!-- s2 BEFORE -->
+  <div id="s2" class="scene clip" data-start="4" data-duration="3.5" data-track-index="1">
+    <div class="kicker bad">BEFORE — rig なし</div>
+    <div class="emoji">😵‍💫</div>
+    <div class="title" style="font-size:72px;margin-top:10px">「この変更、レビューして」</div>
+    <div class="sub">…さて、どうやる？</div>
+  </div>
+
+  <!-- s3 BEFORE screen -->
+  <div id="s3" class="scene clip" data-start="7.5" data-duration="7" data-track-index="1">
+    <div class="term bad">
+      <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">~/project — before</span></div>
+      <div class="body">
+        <div class="line cmd"><span class="p">❯</span> # 親(あなた/AI)が diff を全部読む…</div>
+        <div class="line">+312 −188 … 800 行の diff を読み込み</div>
+        <div class="line bad">親 context 汚染: ████████ 8,200 tokens</div>
+        <div class="line bad">レビュー観点: その場の気分（security 抜け）</div>
+        <div class="line">品質: 回によってブレる</div>
+        <div class="line bad">3日後 → 同じ種類のバグ再発…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- s4 AFTER -->
+  <div id="s4" class="scene clip" data-start="14.5" data-duration="3.5" data-track-index="1">
+    <div class="kicker good">AFTER — rig あり</div>
+    <div class="emoji">✨</div>
+    <div class="title" style="font-size:78px;margin-top:10px">コマンド、1つ。</div>
+    <div class="sub">実作業は subagent に渡し、親は dispatch と集約だけ。</div>
+  </div>
+
+  <!-- s5 AFTER --plan -->
+  <div id="s5" class="scene clip" data-start="18" data-duration="7" data-track-index="1">
+    <div class="term">
+      <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">~/project — after</span></div>
+      <div class="body">
+        <div class="line cmd"><span class="p">❯</span> /rig:dev --plan --only review "現在の変更"</div>
+        <div class="line">## rig --plan</div>
+        <div class="line">recipe: review-only [shipped] | autonomy: interactive</div>
+        <div class="line">| 1 | review | parallel-fanout | review-gate | security, design, test |</div>
+        <div class="line ac">steps: 1 ・ まず構成だけ確認（RUN しない）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- s6 AFTER verdict -->
+  <div id="s6" class="scene clip" data-start="25" data-duration="8" data-track-index="1">
+    <div class="term">
+      <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">~/project — after</span></div>
+      <div class="body">
+        <div class="line cmd"><span class="p">❯</span> /rig:dev --only review</div>
+        <div class="line">── review ▸ dispatch → security / design / test（並列）</div>
+        <div class="line ok">判定: APPROVE_WITH_CONDITIONS</div>
+        <div class="line">根拠: 1.認可分岐 OK 2.設計妥当 3.テスト不足</div>
+        <div class="line">【マージ前必須】境界値テストを1本追加</div>
+        <div class="line ok">親 context: 判定行だけ（diff は subagent 側・汚染なし）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- s7 benefits -->
+  <div id="s7" class="scene clip" data-start="33" data-duration="6" data-track-index="1">
+    <div class="title" style="font-size:60px">rig ありの効き目</div>
+    <ul class="items">
+      <li><b>context-minimal</b> — 親は dispatch＋集約だけ</li>
+      <li><b>並列レビュー</b> — 3観点同時で速い・観点が揃う</li>
+      <li><b>determinism-by-gate</b> — 毎回同じ品質に収束</li>
+    </ul>
+  </div>
+
+  <!-- s8 CTA -->
+  <div id="s8" class="scene clip cta" data-start="39" data-duration="5" data-track-index="1">
+    <div class="title" style="font-size:88px">まずは1コマンド。</div>
+    <code>/rig:dev --only review</code>
+    <div class="sub">同じ変更が、毎回ちゃんとレビューされる。</div>
+  </div>
+
+  <!--
+    ▼ 実画面を“実録”にしたい場合（最良）：画面収録を assets/ に置き、s3/s5/s6 を
+      <video class="clip" data-start="…" data-duration="…" data-track-index="1" src="assets/*.mp4" muted playsinline> に差し替える。
+  -->
+
+  <div class="credit">rig · before / after · made with /rig:movie → HyperFrames</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const scenes = [
+      { id:"#s1", s:0,    d:4 }, { id:"#s2", s:4,  d:3.5 }, { id:"#s3", s:7.5, d:7 },
+      { id:"#s4", s:14.5, d:3.5 }, { id:"#s5", s:18, d:7 }, { id:"#s6", s:25, d:8 },
+      { id:"#s7", s:33,   d:6 }, { id:"#s8", s:39, d:5 },
+    ];
+    scenes.forEach(sc => {
+      tl.to(sc.id, { opacity:1, duration:0.6, ease:"power2.out" }, sc.s);
+      tl.to(sc.id, { opacity:0, duration:0.5, ease:"power2.in" }, sc.s + sc.d - 0.5);
+    });
+    tl.from("#s1 .title", { y:60, scale:0.92, duration:0.9, ease:"power3.out" }, 0.2);
+    tl.from("#s2 .emoji", { scale:0.4, duration:0.6, ease:"back.out(2)" }, 4.2);
+    tl.from("#s4 .emoji", { scale:0.4, duration:0.6, ease:"back.out(2)" }, 14.7);
+    tl.from("#s7 .items li", { x:-40, duration:0.6, stagger:0.4 }, 33.4);
+    tl.from("#s8 code", { scale:0.7, duration:0.7, ease:"back.out(1.8)" }, 39.4);
+    // 端末の行を順次表示（タイプ風・seekable）
+    tl.to("#s3 .line", { opacity:1, duration:0.25, stagger:0.55, ease:"none" }, 7.9);
+    tl.to("#s5 .line", { opacity:1, duration:0.25, stagger:0.6, ease:"none" }, 18.4);
+    tl.to("#s6 .line", { opacity:1, duration:0.25, stagger:0.62, ease:"none" }, 25.4);
+    window.__timelines = window.__timelines || {};
+    window.__timelines["rig-ba"] = tl;
+  </script>
+</div>
+</body>
+</html>
