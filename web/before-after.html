@@ -77,62 +77,67 @@
 /* ===SCENES_START===  rig の開発体験 before/after。実コマンド/出力の screen を3つ収録。 */
 const META = { product:"rig", version:"before/after", music:"tension → relief → uplift" };
 const SCENES = [
-  // 1) cold-open — 人で始める（humanist）
-  { type:"title", dur:4.5, kicker:"金曜 21:43", title:"「この変更、見ておいて」",
-    titleAccent:"", subtitle:"レビュー依頼が、ひとつ。" },
+  // 1) cold-open — 人で始める（humanist）。今回は“作る”タスク
+  { type:"title", dur:4.5, kicker:"金曜 21:47", title:"「この機能、月曜までに」",
+    titleAccent:"", subtitle:"実装も、テストも、レビューも、PR も。" },
 
-  // 2) BEFORE — 嘲笑でなく“あるある”の共感で（humanist）
-  { type:"feature", dur:3.2, emoji:"😮‍💨", accent:"#ff3b6b", kickerCls:"bad", kicker:"BEFORE — rig なし",
-    title:"…で、どうやる？", subtitle:"（あるある、だ）" },
+  // 2) BEFORE — 共感（humanist）
+  { type:"feature", dur:3, emoji:"😮‍💨", accent:"#ff3b6b", kickerCls:"bad", kicker:"BEFORE — rig なし",
+    title:"全部、手で。", subtitle:"（どこから手をつける？）" },
 
-  { type:"screen", dur:7, frame:"bad", title:"~/project — before", prompt:"❯",
+  // 3) before screen — 手作業の開発（実装も含む混沌）
+  { type:"screen", dur:8, frame:"bad", title:"~/project — before", prompt:"❯",
     lines:[
-      { cmd:"# 親(あなた/AI)が diff を全部読む…" },
-      { out:"+312 −188 … 800 行の diff を読み込み" },
-      { out:"親 context: 長い diff/ログで膨らむ（イメージ）", cls:"bad" },
-      { out:"レビュー観点: その場任せ（security 抜けが起きやすい）", cls:"bad" },
+      { cmd:"# まず設計…とりあえず実装に入る" },
+      { out:"コードを書く（テストは後で…）", cls:"bad" },
+      { out:"レビュー: 誰に頼む？観点はその場任せ", cls:"bad" },
+      { out:"PR: 手作業でテンプレを埋める" },
+      { out:"親 context: 実装も diff もログも全部抱える（膨張）", cls:"bad" },
       { out:"品質: 回によってブレる" },
-      { out:"→ 観点が抜けると、同種のミスを繰り返しやすい", cls:"bad" },
     ] },
 
   { type:"list", dur:4.5, title:"rig なしの“あるある”",
-    items:["親 context が長い diff/ログで膨らむ","レビュー観点がその場任せ・品質がブレる","中断すると流れが切れて手戻り"] },
+    items:["設計/実装/検証/レビュー/PR を毎回 手で組み直し","テストは後回し・レビュー観点はその場任せ","親 context が膨らみ、品質がブレる"] },
 
-  // 5) 間 — 無音の一拍で断ち切る（deconstruction）
-  { type:"title", dur:3.2, kicker:"", title:"rig を通す。", titleAccent:"", subtitle:"" },
+  // 5) 間（deconstruction）
+  { type:"title", dur:3, kicker:"", title:"rig に組ませる。", titleAccent:"", subtitle:"" },
 
-  { type:"feature", dur:3, emoji:"✨", accent:"#39d98a", kickerCls:"good", kicker:"AFTER — rig あり",
-    title:"コマンド、1つ。", subtitle:"実作業は subagent へ。親は集約だけ。" },
+  { type:"feature", dur:3.8, emoji:"✨", accent:"#39d98a", kickerCls:"good", kicker:"AFTER — rig あり",
+    title:"コマンド、1つ。", subtitle:"intake→実装→検証→レビュー→PR→merge を、その場で合成。" },
 
-  { type:"screen", dur:6.5, frame:"", title:"~/project — after", prompt:"❯",
+  // 7) AFTER screen 1 — コーディング（implement / TDD / verify）
+  { type:"screen", dur:8, frame:"", title:"~/project — after", prompt:"❯",
     lines:[
-      { cmd:'/rig:dev --plan --only review "現在の変更"' },
-      { out:"## rig --plan" },
-      { out:"recipe: review-only [shipped] | autonomy: interactive" },
-      { out:"| 1 | review | parallel-fanout | review-gate | security, design, test |" },
-      { out:"steps: 1 ・ まず構成だけ確認（RUN しない）", cls:"ac" },
+      { cmd:'/rig:dev --recipe release-flow --tdd "JWT リフレッシュを追加"' },
+      { out:"── implement ▸ dispatch → implementer（TDD: red→green）" },
+      { out:"   ✓ 失敗するテストを書く → 実装 → green", cls:"ok" },
+      { out:"── verify ▸ gate: acceptance-gate" },
+      { out:"   ✓ build   ✓ lint 0   ✓ tests 12/12 green", cls:"ok" },
     ] },
 
-  // 8) HERO BEAT — verdict を単独で、溜めて、置く（engagement / deconstruction）
-  { type:"screen", dur:9, frame:"", title:"~/project — after", prompt:"❯",
+  // 8) HERO — 全工程が回り切る（review→pr→merge・親は集約だけ）
+  { type:"screen", dur:8, frame:"", title:"~/project — after", prompt:"❯",
     lines:[
-      { cmd:"/rig:dev --only review" },
-      { out:"── review ▸ dispatch → security / design / test（並列）" },
-      { out:"判定: APPROVE_WITH_CONDITIONS", cls:"ok" },
-      { out:"根拠: 1.認可分岐 OK 2.設計妥当 3.テスト不足" },
-      { out:"【マージ前必須】境界値テストを1本追加" },
-      { out:"…親に届くのは、判定行だけ。", cls:"ok" },
+      { out:"── review ▸ security / design / test（並列）→ APPROVE", cls:"ok" },
+      { out:"── pr ▸ #128 opened" },
+      { out:"── merge ▸ merged ✓", cls:"ok" },
+      { out:"" },
+      { out:"…親がやったのは、dispatch と集約だけ。", cls:"ok" },
     ] },
 
-  // 9) 人で締める — 一息つく間（humanist）
-  { type:"feature", dur:4.5, emoji:"😌", accent:"#ffcf33", kicker:"",
-    title:"気づけば、ちゃんとレビューされている。", subtitle:"diff は subagent 側。手元に残るのは、判定だけ。" },
+  // 9) 広がり — レビューだけじゃない
+  { type:"list", dur:5.5, title:"レビューだけ、じゃない。",
+    items:["intake→design→<b>実装</b>→<b>検証</b>→review→pr→merge を合成","🟧 <b>magi</b> やるか決める ・ 🎯 <b>goal</b> 達成まで回す","sales ・ talk ・ de-ai-smell ・ pre-mortem …"] },
 
   { type:"list", dur:5, title:"効き目",
-    items:["<b>context-minimal</b> — 親は集約だけ（context が膨らまない）","<b>並列レビュー</b> — 3観点同時で速い・観点が揃う","<b>determinism-by-gate</b> — 毎回同じ品質に収束"] },
+    items:["<b>context-minimal</b> — 親は集約だけ（context が膨らまない）","<b>determinism-by-gate</b> — 実装も毎回同じ品質へ収束","<b>size-aware</b> — 軽い時は軽く、重い時だけ厚く"] },
 
-  { type:"cta", dur:5, title:"まずは1コマンド。", code:"/rig:dev --only review",
-    subtitle:"同じ変更が、毎回ちゃんとレビューされる。" },
+  // 11) payoff（humanist・一息）
+  { type:"feature", dur:4.5, emoji:"😌", accent:"#ffcf33", kicker:"",
+    title:"気づけば、機能ができてた。", subtitle:"テストも通って、PR も、マージも。" },
+
+  { type:"cta", dur:5, title:"まずは1コマンド。", code:'/rig:dev "機能を実装して"',
+    subtitle:"実装も、検証も、レビューも、PR も。rig が組む。" },
 ];
 /* ===SCENES_END=== */
 (function(){
