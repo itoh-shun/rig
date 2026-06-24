@@ -77,13 +77,15 @@
 /* ===SCENES_START===  rig の開発体験 before/after。実コマンド/出力の screen を3つ収録。 */
 const META = { product:"rig", version:"before/after", music:"tension → relief → uplift" };
 const SCENES = [
-  { type:"title", dur:4, kicker:"developer experience", title:"rig で、何が変わる？",
-    titleAccent:"", subtitle:"同じ変更を — rig なし → rig あり で見てみる。" },
+  // 1) cold-open — 人で始める（humanist）
+  { type:"title", dur:4.5, kicker:"金曜 21:43", title:"「この変更、見ておいて」",
+    titleAccent:"", subtitle:"レビュー依頼が、ひとつ。" },
 
-  { type:"feature", dur:3.6, emoji:"😵‍💫", accent:"#ff3b6b", kickerCls:"bad", kicker:"BEFORE — rig なし",
-    title:"「この変更、レビューして」", subtitle:"…さて、どうやる？" },
+  // 2) BEFORE — 嘲笑でなく“あるある”の共感で（humanist）
+  { type:"feature", dur:3.2, emoji:"😮‍💨", accent:"#ff3b6b", kickerCls:"bad", kicker:"BEFORE — rig なし",
+    title:"…で、どうやる？", subtitle:"（あるある、だ）" },
 
-  { type:"screen", dur:8, frame:"bad", title:"~/project — before", prompt:"❯",
+  { type:"screen", dur:7, frame:"bad", title:"~/project — before", prompt:"❯",
     lines:[
       { cmd:"# 親(あなた/AI)が diff を全部読む…" },
       { out:"+312 −188 … 800 行の diff を読み込み" },
@@ -93,16 +95,16 @@ const SCENES = [
       { out:"→ 観点が抜けると、同種のミスを繰り返しやすい", cls:"bad" },
     ] },
 
-  { type:"list", dur:5, title:"rig なしの“あるある”",
-    items:["親 context が長い diff/ログで汚れる","レビュー観点がバラつき、品質がブレる","質疑で中断すると流れが切れて手戻り"] },
+  { type:"list", dur:4.5, title:"rig なしの“あるある”",
+    items:["親 context が長い diff/ログで膨らむ","レビュー観点がその場任せ・品質がブレる","中断すると流れが切れて手戻り"] },
 
-  { type:"feature", dur:3.4, accent:"#00e5ff", kicker:"the turn",
-    title:"rig を通すと？", subtitle:"固定フローでなく、タスク専用のハーネスをその場で組む。" },
+  // 5) 間 — 無音の一拍で断ち切る（deconstruction）
+  { type:"title", dur:3.2, kicker:"", title:"rig を通す。", titleAccent:"", subtitle:"" },
 
-  { type:"feature", dur:3.6, emoji:"✨", accent:"#39d98a", kickerCls:"good", kicker:"AFTER — rig あり",
-    title:"コマンド、1つ。", subtitle:"実作業は subagent に渡し、親は dispatch と集約だけ。" },
+  { type:"feature", dur:3, emoji:"✨", accent:"#39d98a", kickerCls:"good", kicker:"AFTER — rig あり",
+    title:"コマンド、1つ。", subtitle:"実作業は subagent へ。親は集約だけ。" },
 
-  { type:"screen", dur:7.5, frame:"", title:"~/project — after", prompt:"❯",
+  { type:"screen", dur:6.5, frame:"", title:"~/project — after", prompt:"❯",
     lines:[
       { cmd:'/rig:dev --plan --only review "現在の変更"' },
       { out:"## rig --plan" },
@@ -111,24 +113,23 @@ const SCENES = [
       { out:"steps: 1 ・ まず構成だけ確認（RUN しない）", cls:"ac" },
     ] },
 
-  { type:"screen", dur:8.5, frame:"", title:"~/project — after", prompt:"❯",
+  // 8) HERO BEAT — verdict を単独で、溜めて、置く（engagement / deconstruction）
+  { type:"screen", dur:9, frame:"", title:"~/project — after", prompt:"❯",
     lines:[
       { cmd:"/rig:dev --only review" },
       { out:"── review ▸ dispatch → security / design / test（並列）" },
       { out:"判定: APPROVE_WITH_CONDITIONS", cls:"ok" },
       { out:"根拠: 1.認可分岐 OK 2.設計妥当 3.テスト不足" },
       { out:"【マージ前必須】境界値テストを1本追加" },
-      { out:"親 context: 判定行だけ（diff は subagent 側・汚染なし）", cls:"ok" },
+      { out:"…親に届くのは、判定行だけ。", cls:"ok" },
     ] },
 
-  { type:"list", dur:5.5, title:"rig ありの効き目",
-    items:["<b>context-minimal</b> — 親は dispatch＋集約だけ（context が汚れない）","<b>並列レビュー</b> — 3観点同時で速い・観点が毎回揃う","<b>determinism-by-gate</b> — ゲートで毎回同じ品質に収束"] },
+  // 9) 人で締める — 一息つく間（humanist）
+  { type:"feature", dur:4.5, emoji:"😌", accent:"#ffcf33", kicker:"",
+    title:"気づけば、ちゃんとレビューされている。", subtitle:"diff は subagent 側。手元に残るのは、判定だけ。" },
 
-  { type:"feature", dur:4.5, emoji:"🪶", accent:"#ffcf33", kicker:"使い勝手",
-    title:"軽い時は軽く、重い時だけ厚く", subtitle:"size-aware で小変更は design/review を自動 OFF。中断しても ▸rig が復帰。" },
-
-  { type:"list", dur:5.5, title:"before → after",
-    items:["親が全部読む → <b>dispatch＋集約</b>","品質がブレる → <b>毎回同じ水準</b>","中断で手戻り → <b>▸rig で復帰</b>"] },
+  { type:"list", dur:5, title:"効き目",
+    items:["<b>context-minimal</b> — 親は集約だけ（context が膨らまない）","<b>並列レビュー</b> — 3観点同時で速い・観点が揃う","<b>determinism-by-gate</b> — 毎回同じ品質に収束"] },
 
   { type:"cta", dur:5, title:"まずは1コマンド。", code:"/rig:dev --only review",
     subtitle:"同じ変更が、毎回ちゃんとレビューされる。" },

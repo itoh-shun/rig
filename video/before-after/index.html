@@ -45,25 +45,25 @@
 <body>
 <div id="root" data-composition-id="rig-ba" data-start="0" data-width="1920" data-height="1080">
 
-  <div id="bg" class="clip" data-start="0" data-duration="44" data-track-index="0"></div>
+  <div id="bg" class="clip" data-start="0" data-duration="45.7" data-track-index="0"></div>
 
-  <!-- s1 title -->
-  <div id="s1" class="scene clip" data-start="0" data-duration="4" data-track-index="1">
-    <div class="kicker">developer experience</div>
-    <div class="title">rig で、何が変わる？</div>
-    <div class="sub">同じ変更を — rig なし → rig あり で見てみる。</div>
+  <!-- s1 cold-open（人で始める・humanist） -->
+  <div id="s1" class="scene clip" data-start="0" data-duration="4.5" data-track-index="1">
+    <div class="kicker">金曜 21:43</div>
+    <div class="title" style="font-size:88px">「この変更、見ておいて」</div>
+    <div class="sub">レビュー依頼が、ひとつ。</div>
   </div>
 
-  <!-- s2 BEFORE -->
-  <div id="s2" class="scene clip" data-start="4" data-duration="3.5" data-track-index="1">
+  <!-- s2 BEFORE（嘲笑でなく“あるある”・humanist） -->
+  <div id="s2" class="scene clip" data-start="4.5" data-duration="3.2" data-track-index="1">
     <div class="kicker bad">BEFORE — rig なし</div>
-    <div class="emoji">😵‍💫</div>
-    <div class="title" style="font-size:72px;margin-top:10px">「この変更、レビューして」</div>
-    <div class="sub">…さて、どうやる？</div>
+    <div class="emoji">😮‍💨</div>
+    <div class="title" style="font-size:76px;margin-top:10px">…で、どうやる？</div>
+    <div class="sub">（あるある、だ）</div>
   </div>
 
   <!-- s3 BEFORE screen -->
-  <div id="s3" class="scene clip" data-start="7.5" data-duration="7" data-track-index="1">
+  <div id="s3" class="scene clip" data-start="7.7" data-duration="7" data-track-index="1">
     <div class="term bad">
       <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">~/project — before</span></div>
       <div class="body">
@@ -77,16 +77,21 @@
     </div>
   </div>
 
-  <!-- s4 AFTER -->
-  <div id="s4" class="scene clip" data-start="14.5" data-duration="3.5" data-track-index="1">
+  <!-- s4 間（無音の一拍・deconstruction） -->
+  <div id="s4" class="scene clip" data-start="14.7" data-duration="3" data-track-index="1">
+    <div class="title" style="font-size:110px">rig を通す。</div>
+  </div>
+
+  <!-- s5 AFTER label -->
+  <div id="s5" class="scene clip" data-start="17.7" data-duration="3" data-track-index="1">
     <div class="kicker good">AFTER — rig あり</div>
     <div class="emoji">✨</div>
     <div class="title" style="font-size:78px;margin-top:10px">コマンド、1つ。</div>
-    <div class="sub">実作業は subagent に渡し、親は dispatch と集約だけ。</div>
+    <div class="sub">実作業は subagent へ。親は集約だけ。</div>
   </div>
 
-  <!-- s5 AFTER --plan -->
-  <div id="s5" class="scene clip" data-start="18" data-duration="7" data-track-index="1">
+  <!-- s6 AFTER --plan -->
+  <div id="s6" class="scene clip" data-start="20.7" data-duration="6.5" data-track-index="1">
     <div class="term">
       <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">~/project — after</span></div>
       <div class="body">
@@ -99,8 +104,8 @@
     </div>
   </div>
 
-  <!-- s6 AFTER verdict -->
-  <div id="s6" class="scene clip" data-start="25" data-duration="8" data-track-index="1">
+  <!-- s7 HERO BEAT — verdict を単独で、溜めて、置く -->
+  <div id="s7" class="scene clip" data-start="27.2" data-duration="9" data-track-index="1">
     <div class="term">
       <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">~/project — after</span></div>
       <div class="body">
@@ -109,23 +114,20 @@
         <div class="line ok">判定: APPROVE_WITH_CONDITIONS</div>
         <div class="line">根拠: 1.認可分岐 OK 2.設計妥当 3.テスト不足</div>
         <div class="line">【マージ前必須】境界値テストを1本追加</div>
-        <div class="line ok">親 context: 判定行だけ（diff は subagent 側・汚染なし）</div>
+        <div class="line ok">…親に届くのは、判定行だけ。</div>
       </div>
     </div>
   </div>
 
-  <!-- s7 benefits -->
-  <div id="s7" class="scene clip" data-start="33" data-duration="6" data-track-index="1">
-    <div class="title" style="font-size:60px">rig ありの効き目</div>
-    <ul class="items">
-      <li><b>context-minimal</b> — 親は dispatch＋集約だけ</li>
-      <li><b>並列レビュー</b> — 3観点同時で速い・観点が揃う</li>
-      <li><b>determinism-by-gate</b> — 毎回同じ品質に収束</li>
-    </ul>
+  <!-- s8 人で締める（一息つく間・humanist） -->
+  <div id="s8" class="scene clip" data-start="36.2" data-duration="4.5" data-track-index="1">
+    <div class="emoji">😌</div>
+    <div class="title" style="font-size:60px;margin-top:10px">気づけば、ちゃんとレビューされている。</div>
+    <div class="sub">diff は subagent 側。手元に残るのは、判定だけ。</div>
   </div>
 
-  <!-- s8 CTA -->
-  <div id="s8" class="scene clip cta" data-start="39" data-duration="5" data-track-index="1">
+  <!-- s9 CTA -->
+  <div id="s9" class="scene clip cta" data-start="40.7" data-duration="5" data-track-index="1">
     <div class="title" style="font-size:88px">まずは1コマンド。</div>
     <code>/rig:dev --only review</code>
     <div class="sub">同じ変更が、毎回ちゃんとレビューされる。</div>
@@ -142,23 +144,24 @@
   <script>
     const tl = gsap.timeline({ paused: true });
     const scenes = [
-      { id:"#s1", s:0,    d:4 }, { id:"#s2", s:4,  d:3.5 }, { id:"#s3", s:7.5, d:7 },
-      { id:"#s4", s:14.5, d:3.5 }, { id:"#s5", s:18, d:7 }, { id:"#s6", s:25, d:8 },
-      { id:"#s7", s:33,   d:6 }, { id:"#s8", s:39, d:5 },
+      { id:"#s1", s:0,    d:4.5 }, { id:"#s2", s:4.5,  d:3.2 }, { id:"#s3", s:7.7, d:7 },
+      { id:"#s4", s:14.7, d:3 },   { id:"#s5", s:17.7, d:3 },   { id:"#s6", s:20.7, d:6.5 },
+      { id:"#s7", s:27.2, d:9 },   { id:"#s8", s:36.2, d:4.5 }, { id:"#s9", s:40.7, d:5 },
     ];
     scenes.forEach(sc => {
       tl.to(sc.id, { opacity:1, duration:0.6, ease:"power2.out" }, sc.s);
       tl.to(sc.id, { opacity:0, duration:0.5, ease:"power2.in" }, sc.s + sc.d - 0.5);
     });
-    tl.from("#s1 .title", { y:60, scale:0.92, duration:0.9, ease:"power3.out" }, 0.2);
-    tl.from("#s2 .emoji", { scale:0.4, duration:0.6, ease:"back.out(2)" }, 4.2);
-    tl.from("#s4 .emoji", { scale:0.4, duration:0.6, ease:"back.out(2)" }, 14.7);
-    tl.from("#s7 .items li", { x:-40, duration:0.6, stagger:0.4 }, 33.4);
-    tl.from("#s8 code", { scale:0.7, duration:0.7, ease:"back.out(1.8)" }, 39.4);
-    // 端末の行を順次表示（タイプ風・seekable）
-    tl.to("#s3 .line", { opacity:1, duration:0.25, stagger:0.55, ease:"none" }, 7.9);
-    tl.to("#s5 .line", { opacity:1, duration:0.25, stagger:0.6, ease:"none" }, 18.4);
-    tl.to("#s6 .line", { opacity:1, duration:0.25, stagger:0.62, ease:"none" }, 25.4);
+    tl.from("#s1 .title", { y:50, scale:0.94, duration:0.9, ease:"power3.out" }, 0.2);
+    tl.from("#s2 .emoji", { scale:0.4, duration:0.6, ease:"back.out(2)" }, 4.7);
+    tl.from("#s4 .title", { y:24, duration:0.9, ease:"power2.out" }, 15.0);   // 間：静かに置く
+    tl.from("#s5 .emoji", { scale:0.4, duration:0.6, ease:"back.out(2)" }, 17.9);
+    tl.from("#s8 .emoji", { scale:0.5, duration:0.8, ease:"back.out(1.6)" }, 36.4); // 一息
+    tl.from("#s9 code", { scale:0.7, duration:0.7, ease:"back.out(1.8)" }, 41.1);
+    // 端末の行を順次表示（タイプ風・seekable）。verdict(s7)は溜めてゆっくり
+    tl.to("#s3 .line", { opacity:1, duration:0.25, stagger:0.55, ease:"none" }, 8.1);
+    tl.to("#s6 .line", { opacity:1, duration:0.25, stagger:0.6,  ease:"none" }, 21.1);
+    tl.to("#s7 .line", { opacity:1, duration:0.3,  stagger:0.85, ease:"none" }, 27.6);
     window.__timelines = window.__timelines || {};
     window.__timelines["rig-ba"] = tl;
   </script>
