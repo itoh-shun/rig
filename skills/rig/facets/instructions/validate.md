@@ -46,6 +46,18 @@
 
 > **WARN とする理由（FAIL にしない）**：§4.2.2 は RUN 時も「親の `extends` を無視し警告ログを出す」であり停止しない。`--validate` も同 severity にそろえる。`--validate --global` 時は全 tier の `extends` recipe を対象に同チェックを実施する。
 
+**`extends` 循環参照（サイクル）チェック（#71）** — `A→B→A` のような循環は RESOLVE フェーズでサイレントに無限ループ（ハング）するため、実行前に **FAIL** で止める。#42 の多段（深さ）チェックは各 recipe を単独で見るため循環は検出できない＝**独立した別チェック**。
+
+1. 各 recipe を起点に `extends` 先を **DFS**（深さ優先探索）で辿り、現在の経路（訪問済みセット）に同じ recipe 名が再出現したら → **FAIL**（循環）。
+2. `extends` がなくなる、または `extends` 先が解決できない（別チェックで報告済み）まで到達したら循環なし。
+3. FAIL メッセージに**循環経路を可視化**する。1 サイクルにつき 1 回だけ報告する。
+
+```
+[FAIL] recipe:circular-extends — circular chain: fix → hotfix → fix
+```
+
+> 親解決は §4.2.1 tier 検索順（`--validate --global` 時は全 tier 横断、既定は shipped）。`scripts/validate.py` の `check_extends_cycles` が CI 用に同ロジックを実装（shipped tier グラフ）。#42（深さ＝孫継承 WARN）と #71（循環＝サイクル FAIL）はそれぞれ独立して報告する。自己参照（`A→A`）も循環として FAIL。
+
 > **`personas[]` は COMPOSE（§5「persona facet の tier 解決」）と同じ経路で解決する**（shipped 層だけ見ない）。順に：①project `<repo>/.claude/rig/personas/<name>.md` → ②user `~/.claude/rig/personas/<name>.md` → ③shipped `skills/rig/facets/personas/<name>.md` → ④agent `<repo>/agents/<name>.md`。**いずれにも無い場合のみ参照切れ FAIL**。shipped 層だけ見ると `/rig:persona` で project/user に生成したカスタム persona を参照する recipe が**偽 FAIL** する（同 instruction の `instruction`/`policies[]`/`output_contract` は当面 shipped 基準で可・persona ほど tier 運用が一般的でないため）。
 > **agent のベースパスはリポジトリルート**（`git rev-parse --show-toplevel` で得る `<repo>/agents/<name>.md`）。shipped ブリック（`facets/`・`patterns/` 等が `skills/rig/` 相対）とは非対称なので、`skills/rig/agents/` ではなく `<repo>/agents/` を見る（ここを誤ると reviewer agent を使う recipe が軒並み偽 FAIL になる）。
 
