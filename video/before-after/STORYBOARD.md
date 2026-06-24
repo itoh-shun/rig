@@ -8,7 +8,7 @@ composition id: `rig-ba`（`window.__timelines["rig-ba"]`）
 |---|---|---|---|---|---|---|
 | s1 | 0–4 | title | ロゴ | rig で、何が変わる？ | 「同じ変更を、before と after で。」 | 低ドローン |
 | s2 | 4–7.5 | BEFORE | 😵‍💫 | 「この変更、レビューして」 | 「rig が無いと、どうなる？」 | 不穏 |
-| s3 | 7.5–14.5 | **screen(before)** | 端末(赤)・親が全 diff 読む | context 汚染 8,200 / 観点バラつき / バグ再発 | 「親の context が汚れ、品質がブレ、手戻りが出る。」 | ノイズ |
+| s3 | 7.5–14.5 | **screen(before)** | 端末(赤)・親が全 diff 読む | context 膨張(イメージ) / 観点その場任せ / 同種ミス反復 | 「親の context が膨らみ、レビュー観点はその場任せ。」 | ノイズ |
 | s4 | 14.5–18 | AFTER | ✨ | コマンド、1つ。 | 「rig を通すと？」 | 転調 |
 | s5 | 18–25 | **screen(after)** | 端末・`--plan` の合成ハーネス | steps: 1 ・RUN しない | 「まず構成だけ、ドライランで見える。」 | キー音 |
 | s6 | 25–33 | **screen(after)** | 端末・3観点並列→構造化 verdict | 判定: APPROVE_WITH_CONDITIONS | 「3観点を並列で。親に届くのは判定行だけ。」 | ヒット |
