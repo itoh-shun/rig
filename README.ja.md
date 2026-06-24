@@ -49,14 +49,14 @@ claude --plugin-dir .
 - **コマンド**: `/rig:magi` — エヴァの MAGI を模した3賢者合議モード。「やるべきか？」の決定を Melchior-1（科学者＝正しさ）/ Balthasar-2（母＝守り）/ Casper-3（女＝価値）の直交3観点に並列で諮り、**決定論的な多数決**で go/no-go を MAGI コンソールに裁定する。例: `/rig:magi この破壊的変更を今リリースしていいか`
 - **コマンド**: `/rig:roast` 🌶️ — 毒舌スタンダップ芸人によるコードレビュー。指摘の中身は本物（AI 臭・可読性・過剰/不足・バグ）だが、ローストとして届けることで批判を**実際に読ませる**。笑いは配送装置で判定は素面。例: `/rig:roast`
 - **コマンド**: `/rig:coin` 🪙 — magi の対極。**可逆で些末**な 50/50（N 択可）を熟考せず即断する反-bikeshed ゲート。先にトリアージし、重い/不可逆と判明したら投げず `/rig:magi` へ回す。例: `/rig:coin タブかスペースか、もう決めて`
-- **コマンド**: `/rig:slot` 🎰 — 「Rigsino」。dev テーマ（🚀ship/🐛bug/🔥prod/🟢green/💎release/🦆duck-WILD/☕coffee）の3リール・スロットで遊ぶ息抜きゲーム。ビルド/CI 待ちの暇つぶし用、架空クレジット・実ギャンブルではない。例: `/rig:slot spin`
+- **コマンド**: `/rig:slot` 🎰 — 「Rigsino」。6号機風 AT パチスロ実機シミュ（通常時→CZ「PR REVIEW」→AT「SHIP RUSH」の状態機械・押し順ベル・天井・設定1〜6・純増・**永続メダル管理**）で遊ぶ息抜きゲーム。実エンジン `scripts/rigsino.py`（機械割は 50 万 G シミュで設定別 95〜115% に調整）。架空メダル・実ギャンブルではない。例: `/rig:slot spin` / `/rig:slot status`
 - **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
 - **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
 - **コマンド**: `/rig:knowledge` — ドメイン知識を **LLM-wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として生成。説明文 or `--auto`(repo 解析)から、global(既定・全プロダクト共有)/project overlay に保存。persona は事実を埋め込まず `inject: [[slug]]` で参照＝暗黙知化させない。例: `/rig:knowledge --auto`
 - **コマンド**: `/rig:catalog` — 横断レジストリ(`--list --global`)。全 tier(shipped＋global＋project)を走査し `domain×pack×persona×wiki×recipe` の地図を tier つきで表示＝「誰がどこで何してるか」を取り戻す。派生・読み取り専用。`--validate --global` は tier 横断の衛生点検。
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
-> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。`magi`（`/rig:magi`）はコードの逐条レビューでなく**採否そのもの**を裁く decision pack で、3 persona（`magi/{melchior,balthasar,casper}`）＋集約 pattern（`magi-consensus`）を足すだけ＝engine 不変。正しさ（科学者）・守り（母）・価値（女）の直交3観点を多数決にかけ、「正しいだけのコードが現実には通らない」を構造化する。`roast`（`/rig:roast`）・`coin`（`/rig:coin`）・`slot`（`/rig:slot`）は **humor pack** — いずれも engine 不変・persona＋薄い instruction を足すだけ。roast は本物の指摘を毒舌で配送（批判を読ませる）、coin は magi の対極（軽い可逆な決定を即断・重いものは magi へ誘導）、slot は息抜きの dev スロット（架空クレジット・遊び）。ネタだが「中身は本物のゲート/レンズ」という rig の流儀を踏襲する。
+> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。`magi`（`/rig:magi`）はコードの逐条レビューでなく**採否そのもの**を裁く decision pack で、3 persona（`magi/{melchior,balthasar,casper}`）＋集約 pattern（`magi-consensus`）を足すだけ＝engine 不変。正しさ（科学者）・守り（母）・価値（女）の直交3観点を多数決にかけ、「正しいだけのコードが現実には通らない」を構造化する。`roast`（`/rig:roast`）・`coin`（`/rig:coin`）・`slot`（`/rig:slot`）は **humor pack** — いずれも engine 不変・persona＋薄い instruction を足すだけ。roast は本物の指摘を毒舌で配送（批判を読ませる）、coin は magi の対極（軽い可逆な決定を即断・重いものは magi へ誘導）、slot は息抜きの dev スロット（6号機風 AT パチスロ実機シミュ・永続メダル管理・実エンジン `scripts/rigsino.py`・架空メダルの遊び）。ネタだが「中身は本物のゲート/レンズ」という rig の流儀を踏襲する。
 
 ## ブリック目録
 
@@ -164,7 +164,7 @@ claude --plugin-dir .
 | `magi` | `skills/rig/recipes/magi.md` | エヴァ MAGI 模倣の3賢者 decision。Melchior(科学者=正しさ)/Balthasar(母=守り)/Casper(女=価値)に並列諮問→多数決(`magi-consensus`)で go/no-go 裁定（magi pack） |
 | `roast` 🌶️ | `skills/rig/recipes/roast.md` | 毒舌ロースト・レビュー。的は adversarial と同じ（AI 臭/可読性/バグ）だが配送をユーモアに振り批判を読ませる。判定は素面（humor pack） |
 | `coin` 🪙 | `skills/rig/recipes/coin.md` | 可逆で些末な決定を即断する反-bikeshed ゲート。重い/不可逆はトリアージで弾いて magi へ。magi の対極（humor pack） |
-| `slot` 🎰 | `skills/rig/recipes/slot.md` | Rigsino。dev テーマ3リールの息抜きスロット。架空クレジット・dev フロー判断には非関与（humor pack） |
+| `slot` 🎰 | `skills/rig/recipes/slot.md` | Rigsino。6号機風 AT パチスロ実機シミュ（通常時→CZ→AT・押し順・天井・設定1〜6・永続メダル）。実エンジン `scripts/rigsino.py`。架空メダル・dev フロー判断には非関与（humor pack） |
 
 ### manifests
 
