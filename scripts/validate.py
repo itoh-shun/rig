@@ -235,6 +235,37 @@ def check_recipe(path: pathlib.Path) -> None:
     _emit("PASS", f"{ctx}: OK")
 
 
+# ── extends 循環参照チェック（#71・DFS）──────────────────────────────────────
+def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
+    """A→B→…→A の循環を DFS で検出する（#42 の深さチェックと独立）。
+
+    shipped tier のグラフのみを見る（cross-tier の循環は Claude 版 --validate が担当）。
+    検出した循環は経路つきで 1 サイクル 1 回だけ FAIL 報告する。
+    """
+    parent: dict[str, str] = {}
+    for path in recipe_files:
+        fm, _ = parse_frontmatter(path)
+        if fm and fm.get("extends"):
+            parent[path.stem] = str(fm["extends"])
+
+    reported: set[frozenset] = set()
+    for start in parent:
+        path_list: list[str] = []
+        in_path: set[str] = set()
+        node = start
+        while node in parent:           # extends 先がある間だけ辿る
+            if node in in_path:         # 現在の経路を再訪 = 循環
+                cycle = path_list[path_list.index(node):] + [node]
+                key = frozenset(cycle)
+                if key not in reported:
+                    reported.add(key)
+                    _emit("FAIL", f"recipe:circular-extends — circular chain: {' → '.join(cycle)}")
+                break
+            path_list.append(node)
+            in_path.add(node)
+            node = parent[node]
+
+
 # ── メイン ────────────────────────────────────────────────────────────────────
 def main() -> None:
     recipe_files = sorted(RECIPES.glob("*.md"))
@@ -247,6 +278,11 @@ def main() -> None:
             check_recipe(recipe_path)
         except Exception:
             _emit("FAIL", f"recipe {recipe_path.stem} — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_extends_cycles(recipe_files)
+    except Exception:
+        _emit("FAIL", f"extends 循環チェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     print("## rig --validate レポート（CI / shipped tier）\n")
     for line in results:
