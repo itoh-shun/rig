@@ -117,6 +117,16 @@ def check_recipe(path: pathlib.Path) -> None:
     if fm["autonomy"] not in ("interactive", "autonomous"):
         _emit("FAIL", f"{ctx} — autonomy '{fm['autonomy']}' は interactive|autonomous でなければなりません")
 
+    # backend 値域（#52）
+    backend_val = fm.get("backend")
+    if backend_val is not None and backend_val not in ("manual", "workflow"):
+        _emit("FAIL", f"{ctx} — backend '{backend_val}' は manual|workflow でなければなりません")
+
+    # tdd 値域（#56）
+    tdd_val = fm.get("tdd")
+    if tdd_val is not None and not isinstance(tdd_val, bool):
+        _emit("FAIL", f"{ctx} — tdd '{tdd_val!r}' は boolean (true/false) でなければなりません")
+
     # ② extends チェーン（§4.2.2 + validate.md ①）
     parent_step_ids: list[str] = []
     extends_name: str | None = fm.get("extends")

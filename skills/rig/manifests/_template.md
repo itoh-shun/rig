@@ -71,6 +71,12 @@ size_thresholds:
 # 汎用既定: 2
 default_max_retries: 2
 
+# ── デフォルト実行バックエンド （任意） ──────────────────────
+# 汎用既定: manual（`Agent` ツールで手 dispatch する軽量モード）
+# `workflow` にすると全 RUN を Workflow ツールで実行する（`--workflow` を毎回打たずに済む）。
+# recipe の `backend:` キー（§3.5）または実行時 `--workflow` フラグで個別に上書き可。
+default_backend: manual   # manual | workflow
+
 # ── worktree 運用 （任意） ────────────────────────────────
 # 汎用既定: worktree を使わず、現作業ブランチのまま進む
 worktree:
@@ -131,6 +137,13 @@ recipe の詳細スキーマは `SKILL.md §3.5` を参照。
 `gate: acceptance-gate` の最大収束試行数 K の全体既定（未設定時 2）。
 step 個別には `SKILL.md §3.5` の `max_retries` キーで上書きする。
 §6 stuck-guard（同一エラー反復のカウンタ）とは独立。
+
+### default_backend
+プロジェクトの全 RUN で使う実行バックエンド。
+`workflow` にすると `--workflow` フラグを毎回指定しなくても Workflow バックエンドが使われる。
+`manual`（または未設定）は `Agent` ツールで手 dispatch する軽量モード（既定）。
+recipe の `backend:` キー（§3.5）または実行時 `--workflow` フラグで個別に上書き可能。
+`--workflow` フラグと同様に opt-in 必須のため、ultracode on のプロジェクトでのみ `workflow` を設定することを推奨。
 
 ### worktree
 `enabled: true` にすると、`root` パターンに従って git worktree を作成してからフローを開始する。
