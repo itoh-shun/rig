@@ -1,6 +1,6 @@
 ---
 description: rig — LEGO-style dev-flow orchestrator. Compose facet/pattern/step/recipe bricks at invocation into a task-specific agent harness (review / implement / PR, etc.). レゴ式ハーネス・オーケストレータ。
-argument-hint: [--recipe review-only|release-flow|design-first|hotfix] [--only <step>] [--from <step>] [--issue <id>] [--design] [--review] [--tdd] [--visual] [--autonomous] [--workflow] [--plan] [--save-recipe <name>] [--capture] [--list] [--validate] [--adversarial] [--persona <name>] [自由記述]
+argument-hint: [--recipe review-only|release-flow|design-first|hotfix] [--only <step>] [--from <step>] [--issue <id>] [--design] [--review] [--tdd] [--visual] [--autonomous] [--workflow] [--plan] [--save-recipe <name>] [--capture] [--list] [--validate] [--adversarial] [--cross-llm] [--persona <name>] [自由記述]
 ---
 
 # rig — dev-flow orchestrator
@@ -32,6 +32,7 @@ $ARGUMENTS
 - `--capture` … RUN 後の学びを承認ダイアログなしで知識層へ（提案表示・事後報告は省略しない）
 - `--list` … 利用可能なブリック・recipe・flag を一覧表示して停止（実行しない）
 - `--adversarial` … 敵対的レビュー（AI の癖排除・人間可読性・不要コメント除去）step を合成に追加
+- `--cross-llm` … 他社 LLM レビュー前提モード。implement に「Codex/Copilot/GPT が読んでも一発で通る」規律（`cross-llm-legibility`）を注入＋ review に外部 LLM 視点の `cross-llm-reviewer` を追加
 
 ## 例
 

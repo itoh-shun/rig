@@ -127,6 +127,11 @@ def check_recipe(path: pathlib.Path) -> None:
     if tdd_val is not None and not isinstance(tdd_val, bool):
         _emit("FAIL", f"{ctx} — tdd '{tdd_val!r}' は boolean (true/false) でなければなりません")
 
+    # no_default_personas 値域（#70）
+    ndp_val = fm.get("no_default_personas")
+    if ndp_val is not None and not isinstance(ndp_val, bool):
+        _emit("FAIL", f"{ctx} — no_default_personas '{ndp_val!r}' は boolean (true/false) でなければなりません")
+
     # ② extends チェーン（§4.2.2 + validate.md ①）
     parent_step_ids: list[str] = []
     extends_name: str | None = fm.get("extends")
