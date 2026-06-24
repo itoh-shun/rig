@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>rig 1.0 — launch film 🎬</title>
+<title>rig — launch film（1.0 concept）🎬</title>
 <style>
   :root{ --bg:#05070d; --txt:#eaf0ff; --dim:#8a93ad; --neon:#00e5ff; --gold:#ffcf33; --hot:#ff3b6b; --green:#39d98a; }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -78,16 +78,16 @@
     <button id="btnPlay">⏸</button><button id="btnPrev">⏮</button><button id="btnNext">⏭</button>
     <button id="btnReplay">↺</button><button id="btnMute">🔊</button>
   </div>
-  <div class="credit">rig 1.0 launch film · made with /rig:movie</div>
-  <div class="overlay" id="overlay"><div class="play">▶</div><div class="lbl">PLAY — rig 1.0 (約80秒)</div></div>
+  <div class="credit">rig launch film · 1.0 concept（未リリース）· made with /rig:movie</div>
+  <div class="overlay" id="overlay"><div class="play">▶</div><div class="lbl">PLAY — rig 1.0 コンセプト (約80秒)</div></div>
 </div>
 
 <script>
-/* ===SCENES_START===  rig 1.0 ローンチ・フィルム（長尺）。screen ショット必須を3つ収録。 */
-const META = { product:"rig", version:"1.0", music:"cinematic long build → triumphant swell" };
+/* ===SCENES_START===  rig ローンチ・フィルム（長尺・1.0 コンセプト／rig はまだ v1.0 未リリース・現行 v0.36）。screen ショット必須を3つ収録。 */
+const META = { product:"rig", version:"1.0-concept", music:"cinematic long build → triumphant swell" };
 const SCENES = [
-  { type:"title", dur:4, kicker:"a LEGO-style harness composer",
-    title:"rig", titleAccent:" 1.0", subtitle:"固定ワークフローを、捨てる。" },
+  { type:"title", dur:4, kicker:"concept teaser — 1.0 はまだ未リリース（現行 v0.36）",
+    title:"rig", titleAccent:" → 1.0", subtitle:"固定ワークフローを、捨てる。" },
 
   { type:"feature", dur:4, emoji:"🧩", accent:"#ffcf33",
     title:"ブリックを、組む。", subtitle:"facet / pattern / step / recipe — タスクごとに、その場で合成する。" },
@@ -154,7 +154,7 @@ const SCENES = [
   { type:"stat", dur:3.6, big:"18", subtitle:"shipped recipes · 0 fail · engine 不変・pack 上乗せ", accent:"#39d98a" },
 
   { type:"cta", dur:5.5, title:"compose your harness.", code:"/rig:dev · /rig:movie",
-    subtitle:"rig 1.0 — Claude Code native, no heavy DSL." },
+    subtitle:"rig — Claude Code native, no heavy DSL.（1.0 は開発中・concept）" },
 ];
 /* ===SCENES_END=== */
 

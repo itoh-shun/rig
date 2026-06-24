@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<!--
+  rig — HyperFrames composition（HTML→決定論的 MP4）｜ 1.0 コンセプト（rig はまだ v1.0 未リリース・現行 v0.36）
+  仕様: heygen-com/hyperframes。renderer が各フレームを seek するため、
+  アニメは GSAP タイムライン(paused:true)を window.__timelines["rig-launch"] に登録する。
+  プレビュー: npx hyperframes preview   /   レンダー: npx hyperframes render --output renders/out.mp4
+  ※この環境では render しない。Node22+/FFmpeg/headless Chrome が要る（README.md 参照）。
+-->
+<style>
+  :root{ --txt:#eaf0ff; --dim:#8a93ad; --neon:#00e5ff; --gold:#ffcf33; --hot:#ff3b6b; --green:#39d98a; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  #root{ position:relative; width:1920px; height:1080px; overflow:hidden; background:#05070d;
+    font-family:"Segoe UI",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif; color:var(--txt); }
+  #bg{ position:absolute; inset:0;
+    background:radial-gradient(1600px 900px at 50% 18%,#101a2e,#05070d 70%); }
+  #bg::after{ content:""; position:absolute; inset:0;
+    box-shadow:inset 0 0 220px #000c; background:repeating-linear-gradient(0deg,#0000 0 3px,#ffffff05 3px 4px); }
+  .scene{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:9%; opacity:0; }
+  .kicker{ font-size:26px; letter-spacing:.5em; color:var(--dim); text-transform:uppercase; margin-bottom:24px; }
+  .title{ font-size:120px; font-weight:900; line-height:1.04;
+    background:linear-gradient(90deg,#fff,#cfe8ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .title .ac{ color:var(--neon); -webkit-text-fill-color:var(--neon); }
+  .sub{ font-size:40px; color:var(--dim); margin-top:34px; max-width:1300px; }
+  .mono{ font-size:60px; font-weight:800; letter-spacing:.02em; }
+  .bar{ width:200px; height:8px; border-radius:5px; margin:34px auto 0; background:var(--neon); transform-origin:left center; }
+  .emoji{ font-size:160px; }
+  ul.items{ list-style:none; margin-top:34px; display:flex; flex-direction:column; gap:22px; }
+  ul.items li{ font-size:42px; }
+  ul.items li b{ color:var(--gold); }
+  .big{ font-size:300px; font-weight:900; color:var(--green); text-shadow:0 0 60px currentColor; line-height:1; }
+  .cta code{ display:inline-block; margin-top:16px; padding:26px 40px; border:1px solid #2a3550; border-radius:18px;
+    background:#0c1424cc; color:var(--green); font-size:48px; font-weight:800; box-shadow:0 0 70px #00e5ff22; }
+  /* terminal (seekable mock screen) */
+  .term{ width:1500px; border-radius:16px; overflow:hidden; border:1px solid #263150; box-shadow:0 30px 100px #000a, 0 0 80px #00e5ff18; }
+  .term .top{ display:flex; align-items:center; gap:10px; padding:14px 18px; background:#161c2b; border-bottom:1px solid #222b40; }
+  .term .top i{ width:15px; height:15px; border-radius:50%; display:inline-block; }
+  .term .top .r{background:#ff5f57}.term .top .y{background:#febc2e}.term .top .g{background:#28c840}
+  .term .top .t{ margin-left:12px; color:var(--dim); font-size:22px; font-family:monospace; }
+  .term .body{ background:#0a0e16; padding:28px 32px; text-align:left;
+    font-family:"SFMono-Regular",Menlo,Consolas,monospace; font-size:30px; line-height:1.7; color:#d6e2f5; min-height:430px; }
+  .term .line{ opacity:0; white-space:pre-wrap; }
+  .term .cmd{ color:#fff; }.term .cmd .p{ color:var(--green); font-weight:700; }
+  .term .ok{ color:var(--green); }.term .ac{ color:var(--gold); }
+  .credit{ position:absolute; left:30px; bottom:28px; font-size:22px; color:#56607a; letter-spacing:.12em; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="rig-launch" data-start="0" data-width="1920" data-height="1080">
+
+  <div id="bg" class="clip" data-start="0" data-duration="46" data-track-index="0"></div>
+
+  <!-- ▼ BGM を入れるなら assets/music.wav を置いてコメント解除（任意）
+  <audio class="clip" data-start="0" data-duration="46" data-track-index="3" data-volume="0.5" src="assets/music.wav"></audio>
+  -->
+
+  <!-- s1 title -->
+  <div id="s1" class="scene clip" data-start="0" data-duration="5" data-track-index="1">
+    <div class="kicker">concept teaser — 1.0 はまだ未リリース（現行 v0.36）</div>
+    <div class="title">rig<span class="ac"> → 1.0</span></div>
+    <div class="sub">固定ワークフローを、捨てる。</div>
+  </div>
+
+  <!-- s2 pipeline -->
+  <div id="s2" class="scene clip" data-start="5" data-duration="5" data-track-index="1">
+    <div class="emoji">🧩</div>
+    <div class="mono" style="margin-top:20px">PARSE → RESOLVE → COMPOSE → RUN</div>
+    <div class="bar" id="s2bar"></div>
+    <div class="sub">facet / pattern / step / recipe — タスクごとに、その場で合成。</div>
+  </div>
+
+  <!-- s3 SCREEN: --plan（seekable モック端末） -->
+  <div id="s3" class="scene clip" data-start="10" data-duration="7" data-track-index="1">
+    <div class="term">
+      <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">~/rig — zsh</span></div>
+      <div class="body">
+        <div class="line cmd"><span class="p">❯</span> /rig:dev --plan --only review "現在の変更"</div>
+        <div class="line">## rig --plan</div>
+        <div class="line">recipe: review-only [shipped] | autonomy: interactive | backend: manual</div>
+        <div class="line">| # | step   | pattern         | gate        | personas               |</div>
+        <div class="line">| 1 | review | parallel-fanout | review-gate | security, design, test |</div>
+        <div class="line ac">steps: 1 ・ RUN はしない（ドライラン）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- s4 determinism -->
+  <div id="s4" class="scene clip" data-start="17" data-duration="5" data-track-index="1">
+    <div class="emoji">🎯</div>
+    <div class="title" style="font-size:84px;margin-top:14px">determinism-by-gate</div>
+    <div class="bar" id="s4bar" style="background:var(--hot)"></div>
+    <div class="sub">非決定な agent 実行を、受け入れゲートで“毎回同じ品質”へ収束させる。これが核。</div>
+  </div>
+
+  <!-- s5 packs -->
+  <div id="s5" class="scene clip" data-start="22" data-duration="6" data-track-index="1">
+    <div class="title" style="font-size:64px">engine は不変。pack を足すだけ。</div>
+    <ul class="items">
+      <li><b>dev</b> ・ <b>sales</b>（商談レビュー＋営業資材生成）</li>
+      <li><b>magi</b> ・ talk ・ goal ・ pr ・ de-ai-smell</li>
+      <li>🌶️ roast ・ 🪙 coin ・ 🦆 duck ・ ⚰️ pre-mortem ・ 🎰 slot ・ 🎬 movie</li>
+    </ul>
+  </div>
+
+  <!-- s6 SCREEN: MAGI（seekable モック端末） -->
+  <div id="s6" class="scene clip" data-start="28" data-duration="7" data-track-index="1">
+    <div class="term">
+      <div class="top"><i class="r"></i><i class="y"></i><i class="g"></i><span class="t">MAGI SYSTEM</span></div>
+      <div class="body">
+        <div class="line cmd"><span class="p">❯</span> /rig:magi この破壊的変更を今リリースしていいか</div>
+        <div class="line">## MAGI 合議結果</div>
+        <div class="line ok">判定: 可決（多数決 2:1）  ｜ 集計: 可決2 / 否決1</div>
+        <div class="line">  MELCHIOR · 1   [可決]  科学者 — 技術的に正しい</div>
+        <div class="line ac">  BALTHASAR · 2  [否決]  母     — ロールバック未設計</div>
+        <div class="line">  CASPER · 3     [可決]  女     — 価値はある</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- s7 run-continuity / cross-llm -->
+  <div id="s7" class="scene clip" data-start="35" data-duration="5" data-track-index="1">
+    <div class="emoji">🧵</div>
+    <div class="title" style="font-size:76px;margin-top:14px">run-continuity</div>
+    <div class="bar" id="s7bar" style="background:var(--gold)"></div>
+    <div class="sub">中断も、コンテキスト圧縮も跨いで駆動を切らさない。「▸ rig」が常に見える。</div>
+  </div>
+
+  <!-- s8 CTA -->
+  <div id="s8" class="scene clip cta" data-start="40" data-duration="6" data-track-index="1">
+    <div class="title" style="font-size:96px">compose your harness.</div>
+    <code>/rig:dev · /rig:movie</code>
+    <div class="sub">rig — Claude Code native, no heavy DSL.（1.0 は開発中・concept）</div>
+  </div>
+
+  <!--
+    ▼ 実画面を“実録”にしたい場合（最良）：画面収録を assets/ に置き、
+      該当シーン（s3 / s6）をこの <video> に差し替える（必須の screen ショットを本物に）。
+    <video id="s3" class="scene clip" data-start="10" data-duration="7" data-track-index="1"
+           src="assets/plan-screen.mp4" muted playsinline
+           style="object-fit:contain;background:#000"></video>
+  -->
+
+  <div class="credit">rig · 1.0 concept（未リリース）· made with /rig:movie → HyperFrames</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
+  <script>
+    // 全アニメは GSAP タイムライン(paused)で記述し window.__timelines に登録する（renderer が seek する）。
+    const tl = gsap.timeline({ paused: true });
+
+    // 各シーンの opacity を時間窓でフェードイン/アウト（決定論的・seekable）
+    const scenes = [
+      { id:"#s1", s:0,  d:5 }, { id:"#s2", s:5,  d:5 }, { id:"#s3", s:10, d:7 },
+      { id:"#s4", s:17, d:5 }, { id:"#s5", s:22, d:6 }, { id:"#s6", s:28, d:7 },
+      { id:"#s7", s:35, d:5 }, { id:"#s8", s:40, d:6 },
+    ];
+    scenes.forEach(sc => {
+      tl.to(sc.id, { opacity:1, duration:0.6, ease:"power2.out" }, sc.s);
+      tl.to(sc.id, { opacity:0, duration:0.5, ease:"power2.in" }, sc.s + sc.d - 0.5);
+    });
+
+    // 中身の入り（parent は opacity、inner は transform で衝突回避）
+    tl.from("#s1 .title", { y:60, scale:0.9, duration:0.9, ease:"power3.out" }, 0.2);
+    tl.from("#s1 .kicker", { y:20, duration:0.8 }, 0.1);
+    tl.from("#s1 .sub", { y:24, duration:0.8 }, 0.6);
+
+    tl.from("#s2 .emoji", { scale:0.4, duration:0.7, ease:"back.out(2)" }, 5.1);
+    tl.fromTo("#s2bar", { scaleX:0 }, { scaleX:1, duration:0.8 }, 5.6);
+
+    tl.from("#s4 .emoji", { scale:0.4, duration:0.7, ease:"back.out(2)" }, 17.1);
+    tl.fromTo("#s4bar", { scaleX:0 }, { scaleX:1, duration:0.8 }, 17.6);
+
+    tl.from("#s5 .items li", { x:-40, duration:0.6, stagger:0.35 }, 22.4);
+
+    tl.from("#s7 .emoji", { scale:0.4, duration:0.7, ease:"back.out(2)" }, 35.1);
+    tl.fromTo("#s7bar", { scaleX:0 }, { scaleX:1, duration:0.8 }, 35.6);
+
+    tl.from("#s8 code", { scale:0.7, duration:0.7, ease:"back.out(1.8)" }, 40.4);
+    tl.from("#s8 .title", { y:40, duration:0.8 }, 40.1);
+
+    // 端末の行を順次表示（タイプ風・seekable な stagger）
+    tl.to("#s3 .line", { opacity:1, duration:0.25, stagger:0.55, ease:"none" }, 10.4);
+    tl.to("#s6 .line", { opacity:1, duration:0.25, stagger:0.6, ease:"none" }, 28.4);
+
+    window.__timelines = window.__timelines || {};
+    window.__timelines["rig-launch"] = tl;
+  </script>
+</div>
+</body>
+</html>
