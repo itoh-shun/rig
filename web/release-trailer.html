@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>rig — release trailer 🎬</title>
+<style>
+  :root{ --bg:#05070d; --txt:#eaf0ff; --dim:#8a93ad; --neon:#00e5ff; --gold:#ffcf33; --hot:#ff3b6b; --green:#39d98a; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#000;color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;
+    display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .frame{position:relative;width:min(900px,100vw);aspect-ratio:16/9;background:
+    radial-gradient(1200px 700px at 50% 20%,#101a2e,#05070d 70%);overflow:hidden;
+    box-shadow:0 0 80px #000;border:1px solid #1a2236}
+  /* film grain / vignette */
+  .frame::after{content:"";position:absolute;inset:0;pointer-events:none;
+    box-shadow:inset 0 0 160px #000c;background:repeating-linear-gradient(0deg,#0000 0 2px,#ffffff05 2px 3px)}
+  .stage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:6%}
+  .kicker{font-size:14px;letter-spacing:.4em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;opacity:0}
+  .title{font-size:clamp(28px,7vw,72px);font-weight:900;line-height:1.05;letter-spacing:.01em;opacity:0;
+    background:linear-gradient(90deg,#fff,#cfe8ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .title .accent{color:var(--neon);-webkit-text-fill-color:var(--neon)}
+  .subtitle{font-size:clamp(15px,2.6vw,24px);color:var(--dim);margin-top:18px;opacity:0;max-width:80%}
+  .big{font-size:clamp(60px,18vw,180px);font-weight:900;opacity:0;line-height:1;
+    text-shadow:0 0 40px currentColor}
+  .accentbar{width:0;height:5px;border-radius:3px;margin:22px auto 0;background:var(--neon)}
+  ul.items{list-style:none;margin-top:22px;display:flex;flex-direction:column;gap:12px}
+  ul.items li{font-size:clamp(15px,2.4vw,22px);opacity:0;transform:translateY(12px)}
+  ul.items li b{color:var(--gold)}
+  .cta-card{margin-top:10px;padding:18px 26px;border:1px solid #2a3550;border-radius:14px;background:#0c1424cc;opacity:0;
+    box-shadow:0 0 50px #00e5ff22}
+  .cta-card code{font-size:clamp(16px,3vw,28px);color:var(--green);font-weight:800;letter-spacing:.02em}
+  /* animation states (added by JS) */
+  .show .kicker{animation:fadeUp .7s .05s forwards}
+  .show .title{animation:fadeUp .8s .15s forwards}
+  .show .subtitle{animation:fadeUp .8s .5s forwards}
+  .show .big{animation:pop .7s .15s forwards}
+  .show .accentbar{animation:grow .8s .5s forwards}
+  .show .cta-card{animation:pop .7s .2s forwards}
+  .show ul.items li{animation:fadeUp .6s forwards}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes pop{0%{opacity:0;transform:scale(.8)}60%{opacity:1;transform:scale(1.04)}100%{opacity:1;transform:scale(1)}}
+  @keyframes grow{from{width:0}to{width:120px}}
+  .emoji{font-size:clamp(40px,10vw,110px);opacity:0}
+  .show .emoji{animation:pop .7s forwards}
+  /* progress */
+  .progress{position:absolute;left:0;right:0;bottom:0;height:4px;background:#ffffff14}
+  .progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--neon),var(--hot))}
+  .dots{position:absolute;bottom:14px;left:0;right:0;display:flex;gap:7px;justify-content:center}
+  .dots span{width:7px;height:7px;border-radius:50%;background:#ffffff33}
+  .dots span.on{background:var(--neon);box-shadow:0 0 8px var(--neon)}
+  /* controls */
+  .ctrl{position:absolute;top:12px;right:12px;display:flex;gap:8px;opacity:.5;transition:opacity .2s}
+  .frame:hover .ctrl{opacity:1}
+  .ctrl button{background:#0c1424cc;border:1px solid #2a3550;color:var(--txt);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px}
+  /* start overlay */
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:#05070dee;cursor:pointer;z-index:5}
+  .overlay .play{font-size:64px;color:var(--neon);text-shadow:0 0 30px var(--neon)}
+  .overlay .lbl{margin-top:10px;color:var(--dim);letter-spacing:.2em}
+  .hidden{display:none!important}
+  .credit{position:absolute;left:14px;bottom:16px;font-size:11px;color:#56607a;letter-spacing:.1em}
+</style>
+</head>
+<body>
+<div class="frame" id="frame">
+  <div class="stage" id="stage"></div>
+  <div class="dots" id="dots"></div>
+  <div class="progress"><i id="bar"></i></div>
+  <div class="ctrl">
+    <button id="btnPlay">⏸</button>
+    <button id="btnPrev">⏮</button>
+    <button id="btnNext">⏭</button>
+    <button id="btnReplay">↺</button>
+    <button id="btnMute">🔊</button>
+  </div>
+  <div class="credit">made with rig · /rig:movie</div>
+  <div class="overlay" id="overlay"><div class="play">▶</div><div class="lbl">PLAY TRAILER</div></div>
+</div>
+
+<script>
+/* ===SCENES_START===  /rig:movie が CHANGELOG に合わせてここだけ差し替える（プレイヤーは下に固定） */
+const META = { product: "rig", version: "v0.30.0", music: "low build → bright synth swell" };
+const SCENES = [
+  { type:"title", dur:3.5, kicker:"a LEGO-style harness composer",
+    title:"rig", titleAccent:" v0.30.0", subtitle:"humor packs — but real tools" },
+
+  { type:"feature", dur:4, emoji:"🦆", accent:"#ffcf33",
+    title:"/rig:duck", subtitle:"質問しかしないアヒル。説明するうちに、自分でバグに気づく。" },
+
+  { type:"feature", dur:4, emoji:"⚰️", accent:"#ff3b6b",
+    title:"/rig:pre-mortem", subtitle:"「もう本番で壊れた。なぜ?」— 出す前に、一番安い保険を見つける。" },
+
+  { type:"list", dur:4.5, title:"engine は不変。pack を足すだけ。",
+    items:["🦆 rubber-duck — 気づきは本人のもの","⚰️ pre-mortem — magi の闇の兄弟","🎰 slot / 🌶️ roast / 🪙 coin も同じ流儀"] },
+
+  { type:"stat", dur:3, big:"16 / 0", subtitle:"recipes validated · 0 fail", accent:"#39d98a" },
+
+  { type:"cta", dur:4, title:"ship it.", code:"git pull  ·  /rig:duck",
+    subtitle:"rig v0.30.0 — engine-untouched, pack-on-top." },
+];
+/* ===SCENES_END=== */
+
+/* ---- player（固定・編集不要） ---- */
+(function(){
+  const stage=document.getElementById("stage"), bar=document.getElementById("bar"),
+        dots=document.getElementById("dots"), overlay=document.getElementById("overlay");
+  let i=0, t0=0, raf=null, paused=false, started=false, muted=false;
+  let sceneEndsAt=0, elapsedBefore=0;
+  const total=SCENES.reduce((s,x)=>s+x.dur,0);
+
+  SCENES.forEach((_,k)=>{ const d=document.createElement("span"); if(k===0)d.className="on"; dots.appendChild(d); });
+  const dotEls=[...dots.children];
+
+  function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+  function render(s){
+    let html="";
+    if(s.type==="title"){
+      html=`<div class="kicker">${esc(s.kicker)}</div>
+            <div class="title">${esc(s.title)}<span class="accent">${esc(s.titleAccent||"")}</span></div>
+            ${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    } else if(s.type==="feature"){
+      html=`${s.emoji?`<div class="emoji">${s.emoji}</div>`:""}
+            <div class="title" style="margin-top:10px">${esc(s.title)}</div>
+            <div class="accentbar" style="background:${s.accent||'#00e5ff'}"></div>
+            ${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    } else if(s.type==="stat"){
+      html=`<div class="big" style="color:${s.accent||'#00e5ff'}">${esc(s.big)}</div>
+            ${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    } else if(s.type==="list"){
+      html=`<div class="title" style="font-size:clamp(22px,4.6vw,40px)">${esc(s.title)}</div>
+            <ul class="items">${(s.items||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`;
+    } else if(s.type==="cta"){
+      html=`<div class="title">${esc(s.title)}</div>
+            <div class="cta-card"><code>${esc(s.code)}</code></div>
+            ${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    }
+    stage.className="stage"; stage.innerHTML=html;
+    void stage.offsetWidth; stage.classList.add("show");
+    // stagger list items
+    stage.querySelectorAll("ul.items li").forEach((li,k)=>li.style.animationDelay=(0.3+k*0.25)+"s");
+    dotEls.forEach((d,k)=>d.classList.toggle("on",k===i));
+    beepScene(s);
+  }
+  function go(idx){
+    i=(idx+SCENES.length)%SCENES.length;
+    elapsedBefore=SCENES.slice(0,i).reduce((s,x)=>s+x.dur,0);
+    render(SCENES[i]); t0=performance.now(); sceneEndsAt=SCENES[i].dur*1000;
+  }
+  function loop(now){
+    if(paused){ raf=requestAnimationFrame(loop); return; }
+    const dt=now-t0;
+    bar.style.width=(100*(elapsedBefore+Math.min(dt,sceneEndsAt)/1000)/total)+"%";
+    if(dt>=sceneEndsAt){
+      if(i>=SCENES.length-1){ paused=true; document.getElementById("btnPlay").textContent="↺"; return; }
+      go(i+1);
+    }
+    raf=requestAnimationFrame(loop);
+  }
+  function start(){ started=true; overlay.classList.add("hidden"); initAudio(); go(0); cancelAnimationFrame(raf); raf=requestAnimationFrame(loop); }
+
+  // ---- audio (WebAudio・任意 BGM＋SE) ----
+  let actx=null, bgmTimer=null, step=0;
+  function initAudio(){ if(actx||muted) return; try{ actx=new (window.AudioContext||window.webkitAudioContext)(); startBgm(); }catch(e){} }
+  function tone(freq,dur,type,gain){ if(!actx||muted) return; const o=actx.createOscillator(),g=actx.createGain();
+    o.type=type||"sine"; o.frequency.value=freq; o.connect(g); g.connect(actx.destination);
+    g.gain.value=gain||0.05; o.start(); g.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+dur); o.stop(actx.currentTime+dur); }
+  function startBgm(){ const notes=[110,110,146.8,164.8]; clearInterval(bgmTimer);
+    bgmTimer=setInterval(()=>{ if(paused||muted||!actx) return; tone(notes[step%notes.length],0.5,"sawtooth",0.025);
+      if(step%4===0) tone(55,0.4,"sine",0.05); step++; },420); }
+  function beepScene(s){ if(!actx||muted) return; const f={title:523,feature:659,stat:784,list:587,cta:1046}[s.type]||500;
+    tone(f,0.18,"triangle",0.06); if(s.type==="cta"){ [523,659,784,1046].forEach((x,k)=>setTimeout(()=>tone(x,0.3,"triangle",0.05),k*110)); } }
+
+  // ---- controls ----
+  const bp=document.getElementById("btnPlay");
+  bp.onclick=()=>{ if(!started){start();return;}
+    if(i>=SCENES.length-1 && paused){ start(); return; }
+    paused=!paused; bp.textContent=paused?"▶":"⏸"; if(!paused){ t0=performance.now()-0; go(i);} };
+  document.getElementById("btnPrev").onclick=()=>{ if(started){ paused=false; bp.textContent="⏸"; go(i-1); } };
+  document.getElementById("btnNext").onclick=()=>{ if(started){ paused=false; bp.textContent="⏸"; go(i+1); } };
+  document.getElementById("btnReplay").onclick=()=>start();
+  document.getElementById("btnMute").onclick=()=>{ muted=!muted; document.getElementById("btnMute").textContent=muted?"🔇":"🔊"; if(!muted) initAudio(); };
+  overlay.onclick=start;
+  document.addEventListener("keydown",e=>{
+    if(e.code==="Space"){ e.preventDefault(); bp.click(); }
+    else if(e.key==="ArrowRight") document.getElementById("btnNext").click();
+    else if(e.key==="ArrowLeft") document.getElementById("btnPrev").click();
+  });
+})();
+</script>
+</body>
+</html>
