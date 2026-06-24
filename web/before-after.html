@@ -87,10 +87,10 @@ const SCENES = [
     lines:[
       { cmd:"# 親(あなた/AI)が diff を全部読む…" },
       { out:"+312 −188 … 800 行の diff を読み込み" },
-      { out:"親 context 汚染: ████████ 8,200 tokens", cls:"bad" },
-      { out:"レビュー観点: その場の気分（security 抜け）", cls:"bad" },
+      { out:"親 context: 長い diff/ログで膨らむ（イメージ）", cls:"bad" },
+      { out:"レビュー観点: その場任せ（security 抜けが起きやすい）", cls:"bad" },
       { out:"品質: 回によってブレる" },
-      { out:"3日後 → 同じ種類のバグ再発…", cls:"bad" },
+      { out:"→ 観点が抜けると、同種のミスを繰り返しやすい", cls:"bad" },
     ] },
 
   { type:"list", dur:5, title:"rig なしの“あるある”",
