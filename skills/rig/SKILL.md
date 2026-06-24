@@ -35,7 +35,7 @@ user-invocable: true
 >
 > | pack | 追加ブリック |
 > |---|---|
-> | **sales**（`/rig:sales`） | persona `facets/personas/sales/{hearing,needs,proposal,closing,next-action}-reviewer` ／ instruction `facets/instructions/deal-review` ／ output-contract `facets/output-contracts/deal-verdict` ／ recipe `recipes/deal-review` ／ knowledge `facets/knowledge/sales-domain/` |
+> | **sales**（`/rig:sales`） | **商談レビュー**: persona `facets/personas/sales/{hearing,needs,proposal,closing,next-action}-reviewer` ／ instruction `facets/instructions/deal-review` ／ output-contract `facets/output-contracts/deal-verdict` ／ recipe `recipes/deal-review` ／ knowledge `facets/knowledge/sales-domain/`。**資材生成（`--material`/`--script`）**: persona `facets/personas/sales/{material-writer,cold-caller}` ／ instruction `facets/instructions/{sales-material,call-script}` ／ output-contract `facets/output-contracts/sales-collateral` ／ recipe `recipes/sales-enablement`（開発資材→営業1枚資料＋荷電スクリプト。機能→ベネフィット翻訳・実在機能のみ・誇張禁止） |
 > | **talk**（`/rig:talk`） | persona `facets/personas/talk-assistant` ／ instruction `facets/instructions/talk-loop`（recipe なし＝既存コマンドへ委譲） |
 > | **goal**（`/rig:goal`） | persona `facets/personas/goal-driver` ／ instruction `facets/instructions/goal-loop` ／ recipe `recipes/goal-loop` |
 > | **pr-review**（`/rig:pr`） | instruction `facets/instructions/pr-review` ／ recipe `recipes/pr-review`（reviewer agent・persona・`review-verdict` は dev 共用） |
@@ -47,6 +47,7 @@ user-invocable: true
 > | **slot**（`/rig:slot`・humor） | persona `facets/personas/slot-dealer` ／ instruction `facets/instructions/slot-machine` ／ recipe `recipes/slot` ／ 実エンジン `scripts/rigsino.py`（Rigsino＝6号機風 AT パチスロ実機シミュ。通常時→CZ→AT 状態機械・押し順・天井・設定1〜6・**永続メダル管理**。架空メダル・dev フロー判断には非関与） |
 > | **duck**（`/rig:duck`・humor） | persona `facets/personas/rubber-duck` ／ instruction `facets/instructions/duck-debug` ／ recipe `recipes/duck`（ラバーダック・デバッグ。アヒルが質問だけで本人に気づかせる会話モード。コードも答えも出さない・実証済み技法） |
 > | **pre-mortem**（`/rig:pre-mortem`・humor） | persona `facets/personas/pre-mortem-analyst` ／ instruction `facets/instructions/pre-mortem` ／ output-contract `facets/output-contracts/premortem-report` ／ recipe `recipes/pre-mortem`（事前検死。「もう本番で壊れた」前提で失敗モードを逆算＋最小ガードレール。magi の補完＝どう壊れるか） |
+> | **release-movie**（`/rig:movie`） | persona `facets/personas/release-director` ／ instruction `facets/instructions/release-movie` ／ recipe `recipes/release-movie` ／ アニメ HTML `web/release-trailer.html`（CHANGELOG→リリーストレーラー。制作台本＋再生できるアニメ HTML の2点。ハイプだが各ビートを実機能に紐づけ・実動画は非生成） |
 > | **init**（`/rig:init`・utility） | instruction `facets/instructions/init`（manifest・知識層 dir・CLAUDE.md "Compact Instructions" を scaffold） |
 > | **persona-gen**（`/rig:persona`・generator） | instruction `facets/instructions/persona-gen`（説明文→persona facet を project/user 層に生成。`--persona <name>` で都度投入、manifest `default_personas` で製品ごと常時自動投入。v2 Phase 1） |
 > | **knowledge-gen**（`/rig:knowledge`・generator） | instruction `facets/instructions/knowledge-gen` ／ knowledge `facets/knowledge/_wiki`（説明文/`--auto` repo 解析→wiki ページを global/project に生成。persona は `inject: [[slug]]` で参照。v2 Phase 2） |
