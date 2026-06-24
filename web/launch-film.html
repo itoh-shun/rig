@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>rig 1.0 — launch film 🎬</title>
+<style>
+  :root{ --bg:#05070d; --txt:#eaf0ff; --dim:#8a93ad; --neon:#00e5ff; --gold:#ffcf33; --hot:#ff3b6b; --green:#39d98a; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#000;color:var(--txt);font-family:"Segoe UI",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;
+    display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .frame{position:relative;width:min(960px,100vw);aspect-ratio:16/9;background:
+    radial-gradient(1200px 700px at 50% 20%,#101a2e,#05070d 70%);overflow:hidden;
+    box-shadow:0 0 80px #000;border:1px solid #1a2236}
+  .frame::after{content:"";position:absolute;inset:0;pointer-events:none;
+    box-shadow:inset 0 0 160px #000c;background:repeating-linear-gradient(0deg,#0000 0 2px,#ffffff05 2px 3px)}
+  .stage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:6%}
+  .kicker{font-size:14px;letter-spacing:.4em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;opacity:0}
+  .title{font-size:clamp(26px,6.5vw,68px);font-weight:900;line-height:1.05;letter-spacing:.01em;opacity:0;
+    background:linear-gradient(90deg,#fff,#cfe8ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .title .accent{color:var(--neon);-webkit-text-fill-color:var(--neon)}
+  .subtitle{font-size:clamp(15px,2.6vw,24px);color:var(--dim);margin-top:18px;opacity:0;max-width:82%}
+  .big{font-size:clamp(60px,18vw,180px);font-weight:900;opacity:0;line-height:1;text-shadow:0 0 40px currentColor}
+  .accentbar{width:0;height:5px;border-radius:3px;margin:22px auto 0;background:var(--neon)}
+  ul.items{list-style:none;margin-top:22px;display:flex;flex-direction:column;gap:12px}
+  ul.items li{font-size:clamp(15px,2.4vw,23px);opacity:0;transform:translateY(12px)}
+  .cta-card{margin-top:10px;padding:18px 26px;border:1px solid #2a3550;border-radius:14px;background:#0c1424cc;opacity:0;box-shadow:0 0 50px #00e5ff22}
+  .cta-card code{font-size:clamp(16px,3vw,28px);color:var(--green);font-weight:800;letter-spacing:.02em}
+  .screen{width:94%;max-width:820px;border-radius:12px;overflow:hidden;border:1px solid #263150;
+    box-shadow:0 24px 80px #000a, 0 0 60px #00e5ff18;opacity:0}
+  .show .screen{animation:fadeUp .6s forwards}
+  .screen .bar{display:flex;align-items:center;gap:7px;padding:9px 12px;background:#161c2b;border-bottom:1px solid #222b40}
+  .screen .dot{width:11px;height:11px;border-radius:50%}
+  .screen .dot.r{background:#ff5f57}.screen .dot.y{background:#febc2e}.screen .dot.g{background:#28c840}
+  .screen .bar .t{margin-left:8px;color:var(--dim);font-size:12px;letter-spacing:.05em}
+  .screen .body{background:#0a0e16;padding:16px 18px;min-height:240px;text-align:left;
+    font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:clamp(10px,1.7vw,14px);line-height:1.65;white-space:pre-wrap;color:#d6e2f5}
+  .screen .body .cmd{color:#fff}.screen .body .cmd .p{color:var(--green);font-weight:700}
+  .screen .body .out{color:#9fb3d1}.screen .body .ok{color:var(--green)}.screen .body .ac{color:var(--gold)}
+  .screen .cur{display:inline-block;width:8px;background:var(--neon);animation:blink .9s steps(1) infinite;color:transparent}
+  @keyframes blink{50%{opacity:0}}
+  .show .kicker{animation:fadeUp .7s .05s forwards}
+  .show .title{animation:fadeUp .8s .15s forwards}
+  .show .subtitle{animation:fadeUp .8s .5s forwards}
+  .show .big{animation:pop .7s .15s forwards}
+  .show .accentbar{animation:grow .8s .5s forwards}
+  .show .cta-card{animation:pop .7s .2s forwards}
+  .show ul.items li{animation:fadeUp .6s forwards}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes pop{0%{opacity:0;transform:scale(.8)}60%{opacity:1;transform:scale(1.04)}100%{opacity:1;transform:scale(1)}}
+  @keyframes grow{from{width:0}to{width:120px}}
+  .emoji{font-size:clamp(40px,9vw,100px);opacity:0}
+  .show .emoji{animation:pop .7s forwards}
+  .progress{position:absolute;left:0;right:0;bottom:0;height:4px;background:#ffffff14}
+  .progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--neon),var(--hot))}
+  .dots{position:absolute;bottom:14px;left:0;right:0;display:flex;gap:6px;justify-content:center;flex-wrap:wrap;padding:0 20px}
+  .dots span{width:6px;height:6px;border-radius:50%;background:#ffffff33}
+  .dots span.on{background:var(--neon);box-shadow:0 0 8px var(--neon)}
+  .ctrl{position:absolute;top:12px;right:12px;display:flex;gap:8px;opacity:.5;transition:opacity .2s}
+  .frame:hover .ctrl{opacity:1}
+  .ctrl button{background:#0c1424cc;border:1px solid #2a3550;color:var(--txt);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px}
+  .clock{position:absolute;top:14px;left:14px;font-size:12px;color:var(--dim);opacity:.6;font-family:monospace}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#05070dee;cursor:pointer;z-index:5}
+  .overlay .play{font-size:64px;color:var(--neon);text-shadow:0 0 30px var(--neon)}
+  .overlay .lbl{margin-top:10px;color:var(--dim);letter-spacing:.2em}
+  .hidden{display:none!important}
+  .credit{position:absolute;left:14px;bottom:16px;font-size:11px;color:#56607a;letter-spacing:.1em}
+</style>
+</head>
+<body>
+<div class="frame" id="frame">
+  <div class="stage" id="stage"></div>
+  <div class="clock" id="clock">0:00 / 0:00</div>
+  <div class="dots" id="dots"></div>
+  <div class="progress"><i id="bar"></i></div>
+  <div class="ctrl">
+    <button id="btnPlay">⏸</button><button id="btnPrev">⏮</button><button id="btnNext">⏭</button>
+    <button id="btnReplay">↺</button><button id="btnMute">🔊</button>
+  </div>
+  <div class="credit">rig 1.0 launch film · made with /rig:movie</div>
+  <div class="overlay" id="overlay"><div class="play">▶</div><div class="lbl">PLAY — rig 1.0 (約80秒)</div></div>
+</div>
+
+<script>
+/* ===SCENES_START===  rig 1.0 ローンチ・フィルム（長尺）。screen ショット必須を3つ収録。 */
+const META = { product:"rig", version:"1.0", music:"cinematic long build → triumphant swell" };
+const SCENES = [
+  { type:"title", dur:4, kicker:"a LEGO-style harness composer",
+    title:"rig", titleAccent:" 1.0", subtitle:"固定ワークフローを、捨てる。" },
+
+  { type:"feature", dur:4, emoji:"🧩", accent:"#ffcf33",
+    title:"ブリックを、組む。", subtitle:"facet / pattern / step / recipe — タスクごとに、その場で合成する。" },
+
+  { type:"feature", dur:4.5, accent:"#00e5ff",
+    title:"PARSE → RESOLVE → COMPOSE → RUN", subtitle:"4段でハーネスを毎回 engineering する。固定フローは、数あるレシピの1つ。" },
+
+  // ★ screen 1: --plan ドライラン（合成ハーネスを見せる）
+  { type:"screen", dur:8, frame:"terminal", title:"~/rig — zsh", prompt:"❯",
+    lines:[
+      { cmd:'/rig:dev --plan --only review "現在の変更"' },
+      { out:"## rig --plan" },
+      { out:"recipe: review-only [shipped] | autonomy: interactive | backend: manual" },
+      { out:"| # | step   | pattern         | gate        | personas                |" },
+      { out:"| 1 | review | parallel-fanout | review-gate | security, design, test  |" },
+      { out:"steps: 1 ・ RUN はしない（ドライラン）", cls:"ac" },
+    ] },
+
+  { type:"feature", dur:4.5, emoji:"🎯", accent:"#ff3b6b",
+    title:"determinism-by-gate", subtitle:"非決定な agent 実行を、受け入れゲートで“毎回同じ品質”へ収束させる。これが核。" },
+
+  { type:"list", dur:5, title:"開発フロー、まるごと。",
+    items:["intake → design → implement → verify","review → pr → merge","recipe で固定 ・ --plan でドライラン ・ --tdd / --adversarial / --cross-llm"] },
+
+  { type:"feature", dur:3.6, emoji:"🟧🟩🟦", accent:"#00e5ff",
+    title:"MAGI 合議", subtitle:"「やるべきか」を、赤木博士の3人格の多数決で裁く。" },
+
+  // ★ screen 2: MAGI コンソール
+  { type:"screen", dur:8, frame:"terminal", title:"MAGI SYSTEM", prompt:"❯",
+    lines:[
+      { cmd:"/rig:magi この破壊的変更を今リリースしていいか" },
+      { out:"## MAGI 合議結果" },
+      { out:"判定: 可決（多数決 2:1）  ｜ 集計: 可決2 / 否決1", cls:"ok" },
+      { out:"  MELCHIOR · 1   [可決]  科学者 — 技術的に正しい" },
+      { out:"  BALTHASAR · 2  [否決]  母     — ロールバック未設計", cls:"ac" },
+      { out:"  CASPER · 3     [可決]  女     — 価値はある" },
+      { out:"次アクション: 保留事項（ロールバック手順）を満たして進行" },
+    ] },
+
+  { type:"list", dur:5, title:"engine は不変。pack を足すだけ。",
+    items:["sales — 商談レビュー ＋ 開発資材→営業資料・荷電スクリプト","talk（会話）/ goal（ゴール駆動）/ pr-review","de-ai-smell（AI 臭除去）/ sns-x（X 運用）"] },
+
+  { type:"list", dur:5, title:"ユーモアも、中身は本物の道具。",
+    items:["🌶️ roast（毒舌レビュー）・ 🪙 coin（反 bikeshed）","🦆 duck（ラバーダック）・ ⚰️ pre-mortem（事前検死）","🎰 slot（6号機風 AT）・ 🎬 movie — この映像も rig 製"] },
+
+  { type:"feature", dur:4.5, emoji:"🧵", accent:"#ffcf33",
+    title:"run-continuity", subtitle:"中断も、コンテキスト圧縮も跨いで駆動を切らさない。「▸ rig」が常に見える。" },
+
+  // ★ screen 3: validate doctor
+  { type:"screen", dur:7, frame:"terminal", title:"~/rig — zsh", prompt:"❯",
+    lines:[
+      { cmd:"python3 scripts/validate.py" },
+      { out:"## rig --validate レポート（CI / shipped tier）" },
+      { out:"[PASS] recipe magi: OK" },
+      { out:"[PASS] recipe release-movie: OK" },
+      { out:"[PASS] recipe sales-enablement: OK" },
+      { out:"PASS: 18 / WARN: 0 / FAIL: 0", cls:"ok" },
+      { out:"合格", cls:"ok" },
+    ] },
+
+  { type:"feature", dur:4, emoji:"🤝", accent:"#00e5ff",
+    title:"--cross-llm", subtitle:"Codex / Copilot / GPT が見ても一発で通るコードを書く規律。外部に通る＝人にも通る。" },
+
+  { type:"stat", dur:3.6, big:"18", subtitle:"shipped recipes · 0 fail · engine 不変・pack 上乗せ", accent:"#39d98a" },
+
+  { type:"cta", dur:5.5, title:"compose your harness.", code:"/rig:dev · /rig:movie",
+    subtitle:"rig 1.0 — Claude Code native, no heavy DSL." },
+];
+/* ===SCENES_END=== */
+
+/* ---- player（固定・編集不要・screen 型対応） ---- */
+(function(){
+  const stage=document.getElementById("stage"), bar=document.getElementById("bar"),
+        dots=document.getElementById("dots"), overlay=document.getElementById("overlay"), clock=document.getElementById("clock");
+  let i=0, t0=0, raf=null, paused=false, started=false, muted=false;
+  let sceneEndsAt=0, elapsedBefore=0, screenPlan=null;
+  const total=SCENES.reduce((s,x)=>s+x.dur,0);
+  const fmtT=s=>{ s=Math.max(0,Math.floor(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
+
+  SCENES.forEach((_,k)=>{ const d=document.createElement("span"); if(k===0)d.className="on"; dots.appendChild(d); });
+  const dotEls=[...dots.children];
+  const esc=s=>(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+
+  function buildScreenPlan(s){
+    const win=s.dur*0.9;
+    const W=s.lines.reduce((a,l)=> a + (l.cmd? Math.max(10,l.cmd.length) : 8), 0);
+    let acc=0; const plan=s.lines.map(l=>{
+      const w=(l.cmd? Math.max(10,l.cmd.length) : 8);
+      const start=win*acc/W; acc+=w; const end=win*acc/W;
+      return {...l, start, end};
+    });
+    return {prompt:s.prompt||"❯", plan};
+  }
+  function renderScreen(e){
+    let html="";
+    for(const l of screenPlan.plan){
+      if(e < l.start) break;
+      if(l.cmd!==undefined){
+        const full=l.cmd; let shown=full;
+        if(e < l.end){ const k=Math.max(0,Math.min(1,(e-l.start)/(l.end-l.start))); shown=full.slice(0,Math.floor(k*full.length)); }
+        const cursor=(e>=l.start && e<l.end)? '<span class="cur">.</span>':'';
+        html+=`<div class="cmd"><span class="p">${esc(screenPlan.prompt)} </span>${esc(shown)}${cursor}</div>`;
+      } else { html+=`<div class="out ${l.cls||''}">${esc(l.out)}</div>`; }
+    }
+    const body=document.getElementById("scrbody"); if(body) body.innerHTML=html;
+  }
+  function render(s){
+    let html="";
+    if(s.type==="title"){
+      html=`<div class="kicker">${esc(s.kicker)}</div><div class="title">${esc(s.title)}<span class="accent">${esc(s.titleAccent||"")}</span></div>${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    } else if(s.type==="feature"){
+      html=`${s.emoji?`<div class="emoji">${s.emoji}</div>`:""}<div class="title" style="margin-top:10px">${esc(s.title)}</div><div class="accentbar" style="background:${s.accent||'#00e5ff'}"></div>${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    } else if(s.type==="stat"){
+      html=`<div class="big" style="color:${s.accent||'#00e5ff'}">${esc(s.big)}</div>${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    } else if(s.type==="list"){
+      html=`<div class="title" style="font-size:clamp(22px,4.4vw,38px)">${esc(s.title)}</div><ul class="items">${(s.items||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`;
+    } else if(s.type==="cta"){
+      html=`<div class="title">${esc(s.title)}</div><div class="cta-card"><code>${esc(s.code)}</code></div>${s.subtitle?`<div class="subtitle">${esc(s.subtitle)}</div>`:""}`;
+    } else if(s.type==="screen"){
+      html=`<div class="screen ${s.frame||'terminal'}"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="t">${esc(s.title||'terminal')}</span></div><div class="body" id="scrbody"></div></div>`;
+    }
+    stage.className="stage"; stage.innerHTML=html; void stage.offsetWidth; stage.classList.add("show");
+    stage.querySelectorAll("ul.items li").forEach((li,k)=>li.style.animationDelay=(0.3+k*0.3)+"s");
+    dotEls.forEach((d,k)=>d.classList.toggle("on",k===i));
+    screenPlan = (s.type==="screen")? buildScreenPlan(s) : null;
+    if(screenPlan) renderScreen(0);
+    beepScene(s);
+  }
+  function go(idx){
+    i=(idx+SCENES.length)%SCENES.length;
+    elapsedBefore=SCENES.slice(0,i).reduce((s,x)=>s+x.dur,0);
+    render(SCENES[i]); t0=performance.now(); sceneEndsAt=SCENES[i].dur*1000;
+  }
+  function loop(now){
+    if(paused){ raf=requestAnimationFrame(loop); return; }
+    const dt=now-t0;
+    if(screenPlan) renderScreen(dt/1000);
+    const elapsed=elapsedBefore+Math.min(dt,sceneEndsAt)/1000;
+    bar.style.width=(100*elapsed/total)+"%";
+    clock.textContent=fmtT(elapsed)+" / "+fmtT(total);
+    if(dt>=sceneEndsAt){
+      if(i>=SCENES.length-1){ paused=true; document.getElementById("btnPlay").textContent="↺"; return; }
+      go(i+1);
+    }
+    raf=requestAnimationFrame(loop);
+  }
+  function start(){ started=true; overlay.classList.add("hidden"); initAudio(); go(0); cancelAnimationFrame(raf); raf=requestAnimationFrame(loop); }
+
+  let actx=null, bgmTimer=null, step=0;
+  function initAudio(){ if(actx||muted) return; try{ actx=new (window.AudioContext||window.webkitAudioContext)(); startBgm(); }catch(e){} }
+  function tone(f,d,t,g){ if(!actx||muted) return; const o=actx.createOscillator(),gn=actx.createGain(); o.type=t||"sine"; o.frequency.value=f; o.connect(gn); gn.connect(actx.destination); gn.gain.value=g||0.05; o.start(); gn.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+d); o.stop(actx.currentTime+d); }
+  function startBgm(){ const notes=[98,98,130.8,146.8,98,110,146.8,164.8]; clearInterval(bgmTimer); bgmTimer=setInterval(()=>{ if(paused||muted||!actx) return; tone(notes[step%notes.length],0.55,"sawtooth",0.02); if(step%4===0) tone(49,0.5,"sine",0.04); step++; },440); }
+  function beepScene(s){ if(!actx||muted) return; const f={title:523,feature:659,stat:784,list:587,cta:1046,screen:440}[s.type]||500; tone(f,0.16,"triangle",0.05); if(s.type==="cta"){ [523,659,784,1046,1318].forEach((x,k)=>setTimeout(()=>tone(x,0.32,"triangle",0.05),k*120)); } }
+  let lastLen=0; const origRenderScreen=renderScreen;
+  renderScreen=function(e){ origRenderScreen(e); const b=document.getElementById("scrbody"); if(b){ const len=b.textContent.length; if(len>lastLen && !muted){ tone(1200+(len%5)*60,0.012,"square",0.018); } lastLen=len; } };
+
+  const bp=document.getElementById("btnPlay");
+  bp.onclick=()=>{ if(!started){start();return;} if(i>=SCENES.length-1 && paused){ start(); return; } paused=!paused; bp.textContent=paused?"▶":"⏸"; if(!paused){ go(i);} };
+  document.getElementById("btnPrev").onclick=()=>{ if(started){ paused=false; bp.textContent="⏸"; go(i-1);} };
+  document.getElementById("btnNext").onclick=()=>{ if(started){ paused=false; bp.textContent="⏸"; go(i+1);} };
+  document.getElementById("btnReplay").onclick=()=>start();
+  document.getElementById("btnMute").onclick=()=>{ muted=!muted; document.getElementById("btnMute").textContent=muted?"🔇":"🔊"; if(!muted) initAudio(); };
+  overlay.onclick=start;
+  document.addEventListener("keydown",e=>{ if(e.code==="Space"){ e.preventDefault(); bp.click(); } else if(e.key==="ArrowRight") document.getElementById("btnNext").click(); else if(e.key==="ArrowLeft") document.getElementById("btnPrev").click(); });
+})();
+</script>
+</body>
+</html>
