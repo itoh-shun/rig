@@ -87,18 +87,24 @@ user-invocable: true
 ```
 ## Recipes
 ### project  (<repo>/.claude/rig/recipes/)
-  my-flow       [3 steps · interactive] extends: release-flow [shipped]  — design を抜いたカスタム release flow
+  my-flow       [3 steps · interactive · gated] extends: release-flow [shipped]  — design を抜いたカスタム release flow
 ### user  (~/.claude/rig/recipes/)
-  strict-tdd    [7 steps · autonomous]  extends: release-flow [shipped]  — TDD 強制の full-flow
+  strict-tdd    [7 steps · autonomous · tdd · gated · workflow]  extends: release-flow [shipped]  — TDD 強制の full-flow
 ### shipped  (skills/rig/recipes/)
-  review-only   [1 step  · interactive]  — 現変更への 3-way 並列レビュー
-  release-flow  [7 steps · interactive]  — intake→design?→implement→verify→review?→pr→merge  ★ default
-  hotfix        [4 steps · interactive]  — 最短経路 (intake→implement→verify→pr)
-  goal-loop     [3 steps · autonomous]   — 高レベル目標を受け入れ基準に変換してループ収束
+  review-only   [1 step  · interactive · gated]  — 現変更への 3-way 並列レビュー
+  release-flow  [7 steps · interactive · gated]  — intake→design?→implement→verify→review?→pr→merge  ★ default
+  hotfix        [4 steps · interactive · gated]  — 最短経路 (intake→implement→verify→pr)
+  goal-loop     [3 steps · autonomous · gated]   — 高レベル目標を受け入れ基準に変換してループ収束
   ...
 ```
 
-各 recipe エントリの `[N step(s) · interactive|autonomous]` は frontmatter の `steps[]` 要素数と `autonomy` 値から派生する（N=1 のみ `1 step`、以降 `N steps`）。`/rig:catalog`（`--list --global`）の recipe 一覧行にも同じメタデータを表示する。
+各 recipe エントリの `[N step(s) · interactive|autonomous]` は frontmatter の `steps[]` 要素数と `autonomy` 値から派生する（N=1 のみ `1 step`、以降 `N steps`）。**非デフォルト属性は `·` 区切りで追記する**（デフォルト値は省略し、一覧を読みやすく保つ）：
+
+- **`· tdd`**（#62）：recipe に `tdd: true` が設定されている場合のみ付記。`--save-recipe --tdd` で保存した recipe が TDD モードで動くことを一覧で確認できる。省略時（`tdd: false`・未設定）は付記なし。
+- **`· gated`**（#66）：`gate: acceptance-gate` を持つ step が1つ以上ある recipe に付記。rig の核心 **determinism-by-gate**（品質収束保証）の有無を一覧で確認できる。acceptance-gate を持つ step が1つもない recipe は付記なし。
+- **`· workflow`**（#60）：recipe に `backend: workflow` が設定されている場合のみ付記。`--save-recipe --workflow` で保存した recipe が Workflow バックエンドで動くことを一覧で確認できる。省略時（`manual`・未設定）は付記なし。
+
+並べ順は **`tdd` → `gated` → `workflow`** の固定順。複数共存例：`[3 steps · interactive · tdd · gated]`。`extends` で継承した recipe も RESOLVE 後の確定値（継承分を含む）を評価する。`/rig:catalog`（`--list --global`）の recipe 一覧行にも同じメタデータ・同じ表示ルールを適用する。
 
 **`--validate` 指定時** → `facets/instructions/validate` の手順でブリック整合（参照切れ／**manifest 参照（`default_recipe` / `default_personas` が実在 tier に解決するか）**／frontmatter スキーマ／目録ドリフト／wiki 衛生）を検査し、結果を提示して**停止**（解決も実行もしない）。`--list` と同じく副作用なしの点検モード。**`--global` 併用時**は tier 横断で点検する（全 tier の orphan・リンク切れ・参照欠落・重複）。
 **`--adversarial` 指定時** → 合成ハーネスの review/verify の後に `adversarial-review` step（instruction: adversarial-review / personas: lazy-senior, cognitive-economist / gate: acceptance-gate）を追加する。recipe `adversarial-review` は敵対レビューのみを回す。
@@ -407,7 +413,19 @@ steps: 7（うち condition 付き=2 / gate=2）| RUN はしない
 - **personas 列は解決済みの最終 persona 集合を表示する**（recipe `personas[]` ＋ manifest `default_personas` ＋ `--persona` 指定分を名前で和集合・dedup。§5「manifest default_personas の自動投入」と同じ集合）＝ **`--plan` の personas ＝ 実行時 reviewer**（差異ゼロを spec で保証）。出所を明示するため manifest `default_personas` 由来に `★`、`--persona` 由来に `†` を付す。**さらに各 persona の直後に解決元 `[tier]`（`project`/`user`/`shipped`/`agent`、未解決は `[WARN: 未解決]`）を付す（#24）**＝ COMPOSE と同じ tier 解決の結果を見せる。例: `security-reviewer [agent], house-authenticity★ [user], my-custom† [project]`。表末尾に凡例1行（`★ = manifest default_personas ／ † = --persona ／ [tier] = 解決先（project/user/shipped/agent）`）。`default_personas` も `--persona` も無く全て shipped/agent なら凡例・tier 表示は省略可。`[WARN: 未解決]` は `--validate ①` が FAIL するケースと1対1（`--plan` だけで「実行したら validate が落ちる」を予見できる）。
 - **`gate: acceptance-gate` の step が1つ以上あるとき**、表の後に「### Gate: 受け入れ基準」ブロックを出す（無ければブロックごと省略）。各 step を `id` で見出し化し `acceptance[]` をチェックリスト（`- [ ]`）で列挙、見出し横に `（max_retries: N）`（未指定は既定 2 を表示）。`acceptance[]` が空/未定義なら `（基準未定義 — WARN: ゲートが常時通過する可能性）` と注記する（`--validate` ③ の警告と同分類）。これで `--plan` 段階でゲートの中身（何を満たせば合格か）まで確認できる。
 - **`extends` 継承の出所表示（#17）**：recipe が `extends: <親>` を持つときのみ、ヘッダ行に `extends: <親> [tier]` フィールドを足し、表の直後に1行サマリ `> extends: <親> [tier] / overridden: <子が同 id で上書きした step…> / inherited: <親から継承した step…>` を出す（§4.2.2 の判定と同定義。親 recipe の解決元 `[tier]` も #25 と同様に付す）。`extends` 無しの recipe では両方とも省略（差分ゼロ）。
-- **`### Knowledge: 注入予定ソース` ブロック（#19）**：Gate ブロックの後に、各 knowledge tier（methodology / ai-quirks / domain / accumulated）の状態を出す（`✓ N files` / `（なし）`）。manifest `knowledge.*`（context_file / adr_dir / design_docs[]）が設定されていれば各パスと実在確認（✓ / WARN）を補記、未設定ならそのセクションを省略。全 tier なし＋manifest 未設定なら `（knowledge なし — 汎用動作）` の1行のみ。`--validate`（#14 のパス WARN）が「実在」を保証し、本ブロックが「注入される一覧」を見せる相補関係。
+- **`### Knowledge: 注入予定ソース` ブロック（#19）**：Gate ブロックの後に、各 knowledge tier（methodology / ai-quirks / domain / accumulated）の状態を出す（`✓ N files` / `（なし）`）。manifest `knowledge.*`（context_file / adr_dir / design_docs[]）が設定されていれば各パスと実在確認（✓ / WARN）を補記、未設定ならそのセクションを省略。全 tier なし＋manifest 未設定なら `（knowledge なし — 汎用動作）` の1行のみ。`--validate`（#14 のパス WARN）が「実在」を保証し、本ブロックが「注入される一覧」を見せる相補関係。**さらに（#59）、解決済み personas のうち `inject: ["[[slug]]", ...]` を持つものを列挙し、各 slug の wiki ページ解決先（tier: project overlay / global）と実在確認（`✓` / `WARN: 未解決`）を `- wiki（persona inject）:` セクションとして追記する。`inject:` を持つ persona が1つもない場合は `- wiki（persona inject）: （なし）` の1行のみ。同一 slug が複数 persona から inject される場合は dedup して1行にまとめる。未解決 slug は `WARN: 未解決` と表示され `--validate` ⑤ のリンク切れ FAIL と1対1で対応する（`--plan` だけで「実行したら validate が落ちる」を予見できる）。`--plan --global` では tier 横断 persona の `inject:` も追跡対象に含める。**
+
+  ```
+  ### Knowledge: 注入予定ソース
+  - methodology: ✓ 2 files
+  - ai-quirks: （なし）
+  - domain: ✓ 1 file
+  - accumulated: （なし）
+  - wiki（persona inject）:
+      [[ddd-context]]  → ~/.claude/rig/knowledge/wiki/ddd-context.md [global] ✓
+      [[auth-model]]   → <repo>/.claude/rig/knowledge/wiki/auth-model.md [project overlay] ✓
+      [[missing-page]] → WARN: 未解決（--validate ⑤ が FAIL するリンク）
+  ```
 
 ## 6. RUN — 実行（context-minimal が絶対条件）
 
