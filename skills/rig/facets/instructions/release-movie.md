@@ -8,7 +8,7 @@
 
 ## 手順
 
-1. **素材の収集** — 対象リリースを確定する。既定は **CHANGELOG の最新エントリ**（`## [x.y.z]`）。引数でバージョン/タグ指定可。補助に `plugin.json` の description・直近の git ログ（前タグ以降）・README の要点。長文は親 context に引き込まない（context-minimal）。
+1. **素材の収集** — 対象リリースを確定する。既定は **CHANGELOG の最新エントリ**（`## [x.y.z]`）。引数でバージョン/タグ指定可。補助に `plugin.json` の description・直近の git ログ（前タグ以降）・README の要点。長文は親 context に引き込まない（context-minimal）。**`/rig:scenario` で検閲済みのシナリオがあれば、それを設計図（ビートシート→シーン表）に使う**（脚本→検閲を前段で済ませておくと、AI 臭・誇張・弱フックが落ちた土台から映像化できる）。
 2. **目玉の決定** — 今回のリリースの**一番の価値**を 1 つ選ぶ（クライマックスに置く）。
 3. **生成の dispatch** — `release-director` を合成して subagent に渡し、下記2点を作らせる。
 4. **接続（任意）** — 台本のコピーは `/rig:dev --recipe de-ai-smell` でさらに磨ける。
