@@ -33,6 +33,19 @@
 
 > **WARN とする理由（FAIL にしない）**：子に意図的な新規 step を追加するケースも §4.2.2 で正当（「子のみに存在する step は親の末尾に追加」）。FAIL にすると正当な extension も通らなくなる。WARN にすることで「気づかせる」だけにとどめ、ユーザーが判断する。`--validate --global` 時は全 tier の `extends` recipe を対象に同チェックを実施する。
 
+**`extends` 多段継承（孫継承）チェック（#42）** — recipe に `extends: <parent>` が宣言されている場合、以下の追加チェックを行う（子 step ID 突き合わせの直後に実施）。
+
+1. 親 recipe を §4.2.1 tier 検索順で解決し、親の frontmatter に `extends:` キーが存在するか確認する。
+2. 存在する場合 → **WARN** を出す（RUN 時に §4.2.2 が「親の `extends` を無視し警告ログを出す」と同 severity にそろえる）。
+
+```
+[WARN] my-flow (extends: custom-base) — custom-base も extends を持ちます（多段継承 = 孫継承）。
+        RUN 時に custom-base の extends が無視されます（SKILL.md §4.2.2）。
+        1 段継承に整理するか、継承元の構成を確認してください。
+```
+
+> **WARN とする理由（FAIL にしない）**：§4.2.2 は RUN 時も「親の `extends` を無視し警告ログを出す」であり停止しない。`--validate` も同 severity にそろえる。`--validate --global` 時は全 tier の `extends` recipe を対象に同チェックを実施する。
+
 > **`personas[]` は COMPOSE（§5「persona facet の tier 解決」）と同じ経路で解決する**（shipped 層だけ見ない）。順に：①project `<repo>/.claude/rig/personas/<name>.md` → ②user `~/.claude/rig/personas/<name>.md` → ③shipped `skills/rig/facets/personas/<name>.md` → ④agent `<repo>/agents/<name>.md`。**いずれにも無い場合のみ参照切れ FAIL**。shipped 層だけ見ると `/rig:persona` で project/user に生成したカスタム persona を参照する recipe が**偽 FAIL** する（同 instruction の `instruction`/`policies[]`/`output_contract` は当面 shipped 基準で可・persona ほど tier 運用が一般的でないため）。
 > **agent のベースパスはリポジトリルート**（`git rev-parse --show-toplevel` で得る `<repo>/agents/<name>.md`）。shipped ブリック（`facets/`・`patterns/` 等が `skills/rig/` 相対）とは非対称なので、`skills/rig/agents/` ではなく `<repo>/agents/` を見る（ここを誤ると reviewer agent を使う recipe が軒並み偽 FAIL になる）。
 
@@ -84,9 +97,25 @@ wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowled
 - **frontmatter 欠落** → `slug`（ファイル名一致）/`title`/`status` が無い、`status` が `canonical|draft|deprecated` 以外 → WARN。
 - **INDEX ドリフト** → `INDEX.md` と実ファイル/タグ/backlink の乖離 → WARN（再生成を提案）。
 
+### ⑥ ai-quirks 二相ペア整合（`--validate --global` のみ・#43）
+
+`~/.claude/rig/knowledge/ai-quirks/` を走査する（ディレクトリ不在はスキップ）。`capture` が生成する ai-quirk は**記述形（`*-descriptive.md`）と規範形（`*-policy.md`）のペア**（§7.2 二相）でなければ COMPOSE の二相注入（§5）が片方しか効かない。ファイル名を `*-descriptive.md` と `*-policy.md` のペアに対応付け、片方が欠けているものを抽出する。
+
+- `*-descriptive.md` が存在するが同名の `*-policy.md` が存在しない → **WARN**
+- `*-policy.md` が存在するが同名の `*-descriptive.md` が存在しない → **WARN**
+- 両方存在するペアは **PASS**
+
+```
+[WARN] ai-quirks: jwt-hallucination-descriptive.md があるが jwt-hallucination-policy.md が見つかりません。
+        policy が注入されないため、AI 癖の抑制規範が RUN に渡りません（SKILL.md §5 / §7.2）。
+        `capture` でペアを再生成するか、手動で policy ファイルを作成してください。
+```
+
+> **`--validate`（`--global` なし）では走査しない理由**：ai-quirks は user（global）層 `~/.claude/` にある。`--global` なしの validate は project スコープのみを対象とする設計（§3 `--global` の定義）と一致させる。⑤ wiki 衛生と対称的な追加（ai-quirks ファイルの integrity チェック）。
+
 ### `--global`（tier 横断）
 
-`--validate --global` 指定時は shipped だけでなく **user(global)・project 層も走査**し、上記①〜⑤を**全 tier 横断**で点検する（全 tier の orphan・リンク切れ・参照欠落・重複・persona の `inject:` 先欠落）。tier をまたいだ同 slug の上書き関係（project overlay > global）も考慮し、**どの tier の何が問題か**を明示する。地図表示（読み取り）は `facets/instructions/catalog`（`--list --global` / `/rig:catalog`）に委ねる。
+`--validate --global` 指定時は shipped だけでなく **user(global)・project 層も走査**し、上記①〜⑥を**全 tier 横断**で点検する（全 tier の orphan・リンク切れ・参照欠落・重複・persona の `inject:` 先欠落・ai-quirks 二相ペア不整合）。tier をまたいだ同 slug の上書き関係（project overlay > global）も考慮し、**どの tier の何が問題か**を明示する。地図表示（読み取り）は `facets/instructions/catalog`（`--list --global` / `/rig:catalog`）に委ねる。
 
 ## レポート形式
 
