@@ -43,7 +43,7 @@ claude --plugin-dir .
 
 - **コマンド**: `/rig:dev` — 開発フローの入口。例: `/rig:dev --plan --only review "現在の変更"`
 - **コマンド**: `/rig:sales` — sales ドメインの入口。既定は商談記録を5観点で評価。**`--material` / `--script`** で**開発資材**（README/CHANGELOG/コード/リリース）から**営業1枚資料・荷電スクリプト**を生成（機能→ベネフィット翻訳・実在機能のみ・誇張なし）。例: `/rig:sales ./deals/acme.md` ・ `/rig:sales --material --script`
-- **コマンド**: `/rig:movie` 🎬 — CHANGELOG から短い**リリーストレーラー**を作る。制作台本（絵コンテ/テロップ/VO/尺/BGMキュー＋各ビートが CHANGELOG のどの項目かのソース対応表）＋ブラウザで**再生できるアニメ HTML トレーラー**（[`web/release-trailer.html`](./web/release-trailer.html)）の2点。ハイプだが全ビートが実機能の裏打ち。実動画は非生成（台本を編集ツールへ）。例: `/rig:movie v0.30.0`
+- **コマンド**: `/rig:movie` 🎬 — CHANGELOG から短い**リリーストレーラー**を作る。制作台本（絵コンテ/テロップ/VO/尺/BGMキュー＋ソース対応表）＋ブラウザで**再生できるアニメ HTML トレーラー**（[`web/release-trailer.html`](./web/release-trailer.html)）の2点。**`--hyperframes`** で [HeyGen HyperFrames](https://github.com/heygen-com/hyperframes)（HTML→決定論的 MP4・GSAP seekable・Apache-2.0）コンポジションも生成し、`npx hyperframes render` で**本物の MP4** を出せる（例: [`video/launch-film/`](./video/launch-film/)）。ハイプだが全ビートが実機能の裏打ち。harness はコンポジションまで生成し render はユーザー環境（Node22+/FFmpeg/Chrome）。例: `/rig:movie v0.30.0` ・ `/rig:movie --hyperframes`
 - **コマンド**: `/rig:talk` — JARVIS 的な会話モード。話しかけると意図を汲んで適切な rig フロー(dev/sales)へ橋渡しして実行する。例: `/rig:talk 今の変更だけ軽くレビューして`
 - **コマンド**: `/rig:goal` — ゴール駆動ループ。高レベルな目標を渡すと受け入れ基準に変換し「現状把握→次手→既存フローへ委譲→照合」を達成まで回す。例: `/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"`
 - **コマンド**: `/rig:pr` — 既存 PR レビュー。PR 番号/URL を GitHub MCP で取得し security/design/test の3観点で並列評価して structured verdict を返す。例: `/rig:pr 1234 --adversarial`

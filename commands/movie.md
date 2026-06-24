@@ -1,13 +1,13 @@
 ---
-description: rig/movie — リリースムービー生成。CHANGELOG/リリースノートから、短いリリーストレーラーの制作台本(絵コンテ/VO/テロップ/尺/BGMキュー/ソース対応表)＋再生できるアニメ HTML トレーラーの2点を作る。ハイプだが嘘なし。
-argument-hint: [バージョン/タグ（省略時は CHANGELOG 最新）] [--plan]
+description: rig/movie — リリースムービー生成。CHANGELOG から制作台本＋再生できるアニメ HTML トレーラーを作る。--hyperframes で MP4 レンダリング可能な HyperFrames コンポジションも生成。ハイプだが嘘なし。
+argument-hint: [バージョン/タグ（省略時は CHANGELOG 最新）] [--hyperframes] [--plan]
 ---
 
 # rig/movie — リリースムービー 🎬
 
 **まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
 
-> ⚠️ harness は**実動画をレンダリングしない**。納品は「制作台本（実編集に渡せる）」＋「ブラウザで再生できるアニメ HTML トレーラー（実物）」。実 mp4 が要るなら台本を After Effects / CapCut 等へ。
+> ⚠️ harness は**実動画をレンダリングしない**。既定の納品は「制作台本」＋「ブラウザで再生できるアニメ HTML トレーラー（実物）」。**`--hyperframes` 指定時**は、本物の MP4 を出せる **HyperFrames コンポジション**（HTML→決定論的 MP4・OSS）も生成する — render はユーザー環境で `npx hyperframes render`（この harness では実行しない）。
 
 起動後、`--recipe release-movie` を既定として次の引数を PARSE する:
 
@@ -29,13 +29,15 @@ $ARGUMENTS
 ## flag
 
 - `--plan` … 構成（尺・シーン数・目玉）を提示して停止（ドライラン）。
+- `--hyperframes` … **HyperFrames コンポジション**（本物の MP4 を出せる・OSS）も生成する。手順は `facets/instructions/hyperframes-video`（認証契約：`data-composition-id` / `class="clip"`＋`data-start`/`data-duration` / GSAP タイムラインを `window.__timelines` に登録＝seekable）。`video/<name>/`（index.html＋STORYBOARD.md＋README.md）として出力。同梱例: `video/launch-film/`。render は Node22+/FFmpeg/Chrome が要り、**この harness では行わない**（ユーザー環境で `npx hyperframes preview` → `render`）。
 
 ## 例
 
 ```
-/rig:movie                     # CHANGELOG 最新リリースのトレーラー
+/rig:movie                     # CHANGELOG 最新リリースのトレーラー（HTML＋台本）
 /rig:movie v0.30.0             # 特定バージョンのトレーラー
 /rig:movie --plan              # 構成だけ先に確認
+/rig:movie --hyperframes       # MP4 を出せる HyperFrames コンポジションも生成
 ```
 
-生成した HTML はブラウザで開くと自動再生（再生/停止＝Space、前後＝←→、リプレイ、任意 BGM）。
+生成した HTML はブラウザで開くと自動再生（再生/停止＝Space、前後＝←→、リプレイ、任意 BGM）。`--hyperframes` 版は `npx hyperframes render` で MP4 を書き出す。

@@ -59,6 +59,10 @@
 - **空ワード禁止**（「革命的」「次世代」等）。具体・数字・before→after で熱を作る。
 - 目玉は 1 つに絞る（全部を主役にしない）。テロップは 1 行・数語。
 
+## MP4 経路（`--hyperframes`・任意）
+
+`--hyperframes` 指定時は、本物の MP4 を出せる **HyperFrames コンポジション**も生成する。手順・認証契約は **`facets/instructions/hyperframes-video`** に委譲（`data-composition-id` / `class="clip"`＋`data-start`/`data-duration` / GSAP タイムラインを `window.__timelines` に登録＝seekable）。`video/<name>/`（index.html＋STORYBOARD.md＋README.md）として出力し、render はユーザー環境（Node22+/FFmpeg/Chrome で `npx hyperframes render`・**harness では実行しない**）。HTML 即プレビュー版（`web/release-trailer.html`）は残す＝「即見る HTML」と「MP4 を出す HyperFrames」の二経路。同梱例: `video/launch-film/`。
+
 ## 受け入れ（生成物がこれを満たすこと）
 
 - [ ] 制作台本のシーン表に **`screen`（画面収録/モック）ショットが 1 つ以上**あり、何のコマンド/画面かが明記されている。
