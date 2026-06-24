@@ -14,6 +14,8 @@
 
 加えて **source 対応の検閲**（実機能の裏打ち）：各ビートの `source`（実機能）が CHANGELOG/README/コードに**実在するか**を照合し、出荷していない機能・盛った数字を **誇張/捏造**として弾く。
 
+**作家性レンズ（任意・`--persona`）**：より尖った演出批評が要るときは、`--persona auteur/deconstructionist`（解体派＝本音/緊張/間/形式破壊）／`--persona auteur/humanist`（人間派＝温かさ/誠実/日常の発見）を fan-out に足す（実名を避けた作家アーキタイプ）。`--persona` と同じ tier 解決で reviewer 集合に和集合・dedup。盛らない原則は共通（面白さ・本音・感動のための誇張は禁止＝`ai-smell`/`source` と整合）。
+
 ## 手順
 
 1. `scenario-write` の確定シナリオを受け取る（長文は親 context に引き込まない）。
