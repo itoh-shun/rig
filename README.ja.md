@@ -161,6 +161,7 @@ claude --plugin-dir .
 | `release-flow` | `skills/rig/recipes/release-flow.md` | 実装→検証→レビュー→PR→マージのフルフロー |
 | `design-first` | `skills/rig/recipes/design-first.md` | 設計フェーズ優先フロー |
 | `hotfix` | `skills/rig/recipes/hotfix.md` | 緊急修正向け軽量フロー |
+| `debug` | `skills/rig/recipes/debug.md` | バグ調査フロー（再現→根本原因特定→実装→検証） |
 | `adversarial-review` | `skills/rig/recipes/adversarial-review.md` | 敵対的レビューのみ（AIの癖排除・可読性） |
 | `deal-review` | `skills/rig/recipes/deal-review.md` | 商談を5観点で並列評価→総合評価＋改善アクション（sales pack） |
 | `goal-loop` | `skills/rig/recipes/goal-loop.md` | ゴールを受け入れ基準に変換し既存フローへの委譲ループで達成まで収束（goal pack。acceptance-gate＋autonomous-loop） |
