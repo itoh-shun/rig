@@ -201,6 +201,7 @@ claude --plugin-dir .
 | `--validate` | doctor: recipe→facet 参照切れ・frontmatter スキーマ・§2 目録ドリフト・wiki 衛生を検査して停止（実行しない） |
 | `--global` | `--list`/`--validate` を tier 横断(shipped＋global＋project)に拡張。`--list --global`=横断レジストリ地図(`/rig:catalog`)、`--validate --global`=横断衛生点検 |
 | `--adversarial` | 敵対的レビュー step を追加（AIの癖排除・人間可読性・不要コメント除去） |
+| `--cross-llm` | 他社 LLM がレビューする前提でコーディング。implement に `cross-llm-legibility`（Codex/Copilot/GPT が一発で通す慣用的・明示的・文脈非依存なコード）を注入＋ review に外部 LLM 視点の `cross-llm-reviewer` を追加 |
 | `--persona <name>` | review fan-out に名前指定のカスタム reviewer persona を追加（複数可・tier 解決 project→user→shipped・`/rig:persona` と対） |
 
 ## クイック例

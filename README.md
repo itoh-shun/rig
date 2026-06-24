@@ -119,6 +119,7 @@ The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `P
 | `--list` | list available bricks/recipes/flags and stop (no run) |
 | `--validate` | doctor: check recipe→facet references, frontmatter schema, and §2 inventory drift; report and stop (no run) |
 | `--adversarial` | add an adversarial-review step (AI-slop elimination + human readability) |
+| `--cross-llm` | code as if another vendor's LLM will review it: injects the `cross-llm-legibility` policy into implement (idiomatic, explicit, context-independent code that Codex/Copilot/GPT pass on the first read) + adds a `cross-llm-reviewer` (an external-LLM perspective) to the review fan-out |
 | `--persona <name>` | inject a named custom reviewer persona into the review fan-out (resolves project→user→shipped; pairs with `/rig:persona`) |
 | `--global` | widen `--list` / `--validate` across tiers (shipped + global + project): `--list --global` is the cross-cutting registry map (`/rig:catalog`); `--validate --global` checks hygiene across tiers |
 
