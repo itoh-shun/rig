@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""
+rig 計算的オーケストレータ（deterministic orchestration runner）
+
+recipe のステップ DAG を**コードが**解釈し、遷移・ゲート・停止条件・状態保持を
+決定論的に強制する薄いランナー。rig engine（SKILL.md）の「制御ループを散文で
+モデルに握らせる」弱点を埋める層＝舵をコードが握る（engine 不変・opt-in）。
+
+モデルは各ステップの「作業」をするが、「次に何をするか」はこのランナーが決める：
+  plan   <recipe.md>                 ステップ状態機械を決定論的に算出（モデル不要）
+  init   <recipe.md> [--goal G]      run-state を作成し最初のアクションを出す
+  check  <state.json>                現ステップの checks: (shell) を実行し pass/fail 記録（計算的センサー）
+  verdict<state.json> --by N --pass  独立検証者の推論的判定を記録（採点者≠生成者を強制）
+  next   <state.json>                次の遷移を決定論的に計算・適用して出力
+  status <state.json>                現在の状態を出力
+  selftest                           決定論の自己検証（同入力→同遷移を証明）
+
+依存: Python3 + PyYAML（validate.py と同じ）。終了コード 0=正常 / 1=エラー・ESCALATE。
+"""
+
+import sys
+import os
+import json
+import pathlib
+import subprocess
+
+try:
+    import yaml
+except ImportError:
+    print("[ERROR] PyYAML が見つかりません。`pip install pyyaml`。")
+    sys.exit(1)
+
+ROOT = pathlib.Path(__file__).parent.parent
+RECIPES = ROOT / "skills" / "rig" / "recipes"
+DEFAULT_K = 2  # acceptance-gate の既定リトライ上限（SKILL §3.5）
+
+# ── recipe 読み込み ───────────────────────────────────────────────────────────
+def parse_frontmatter(path: pathlib.Path) -> dict:
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        return {}
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    return yaml.safe_load(parts[1]) or {}
+
+
+def load_steps(fm: dict) -> list[dict]:
+    """recipe frontmatter から決定論的なステップ定義列を抽出する（純関数）。"""
+    out = []
+    for s in (fm.get("steps") or []):
+        if not isinstance(s, dict):
+            continue
+        gate = s.get("gate")
+        out.append({
+            "id": s.get("id"),
+            "instruction": s.get("instruction"),
+            "gate": None if gate in (None, "—", "-") else gate,
+            "acceptance": list(s.get("acceptance") or []),
+            "checks": list(s.get("checks") or []),          # 任意: 機械検証コマンド列
+            "max_retries": s.get("max_retries") or DEFAULT_K,
+            "output_contract": s.get("output_contract"),
+        })
+    return out
+
+
+# ── run-state ────────────────────────────────────────────────────────────────
+def new_state(recipe: str, steps: list[dict], goal: str | None) -> dict:
+    return {
+        "recipe": recipe,
+        "goal": goal,
+        "steps": steps,
+        "cursor": 0,
+        "step_state": {s["id"]: {"status": "pending", "retries": 0, "checks": [], "verdicts": []}
+                       for s in steps},
+        "stopped": None,
+        "done": False,
+        "history": [],
+    }
+
+
+def save_state(state: dict, path: pathlib.Path) -> None:
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_state(path: pathlib.Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ── ゲート評価（決定論・純関数）────────────────────────────────────────────────
+def gate_outcome(step: dict, st: dict) -> str:
+    """現ステップの合否を決定論的に判定する。
+    返り値: pass | fail | incomplete | self-graded
+    """
+    gate = step["gate"]
+    if not gate:
+        return "pass"  # ゲート無し step は素通り
+
+    declared = step["checks"]
+    ran = st["checks"]
+    verdicts = st["verdicts"]
+
+    # 計算的センサー（checks）— 宣言があれば一次根拠。全件実行＆全 ok を要求。
+    if declared:
+        if len(ran) < len(declared):
+            return "incomplete"        # まだ check していない
+        if any(not c["ok"] for c in ran):
+            return "fail"
+
+    # 推論的検証（verdict）— acceptance-gate/review-gate は独立判定を要求（checks 未宣言時）。
+    needs_verdict = gate in ("acceptance-gate", "review-gate") and not declared
+    if needs_verdict and not verdicts:
+        return "incomplete"            # 独立検証者の判定待ち
+
+    # 採点者≠生成者の強制（self-grading バイアス防止・policies/independent-verification）
+    if any(str(v.get("by", "")).lower() in ("", "self", "generator", "producer") for v in verdicts):
+        return "self-graded"
+    if any(not v["ok"] for v in verdicts):
+        return "fail"
+
+    return "pass"
+
+
+def compute_next(state: dict) -> tuple[str, str]:
+    """状態から次のアクションを決定論的に計算して適用する（state を破壊的更新）。
+    返り値: (action_code, message)
+    """
+    if state["stopped"]:
+        return "STOPPED", f"停止済み: {state['stopped']['reason']}"
+    steps = state["steps"]
+    if state["cursor"] >= len(steps):
+        state["done"] = True
+        return "DONE", "全ステップ完了。"
+
+    step = steps[state["cursor"]]
+    sid = step["id"]
+    st = state["step_state"][sid]
+
+    if st["status"] == "pending":
+        st["status"] = "running"
+        state["history"].append({"action": "START", "step": sid})
+        gate = step["gate"] or "なし"
+        need = []
+        if step["checks"]:
+            need.append(f"check（{len(step['checks'])} 件の機械検証）")
+        if step["gate"] in ("acceptance-gate", "review-gate") and not step["checks"]:
+            need.append("verdict（独立検証者の判定・採点者≠生成者）")
+        need_s = " → ".join(need) if need else "（ゲート無し＝作業後そのまま next）"
+        return "START", (f"step `{sid}` を実行（instruction: {step['instruction']} / gate: {gate}）。"
+                         f"作業を委譲し、{need_s} を済ませてから `next`。")
+
+    # status == "running"
+    outcome = gate_outcome(step, st)
+    if outcome == "incomplete":
+        return "AWAIT", f"step `{sid}` はゲート評価待ち。`check` / `verdict` を実行してから `next`。"
+    if outcome == "self-graded":
+        return "BLOCKED", (f"step `{sid}`: 生成者自身の判定（by=self/generator）は不可。"
+                           f"独立した検証者の `verdict` が必要（採点者≠生成者）。")
+    if outcome == "pass":
+        st["status"] = "passed"
+        state["cursor"] += 1
+        state["history"].append({"action": "PASS", "step": sid})
+        if state["cursor"] >= len(steps):
+            state["done"] = True
+            return "DONE", f"step `{sid}` 合格。全ステップ完了。"
+        nxt = steps[state["cursor"]]["id"]
+        return "ADVANCE", f"step `{sid}` 合格 → 次は step `{nxt}`。`next` で開始。"
+    # fail
+    st["retries"] += 1
+    K = step["max_retries"]
+    state["history"].append({"action": "FAIL", "step": sid, "try": st["retries"]})
+    if st["retries"] >= K:
+        state["stopped"] = {"reason": f"step `{sid}` がゲート未達のまま {K} 回 → エスカレーション", "at": sid}
+        return "ESCALATE", state["stopped"]["reason"] + "（無限ループ禁止・ユーザーへ）。"
+    # リトライ: この step をやり直し（記録はリセット）
+    st["status"] = "pending"
+    st["checks"] = []
+    st["verdicts"] = []
+    return "RETRY", f"step `{sid}` 未達 → やり直し（try {st['retries']+1}/{K}）。指摘を反映して再実行。"
+
+
+# ── コマンド ──────────────────────────────────────────────────────────────────
+def resolve_recipe(name: str) -> pathlib.Path:
+    p = pathlib.Path(name)
+    if p.exists():
+        return p
+    cand = RECIPES / (name if name.endswith(".md") else f"{name}.md")
+    if cand.exists():
+        return cand
+    print(f"[ERROR] recipe が見つかりません: {name}")
+    sys.exit(1)
+
+
+def render_plan(recipe: str, steps: list[dict]) -> str:
+    lines = [f"## rig 計算的プラン: {recipe}", "",
+             f"ステップ数: {len(steps)} ／ 遷移はコードが強制（決定論）", ""]
+    for i, s in enumerate(steps):
+        gate = s["gate"] or "なし"
+        sensor = ("計算的センサー " + str(len(s["checks"])) + "件"
+                  if s["checks"] else
+                  ("独立 verdict 要" if s["gate"] in ("acceptance-gate", "review-gate") else "—"))
+        lines.append(f"  [{i}] {s['id']}  gate={gate}  K={s['max_retries']}  検証={sensor}")
+    lines.append("")
+    lines.append("停止条件: 各 step はゲート未達が K 回でエスカレーション（無限ループ禁止）。")
+    return "\n".join(lines)
+
+
+def cmd_plan(args):
+    path = resolve_recipe(args[0])
+    fm = parse_frontmatter(path)
+    steps = load_steps(fm)
+    print(render_plan(fm.get("name", path.stem), steps))
+    if "--json" in args:
+        print("\n" + json.dumps({"recipe": fm.get("name"), "steps": steps}, ensure_ascii=False))
+
+
+def _state_path(args, default="run-state.json") -> pathlib.Path:
+    return pathlib.Path(args[0]) if args else pathlib.Path(default)
+
+
+def cmd_init(args):
+    path = resolve_recipe(args[0])
+    fm = parse_frontmatter(path)
+    steps = load_steps(fm)
+    goal = None
+    out = pathlib.Path("run-state.json")
+    i = 1
+    while i < len(args):
+        if args[i] == "--goal" and i + 1 < len(args):
+            goal = args[i + 1]; i += 2
+        elif args[i] == "--out" and i + 1 < len(args):
+            out = pathlib.Path(args[i + 1]); i += 2
+        else:
+            i += 1
+    state = new_state(fm.get("name", path.stem), steps, goal)
+    save_state(state, out)
+    print(render_plan(state["recipe"], steps))
+    print(f"\nrun-state: {out}")
+    action, msg = compute_next(state)
+    save_state(state, out)
+    print(f"\n▶ {action}: {msg}")
+
+
+def _current_running(state: dict):
+    if state["cursor"] >= len(state["steps"]):
+        return None, None
+    step = state["steps"][state["cursor"]]
+    st = state["step_state"][step["id"]]
+    if st["status"] != "running":
+        return None, None
+    return step, st
+
+
+def cmd_check(args):
+    sp = _state_path(args)
+    state = load_state(sp)
+    step, st = _current_running(state)
+    if not step:
+        print("[ERROR] 実行中(running)の step がありません。先に `next` で START してください。")
+        sys.exit(1)
+    if not step["checks"]:
+        print(f"step `{step['id']}` に checks: は未宣言（機械検証なし）。verdict を使ってください。")
+        return
+    print(f"## check: step `{step['id']}` の計算的センサー（{len(step['checks'])} 件）")
+    st["checks"] = []
+    all_ok = True
+    for cmd in step["checks"]:
+        r = subprocess.run(cmd, shell=True, cwd=str(ROOT),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ok = (r.returncode == 0)
+        all_ok = all_ok and ok
+        st["checks"].append({"cmd": cmd, "ok": ok})
+        print(f"  [{'OK ' if ok else 'NG '}] {cmd}  (exit {r.returncode})")
+    save_state(state, sp)
+    print(f"→ {'全件 OK' if all_ok else 'NG あり'}。`next` で遷移を計算。")
+
+
+def cmd_verdict(args):
+    sp = _state_path(args)
+    state = load_state(sp)
+    step, st = _current_running(state)
+    if not step:
+        print("[ERROR] 実行中(running)の step がありません。")
+        sys.exit(1)
+    by, ok, note = None, None, ""
+    i = 1
+    while i < len(args):
+        if args[i] == "--by" and i + 1 < len(args):
+            by = args[i + 1]; i += 2
+        elif args[i] == "--pass":
+            ok = True; i += 1
+        elif args[i] == "--fail":
+            ok = False; i += 1
+        elif args[i] == "--note" and i + 1 < len(args):
+            note = args[i + 1]; i += 2
+        else:
+            i += 1
+    if by is None or ok is None:
+        print("[ERROR] --by <検証者名> と --pass|--fail が必須。")
+        sys.exit(1)
+    st["verdicts"].append({"by": by, "ok": ok, "note": note})
+    save_state(state, sp)
+    guard = "（独立）" if by.lower() not in ("self", "generator", "producer") else "（⚠ 生成者自身＝無効）"
+    print(f"verdict 記録: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}。`next` へ。")
+
+
+def cmd_next(args):
+    sp = _state_path(args)
+    state = load_state(sp)
+    action, msg = compute_next(state)
+    save_state(state, sp)
+    print(f"▶ {action}: {msg}")
+    if action == "ESCALATE":
+        sys.exit(1)
+
+
+def cmd_status(args):
+    sp = _state_path(args)
+    state = load_state(sp)
+    print(f"## run: {state['recipe']}  cursor={state['cursor']}/{len(state['steps'])}  "
+          f"done={state['done']}  stopped={bool(state['stopped'])}")
+    for s in state["steps"]:
+        st = state["step_state"][s["id"]]
+        print(f"  {s['id']:<14} {st['status']:<9} retries={st['retries']} "
+              f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
+              f"verdicts={len(st['verdicts'])}")
+
+
+# ── 決定論セルフテスト ────────────────────────────────────────────────────────
+def _drive(steps, script):
+    """steps と (action_kind, payload) のスクリプトで run を進め、遷移列と最終状態を返す。"""
+    state = new_state("selftest", steps, None)
+    trace = []
+    for kind, payload in script:
+        if kind == "next":
+            a, _ = compute_next(state)
+            trace.append(a)
+        elif kind == "check":
+            step, st = _current_running(state)
+            st["checks"] = [{"cmd": c, "ok": payload} for c in step["checks"]]
+        elif kind == "verdict":
+            step, st = _current_running(state)
+            st["verdicts"].append({"by": payload[0], "ok": payload[1], "note": ""})
+    return trace, state
+
+
+def cmd_selftest(_args):
+    s = lambda **k: {"id": k["id"], "instruction": "x", "gate": k.get("gate"),
+                     "acceptance": [], "checks": k.get("checks", []),
+                     "max_retries": k.get("max_retries", DEFAULT_K), "output_contract": None}
+
+    # シナリオ A: 正常系（no-gate → checks pass → verdict pass → DONE）
+    stepsA = [s(id="design"),
+              s(id="verify", gate="acceptance-gate", checks=["true"]),
+              s(id="review", gate="review-gate")]
+    scriptA = [("next", None),                       # START design
+               ("next", None),                       # design no-gate → ADVANCE verify
+               ("next", None),                       # START verify
+               ("check", True), ("next", None),      # verify checks ok → ADVANCE review
+               ("next", None),                       # START review
+               ("verdict", ("reviewer", True)), ("next", None)]  # review pass → DONE
+    expectA = ["START", "ADVANCE", "START", "ADVANCE", "START", "DONE"]
+    tA1, stA1 = _drive(stepsA, scriptA)
+    tA2, stA2 = _drive(stepsA, scriptA)
+
+    # シナリオ B: 失敗系（checks fail → retry → 再START → fail → ESCALATE）
+    stepsB = [s(id="verify", gate="acceptance-gate", checks=["false"], max_retries=2)]
+    scriptB = [("next", None),                       # START
+               ("check", False), ("next", None),     # fail → RETRY（pending に戻る）
+               ("next", None),                       # 再 START
+               ("check", False), ("next", None)]      # fail（try2/2）→ ESCALATE
+    expectB = ["START", "RETRY", "START", "ESCALATE"]
+    tB, _ = _drive(stepsB, scriptB)
+
+    # シナリオ C: 自己採点ブロック（by=self → BLOCKED）
+    stepsC = [s(id="review", gate="review-gate")]
+    scriptC = [("next", None), ("verdict", ("self", True)), ("next", None)]
+    expectC = ["START", "BLOCKED"]
+    tC, _ = _drive(stepsC, scriptC)
+
+    ok = True
+    def report(name, got, exp, det=""):
+        nonlocal ok
+        good = (got == exp)
+        ok = ok and good
+        print(f"  [{'OK ' if good else 'NG '}] {name}: {got}{'' if good else f'  != {exp}'} {det}")
+
+    print("## orchestrate selftest（決定論の証明）")
+    report("A 正常系の遷移列", tA1, expectA)
+    report("A 反復で同一(決定論)", tA2, tA1, "同入力→同遷移")
+    report("A 最終状態が同一", json.dumps(stA1, sort_keys=True), json.dumps(stA2, sort_keys=True))
+    report("A done=True", stA1["done"], True)
+    report("B 失敗→リトライ→エスカレーション", tB, expectB)
+    report("C 自己採点ブロック", tC, expectC)
+    print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
+    sys.exit(0 if ok else 1)
+
+
+# ── エントリ ──────────────────────────────────────────────────────────────────
+COMMANDS = {
+    "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
+    "verdict": cmd_verdict, "next": cmd_next, "status": cmd_status,
+    "selftest": cmd_selftest,
+}
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        print(__doc__)
+        sys.exit(0 if len(sys.argv) < 2 else 1)
+    COMMANDS[sys.argv[1]](sys.argv[2:])
+
+
+if __name__ == "__main__":
+    main()
