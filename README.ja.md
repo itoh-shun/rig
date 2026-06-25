@@ -51,16 +51,16 @@ claude --plugin-dir .
 - **コマンド**: `/rig:magi` — エヴァの MAGI を模した3賢者合議モード。「やるべきか？」の決定を Melchior-1（科学者＝正しさ）/ Balthasar-2（母＝守り）/ Casper-3（女＝価値）の直交3観点に並列で諮り、**決定論的な多数決**で go/no-go を MAGI コンソールに裁定する。例: `/rig:magi この破壊的変更を今リリースしていいか`
 - **コマンド**: `/rig:roast` 🌶️ — 毒舌スタンダップ芸人によるコードレビュー。指摘の中身は本物（AI 臭・可読性・過剰/不足・バグ）だが、ローストとして届けることで批判を**実際に読ませる**。笑いは配送装置で判定は素面。例: `/rig:roast`
 - **コマンド**: `/rig:coin` 🪙 — magi の対極。**可逆で些末**な 50/50（N 択可）を熟考せず即断する反-bikeshed ゲート。先にトリアージし、重い/不可逆と判明したら投げず `/rig:magi` へ回す。例: `/rig:coin タブかスペースか、もう決めて`
-- **コマンド**: `/rig:slot` 🎰 — 「Rigsino」。6号機風 AT パチスロ実機シミュ（通常時→CZ「PR REVIEW」→AT「SHIP RUSH」の状態機械・押し順ベル・天井・設定1〜6・純増・**永続メダル管理**）で遊ぶ息抜きゲーム。実エンジン `scripts/rigsino.py`（機械割は 50 万 G シミュで設定別 95〜115% に調整）。架空メダル・実ギャンブルではない。例: `/rig:slot spin` / `/rig:slot status`
 - **コマンド**: `/rig:duck` 🦆 — ラバーダック・デバッグ。机のアヒルに問題を説明する会話モード。アヒルは**質問しかせず、コードも答えも出さない**ので、説明している本人が穴に気づく（実証済みの技法）。気づいた後の修正は `/rig:dev` 等へ委譲。例: `/rig:duck なぜか nil が返る`
 - **コマンド**: `/rig:pre-mortem` ⚰️ — 事前検死（magi の闇の兄弟）。「**もう本番で壊れた**」前提で失敗モードを断定形で逆算し、各々に最小ガードレールを対で出す。prospective hindsight は「何が起きうる?」より失敗を多く見つける。例: `/rig:pre-mortem この DB 移行`
 - **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
 - **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
 - **コマンド**: `/rig:knowledge` — ドメイン知識を **LLM-wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として生成。説明文 or `--auto`(repo 解析)から、global(既定・全プロダクト共有)/project overlay に保存。persona は事実を埋め込まず `inject: [[slug]]` で参照＝暗黙知化させない。例: `/rig:knowledge --auto`
+- **コマンド**: `/rig:design` 🎨 — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から**デザイン仕様書／コンポーネント仕様／ワイヤー／a11y 計画**を生成し、`ux-reviewer`（ユーザビリティ）・`a11y-reviewer`（WCAG 2.2）で並列検閲して acceptance-gate で収束。引数に**画面 URL** を渡すと Playwright で実装画面を取得し UI/UX・a11y を**監査**する。`--ppt`(PowerPoint)・`--claudedesign`(claude.ai デザイン) で追加出力（併用可）。例: `/rig:design ログイン画面 --ppt` ・ `/rig:design https://example.com/login`
 - **コマンド**: `/rig:catalog` — 横断レジストリ(`--list --global`)。全 tier(shipped＋global＋project)を走査し `domain×pack×persona×wiki×recipe` の地図を tier つきで表示＝「誰がどこで何してるか」を取り戻す。派生・読み取り専用。`--validate --global` は tier 横断の衛生点検。
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
-> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。`magi`（`/rig:magi`）はコードの逐条レビューでなく**採否そのもの**を裁く decision pack で、3 persona（`magi/{melchior,balthasar,casper}`）＋集約 pattern（`magi-consensus`）を足すだけ＝engine 不変。正しさ（科学者）・守り（母）・価値（女）の直交3観点を多数決にかけ、「正しいだけのコードが現実には通らない」を構造化する。`roast`（`/rig:roast`）・`coin`（`/rig:coin`）・`slot`（`/rig:slot`）は **humor pack** — いずれも engine 不変・persona＋薄い instruction を足すだけ。roast は本物の指摘を毒舌で配送（批判を読ませる）、coin は magi の対極（軽い可逆な決定を即断・重いものは magi へ誘導）、slot は息抜きの dev スロット（6号機風 AT パチスロ実機シミュ・永続メダル管理・実エンジン `scripts/rigsino.py`・架空メダルの遊び）、`duck`（`/rig:duck`）はラバーダック・デバッグ（アヒルが質問だけで本人に気づかせる）、`pre-mortem`（`/rig:pre-mortem`）は事前検死（「もう壊れた」前提で失敗モードを逆算＝magi の「どう壊れるか」補完）。ネタだが「中身は本物のゲート/レンズ」という rig の流儀を踏襲する。
+> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。`magi`（`/rig:magi`）はコードの逐条レビューでなく**採否そのもの**を裁く decision pack で、3 persona（`magi/{melchior,balthasar,casper}`）＋集約 pattern（`magi-consensus`）を足すだけ＝engine 不変。正しさ（科学者）・守り（母）・価値（女）の直交3観点を多数決にかけ、「正しいだけのコードが現実には通らない」を構造化する。`roast`（`/rig:roast`）・`coin`（`/rig:coin`）は **humor pack** — いずれも engine 不変・persona＋薄い instruction を足すだけ。roast は本物の指摘を毒舌で配送（批判を読ませる）、coin は magi の対極（軽い可逆な決定を即断・重いものは magi へ誘導）。`duck`（`/rig:duck`）はラバーダック・デバッグ（アヒルが質問だけで本人に気づかせる）、`pre-mortem`（`/rig:pre-mortem`）は事前検死（「もう壊れた」前提で失敗モードを逆算＝magi の「どう壊れるか」補完）。ネタだが「中身は本物のゲート/レンズ」という rig の流儀を踏襲する。
 
 ## ブリック目録
 
@@ -169,12 +169,13 @@ claude --plugin-dir .
 | `magi` | `skills/rig/recipes/magi.md` | エヴァ MAGI 模倣の3賢者 decision。Melchior(科学者=正しさ)/Balthasar(母=守り)/Casper(女=価値)に並列諮問→多数決(`magi-consensus`)で go/no-go 裁定（magi pack） |
 | `roast` 🌶️ | `skills/rig/recipes/roast.md` | 毒舌ロースト・レビュー。的は adversarial と同じ（AI 臭/可読性/バグ）だが配送をユーモアに振り批判を読ませる。判定は素面（humor pack） |
 | `coin` 🪙 | `skills/rig/recipes/coin.md` | 可逆で些末な決定を即断する反-bikeshed ゲート。重い/不可逆はトリアージで弾いて magi へ。magi の対極（humor pack） |
-| `slot` 🎰 | `skills/rig/recipes/slot.md` | Rigsino。6号機風 AT パチスロ実機シミュ（通常時→CZ→AT・押し順・天井・設定1〜6・永続メダル）。実エンジン `scripts/rigsino.py`。架空メダル・dev フロー判断には非関与（humor pack） |
 | `duck` 🦆 | `skills/rig/recipes/duck.md` | ラバーダック・デバッグ。アヒルが質問だけで本人に気づかせる会話モード。コードも答えも出さない・修正は dev へ委譲（humor pack） |
 | `pre-mortem` ⚰️ | `skills/rig/recipes/pre-mortem.md` | 事前検死。「もう本番で壊れた」前提で失敗モードを逆算＋最小ガードレール（`premortem-report`）。magi の「どう壊れるか」補完（humor pack） |
 | `sales-enablement` | `skills/rig/recipes/sales-enablement.md` | 開発資材（README/CHANGELOG/コード）→ 営業1枚資料＋荷電スクリプト（`sales-collateral`）。機能→ベネフィット翻訳・実在機能のみ・不明は `[要記入]`（sales pack） |
 | `release-movie` 🎬 | `skills/rig/recipes/release-movie.md` | CHANGELOG → リリーストレーラーの制作台本＋再生できるアニメ HTML（`web/release-trailer.html`）。ハイプだが全ビートが実機能の裏打ち |
 | `scenario` 🎬✍️ | `skills/rig/recipes/scenario.md` | シナリオライターモード（`/rig:movie` 前段）。脚本（フック→課題→転換→ペイオフ→CTA＋VO＋source 対応）を書き、既存の掛け合わせ（`ai-smell-reviewer`＋`ai-writing-smells` × `sns-post-reviewer`）で検閲→acceptance-gate 収束（新規 reviewer 不要） |
+| `design` 🎨 | `skills/rig/recipes/design.md` | UI/UX・a11y デザイン作成。仕様書/コンポーネント/ワイヤー/a11y 計画を生成→`ux-reviewer`・`a11y-reviewer`(WCAG) で並列検閲→acceptance-gate 収束。`--ppt`/`--claudedesign` 追加出力（design pack） |
+| `design-audit` 🎨 | `skills/rig/recipes/design-audit.md` | 実装画面の URL 監査。Playwright で SS/DOM/axe-core 取得→UI/UX・a11y 並列レビュー→`design-verdict`。design 作成の監査版（design pack） |
 
 ### manifests
 

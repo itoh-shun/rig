@@ -4,3 +4,8 @@
 # Python
 __pycache__/
 *.pyc
+
+# 依存物・キャッシュ・別作業（プラグイン本体に無関係なため追跡しない）
+node_modules/
+.agents/
+video/
