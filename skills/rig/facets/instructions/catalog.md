@@ -47,6 +47,18 @@ summary: domains=N | personas=N(global M/project K/shipped L) | wiki=N | recipes
 ```
 
 - recipe エントリは `name [N step(s) · interactive|autonomous]` の形式で表示する（N=1 のみ `1 step`、以降 `N steps`）。これは `--list` の recipe エントリ表示（§3 SKILL.md）と同じメタデータで、autonomy・フローの重さを一覧段階で判断できる。
+- **`### Accumulated Knowledge` セクション（#115）**：`<repo>/.claude/rig/knowledge/accumulated/` に1件以上ファイルがある場合、末尾に `### Accumulated Knowledge` セクションを追加する。各エントリは frontmatter の `title（category, date）` を1行で表示し、`category` 別（`pitfall` / `decision` / `convention` / `stuck-twice`）にグルーピングする。`~/.claude/rig/knowledge/accumulated/`（user 層）も同様に表示し `（global）` と区別する。ファイルが0件の tier はサイレントに省略する（空見出し不要）。
+
+  ```
+  ### Accumulated Knowledge （project）
+  #### pitfall
+  - JWTリフレッシュ競合でダブル送信（2026-05-10）
+  #### decision
+  - 認証ミドルウェアを共通化（2026-05-15）
+  #### convention
+  - マイグレーションは必ず冪等に書く（2026-06-01）
+    3 entries （<repo>/.claude/rig/knowledge/accumulated/）
+  ```
 - `--json` 指定時は機械可読 JSON で同じ内容を返す（将来のグラフ可視化用。既定は Markdown）。
 - 末尾に **要対応**（`--validate --global` で見つかる orphan/リンク切れ等があれば件数だけ）を1行で添え、「詳細は `--validate --global`」と案内する。
 
