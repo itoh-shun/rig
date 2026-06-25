@@ -1,0 +1,79 @@
+{
+  "tts_provider": "irodori-voicedesign",
+  "voice_id": "v4-D 30代後半 企業ナレーター",
+  "voicedesign_config": {
+    "caption": "30代後半男性の企業ナレーターの声。落ち着いた中低音の温かみのある声質と、ビジネス向けの明瞭な音色を持ち、自然で安定した抑揚、丁寧で聞き取りやすいやや遅めのテンポで、信頼感のある誠実で親しみやすい語り口。",
+    "seed": "9382647519283746591",
+    "cfg_scale_caption": 4,
+    "num_steps": 60,
+    "cfg_guidance_mode": "alternating"
+  },
+  "bgm_provider": null,
+  "bgm_enabled": false,
+  "bgm_path": null,
+  "bgm_pending": false,
+  "bgm_log": null,
+  "bgm_pid": null,
+  "bgm_mode": null,
+  "bgm_target_duration_s": null,
+  "bgm_seed_duration_s": null,
+  "bgm_loop_count": null,
+  "total_duration_s": 79.6,
+  "scenes": {
+    "scene_1": {
+      "voicePath": "assets/voice/scene_1.wav",
+      "voiceDuration": 4.68,
+      "wordsPath": ""
+    },
+    "scene_2": {
+      "voicePath": "assets/voice/scene_2.wav",
+      "voiceDuration": 7.8,
+      "wordsPath": ""
+    },
+    "scene_3": {
+      "voicePath": "assets/voice/scene_3.wav",
+      "voiceDuration": 7.32,
+      "wordsPath": ""
+    },
+    "scene_4": {
+      "voicePath": "assets/voice/scene_4.wav",
+      "voiceDuration": 8.24,
+      "wordsPath": ""
+    },
+    "scene_5": {
+      "voicePath": "assets/voice/scene_5.wav",
+      "voiceDuration": 8.28,
+      "wordsPath": ""
+    },
+    "scene_6": {
+      "voicePath": "assets/voice/scene_6.wav",
+      "voiceDuration": 5.4,
+      "wordsPath": ""
+    },
+    "scene_7": {
+      "voicePath": "assets/voice/scene_7.wav",
+      "voiceDuration": 11.76,
+      "wordsPath": ""
+    },
+    "scene_8": {
+      "voicePath": "assets/voice/scene_8.wav",
+      "voiceDuration": 6.16,
+      "wordsPath": ""
+    },
+    "scene_9": {
+      "voicePath": "assets/voice/scene_9.wav",
+      "voiceDuration": 6.24,
+      "wordsPath": ""
+    },
+    "scene_10": {
+      "voicePath": "assets/voice/scene_10.wav",
+      "voiceDuration": 8.2,
+      "wordsPath": ""
+    },
+    "scene_11": {
+      "voicePath": "assets/voice/scene_11.wav",
+      "voiceDuration": 5.52,
+      "wordsPath": ""
+    }
+  }
+}

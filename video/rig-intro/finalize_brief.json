@@ -1,0 +1,386 @@
+{
+  "version": 3,
+  "generated_at": "2026-06-25T02:34:35.932Z",
+  "pinned_hyperframes_version": "0.7.5",
+  "cli_version_line": "(failed to resolve hyperframes@0.7.5: spawnSync /bin/sh ETIMEDOUT)",
+  "npx_prefix": "npx --yes hyperframes@0.7.5",
+  "gates_clean": false,
+  "gates": {
+    "lint": {
+      "ok": false,
+      "exit_code": 1,
+      "duration_s": 2.54,
+      "errors": 9,
+      "warnings": 15,
+      "info": null,
+      "output_tail": "◆  Linting rig-intro/10 files\n\n  ⚠ [compositions/group_w4.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for p between 0.00s and 4.20s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/group_w4.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for p between 0.00s and 4.00s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/group_w4.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for p between 0.00s and 6.20s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/group_w4.html] overlapping_gsap_tweens: GSAP tweens overlap on \"#g4-stage-parse\" for scale between 0.00s and 0.28s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/group_w4.html] overlapping_gsap_tweens: GSAP tweens overlap on \"#g4-stage-resolve\" for scale between 0.00s and 0.30s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/group_w4.html] overlapping_gsap_tweens: GSAP tweens overlap on \"#g4-stage-resolve\" for scale between 0.00s and 0.26s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/group_w4.html] composition_file_too_large: This HTML composition file has 445 lines. Smaller sub-compositions are easier to read, iterate on, and diff.\n    Fix: Split this sub-composition further into smaller .html files, then mount them from the parent with data-composition-src so each file stays small enough to inspect, revise, and validate independently.\n  ✗ [compositions/group_w4.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono), var(--font-script). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ✗ [compositions/scene_1.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono), var(--font-display), var(--font-script). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ✗ [compositions/scene_10.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono), var(--font-display), var(--font-script, caveat, cursive). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ⚠ [compositions/scene_11.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for opacity between 1.62s and 1.97s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/scene_11.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for opacity between 1.69s and 1.97s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/scene_11.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for opacity between 1.76s and 1.97s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/scene_11.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for opacity between 1.69s and 2.04s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/scene_11.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for opacity between 1.76s and 2.04s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ⚠ [compositions/scene_11.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for opacity between 1.76s and 2.11s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ✗ [compositions/scene_11.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ✗ [compositions/scene_2.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono), var(--font-script), var(--font-display). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ⚠ [compositions/scene_3.html] overlapping_gsap_tweens: GSAP tweens overlap on \"__unresolved__\" for strokeDashoffset between 0.00s and 0.18s.\n    Fix: Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`.\n  ✗ [compositions/scene_3.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-display), var(--font-mono). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ⚠ [compositions/scene_7.html] composition_file_too_large: This HTML composition file has 307 lines. Smaller sub-compositions are easier to read, iterate on, and diff.\n    Fix: Split this sub-composition further into smaller .html files, then mount them from the parent with data-composition-src so each file stays small enough to inspect, revise, and validate independently.\n  ✗ [compositions/scene_7.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ✗ [compositions/scene_8.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono), var(--font-display), var(--font-script, var(--font-display)). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n  ✗ [compositions/scene_9.html] font_family_without_font_face: Font families used without @font-face declaration: var(--font-body), var(--font-mono). These are not in the auto-resolved font list, so the renderer cannot supply them automatically. Text will fall back to a generic font, producing incorrect typography in the video.\n    Fix: Add @font-face { font-family: '...'; src: url('capture/assets/fonts/...woff2'); } for each font family, pointing to the captured .woff2 files.\n\n◇  9 error(s), 15 warning(s)\n"
+    },
+    "validate": {
+      "ok": true,
+      "exit_code": 0,
+      "duration_s": 9.68,
+      "errors": 0,
+      "warnings": 0,
+      "info": null,
+      "output_tail": "◆  Validating rig-intro in headless Chrome\n\n\n  ⚠ WCAG AA contrast warnings (30):\n    · span.s11-hero-slash \"/\" — 1.38:1 (need 3:1, t=7.828s)\n    · span \"rig:dev\" — 1.38:1 (need 3:1, t=7.828s)\n    · span.s11-hero-slash \"/\" — 1.73:1 (need 3:1, t=7.828s)\n    · span \"rig:dev\" — 1.73:1 (need 3:1, t=7.828s)\n    · span.s11-hero-slash \"/\" — 2.19:1 (need 3:1, t=7.828s)\n    · span \"rig:dev\" — 2.19:1 (need 3:1, t=7.828s)\n    · span.s11-hero-slash \"/\" — 1.38:1 (need 3:1, t=23.484s)\n    · span \"rig:dev\" — 1.38:1 (need 3:1, t=23.484s)\n    · span.s11-hero-slash \"/\" — 1.73:1 (need 3:1, t=23.484s)\n    · span \"rig:dev\" — 1.73:1 (need 3:1, t=23.484s)\n    · span.s11-hero-slash \"/\" — 2.19:1 (need 3:1, t=23.484s)\n    · span \"rig:dev\" — 2.19:1 (need 3:1, t=23.484s)\n    · span.s11-hero-slash \"/\" — 1.38:1 (need 3:1, t=39.14s)\n    · span \"rig:dev\" — 1.38:1 (need 3:1, t=39.14s)\n    · span.s11-hero-slash \"/\" — 1.73:1 (need 3:1, t=39.14s)\n    · span \"rig:dev\" — 1.73:1 (need 3:1, t=39.14s)\n    · span.s11-hero-slash \"/\" — 2.19:1 (need 3:1, t=39.14s)\n    · span \"rig:dev\" — 2.19:1 (need 3:1, t=39.14s)\n    · span.s11-hero-slash \"/\" — 1.38:1 (need 3:1, t=54.796s)\n    · span \"rig:dev\" — 1.38:1 (need 3:1, t=54.796s)\n    · span.s11-hero-slash \"/\" — 1.73:1 (need 3:1, t=54.796s)\n    · span \"rig:dev\" — 1.73:1 (need 3:1, t=54.796s)\n    · span.s11-hero-slash \"/\" — 2.19:1 (need 3:1, t=54.796s)\n    · span \"rig:dev\" — 2.19:1 (need 3:1, t=54.796s)\n    · span.s11-hero-slash \"/\" — 1.38:1 (need 3:1, t=70.452s)\n    · span \"rig:dev\" — 1.38:1 (need 3:1, t=70.452s)\n    · span.s11-hero-slash \"/\" — 1.73:1 (need 3:1, t=70.452s)\n    · span \"rig:dev\" — 1.73:1 (need 3:1, t=70.452s)\n    · span.s11-hero-slash \"/\" — 2.19:1 (need 3:1, t=70.452s)\n    · span \"rig:dev\" — 2.19:1 (need 3:1, t=70.452s)\n\n◇  0 error(s), 0 warning(s), 30 contrast warning(s)\n"
+    },
+    "inspect": {
+      "ok": false,
+      "exit_code": 1,
+      "duration_s": 6.7,
+      "errors": 1,
+      "warnings": 11,
+      "info": 0,
+      "output_tail": "◆  Inspecting layout for rig-intro (22 timeline samples)\n\n  ✗ t=55.15s text_box_overflow span.s8-parent-line-label inside #s8-parent-line overflowed top 27.28px \"PARENT · /rig:talk\" — Text extends outside its nearest visual/container box.\n        Fix: Text is 215px x 20px inside 782px x 7px and overflows by up to 27px; increase the container height to at least ~34px or shrink font-size from 16px to ~5px, or allow wrapping with max-width/fitTextFontSize.\n  ⚠ t=1.78s content_overlap span.s1-word inside span.s1-word \"気になったところ止まり\" — Two text blocks overlap and may render unreadable.\n        Fix: Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.\n  ⚠ t=5.34s container_overflow #s2-stage inside div.scene_2-root overflowed left 6.51px — Element extends outside a clipping layout container.\n        Fix: Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.\n  ⚠ t=8.89s container_overflow #s2-stage inside div.scene_2-root overflowed right 4.01px — Element extends outside a clipping layout container.\n        Fix: Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.\n  ⚠ t=12.45-16.01s (2 samples) content_overlap span.s3-depth-text.is-back inside span.s3-depth-text.is-back \"rig\" — Two text blocks overlap and may render unreadable.\n        Fix: Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.\n  ⚠ t=12.45-16.01s (2 samples) content_overlap span.s3-depth-text.is-back inside span.s3-depth-text.is-front \"rig\" — Two text blocks overlap and may render unreadable.\n        Fix: Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.\n  ⚠ t=40.92s content_overlap #s7-dispatch-line inside #s7-fan \"AGENT( PARALLEL: [ SECURITY, DESIGN, TEST ])\" — Two text blocks overlap and may render unreadable.\n        Fix: Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.\n  ⚠ t=48.03s content_overlap span.s7-card-spike inside #s7-card-1-title \"✱\" — Two text blocks overlap and may render unreadable.\n        Fix: Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.\n  ⚠ t=72.94s container_overflow #s11-stage inside div.scene_11-root overflowed left 2.08px — Element extends outside a clipping layout container.\n        Fix: Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.\n  ⚠ t=76.5s container_overflow #s11-stage inside div.scene_11-root overflowed right 2.74px — Element extends outside a clipping layout container.\n        Fix: Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.\n  ⚠ t=76.5s content_overlap span.s11-hero-slash inside span.s11-hero-slash \"/\" — Two text blocks overlap and may render unreadable.\n        Fix: Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.\n  ⚠ t=76.5s content_overlap div.s11-depth-text.is-back > span:nth-of-type(2) inside div.s11-depth-text.is-front > span:nth-of-type(2) \"rig:dev\" — Two text blocks overlap and may render unreadable.\n        Fix: Give each block its own zone, or mark intentional layering with data-layout-allow-overlap.\n\n◇  1 error(s), 11 warning(s), 0 info(s)\n"
+    }
+  },
+  "bgm": {
+    "enabled": false,
+    "path": null,
+    "ready": false,
+    "status_file": "bgm_status.json",
+    "status": "disabled",
+    "provider": null,
+    "mode": null,
+    "log": null,
+    "pid": null,
+    "target_duration_s": null,
+    "seed_duration_s": null,
+    "loop_count": null,
+    "message": "BGM not requested or disabled in audio_meta.json."
+  },
+  "overlap": {
+    "status": "ok",
+    "canvas": {
+      "width": 1920,
+      "height": 1080
+    },
+    "probe_ratios": [
+      0.4,
+      0.7,
+      0.92
+    ],
+    "min_overlap_px": 4,
+    "scenes_scanned": 8,
+    "scenes_skipped": 3,
+    "scenes_no_timeline": 0,
+    "violations": [],
+    "transients": []
+  },
+  "caption_keepout": {
+    "enabled": false,
+    "canvas_height_px": 1080,
+    "caption_band_top_y": 900,
+    "fail_threshold_bottom_px": 180,
+    "suggested_min_bottom_px": 200,
+    "scenes_scanned": 0,
+    "violations": []
+  },
+  "anomalies": [],
+  "preflight_clean": false,
+  "deterministic_fixes_applied": [],
+  "snapshot_times_s": [
+    2.08,
+    4.46,
+    7.82,
+    11.68,
+    14.9,
+    18.57,
+    22.3,
+    26.28,
+    30.3,
+    32.31,
+    33.516,
+    34.32,
+    37.12,
+    38.52,
+    39.36,
+    40.17,
+    44.4,
+    46.64,
+    47.984,
+    49.18,
+    52.5,
+    54.31,
+    55.396,
+    56.37,
+    60.02,
+    64.12,
+    67.68,
+    69.56,
+    70.688,
+    71.64,
+    74.86
+  ],
+  "total_duration_s": 78.28,
+  "scenes": [
+    {
+      "scene_id": "scene_1",
+      "start_s": 0,
+      "duration_s": 4.16,
+      "midpoint_s": 2.08,
+      "high_risk_extras_s": [],
+      "high_risk": false,
+      "effects": [
+        "asr-keyword-glow",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_2",
+      "start_s": 4.16,
+      "duration_s": 7.32,
+      "midpoint_s": 7.82,
+      "high_risk_extras_s": [],
+      "high_risk": false,
+      "effects": [
+        "svg-path-draw",
+        "asr-keyword-glow",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_3",
+      "start_s": 11.48,
+      "duration_s": 6.84,
+      "midpoint_s": 14.9,
+      "high_risk_extras_s": [],
+      "high_risk": false,
+      "effects": [
+        "svg-path-draw",
+        "3d-text-depth-layers",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_4",
+      "start_s": 18.32,
+      "duration_s": 7.96,
+      "midpoint_s": 22.3,
+      "high_risk_extras_s": [],
+      "high_risk": false,
+      "effects": [
+        "svg-path-draw",
+        "discrete-text-sequence",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_5",
+      "start_s": 26.28,
+      "duration_s": 8.04,
+      "midpoint_s": 30.3,
+      "high_risk_extras_s": [
+        32.31,
+        33.516
+      ],
+      "high_risk": true,
+      "effects": [
+        "scale-swap-transition",
+        "svg-path-draw",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_6",
+      "start_s": 34.32,
+      "duration_s": 5.6,
+      "midpoint_s": 37.12,
+      "high_risk_extras_s": [
+        38.52,
+        39.36
+      ],
+      "high_risk": true,
+      "effects": [
+        "scale-swap-transition",
+        "dynamic-content-sequencing",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_7",
+      "start_s": 39.92,
+      "duration_s": 8.96,
+      "midpoint_s": 44.4,
+      "high_risk_extras_s": [
+        46.64,
+        47.984
+      ],
+      "high_risk": true,
+      "effects": [
+        "svg-path-draw",
+        "dynamic-content-sequencing",
+        "asr-keyword-glow",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_8",
+      "start_s": 48.88,
+      "duration_s": 7.24,
+      "midpoint_s": 52.5,
+      "high_risk_extras_s": [
+        54.31,
+        55.396
+      ],
+      "high_risk": true,
+      "effects": [
+        "split-tilt-cards",
+        "counting-dynamic-scale",
+        "asr-keyword-glow"
+      ]
+    },
+    {
+      "scene_id": "scene_9",
+      "start_s": 56.12,
+      "duration_s": 7.8,
+      "midpoint_s": 60.02,
+      "high_risk_extras_s": [],
+      "high_risk": false,
+      "effects": [
+        "dynamic-content-sequencing",
+        "svg-path-draw",
+        "asr-keyword-glow",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_10",
+      "start_s": 63.92,
+      "duration_s": 7.52,
+      "midpoint_s": 67.68,
+      "high_risk_extras_s": [
+        69.56,
+        70.688
+      ],
+      "high_risk": true,
+      "effects": [
+        "svg-path-draw",
+        "center-outward-expansion",
+        "asr-keyword-glow",
+        "sine-wave-loop"
+      ]
+    },
+    {
+      "scene_id": "scene_11",
+      "start_s": 71.44,
+      "duration_s": 6.84,
+      "midpoint_s": 74.86,
+      "high_risk_extras_s": [],
+      "high_risk": false,
+      "effects": [
+        "3d-text-depth-layers",
+        "press-release-spring",
+        "asr-keyword-glow"
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "from": "scene_1",
+      "to": "scene_2",
+      "from_scene": "scene_1",
+      "to_scene": "scene_2",
+      "type": "blur-crossfade",
+      "direction": null,
+      "duration_s": 0.6,
+      "tier": "b",
+      "seam_mid_s": 4.46
+    },
+    {
+      "from": "scene_2",
+      "to": "scene_3",
+      "from_scene": "scene_2",
+      "to_scene": "scene_3",
+      "type": "zoom-through",
+      "direction": null,
+      "duration_s": 0.4,
+      "tier": "b",
+      "seam_mid_s": 11.68
+    },
+    {
+      "from": "scene_3",
+      "to": "group_w4",
+      "from_scene": "scene_3",
+      "to_scene": "scene_4",
+      "type": "push-slide",
+      "direction": "LEFT",
+      "duration_s": 0.5,
+      "tier": "b",
+      "seam_mid_s": 18.57
+    },
+    {
+      "from": "group_w4",
+      "to": "scene_7",
+      "from_scene": "scene_6",
+      "to_scene": "scene_7",
+      "type": "push-slide",
+      "direction": "LEFT",
+      "duration_s": 0.5,
+      "tier": "b",
+      "seam_mid_s": 40.17
+    },
+    {
+      "from": "scene_7",
+      "to": "scene_8",
+      "from_scene": "scene_7",
+      "to_scene": "scene_8",
+      "type": "blur-crossfade",
+      "direction": null,
+      "duration_s": 0.6,
+      "tier": "b",
+      "seam_mid_s": 49.18
+    },
+    {
+      "from": "scene_8",
+      "to": "scene_9",
+      "from_scene": "scene_8",
+      "to_scene": "scene_9",
+      "type": "push-slide",
+      "direction": "RIGHT",
+      "duration_s": 0.5,
+      "tier": "b",
+      "seam_mid_s": 56.37
+    },
+    {
+      "from": "scene_9",
+      "to": "scene_10",
+      "from_scene": "scene_9",
+      "to_scene": "scene_10",
+      "type": "zoom-through",
+      "direction": null,
+      "duration_s": 0.4,
+      "tier": "b",
+      "seam_mid_s": 64.12
+    },
+    {
+      "from": "scene_10",
+      "to": "scene_11",
+      "from_scene": "scene_10",
+      "to_scene": "scene_11",
+      "type": "zoom-through",
+      "direction": null,
+      "duration_s": 0.4,
+      "tier": "b",
+      "seam_mid_s": 71.64
+    }
+  ],
+  "internal_seams": [
+    {
+      "from_scene": "scene_4",
+      "to_scene": "scene_5",
+      "visual_id": "group_w4",
+      "worker_id": "w4",
+      "seam_s": 26.28,
+      "local_time_s": 7.96
+    },
+    {
+      "from_scene": "scene_5",
+      "to_scene": "scene_6",
+      "visual_id": "group_w4",
+      "worker_id": "w4",
+      "seam_s": 34.32,
+      "local_time_s": 16
+    }
+  ]
+}

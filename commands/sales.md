@@ -5,7 +5,7 @@ argument-hint: [商談記録 or ファイルパス] [--material] [--script] [--f
 
 # rig/sales — 営業ハーネス（商談レビュー ＋ 資材生成）
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev と同じ engine を sales ドメインで使う。
+**まず `rig:rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev と同じ engine を sales ドメインで使う。
 
 ## モード（2 系統）
 

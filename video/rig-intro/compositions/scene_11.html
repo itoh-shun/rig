@@ -1,0 +1,422 @@
+<template id="scene_11-template">
+  <div id="root" class="scene_11-root" data-composition-id="scene_11" data-width="1920" data-height="1080" data-duration="6.84" style="position:relative; width:1920px; height:1080px; overflow:hidden;">
+    <style>
+      /* Pin-and-paper CTA card. Warm cadmium paper canvas, cream pinned card,
+         depth-stamped /rig:dev hero word, quiet GitHub handle pinned at foot,
+         single Caveat-tone scribble in the left margin.
+         Tokens come globally from index.html <head> — do not redeclare :root. */
+      #root {
+        background: var(--canvas);
+        font-family: Inter, system-ui, sans-serif;
+        color: var(--brand-primary);
+      }
+      #root *, #root *::before, #root *::after { box-sizing: border-box; }
+
+      /* Sparse paper-grain ambient — full-bleed background, decorative.
+         Same idiom as sibling scenes. */
+      .s11-grain {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        opacity: 0.5;
+        pointer-events: none;
+        background-image:
+          radial-gradient(circle at 17% 23%, rgba(31,58,138,0.05) 0 1.2px, transparent 1.6px),
+          radial-gradient(circle at 73% 61%, rgba(31,58,138,0.04) 0 1.2px, transparent 1.6px),
+          radial-gradient(circle at 42% 88%, rgba(31,58,138,0.05) 0 1.2px, transparent 1.6px),
+          radial-gradient(circle at 88% 12%, rgba(31,58,138,0.035) 0 1.2px, transparent 1.6px);
+        background-size: 240px 240px, 320px 320px, 280px 280px, 360px 360px;
+      }
+
+      /* Macro parallax wrapper — very slow root-level drift (translate only;
+         NEVER a scale push, per anti-wobble HARD directive). */
+      .s11-stage {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 30px;
+        padding: 110px 64px 90px;
+        transform-origin: 50% 50%;
+        will-change: transform;
+      }
+
+      /* The single quiet pinned card — upper-center ~60% of canvas.
+         Cream cardstock, hairline ink border, hard ink offset shadow. */
+      .s11-card {
+        position: relative;
+        width: 1100px;
+        padding: 64px 88px 58px;
+        background: var(--surface-cream);
+        border: var(--border-hairline);
+        border-radius: var(--radius-card);
+        box-shadow: var(--shadow-pin-hero);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 30px;
+        transform-origin: 50% 50%;
+      }
+
+      /* DM Mono eyebrow (catalog-card register) */
+      .s11-eyebrow {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 500;
+        font-size: 22px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--brand-primary);
+        opacity: 0.78;
+      }
+
+      /* Hairline rule under eyebrow */
+      .s11-rule {
+        width: 72px;
+        height: 1.5px;
+        background: var(--brand-primary);
+        opacity: 0.6;
+      }
+
+      /* Top install line — DM Mono, slightly smaller than the depth-hero below */
+      .s11-install {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 500;
+        font-size: 56px;
+        line-height: 1;
+        letter-spacing: 0.01em;
+        color: var(--brand-primary);
+        white-space: nowrap;
+        text-align: center;
+      }
+      .s11-install .s11-install-slash {
+        color: var(--brand-primary);
+        opacity: 0.55;
+      }
+      .s11-install .s11-install-token {
+        display: inline-block;
+        transform-origin: 50% 50%;
+        will-change: transform, text-shadow;
+      }
+
+      /* Hairline divider between the two command lines */
+      .s11-divider {
+        width: 320px;
+        height: 1px;
+        background: var(--brand-primary);
+        opacity: 0.22;
+        transform-origin: 50% 50%;
+      }
+
+      /* /rig:dev — the hero line. 3d-text-depth-layers stack lives here. */
+      .s11-hero-wrap {
+        position: relative;
+        display: inline-grid;
+        place-items: center;
+        padding: 8px 4px;
+      }
+      .s11-depth-stack {
+        position: relative;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: 0.005em;
+      }
+      .s11-depth-text {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 700;
+        font-size: 124px;
+        line-height: 1;
+        letter-spacing: 0.005em;
+        white-space: nowrap;
+        text-transform: none;
+      }
+      .s11-depth-text.is-back {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+      }
+      .s11-depth-text.is-front {
+        position: relative;
+        z-index: 10;
+        color: var(--brand-primary);
+        will-change: transform, text-shadow;
+      }
+      .s11-hero-slash {
+        opacity: 0.6;
+      }
+
+      /* GitHub handle pinned at the foot — hairline-ink mono, terse. */
+      .s11-handle {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 400;
+        font-size: 22px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--brand-primary);
+        opacity: 0.6;
+        margin-top: 6px;
+      }
+      .s11-handle::before {
+        content: "→ ";
+        opacity: 0.8;
+      }
+
+      /* Caveat-tone scribble in the LEFT margin — positioned absolute so it
+         truly sits in the margin rather than the card row. Placed BELOW the
+         centered card (card bbox y286-814) to guarantee no overlap, anchored
+         left at canvas margin like a hand-written annotation. */
+      .s11-scribble {
+        position: absolute;
+        left: 120px;
+        top: 870px;
+        width: 660px;
+        font-family: Inter, system-ui, sans-serif;
+        font-style: italic;
+        font-weight: 500;
+        font-size: 30px;
+        line-height: 1.18;
+        color: var(--brand-primary);
+        opacity: 0.85;
+        z-index: 2;
+        transform-origin: left bottom;
+        /* Tilt is applied via gsap.set so timeline transforms compose. */
+      }
+      .s11-scribble-underline {
+        border-bottom: 2px solid var(--brand-primary);
+      }
+    </style>
+
+    <div class="s11-grain"></div>
+
+    <div class="s11-stage" id="s11-stage">
+      <div class="s11-card" id="s11-card">
+        <span class="s11-eyebrow" id="s11-eyebrow">TRY IT</span>
+        <div class="s11-rule" id="s11-rule"></div>
+
+        <div class="s11-install" id="s11-install">
+          <span class="s11-install-slash">/</span><span>plugin&nbsp;</span><span class="s11-install-token" id="s11-install-token">install</span><span>&nbsp;rig</span>
+        </div>
+
+        <div class="s11-divider" id="s11-divider"></div>
+
+        <div class="s11-hero-wrap" id="s11-hero-wrap">
+          <div class="s11-depth-stack" id="s11-depth-stack">
+            <!-- 3d-text-depth-layers injected by script (LAYER_COUNT copies) -->
+          </div>
+        </div>
+
+        <span class="s11-handle" id="s11-handle">github.com/itoh-shun/rig</span>
+      </div>
+
+      <p class="s11-scribble" id="s11-scribble">
+        <span class="s11-scribble-underline">ひとり</span>で抱えなくていい。
+      </p>
+    </div>
+
+    <script>
+      // EASE / DUR — pasted from dispatch easings.js
+      const EASE = {
+        entry: "power2.out",      // soft arrival, paper settling
+        emphasis: "power3.out",   // pin-reveal / stamp-slam
+        exit: "power2.in",        // calm departure
+        drift: "sine.inOut",      // ambient drift
+      };
+      const DUR = { snap: 0.18, med: 0.5, slow: 0.95 };
+
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ----- 3d-text-depth-layers: build the /rig:dev stack -----
+      // Choices: LAYER_COUNT=4 (low end of range — quiet, single-step paper extrusion),
+      // OFFSET=(2,2) (light upper-left), BACK_ALPHA_MAX=0.55, _STEP=0.12, _MIN=0.18.
+      // Front color is brand-primary ink; back layers fade in a translucent ink.
+      const STACK = document.getElementById("s11-depth-stack");
+      const HERO_TEXT_PARTS = ["/", "rig:dev"];
+      const LAYER_COUNT = 4;
+      const OFFSET_X = 2;
+      const OFFSET_Y = 2;
+      const BACK_ALPHA_MAX = 0.55;
+      const BACK_ALPHA_STEP = 0.12;
+      const BACK_ALPHA_MIN = 0.18;
+      function makeLayerText() {
+        // Slash gets a slightly lower opacity via inline span — keeps the
+        // /rig:dev mark legible and the system's "dim slash" idiom intact.
+        return '<span class="s11-hero-slash">/</span><span>rig:dev</span>';
+      }
+      // Build back-to-front so the front (i=0) is appended LAST and its
+      // position:relative defines the container size.
+      for (let i = LAYER_COUNT - 1; i >= 0; i--) {
+        const el = document.createElement("div");
+        el.className = "s11-depth-text " + (i === 0 ? "is-front" : "is-back");
+        el.innerHTML = makeLayerText();
+        if (i > 0) {
+          const alpha = Math.max(BACK_ALPHA_MAX - i * BACK_ALPHA_STEP, BACK_ALPHA_MIN);
+          // Back layers in ink — translucent.
+          el.style.color = "rgba(31, 58, 138, " + alpha + ")";
+          el.style.transform = "translate(" + (i * OFFSET_X) + "px, " + (i * OFFSET_Y) + "px)";
+        }
+        el.dataset.layer = String(i);
+        STACK.appendChild(el);
+      }
+      const FRONT_LAYER = STACK.querySelector(".is-front");
+      const BACK_LAYERS = STACK.querySelectorAll(".is-back");
+
+      // ----- Initial hidden states (gsap.set, per cheat-sheet #2) -----
+      gsap.set("#s11-card", { opacity: 0, y: 18, scale: 0.985 });
+      gsap.set("#s11-eyebrow", { opacity: 0, y: 6 });
+      gsap.set("#s11-rule", { opacity: 0, scaleX: 0.3 });
+      gsap.set("#s11-install", { opacity: 0, y: 8 });
+      gsap.set("#s11-divider", { opacity: 0, scaleX: 0.3 });
+      gsap.set("#s11-hero-wrap", { opacity: 1 }); // wrapper visible; per-layer opacity gates the reveal
+      gsap.set(BACK_LAYERS, { opacity: 0 });
+      gsap.set(FRONT_LAYER, { opacity: 0, scale: 1, transformOrigin: "50% 50%" });
+      gsap.set("#s11-handle", { opacity: 0, y: 6 });
+      // Scribble carries -2° tilt in the timeline transform (NOT in CSS, per cheat-sheet #1).
+      gsap.set("#s11-scribble", { opacity: 0, x: -8, rotation: -2, transformOrigin: "left bottom" });
+      gsap.set("#s11-stage", { x: 0, y: 0 }); // parallax drift origin
+
+      // ----- Macro motion: ONE root-level slow parallax DRIFT (translate only).
+      // No scale push (anti-wobble HARD). Drift carries the eye across the whole
+      // 6.84s; the final 1.0s is FULLY STATIC, so the drift completes by t=5.84.
+      // ±5 px total — well under the catalog default cap (subtle floor).
+      const PARALLAX_END = 5.84;
+      tl.fromTo("#s11-stage",
+        { x: -3, y: -2 },
+        { x: 3, y: 2, duration: PARALLAX_END, ease: EASE.drift },
+        0);
+
+      // ----- Card lands (paper settling) -----
+      tl.to("#s11-card", { opacity: 1, y: 0, scale: 1, duration: DUR.slow, ease: EASE.entry }, 0.10);
+      tl.to("#s11-eyebrow", { opacity: 1, y: 0, duration: DUR.med, ease: EASE.entry }, 0.55);
+      tl.to("#s11-rule", { opacity: 0.6, scaleX: 1, duration: DUR.med, ease: EASE.entry }, 0.70);
+
+      // ----- Install line lands -----
+      tl.to("#s11-install", { opacity: 1, y: 0, duration: DUR.med, ease: EASE.entry }, 1.00);
+
+      // Hairline divider settles
+      tl.to("#s11-divider", { opacity: 0.22, scaleX: 1, duration: DUR.med, ease: EASE.entry }, 1.30);
+
+      // ----- 3d-text-depth-layers cascade entry on /rig:dev -----
+      // Cascade back→front so the depth builds toward the viewer.
+      const CASCADE_START = 1.55;
+      const CASCADE_STEP = 0.07;
+      const LAYER_FADE_DUR = 0.42;
+      for (let i = LAYER_COUNT - 1; i >= 0; i--) {
+        const el = STACK.querySelectorAll(".s11-depth-text")[LAYER_COUNT - 1 - i];
+        // Reordered above: we appended back-to-front, so index in querySelectorAll is order of appearance.
+        const layerEl = STACK.querySelectorAll(".s11-depth-text").item(LAYER_COUNT - 1 - i);
+        const finalAlpha = layerEl.classList.contains("is-front")
+          ? 1
+          : Math.max(BACK_ALPHA_MAX - i * BACK_ALPHA_STEP, BACK_ALPHA_MIN);
+        tl.to(layerEl, { opacity: finalAlpha, duration: LAYER_FADE_DUR, ease: EASE.entry },
+          CASCADE_START + (LAYER_COUNT - 1 - i) * CASCADE_STEP);
+      }
+
+      // ----- Scribble enters from the margin -----
+      tl.to("#s11-scribble", { opacity: 0.85, x: 0, duration: DUR.slow, ease: EASE.entry }, 1.90);
+
+      // ----- GitHub handle pinned at foot -----
+      tl.to("#s11-handle", { opacity: 0.6, y: 0, duration: DUR.med, ease: EASE.entry }, 2.30);
+
+      // ----- press-release-spring on /rig:dev hero line at ~3.0s -----
+      // Single tactile depth press: linear compression, spring recovery.
+      // ONLY kinetic moment in the scene (per brief).
+      const PRESS_START = 3.00;
+      const PRESS_DUR = 0.14;                              // tight, instant feel
+      const RELEASE_START = PRESS_START + PRESS_DUR;       // 3.14 — state continuity
+      const RELEASE_DUR = 0.55;
+      const BOUNCE_FACTOR = 1.5;                           // soft pop, editorial register
+      const PRESS_SCALE = 0.94;
+
+      // Press (linear compression)
+      tl.to(FRONT_LAYER, {
+        scale: PRESS_SCALE,
+        duration: PRESS_DUR,
+        ease: "power1.in",
+      }, PRESS_START);
+
+      // Release (spring back with overshoot) — back.out is allowed by film
+      // direction "no back.out/elastic/bounce" only as a DRIFT idle; the brief
+      // explicitly authorizes this single press-release moment. Bounce factor
+      // 1.5 keeps overshoot subtle (≤2°  visual displacement).
+      tl.to(FRONT_LAYER, {
+        scale: 1,
+        duration: RELEASE_DUR,
+        ease: "back.out(" + BOUNCE_FACTOR + ")",
+      }, RELEASE_START);
+
+      // Back layers gently follow the press for tactile cohesion (smaller scale).
+      tl.to(BACK_LAYERS, {
+        scale: 0.97,
+        duration: PRESS_DUR,
+        ease: "power1.in",
+        transformOrigin: "50% 50%",
+      }, PRESS_START);
+      tl.to(BACK_LAYERS, {
+        scale: 1,
+        duration: RELEASE_DUR,
+        ease: "back.out(" + BOUNCE_FACTOR + ")",
+      }, RELEASE_START);
+
+      // ----- asr-keyword-glow on "install" and "/rig:dev" -----
+      // Karaoke envelope: the narrator says インストール (mapped to the "install"
+      // token in /plugin install rig) and then /rig:dev. We drive text-shadow
+      // glow + a tiny scale boost on those two tokens, attack-sustain-release.
+      // EASE.drift (sine.inOut) is the ambient cap; this driver is linear ("none")
+      // per asr-keyword-glow critical constraint.
+      const SCENE_DURATION = 6.84;
+      const ATTACK = 0.18;
+      const RELEASE_ENV = 0.45;
+      const REST_LEVEL = 0.10;        // dim breadcrumb after speech
+      const MAX_BLUR = 16;            // default-style range
+      const MAX_SCALE_BOOST = 0.045;  // subtle — front layer already springs; we don't double-bounce
+      // Hand-authored speech windows (seconds), monotonic non-overlap:
+      const TIMINGS = {
+        install: { start: 1.20, end: 2.10 },
+        hero:    { start: 2.95, end: 3.85 },   // overlaps the press as the spoken emphasis
+      };
+      function envelope(t, start, end) {
+        const releaseEnd = end + RELEASE_ENV;
+        if (t < start) return 0;
+        if (t < end) return Math.min((t - start) / ATTACK, 1);
+        if (t < releaseEnd) {
+          const decay = (t - end) / RELEASE_ENV;
+          return 1 - decay * (1 - REST_LEVEL);
+        }
+        return REST_LEVEL;
+      }
+
+      const INSTALL_TOKEN = document.getElementById("s11-install-token");
+      const driver = { t: 0 };
+      tl.to(driver, {
+        t: SCENE_DURATION,
+        duration: SCENE_DURATION,
+        ease: "none",
+        onUpdate: () => {
+          // install token glow
+          const envI = envelope(driver.t, TIMINGS.install.start, TIMINGS.install.end);
+          const blurI = MAX_BLUR * envI;
+          const aI = 0.15 + envI * 0.55;
+          INSTALL_TOKEN.style.textShadow = "0 0 " + blurI + "px rgba(31, 58, 138, " + aI + ")";
+          // scale on install (text-shadow only — no scale double-up after press)
+          // Hero glow — only text-shadow; the scale beat is the press-release.
+          const envH = envelope(driver.t, TIMINGS.hero.start, TIMINGS.hero.end);
+          const blurH = MAX_BLUR * envH;
+          const aH = 0.15 + envH * 0.55;
+          FRONT_LAYER.style.textShadow = "0 0 " + blurH + "px rgba(31, 58, 138, " + aH + ")";
+        },
+      }, 0);
+
+      // ----- Stillness-before-climax: final 1.0s static hold -----
+      // Per directive: NO sine-wave-loop, no scheduled tweens in the tail.
+      // The parallax drift ends at t=5.84; everything else is settled by ~5.0s.
+      // Driver continues to t=6.84 only to keep asr glow at REST_LEVEL — no motion.
+
+      window.__timelines["scene_11"] = tl;
+    </script>
+  </div>
+</template>

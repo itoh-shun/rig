@@ -1,0 +1,2945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>capture × Pin &amp; Paper — design.html</title>
+<!--
+  AGENT NOTE — design.html (product-launch-video Phase 1b output)
+  Brand DNA from: 
+  Style preset:   pin-and-paper (forced)
+  Generated:      2026-06-25T02:15:43.942Z
+
+  Downstream usage (Phase 4b scene workers):
+    - §2: grep <!-- ROOT-START --> .. <!-- ROOT-END --> → paste into scene <style>
+    - §4: grep <!-- MOTION-START --> .. <!-- MOTION-END --> → paste into <script>
+    - §5: grep <!-- VOICE-START --> .. <!-- VOICE-END --> → register for DOM text copy
+    - §H: grep <!-- HINTS-START --> .. <!-- HINTS-END --> → composition rules for plan agent
+    - §6: grep <!-- COMPONENT: <name> --> .. <!-- /COMPONENT --> → paste by name
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- preset chromeFonts: native typography for doc chrome + .preset-native-scope -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;family=Caveat:wght@500;600;700&amp;family=DM+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    color: #1F3A8A;
+    background: #EFE56A;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+  .ds-section { padding: 80px 0; border-top: 1px solid #e5e5e5; }
+  .ds-section:first-of-type { border-top: none; }
+  .eyebrow { font-family: 'DM Mono', ui-monospace, monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 0.14em; opacity: 0.6; margin-bottom: 12px; }
+  h1, h2, h3 { font-family: 'Space Grotesk', serif; font-weight: 400; letter-spacing: -0.015em; line-height: 1.05; }
+  h2 { font-size: clamp(36px, 4vw, 56px); margin-bottom: 16px; }
+  h3.ds-h3 { font-size: 18px; font-family: 'Space Grotesk', sans-serif; font-weight: 600; margin: 20px 0 12px; opacity: 0.85; }
+  .ds-prose { font-size: 16px; max-width: 62ch; margin: 12px 0; opacity: 0.85; }
+  .ds-prose code, code { font-family: 'DM Mono', monospace; background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+  .ds-code { font-family: 'DM Mono', monospace; background: #0f1419; color: #e6edf3; padding: 20px 24px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 16px 0; white-space: pre; }
+  .ds-summary { cursor: pointer; padding: 8px 0; font-family: 'DM Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.7; }
+  details[open] .ds-summary { opacity: 1; }
+
+  /* Paste-ready source blocks — collapsed by default because the raw markdown / CSS
+     in <pre> doesn't render as a readable doc (it's machine-bound for emit-chunks).
+     The rendered version sits above each <details>. */
+  .ds-paste-ready { margin: 16px 0; padding: 12px 16px; border: 1px dashed #bbb; border-radius: 8px; background: #fafafa; }
+  .ds-paste-ready > .ds-summary { padding: 4px 0; font-size: 11px; opacity: 0.85; }
+  .ds-paste-ready > .ds-summary code { background: #eee; padding: 1px 5px; border-radius: 3px; font-size: 0.95em; }
+  .ds-paste-ready[open] > .ds-summary { margin-bottom: 8px; }
+  .ds-paste-ready > pre.ds-code { margin: 0; }
+
+  /* ── Title card */
+  .title-card { padding: 80px 0 64px; border-bottom: 1px solid #e5e5e5; }
+  .title-card-inner { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+  .brand-row { display: flex; gap: 12px; align-items: baseline; font-family: 'DM Mono', monospace; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 24px; }
+  .brand-name { color: #1F3A8A; font-weight: 700; }
+  .brand-x { opacity: 0.4; }
+  .style-name { color: #C2342B; font-weight: 700; }
+  .title-display { font-size: clamp(48px, 7vw, 96px); margin: 0; }
+  .title-meta { margin-top: 32px; font-family: 'DM Mono', monospace; font-size: 12px; opacity: 0.7; }
+  .title-meta strong { font-weight: 700; opacity: 0.9; }
+
+  /* ── §1 Brand DNA */
+  .dna-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+  .dna-grid-5 { grid-template-columns: repeat(5, 1fr); }
+  .dna-swatch { padding: 24px 20px; border-radius: 8px; min-height: 120px; display: flex; flex-direction: column; justify-content: space-between; }
+  .dna-label { font-family: 'DM Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.8; }
+  .dna-hex { font-family: 'DM Mono', monospace; font-size: 18px; font-weight: 700; }
+  .dna-desc { margin-top: 24px; font-size: 18px; line-height: 1.55; max-width: 60ch; opacity: 0.85; }
+  .dna-gradient { margin: 32px 0 0; }
+  .dna-gradient-label { font-family: 'DM Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.6; margin-bottom: 10px; }
+  .dna-gradient-bar { height: 96px; border-radius: 8px; }
+  .dna-gradient-code { display: block; margin-top: 10px; font-family: 'DM Mono', monospace; font-size: 12px; opacity: 0.7; word-break: break-all; }
+  @media (max-width: 900px) { .dna-grid-5 { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 720px) { .dna-grid { grid-template-columns: repeat(2, 1fr); } .dna-grid-5 { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ── §3 Typography */
+  .type-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 24px 0; }
+  .type-card { padding: 24px; border: 1px solid #e5e5e5; border-radius: 8px; }
+  .type-role { font-family: 'DM Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.6; }
+  .type-name { font-size: 18px; font-weight: 600; margin: 4px 0; }
+  .type-note { font-family: 'DM Mono', monospace; font-size: 11px; opacity: 0.5; margin-bottom: 16px; }
+  .type-specimen { margin-top: 16px; }
+  @media (max-width: 720px) { .type-grid { grid-template-columns: 1fr; } }
+
+  /* ── §5 Voice */
+  .voice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin: 24px 0; }
+  .voice-dl dt { font-family: 'DM Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.6; margin-top: 16px; }
+  .voice-dl dd { font-size: 15px; margin-top: 4px; }
+  .voice-cta { display: inline-block; padding: 2px 10px; border: 1px solid #ddd; border-radius: 999px; font-size: 13px; margin: 2px 4px 2px 0; }
+  .voice-sample { font-size: 15px; opacity: 0.85; margin: 4px 0; }
+  .voice-pair { padding: 16px; border: 1px solid #e5e5e5; border-radius: 8px; margin: 12px 0; }
+  .voice-tag { font-family: 'DM Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; opacity: 0.6; margin-right: 8px; }
+  .voice-in { margin-bottom: 8px; }
+  .voice-out { opacity: 0.7; }
+  @media (max-width: 720px) { .voice-grid { grid-template-columns: 1fr; } }
+
+  /* ── §6 Components */
+  .comp-card { padding: 0; border: 1px solid #e5e5e5; border-radius: 8px; margin: 16px 0; overflow: hidden; }
+  .comp-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #fafafa; border-bottom: 1px solid #e5e5e5; }
+  .comp-name { font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 700; }
+  .comp-marker { font-family: 'DM Mono', monospace; font-size: 11px; opacity: 0.6; }
+  /* Component preview: components are authored for 1920×1080 scenes. The doc
+     container is ~1056px wide, so wide components (mega-stat etc.) overflow.
+     Allow horizontal scroll so reviewers can pan; max-height caps vertical too. */
+  .comp-preview { padding: 32px; background: #EFE56A; overflow: auto; max-height: 720px; }
+  .comp-preview::-webkit-scrollbar { height: 8px; width: 8px; }
+  .comp-preview::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+
+  /* ── Markdown blocks (mdBlockToHtml output) */
+  .ds-prose-block { max-width: 80ch; margin: 16px 0; }
+  .ds-prose-block .ds-prose { margin: 0 0 12px; }
+  .ds-prose-block .ds-prose:last-child { margin-bottom: 0; }
+  .ds-prose-block .ds-h2 { font-family: 'Space Grotesk', serif; font-size: 24px; margin: 24px 0 12px; }
+  .ds-prose-block .ds-h3 { font-size: 16px; font-weight: 700; margin: 20px 0 8px; opacity: 0.9; }
+  .ds-prose-block .ds-h4 { font-size: 14px; font-weight: 700; margin: 18px 0 6px; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.06em; }
+  .ds-prose-block .ds-list { margin: 8px 0 16px; padding-left: 24px; }
+  .ds-prose-block .ds-list li { margin: 4px 0; line-height: 1.55; }
+  .ds-prose-block .ds-list li code { font-size: 0.92em; }
+  .ds-prose-block .ds-code { margin: 12px 0; }
+  .ds-table { border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  .ds-table th, .ds-table td { padding: 8px 12px; border: 1px solid #e5e5e5; vertical-align: top; text-align: left; }
+  .ds-table th { background: #fafafa; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .ds-table td code { font-size: 0.92em; }
+  
+
+/* ── Preset §I page styling (from pin-and-paper.md) ── */
+/* ── Preset-native typography vars (loaded via preset-meta.chromeFonts.googleFontsHref).
+ * These let the doc chrome render in Space Grotesk + Caveat + DM Mono regardless
+ * of which brand DNA the preset is applied to. The §6 component preview and §T
+ * type-role atlas also read these via .preset-native-scope.
+ *
+ * Fallback chains end in a face that still carries the preset's vibe (Inter /
+ * Manrope for the printed display + body; system cursives for the script;
+ * IBM Plex Mono / Menlo for the archival mono). Caveat in particular is
+ * non-substitutable — its absence falls through to `cursive` which varies
+ * widely by OS, so the chain stays short and intentional. */
+:root {
+  --f-disp-native:
+    "Space Grotesk", "Inter Tight", "Manrope", -apple-system, BlinkMacSystemFont, system-ui,
+    sans-serif;
+  --f-body-native:
+    "Space Grotesk", "Inter", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, system-ui,
+    sans-serif;
+  --f-script-native: "Caveat", "Kalam", "Shadows Into Light", "Brush Script MT", cursive;
+  --f-mono-native:
+    "DM Mono", "JetBrains Mono", "IBM Plex Mono", "Space Mono", "Menlo", ui-monospace, monospace;
+}
+
+/* .preset-native-scope: re-bind brand DNA font tokens to preset-native families.
+ * Wraps §6 component previews and §T type-role samples so
+ * var(--font-*) resolves to Space Grotesk / Caveat / DM Mono regardless of the
+ * brand DNA tokens emitted in :root. The paste-ready component source is
+ * untouched — Phase 4b still grep + paste original `var(--font-display)`
+ * tokens, which resolve to brand DNA at scene-render time. */
+.preset-native-scope {
+  --font-display: var(--f-disp-native);
+  --font-body: var(--f-body-native);
+  --font-script: var(--f-script-native);
+  --font-mono: var(--f-mono-native);
+}
+
+body {
+  background: var(--surface-paper);
+  position: relative;
+  color: var(--brand-primary);
+  font-family: "Space Grotesk", "Inter", sans-serif;
+}
+body::before {
+  /* Paper grain on design.html itself */
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: var(--paper-grain);
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 9999;
+}
+.title-card {
+  background: var(--surface-paper);
+  border-bottom: var(--border-hairline);
+  padding: 96px 0 80px;
+}
+.title-display {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--brand-primary);
+}
+.brand-name {
+  color: var(--brand-primary);
+  font-weight: 700;
+}
+.style-name {
+  font-family: "Caveat", cursive;
+  font-weight: 700;
+  color: var(--brand-primary);
+  transform: rotate(-2deg);
+  display: inline-block;
+}
+.ds-section {
+  border-top: var(--border-dashed);
+  padding: 80px 0;
+}
+h2 {
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--brand-primary);
+}
+.eyebrow {
+  font-family: "DM Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--brand-primary);
+  opacity: 0.7;
+  font-weight: 500;
+}
+.type-card,
+.voice-pair,
+.comp-card {
+  background: var(--surface-cream) !important;
+  border: var(--border-hairline) !important;
+  border-radius: var(--radius-card) !important;
+  box-shadow: var(--shadow-pin-standard) !important;
+}
+/* dna-swatch keeps its inline brand-color background — only restyle border/shadow */
+.dna-swatch {
+  border: var(--border-hairline) !important;
+  border-radius: var(--radius-card) !important;
+  box-shadow: var(--shadow-pin-standard) !important;
+}
+.comp-head {
+  background: var(--surface-paper-2) !important;
+  color: var(--brand-primary) !important;
+  border-bottom: var(--border-hairline) !important;
+  font-family: "DM Mono", monospace !important;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.ds-code {
+  background: var(--surface-cream) !important;
+  border: var(--border-hairline) !important;
+  border-radius: var(--radius-card) !important;
+  color: var(--brand-primary) !important;
+  font-family: "DM Mono", monospace !important;
+}
+
+/* ── §T Type-role atlas. Container = a single cream pinned-card with the
+ * universal hard ink offset shadow. Each row is a single-column entry padded
+ * only — no inner grid, no eyebrow column. Each .t-trole-* class encodes the
+ * role's family / size / weight / leading / tracking / case / decoration.
+ * Family selectors use var(--font-*) tokens so the atlas renders in BRAND DNA
+ * fonts; only the recipe is preset-declared. Decoration (color, border,
+ * shadow, rotation, stamp, pill) stays hard-coded to pin-and-paper tokens
+ * (var(--brand-primary), var(--brand-accent), var(--surface-paper) etc.). */
+.ds-trole-box {
+  display: flex;
+  flex-direction: column;
+  border: var(--border-hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface-cream);
+  box-shadow: var(--shadow-pin-standard);
+  overflow: hidden;
+  margin-top: 24px;
+}
+.ds-trole-row {
+  padding: 28px 32px;
+  border-bottom: var(--border-dashed);
+}
+.ds-trole-row:last-child {
+  border-bottom: 0;
+}
+.ds-trole-sample {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 960px) {
+  .ds-trole-row {
+    padding: 24px;
+  }
+}
+
+/* ── Type-role samples. Each .t-trole-* class mirrors a pin-and-paper type-scale
+ * entry but uses var(--font-display/body/script/mono) so the actual typeface
+ * comes from brand DNA. Decoration (color, border, shadow, rotation, stamp,
+ * pill) is preset-native. */
+.t-trole-display-cover {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(64px, 10vw, 196px);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+  color: var(--brand-primary);
+}
+.t-trole-display-section {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(64px, 9vw, 168px);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  background: var(--brand-primary);
+  color: var(--surface-paper);
+  padding: 24px 32px;
+  max-width: 16ch;
+}
+.t-trole-number-hero {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(80px, 9vw, 168px);
+  line-height: 0.85;
+  letter-spacing: -0.04em;
+  color: var(--brand-primary);
+}
+.t-trole-number-hero small {
+  font-family: var(--font-script);
+  font-weight: 700;
+  font-size: 0.36em;
+  line-height: 1;
+  letter-spacing: 0;
+  margin-left: 0.12em;
+}
+.t-trole-h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(64px, 7vw, 130px);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  color: var(--brand-primary);
+}
+.t-trole-h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(48px, 5vw, 96px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--brand-primary);
+}
+.t-trole-card-h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(24px, 2.4vw, 38px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: var(--brand-primary);
+}
+.t-trole-quote-text {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: clamp(28px, 3.5vw, 50px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--brand-primary);
+  max-width: 22ch;
+}
+.t-trole-scribble-lg {
+  font-family: var(--font-script);
+  font-weight: 700;
+  font-size: clamp(48px, 5.5vw, 70px);
+  line-height: 0.9;
+  color: var(--brand-primary);
+}
+.t-trole-scribble-sm {
+  display: inline-block;
+  font-family: var(--font-script);
+  font-weight: 600;
+  font-size: clamp(32px, 2.8vw, 38px);
+  line-height: 1.05;
+  color: var(--brand-primary);
+  transform: rotate(-2deg);
+}
+.t-trole-scribble-sm .pp-underline {
+  border-bottom: 2px solid var(--brand-primary);
+  padding-bottom: 1px;
+}
+.t-trole-label-top {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.4vw, 26px);
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brand-primary);
+}
+.t-trole-label-footer {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.3vw, 25px);
+  line-height: 1.2;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-primary);
+  opacity: 0.65;
+}
+.t-trole-stamp-mark {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.4vw, 26px);
+  line-height: 1;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brand-accent);
+  background: transparent;
+  border: 3px solid var(--brand-accent);
+  padding: 6px 16px;
+  transform: rotate(-4deg);
+}
+.t-trole-pill-yes {
+  display: inline-block;
+  font-family: var(--font-script);
+  font-weight: 600;
+  font-size: clamp(24px, 2vw, 28px);
+  line-height: 1;
+  color: var(--surface-paper);
+  background: var(--brand-primary);
+  border: 1.5px solid var(--brand-primary);
+  border-radius: 999px;
+  padding: 4px 14px;
+}
+.t-trole-pill-no {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.4vw, 26px);
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-accent);
+  background: transparent;
+  border: 1.5px solid var(--brand-accent);
+  border-radius: 999px;
+  padding: 4px 14px;
+}
+
+</style>
+</head>
+<body>
+
+
+<section class="title-card">
+  <div class="title-card-inner">
+    <div class="brand-row">
+      <span class="brand-name">capture</span>
+      <span class="brand-x">×</span>
+      <span class="style-name">Pin &amp; Paper</span>
+    </div>
+    <h1 class="title-display">capture</h1>
+    <p class="title-meta">
+      <strong>Source</strong> —
+      &nbsp;·&nbsp;
+      <strong>Material</strong> flat
+      &nbsp;·&nbsp;
+      <strong>Intent</strong> landing
+      &nbsp;·&nbsp;
+      <strong>Style</strong> Pin &amp; Paper (forced)
+    </p>
+  </div>
+</section>
+
+<main class="wrap">
+
+<section id="brand-dna" class="ds-section">
+  <div class="eyebrow">§1 · Brand DNA (from site)</div>
+  <h2>capture in one glance</h2>
+  <div class="dna-grid dna-grid-5">
+    
+    <div class="dna-swatch" style="background: #1F3A8A; color: #fff; ">
+      <div class="dna-label">Primary</div>
+      <div class="dna-hex">#1F3A8A</div>
+    </div>
+    
+    <div class="dna-swatch" style="background: #C9A66B; color: #000; ">
+      <div class="dna-label">Secondary</div>
+      <div class="dna-hex">#C9A66B</div>
+    </div>
+    
+    <div class="dna-swatch" style="background: #C2342B; color: #fff; ">
+      <div class="dna-label">Accent</div>
+      <div class="dna-hex">#C2342B</div>
+    </div>
+    
+    <div class="dna-swatch" style="background: #EFE56A; color: #000; border: 1px solid #eee;">
+      <div class="dna-label">Canvas</div>
+      <div class="dna-hex">#EFE56A</div>
+    </div>
+    
+    <div class="dna-swatch" style="background: #1F3A8A; color: #fff; ">
+      <div class="dna-label">Ink</div>
+      <div class="dna-hex">#1F3A8A</div>
+    </div>
+  </div>
+
+  <div class="dna-gradient">
+    <div class="dna-gradient-label">Signature gradient</div>
+    <div class="dna-gradient-bar" style="background: linear-gradient(135deg, #1F3A8A 0%, #C9A66B 50%, #C2342B 100%);"></div>
+    <code class="dna-gradient-code">linear-gradient(135deg, #1F3A8A 0%, #C9A66B 50%, #C2342B 100%)</code>
+  </div>
+
+  <p class="dna-desc">Claude Code のためのレゴ式開発フロー・オーケストレータ。ブリックを起動時に組み合わせてタスク専用のエージェント・ハーネスを engineering する。</p>
+</section>
+
+<section id="color-tokens" class="ds-section">
+  <div class="eyebrow">§2 · Color × Style overlay</div>
+  <h2>Color tokens + Pin &amp; Paper decoration vars</h2>
+  <p class="ds-prose">Brand colors come from the site. Decoration variables come from the <strong>Pin &amp; Paper</strong> preset. The <code>:root</code> block is live on this page (so §6 component previews render properly). The paste-ready source for <code>chunks/tokens.css</code> is collapsed below — open it to copy.</p>
+  <style>:root {
+  --brand-primary:   #1F3A8A;
+  --brand-secondary: #C9A66B;
+  --brand-tertiary:  #000000;
+  --brand-accent:    #C2342B;
+  --brand-costume:   #F8F1D6;
+  --ink:             #1F3A8A;
+  --canvas:          #EFE56A;
+  --brand-gradient:  linear-gradient(135deg, #1F3A8A 0%, #C9A66B 50%, #C2342B 100%);
+  --deco-1:          #F7CB46;
+  --deco-2:          #99E885;
+  --deco-3:          #C0F7FE;
+  --deco-4:          #FE90E8;
+  --font-display:    'Space Grotesk', system-ui, sans-serif;
+  --font-body:       'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:       'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --anchor-paper-yellow: #efe56a; /* saturated cadmium yellow — the page */
+  --anchor-cream: #f8f1d6; /* off-white ivory — the cards */
+  --surface-paper: color-mix(in srgb, var(--brand-primary) 6%, var(--anchor-paper-yellow));
+  --surface-paper-2: color-mix(
+  in srgb,
+  var(--brand-primary) 4%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 70%, white)
+);
+  --surface-paper-3: color-mix(
+  in srgb,
+  var(--brand-primary) 8%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 85%, black 8%)
+);
+  --surface-cream: color-mix(in srgb, var(--brand-primary) 4%, var(--anchor-cream));
+  --shadow-pin-compact: 4px 5px 0 0 var(--brand-primary);
+  --shadow-pin-standard: 5px 6px 0 0 var(--brand-primary);
+  --shadow-pin-hero: 8px 9px 0 0 var(--brand-primary);
+  --border-hairline: 1.5px solid var(--brand-primary);
+  --border-dashed: 1.5px dashed color-mix(in srgb, var(--brand-primary) 45%, transparent);
+  --border-stamp: 3px solid var(--brand-accent);
+  --radius-card: 4px;
+  --radius-pill: 999px;
+  --pad-edge: 64px;
+  --pad-top: 110px;
+  --pad-bottom: 90px;
+  --card-pad: 28px;
+  --card-pad-lg: 36px 28px 28px;
+  --gap-card-sm: 22px;
+  --gap-card-md: 28px;
+  --gap-card-lg: 32px;
+  --tilt-pin: -10deg;
+  --tilt-pin-alt: 14deg;
+  --tilt-card-askew: 0.9deg;
+  --tilt-scribble: -2deg;
+  --tilt-stamp: -4deg;
+  --paper-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.4' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.45  0 0 0 0 0.2  0 0 0 .25 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }</style>
+  <details class="ds-paste-ready">
+    <summary class="ds-summary">▸ Paste-ready source → <code>chunks/tokens.css</code></summary>
+    <pre class="ds-code"><!-- ROOT-START -->:root {
+  --brand-primary:   #1F3A8A;
+  --brand-secondary: #C9A66B;
+  --brand-tertiary:  #000000;
+  --brand-accent:    #C2342B;
+  --brand-costume:   #F8F1D6;
+  --ink:             #1F3A8A;
+  --canvas:          #EFE56A;
+  --brand-gradient:  linear-gradient(135deg, #1F3A8A 0%, #C9A66B 50%, #C2342B 100%);
+  --deco-1:          #F7CB46;
+  --deco-2:          #99E885;
+  --deco-3:          #C0F7FE;
+  --deco-4:          #FE90E8;
+  --font-display:    'Space Grotesk', system-ui, sans-serif;
+  --font-body:       'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:       'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --anchor-paper-yellow: #efe56a; /* saturated cadmium yellow — the page */
+  --anchor-cream: #f8f1d6; /* off-white ivory — the cards */
+  --surface-paper: color-mix(in srgb, var(--brand-primary) 6%, var(--anchor-paper-yellow));
+  --surface-paper-2: color-mix(
+  in srgb,
+  var(--brand-primary) 4%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 70%, white)
+);
+  --surface-paper-3: color-mix(
+  in srgb,
+  var(--brand-primary) 8%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 85%, black 8%)
+);
+  --surface-cream: color-mix(in srgb, var(--brand-primary) 4%, var(--anchor-cream));
+  --shadow-pin-compact: 4px 5px 0 0 var(--brand-primary);
+  --shadow-pin-standard: 5px 6px 0 0 var(--brand-primary);
+  --shadow-pin-hero: 8px 9px 0 0 var(--brand-primary);
+  --border-hairline: 1.5px solid var(--brand-primary);
+  --border-dashed: 1.5px dashed color-mix(in srgb, var(--brand-primary) 45%, transparent);
+  --border-stamp: 3px solid var(--brand-accent);
+  --radius-card: 4px;
+  --radius-pill: 999px;
+  --pad-edge: 64px;
+  --pad-top: 110px;
+  --pad-bottom: 90px;
+  --card-pad: 28px;
+  --card-pad-lg: 36px 28px 28px;
+  --gap-card-sm: 22px;
+  --gap-card-md: 28px;
+  --gap-card-lg: 32px;
+  --tilt-pin: -10deg;
+  --tilt-pin-alt: 14deg;
+  --tilt-card-askew: 0.9deg;
+  --tilt-scribble: -2deg;
+  --tilt-stamp: -4deg;
+  --paper-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.4' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.45  0 0 0 0 0.2  0 0 0 .25 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}<!-- ROOT-END --></pre>
+  </details>
+</section>
+
+<section id="typography" class="ds-section">
+  <div class="eyebrow">§3 · Typography</div>
+  <h2>Type roles</h2>
+  <p class="ds-prose">Font families resolved by 4-step lookup: site name on Google Fonts → self-host local woff2 → preset §D fallback → final hard-coded fallback. Each card shows which step landed.</p>
+
+  <div class="type-grid">
+    
+    <div class="type-card">
+      <div class="type-role">Display</div>
+      <div class="type-name">Space Grotesk</div>
+      <div class="type-note">site has no display face → preset fallback</div>
+      <div class="type-specimen" style="font-family: 'Space Grotesk', serif; font-size: 72px; font-weight: 400; letter-spacing: -0.02em; line-height: 1;">capture</div>
+    </div>
+    <div class="type-card">
+      <div class="type-role">Body</div>
+      <div class="type-name">Space Grotesk</div>
+      <div class="type-note">site has no body face → preset fallback</div>
+      <div class="type-specimen" style="font-family: 'Space Grotesk', sans-serif; font-size: 22px; line-height: 1.5;">The quick brown fox jumps over the lazy dog.</div>
+    </div>
+    <div class="type-card">
+      <div class="type-role">Mono</div>
+      <div class="type-name">DM Mono</div>
+      <div class="type-note">site has no mono face → preset fallback</div>
+      <div class="type-specimen" style="font-family: 'DM Mono', ui-monospace, monospace; font-size: 18px;">font: DM Mono</div>
+    </div>
+  </div>
+
+  <h3 class="ds-h3" style="margin-top: 48px;">Type-role atlas</h3>
+  <div class="ds-trole-box">
+    
+    <div class="ds-trole-row" data-scale="display-cover" data-family="display" data-px-min="96" data-px-max="196" data-weight="700" data-leading="1.08" data-tracking="-0.04em" data-case="mixed" data-purpose="cover hero — Space Grotesk 700 mixed case, ink-blue on yellow paper">
+      <div class="ds-trole-sample"><div class="t-trole-display-cover">BRAND_NAME</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="display-section" data-family="display" data-px-min="96" data-px-max="168" data-weight="700" data-leading="1.05" data-tracking="-0.04em" data-case="mixed" data-purpose="section-divider headline on ink-blue surface (paper-yellow text)">
+      <div class="ds-trole-sample"><div class="t-trole-display-section">Section title.</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="number-hero" data-family="display" data-px-min="96" data-px-max="168" data-weight="700" data-leading="0.85" data-tracking="-0.04em" data-case="mixed" data-purpose="hero stat numeral — Space Grotesk 700, ink-blue, paired with Caveat unit suffix">
+      <div class="ds-trole-sample"><div class="t-trole-number-hero">63<small>%</small></div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="h1" data-family="display" data-px-min="84" data-px-max="130" data-weight="700" data-leading="1.05" data-tracking="-0.035em" data-case="mixed" data-purpose="closing CTA headline / chart-slide headline">
+      <div class="ds-trole-sample"><div class="t-trole-h1">One canvas. Everyone home.</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="h2" data-family="display" data-px-min="64" data-px-max="96" data-weight="700" data-leading="1.05" data-tracking="-0.03em" data-case="mixed" data-purpose="standard slide headline — Space Grotesk 700 mixed case">
+      <div class="ds-trole-sample"><div class="t-trole-h2">Designed together.</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="card-h3" data-family="display" data-px-min="28" data-px-max="38" data-weight="700" data-leading="1.02" data-tracking="-0.02em" data-case="mixed" data-purpose="pinned-card title — Space Grotesk 700, ink-blue on cream">
+      <div class="ds-trole-sample"><div class="t-trole-card-h3">Field report</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="quote-text" data-family="display" data-px-min="36" data-px-max="50" data-weight="500" data-leading="1.1" data-tracking="-0.02em" data-case="mixed" data-purpose="pull-quote body — Space Grotesk 500 mixed case">
+      <div class="ds-trole-sample"><div class="t-trole-quote-text">The work gets simpler as the team gets braver.</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="scribble-lg" data-family="script" data-px-min="60" data-px-max="70" data-weight="700" data-leading="0.9" data-tracking="0" data-case="sentence" data-purpose="process step numeral / large hand-script accent — Caveat 700, ink-blue">
+      <div class="ds-trole-sample"><div class="t-trole-scribble-lg">3</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="scribble-sm" data-family="script" data-px-min="32" data-px-max="38" data-weight="600" data-leading="1.05" data-tracking="0" data-case="sentence" data-purpose="marginal note / &#39;me&#39; voice annotation — Caveat 600, slight rotation">
+      <div class="ds-trole-sample"><div class="t-trole-scribble-sm">finally — <span class="pp-underline">one canvas</span>, everyone home</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="label-top" data-family="mono" data-px-min="24" data-px-max="26" data-weight="500" data-leading="1.2" data-tracking="0.12em" data-case="upper" data-purpose="top-chrome brand lockup / archival tag — DM Mono 500 uppercase">
+      <div class="ds-trole-sample"><div class="t-trole-label-top">Field report · Vol. 01</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="label-footer" data-family="mono" data-px-min="24" data-px-max="25" data-weight="500" data-leading="1.2" data-tracking="0.14em" data-case="upper" data-purpose="footer chrome — DM Mono 500 uppercase, 65% opacity">
+      <div class="ds-trole-sample"><div class="t-trole-label-footer">Source · Internal study, 2026</div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="stamp-mark" data-family="mono" data-px-min="24" data-px-max="26" data-weight="500" data-leading="1" data-tracking="0.18em" data-case="upper" data-purpose="cinnabar-red rubber stamp — 3px solid red border, red mono uppercase, rotated -4deg">
+      <div class="ds-trole-sample"><div><span class="t-trole-stamp-mark">Received</span></div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="pill-yes" data-family="script" data-px-min="24" data-px-max="28" data-weight="600" data-leading="1" data-tracking="0" data-case="sentence" data-purpose="affirmative pill — solid ink fill with Caveat paper-yellow text inside a 999px pill">
+      <div class="ds-trole-sample"><div><span class="t-trole-pill-yes">Yes</span></div></div>
+    </div>
+    <div class="ds-trole-row" data-scale="pill-no" data-family="mono" data-px-min="24" data-px-max="26" data-weight="500" data-leading="1" data-tracking="0.14em" data-case="upper" data-purpose="negative pill — red mono uppercase inside a red-bordered transparent 999px pill">
+      <div class="ds-trole-sample"><div><span class="t-trole-pill-no">No</span></div></div>
+    </div>
+  </div>
+
+  <details class="ds-paste-ready" style="margin-top: 32px;">
+    <summary class="ds-summary">▸ Paste-ready source → <code>chunks/type-roles.md</code> (scene worker reads on demand)</summary>
+    <pre class="ds-code"><!-- TYPE-ROLES-START -->
+# Type-roles atlas — Pin &amp; Paper
+
+Phase 4b scene worker reads this when text outside §6 components is needed (hero displays, ledes, pill rows, CTA buttons, …). Workflow: pick role by id → paste the CSS rule into scene `&lt;style&gt;` with `s&lt;N&gt;-` prefix on the class names → wrap content using the prefixed class. Family tokens (`var(--font-*)`) resolve to brand DNA at scene-render time.
+
+## type-role: display-cover
+
+- family: display · px: 96–196 · weight: 700
+- leading: 1.08 · tracking: -0.04em · case: mixed
+- purpose: cover hero — Space Grotesk 700 mixed case, ink-blue on yellow paper
+
+```css
+.t-trole-display-cover {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(64px, 10vw, 196px);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+  color: var(--brand-primary);
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-display-cover&quot;&gt;{BRAND_NAME}&lt;/div&gt;
+```
+
+## type-role: display-section
+
+- family: display · px: 96–168 · weight: 700
+- leading: 1.05 · tracking: -0.04em · case: mixed
+- purpose: section-divider headline on ink-blue surface (paper-yellow text)
+
+```css
+.t-trole-display-section {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(64px, 9vw, 168px);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  background: var(--brand-primary);
+  color: var(--surface-paper);
+  padding: 24px 32px;
+  max-width: 16ch;
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-display-section&quot;&gt;Section title.&lt;/div&gt;
+```
+
+## type-role: number-hero
+
+- family: display · px: 96–168 · weight: 700
+- leading: 0.85 · tracking: -0.04em · case: mixed
+- purpose: hero stat numeral — Space Grotesk 700, ink-blue, paired with Caveat unit suffix
+
+```css
+.t-trole-number-hero {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(80px, 9vw, 168px);
+  line-height: 0.85;
+  letter-spacing: -0.04em;
+  color: var(--brand-primary);
+}
+
+.t-trole-number-hero small {
+  font-family: var(--font-script);
+  font-weight: 700;
+  font-size: 0.36em;
+  line-height: 1;
+  letter-spacing: 0;
+  margin-left: 0.12em;
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-number-hero&quot;&gt;63&lt;small&gt;%&lt;/small&gt;&lt;/div&gt;
+```
+
+## type-role: h1
+
+- family: display · px: 84–130 · weight: 700
+- leading: 1.05 · tracking: -0.035em · case: mixed
+- purpose: closing CTA headline / chart-slide headline
+
+```css
+.t-trole-h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(64px, 7vw, 130px);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  color: var(--brand-primary);
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-h1&quot;&gt;One canvas. Everyone home.&lt;/div&gt;
+```
+
+## type-role: h2
+
+- family: display · px: 64–96 · weight: 700
+- leading: 1.05 · tracking: -0.03em · case: mixed
+- purpose: standard slide headline — Space Grotesk 700 mixed case
+
+```css
+.t-trole-h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(48px, 5vw, 96px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--brand-primary);
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-h2&quot;&gt;Designed together.&lt;/div&gt;
+```
+
+## type-role: card-h3
+
+- family: display · px: 28–38 · weight: 700
+- leading: 1.02 · tracking: -0.02em · case: mixed
+- purpose: pinned-card title — Space Grotesk 700, ink-blue on cream
+
+```css
+.t-trole-card-h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(24px, 2.4vw, 38px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: var(--brand-primary);
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-card-h3&quot;&gt;Field report&lt;/div&gt;
+```
+
+## type-role: quote-text
+
+- family: display · px: 36–50 · weight: 500
+- leading: 1.1 · tracking: -0.02em · case: mixed
+- purpose: pull-quote body — Space Grotesk 500 mixed case
+
+```css
+.t-trole-quote-text {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: clamp(28px, 3.5vw, 50px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--brand-primary);
+  max-width: 22ch;
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-quote-text&quot;&gt;The work gets simpler as the team gets braver.&lt;/div&gt;
+```
+
+## type-role: scribble-lg
+
+- family: script · px: 60–70 · weight: 700
+- leading: 0.9 · tracking: 0 · case: sentence
+- purpose: process step numeral / large hand-script accent — Caveat 700, ink-blue
+
+```css
+.t-trole-scribble-lg {
+  font-family: var(--font-script);
+  font-weight: 700;
+  font-size: clamp(48px, 5.5vw, 70px);
+  line-height: 0.9;
+  color: var(--brand-primary);
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-scribble-lg&quot;&gt;3&lt;/div&gt;
+```
+
+## type-role: scribble-sm
+
+- family: script · px: 32–38 · weight: 600
+- leading: 1.05 · tracking: 0 · case: sentence
+- purpose: marginal note / &#39;me&#39; voice annotation — Caveat 600, slight rotation
+
+```css
+.t-trole-scribble-sm {
+  display: inline-block;
+  font-family: var(--font-script);
+  font-weight: 600;
+  font-size: clamp(32px, 2.8vw, 38px);
+  line-height: 1.05;
+  color: var(--brand-primary);
+  transform: rotate(-2deg);
+}
+
+.t-trole-scribble-sm .pp-underline {
+  border-bottom: 2px solid var(--brand-primary);
+  padding-bottom: 1px;
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-scribble-sm&quot;&gt;finally — &lt;span class=&quot;pp-underline&quot;&gt;one canvas&lt;/span&gt;, everyone home&lt;/div&gt;
+```
+
+## type-role: label-top
+
+- family: mono · px: 24–26 · weight: 500
+- leading: 1.2 · tracking: 0.12em · case: upper
+- purpose: top-chrome brand lockup / archival tag — DM Mono 500 uppercase
+
+```css
+.t-trole-label-top {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.4vw, 26px);
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brand-primary);
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-label-top&quot;&gt;Field report · Vol. 01&lt;/div&gt;
+```
+
+## type-role: label-footer
+
+- family: mono · px: 24–25 · weight: 500
+- leading: 1.2 · tracking: 0.14em · case: upper
+- purpose: footer chrome — DM Mono 500 uppercase, 65% opacity
+
+```css
+.t-trole-label-footer {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.3vw, 25px);
+  line-height: 1.2;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-primary);
+  opacity: 0.65;
+}
+```
+
+Sample:
+
+```html
+&lt;div class=&quot;t-trole-label-footer&quot;&gt;Source · Internal study, 2026&lt;/div&gt;
+```
+
+## type-role: stamp-mark
+
+- family: mono · px: 24–26 · weight: 500
+- leading: 1 · tracking: 0.18em · case: upper
+- purpose: cinnabar-red rubber stamp — 3px solid red border, red mono uppercase, rotated -4deg
+
+```css
+.t-trole-stamp-mark {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.4vw, 26px);
+  line-height: 1;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brand-accent);
+  background: transparent;
+  border: 3px solid var(--brand-accent);
+  padding: 6px 16px;
+  transform: rotate(-4deg);
+}
+```
+
+Sample:
+
+```html
+&lt;div&gt;&lt;span class=&quot;t-trole-stamp-mark&quot;&gt;Received&lt;/span&gt;&lt;/div&gt;
+```
+
+## type-role: pill-yes
+
+- family: script · px: 24–28 · weight: 600
+- leading: 1 · tracking: 0 · case: sentence
+- purpose: affirmative pill — solid ink fill with Caveat paper-yellow text inside a 999px pill
+
+```css
+.t-trole-pill-yes {
+  display: inline-block;
+  font-family: var(--font-script);
+  font-weight: 600;
+  font-size: clamp(24px, 2vw, 28px);
+  line-height: 1;
+  color: var(--surface-paper);
+  background: var(--brand-primary);
+  border: 1.5px solid var(--brand-primary);
+  border-radius: 999px;
+  padding: 4px 14px;
+}
+```
+
+Sample:
+
+```html
+&lt;div&gt;&lt;span class=&quot;t-trole-pill-yes&quot;&gt;Yes&lt;/span&gt;&lt;/div&gt;
+```
+
+## type-role: pill-no
+
+- family: mono · px: 24–26 · weight: 500
+- leading: 1 · tracking: 0.14em · case: upper
+- purpose: negative pill — red mono uppercase inside a red-bordered transparent 999px pill
+
+```css
+.t-trole-pill-no {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: clamp(24px, 1.4vw, 26px);
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-accent);
+  background: transparent;
+  border: 1.5px solid var(--brand-accent);
+  border-radius: 999px;
+  padding: 4px 14px;
+}
+```
+
+Sample:
+
+```html
+&lt;div&gt;&lt;span class=&quot;t-trole-pill-no&quot;&gt;No&lt;/span&gt;&lt;/div&gt;
+```
+<!-- TYPE-ROLES-END --></pre>
+  </details>
+  <details style="margin-top: 32px;">
+    <summary class="ds-summary">Font pairing recipe (preset §D)</summary>
+    <div class="ds-prose-block"><p class="ds-prose">Pin &amp; Paper depends on the three-voice editorial pairing (printed display / handwritten / archival). Fallbacks below are only used if the brand-derived face fails to load.</p>
+<ul class="ds-list"><li><strong>display</strong>: <code>&#39;Space Grotesk&#39;</code> · <code>&#39;Inter Tight&#39;</code> · <code>&#39;Manrope&#39;</code> wght 700</li><li><strong>body</strong>: <code>&#39;Space Grotesk&#39;</code> · <code>&#39;Inter&#39;</code> · <code>&#39;IBM Plex Sans&#39;</code> wght 400</li><li><strong>mono</strong>: <code>&#39;DM Mono&#39;</code> · <code>&#39;JetBrains Mono&#39;</code> · <code>&#39;IBM Plex Mono&#39;</code> wght 500</li></ul>
+<p class="ds-prose">The handwritten layer (Caveat) is non-substitutable — if Caveat fails to load it falls through to <code>cursive</code>, which varies by OS. Component CSS forces Caveat directly; brand DNA does not override it.</p></div>
+  </details>
+</section>
+
+<section id="motion" class="ds-section">
+  <div class="eyebrow">§4 · Motion (preset)</div>
+  <h2>Pin &amp; Paper motion language</h2>
+  <div class="ds-prose-block"><p class="ds-prose">Field notebook pinned to a corkboard, not a polished deck. Every surface is <strong>yellow legal-pad paper</strong> with a non-optional fractal-noise grain — without the texture the system collapses into flat cartoon-yellow. Cards are <strong>cream paper pinned to the page</strong> with a 1.5px hairline ink border, 4px micro-radius, and a hard ink-blue offset shadow (5–8px, zero blur). The shadow is the only depth language.</p>
+<p class="ds-prose">Three editorial voices, each in its own face: <strong>Space Grotesk 700</strong> carries every printed headline (negative letter-spacing, mixed case); <strong>Caveat</strong> carries every handwritten moment — marginal notes, step numerals, &quot;me&quot; voice annotations; <strong>DM Mono uppercase</strong> carries every archival tag — top-chrome lockup, footer meta, date strips. Switching a voice&#39;s face collapses the register.</p>
+<p class="ds-prose"><strong>Brand DNA drives the chrome color, preset drives the structure.</strong> <code>--brand-primary</code> maps to the ink-blue role (text, borders, dividers, pin illustrations, hard offset shadow). <code>--brand-accent</code> maps to the cinnabar-red stamp role (used in exactly two places: the rotated rubber stamp and the negative pill). The yellow paper base is a <strong>technical signature anchor</strong> — without it the layered radial gradients, grain overlay, and cream-on-yellow card contrast all fail; declared once in §B as <code>--anchor-paper-yellow</code> / <code>--anchor-cream</code> so brand DNA can tint via <code>color-mix()</code> without losing the paper reading.</p>
+<p class="ds-prose">Motion is <strong>quiet and considered</strong> — short fades, no overshoot, no bounce. The hand-pinned aesthetic doesn&#39;t want kinetic theatrics; the camera holds and the eye reads. Ambient pin rotations drift on <code>sine.inOut</code> like paper settling.</p>
+<p class="ds-prose"><strong>Density philosophy: populated, not sparse.</strong> Pin &amp; Paper reads as authoritative when 3–6 cards are pinned across the page, each carrying a heading + body + marginal note. A scene with one centered headline and otherwise empty space reads as broken.</p></div>
+  <details class="ds-paste-ready">
+    <summary class="ds-summary">▸ Paste-ready source → <code>chunks/easings.js</code> (paste at top of every scene's <code>&lt;script&gt;</code>)</summary>
+    <pre class="ds-code"><!-- MOTION-START -->
+const EASE = {
+  entry: &quot;power2.out&quot;, // soft arrival, no overshoot — paper settling onto the page
+  emphasis: &quot;power3.out&quot;, // a touch more authority on pin-reveal / stamp-slam beats
+  exit: &quot;power2.in&quot;, // calm departure, no acceleration spike
+  drift: &quot;sine.inOut&quot;, // ambient pin / scribble tilt drift
+};
+const DUR = {
+  snap: 0.18,
+  med: 0.5,
+  slow: 0.95,
+};
+// RULE: never back.out / elastic / bounce — the field-notebook register is
+//       quiet and considered. Overshoot breaks the &quot;paper settling&quot; feel.
+// RULE: pin illustrations and stamps may rotate within ±2° on entry — never
+//       counter-rotate to 0°. The off-axis tilt is the system&#39;s identity.
+// RULE: scene transitions are short cross-dissolves (DUR.med). NEVER slide,
+//       wipe, or zoom — they read as digital chrome and break the paper aesthetic.
+// RULE: scribble entries should write-on (clip-path reveal left→right) at
+//       DUR.med with EASE.entry. Don&#39;t fade — fade is for printed type.
+<!-- MOTION-END --></pre>
+  </details>
+</section>
+
+<section id="voice" class="ds-section">
+  <div class="eyebrow">§5 · Voice (site × style transform)</div>
+  <h2>How to write on-screen copy in Pin &amp; Paper register</h2>
+
+  <div class="voice-grid">
+    <div>
+      <h3 class="ds-h3">From the site (DNA)</h3>
+      <dl class="voice-dl">
+        <dt>Tone</dt><dd>neutral</dd>
+        <dt>Heading style</dt><dd>Sentence case</dd>
+        
+        
+      </dl>
+    </div>
+    <div>
+      <h3 class="ds-h3">Transform recipe (preset §G)</h3>
+      <div class="ds-prose-block"><p class="ds-prose">Take the brand&#39;s product description / value prop. Transform with:</p>
+<ol class="ds-list"><li>Hero headlines: 2–5 words, mixed case (NOT uppercase), Space Grotesk 700 with negative letter-spacing. Period optional — the cover behaves like a book title.</li><li>Top-chrome lockups, dates, source attributions: DM Mono UPPERCASE with 0.12–0.18em tracking. Terse, indexical — pretend it&#39;s a catalog-card tag.</li><li>Stamps: UPPERCASE DM Mono, 1–2 words (&quot;CONFIDENTIAL&quot;, &quot;RECEIVED&quot;, &quot;DRAFT 04&quot;). Always rotated −4°.</li><li>Marginal notes (Caveat scribble): sentence case, 4–10 words, conversational. This is the &quot;me&quot; voice — write as if annotating someone else&#39;s document. Use <code>&lt;span class=&quot;pp-underline&quot;&gt;word&lt;/span&gt;</code> for hand-drawn underline emphasis.</li><li>Step numerals: Caveat hand-script (1, 2, 3 — not &quot;Step 1&quot;). The script numeral is the system&#39;s ordering voice; never substitute a numeric font.</li><li>Card bodies: Space Grotesk sentence case, terse, full sentences. Never set body in Caveat — the script is for marginal notes, never paragraphs.</li></ol>
+<p class="ds-prose"><strong>Example:</strong></p>
+<ul class="ds-list"><li>IN: <code>Figma helps teams design products collaboratively in real time</code></li><li>OUT: hero=<code>Designed together.</code> / chip=<code>FIELD REPORT 04</code> / stamp=<code>RECEIVED</code> / margin-note=<code>finally — one canvas, everyone home</code></li></ul></div>
+    </div>
+  </div>
+
+  <h3 class="ds-h3" style="margin-top: 32px;">Try it on this site's voice</h3>
+  
+  <div class="voice-pair">
+    <div class="voice-in"><span class="voice-tag">IN (site)</span> Claude Code のためのレゴ式開発フロー・オーケストレータ。ブリックを起動時に組み合わせてタスク専用のエージェント・ハーネスを engineering する。</div>
+    <div class="voice-out"><span class="voice-tag">OUT (Phase 4b applies recipe to DOM copy)</span> <em>worker writes register-shaped HTML text</em></div>
+  </div>
+
+  <details class="ds-paste-ready" style="margin-top: 32px;">
+    <summary class="ds-summary">▸ Paste-ready source → <code>chunks/voice.md</code> (Phase 4b applies recipe to DOM text)</summary>
+    <pre class="ds-code"><!-- VOICE-START -->
+# Voice register: pin-and-paper
+
+## From the site (DNA)
+- Tone: neutral
+- Heading style: Sentence case
+
+## Transform recipe
+
+Take the brand&#39;s product description / value prop. Transform with:
+
+1. Hero headlines: 2–5 words, mixed case (NOT uppercase), Space Grotesk 700 with negative letter-spacing. Period optional — the cover behaves like a book title.
+2. Top-chrome lockups, dates, source attributions: DM Mono UPPERCASE with 0.12–0.18em tracking. Terse, indexical — pretend it&#39;s a catalog-card tag.
+3. Stamps: UPPERCASE DM Mono, 1–2 words (&quot;CONFIDENTIAL&quot;, &quot;RECEIVED&quot;, &quot;DRAFT 04&quot;). Always rotated −4°.
+4. Marginal notes (Caveat scribble): sentence case, 4–10 words, conversational. This is the &quot;me&quot; voice — write as if annotating someone else&#39;s document. Use `&lt;span class=&quot;pp-underline&quot;&gt;word&lt;/span&gt;` for hand-drawn underline emphasis.
+5. Step numerals: Caveat hand-script (1, 2, 3 — not &quot;Step 1&quot;). The script numeral is the system&#39;s ordering voice; never substitute a numeric font.
+6. Card bodies: Space Grotesk sentence case, terse, full sentences. Never set body in Caveat — the script is for marginal notes, never paragraphs.
+
+**Example:**
+
+- IN: `Figma helps teams design products collaboratively in real time`
+- OUT: hero=`Designed together.` / chip=`FIELD REPORT 04` / stamp=`RECEIVED` / margin-note=`finally — one canvas, everyone home`
+
+&gt; Phase 4b scene workers: apply to DOM text only (headline / chip / button copy).
+&gt; Phase 2 narrator scripts are TTS-bound — do NOT uppercase or strip articles.
+<!-- VOICE-END --></pre>
+  </details>
+</section>
+
+<section id="hints" class="ds-section">
+  <div class="eyebrow">§H · Scene composition hints (plan agent reads these)</div>
+  <h2>Pin &amp; Paper composition rules</h2>
+  <p class="ds-prose">Surface contracts, material composition rules, brand-color placement — anything that constrains <strong>which</strong> components a Phase 3 plan can mix in a single scene.</p>
+  <div class="ds-prose-block"><p class="ds-prose">_no §H declared_</p></div>
+  <details class="ds-paste-ready">
+    <summary class="ds-summary">▸ Paste-ready source → <code>chunks/composition-hints.md</code> (plan agent reads this)</summary>
+    <pre class="ds-code"><!-- HINTS-START -->
+# Composition hints — Pin &amp; Paper
+
+_(preset declared no §H — plan agent picks components by id alone)_
+<!-- HINTS-END --></pre>
+  </details>
+</section>
+
+<section id="components" class="ds-section">
+  <div class="eyebrow">§6 · Components (paste-ready)</div>
+  <h2>Pin &amp; Paper component library</h2>
+
+  
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">chip</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: chip --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    DM Mono uppercase archival tag — the "catalog-card" voice. Used as
+    top-chrome lockup, date strip, source attribution, scene-level meta tag.
+    No background, no border by default — it's a label, not a UI chip. The
+    tracking (0.18em) is load-bearing; tighter and it reads as generic mono.
+  */
+  .pp-chip {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    line-height: 1;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--brand-primary);
+    padding: 6px 0;
+  }
+  /* Footer / muted variant. */
+  .pp-chip.muted {
+    opacity: 0.65;
+    font-size: 24px;
+    letter-spacing: 0.14em;
+  }
+  /* Boxed variant — when the chip needs to read as a tag, not a label.
+     Hairline ink border, micro-radius, cream fill. */
+  .pp-chip.boxed {
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    padding: 6px 14px;
+  }
+</style>
+      <span class="pp-chip">Get started</span>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: chip --&gt;
+```html
+&lt;span class=&quot;pp-chip&quot;&gt;{LABEL}&lt;/span&gt;
+
+&lt;style&gt;
+  /*
+    DM Mono uppercase archival tag — the &quot;catalog-card&quot; voice. Used as
+    top-chrome lockup, date strip, source attribution, scene-level meta tag.
+    No background, no border by default — it&#39;s a label, not a UI chip. The
+    tracking (0.18em) is load-bearing; tighter and it reads as generic mono.
+  */
+  .pp-chip {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    line-height: 1;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--brand-primary);
+    padding: 6px 0;
+  }
+  /* Footer / muted variant. */
+  .pp-chip.muted {
+    opacity: 0.65;
+    font-size: 24px;
+    letter-spacing: 0.14em;
+  }
+  /* Boxed variant — when the chip needs to read as a tag, not a label.
+     Hairline ink border, micro-radius, cream fill. */
+  .pp-chip.boxed {
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    padding: 6px 14px;
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">divider-loud</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: divider-loud --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    The dashed-ink inter-row divider — used between agenda rows, between CTA
+    steps, between source notes inside cards. 1.5px dashed at 45% ink opacity
+    creates the "graph-paper line break" feel. The dashed pattern is the
+    system's only secondary border style — solid + dashed are the two voices.
+
+    Variants:
+      .solid — 1.5px solid ink (used as section separators inside cards).
+      .ruled — 2px solid ink (used as the Caveat .underline equivalent at
+               block level; rare).
+
+    NEVER use a 1px border — the hairline weight in this system is 1.5px.
+    NEVER use box-shadow on a divider — the offset shadow is for cards only.
+  */
+  .pp-divider-loud {
+    border: 0;
+    border-top: var(--border-dashed);
+    margin: 0;
+    width: 100%;
+    height: 0;
+  }
+  .pp-divider-loud.solid {
+    border-top: var(--border-hairline);
+  }
+  .pp-divider-loud.ruled {
+    border-top: 2px solid var(--brand-primary);
+  }
+</style>
+      <hr class="pp-divider-loud" />
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: divider-loud --&gt;
+```html
+&lt;hr class=&quot;pp-divider-loud&quot; /&gt;
+
+&lt;style&gt;
+  /*
+    The dashed-ink inter-row divider — used between agenda rows, between CTA
+    steps, between source notes inside cards. 1.5px dashed at 45% ink opacity
+    creates the &quot;graph-paper line break&quot; feel. The dashed pattern is the
+    system&#39;s only secondary border style — solid + dashed are the two voices.
+
+    Variants:
+      .solid — 1.5px solid ink (used as section separators inside cards).
+      .ruled — 2px solid ink (used as the Caveat .underline equivalent at
+               block level; rare).
+
+    NEVER use a 1px border — the hairline weight in this system is 1.5px.
+    NEVER use box-shadow on a divider — the offset shadow is for cards only.
+  */
+  .pp-divider-loud {
+    border: 0;
+    border-top: var(--border-dashed);
+    margin: 0;
+    width: 100%;
+    height: 0;
+  }
+  .pp-divider-loud.solid {
+    border-top: var(--border-hairline);
+  }
+  .pp-divider-loud.ruled {
+    border-top: 2px solid var(--brand-primary);
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">hero</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: hero --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Cover headline block. Yellow paper surface (the layered paper-grain-overlay
+    sits on the scene root, NOT on the hero). Space Grotesk 700 mixed case
+    with tight negative letter-spacing — the "printed-poster" voice. DM Mono
+    eyebrow above, Caveat-tone subhead below. Prefix: pp- (pin-paper).
+  */
+  .pp-hero {
+    background: var(--surface-paper);
+    padding: 110px 64px 80px;
+    position: relative;
+    color: var(--brand-primary);
+  }
+  .pp-hero-eyebrow {
+    display: block;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    opacity: 0.85;
+    margin-bottom: 32px;
+  }
+  .pp-hero-display {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(72px, 10vw, 196px);
+    line-height: 1.08;
+    letter-spacing: -0.04em;
+    color: var(--brand-primary);
+    margin: 0;
+    max-width: 14ch;
+  }
+  .pp-hero-subhead {
+    font-family: var(--font-script);
+    font-weight: 600;
+    font-size: clamp(28px, 2.4vw, 38px);
+    line-height: 1.1;
+    color: var(--brand-primary);
+    transform: rotate(-2deg);
+    transform-origin: left bottom;
+    margin-top: 40px;
+    max-width: 40ch;
+  }
+</style>
+      <div class="pp-hero">
+  <span class="pp-hero-eyebrow">Build faster</span>
+  <h1 class="pp-hero-display">capture</h1>
+  <p class="pp-hero-subhead">Stamped. Signed. Framed.</p>
+</div>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: hero --&gt;
+```html
+&lt;div class=&quot;pp-hero&quot;&gt;
+  &lt;span class=&quot;pp-hero-eyebrow&quot;&gt;{EYEBROW}&lt;/span&gt;
+  &lt;h1 class=&quot;pp-hero-display&quot;&gt;{HEADLINE}&lt;/h1&gt;
+  &lt;p class=&quot;pp-hero-subhead&quot;&gt;{SUBHEAD}&lt;/p&gt;
+&lt;/div&gt;
+
+&lt;style&gt;
+  /*
+    Cover headline block. Yellow paper surface (the layered paper-grain-overlay
+    sits on the scene root, NOT on the hero). Space Grotesk 700 mixed case
+    with tight negative letter-spacing — the &quot;printed-poster&quot; voice. DM Mono
+    eyebrow above, Caveat-tone subhead below. Prefix: pp- (pin-paper).
+  */
+  .pp-hero {
+    background: var(--surface-paper);
+    padding: 110px 64px 80px;
+    position: relative;
+    color: var(--brand-primary);
+  }
+  .pp-hero-eyebrow {
+    display: block;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    opacity: 0.85;
+    margin-bottom: 32px;
+  }
+  .pp-hero-display {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(72px, 10vw, 196px);
+    line-height: 1.08;
+    letter-spacing: -0.04em;
+    color: var(--brand-primary);
+    margin: 0;
+    max-width: 14ch;
+  }
+  .pp-hero-subhead {
+    font-family: var(--font-script);
+    font-weight: 600;
+    font-size: clamp(28px, 2.4vw, 38px);
+    line-height: 1.1;
+    color: var(--brand-primary);
+    transform: rotate(-2deg);
+    transform-origin: left bottom;
+    margin-top: 40px;
+    max-width: 40ch;
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">paper-grain-overlay</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: paper-grain-overlay --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Foundational atmosphere — the texture is what makes the surface read as
+    physical paper under raking light, not flat color. Opacity 0.35 with
+    multiply blend on default (yellow / cream) surfaces. Drops to 0.25 with
+    screen blend on ink-blue surfaces — multiply on dark turns the slide
+    muddy.
+
+    Variants:
+      .ink   — screen blend at 0.25 opacity (for ink-blue surfaces).
+      .cream — slightly lower opacity (0.28) on cream-only scenes so the
+               texture doesn't visually compete with the card layer.
+  */
+  .pp-paper-grain-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.35;
+    mix-blend-mode: multiply;
+    background-image: var(--paper-grain);
+  }
+  .pp-paper-grain-overlay.ink {
+    opacity: 0.25;
+    mix-blend-mode: screen;
+  }
+  .pp-paper-grain-overlay.cream {
+    opacity: 0.28;
+  }
+</style>
+      <!-- The non-optional fractal-noise paper grain. MUST sit at the top of every
+     scene's z-stack but below the content (pointer-events: none, z-index 1).
+     Multiply blend over yellow / cream surfaces; flips to screen blend over
+     ink-blue surfaces (apply .ink class). Without this layer the surface
+     collapses into flat cartoon-yellow. -->
+<div class="pp-paper-grain-overlay" aria-hidden="true"></div>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: paper-grain-overlay --&gt;
+```html
+&lt;!-- The non-optional fractal-noise paper grain. MUST sit at the top of every
+     scene&#39;s z-stack but below the content (pointer-events: none, z-index 1).
+     Multiply blend over yellow / cream surfaces; flips to screen blend over
+     ink-blue surfaces (apply .ink class). Without this layer the surface
+     collapses into flat cartoon-yellow. --&gt;
+&lt;div class=&quot;pp-paper-grain-overlay&quot; aria-hidden=&quot;true&quot;&gt;&lt;/div&gt;
+
+&lt;style&gt;
+  /*
+    Foundational atmosphere — the texture is what makes the surface read as
+    physical paper under raking light, not flat color. Opacity 0.35 with
+    multiply blend on default (yellow / cream) surfaces. Drops to 0.25 with
+    screen blend on ink-blue surfaces — multiply on dark turns the slide
+    muddy.
+
+    Variants:
+      .ink   — screen blend at 0.25 opacity (for ink-blue surfaces).
+      .cream — slightly lower opacity (0.28) on cream-only scenes so the
+               texture doesn&#39;t visually compete with the card layer.
+  */
+  .pp-paper-grain-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.35;
+    mix-blend-mode: multiply;
+    background-image: var(--paper-grain);
+  }
+  .pp-paper-grain-overlay.ink {
+    opacity: 0.25;
+    mix-blend-mode: screen;
+  }
+  .pp-paper-grain-overlay.cream {
+    opacity: 0.28;
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">pill-yes</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: pill-yes --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Affirmative pill — the system's signature "handwritten letters inside a UI
+    pill shape" treatment. Solid ink fill with paper-yellow Caveat text,
+    rounded 999px, hairline ink border. The mismatch between rounded UI shape
+    and handwritten letterforms is INTENTIONAL — this is the preset's most
+    surprising decoration.
+
+    Variants:
+      .part — partial-state pill: paper-2 fill, ink Caveat text.
+      .no   — negative pill: red mono uppercase text in a red-bordered
+              transparent pill. The ONLY other place red appears outside the
+              pp-stamp component. Different family + casing — the negative
+              state intentionally reads as "official rejection stamp" while
+              .yes and .part feel hand-counted.
+
+    NEVER set Space Grotesk inside this pill — the Caveat letterform is the
+    point.
+  */
+  .pp-pill-yes {
+    display: inline-block;
+    background: var(--brand-primary);
+    color: var(--surface-paper);
+    border: var(--border-hairline);
+    border-radius: var(--radius-pill);
+    padding: 4px 14px;
+    font-family: var(--font-script);
+    font-weight: 600;
+    font-size: 28px;
+    line-height: 1;
+  }
+  .pp-pill-yes.part {
+    background: var(--surface-paper-2);
+    color: var(--brand-primary);
+  }
+  .pp-pill-yes.no {
+    background: transparent;
+    color: var(--brand-accent);
+    border: 1.5px solid var(--brand-accent);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+</style>
+      <span class="pp-pill-yes">Get started</span>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: pill-yes --&gt;
+```html
+&lt;span class=&quot;pp-pill-yes&quot;&gt;{LABEL}&lt;/span&gt;
+
+&lt;style&gt;
+  /*
+    Affirmative pill — the system&#39;s signature &quot;handwritten letters inside a UI
+    pill shape&quot; treatment. Solid ink fill with paper-yellow Caveat text,
+    rounded 999px, hairline ink border. The mismatch between rounded UI shape
+    and handwritten letterforms is INTENTIONAL — this is the preset&#39;s most
+    surprising decoration.
+
+    Variants:
+      .part — partial-state pill: paper-2 fill, ink Caveat text.
+      .no   — negative pill: red mono uppercase text in a red-bordered
+              transparent pill. The ONLY other place red appears outside the
+              pp-stamp component. Different family + casing — the negative
+              state intentionally reads as &quot;official rejection stamp&quot; while
+              .yes and .part feel hand-counted.
+
+    NEVER set Space Grotesk inside this pill — the Caveat letterform is the
+    point.
+  */
+  .pp-pill-yes {
+    display: inline-block;
+    background: var(--brand-primary);
+    color: var(--surface-paper);
+    border: var(--border-hairline);
+    border-radius: var(--radius-pill);
+    padding: 4px 14px;
+    font-family: var(--font-script);
+    font-weight: 600;
+    font-size: 28px;
+    line-height: 1;
+  }
+  .pp-pill-yes.part {
+    background: var(--surface-paper-2);
+    color: var(--brand-primary);
+  }
+  .pp-pill-yes.no {
+    background: transparent;
+    color: var(--brand-accent);
+    border: 1.5px solid var(--brand-accent);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">pinned-card</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: pinned-card --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    The universal card pattern — the system's most repeated structural unit.
+    Cream fill, 1.5px hairline ink border, 4px micro-radius, hard ink offset
+    shadow (zero blur). The three together define the "pinned paper" reading;
+    missing any one breaks it. A pp-safety-pin overlay at the top edge is
+    expected on most instances (positioned via the consumer scene).
+
+    Variants:
+      .alt   → paper-2 (light yellow) fill — break up adjacent same-tone cards.
+      .alt2  → paper-extra (warm yellow) fill + 0.9° askew rotation — the
+               pinned-askew variant, max ONE per card row.
+      .compact → tighter padding + smaller shadow offset (for dense grids).
+      .hero    → larger shadow offset (8/9) for the highest-elevation card.
+  */
+  .pp-pinned-card {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-standard);
+    padding: var(--card-pad-lg);
+    color: var(--brand-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .pp-pinned-card.alt {
+    background: var(--surface-paper-2);
+  }
+  .pp-pinned-card.alt2 {
+    background: var(--surface-paper-3);
+    transform: rotate(var(--tilt-card-askew));
+  }
+  .pp-pinned-card.compact {
+    padding: 28px 28px 24px;
+    box-shadow: var(--shadow-pin-compact);
+  }
+  .pp-pinned-card.hero {
+    box-shadow: var(--shadow-pin-hero);
+    padding: 60px 80px;
+  }
+  .pp-pinned-card-num {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    opacity: 0.65;
+    line-height: 1;
+  }
+  .pp-pinned-card-title {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(28px, 2.4vw, 38px);
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+  .pp-pinned-card-body {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: clamp(24px, 1.6vw, 28px);
+    line-height: 1.45;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+</style>
+      <div class="pp-pinned-card">
+  <!-- Nest a pp-safety-pin and/or pp-scribble-note inside as the scene calls for it. -->
+  <span class="pp-pinned-card-num">Issue 01</span>
+  <h3 class="pp-pinned-card-title">capture</h3>
+  <p class="pp-pinned-card-body">Two lines max. One idea.</p>
+</div>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: pinned-card --&gt;
+```html
+&lt;div class=&quot;pp-pinned-card&quot;&gt;
+  &lt;!-- Nest a pp-safety-pin and/or pp-scribble-note inside as the scene calls for it. --&gt;
+  &lt;span class=&quot;pp-pinned-card-num&quot;&gt;{KICKER}&lt;/span&gt;
+  &lt;h3 class=&quot;pp-pinned-card-title&quot;&gt;{HEADLINE}&lt;/h3&gt;
+  &lt;p class=&quot;pp-pinned-card-body&quot;&gt;{LEDE}&lt;/p&gt;
+&lt;/div&gt;
+
+&lt;style&gt;
+  /*
+    The universal card pattern — the system&#39;s most repeated structural unit.
+    Cream fill, 1.5px hairline ink border, 4px micro-radius, hard ink offset
+    shadow (zero blur). The three together define the &quot;pinned paper&quot; reading;
+    missing any one breaks it. A pp-safety-pin overlay at the top edge is
+    expected on most instances (positioned via the consumer scene).
+
+    Variants:
+      .alt   → paper-2 (light yellow) fill — break up adjacent same-tone cards.
+      .alt2  → paper-extra (warm yellow) fill + 0.9° askew rotation — the
+               pinned-askew variant, max ONE per card row.
+      .compact → tighter padding + smaller shadow offset (for dense grids).
+      .hero    → larger shadow offset (8/9) for the highest-elevation card.
+  */
+  .pp-pinned-card {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-standard);
+    padding: var(--card-pad-lg);
+    color: var(--brand-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .pp-pinned-card.alt {
+    background: var(--surface-paper-2);
+  }
+  .pp-pinned-card.alt2 {
+    background: var(--surface-paper-3);
+    transform: rotate(var(--tilt-card-askew));
+  }
+  .pp-pinned-card.compact {
+    padding: 28px 28px 24px;
+    box-shadow: var(--shadow-pin-compact);
+  }
+  .pp-pinned-card.hero {
+    box-shadow: var(--shadow-pin-hero);
+    padding: 60px 80px;
+  }
+  .pp-pinned-card-num {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    opacity: 0.65;
+    line-height: 1;
+  }
+  .pp-pinned-card-title {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(28px, 2.4vw, 38px);
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+  .pp-pinned-card-body {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: clamp(24px, 1.6vw, 28px);
+    line-height: 1.45;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">process-step</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: process-step --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Process / roadmap step card. Cream-card pattern with the Caveat
+    hand-script ordinal at the top. The numeral is load-bearing — it signals
+    "step counted by hand, not by an algorithm". Sits in a 3-to-5 column flow
+    with 22px gaps; place a pp-safety-pin overlay centered on the top edge
+    for the full pinned look.
+
+    Variants:
+      .alt   — paper-2 fill.
+      .alt2  — paper-extra fill + 0.9° askew rotation.
+      .compact — drops body, used for tight 5-card flows.
+  */
+  .pp-process-step {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-compact);
+    padding: 32px 22px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--brand-primary);
+  }
+  .pp-process-step.alt {
+    background: var(--surface-paper-2);
+  }
+  .pp-process-step.alt2 {
+    background: var(--surface-paper-3);
+    transform: rotate(var(--tilt-card-askew));
+  }
+  .pp-process-step-num {
+    font-family: var(--font-script);
+    font-weight: 700;
+    font-size: clamp(50px, 5vw, 70px);
+    line-height: 0.9;
+    color: var(--brand-primary);
+  }
+  .pp-process-step-title {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(28px, 2.4vw, 34px);
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+  .pp-process-step-body {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1.4;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+</style>
+      <div class="pp-process-step">
+  <!-- Set the numeral literal per step instance (1 / 2 / 3 / 4 / 5).
+       Caveat hand-script numeral is the system's ordering voice — never substitute
+       Space Grotesk numerals or a CSS list-counter. -->
+  <span class="pp-process-step-num">1</span>
+  <h3 class="pp-process-step-title">capture</h3>
+  <p class="pp-process-step-body">Stamped. Signed. Framed.</p>
+</div>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: process-step --&gt;
+```html
+&lt;div class=&quot;pp-process-step&quot;&gt;
+  &lt;!-- Set the numeral literal per step instance (1 / 2 / 3 / 4 / 5).
+       Caveat hand-script numeral is the system&#39;s ordering voice — never substitute
+       Space Grotesk numerals or a CSS list-counter. --&gt;
+  &lt;span class=&quot;pp-process-step-num&quot;&gt;1&lt;/span&gt;
+  &lt;h3 class=&quot;pp-process-step-title&quot;&gt;{HEADLINE}&lt;/h3&gt;
+  &lt;p class=&quot;pp-process-step-body&quot;&gt;{SUBHEAD}&lt;/p&gt;
+&lt;/div&gt;
+
+&lt;style&gt;
+  /*
+    Process / roadmap step card. Cream-card pattern with the Caveat
+    hand-script ordinal at the top. The numeral is load-bearing — it signals
+    &quot;step counted by hand, not by an algorithm&quot;. Sits in a 3-to-5 column flow
+    with 22px gaps; place a pp-safety-pin overlay centered on the top edge
+    for the full pinned look.
+
+    Variants:
+      .alt   — paper-2 fill.
+      .alt2  — paper-extra fill + 0.9° askew rotation.
+      .compact — drops body, used for tight 5-card flows.
+  */
+  .pp-process-step {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-compact);
+    padding: 32px 22px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--brand-primary);
+  }
+  .pp-process-step.alt {
+    background: var(--surface-paper-2);
+  }
+  .pp-process-step.alt2 {
+    background: var(--surface-paper-3);
+    transform: rotate(var(--tilt-card-askew));
+  }
+  .pp-process-step-num {
+    font-family: var(--font-script);
+    font-weight: 700;
+    font-size: clamp(50px, 5vw, 70px);
+    line-height: 0.9;
+    color: var(--brand-primary);
+  }
+  .pp-process-step-title {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(28px, 2.4vw, 34px);
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+  .pp-process-step-body {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1.4;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">quote-panel</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: quote-panel --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Pull-quote panel — the highest-elevation card in the system. Uses the
+    largest shadow offset (8/9) and the oversized Caveat quote-mark glyph
+    at 360px as composition (not punctuation). Two-column grid: the glyph
+    on the left, the quote body + attribution on the right.
+
+    The mark is rendered as a literal ASCII left double-quote in Caveat at
+    360px — at this size the character functions as a decorative shape.
+  */
+  .pp-quote-panel {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-hero);
+    padding: 60px 80px;
+    display: grid;
+    grid-template-columns: 1fr 1.6fr;
+    gap: 60px;
+    align-items: center;
+    color: var(--brand-primary);
+  }
+  .pp-quote-panel-mark {
+    font-family: var(--font-script);
+    font-weight: 700;
+    font-size: clamp(180px, 22vw, 360px);
+    line-height: 0.8;
+    color: var(--brand-primary);
+    margin-top: -100px;
+    user-select: none;
+  }
+  .pp-quote-panel-body {
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: clamp(28px, 3.2vw, 50px);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: var(--brand-primary);
+    margin: 0;
+  }
+  .pp-quote-panel-attr {
+    margin-top: 32px;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brand-primary);
+  }
+</style>
+      <div class="pp-quote-panel">
+  <div class="pp-quote-panel-mark" aria-hidden="true">&ldquo;</div>
+  <div class="pp-quote-panel-content">
+    <blockquote class="pp-quote-panel-body">This changes how teams work.</blockquote>
+    <div class="pp-quote-panel-attr">Customer Quote</div>
+  </div>
+</div>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: quote-panel --&gt;
+```html
+&lt;div class=&quot;pp-quote-panel&quot;&gt;
+  &lt;div class=&quot;pp-quote-panel-mark&quot; aria-hidden=&quot;true&quot;&gt;&amp;ldquo;&lt;/div&gt;
+  &lt;div class=&quot;pp-quote-panel-content&quot;&gt;
+    &lt;blockquote class=&quot;pp-quote-panel-body&quot;&gt;{QUOTE}&lt;/blockquote&gt;
+    &lt;div class=&quot;pp-quote-panel-attr&quot;&gt;{AUTHOR}&lt;/div&gt;
+  &lt;/div&gt;
+&lt;/div&gt;
+
+&lt;style&gt;
+  /*
+    Pull-quote panel — the highest-elevation card in the system. Uses the
+    largest shadow offset (8/9) and the oversized Caveat quote-mark glyph
+    at 360px as composition (not punctuation). Two-column grid: the glyph
+    on the left, the quote body + attribution on the right.
+
+    The mark is rendered as a literal ASCII left double-quote in Caveat at
+    360px — at this size the character functions as a decorative shape.
+  */
+  .pp-quote-panel {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-hero);
+    padding: 60px 80px;
+    display: grid;
+    grid-template-columns: 1fr 1.6fr;
+    gap: 60px;
+    align-items: center;
+    color: var(--brand-primary);
+  }
+  .pp-quote-panel-mark {
+    font-family: var(--font-script);
+    font-weight: 700;
+    font-size: clamp(180px, 22vw, 360px);
+    line-height: 0.8;
+    color: var(--brand-primary);
+    margin-top: -100px;
+    user-select: none;
+  }
+  .pp-quote-panel-body {
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: clamp(28px, 3.2vw, 50px);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: var(--brand-primary);
+    margin: 0;
+  }
+  .pp-quote-panel-attr {
+    margin-top: 32px;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brand-primary);
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">safety-pin</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: safety-pin --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    The closed safety pin — coil on right, shaft sweeping left, clasp cap
+    on left. Default: rotated -10° to sit above a card's top edge. Inherits
+    color from parent text color (currentColor on the stroke).
+
+    Sizing presets via the `width`/`height` attribute or these utility
+    classes. Position is set by the consumer scene; the pin itself just
+    handles rotation.
+
+    Variants:
+      .lg   — section-divider scene oversize (rotated +14°).
+      .xl   — cover-scene anchor (rotated +20°).
+      .open — substitute the OPEN safety-pin path data (clasp lifted, sharp
+              point exposed). For "lifted" feel vs "secured" feel — use sparingly.
+  */
+  .pp-safety-pin {
+    color: var(--brand-primary);
+    transform: rotate(var(--tilt-pin));
+    transform-origin: center;
+  }
+  .pp-safety-pin.lg {
+    width: 360px;
+    height: 110px;
+    transform: rotate(var(--tilt-pin-alt));
+  }
+  .pp-safety-pin.xl {
+    width: 640px;
+    height: 196px;
+    transform: rotate(20deg);
+  }
+  /* Faded variant for layered backgrounds on section dividers. */
+  .pp-safety-pin.faded {
+    opacity: 0.5;
+  }
+</style>
+      <!-- The defining visual signature. Inline SVG (no external <use href> — keeps
+     the scene self-contained). currentColor follows the parent's text color so
+     ink-on-paper renders blue, paper-on-ink renders yellow. ALWAYS rotated
+     off-axis — a pin at 0° reads as a UI icon, not a pinned object. -->
+<svg class="pp-safety-pin" viewBox="0 0 360 110" width="120" height="32" aria-hidden="true">
+  <g
+    fill="none"
+    stroke="currentColor"
+    stroke-width="5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <!-- coiled spring on the right -->
+    <path d="M312 38 C 296 32, 290 50, 304 58 C 320 66, 340 60, 342 44 C 344 28, 322 18, 300 24" />
+    <!-- top shaft running from coil to clasp -->
+    <path d="M300 24 C 240 14, 140 14, 70 30" />
+    <!-- bottom shaft curving back under -->
+    <path d="M312 56 C 250 78, 150 82, 80 70" />
+    <!-- clasp cap (oval) covering the meet point on the left -->
+    <ellipse cx="58" cy="50" rx="24" ry="14" />
+  </g>
+</svg>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: safety-pin --&gt;
+```html
+&lt;!-- The defining visual signature. Inline SVG (no external &lt;use href&gt; — keeps
+     the scene self-contained). currentColor follows the parent&#39;s text color so
+     ink-on-paper renders blue, paper-on-ink renders yellow. ALWAYS rotated
+     off-axis — a pin at 0° reads as a UI icon, not a pinned object. --&gt;
+&lt;svg class=&quot;pp-safety-pin&quot; viewBox=&quot;0 0 360 110&quot; width=&quot;120&quot; height=&quot;32&quot; aria-hidden=&quot;true&quot;&gt;
+  &lt;g
+    fill=&quot;none&quot;
+    stroke=&quot;currentColor&quot;
+    stroke-width=&quot;5&quot;
+    stroke-linecap=&quot;round&quot;
+    stroke-linejoin=&quot;round&quot;
+  &gt;
+    &lt;!-- coiled spring on the right --&gt;
+    &lt;path d=&quot;M312 38 C 296 32, 290 50, 304 58 C 320 66, 340 60, 342 44 C 344 28, 322 18, 300 24&quot; /&gt;
+    &lt;!-- top shaft running from coil to clasp --&gt;
+    &lt;path d=&quot;M300 24 C 240 14, 140 14, 70 30&quot; /&gt;
+    &lt;!-- bottom shaft curving back under --&gt;
+    &lt;path d=&quot;M312 56 C 250 78, 150 82, 80 70&quot; /&gt;
+    &lt;!-- clasp cap (oval) covering the meet point on the left --&gt;
+    &lt;ellipse cx=&quot;58&quot; cy=&quot;50&quot; rx=&quot;24&quot; ry=&quot;14&quot; /&gt;
+  &lt;/g&gt;
+&lt;/svg&gt;
+
+&lt;style&gt;
+  /*
+    The closed safety pin — coil on right, shaft sweeping left, clasp cap
+    on left. Default: rotated -10° to sit above a card&#39;s top edge. Inherits
+    color from parent text color (currentColor on the stroke).
+
+    Sizing presets via the `width`/`height` attribute or these utility
+    classes. Position is set by the consumer scene; the pin itself just
+    handles rotation.
+
+    Variants:
+      .lg   — section-divider scene oversize (rotated +14°).
+      .xl   — cover-scene anchor (rotated +20°).
+      .open — substitute the OPEN safety-pin path data (clasp lifted, sharp
+              point exposed). For &quot;lifted&quot; feel vs &quot;secured&quot; feel — use sparingly.
+  */
+  .pp-safety-pin {
+    color: var(--brand-primary);
+    transform: rotate(var(--tilt-pin));
+    transform-origin: center;
+  }
+  .pp-safety-pin.lg {
+    width: 360px;
+    height: 110px;
+    transform: rotate(var(--tilt-pin-alt));
+  }
+  .pp-safety-pin.xl {
+    width: 640px;
+    height: 196px;
+    transform: rotate(20deg);
+  }
+  /* Faded variant for layered backgrounds on section dividers. */
+  .pp-safety-pin.faded {
+    opacity: 0.5;
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">scribble-note</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: scribble-note --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Caveat hand-script marginal note — the system's "me" voice. Rotated -2°
+    by default for the "handwritten in the margin" feel. May be appended to
+    a pp-pinned-card body, placed in a slide's lower-right corner, or used
+    as a standalone scribble on a section divider.
+
+    The .pp-underline span draws a 2px solid ink underline — mimics an
+    underline drawn by hand for emphasis. NEVER use this on Space Grotesk
+    body text; underline is exclusively a Caveat treatment in this preset.
+
+    Variants:
+      .sm  — small in-card annotation (~28px).
+      .lg  — section-divider scribble (~50px).
+      .right — right-aligned + right-bottom transform origin (cover scene).
+  */
+  .pp-scribble-note {
+    font-family: var(--font-script);
+    font-weight: 600;
+    font-size: clamp(28px, 2.4vw, 38px);
+    line-height: 1.05;
+    color: var(--brand-primary);
+    transform: rotate(var(--tilt-scribble));
+    transform-origin: left bottom;
+    margin: 0;
+    padding-top: 14px;
+    max-width: 32ch;
+  }
+  .pp-scribble-note.sm {
+    font-size: clamp(28px, 2vw, 32px);
+  }
+  .pp-scribble-note.lg {
+    font-size: clamp(38px, 3.2vw, 50px);
+  }
+  .pp-scribble-note.right {
+    text-align: right;
+    transform-origin: right bottom;
+  }
+  /* Inline emphasis span — 2px solid ink underline, hand-drawn feel. */
+  .pp-scribble-note .pp-underline {
+    border-bottom: 2px solid var(--brand-primary);
+  }
+</style>
+      <p class="pp-scribble-note">
+  <!-- TODO: wrap a word in <span class="pp-underline">word</span> for handwritten
+       emphasis (2px solid ink underline). Use sparingly — once per scribble. -->
+  This changes how teams work.
+</p>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: scribble-note --&gt;
+```html
+&lt;p class=&quot;pp-scribble-note&quot;&gt;
+  &lt;!-- TODO: wrap a word in &lt;span class=&quot;pp-underline&quot;&gt;word&lt;/span&gt; for handwritten
+       emphasis (2px solid ink underline). Use sparingly — once per scribble. --&gt;
+  {QUOTE}
+&lt;/p&gt;
+
+&lt;style&gt;
+  /*
+    Caveat hand-script marginal note — the system&#39;s &quot;me&quot; voice. Rotated -2°
+    by default for the &quot;handwritten in the margin&quot; feel. May be appended to
+    a pp-pinned-card body, placed in a slide&#39;s lower-right corner, or used
+    as a standalone scribble on a section divider.
+
+    The .pp-underline span draws a 2px solid ink underline — mimics an
+    underline drawn by hand for emphasis. NEVER use this on Space Grotesk
+    body text; underline is exclusively a Caveat treatment in this preset.
+
+    Variants:
+      .sm  — small in-card annotation (~28px).
+      .lg  — section-divider scribble (~50px).
+      .right — right-aligned + right-bottom transform origin (cover scene).
+  */
+  .pp-scribble-note {
+    font-family: var(--font-script);
+    font-weight: 600;
+    font-size: clamp(28px, 2.4vw, 38px);
+    line-height: 1.05;
+    color: var(--brand-primary);
+    transform: rotate(var(--tilt-scribble));
+    transform-origin: left bottom;
+    margin: 0;
+    padding-top: 14px;
+    max-width: 32ch;
+  }
+  .pp-scribble-note.sm {
+    font-size: clamp(28px, 2vw, 32px);
+  }
+  .pp-scribble-note.lg {
+    font-size: clamp(38px, 3.2vw, 50px);
+  }
+  .pp-scribble-note.right {
+    text-align: right;
+    transform-origin: right bottom;
+  }
+  /* Inline emphasis span — 2px solid ink underline, hand-drawn feel. */
+  .pp-scribble-note .pp-underline {
+    border-bottom: 2px solid var(--brand-primary);
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">stamp</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: stamp --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Cinnabar-red rotated rubber-stamp tag — one of exactly TWO places red
+    appears in this system (the other is the pp-pill-yes negative variant).
+    3px solid brand-accent border, brand-accent mono uppercase text,
+    rotation locked at -4°. Zero radius — stamps don't have soft corners.
+
+    Variants:
+      .lg — slightly larger padding + font (for cover-scene status marks).
+      .upright — emergency override that drops rotation to 0° for cases where
+                 the stamp must sit flush against another rotated element.
+                 Use sparingly; the -4° tilt is the identity.
+
+    DO NOT counter-rotate the stamp on entry animations. The stamp-slam
+    motion scales 1.08 → 1 at -4°; it never rotates from 0° to -4°.
+  */
+  .pp-stamp {
+    display: inline-block;
+    border: var(--border-stamp);
+    color: var(--brand-accent);
+    background: transparent;
+    padding: 6px 16px;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    line-height: 1;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    transform: rotate(var(--tilt-stamp));
+    border-radius: 0;
+  }
+  .pp-stamp.lg {
+    padding: 8px 20px;
+    font-size: 30px;
+    letter-spacing: 0.2em;
+  }
+  .pp-stamp.upright {
+    transform: rotate(0deg);
+  }
+</style>
+      <span class="pp-stamp">Get started</span>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: stamp --&gt;
+```html
+&lt;span class=&quot;pp-stamp&quot;&gt;{LABEL}&lt;/span&gt;
+
+&lt;style&gt;
+  /*
+    Cinnabar-red rotated rubber-stamp tag — one of exactly TWO places red
+    appears in this system (the other is the pp-pill-yes negative variant).
+    3px solid brand-accent border, brand-accent mono uppercase text,
+    rotation locked at -4°. Zero radius — stamps don&#39;t have soft corners.
+
+    Variants:
+      .lg — slightly larger padding + font (for cover-scene status marks).
+      .upright — emergency override that drops rotation to 0° for cases where
+                 the stamp must sit flush against another rotated element.
+                 Use sparingly; the -4° tilt is the identity.
+
+    DO NOT counter-rotate the stamp on entry animations. The stamp-slam
+    motion scales 1.08 → 1 at -4°; it never rotates from 0° to -4°.
+  */
+  .pp-stamp {
+    display: inline-block;
+    border: var(--border-stamp);
+    color: var(--brand-accent);
+    background: transparent;
+    padding: 6px 16px;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 26px;
+    line-height: 1;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    transform: rotate(var(--tilt-stamp));
+    border-radius: 0;
+  }
+  .pp-stamp.lg {
+    padding: 8px 20px;
+    font-size: 30px;
+    letter-spacing: 0.2em;
+  }
+  .pp-stamp.upright {
+    transform: rotate(0deg);
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+  <div class="comp-card">
+    <div class="comp-head">
+      <span class="comp-name">stat-counter</span>
+      <span class="comp-marker">&lt;!-- COMPONENT: stat-counter --&gt;</span>
+    </div>
+    <div class="comp-preview preset-native-scope">
+      <style>
+  /*
+    Hero stat block. Cream card pattern (1.5px ink border, 4px micro-radius,
+    hard ink offset shadow). Big Space Grotesk 700 numeral with a Caveat
+    <small> unit suffix — the script suffix is the system's signature mix:
+    a printed numeral with a hand-counted unit tag.
+
+    Variants:
+      .alt   — paper-2 fill.
+      .alt2  — paper-extra fill + 0.9° askew rotation.
+
+    Often combined with a pp-safety-pin overlay at the top edge of the card.
+  */
+  .pp-stat-counter {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-standard);
+    padding: 32px 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    color: var(--brand-primary);
+  }
+  .pp-stat-counter.alt {
+    background: var(--surface-paper-2);
+  }
+  .pp-stat-counter.alt2 {
+    background: var(--surface-paper-3);
+    transform: rotate(var(--tilt-card-askew));
+  }
+  .pp-stat-counter-num {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(96px, 12vw, 168px);
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    margin-top: 16px;
+    color: var(--brand-primary);
+  }
+  .pp-stat-counter-unit {
+    font-family: var(--font-script);
+    font-weight: 700;
+    font-size: clamp(40px, 4vw, 60px);
+    vertical-align: top;
+    margin-left: 6px;
+    line-height: 1;
+  }
+  .pp-stat-counter-label {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 26px;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: auto 0 0;
+    color: var(--brand-primary);
+  }
+  .pp-stat-counter-body {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1.45;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+</style>
+      <div class="pp-stat-counter">
+  <div class="pp-stat-counter-num">
+    4M<small class="pp-stat-counter-unit">M</small>
+    <!-- Don't use Space Grotesk for the suffix — the script face is load-bearing. -->
+  </div>
+  <h3 class="pp-stat-counter-label">capture</h3>
+  <p class="pp-stat-counter-body">Two lines max. One idea.</p>
+</div>
+    </div>
+    <details>
+      <summary class="ds-summary">Source</summary>
+      <pre class="ds-code">&lt;!-- COMPONENT: stat-counter --&gt;
+```html
+&lt;div class=&quot;pp-stat-counter&quot;&gt;
+  &lt;div class=&quot;pp-stat-counter-num&quot;&gt;
+    {NUM}&lt;small class=&quot;pp-stat-counter-unit&quot;&gt;M&lt;/small&gt;
+    &lt;!-- Don&#39;t use Space Grotesk for the suffix — the script face is load-bearing. --&gt;
+  &lt;/div&gt;
+  &lt;h3 class=&quot;pp-stat-counter-label&quot;&gt;{HEADLINE}&lt;/h3&gt;
+  &lt;p class=&quot;pp-stat-counter-body&quot;&gt;{LEDE}&lt;/p&gt;
+&lt;/div&gt;
+
+&lt;style&gt;
+  /*
+    Hero stat block. Cream card pattern (1.5px ink border, 4px micro-radius,
+    hard ink offset shadow). Big Space Grotesk 700 numeral with a Caveat
+    &lt;small&gt; unit suffix — the script suffix is the system&#39;s signature mix:
+    a printed numeral with a hand-counted unit tag.
+
+    Variants:
+      .alt   — paper-2 fill.
+      .alt2  — paper-extra fill + 0.9° askew rotation.
+
+    Often combined with a pp-safety-pin overlay at the top edge of the card.
+  */
+  .pp-stat-counter {
+    position: relative;
+    background: var(--surface-cream);
+    border: var(--border-hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-pin-standard);
+    padding: 32px 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    color: var(--brand-primary);
+  }
+  .pp-stat-counter.alt {
+    background: var(--surface-paper-2);
+  }
+  .pp-stat-counter.alt2 {
+    background: var(--surface-paper-3);
+    transform: rotate(var(--tilt-card-askew));
+  }
+  .pp-stat-counter-num {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: clamp(96px, 12vw, 168px);
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    margin-top: 16px;
+    color: var(--brand-primary);
+  }
+  .pp-stat-counter-unit {
+    font-family: var(--font-script);
+    font-weight: 700;
+    font-size: clamp(40px, 4vw, 60px);
+    vertical-align: top;
+    margin-left: 6px;
+    line-height: 1;
+  }
+  .pp-stat-counter-label {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 26px;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: auto 0 0;
+    color: var(--brand-primary);
+  }
+  .pp-stat-counter-body {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1.45;
+    margin: 0;
+    color: var(--brand-primary);
+  }
+&lt;/style&gt;
+```
+&lt;!-- /COMPONENT --&gt;</pre>
+    </details>
+  </div>
+</section>
+
+<section id="captions" class="ds-section">
+  <div class="eyebrow">§C · Captions (preset-local skin)</div>
+  <h2>Word <em>by word.</em></h2>
+  <p class="ds-prose">Live preview of <code>caption-skin.html</code> — this preset's own caption look. The same file is copied to <code>chunks/caption-skin.html</code> and filled with real word timings by the caption builder (Phase 4a.5); the demo words and loop here are preview-only.</p>
+  <div style="position: relative; width: 100%; max-width: 960px; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #e5e5e5; border-radius: 8px; margin: 24px 0; background: #fff;">
+    <iframe title="caption-skin preview" loading="lazy" style="position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; border: 0; transform: scale(0.5); transform-origin: top left;" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+  &lt;head&gt;
+    &lt;meta charset=&quot;UTF-8&quot; /&gt;
+    &lt;meta name=&quot;viewport&quot; content=&quot;width=1920, height=1080&quot; /&gt;
+    &lt;title&gt;Pin &amp;amp; Paper — Captions&lt;/title&gt;
+    &lt;!--
+      Pin &amp; Paper caption skin (preset-local source — second caption source).
+
+      A pre-baked, brand-token-strict caption sub-composition. emit-chunks copies this to
+      design-system/chunks/caption-skin.html for the chosen preset; build-captions-html.mjs
+      then fills three reserved holes and writes compositions/captions.html:
+        - the empty GROUPS array       → engine's scene-aware, non-overlapping word groups
+        - the 0 DURATION + data-duration → real total_duration_s
+        - the empty brand-tokens style → the project's tokens.css
+      (the filler asserts each hole appears exactly once, so this note avoids the literals)
+
+      Contract (so ONE generic fill works for every preset's skin — no per-skin transform):
+        · root carries data-composition-id=&quot;captions&quot;; timeline registers window.__timelines[&quot;captions&quot;]
+        · canonical hooks .caption-group / .caption-word (+ states .is-active / .is-spoken)
+        · all colors are var(--*) / color-mix over tokens — brand-strict by construction
+        · no &lt;video&gt;, no Google Fonts, no placeholder transcript, no window.&lt;native&gt;() calls
+        · state changes use gsap.set({className}) (applied on seek) — NOT .call callbacks
+          (callbacks don't fire on the engine's frame-by-frame seek)
+
+      Visual: cream paper card pinned to the page — 1.5px hairline ink border, 4px micro-radius,
+      hard ink-blue zero-blur offset shadow, slight askew tilt. The current word wears a cinnabar-red
+      rubber-stamp outline; spoken words settle to solid ink. The field-notebook counterpart to the
+      registry default caption-pill-karaoke (soft rounded SaaS pill).
+    --&gt;
+    &lt;script src=&quot;https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js&quot;&gt;&lt;/script&gt;
+
+    &lt;!-- build-captions-html.mjs injects the project's tokens.css here --&gt;
+    &lt;style data-brand-tokens&gt;
+
+:root {
+  --brand-primary:   #1F3A8A;
+  --brand-secondary: #C9A66B;
+  --brand-tertiary:  #000000;
+  --brand-accent:    #C2342B;
+  --brand-costume:   #F8F1D6;
+  --ink:             #1F3A8A;
+  --canvas:          #EFE56A;
+  --brand-gradient:  linear-gradient(135deg, #1F3A8A 0%, #C9A66B 50%, #C2342B 100%);
+  --deco-1:          #F7CB46;
+  --deco-2:          #99E885;
+  --deco-3:          #C0F7FE;
+  --deco-4:          #FE90E8;
+  --font-display:    'Space Grotesk', system-ui, sans-serif;
+  --font-body:       'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:       'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --anchor-paper-yellow: #efe56a; /* saturated cadmium yellow — the page */
+  --anchor-cream: #f8f1d6; /* off-white ivory — the cards */
+  --surface-paper: color-mix(in srgb, var(--brand-primary) 6%, var(--anchor-paper-yellow));
+  --surface-paper-2: color-mix(
+  in srgb,
+  var(--brand-primary) 4%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 70%, white)
+);
+  --surface-paper-3: color-mix(
+  in srgb,
+  var(--brand-primary) 8%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 85%, black 8%)
+);
+  --surface-cream: color-mix(in srgb, var(--brand-primary) 4%, var(--anchor-cream));
+  --shadow-pin-compact: 4px 5px 0 0 var(--brand-primary);
+  --shadow-pin-standard: 5px 6px 0 0 var(--brand-primary);
+  --shadow-pin-hero: 8px 9px 0 0 var(--brand-primary);
+  --border-hairline: 1.5px solid var(--brand-primary);
+  --border-dashed: 1.5px dashed color-mix(in srgb, var(--brand-primary) 45%, transparent);
+  --border-stamp: 3px solid var(--brand-accent);
+  --radius-card: 4px;
+  --radius-pill: 999px;
+  --pad-edge: 64px;
+  --pad-top: 110px;
+  --pad-bottom: 90px;
+  --card-pad: 28px;
+  --card-pad-lg: 36px 28px 28px;
+  --gap-card-sm: 22px;
+  --gap-card-md: 28px;
+  --gap-card-lg: 32px;
+  --tilt-pin: -10deg;
+  --tilt-pin-alt: 14deg;
+  --tilt-card-askew: 0.9deg;
+  --tilt-scribble: -2deg;
+  --tilt-stamp: -4deg;
+  --paper-grain: url(&quot;data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'&gt;&lt;filter id='n'&gt;&lt;feTurbulence type='fractalNoise' baseFrequency='1.4' numOctaves='2' stitchTiles='stitch'/&gt;&lt;feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.45  0 0 0 0 0.2  0 0 0 .25 0'/&gt;&lt;/filter&gt;&lt;rect width='100%25' height='100%25' filter='url(%23n)'/&gt;&lt;/svg&gt;&quot;);
+}&lt;/style&gt;
+
+    &lt;style&gt;
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+      #captions-root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: transparent;
+        pointer-events: none;
+      }
+
+      /* pin-and-paper · captions · cream paper card pinned to the page — hairline ink border,
+         micro-radius, hard ink-blue zero-blur offset shadow, slight askew tilt, cinnabar-red
+         rubber-stamp outline on the current word */
+      .caption-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        pointer-events: none;
+      }
+      .caption-stage {
+        position: absolute;
+        left: 50%;
+        bottom: 36px;
+        transform: translateX(-50%);
+        width: 1600px;
+        height: 210px;
+      }
+      .caption-group {
+        /* every group is absolutely positioned over the SAME band — exactly one is shown
+           at a time via opacity. Must be absolute: if groups stay in-flow, N groups lay
+           out side-by-side (opacity:0 hides but still occupies space). */
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+      }
+
+      /* THE pinned paper card — cream fill, 1.5px hairline ink border, 4px micro-radius,
+         hard ink-blue offset shadow (zero blur), settled slightly askew on the page */
+      .caption-pill {
+        max-width: 1600px;
+        padding: 22px 44px 26px;
+        background: var(--surface-cream);
+        border: var(--border-hairline);
+        border-radius: var(--radius-card);
+        box-shadow: var(--shadow-pin-standard);
+        transform: rotate(var(--tilt-card-askew));
+      }
+      .caption-line {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.16em 0.34em;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: clamp(40px, 4.4vw, 56px);
+        line-height: 1.24;
+        letter-spacing: -0.03em;
+      }
+
+      /* upcoming — faint ink-blue, no stamp */
+      .caption-word {
+        display: inline-block;
+        padding: 0 0.04em;
+        color: color-mix(in srgb, var(--brand-primary) 38%, var(--surface-cream));
+      }
+      /* current word — THE cinnabar-red rubber-stamp outline (box-shadow ring = stamp w/o
+         layout shift), ink-blue glyphs reading over the cream page */
+      .caption-word.is-active {
+        color: var(--brand-primary);
+        background: color-mix(in srgb, var(--brand-accent) 12%, var(--surface-cream));
+        box-shadow:
+          0 0 0 0.06em var(--brand-accent),
+          0 0 0 0.12em color-mix(in srgb, var(--brand-accent) 30%, transparent);
+      }
+      /* already spoken — solid ink-blue, stamp cleared */
+      .caption-word.is-spoken {
+        color: var(--brand-primary);
+        background: transparent;
+        box-shadow: none;
+      }
+
+      /* optional per-word accents (dormant until a word-classer tags them) */
+      .caption-word.cap-brand {
+        color: var(--brand-primary);
+        font-style: italic;
+      }
+      .caption-word.cap-brand.is-active {
+        color: var(--brand-primary);
+        background: color-mix(in srgb, var(--brand-accent) 14%, var(--surface-cream));
+        box-shadow:
+          0 0 0 0.06em var(--brand-accent),
+          0 0 0 0.12em color-mix(in srgb, var(--brand-accent) 30%, transparent);
+      }
+      .caption-word.cap-num {
+        color: color-mix(in srgb, var(--brand-primary) 72%, var(--surface-cream));
+      }
+      /* the cinnabar-red stamp underline — the system's hand-drawn emphasis, in red */
+      .caption-word.cap-cta {
+        text-decoration: underline;
+        text-decoration-thickness: 3px;
+        text-decoration-color: var(--brand-accent);
+        text-underline-offset: 0.08em;
+      }
+
+      @media (max-aspect-ratio: 9/16) {
+        .caption-stage {
+          bottom: 100px;
+          width: 92%;
+        }
+        .caption-line {
+          font-size: clamp(34px, 5.4vw, 46px);
+        }
+      }
+    &lt;/style&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;div
+      id=&quot;captions-root&quot;
+      data-composition-id=&quot;captions&quot;
+      data-timeline-locked
+      data-start=&quot;0&quot;
+      data-duration=&quot;6.6&quot;
+      data-fps=&quot;30&quot;
+      data-width=&quot;1920&quot;
+      data-height=&quot;1080&quot;
+    &gt;
+      &lt;div class=&quot;caption-layer&quot; aria-hidden=&quot;true&quot;&gt;
+        &lt;div id=&quot;caption-stage&quot; class=&quot;caption-stage&quot;&gt;&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;script&gt;
+      // build-captions-html.mjs injects the engine's scene-aware groups + real duration.
+      var GROUPS = [{&quot;start&quot;:0.3,&quot;end&quot;:2.1,&quot;words&quot;:[{&quot;text&quot;:&quot;WRITE&quot;,&quot;start&quot;:0.3,&quot;end&quot;:0.9},{&quot;text&quot;:&quot;HTML,&quot;,&quot;start&quot;:0.9,&quot;end&quot;:1.4},{&quot;text&quot;:&quot;RENDER&quot;,&quot;start&quot;:1.4,&quot;end&quot;:2.1}]},{&quot;start&quot;:2.5,&quot;end&quot;:4.3,&quot;words&quot;:[{&quot;text&quot;:&quot;VIDEO.&quot;,&quot;start&quot;:2.5,&quot;end&quot;:3.1},{&quot;text&quot;:&quot;NO&quot;,&quot;start&quot;:3.1,&quot;end&quot;:3.5},{&quot;text&quot;:&quot;TIMELINE.&quot;,&quot;start&quot;:3.5,&quot;end&quot;:4.3}]},{&quot;start&quot;:4.7,&quot;end&quot;:6.2,&quot;words&quot;:[{&quot;text&quot;:&quot;JUST&quot;,&quot;start&quot;:4.7,&quot;end&quot;:5.1},{&quot;text&quot;:&quot;CODE.&quot;,&quot;start&quot;:5.1,&quot;end&quot;:5.9}]}];
+      var DURATION = 6.6;
+
+      (function () {
+        var stage = document.getElementById(&quot;caption-stage&quot;);
+
+        // build DOM: one .caption-group per group, .caption-word per word
+        GROUPS.forEach(function (group, g) {
+          var groupEl = document.createElement(&quot;div&quot;);
+          groupEl.className = &quot;caption-group&quot;;
+          groupEl.id = &quot;caption-group-&quot; + g;
+          var pill = document.createElement(&quot;div&quot;);
+          pill.className = &quot;caption-pill&quot;;
+          var line = document.createElement(&quot;div&quot;);
+          line.className = &quot;caption-line&quot;;
+          (group.words || []).forEach(function (w, i) {
+            var span = document.createElement(&quot;span&quot;);
+            span.className = &quot;caption-word&quot;;
+            span.id = &quot;caption-word-&quot; + g + &quot;-&quot; + i;
+            span.textContent = String(w.text).toUpperCase();
+            line.appendChild(span);
+          });
+          pill.appendChild(line);
+          groupEl.appendChild(pill);
+          stage.appendChild(groupEl);
+        });
+
+        window.__timelines = window.__timelines || {};
+        var tl = gsap.timeline({ paused: true });
+
+        GROUPS.forEach(function (group, g) {
+          var groupEl = document.getElementById(&quot;caption-group-&quot; + g);
+          var words = group.words || [];
+          var next = GROUPS[g + 1];
+          var isLast = g === GROUPS.length - 1;
+          var start = Math.max(0, Number(group.start));
+          var end = isLast ? DURATION : Math.min(Number(next.start), Number(group.end) + 0.3);
+          if (end &lt;= start) end = start + 0.01;
+
+          // group on/off — exactly one group visible at a time
+          tl.set(groupEl, { opacity: 1 }, start);
+          tl.set(groupEl, { opacity: 0 }, end);
+
+          // 3-state karaoke via className SETS — seek-safe (gsap.set applies on the
+          // engine's frame-by-frame seek; .call callbacks would NOT fire).
+          words.forEach(function (w, i) {
+            var el = document.getElementById(&quot;caption-word-&quot; + g + &quot;-&quot; + i);
+            var at = Math.max(start, Number(w.start));
+            tl.set(el, { className: &quot;caption-word&quot; }, start); // upcoming (also resets on reverse-seek)
+            tl.set(el, { className: &quot;caption-word is-active&quot; }, at); // current
+            tl.fromTo(el, { scale: 0.9 }, { scale: 1, duration: 0.14, ease: &quot;power3.out&quot; }, at);
+            if (i + 1 &lt; words.length) {
+              var nextAt = Math.max(start, Number(words[i + 1].start));
+              tl.set(el, { className: &quot;caption-word is-spoken&quot; }, nextAt); // demote when next stamps
+            }
+          });
+          if (words.length) {
+            var lastEl = document.getElementById(&quot;caption-word-&quot; + g + &quot;-&quot; + (words.length - 1));
+            var lastSpoken = Math.min(end, Number(words[words.length - 1].end) + 0.1);
+            tl.set(lastEl, { className: &quot;caption-word is-spoken&quot; }, lastSpoken);
+          }
+        });
+
+        // full-span anchor so the sub-comp timeline spans the whole video
+        tl.to({}, { duration: DURATION }, 0);
+        window.__timelines[&quot;captions&quot;] = tl;
+      })();
+    &lt;/script&gt;
+    &lt;script&gt;
+    (function () {
+      var t = window.__timelines &amp;&amp; window.__timelines[&quot;captions&quot;];
+      if (t &amp;&amp; t.duration()) t.repeat(-1).repeatDelay(0.5).play();
+    })();
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+  </div>
+</section>
+</main>
+
+</body>
+</html>

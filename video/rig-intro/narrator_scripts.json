@@ -1,0 +1,220 @@
+{
+  "project": "rig — LEGO-style harness orchestrator",
+  "narrativeArchetype": "concept-explainer with how-to-process",
+  "stylePreset": "block-frame",
+  "orientation": "landscape",
+  "emotionalArc": "Recognition of Claude Code's solo-worker bottleneck pivots to clarity as rig's four-stage pipeline composes a task-specific harness, building conviction through the parallel-review payoff, expanding to show rig works for non-dev roles too, and landing on resolve to try it.",
+  "scenes": [
+    {
+      "sceneNumber": 1,
+      "sceneName": "Hook — レビューの天井",
+      "transition": {
+        "continuity": "break",
+        "intent": "cut",
+        "description": "Open cold on a single hand-drawn checkmark beside three '気になったところ' comments pinned to a paper background. Held still."
+      },
+      "narrativeIntent": {
+        "type": "hook",
+        "narrativeRole": "Surface the unspoken ceiling: review surfaces 'noticed-it' findings only.",
+        "keyMessage": "気になったところ止まりのレビューに、心当たりはありませんか。",
+        "persuasion": "Recognition: name a daily friction",
+        "emotionalBeat": "Recognition and unease"
+      },
+      "assetCandidates": [],
+      "script": "「気になったところ」止まりのレビュー、心当たりありませんか。",
+      "estimatedDuration": "4s"
+    },
+    {
+      "sceneNumber": 2,
+      "sceneName": "Pain — 一人のクロード",
+      "transition": {
+        "continuity": "break",
+        "intent": "dissolve",
+        "description": "Dissolve into a paper page where one figure-of-eight loop is labeled '実装' and '判断' both — a single agent doing both, with a context bar inking in next to it."
+      },
+      "narrativeIntent": {
+        "type": "pain_point",
+        "narrativeRole": "Concretize why solo execution dulls: one agent reviews while implementing.",
+        "keyMessage": "コンテキストが膨らむほど、判断は雑になる。",
+        "persuasion": "Causal chain: long session → swollen context → coarse review",
+        "emotionalBeat": "Tension and skepticism"
+      },
+      "assetCandidates": [],
+      "script": "実装もレビューも、ひとりのクロード。コンテキストが膨らむほど、判断は雑になる。",
+      "estimatedDuration": "7s"
+    },
+    {
+      "sceneNumber": 3,
+      "sceneName": "Name — リグはレゴ式",
+      "transition": {
+        "continuity": "break",
+        "intent": "zoom",
+        "description": "Pencil zooms back from the page to reveal the word 'rig' in serif with four sketched brick glyphs (facet / pattern / recipe / persona) pinned beneath."
+      },
+      "narrativeIntent": {
+        "type": "product_intro",
+        "narrativeRole": "Name the protagonist concept: rig as a LEGO-style harness composer.",
+        "keyMessage": "rig はタスクごとに開発フローを組み立てるオーケストレータ。",
+        "persuasion": "Mnemonic: LEGO bricks as composable facets",
+        "emotionalBeat": "Clarity and orientation"
+      },
+      "assetCandidates": [],
+      "script": "リグはレゴ式。タスクごとに、開発フローを組み立てるオーケストレータです。",
+      "estimatedDuration": "7s"
+    },
+    {
+      "sceneNumber": 4,
+      "sceneName": "PARSE — 起動文字列を読む",
+      "transition": {
+        "continuity": "break",
+        "intent": "slide",
+        "description": "Slide horizontally onto a paper code-window stage; a command line lands and two labeled chips light up: フラグ and 自由記述."
+      },
+      "narrativeIntent": {
+        "type": "feature_showcase",
+        "narrativeRole": "Stage 1 of the pipeline — invocation parsed into flags and free text.",
+        "keyMessage": "PARSE reads what you typed and separates the levers.",
+        "persuasion": "Progressive disclosure: stage 1 of 4 with a worked invocation",
+        "emotionalBeat": "Focus and anticipation"
+      },
+      "assetCandidates": [],
+      "script": "パースが読むのは、起動文字列。フラグと、自由記述。ここで切り分けます。",
+      "estimatedDuration": "8s"
+    },
+    {
+      "sceneNumber": 5,
+      "sceneName": "RESOLVE — 規則を重ねる",
+      "transition": {
+        "continuity": "continue",
+        "intent": "morph",
+        "sharedMotif": "the four-stage pipeline-strip ribbon",
+        "description": "The PARSE pill slides left as a second pill titled RESOLVE morphs in. A short stack of pencil-labeled rules (manifest / recipe / flag / size-aware) inks in."
+      },
+      "narrativeIntent": {
+        "type": "feature_showcase",
+        "narrativeRole": "Stage 2 — rules stack in order, later overrides earlier.",
+        "keyMessage": "RESOLVE がハーネスをひとつに確定する。",
+        "persuasion": "Build-up: simple → general layered stack",
+        "emotionalBeat": "Comprehension"
+      },
+      "assetCandidates": [],
+      "script": "リゾルブで、マニフェスト、レシピ、フラグを順に重ねる。ハーネスが、ひとつ決まる。",
+      "estimatedDuration": "8s"
+    },
+    {
+      "sceneNumber": 6,
+      "sceneName": "COMPOSE — 固定順で組む",
+      "transition": {
+        "continuity": "continue",
+        "intent": "morph",
+        "sharedMotif": "the four-stage pipeline-strip ribbon",
+        "description": "The pipeline strip advances; a vertical prompt skeleton appears, five facet slots ink in top→bottom like a printed form."
+      },
+      "narrativeIntent": {
+        "type": "feature_showcase",
+        "narrativeRole": "Stage 3 — facets assembled in a strict order.",
+        "keyMessage": "COMPOSE は固定順で組み立てる。順番が崩れたら壊れる。",
+        "persuasion": "Frame-then-fill: 5 slots dropped in order",
+        "emotionalBeat": "Confidence"
+      },
+      "assetCandidates": [],
+      "script": "コンポーズは固定順。いつつのファセットを、決まった順番で組み立てます。",
+      "estimatedDuration": "6s"
+    },
+    {
+      "sceneNumber": 7,
+      "sceneName": "RUN — ネイティブだけで走る",
+      "transition": {
+        "continuity": "break",
+        "intent": "slide",
+        "description": "Slide off the prompt skeleton; a hand-drawn fan of three subagent cards opens out from a single dispatch line, each labeled (security / design / test), parent context kept conspicuously thin."
+      },
+      "narrativeIntent": {
+        "type": "feature_showcase",
+        "narrativeRole": "Stage 4 — execute via native primitives; parallel observations in one message.",
+        "keyMessage": "RUN: 並列観点はひとつのメッセージで一気に投げる。",
+        "persuasion": "Demonstration: one dispatch fans out",
+        "emotionalBeat": "Momentum"
+      },
+      "assetCandidates": [],
+      "script": "ここでネイティブだけで走る。セキュリティ、デザイン、テスト。みっつの観点を、ひとつのメッセージで投げます。",
+      "estimatedDuration": "9s"
+    },
+    {
+      "sceneNumber": 8,
+      "sceneName": "context-minimal — 親は空のまま",
+      "transition": {
+        "continuity": "break",
+        "intent": "dissolve",
+        "description": "Dissolve to a paper split frame: left side a fat fill bar labeled 'before' (膨らむ), right side a thin parent line with three small subagent badges underneath labeled 'after' (空)."
+      },
+      "narrativeIntent": {
+        "type": "benefit_highlight",
+        "narrativeRole": "The structural payoff: parent stays empty, judgment never dulls.",
+        "keyMessage": "親のコンテキストは常に空。膨らまないから、最後まで鈍らない。",
+        "persuasion": "Before/after contrast on the same axis",
+        "emotionalBeat": "Aha and relief"
+      },
+      "assetCandidates": [],
+      "script": "親のコンテキストは、常に空っぽ。膨らまないから、最後まで鈍らない。",
+      "estimatedDuration": "7s"
+    },
+    {
+      "sceneNumber": 9,
+      "sceneName": "Parallel review — 3 つの verdict",
+      "transition": {
+        "continuity": "break",
+        "intent": "slide",
+        "description": "Slide right into three vertical reviewer panes (security / design / test); each stamps a verdict line simultaneously."
+      },
+      "narrativeIntent": {
+        "type": "social_proof",
+        "narrativeRole": "Concrete runnable example: /rig:dev --review fans out three reviewers.",
+        "keyMessage": "リグ デブ レビュー で、3 つの verdict が並列で返る。",
+        "persuasion": "Worked example: real command, three structured verdicts",
+        "emotionalBeat": "Conviction"
+      },
+      "assetCandidates": [],
+      "script": "リグ デブ レビュー なら、みっつの ヴァーディクト が並列で返る。抜けが、起きにくい。",
+      "estimatedDuration": "8s"
+    },
+    {
+      "sceneNumber": 10,
+      "sceneName": "Not just dev — 同じハーネスが他のロールでも動く",
+      "transition": {
+        "continuity": "break",
+        "intent": "zoom",
+        "description": "Camera pulls back from the dev reviewers to reveal three siblings branching off the same hand-drawn harness spine: /rig:dev (code icon), /rig:sales (handshake icon), /rig:goal (target icon). Pencil-sketched labels."
+      },
+      "narrativeIntent": {
+        "type": "benefit_highlight",
+        "narrativeRole": "Expand the audience: rig is not dev-only. Sales reviews, goal loops use the same harness.",
+        "keyMessage": "rig は開発者だけじゃない。商談レビューもゴール駆動も、同じハーネスで動く。",
+        "persuasion": "Breadth-of-use proof: same engine, multiple roles",
+        "emotionalBeat": "Inclusion and expanded clarity"
+      },
+      "assetCandidates": [],
+      "script": "リグは、開発者だけじゃない。商談レビューも、ゴール駆動も、同じハーネスで動きます。",
+      "estimatedDuration": "8s"
+    },
+    {
+      "sceneNumber": 11,
+      "sceneName": "CTA — インストールしてください",
+      "transition": {
+        "continuity": "break",
+        "intent": "zoom",
+        "description": "Zoom to a quiet paper card centered: '/plugin install rig' above '/rig:dev', with the GitHub handle pinned at the foot in hairline ink."
+      },
+      "narrativeIntent": {
+        "type": "cta",
+        "narrativeRole": "Close with the smallest next step — install and run /rig:dev.",
+        "keyMessage": "もう一人で抱えなくていい。インストールして、/rig:dev から始めて。",
+        "persuasion": "Distillation: one install line, one entrypoint",
+        "emotionalBeat": "Resolve and inspiration"
+      },
+      "assetCandidates": [],
+      "script": "もう、ひとりで抱えなくていい。プラグイン インストール リグ、そして リグ デブ。",
+      "estimatedDuration": "7s"
+    }
+  ]
+}

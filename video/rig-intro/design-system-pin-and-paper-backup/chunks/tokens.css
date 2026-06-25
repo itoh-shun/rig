@@ -1,0 +1,53 @@
+:root {
+  --brand-primary:   #1F3A8A;
+  --brand-secondary: #C9A66B;
+  --brand-tertiary:  #000000;
+  --brand-accent:    #C2342B;
+  --brand-costume:   #F8F1D6;
+  --ink:             #1F3A8A;
+  --canvas:          #EFE56A;
+  --brand-gradient:  linear-gradient(135deg, #1F3A8A 0%, #C9A66B 50%, #C2342B 100%);
+  --deco-1:          #F7CB46;
+  --deco-2:          #99E885;
+  --deco-3:          #C0F7FE;
+  --deco-4:          #FE90E8;
+  --font-display:    'Space Grotesk', system-ui, sans-serif;
+  --font-body:       'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:       'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --anchor-paper-yellow: #efe56a; /* saturated cadmium yellow — the page */
+  --anchor-cream: #f8f1d6; /* off-white ivory — the cards */
+  --surface-paper: color-mix(in srgb, var(--brand-primary) 6%, var(--anchor-paper-yellow));
+  --surface-paper-2: color-mix(
+  in srgb,
+  var(--brand-primary) 4%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 70%, white)
+);
+  --surface-paper-3: color-mix(
+  in srgb,
+  var(--brand-primary) 8%,
+  color-mix(in srgb, var(--anchor-paper-yellow) 85%, black 8%)
+);
+  --surface-cream: color-mix(in srgb, var(--brand-primary) 4%, var(--anchor-cream));
+  --shadow-pin-compact: 4px 5px 0 0 var(--brand-primary);
+  --shadow-pin-standard: 5px 6px 0 0 var(--brand-primary);
+  --shadow-pin-hero: 8px 9px 0 0 var(--brand-primary);
+  --border-hairline: 1.5px solid var(--brand-primary);
+  --border-dashed: 1.5px dashed color-mix(in srgb, var(--brand-primary) 45%, transparent);
+  --border-stamp: 3px solid var(--brand-accent);
+  --radius-card: 4px;
+  --radius-pill: 999px;
+  --pad-edge: 64px;
+  --pad-top: 110px;
+  --pad-bottom: 90px;
+  --card-pad: 28px;
+  --card-pad-lg: 36px 28px 28px;
+  --gap-card-sm: 22px;
+  --gap-card-md: 28px;
+  --gap-card-lg: 32px;
+  --tilt-pin: -10deg;
+  --tilt-pin-alt: 14deg;
+  --tilt-card-askew: 0.9deg;
+  --tilt-scribble: -2deg;
+  --tilt-stamp: -4deg;
+  --paper-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.4' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.45  0 0 0 0 0.2  0 0 0 .25 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}

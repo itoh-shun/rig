@@ -1,0 +1,329 @@
+<template id="scene_3-template">
+  <div id="root" class="scene_3-root" data-composition-id="scene_3" data-width="1920" data-height="1080" data-duration="6.84" style="position:relative; width:1920px; height:1080px; overflow:hidden;">
+    <style>
+      /* Tokens declared globally in index.html — reference only via var(--*). */
+      #root {
+        background: var(--canvas);
+        font-family: Inter, system-ui, sans-serif;
+        color: var(--ink);
+      }
+      #root *, #root *::before, #root *::after { box-sizing: border-box; }
+
+      /* Paper-grain ambient — full-bleed, single ambient layer (constraint #13 background exception keyword: grain). */
+      .s3-grain {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.35;
+        mix-blend-mode: multiply;
+        background-image: var(--paper-grain);
+        z-index: 1;
+      }
+
+      /* Root content stack — sits above grain. */
+      .s3-stage {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 120px 96px;
+        gap: 36px;
+        transform-origin: 50% 50%;
+      }
+
+      /* Scribble note 「レゴ式」 — marginal voice, tilted -2° via GSAP rotation
+         (constraint #5b — element is animated, so tilt lives in GSAP not CSS). */
+      .s3-scribble {
+        font-family: Inter, system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 56px;
+        line-height: 1;
+        color: var(--brand-primary);
+        margin: 0;
+        will-change: transform;
+      }
+
+      /* Hero "rig" depth stack — 3d-text-depth-layers. */
+      .s3-depth-stack {
+        position: relative;
+        display: inline-block;
+      }
+      .s3-depth-text {
+        font-family: Inter, system-ui, sans-serif;
+        font-weight: 700;
+        font-size: 360px;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        margin: 0;
+        color: var(--brand-primary);
+      }
+      .s3-depth-text.is-back {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+      }
+      .s3-depth-text.is-front {
+        position: relative;
+        z-index: 10;
+      }
+
+      /* Brick glyph row — four pencil-sketched bricks ink left-to-right. */
+      .s3-brick-row {
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 56px;
+        margin-top: 8px;
+      }
+      .s3-brick {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+      .s3-brick-svg {
+        width: 132px;
+        height: 96px;
+        display: block;
+      }
+      .s3-brick-svg path,
+      .s3-brick-svg circle {
+        fill: none;
+        stroke: var(--brand-primary);
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .s3-brick-label {
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 500;
+        font-size: 22px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--brand-primary);
+        margin: 0;
+        opacity: 0;
+      }
+    </style>
+
+    <div class="s3-grain" aria-hidden="true"></div>
+
+    <div class="s3-stage" id="s3-stage">
+      <p class="s3-scribble" id="s3-scribble">レゴ式</p>
+
+      <div class="s3-depth-stack" id="s3-depth-stack">
+        <!-- Depth layers injected by script (4 copies, front+back). -->
+      </div>
+
+      <div class="s3-brick-row">
+        <div class="s3-brick">
+          <svg class="s3-brick-svg" id="s3-brick-1" viewBox="0 0 132 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path id="s3-brick-1-body" d="M 14 26 L 118 26 L 118 82 L 14 82 Z" />
+            <circle id="s3-brick-1-stud-a" cx="40" cy="14" r="9" />
+            <circle id="s3-brick-1-stud-b" cx="92" cy="14" r="9" />
+          </svg>
+          <p class="s3-brick-label" id="s3-brick-1-label">FACET</p>
+        </div>
+        <div class="s3-brick">
+          <svg class="s3-brick-svg" id="s3-brick-2" viewBox="0 0 132 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path id="s3-brick-2-body" d="M 14 26 L 118 26 L 118 82 L 14 82 Z" />
+            <circle id="s3-brick-2-stud-a" cx="40" cy="14" r="9" />
+            <circle id="s3-brick-2-stud-b" cx="92" cy="14" r="9" />
+          </svg>
+          <p class="s3-brick-label" id="s3-brick-2-label">PATTERN</p>
+        </div>
+        <div class="s3-brick">
+          <svg class="s3-brick-svg" id="s3-brick-3" viewBox="0 0 132 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path id="s3-brick-3-body" d="M 14 26 L 118 26 L 118 82 L 14 82 Z" />
+            <circle id="s3-brick-3-stud-a" cx="40" cy="14" r="9" />
+            <circle id="s3-brick-3-stud-b" cx="92" cy="14" r="9" />
+          </svg>
+          <p class="s3-brick-label" id="s3-brick-3-label">RECIPE</p>
+        </div>
+        <div class="s3-brick">
+          <svg class="s3-brick-svg" id="s3-brick-4" viewBox="0 0 132 96" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path id="s3-brick-4-body" d="M 14 26 L 118 26 L 118 82 L 14 82 Z" />
+            <circle id="s3-brick-4-stud-a" cx="40" cy="14" r="9" />
+            <circle id="s3-brick-4-stud-b" cx="92" cy="14" r="9" />
+          </svg>
+          <p class="s3-brick-label" id="s3-brick-4-label">PERSONA</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const EASE = {
+        entry: "power2.out",
+        emphasis: "power3.out",
+        exit: "power2.in",
+        drift: "sine.inOut",
+      };
+      const DUR = {
+        snap: 0.18,
+        med: 0.5,
+        slow: 0.95,
+      };
+
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // Build "rig" depth stack — 4 layers, light from upper-left (+x, +y back-layer offsets).
+      const stack = document.getElementById("s3-depth-stack");
+      const TEXT = "rig";
+      const LAYER_COUNT = 4;
+      const OFFSET_X = 3;
+      const OFFSET_Y = 3;
+      const BACK_ALPHA_MAX = 0.55;
+      const BACK_ALPHA_STEP = 0.12;
+      const BACK_ALPHA_MIN = 0.18;
+      for (let i = LAYER_COUNT - 1; i >= 0; i--) {
+        const el = document.createElement("span");
+        el.className = "s3-depth-text " + (i === 0 ? "is-front" : "is-back");
+        el.textContent = TEXT;
+        if (i > 0) {
+          const alpha = Math.max(BACK_ALPHA_MAX - (i - 1) * BACK_ALPHA_STEP, BACK_ALPHA_MIN);
+          // --brand-primary #1F3A8A → rgb(31,58,138)
+          el.style.color = "rgba(31, 58, 138, " + alpha + ")";
+          el.style.transform = "translate(0px, 0px)";
+        }
+        el.dataset.layer = String(i);
+        stack.appendChild(el);
+      }
+
+      // Initial-hidden via gsap.set (cheat-sheet #2).
+      gsap.set("#s3-scribble", { opacity: 0, y: 12, rotation: -2 });
+      gsap.set(".s3-depth-text", { opacity: 0 });
+      gsap.set([
+        "#s3-brick-1-label",
+        "#s3-brick-2-label",
+        "#s3-brick-3-label",
+        "#s3-brick-4-label",
+      ], { opacity: 0 });
+
+      // svg-path-draw setup — measure each shape's getTotalLength + set dash.
+      const brickSvgIds = ["s3-brick-1", "s3-brick-2", "s3-brick-3", "s3-brick-4"];
+      brickSvgIds.forEach((svgId) => {
+        const svg = document.getElementById(svgId);
+        const shapes = svg.querySelectorAll("path, circle");
+        shapes.forEach((s) => {
+          const len = s.getTotalLength();
+          s.style.strokeDasharray = String(len);
+          s.style.strokeDashoffset = String(len);
+        });
+      });
+
+      // Phase 1 — scribble note enters (0.0 → 0.4).
+      tl.to("#s3-scribble", {
+        opacity: 1,
+        y: 0,
+        duration: 0.4,
+        ease: EASE.entry,
+      }, 0);
+
+      // Phase 2 — "rig" depth-layer cascade (0.4 → 1.05).
+      const LAYER_CASCADE_START = 0.4;
+      const LAYER_CASCADE_STEP = 0.08;
+      const LAYER_FADE_DUR = 0.45;
+      const allLayers = stack.querySelectorAll(".s3-depth-text");
+      allLayers.forEach((el) => {
+        const i = Number(el.dataset.layer);
+        const finalAlpha = el.classList.contains("is-front")
+          ? 1
+          : Math.max(BACK_ALPHA_MAX - (i - 1) * BACK_ALPHA_STEP, BACK_ALPHA_MIN);
+        tl.to(el, {
+          opacity: finalAlpha,
+          duration: LAYER_FADE_DUR,
+          ease: EASE.entry,
+        }, LAYER_CASCADE_START + (LAYER_COUNT - 1 - i) * LAYER_CASCADE_STEP);
+      });
+
+      // Depth grows from 0 → full extrusion in step with cascade.
+      const depthState = { p: 0 };
+      tl.to(depthState, {
+        p: 1,
+        duration: 0.65,
+        ease: EASE.emphasis,
+        onUpdate: () => {
+          stack.querySelectorAll(".s3-depth-text.is-back").forEach((el) => {
+            const i = Number(el.dataset.layer);
+            const x = i * OFFSET_X * depthState.p;
+            const y = i * OFFSET_Y * depthState.p;
+            el.style.transform = "translate(" + x + "px, " + y + "px)";
+          });
+        },
+      }, LAYER_CASCADE_START);
+
+      // Phase 3 — brick path-draws (1.4 → 2.6), ~400ms total stagger window.
+      const BRICK_DRAW_DUR = 0.42;
+      const STUD_DRAW_DUR = 0.18;
+      const BRICK_START = 1.4;
+      const BRICK_STAGGER = 0.30;
+      brickSvgIds.forEach((svgId, idx) => {
+        const start = BRICK_START + idx * BRICK_STAGGER;
+        tl.to("#" + svgId + " path", {
+          strokeDashoffset: 0,
+          duration: BRICK_DRAW_DUR,
+          ease: EASE.entry,
+        }, start);
+        tl.to(
+          ["#" + svgId + "-stud-a", "#" + svgId + "-stud-b"],
+          {
+            strokeDashoffset: 0,
+            duration: STUD_DRAW_DUR,
+            ease: EASE.entry,
+            stagger: 0.06,
+          },
+          start + 0.22
+        );
+      });
+
+      // Phase 4 — brick labels fade in below each brick.
+      const LABEL_START = 2.55;
+      const LABEL_STAGGER = 0.07;
+      brickSvgIds.forEach((_, idx) => {
+        tl.to("#s3-brick-" + (idx + 1) + "-label", {
+          opacity: 1,
+          duration: 0.32,
+          ease: EASE.entry,
+        }, LABEL_START + idx * LABEL_STAGGER);
+      });
+
+      // Phase 5 — sine-wave-loop on scribble only (3.0 → 6.34).
+      // Anti-wobble HARD: ±0.5% scale, ±1px y on ONE element, with envelope
+      // fading amplitude to 0 over the last 25% so the final 0.5s is fully static.
+      const IDLE_START = 3.0;
+      const IDLE_END = 6.34;
+      const IDLE_DUR = IDLE_END - IDLE_START;
+      const CYCLES = 1.2;
+      const SCALE_AMP = 0.005;
+      const Y_AMP_PX = 1;
+      const FADE_FRAC = 0.25;
+      const phase = { p: 0 };
+      tl.to(phase, {
+        p: Math.PI * 2 * CYCLES,
+        duration: IDLE_DUR,
+        ease: "none",
+        onUpdate: () => {
+          const t = phase.p / (Math.PI * 2 * CYCLES);
+          const env = t < 1 - FADE_FRAC ? 1 : (1 - t) / FADE_FRAC;
+          const s = 1 + Math.sin(phase.p) * SCALE_AMP * env;
+          const y = Math.sin(phase.p) * Y_AMP_PX * env;
+          const scribble = document.getElementById("s3-scribble");
+          if (scribble) {
+            // Compose with the resting -2deg tilt (constraint 5b: preserve rotation).
+            scribble.style.transform = "translateY(" + y + "px) scale(" + s + ") rotate(-2deg)";
+          }
+        },
+      }, IDLE_START);
+
+      // 6.34 → 6.84: no scheduled tweens. Fully static tail.
+
+      window.__timelines["scene_3"] = tl;
+    </script>
+  </div>
+</template>

@@ -1,0 +1,840 @@
+{
+  "scenes_per_group_max": 3,
+  "total_scenes": 11,
+  "width": 1920,
+  "height": 1080,
+  "captions_enabled": false,
+  "film_direction": "**Palette:** 60% warm cadmium-yellow paper canvas / 30% hairline rules + repeated canvas (no surface token — layer with `--border-hairline` and pinned cream cards) / 10% accent — `--brand-primary` deep ink carries every hero word, stage label, and active pipeline pill; `--brand-accent` red is the stamp/verdict color (reserved for s9 stamps and the s11 CTA underline only); `--brand-secondary` gold is the warm focal flip on s8's \"after\" lane. `--ink` is deep blue ink on paper; no pure black.\n**Type:** display = hero words and stage names (PARSE / RESOLVE / COMPOSE / RUN), heavy weight + tight tracking; mono uppercase = stage chips, eyebrow labels, command-line text (`/rig:dev`), terse catalog-card tags; body = scribble step labels and process-step bodies (sentence case, terse); Caveat hand-script numerals are the system's ordering voice on every numbered list. CJK appears throughout (Japanese narration text); display-tier CJK runs one tier smaller than Latin.\n**Motion defaults + budget:** entries on `EASE.entry` (paper settling, no overshoot); stage labels and hero stamps on `EASE.emphasis`; idle on `EASE.drift` at the **subtle floor** (±0.5% scale / ±1 px y, 3-4s cycle — half the catalog default, capped per anti-wobble); exits none — every scene **holds the final frame fully static for the last 0.5s** (no scheduled tweens, no breathing loops in the tail). **Budget per scene: ONE macro motion at the root (slow parallax drift OR a single dolly beat — never both, never a scale push on the composition root) + at most ONE secondary live element from the pin/scribble menu. Everything else rests.** Tilt floor: pins and stamps may sit at off-axis tilt within ±2° (the system's identity); never counter-rotate to 0°. Reference only canonical role keys (`EASE.entry/emphasis/exit/drift`, `DUR.snap/med/slow`).\n**Ambient:** paper-grain overlay full-bleed every scene (the preset's native warm paper texture + sparse fiber noise) — single background medium. The grain IS the atmosphere; no mesh, no swell, no scanline, no grid layered on top. Cross-film consistency is a hard rule: the same warm paper carries scene 1 through scene 11.\n**Never (film-wide):** no mesh gradients, no neon-on-black, no glow bloom, no bokeh, no purple-blue AI gradient, no editorial sleek code-window, no glass/translucency, no slide-wipe-or-zoom on the paper surface itself (paper does not zoom — only Tier-B clip transitions do), no `back.out` / `elastic` / `bounce`, no yoyo tweens, no macro scale push on the composition root.\n**Transitions:** 3 Tier-B types only — `blur-crossfade` (default for dissolves and clashing-background seams), `push-slide` (directional, narrative flow), `zoom-through` (high-energy reveals: name, expansion, CTA). Repeated across the film.\n**Stillness-before-climax:** scenes 8 and 11 only — the aha (parent stays empty) and the CTA pause.\n**Register mix:** s1 typography (hero quote on paper), s2 diagram (figure-of-eight loop + inking context bar), s3 typography + abstract (name + brick glyphs), s4–s6 continue-run diagram (four-stage pipeline-strip ribbon evolves through PARSE / RESOLVE / COMPOSE), s7 diagram (dispatch fan-out), s8 data-viz/diagram (before/after split), s9 typography + verdict-stamp grid, s10 diagram (harness spine with three sibling branches), s11 typography (CTA card). No captured assets this film (`assetCandidates` all empty).\n**Captions:** disabled — full canvas height is available; no bottom-band reservation.",
+  "total_duration_s": 78.28,
+  "bgm_path": "",
+  "font_face_css": "",
+  "brand_tokens_css": ":root {\n  --brand-primary:   #1F3A8A;\n  --brand-secondary: #C9A66B;\n  --brand-tertiary:  #000000;\n  --brand-accent:    #C2342B;\n  --brand-costume:   #F8F1D6;\n  --ink:             #1F3A8A;\n  --canvas:          #EFE56A;\n  --brand-gradient:  linear-gradient(135deg, #1F3A8A 0%, #C9A66B 50%, #C2342B 100%);\n  --deco-1:          #F7CB46;\n  --deco-2:          #99E885;\n  --deco-3:          #C0F7FE;\n  --deco-4:          #FE90E8;\n  --font-display:    'Space Grotesk', system-ui, sans-serif;\n  --font-body:       'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;\n  --font-mono:       'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;\n  --anchor-paper-yellow: #efe56a; /* saturated cadmium yellow — the page */\n  --anchor-cream: #f8f1d6; /* off-white ivory — the cards */\n  --surface-paper: color-mix(in srgb, var(--brand-primary) 6%, var(--anchor-paper-yellow));\n  --surface-paper-2: color-mix(\n  in srgb,\n  var(--brand-primary) 4%,\n  color-mix(in srgb, var(--anchor-paper-yellow) 70%, white)\n);\n  --surface-paper-3: color-mix(\n  in srgb,\n  var(--brand-primary) 8%,\n  color-mix(in srgb, var(--anchor-paper-yellow) 85%, black 8%)\n);\n  --surface-cream: color-mix(in srgb, var(--brand-primary) 4%, var(--anchor-cream));\n  --shadow-pin-compact: 4px 5px 0 0 var(--brand-primary);\n  --shadow-pin-standard: 5px 6px 0 0 var(--brand-primary);\n  --shadow-pin-hero: 8px 9px 0 0 var(--brand-primary);\n  --border-hairline: 1.5px solid var(--brand-primary);\n  --border-dashed: 1.5px dashed color-mix(in srgb, var(--brand-primary) 45%, transparent);\n  --border-stamp: 3px solid var(--brand-accent);\n  --radius-card: 4px;\n  --radius-pill: 999px;\n  --pad-edge: 64px;\n  --pad-top: 110px;\n  --pad-bottom: 90px;\n  --card-pad: 28px;\n  --card-pad-lg: 36px 28px 28px;\n  --gap-card-sm: 22px;\n  --gap-card-md: 28px;\n  --gap-card-lg: 32px;\n  --tilt-pin: -10deg;\n  --tilt-pin-alt: 14deg;\n  --tilt-card-askew: 0.9deg;\n  --tilt-scribble: -2deg;\n  --tilt-stamp: -4deg;\n  --paper-grain: url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.4' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.45  0 0 0 0 0.2  0 0 0 .25 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>\");\n}",
+  "groups": [
+    {
+      "worker_id": "w1",
+      "scene_ids": [
+        "scene_1"
+      ],
+      "scenes": {
+        "scene_1": {
+          "start_s": 0,
+          "effects": [
+            "asr-keyword-glow",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/asr-keyword-glow.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 4.16,
+          "voicePath": "assets/voice/scene_1.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Recognition beat — a slightly uneasy, held-breath rhythm; one short line of paper-quiet. Centered template, kinetic-typography register: the narrator's question 「気になったところ止まりのレビュー、心当たりありませんか。」 occupies the upper 55% of the canvas as a heavy display block on cream cardstock pinned at the top, with a hand-drawn checkmark (Caveat ink) beside three short scribble-note lines reading 「気になったところ」 stacked beneath — primary visual fills ~60% of canvas, generous warm-paper margins all around. Macro motion: very slow horizontal parallax drift on the scene root (paper feels like it is being lowered onto a desk). `asr-keyword-glow` lifts the words 「気になったところ止まり」 in deep ink as the narrator hits them; `sine-wave-loop` keeps only the topmost scribble line breathing at the subtle floor — pins and stamps stay still. Last 0.5s: everything settles, no idle motion. Eye exits inward toward the page center, preparing the dissolve into the loop diagram.\n\n",
+          "local_start_s": 0,
+          "visual_id": "scene_1"
+        }
+      },
+      "start_s": 0,
+      "duration_s": 4.16,
+      "composition_id": "scene_1",
+      "composition_file": "compositions/scene_1.html",
+      "kind": "scene"
+    },
+    {
+      "worker_id": "w2",
+      "scene_ids": [
+        "scene_2"
+      ],
+      "scenes": {
+        "scene_2": {
+          "start_s": 4.16,
+          "effects": [
+            "svg-path-draw",
+            "asr-keyword-glow",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/svg-path-draw.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/asr-keyword-glow.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 7.32,
+          "voicePath": "assets/voice/scene_2.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Tense, slightly-resigned rhythm — narration accumulates the causal chain on top of a quietly inking figure. Asymmetric 60/40 template, diagram register: left 60% holds a hand-drawn figure-of-eight loop (ink hairline + pencil-sketch corners) whose two lobes are labeled 実装 and 判断 in Caveat; one solitary stick-figure Claude sits at the crossing, doing both. Right 40%: a vertical \"context\" bar that inks downward — fattening from a hairline at the top to a thick swelling at the bottom — labeled 膨らむ in scribble-note tilt. Primary visual ~55% of canvas. `svg-path-draw` traces the figure-of-eight first (~2s), then the context bar fills downward (~3s, paced to the narration). `asr-keyword-glow` lifts コンテキスト and 雑に on the line; `sine-wave-loop` is reserved for the lone figure only (the one live element), the bar holds firm once full. Final 0.6s: full stillness on the swollen bar — the unease lands without motion.\n\n",
+          "local_start_s": 0,
+          "visual_id": "scene_2"
+        }
+      },
+      "start_s": 4.16,
+      "duration_s": 7.32,
+      "composition_id": "scene_2",
+      "composition_file": "compositions/scene_2.html",
+      "kind": "scene"
+    },
+    {
+      "worker_id": "w3",
+      "scene_ids": [
+        "scene_3"
+      ],
+      "scenes": {
+        "scene_3": {
+          "start_s": 11.48,
+          "effects": [
+            "svg-path-draw",
+            "3d-text-depth-layers",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/svg-path-draw.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/3d-text-depth-layers.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 6.84,
+          "voicePath": "assets/voice/scene_3.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Clarifying, slightly bright rhythm — the answer arrives. Centered template, typography + abstract register: the word **rig** lands as a heavy display word at upper-center (display tier, tight tracking, deep ink) with a Caveat scribble-note above reading 「レゴ式」 tilted -2°; beneath, four pencil-sketched brick glyphs ink in left-to-right labeled facet / pattern / recipe / persona in mono uppercase. Primary visual ~65% canvas. Macro motion: slow root-level parallax drift (no zoom on the composition root). `svg-path-draw` draws each brick outline in sequence with a snappy stagger total ~400ms; `3d-text-depth-layers` gives **rig** a one-step paper-shadow extrusion in `--brand-primary` ink — its only live moment, no breathing afterward; `sine-wave-loop` is on the scribble-note above the word, the one breathing element. Voice register note: hero resolves as the lowercase serif-feeling display word **rig** (not uppercase), per the brand cover-title behavior. Last 0.5s: bricks land hard-pinned, no drift. Eye exits forward, pushed toward the pipeline strip.\n\n",
+          "local_start_s": 0,
+          "visual_id": "scene_3"
+        }
+      },
+      "start_s": 11.48,
+      "duration_s": 6.84,
+      "composition_id": "scene_3",
+      "composition_file": "compositions/scene_3.html",
+      "kind": "scene"
+    },
+    {
+      "worker_id": "w4",
+      "scene_ids": [
+        "scene_4",
+        "scene_5",
+        "scene_6"
+      ],
+      "scenes": {
+        "scene_4": {
+          "start_s": 18.32,
+          "effects": [
+            "svg-path-draw",
+            "discrete-text-sequence",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/svg-path-draw.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/discrete-text-sequence.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 7.96,
+          "voicePath": "assets/voice/scene_4.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Focused, lab-notebook rhythm — the first stage of the pipeline lands with worked-example weight. Layered-depth template, diagram register: the **four-stage pipeline-strip ribbon** appears at the top ~18% of canvas as four pencil-sketched stage pills (PARSE / RESOLVE / COMPOSE / RUN), each a small pinned card with mono uppercase label; the leftmost PARSE pill is fully inked, the other three are hairline ghosts. Below, a paper code-window panel (warm cream cardstock, pinned cornered, hand-ruled lines — NOT editorial flat) shows a command line typing in: `/rig:dev \"review my branch\" --focus security`. Two scribble-note callouts (chip-like) ink in beside the typed command: `フラグ` lassos the `--focus security` token, `自由記述` lassos the `\"review my branch\"` quoted string, each linked by a thin hand-drawn arrow. Primary visual ~70% canvas. `discrete-text-sequence` types the command (~2.5s, paced to narration); `svg-path-draw` inks the two lasso arrows after the typing completes; the active PARSE pill holds the live ambient slot via `sine-wave-loop` at the subtle floor. Last 0.5s: the two callouts hold static — the levers are separated. Eye exits leftward along the pipeline strip toward stage 2.\n\n",
+          "local_start_s": 0,
+          "visual_id": "group_w4"
+        },
+        "scene_5": {
+          "start_s": 26.28,
+          "effects": [
+            "scale-swap-transition",
+            "svg-path-draw",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/scale-swap-transition.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/svg-path-draw.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 8.04,
+          "voicePath": "assets/voice/scene_5.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Steady, accumulating rhythm — rules layer one on the other. The shared **four-stage pipeline-strip ribbon** persists at the top from scene 4; the active inked pill `scale-swap-transition`s from PARSE → RESOLVE (one beat, ~0.5s), the PARSE pill demoting to hairline ghost. Layered-depth template continued, diagram register: below the strip, a short vertical stack of four pencil-labeled rule cards inks in top-to-bottom (manifest / recipe / flag / size-aware), each on cream cardstock pinned -10°/+14° alternating, with a Caveat scribble-note in the right margin reading 「上が下を上書き」. `svg-path-draw` inks each rule card outline in sequence (~3.5s total, snappy stagger ~400ms). The active RESOLVE pill is the only breathing element via `sine-wave-loop` at subtle floor; pinned cards rest. Final 0.5s: the stack holds still, fully inked. **Continue handoff:** the pipeline strip and the rule stack both remain on screen at scene-end; the active stage indicator is positioned to advance from RESOLVE to COMPOSE in the next segment, and the rule stack will demote (shrink + dim) as the prompt skeleton enters.\n\n",
+          "local_start_s": 7.96,
+          "visual_id": "group_w4"
+        },
+        "scene_6": {
+          "start_s": 34.32,
+          "effects": [
+            "scale-swap-transition",
+            "dynamic-content-sequencing",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/scale-swap-transition.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/dynamic-content-sequencing.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 5.6,
+          "voicePath": "assets/voice/scene_6.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Confident, click-step rhythm — slots drop in a printed-form order. The pipeline strip advances: RESOLVE pill `scale-swap-transition`s to a hairline ghost while COMPOSE inks active. The rule stack from scene 5 demotes (shrinks ~30%, fades toward hairline) and slides to the right margin as a memory-rail; primary stage shifts to a vertical **prompt skeleton** centered on cream cardstock — five facet slots inked top-to-bottom like a printed form, each a pencil-sketched dashed-border rectangle labeled with a Caveat numeral 1–5 in the left margin, slot names in mono uppercase. Asymmetric 65/35 template, diagram register. `dynamic-content-sequencing` paces the slot ink-ins so each label lands cleanly within ~3.5s; the active COMPOSE pill is the one breathing element via `sine-wave-loop`. The five numerals are the script's \"順番が崩れたら壊れる\" voice — never substitute a numeric font. Final 0.5s: skeleton holds fully static, ready to hand off to RUN.\n\n",
+          "local_start_s": 16,
+          "visual_id": "group_w4"
+        }
+      },
+      "start_s": 18.32,
+      "duration_s": 21.6,
+      "composition_id": "group_w4",
+      "composition_file": "compositions/group_w4.html",
+      "kind": "group"
+    },
+    {
+      "worker_id": "w5",
+      "scene_ids": [
+        "scene_7"
+      ],
+      "scenes": {
+        "scene_7": {
+          "start_s": 39.92,
+          "effects": [
+            "svg-path-draw",
+            "dynamic-content-sequencing",
+            "asr-keyword-glow",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/svg-path-draw.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/dynamic-content-sequencing.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/asr-keyword-glow.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 8.96,
+          "voicePath": "assets/voice/scene_7.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "**PrimarySubjectTimeline:** 0–1.0s pipeline strip primary (RUN pill inks active); 1.0–4.5s single dispatch line primary (one mono-uppercase command on cream cardstock); 4.5–8.96s three subagent fan-cards primary (security / design / test pinned spread), parent context kept conspicuously thin as a supporting hairline rail above them.\n**Handoff:** Before the three subagent cards fan out, the dispatch line compacts to a hairline ribbon and slides up to sit just under the pipeline strip; the parent context bar from earlier moments demotes to a single thin hairline rule labeled 「親」 with no fill — outside the primary bbox. Camera does not move; the demotion is the handoff.\n\nMomentum-building, opening-out rhythm — one breath releases into three. Layered-depth template, diagram register. The shared pipeline strip persists at the top (RUN now active), then below: a single dispatch line types in across center reading `Agent(parallel: [security, design, test])` in mono uppercase on cream paper. After it compacts, three pencil-sketched subagent cards `svg-path-draw` open as a hand-drawn fan from that compacted line — labeled セキュリティ / デザイン / テスト in mono uppercase with a Caveat scribble-note 「親は薄いまま」 in the right margin. `dynamic-content-sequencing` paces the fan-out (~2.5s, staggered ~350ms total). `asr-keyword-glow` lifts 並列観点 and ひとつのメッセージ on the narration; `sine-wave-loop` is reserved for the parent hairline rail only (the visible \"alive but empty\" element). Final 0.5s: three cards hold fully pinned at their off-axis tilts.\n\n",
+          "local_start_s": 0,
+          "visual_id": "scene_7"
+        }
+      },
+      "start_s": 39.92,
+      "duration_s": 8.96,
+      "composition_id": "scene_7",
+      "composition_file": "compositions/scene_7.html",
+      "kind": "scene"
+    },
+    {
+      "worker_id": "w6",
+      "scene_ids": [
+        "scene_8"
+      ],
+      "scenes": {
+        "scene_8": {
+          "start_s": 48.88,
+          "effects": [
+            "split-tilt-cards",
+            "counting-dynamic-scale",
+            "asr-keyword-glow"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/split-tilt-cards.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/counting-dynamic-scale.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/asr-keyword-glow.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 7.24,
+          "voicePath": "assets/voice/scene_8.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "**PrimarySubjectTimeline:** 0–3.0s left \"before\" lane primary (fat fill bar swells); 3.0–7.24s right \"after\" lane primary (thin parent line + three small subagent badges), left lane demotes to supporting low-contrast rail.\n**Handoff:** Before the right \"after\" lane takes primary, the left \"before\" bar exits its accent saturation — it dims toward hairline and shrinks ~20%, becoming a supporting silhouette. The right lane owns the center safe zone with the warm gold accent flipping in as its focal mark. Camera holds — the contrast itself is the handoff. Stillness-before-climax allocated here: 0.5s pause between the \"after\" inking complete and the gold accent landing.\n\nAha, relief-with-a-quiet-smile rhythm — the structural payoff lands. Split-screen template, data-viz/diagram register: paper-split frame with a hand-ruled vertical pencil divider down the middle; left half labeled `before` carries a fat ink-fill bar swelling top to bottom with a Caveat margin-note 「膨らむ」, right half labeled `after` carries a thin hairline parent line with three small pinned subagent badges (セ / デ / テ) underneath and a Caveat margin-note 「空のまま」. Primary visual ~70% canvas. `split-tilt-cards` gives the two halves opposite 3D tilts (~±4°) — the one allowed dimensional play this scene; `counting-dynamic-scale` runs a tiny \"tokens\" counter that swells on the left (peaks ~3.0s) and stays low on the right; `asr-keyword-glow` lifts 常に空 and 鈍らない on narration. Style delta: accent flips to `--brand-secondary` (warm gold) on the \"after\" lane only — the warm focal mark this scene. No `sine-wave-loop` this scene — the whole tail is `settle and hold`. Final 0.6s: both lanes fully static, gold accent pinned.\n\n",
+          "local_start_s": 0,
+          "visual_id": "scene_8"
+        }
+      },
+      "start_s": 48.88,
+      "duration_s": 7.24,
+      "composition_id": "scene_8",
+      "composition_file": "compositions/scene_8.html",
+      "kind": "scene"
+    },
+    {
+      "worker_id": "w7",
+      "scene_ids": [
+        "scene_9"
+      ],
+      "scenes": {
+        "scene_9": {
+          "start_s": 56.12,
+          "effects": [
+            "dynamic-content-sequencing",
+            "svg-path-draw",
+            "asr-keyword-glow",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/dynamic-content-sequencing.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/svg-path-draw.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/asr-keyword-glow.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 7.8,
+          "voicePath": "assets/voice/scene_9.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Conviction-building rhythm — three stamps land in close succession. Triptych template, typography + diagram register: three vertical reviewer panes on cream cardstock side by side (`セキュリティ` / `デザイン` / `テスト` mono uppercase headers, each a pinned column with hand-ruled top edge). At the top a mono-uppercase command bar reads `/rig:dev --review`. Each pane inks in a short bullet list of finding-lines (`svg-path-draw` traces them with a snappy stagger, total ~3.5s), and at ~4.2s each pane gets a verdict stamp in `--brand-accent` red at -4° tilt reading `VERDICT` in mono uppercase, lined up in a near-simultaneous staccato via `dynamic-content-sequencing`. `asr-keyword-glow` lifts 並列 and ヴァーディクト. `sine-wave-loop` is reserved for the command bar's caret only — the one breathing element. The three stamps stay rotated at the off-axis paper tilt; no counter-rotation. Final 0.5s: full stillness, all three stamps pinned. Eye exits rightward as the camera widens into scene 10.\n\n",
+          "local_start_s": 0,
+          "visual_id": "scene_9"
+        }
+      },
+      "start_s": 56.12,
+      "duration_s": 7.8,
+      "composition_id": "scene_9",
+      "composition_file": "compositions/scene_9.html",
+      "kind": "scene"
+    },
+    {
+      "worker_id": "w8",
+      "scene_ids": [
+        "scene_10"
+      ],
+      "scenes": {
+        "scene_10": {
+          "start_s": 63.92,
+          "effects": [
+            "svg-path-draw",
+            "center-outward-expansion",
+            "asr-keyword-glow",
+            "sine-wave-loop"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/svg-path-draw.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/center-outward-expansion.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/asr-keyword-glow.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/sine-wave-loop.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 7.52,
+          "voicePath": "assets/voice/scene_10.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "**PrimarySubjectTimeline:** 0–2.0s harness spine primary (a horizontal hand-drawn ink spine inks in across center); 2.0–7.52s three sibling branch cards primary (`/rig:dev` / `/rig:sales` / `/rig:goal`), spine demotes to a supporting hairline structural element underneath them.\n**Handoff:** Before the three sibling branches `center-outward-expansion` outward from the spine, the spine itself loses its inked weight and falls to a hairline rule — the structural axis remains visible but recedes; the three pinned sibling cards own the focal center, each at its own off-axis pin tilt outside the others' bbox. Camera widens (not pushes) — the widening reveal IS the handoff.\n\nInclusive, expanding-clarity rhythm — the lens widens to show siblings. Triptych template (centered after expansion), diagram register: a horizontal hand-drawn ink spine across mid-canvas labeled 「同じハーネス」 in Caveat above it, three pencil-sketched sibling cards branching off vertically: left `/rig:dev` with a small code-bracket pencil icon, center `/rig:sales` with a handshake icon, right `/rig:goal` with a target icon — each a pinned card on cream cardstock with mono-uppercase command label and a Caveat one-line role description below (開発 / 商談 / ゴール). `svg-path-draw` inks the spine first (~1.5s), then `center-outward-expansion` brings the three siblings outward from a clustered center to their final positions (~2.5s, total stagger ~400ms). `asr-keyword-glow` lifts 開発者だけじゃない and 同じハーネス. `sine-wave-loop` is reserved for the center `/rig:sales` card only — the one breathing element marking the \"this is new ground\" beat. Final 0.5s: all three cards static at their off-axis pins. Eye exits forward as the camera pushes into the CTA card.\n\n",
+          "local_start_s": 0,
+          "visual_id": "scene_10"
+        }
+      },
+      "start_s": 63.92,
+      "duration_s": 7.52,
+      "composition_id": "scene_10",
+      "composition_file": "compositions/scene_10.html",
+      "kind": "scene"
+    },
+    {
+      "worker_id": "w9",
+      "scene_ids": [
+        "scene_11"
+      ],
+      "scenes": {
+        "scene_11": {
+          "start_s": 71.44,
+          "effects": [
+            "3d-text-depth-layers",
+            "press-release-spring",
+            "asr-keyword-glow"
+          ],
+          "rule_paths": [
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/3d-text-depth-layers.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/press-release-spring.md",
+            "/home/itoshun/.claude/skills/hyperframes-animation/rules/asr-keyword-glow.md"
+          ],
+          "assetCandidates": [],
+          "estimatedDuration_s": 6.84,
+          "voicePath": "assets/voice/scene_11.wav",
+          "wordsPath": "",
+          "design_chunks": {
+            "tokens_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/tokens.css",
+            "easings_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/easings.js",
+            "voice_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/voice.md",
+            "hints_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/composition-hints.md",
+            "type_roles_file": "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/type-roles.md",
+            "components": [
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/chip.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/divider-loud.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/hero.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/paper-grain-overlay.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pill-yes.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/pinned-card.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/process-step.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/quote-panel.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/safety-pin.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/scribble-note.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stamp.html",
+              "/home/itoshun/works/rig/video/rig-intro/design-system/chunks/components/stat-counter.html"
+            ]
+          },
+          "creative_brief": "Resolve-with-quiet-warmth rhythm — one card, two lines, one signature. Centered template, typography register: a single quiet pinned card on cream cardstock occupies upper-center ~60% of canvas, two stacked mono-uppercase command lines reading `/plugin install rig` (top, slightly smaller) and `/rig:dev` (bottom, heavy display tier with a `3d-text-depth-layers` one-step paper-shadow extrusion in `--brand-primary` ink — the hero word). Beneath the card, a hairline GitHub handle attribution is pinned in DM-Mono uppercase. To the left margin, a small Caveat scribble-note reads 「ひとりで抱えなくていい」 at -2° tilt. Macro motion: very slow root-level parallax drift — no scale push. `press-release-spring` gives the bottom `/rig:dev` line a single tactile depth press at ~3.0s (linear compression, spring recovery — the only kinetic moment); `asr-keyword-glow` lifts インストール and `/rig:dev` on the narration. No `sine-wave-loop` — the closing beat `settles and holds` for the entire tail. Stillness-before-climax allocated here: 0.5s pause between the press-release and the final hold, where the card sits perfectly still beneath the depth-stamped `/rig:dev`. Final 1.0s: full stillness — the card holds, no drift, no breath. The eye rests on the CTA.\n",
+          "local_start_s": 0,
+          "visual_id": "scene_11"
+        }
+      },
+      "start_s": 71.44,
+      "duration_s": 6.84,
+      "composition_id": "scene_11",
+      "composition_file": "compositions/scene_11.html",
+      "kind": "scene"
+    }
+  ],
+  "visual_clips": [
+    {
+      "id": "scene_1",
+      "file": "compositions/scene_1.html",
+      "kind": "scene",
+      "worker_id": "w1",
+      "scene_ids": [
+        "scene_1"
+      ],
+      "start_s": 0,
+      "duration_s": 4.16
+    },
+    {
+      "id": "scene_2",
+      "file": "compositions/scene_2.html",
+      "kind": "scene",
+      "worker_id": "w2",
+      "scene_ids": [
+        "scene_2"
+      ],
+      "start_s": 4.16,
+      "duration_s": 7.32
+    },
+    {
+      "id": "scene_3",
+      "file": "compositions/scene_3.html",
+      "kind": "scene",
+      "worker_id": "w3",
+      "scene_ids": [
+        "scene_3"
+      ],
+      "start_s": 11.48,
+      "duration_s": 6.84
+    },
+    {
+      "id": "group_w4",
+      "file": "compositions/group_w4.html",
+      "kind": "group",
+      "worker_id": "w4",
+      "scene_ids": [
+        "scene_4",
+        "scene_5",
+        "scene_6"
+      ],
+      "start_s": 18.32,
+      "duration_s": 21.6
+    },
+    {
+      "id": "scene_7",
+      "file": "compositions/scene_7.html",
+      "kind": "scene",
+      "worker_id": "w5",
+      "scene_ids": [
+        "scene_7"
+      ],
+      "start_s": 39.92,
+      "duration_s": 8.96
+    },
+    {
+      "id": "scene_8",
+      "file": "compositions/scene_8.html",
+      "kind": "scene",
+      "worker_id": "w6",
+      "scene_ids": [
+        "scene_8"
+      ],
+      "start_s": 48.88,
+      "duration_s": 7.24
+    },
+    {
+      "id": "scene_9",
+      "file": "compositions/scene_9.html",
+      "kind": "scene",
+      "worker_id": "w7",
+      "scene_ids": [
+        "scene_9"
+      ],
+      "start_s": 56.12,
+      "duration_s": 7.8
+    },
+    {
+      "id": "scene_10",
+      "file": "compositions/scene_10.html",
+      "kind": "scene",
+      "worker_id": "w8",
+      "scene_ids": [
+        "scene_10"
+      ],
+      "start_s": 63.92,
+      "duration_s": 7.52
+    },
+    {
+      "id": "scene_11",
+      "file": "compositions/scene_11.html",
+      "kind": "scene",
+      "worker_id": "w9",
+      "scene_ids": [
+        "scene_11"
+      ],
+      "start_s": 71.44,
+      "duration_s": 6.84
+    }
+  ],
+  "scene_to_visual": {
+    "scene_1": "scene_1",
+    "scene_2": "scene_2",
+    "scene_3": "scene_3",
+    "scene_4": "group_w4",
+    "scene_5": "group_w4",
+    "scene_6": "group_w4",
+    "scene_7": "scene_7",
+    "scene_8": "scene_8",
+    "scene_9": "scene_9",
+    "scene_10": "scene_10",
+    "scene_11": "scene_11"
+  },
+  "internal_seams": [
+    {
+      "from_scene": "scene_4",
+      "to_scene": "scene_5",
+      "visual_id": "group_w4",
+      "worker_id": "w4",
+      "global_time_s": 26.28,
+      "local_time_s": 7.96,
+      "is_break": false
+    },
+    {
+      "from_scene": "scene_5",
+      "to_scene": "scene_6",
+      "visual_id": "group_w4",
+      "worker_id": "w4",
+      "global_time_s": 34.32,
+      "local_time_s": 16,
+      "is_break": false
+    }
+  ],
+  "transitions": [
+    {
+      "from": "scene_1",
+      "to": "scene_2",
+      "from_scene": "scene_1",
+      "to_scene": "scene_2",
+      "type": "blur-crossfade",
+      "direction": null,
+      "duration_s": 0.6,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w1",
+      "to_worker": "w2"
+    },
+    {
+      "from": "scene_2",
+      "to": "scene_3",
+      "from_scene": "scene_2",
+      "to_scene": "scene_3",
+      "type": "zoom-through",
+      "direction": null,
+      "duration_s": 0.4,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w2",
+      "to_worker": "w3"
+    },
+    {
+      "from": "scene_3",
+      "to": "group_w4",
+      "from_scene": "scene_3",
+      "to_scene": "scene_4",
+      "type": "push-slide",
+      "direction": "LEFT",
+      "duration_s": 0.5,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w3",
+      "to_worker": "w4"
+    },
+    {
+      "from": "group_w4",
+      "to": "scene_7",
+      "from_scene": "scene_6",
+      "to_scene": "scene_7",
+      "type": "push-slide",
+      "direction": "LEFT",
+      "duration_s": 0.5,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w4",
+      "to_worker": "w5"
+    },
+    {
+      "from": "scene_7",
+      "to": "scene_8",
+      "from_scene": "scene_7",
+      "to_scene": "scene_8",
+      "type": "blur-crossfade",
+      "direction": null,
+      "duration_s": 0.6,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w5",
+      "to_worker": "w6"
+    },
+    {
+      "from": "scene_8",
+      "to": "scene_9",
+      "from_scene": "scene_8",
+      "to_scene": "scene_9",
+      "type": "push-slide",
+      "direction": "RIGHT",
+      "duration_s": 0.5,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w6",
+      "to_worker": "w7"
+    },
+    {
+      "from": "scene_9",
+      "to": "scene_10",
+      "from_scene": "scene_9",
+      "to_scene": "scene_10",
+      "type": "zoom-through",
+      "direction": null,
+      "duration_s": 0.4,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w7",
+      "to_worker": "w8"
+    },
+    {
+      "from": "scene_10",
+      "to": "scene_11",
+      "from_scene": "scene_10",
+      "to_scene": "scene_11",
+      "type": "zoom-through",
+      "direction": null,
+      "duration_s": 0.4,
+      "tier": "b",
+      "is_break": true,
+      "bridge_id": null,
+      "from_worker": "w8",
+      "to_worker": "w9"
+    }
+  ],
+  "sfx": [],
+  "sfx_cues": []
+}

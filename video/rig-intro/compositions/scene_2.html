@@ -1,0 +1,488 @@
+<template id="scene_2-template">
+  <div id="root" class="scene_2-root" data-composition-id="scene_2" data-width="1920" data-height="1080" data-duration="7.32" style="position:relative; width:1920px; height:1080px; overflow:hidden;">
+    <style>
+      /* Pin-and-paper root — warm cadmium paper. Tokens inherit globally;
+         we reference them as var(--*) per constraint. */
+      #root {
+        background: var(--canvas);
+        font-family: Inter, system-ui, sans-serif;
+        color: var(--brand-primary);
+      }
+      #root *,
+      #root *::before,
+      #root *::after {
+        box-sizing: border-box;
+      }
+
+      /* Paper-grain ambient — full-bleed, the only atmosphere layer.
+         Sparse fractal noise from --paper-grain token, multiply blend so
+         the warm cadmium reads as physical paper under raking light. */
+      .s2-grain {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 1;
+        opacity: 0.35;
+        mix-blend-mode: multiply;
+        background-image: var(--paper-grain);
+      }
+
+      /* Stage — holds the ONE macro motion (very slow parallax drift).
+         Asymmetric 60 / 40 layout for the figure-of-eight loop and the
+         context bar. */
+      .s2-stage {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: grid;
+        grid-template-columns: 60% 40%;
+        grid-template-rows: auto 1fr auto;
+        padding: 110px 96px 90px;
+        column-gap: 56px;
+        row-gap: 24px;
+        transform-origin: 50% 50%;
+        will-change: transform;
+      }
+
+      /* Top eyebrow chrome — DM mono uppercase, catalog-card register. */
+      .s2-eyebrow {
+        grid-column: 1 / span 2;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 500;
+        font-size: 26px;
+        line-height: 1.2;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--brand-primary);
+        opacity: 0.7;
+      }
+
+      /* Left lobe — figure-of-eight loop wrapper. The SVG renders the
+         inked path; lobe labels and the stick figure sit in absolutely
+         positioned spans inside the same container so they share frame. */
+      .s2-loop {
+        position: relative;
+        grid-column: 1;
+        grid-row: 2;
+        align-self: center;
+        justify-self: center;
+        width: 980px;
+        height: 560px;
+      }
+
+      .s2-loop-svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+
+      .s2-loop-svg .s2-ink-line {
+        fill: none;
+        stroke: var(--brand-primary);
+        stroke-width: 4.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .s2-loop-svg .s2-pencil-corner {
+        fill: none;
+        stroke: var(--brand-primary);
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-dasharray: 4 6;
+        opacity: 0.45;
+      }
+
+      /* Lobe labels in Caveat hand-script — the system's "me" voice.
+         Each label is tilted into the system identity (±2-3 deg). */
+      .s2-lobe-label {
+        position: absolute;
+        font-family: 'Playfair Display', Georgia, serif;
+        font-weight: 700;
+        font-size: 60px;
+        line-height: 0.95;
+        color: var(--brand-primary);
+        transform-origin: 50% 50%;
+        will-change: opacity, transform;
+      }
+      .s2-lobe-jissou {
+        top: -8px;
+        left: 70px;
+      }
+      .s2-lobe-handan {
+        top: -8px;
+        right: 70px;
+      }
+
+      /* Stick figure Claude — the lone live element (sine breathing).
+         Sits at the loop crossing. */
+      .s2-figure {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 110px;
+        height: 130px;
+        margin-left: -55px;
+        margin-top: -65px;
+        will-change: transform;
+      }
+      .s2-figure-svg {
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+      .s2-figure-svg path,
+      .s2-figure-svg circle,
+      .s2-figure-svg line {
+        fill: none;
+        stroke: var(--brand-primary);
+        stroke-width: 3.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .s2-figure-tag {
+        position: absolute;
+        left: 50%;
+        bottom: -34px;
+        font-family: 'Playfair Display', Georgia, serif;
+        font-weight: 600;
+        font-size: 28px;
+        line-height: 1;
+        color: var(--brand-primary);
+        white-space: nowrap;
+      }
+
+      /* Right panel — vertical inking "context bar" that fills downward.
+         Two ink strokes (hairline top, thickened mid) and a wedge foot
+         simulate the bar fattening from a thread to a swollen base. */
+      .s2-bar-wrap {
+        position: relative;
+        grid-column: 2;
+        grid-row: 2;
+        align-self: stretch;
+        justify-self: center;
+        width: 100%;
+        max-width: 460px;
+        display: flex;
+        align-items: stretch;
+        justify-content: center;
+        padding: 8px 0;
+      }
+      .s2-bar-svg {
+        width: 220px;
+        height: 100%;
+        overflow: visible;
+        will-change: clip-path;
+      }
+      .s2-bar-svg .s2-bar-stem {
+        fill: none;
+        stroke: var(--brand-primary);
+        stroke-linecap: round;
+      }
+      .s2-bar-svg .s2-bar-wedge {
+        fill: var(--brand-primary);
+      }
+
+      /* Scribble label 膨らむ — Caveat note tilted, anchored
+         to the bottom-right of the swollen bar foot. */
+      .s2-bar-label {
+        position: absolute;
+        right: -8px;
+        bottom: 24px;
+        font-family: 'Playfair Display', Georgia, serif;
+        font-weight: 700;
+        font-size: 56px;
+        line-height: 0.95;
+        color: var(--brand-primary);
+        transform-origin: right bottom;
+        will-change: opacity, transform;
+      }
+      .s2-bar-label .s2-underline {
+        border-bottom: 2px solid var(--brand-primary);
+        padding-bottom: 2px;
+      }
+
+      /* Narration line — bottom strip; carries the ASR-glow keywords.
+         Display tier Space Grotesk, sentence case, ink-blue. Words are
+         per-span so the envelope can drive scale + text-shadow on the
+         two emphasized tokens (コンテキスト, 雑に). */
+      .s2-narration {
+        grid-column: 1 / span 2;
+        grid-row: 3;
+        font-family: Inter, system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 48px;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+        color: var(--brand-primary);
+        text-align: center;
+        padding: 0 64px;
+        will-change: opacity, transform;
+      }
+      .s2-narration .s2-word {
+        display: inline-block;
+        transform-origin: 50% 60%;
+        will-change: transform, text-shadow;
+      }
+    </style>
+
+    <!-- z=1 grain ambient -->
+    <div class="s2-grain" aria-hidden="true"></div>
+
+    <!-- z=2 stage (root for the slow parallax) -->
+    <div class="s2-stage" id="s2-stage">
+      <div class="s2-eyebrow">FIELD REPORT &middot; SCENE 02 &middot; THE LOOP</div>
+
+      <!-- LEFT 60% — figure-of-eight loop with stick-figure Claude at crossing -->
+      <div class="s2-loop">
+        <svg class="s2-loop-svg" viewBox="0 0 980 560" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <!-- Decorative pencil-sketch corner marks (static, drawn fully) -->
+          <path class="s2-pencil-corner" d="M 24 80 L 24 24 L 80 24" />
+          <path class="s2-pencil-corner" d="M 956 80 L 956 24 L 900 24" />
+          <path class="s2-pencil-corner" d="M 24 480 L 24 536 L 80 536" />
+          <path class="s2-pencil-corner" d="M 956 480 L 956 536 L 900 536" />
+
+          <!-- The figure-of-eight (infinity loop) ink path. Drawn as a
+               single smooth cubic bezier loop crossing at the center. -->
+          <path
+            id="s2-loop-path"
+            class="s2-ink-line"
+            d="M 490 280 C 490 100, 250 100, 250 280 C 250 460, 490 460, 490 280 C 490 100, 730 100, 730 280 C 730 460, 490 460, 490 280 Z"
+          />
+        </svg>
+
+        <span class="s2-lobe-label s2-lobe-jissou" id="s2-lobe-jissou">実装</span>
+        <span class="s2-lobe-label s2-lobe-handan" id="s2-lobe-handan">判断</span>
+
+        <!-- Stick-figure Claude — single live element (sine breathing) -->
+        <div class="s2-figure" id="s2-figure">
+          <svg class="s2-figure-svg" viewBox="0 0 110 130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="55" cy="22" r="16" />
+            <line x1="55" y1="40" x2="55" y2="86" />
+            <line x1="55" y1="52" x2="30" y2="74" />
+            <line x1="55" y1="52" x2="80" y2="74" />
+            <line x1="55" y1="86" x2="36" y2="118" />
+            <line x1="55" y1="86" x2="74" y2="118" />
+          </svg>
+          <span class="s2-figure-tag" id="s2-figure-tag">Claude</span>
+        </div>
+      </div>
+
+      <!-- RIGHT 40% — vertical context bar that inks downward,
+           hairline at top, fattening into a thick wedge at the bottom. -->
+      <div class="s2-bar-wrap">
+        <svg class="s2-bar-svg" viewBox="0 0 220 560" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <!-- Hairline stem — top portion -->
+          <line class="s2-bar-stem" x1="110" y1="6" x2="110" y2="220" stroke-width="2" />
+          <!-- Mid-thickening segment -->
+          <line class="s2-bar-stem" x1="110" y1="220" x2="110" y2="360" stroke-width="6" />
+          <!-- Fattening wedge — bottom portion -->
+          <path class="s2-bar-wedge" d="M 92 360 L 128 360 L 168 554 L 52 554 Z" />
+        </svg>
+
+        <span class="s2-bar-label" id="s2-bar-label">
+          <span class="s2-underline">膨</span>らむ
+        </span>
+      </div>
+
+      <!-- Bottom narration line — words split for asr-keyword-glow.
+           The two emphasized tokens carry data-word handles for the envelope. -->
+      <div class="s2-narration" id="s2-narration">
+        <span class="s2-word" data-word="ctx">コンテキスト</span><span class="s2-word" data-word="ga">が</span><span class="s2-word" data-word="zatsuni">雑に</span><span class="s2-word" data-word="fukuramu">膨らんでいく。</span>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        // EASE / DUR — pasted from easings.js per dispatch.
+        const EASE = {
+          entry: "power2.out",
+          emphasis: "power3.out",
+          exit: "power2.in",
+          drift: "sine.inOut",
+        };
+        const DUR = { snap: 0.18, med: 0.5, slow: 0.95 };
+
+        const SCENE_DURATION = 7.32;
+
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        // ---- svg-path-draw setup --------------------------------------
+        // Measure the figure-of-eight path; preset dash for hand-drawn reveal.
+        const loopPath = document.getElementById("s2-loop-path");
+        const loopLen = loopPath.getTotalLength();
+        loopPath.style.strokeDasharray = loopLen + "";
+        loopPath.style.strokeDashoffset = loopLen + "";
+
+        // Initial state — handled via gsap.set, not CSS opacity:0,
+        // so frame-seek under the engine reproduces correctly.
+        gsap.set(["#s2-lobe-jissou"], { opacity: 0, y: 8, rotation: -2 });
+        gsap.set(["#s2-lobe-handan"], { opacity: 0, y: 8, rotation: 1.5 });
+        gsap.set("#s2-figure", { opacity: 0, scale: 0.92, transformOrigin: "50% 50%" });
+        gsap.set("#s2-figure-tag", { rotation: -3, transformOrigin: "50% 50%" });
+        gsap.set("#s2-bar-label", { opacity: 0, y: 10, rotation: -3 });
+        gsap.set("#s2-narration", { opacity: 0, y: 12 });
+
+        // Context bar starts fully clipped from the bottom; we wipe
+        // bottom-inset from 100% down to 0% to "ink" it downward.
+        const barSvg = document.querySelector(".s2-bar-svg");
+        gsap.set(barSvg, { clipPath: "inset(0 0 100% 0)" });
+
+        // ---- Phase A — figure-of-eight inks (0.15 -> ~2.05s) ----------
+        tl.to(
+          "#s2-loop-path",
+          { strokeDashoffset: 0, duration: 1.9, ease: "none" },
+          0.15,
+        );
+        // Lobe labels settle just after the loop closes — preserve tilt.
+        tl.fromTo(
+          "#s2-lobe-jissou",
+          { opacity: 0, y: 8, rotation: -2 },
+          { opacity: 1, y: 0, rotation: -2, duration: DUR.med, ease: EASE.entry },
+          1.55,
+        );
+        tl.fromTo(
+          "#s2-lobe-handan",
+          { opacity: 0, y: 8, rotation: 1.5 },
+          { opacity: 1, y: 0, rotation: 1.5, duration: DUR.med, ease: EASE.entry },
+          1.75,
+        );
+        // Stick-figure Claude steps onto the crossing.
+        tl.fromTo(
+          "#s2-figure",
+          { opacity: 0, scale: 0.92 },
+          { opacity: 1, scale: 1, duration: DUR.med, ease: EASE.emphasis },
+          1.95,
+        );
+
+        // ---- Phase B — context bar fills downward (~2.25 -> 5.25s) ----
+        const barDriver = { v: 0 };
+        tl.to(
+          barDriver,
+          {
+            v: 1,
+            duration: 3.0,
+            ease: "power1.inOut",
+            onUpdate: () => {
+              const bottomInset = (1 - barDriver.v) * 100;
+              barSvg.style.clipPath = "inset(0 0 " + bottomInset + "% 0)";
+            },
+          },
+          2.25,
+        );
+        // 膨らむ scribble lands as the bar reaches its swollen foot.
+        tl.fromTo(
+          "#s2-bar-label",
+          { opacity: 0, y: 10, rotation: -3 },
+          { opacity: 1, y: 0, rotation: -3, duration: DUR.med, ease: EASE.entry },
+          4.85,
+        );
+
+        // ---- Phase C — narration band fades in (~3.40s) --------------
+        tl.fromTo(
+          "#s2-narration",
+          { opacity: 0, y: 12 },
+          { opacity: 1, y: 0, duration: DUR.med, ease: EASE.entry },
+          3.40,
+        );
+
+        // ---- asr-keyword-glow — envelope over emphasized tokens ------
+        // Per-word { start, end } (scene-local seconds), monotonic.
+        const TIMINGS = {
+          ctx:      { start: 3.80, end: 4.45 },  // コンテキスト — emphasized
+          ga:       { start: 4.45, end: 4.70 },
+          zatsuni:  { start: 4.75, end: 5.30 },  // 雑に — emphasized
+          fukuramu: { start: 5.30, end: 5.95 },
+        };
+        const EMPHASIZED = { ctx: true, zatsuni: true };
+        const ATTACK_DUR = 0.18;
+        const RELEASE = 0.40;
+        const REST_LEVEL = 0.22;
+        const MAX_BLUR = 16;            // default-style (paper, not karaoke)
+        const MAX_SCALE_BOOST = 0.06;   // gentle lift; pin-and-paper register
+
+        function envelope(time, start, end) {
+          const releaseEnd = end + RELEASE;
+          if (time < start) return 0;
+          if (time < end) return Math.min((time - start) / ATTACK_DUR, 1);
+          if (time < releaseEnd) {
+            const decay = (time - end) / RELEASE;
+            return 1 - decay * (1 - REST_LEVEL);
+          }
+          return REST_LEVEL;
+        }
+
+        const wordEls = document.querySelectorAll("#s2-narration .s2-word");
+        const driver = { t: 0 };
+        tl.to(
+          driver,
+          {
+            t: SCENE_DURATION,
+            duration: SCENE_DURATION,
+            ease: "none",
+            onUpdate: () => {
+              wordEls.forEach((el) => {
+                const k = el.dataset.word;
+                const timing = TIMINGS[k];
+                if (!timing) return;
+                if (!EMPHASIZED[k]) return;
+                const env = envelope(driver.t, timing.start, timing.end);
+                const blur = MAX_BLUR * env;
+                const scale = 1 + MAX_SCALE_BOOST * env;
+                el.style.transform = "scale(" + scale + ")";
+                el.style.textShadow =
+                  "0 0 " + blur + "px rgba(31, 58, 138, " + (0.10 + env * 0.30) + ")";
+              });
+            },
+          },
+          0,
+        );
+
+        // ---- sine-wave-loop — ONLY the stick figure breathes ----------
+        // Subtle floor per film direction: cycle ~3s, amplitude at floor,
+        // amplitude fades to zero over the last 25% so the final 0.6s
+        // of the scene is fully static.
+        const IDLE_START = 2.55;                // begins after figure settles
+        const IDLE_END   = 6.72;                // ends 0.6s before scene end
+        const IDLE_DUR   = IDLE_END - IDLE_START;
+        const CYCLES     = 1.4;                 // ~3s per breath cycle
+        const SCALE_AMP  = 0.005;
+        const Y_AMP_PX   = 1.0;
+        const FADE_FRAC  = 0.25;
+        const figureEl = document.getElementById("s2-figure");
+        const phase = { p: 0 };
+        tl.to(
+          phase,
+          {
+            p: Math.PI * 2 * CYCLES,
+            duration: IDLE_DUR,
+            ease: "none",
+            onUpdate: () => {
+              const t = phase.p / (Math.PI * 2 * CYCLES);
+              const env = t < 1 - FADE_FRAC ? 1 : Math.max(0, (1 - t) / FADE_FRAC);
+              const s = 1 + Math.sin(phase.p) * SCALE_AMP * env;
+              const y = Math.sin(phase.p) * Y_AMP_PX * env;
+              figureEl.style.transform =
+                "translateY(" + y + "px) scale(" + s + ")";
+            },
+          },
+          IDLE_START,
+        );
+
+        // ---- One macro motion at the root — very slow horizontal drift.
+        // Linear nudge only (no scale push on the root). Lands at rest
+        // 0.6s before scene end so the tail holds fully static.
+        tl.fromTo(
+          "#s2-stage",
+          { x: -10 },
+          { x: 10, duration: 6.72, ease: "none" },
+          0,
+        );
+
+        window.__timelines["scene_2"] = tl;
+      })();
+    </script>
+  </div>
+</template>

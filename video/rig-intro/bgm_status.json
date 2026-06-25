@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-06-25T02:30:51.310Z",
+  "enabled": false,
+  "provider": null,
+  "mode": null,
+  "path": null,
+  "log": null,
+  "pid": null,
+  "target_duration_s": null,
+  "seed_duration_s": null,
+  "loop_count": null,
+  "timeout_ms": 5000,
+  "status": "disabled",
+  "ready": false,
+  "waited_ms": 0,
+  "message": "BGM not requested or disabled in audio_meta.json."
+}

@@ -1,0 +1,321 @@
+<template id="scene_1-template">
+  <div id="root" class="scene_1-root" data-composition-id="scene_1" data-width="1920" data-height="1080" data-duration="4.16" style="position:relative; width:1920px; height:1080px; overflow:hidden;">
+    <style>
+      /* Pin-and-paper scene 1 — recognition beat: narrator's question on cream cardstock,
+         with a hand-drawn checkmark beside three scribble lines reading 「気になったところ」.
+         Tokens (--brand-*, --canvas, --ink, --font-*) inherit from index.html <head>. */
+      #root {
+        background: var(--canvas);
+        font-family: Inter, system-ui, sans-serif;
+        color: var(--brand-primary);
+      }
+      #root *,
+      #root *::before,
+      #root *::after {
+        box-sizing: border-box;
+      }
+
+      /* Paper grain overlay — atmospheric texture, full bleed, beneath content */
+      .s1-grain {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 1;
+        opacity: 0.35;
+        mix-blend-mode: multiply;
+        background-image: var(--paper-grain);
+      }
+
+      /* Parallax drift wrapper — single root macro motion (very slow horizontal drift) */
+      .s1-stage {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        padding: 110px 96px 90px;
+        gap: 56px;
+        will-change: transform;
+      }
+
+      /* Pinned cream cardstock holding the narrator question — upper 55% of canvas */
+      .s1-card {
+        position: relative;
+        background: var(--surface-cream);
+        border: var(--border-hairline);
+        border-radius: var(--radius-card);
+        box-shadow: var(--shadow-pin-hero);
+        padding: 64px 96px 72px;
+        max-width: 1500px;
+        width: 100%;
+        will-change: transform, opacity;
+      }
+
+      /* Eyebrow label — mono uppercase catalog tag */
+      .s1-eyebrow {
+        display: block;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-weight: 500;
+        font-size: 24px;
+        letter-spacing: 0.18em;
+        line-height: 1;
+        text-transform: uppercase;
+        color: var(--brand-primary);
+        opacity: 0.65;
+        margin-bottom: 28px;
+      }
+
+      /* Heavy display question — kinetic typography block.
+         CJK runs one tier smaller than Latin per Film direction. */
+      .s1-phrase {
+        font-family: Inter, system-ui, sans-serif;
+        font-weight: 700;
+        font-size: clamp(56px, 5.6vw, 92px);
+        line-height: 1.18;
+        letter-spacing: -0.02em;
+        color: var(--brand-primary);
+        margin: 0;
+      }
+
+      .s1-word {
+        display: inline-block;
+        transform-origin: 50% 60%;
+        will-change: transform, text-shadow;
+      }
+
+      /* Scribble cluster — checkmark + three scribble lines beneath the card */
+      .s1-scribble-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 32px;
+        max-width: 1100px;
+        margin-top: 8px;
+        will-change: transform, opacity;
+      }
+
+      .s1-check {
+        display: block;
+        width: 96px;
+        height: 96px;
+        flex: 0 0 96px;
+        margin-top: 8px;
+      }
+      .s1-check path {
+        fill: none;
+        stroke: var(--brand-primary);
+        stroke-width: 7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .s1-scribble-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+      .s1-scribble {
+        font-family: 'Playfair Display', Georgia, serif;
+        font-weight: 600;
+        font-size: 56px;
+        line-height: 1.0;
+        color: var(--brand-primary);
+        margin: 0;
+        transform-origin: left center;
+        will-change: transform;
+      }
+      .s1-line1 {
+        font-size: 56px;
+      }
+      .s1-line2 {
+        opacity: 0.85;
+        font-size: 50px;
+      }
+      .s1-line3 {
+        opacity: 0.7;
+        font-size: 46px;
+      }
+    </style>
+
+    <!-- Foundational paper-grain texture -->
+    <div class="s1-grain" aria-hidden="true"></div>
+
+    <!-- Stage receives the slow horizontal parallax drift (root macro motion) -->
+    <div class="s1-stage" id="s1-stage">
+      <!-- Pinned cream cardstock — narrator question -->
+      <div class="s1-card" id="s1-card">
+        <span class="s1-eyebrow">Field note &middot; review</span>
+        <p class="s1-phrase" id="s1-phrase">
+          <span class="s1-word" data-word="kininatta">気になったところ止まり</span><span class="s1-word" data-word="no">の</span><span class="s1-word" data-word="review">レビュー、</span><br /><span class="s1-word" data-word="kokoro">心当たり</span><span class="s1-word" data-word="arimasen">ありませんか。</span>
+        </p>
+      </div>
+
+      <!-- Hand-drawn checkmark + three scribble lines -->
+      <div class="s1-scribble-row" id="s1-scribble-row">
+        <svg class="s1-check" id="s1-check" viewBox="0 0 100 100" aria-hidden="true">
+          <path id="s1-check-path" d="M14 56 L40 82 L88 22" />
+        </svg>
+        <div class="s1-scribble-stack">
+          <p class="s1-scribble s1-line1" id="s1-line1">気になったところ</p>
+          <p class="s1-scribble s1-line2" id="s1-line2">気になったところ</p>
+          <p class="s1-scribble s1-line3" id="s1-line3">気になったところ</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Easings + durations — canonical role keys from dispatch
+      const EASE = {
+        entry: "power2.out",
+        emphasis: "power3.out",
+        exit: "power2.in",
+        drift: "sine.inOut",
+      };
+      const DUR = { snap: 0.18, med: 0.5, slow: 0.95 };
+
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const SCENE_DURATION = 4.16;
+      const TAIL_HOLD = 0.5; // last 0.5s fully static (anti-wobble)
+      const IDLE_END = SCENE_DURATION - TAIL_HOLD;
+
+      // ---- Initial hidden states (gsap.set, NOT CSS opacity:0) ----
+      gsap.set("#s1-card", { opacity: 0, y: -28, scale: 0.985 });
+      gsap.set("#s1-check", { opacity: 0, scale: 0.7, rotation: -6, transformOrigin: "50% 50%" });
+      gsap.set("#s1-line1", { opacity: 0, x: -18, rotation: -2, transformOrigin: "left center" });
+      gsap.set("#s1-line2", { opacity: 0, x: -18, rotation: -1.2, transformOrigin: "left center" });
+      gsap.set("#s1-line3", { opacity: 0, x: -18, rotation: -2.6, transformOrigin: "left center" });
+
+      // ---- Entry: card settles onto the page (paper-settling) ----
+      tl.fromTo(
+        "#s1-card",
+        { opacity: 0, y: -28, scale: 0.985 },
+        { opacity: 1, y: 0, scale: 1, duration: DUR.slow, ease: EASE.entry },
+        0.05,
+      );
+
+      // ---- Scribble cluster writes in: check mark, then three lines ----
+      tl.fromTo(
+        "#s1-check",
+        { opacity: 0, scale: 0.7, rotation: -6 },
+        { opacity: 1, scale: 1, rotation: -4, duration: DUR.med, ease: EASE.emphasis },
+        0.55,
+      );
+      tl.fromTo(
+        "#s1-line1",
+        { opacity: 0, x: -18, rotation: -2 },
+        { opacity: 1, x: 0, rotation: -2, duration: DUR.med, ease: EASE.entry },
+        0.85,
+      );
+      tl.fromTo(
+        "#s1-line2",
+        { opacity: 0, x: -18, rotation: -1.2 },
+        { opacity: 0.85, x: 0, rotation: -1.2, duration: DUR.med, ease: EASE.entry },
+        1.05,
+      );
+      tl.fromTo(
+        "#s1-line3",
+        { opacity: 0, x: -18, rotation: -2.6 },
+        { opacity: 0.7, x: 0, rotation: -2.6, duration: DUR.med, ease: EASE.entry },
+        1.25,
+      );
+
+      // ---- asr-keyword-glow on the phrase ----
+      // Lifts 「気になったところ止まり」 specifically (the first word span carries that string).
+      const TIMINGS = {
+        kininatta: { start: 0.6, end: 1.9 },     // 「気になったところ止まり」 — long sustain (the brand-equivalent emphasis)
+        no:        { start: 1.95, end: 2.20 },
+        review:    { start: 2.22, end: 2.70 },
+        kokoro:    { start: 2.75, end: 3.05 },
+        arimasen:  { start: 3.08, end: 3.45 },
+      };
+      const ATTACK_DUR = 0.16;
+      const RELEASE = 0.32;
+      const REST_LEVEL = 0.18;
+      const MAX_BLUR = 18;
+      const MAX_SCALE_BOOST = 0.06;
+      const INK = "31, 58, 138"; // --brand-primary rgb
+
+      function envelope(time, start, end) {
+        const releaseEnd = end + RELEASE;
+        if (time < start) return 0;
+        if (time < end) return Math.min((time - start) / ATTACK_DUR, 1);
+        if (time < releaseEnd) {
+          const decay = (time - end) / RELEASE;
+          return 1 - decay * (1 - REST_LEVEL);
+        }
+        return REST_LEVEL;
+      }
+
+      const words = document.querySelectorAll(".s1-word");
+      const driver = { t: 0 };
+      tl.to(
+        driver,
+        {
+          t: IDLE_END,
+          duration: IDLE_END,
+          ease: "none",
+          onUpdate: () => {
+            words.forEach((el) => {
+              const key = el.dataset.word;
+              const timing = TIMINGS[key];
+              if (!timing) return;
+              const env = envelope(driver.t, timing.start, timing.end);
+              const blur = MAX_BLUR * env;
+              const scale = 1 + MAX_SCALE_BOOST * env;
+              const alpha = 0.10 + env * 0.55;
+              el.style.textShadow = `0 0 ${blur}px rgba(${INK}, ${alpha})`;
+              el.style.transform = `scale(${scale})`;
+            });
+          },
+        },
+        0,
+      );
+
+      // ---- Macro motion: slow horizontal parallax drift on the scene stage ----
+      // Single live root motion. Travels gently L→R across the scene; eases out so
+      // velocity is ~0 by IDLE_END (no idle motion in the final 0.5s).
+      tl.fromTo(
+        "#s1-stage",
+        { x: -10 },
+        { x: 10, duration: IDLE_END, ease: EASE.drift },
+        0,
+      );
+
+      // ---- sine-wave-loop on ONLY the topmost scribble line (subtle floor) ----
+      // Per anti-wobble: ≤ ±0.5% scale, ≤ ±1 px y; ONE element only; fades to 0 over
+      // the last ~25% so motion is zero before the tail-hold begins.
+      const SCALE_AMP = 0.004; // 0.4% — under the 0.5% cap
+      const Y_AMP_PX = 1.0;
+      const CYCLES = 2; // ~1.1s per cycle across idle window
+      const FADE_FRAC = 0.25;
+      const IDLE_START = 1.45; // after line1 entry settles
+      const IDLE_DUR = IDLE_END - IDLE_START;
+      const phase = { p: 0 };
+      tl.to(
+        phase,
+        {
+          p: Math.PI * 2 * CYCLES,
+          duration: IDLE_DUR,
+          ease: "none",
+          onUpdate: () => {
+            const t = phase.p / (Math.PI * 2 * CYCLES);
+            const env = t < 1 - FADE_FRAC ? 1 : Math.max(0, (1 - t) / FADE_FRAC);
+            const sc = 1 + Math.sin(phase.p) * SCALE_AMP * env;
+            const dy = Math.sin(phase.p) * Y_AMP_PX * env;
+            // Compose with the line's resting rotation (-2deg)
+            const line1 = document.getElementById("s1-line1");
+            if (line1) line1.style.transform = `translateY(${dy}px) rotate(-2deg) scale(${sc})`;
+          },
+        },
+        IDLE_START,
+      );
+
+      // ---- Final 0.5s tail-hold: no scheduled tweens after IDLE_END (anti-wobble) ----
+
+      window.__timelines["scene_1"] = tl;
+    </script>
+  </div>
+</template>
