@@ -64,7 +64,7 @@ orchestrate.py run <recipe> --provider <claude|codex|cmd|mock> \
     [--goal G] [--max-steps N] [--out run-state.json]
 ```
 
-- **プロバイダ抽象（マルチプロバイダ）**：`claude`（`claude -p … --output-format text`）/ `codex`（`codex exec`）/ `cmd`（任意 CLI を `{prompt}` テンプレートで）/ `mock`（決定論ダミー・テスト用）。生成と検証で**別プロバイダ**を指定できる（例 `--provider claude --verifier-provider codex`＝別モデルが独立検証）。
+- **プロバイダ抽象（マルチプロバイダ）**：**`rig`（各 step を `rig` skill で起動した別プロセス＝再帰 rig ハーネス・推奨）** / `claude`（`claude -p`）/ `codex`（`codex exec`）/ `cmd`（任意 CLI を `{prompt}` テンプレートで）/ `mock`（決定論ダミー・テスト用）。生成と検証で**別プロバイダ**を指定できる（例 `--provider rig --verifier-provider codex`＝別モデルが独立検証）。`rig` は各 step を rig の engine（PARSE→RESOLVE→COMPOSE→RUN）で実行し、検証者は独立レビュアーとして `VERDICT: PASS|FAIL` を返す。
 - **プロセス隔離**：step ごとに新規プロセス＝**毎回クリーンな context**（Context Rot 対策の構造版）。親が肥大しない（Thin Harness）。
 - **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:<persona>`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。
 - **並列レビュアー・ファンアウト**：gated step の `personas` を **N 人の同時プロセス**で走らせる（`parallel-fanout` の実プロセス版・`--max-parallel` で同時数）。集約は決定論（persona 名順）：`--quorum all`（既定＝review-gate と同じ全員一致・1人 FAIL でゲート不合格）か `--quorum majority`（過半数）。完了順に依らず同じ結論＝**並列でも決定論**。

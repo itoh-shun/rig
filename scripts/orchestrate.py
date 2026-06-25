@@ -345,9 +345,19 @@ MOCK_SRC = (
     "    print('STATUS: done')\n"
 )
 
+RIG_GEN_PREFIX = ("`rig` skill を Skill ツールで起動し、その engine（PARSE→RESOLVE→COMPOSE→RUN・"
+                  "context-minimal）に従って次の step を実行してください。\n")
+RIG_VER_PREFIX = ("`rig` skill を Skill ツールで起動し、独立した検証者として（この step を生成した"
+                  "エージェントとは別プロセス）受け入れ基準を判定し、最後に必ず 'VERDICT: PASS' か "
+                  "'VERDICT: FAIL' を出力してください。\n")
+
 def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
     if provider == "mock":
         return ["python3", "-c", MOCK_SRC, role, persona]
+    if provider == "rig":
+        # 各 step を「rig ハーネス」として claude ヘッドレスで起動（rig を名前で呼ぶ）。
+        pre = RIG_VER_PREFIX if role == "verifier" else RIG_GEN_PREFIX
+        return ["claude", "-p", pre + prompt, "--output-format", "text"]
     if provider == "claude":
         # ヘッドレス。実運用は権限モード等をユーザーが --provider-cmd で調整可。
         return ["claude", "-p", prompt, "--output-format", "text"]
@@ -508,8 +518,8 @@ def cmd_run(args):
         else:
             i += 1
     if not gen:
-        print("[ERROR] --provider <name> が必須（claude|codex|cmd|mock）。"
-              "本物の再帰実行を避けたいときは mock。")
+        print("[ERROR] --provider <name> が必須（rig|claude|codex|cmd|mock）。"
+              "rig＝各 step を rig ハーネスとして起動（推奨）。テストは mock。")
         sys.exit(1)
     ver = ver or gen  # 未指定なら同プロバイダ（ただし別プロセス・別ロール）
     state = new_state(fm.get("name", path.stem), steps, goal)
@@ -626,6 +636,12 @@ def cmd_selftest(_args):
     report("E 並列でも決定論(完了順に依らず)", vE2, vE1, "同集合")
     report("F majority は1人FAILでも可決→DONE", finalF, "DONE")
     report("G all は1人FAILで不合格→ESCALATE", finalG, "ESCALATE")
+    # H: rig プロバイダは各 step を rig ハーネスとして起動（rig を名前で呼ぶ）
+    argv_gen = build_argv("rig", "generator", "step X", {})
+    argv_ver = build_argv("rig", "verifier", "step X", {})
+    report("H rig provider は claude で起動", argv_gen[0], "claude")
+    report("H rig を名前で呼ぶ(生成)", "`rig` skill" in argv_gen[2], True)
+    report("H rig 検証は VERDICT 契約", "VERDICT" in argv_ver[2] and "`rig` skill" in argv_ver[2], True)
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 
