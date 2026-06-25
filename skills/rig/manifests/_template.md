@@ -77,6 +77,12 @@ default_max_retries: 2
 # recipe の `backend:` キー（§3.5）または実行時 `--workflow` フラグで個別に上書き可。
 default_backend: manual   # manual | workflow
 
+# ── 計算的オーケストレーション （任意） ──────────────────────
+# true にすると全 RUN を決定論ランナー（scripts/orchestrate.py）で回す＝--orchestrate 等価。
+# recipe の checks:/needs: による自動有効化（§4.3）とは独立にプロジェクト全体へ適用。
+# 個別 run は --no-orchestrate で打ち消せる。省略時 false（明示 opt-in / 自動検出のみ）。
+default_orchestrate: false   # true | false
+
 # ── worktree 運用 （任意） ────────────────────────────────
 # 汎用既定: worktree を使わず、現作業ブランチのまま進む
 worktree:

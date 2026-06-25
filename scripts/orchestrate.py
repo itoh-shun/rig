@@ -197,9 +197,23 @@ def resolve_recipe(name: str) -> pathlib.Path:
     sys.exit(1)
 
 
+def auto_orchestrate(steps: list[dict], manifest_default: bool = False) -> tuple[bool, str]:
+    """この recipe が --orchestrate を自動有効化するか（決定論・SKILL §4.3 と同じ規則）。"""
+    has_checks = any(s["checks"] for s in steps)
+    has_needs = any(s["needs"] for s in steps)
+    if has_checks or has_needs:
+        why = "・".join(x for x in (["checks"] if has_checks else []) + (["needs"] if has_needs else []))
+        return True, f"recipe に {why} 宣言あり"
+    if manifest_default:
+        return True, "manifest default_orchestrate: true"
+    return False, "明示 opt-in のみ（自動有効化なし）"
+
+
 def render_plan(recipe: str, steps: list[dict]) -> str:
+    auto, why = auto_orchestrate(steps)
     lines = [f"## rig 計算的プラン: {recipe}", "",
-             f"ステップ数: {len(steps)} ／ 遷移はコードが強制（決定論）", ""]
+             f"ステップ数: {len(steps)} ／ 遷移はコードが強制（決定論）",
+             f"自動 orchestrate: {'auto ON' if auto else 'off'}（{why}）", ""]
     for i, s in enumerate(steps):
         gate = s["gate"] or "なし"
         sensor = ("計算的センサー " + str(len(s["checks"])) + "件"
@@ -782,6 +796,11 @@ def cmd_selftest(_args):
     report("I judge-panel は決定論", i_det, True)
     report("J DAG: 独立 a,b は同 wave→c は次 wave", j_waves, [["a", "b"], ["c"]])
     report("J DAG が DONE", finalJ, "DONE")
+    # K: 自動有効化（checks/needs/manifest で --orchestrate auto ON）
+    report("K checks 宣言で auto ON", auto_orchestrate([s(id="v", checks=["true"])])[0], True)
+    report("K needs 宣言で auto ON", auto_orchestrate([s(id="a"), s(id="b", needs=["a"])])[0], True)
+    report("K 宣言なしは off", auto_orchestrate([s(id="x")])[0], False)
+    report("K manifest 既定で auto ON", auto_orchestrate([s(id="x")], manifest_default=True)[0], True)
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 

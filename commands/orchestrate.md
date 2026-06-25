@@ -34,6 +34,14 @@ python3 scripts/orchestrate.py run <recipe> --provider rig \
 - **step-DAG 並列**：recipe step に `needs: [id…]` があれば、依存を満たした独立 step を同一 wave で同時プロセス実行（intake → {design,test 並走} → merge）。
 - **構造的に採点者≠生成者**：検証は別プロセス（別プロバイダ可）の rig 検証者が `VERDICT: PASS|FAIL` を返す。
 
+## 自動有効化（明示しなくても通る）
+
+`--orchestrate` を明示しなくても、次のとき自動で orchestrate を通る（§4.3）：
+- **recipe が `checks:` か `needs:` を宣言**＝決定論で回す意図のある recipe（機械検証 or DAG 並列）。
+- **manifest `default_orchestrate: true`**＝プロジェクト全体の既定。
+
+`--no-orchestrate` でその run だけ従来の散文エンジンに戻せる。単発生成コマンド（`/rig:persona` 等）には作用しない。`plan` 出力に `自動 orchestrate: auto ON/off` が出る。
+
 ## 効く所
 
 - **prose の制御ループ ≪ コードの強制**（`harness-taxonomy`）。遷移・停止・リトライをコードが握る。
