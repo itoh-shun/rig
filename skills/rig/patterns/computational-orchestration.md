@@ -66,7 +66,8 @@ orchestrate.py run <recipe> --provider <claude|codex|cmd|mock> \
 
 - **プロバイダ抽象（マルチプロバイダ）**：`claude`（`claude -p … --output-format text`）/ `codex`（`codex exec`）/ `cmd`（任意 CLI を `{prompt}` テンプレートで）/ `mock`（決定論ダミー・テスト用）。生成と検証で**別プロバイダ**を指定できる（例 `--provider claude --verifier-provider codex`＝別モデルが独立検証）。
 - **プロセス隔離**：step ごとに新規プロセス＝**毎回クリーンな context**（Context Rot 対策の構造版）。親が肥大しない（Thin Harness）。
-- **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:independent`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。
+- **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:<persona>`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。
+- **並列レビュアー・ファンアウト**：gated step の `personas` を **N 人の同時プロセス**で走らせる（`parallel-fanout` の実プロセス版・`--max-parallel` で同時数）。集約は決定論（persona 名順）：`--quorum all`（既定＝review-gate と同じ全員一致・1人 FAIL でゲート不合格）か `--quorum majority`（過半数）。完了順に依らず同じ結論＝**並列でも決定論**。
 - **自走と安全**：遷移はランナーが決定論的に回す。`--max-steps` で上限、ゲート未達 K 回で `ESCALATE`、自己採点は `BLOCKED`。`run-state.json` に永続＝中断・再開可能。
 - **opt-in / 本物の再帰に注意**：`--provider` は明示必須（既定なし）。`claude` を指定すると**入れ子で claude が起動**する＝コスト・再帰に注意。設計確認やテストは `--provider mock`（別プロセスだが即返す決定論ダミー）で。
 

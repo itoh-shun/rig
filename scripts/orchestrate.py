@@ -56,6 +56,8 @@ def load_steps(fm: dict) -> list[dict]:
             "id": s.get("id"),
             "instruction": s.get("instruction"),
             "gate": None if gate in (None, "—", "-") else gate,
+            "pattern": s.get("pattern"),
+            "personas": list(s.get("personas") or []),       # 並列検証者のロール
             "acceptance": list(s.get("acceptance") or []),
             "checks": list(s.get("checks") or []),          # 任意: 機械検証コマンド列
             "max_retries": s.get("max_retries") or DEFAULT_K,
@@ -334,17 +336,18 @@ def cmd_status(args):
 MOCK_SRC = (
     "import sys\n"
     "role = sys.argv[1] if len(sys.argv) > 1 else 'generator'\n"
+    "persona = sys.argv[2] if len(sys.argv) > 2 else ''\n"
     "if role == 'verifier':\n"
-    "    print('独立検証（mock）: 受け入れ基準を確認')\n"
-    "    print('VERDICT: PASS')\n"
+    "    print('独立検証（mock）: ' + persona)\n"
+    "    print('VERDICT: ' + ('FAIL' if 'fail' in persona else 'PASS'))\n"
     "else:\n"
     "    print('## step 実行結果（mock）')\n"
     "    print('STATUS: done')\n"
 )
 
-def build_argv(provider: str, role: str, prompt: str, cfg: dict) -> list[str]:
+def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
     if provider == "mock":
-        return ["python3", "-c", MOCK_SRC, role]
+        return ["python3", "-c", MOCK_SRC, role, persona]
     if provider == "claude":
         # ヘッドレス。実運用は権限モード等をユーザーが --provider-cmd で調整可。
         return ["claude", "-p", prompt, "--output-format", "text"]
@@ -354,12 +357,13 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict) -> list[str]:
         tmpl = cfg.get("provider_cmd") or ""
         if not tmpl:
             raise SystemExit("[ERROR] --provider cmd には --provider-cmd \"... {prompt} ...\" が必須")
-        return [a.replace("{prompt}", prompt).replace("{role}", role) for a in tmpl.split()]
+        return [a.replace("{prompt}", prompt).replace("{role}", role).replace("{persona}", persona)
+                for a in tmpl.split()]
     raise SystemExit(f"[ERROR] 未知のプロバイダ: {provider}")
 
 
-def run_provider(provider: str, role: str, prompt: str, cfg: dict) -> tuple[int, str]:
-    argv = build_argv(provider, role, prompt, cfg)
+def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> tuple[int, str]:
+    argv = build_argv(provider, role, prompt, cfg, persona)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd",) else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600))
@@ -368,6 +372,24 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict) -> tuple[int,
     except subprocess.TimeoutExpired:
         return 124, "[provider timeout]"
     return r.returncode, (r.stdout or "")
+
+
+def run_verifiers_parallel(ver: str, prompt: str, personas: list[str],
+                           cfg: dict, max_parallel: int) -> list[dict]:
+    """N 人の検証者を同時プロセスで走らせ、persona 名順（決定論）に結果を返す。"""
+    import concurrent.futures as _f
+    personas = personas or ["reviewer"]
+
+    def _one(p):
+        rc, out = run_provider(ver, "verifier", prompt, cfg, persona=p)
+        ok = ("VERDICT: PASS" in out) and ("VERDICT: FAIL" not in out)
+        return {"by": f"{ver}:{p}", "persona": p, "ok": ok, "note": f"exit {rc}"}
+
+    if len(personas) == 1:
+        return [_one(personas[0])]
+    with _f.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
+        res = list(ex.map(_one, personas))
+    return sorted(res, key=lambda r: r["persona"])  # 完了順に依らず決定論
 
 
 def _build_prompt(state: dict, step: dict) -> str:
@@ -391,8 +413,10 @@ def _run_step_checks(step: dict, st: dict) -> None:
 
 
 def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
-             cfg: dict, max_steps: int, quiet: bool = False) -> str:
-    """各 step を別プロセスのエージェントで実行する自走ループ。返り値=終了アクション。"""
+             cfg: dict, max_steps: int, quiet: bool = False,
+             max_parallel: int = 4, quorum: str = "all") -> str:
+    """各 step を別プロセスのエージェントで実行する自走ループ。返り値=終了アクション。
+    gated step の検証は personas を N 人の同時プロセスでファンアウト（決定論集約）。"""
     log = (lambda *a: None) if quiet else print
     iters = 0
     last = "—"
@@ -413,14 +437,27 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
             if step["checks"]:
                 _run_step_checks(step, st)
                 log(f"   ↳ checks: {sum(c['ok'] for c in st['checks'])}/{len(st['checks'])} ok")
-            # 観点検証＝別プロバイダ/別プロセス（採点者≠生成者を構造的に強制）
+            # 観点検証＝N 人の独立レビュアーを並列プロセスで（採点者≠生成者を構造的に強制）
             elif step["gate"] in ("acceptance-gate", "review-gate"):
-                rc2, out2 = run_provider(ver, "verifier",
-                                         _build_verify_prompt(state, step, out), cfg)
-                ok = ("VERDICT: PASS" in out2) and ("VERDICT: FAIL" not in out2)
-                by = f"{ver}:independent"
-                st["verdicts"].append({"by": by, "ok": ok, "note": f"exit {rc2}"})
-                log(f"   ↳ {by} → {'PASS' if ok else 'FAIL'}")
+                personas = step["personas"] or ["independent"]
+                results = run_verifiers_parallel(
+                    ver, _build_verify_prompt(state, step, out), personas, cfg, max_parallel)
+                passes = sum(1 for r in results if r["ok"])
+                total = len(results)
+                par = "並列" if total > 1 else "単独"
+                log(f"   ↳ {par}検証 {total} 人: PASS {passes}/{total}（quorum={quorum}）")
+                for r in results:
+                    log(f"      - {r['by']} → {'PASS' if r['ok'] else 'FAIL'}")
+                if quorum == "majority" and total > 1:
+                    # 過半数で1票に集約（個別はノートに残す）
+                    agg_ok = passes * 2 > total
+                    st["verdicts"].append({
+                        "by": f"{ver}:quorum-majority", "ok": agg_ok,
+                        "note": f"{passes}/{total} pass; " + ", ".join(
+                            f"{r['persona']}={'P' if r['ok'] else 'F'}" for r in results)})
+                else:
+                    # 全員一致（review-gate 既定）＝個別票を記録（1人でも FAIL でゲート不合格）
+                    st["verdicts"].extend(results)
             if sp:
                 save_state(state, sp)
             continue
@@ -446,6 +483,8 @@ def cmd_run(args):
     goal = None
     out = pathlib.Path("run-state.json")
     max_steps = 40
+    max_parallel = 4
+    quorum = "all"
     cfg: dict = {}
     i = 1
     while i < len(args):
@@ -462,6 +501,10 @@ def cmd_run(args):
             out = pathlib.Path(args[i + 1]); i += 2
         elif a == "--max-steps" and i + 1 < len(args):
             max_steps = int(args[i + 1]); i += 2
+        elif a == "--max-parallel" and i + 1 < len(args):
+            max_parallel = int(args[i + 1]); i += 2
+        elif a == "--quorum" and i + 1 < len(args):
+            quorum = args[i + 1]; i += 2
         else:
             i += 1
     if not gen:
@@ -471,8 +514,10 @@ def cmd_run(args):
     ver = ver or gen  # 未指定なら同プロバイダ（ただし別プロセス・別ロール）
     state = new_state(fm.get("name", path.stem), steps, goal)
     print(render_plan(state["recipe"], steps))
-    print(f"\n自走実行: provider={gen} / verifier={ver} / max-steps={max_steps}\n")
-    final = run_loop(state, out, gen, ver, cfg, max_steps)
+    print(f"\n自走実行: provider={gen} / verifier={ver} / "
+          f"max-steps={max_steps} / 並列={max_parallel} / quorum={quorum}\n")
+    final = run_loop(state, out, gen, ver, cfg, max_steps,
+                     max_parallel=max_parallel, quorum=quorum)
     print(f"\n=== 終了: {final} ===  run-state: {out}")
     sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
 
@@ -497,6 +542,7 @@ def _drive(steps, script):
 
 def cmd_selftest(_args):
     s = lambda **k: {"id": k["id"], "instruction": "x", "gate": k.get("gate"),
+                     "pattern": k.get("pattern"), "personas": k.get("personas", []),
                      "acceptance": [], "checks": k.get("checks", []),
                      "max_retries": k.get("max_retries", DEFAULT_K), "output_contract": None}
 
@@ -538,6 +584,26 @@ def cmd_selftest(_args):
     d_indep = bool(rev_verdicts) and rev_verdicts[0]["by"] == "mock:independent" and rev_verdicts[0]["ok"]
     d_exec = any(h["action"] == "EXEC" for h in stateD["history"])
 
+    # シナリオ E: 並列検証ファンアウト（3 人の独立レビュアーを同時プロセス・全員 PASS）
+    stepsE = [s(id="review", gate="review-gate", pattern="parallel-fanout",
+                personas=["correctness", "repro", "security"])]
+    stateE1 = new_state("par", stepsE, None)
+    finalE1 = run_loop(stateE1, None, "mock", "mock", {}, 20, quiet=True, max_parallel=3)
+    vE1 = sorted(v["by"] for v in stateE1["step_state"]["review"]["verdicts"])
+    stateE2 = new_state("par", stepsE, None)
+    run_loop(stateE2, None, "mock", "mock", {}, 20, quiet=True, max_parallel=3)
+    vE2 = sorted(v["by"] for v in stateE2["step_state"]["review"]["verdicts"])
+    expectE = ["mock:correctness", "mock:repro", "mock:security"]
+
+    # シナリオ F: 1 人 FAIL。quorum=majority は可決、quorum=all はゲート不合格→ESCALATE。
+    stepsF = [s(id="review", gate="review-gate", personas=["a", "b", "fail-c"], max_retries=2)]
+    stateF = new_state("maj", stepsF, None)
+    finalF = run_loop(stateF, None, "mock", "mock", {}, 20, quiet=True,
+                      max_parallel=3, quorum="majority")  # 2/3 pass → DONE
+    stateG = new_state("all", stepsF, None)
+    finalG = run_loop(stateG, None, "mock", "mock", {}, 20, quiet=True,
+                      max_parallel=3, quorum="all")        # 1 FAIL → retry → ESCALATE
+
     ok = True
     def report(name, got, exp, det=""):
         nonlocal ok
@@ -555,6 +621,11 @@ def cmd_selftest(_args):
     report("D 外部ランナーが DONE まで自走", finalD, "DONE")
     report("D 別プロセスで step を実行(EXEC)", d_exec, True)
     report("D 検証が独立(by=mock:independent)", d_indep, True)
+    report("E 並列3人で DONE", finalE1, "DONE")
+    report("E 3人分の独立票を記録", vE1, expectE)
+    report("E 並列でも決定論(完了順に依らず)", vE2, vE1, "同集合")
+    report("F majority は1人FAILでも可決→DONE", finalF, "DONE")
+    report("G all は1人FAILで不合格→ESCALATE", finalG, "ESCALATE")
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 
