@@ -56,6 +56,7 @@ claude --plugin-dir .
 - **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
 - **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
 - **コマンド**: `/rig:knowledge` — ドメイン知識を **LLM-wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として生成。説明文 or `--auto`(repo 解析)から、global(既定・全プロダクト共有)/project overlay に保存。persona は事実を埋め込まず `inject: [[slug]]` で参照＝暗黙知化させない。例: `/rig:knowledge --auto`
+- **コマンド**: `/rig:design` 🎨 — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から**デザイン仕様書／コンポーネント仕様／ワイヤー／a11y 計画**を生成し、`ux-reviewer`（ユーザビリティ）・`a11y-reviewer`（WCAG 2.2）で並列検閲して acceptance-gate で収束。引数に**画面 URL** を渡すと Playwright で実装画面を取得し UI/UX・a11y を**監査**する。`--ppt`(PowerPoint)・`--claudedesign`(claude.ai デザイン) で追加出力（併用可）。例: `/rig:design ログイン画面 --ppt` ・ `/rig:design https://example.com/login`
 - **コマンド**: `/rig:catalog` — 横断レジストリ(`--list --global`)。全 tier(shipped＋global＋project)を走査し `domain×pack×persona×wiki×recipe` の地図を tier つきで表示＝「誰がどこで何してるか」を取り戻す。派生・読み取り専用。`--validate --global` は tier 横断の衛生点検。
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
@@ -172,6 +173,8 @@ claude --plugin-dir .
 | `sales-enablement` | `skills/rig/recipes/sales-enablement.md` | 開発資材（README/CHANGELOG/コード）→ 営業1枚資料＋荷電スクリプト（`sales-collateral`）。機能→ベネフィット翻訳・実在機能のみ・不明は `[要記入]`（sales pack） |
 | `release-movie` 🎬 | `skills/rig/recipes/release-movie.md` | CHANGELOG → リリーストレーラーの制作台本＋再生できるアニメ HTML（`web/release-trailer.html`）。ハイプだが全ビートが実機能の裏打ち |
 | `scenario` 🎬✍️ | `skills/rig/recipes/scenario.md` | シナリオライターモード（`/rig:movie` 前段）。脚本（フック→課題→転換→ペイオフ→CTA＋VO＋source 対応）を書き、既存の掛け合わせ（`ai-smell-reviewer`＋`ai-writing-smells` × `sns-post-reviewer`）で検閲→acceptance-gate 収束（新規 reviewer 不要） |
+| `design` 🎨 | `skills/rig/recipes/design.md` | UI/UX・a11y デザイン作成。仕様書/コンポーネント/ワイヤー/a11y 計画を生成→`ux-reviewer`・`a11y-reviewer`(WCAG) で並列検閲→acceptance-gate 収束。`--ppt`/`--claudedesign` 追加出力（design pack） |
+| `design-audit` 🎨 | `skills/rig/recipes/design-audit.md` | 実装画面の URL 監査。Playwright で SS/DOM/axe-core 取得→UI/UX・a11y 並列レビュー→`design-verdict`。design 作成の監査版（design pack） |
 
 ### manifests
 
