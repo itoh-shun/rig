@@ -602,6 +602,28 @@ steps: <N> 完了 / <M> スキップ / <K> エスカレーション
 - ヘッダの `steps: N 完了 / M スキップ / K エスカレーション` でフロー全体の集計を1行で示す。
 - `--plan`（実行前）のテーブルと対称構造：`--plan` が「予定」、このレポートが「実績」として対応する（`--plan` のテーブルを参照することでそのまま比較できる）。
 
+**`--from`/`--only` スライス指定時（#108）**：`--plan --from`/`--only` と対称的に、テーブルには**スライス後の step のみ**を表示し、ヘッダに `slice:` フィールドを追加する。
+
+```
+## rig フロー完了
+
+recipe: release-flow | autonomy: interactive | backend: manual
+slice: implement → end
+steps: 4 完了 / 0 スキップ / 0 エスカレーション
+
+| step      | outcome | gate                             |
+|-----------|---------|----------------------------------|
+| implement | ✓ done  | —                                |
+| verify    | ✓ done  | acceptance-gate passed (try 1/2) |
+| pr        | ✓ done  | —                                |
+| merge     | ✓ done  | —                                |
+```
+
+- スライス前の step（`--from` 開始前の step、または `--only` 対象外の step）は**テーブルに出さない**（`--plan --from`/`--only` と同じ）。
+- ヘッダの `steps: N 完了 / M スキップ / K エスカレーション` は**スライス後の step のみ**をカウントする（スライス前の step は含まない）。
+- `slice:` フィールドの書式：`--from <id>` なら `<id> → end`、`--only <id>` なら `<id> only`。
+- `--from`/`--only` と `--skip` の組み合わせ時は `slice:` と `skip:` を**両方**ヘッダに出す（`--plan` の `#88` と同じ対称規則）。スライス前の step が `--skip` 対象だった場合もテーブル行は表示しない（スライス外のため行が無い）。
+
 ## 7. 知識層への蓄積（capture）— RUN 後の学習サイクル
 
 RUN が完了した後（またはユーザーが `--capture` フラグを明示した場合）、親は実行から得た**学び**を蒸留して既存のメモリ・知識層に書き戻す。これにより次回 RUN の知識注入（§5 COMPOSE の知識層注入）が充実し、システムが回を重ねるごとに賢くなる。
