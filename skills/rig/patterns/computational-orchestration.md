@@ -68,6 +68,8 @@ orchestrate.py run <recipe> --provider <claude|codex|cmd|mock> \
 - **プロセス隔離**：step ごとに新規プロセス＝**毎回クリーンな context**（Context Rot 対策の構造版）。親が肥大しない（Thin Harness）。
 - **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:<persona>`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。
 - **並列レビュアー・ファンアウト**：gated step の `personas` を **N 人の同時プロセス**で走らせる（`parallel-fanout` の実プロセス版・`--max-parallel` で同時数）。集約は決定論（persona 名順）：`--quorum all`（既定＝review-gate と同じ全員一致・1人 FAIL でゲート不合格）か `--quorum majority`（過半数）。完了順に依らず同じ結論＝**並列でも決定論**。
+- **judge-panel（複数生成→勝者選択）**：`--generators a,b,c` で **複数プロバイダが同じ step を並列生成**し、judge（verifier）が各候補を判定。**最初に PASS した候補（generator 列の順＝決定論）が勝者**。例 `--generators rig,claude,codex`＝3モデルに作らせて一番筋の良いものを採る。誰も通らなければゲート不合格。
+- **step-DAG 並列**：step に `needs: [id…]` を宣言すると、**依存を満たした独立 step を同一 wave で同時プロセス実行**する（例 intake → {design, test 並走} → merge）。ready 集合は id 順・ゲート評価も id 順適用＝**並列でも決定論**。`needs` 未宣言の recipe は従来どおり直列。
 - **自走と安全**：遷移はランナーが決定論的に回す。`--max-steps` で上限、ゲート未達 K 回で `ESCALATE`、自己採点は `BLOCKED`。`run-state.json` に永続＝中断・再開可能。
 - **opt-in / 本物の再帰に注意**：`--provider` は明示必須（既定なし）。`claude` を指定すると**入れ子で claude が起動**する＝コスト・再帰に注意。設計確認やテストは `--provider mock`（別プロセスだが即返す決定論ダミー）で。
 
