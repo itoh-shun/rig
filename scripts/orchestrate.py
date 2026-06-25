@@ -326,6 +326,157 @@ def cmd_status(args):
               f"verdicts={len(st['verdicts'])}")
 
 
+# ── 実行層（外部ランナー・プロバイダ抽象）──────────────────────────────────────
+# 各 step を「別プロセスのエージェント」で実行する＝プロセス境界で context を隔離。
+# 検証は「別プロバイダ/別プロセス」で回す＝構造的に採点者≠生成者（takt 型トポロジ）。
+# 既定プロバイダは無し（明示必須）。本物の claude/codex は配線のみ、テストは mock。
+
+MOCK_SRC = (
+    "import sys\n"
+    "role = sys.argv[1] if len(sys.argv) > 1 else 'generator'\n"
+    "if role == 'verifier':\n"
+    "    print('独立検証（mock）: 受け入れ基準を確認')\n"
+    "    print('VERDICT: PASS')\n"
+    "else:\n"
+    "    print('## step 実行結果（mock）')\n"
+    "    print('STATUS: done')\n"
+)
+
+def build_argv(provider: str, role: str, prompt: str, cfg: dict) -> list[str]:
+    if provider == "mock":
+        return ["python3", "-c", MOCK_SRC, role]
+    if provider == "claude":
+        # ヘッドレス。実運用は権限モード等をユーザーが --provider-cmd で調整可。
+        return ["claude", "-p", prompt, "--output-format", "text"]
+    if provider == "codex":
+        return ["codex", "exec", prompt]
+    if provider == "cmd":
+        tmpl = cfg.get("provider_cmd") or ""
+        if not tmpl:
+            raise SystemExit("[ERROR] --provider cmd には --provider-cmd \"... {prompt} ...\" が必須")
+        return [a.replace("{prompt}", prompt).replace("{role}", role) for a in tmpl.split()]
+    raise SystemExit(f"[ERROR] 未知のプロバイダ: {provider}")
+
+
+def run_provider(provider: str, role: str, prompt: str, cfg: dict) -> tuple[int, str]:
+    argv = build_argv(provider, role, prompt, cfg)
+    try:
+        r = subprocess.run(argv, input=prompt if provider in ("cmd",) else None,
+                           capture_output=True, text=True, timeout=cfg.get("timeout", 600))
+    except FileNotFoundError:
+        return 127, f"[provider not found: {provider}]"
+    except subprocess.TimeoutExpired:
+        return 124, "[provider timeout]"
+    return r.returncode, (r.stdout or "")
+
+
+def _build_prompt(state: dict, step: dict) -> str:
+    return (f"あなたは rig のサブエージェント（{step['id']} 担当）。recipe '{state['recipe']}' の "
+            f"step '{step['id']}'（instruction: {step['instruction']}）を実行してください。"
+            f"ゴール: {state.get('goal') or '(なし)'}。完了したら最後に 'STATUS: done' を出力。")
+
+
+def _build_verify_prompt(state: dict, step: dict, product: str) -> str:
+    return (f"あなたは独立した検証者です（この step を生成したエージェントとは別プロセス・別ロール）。"
+            f"step '{step['id']}' の成果が受け入れ基準を満たすか判定し、最後に必ず "
+            f"'VERDICT: PASS' か 'VERDICT: FAIL' を出力してください。\n--- 成果 ---\n{product[:2000]}")
+
+
+def _run_step_checks(step: dict, st: dict) -> None:
+    st["checks"] = []
+    for cmd in step["checks"]:
+        r = subprocess.run(cmd, shell=True, cwd=str(ROOT),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        st["checks"].append({"cmd": cmd, "ok": r.returncode == 0})
+
+
+def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
+             cfg: dict, max_steps: int, quiet: bool = False) -> str:
+    """各 step を別プロセスのエージェントで実行する自走ループ。返り値=終了アクション。"""
+    log = (lambda *a: None) if quiet else print
+    iters = 0
+    last = "—"
+    while iters < max_steps:
+        iters += 1
+        action, msg = compute_next(state)
+        last = action
+        log(f"▶ {action}: {msg}")
+        if action == "START":
+            step = state["steps"][state["cursor"]]
+            st = state["step_state"][step["id"]]
+            # 生成（別プロセス＝context 隔離）
+            rc, out = run_provider(gen, "generator", _build_prompt(state, step), cfg)
+            state["history"].append({"action": "EXEC", "step": step["id"],
+                                     "provider": gen, "rc": rc, "out": out[:200]})
+            log(f"   ↳ {gen}:generator (exit {rc})")
+            # ゲートの一次根拠＝計算的センサー（checks）
+            if step["checks"]:
+                _run_step_checks(step, st)
+                log(f"   ↳ checks: {sum(c['ok'] for c in st['checks'])}/{len(st['checks'])} ok")
+            # 観点検証＝別プロバイダ/別プロセス（採点者≠生成者を構造的に強制）
+            elif step["gate"] in ("acceptance-gate", "review-gate"):
+                rc2, out2 = run_provider(ver, "verifier",
+                                         _build_verify_prompt(state, step, out), cfg)
+                ok = ("VERDICT: PASS" in out2) and ("VERDICT: FAIL" not in out2)
+                by = f"{ver}:independent"
+                st["verdicts"].append({"by": by, "ok": ok, "note": f"exit {rc2}"})
+                log(f"   ↳ {by} → {'PASS' if ok else 'FAIL'}")
+            if sp:
+                save_state(state, sp)
+            continue
+        if action in ("ADVANCE", "RETRY", "AWAIT"):
+            if sp:
+                save_state(state, sp)
+            continue
+        break  # DONE / ESCALATE / BLOCKED / STOPPED
+    if sp:
+        save_state(state, sp)
+    return last
+
+
+def cmd_run(args):
+    if not args:
+        print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
+              "[--provider-cmd \"...{prompt}...\"] [--max-steps N] [--goal G] [--out f]")
+        sys.exit(1)
+    path = resolve_recipe(args[0])
+    fm = parse_frontmatter(path)
+    steps = load_steps(fm)
+    gen = ver = None
+    goal = None
+    out = pathlib.Path("run-state.json")
+    max_steps = 40
+    cfg: dict = {}
+    i = 1
+    while i < len(args):
+        a = args[i]
+        if a == "--provider" and i + 1 < len(args):
+            gen = args[i + 1]; i += 2
+        elif a == "--verifier-provider" and i + 1 < len(args):
+            ver = args[i + 1]; i += 2
+        elif a == "--provider-cmd" and i + 1 < len(args):
+            cfg["provider_cmd"] = args[i + 1]; i += 2
+        elif a == "--goal" and i + 1 < len(args):
+            goal = args[i + 1]; i += 2
+        elif a == "--out" and i + 1 < len(args):
+            out = pathlib.Path(args[i + 1]); i += 2
+        elif a == "--max-steps" and i + 1 < len(args):
+            max_steps = int(args[i + 1]); i += 2
+        else:
+            i += 1
+    if not gen:
+        print("[ERROR] --provider <name> が必須（claude|codex|cmd|mock）。"
+              "本物の再帰実行を避けたいときは mock。")
+        sys.exit(1)
+    ver = ver or gen  # 未指定なら同プロバイダ（ただし別プロセス・別ロール）
+    state = new_state(fm.get("name", path.stem), steps, goal)
+    print(render_plan(state["recipe"], steps))
+    print(f"\n自走実行: provider={gen} / verifier={ver} / max-steps={max_steps}\n")
+    final = run_loop(state, out, gen, ver, cfg, max_steps)
+    print(f"\n=== 終了: {final} ===  run-state: {out}")
+    sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
+
+
 # ── 決定論セルフテスト ────────────────────────────────────────────────────────
 def _drive(steps, script):
     """steps と (action_kind, payload) のスクリプトで run を進め、遷移列と最終状態を返す。"""
@@ -378,6 +529,15 @@ def cmd_selftest(_args):
     expectC = ["START", "BLOCKED"]
     tC, _ = _drive(stepsC, scriptC)
 
+    # シナリオ D: 外部ランナー（mock プロバイダ・別プロセス実行＋独立検証）
+    stepsD = [s(id="implement"),
+              s(id="review", gate="review-gate")]
+    stateD = new_state("selftest-run", stepsD, "デモ")
+    finalD = run_loop(stateD, None, "mock", "mock", {}, max_steps=20, quiet=True)
+    rev_verdicts = stateD["step_state"]["review"]["verdicts"]
+    d_indep = bool(rev_verdicts) and rev_verdicts[0]["by"] == "mock:independent" and rev_verdicts[0]["ok"]
+    d_exec = any(h["action"] == "EXEC" for h in stateD["history"])
+
     ok = True
     def report(name, got, exp, det=""):
         nonlocal ok
@@ -392,6 +552,9 @@ def cmd_selftest(_args):
     report("A done=True", stA1["done"], True)
     report("B 失敗→リトライ→エスカレーション", tB, expectB)
     report("C 自己採点ブロック", tC, expectC)
+    report("D 外部ランナーが DONE まで自走", finalD, "DONE")
+    report("D 別プロセスで step を実行(EXEC)", d_exec, True)
+    report("D 検証が独立(by=mock:independent)", d_indep, True)
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 
@@ -400,7 +563,7 @@ def cmd_selftest(_args):
 COMMANDS = {
     "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
     "verdict": cmd_verdict, "next": cmd_next, "status": cmd_status,
-    "selftest": cmd_selftest,
+    "run": cmd_run, "selftest": cmd_selftest,
 }
 
 

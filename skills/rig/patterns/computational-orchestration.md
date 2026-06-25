@@ -54,6 +54,22 @@ steps:
       - "npm run typecheck"
 ```
 
+## 外部ランナー（`run`）— 各 step を別プロセスのエージェントで自走実行
+
+`next`/`check`/`verdict` を**現在のモデルが手で回す**代わりに、`run` は**各 step を別プロセスのエージェントに実行させ、遷移を自動で回す**（takt 型の外部オーケストレーション）。プロセス境界が context を隔離し、検証を別プロバイダ/別プロセスにすれば**採点者≠生成者が構造的に**成立する。
+
+```
+orchestrate.py run <recipe> --provider <claude|codex|cmd|mock> \
+    [--verifier-provider <name>] [--provider-cmd "tool {prompt}"] \
+    [--goal G] [--max-steps N] [--out run-state.json]
+```
+
+- **プロバイダ抽象（マルチプロバイダ）**：`claude`（`claude -p … --output-format text`）/ `codex`（`codex exec`）/ `cmd`（任意 CLI を `{prompt}` テンプレートで）/ `mock`（決定論ダミー・テスト用）。生成と検証で**別プロバイダ**を指定できる（例 `--provider claude --verifier-provider codex`＝別モデルが独立検証）。
+- **プロセス隔離**：step ごとに新規プロセス＝**毎回クリーンな context**（Context Rot 対策の構造版）。親が肥大しない（Thin Harness）。
+- **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:independent`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。
+- **自走と安全**：遷移はランナーが決定論的に回す。`--max-steps` で上限、ゲート未達 K 回で `ESCALATE`、自己採点は `BLOCKED`。`run-state.json` に永続＝中断・再開可能。
+- **opt-in / 本物の再帰に注意**：`--provider` は明示必須（既定なし）。`claude` を指定すると**入れ子で claude が起動**する＝コスト・再帰に注意。設計確認やテストは `--provider mock`（別プロセスだが即返す決定論ダミー）で。
+
 ## ガード
 
 - **opt-in**（`--orchestrate` 明示時のみ）。既定の散文ループは変えない（engine 不変）。
