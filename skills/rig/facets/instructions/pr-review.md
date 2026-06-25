@@ -31,7 +31,38 @@
 総合 verdict（`APPROVE` / `APPROVE_WITH_CONDITIONS` / `REJECT`）と観点別サマリ・必須条件を提示する。
 
 - **既定は user への提示のみ**（read のみ・副作用なし）。
-- `--comment` 指定時のみ、PR へコメント/レビュー投稿（GitHub MCP の write 系。例 `add_comment_to_pending_review` → `pull_request_review_write`、または `add_issue_comment`）。**書き込みは影響あるアクションなので確認必須**（`--autonomous` でも PR への投稿確認は解除しない）。投稿後は何をどこに書いたか報告する。
+- `--comment` 指定時のみ、PR へコメント投稿する。**書き込みは影響あるアクションなので確認必須**（`--autonomous` でも PR への投稿確認は解除しない）。投稿後は何をどこに書いたか報告する。
+
+#### `--comment` 投稿フォーマット（正準定義・#107）
+
+**GitHub MCP メソッド**: `add_issue_comment`
+（plain コメント。`pull_request_review_write` はリポジトリ権限・ブランチ保護ルールへの影響が大きいため、デフォルトは低リスク側を選ぶ）
+
+**投稿内容（Markdown 正準構造）**:
+
+```
+## rig pr-review: <総合判定>
+
+| 観点     | 判定                        |
+|----------|-----------------------------|
+| security | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
+| design   | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
+| test     | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
+
+### 必須対応事項（REJECT / APPROVE_WITH_CONDITIONS の観点のみ）
+- （観点名）: <根拠・条件を1文で>
+（該当なしなら節ごと省略）
+
+---
+> [rig](https://github.com/itoh-shun/rig) pr-review — acceptance-gate passed
+```
+
+**総合判定の集約ルール（`review-gate` と同一基準）**:
+- REJECT が 1 件以上 → `REJECT`
+- APPROVE_WITH_CONDITIONS が 1 件以上（REJECT なし）→ `APPROVE_WITH_CONDITIONS`
+- 全 APPROVE → `APPROVE`
+
+`--adversarial` 指定時は adversarial 観点行をテーブルに追加する（例: `| lazy-senior | APPROVE |`）。
 
 ## 原則
 
