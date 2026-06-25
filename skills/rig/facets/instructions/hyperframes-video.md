@@ -18,7 +18,7 @@
 
 ## 手順
 
-1. **素材の収集** — 対象リリース（既定 CHANGELOG 最新エントリ・バージョン指定可）。`release-movie` の制作台本（シーン表＝尺/テロップ/VO/BGM/ソース対応表）が既にあればそれを設計図に使う。無ければ先に台本を起こす。
+1. **素材の収集** — 対象（既定＝実装中のプロジェクト：コード/README/実際に動く画面/開発フロー。`--release` 時のみ CHANGELOG エントリ・バージョン指定可）。`release-movie` の制作台本（シーン表＝尺/テロップ/VO/BGM/ソース対応表）が既にあればそれを設計図に使う。無ければ先に台本を起こす。
 2. **コンポジション生成** — 上記契約どおり `video/<name>/index.html` を生成（または同梱例 `video/launch-film/` を複製して中身を差し替え）。各台本シーン → `class="clip"`＋`data-start`/`data-duration`、入りは GSAP タイムラインに配置。**screen ショットは `<video>` 実録枠 or seekable モック端末を最低1つ**（`release-movie` の必須ルールを継承）。
 3. **同梱物** — `STORYBOARD.md`（台本）と `README.md`（`npx hyperframes init/preview/render` 手順・要件・assets の置き場）を出す。
 4. **引き渡し** — 「この harness では render 不可。手元で `npm i && npx hyperframes preview` で確認 → `npx hyperframes render --output renders/out.mp4`」と明示する。BGM/実録 mp4 は `assets/` に置けば取り込まれる旨を添える。

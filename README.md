@@ -79,6 +79,7 @@ claude --plugin-dir .
 | `release-flow` | intake→design?→implement→verify→review?→pr→merge (size-aware; `?` steps are conditional) |
 | `design-first` | design-heavy flow |
 | `hotfix` | shortest path (intake→implement→verify→pr) |
+| `debug` | bug-investigation flow: reproduce → isolate (root-cause hypothesis) → implement → verify (acceptance-gate) |
 | `adversarial-review` | adversarial review — eliminate AI tics, dead comments; enforce human readability (lazy-senior / cognitive-economist) |
 | `goal-loop` | goal-driven loop — turn a high-level goal into acceptance criteria, then converge to it by delegating existing flows each round (acceptance-gate + autonomous-loop) |
 | `pr-review` | review an existing open PR (fetched via GitHub MCP) with the 3-way (security/design/test) review + optional adversarial pass |
