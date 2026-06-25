@@ -1,5 +1,7 @@
 # output-contract: design-verdict
 
+## output-contract: design-verdict
+
 UI/UX・a11y レビュー担当（`design/ux-reviewer` / `design/a11y-reviewer`）が共通で遵守する出力構造。機械抽出を前提に判定を先頭に置き、前置き・挨拶・補足説明は禁止する。
 
 ### 形式
