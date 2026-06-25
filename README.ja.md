@@ -207,6 +207,8 @@ claude --plugin-dir .
 | `--adversarial` | 敵対的レビュー step を追加（AIの癖排除・人間可読性・不要コメント除去） |
 | `--cross-llm` | 他社 LLM がレビューする前提でコーディング。implement に `cross-llm-legibility`（Codex/Copilot/GPT が一発で通す慣用的・明示的・文脈非依存なコード）を注入＋ review に外部 LLM 視点の `cross-llm-reviewer` を追加 |
 | `--persona <name>` | review fan-out に名前指定のカスタム reviewer persona を追加（複数可・tier 解決 project→user→shipped・`/rig:persona` と対） |
+| `--orchestrate` | **計算的オーケストレーション**（舵をコードが握る）。遷移・ゲート・リトライ・停止・状態保持を決定論ランナーに強制。`/rig:orchestrate` も同義。recipe の `checks:`/`needs:` か manifest `default_orchestrate` で自動 ON（→「いつ計算的オーケストレーションになる？」） |
+| `--no-orchestrate` | 自動有効化（`checks:`/`needs:`/manifest）をこの run だけ打ち消し、従来の散文エンジンで回す |
 
 ## クイック例
 
@@ -225,6 +227,40 @@ claude --plugin-dir .
 
 # 知識蓄積を確認ダイアログなしで実行する
 /rig:dev --capture --recipe release-flow "機能Y"
+```
+
+## いつ「計算的オーケストレーション」になる？（選択基準）
+
+rig には2つの回し方があります。**舵を LLM が握る軽い散文エンジン（既定）**と、**舵をコードが握る決定論ランナー（`--orchestrate`）**。後者は遷移・ゲート・リトライ・停止・状態保持を `scripts/orchestrate.py` が強制し、各 step を別プロセスのエージェントで自走実行できます（並列検証・judge-panel・step-DAG 並列・マルチプロバイダ）。
+
+**ざっくりの目安**
+
+- サッと一発・対話的に進めたい → **既定エンジン**（何もしなくていい）
+- 品質を毎回同じ水準に固めたい／並列で回したい／自走させたい → **orchestrate**
+
+**いつ orchestrate を通るか（この条件で自動的に切り替わります）**
+
+| こういう時 | orchestrate？ | 理由 |
+|---|---|---|
+| 普通に `/rig:dev` を一発・対話で | ❌ 散文エンジン | 軽い・即時 |
+| `/rig:orchestrate` か `--orchestrate` を付けた | ✅ | 明示 |
+| recipe に `checks:`（lint/test 等の機械検証）がある | ✅ 自動 | 決定論ゲートで回す意図 |
+| recipe に `needs:`（step 依存）がある | ✅ 自動 | DAG 並列で回す意図 |
+| `rig.md` に `default_orchestrate: true` | ✅ 既定 | プロジェクト全体で常にカッチリ |
+| 自動 ON を今回だけ切りたい | ❌ | `--no-orchestrate` で打ち消し |
+| `/rig:persona` など単発生成 | ❌ | ループが無いので対象外 |
+
+自動で切り替わった時は、実行開始の1行で理由と戻し方を通知します（例：`🧭 計算的オーケストレーションで回します（理由: recipe に needs 宣言）。戻すには --no-orchestrate`）。実行中は run-status ヘッダに `orch: on`（明示）／`orch: auto`（自動）が出ます。事前に確認したいときは `orchestrate.py plan <recipe>` が `自動 orchestrate: auto ON/off（理由）` を表示します。
+
+```bash
+# 明示してカッチリ自走（各 step を rig ハーネスで実行・3並列検証）
+/rig:orchestrate --run --provider rig --max-parallel 3
+
+# 複数モデルに作らせて勝ち筋を選ぶ（judge-panel）
+python3 scripts/orchestrate.py run release-flow --generators rig,claude,codex
+
+# 今回だけ素のエンジンに戻す
+/rig:dev --no-orchestrate --recipe release-flow "機能Z"
 ```
 
 ## ドキュメント
