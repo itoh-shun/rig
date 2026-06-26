@@ -132,6 +132,21 @@ def check_recipe(path: pathlib.Path) -> None:
     if ndp_val is not None and not isinstance(ndp_val, bool):
         _emit("FAIL", f"{ctx} — no_default_personas '{ndp_val!r}' は boolean (true/false) でなければなりません")
 
+    # orchestrate 値域（#129/#151）
+    orch_val = fm.get("orchestrate")
+    if orch_val is not None and not isinstance(orch_val, bool):
+        _emit("FAIL", f"{ctx} — orchestrate '{orch_val!r}' は boolean (true/false) でなければなりません")
+
+    # cross_llm 値域（#130/#151）
+    cross_llm_val = fm.get("cross_llm")
+    if cross_llm_val is not None and not isinstance(cross_llm_val, bool):
+        _emit("FAIL", f"{ctx} — cross_llm '{cross_llm_val!r}' は boolean (true/false) でなければなりません")
+
+    # no_capture 値域（#137/#151）
+    no_capture_val = fm.get("no_capture")
+    if no_capture_val is not None and not isinstance(no_capture_val, bool):
+        _emit("FAIL", f"{ctx} — no_capture '{no_capture_val!r}' は boolean (true/false) でなければなりません")
+
     # ② extends チェーン（§4.2.2 + validate.md ①）
     parent_step_ids: list[str] = []
     extends_name: str | None = fm.get("extends")
@@ -232,6 +247,24 @@ def check_recipe(path: pathlib.Path) -> None:
                 f"（override タイポの可能性。新規 step として追加する意図なら無視可。SKILL.md §4.2.2）",
             )
 
+    # needs: 参照切れチェック（チェック A・#152）
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_id = step.get("id") or "?"
+        needs_list = step.get("needs")
+        if not needs_list:
+            continue
+        for needed_id in needs_list:
+            if not isinstance(needed_id, str):
+                continue
+            if needed_id not in seen_ids:
+                _emit(
+                    "FAIL",
+                    f"{ctx}.{step_id} — needs に未定義の step-id {needed_id!r} が含まれます。"
+                    f" 有効な step-id: {', '.join(sorted(seen_ids))}",
+                )
+
     _emit("PASS", f"{ctx}: OK")
 
 
@@ -266,6 +299,60 @@ def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
             node = parent[node]
 
 
+# ── needs: 循環依存チェック（チェック B・#152・DFS）─────────────────────────────
+def check_needs_cycles(recipe_files: list[pathlib.Path]) -> None:
+    """各 recipe の needs: DAG を DFS で走査し、循環依存を検出する（#152）。
+
+    shipped tier のグラフのみを見る（cross-tier の循環は Claude 版 --validate が担当）。
+    check_extends_cycles と同じロジック・同じ severity（FAIL）。
+    """
+    for recipe_path in recipe_files:
+        fm, _ = parse_frontmatter(recipe_path)
+        if not fm or not isinstance(fm.get("steps"), list):
+            continue
+
+        steps = fm["steps"]
+        graph: dict[str, list[str]] = {}
+        valid_ids: set[str] = set()
+        for step in steps:
+            if isinstance(step, dict) and step.get("id"):
+                sid = str(step["id"])
+                valid_ids.add(sid)
+                needs = step.get("needs") or []
+                graph[sid] = [str(n) for n in needs if isinstance(n, str) and n in valid_ids or True]
+
+        # DFS 色付けアルゴリズム（白=未訪問 / 灰=処理中 / 黒=完了）
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color: dict[str, int] = {sid: WHITE for sid in valid_ids}
+        reported: set[str] = set()
+
+        def dfs(node: str, trail: list[str]) -> bool:
+            color[node] = GRAY
+            current_trail = trail + [node]
+            for dep in graph.get(node, []):
+                if dep not in valid_ids:
+                    continue
+                if color[dep] == GRAY:
+                    cycle_start = current_trail.index(dep)
+                    cycle = current_trail[cycle_start:] + [dep]
+                    cycle_key = " → ".join(cycle)
+                    if cycle_key not in reported:
+                        reported.add(cycle_key)
+                        _emit(
+                            "FAIL",
+                            f"recipe {recipe_path.stem}: needs 循環依存 — {cycle_key}",
+                        )
+                    return True
+                if color[dep] == WHITE:
+                    dfs(dep, current_trail)
+            color[node] = BLACK
+            return False
+
+        for sid in list(valid_ids):
+            if color[sid] == WHITE:
+                dfs(sid, [])
+
+
 # ── メイン ────────────────────────────────────────────────────────────────────
 def main() -> None:
     recipe_files = sorted(RECIPES.glob("*.md"))
@@ -283,6 +370,11 @@ def main() -> None:
         check_extends_cycles(recipe_files)
     except Exception:
         _emit("FAIL", f"extends 循環チェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_needs_cycles(recipe_files)
+    except Exception:
+        _emit("FAIL", f"needs 循環チェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     print("## rig --validate レポート（CI / shipped tier）\n")
     for line in results:

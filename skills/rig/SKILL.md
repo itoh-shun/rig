@@ -515,6 +515,28 @@ steps: 7（うち condition 付き=2 / gate=2）| RUN はしない
     WARN: checks[] 未定義 — ランナーは独立 verdict のみを gate 根拠に使用
   ```
 
+- **`--orchestrate` 指定時かつ `needs:` 宣言 step が1件以上あるとき、`### DAG: step 並列実行トポロジー（--orchestrate）` ブロックを `### Checks:` ブロックの直後・`### Knowledge:` ブロックの前に出す（#153）**（`--orchestrate` 未指定、または `needs:` が全 step で未宣言のときはブロックごと省略）。`needs:` グラフをトポロジカルソート（BFS）し、同一 wave（並列実行可能）の step をグループ化して列挙する。`needs:` 宣言ありだが参照先 step-id が未定義の場合（`--validate` #152 が FAIL とするケース）は該当 step に `WARN: 未解決の needs` を付記し wave 計算を最善努力で続ける（`--plan` はドライラン＝FAIL でも出力を止めない）。
+
+  **Wave 計算ルール**（SKILL §3.5 `needs:` / `patterns/computational-orchestration` の実行モデルと同一）：
+  - **Wave 1**：`needs:` なし / `needs: []` の step をすべて Wave 1 に割り当てる
+  - **Wave N**：`needs:` に列挙された全 step-id が Wave 1〜(N-1) に含まれる step を Wave N に割り当てる
+  - 同 wave 内の step は `orchestrate run` で**同時プロセス起動**される
+
+  ```
+  ### DAG: step 並列実行トポロジー（--orchestrate）
+
+  Wave 1（並列）:  intake
+  Wave 2（並列）:  implement
+  Wave 3（並列）:  review-a, review-b          ← 同 wave = 並走
+  Wave 4（並列）:  verify
+
+  依存関係:
+    implement  ← intake
+    review-a   ← implement
+    review-b   ← implement
+    verify     ← review-a, review-b
+  ```
+
 - **`### Knowledge: 注入予定ソース` ブロック（#19）**：Gate ブロック（および Checks ブロック）の後に、各 knowledge tier（methodology / ai-quirks / domain / accumulated）の状態を出す（`✓ N files` / `（なし）`）。manifest `knowledge.*`（context_file / adr_dir / design_docs[]）が設定されていれば各パスと実在確認（✓ / WARN）を補記、未設定ならそのセクションを省略。全 tier なし＋manifest 未設定なら `（knowledge なし — 汎用動作）` の1行のみ。`--validate`（#14 のパス WARN）が「実在」を保証し、本ブロックが「注入される一覧」を見せる相補関係。**さらに（#59）、解決済み personas のうち `inject: ["[[slug]]", ...]` を持つものを列挙し、各 slug の wiki ページ解決先（tier: project overlay / global）と実在確認（`✓` / `WARN: 未解決`）を `- wiki（persona inject）:` セクションとして追記する。`inject:` を持つ persona が1つもない場合は `- wiki（persona inject）: （なし）` の1行のみ。同一 slug が複数 persona から inject される場合は dedup して1行にまとめる。未解決 slug は `WARN: 未解決` と表示され `--validate` ⑤ のリンク切れ FAIL と1対1で対応する（`--plan` だけで「実行したら validate が落ちる」を予見できる）。`--plan --global` では tier 横断 persona の `inject:` も追跡対象に含める。** **（#113）`✓ N files` の後に各ファイル名をインデントして1行ずつ列挙する（wiki inject の per-item 表示と非対称だった箇所を解消）。tier パス（`[global]` / `[project]`）を `✓ N files` の後ろに付記する（methodology / ai-quirks は常に `[global]`、domain / accumulated は常に `[project]`）。0件の tier は従来どおり `（なし）`（ファイル名行なし）。**
 
   ```
