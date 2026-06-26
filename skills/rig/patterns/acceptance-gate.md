@@ -9,7 +9,7 @@
    - 観点検証: `review-gate` で 3-way レビューに REJECT が無い
    - 構造検証: `output-contract` の必須項目をすべて満たす
 2. **step を実行** — subagent に dispatch（context-minimal）。
-3. **基準に照合** — `structured-report` で機械抽出し、基準を満たすか判定。
+3. **基準に照合** — `structured-report` で機械抽出し、基準を満たすか判定。structured-report には各 criterion の合否（pass/fail）と未達の根拠（1行サマリ）を含める（§6 ③ のバナー表示（#159）で親コンテキストに表示する）。
 4. **未達なら収束させる** — 指摘・失敗を反映して**別 subagent で再生成/精緻化を最大 K 回**。良い run も悪い run も「基準を満たすまで」回す。
 5. **K 回で未達 → user にエスカレーション**（§6 の「2回詰まりガード」と連動）。**基準未達の出力は次 step へ通さない**（サブ基準の成果物を下流に流さない）。
 
