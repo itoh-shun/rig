@@ -80,6 +80,7 @@ user-invocable: true
 | `--workflow` | 実行バックエンドを **workflow**（ultracode Workflow ツール）に切り替える。既定は **manual**（`patterns/workflow-backend` 参照） |
 | `--orchestrate` | **計算的オーケストレーション**を ON。step の遷移・ゲート判定・リトライ・停止条件・状態保持を、散文でなく **`scripts/orchestrate.py`（決定論ランナー）に強制させる**（舵をコードが握る）。半自動＝`init`→`next`/`check`/`verdict`（モデルが各 step の作業）。全自動＝`run`＝**各 step を別プロセスのエージェントで実行**（マルチプロバイダ rig/claude/codex/cmd/mock・プロセス隔離・検証は別プロバイダで構造的に採点者≠生成者）。**recipe に `checks:`/`needs:` があるか manifest `default_orchestrate: true` のとき自動 ON**（§4.3）。`patterns/computational-orchestration` 参照 |
 | `--no-orchestrate` | 自動有効化（recipe の `checks:`/`needs:` または manifest `default_orchestrate`）を**この run だけ打ち消す**＝従来の散文エンジンで回す |
+| （横断 CLI） | `scripts/orchestrate.py install-shim` で `~/.local/bin/rig` を 1 回張れば、任意 cwd から `rig <subcommand>` で起動できる。`$RIG_HOME` 上書き可、`<cwd>/.rig/recipes/<name>.md` が同名 built-in を**プロジェクト overlay**として上書き解決、`checks:` の実行 cwd は呼び出し元（rig リポジトリではない） |
 | `--capture` | capture（学びの知識層への蓄積）を承認ダイアログなしで実行（提案表示と事後報告は省略しない）。既定は capture 提案時に承認を求める |
 | `--skip <step>` | 指定した step を除外してフローを継続する（複数可。例 `--skip design --skip review`）。size-aware 既定・`--design`/`--review` 等フラグより後に適用される（明示スキップが最終的に勝つ）。`--only` との同時指定は `--only` 優先・警告を出す。`--save-recipe` には影響しない（実行時フィルタ＝§4.3.2 snapshot 意味論と同じ） |
 | `--list` | 利用可能なブリック(§2)・**全 tier の recipe**（project / user / shipped）・flag を一覧表示して停止（RESOLVE/COMPOSE/RUN しない） |

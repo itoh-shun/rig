@@ -144,6 +144,23 @@ The full brick catalog (personas, policies, instructions, knowledge, output-cont
 - **Recipes** — add `<repo>/.claude/rig/recipes/*.md` (project) or `~/.claude/rig/recipes/*.md` (user); `extends` a shipped recipe and override just the diff. Or `--save-recipe`.
 - **Knowledge layer** — grow `~/.claude/rig/knowledge/{methodology,ai-quirks}/` (cross-project) and `<repo>/.claude/rig/knowledge/domain/` (per-project). Injected into every run.
 
+## Standalone CLI (cross-project)
+
+The deterministic orchestrator (`scripts/orchestrate.py`) is also usable from any directory as a plain CLI. Install the shim once:
+
+```bash
+# inside the rig repo (or wherever the plugin is installed)
+python3 scripts/orchestrate.py install-shim          # → ~/.local/bin/rig (symlink)
+# then anywhere
+rig models                                            # discover LLM providers
+rig probe --provider codex                            # smoke-test a provider
+rig run review-only --provider rig --verifier-provider codex
+```
+
+- **`$RIG_HOME` override** — point the shim at a different install: `RIG_HOME=/path/to/rig rig …`. Default resolution: `$RIG_HOME` → `~/.claude/plugins/data/rig-itoshun-local-plugins` → the script's own repo (dev).
+- **Project recipe overlay** — `<cwd>/.rig/recipes/<name>.md` shadows the built-in recipe of the same name when you run `rig <verb> <name>` from that project. Built-ins are still available by absolute path.
+- **`checks:`** declared in a recipe run in the **invocation cwd** (i.e. your project), not in the rig repo.
+
 ## Docs
 
 - [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
