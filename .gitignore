@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 
+# rig orchestrate runtime artifacts（cwd に dump される run-state）
+run-state.json
+
 # 依存物・キャッシュ・別作業（プラグイン本体に無関係なため追跡しない）
 node_modules/
 .agents/

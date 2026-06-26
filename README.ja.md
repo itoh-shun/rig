@@ -275,6 +275,23 @@ python3 scripts/orchestrate.py run release-flow --provider ollama --auto-model
 
 使えるプロバイダ（`--provider` / `--verifier-provider` / `--generators`）：`rig`（推奨・各 step を rig ハーネスで起動）・`claude`・`codex`・**`ollama`・`lmstudio`（ローカル LLM・OpenAI 互換 HTTP・`--model`/`--base-url`）**・`cmd`（任意 CLI）・`mock`（テスト）。
 
+## 横断利用（CLI として）
+
+`scripts/orchestrate.py` は、shim を 1 回置けば **どのディレクトリからでも `rig` コマンドとして呼べる**：
+
+```bash
+# rig リポジトリ（またはプラグインインストール済みパス）で 1 回
+python3 scripts/orchestrate.py install-shim          # → ~/.local/bin/rig（symlink）
+# 以降はどの cwd からでも
+rig models                                           # 利用可能プロバイダ探索
+rig probe --provider codex                           # 疎通テスト
+rig run review-only --provider rig --verifier-provider codex
+```
+
+- **`$RIG_HOME` で上書き**：別 install を使う場合 `RIG_HOME=/path/to/rig rig …`。解決順は `$RIG_HOME` → `~/.claude/plugins/data/rig-itoshun-local-plugins` → スクリプト隣接（dev）。
+- **プロジェクト overlay**：`<cwd>/.rig/recipes/<name>.md` が同名 built-in を**上書き解決**。built-in は絶対パス指定で引き続き使える。
+- **`checks:` の実行 cwd は呼び出し元プロジェクト**（rig リポジトリではない）＝ lint/test/build が「自分の手元のプロジェクト」に対して走る。
+
 ## ドキュメント
 
 - `docs/testing-scenarios.md` — ディシプリン圧力シナリオ集（rationalize パターンと GREEN 応答の対比）
