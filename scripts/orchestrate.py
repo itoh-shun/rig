@@ -804,6 +804,53 @@ def _drive(steps, script):
     return trace, state
 
 
+# ── プロバイダ疎通テスト ──────────────────────────────────────────────────────
+def cmd_probe(args):
+    """プロバイダを1回叩いて、実際のコマンド・出力・契約パースの可否を表示する。
+    例: orchestrate.py probe --provider codex          （検証ロールで VERDICT を確認）
+        orchestrate.py probe --provider codex --role generator
+        orchestrate.py probe --provider ollama --model llama3.1"""
+    provider, role, cfg = None, "verifier", {}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--provider" and i + 1 < len(args):
+            provider = args[i + 1]; i += 2
+        elif a == "--role" and i + 1 < len(args):
+            role = args[i + 1]; i += 2
+        elif a == "--model" and i + 1 < len(args):
+            cfg["model"] = args[i + 1]; i += 2
+        elif a == "--base-url" and i + 1 < len(args):
+            cfg["base_url"] = args[i + 1]; i += 2
+        elif a == "--provider-cmd" and i + 1 < len(args):
+            cfg["provider_cmd"] = args[i + 1]; i += 2
+        else:
+            i += 1
+    if not provider:
+        print("[ERROR] --provider <name> が必須（rig|claude|codex|ollama|lmstudio|cmd|mock）")
+        sys.exit(1)
+    prompt = ("ある成果が受け入れ基準を満たすか判定し、最後に必ず 'VERDICT: PASS' か "
+              "'VERDICT: FAIL' を1行で出力してください。\n成果: 2 + 2 = 4"
+              if role == "verifier" else
+              "1 + 1 を計算し、最後に 'STATUS: done' を出力してください。")
+    sig = "VERDICT" if role == "verifier" else "STATUS"
+    print(f"## probe: provider={provider} / role={role}")
+    if provider in _OPENAI_BASE:
+        print(f"  endpoint : {_base_url(provider, cfg)}/chat/completions")
+        print(f"  model    : {resolve_http_model(provider, cfg)}")
+    else:
+        argv = build_argv(provider, role, "<PROMPT>", cfg, "probe")
+        print("  command  : " + " ".join(shlex.quote(a) for a in argv))
+    rc, out = run_provider(provider, role, prompt, cfg, persona="probe")
+    found = sig in (out or "")
+    print(f"  exit     : {rc}")
+    print("  --- 出力（先頭 600 字） ---")
+    print("  " + (out or "")[:600].replace("\n", "\n  "))
+    print(f"  → {sig} 検出: " + ("✓ パース可能（rig から使えます）" if found
+                                else f"✗ 見つからない（プロンプト/フラグ調整が必要。cmd プロバイダで実コマンドを指定可）"))
+    sys.exit(0 if (rc == 0 and found) else 1)
+
+
 def cmd_selftest(_args):
     s = lambda **k: {"id": k["id"], "instruction": "x", "gate": k.get("gate"),
                      "pattern": k.get("pattern"), "personas": k.get("personas", []),
@@ -940,6 +987,10 @@ def cmd_selftest(_args):
            resolve_http_model("ollama", {"auto_model": True, "base_url": "http://127.0.0.1:1/v1", "timeout": 2}),
            "llama3.1")
     report("M --model 明示は最優先", resolve_http_model("ollama", {"auto_model": True, "model": "qwen2.5"}), "qwen2.5")
+    # N: probe の土台（codex の実コマンドが正しい・検証出力から VERDICT を拾える）
+    report("N probe: codex の command", build_argv("codex", "verifier", "P", {}), ["codex", "exec", "P"])
+    _, out_n = run_provider("mock", "verifier", "x", {})
+    report("N probe: 検証出力に VERDICT", "VERDICT" in out_n, True)
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 
@@ -948,7 +999,7 @@ def cmd_selftest(_args):
 COMMANDS = {
     "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
     "verdict": cmd_verdict, "next": cmd_next, "status": cmd_status,
-    "run": cmd_run, "models": cmd_models, "selftest": cmd_selftest,
+    "run": cmd_run, "models": cmd_models, "probe": cmd_probe, "selftest": cmd_selftest,
 }
 
 
