@@ -391,7 +391,34 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
     raise SystemExit(f"[ERROR] 未知のプロバイダ: {provider}")
 
 
+# ── ローカル LLM（OpenAI 互換 HTTP）─────────────────────────────────────────────
+# ollama / lmstudio はローカルサーバの OpenAI 互換エンドポイントを叩く。
+# 各リクエストは独立（ステートレス）＝context 隔離は保たれる。要: サーバ起動＋モデル。
+_OPENAI_COMPAT = {
+    "lmstudio": "http://localhost:1234/v1/chat/completions",   # LM Studio（Local Server を起動）
+    "ollama":   "http://localhost:11434/v1/chat/completions",   # ollama serve（OpenAI 互換）
+}
+_DEFAULT_MODEL = {"lmstudio": "local-model", "ollama": "llama3.1"}
+
+def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
+    import urllib.request
+    url = cfg.get("base_url") or _OPENAI_COMPAT[provider]
+    model = cfg.get("model") or _DEFAULT_MODEL.get(provider, "local-model")
+    body = json.dumps({"model": model, "temperature": 0,
+                       "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
+    req = urllib.request.Request(url, data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return 0, data["choices"][0]["message"]["content"]
+    except Exception as e:                      # 接続不可・モデル無し等は rc!=0 で握り潰す
+        return 1, f"[{provider} error: {e} @ {url}]"
+
+
 def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> tuple[int, str]:
+    if provider in _OPENAI_COMPAT:
+        return run_http_provider(provider, prompt, cfg)
     argv = build_argv(provider, role, prompt, cfg, persona)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd",) else None,
@@ -627,6 +654,10 @@ def cmd_run(args):
             ver = args[i + 1]; i += 2
         elif a == "--provider-cmd" and i + 1 < len(args):
             cfg["provider_cmd"] = args[i + 1]; i += 2
+        elif a == "--model" and i + 1 < len(args):
+            cfg["model"] = args[i + 1]; i += 2
+        elif a == "--base-url" and i + 1 < len(args):
+            cfg["base_url"] = args[i + 1]; i += 2
         elif a == "--goal" and i + 1 < len(args):
             goal = args[i + 1]; i += 2
         elif a == "--out" and i + 1 < len(args):
@@ -643,7 +674,8 @@ def cmd_run(args):
         gen = generators[0]            # --generators だけでも可（先頭を代表に）
     if not gen:
         print("[ERROR] --provider <name>（または --generators a,b,c）が必須"
-              "（rig|claude|codex|cmd|mock）。rig＝各 step を rig ハーネスとして起動（推奨）。テストは mock。")
+              "（rig|claude|codex|ollama|lmstudio|cmd|mock）。rig＝各 step を rig ハーネスとして起動（推奨）。"
+              "ollama/lmstudio＝ローカル LLM（要サーバ・--model でモデル指定）。テストは mock。")
         sys.exit(1)
     ver = ver or gen  # 未指定なら同プロバイダ（ただし別プロセス・別ロール）
     state = new_state(fm.get("name", path.stem), steps, goal)
@@ -801,6 +833,10 @@ def cmd_selftest(_args):
     report("K needs 宣言で auto ON", auto_orchestrate([s(id="a"), s(id="b", needs=["a"])])[0], True)
     report("K 宣言なしは off", auto_orchestrate([s(id="x")])[0], False)
     report("K manifest 既定で auto ON", auto_orchestrate([s(id="x")], manifest_default=True)[0], True)
+    # L: ローカル LLM（ollama/lmstudio）が OpenAI 互換 HTTP プロバイダとして配線されている
+    report("L ollama/lmstudio が配線済み", set(_OPENAI_COMPAT) == {"lmstudio", "ollama"}, True)
+    rc_l, _ = run_provider("lmstudio", "verifier", "x", {"base_url": "http://127.0.0.1:1/v1", "timeout": 2})
+    report("L サーバ不在でも crash せず rc!=0", rc_l != 0, True)
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 
