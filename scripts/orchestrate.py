@@ -392,18 +392,63 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
 
 
 # ── ローカル LLM（OpenAI 互換 HTTP）─────────────────────────────────────────────
-# ollama / lmstudio はローカルサーバの OpenAI 互換エンドポイントを叩く。
+# ollama / lmstudio はローカルサーバの OpenAI 互換エンドポイント（/v1 ルート）を叩く。
 # 各リクエストは独立（ステートレス）＝context 隔離は保たれる。要: サーバ起動＋モデル。
-_OPENAI_COMPAT = {
-    "lmstudio": "http://localhost:1234/v1/chat/completions",   # LM Studio（Local Server を起動）
-    "ollama":   "http://localhost:11434/v1/chat/completions",   # ollama serve（OpenAI 互換）
+_OPENAI_BASE = {
+    "lmstudio": "http://localhost:1234/v1",    # LM Studio（Local Server を起動）
+    "ollama":   "http://localhost:11434/v1",    # ollama serve（OpenAI 互換）
 }
 _DEFAULT_MODEL = {"lmstudio": "local-model", "ollama": "llama3.1"}
+_MODELS_CACHE_PATH = pathlib.Path(os.path.expanduser("~/.claude/rig/models.json"))
+
+
+def _base_url(provider: str, cfg: dict) -> str:
+    return (cfg.get("base_url") or _OPENAI_BASE[provider]).rstrip("/")
+
+
+def _http_get_json(url: str, timeout: float) -> dict | None:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def list_models(provider: str, cfg: dict) -> list[str]:
+    """サーバの /v1/models から利用可能モデル id を取得（不可なら空）。"""
+    data = _http_get_json(f"{_base_url(provider, cfg)}/models", cfg.get("timeout", 8))
+    if not data:
+        return []
+    return [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+
+
+def resolve_http_model(provider: str, cfg: dict) -> str:
+    """使用モデルを解決する。優先: --model → 保存設定 → サーバ実機の先頭 → 既定。
+    --auto-model 指定時は実機から動的取得して設定する。"""
+    if cfg.get("model"):
+        return cfg["model"]
+    if cfg.get("auto_model"):
+        saved = _load_models_config().get(provider, {})
+        if saved.get("default"):
+            return saved["default"]
+        live = list_models(provider, cfg)
+        if live:
+            return live[0]
+    return _DEFAULT_MODEL.get(provider, "local-model")
+
+
+def _load_models_config() -> dict:
+    try:
+        return json.loads(_MODELS_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
 
 def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     import urllib.request
-    url = cfg.get("base_url") or _OPENAI_COMPAT[provider]
-    model = cfg.get("model") or _DEFAULT_MODEL.get(provider, "local-model")
+    url = f"{_base_url(provider, cfg)}/chat/completions"
+    model = resolve_http_model(provider, cfg)
     body = json.dumps({"model": model, "temperature": 0,
                        "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
     req = urllib.request.Request(url, data=body,
@@ -416,8 +461,56 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
         return 1, f"[{provider} error: {e} @ {url}]"
 
 
+def discover_models(cfg: dict) -> dict:
+    """利用可能なプロバイダとモデルを動的に探索する（決定論的にソート）。"""
+    import shutil
+    out: dict = {}
+    for p in sorted(_OPENAI_BASE):
+        models = sorted(list_models(p, cfg))
+        out[p] = {"kind": "local-http", "base_url": _base_url(p, cfg),
+                  "reachable": bool(models), "models": models,
+                  "default": models[0] if models else None}
+    for p in ("claude", "codex"):               # CLI 系は presence のみ
+        out[p] = {"kind": "cli", "available": shutil.which(p) is not None, "models": []}
+    out["rig"] = {"kind": "cli", "available": shutil.which("claude") is not None,
+                  "note": "各 step を rig ハーネス(claude)で起動", "models": []}
+    return out
+
+
+def cmd_models(args):
+    cfg: dict = {}
+    save = "--save" in args
+    as_json = "--json" in args
+    i = 0
+    while i < len(args):
+        if args[i] == "--base-url" and i + 1 < len(args):
+            cfg["base_url"] = args[i + 1]; i += 2
+        else:
+            i += 1
+    found = discover_models(cfg)
+    if as_json:
+        print(json.dumps(found, ensure_ascii=False, indent=2))
+    else:
+        print("## rig orchestrate: 利用可能モデル探索\n")
+        for p, info in found.items():
+            if info["kind"] == "local-http":
+                status = (f"✓ {', '.join(info['models'])}" if info["reachable"]
+                          else f"✗ サーバ未起動/モデル無し @ {info['base_url']}")
+                print(f"  {p:<10} {status}")
+            else:
+                av = "✓ CLI あり" if info.get("available") else "✗ CLI 無し"
+                print(f"  {p:<10} {av}{'  — ' + info['note'] if info.get('note') else ''}")
+    if save:
+        # local-http のみ設定保存（default モデルを次回 --auto-model で使う）
+        conf = {p: {"base_url": d["base_url"], "default": d["default"], "models": d["models"]}
+                for p, d in found.items() if d["kind"] == "local-http" and d["reachable"]}
+        _MODELS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _MODELS_CACHE_PATH.write_text(json.dumps(conf, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n保存: {_MODELS_CACHE_PATH}（{len(conf)} プロバイダ）— 次回 run --auto-model で使用")
+
+
 def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> tuple[int, str]:
-    if provider in _OPENAI_COMPAT:
+    if provider in _OPENAI_BASE:
         return run_http_provider(provider, prompt, cfg)
     argv = build_argv(provider, role, prompt, cfg, persona)
     try:
@@ -658,6 +751,8 @@ def cmd_run(args):
             cfg["model"] = args[i + 1]; i += 2
         elif a == "--base-url" and i + 1 < len(args):
             cfg["base_url"] = args[i + 1]; i += 2
+        elif a in ("--auto-model", "--auto-model-setting"):
+            cfg["auto_model"] = True; i += 1
         elif a == "--goal" and i + 1 < len(args):
             goal = args[i + 1]; i += 2
         elif a == "--out" and i + 1 < len(args):
@@ -834,9 +929,17 @@ def cmd_selftest(_args):
     report("K 宣言なしは off", auto_orchestrate([s(id="x")])[0], False)
     report("K manifest 既定で auto ON", auto_orchestrate([s(id="x")], manifest_default=True)[0], True)
     # L: ローカル LLM（ollama/lmstudio）が OpenAI 互換 HTTP プロバイダとして配線されている
-    report("L ollama/lmstudio が配線済み", set(_OPENAI_COMPAT) == {"lmstudio", "ollama"}, True)
+    report("L ollama/lmstudio が配線済み", set(_OPENAI_BASE) == {"lmstudio", "ollama"}, True)
     rc_l, _ = run_provider("lmstudio", "verifier", "x", {"base_url": "http://127.0.0.1:1/v1", "timeout": 2})
     report("L サーバ不在でも crash せず rc!=0", rc_l != 0, True)
+    # M: 動的モデル探索（--auto-model）— サーバ不在でも crash せず graceful
+    found = discover_models({"base_url": "http://127.0.0.1:1/v1", "timeout": 2})
+    report("M discover が全プロバイダを返す", set(found) >= {"ollama", "lmstudio", "claude", "codex", "rig"}, True)
+    report("M 不在サーバは reachable=False", found["ollama"]["reachable"], False)
+    report("M auto-model 解決は既定にフォールバック",
+           resolve_http_model("ollama", {"auto_model": True, "base_url": "http://127.0.0.1:1/v1", "timeout": 2}),
+           "llama3.1")
+    report("M --model 明示は最優先", resolve_http_model("ollama", {"auto_model": True, "model": "qwen2.5"}), "qwen2.5")
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 
@@ -845,7 +948,7 @@ def cmd_selftest(_args):
 COMMANDS = {
     "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
     "verdict": cmd_verdict, "next": cmd_next, "status": cmd_status,
-    "run": cmd_run, "selftest": cmd_selftest,
+    "run": cmd_run, "models": cmd_models, "selftest": cmd_selftest,
 }
 
 
