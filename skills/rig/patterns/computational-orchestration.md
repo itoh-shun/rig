@@ -66,6 +66,7 @@ orchestrate.py run <recipe> --provider <claude|codex|cmd|mock> \
 
 - **プロバイダ抽象（マルチプロバイダ）**：**`rig`（各 step を `rig` skill で起動した別プロセス＝再帰 rig ハーネス・推奨）** / `claude`（`claude -p`）/ `codex`（`codex exec`）/ **`ollama`・`lmstudio`（ローカル LLM・OpenAI 互換 HTTP）** / `cmd`（任意 CLI を `{prompt}` テンプレートで）/ `mock`（決定論ダミー・テスト用）。生成と検証で**別プロバイダ**を指定できる（例 `--provider rig --verifier-provider codex`＝別モデルが独立検証）。`rig` は各 step を rig の engine（PARSE→RESOLVE→COMPOSE→RUN）で実行し、検証者は独立レビュアーとして `VERDICT: PASS|FAIL` を返す。
 - **ローカル LLM（`ollama`/`lmstudio`）**：OpenAI 互換エンドポイント（既定 `:11434`/`:1234`、`--base-url` で上書き）へ HTTP で問い合わせる。`--model <name>` でモデル指定（ollama 既定 `llama3.1`）。要：ローカルサーバ起動＋モデル取得。各リクエストは独立＝context 隔離は保たれる。サーバ不在時はゲート FAIL→エスカレーション（crash しない）。
+- **動的モデル探索**：`orchestrate.py models [--save]` で起動中のサーバの `/v1/models` を叩いて**利用可能モデルを動的取得**（`claude`/`codex`/`rig` は CLI 有無）。`run --auto-model`（=`--auto-model-setting`）は `--model` 未指定時、保存設定（`~/.claude/rig/models.json`）→実機の先頭モデル→既定 の順で**自動解決**。サーバ不在でも既定にフォールバック（graceful）。
 - **プロセス隔離**：step ごとに新規プロセス＝**毎回クリーンな context**（Context Rot 対策の構造版）。親が肥大しない（Thin Harness）。
 - **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:<persona>`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。
 - **並列レビュアー・ファンアウト**：gated step の `personas` を **N 人の同時プロセス**で走らせる（`parallel-fanout` の実プロセス版・`--max-parallel` で同時数）。集約は決定論（persona 名順）：`--quorum all`（既定＝review-gate と同じ全員一致・1人 FAIL でゲート不合格）か `--quorum majority`（過半数）。完了順に依らず同じ結論＝**並列でも決定論**。
