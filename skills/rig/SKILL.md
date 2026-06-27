@@ -56,6 +56,7 @@ user-invocable: true
 > | **init**（`/rig:init`・utility） | instruction `facets/instructions/init`（manifest・知識層 dir・CLAUDE.md "Compact Instructions" を scaffold） |
 > | **persona-gen**（`/rig:persona`・generator） | instruction `facets/instructions/persona-gen`（説明文→persona facet を project/user 層に生成。`--persona <name>` で都度投入、manifest `default_personas` で製品ごと常時自動投入。v2 Phase 1） |
 > | **knowledge-gen**（`/rig:knowledge`・generator） | instruction `facets/instructions/knowledge-gen` ／ knowledge `facets/knowledge/_wiki`（説明文/`--auto` repo 解析→wiki ページを global/project に生成。persona は `inject: [[slug]]` で参照。v2 Phase 2） |
+> | **skill-author**（`/rig:skill`・generator） | instruction `facets/instructions/skill-author`（説明文→rig のブリック/パック〔recipe・instruction・output-contract・command〕を自作して検証・保存する**自己拡張メタ能力**＝writing-skills 相当。persona は `/rig:persona`・knowledge は `/rig:knowledge` へ委譲。**engine 不変・pack 上乗せ**（既存 pattern と facet 型を組むだけ）・pack の定石（persona=判断/knowledge=カタログ/instruction=routing/recipe=step/output-contract=形式/command=入口）・生成後に `--validate` で参照切れ検証・書込確認必須・project/user/shipped tier） |
 > | **catalog**（`/rig:catalog`・`--list --global`・utility） | instruction `facets/instructions/catalog`（全 tier 走査→domain×pack×persona×wiki×recipe の横断レジストリ地図。派生・読み取り専用。v2 Phase 3） |
 > | **hooks**（プラグイン同梱） | `hooks/hooks.json` → `hooks/preserve-rig-state.sh`（`PreCompact`：圧縮で run-state を保全。§6 run-continuity ④） |
 
