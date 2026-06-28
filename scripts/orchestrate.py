@@ -809,6 +809,177 @@ def cmd_run(args):
     sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
 
 
+# ── タスクキュー（積んで GO・管理ツール連携）──────────────────────────────────
+# 「task を積む → まとめて GO」を、ローカル json か外部管理ツール(GitHub/GitLab Issue)で持つ。
+# backend は差し替え式：local（.rig/queue.json）／github（gh CLI）／gitlab（glab CLI）。
+# Issue 連携時はラベルで状態管理：rig-queue → rig-running → rig-done / rig-failed。
+QUEUE_LABEL = "rig-queue"
+QUEUE_PATH = INVOCATION_CWD / ".rig" / "queue.json"
+
+
+def _gh_cli(backend: str) -> str:
+    return {"github": "gh", "gitlab": "glab"}[backend]
+
+
+def _cli_run(argv: list[str]) -> tuple[int, str, str]:
+    """gh/glab を subprocess 実行。CLI 不在でも crash せず (127, "", err) を返す。"""
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except FileNotFoundError:
+        return 127, "", f"{argv[0]} が見つかりません（CLI 未インストール）"
+
+
+def _local_load() -> dict:
+    try:
+        return json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"items": [], "next_id": 1}
+
+
+def _local_save(q: dict) -> None:
+    QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    QUEUE_PATH.write_text(json.dumps(q, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def queue_add(backend: str, task: str, cfg: dict) -> dict:
+    if backend == "local":
+        q = _local_load()
+        item = {"id": q["next_id"], "task": task, "status": "queued", "note": ""}
+        q["items"].append(item); q["next_id"] += 1
+        _local_save(q)
+        return item
+    cli = _gh_cli(backend)
+    argv = [cli, "issue", "create", "-t", task, "-l", QUEUE_LABEL, "-b", "rig queue task"]
+    if cfg.get("repo"):
+        argv += ["-R", cfg["repo"]]
+    rc, out, err = _cli_run(argv)
+    if rc != 0:
+        return {"id": None, "task": task, "status": "error", "note": (err or out)[:200]}
+    return {"id": out.strip().split("/")[-1] or "?", "task": task, "status": "queued"}
+
+
+def queue_list(backend: str, cfg: dict) -> list[dict]:
+    if backend == "local":
+        return _local_load()["items"]
+    cli = _gh_cli(backend)
+    argv = [cli, "issue", "list", "-l", QUEUE_LABEL, "--state", "open"]
+    if backend == "github":
+        argv += ["--json", "number,title,labels"]
+    if cfg.get("repo"):
+        argv += ["-R", cfg["repo"]]
+    rc, out, err = _cli_run(argv)
+    if rc != 0:
+        return [{"id": None, "task": f"[{cli} error: {(err or '')[:120]}]", "status": "error"}]
+    if backend == "github":
+        try:
+            rows = json.loads(out or "[]")
+        except Exception:
+            return []
+        out = []
+        for x in rows:
+            labels = {l.get("name") for l in (x.get("labels") or [])}
+            st = "running" if "rig-running" in labels else "queued"
+            out.append({"id": x.get("number"), "task": x.get("title"), "status": st})
+        return out
+    return [{"id": None, "task": ln, "status": "queued"} for ln in out.splitlines() if ln.strip()]
+
+
+def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -> None:
+    if backend == "local":
+        q = _local_load()
+        for it in q["items"]:
+            if str(it["id"]) == str(item_id):
+                it["status"] = status; it["note"] = note[:300]
+        _local_save(q)
+        return
+    cli = _gh_cli(backend)
+    R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
+    label = {"running": "rig-running", "done": "rig-done", "failed": "rig-failed"}.get(status)
+    if label:
+        _cli_run([cli, "issue", "edit", str(item_id), "--add-label", label,
+                  "--remove-label", QUEUE_LABEL] + R)
+    if note:
+        _cli_run([cli, "issue", "comment", str(item_id), "-b", note] + R)
+    if status == "done":
+        _cli_run([cli, "issue", "close", str(item_id)] + R)
+
+
+def cmd_queue(args):
+    if not args or args[0] not in ("add", "list", "go", "done"):
+        print("[ERROR] usage: queue <add|list|go|done> [...] "
+              "[--backend local|github|gitlab] [--repo owner/repo]")
+        sys.exit(1)
+    sub, rest = args[0], args[1:]
+    backend, cfg = "local", {}
+    gen, ver, max_parallel = "rig", None, 3
+    free = []
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--backend" and i + 1 < len(rest):
+            backend = rest[i + 1]; i += 2
+        elif a == "--repo" and i + 1 < len(rest):
+            cfg["repo"] = rest[i + 1]; i += 2
+        elif a == "--provider" and i + 1 < len(rest):
+            gen = rest[i + 1]; i += 2
+        elif a == "--verifier-provider" and i + 1 < len(rest):
+            ver = rest[i + 1]; i += 2
+        elif a == "--max-parallel" and i + 1 < len(rest):
+            max_parallel = int(rest[i + 1]); i += 2
+        elif a == "--provider-cmd" and i + 1 < len(rest):
+            cfg["provider_cmd"] = rest[i + 1]; i += 2
+        else:
+            free.append(a); i += 1
+    ver = ver or gen
+
+    if sub == "add":
+        if not free:
+            print("[ERROR] queue add \"<task>\""); sys.exit(1)
+        it = queue_add(backend, " ".join(free), cfg)
+        print(f"積んだ [{backend}]: #{it['id']} {it['task']}  ({it['status']})"
+              + (f" — {it.get('note','')}" if it.get("status") == "error" else ""))
+        return
+    if sub == "list":
+        items = queue_list(backend, cfg)
+        print(f"## rig queue [{backend}]  ({len(items)} 件)")
+        for it in items:
+            print(f"  [{it.get('status','?'):<8}] #{it.get('id')}  {it.get('task')}")
+        return
+    if sub == "done":
+        if not free:
+            print("[ERROR] queue done <id>"); sys.exit(1)
+        queue_set_status(backend, free[0], "done", "手動で done", cfg)
+        print(f"done [{backend}]: #{free[0]}")
+        return
+    # go: 積まれた task をまとめて実行（独立 task は並列・各 task をゲート）
+    items = [it for it in queue_list(backend, cfg) if it.get("status") == "queued"]
+    if not items:
+        print(f"キューは空です [{backend}]。`queue add` で積んでください。")
+        return
+    print(f"## rig queue GO [{backend}]  {len(items)} 件 / provider={gen} / 並列={max_parallel}\n")
+
+    def _run_one(it):
+        task = it["task"]
+        queue_set_status(backend, it["id"], "running", "", cfg)
+        rc, out = run_provider(gen, "generator", _build_prompt(
+            {"recipe": "queue", "goal": task}, {"id": "task", "instruction": task}), cfg)
+        rc2, vout = run_provider(ver, "verifier", _build_verify_prompt(
+            {"recipe": "queue"}, {"id": "task"}, out), cfg, persona="queue")
+        ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
+        queue_set_status(backend, it["id"], "done" if ok else "failed",
+                         ("✅ rig: 完了" if ok else "❌ rig: 検証 FAIL") + f"（{gen}→{ver}）", cfg)
+        return (it, ok)
+
+    with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
+        results = list(ex.map(_run_one, items))
+    done = sum(1 for _, ok in results if ok)
+    for it, ok in results:
+        print(f"  [{'DONE' if ok else 'FAIL'}] #{it['id']}  {it['task']}")
+    print(f"\n=== GO 完了: {done}/{len(results)} done [{backend}] ===")
+    sys.exit(0 if done == len(results) else 1)
+
+
 # ── 決定論セルフテスト ────────────────────────────────────────────────────────
 def _drive(steps, script):
     """steps と (action_kind, payload) のスクリプトで run を進め、遷移列と最終状態を返す。"""
@@ -1047,6 +1218,24 @@ def cmd_selftest(_args):
     report("N probe: codex の command", build_argv("codex", "verifier", "P", {}), ["codex", "exec", "P"])
     _, out_n = run_provider("mock", "verifier", "x", {})
     report("N probe: 検証出力に VERDICT", "VERDICT" in out_n, True)
+    # O: タスクキュー（local backend で積む→list→mock go・github は CLI 不在で graceful）
+    global QUEUE_PATH
+    _orig_qp = QUEUE_PATH
+    import tempfile
+    QUEUE_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_queue_selftest.json"
+    QUEUE_PATH.unlink(missing_ok=True)
+    queue_add("local", "タスクA", {}); queue_add("local", "タスクB", {})
+    q_items = queue_list("local", {})
+    for it in q_items:                          # mock で go（生成→検証→done）
+        _, vout = run_provider("mock", "verifier", "x", {}, persona="queue")
+        queue_set_status("local", it["id"], "done" if "VERDICT: PASS" in vout else "failed", "", {})
+    q_done = [it for it in queue_list("local", {}) if it["status"] == "done"]
+    gh_item = queue_add("github", "t", {})      # gh 不在 → error（crash しない）
+    QUEUE_PATH.unlink(missing_ok=True)
+    QUEUE_PATH = _orig_qp
+    report("O queue: 2件積んで list", len(q_items), 2)
+    report("O queue: mock go で全 done", len(q_done), 2)
+    report("O github backend は CLI 不在で graceful(error)", gh_item["status"], "error")
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
 
@@ -1055,7 +1244,7 @@ def cmd_selftest(_args):
 COMMANDS = {
     "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
     "verdict": cmd_verdict, "next": cmd_next, "status": cmd_status,
-    "run": cmd_run, "models": cmd_models, "probe": cmd_probe,
+    "run": cmd_run, "models": cmd_models, "probe": cmd_probe, "queue": cmd_queue,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest,
 }
 

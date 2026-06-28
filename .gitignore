@@ -12,3 +12,4 @@ run-state.json
 node_modules/
 .agents/
 video/
+.rig/
