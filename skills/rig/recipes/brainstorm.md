@@ -43,7 +43,7 @@ autonomy: interactive
 2. **代替案** — 2〜3案＋トレードオフ。推しを1つに収束（根拠つき）。
 3. **セクション合意** — 設計を節に分け、1つずつ承認/修正を取る（一気に決めない）。
 4. **収束** — `design-brief`（狙い／セクション別決定／代替案／未解決／次の一手）に。`--plan` なら草案提示で停止。
-5. **接続** — 承認 brief を `/rig:tasks`（割る）or `/rig:dev`（実装）へ。
+5. **接続** — 終了時に**次段を1つ理由つきで推薦**し、起動文字列を提示して「これで進める？」と確認（規模大→`/rig:tasks`、小さく明確→`/rig:dev`、未解決が重い→調査先行）。**合意を得てから**次段へ（無断 auto-chain しない）。
 
 手順本体は `facets/instructions/brainstorm`、作法は `brainstormer`、出力は `output-contracts/design-brief` に従う。
 
