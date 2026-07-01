@@ -60,11 +60,16 @@ def parse_frontmatter(path: pathlib.Path) -> tuple[dict | None, str]:
 
 
 # ── 参照解決ヘルパー ──────────────────────────────────────────────────────────
-def _check_exists(path: pathlib.Path, ctx: str, field: str) -> bool:
+def _check_exists(path: pathlib.Path, ctx: str, field: str, hint_dir: pathlib.Path | None = None) -> bool:
     if path.exists():
         return True
     rel = path.relative_to(ROOT) if ROOT in path.parents or path.is_relative_to(ROOT) else path
-    _emit("FAIL", f"{ctx} — {field}: {rel} が存在しません")
+    msg = f"{ctx} — {field}: {rel} が存在しません"
+    if hint_dir is not None and hint_dir.is_dir():
+        available = sorted(p.stem for p in hint_dir.glob("*.md"))
+        if available:
+            msg += f"（期待パス: {rel}／利用可能: {', '.join(available)}）"
+    _emit("FAIL", msg)
     return False
 
 
@@ -199,7 +204,8 @@ def check_recipe(path: pathlib.Path) -> None:
         if not instr:
             _emit("FAIL", f"{step_ctx} — instruction がありません")
         else:
-            _check_exists(FACETS / "instructions" / f"{instr}.md", step_ctx, "instruction")
+            _check_exists(FACETS / "instructions" / f"{instr}.md", step_ctx, "instruction",
+                          hint_dir=FACETS / "instructions")
 
         # personas[]
         for persona in (step.get("personas") or []):
@@ -207,12 +213,14 @@ def check_recipe(path: pathlib.Path) -> None:
 
         # policies[]
         for policy in (step.get("policies") or []):
-            _check_exists(FACETS / "policies" / f"{policy}.md", step_ctx, f"policies[{policy}]")
+            _check_exists(FACETS / "policies" / f"{policy}.md", step_ctx, f"policies[{policy}]",
+                          hint_dir=FACETS / "policies")
 
         # output_contract
         oc = step.get("output_contract")
         if oc:
-            _check_exists(FACETS / "output-contracts" / f"{oc}.md", step_ctx, "output_contract")
+            _check_exists(FACETS / "output-contracts" / f"{oc}.md", step_ctx, "output_contract",
+                          hint_dir=FACETS / "output-contracts")
 
         # pattern / gate → patterns/
         _check_pattern_or_gate(step.get("pattern"), step_ctx, "pattern")

@@ -19,6 +19,16 @@
 | `pattern` / `gate` | `patterns/<name>.md` | 任意・あれば |
 | `extends` | 親 recipe（§4.2.1 tier 検索順・bare 名） | あれば |
 
+**`instruction` / `output_contract` / `policies[]` 参照切れの FAIL メッセージ形式（#202）** — 上表の3キーが参照するファイルが存在しない場合は **FAIL**。メッセージには**期待パス**と、**同ディレクトリに実在する候補一覧**（`facets/instructions/` / `facets/output-contracts/` / `facets/policies/` を `Glob` で列挙）を付す（タイポ修正のヒント）。
+
+```
+[FAIL] recipe my-flow step review: instruction 'paralel-review' が見つかりません。
+  期待パス: skills/rig/facets/instructions/paralel-review.md
+  利用可能な instruction: intake, design, implement, verify, visual-verify, pr, merge, parallel-review, ...
+```
+
+> **`personas[]` の severity は変更しない（FAIL のまま）**：`personas[]` は project→user→shipped→agent の**4 tier すべて**を検索した上で見つからない場合にのみ FAIL とする（上表の note・§5「persona facet の tier 解決」参照）。これは shipped 層のみで判定していた古い実装が `/rig:persona` 生成のカスタム persona を偽 FAIL させていた問題を4 tier 検索で解消した結果であり（過去の対応）、4 tier とも見つからない参照は実際に壊れているため WARN に緩めない。`instruction`/`output_contract`/`policies[]` は当面 shipped 層のみの判定（§ above note）のままだが、これは「タイポ検出の強さ」を保つ独立した判断であり、personas[] の FAIL 判定条件とは連動しない。
+
 **`extends` 親 recipe 存在チェック（#191）** — `extends:` フィールドを持つ recipe について、§4.2.1 と同じ tier 検索順（project→user→shipped）で親 recipe ファイルを探す。見つからない場合は **FAIL**（`--list` の `[WARN: 親未解決]` と同一条件を `--validate` では FAIL として扱う。静的品質チェックとして厳格にする）。`extends:` を持たない recipe はスキップ。`--validate --global` 時も全 tier 横断で同チェックを実施する。
 
 ```
@@ -279,6 +289,22 @@ wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowled
 [WARN] accumulated/pitfall-jwt.md: category が不正値です（"unknwon"）。有効値: pitfall|decision|convention|stuck-twice
 [WARN] accumulated/decision-arch.md: title が空です。MEMORY.md インデックスとの整合が取れません。
 [WARN] accumulated/convention-naming.md: date が YYYY-MM-DD 形式ではありません（"2026/06/10"）。
+```
+
+**⑦-b. 本文必須セクション検査（#203）** — frontmatter チェック（⑦-a）と同じファイル群（`<repo>/.claude/rig/knowledge/accumulated/*.md`）を対象に、frontmatter を除いた本文に §7.2「accumulated/ ファイルの正準フォーマット」で**必須**と定義されている2セクションが存在するかを確認する。
+
+| セクション | 不正時の判定 |
+|---|---|
+| `## 何が起きたか` | **WARN** |
+| `## 次回への示唆` | **WARN** |
+
+- severity は ⑦-a と同じ **WARN**（本文セクション欠落でも RUN は完了するため FAIL にしない。ただし COMPOSE 時に注入される知識が不完全になる）。
+- ⑦-a（frontmatter）と ⑦-b（本文セクション）は独立にチェックし、両方に問題があるファイルは両方の WARN を出す。
+- `--validate --global` 時は ⑦-a と同様に project / user 両層の `accumulated/` を走査する。
+
+```
+[WARN] accumulated/pitfall-jwt.md: 必須セクション `## 何が起きたか` が見つかりません（SKILL.md §7.2）。
+[WARN] accumulated/pitfall-jwt.md: 必須セクション `## 次回への示唆` が見つかりません（SKILL.md §7.2）。
 ```
 
 > **⑥ ai-quirks との対称性**：⑥ が user 層の ai-quirks ペア整合を保護するのと同様に、⑦ は project 層の accumulated/ 知識パイプラインの整合を保護する。COMPOSE フェーズ（§5）で accumulated/ の本文が Knowledge 位置に注入されるため、frontmatter が壊れたファイルは「分類不明のゴミ知識」として注入されうる。
