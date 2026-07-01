@@ -814,6 +814,8 @@ def cmd_run(args):
 # backend は差し替え式：local（.rig/queue.json）／github（gh CLI）／gitlab（glab CLI）。
 # Issue 連携時はラベルで状態管理：rig-queue → rig-running → rig-done / rig-failed。
 QUEUE_LABEL = "rig-queue"
+# queue list が可視化すべき「アクティブ」ラベル（rig-done は close 済みのため対象外・#211）。
+QUEUE_LABELS_ACTIVE = ["rig-queue", "rig-running", "rig-failed"]
 QUEUE_PATH = INVOCATION_CWD / ".rig" / "queue.json"
 
 
@@ -860,29 +862,47 @@ def queue_add(backend: str, task: str, cfg: dict) -> dict:
 
 
 def queue_list(backend: str, cfg: dict) -> list[dict]:
+    """アクティブな item（queued/running/failed）を全て返す。done（close 済み）は対象外。
+
+    ラベル遷移（queue_set_status）で旧ラベルは外れるため、単一ラベルの `-l` 絞り込みだと
+    running/failed に遷移した item が一覧から消える（#211）。QUEUE_LABELS_ACTIVE の各ラベルを
+    個別に問い合わせて id（github）／行（gitlab, テキストのみ）で dedup・merge する。
+    """
     if backend == "local":
         return _local_load()["items"]
     cli = _gh_cli(backend)
-    argv = [cli, "issue", "list", "-l", QUEUE_LABEL, "--state", "open"]
+    R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
     if backend == "github":
-        argv += ["--json", "number,title,labels"]
-    if cfg.get("repo"):
-        argv += ["-R", cfg["repo"]]
-    rc, out, err = _cli_run(argv)
-    if rc != 0:
-        return [{"id": None, "task": f"[{cli} error: {(err or '')[:120]}]", "status": "error"}]
-    if backend == "github":
-        try:
-            rows = json.loads(out or "[]")
-        except Exception:
-            return []
-        out = []
-        for x in rows:
-            labels = {l.get("name") for l in (x.get("labels") or [])}
-            st = "running" if "rig-running" in labels else "queued"
-            out.append({"id": x.get("number"), "task": x.get("title"), "status": st})
-        return out
-    return [{"id": None, "task": ln, "status": "queued"} for ln in out.splitlines() if ln.strip()]
+        seen: dict[object, dict] = {}
+        for label in QUEUE_LABELS_ACTIVE:
+            argv = [cli, "issue", "list", "-l", label, "--state", "open",
+                    "--json", "number,title,labels"] + R
+            rc, out, err = _cli_run(argv)
+            if rc != 0:
+                return [{"id": None, "task": f"[{cli} error: {(err or '')[:120]}]", "status": "error"}]
+            try:
+                rows = json.loads(out or "[]")
+            except Exception:
+                rows = []
+            for x in rows:
+                labels = {l.get("name") for l in (x.get("labels") or [])}
+                st = ("running" if "rig-running" in labels
+                      else "failed" if "rig-failed" in labels
+                      else "queued")
+                seen[x.get("number")] = {"id": x.get("number"), "task": x.get("title"), "status": st}
+        return list(seen.values())
+    # gitlab（glab）はテキスト出力のみで labels が取れないため、ラベルごとに問い合わせて
+    # 行単位で dedup・merge する（status は従来どおり "queued" 固定。#211 の可視性回復が主目的）。
+    seen_lines: dict[str, dict] = {}
+    for label in QUEUE_LABELS_ACTIVE:
+        argv = [cli, "issue", "list", "-l", label, "--state", "open"] + R
+        rc, out, err = _cli_run(argv)
+        if rc != 0:
+            return [{"id": None, "task": f"[{cli} error: {(err or '')[:120]}]", "status": "error"}]
+        for ln in out.splitlines():
+            if ln.strip():
+                seen_lines[ln] = {"id": None, "task": ln, "status": "queued"}
+    return list(seen_lines.values())
 
 
 def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -> None:
