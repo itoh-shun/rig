@@ -849,7 +849,9 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         # ヘッドレス。実運用は権限モード等をユーザーが --provider-cmd で調整可。
         return ["claude", "-p", prompt, "--output-format", "text"]
     if provider == "codex":
-        return ["codex", "exec", prompt]
+        # --skip-git-repo-check: 非 git ディレクトリ（横断利用の overlay 先など）でも
+        # codex が起動拒否しないように。サンドボックスは無効化しないので安全。
+        return ["codex", "exec", "--skip-git-repo-check", prompt]
     if provider == "cmd":
         tmpl = cfg.get("provider_cmd") or ""
         if not tmpl:
@@ -1905,7 +1907,8 @@ def cmd_selftest(_args):
            "llama3.1")
     report("M --model 明示は最優先", resolve_http_model("ollama", {"auto_model": True, "model": "qwen2.5"}), "qwen2.5")
     # N: probe の土台（codex の実コマンドが正しい・検証出力から VERDICT を拾える）
-    report("N probe: codex の command", build_argv("codex", "verifier", "P", {}), ["codex", "exec", "P"])
+    report("N probe: codex の command", build_argv("codex", "verifier", "P", {}),
+           ["codex", "exec", "--skip-git-repo-check", "P"])
     _, out_n = run_provider("mock", "verifier", "x", {})
     report("N probe: 検証出力に VERDICT", "VERDICT" in out_n, True)
     # O: タスクキュー（local backend で積む→list→mock go・github は CLI 不在で graceful）
