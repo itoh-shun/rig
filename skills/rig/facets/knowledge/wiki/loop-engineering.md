@@ -6,6 +6,7 @@ tags: [loop, orchestration, verification]
 domain: dev
 status: canonical
 links: []
+reviewed_at: 2026-07-02
 sources: ["skills/rig/patterns/autonomous-loop.md", "skills/rig/facets/policies/independent-verification.md", "skills/rig/recipes/goal-loop.md"]
 ---
 

@@ -12,9 +12,10 @@
 |---|---|---|
 | **user（global・一次）** | `~/.claude/rig/knowledge/wiki/` | 全プロジェクト共有の正準ページ |
 | **project（overlay）** | `<repo>/.claude/rig/knowledge/wiki/` | 同 slug を上書き/追補（プロジェクト固有の差分） |
+| **org（チーム共有・任意）** | `<org_dir>/knowledge/wiki/`（manifest `org_dir:`/env `RIG_ORG_HOME`） | チームで育てる正準ページ。未設定ならスキップ |
 | **shipped（同梱・最低優先）** | `skills/rig/facets/knowledge/wiki/` | plugin 同梱の正準ページ。shipped persona の `inject:` 先＝**rig 自身が wiki 分離を dogfooding する層**。user/project の同 slug で上書き可 |
 
-- 解決は **project overlay > global > shipped**（ページ単位＝同 slug があれば上位 tier 優先）。
+- 解決は **project overlay > global > org > shipped**（ページ単位＝同 slug があれば上位 tier 優先）。
 - 既存の `knowledge/{methodology,domain,accumulated,ai-quirks}/` は維持（後方互換）。`wiki/` は正準な概念ページ層。
 - ディレクトリが無ければ**サイレントにスキップ**。
 
@@ -30,6 +31,7 @@ domain: music                # 横断レジストリ(C)の分類キー
 status: canonical            # canonical | draft | deprecated
 links: ["[[genre-house]]", "[[genre-grunge]]"]   # 関連ページ
 sources: ["docs/...", "実コード", "外部出典"]      # 根拠（捏造禁止）
+reviewed_at: 2026-07-02        # 任意: 最終レビュー日（知識の賞味期限。180日超は --validate が WARN）
 ---
 本文：この時代の音作りの傾向・不変条件。関連は [[genre-house]] を参照。
 ```
@@ -53,7 +55,7 @@ inject: ["[[music-era-90s]]", "[[genre-house]]", "[[effect-design-conventions]]"
 （語り口・審美の判断軸のみ。事実は wiki から注入される）
 ```
 
-COMPOSE 時に engine が `inject:` の `[[...]]` を **tier 解決**（project overlay > global）して **Knowledge 位置**（User 先頭）へ注入する。リンク先が見つからなければ警告（`--validate` が検出）。
+COMPOSE 時に engine が `inject:` の `[[...]]` を **tier 解決**（project overlay > global > org > shipped）して **Knowledge 位置**（User 先頭）へ注入する。リンク先が見つからなければ警告（`--validate` が検出）。
 
 ## `[[link]]` の解決
 
@@ -68,6 +70,7 @@ COMPOSE 時に engine が `inject:` の `[[...]]` を **tier 解決**（project 
 - **重複/矛盾**：同義（同 title/alias）で別 slug の正準ページが複数。
 - **参照欠落**：persona の `inject:` 先が無い。
 - **INDEX ドリフト**：実ファイルと `INDEX.md` の乖離。
+- **賞味期限切れ**：`reviewed_at` が180日超（または未設定のまま古い）ページ → WARN（知識も腐る。内容を見直して `reviewed_at` を更新するか `status: deprecated` に）。
 
 ## 成長（capture との連携）
 
