@@ -20,6 +20,9 @@
 
 - **performance 観点**（`performance-reviewer`）: ホットパス・データ量スケールに触れる変更（クエリ・ループ・キャッシュ・大量データ処理）に推奨。
 - **observability 観点**（`observability-reviewer`）: 本番運用に影響する変更（エラーハンドリング・ログ・監視対象の挙動・デプロイ手順が要る変更）に推奨。
+- **api-compat 観点**（`api-compat-reviewer`）: 公開 API・スキーマ・設定キー・CLI フラグに触れる変更（破壊的変更・semver・非推奨手順）に推奨。
+- **migration 観点**（`migration-reviewer`）: DB/データ移行を含む変更（往路と復路・expand-contract・ロック時間・データ検証）に推奨。
+- **docs 観点**（`docs-reviewer`）: 公開挙動を変える変更（README/CHANGELOG/コメント/設定例が虚偽化していないか）に推奨。
 
 各 subagent の出力形式は `output-contracts/review-verdict` に従わせること。
 
