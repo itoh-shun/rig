@@ -1,6 +1,6 @@
 ---
 description: rig/import — ネット上の外部 skill（GitHub の SKILL.md / plugin）を解析して rig ブリックへ翻訳し、出所とハッシュを skills-lock.json に記録する取り込み機構。--check-updates で上流差分検知。/rig:skill（自作）の対＝既にあるものを取り込む。
-argument-hint: ["<GitHub URL | owner/repo | ローカルパス>"] [--path <repo内パス>] [--name <slug>] [--user] [--dry-run] [--check-updates]
+argument-hint: ["<GitHub URL | owner/repo | ローカルパス>"] [--path <repo内パス>] [--all] [--name <slug>] [--user] [--dry-run] [--check-updates]
 ---
 
 # rig/import — 外部 skill の取り込み 📥
@@ -27,6 +27,8 @@ $ARGUMENTS
 ```
 /rig:import anthropics/skills --path skills/frontend-design/SKILL.md   # 特定 skill を取り込む
 /rig:import https://github.com/obra/superpowers --dry-run              # 走査して候補提示・書き込みなし
+/rig:import ~/.claude/skills --all --dry-run                           # 手元のスキル集の判断サマリを一覧（書き込みなし）
+/rig:import ~/.claude/skills --all                                     # 候補全件を一括取り込み（承認は一括1回・lock 一括記録）
 /rig:import owner/repo --name tanka-review --user                      # user 層に取り込む
 /rig:import --check-updates                                            # 取り込み済み全 skill の上流差分検知
 ```

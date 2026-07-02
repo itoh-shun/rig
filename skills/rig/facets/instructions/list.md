@@ -2,6 +2,8 @@
 
 **`--list` の表示仕様の正本。** `--list` はブリック目録（SKILL.md §2）・flag 一覧に加え、recipe を全 tier 走査して以下の仕様でグルーピング表示し、**停止**する（RESOLVE/COMPOSE/RUN しない・副作用なし）。SKILL.md §3 は要約とポインタのみを持ち、表示ルールの詳細（バッジ導出・`steps:` フィールド・tier グルーピング）はこのファイルが正本。
 
+> **決定論参照実装**：badge 固定順・`steps:` フィールド・`extends` マージ（`remove`/origin）の導出は `scripts/orchestrate.py plan <recipe> --json`（`resolve_plan_json`）が機械実装しており、`selftest` シナリオ Q が golden 検証する。散文とコードが食い違ったら**コード側の selftest を先に直し、本ファイルを追随させる**（RESOLVE コード化フェーズ1）。
+
 ## tier グルーピングと recipe エントリ
 
 recipe を全 tier 走査（§4.2.1 と同じ project → user → shipped 順）して tier 別にグルーピング表示する。**shipped tier の recipe は §2 pack 定義に従い `#### <pack>` サブ見出しでグループ化する（#99）**：`dev（core）`（review-only / release-flow / design-first / hotfix / debug / adversarial-review）、`goal`、`pr-review`、`de-ai-smell`、`sns-x`、`magi`、`humor`（roast / coin / duck / pre-mortem）、`sales`（deal-review / sales-enablement）、`release-movie`、`scenario`、`design`（design / design-audit）。project / user tier の recipe はパック分類なしでフラット表示する（tier だけで十分に絞り込めるため）。各 recipe は frontmatter の `name` / `description` を出す。
