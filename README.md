@@ -126,6 +126,7 @@ The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `P
 | `--adversarial` | add an adversarial-review step (AI-slop elimination + human readability) |
 | `--cross-llm` | code as if another vendor's LLM will review it: injects the `cross-llm-legibility` policy into implement (idiomatic, explicit, context-independent code that Codex/Copilot/GPT pass on the first read) + adds a `cross-llm-reviewer` (an external-LLM perspective) to the review fan-out |
 | `--persona <name>` | inject a named custom reviewer persona into the review fan-out (resolves project→user→shipped; pairs with `/rig:persona`) |
+| `--verify-findings` | adversarial verification of findings: every REJECT rationale and merge-blocking condition is challenged by an independent `finding-verifier` (evidence-anchored refutation); REFUTED findings don't reach the gate — the last line of false-positive control when running many reviewers |
 | `--global` | widen `--list` / `--validate` across tiers (shipped + global + project): `--list --global` is the cross-cutting registry map (`/rig:catalog`); `--validate --global` checks hygiene across tiers |
 
 ## How it works
