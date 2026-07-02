@@ -10,7 +10,9 @@ Claude 不要・ファイルシステムのみで完結。
 """
 
 import sys
+import os
 import re
+import json
 import pathlib
 import traceback
 
@@ -493,6 +495,41 @@ def check_wiki() -> None:
     _emit("PASS", f"wiki: {ok}/{len(pages)} 件スキーマ OK（shipped tier）")
 
 
+
+# ── ブリック・グラフ整合チェック（オントロジー制約・#graph）─────────────────
+def check_graph() -> None:
+    """orchestrate.py graph --json（型付きグラフの一次実装）を呼び、未解決エッジを検査する。
+
+    導出ロジックを再実装せず subprocess で一次実装を叩く（散文とコードの二重化を作らない）。
+    他チェックが既に担う rel（injects=check_personas / uses-*=check_recipe）は二重報告を避けて
+    スキップし、ここでは **links-to（wiki 相互リンク切れ）= FAIL / references・mirrors = WARN**
+    のみを担当する。
+    """
+    import subprocess
+    proc = subprocess.run(
+        [sys.executable, str(pathlib.Path(__file__).parent / "orchestrate.py"), "graph", "--json"],
+        capture_output=True, text=True, env={**os.environ, "RIG_HOME": str(ROOT)})
+    if proc.returncode != 0:
+        _emit("FAIL", f"graph — orchestrate.py graph --json が失敗しました: {proc.stderr[:200]}")
+        return
+    g = json.loads(proc.stdout)
+    covered = {"injects", "uses-persona", "uses-instruction", "uses-pattern",
+               "gated-by", "applies-policy", "emits-contract", "extends"}
+    bad = 0
+    for e in g["edges"]:
+        if e["resolved"] or e["rel"] in covered:
+            continue
+        bad += 1
+        if e["rel"] == "links-to":
+            _emit("FAIL", f"graph — wiki リンク切れ: {e['from']} → [[{e['to'].split(':', 1)[1]}]] が存在しません")
+        elif e["rel"] == "mirrors":
+            _emit("WARN", f"graph — {e['from']} に対応する persona がありません（native-first の対が欠落）")
+        else:
+            _emit("WARN", f"graph — {e['from']} が {e['to']} を参照していますが解決できません")
+    if bad == 0:
+        _emit("PASS", f"graph: {len(g['nodes'])} nodes / {len(g['edges'])} edges — 型付きグラフに未解決なし")
+
+
 # ── extends 循環参照チェック（#71・DFS）──────────────────────────────────────
 def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
     """A→B→…→A の循環を DFS で検出する（#42 の深さチェックと独立）。
@@ -615,6 +652,11 @@ def main() -> None:
         check_wiki()
     except Exception:
         _emit("FAIL", f"wiki 衛生チェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_graph()
+    except Exception:
+        _emit("FAIL", f"graph 整合チェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     try:
         check_extends_cycles(recipe_files)

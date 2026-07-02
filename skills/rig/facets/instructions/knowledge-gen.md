@@ -8,6 +8,7 @@
 |---|---|---|
 | **説明モード** | `/rig:knowledge "<説明>"` | 与えた説明から1つ以上の wiki ページを起草 |
 | **`--auto` モード** | `/rig:knowledge --auto` | subagent が repo（コード構造・README・docs・命名）を解析し、ユビキタス言語・ドメインモデル・主要な規約・ADR 風の決定を蒸留してページ化 |
+| **`--graph` モード** | `/rig:knowledge --graph` | repo の**型付き知識グラフ**（entities＋typed relations）を1枚の wiki ページに蒸留（下記専用セクション） |
 
 - `--project`：project overlay（`<repo>/.claude/rig/knowledge/wiki/`）に保存。**既定は global**（`~/.claude/rig/knowledge/wiki/`＝全プロダクト共有。知人要件「base=global」）。
 - `--name <slug>`（任意）：単一ページの slug を明示。省略時は内容から slug を提案。
@@ -35,6 +36,30 @@
 - **1概念=1正準ページ・相互リンク・explicit**（暗黙知化させない）。捏造禁止・`sources` 必須。
 - 書き込みは確認必須・冪等。global は特に明示。
 - これは「事実ストアを育てる」ジェネレータ。判断・声は persona 側（`/rig:persona`）の役割。
+
+## `--graph`（対象リポジトリの型付き知識グラフ）
+
+「関係を型として明示すると、モデルがファイルを丸読みせず関係を辿れる」というオントロジーの効用を、**新しいストアを作らず wiki ページ1枚**で得るモード。memory MCP（マシンローカルな jsonl）と違い、**git 管理・チーム共有・PR レビュー可能・tier 解決に乗る**のが rig 流。
+
+1. **解析**（subagent・context-minimal）— repo のモジュール/サービス/外部依存を**実コードに基づいて**抽出する（import・呼び出し・設定・IaC が根拠。捏造禁止）。
+2. **蒸留** — entities（種類つき）と relations（**固定語彙**: `calls` / `depends-on` / `part-of` / `is-a` / `stores-in` / `emits` / `reads-from`）に落とす。**上限 entities ≤ 40 / relations ≤ 80**（context-minimal——注入して効く濃さを超えたら、サブシステム別ページに分割し `[[slug]]` でリンク）。
+3. **ページ化** — 既定 slug は `codebase-graph`（`--name` で変更可）。保存先は**既定で project overlay**（`<repo>/.claude/rig/knowledge/wiki/codebase-graph.md`——グラフはプロダクト固有の事実。`--auto`/説明モードの「既定 global」とは逆）。本文フォーマット:
+
+   ```markdown
+   ## entities
+   - `order-service` (service) — 注文の受付と在庫引当。エントリは api/orders/
+   - `payment-service` (service) — 決済。外部 API 依存
+   ## relations
+   - `order-service` calls `payment-service`
+   - `payment-service` depends-on `stripe-api` (external)
+   - `order-service` stores-in `orders-db`
+   ```
+
+4. **提案→確認→保存** — 通常の生成と同じゲート。既存 `codebase-graph` があれば上書きせず**差分提案**（増減した entity/relation を示す）。`sources` に代表パス・`reviewed_at` に解析日（コードが変われば腐る知識なので賞味期限検査が特に効く）。
+5. **配線の提案** — 保存後、reviewer persona への `inject: ["[[codebase-graph]]"]` 追加を提案する。効果: レビュアーが「変更が触る信頼境界」を**ファイル丸読みでなく1〜2ホップのグラフ探索**で辿れる（例: security-reviewer が `order-service calls payment-service` から決済境界の認可を即座に疑える）。
+
+- **効く/効かない**: 数百ファイル超・サービス境界をまたぐ問いが多い repo で効く。小規模 repo ではノイズ（作らない判断も正しい）。
+- rig 自身のブリック網のグラフはこのモードではなく **`/rig:catalog --graph`**（`orchestrate.py graph`＝frontmatter からの導出・手書きしない）。手で蒸留するのは「コードからは導出できない対象リポジトリの知識」だけ。
 
 ## `--research "<トピック>"`（web からの知識収穫）
 
