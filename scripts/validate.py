@@ -2,8 +2,8 @@
 """
 rig 構造バリデータ（CI 用）
 
-shipped tier の recipe frontmatter・step 参照・extends チェーンを機械的に検査する。
---validate instruction（facets/instructions/validate.md）の①②③サブセットを実装。
+shipped tier の recipe frontmatter・step 参照・extends チェーン・persona frontmatter を機械的に検査する。
+--validate instruction（facets/instructions/validate.md）の①②③（＋③-b persona スキーマ）サブセットを実装。
 Claude 不要・ファイルシステムのみで完結。
 
 終了コード: 0=合格 / 1=FAIL あり
@@ -276,6 +276,53 @@ def check_recipe(path: pathlib.Path) -> None:
     _emit("PASS", f"{ctx}: OK")
 
 
+# ── persona facet スキーマチェック ────────────────────────────────────────────
+def check_personas() -> None:
+    """shipped persona facet の frontmatter スキーマを検査する。
+
+    - frontmatter が存在し YAML として読めること（FAIL）
+    - `name` が personas/ からの相対パス（拡張子なし・`/` 区切り）と一致すること（FAIL。
+      recipe `personas[]` / `--persona <name>` の名前解決と整合しなくなるため）
+    - `description` が非空文字列であること（FAIL。catalog / --list の表示に使う）
+    - `inject` がある場合はリスト型であること（FAIL。wiki 参照 §5 の宣言形式）
+    """
+    personas_dir = FACETS / "personas"
+    persona_files = sorted(personas_dir.rglob("*.md"))
+    if not persona_files:
+        _emit("WARN", "facets/personas/ に .md ファイルが見つかりません")
+        return
+
+    ok = 0
+    for path in persona_files:
+        rel_name = str(path.relative_to(personas_dir))[:-3].replace("\\", "/")
+        ctx = f"persona {rel_name}"
+        fm, raw = parse_frontmatter(path)
+
+        if fm is None:
+            if path.read_text(encoding="utf-8").startswith("---"):
+                _emit("FAIL", f"{ctx} — frontmatter が読めません（YAML エラー: {raw[:80]}）")
+            else:
+                _emit("FAIL", f"{ctx} — frontmatter がありません（name/description が必須）")
+            continue
+
+        bad = False
+        if fm.get("name") != rel_name:
+            _emit("FAIL", f"{ctx} — name '{fm.get('name')}' が相対パス '{rel_name}' と不一致")
+            bad = True
+        desc = fm.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            _emit("FAIL", f"{ctx} — description が空または未定義です")
+            bad = True
+        inject = fm.get("inject")
+        if inject is not None and not isinstance(inject, list):
+            _emit("FAIL", f"{ctx} — inject はリスト型でなければなりません（値: {inject!r}）")
+            bad = True
+        if not bad:
+            ok += 1
+
+    _emit("PASS", f"personas: {ok}/{len(persona_files)} 件スキーマ OK")
+
+
 # ── extends 循環参照チェック（#71・DFS）──────────────────────────────────────
 def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
     """A→B→…→A の循環を DFS で検出する（#42 の深さチェックと独立）。
@@ -373,6 +420,11 @@ def main() -> None:
             check_recipe(recipe_path)
         except Exception:
             _emit("FAIL", f"recipe {recipe_path.stem} — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_personas()
+    except Exception:
+        _emit("FAIL", f"persona スキーマチェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     try:
         check_extends_cycles(recipe_files)

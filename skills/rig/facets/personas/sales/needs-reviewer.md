@@ -1,3 +1,8 @@
+---
+name: sales/needs-reviewer
+description: 商談記録を「ニーズ理解の精度」の観点で read-only 評価する。deal-review 5観点の1枠。
+---
+
 # persona: sales/needs-reviewer
 
 ## facet: persona / needs-reviewer

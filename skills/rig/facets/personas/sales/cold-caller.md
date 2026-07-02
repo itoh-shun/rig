@@ -1,3 +1,8 @@
+---
+name: sales/cold-caller
+description: 開発資材の価値を電話の最初の15秒に圧縮する荷電スクリプトのトップ SDR。
+---
+
 # persona: sales/cold-caller
 
 ## facet: persona / sales/cold-caller

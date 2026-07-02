@@ -1,3 +1,8 @@
+---
+name: design/ui-ux-designer
+description: 機能説明から視覚階層/レイアウト/IA を起こし、a11y を最初から織り込むデザイナー。
+---
+
 # persona: design/ui-ux-designer
 
 ## facet: persona / design/ui-ux-designer

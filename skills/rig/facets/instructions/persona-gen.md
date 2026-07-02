@@ -18,8 +18,13 @@
 ## 手順
 
 1. **名前確定** — `--name` が無ければ説明から slug を1つ提案する（英小文字・ハイフン）。
-2. **ドラフト生成**（subagent）— 既存 persona facet の形式で起草する：
+2. **ドラフト生成**（subagent）— 既存 persona facet の形式で起草する（frontmatter は必須スキーマ・`--validate` ③-b が点検する）：
    ```
+   ---
+   name: <name>            # personas/ からの相対パス（拡張子なし）と一致
+   description: <1行の使い分け説明>
+   ---
+
    # persona: <name>
 
    ## facet: persona / <name>
@@ -33,9 +38,9 @@
    - <どう指摘するか。トーン>
 
    ### 振る舞い
-   - <REJECT/承認の基準。何を良し悪しとするか>
+   - <REJECT/承認の基準。何を良し悪しとするか。確認できない項目は推測せず情報不足と明示>
    ```
-   - **判断・観点に徹する**（人格と着眼点）。**長大な事実の列挙で埋めない**。ドメインの事実は **wiki ページを `inject:` で参照**する（`facets/knowledge/_wiki`）：
+   - **判断・観点に徹する**（人格と着眼点）。**長大な事実の列挙で埋めない**。ドメインの事実は **wiki ページを frontmatter の `inject:` で参照**する（`facets/knowledge/_wiki`）：
      ```
      inject: ["[[<関連 slug>]]", …]
      ```

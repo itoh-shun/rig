@@ -1,3 +1,8 @@
+---
+name: sales/next-action-reviewer
+description: 商談記録を「次の一手の具体性」の観点で read-only 評価する。deal-review 5観点の1枠。
+---
+
 # persona: sales/next-action-reviewer
 
 ## facet: persona / next-action-reviewer
