@@ -57,6 +57,7 @@ claude --plugin-dir .
 - **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
 - **コマンド**: `/rig:knowledge` — ドメイン知識を **LLM-wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として生成。説明文 or `--auto`(repo 解析)から、global(既定・全プロダクト共有)/project overlay に保存。persona は事実を埋め込まず `inject: [[slug]]` で参照＝暗黙知化させない。例: `/rig:knowledge --auto`
 - **コマンド**: `/rig:design` 🎨 — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から**デザイン仕様書／コンポーネント仕様／ワイヤー／a11y 計画**を生成し、`ux-reviewer`（ユーザビリティ）・`a11y-reviewer`（WCAG 2.2）で並列検閲して acceptance-gate で収束。引数に**画面 URL** を渡すと Playwright で実装画面を取得し UI/UX・a11y を**監査**する。`--ppt`(PowerPoint)・`--claudedesign`(claude.ai デザイン) で追加出力（併用可）。例: `/rig:design ログイン画面 --ppt` ・ `/rig:design https://example.com/login`
+- **コマンド**: `/rig:import` 📥 — ネット上の外部 skill(GitHub の SKILL.md / plugin)を rig に取り込む。解析して**委譲(最優先)→翻訳→知識のみ**を判断し、生成は既存ジェネレータへ委譲、出所と SHA-256 を `skills-lock.json` に記録。`--check-updates` で全取り込み skill の上流差分を検知(提案まで・自動追従なし)。`/rig:skill`(自作)の対＝既にあるものを取り込む。例: `/rig:import anthropics/skills --path skills/frontend-design/SKILL.md` ・ `/rig:import --check-updates`
 - **コマンド**: `/rig:catalog` — 横断レジストリ(`--list --global`)。全 tier(shipped＋global＋project)を走査し `domain×pack×persona×wiki×recipe` の地図を tier つきで表示＝「誰がどこで何してるか」を取り戻す。派生・読み取り専用。`--validate --global` は tier 横断の衛生点検。
 - **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
 
