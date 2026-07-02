@@ -264,11 +264,20 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 ### ④ §2 目録ドリフト
 
+> **CI 用機械実装**：`scripts/validate.py` の `check_catalog_drift` が本節のサブセットを実装 — §2 のバッククォート・ブリック参照（brace 記法 `{a,b}-reviewer` 展開対応）→実ファイル（幽霊エントリ＝FAIL）、shipped の recipe/instruction/persona 実ファイル→SKILL.md 記載（追記漏れ疑い＝WARN）。
+
 §2 ブリック目録（dev-core 行＋pack 追加分の表）と**実ファイル**を突き合わせる。
 
 - 目録に載っているが**実ファイルが無い**もの（幽霊エントリ）→ error。
 - 実ファイルが在るが**目録に載っていない**もの → pack 追加分への追記漏れの可能性として warning（dev-core は安定前提なので especially recipe/instruction/persona を見る）。
 - README.md / README.ja.md の recipe / instruction / persona 一覧表も同様に実ファイルと突き合わせ、抜け・古い記載を warning する。
+
+### ④-b commands / agents frontmatter（実バグ class の再発防止）
+
+`commands/*.md` と `agents/*.md` の frontmatter を検査する（`scripts/validate.py` の `check_commands` / `check_agents`）。根拠は実際に起きた2つのバグ：**frontmatter の YAML 不正で全コマンドが未登録**（v0.77 で修正）と**予約名衝突**（v0.78 `skill`→`forge`）。
+
+- commands: frontmatter が YAML として読める（FAIL）／`description` 非空文字列（FAIL）／`argument-hint` は文字列（FAIL・配列は YAML 崩れの温床）／CC 組み込みと衝突実績のある名前（`skill`・`status`）は **WARN**（skill→forge / status→party の前例）。
+- agents: frontmatter が読める（FAIL）／`name` がファイル名と一致（FAIL＝subagent_type 解決が壊れる）／`description` 非空（FAIL）／`tools` 未定義は WARN。
 
 ### ⑤ wiki 衛生（`facets/knowledge/_wiki`）
 
