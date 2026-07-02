@@ -28,7 +28,7 @@
 
 ### ③ 集約（`pattern: review-gate`）
 
-3つの verdict が揃ったら `pattern: review-gate` で着手判断を決定する。
+3つの verdict が揃ったら `pattern: review-gate` で着手判断を決定する。`--verify-findings`（または recipe `verify_findings: true`）が有効なら、集約前に各 REJECT 根拠・マージ前必須条件を `finding-verifier` で反証し、REFUTED をゲートから除く（`patterns/review-gate`「敵対的検証」）。
 
 ### ④ 実装方針への反映
 

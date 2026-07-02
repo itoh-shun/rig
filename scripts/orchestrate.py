@@ -207,6 +207,8 @@ def derive_badges(fm: dict, steps: list[dict]) -> list[str]:
         badges.append("review")
     if fm.get("capture") is True:
         badges.append("capture")
+    if fm.get("verify_findings") is True:
+        badges.append("verify-findings")
     return badges
 
 
@@ -231,7 +233,7 @@ _KEY_TO_FLAG = {
     "tdd": "--tdd", "design": "--design", "review": "--review", "visual": "--visual",
     "adversarial": "--adversarial", "cross_llm": "--cross-llm", "orchestrate": "--orchestrate",
     "no_orchestrate": "--no-orchestrate", "no_capture": "--no-capture", "capture": "--capture",
-    "no_default_personas": "--no-default-personas",
+    "no_default_personas": "--no-default-personas", "verify_findings": "--verify-findings",
 }
 
 
@@ -1814,7 +1816,7 @@ def cmd_selftest(_args):
         "    acceptance: [\"ok\"]\n---\n", encoding="utf-8")
     (qdir / "child-flow.md").write_text(
         "---\nname: child-flow\ndescription: t\nscope: project\nautonomy: autonomous\n"
-        "extends: base-flow\ntdd: true\n"
+        "extends: base-flow\ntdd: true\nverify_findings: true\n"
         "steps:\n  - id: design\n    remove: true\n"
         "  - id: verify\n    instruction: verify\n    gate: acceptance-gate\n    checks: [\"true\"]\n"
         "  - id: pr\n    instruction: pr\n---\n", encoding="utf-8")
@@ -1827,8 +1829,8 @@ def cmd_selftest(_args):
            q1["steps_field"], "intake, implement, verify, pr")
     report("Q resolve: origin 判定",
            [s["origin"] for s in q1["steps"]], ["inherited", "inherited", "override", "added"])
-    report("Q resolve: badge 固定順（tdd→gated→orchestrate(auto)→autonomous）",
-           q1["badges"], ["tdd", "gated", "orchestrate(auto)", "autonomous"])
+    report("Q resolve: badge 固定順（tdd→gated→orchestrate(auto)→autonomous→verify-findings）",
+           q1["badges"], ["tdd", "gated", "orchestrate(auto)", "autonomous", "verify-findings"])
     report("Q resolve: 決定論（同入力→同 JSON）",
            json.dumps(q1, sort_keys=True), json.dumps(q2, sort_keys=True))
     # R: RESOLVE フェーズ2（condition 評価・size 判定・スライス・flag 優先順位）の golden 検証

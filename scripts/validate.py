@@ -152,6 +152,11 @@ def check_recipe(path: pathlib.Path) -> None:
     if no_capture_val is not None and not isinstance(no_capture_val, bool):
         _emit("FAIL", f"{ctx} — no_capture '{no_capture_val!r}' は boolean (true/false) でなければなりません")
 
+    # verify_findings 値域（review-gate 敵対的検証・§3.5）
+    vf_val = fm.get("verify_findings")
+    if vf_val is not None and not isinstance(vf_val, bool):
+        _emit("FAIL", f"{ctx} — verify_findings '{vf_val!r}' は boolean (true/false) でなければなりません")
+
     # ② extends チェーン（§4.2.2 + validate.md ①）
     parent_step_ids: list[str] = []
     extends_name: str | None = fm.get("extends")
