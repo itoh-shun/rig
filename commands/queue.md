@@ -1,5 +1,5 @@
 ---
-description: "rig/queue — タスクを積んで、まとめて GO。キューを管理ツール(GitHub/GitLab Issue)かローカルで持ち、go で全タスクを並列実行(各タスクをゲート通過)して結果を Issue に書き戻す。takt の「stack→GO」相当。"
+description: "rig/queue — タスクを積んで、まとめて GO。キューを管理ツール(GitHub/GitLab Issue)かローカルで持ち、go で全タスクを並列実行(各タスクをゲート通過)して結果を Issue に書き戻す。"
 argument-hint: "<add \"task\" | list | go | done id> [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
 ---
 

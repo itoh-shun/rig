@@ -56,11 +56,11 @@ steps:
 
 ## 外部ランナー（`run`）— 各 step を別プロセスのエージェントで自走実行
 
-`next`/`check`/`verdict` を**現在のモデルが手で回す**代わりに、`run` は**各 step を別プロセスのエージェントに実行させ、遷移を自動で回す**（takt 型の外部オーケストレーション）。プロセス境界が context を隔離し、検証を別プロバイダ/別プロセスにすれば**採点者≠生成者が構造的に**成立する。
+`next`/`check`/`verdict` を**現在のモデルが手で回す**代わりに、`run` は**各 step を別プロセスのエージェントに実行させ、遷移を自動で回す**（外部オーケストレーション）。プロセス境界が context を隔離し、検証を別プロバイダ/別プロセスにすれば**採点者≠生成者が構造的に**成立する。
 
 ```
 orchestrate.py run <recipe> --provider <claude|codex|cmd|mock> \
-    [--verifier-provider <name>] [--provider-cmd "tool {prompt}"] \
+    [--verifier-provider <name>] [--provider-cmd "tool {prompt}"] [--isolate] \
     [--goal G] [--max-steps N] [--out run-state.json]
 ```
 
@@ -68,7 +68,8 @@ orchestrate.py run <recipe> --provider <claude|codex|cmd|mock> \
 - **ローカル LLM（`ollama`/`lmstudio`）**：OpenAI 互換エンドポイント（既定 `:11434`/`:1234`、`--base-url` で上書き）へ HTTP で問い合わせる。`--model <name>` でモデル指定（ollama 既定 `llama3.1`）。要：ローカルサーバ起動＋モデル取得。各リクエストは独立＝context 隔離は保たれる。サーバ不在時はゲート FAIL→エスカレーション（crash しない）。
 - **動的モデル探索**：`orchestrate.py models [--save]` で起動中のサーバの `/v1/models` を叩いて**利用可能モデルを動的取得**（`claude`/`codex`/`rig` は CLI 有無）。`run --auto-model`（=`--auto-model-setting`）は `--model` 未指定時、保存設定（`~/.claude/rig/models.json`）→実機の先頭モデル→既定 の順で**自動解決**。サーバ不在でも既定にフォールバック（graceful）。
 - **プロセス隔離**：step ごとに新規プロセス＝**毎回クリーンな context**（Context Rot 対策の構造版）。親が肥大しない（Thin Harness）。
-- **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:<persona>`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。
+- **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:<persona>`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。さらに **verifier ロールの CLI には読み取り専用権限を argv で固定付与**する（claude→`--allowedTools Read,Grep,Glob`／codex→`--sandbox read-only`）＝「検証役は書かない」がプロンプトのお願いではなく**機構**になる（採点者≠生成者の第2段）。
+- **`--isolate`（worktree 隔離実行）**：run を使い捨ての git worktree＋専用 branch（`rig/run-<recipe>-<ts>`）に隔離する。終了時の後始末は決定論規則（selftest X が golden 検証）——**DONE＋クリーン＋commit あり→元 branch へ ff 合流して撤収**／変更なし→撤収のみ／**未達・dirty・非 ff→worktree と branch を保全**して人の検分に委ねる。非決定的な生成過程が作業ツリーに触れず、**ゲートを通った成果だけが合流する**＝determinism-by-gate の空間版。
 - **並列レビュアー・ファンアウト**：gated step の `personas` を **N 人の同時プロセス**で走らせる（`parallel-fanout` の実プロセス版・`--max-parallel` で同時数）。集約は決定論（persona 名順）：`--quorum all`（既定＝review-gate と同じ全員一致・1人 FAIL でゲート不合格）か `--quorum majority`（過半数）。完了順に依らず同じ結論＝**並列でも決定論**。
 - **judge-panel（複数生成→勝者選択）**：`--generators a,b,c` で **複数プロバイダが同じ step を並列生成**し、judge（verifier）が各候補を判定。**最初に PASS した候補（generator 列の順＝決定論）が勝者**。例 `--generators rig,claude,codex`＝3モデルに作らせて一番筋の良いものを採る。誰も通らなければゲート不合格。
 - **step-DAG 並列**：step に `needs: [id…]` を宣言すると、**依存を満たした独立 step を同一 wave で同時プロセス実行**する（例 intake → {design, test 並走} → merge）。ready 集合は id 順・ゲート評価も id 順適用＝**並列でも決定論**。`needs` 未宣言の recipe は従来どおり直列。
