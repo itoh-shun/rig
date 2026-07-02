@@ -1,6 +1,6 @@
 {
   "name": "rig",
-  "version": "0.75.0",
+  "version": "0.76.0",
   "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness. Domain-agnostic engine: dev-flow orchestration (review, implement, PR), pluggable packs — sales deal-review, a conversational mode (rig:talk), a goal-driven loop (rig:goal), existing-PR review (rig:pr), and a prose AI-smell remover (de-ai-smell) — plus a --validate doctor, a /rig:init scaffolder, generators for reviewer personas (/rig:persona) and LLM-wiki domain knowledge (/rig:knowledge), self-extension that authors new bricks/packs from a description and validates them (/rig:skill), a /rig:catalog cross-tier registry, and run-continuity that survives context compaction via a shipped PreCompact hook. Tiered (project/global) personas and a cross-linked knowledge wiki keep domain knowledge shared, not siloed. Claude Code native; no heavy DSL engine.",
   "author": {
     "name": "itoshun"
