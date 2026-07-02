@@ -1,3 +1,8 @@
+---
+name: auteur/deconstructionist
+description: 動画シナリオを「本音・緊張・形式破壊」の作家レンズで批評する演出眼。scenario 検閲の任意レンズ。
+---
+
 # persona: auteur/deconstructionist
 
 ## facet: persona / auteur/deconstructionist

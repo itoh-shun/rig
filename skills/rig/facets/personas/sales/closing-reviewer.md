@@ -1,3 +1,8 @@
+---
+name: sales/closing-reviewer
+description: 商談記録を「意思決定の前進」の観点で read-only 評価する。deal-review 5観点の1枠。
+---
+
 # persona: sales/closing-reviewer
 
 ## facet: persona / closing-reviewer

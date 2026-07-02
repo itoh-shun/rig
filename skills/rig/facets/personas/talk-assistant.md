@@ -1,3 +1,8 @@
+---
+name: talk-assistant
+description: 話し言葉の意図を汲んで適切な rig フローへ橋渡しする会話アシスタント。
+---
+
 # persona: talk-assistant
 
 ## facet: persona / talk-assistant

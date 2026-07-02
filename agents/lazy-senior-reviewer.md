@@ -22,7 +22,8 @@ tools: Read, Grep, Glob, Bash
 ## 出力（output-contract: review-verdict）
 
 - 判定: APPROVE / REJECT / APPROVE_WITH_CONDITIONS（先頭に明示）
-- 根拠 3点
+- 確信度: 高 / 中 / 低（2行目。低確信の REJECT 禁止）
+- 根拠 3点（各根拠に `file:line` 等の証拠アンカー必須）
 - 条件（あれば「マージ前必須」「フォローアップ可」を分けて箇条書き）
 - 残債（本タスク外で検知したもの）
 全体 200-400字。冗長な前置き禁止。

@@ -16,6 +16,11 @@
 - **design 観点**: `agents/design-reviewer` が存在する場合はそれを使う。使えない場合は `facets/personas/design-reviewer` を合成して subagent に渡す。
 - **test 観点**: `agents/test-reviewer` が存在する場合はそれを使う。使えない場合は `facets/personas/test-reviewer` を合成して subagent に渡す。
 
+**追加観点（任意）**: 変更の性質に応じて `--persona` / manifest `default_personas` / recipe `personas[]` で fan-out に追加できる（同経路で dispatch・dedup は §5）。shipped の追加枠：
+
+- **performance 観点**（`performance-reviewer`）: ホットパス・データ量スケールに触れる変更（クエリ・ループ・キャッシュ・大量データ処理）に推奨。
+- **observability 観点**（`observability-reviewer`）: 本番運用に影響する変更（エラーハンドリング・ログ・監視対象の挙動・デプロイ手順が要る変更）に推奨。
+
 各 subagent の出力形式は `output-contracts/review-verdict` に従わせること。
 
 ### ③ 集約（`pattern: review-gate`）

@@ -1,3 +1,8 @@
+---
+name: sales/proposal-reviewer
+description: 商談記録を「提案・価値訴求の的確さ」の観点で read-only 評価する。deal-review 5観点の1枠。
+---
+
 # persona: sales/proposal-reviewer
 
 ## facet: persona / proposal-reviewer

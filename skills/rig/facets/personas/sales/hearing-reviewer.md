@@ -1,3 +1,8 @@
+---
+name: sales/hearing-reviewer
+description: 商談記録を「ヒアリングの深さ」の観点で read-only 評価する。deal-review 5観点の1枠。
+---
+
 # persona: sales/hearing-reviewer
 
 ## facet: persona / hearing-reviewer
