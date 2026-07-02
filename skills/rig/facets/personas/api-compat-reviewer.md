@@ -1,6 +1,7 @@
 ---
 name: api-compat-reviewer
 description: 変更を API/契約互換 視点で read-only 評価する。破壊的変更の検出/semver/スキーマ互換/非推奨手順を見る。`--persona api-compat-reviewer` で review fan-out に追加。
+inject: ["[[api-compat-semver]]"]
 ---
 
 # persona: api-compat-reviewer

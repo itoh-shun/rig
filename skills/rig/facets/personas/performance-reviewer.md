@@ -1,6 +1,7 @@
 ---
 name: performance-reviewer
 description: 変更を performance 視点で read-only 評価する。計算量・データ量スケール/ホットパス/リソースリーク/測定可能性を見る。`--persona performance-reviewer` で review fan-out に追加。
+inject: ["[[performance-pitfalls]]"]
 ---
 
 # persona: performance-reviewer
