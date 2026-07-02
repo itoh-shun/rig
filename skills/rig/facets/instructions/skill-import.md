@@ -9,7 +9,8 @@
   - `<owner>/<repo>` 短縮形
   - ローカルパス（clone 済みディレクトリ）
 - `--path <repo内パス>`（任意）：取り込む skill のパス（例 `skills/hyperframes/SKILL.md`）。省略時はリポジトリを走査して SKILL.md / plugin 構造を発見し、**候補一覧を提示して選ばせる**。
-- `--name <slug>`（任意）：rig 側での pack/brick 名。省略時はソースから slug を提案。
+- `--all`（任意）：走査で見つかった**候補全件を一括処理**する（下記③'）。手元のスキル集・スキルディレクトリ（例 `~/.claude/skills`）をまとめて取り込む/lock 登録するときに使う。`--path` と排他（`--path` は1件指定）。
+- `--name <slug>`（任意）：rig 側での pack/brick 名。省略時はソースから slug を提案（`--all` 時は各 skill のディレクトリ名から自動提案）。
 - `--user`：生成ブリックを user 層に保存（既定は project 層。rig 本体作業時は `--shipped`）。
 - `--dry-run`：解析と翻訳提案まで（書き込み・lock 記録をしない）。
 - `--check-updates`：取り込み済み skill の**上流差分検知**モード（下記②'）。ソース指定不要。
@@ -45,6 +46,26 @@
   faceless-explainer     heygen-com/hyperframes  ⚠ 上流更新あり → /rig:import heygen-com/hyperframes --path skills/faceless-explainer/SKILL.md で再取り込み
   some-skill             owner/gone-repo         ? 取得不能（リポジトリ不在/権限）
 ```
+
+### ③' `--all`（一括取り込み）
+
+走査で見つかった候補全件について、②の判断（委譲/翻訳/知識のみ/取り込まない）を**各 skill ごとに subagent で並行実施**し、結果を**判断サマリ一覧**として1つの表で提示する：
+
+```
+## rig import --all（<source>・N 件）
+
+| # | skill              | 判断       | 生成予定ブリック                        | 理由（1行）                         |
+|---|--------------------|-----------|----------------------------------------|-------------------------------------|
+| 1 | frontend-design    | 委譲       | instructions/frontend-design（routing） | CC skill としてそのまま動く          |
+| 2 | tdd-workflow       | 翻訳       | recipes/tdd-strict ＋ persona 1件       | ゲートに組み込む判断を持つ           |
+| 3 | writing-guide      | 知識のみ   | wiki [[writing-guide]]                  | 観点カタログのみ・フロー価値なし     |
+| 4 | duplicate-skill    | 取り込まない | —                                      | 既存 `de-ai-smell` と重複            |
+```
+
+- **承認は一括で1回**（表を見て「この方針で全件進める / #N だけ除外 / 中止」を選ばせる）。個別の書き込み確認を N 回繰り返さない＝`--all` の存在意義。ただし **global（`--user`）書き込みを含む場合はその旨を表の下に明示**する。
+- 承認後、各 skill を④の lock 記録まで処理し、**lock への書き込みは1回にまとめる**（エントリ N 件を1度の編集で追加）。
+- 1件の失敗（取得不能・ライセンス不明で委譲不可等）は該当行に `[SKIP: 理由]` を付けて続行し、最後にまとめて報告する（全体を止めない）。
+- `--dry-run --all` は判断サマリ一覧の提示で停止（書き込み・lock 記録なし）＝**まず全体像だけ見る**の推奨経路。
 
 ### ③ 提案と確認（書き込みは必ず確認）
 
