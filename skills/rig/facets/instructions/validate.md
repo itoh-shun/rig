@@ -64,6 +64,13 @@
 
 > **WARN とする理由（FAIL にしない）**：§4.2.2 は RUN 時も「親の `extends` を無視し警告ログを出す」であり停止しない。`--validate` も同 severity にそろえる。`--validate --global` 時は全 tier の `extends` recipe を対象に同チェックを実施する。
 
+**`remove: true` フィールドの整合チェック（#144）** — `extends` を持つ recipe の `remove: true` step エントリについて：① 対象 `id` が親 recipe に存在しない場合は **WARN**（削除対象が無い＝タイポの可能性。停止なし）。② `remove` の値が `true`/`false` 以外（文字列 `"yes"` 等）の場合は **FAIL**（型不正）。`extends` なし recipe での `remove` 使用は WARN（§3.5・削除する親が無い）。
+
+```
+[WARN] my-flow (extends: release-flow) — remove: true の step `desgin` は parent に存在しません（タイポの可能性）。
+[FAIL] my-flow step design: remove の値 "yes" は不正です。有効値: true | false
+```
+
 **`extends` 循環参照（サイクル）チェック（#71）** — `A→B→A` のような循環は RESOLVE フェーズでサイレントに無限ループ（ハング）するため、実行前に **FAIL** で止める。#42 の多段（深さ）チェックは各 recipe を単独で見るため循環は検出できない＝**独立した別チェック**。
 
 1. 各 recipe を起点に `extends` 先を **DFS**（深さ優先探索）で辿り、現在の経路（訪問済みセット）に同じ recipe 名が再出現したら → **FAIL**（循環）。
