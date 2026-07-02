@@ -2,7 +2,7 @@
 
 **`--list` の表示仕様の正本。** `--list` はブリック目録（SKILL.md §2）・flag 一覧に加え、recipe を全 tier 走査して以下の仕様でグルーピング表示し、**停止**する（RESOLVE/COMPOSE/RUN しない・副作用なし）。SKILL.md §3 は要約とポインタのみを持ち、表示ルールの詳細（バッジ導出・`steps:` フィールド・tier グルーピング）はこのファイルが正本。
 
-> **決定論参照実装**：badge 固定順・`steps:` フィールド・`extends` マージ（`remove`/origin）の導出は `scripts/orchestrate.py plan <recipe> --json`（`resolve_plan_json`）が機械実装しており、`selftest` シナリオ Q が golden 検証する。散文とコードが食い違ったら**コード側の selftest を先に直し、本ファイルを追随させる**（RESOLVE コード化フェーズ1）。
+> **一次実装はコード**：badge 固定順・`steps:` フィールド・`extends` マージ（`remove`/origin）の導出は `scripts/orchestrate.py plan <recipe> --json`（`resolve_plan_json`）が機械実装しており、**`--list` の各 recipe 行を作るときはこの出力をデータ源として使う**（スクリプトを呼べない環境のみ本ファイルの規則で自力導出）。`selftest` シナリオ Q が golden 検証。散文とコードが食い違ったら**コード側の selftest を先に直し、本ファイルを追随させる**。
 
 ## tier グルーピングと recipe エントリ
 
