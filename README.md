@@ -170,6 +170,7 @@ rig run review-only --provider rig --verifier-provider codex
 ## Docs
 
 - [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
+- [`docs/architecture.md`](./docs/architecture.md) — architecture proof points (determinism, gate enforcement, judge measurement) with runnable commands
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
 - [README.ja.md](./README.ja.md) — Japanese version
 
