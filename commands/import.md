@@ -1,0 +1,34 @@
+---
+description: rig/import — ネット上の外部 skill（GitHub の SKILL.md / plugin）を解析して rig ブリックへ翻訳し、出所とハッシュを skills-lock.json に記録する取り込み機構。--check-updates で上流差分検知。/rig:skill（自作）の対＝既にあるものを取り込む。
+argument-hint: ["<GitHub URL | owner/repo | ローカルパス>"] [--path <repo内パス>] [--name <slug>] [--user] [--dry-run] [--check-updates]
+---
+
+# rig/import — 外部 skill の取り込み 📥
+
+**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・§8 Native-first・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-import` にある（重複定義しない）。
+
+起動後、`facets/instructions/skill-import` に従って外部 skill を取り込む:
+
+```
+$ARGUMENTS
+```
+
+## やること
+
+「ネットにある skills を真似しながら包括する」を機構にする。外部 skill を**委譲（最優先）→ 翻訳 → 知識のみ**の順で取り込み方を判断し、生成は既存ジェネレータ（`/rig:skill` `/rig:persona` `/rig:knowledge`）へ委譲、**出所と SHA-256 を `skills-lock.json` に記録**して再現可能・更新検知可能にする。
+
+- **委譲**：そのまま動く skill は移植しない（薄い routing ブリックだけ作る）。
+- **翻訳**：判断・観点・手順を pack の定石（persona/knowledge/instruction/recipe/output-contract/command）に分解。
+- **`--check-updates`**：lock の全エントリを上流と照合し、更新あり/最新/取得不能を一覧。再取り込みは提案まで（自動追従しない）。
+- **書き込みは確認必須・冪等**。ライセンス不明なら本文を持ち込まず委譲のみ。
+
+## 例
+
+```
+/rig:import anthropics/skills --path skills/frontend-design/SKILL.md   # 特定 skill を取り込む
+/rig:import https://github.com/obra/superpowers --dry-run              # 走査して候補提示・書き込みなし
+/rig:import owner/repo --name tanka-review --user                      # user 層に取り込む
+/rig:import --check-updates                                            # 取り込み済み全 skill の上流差分検知
+```
+
+取り込んだ brick は `--list` / `/rig:catalog` に出る。出所は `skills-lock.json` が持ち続ける。
