@@ -1,6 +1,6 @@
 ---
 description: "rig/knowledge — ドメイン知識を LLM-wiki ページとして自動生成。説明文 or --auto(repo 解析)から 1概念=1正準ページを起草し global(既定・全プロダクト共有)/project overlay(--project)に保存。persona は inject: [[slug]] で参照する。"
-argument-hint: "[\"<説明>\" | --auto] [--project] [--name <slug>]"
+argument-hint: "[--research \"<トピック>\"] [\"<説明>\" | --auto] [--project] [--name <slug>]"
 ---
 
 # rig/knowledge — ドメイン知識ジェネレータ（wiki）

@@ -24,6 +24,8 @@
 - **migration 観点**（`migration-reviewer`）: DB/データ移行を含む変更（往路と復路・expand-contract・ロック時間・データ検証）に推奨。
 - **docs 観点**（`docs-reviewer`）: 公開挙動を変える変更（README/CHANGELOG/コメント/設定例が虚偽化していないか）に推奨。
 
+**観点カタログの注入**: dispatch する各 reviewer について、同名の persona facet が `inject: ["[[slug]]"]` を宣言していれば、wiki ページを tier 解決して Knowledge 位置へ注入する（**agent 経由の dispatch でも同様**＝agent と persona で知識が非対称にならない）。
+
 各 subagent の出力形式は `output-contracts/review-verdict` に従わせること。
 
 ### ③ 集約（`pattern: review-gate`）

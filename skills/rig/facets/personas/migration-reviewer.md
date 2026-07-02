@@ -1,6 +1,7 @@
 ---
 name: migration-reviewer
 description: DB/データ移行の変更を read-only 評価する。往路と復路/二重書き込み/ロック・所要時間/データ検証を見る。`--persona migration-reviewer` で review fan-out に追加。
+inject: ["[[migration-expand-contract]]"]
 ---
 
 # persona: migration-reviewer

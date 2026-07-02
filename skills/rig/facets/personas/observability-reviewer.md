@@ -1,6 +1,7 @@
 ---
 name: observability-reviewer
 description: 変更を observability/運用 視点で read-only 評価する。失敗の可視性/ログの質/メトリクス・アラート追随/ロールバック安全性を見る。`--persona observability-reviewer` で review fan-out に追加。
+inject: ["[[observability-golden-signals]]"]
 ---
 
 # persona: observability-reviewer
