@@ -1,6 +1,6 @@
 ---
-description: rig/pr — 既存 PR レビュー。PR 番号/URL を渡すと GitHub MCP で取得し、security/design/test の3観点(＋任意で敵対レビュー)を並列評価して structured verdict を返す。自分の作業ツリーでなく「既に open している PR」を見る入口。
-argument-hint: [PR 番号 or URL] [--adversarial] [--comment] [--plan]
+description: "rig/pr — 既存 PR レビュー。PR 番号/URL を渡すと GitHub MCP で取得し、security/design/test の3観点(＋任意で敵対レビュー)を並列評価して structured verdict を返す。自分の作業ツリーでなく「既に open している PR」を見る入口。"
+argument-hint: "[PR 番号 or URL] [--adversarial] [--comment] [--plan]"
 ---
 
 # rig/pr — 既存 PR レビュー

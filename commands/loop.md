@@ -1,6 +1,6 @@
 ---
-description: rig/loop — 一定間隔 or 自己ペースで対象（コマンド/rig フロー/タスク）を繰り返す recurring driver。停止条件（--until/--times/明示）と安全上限つき。goal（達成まで収束）の対極＝見張り・ポーリング・定期実行。
-argument-hint: ["繰り返す対象（コマンド/タスク）"] [--every <dur>] [--until "<check>"] [--times N] [--plan]
+description: "rig/loop — 一定間隔 or 自己ペースで対象（コマンド/rig フロー/タスク）を繰り返す recurring driver。停止条件（--until/--times/明示）と安全上限つき。goal（達成まで収束）の対極＝見張り・ポーリング・定期実行。"
+argument-hint: "[\"繰り返す対象（コマンド/タスク）\"] [--every <dur>] [--until \"<check>\"] [--times N] [--plan]"
 ---
 
 # rig/loop — 繰り返し・監視ループ 🔁

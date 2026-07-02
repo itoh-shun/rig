@@ -1,6 +1,6 @@
 ---
-description: rig/design — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から仕様書/コンポーネント仕様/ワイヤー/a11y 計画を生成し UI/UX・WCAG で検閲(design)。URL を渡すと Playwright で実装画面を取得し監査(design-audit)。--ppt/--claudedesign で追加出力。
-argument-hint: [機能の説明 or 画面URL] [--url <url>] [--a11y-level A|AA|AAA] [--ppt] [--claudedesign] [--plan] [--persona <name>]
+description: "rig/design — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から仕様書/コンポーネント仕様/ワイヤー/a11y 計画を生成し UI/UX・WCAG で検閲(design)。URL を渡すと Playwright で実装画面を取得し監査(design-audit)。--ppt/--claudedesign で追加出力。"
+argument-hint: "[機能の説明 or 画面URL] [--url <url>] [--a11y-level A|AA|AAA] [--ppt] [--claudedesign] [--plan] [--persona <name>]"
 ---
 
 # rig/design — デザイン作成・監査ハーネス 🎨

@@ -1,6 +1,6 @@
 ---
-description: rig/sales — 営業ハーネス。商談記録を5観点で並列評価(deal-review)するほか、開発資材から営業1枚資料・荷電スクリプトを生成(--material/--script)する。営業メンバーも使える平易な入口。
-argument-hint: [商談記録 or ファイルパス] [--material] [--script] [--from <path>] [--plan] [--autonomous] [--capture]
+description: "rig/sales — 営業ハーネス。商談記録を5観点で並列評価(deal-review)するほか、開発資材から営業1枚資料・荷電スクリプトを生成(--material/--script)する。営業メンバーも使える平易な入口。"
+argument-hint: "[商談記録 or ファイルパス] [--material] [--script] [--from <path>] [--plan] [--autonomous] [--capture]"
 ---
 
 # rig/sales — 営業ハーネス（商談レビュー ＋ 資材生成）

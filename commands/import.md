@@ -1,6 +1,6 @@
 ---
-description: rig/import — ネット上の外部 skill（GitHub の SKILL.md / plugin）を解析して rig ブリックへ翻訳し、出所とハッシュを skills-lock.json に記録する取り込み機構。--check-updates で上流差分検知。/rig:skill（自作）の対＝既にあるものを取り込む。
-argument-hint: ["<GitHub URL | owner/repo | ローカルパス>"] [--path <repo内パス>] [--all] [--name <slug>] [--user] [--dry-run] [--check-updates]
+description: "rig/import — ネット上の外部 skill（GitHub の SKILL.md / plugin）を解析して rig ブリックへ翻訳し、出所とハッシュを skills-lock.json に記録する取り込み機構。--check-updates で上流差分検知。/rig:skill（自作）の対＝既にあるものを取り込む。"
+argument-hint: "[\"<GitHub URL | owner/repo | ローカルパス>\"] [--path <repo内パス>] [--all] [--name <slug>] [--user] [--dry-run] [--check-updates]"
 ---
 
 # rig/import — 外部 skill の取り込み 📥

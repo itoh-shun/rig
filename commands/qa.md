@@ -1,6 +1,6 @@
 ---
-description: rig/qa — テストケース設計。固定の7観点（初見/ベテラン/悪意/整合性/移行/回帰/仕様疑義）を取りこぼさず洗い、根拠(Test Basis)必須・未確認は「※要確認」・要件カバレッジで仕様ギャップを可視化。--migration で移行トラック、--review で既存ケースの指摘。AIはテスト設計者（実行・合否・修正は人間）。
-argument-hint: [対象（課題/機能/diff/仕様）] [--migration] [--review <path>] [--plan]
+description: "rig/qa — テストケース設計。固定の7観点（初見/ベテラン/悪意/整合性/移行/回帰/仕様疑義）を取りこぼさず洗い、根拠(Test Basis)必須・未確認は「※要確認」・要件カバレッジで仕様ギャップを可視化。--migration で移行トラック、--review で既存ケースの指摘。AIはテスト設計者（実行・合否・修正は人間）。"
+argument-hint: "[対象（課題/機能/diff/仕様）] [--migration] [--review <path>] [--plan]"
 ---
 
 # rig/qa — テスト設計 🧪

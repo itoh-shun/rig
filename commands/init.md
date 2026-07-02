@@ -1,6 +1,6 @@
 ---
-description: rig/init — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md の "Compact Instructions" 節を雛形生成する。書き込みは確認必須・冪等(既存は上書きしない)。
-argument-hint: [--autonomous は無効(init の書き込みは常に確認)]
+description: "rig/init — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md の \"Compact Instructions\" 節を雛形生成する。書き込みは確認必須・冪等(既存は上書きしない)。"
+argument-hint: "[--autonomous は無効(init の書き込みは常に確認)]"
 ---
 
 # rig/init — リポジトリ初期化（scaffold）

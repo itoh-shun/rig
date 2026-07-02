@@ -1,6 +1,6 @@
 ---
-description: rig/skill — 説明文から rig のブリック/パック（recipe・instruction・persona・output-contract・command）を自作して検証・保存する自己拡張メタ能力。「こういうフロー/レビュー観点/モードが欲しい」→ rig 規約で生成し validate まで。engine 不変・pack 上乗せ。
-argument-hint: ["<欲しい機能の説明>"] [--type recipe|persona|knowledge|pack] [--name <id>] [--user]
+description: "rig/skill — 説明文から rig のブリック/パック（recipe・instruction・persona・output-contract・command）を自作して検証・保存する自己拡張メタ能力。「こういうフロー/レビュー観点/モードが欲しい」→ rig 規約で生成し validate まで。engine 不変・pack 上乗せ。"
+argument-hint: "[\"<欲しい機能の説明>\"] [--type recipe|persona|knowledge|pack] [--name <id>] [--user]"
 ---
 
 # rig/skill — スキル自作（writing-skills） 🧱✨

@@ -1,6 +1,6 @@
 ---
-description: rig/tasks — 依頼を細粒度の検証可能タスクに割ってから実装する。plan(各タスクに検証つき)→implement(タスク順・--tdd可)→verify→review。大きく曖昧に実装せず「小さく割って・確かめながら・順に潰す」。承認を取ってから実行。
-argument-hint: ["<やりたいこと>"] [--plan] [--tdd] [--orchestrate]
+description: "rig/tasks — 依頼を細粒度の検証可能タスクに割ってから実装する。plan(各タスクに検証つき)→implement(タスク順・--tdd可)→verify→review。大きく曖昧に実装せず「小さく割って・確かめながら・順に潰す」。承認を取ってから実行。"
+argument-hint: "[\"<やりたいこと>\"] [--plan] [--tdd] [--orchestrate]"
 ---
 
 # rig/tasks — 細粒度プランニング 🧩

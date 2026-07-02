@@ -1,6 +1,6 @@
 ---
-description: rig/talk — 話しかけると意図を汲んで適切な rig フロー(dev/sales…)へ橋渡しする JARVIS 的な会話モード。多ターン対話・短い話し言葉・影響あるアクションは確認。
-argument-hint: [話しかける内容（省略可）] [--autonomous]
+description: "rig/talk — 話しかけると意図を汲んで適切な rig フロー(dev/sales…)へ橋渡しする JARVIS 的な会話モード。多ターン対話・短い話し言葉・影響あるアクションは確認。"
+argument-hint: "[話しかける内容（省略可）] [--autonomous]"
 ---
 
 # rig/talk — 会話モード

@@ -1,6 +1,6 @@
 ---
-description: rig/brainstorm — ラフな着想を質問→代替案→セクション合意で固める壁打ち。実装/タスク分解の前段＝「何を作るか/なぜ/どの順か」を先に固め、曖昧なまま実装に突っ込むのを防ぐ。design-brief に収束し /rig:tasks・/rig:dev へ接続。
-argument-hint: ["<ぼんやりした要望>"] [--plan]
+description: "rig/brainstorm — ラフな着想を質問→代替案→セクション合意で固める壁打ち。実装/タスク分解の前段＝「何を作るか/なぜ/どの順か」を先に固め、曖昧なまま実装に突っ込むのを防ぐ。design-brief に収束し /rig:tasks・/rig:dev へ接続。"
+argument-hint: "[\"<ぼんやりした要望>\"] [--plan]"
 ---
 
 # rig/brainstorm — 設計の壁打ち 💭

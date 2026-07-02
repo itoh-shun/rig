@@ -1,6 +1,6 @@
 ---
-description: rig/movie — 実装中のプロジェクトのデモ動画を作る。既定は「いま作っているプロジェクト」（コード/README/実際に動く画面/開発フロー）から、再生できるアニメ HTML を生成。--hyperframes で MP4 レンダリング可能な HyperFrames コンポジションも。--release で CHANGELOG からのリリーストレーラー。ハイプだが嘘なし。
-argument-hint: ["何を見せる動画か（省略時はこのプロジェクト全体）"] [--release [バージョン]] [--hyperframes] [--plan]
+description: "rig/movie — 実装中のプロジェクトのデモ動画を作る。既定は「いま作っているプロジェクト」（コード/README/実際に動く画面/開発フロー）から、再生できるアニメ HTML を生成。--hyperframes で MP4 レンダリング可能な HyperFrames コンポジションも。--release で CHANGELOG からのリリーストレーラー。ハイプだが嘘なし。"
+argument-hint: "[\"何を見せる動画か（省略時はこのプロジェクト全体）\"] [--release [バージョン]] [--hyperframes] [--plan]"
 ---
 
 # rig/movie — プロジェクトのデモ動画 🎬

@@ -1,6 +1,6 @@
 ---
-description: rig/scenario — 短尺プロダクト動画のシナリオライターモード。脚本(フック→課題→転換→ペイオフ→CTA・VO 草案・source 対応)を書き、既存ペルソナ×知識(ai-smell-reviewer＋ai-writing-smells × sns-post-reviewer)を掛け合わせて検閲する。/rig:movie の前段。
-argument-hint: [何の動画か（release trailer / before-after / 機能紹介・対象・尺）] [--plan]
+description: "rig/scenario — 短尺プロダクト動画のシナリオライターモード。脚本(フック→課題→転換→ペイオフ→CTA・VO 草案・source 対応)を書き、既存ペルソナ×知識(ai-smell-reviewer＋ai-writing-smells × sns-post-reviewer)を掛け合わせて検閲する。/rig:movie の前段。"
+argument-hint: "[何の動画か（release trailer / before-after / 機能紹介・対象・尺）] [--plan]"
 ---
 
 # rig/scenario — シナリオライターモード 🎬✍️

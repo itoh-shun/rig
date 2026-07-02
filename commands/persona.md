@@ -1,6 +1,6 @@
 ---
-description: rig/persona — 説明文から reviewer/persona を自動生成。product 単位(project 層・既定)か global(user 層・--user)に保存し、--persona <name> で review に投入できる。例 "80年代の音楽を理解しているレビュアー"。
-argument-hint: ["<どんなレビュアーか説明>"] [--user] [--name <id>]
+description: "rig/persona — 説明文から reviewer/persona を自動生成。product 単位(project 層・既定)か global(user 層・--user)に保存し、--persona <name> で review に投入できる。例 \"80年代の音楽を理解しているレビュアー\"。"
+argument-hint: "[\"<どんなレビュアーか説明>\"] [--user] [--name <id>]"
 ---
 
 # rig/persona — persona ジェネレータ

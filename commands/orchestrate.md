@@ -1,6 +1,6 @@
 ---
-description: rig/orchestrate — 計算的オーケストレーション。recipe のステップ遷移・ゲート・リトライ・停止・状態保持を決定論ランナー(scripts/orchestrate.py)がコードで強制。run で各 step を別プロセスの rig ハーネスとして自走実行（並列検証・マルチプロバイダ）。
-argument-hint: [recipe（省略時は現在の合成ハーネス）] [--run] [--provider rig|claude|mock] [--max-parallel N] [--quorum all|majority] [--plan]
+description: "rig/orchestrate — 計算的オーケストレーション。recipe のステップ遷移・ゲート・リトライ・停止・状態保持を決定論ランナー(scripts/orchestrate.py)がコードで強制。run で各 step を別プロセスの rig ハーネスとして自走実行（並列検証・マルチプロバイダ）。"
+argument-hint: "[recipe（省略時は現在の合成ハーネス）] [--run] [--provider rig|claude|mock] [--max-parallel N] [--quorum all|majority] [--plan]"
 ---
 
 # rig/orchestrate — 計算的オーケストレーション 🧭⚙️

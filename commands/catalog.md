@@ -1,6 +1,6 @@
 ---
-description: rig/catalog — 横断レジストリ(統合管理)。全 tier(shipped＋global＋project)を走査し domain×pack×persona×wiki×recipe の地図を表示。「誰がどこで何してるか」を取り戻す。読み取り専用。
-argument-hint: [--domain <tag>] [--json]
+description: "rig/catalog — 横断レジストリ(統合管理)。全 tier(shipped＋global＋project)を走査し domain×pack×persona×wiki×recipe の地図を表示。「誰がどこで何してるか」を取り戻す。読み取り専用。"
+argument-hint: "[--domain <tag>] [--json]"
 ---
 
 # rig/catalog — 横断レジストリ（統合管理ハーネス）
