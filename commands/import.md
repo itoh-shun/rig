@@ -1,5 +1,5 @@
 ---
-description: "rig/import — ネット上の外部 skill（GitHub の SKILL.md / plugin）を解析して rig ブリックへ翻訳し、出所とハッシュを skills-lock.json に記録する取り込み機構。--check-updates で上流差分検知。/rig:skill（自作）の対＝既にあるものを取り込む。"
+description: "rig/import — ネット上の外部 skill（GitHub の SKILL.md / plugin）を解析して rig ブリックへ翻訳し、出所とハッシュを skills-lock.json に記録する取り込み機構。--check-updates で上流差分検知。/rig:forge（自作）の対＝既にあるものを取り込む。"
 argument-hint: "[\"<GitHub URL | owner/repo | ローカルパス>\"] [--path <repo内パス>] [--all] [--name <slug>] [--user] [--dry-run] [--check-updates]"
 ---
 
@@ -15,7 +15,7 @@ $ARGUMENTS
 
 ## やること
 
-「ネットにある skills を真似しながら包括する」を機構にする。外部 skill を**委譲（最優先）→ 翻訳 → 知識のみ**の順で取り込み方を判断し、生成は既存ジェネレータ（`/rig:skill` `/rig:persona` `/rig:knowledge`）へ委譲、**出所と SHA-256 を `skills-lock.json` に記録**して再現可能・更新検知可能にする。
+「ネットにある skills を真似しながら包括する」を機構にする。外部 skill を**委譲（最優先）→ 翻訳 → 知識のみ**の順で取り込み方を判断し、生成は既存ジェネレータ（`/rig:forge` `/rig:persona` `/rig:knowledge`）へ委譲、**出所と SHA-256 を `skills-lock.json` に記録**して再現可能・更新検知可能にする。
 
 - **委譲**：そのまま動く skill は移植しない（薄い routing ブリックだけ作る）。
 - **翻訳**：判断・観点・手順を pack の定石（persona/knowledge/instruction/recipe/output-contract/command）に分解。

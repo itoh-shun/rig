@@ -1,6 +1,6 @@
 # instruction: skill-import
 
-ネット上の外部 skill（GitHub リポジトリの SKILL.md / Claude Code plugin / superpowers 系スキル集）を**解析して rig のブリックに翻訳し、出所を `skills-lock.json` に記録**する。rig の思想（ネットのあらゆる skills を真似しながら包括する）を、手動 vendoring から**再現可能・更新検知可能な取り込み機構**に格上げする。`/rig:skill`（ゼロから自作）の対＝**既にあるものを取り込む**。
+ネット上の外部 skill（GitHub リポジトリの SKILL.md / Claude Code plugin / superpowers 系スキル集）を**解析して rig のブリックに翻訳し、出所を `skills-lock.json` に記録**する。rig の思想（ネットのあらゆる skills を真似しながら包括する）を、手動 vendoring から**再現可能・更新検知可能な取り込み機構**に格上げする。`/rig:forge`（ゼロから自作）の対＝**既にあるものを取り込む**。
 
 ## 入力
 
@@ -26,7 +26,7 @@
 取り込みには3つの形があり、**上から順に検討する**（§8 Native-first 非対称ルール）：
 
 1. **委譲（最優先）** — 外部 skill がそのまま Claude Code plugin / skill として動くなら、**移植しない**。instruction facet から「この step は skill `<name>` に委譲する」と routing するだけの薄いブリックを作る（例：`hyperframes-video` が HyperFrames の shipped skills へ委譲している形）。
-2. **翻訳** — 外部 skill の**判断・観点・手順**が rig のフローに組み込む価値を持つなら、pack の定石（persona＝判断／knowledge＝観点カタログ／instruction＝routing／recipe＝step の束／output-contract＝形式／command＝入口）に**分解して翻訳**する。生成自体は `/rig:skill`（skill-author）・`/rig:persona`・`/rig:knowledge` の各ジェネレータに委譲し、本 instruction は分解方針の決定と出所記録に徹する。
+2. **翻訳** — 外部 skill の**判断・観点・手順**が rig のフローに組み込む価値を持つなら、pack の定石（persona＝判断／knowledge＝観点カタログ／instruction＝routing／recipe＝step の束／output-contract＝形式／command＝入口）に**分解して翻訳**する。生成自体は `/rig:forge`（skill-author）・`/rig:persona`・`/rig:knowledge` の各ジェネレータに委譲し、本 instruction は分解方針の決定と出所記録に徹する。
 3. **知識のみ** — フロー化する価値はないが観点カタログとして有用なら、knowledge/wiki ページとしてだけ取り込む（`/rig:knowledge` へ委譲）。
 
 **判断根拠を必ず提示する**（なぜ委譲でなく翻訳か、どのブリック型に何を割り当てたか）。既存ブリックとの重複は `--list` / catalog で確認し、重複するなら取り込まず既存を案内する。
