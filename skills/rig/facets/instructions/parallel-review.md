@@ -30,6 +30,8 @@
 
 3つの verdict が揃ったら `pattern: review-gate` で着手判断を決定する。`--verify-findings`（または recipe `verify_findings: true`）が有効なら、集約前に各 REJECT 根拠・マージ前必須条件を `finding-verifier` で反証し、REFUTED をゲートから除く（`patterns/review-gate`「敵対的検証」）。
 
+**リプレイ・アーカイブ（任意）**: 実行した diff と各 verdict を `.rig/replay/<ts>/` に保存してよい（`runs.jsonl` と同格のローカル実行ログ・承認不要）。`/rig:drill --replay <persona>` がペルソナ編集後の回帰確認に使う。
+
 ### ④ 実装方針への反映
 
 `review-gate` が出力した統合 conditions を実装計画の必須条件として折り込み、実装フェーズへ進む。
