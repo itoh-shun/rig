@@ -317,6 +317,21 @@ def check_personas() -> None:
         if inject is not None and not isinstance(inject, list):
             _emit("FAIL", f"{ctx} — inject はリスト型でなければなりません（値: {inject!r}）")
             bad = True
+        elif isinstance(inject, list):
+            # shipped persona の inject は shipped wiki tier に解決できなければならない
+            # （user/project tier は新規インストール環境に存在しないため FAIL）
+            wiki_dir = FACETS / "knowledge" / "wiki"
+            for entry in inject:
+                m = re.match(r"^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$", str(entry).strip())
+                if not m:
+                    _emit("FAIL", f"{ctx} — inject エントリ {entry!r} が [[slug]] 形式ではありません")
+                    bad = True
+                    continue
+                slug = m.group(1)
+                if not (wiki_dir / f"{slug}.md").exists():
+                    _emit("FAIL", f"{ctx} — inject [[{slug}]] が shipped wiki"
+                                  f"（skills/rig/facets/knowledge/wiki/{slug}.md）に解決できません")
+                    bad = True
         if not bad:
             ok += 1
 

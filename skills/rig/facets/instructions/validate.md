@@ -272,7 +272,7 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 ### ⑤ wiki 衛生（`facets/knowledge/_wiki`）
 
-wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowledge/wiki/`）を点検する。ディレクトリが無ければスキップ。
+wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowledge/wiki/` ＋ shipped `skills/rig/facets/knowledge/wiki/`）を点検する。ディレクトリが無ければスキップ。**shipped persona の `inject:` は shipped wiki tier に解決できなければ FAIL**（user/project tier は新規インストール環境に存在しないため。`scripts/validate.py` ③-b が機械検査）。
 
 - **リンク切れ** → 本文/`links:`/persona の `inject:` にある `[[slug]]` が、どの tier のページにも解決しない → WARN（wiki が user/global tier のみに存在し project-scope validate で不可視なケースがあるため。`--validate --global` 時は FAIL に格上げ）。
 - **参照欠落** → persona facet の `inject:` 先ページが存在しない → WARN（wiki が user/global tier のみに存在し project-scope validate で不可視なケースがあるため。`--validate --global` 時は FAIL に格上げ）。
@@ -336,7 +336,7 @@ wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowled
 
 ### `--global`（tier 横断）
 
-`--validate --global` 指定時は shipped だけでなく **user(global)・project 層も走査**し、上記①〜⑥を**全 tier 横断**で点検する（全 tier の orphan・リンク切れ・参照欠落・重複・persona の `inject:` 先欠落・ai-quirks 二相ペア不整合）。tier をまたいだ同 slug の上書き関係（project overlay > global）も考慮し、**どの tier の何が問題か**を明示する。地図表示（読み取り）は `facets/instructions/catalog`（`--list --global` / `/rig:catalog`）に委ねる。
+`--validate --global` 指定時は shipped だけでなく **user(global)・project 層も走査**し、上記①〜⑥を**全 tier 横断**で点検する（全 tier の orphan・リンク切れ・参照欠落・重複・persona の `inject:` 先欠落・ai-quirks 二相ペア不整合）。tier をまたいだ同 slug の上書き関係（project overlay > global > shipped）も考慮し、**どの tier の何が問題か**を明示する。地図表示（読み取り）は `facets/instructions/catalog`（`--list --global` / `/rig:catalog`）に委ねる。
 
 ## レポート形式
 

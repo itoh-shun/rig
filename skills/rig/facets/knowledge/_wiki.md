@@ -12,8 +12,9 @@
 |---|---|---|
 | **user（global・一次）** | `~/.claude/rig/knowledge/wiki/` | 全プロジェクト共有の正準ページ |
 | **project（overlay）** | `<repo>/.claude/rig/knowledge/wiki/` | 同 slug を上書き/追補（プロジェクト固有の差分） |
+| **shipped（同梱・最低優先）** | `skills/rig/facets/knowledge/wiki/` | plugin 同梱の正準ページ。shipped persona の `inject:` 先＝**rig 自身が wiki 分離を dogfooding する層**。user/project の同 slug で上書き可 |
 
-- 解決は **project overlay > global**（ページ単位＝同 slug があれば project 優先）。
+- 解決は **project overlay > global > shipped**（ページ単位＝同 slug があれば上位 tier 優先）。
 - 既存の `knowledge/{methodology,domain,accumulated,ai-quirks}/` は維持（後方互換）。`wiki/` は正準な概念ページ層。
 - ディレクトリが無ければ**サイレントにスキップ**。
 

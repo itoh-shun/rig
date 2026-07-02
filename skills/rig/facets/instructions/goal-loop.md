@@ -2,7 +2,7 @@
 
 高レベルな目標を受け取り、それを**受け入れ基準**に変換して、達成まで「現状把握 → 次手決定 → 既存フローへ委譲 → 受け入れ照合」のループを回す。goal は新しい制御機構を発明しない。**`patterns/acceptance-gate`（受け入れ基準＝ゴール）と `patterns/autonomous-loop`（`--autonomous` 時の周回駆動）を組むだけ**で成立する。実作業は委譲先（`/rig:dev` 等）と subagent が回す。goal は周回を駆動するだけ（context-minimal）。
 
-> **ループ1周回＝5つの動き**（loop engineering・詳細は `knowledge/loop-engineering`）：**discovery**（②現状把握/③次手）→ **handoff**（④委譲）→ **verification**（⑤照合・**独立検証**）→ **persistence**（run-continuity）→ **scheduling**（⑥周回・`autonomous-loop`）。この層は harness の1つ上＝作業者をループから外す。最も壊れやすいのは verification（自己採点バイアス）。
+> **ループ1周回＝5つの動き**（loop engineering・詳細は wiki `[[loop-engineering]]`＝`goal-driver` persona が `inject:` で自動注入）：**discovery**（②現状把握/③次手）→ **handoff**（④委譲）→ **verification**（⑤照合・**独立検証**）→ **persistence**（run-continuity）→ **scheduling**（⑥周回・`autonomous-loop`）。この層は harness の1つ上＝作業者をループから外す。最も壊れやすいのは verification（自己採点バイアス）。
 
 ## 手順
 

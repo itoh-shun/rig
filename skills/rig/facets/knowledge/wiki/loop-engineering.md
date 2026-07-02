@@ -1,4 +1,13 @@
-# knowledge: loop-engineering
+---
+title: Loop Engineering（自走ループの観点カタログ）
+slug: loop-engineering
+aliases: [loop-design, autonomous-loop-engineering]
+tags: [loop, orchestration, verification]
+domain: dev
+status: canonical
+links: []
+sources: ["skills/rig/patterns/autonomous-loop.md", "skills/rig/facets/policies/independent-verification.md", "skills/rig/recipes/goal-loop.md"]
+---
 
 「自分で回り続けるループ」を設計するときの**観点カタログ**（事実）。判断は `goal-driver` / `orchestrator` が持つ。ここは「ループ1ターンを何に分解するか・どこで事故るか」だけを並べる。
 
