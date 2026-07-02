@@ -159,7 +159,7 @@ rig queue add "rig:import --update <slug>" --backend github --repo owner/repo
 
 ### ⑤ 検証と報告
 
-生成ブリックを `--validate`（rig 本体なら `python3 scripts/validate.py`）で点検し、FAIL を直してから完了報告する：書き込んだパス・lock エントリ・使い方（`/rig:dev --recipe <name>` 等）・上流の再確認方法（`/rig:import --check-updates`）。
+生成ブリックを `--validate`（rig 本体なら `python3 scripts/validate.py`）で点検し、FAIL を直してから完了報告する（manifest `sage_notifications: true` なら報告の先頭に `《告》スキル「<slug>」を獲得しました` を1行付す＝演出のみ・本文不変）：書き込んだパス・lock エントリ・使い方（`/rig:dev --recipe <name>` 等）・上流の再確認方法（`/rig:import --check-updates`）。
 
 ## 原則
 
