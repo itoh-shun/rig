@@ -343,6 +343,120 @@ def check_personas() -> None:
     _emit("PASS", f"personas: {ok}/{len(persona_files)} 件スキーマ OK")
 
 
+# ── commands / agents frontmatter チェック ──────────────────────────────────
+# v0.77（frontmatter YAML 不正で全コマンド未登録）・v0.78（予約名 skill 衝突）の
+# 実バグ class を CI で再発防止する。
+_RESERVED_COMMAND_NAMES = {"skill", "status"}  # 経験的に衝突（skill）/衝突回避で改名済み（status→party）
+
+
+def check_commands() -> None:
+    cmd_dir = ROOT / "commands"
+    if not cmd_dir.is_dir():
+        return
+    ok = 0
+    files = sorted(cmd_dir.glob("*.md"))
+    for path in files:
+        ctx = f"command {path.stem}"
+        fm, raw = parse_frontmatter(path)
+        bad = False
+        if fm is None:
+            _emit("FAIL", f"{ctx} — frontmatter が YAML として読めません（全コマンド未登録バグの再発 class）: {raw[:80]}")
+            continue
+        desc = fm.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            _emit("FAIL", f"{ctx} — description が空または文字列ではありません")
+            bad = True
+        ah = fm.get("argument-hint")
+        if ah is not None and not isinstance(ah, str):
+            _emit("FAIL", f"{ctx} — argument-hint '{ah!r}' は文字列でなければなりません（配列で書くと YAML 崩れの温床）")
+            bad = True
+        if path.stem in _RESERVED_COMMAND_NAMES:
+            _emit("WARN", f"{ctx} — '{path.stem}' は CC 組み込みと衝突した実績のある名前です（skill→forge / status→party の前例）")
+        if not bad:
+            ok += 1
+    _emit("PASS", f"commands: {ok}/{len(files)} 件 frontmatter OK")
+
+
+def check_agents() -> None:
+    if not AGENTS.is_dir():
+        return
+    ok = 0
+    files = sorted(AGENTS.glob("*.md"))
+    for path in files:
+        ctx = f"agent {path.stem}"
+        fm, raw = parse_frontmatter(path)
+        bad = False
+        if fm is None:
+            _emit("FAIL", f"{ctx} — frontmatter が YAML として読めません: {raw[:80]}")
+            continue
+        if fm.get("name") != path.stem:
+            _emit("FAIL", f"{ctx} — name '{fm.get('name')}' がファイル名 '{path.stem}' と不一致（subagent_type 解決が壊れる）")
+            bad = True
+        if not isinstance(fm.get("description"), str) or not fm["description"].strip():
+            _emit("FAIL", f"{ctx} — description が空または未定義です")
+            bad = True
+        if not fm.get("tools"):
+            _emit("WARN", f"{ctx} — tools が未定義（read-only reviewer は Read, Grep, Glob, Bash を明示推奨）")
+        if not bad:
+            ok += 1
+    _emit("PASS", f"agents: {ok}/{len(files)} 件 frontmatter OK")
+
+
+# ── §2 目録ドリフト（validate.md ④ の機械実装）────────────────────────────────
+def _expand_braces(token: str) -> list[str]:
+    """`a/{b,c}-d` → [`a/b-d`, `a/c-d`]（1段のみ・§2 の記法に十分）。"""
+    m = re.search(r"\{([^{}]+)\}", token)
+    if not m:
+        return [token]
+    out = []
+    for part in m.group(1).split(","):
+        out.extend(_expand_braces(token[:m.start()] + part.strip() + token[m.end():]))
+    return out
+
+
+def check_catalog_drift() -> None:
+    """SKILL.md §2 のバッククォート・ブリック参照 → 実ファイル（幽霊エントリ＝FAIL）、
+    実ファイル → SKILL.md 記載（追記漏れ＝WARN）を突き合わせる。"""
+    skill = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
+    s2 = skill[skill.index("## 2."):skill.index("## 3.")]
+
+    base_map = {
+        "facets/": SKILLS / "facets", "recipes/": SKILLS / "recipes",
+        "patterns/": SKILLS / "patterns", "manifests/": SKILLS / "manifests",
+        "agents/": AGENTS, "commands/": ROOT / "commands",
+        "hooks/": ROOT / "hooks", "scripts/": ROOT / "scripts",
+        "web/": ROOT / "web",
+    }
+    ghosts = 0
+    tokens = set()
+    for raw_tok in re.findall(r"`([A-Za-z0-9_{},/.-]+)`", s2):
+        for prefix, base in base_map.items():
+            if raw_tok.startswith(prefix):
+                for tok in _expand_braces(raw_tok):
+                    tokens.add((tok, base / tok[len(prefix):]))
+                break
+    for tok, path in sorted(tokens):
+        if tok.endswith("/"):
+            exists = path.is_dir()
+        else:
+            exists = path.exists() or path.with_suffix(".md").exists()
+        if not exists:
+            _emit("FAIL", f"§2 目録 — `{tok}` が実ファイルに解決できません（幽霊エントリ）")
+            ghosts += 1
+
+    # brace 記法（{a,b}-reviewer 等）で登録されたブリックも展開済みトークンから照合する
+    expanded_stems = {pathlib.Path(tok).stem for tok, _ in tokens}
+    missing = 0
+    for sub in ("recipes", "facets/instructions", "facets/personas"):
+        for f in sorted((SKILLS / sub).rglob("*.md")):
+            if f.stem.startswith("_"):
+                continue
+            if f.stem not in skill and f.stem not in expanded_stems:
+                _emit("WARN", f"§2 目録 — {sub}/{f.relative_to(SKILLS / sub)} が SKILL.md に未記載（pack 追加分への追記漏れ?）")
+                missing += 1
+    _emit("PASS", f"§2 目録ドリフト: 参照 {len(tokens)} 件（幽霊 {ghosts}）／追記漏れ疑い {missing} 件")
+
+
 # ── shipped wiki 衛生チェック（賞味期限含む）──────────────────────────────────
 def check_wiki() -> None:
     """shipped wiki ページの frontmatter 衛生と賞味期限（reviewed_at・180日）を検査する。"""
@@ -481,6 +595,21 @@ def main() -> None:
         check_personas()
     except Exception:
         _emit("FAIL", f"persona スキーマチェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_commands()
+    except Exception:
+        _emit("FAIL", f"commands チェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_agents()
+    except Exception:
+        _emit("FAIL", f"agents チェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_catalog_drift()
+    except Exception:
+        _emit("FAIL", f"§2 目録ドリフトチェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     try:
         check_wiki()
