@@ -44,3 +44,10 @@ $ARGUMENTS
 /rig:loop "毎朝レポートを集計"                                # 自己ペースの定期チョア
 /rig:loop --plan --every 10m --until "デプロイ成功" ...        # 構成だけ先に確認
 ```
+
+## 代表的な合成例
+
+```
+/rig:loop --until "PR #123 が MERGED または CLOSED" "/rig:pr 123"   # PR 常駐（babysit）
+/rig:loop --every 7d "/rig:import --check-updates"                  # skill-dependabot（上流差分の定期検知）
+```

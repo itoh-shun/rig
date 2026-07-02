@@ -36,3 +36,13 @@ $ARGUMENTS
 /rig:pr 1234 --comment       # レビュー結果を PR に投稿（確認の上）
 /rig:pr --plan 1234          # レビュー構成をドライラン確認
 ```
+
+## PR 常駐（babysit — loop との合成）
+
+PR を見張って push のたびに再レビューしたいときは、`/rig:loop` と合成する（新機構は不要＝既存ブリックの組み合わせ）:
+
+```
+/rig:loop --until "PR #123 が MERGED または CLOSED" "/rig:pr 123"
+```
+
+各 tick で PR の新 push・CI 状態を確認し、変化があれば 3-way 再レビュー、なければ skip して次の tick を予約する。停止条件必須（`--until`／`--times`・loop pack の安全規約に従う）。

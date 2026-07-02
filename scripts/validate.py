@@ -343,6 +343,42 @@ def check_personas() -> None:
     _emit("PASS", f"personas: {ok}/{len(persona_files)} 件スキーマ OK")
 
 
+# ── shipped wiki 衛生チェック（賞味期限含む）──────────────────────────────────
+def check_wiki() -> None:
+    """shipped wiki ページの frontmatter 衛生と賞味期限（reviewed_at・180日）を検査する。"""
+    import datetime
+    wiki_dir = FACETS / "knowledge" / "wiki"
+    if not wiki_dir.is_dir():
+        return
+    ok = 0
+    pages = sorted(wiki_dir.glob("*.md"))
+    for path in pages:
+        ctx = f"wiki {path.stem}"
+        fm, raw = parse_frontmatter(path)
+        bad = False
+        if fm is None:
+            _emit("FAIL", f"{ctx} — frontmatter が読めません（YAML エラー: {raw[:80]}）")
+            continue
+        if fm.get("slug") != path.stem:
+            _emit("FAIL", f"{ctx} — slug '{fm.get('slug')}' がファイル名 '{path.stem}' と不一致")
+            bad = True
+        if fm.get("status") not in ("canonical", "draft", "deprecated"):
+            _emit("FAIL", f"{ctx} — status '{fm.get('status')}' は canonical|draft|deprecated でなければなりません")
+            bad = True
+        ra = fm.get("reviewed_at")
+        if ra is not None:
+            try:
+                d = ra if isinstance(ra, datetime.date) else datetime.date.fromisoformat(str(ra))
+                if (datetime.date.today() - d).days > 180:
+                    _emit("WARN", f"{ctx} — reviewed_at が180日超（{d}）: 内容を見直して更新するか deprecated に（知識の賞味期限）")
+            except ValueError:
+                _emit("FAIL", f"{ctx} — reviewed_at '{ra}' が YYYY-MM-DD 形式ではありません")
+                bad = True
+        if not bad:
+            ok += 1
+    _emit("PASS", f"wiki: {ok}/{len(pages)} 件スキーマ OK（shipped tier）")
+
+
 # ── extends 循環参照チェック（#71・DFS）──────────────────────────────────────
 def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
     """A→B→…→A の循環を DFS で検出する（#42 の深さチェックと独立）。
@@ -445,6 +481,11 @@ def main() -> None:
         check_personas()
     except Exception:
         _emit("FAIL", f"persona スキーマチェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_wiki()
+    except Exception:
+        _emit("FAIL", f"wiki 衛生チェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     try:
         check_extends_cycles(recipe_files)

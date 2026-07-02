@@ -14,6 +14,7 @@
 |---|---|
 | project（既定・product 単位） | `<repo>/.claude/rig/personas/<name>.md` |
 | user（`--user`・global） | `~/.claude/rig/personas/<name>.md` |
+| org（`--org`・チーム共有） | `<org_dir>/personas/<name>.md`（manifest `org_dir:`/env `RIG_ORG_HOME`。書き込み後の commit/push はユーザー操作） |
 
 ## 手順
 
