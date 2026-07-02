@@ -216,6 +216,200 @@ def derive_steps_field(steps: list[dict]) -> str:
     return ", ".join(parts)
 
 
+# ── RESOLVE 参照実装フェーズ2（condition 評価・size 判定・スライス・flag 優先順位）──
+# SKILL.md §4.3（flag override）・§4.3.1（--only/--from/--to/--skip）・§4.4（size-aware）の
+# 決定論参照実装。selftest R が golden 検証する。
+
+_SIZE_RANK = {"S": 0, "M": 1, "L": 2, "XL": 3}
+
+# recipe frontmatter キー → 等価フラグ（§4.3 の「キーの解釈」群）
+_KEY_TO_FLAG = {
+    "tdd": "--tdd", "design": "--design", "review": "--review", "visual": "--visual",
+    "adversarial": "--adversarial", "cross_llm": "--cross-llm", "orchestrate": "--orchestrate",
+    "no_orchestrate": "--no-orchestrate", "no_capture": "--no-capture", "capture": "--capture",
+    "no_default_personas": "--no-default-personas",
+}
+
+
+def size_class(diff_lines: int | None, thresholds: dict | None = None) -> str:
+    """diff 増減行数 → size class（§4.4。diff 不明は S 既定）。"""
+    th = {"S_max": 100, "M_max": 200, "L_max": 400}
+    th.update(thresholds or {})
+    if diff_lines is None:
+        return "S"
+    if diff_lines <= th["S_max"]:
+        return "S"
+    if diff_lines <= th["M_max"]:
+        return "M"
+    if diff_lines <= th["L_max"]:
+        return "L"
+    return "XL"
+
+
+def evaluate_condition(cond: str | None, flags: set[str], size: str) -> tuple[bool, str]:
+    """condition 式（例 "--design または size L+"）を評価する（フラグ成分 OR size 成分）。
+
+    どちらの成分も無い・解釈できない condition は常時 OFF（--validate #109 と同じ扱い）。
+    """
+    if not cond:
+        return True, "condition なし"
+    cond_flags = re.findall(r"--[a-z][a-z0-9-]*", cond)
+    hit = sorted(set(cond_flags) & flags)
+    if hit:
+        return True, f"flag 解決（{' '.join(hit)}）"
+    m = re.search(r"size\s*[:：]?\s*([SMLX]+)\+?", cond)
+    if m and m.group(1) in _SIZE_RANK:
+        need = m.group(1)
+        if _SIZE_RANK[size] >= _SIZE_RANK[need]:
+            return True, f"size {need}+ 充足（size {size}）"
+        return False, f"size {need}+ 未満（size {size}）"
+    if cond_flags:
+        return False, f"flag 未指定（{' '.join(sorted(set(cond_flags)))}）"
+    return False, "condition 不正（常時 OFF・#109）"
+
+
+def _levenshtein(a: str, b: str) -> int:
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _suggest(bad: str, ids: list[str]) -> list[str]:
+    cands = sorted((d, i) for i in ids if (d := _levenshtein(bad, i)) <= 2)
+    return [i for _, i in cands[:3]]
+
+
+def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
+                      diff_lines: int | None = None,
+                      thresholds: dict | None = None) -> dict:
+    """RESOLVE の確定結果＝flag override・condition 評価・スライス適用後の実行 step 集合を返す。
+
+    §4.3/§4.3.1/§4.4 の決定論参照実装。errors があれば実行不能（散文エンジンの ERROR 停止と同じ）。
+    """
+    plan = resolve_plan_json(recipe_path)
+    fm = parse_frontmatter(recipe_path)
+    warnings = list(plan["warnings"])
+    errors: list[str] = []
+
+    # ① 有効フラグ集合 ＝ 明示フラグ ∪ recipe キー等価フラグ（§4.3「キーの解釈」）
+    fset = set(flags or [])
+    for key, flg in _KEY_TO_FLAG.items():
+        if fm.get(key) is True:
+            fset.add(flg)
+    if fm.get("autonomy") == "autonomous":
+        fset.add("--autonomous")
+    if fm.get("backend") == "workflow":
+        fset.add("--workflow")
+
+    # ② size 判定（§4.4）と condition 評価
+    size = size_class(diff_lines, thresholds)
+    steps = [dict(s) for s in plan["steps"]]
+    for s in steps:
+        s["active"], s["why"] = evaluate_condition(s.get("condition"), fset, size)
+
+    ids = [s["id"] for s in steps]
+    active_ids = [s["id"] for s in steps if s["active"]]
+
+    # ③ スライス（§4.3.1・condition 評価後のリストに適用）
+    def _slice_val(name: str) -> str | None:
+        lst = flags or []
+        return lst[lst.index(name) + 1] if name in lst and lst.index(name) + 1 < len(lst) else None
+
+    only, frm, to = _slice_val("--only"), _slice_val("--from"), _slice_val("--to")
+    skips = [v for i, v in enumerate(flags or []) if i > 0 and (flags or [])[i - 1] == "--skip"]
+
+    if only and frm:
+        warnings.append("--only と --from の同時指定: --only 優先・--from 無視")
+        frm = None
+    if only and to:
+        warnings.append("--only と --to の同時指定: --only 優先・--to 無視")
+        to = None
+    if only and skips:
+        warnings.append("--only と --skip の同時指定: --only 優先・--skip 無視")
+        skips = []
+
+    def _check_id(sid: str, flag: str) -> bool:
+        if sid in ids:
+            return True
+        sug = _suggest(sid, ids)
+        errors.append(f"{flag} {sid}: step が見つかりません"
+                      + (f"（もしかして: {', '.join(sug)}）" if sug else "")
+                      + f"。実行可能な step-id: {', '.join(ids)}")
+        return False
+
+    for sid, flg in ((only, "--only"), (frm, "--from"), (to, "--to")):
+        if sid:
+            _check_id(sid, flg)
+    if only and only in ids and only not in active_ids:
+        cond = next(s.get("condition") for s in steps if s["id"] == only)
+        errors.append(f"--only {only}: condition (\"{cond}\") が現在 OFF です"
+                      f"（{next(s['why'] for s in steps if s['id'] == only)}）。"
+                      f"有効化フラグを追加してください。")
+    if frm and to and frm in ids and to in ids and ids.index(frm) > ids.index(to):
+        errors.append(f"--from {frm} --to {to}: step 順序が逆です。実行可能な step-id: {', '.join(ids)}")
+
+    for sid in skips:
+        if sid not in ids:
+            _check_id(sid, "--skip")  # 存在しない id は ERROR（ケース A）
+            continue
+        st = next(s for s in steps if s["id"] == sid)
+        if not st["active"]:
+            warnings.append(f"--skip {sid}: {sid} step はすでに condition-OFF です（--skip は不要）")
+        if st.get("gate") == "acceptance-gate":
+            warnings.append(f"--skip {sid}: {sid} step は gate: acceptance-gate を持ちます"
+                            " — 品質収束ループがスキップされます")
+
+    # ④ active/why の確定（スライス > --skip > condition。明示スキップが最終的に勝つ）
+    for s in steps:
+        sid = s["id"]
+        if only:
+            if sid != only:
+                s["active"], s["why"] = False, "slice 範囲外（--only）"
+        else:
+            if frm and frm in ids and ids.index(sid) < ids.index(frm):
+                s["active"], s["why"] = False, "slice 範囲外（--from）"
+            if to and to in ids and ids.index(sid) > ids.index(to):
+                s["active"], s["why"] = False, "slice 範囲外（--to）"
+        if sid in skips:
+            s["active"], s["why"] = False, "[SKIP: --skip flag]"
+
+    # ⑤ モードサマリ（orchestrate は on > off(打ち消し) > auto の優先順・§4.3）
+    auto, auto_why = auto_orchestrate(plan["steps"])
+    if "--orchestrate" in fset:
+        orch = "on"
+    elif "--no-orchestrate" in fset:
+        orch = "off"
+    elif auto:
+        orch = f"auto（{auto_why}）"
+    else:
+        orch = "off"
+    mode = {
+        "autonomy": "autonomous" if "--autonomous" in fset else "interactive",
+        "backend": "workflow" if "--workflow" in fset else "manual",
+        "tdd": "--tdd" in fset,
+        "orchestrate": orch,
+        "capture": "off" if "--no-capture" in fset else ("auto" if "--capture" in fset else "ask"),
+    }
+    if "--capture" in fset and "--no-capture" in fset:
+        warnings.append("--capture と --no-capture の同時指定: --no-capture 優先（§7.3）")
+
+    plan.update({
+        "flags": sorted(fset),
+        "size": {"diff_lines": diff_lines, "class": size},
+        "steps": steps,
+        "effective_steps": [s["id"] for s in steps if s["active"]],
+        "slice": {"only": only, "from": frm, "to": to, "skip": skips},
+        "mode": mode,
+        "warnings": warnings,
+        "errors": errors,
+    })
+    return plan
+
+
 def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
     """recipe を RESOLVE し、--list/--plan 表示の計算フィールドを JSON で返す（決定論）。"""
     fm = parse_frontmatter(recipe_path)
@@ -430,14 +624,30 @@ def render_plan(recipe: str, steps: list[dict]) -> str:
 
 def cmd_plan(args):
     path = resolve_recipe(args[0])
-    plan = resolve_plan_json(path)
+    with_flags: list[str] | None = None
+    diff_lines: int | None = None
+    i = 1
+    while i < len(args):
+        if args[i] == "--with" and i + 1 < len(args):
+            with_flags = shlex.split(args[i + 1]); i += 2
+        elif args[i] == "--diff-lines" and i + 1 < len(args):
+            diff_lines = int(args[i + 1]); i += 2
+        else:
+            i += 1
+    if with_flags is not None or diff_lines is not None:
+        plan = resolve_effective(path, with_flags, diff_lines)
+    else:
+        plan = resolve_plan_json(path)
     if "--json" in args:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return
     print(render_plan(plan["recipe"], plan["steps"]))
-    if plan["warnings"]:
-        for w in plan["warnings"]:
-            print(f"[WARN] {w}")
+    for w in plan.get("warnings", []):
+        print(f"[WARN] {w}")
+    for e in plan.get("errors", []):
+        print(f"[ERROR] {e}")
+    if plan.get("errors"):
+        sys.exit(1)
 
 
 def _state_path(args, default="run-state.json") -> pathlib.Path:
@@ -1576,6 +1786,40 @@ def cmd_selftest(_args):
            q1["badges"], ["tdd", "gated", "orchestrate(auto)", "autonomous"])
     report("Q resolve: 決定論（同入力→同 JSON）",
            json.dumps(q1, sort_keys=True), json.dumps(q2, sort_keys=True))
+    # R: RESOLVE フェーズ2（condition 評価・size 判定・スライス・flag 優先順位）の golden 検証
+    rf = RECIPES / "release-flow.md"
+    r_s = resolve_effective(rf, [], diff_lines=50)                       # size S: design/review OFF
+    r_flag = resolve_effective(rf, ["--design"], diff_lines=50)          # flag が condition を解決
+    r_l = resolve_effective(rf, [], diff_lines=300)                      # size L: design/review ON
+    r_only_off = resolve_effective(rf, ["--only", "review"], diff_lines=50)   # ケース B: condition-OFF
+    r_only_on = resolve_effective(rf, ["--only", "review", "--review"], diff_lines=50)
+    r_range = resolve_effective(rf, ["--from", "implement", "--to", "verify"], diff_lines=50)
+    r_rev = resolve_effective(rf, ["--from", "verify", "--to", "implement"], diff_lines=50)
+    r_skipwin = resolve_effective(rf, ["--design", "--skip", "design"], diff_lines=50)
+    r_onlyskip = resolve_effective(rf, ["--only", "verify", "--skip", "design"], diff_lines=50)
+    r_gate = resolve_effective(rf, ["--skip", "verify"], diff_lines=50)  # acceptance-gate skip WARN
+    r_typo = resolve_effective(rf, ["--only", "verifi"], diff_lines=50)  # ケース A: Levenshtein 候補
+    r_det = (json.dumps(resolve_effective(rf, ["--design"], diff_lines=50), sort_keys=True)
+             == json.dumps(resolve_effective(rf, ["--design"], diff_lines=50), sort_keys=True))
+    report("R size S: design/review は condition-OFF",
+           r_s["effective_steps"], ["intake", "implement", "verify", "pr", "merge"])
+    report("R --design flag が condition を解決",
+           r_flag["effective_steps"], ["intake", "design", "implement", "verify", "pr", "merge"])
+    report("R size L+: design/review が自動 ON",
+           r_l["effective_steps"], ["intake", "design", "implement", "verify", "review", "pr", "merge"])
+    report("R --only condition-OFF step はエラー（ケース B）",
+           any("condition" in e for e in r_only_off["errors"]), True)
+    report("R --only + 有効化フラグで単独実行", r_only_on["effective_steps"], ["review"])
+    report("R --from/--to 範囲スライス", r_range["effective_steps"], ["implement", "verify"])
+    report("R --from/--to 順序逆はエラー", any("順序が逆" in e for e in r_rev["errors"]), True)
+    report("R 明示 --skip が明示 ON に勝つ", "design" not in r_skipwin["effective_steps"], True)
+    report("R --only は --skip を無視して WARN",
+           any("--only 優先・--skip 無視" in w for w in r_onlyskip["warnings"]), True)
+    report("R acceptance-gate step の --skip は WARN",
+           any("acceptance-gate" in w for w in r_gate["warnings"]), True)
+    report("R タイポは Levenshtein 候補つきエラー（ケース A）",
+           any("もしかして: verify" in e for e in r_typo["errors"]), True)
+    report("R resolve_effective は決定論", r_det, True)
     for f in qdir.iterdir():
         f.unlink()
     qdir.rmdir()
