@@ -58,6 +58,25 @@
   some-skill             owner/gone-repo         ? 取得不能（リポジトリ不在/権限）
 ```
 
+### ②''' `--update <slug>`（差分再取り込み — skill の dependabot）
+
+`--check-updates` が「⚠ 上流更新あり」を出したエントリを、**最小デルタ**で追随させる：
+
+1. **3-way 取得** — lock の `sourceRef`（取り込み時の commit SHA）で**上流の旧版**を、現在の HEAD で**上流の新版**を取得し、`旧→新` の diff を要約する（subagent・context-minimal）。`sourceRef` が無い旧エントリは 2-way（新版 vs こちらの `importedAs` ブリック）にフォールバックし、次回のために `sourceRef` を記録する。
+2. **デルタ提案** — 上流の変更が、こちらの翻訳ブリック（`importedAs`）のどこに影響するかを対応づけ、**最小の更新デルタ**を提案する（上流の変更が翻訳に無関係＝観点非変更なら「lock のハッシュ更新のみ」でよい）。
+3. **import-gate（③''）を再通過** — 更新後ブリックも試用試験に合格してから確定。
+4. **確認 → lock 更新** — 承認後に `computedHash`・`sourceRef`・`importedAt` を更新する。**自動追随はしない**（このコマンド自体が人の起動＝提案と確認を挟む）。
+
+**定期運用（skill-dependabot）** — 既存ブリックの組み合わせで回す：
+
+```
+/rig:loop --every 7d "/rig:import --check-updates"        # 週次で上流差分を検知
+# 更新ありを backlog に積む（チーム共有なら github backend で Issue 化）：
+rig queue add "rig:import --update <slug>" --backend github --repo owner/repo
+```
+
+検知（loop）→ 積む（queue）→ 直す（--update・gate つき）が全部 rig の既存機構で閉じる。
+
 ### ③' `--all`（一括取り込み）
 
 走査で見つかった候補全件について、②の判断（委譲/翻訳/知識のみ/取り込まない）を**各 skill ごとに subagent で並行実施**し、結果を**判断サマリ一覧**として1つの表で提示する：
@@ -112,6 +131,7 @@
       "computedHash": "<取り込み時点の上流内容の SHA-256>",
       "importedAs": ["facets/instructions/<name>.md", "recipes/<name>.md"],
       "importedAt": "<YYYY-MM-DD>",
+      "sourceRef": "<取り込み時の上流 commit SHA（--update の 3-way 比較基準）>",
       "mode": "delegate|translate|knowledge"
     }
   }

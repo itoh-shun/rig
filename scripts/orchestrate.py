@@ -1546,6 +1546,21 @@ def cmd_runs(args):
         print(f"  {name:20s} {a['n']:5d} {a['done'] / a['n'] * 100:6.0f}% "
               f"{a['retries'] / a['n']:9.1f} {a['esc']:4d}")
 
+    # ギャップ処方箋: 同一 (recipe, step) で2回以上エスカレーションしていたら能力調達を提案する
+    # （テレメトリ → /rig:import --discover / /rig:harness への接続＝自己補完ループの入口）
+    gaps: dict[tuple, int] = {}
+    for r in rows:
+        esc_at = r.get("escalated_at")
+        if esc_at:
+            gaps[(r.get("recipe", "?"), esc_at)] = gaps.get((r.get("recipe", "?"), esc_at), 0) + 1
+    hot = {k: v for k, v in gaps.items() if v >= 2}
+    if hot:
+        print("\n## ギャップ処方箋（同一 step でのエスカレーション反復）\n")
+        for (rcp, sid), n in sorted(hot.items(), key=lambda kv: -kv[1]):
+            print(f"  {rcp} / {sid}: エスカレーション {n} 回 — 能力調達を検討:"
+                  f" /rig:import --discover \"{sid} を強くする skill\""
+                  f" ／ 棚卸しは /rig:harness")
+
 
 def cmd_probe(args):
     """プロバイダを1回叩いて、実際のコマンド・出力・契約パースの可否を表示する。
@@ -1877,6 +1892,24 @@ def cmd_selftest(_args):
            r_s_orch["mode"]["orchestrate"].startswith("auto"), True)
     report("S git_diff_lines は crash せず int|None", isinstance(git_diff_lines(), (int, type(None))), True)
     report("S load_manifest は常に dict", isinstance(load_manifest(), dict), True)
+    # T: ギャップ処方箋（同一 step のエスカレーション反復 → --discover 提案）
+    import io, contextlib
+    RUNS_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_runs_gap_selftest.jsonl"
+    RUNS_PATH.unlink(missing_ok=True)
+    with RUNS_PATH.open("w", encoding="utf-8") as f:
+        for esc in ("verify", "verify", None):
+            f.write(json.dumps({"ts": "t", "recipe": "release-flow", "backend": "orchestrate",
+                                "final": "ESCALATE" if esc else "DONE", "steps_total": 1,
+                                "steps_passed": 0 if esc else 1, "retries": 2 if esc else 0,
+                                "escalated_at": esc, "steps": []}) + "\n")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cmd_runs([])
+    t_out = buf.getvalue()
+    RUNS_PATH.unlink(missing_ok=True)
+    RUNS_PATH = _orig_runs
+    report("T gap: エスカレーション2回で処方箋を提示", "ギャップ処方箋" in t_out and "--discover" in t_out, True)
+    report("T gap: 対象 step を特定", "release-flow / verify: エスカレーション 2 回" in t_out, True)
     for f in qdir.iterdir():
         f.unlink()
     qdir.rmdir()
