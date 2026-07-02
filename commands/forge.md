@@ -1,9 +1,9 @@
 ---
-description: "rig/skill — 説明文から rig のブリック/パック（recipe・instruction・persona・output-contract・command）を自作して検証・保存する自己拡張メタ能力。「こういうフロー/レビュー観点/モードが欲しい」→ rig 規約で生成し validate まで。engine 不変・pack 上乗せ。"
+description: "rig/forge — 説明文から rig のブリック/パック（recipe・instruction・persona・output-contract・command）を自作して検証・保存する自己拡張メタ能力。「こういうフロー/レビュー観点/モードが欲しい」→ rig 規約で生成し validate まで。engine 不変・pack 上乗せ。"
 argument-hint: "[\"<欲しい機能の説明>\"] [--type recipe|persona|knowledge|pack] [--name <id>] [--user]"
 ---
 
-# rig/skill — スキル自作（writing-skills） 🧱✨
+# rig/forge — スキル自作（writing-skills） 🧱✨
 
 **まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・§3.5 recipe スキーマ・§5 tier 解決・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-author` にある（重複定義しない）。
 
@@ -34,10 +34,10 @@ rig が**自分自身を拡張する**。説明文を受け取り、必要なブ
 ## 例
 
 ```
-/rig:skill "コミットメッセージを規約準拠に直すフロー"            # 新フロー(recipe)を生成
-/rig:skill --type pack "短歌を5観点で評価するモード"            # pack 一式を生成
-/rig:skill "アクセシビリティ専門のレビュアー"                   # → /rig:persona へ委譲
-/rig:skill --user "個人用のリリース前チェックリスト"            # user 層に保存
+/rig:forge "コミットメッセージを規約準拠に直すフロー"            # 新フロー(recipe)を生成
+/rig:forge --type pack "短歌を5観点で評価するモード"            # pack 一式を生成
+/rig:forge "アクセシビリティ専門のレビュアー"                   # → /rig:persona へ委譲
+/rig:forge --user "個人用のリリース前チェックリスト"            # user 層に保存
 ```
 
 生成した brick は project/user なら `--list` / `/rig:catalog` に出る。`/rig:dev --recipe <name>` 等で即使える。
