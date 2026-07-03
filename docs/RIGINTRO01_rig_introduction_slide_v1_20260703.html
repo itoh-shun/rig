@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RIG-INTRO-01｜rig 紹介スライド — 用語がわかれば rig がわかる</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   RIG-INTRO-01 スライド版 — STYLE-02 v1.5 のトークンを継承
+   スライド規則：濃色背景の全面禁止（v1.4）＝ライトトーンで統一
+   ============================================================ */
+:root {
+  --paper: #FAF6EE;
+  --paper-tint: #F2EBD9;
+  --ink: #1A1814;
+  --ink-soft: #4A4640;
+  --ink-mute: #8A8278;
+  --rule: #D9D1BF;
+  --accent: #C8341F;
+  --must: #B22F1A;   --must-bg: #FBE6E1;
+  --should: #B57500; --should-bg: #FBEFD0;
+  --could: #1F4A8C;  --could-bg: #DDE7F4;
+  --tint-a: #FBF1EA;
+  --tint-b: #EEF3F0;
+  --font-sans: 'IBM Plex Sans JP', 'Noto Sans JP', "Hiragino Kaku Gothic ProN",
+               "Yu Gothic", "Meiryo", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-font-smoothing: antialiased; }
+body { background: #E9E2D2; color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 1.6; letter-spacing: 0.01em; }
+
+.deck { max-width: 1240px; margin: 0 auto; padding: 32px 16px 96px; }
+
+/* ---- スライド1枚 ---- */
+.slide {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  box-shadow: 0 2px 10px rgba(26,24,20,0.07);
+  margin: 0 auto 28px;
+  padding: 40px 52px 56px;
+  min-height: 640px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.slide .kicker { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-mute); margin-bottom: 6px; }
+.slide h2.stitle { font-weight: 700; font-size: 30px; line-height: 1.25; margin-bottom: 6px; letter-spacing: -0.005em; }
+.slide h2.stitle .snum { color: var(--accent); font-feature-settings: "tnum"; margin-right: 10px; }
+.slide .ssub { font-size: 15px; color: var(--ink-soft); margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--rule); }
+.slide .body { flex: 1; }
+.slide .pagefoot { position: absolute; left: 52px; right: 52px; bottom: 18px; display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute); }
+
+/* ---- 中身の部品 ---- */
+p { margin-bottom: 12px; }
+ul, ol { margin: 0 0 12px 1.35em; }
+li { margin-bottom: 5px; line-height: 1.6; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; background: var(--paper-tint); padding: 1px 5px; }
+b { color: var(--ink); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
+th { background: var(--paper-tint); color: var(--ink); font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--ink); }
+td { padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.55; }
+td.term { background: var(--paper-tint); font-weight: 600; white-space: nowrap; }
+td.kit { color: var(--ink-soft); }
+
+.callout { border-left: 4px solid var(--accent); background: var(--paper-tint); padding: 12px 18px; margin-bottom: 12px; font-size: 14px; }
+.callout.should { border-left-color: var(--should); background: var(--should-bg); }
+.callout.could { border-left-color: var(--could); background: var(--could-bg); }
+
+.hero-title { font-size: 54px; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; margin: 8px 0 18px; }
+.hero-title .accent { color: var(--accent); }
+.hero-lede { font-size: 19px; color: var(--ink-soft); line-height: 1.8; max-width: 860px; }
+
+.bigline { border: 1.5px solid var(--ink); background: #fff; padding: 16px 22px; margin: 14px 0 18px; font-size: 19px; font-weight: 600; line-height: 1.7; }
+.bigline .q { color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 600; margin-right: 10px; }
+
+.twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px; }
+.threecol { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.panel { border: 1px solid var(--rule); background: #fff; padding: 16px 18px; }
+.panel h4 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.panel h4 .tag-mini { font-family: var(--font-mono); font-size: 10px; color: var(--accent); letter-spacing: .08em; margin-right: 6px; }
+.panel ul { margin-left: 1.2em; margin-bottom: 0; }
+.panel li { font-size: 13px; color: var(--ink-soft); }
+.panel.tinted { background: var(--paper-tint); }
+
+.fig-wrap { border: 1px solid var(--rule); background: #fff; padding: 12px; margin-bottom: 8px; overflow-x: auto; }
+.fig-cap { font-size: 12px; color: var(--ink-mute); margin-bottom: 10px; }
+
+.metaphor { display: inline-block; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; color: var(--should); border: 1px solid var(--should); background: var(--should-bg); padding: 1px 8px; margin-right: 6px; }
+
+/* ---- 印刷：1スライド=1ページ・ライト ---- */
+@media print {
+  body { background: #fff; }
+  .deck { max-width: none; padding: 0; }
+  .slide { box-shadow: none; border: none; margin: 0; min-height: auto; page-break-after: always; padding: 12mm 14mm; }
+  .slide:last-child { page-break-after: auto; }
+}
+@media (max-width: 900px) {
+  .slide { padding: 24px 20px 48px; min-height: auto; }
+  .slide .pagefoot { left: 20px; right: 20px; }
+  .twocol, .threecol { grid-template-columns: 1fr; }
+  .hero-title { font-size: 34px; }
+  table { font-size: 12px; }
+  td.term { white-space: normal; }
+}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<!-- ============ S1 タイトル ============ -->
+<section class="slide">
+  <div class="body" style="display:flex;flex-direction:column;justify-content:center;">
+    <div class="kicker">RIG-INTRO-01 v1 ／ 2026-07-03 ／ STYLE v1.5（スライド版・ライトトーン）</div>
+    <div class="hero-title"><span class="accent">rig</span> — タスクごとに<br>「足場」を組み替える開発ハーネス・コンポーザ</div>
+    <p class="hero-lede">
+      固定のワークフローを1本持つのではなく、<b>部品（ブリック）をその場で組み合わせて、タスク専用のエージェント・ハーネスを毎回組み上げる</b> Claude Code プラグイン。<br>
+      本スライドは「rig の用語がわかりにくい」を解消することを目的に、<b>用語辞典（一文定義＋たとえ）を中核</b>に据えて rig を紹介する。
+    </p>
+    <p style="font-family:var(--font-mono);font-size:12px;color:var(--ink-mute);margin-top:18px;">github.com/itoh-shun/rig ／ 正本：README.ja.md・skills/rig/SKILL.md</p>
+  </div>
+  <div class="pagefoot"><span>rig introduction</span><span>1 / 14</span></div>
+</section>
+
+<!-- ============ S2 rigとは ============ -->
+<section class="slide">
+  <div class="kicker">What is rig</div>
+  <h2 class="stitle"><span class="snum">02</span>rig とは何か——1行と、その背景</h2>
+  <div class="ssub">「素の AI エージェント」の弱点から出発する</div>
+  <div class="body">
+    <div class="bigline"><span class="q">DEF</span>rig ＝ ブリック（部品）を起動時に動的に組み合わせ、タスクに最適化されたエージェント・ハーネスを engineering する、レゴ式ハーネス・コンポーザ。</div>
+    <div class="twocol">
+      <div class="panel">
+        <h4>課題：AI に任せると、毎回ばらつく</h4>
+        <ul>
+          <li>同じ依頼でも、日によって進め方・品質・確認の深さが変わる</li>
+          <li>レビュー観点が抜ける・自分の仕事を自分で「OK」と甘く判定する</li>
+          <li>タスクの種類（実装／レビュー／ホットフィックス／設計）ごとに最適な進め方は違うのに、道具は1本の固定フローになりがち</li>
+        </ul>
+      </div>
+      <div class="panel tinted">
+        <h4>rig の答え：組み替える。そして出口で締める</h4>
+        <ul>
+          <li><b>組み替える</b>——タスクを読んで、必要な部品（観点・手順・型・ルール）だけをその場で合成する。3-Stage フルフロー（intake→design→implement→verify→review→pr→merge）も「数あるレシピの1つ」にすぎない</li>
+          <li><b>出口で締める</b>——実行の経路は揺れてよい。代わりに<b>受け入れゲート（acceptance-gate）</b>が毎回同じ基準で出口を締め、同じ品質へ収束させる</li>
+          <li>重い DSL・外部依存なし。Claude Code ネイティブ（command＋skill＋agents）</li>
+        </ul>
+      </div>
+    </div>
+    <p style="font-size:13.5px;color:var(--ink-soft);">名前の由来は「rig up ＝（船や舞台の）艤装・仕掛けを組むこと」。モデル（頭脳）は変えられないが、<b>その周りに組む足場は設計できる</b>——という Agent = Model + Harness の考え方を、そのまま道具にしたもの。</p>
+  </div>
+  <div class="pagefoot"><span>rig introduction</span><span>2 / 14</span></div>
+</section>
+
+<!-- ============ S3 中心思想 ============ -->
+<section class="slide">
+  <div class="kicker">Core idea</div>
+  <h2 class="stitle"><span class="snum">03</span>中心思想：determinism-by-gate</h2>
+  <div class="ssub">「非決定的な実行」を「決定的なゲート」で挟む——rig の品質保証の核</div>
+  <div class="body">
+    <div class="fig-wrap">
+    <svg viewBox="0 0 1100 240" width="100%" role="img" aria-label="determinism-by-gateの図。非決定的なエージェント実行を、決定的な受け入れゲートで挟み、REJECTなら差し戻し、PASSなら次工程へ。">
+      <g font-family="'IBM Plex Sans JP',sans-serif">
+        <rect x="30" y="70" width="250" height="100" fill="#F2EBD9" stroke="#D9D1BF"/>
+        <text x="55" y="110" fill="#1A1814" font-size="16" font-weight="700">エージェント実行</text>
+        <text x="55" y="134" fill="#4A4640" font-size="12.5">経路・書き方は毎回揺れる</text>
+        <text x="55" y="152" fill="#8A8278" font-size="11">（非決定的＝縛らない）</text>
+        <line x1="280" y1="120" x2="380" y2="120" stroke="#4A4640" stroke-width="1.5"/>
+        <polygon points="380,120 370,115 370,125" fill="#4A4640"/>
+        <rect x="382" y="50" width="290" height="140" fill="#FBE6E1" stroke="#B22F1A" stroke-width="1.5"/>
+        <text x="407" y="88" fill="#B22F1A" font-size="16" font-weight="700">受け入れゲート</text>
+        <text x="407" y="112" fill="#4A4640" font-size="12.5">合格基準は事前に固定・毎回同じ</text>
+        <text x="407" y="130" fill="#4A4640" font-size="12.5">（決定的：テスト・観点・契約で判定）</text>
+        <text x="407" y="154" fill="#8A8278" font-size="11">patterns/acceptance-gate ・ review-gate</text>
+        <line x1="672" y1="100" x2="790" y2="100" stroke="#2B5D4F" stroke-width="1.5"/>
+        <polygon points="790,100 780,95 780,105" fill="#2B5D4F"/>
+        <text x="700" y="90" fill="#2B5D4F" font-size="12.5" font-weight="600">PASS</text>
+        <rect x="792" y="66" width="270" height="70" fill="#EEF3F0" stroke="#D9D1BF"/>
+        <text x="815" y="96" fill="#1A1814" font-size="15" font-weight="700">次の工程へ／完了</text>
+        <text x="815" y="118" fill="#4A4640" font-size="12">毎回、同じ品質水準に収束する</text>
+        <path d="M 527 190 L 527 214 L 155 214 L 155 172" stroke="#B57500" stroke-width="1.5" fill="none"/>
+        <polygon points="155,172 150,182 160,182" fill="#B57500"/>
+        <text x="330" y="208" fill="#B57500" font-size="12.5" font-weight="600">REJECT → 差し戻し（上限 K 回・超えたら人へエスカレーション）</text>
+      </g>
+    </svg>
+    </div>
+    <div class="fig-cap">図：determinism-by-gate。モデルの自由（裁量）は残し、出口の基準だけを決定的に固定する。</div>
+    <div class="twocol">
+      <div class="callout" style="margin-bottom:0;"><b>縛らない、でも通さない。</b>モデルをルールで縛るほど賢さは死ぬ。rig は実行を縛らず、<b>「何をもって合格か」だけを機械が判定できる形で固定</b>する。差し戻し回数に上限（K 回）を置き、超えたら人へエスカレーション——無限ループも防ぐ。</div>
+      <div class="callout should" style="margin-bottom:0;"><b>採点者 ≠ 生成者。</b>作った本人に自分の仕事を採点させない。レビューは<b>独立した別エージェント</b>（read-only・専用コンテキスト）が行い、さらに反証者（finding-verifier）が指摘の側もチェックする（S9）。</div>
+    </div>
+  </div>
+  <div class="pagefoot"><span>rig introduction</span><span>3 / 14</span></div>
+</section>
+
+<!-- ============ S4 用語の見取り図 ============ -->
+<section class="slide">
+  <div class="kicker">Vocabulary map</div>
+  <h2 class="stitle"><span class="snum">04</span>用語の見取り図——3グループに分ければ迷わない</h2>
+  <div class="ssub">rig の用語は多いが、役割は「部品」「組み立て」「実行と品質」の3つしかない</div>
+  <div class="body">
+    <div class="fig-wrap">
+    <svg viewBox="0 0 1100 300" width="100%" role="img" aria-label="用語の見取り図。部品（ブリック）→組み立て（recipe/pack/manifest）→実行と品質（PARSE-RUN、ゲート）の3グループ。">
+      <g font-family="'IBM Plex Sans JP',sans-serif">
+        <rect x="20" y="30" width="330" height="240" fill="#FBF1EA" stroke="#D9D1BF"/>
+        <text x="40" y="62" fill="#8A6D2E" font-size="16" font-weight="700">① 部品＝ブリック</text>
+        <text x="40" y="82" fill="#8A8278" font-size="11.5">個々のレゴブロック（→ S5）</text>
+        <text x="40" y="112" fill="#4A4640" font-size="13">・facet（persona／instruction／</text>
+        <text x="52" y="132" fill="#4A4640" font-size="13">policy／knowledge・wiki／契約）</text>
+        <text x="40" y="156" fill="#4A4640" font-size="13">・agent（独立レビュアー）</text>
+        <text x="40" y="180" fill="#4A4640" font-size="13">・pattern（進め方の型）</text>
+        <text x="40" y="204" fill="#4A4640" font-size="13">・step（工程の単位）</text>
+        <line x1="350" y1="150" x2="400" y2="150" stroke="#4A4640" stroke-width="1.5"/>
+        <polygon points="400,150 390,145 390,155" fill="#4A4640"/>
+        <rect x="402" y="30" width="330" height="240" fill="#EEF3F0" stroke="#D9D1BF"/>
+        <text x="422" y="62" fill="#2A5A7C" font-size="16" font-weight="700">② 組み立て</text>
+        <text x="422" y="82" fill="#8A8278" font-size="11.5">部品を束ねて再利用する（→ S6）</text>
+        <text x="422" y="112" fill="#4A4640" font-size="13">・recipe（工程＋部品の固定セット）</text>
+        <text x="422" y="136" fill="#4A4640" font-size="13">・pack（ドメイン拡張の部品群）</text>
+        <text x="422" y="160" fill="#4A4640" font-size="13">・manifest（プロジェクトの方針）</text>
+        <text x="422" y="184" fill="#4A4640" font-size="13">・tier／overlay（3層の置き場）</text>
+        <line x1="732" y1="150" x2="782" y2="150" stroke="#4A4640" stroke-width="1.5"/>
+        <polygon points="782,150 772,145 772,155" fill="#4A4640"/>
+        <rect x="784" y="30" width="296" height="240" fill="#DDE7F4" stroke="#D9D1BF"/>
+        <text x="804" y="62" fill="#1F4A8C" font-size="16" font-weight="700">③ 実行と品質</text>
+        <text x="804" y="82" fill="#8A8278" font-size="11.5">組んだ足場で回し、締める（→ S7〜S9）</text>
+        <text x="804" y="112" fill="#4A4640" font-size="13">・PARSE→RESOLVE→COMPOSE→RUN</text>
+        <text x="804" y="136" fill="#4A4640" font-size="13">・acceptance-gate／review-gate</text>
+        <text x="804" y="160" fill="#4A4640" font-size="13">・fan-out／finding-verifier</text>
+        <text x="804" y="184" fill="#4A4640" font-size="13">・orchestrate（決定論ランナー）</text>
+        <text x="804" y="208" fill="#4A4640" font-size="13">・telemetry／drill／capture</text>
+      </g>
+    </svg>
+    </div>
+    <div class="callout should"><b>たとえは「厨房」で統一する：</b>以降の用語辞典では、rig を<b>レストランの厨房</b>にたとえる。<b>recipe はそのまま「レシピ」、step は「工程」、persona は「観点の違う味見役」、acceptance-gate は「お客に出せる皿の検品基準」</b>——という対応。たとえは位置づけを掴むための補助線であり、正確な定義は各表の左側で確認する。</div>
+  </div>
+  <div class="pagefoot"><span>rig introduction</span><span>4 / 14</span></div>
+</section>
+
+<!-- ============ S5 用語辞典① ============ -->
+<section class="slide">
+  <div class="kicker">Glossary 1/3</div>
+  <h2 class="stitle"><span class="snum">05</span>用語辞典① 部品——「ブリック」の中身</h2>
+  <div class="ssub">ブリック＝rig を構成するレゴブロックの総称。その主な種類が以下</div>
+  <div class="body">
+    <table>
+      <thead><tr><th style="width:17%;">用語</th><th style="width:46%;">ひとことで（正確な定義）</th><th>厨房でいうと</th></tr></thead>
+      <tbody>
+        <tr><td class="term">ブリック（brick）</td><td>rig を構成する部品の総称。足したり外したりして足場を組む。エンジン本体は変えず、ブリックを追加するだけで新しいフローが乗る</td><td class="kit">食材・道具・レシピカードなど、厨房にある「組み合わせ可能なもの」全部</td></tr>
+        <tr><td class="term">facet（ファセット）</td><td>作業担当のエージェントに渡すプロンプトへ<b>合成される「面」</b>。下の persona／instruction／policy／knowledge／output-contract は全部 facet の種類</td><td class="kit">調理担当に渡す指示書の「記入欄」——役割欄・手順欄・禁止事項欄・参考資料欄・盛り付け見本欄</td></tr>
+        <tr><td class="term">persona（ペルソナ）</td><td>レビュアーなどの<b>人格・観点</b>の定義。「セキュリティ観点」「テスト観点」など、何をどう見るかを1枚に固めたもの。<code>/rig:persona</code> で自作もできる</td><td class="kit">観点の違う味見役——塩加減担当・アレルギー担当・盛り付け担当。増やせば見落としが減る</td></tr>
+        <tr><td class="term">agent（エージェント）</td><td>persona の<b>独立実行版</b>。専用のコンテキストとツール制限（read-only）つきで起動される native のレビュアー。あれば agent 優先、なければ persona で代用</td><td class="kit">外部から呼ぶ覆面の試食審査員。厨房の事情（実装の経緯）を知らずに皿だけを見る</td></tr>
+        <tr><td class="term">instruction</td><td><b>手順書</b>。ただし厚い手順を抱え込まず、既存の skill／command／agent へ「薄く委譲」する routing が原則</td><td class="kit">工程カード。「ソースは3番レシピ参照」のように、詳細は正本へ飛ばす</td></tr>
+        <tr><td class="term">policy（ポリシー）</td><td>プロンプト末尾に注入される<b>ガードレール</b>（例：PR 衛生・push 前レビュー・CI コスト配慮）</td><td class="kit">壁に貼った「揚げ物は二度確認」の類の掟。どの料理にも最後に効く</td></tr>
+        <tr><td class="term">knowledge／wiki</td><td><b>知識ページ</b>。1概念＝1正準ページの LLM-wiki（出典・確認日必須）として持ち、persona には事実を埋め込まず <code>inject: [[ページ名]]</code> で参照させる＝知識を暗黙知にしない</td><td class="kit">厨房の共有レシピブック。各自の頭の中でなく、棚の正本を全員が参照する</td></tr>
+        <tr><td class="term">output-contract</td><td><b>出力の契約</b>。レビュー結果などを機械が確実に読み取れる固定フォーマットで返させる定義（例：review-verdict）</td><td class="kit">検品票の様式。自由作文でなく、合否・理由・必須条件を決まった欄に書かせる</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：SKILL.md §2 ブリック目録</span><span>5 / 14</span></div>
+</section>
+
+<!-- ============ S6 用語辞典② ============ -->
+<section class="slide">
+  <div class="kicker">Glossary 2/3</div>
+  <h2 class="stitle"><span class="snum">06</span>用語辞典② 組み立て——部品を束ねて再利用する</h2>
+  <div class="ssub">1回組んだ足場は、名前をつけて何度でも使い回せる</div>
+  <div class="body">
+    <table>
+      <thead><tr><th style="width:17%;">用語</th><th style="width:46%;">ひとことで（正確な定義）</th><th>厨房でいうと</th></tr></thead>
+      <tbody>
+        <tr><td class="term">step（ステップ）</td><td><b>フローの工程単位</b>。intake（受付）／design（設計）／implement（実装）／verify（検証）／review（レビュー）／pr／merge など</td><td class="kit">下ごしらえ→調理→味見→盛り付け→提供、の各工程</td></tr>
+        <tr><td class="term">pattern（パターン）</td><td>step を<b>どう回すかの制御テンプレ</b>。並列に撒く（parallel-fanout）・直列（serial）・検品を挟む（review-gate／acceptance-gate)・自律ループ（autonomous-loop）など</td><td class="kit">段取りの型。「3品同時進行」「1品ずつ」「必ず検品を挟む」</td></tr>
+        <tr><td class="term">recipe（レシピ）</td><td><b>step＋pattern＋facet を固定したテンプレのワークフロー</b>。release-flow・review-only・hotfix など。<code>extends</code> で親レシピを継承、<code>checks:</code>（lint／test 等の機械検証）や <code>needs:</code>（工程間の依存）も書ける。<code>--save-recipe</code> で今回の合成を保存できる</td><td class="kit">文字どおりレシピ。「コース仕立て」「まかない速攻版」を名前で呼び出す</td></tr>
+        <tr><td class="term">pack（パック）</td><td>エンジンを一切変えずに<b>ブリック一式を上乗せするドメイン拡張</b>。sales（営業）／goal（ゴール駆動）／magi（3賢者合議）／design（UI/UX）など。「engine 不変・ブリック追加のみ」が原則</td><td class="kit">メニュージャンルの追加。和食パックを足しても厨房の設備は同じ</td></tr>
+        <tr><td class="term">manifest（マニフェスト）</td><td><b>プロジェクトごとの方針・既定値</b>を書くファイル（<code>.claude/rig.md</code>）。常時投入するレビュアー（default_personas）・常時カッチリ実行（default_orchestrate）などを固定する。<code>/rig:init</code> が雛形を生成</td><td class="kit">店の方針ノート。「うちは必ずアレルギー確認」「検品は毎回機械式」</td></tr>
+        <tr><td class="term">tier（ティア）／overlay</td><td>ブリックの<b>置き場の3層</b>：shipped（rig 同梱）→ user（自分の全プロジェクト共通）→ project（このリポジトリ専用）。<b>近い層が勝つ</b>解決順（project→user→shipped）で、同名 recipe はプロジェクト側が上書き（overlay）できる</td><td class="kit">チェーン共通レシピ＜自分の定番＜この店のアレンジ。近い方が優先</td></tr>
+      </tbody>
+    </table>
+    <div class="callout" style="font-size:13px;"><b>覚え方：</b>facet／pattern／step が「素材と段取り」、recipe がそれを束ねた「一皿の作り方」、pack が「ジャンル一式」、manifest／tier が「店ごとの流儀と置き場」。</div>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：SKILL.md §2・§3.5・§4</span><span>6 / 14</span></div>
+</section>
+
+<!-- ============ S7 用語辞典③ ============ -->
+<section class="slide">
+  <div class="kicker">Glossary 3/3</div>
+  <h2 class="stitle"><span class="snum">07</span>用語辞典③ 実行と品質——回し方・締め方の言葉</h2>
+  <div class="ssub">ここが rig の独自色。「非決定を決定で挟む」ための語彙</div>
+  <div class="body">
+    <table>
+      <thead><tr><th style="width:20%;">用語</th><th style="width:44%;">ひとことで（正確な定義）</th><th>厨房でいうと</th></tr></thead>
+      <tbody>
+        <tr><td class="term">PARSE → RESOLVE →<br>COMPOSE → RUN</td><td>エンジンの4段。<b>読む→選ぶ→組む→回す</b>（詳細は次スライド）</td><td class="kit">注文を聞く→レシピと材料を決める→調理台を整える→調理する</td></tr>
+        <tr><td class="term">acceptance-gate</td><td><b>受け入れゲート</b>。step の出口に置く決定的な合格判定。REJECT なら差し戻し、K 回超えたら人へエスカレーション（determinism-by-gate の実体）</td><td class="kit">お客に出せる皿の検品基準。基準未満は作り直し、揉めたら店長を呼ぶ</td></tr>
+        <tr><td class="term">fan-out（ファンアウト）</td><td>レビューを<b>複数の観点へ並列に撒く</b>こと。既定は 3-way（security／design／test）、選択投入や <code>--persona</code> で増やせる（全11枠＋）</td><td class="kit">1皿を味見役3人に同時に回す。観点が違うから見落としが重ならない</td></tr>
+        <tr><td class="term">finding-verifier<br>（反証者）</td><td>レビュアーの<b>指摘の側を検証する</b>独立エージェント。証拠つきで反証された指摘（REFUTED）はゲートに通さない＝誤検出（false-positive）の最終制御</td><td class="kit">「その指摘、本当？」を確かめる二次検品。味見役の言いがかりを弾く</td></tr>
+        <tr><td class="term">orchestrate<br>（計算的オーケストレーション）</td><td>工程の遷移・ゲート判定・リトライ・停止・状態保持を、散文（LLM の判断）でなく<b>コード（決定論ランナー <code>orchestrate.py</code>）に強制させる</b>実行モード。<code>--orchestrate</code> 明示のほか、recipe に <code>checks:</code>／<code>needs:</code> があれば自動 ON</td><td class="kit">人の勘でなく、キッチンタイマーとチェックリスト装置が工程を進める</td></tr>
+        <tr><td class="term">context-minimal</td><td>RUN の絶対条件。各担当には<b>必要最小の文脈だけ</b>を渡す（全部盛りは精度もコストも悪化させる）</td><td class="kit">担当者には担当の分の指示だけ渡す。厨房全体の事情は背負わせない</td></tr>
+        <tr><td class="term">run-continuity</td><td>質疑や脱線・コンテキスト自動圧縮を挟んでも rig の駆動が切れないための仕組み（毎ターンの状態ヘッダ再掲・再アンカー・PreCompact フック）</td><td class="kit">中断後も「今どの注文のどの工程か」を必ず声に出してから再開する</td></tr>
+        <tr><td class="term">capture（捕捉）</td><td>RUN 後に得た学び（AI の癖・落とし穴・決定）を<b>承認つきで知識層に書き溜める</b>学習サイクル。サイレント書き込みは禁止</td><td class="kit">まかないノート。今日の失敗と対策を残し、次の営業に効かせる</td></tr>
+        <tr><td class="term">telemetry／drill</td><td>全実行の記録（<code>.rig/runs.jsonl</code>）と、<b>レビュアー検出率の実測</b>（既知のバグの種を注入して検出／見逃し／誤検出を採点＝<code>/rig:drill</code>）</td><td class="kit">営業日報と、覆面調査（わざと異物を混ぜて検品が見つけるか試す）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：SKILL.md §5〜§7・patterns/</span><span>7 / 14</span></div>
+</section>
+
+<!-- ============ S8 エンジン4段 ============ -->
+<section class="slide">
+  <div class="kicker">Engine</div>
+  <h2 class="stitle"><span class="snum">08</span>エンジンの4段：PARSE → RESOLVE → COMPOSE → RUN</h2>
+  <div class="ssub">どのコマンドで呼んでも、内側ではこの4段が動いている</div>
+  <div class="body">
+    <div class="fig-wrap">
+    <svg viewBox="0 0 1100 250" width="100%" role="img" aria-label="エンジン4段の図。PARSE読む、RESOLVE選ぶ、COMPOSE組む、RUN回す。">
+      <g font-family="'IBM Plex Sans JP',sans-serif">
+        <rect x="20" y="40" width="240" height="150" fill="#F2EBD9" stroke="#D9D1BF"/>
+        <text x="40" y="72" fill="#C8341F" font-size="15" font-weight="700">1. PARSE 読む</text>
+        <text x="40" y="98" fill="#4A4640" font-size="12.5">起動文字列を flag と</text>
+        <text x="40" y="116" fill="#4A4640" font-size="12.5">自由記述に分解する</text>
+        <text x="40" y="142" fill="#8A8278" font-size="11">例：--recipe release-flow</text>
+        <text x="40" y="158" fill="#8A8278" font-size="11">「機能X を実装」</text>
+        <line x1="260" y1="115" x2="290" y2="115" stroke="#4A4640" stroke-width="1.5"/><polygon points="290,115 280,110 280,120" fill="#4A4640"/>
+        <rect x="292" y="40" width="240" height="150" fill="#F2EBD9" stroke="#D9D1BF"/>
+        <text x="312" y="72" fill="#C8341F" font-size="15" font-weight="700">2. RESOLVE 選ぶ</text>
+        <text x="312" y="98" fill="#4A4640" font-size="12.5">manifest＋recipe＋flag を</text>
+        <text x="312" y="116" fill="#4A4640" font-size="12.5">この順で重ね、使う部品と</text>
+        <text x="312" y="134" fill="#4A4640" font-size="12.5">工程の集合を確定する</text>
+        <text x="312" y="158" fill="#8A8278" font-size="11">タスクが小さければ軽い構成が既定</text>
+        <line x1="532" y1="115" x2="562" y2="115" stroke="#4A4640" stroke-width="1.5"/><polygon points="562,115 552,110 552,120" fill="#4A4640"/>
+        <rect x="564" y="40" width="240" height="150" fill="#F2EBD9" stroke="#D9D1BF"/>
+        <text x="584" y="72" fill="#C8341F" font-size="15" font-weight="700">3. COMPOSE 組む</text>
+        <text x="584" y="98" fill="#4A4640" font-size="12.5">選んだ facet を所定の順で</text>
+        <text x="584" y="116" fill="#4A4640" font-size="12.5">プロンプトに合成＝ハーネス</text>
+        <text x="584" y="134" fill="#4A4640" font-size="12.5">を組み上げる</text>
+        <text x="584" y="158" fill="#8A8278" font-size="11">--plan はここで止めて中身を見せる</text>
+        <line x1="804" y1="115" x2="834" y2="115" stroke="#4A4640" stroke-width="1.5"/><polygon points="834,115 824,110 824,120" fill="#4A4640"/>
+        <rect x="836" y="40" width="240" height="150" fill="#FBF1EA" stroke="#C8341F" stroke-width="1.5"/>
+        <text x="856" y="72" fill="#C8341F" font-size="15" font-weight="700">4. RUN 回す</text>
+        <text x="856" y="98" fill="#4A4640" font-size="12.5">step を実行し、出口ごとに</text>
+        <text x="856" y="116" fill="#4A4640" font-size="12.5">ゲートで締める。context-</text>
+        <text x="856" y="134" fill="#4A4640" font-size="12.5">minimal が絶対条件</text>
+        <text x="856" y="158" fill="#8A8278" font-size="11">終わったら capture（学びの蓄積）へ</text>
+        <text x="20" y="228" fill="#8A8278" font-size="12">厨房でいうと：注文を聞く → レシピと材料を決める → 調理台を整える → 調理して検品する</text>
+      </g>
+    </svg>
+    </div>
+    <div class="twocol">
+      <div class="panel">
+        <h4>「都度合成」だから起きること</h4>
+        <ul>
+          <li>同じ <code>/rig:dev</code> でも、レビューだけ（<code>--only review</code>）・TDD（<code>--tdd</code>）・敵対レビュー追加（<code>--adversarial</code>）と、組まれる足場が毎回変わる</li>
+          <li>気に入った構成は <code>--save-recipe</code> で名前をつけて固定できる</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4>実行前に「見える」</h4>
+        <ul>
+          <li><code>--plan</code>＝組んだハーネスを人間可読で提示して停止（実行しない）</li>
+          <li><code>--list</code>＝部品と recipe の在庫一覧、<code>--validate</code>＝部品の整合点検（doctor）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：SKILL.md §3〜§6</span><span>8 / 14</span></div>
+</section>
+
+<!-- ============ S9 品質の仕組み ============ -->
+<section class="slide">
+  <div class="kicker">Quality</div>
+  <h2 class="stitle"><span class="snum">09</span>品質の仕組み：レビューを「多観点×独立×反証」にする</h2>
+  <div class="ssub">1人の頭の中の「たぶん大丈夫」を、構造で置き換える</div>
+  <div class="body">
+    <div class="threecol">
+      <div class="panel">
+        <h4><span class="tag-mini">STEP 1</span>多観点に撒く（fan-out）</h4>
+        <ul>
+          <li>既定 3-way：security／design／test</li>
+          <li>選択投入：performance・observability・api-compat・migration・docs</li>
+          <li>敵対枠：lazy-senior・cognitive-economist（AI の癖・過剰実装を突く）</li>
+          <li>自作 persona も <code>--persona</code> で投入可</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4><span class="tag-mini">STEP 2</span>独立させる</h4>
+        <ul>
+          <li>レビュアーは <b>read-only の別エージェント</b>——実装の経緯を知らず、成果物だけを見る</li>
+          <li>orchestrate の全自動モードでは、検証を<b>別プロバイダ（別のモデル）</b>に振ることもでき、構造的に「採点者≠生成者」になる</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4><span class="tag-mini">STEP 3</span>指摘の側も検証する</h4>
+        <ul>
+          <li><code>--verify-findings</code>：REJECT の根拠を1件ずつ<b>反証者（finding-verifier）</b>に渡す</li>
+          <li>証拠つきで反証された指摘（REFUTED）はゲートに通さない</li>
+          <li>「疑わしきは所見の利」＝UPHELD／UNRESOLVED は通す</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>結果の読み取りも機械式：</b>各レビュアーは自由作文でなく <b>output-contract（review-verdict）</b>の様式で返すため、ゲートは合否・必須条件を確実に拾える。品質を「人の注意」でなく「構造」で守る——という手元資料（CLAUDE-00 §09）の指針を、レビューに実装した形。</div>
+    <div class="callout should" style="font-size:13.5px;"><b>やり過ぎ防止も内蔵：</b>レビュアーを増やすほど誤検出と費用も増える。<code>--budget low/mid</code> で fan-out を間引き、telemetry（<code>runs --personas</code>）で「5票以上 REJECT ゼロ＝ゴム印疑い」のような剪定ヒントが出る。</div>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：patterns/review-gate・agents/</span><span>9 / 14</span></div>
+</section>
+
+<!-- ============ S10 回し方2つ ============ -->
+<section class="slide">
+  <div class="kicker">Two ways to run</div>
+  <h2 class="stitle"><span class="snum">10</span>回し方は2つ：散文エンジンと、決定論ランナー</h2>
+  <div class="ssub">「サッと対話で」か「毎回同じ水準でカッチリ」か——舵を誰が握るかの違い</div>
+  <div class="body">
+    <div class="twocol">
+      <div class="panel">
+        <h4>既定：散文エンジン（舵＝LLM）</h4>
+        <ul>
+          <li>SKILL.md の手順を読んだ Claude 自身が工程を進める</li>
+          <li>軽い・即時・対話的。一発のレビューや小さな実装に向く</li>
+          <li>ゲートやリトライも効くが、進行判断はモデルに委ねる</li>
+        </ul>
+      </div>
+      <div class="panel tinted">
+        <h4><code>--orchestrate</code>：計算的オーケストレーション（舵＝コード）</h4>
+        <ul>
+          <li>遷移・ゲート判定・リトライ・停止・状態保持を <code>scripts/orchestrate.py</code>（決定論ランナー）が<b>強制</b>する</li>
+          <li>全自動モードでは各 step を<b>別プロセスのエージェント</b>で実行——並列検証・工程 DAG・マルチプロバイダ（claude／codex／ollama 等）・worktree 隔離（<code>run --isolate</code>）</li>
+          <li>状態は <code>run-state.json</code> に永続＝止めても続きから</li>
+        </ul>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>こういう時</th><th style="width:22%;">orchestrate？</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td>普通に <code>/rig:dev</code> を一発・対話で</td><td>OFF（散文）</td><td>軽い・即時が正義</td></tr>
+        <tr><td>recipe に <code>checks:</code>（lint／test）や <code>needs:</code>（依存）がある</td><td><b>自動 ON</b></td><td>機械検証・DAG は決定論で回す意図</td></tr>
+        <tr><td>manifest に <code>default_orchestrate: true</code></td><td>常時 ON</td><td>このプロジェクトは毎回カッチリ</td></tr>
+        <tr><td>今回だけ軽く戻したい</td><td><code>--no-orchestrate</code></td><td>run 単位で打ち消せる</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:13px;color:var(--ink-soft);">自動で切り替わった時は理由と戻し方を1行で通知（例：<code>🧭 計算的オーケストレーションで回します（理由: recipe に needs 宣言）</code>）。黙って挙動が変わらないのも設計方針。</p>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：patterns/computational-orchestration</span><span>10 / 14</span></div>
+</section>
+
+<!-- ============ S11 ゴールとループ ============ -->
+<section class="slide">
+  <div class="kicker">Goal &amp; Loop</div>
+  <h2 class="stitle"><span class="snum">11</span>ゴール駆動とループ：任せて、席を外せるように</h2>
+  <div class="ssub">「達成するまで回る」goal と「またの機会に回る」loop——役割が対になっている</div>
+  <div class="body">
+    <div class="twocol">
+      <div class="panel">
+        <h4><code>/rig:goal</code> — 達成するまで回る（内向きのループ）</h4>
+        <ul>
+          <li>高レベルな目標を渡すと、まず<b>受け入れ基準（＝測れる完了条件）に変換</b>する</li>
+          <li>「現状把握 → 次の一手 → 既存フローへ委譲 → 基準と照合」を<b>達成まで周回</b></li>
+          <li>policy <code>independent-verification</code>（採点者≠生成者）を同梱——判定役の独立はここでも原則</li>
+          <li>例：<code>/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"</code></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4><code>/rig:loop</code> — いつまた回るかを担う（外向きのループ）</h4>
+        <ul>
+          <li>watch／poll／repeat＝<b>監視・定期の繰り返し</b>。goal の対極</li>
+          <li>停止条件（<code>--until</code>／<code>--times</code>）と安全上限が<b>必須</b>・各周回で報告</li>
+          <li><code>--every</code> で <code>/rig:goal</code> を定期キック＝外側のスケジューラとして重ねられる</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>手元資料（GENAI-E01）との対応：</b>これはループエンジニアリングの原則——ゴールは測れる形で・判定役は独立・停止条件は必須・状態は置き場に記録——をコマンドにしたもの。ループの土台になる環境（ハーネス）は S5〜S10 の部品が既に用意している、という積み上げ構造。</div>
+    <div class="callout should" style="font-size:13.5px;"><b>途中で切れない工夫（run-continuity）：</b>長い run では質疑・脱線・コンテキスト自動圧縮が必ず挟まる。rig は毎ターン状態ヘッダ（<code>▸ rig | recipe … | step … | gate …</code>）を再掲し、圧縮時は PreCompact フックが run 状態の保全を注入——「いつの間にか素の Claude に戻っていた」を防ぐ。</div>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：recipes/goal-loop・recipes/loop</span><span>11 / 14</span></div>
+</section>
+
+<!-- ============ S12 測って育てる ============ -->
+<section class="slide">
+  <div class="kicker">Measure &amp; Grow</div>
+  <h2 class="stitle"><span class="snum">12</span>測って、育てて、還元する</h2>
+  <div class="ssub">足場は組んで終わりではない——数字で測り、学びを貯め、外とやり取りする</div>
+  <div class="body">
+    <div class="threecol">
+      <div class="panel">
+        <h4>測る</h4>
+        <ul>
+          <li><b>telemetry</b>：全 run が <code>.rig/runs.jsonl</code> に自動記録。DONE 率・平均リトライ・レビュアー別の票を集計</li>
+          <li><b><code>/rig:drill</code></b>：既知のバグの種を使い捨て worktree に注入 → レビュアー別の<b>検出／見逃し／誤検出スコアボード</b>＝判定役の品質を意見でなく数字に</li>
+          <li><b><code>/rig:party</code></b> 🎮：在庫と実測を RPG のパーティ画面風に描画——見た目は遊び、全行が実データの健康診断</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4>育てる</h4>
+        <ul>
+          <li><b>capture</b>：run で得た学び（AI の癖・落とし穴・決定）を承認つきで知識層へ蓄積</li>
+          <li><b><code>/rig:persona</code></b>：説明文からレビュアー観点を自作</li>
+          <li><b><code>/rig:knowledge</code></b>：ドメイン知識を wiki ページ化（web 調査 <code>--research</code>・リポジトリ解析 <code>--auto</code>）</li>
+          <li><b><code>/rig:forge</code></b>：ブリック／パック自体を自作する自己拡張</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4>還元する（吸収と還元の輪）</h4>
+        <ul>
+          <li><b><code>/rig:import</code></b>：ネット上の外部 skill を検疫→判断→検証つきで取り込む（出所と SHA-256 を lock 記録）</li>
+          <li><b><code>/rig:export</code></b>：rig で育てた部品を、<b>rig を知らない人もそのまま使える独立 skill</b> に書き出す</li>
+          <li><b><code>/rig:catalog</code></b>：全層の部品を横断した地図——「誰がどこで何をしているか」を取り戻す</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>ここが一番の差別化：</b>多くの道具は「組む」まで。rig は<b>検品係（レビュアー）そのものを覆面調査（drill）で採点し、働きの悪い味見役をデータで入れ替える</b>ところまで踏み込む。ハーネス→ループの次に来る「判定基準を体系化する」段階（eval engineering）の実装例。</div>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：README「実行テレメトリ」・facets/instructions/drill</span><span>12 / 14</span></div>
+</section>
+
+<!-- ============ S13 入口マップ ============ -->
+<section class="slide">
+  <div class="kicker">Commands</div>
+  <h2 class="stitle"><span class="snum">13</span>入口マップ：主要コマンドを役割で分ける</h2>
+  <div class="ssub">コマンドは多いが、役割グループは5つ。まずは太字から</div>
+  <div class="body">
+    <table>
+      <thead><tr><th style="width:16%;">グループ</th><th style="width:42%;">コマンド</th><th>使いどころ</th></tr></thead>
+      <tbody>
+        <tr><td class="term">つくる（本流）</td><td><b><code>/rig:dev</code></b>（開発フロー）・<code>/rig:tasks</code>（タスク分割）・<code>/rig:brainstorm</code>（設計の壁打ち）・<code>/rig:queue</code>（積んで一括実行）</td><td class="kit">実装・レビュー・PR 完了など日常の開発。迷ったら <code>/rig:dev</code></td></tr>
+        <tr><td class="term">まわす（自律）</td><td><b><code>/rig:goal</code></b>（達成まで）・<code>/rig:loop</code>（定期・監視）・<code>/rig:orchestrate</code>（決定論ランナー）</td><td class="kit">任せて席を外したい・毎回同じ水準で回したい</td></tr>
+        <tr><td class="term">きめる（判断）</td><td><code>/rig:magi</code>（3賢者の go/no-go 合議）・<code>/rig:coin</code>（些末な二択の即断）・<code>/rig:pre-mortem</code>（事前検死）・<code>/rig:sage</code>（裏取りつき Q&amp;A）・<code>/rig:duck</code>（ラバーダック）</td><td class="kit">「やるべきか」「どう壊れるか」の意思決定。ネタ風でも中身は本物のゲート</td></tr>
+        <tr><td class="term">みる（点検）</td><td><code>/rig:pr</code>（既存 PR レビュー）・<code>/rig:drill</code>（検出率実測）・<code>/rig:party</code>（健康診断）・<code>/rig:catalog</code>（部品地図）・<code>/rig:harness</code>（ハーネス棚卸し）</td><td class="kit">品質と足場そのものの点検・可視化</td></tr>
+        <tr><td class="term">そだてる（拡張）</td><td><code>/rig:init</code>（初期化）・<code>/rig:persona</code>／<code>/rig:knowledge</code>／<code>/rig:forge</code>（自作）・<code>/rig:import</code>／<code>/rig:export</code>（取込と還元）</td><td class="kit">プロジェクトへの導入と、部品の自作・共有</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:13px;color:var(--ink-soft);">ほかに sales（営業資料）・design（UI/UX・a11y）・movie／scenario（リリース動画）・qa（テスト設計）などのドメイン pack もあるが、<b>すべて同じエンジン（PARSE→RESOLVE→COMPOSE→RUN）にブリックを足しただけ</b>——という点が rig らしさ。<code>/rig:talk</code> に話しかければ適切な入口へ橋渡しもしてくれる。</p>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ 正本：README「呼び出し」</span><span>13 / 14</span></div>
+</section>
+
+<!-- ============ S14 はじめかた・まとめ ============ -->
+<section class="slide">
+  <div class="kicker">Get started</div>
+  <h2 class="stitle"><span class="snum">14</span>はじめかた ＆ まとめ</h2>
+  <div class="ssub">3行で入れて、3語で覚えて帰る</div>
+  <div class="body">
+    <div class="twocol">
+      <div class="panel">
+        <h4>インストール（marketplace 経由）</h4>
+        <pre style="font-family:var(--font-mono);background:var(--paper-tint);border:1px solid var(--rule);padding:12px;font-size:12.5px;line-height:1.6;overflow-x:auto;">/plugin marketplace add itoh-shun/rig
+/plugin install rig@itoshun-local-plugins</pre>
+        <h4>最初の一歩</h4>
+        <pre style="font-family:var(--font-mono);background:var(--paper-tint);border:1px solid var(--rule);padding:12px;font-size:12.5px;line-height:1.6;overflow-x:auto;">/rig:init                 # プロジェクトを初期化
+/rig:dev --plan "変更をレビュー"   # まず組まれる足場を見る
+/rig:dev --only review    # レビューだけ回してみる</pre>
+        <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:0;"><code>--plan</code> で「実行せず中身を見る」から入るのが安全な順序。</p>
+      </div>
+      <div class="panel tinted">
+        <h4>持ち帰る3語</h4>
+        <ul style="font-size:14px;">
+          <li><b>ブリック</b>——rig の部品。persona（観点）・recipe（工程の束）・pattern（段取りの型）… すべて足し外しできるレゴブロック</li>
+          <li><b>determinism-by-gate</b>——実行は縛らず、出口の合格基準だけを毎回同じに固定する。rig の品質保証の核</li>
+          <li><b>採点者≠生成者</b>——作った本人に採点させない。独立レビュー＋反証者＋覆面調査（drill）で、判定役まで疑って測る</li>
+        </ul>
+        <h4>3つのエンジニアリングとの対応</h4>
+        <ul style="font-size:13px;">
+          <li>プロンプト＝部品化して版管理（persona・instruction・wiki）</li>
+          <li>ハーネス＝タスクごとに合成（COMPOSE・gate・policy）</li>
+          <li>ループ＝goal／loop／orchestrate で「達成まで・定期に」回す</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout" style="font-size:13px;"><b>注意書き：</b>rig は個人開発の OSS プラグインで、コマンド・ブリック構成は開発の進行で変わる。本スライドは 2026-07-03 時点。正本はリポジトリの README.ja.md と <code>skills/rig/SKILL.md</code>（ブリック目録・flag・recipe スキーマ）。関連資料：GENAI-E01「3つのエンジニアリング整理」（プロンプト／ハーネス／ループの背景）。</div>
+  </div>
+  <div class="pagefoot"><span>rig introduction ／ RIGINTRO01 v1 2026-07-03</span><span>14 / 14</span></div>
+</section>
+
+</div>
+</body>
+</html>
