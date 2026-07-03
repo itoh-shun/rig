@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GENAI-E01｜3つのエンジニアリング整理 — プロンプト／ハーネス／ループ（STYLE v1.5）</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   claude-doc-style.css — 配布資料共通スタイル（STYLE-02 v1.5 準拠）
+   ============================================================ */
+:root {
+  --paper: #FAF6EE;
+  --paper-tint: #F2EBD9;
+  --ink: #1A1814;
+  --ink-soft: #4A4640;
+  --ink-mute: #8A8278;
+  --rule: #D9D1BF;
+  --accent: #C8341F;
+
+  --must: #B22F1A;   --must-bg: #FBE6E1;
+  --should: #B57500; --should-bg: #FBEFD0;
+  --could: #1F4A8C;  --could-bg: #DDE7F4;
+
+  --id-1: #4A4380;
+  --id-2: #2A5A7C;
+  --id-3: #2B5D4F;
+  --id-4: #8A6D2E;
+  --id-5: #6E3A5A;
+  --id-6: #B8482A;
+  --id-7: #5A5550;
+
+  --tint-a: #FBF1EA;
+  --tint-b: #EEF3F0;
+
+  --font-sans: 'IBM Plex Sans JP', 'Noto Sans JP', "Hiragino Kaku Gothic ProN",
+               "Yu Gothic", "Meiryo", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', "SFMono-Regular", Consolas,
+               "Liberation Mono", monospace;
+
+  --sp-1: 8px;  --sp-2: 16px; --sp-3: 24px;
+  --sp-4: 32px; --sp-6: 48px; --sp-8: 64px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-font-smoothing: antialiased; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.65;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+.doc-wrap { max-width: 1180px; margin: 0 auto; padding: var(--sp-8) var(--sp-6) 96px; }
+
+h1, h2, h3, h4, h5 { font-family: var(--font-sans); }
+h1 { font-weight: 700; font-size: 40px; line-height: 1.1; letter-spacing: -0.01em; margin-bottom: var(--sp-2); }
+h2 { font-weight: 700; font-size: 26px; line-height: 1.2; margin: var(--sp-6) 0 var(--sp-2); padding-bottom: var(--sp-1); border-bottom: 1px solid var(--rule); }
+h3 { font-weight: 600; font-size: 19px; line-height: 1.3; margin: var(--sp-4) 0 var(--sp-1); }
+h4 { font-weight: 600; font-size: 16px; margin: var(--sp-3) 0 var(--sp-1); }
+
+p { margin-bottom: var(--sp-2); }
+a { color: var(--could); text-decoration: none; border-bottom: 1px solid var(--rule); }
+
+.meta, .label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-mute); }
+.sec-num { font-family: var(--font-sans); font-weight: 700; font-size: 40px; color: var(--accent); line-height: 1; font-feature-settings: "tnum"; }
+
+code, kbd, .mono { font-family: var(--font-mono); font-size: 0.88em; background: var(--paper-tint); padding: 1px 5px; }
+pre { font-family: var(--font-mono); background: var(--paper-tint); border: 1px solid var(--rule); padding: var(--sp-2); overflow-x: auto; font-size: 13px; line-height: 1.5; margin-bottom: var(--sp-2); }
+pre code { background: none; padding: 0; }
+
+ul, ol { margin: 0 0 var(--sp-2) 1.4em; }
+li { margin-bottom: 4px; line-height: 1.6; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-bottom: var(--sp-3); }
+th { background: var(--ink); color: var(--paper); font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; padding: 10px 12px; }
+td { padding: 11px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table tbody tr td:first-child { background: var(--paper-tint); font-weight: 500; }
+
+.card { background: var(--paper); border: 1px solid var(--rule); padding: var(--sp-3); margin-bottom: var(--sp-2); }
+.card-tint { background: var(--paper-tint); }
+
+.tag { display: inline-block; font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 10px; color: #fff; }
+.tag.must { background: var(--must); }
+.tag.should { background: var(--should); }
+.tag.could { background: var(--could); }
+
+.callout { border-left: 4px solid var(--accent); background: var(--paper-tint); padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-2); }
+.callout.must { border-left-color: var(--must); background: var(--must-bg); }
+.callout.should { border-left-color: var(--should); background: var(--should-bg); }
+.callout.could { border-left-color: var(--could); background: var(--could-bg); }
+
+.tint-a { background: var(--tint-a); }
+.tint-b { background: var(--tint-b); }
+
+hr { border: none; border-top: 1px solid var(--rule); margin: var(--sp-4) 0; }
+
+@media print {
+  body { background: #fff; }
+  .doc-wrap { max-width: none; padding: 16mm; }
+  h2, section, .card, table, .callout { break-inside: avoid; }
+  th { background: #fff; color: var(--ink); border-bottom: 2px solid var(--ink); }
+  table tbody tr td:first-child { background: #fff; }
+  .tint-a, .tint-b { background: #fff; }
+  a { color: var(--ink); border: none; }
+  .tag { color: var(--ink); background: none; border: 1px solid var(--ink); }
+}
+
+@media (max-width: 960px) {
+  .doc-wrap { padding: var(--sp-4) var(--sp-2); }
+  h1 { font-size: 30px; }
+  h2 { font-size: 22px; }
+  table { font-size: 12.5px; }
+}
+
+/* --- GENAI-E01 固有の最小追加（STYLE-02 本体は無改変） --- */
+.masthead { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--sp-2); padding-bottom:var(--sp-2); border-bottom:1px solid var(--rule); margin-bottom:var(--sp-4); }
+.masthead .badge { font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; color:var(--ink-mute); text-transform:uppercase; }
+.lede { color:var(--ink-soft); max-width:920px; font-size:16px; line-height:1.75; }
+.h2sub { font-weight:400; font-size:15px; color:var(--ink-mute); margin-left:10px; }
+.term-card { border-left:3px solid var(--accent); padding-left:calc(var(--sp-3) - 3px); }
+.def-lede { font-size:17px; font-weight:600; color:var(--ink); line-height:1.6; margin-bottom:var(--sp-3); }
+.sub-label { font-family:var(--font-mono); font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--ink-mute); margin-bottom:2px; }
+.src-tag { display:inline-block; font-family:var(--font-mono); font-size:11px; font-weight:600; letter-spacing:.06em; padding:2px 9px; border:1px solid var(--rule); background:var(--paper-tint); color:var(--ink-soft); vertical-align:middle; margin-left:10px; }
+.fig-wrap { border:1px solid var(--rule); background:#fff; padding:var(--sp-2); margin-bottom:var(--sp-1); overflow-x:auto; }
+.fig-cap { font-size:12px; color:var(--ink-mute); margin-bottom:var(--sp-3); }
+.oneline { border:1.5px solid var(--ink); background:#fff; padding:var(--sp-2) var(--sp-3); margin:var(--sp-2) 0 var(--sp-3); font-size:16px; font-weight:600; line-height:1.7; }
+.oneline .q { color:var(--accent); font-family:var(--font-mono); font-size:12px; font-weight:600; letter-spacing:.06em; margin-right:8px; }
+.foot { display:flex; justify-content:space-between; gap:var(--sp-3); flex-wrap:wrap; border-top:1px solid var(--rule); margin-top:var(--sp-6); padding-top:var(--sp-2); font-size:12px; color:var(--ink-mute); line-height:1.7; }
+.disc { font-size:12px; color:var(--ink-mute); border-top:1px solid var(--rule); padding-top:var(--sp-2); margin-top:var(--sp-3); line-height:1.7; }
+@media print { .src-tag, .oneline { background:#fff; } }
+</style>
+</head>
+<body>
+<div class="doc-wrap">
+
+  <div class="masthead">
+    <span class="badge">GENAI-E01 v2 ／ Three Engineerings ／ STYLE v1.5</span>
+    <span class="badge">2026-07-03 JST</span>
+  </div>
+
+  <h1>3つのエンジニアリング整理<br>——プロンプト／ハーネス／ループ</h1>
+  <p class="lede">
+    生成AI活用の実務で並んで語られる3つの「エンジニアリング」——<b>プロンプトエンジニアリング</b>・<b>ハーネスエンジニアリング</b>・<b>ループエンジニアリング</b>——を、それぞれ「何を最適化する営みか」「誰がいつ言い出したか」「Claude ではどの部品にあたるか」の3点で整理する資料である。
+    3語は流行語の言い換えではなく、<b>最適化の対象が「一回の応答」→「毎回の実行環境」→「繰り返しそのもの」へと一段ずつ外側に広がってきた系譜</b>として読むと見通しがよい。
+  </p>
+  <p class="lede">
+    記述は Anthropic の公式ドキュメント（プロンプトエンジニアリングガイド・Claude Agent SDK 解説・コンテキストエンジニアリング解説）と、各語の考案者・提唱者の一次情報（Mitchell Hashimoto、OpenAI の実践報告、Martin Fowler 誌の体系化記事、2026年6月のループエンジニアリング提唱群）に依拠し、手元の資料群（GENAI-01／GENAI-G01 用語集／CLAUDE-00／STEPUP-CLAUDE-01）の枠組みへ接続する。出典は §06 に集約。
+  </p>
+  <div class="callout"><b>公式／通称の区別（重要）：</b>3語のうち<b>「プロンプトエンジニアリング」だけが Anthropic の公式用語</b>（公式ドキュメントに定義と体系がある）。<b>「ハーネス」は公式用語だが「ハーネスエンジニアリング」は通称</b>（2026年2月に実務家発で定着）、<b>「ループエンジニアリング」も通称</b>（2026年6月に定着）。通称側は定義が発話者により揺れるため、本資料では提唱者の一次情報の定義を採る。</div>
+
+  <!-- ===== 00 一枚で掴む ===== -->
+  <h2><span class="sec-num">00</span> 一枚で掴む<span class="h2sub">3つの営みは「問い」が違う</span></h2>
+  <div class="oneline">
+    <span class="q">Q1</span>プロンプトエンジニアリング＝<b>「何をどう伝えるか」</b>の設計。<br>
+    <span class="q">Q2</span>ハーネスエンジニアリング＝<b>「どんな環境で動かすか」</b>の設計。<br>
+    <span class="q">Q3</span>ループエンジニアリング＝<b>「いつ回し、何を確かめ、どこで止めるか」</b>の設計。
+  </div>
+  <table>
+    <thead><tr><th>観点</th><th>プロンプトエンジニアリング</th><th>ハーネスエンジニアリング</th><th>ループエンジニアリング</th></tr></thead>
+    <tbody>
+      <tr><td>一言定義</td><td>望む出力を一貫して得られるよう、モデルへの入力（指示・文脈・例・形式）を構造化する営み</td><td>モデルを囲む環境（前提知識・規約・権限・道具・検証）を設計し、ミスが構造的に再発しないよう育てる営み</td><td>目標と完了条件を定義し、「実行→検証」の繰り返し自体を設計して、人がループの外に出る営み</td></tr>
+      <tr><td>最適化の対象</td><td>1回の入出力（1ターン）</td><td>毎回の実行（全セッション）</td><td>繰り返し全体（人が見ていない時間を含む）</td></tr>
+      <tr><td>人の位置</td><td>都度書いて渡す</td><td>事前に作り込み、失敗のたび環境を直す</td><td>ループの外で設計・監督し、要所だけ介入する</td></tr>
+      <tr><td>主な道具（Claude）</td><td>明確な指示・例示・XMLタグ・ロール・思考・チェーン</td><td>CLAUDE.md・permissions・hooks・Skills・MCP・サンドボックス</td><td>ゴール定義・判定役（verifier）・停止条件・状態記録・Stop hooks／<code>/goal</code></td></tr>
+      <tr><td>典型的な失敗</td><td>ズレた出力・形式のばらつき</td><td>同じミスの再発・危険な実行・権限の出しすぎ</td><td>基準に満たない成果物を自信たっぷりに量産し続ける（ドリフトの自動化）</td></tr>
+      <tr><td>語の出自</td><td>公式（Anthropic ドキュメント）</td><td>通称（2026-02 M. Hashimoto 発、Fowler 誌が体系化）</td><td>通称（2026-06 Steinberger らの指摘を Osmani が命名）</td></tr>
+      <tr><td>手元資料の対応</td><td>GENAI-G01 用語集 C群</td><td>CLAUDE-00 §04／STEPUP ステップ3.5</td><td>STEPUP ステップ5／用語集「停止条件」</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ===== 01 系譜 ===== -->
+  <h2><span class="sec-num">01</span> なぜ3つ並ぶのか<span class="h2sub">最適化の対象が一段ずつ外側へ広がった</span></h2>
+  <p>3語は対立概念ではなく、生成AIの使い方が「対話 → 委任 → 自律」へ深まるにつれ（STEPUP-CLAUDE-01 の階段そのもの）、<b>設計対象が入力 → 環境 → 反復へと外側に拡張されてきた時系列</b>にある。間に挟まる「コンテキストエンジニアリング」は、Anthropic 自身が「プロンプトエンジニアリングの自然な発展形」と位置づける中間段である。</p>
+  <div class="fig-wrap">
+  <svg viewBox="0 0 1120 210" width="100%" role="img" aria-label="系譜図。2023年頃プロンプトエンジニアリング、2025年コンテキストエンジニアリング、2026年2月ハーネスエンジニアリング、2026年6月ループエンジニアリングの順に登場し、設計対象が入力から環境、反復へ広がる。">
+    <line x1="20" y1="150" x2="1100" y2="150" stroke="#D9D1BF" stroke-width="1.5"/>
+    <g font-family="'IBM Plex Sans JP',sans-serif">
+      <rect x="30" y="52" width="230" height="70" fill="#F2EBD9" stroke="#D9D1BF"/>
+      <rect x="30" y="52" width="5" height="70" fill="#C8341F"/>
+      <text x="46" y="78" fill="#1A1814" font-size="14" font-weight="700">プロンプト</text>
+      <text x="46" y="97" fill="#4A4640" font-size="12">入力の書き方を設計する</text>
+      <text x="46" y="114" fill="#8A8278" font-size="11">公式用語・体系化済み</text>
+      <text x="30" y="172" fill="#8A8278" font-size="11" font-family="'IBM Plex Mono',monospace">2023頃〜</text>
+
+      <rect x="300" y="52" width="230" height="70" fill="#EEF3F0" stroke="#D9D1BF"/>
+      <rect x="300" y="52" width="5" height="70" fill="#2A5A7C"/>
+      <text x="316" y="78" fill="#1A1814" font-size="14" font-weight="700">（コンテキスト）</text>
+      <text x="316" y="97" fill="#4A4640" font-size="12">何を文脈に保つかを設計する</text>
+      <text x="316" y="114" fill="#8A8278" font-size="11">プロンプトの自然な発展形</text>
+      <text x="300" y="172" fill="#8A8278" font-size="11" font-family="'IBM Plex Mono',monospace">2025-09（Anthropic）</text>
+
+      <rect x="570" y="52" width="230" height="70" fill="#FBF1EA" stroke="#D9D1BF"/>
+      <rect x="570" y="52" width="5" height="70" fill="#8A6D2E"/>
+      <text x="586" y="78" fill="#1A1814" font-size="14" font-weight="700">ハーネス</text>
+      <text x="586" y="97" fill="#4A4640" font-size="12">動かす環境全体を設計する</text>
+      <text x="586" y="114" fill="#8A8278" font-size="11">Agent = Model + Harness</text>
+      <text x="570" y="172" fill="#8A8278" font-size="11" font-family="'IBM Plex Mono',monospace">2026-02（Hashimoto 他）</text>
+
+      <rect x="840" y="52" width="230" height="70" fill="#DDE7F4" stroke="#D9D1BF"/>
+      <rect x="840" y="52" width="5" height="70" fill="#1F4A8C"/>
+      <text x="856" y="78" fill="#1A1814" font-size="14" font-weight="700">ループ</text>
+      <text x="856" y="97" fill="#4A4640" font-size="12">繰り返しと止め方を設計する</text>
+      <text x="856" y="114" fill="#8A8278" font-size="11">人がループの外に出る</text>
+      <text x="840" y="172" fill="#8A8278" font-size="11" font-family="'IBM Plex Mono',monospace">2026-06（Osmani 命名）</text>
+    </g>
+    <text x="20" y="200" fill="#8A8278" font-size="11" font-family="'IBM Plex Sans JP',sans-serif">← 設計対象が内側（1回の入力）　／　外側（環境・反復）へ →</text>
+  </svg>
+  </div>
+  <div class="fig-cap">図1：3つのエンジニアリングの系譜。新しい語が古い語を置き換えるのではなく、<b>外側の層が増えるたびに内側の技芸はその部品として埋め込まれる</b>（§05）。</div>
+
+  <!-- ===== 02 プロンプトエンジニアリング ===== -->
+  <h2><span class="sec-num">02</span> プロンプトエンジニアリング<span class="src-tag">公式用語（Anthropic）</span></h2>
+  <div class="card term-card">
+    <p class="def-lede">望む出力を一貫して得られるよう、モデルへの入力を構造化する営み。指示の言い回し、情報を置く順序、依頼の形式まで含む——Anthropic 公式ドキュメントの定義。</p>
+
+    <p class="sub-label">なぜこの営みが要るのか</p>
+    <p>同じモデルでも、依頼の書き方ひとつで出力の質・形式・安定性が大きく変わる。「うまく書けば良い答えが返る呪文」ではなく、<b>役割・文脈・制約・例を組み合わせて設計する対象</b>であり（GENAI-G01 用語集「プロンプト」）、その設計の巧拙が最初に効く変数だから。生成AI活用の基礎スキルとして最初に押さえる位置にある。</p>
+
+    <h4>公式ガイドが置く「前提」——書き始める前に決めること</h4>
+    <p>Anthropic のプロンプトエンジニアリングガイドは、テクニックの前に次の3点を前提として要求する。ここが本資料全体の伏線になる——<b>「成功基準を先に決め、実証的に測る」という姿勢は、後のループエンジニアリングの完了条件設計にそのままつながる</b>。</p>
+    <ol>
+      <li><b>成功基準の明確な定義</b>——何をもって「良い出力」とするか。</li>
+      <li><b>基準に対する実証的なテスト手段</b>——目視の印象でなく、評価（eval）で測れること。</li>
+      <li><b>改善したい初稿プロンプト</b>——ゼロからでなく、たたき台を回して磨く。</li>
+    </ol>
+    <p>また「いつプロンプトエンジニアリングをするか」も公式に線が引かれている：<b>プロンプトで制御できる成功基準に対して行う</b>。レイテンシやコストは、プロンプトの工夫よりモデル選択（軽量モデルへの切替）の方が効くことがある——「何でもプロンプトで解こうとしない」が公式の姿勢である。</p>
+
+    <h4>代表的な技法（公式ガイドの体系）</h4>
+    <table>
+      <thead><tr><th>技法</th><th>一言でいうと</th></tr></thead>
+      <tbody>
+        <tr><td>明確・直接的に書く</td><td>タスク・読み手・完了像を明示する。曖昧な依頼に良い出力は返らない</td></tr>
+        <tr><td>例を与える（multishot）</td><td>期待する入出力の例を数個見せる。形式のばらつきに最も効く</td></tr>
+        <tr><td>考えさせる（chain of thought）</td><td>結論の前に段階的に考えさせ、複雑な課題の精度を上げる</td></tr>
+        <tr><td>XMLタグで構造化</td><td>指示・資料・例を <code>&lt;instructions&gt;</code> 等のタグで区切り、混線を防ぐ</td></tr>
+        <tr><td>ロールを与える（システムプロンプト）</td><td>役割・前提・口調を会話の土台として固定する（ユーザー発言より上位で効く層）</td></tr>
+        <tr><td>応答の書き出しを与える（prefill）</td><td>出力の先頭を指定して形式・方向を固定する</td></tr>
+        <tr><td>チェーン化（prompt chaining）</td><td>大きな課題を複数の小プロンプトに分割し、順に渡す</td></tr>
+      </tbody>
+    </table>
+
+    <h4>発展形：コンテキストエンジニアリング</h4>
+    <p>Anthropic は2025年9月の技術解説で、<b>コンテキストエンジニアリングを「プロンプトエンジニアリングの自然な発展形」</b>と位置づけた。プロンプトエンジニアリングが「指示をどう<b>書くか</b>」なら、コンテキストエンジニアリングは「推論のたびに<b>どのトークン集合を文脈に保つか</b>」——書き方から、取捨選択と維持管理へ。背景には、注意予算・コンテキスト腐敗（用語集C群）という「足すほど効く、は成り立たない」性質がある。エージェント時代には後者の比重が増す。</p>
+
+    <div class="callout">
+      <p class="sub-label">〈日常のたとえ〉</p>
+      <p>誰かに仕事を頼むときの<b>依頼メモの書き方</b>。「いつまでに」「どんな形式で」「この例のように」と書くほど期待通りに動いてもらえる。コンテキストエンジニアリングは、そのメモに<b>添える資料をどう厳選するか</b>——山ほど渡せば良いわけではなく、肝心の1枚が埋もれない分量に絞る側の技術。</p>
+    </div>
+
+    <p class="sub-label">使いどころ</p>
+    <p>出力がズレたら、役割・文脈・制約・例のどれが足りないかを点検する。単発の作業なら、この営みだけで十分に完結する（STEPUP ステップ1〜2 の主戦場）。ただし「毎回同じ工夫を書き直している」と気づいたら、それは次のハーネスへ移す合図。</p>
+  </div>
+
+  <!-- ===== 03 ハーネスエンジニアリング ===== -->
+  <h2><span class="sec-num">03</span> ハーネスエンジニアリング<span class="src-tag">通称（2026-02 定着）</span></h2>
+  <div class="card term-card">
+    <p class="def-lede">モデルそのものではなく、モデルを囲む環境——前提知識・規約・権限・道具・検証の仕組み一式（＝ハーネス）——を設計し、エージェントが一度した失敗を構造的に繰り返せないように育てていく営み。</p>
+
+    <p class="sub-label">誰が言い出したか（考案・定着の経緯）</p>
+    <ul>
+      <li><b>2026-02-05 Mitchell Hashimoto</b>（HashiCorp 共同創業者・Terraform 作者）がブログ「My AI Adoption Journey」で自身の規律を言語化：<b>エージェントがミスをするたび、その特定のミスが二度と起きないよう恒久的な修正を環境側に組み込む</b>。数日後、<b>Agent = Model + Harness</b>（エージェント＝モデル＋ハーネス）という定式で要点を蒸留し、実務家に一気に広まった。</li>
+      <li><b>2026-02-11 OpenAI の Ryan Lopopolo</b> が実践報告を公開：手書きコード0行のまま5ヶ月で本番アプリを構築（最終約100万行・約1,500件の自動PR）。「最も困難な課題は環境・フィードバックループ・制御系の設計に集中していた」と述べ、この語に実績の裏づけを与えた。</li>
+      <li><b>Martin Fowler 誌（Thoughtworks の Birgitta Böckeler）</b>が体系化記事「Harness engineering for coding agent users」を公開し、ハーネス部品を <b>guides（ガイド）と sensors（センサー）</b>に分類する語彙を定着させた。</li>
+    </ul>
+    <p>なお「ハーネス」という語自体は Anthropic も公式に使う（用語集A群：モデル核を囲み、ツール・ルール・実行手順・記憶を与えて安全に働かせる仕組み一式）。通称なのは「〜エンジニアリング」と呼んで一つの技芸に格上げした部分である。</p>
+
+    <h4>体系：guides（事前に導く）と sensors（事後に検知する）</h4>
+    <table>
+      <thead><tr><th>区分</th><th>働き</th><th>Claude での代表部品</th></tr></thead>
+      <tbody>
+        <tr><td>guides<br>（フィードフォワード）</td><td>行動の<b>前</b>に良い振る舞いへ導き、初回で当たる確率を上げる</td><td>CLAUDE.md（前提・規約）／Skills（型・手順）／出力テンプレート／権限設定（そもそも危険な操作をさせない）</td></tr>
+        <tr><td>sensors<br>（フィードバック）</td><td>行動の<b>後</b>に結果を観測し、自己修正させる</td><td>テスト・リンター・型チェック（決定論的＝計算型）／LLMジャッジ・AIコードレビュー（非決定的＝推論型）／hooks（操作の前後で必ず走る自動チェック）</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Claude Code はハーネスの実物である</h4>
+    <p>CLAUDE-00 §04 の通り、第三者解析（論文 arXiv:2604.14228、非公式）は Claude Code のソースの<b>約98.4%が「考える部分」ではなくハーネス</b>だとする。設計思想は「モデルを縛る」の逆で、<b>モデルに大きな裁量を与え、周囲の環境を徹底して作り込む</b>。実務上とくに重要なのが次の分離：</p>
+    <div class="callout should"><b>ガイダンスと強制の分離：</b>CLAUDE.md は「お願い」として渡り、確実な遵守は保証されない。<b>確実に守らせたいルールは、決定論的に効く側——permissions（Deny → Ask → Allow）・hooks・サンドボックス——で縛る</b>。「お願い（guides の一部）」と「強制（歯止め）」を混同しないことが、ハーネス設計の第一原則になる。</div>
+
+    <div class="callout">
+      <p class="sub-label">〈日常のたとえ〉</p>
+      <p>新入社員が独り立ちできるように整える<b>支援体制一式</b>（マニュアル・チェックリスト・権限・相談体制）。本人の地頭（モデル）だけでなく体制の作り込みで成果が決まる。ハーネスエンジニアリングは、その体制を<b>失敗のたびに恒久改善していく本部の仕事</b>——個々の担当者を鍛えるのではなく、誰が担当してもうまく回る仕組みを育てる側に立つ。</p>
+    </div>
+
+    <p class="sub-label">使いどころ</p>
+    <p>「同じ注意を毎回プロンプトに書いている」「エージェントが同じ失敗を繰り返す」が着手の合図。プロンプトの言い回しを磨くより、環境（前提・権限・自動チェック）を1つ直す方が、以後のすべてのセッションに効く。STEPUP ステップ3.5 の主戦場で、コード的な構築（ファイル・権限・hooks）に入るため非エンジニアには壁になりやすい——その場合は Claude 単体＋外部化の「仕組み化」（経路B）で近づく道もある。</p>
+  </div>
+
+  <!-- ===== 04 ループエンジニアリング ===== -->
+  <h2><span class="sec-num">04</span> ループエンジニアリング<span class="src-tag">通称（2026-06 定着）</span></h2>
+  <div class="card term-card">
+    <p class="def-lede">目標と完了条件をあらかじめ定義し、エージェントの「実行→検証」の繰り返し（ループ）そのもの——どこで回し、何を確かめ、どこで止めるか——を設計する営み。人は毎回のやり取りの外に出て、ループを設計・監督する側に回る。</p>
+
+    <p class="sub-label">公式の土台：agentic loop</p>
+    <p>Anthropic は Claude Agent SDK の公式解説で、エージェントの基本動作を <b>「文脈収集（gather context）→ 実行（take action）→ 検証（verify work）→ 繰り返し（repeat）」のフィードバックループ</b>として定式化している。検証の手法として①明確なルールに基づく判定（最も効果的）②スクリーンショット等の視覚フィードバック③別モデルによる LLM ジャッジ、を挙げる。<b>「ループを設計する」という発想自体は公式の設計思想</b>であり、通称はそれを一つの技芸として名指したものである。</p>
+
+    <p class="sub-label">誰が言い出したか（提唱・定着の経緯）</p>
+    <p>2026年6月、複数の実務家がほぼ同時に同じ指摘をして定着した。<b>Peter Steinberger</b> が「エージェントにプロンプトを打ち込むのをやめ、<b>エージェントを促すループを設計せよ</b>（You should be designing loops that prompt your agents）」と要点を突き、<b>Boris Cherny</b>（Claude Code 作者）も同時期に同旨を発信、<b>Addy Osmani</b> が「loop engineering」と命名して呼び方が固まった。単発プロンプトの最適化（1インタラクション）に対し、<b>複数インタラクションからなる系全体の最適化</b>という切り分けである。</p>
+
+    <h4>ループを構成する要素</h4>
+    <table>
+      <thead><tr><th>要素</th><th>設計する内容</th></tr></thead>
+      <tbody>
+        <tr><td>① 起点（トリガー）</td><td>人が毎回操作しなくても動き出す仕掛け（スケジュール・イベント・Stop hooks）</td></tr>
+        <tr><td>② ゴールと完了条件</td><td>「コードを改善」ではなく「対象テストが全て通る」のように<b>測れる形</b>で事前定義する</td></tr>
+        <tr><td>③ コンテキスト・道具</td><td>ループ内でエージェントが使う前提・ルール・許可された操作（＝ハーネス。§03 が前提になる）</td></tr>
+        <tr><td>④ 検証（判定役）</td><td>テスト・型・リンター・CI 等の独立した判定。「モデルが良さそうと言う」は弱い検証</td></tr>
+        <tr><td>⑤ 状態の置き場</td><td>進捗・気づき・約束事をどこに記録し引き継ぐか。<b>最も見落とされがちで、自律稼働の成否を分ける</b></td></tr>
+        <tr><td>⑥ 停止条件</td><td>完了・失敗・中断を何を証拠に判定し、止めた理由をどう次へ引き継ぐか（用語集「停止条件」）</td></tr>
+        <tr><td>⑦ 人のチェックポイント</td><td>本番反映・顧客影響など、人の判断を残す箇所を先に決める</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout must"><b>要の原則：判定役がボトルネック。</b>ループには「作る側」と「できたかを判定する側」があり、<b>作った本人（同じモデル・同じ文脈）に判定させない</b>——自己採点は一貫して甘くなる。判定基準が甘いループは派手に壊れるのではなく、<b>基準未満の成果物を自信たっぷりに量産し続ける</b>。提唱側はこれを「エージェントが完了を<b>証明</b>できないなら、それはループエンジニアリングではなくドリフトの自動化だ」と言い切る（Operator Test）。力を注ぐ先は指示の言い回しでなく、「何をもって完了とするか」を測れる形にすること。</div>
+
+    <h4>ゆるいループと厳格なループ／実装の重さ</h4>
+    <ul>
+      <li><b>ゆるいループ</b>：目標と大まかな条件だけ与えて広く探索させる。発想は出るが、基準が曖昧だと消費だけがかさむ。</li>
+      <li><b>厳格なループ</b>：成功条件を事前固定し、毎回厳密に評価して明確に止める。安全だが、指定した以上のことは起きない。<b>まず厳格で足場を固め、慣れてから探索の余地を持たせるのが安全な順序</b>。</li>
+      <li><b>実装の重さは段階的に</b>：同じ指示の機械的反復（人が止める）→ 完了条件の軽い自動判定 → 進捗をファイルに記録しながら長時間動く常駐運用。<b>自律度が高いほど良いのではなく、目的を達成できる最小限の重さを選ぶ</b>。</li>
+    </ul>
+    <p>Claude Code では、完了条件を設定して満たすまで自律継続する <code>/goal</code>、終了しようとした時に完了条件（テスト・カバレッジ・型チェック等)を検査して未達なら作業に差し戻す <b>Stop hooks</b>、定期実行の <code>/loop</code>・Routines などが、この営みの具体的な部品にあたる。</p>
+
+    <div class="callout">
+      <p class="sub-label">〈日常のたとえ〉</p>
+      <p>料理の「味見して、足りなければ調味料を足して、また味見する」という繰り返しに対し、<b>「塩分濃度計でこの数値になったら仕上げる」と先に決めておく</b>のがループエンジニアリング。基準がなければ気分次第でいつまでも調整が続くし、味見役を作った本人にやらせれば「もう十分おいしい」と甘く判定する。基準（完了条件）・計測器（判定役）・引き継ぎメモ（状態の置き場）を先に整えるから、任せて席を外せる。</p>
+    </div>
+
+    <p class="sub-label">使いどころ</p>
+    <p>「同じ依頼を何度も繰り返している」「夜間や不在時間にも進めたい」「完了判定が目視頼みになっている」が着手の合図。STEPUP ステップ5 の主戦場。順序は必ず「初回は人が確認 → 確認の積み重ねがルール → ルールが委譲を可能にする」で、観察が積み上がる前の自動化・ルール化を急がない。</p>
+  </div>
+
+  <!-- ===== 05 三者の関係 ===== -->
+  <h2><span class="sec-num">05</span> 三者の関係<span class="h2sub">捨てるのではなく、外側に積む</span></h2>
+  <p>3つの営みは選択肢ではなく<b>入れ子</b>である。プロンプトはハーネスの中で毎ターン渡される部品になり、ハーネスはループが安全に回るための受け入れ環境になる。</p>
+  <div class="fig-wrap">
+  <svg viewBox="0 0 1120 300" width="100%" role="img" aria-label="入れ子図。外側がループ設計、その内側がハーネス、その内側にモデルとプロンプト。">
+    <g font-family="'IBM Plex Sans JP',sans-serif">
+      <rect x="30" y="20" width="1060" height="260" fill="#DDE7F4" stroke="#1F4A8C" stroke-width="1.5"/>
+      <text x="52" y="52" fill="#1F4A8C" font-size="15" font-weight="700">ループエンジニアリング＝繰り返しの設計</text>
+      <text x="52" y="72" fill="#4A4640" font-size="12">起点 ／ ゴール・完了条件 ／ 判定役の独立 ／ 状態の置き場 ／ 停止条件 ／ 人のチェックポイント</text>
+
+      <rect x="52" y="90" width="740" height="166" fill="#FBF1EA" stroke="#8A6D2E" stroke-width="1.5"/>
+      <text x="74" y="120" fill="#8A6D2E" font-size="15" font-weight="700">ハーネスエンジニアリング＝環境の設計</text>
+      <text x="74" y="140" fill="#4A4640" font-size="12">CLAUDE.md（前提・規約）／ permissions（Deny→Ask→Allow）／ hooks ／ Skills ／ MCP ／ サンドボックス</text>
+
+      <rect x="74" y="156" width="430" height="78" fill="#F2EBD9" stroke="#C8341F" stroke-width="1.5"/>
+      <text x="94" y="184" fill="#C8341F" font-size="15" font-weight="700">モデル ＋ プロンプトエンジニアリング</text>
+      <text x="94" y="204" fill="#4A4640" font-size="12">毎ターンの指示・例・構造化＝入力の設計</text>
+      <text x="94" y="222" fill="#8A8278" font-size="11">Agent = Model + Harness（Hashimoto）</text>
+
+      <text x="820" y="120" fill="#4A4640" font-size="12">検証・状態記録は</text>
+      <text x="820" y="138" fill="#4A4640" font-size="12">ハーネスの sensors を</text>
+      <text x="820" y="156" fill="#4A4640" font-size="12">ループが利用する</text>
+      <text x="820" y="192" fill="#4A4640" font-size="12">人はこの外に立ち、</text>
+      <text x="820" y="210" fill="#4A4640" font-size="12">設計と要所の承認を担う</text>
+    </g>
+  </svg>
+  </div>
+  <div class="fig-cap">図2：入れ子の関係。ループはハーネスを前提にし、ハーネスはプロンプト（とモデル）を包む。外側の層が増えても内側の技芸は消えない。</div>
+
+  <div class="callout"><b>「プロンプトはもう古い」ではない：</b>システムプロンプトも CLAUDE.md も Skills もゴール定義も、<b>中身はすべてプロンプトの技芸で書かれる</b>。変わったのは「どこに書いて、どう届けるか」——都度チャットに書く（プロンプト）→ 環境に恒久配置する（ハーネス）→ 完了条件として機械に判定させる（ループ）。同様に、公式が一貫して要求する<b>「成功基準を先に決めて実証的に測る」姿勢は3層すべてを貫く背骨</b>であり、プロンプトの評価（eval）がそのままループの判定役に育っていく。</div>
+
+  <h3>どこから手をつけるか（STEPUP-CLAUDE-01 との対応）</h3>
+  <table>
+    <thead><tr><th>現在地（STEPUP の階段）</th><th>主戦場になる営み</th><th>次への移行の合図</th></tr></thead>
+    <tbody>
+      <tr><td>ステップ1〜2.5（対話・成果物・外部化）</td><td>プロンプトエンジニアリング</td><td>毎回同じ前提・同じ工夫を書き直している</td></tr>
+      <tr><td>ステップ3〜3.5（エージェント・ハーネス）</td><td>ハーネスエンジニアリング</td><td>同じ失敗が再発する／「お願い」で縛ろうとしている</td></tr>
+      <tr><td>ステップ4〜5（マルチエージェント・ループ）</td><td>ループエンジニアリング</td><td>完了判定が目視頼み／不在時間に進めたい</td></tr>
+    </tbody>
+  </table>
+  <div class="callout should"><b>順序を飛ばさない：</b>ハーネス（環境と歯止め）が貧弱なままループを回すのは、ブレーキ未整備の車で自動運転を始めるに等しい。逆にハーネスが整っていれば、ループは「置き場の設計＋判定役の独立」という小さな追加で始められる（STEPUP §04 の運用例）。<b>プロンプト→ハーネス→ループの順に、内側から積む</b>。</div>
+
+  <!-- ===== 06 事例：Rig ===== -->
+  <h2><span class="sec-num">06</span> 事例：Rig<span class="h2sub">3つのエンジニアリングを「ブリックで組む」実装</span></h2>
+  <p>抽象論の締めくくりに、3層が1つの道具の中にどう同居するかを実例で確かめる。<b>Rig</b>（<a href="https://github.com/itoh-shun/rig">github.com/itoh-shun/rig</a>）は Claude Code ネイティブ（command＋skill＋agents）のプラグインで、<b>ブリック——persona・instruction・policy・knowledge／wiki・pattern・recipe・output-contract といった部品——を起動時に動的に組み合わせ、タスクに最適化されたエージェント・ハーネスをその場で engineering する</b>汎用開発フロー・オーケストレータである。重い DSL エンジンや外部依存を持たず、ブリックを追加するだけで任意のフロー（開発3-Stage・PRレビュー・営業資料・合議判定など）が同じエンジンに乗る。名前も文字どおり「リグを組む（rig up）＝艤装する」——本資料の言葉でいえば、<b>ハーネスエンジニアリングという営み自体を道具化した</b>ものにあたる。</p>
+
+  <h4>3層との対応</h4>
+  <table>
+    <thead><tr><th>層</th><th>Rig での実装</th><th>本資料の対応</th></tr></thead>
+    <tbody>
+      <tr><td>プロンプト<br>（§02）</td><td>persona・instruction・output-contract はすべて<b>散文 Markdown のブリック</b>として版管理される——「都度チャットに書く」工夫を、名前つきの再利用部品へ昇格させる。<code>/rig:knowledge</code> はドメイン知識を LLM-wiki（1概念＝1正準ページ・相互リンク）にし、persona へは事実を埋め込まず <code>inject: [[slug]]</code> で参照させる＝<b>プロンプトの中身を暗黙知化させない</b></td><td>プロンプトの技芸は消えず、恒久配置の部品になる（§05「捨てずに積む」）</td></tr>
+      <tr><td>ハーネス<br>（§03）</td><td>エンジンは <code>PARSE → RESOLVE → COMPOSE → RUN</code>。<b>guides</b>＝recipe・manifest（<code>.claude/rig.md</code>）・<code>/rig:init</code> が生成する CLAUDE.md 雛形。<b>sensors</b>＝reviewer 11枠（security／design／test 既定＋選択投入）・<code>checks:</code>（lint／test の機械検証）・acceptance-gate。そして<b>強制側</b>＝<code>--orchestrate</code>（遷移・ゲート・リトライ・停止を LLM でなくコードが強制する決定論ランナー）・worktree 隔離実行（<code>run --isolate</code>）・verifier の読み取り専用強制</td><td>guides／sensors の二分法と「ガイダンス（お願い）と強制の分離」をそのまま部品化</td></tr>
+      <tr><td>ループ<br>（§04）</td><td><code>/rig:goal</code> が高レベル目標を<b>受け入れ基準に変換</b>し、「現状把握→次手→既存フローへ委譲→照合」を達成まで周回する。<b>判定役の独立</b>＝実装と検証を別エージェントに分け、さらに finding-verifier が REJECT を証拠ベースで反証（誤検出の最終制御）。<b>状態の置き場</b>＝全 RUN が <code>.rig/runs.jsonl</code> に自動追記され、run-state は PreCompact フックで<b>コンテキスト自動圧縮も生き延びる</b></td><td>ループ7要素（ゴール・判定役・状態・停止条件）の実装。判定役ボトルネック原則に対応</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout should"><b>その先：判定役を「測る」（eval engineering の芽）：</b>ループの質が判定役で決まるなら、次の問いは「その判定役は信用できるか」になる。Rig の <code>/rig:drill</code> は既知のバグの種を使い捨て worktree の差分に注入し、<b>reviewer 別の検出／見逃し／誤検出スコアボード</b>を実測する——判定役の品質を意見でなく数字にする仕組み。<code>runs --personas</code> は「5票以上 REJECT ゼロ＝ゴム印疑い」のような剪定ヒントを出す。用語集（GENAI-G01）が「ループエンジニアリングの次段」として挙げる <b>eval engineering</b> の実装例であり、なお Rig は本資料の主題である loop engineering の wiki ページを同梱して対応 reviewer に inject 済み——<b>主題そのものが道具の中の部品として入っている</b>、という入れ子になっている。</div>
+
+  <p>STEPUP-CLAUDE-01 の階段でいえば、Rig を導入することは<b>ステップ3.5（ハーネス）〜5（ループ）を一から自作せず「組む」</b>ことに相当する。CLAUDE.md・権限・hooks を素手で積む代わりに、検証の独立・隔離実行・停止条件といった本資料の原則が既に部品化された足場から始められる。</p>
+  <div class="callout"><b>読み方の注意：</b>本節は「3層が実際にどう部品化されるか」を示す具体例としての紹介である。Rig は個人開発の OSS プラグインで、機能・コマンド・ブリック構成は時点で変わる。正本はリポジトリの README・<code>skills/rig/SKILL.md</code>（目録・flag・recipe スキーマ）で確認する。</div>
+
+  <!-- ===== 07 出典 ===== -->
+  <h2><span class="sec-num">07</span> 出典・裏取り<span class="h2sub">公式と考案者の一次情報</span></h2>
+  <h4>Anthropic 公式（プロンプト／agentic loop）</h4>
+  <ul>
+    <li><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview">Prompt engineering overview（Claude Platform Docs）</a>——定義・前提（成功基準→評価→初稿）・適用範囲の線引き。</li>
+    <li><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices">Prompting best practices（Claude Platform Docs）</a>——明確化・例示・XMLタグ・ロール・思考・チェーン等の技法の正本。</li>
+    <li><a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Effective context engineering for AI agents（Anthropic Engineering, 2025-09）</a>——コンテキストエンジニアリング＝プロンプトエンジニアリングの自然な発展形、注意予算の考え方。</li>
+    <li><a href="https://claude.com/blog/building-agents-with-the-claude-agent-sdk">Building agents with the Claude Agent SDK（Claude Blog）</a>——agentic loop（gather context → take action → verify work → repeat）と3つの検証手法。</li>
+  </ul>
+  <h4>考案者・提唱者（ハーネス／ループ）</h4>
+  <ul>
+    <li>Mitchell Hashimoto「My AI Adoption Journey」（2026-02-05、mitchellh.com）——ミスの恒久修正を環境に組み込む規律、のちの <b>Agent = Model + Harness</b> 定式。</li>
+    <li>Ryan Lopopolo（OpenAI、2026-02-11 の実践報告）——手書き0行・5ヶ月・約100万行・約1,500 自動PR。「困難は環境・フィードバックループ・制御系の設計に集中」。</li>
+    <li><a href="https://martinfowler.com/articles/harness-engineering.html">Birgitta Böckeler「Harness engineering for coding agent users」（martinfowler.com）</a>——guides／sensors の分類、計算型／推論型の検証、保守性・アーキテクチャ・動作の3ハーネス。</li>
+    <li>Peter Steinberger・Boris Cherny・Addy Osmani（2026-06 の一連の発信）——「エージェントを促すループを設計せよ」、Osmani による loop engineering の命名。整理記事の例：<a href="https://www.jacknjoroge.com/loop-engineering/">Loop Engineering: The 2026 Guide to AI Agent Loops</a>（Operator Test・判定役の分離・5層スタック）。</li>
+    <li>論文 arXiv:2604.14228「Dive into Claude Code」（2026-04、非公式のリーク解析）——Claude Code の約98.4%がハーネスという内部像。一次情報での裏取り要（CLAUDE-00 §04 の留保に同じ）。</li>
+  </ul>
+  <h4>事例（§06）</h4>
+  <ul>
+    <li><a href="https://github.com/itoh-shun/rig">Rig（itoh-shun/rig, GitHub）</a>——正本は README（日本語）と <code>skills/rig/SKILL.md</code>（ブリック目録・flag・recipe スキーマ）。</li>
+  </ul>
+
+  <div class="foot">
+    <div><b style="color:var(--ink);">GENAI-E01</b> ／ 3つのエンジニアリング整理 ／ v2 2026-07-03<br>参照枠組み：GENAI-01 v2.3 ／ GENAI-G01 用語集 v2 ／ CLAUDE-00（2026-07-02改訂） ／ STEPUP-CLAUDE-01 v6 ／ 様式：STYLE v1.5</div>
+    <div style="text-align:right;">構成：00 一枚で掴む ／ 01 系譜 ／ 02 プロンプト ／ 03 ハーネス ／ 04 ループ ／ 05 三者の関係 ／ 06 事例：Rig ／ 07 出典<br>改訂履歴：v2（2026-07-03）§06「事例：Rig」を新設（3層×Rig 部品の対応表・判定役を実測する eval engineering への接続・STEPUP 階段との対応）。旧§06 出典を §07 へ繰り下げ。<br>v1（2026-07-03）初版。</div>
+  </div>
+
+  <p class="disc">本資料は3つの営みの位置関係を掴むための整理であり、網羅性・厳密性を保証しない。「ハーネスエンジニアリング」「ループエンジニアリング」は通称で、定義・語法は発話者と時点により揺れる（記述は2026-07時点のスナップショット）。ハーネス内部像（98.4%）は非公式のリーク解析に基づく第三者情報。人名・日付・経緯はWeb上の公開情報に基づくため、引用時は各一次情報に直接当たること。技法・機能の最新は一次情報（platform.claude.com／docs.claude.com／anthropic.com）で確認する。</p>
+
+</div>
+</body>
+</html>
