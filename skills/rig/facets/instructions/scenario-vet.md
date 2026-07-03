@@ -27,7 +27,7 @@
    - **フックが効くと判定される（sns-post-reviewer が hook を可とする）**
    - **ブランド/炎上リスクが許容範囲**
    - **動画として面白い（engagement-reviewer が可）— 退屈でない・最後まで観たくなる・記憶に残る山場が1つある**
-5. 通ったシナリオを確定し、`/rig:movie`（`release-movie` / `hyperframes-video`）へ渡せる形で提示する。
+5. 通ったシナリオを確定し、`/rig:movie`（汎用 `video-direct` ワークフロー、`--release` 時は `release-movie` の storyboard / `render-hyperframes` の SCENES）へ渡せる形で提示する。
 
 ## ガード
 

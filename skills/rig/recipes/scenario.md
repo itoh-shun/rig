@@ -42,7 +42,7 @@ autonomy: interactive
    - `engagement-reviewer` = **動画としての面白さ**（掴み・テンポ・意外性・ペイオフ・記憶に残る山場・完走したくなるか）＝「正しいが退屈」を撃つ
    - ＋ **source 対応チェック**（各ビートの実機能が実在するか照合）
    - acceptance-gate で「AI 臭なし・誇張/捏造なし・フックが効く・リスク許容・**面白い（退屈でない）**」へ収束（未達は `write` へ差し戻して再走）
-3. 通ったシナリオを `/rig:movie`（`release-movie` の storyboard / `hyperframes-video` の SCENES）に渡す。
+3. 通ったシナリオを `/rig:movie`（汎用 `video-direct` ワークフロー、`--release` 時は `release-movie` の storyboard / `render-hyperframes` の SCENES）に渡す。
 
 手順本体は `facets/instructions/{scenario-write,scenario-vet}` に従う。
 

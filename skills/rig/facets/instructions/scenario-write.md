@@ -9,7 +9,7 @@
 1. **目的・対象の確定** — 何の動画か（`trailer` / `before-after` / `explainer`）・尺・観客（開発者 / 経営層 等）を確定する。曖昧なら1問だけ確認。
 2. **素材の収集** — 対象機能・リリースの根拠（CHANGELOG / README / `plugin.json` / コード）を集める。長文は親 context に引き込まず subagent に要点抽出させる（context-minimal）。
 3. **執筆の dispatch** — `scenario-writer` を合成して subagent に渡し、上記スコープのシナリオを書かせる。**冒頭3秒のフック・感情の弧・各ビートの source（実機能）・目玉1つ・CTA1つ**を必ず含めさせる。空ワード・誇張・捏造機能は禁止（後段の検閲で弾かれる前提）。
-4. **受け渡し** — 確定シナリオを `scenario-vet`（検閲）へ渡す。検閲を通ったシナリオは `/rig:movie`（`release-movie` の storyboard / `hyperframes-video` の SCENES）の設計図になる。
+4. **受け渡し** — 確定シナリオを `scenario-vet`（検閲）へ渡す。検閲を通ったシナリオは `/rig:movie`（汎用 `video-direct` ワークフロー、`--release` 時は `release-movie` の storyboard / `render-hyperframes` の SCENES）の設計図になる。
 
 ## ガード
 

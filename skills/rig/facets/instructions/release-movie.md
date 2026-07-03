@@ -2,13 +2,13 @@
 
 プロジェクトのデモ動画生成の **routing**。演出の作法（ハイプだが嘘なし・構成・テンポ）は委譲先 persona（`release-director`）が持つのでここには再掲しない（Native-first）。
 
-**スコープ**: **既定は「実装中のプロジェクト」**（コード・README・実際に動く画面・開発フロー）から、何を作り・どう動き・どう使うのかを見せる**短い動画**を作る。`--release` 指定時のみ CHANGELOG/リリースノートをソースにしたリリーストレーラー。納品は 2 つ — ①制作台本（絵コンテ）と ②再生できるアニメ HTML。
+**スコープ**: `release-movie` recipe は `movie` の **`--release` サブクラス**。CHANGELOG/リリースノート（指定バージョン、省略時は最新）をソースに、出荷済みバージョンの**リリーストレーラー**を作ることに特化する（プロジェクト実装からの汎用デモ動画は `movie` 既定側＝`video-direct` の役割）。納品は 2 つ — ①制作台本（絵コンテ）と ②再生できるアニメ HTML。
 
 > ⚠️ harness は**実動画をレンダリングしない**。納品は「制作台本（実動画編集に渡せる）」＋「ブラウザで再生できる HTML トレーラー（実物のアニメーション）」。実 mp4 が要る場合は台本を After Effects / CapCut 等に渡す前提。
 
 ## 手順
 
-1. **素材の収集** — 対象を確定する。**既定は「いま実装しているプロジェクト」**：README＋マニフェスト（plugin.json / package.json 等）＋主要ソース/エントリポイントから「**何を作っているか**」を、作業ブランチの git ログ＋作業ツリー diff から「**いま実装中の何か**」を、そして実行して得た「**実際に動く画面**」を素材にする。**`--release` 指定時のみ** CHANGELOG の対象エントリ（`## [x.y.z]`・引数でバージョン/タグ指定可）を正準ソースにする。大量コード/長文は親 context に引き込まない（context-minimal・subagent へ）。**`/rig:scenario` で検閲済みのシナリオがあれば、それを設計図（ビートシート→シーン表）に使う**（脚本→検閲を前段で済ませておくと、AI 臭・誇張・弱フックが落ちた土台から映像化できる）。
+1. **素材の収集** — CHANGELOG / リリースノートの対象エントリ（`## [x.y.z]`・引数でバージョン/タグ指定可、省略時は最新）を正準ソースにする（プロジェクト実装からのデモ動画が目的なら `movie` 既定側へ）。大量コード/長文は親 context に引き込まない（context-minimal・subagent へ）。**`/rig:scenario` で検閲済みのシナリオがあれば、それを設計図（ビートシート→シーン表）に使う**（脚本→検閲を前段で済ませておくと、AI 臭・誇張・弱フックが落ちた土台から映像化できる）。
 2. **目玉の決定** — **一番見せたい価値**を 1 つ選ぶ（クライマックスに置く・実際に動く画面で見せられるものが最強）。
 3. **生成の dispatch** — `release-director` を合成して subagent に渡し、下記2点を作らせる。
 4. **接続（任意）** — 台本のコピーは `/rig:dev --recipe de-ai-smell` でさらに磨ける。
@@ -61,7 +61,7 @@
 
 ## MP4 経路（`--hyperframes`・任意）
 
-`--hyperframes` 指定時は、本物の MP4 を出せる **HyperFrames コンポジション**も生成する。手順・認証契約は **`facets/instructions/hyperframes-video`** に委譲（`data-composition-id` / `class="clip"`＋`data-start`/`data-duration` / GSAP タイムラインを `window.__timelines` に登録＝seekable）。`video/<name>/`（index.html＋STORYBOARD.md＋README.md）として出力し、render はユーザー環境（Node22+/FFmpeg/Chrome で `npx hyperframes render`・**harness では実行しない**）。HTML 即プレビュー版（`web/release-trailer.html`）は残す＝「即見る HTML」と「MP4 を出す HyperFrames」の二経路。同梱例: `video/launch-film/`。
+`--hyperframes` 指定時は、本物の MP4 を出せる **HyperFrames コンポジション**も生成する。手順・認証契約は **`facets/instructions/render-hyperframes`** に委譲（`data-composition-id` / `class="clip"`＋`data-start`/`data-duration` / GSAP タイムラインを `window.__timelines` に登録＝seekable）。`video/<name>/`（index.html＋STORYBOARD.md＋README.md）として出力し、render はユーザー環境（Node22+/FFmpeg/Chrome で `npx hyperframes render`・**harness では実行しない**）。HTML 即プレビュー版（`web/release-trailer.html`）は残す＝「即見る HTML」と「MP4 を出す HyperFrames」の二経路。同梱例: `video/launch-film/`。
 
 ## 受け入れ（生成物がこれを満たすこと）
 

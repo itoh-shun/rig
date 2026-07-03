@@ -1,6 +1,6 @@
-# instruction: hyperframes-video
+# instruction: render-hyperframes
 
-**HyperFrames（HeyGen の OSS・HTML→決定論的 MP4 レンダラ）でリリース動画を MP4 出力可能なコンポジションとして生成する skill。** `release-movie`（HTML 即プレビュー＋制作台本）の**高品質レンダリング経路**。演出の作法は `release-director` persona が持つ（Native-first）。
+**HyperFrames（HeyGen の OSS・HTML→決定論的 MP4 レンダラ）で動画コンポジションを生成する skill（render target = hyperframes・既定）。** 演出（台本）は `video-direct` が、作法は `video-director` persona が持つ。本 instruction は **HTML/CSS/JS コンポジションの認証契約**だけを定める。`release-movie`（`--release` 時・CHANGELOG ソース・`release-director` 演出）もこの経路を既定 target として使う。
 
 > HyperFrames は素の HTML/CSS/JS を **headless Chrome が各フレームを seek してスクショ → ffmpeg でエンコード**して MP4 にする（"same input, same frames, same output"）。React 不要・Apache-2.0・per-render 料金なし。要 Node 22+ / FFmpeg / headless Chrome。**この harness では render できない**（コンポジション一式まで生成し、render はユーザー環境で `npx hyperframes render`）。
 
@@ -18,20 +18,21 @@
 
 ## 手順
 
-1. **素材の収集** — 対象（既定＝実装中のプロジェクト：コード/README/実際に動く画面/開発フロー。`--release` 時のみ CHANGELOG エントリ・バージョン指定可）。`release-movie` の制作台本（シーン表＝尺/テロップ/VO/BGM/ソース対応表）が既にあればそれを設計図に使う。無ければ先に台本を起こす。
-2. **コンポジション生成** — 上記契約どおり `video/<name>/index.html` を生成（または同梱例 `video/launch-film/` を複製して中身を差し替え）。各台本シーン → `class="clip"`＋`data-start`/`data-duration`、入りは GSAP タイムラインに配置。**screen ショットは `<video>` 実録枠 or seekable モック端末を最低1つ**（`release-movie` の必須ルールを継承）。
+1. **設計図の確保** — `video-direct` の制作台本（シーン表＝尺/構図/テロップ/VO/BGM/ソース対応表）を起点に。無ければ先に台本を起こす（`--release` 時は `release-movie` の制作台本＝CHANGELOG ソース対応表）。
+2. **コンポジション生成** — 上記契約どおり `video/<name>/index.html` を生成（または同梱例 `video/launch-film/` を複製して中身を差し替え）。各台本シーン → `class="clip"`＋`data-start`/`data-duration`、入りは GSAP タイムラインに配置。**screen ショットは `<video>` 実録枠 or seekable モック端末を最低1つ**（`video-direct` の必須ルールを継承）。
 3. **同梱物** — `STORYBOARD.md`（台本）と `README.md`（`npx hyperframes init/preview/render` 手順・要件・assets の置き場）を出す。
 4. **引き渡し** — 「この harness では render 不可。手元で `npm i && npx hyperframes preview` で確認 → `npx hyperframes render --output renders/out.mp4`」と明示する。BGM/実録 mp4 は `assets/` に置けば取り込まれる旨を添える。
 
 ## ガード
 
 - **認証契約を厳守**（`data-composition-id`/`class="clip"`/`window.__timelines` を外さない）。renderer は seek 駆動なので**実時計アニメは禁止**（必ず GSAP タイムライン or CSS/WAAPI の seekable な手段）。
-- **各ビートを実機能に紐づける**（ソース対応表・捏造機能を作らない）・**空ワード禁止**（`release-director` と同じ規律）。
+- **各ビートを実機能に紐づける**（ソース対応表・捏造機能を作らない）・**空ワード禁止**（target を問わない `video-director` の規律を継承）。
 - **動いている画面ショットを最低1つ**（実録 mp4 が最良・無ければ seekable モック）。
 - render 環境（Node22+/ffmpeg/Chrome）が要る旨と、**harness では MP4 を出せない**旨を必ず伝える（誇張しない）。
 
 ## 関連
 
-- `facets/instructions/release-movie` — HTML 即プレビュー＋制作台本（このスキルの設計図元）。`/rig:movie --hyperframes` でこの経路に入る。
-- `facets/personas/release-director` — 演出（ハイプだが嘘なし・目玉1つ・テロップ短く）。
+- `facets/instructions/video-direct` — 制作台本（このスキルの設計図元）。
+- `facets/personas/video-director` — 演出（target 非依存）。
+- `facets/instructions/release-movie` — `--release` 時の差分（CHANGELOG ソース・`release-director` 演出）。`/rig:movie --release` もこの経路（既定 target）を使う。
 - 同梱例：`video/launch-film/`（rig の HyperFrames コンポジション・GSAP seekable・README つき）。

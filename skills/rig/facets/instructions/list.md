@@ -6,7 +6,7 @@
 
 ## tier グルーピングと recipe エントリ
 
-recipe を全 tier 走査（§4.2.1 と同じ project → user → shipped 順）して tier 別にグルーピング表示する。**shipped tier の recipe は §2 pack 定義に従い `#### <pack>` サブ見出しでグループ化する（#99）**：`dev（core）`（review-only / release-flow / design-first / hotfix / debug / adversarial-review）、`goal`、`pr-review`、`de-ai-smell`、`sns-x`、`magi`、`humor`（roast / coin / duck / pre-mortem）、`sales`（deal-review / sales-enablement）、`release-movie`、`scenario`、`design`（design / design-audit）。project / user tier の recipe はパック分類なしでフラット表示する（tier だけで十分に絞り込めるため）。各 recipe は frontmatter の `name` / `description` を出す。
+recipe を全 tier 走査（§4.2.1 と同じ project → user → shipped 順）して tier 別にグルーピング表示する。**shipped tier の recipe は §2 pack 定義に従い `#### <pack>` サブ見出しでグループ化する（#99）**：`dev（core）`（review-only / release-flow / design-first / hotfix / debug / adversarial-review）、`goal`、`pr-review`、`de-ai-smell`、`sns-x`、`magi`、`humor`（roast / coin / duck / pre-mortem）、`sales`（deal-review / sales-enablement）、`movie`（movie / release-movie）、`scenario`、`design`（design / design-audit）。project / user tier の recipe はパック分類なしでフラット表示する（tier だけで十分に絞り込めるため）。各 recipe は frontmatter の `name` / `description` を出す。
 
 - **`extends` を持つ recipe は `extends: <親名> [tier]` を併記する**（`extends` 無しは省略。親が解決できない場合は `[WARN: 親未解決]` を付す）（#53）。
 - manifest に `default_recipe` が設定されているとき、一致する recipe エントリに **`★ default` を付記する**（manifest なし・`default_recipe: "interactive"` の場合はマーカーなし。`default_recipe` が未解決なら `★ default (WARN: 未解決)` を付す。`--list --global` 実行時も同様）（#55）。
