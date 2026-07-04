@@ -56,7 +56,7 @@
 
 取り込みには3つの形があり、**上から順に検討する**（§8 Native-first 非対称ルール）：
 
-1. **委譲（最優先）** — 外部 skill がそのまま Claude Code plugin / skill として動くなら、**移植しない**。instruction facet から「この step は skill `<name>` に委譲する」と routing するだけの薄いブリックを作る（例：`hyperframes-video` が HyperFrames の shipped skills へ委譲している形）。
+1. **委譲（最優先）** — 外部 skill がそのまま Claude Code plugin / skill として動くなら、**移植しない**。instruction facet から「この step は skill `<name>` に委譲する」と routing するだけの薄いブリックを作る（例：`render-hyperframes` が HyperFrames の shipped skills へ委譲している形）。
 2. **翻訳** — 外部 skill の**判断・観点・手順**が rig のフローに組み込む価値を持つなら、pack の定石（persona＝判断／knowledge＝観点カタログ／instruction＝routing／recipe＝step の束／output-contract＝形式／command＝入口）に**分解して翻訳**する。生成自体は `/rig:forge`（skill-author）・`/rig:persona`・`/rig:knowledge` の各ジェネレータに委譲し、本 instruction は分解方針の決定と出所記録に徹する。
 3. **知識のみ** — フロー化する価値はないが観点カタログとして有用なら、knowledge/wiki ページとしてだけ取り込む（`/rig:knowledge` へ委譲）。
 
