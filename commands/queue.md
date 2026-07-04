@@ -48,3 +48,12 @@ orchestrate queue done <id>               # 手動で完了に
 /rig:queue go --provider rig --max-parallel 3
 /rig:queue go --backend github --repo itoh-shun/rig    # Issue から引いて実行・書き戻し
 ```
+
+
+## run-continuity（SKILL.md §6）
+
+RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```

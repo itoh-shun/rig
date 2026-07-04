@@ -34,3 +34,13 @@ $ARGUMENTS
 ## 将来（v1 非スコープ）
 
 音声 I/O（TTS/STT・**ユーザーが選べる差し替え式**）とハンズフリー・ループは将来層。v1 はテキスト会話のみ（詳細は spec）。
+
+## run-continuity（SKILL.md §6）
+
+talk が委譲した先のフロー RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```
+
+**例外**: talk 自身の地の会話ターン（フローに委譲していない短い雑談）にはヘッダを出さない（短い話し言葉を保つ）。

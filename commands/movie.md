@@ -59,3 +59,12 @@ $ARGUMENTS
 ```
 
 target を問わず、生成した制作台本（絵コンテ・ソース対応表）は実編集者にもそのまま渡せる。`hyperframes` / `remotion` は render まで自走可能（要 Node 22+ / FFmpeg / Chrome）、`davinci` / `aviutl` は人間編集者の引き渡し前提。
+
+
+## run-continuity（SKILL.md §6）
+
+RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```

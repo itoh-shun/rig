@@ -52,3 +52,12 @@ $ARGUMENTS
 /rig:design --url https://staging.example.com/signup --a11y-level AAA     # 監査・AAA
 /rig:design ダッシュボードの設計 --plan                                   # ドライラン
 ```
+
+
+## run-continuity（SKILL.md §6）
+
+RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```

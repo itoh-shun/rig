@@ -1,5 +1,5 @@
 {
-  "description": "rig hooks — (1) run-continuity: preserve the active harness run-state across context compaction, and carry the talk-always-on directive across compaction (PreCompact stdout becomes custom compaction instructions). (2) talk-always-on: inject a standing instruction so interactive sessions default to routing user turns through rig:talk (SessionStart additionalContext).",
+  "description": "rig hooks — (1) run-continuity: preserve the active harness run-state across context compaction, and carry the talk-always-on directive across compaction (PreCompact stdout becomes custom compaction instructions). (2) talk-always-on: inject a standing instruction so interactive sessions default to routing user turns through rig:talk (SessionStart additionalContext). (3) run-continuity-reminder: on each user prompt, if an active rig RUN is detected in the recent transcript (via the run-status header signature), re-inject the SKILL.md §6 directive so the model re-emits the header at the top of its response (backstops the prose-only directive which loses recency across many turns and tool calls).",
   "hooks": {
     "PreCompact": [
       {
@@ -19,6 +19,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-talk-mode.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/remind-rig-header.sh"
           }
         ]
       }

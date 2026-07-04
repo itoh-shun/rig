@@ -49,3 +49,12 @@ $ARGUMENTS
 - **`--plan`** → COMPOSE で停止し合成ハーネスを人間可読で提示。RUN しない。
 - **context-minimal（ハードルール）** → 実作業は必ず subagent に dispatch。親は dispatch＋集約＋ゲート判断のみ。長い出力を親 context に引き込まない。
 - **size-aware 既定** → S/M は design/review/tdd を自動 OFF（明示 flag で ON）。
+
+
+## run-continuity（SKILL.md §6）
+
+RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```

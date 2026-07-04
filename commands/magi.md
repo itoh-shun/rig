@@ -37,3 +37,12 @@ $ARGUMENTS
 /rig:magi この機能、そもそも作る価値があるか
 /rig:magi --plan 現在の変更をマージすべきか        # 諮問構成だけ確認
 ```
+
+
+## run-continuity（SKILL.md §6）
+
+RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```

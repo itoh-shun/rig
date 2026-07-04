@@ -27,3 +27,12 @@ $ARGUMENTS
 /rig:drill --seeds 10 --verify-findings     # 反証者込みの本気の較正
 /rig:drill --replay security-reviewer       # 観点を尖らせた後の回帰確認
 ```
+
+
+## run-continuity（SKILL.md §6）
+
+RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```

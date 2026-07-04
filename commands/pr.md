@@ -46,3 +46,12 @@ PR を見張って push のたびに再レビューしたいときは、`/rig:lo
 ```
 
 各 tick で PR の新 push・CI 状態を確認し、変化があれば 3-way 再レビュー、なければ skip して次の tick を予約する。停止条件必須（`--until`／`--times`・loop pack の安全規約に従う）。
+
+
+## run-continuity（SKILL.md §6）
+
+RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+
+```
+▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
+```
