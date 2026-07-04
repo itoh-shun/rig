@@ -49,6 +49,10 @@
 
 読み取り専用のタスク（review / security_review / investigation の一部）は差分を作らないため `--no-worktree` で worktree を省略してよい。その場合 `diff` はメイン作業ツリーの現状差分を対象にし、`accept` は対象なしとして拒否される。
 
+## 複数タスクの並行実行との関係
+
+隔離が task ごとに完結しているため、**複数の task を同時に走らせても互いに干渉しない**（別 worktree・別 branch）。`/rig:queue go --provider rig --max-parallel N` は各 queue item を `/rig:rig "<task>"` 経由で dispatch し、この隔離を使って**別プロセスの並列実行を安全にする**（headless プロセス同士が同じ作業ディレクトリを取り合うことがない）。並行タスクの全体像は `scripts/workbench.py board` が単一のダッシュボードとして提供する——`/rig:rig` を直接叩いた task も `/rig:queue` 経由の task も `.rig/runs/` に集約されるため、ターミナルを増やさずに1コマンドで状況を把握できる。
+
 ## 既存ブリックとの関係
 
 | 部品 | 役割 |

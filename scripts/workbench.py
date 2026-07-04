@@ -658,6 +658,54 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"Next: {NEXT_ACTIONS.get(task['status'], '-')}")
 
 
+ACTIVE_STATUSES = ("running", "gate_passed", "gate_failed")
+
+
+def cmd_board(args: argparse.Namespace) -> None:
+    """全 task を一覧する単一ダッシュボード。
+
+    `/rig:rig` を直接叩いた task も `/rig:queue go --provider rig` 経由で並列実行された
+    task も同じ `.rig/runs/` に積まれるため、複数タスクを並行で進めていても**ターミナルを
+    いくつも開かず1コマンドで全体像を見る**——「何をしていたか忘れる」を構造的に解消する。
+    """
+    root = repo_root()
+    base = runs_dir(root)
+    tasks: list[dict] = []
+    if base.is_dir():
+        for p in sorted(base.iterdir()):
+            tj = p / "task.json"
+            if tj.exists():
+                tasks.append(load_json(tj))
+
+    if not args.all:
+        tasks = [t for t in tasks if t["status"] in ACTIVE_STATUSES]
+    tasks.sort(key=lambda t: t["created_at"])
+
+    scope = "全 task" if args.all else "アクティブ"
+    print(f"## rig board（{scope}: {len(tasks)} 件）\n")
+    if not tasks:
+        print("アクティブな task がありません。" if not args.all else "task がありません（.rig/runs/ が空）。")
+        print("\n新しいタスクを始めるには: /rig:rig \"<task>\"")
+        return
+
+    for t in tasks:
+        d = base / t["task_id"]
+        acc = load_json(d / "acceptance.json", {"checks": []})
+        gs = gate_status(acc) if acc.get("checks") else "-"
+        steps = load_json(d / "steps.json", {"steps": []})["steps"]
+        last_step = f"{steps[-1]['name']}({steps[-1]['status']})" if steps else "-"
+        mode = "isolated" if t.get("worktree_path") else "not-isolated"
+
+        print(f"[{t['status']:<11}] {t['task_id']}")
+        print(f"    {t['input'][:70]}{'…' if len(t['input']) > 70 else ''}")
+        print(f"    type={t['task_type']:<14} recipe={t.get('recipe') or '-':<14} "
+              f"mode={mode:<13} step={last_step:<20} gate={gs}")
+    if not args.all:
+        print(f"\n({sum(1 for t in tasks if t['status'] == 'gate_failed')} 件 gate_failed / "
+              f"{sum(1 for t in tasks if t['status'] == 'gate_passed')} 件 diff/accept 待ち)")
+        print("次のアクション: /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes")
+
+
 def cmd_log(args: argparse.Namespace) -> None:
     root = repo_root()
     base = runs_dir(root)
@@ -853,6 +901,10 @@ def main() -> None:
     p = sub.add_parser("status", help="現在（または指定 task）の実行状態を表示する")
     p.add_argument("task_id", nargs="?")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("board", help="全 task を一覧するダッシュボード（既定はアクティブのみ）")
+    p.add_argument("--all", action="store_true", help="accepted/discarded も含めて全 task を表示する")
+    p.set_defaults(func=cmd_board)
 
     p = sub.add_parser("log", help="過去の実行ログを一覧する")
     p.add_argument("--limit", type=int, default=10)
