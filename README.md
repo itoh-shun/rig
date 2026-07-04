@@ -1,176 +1,244 @@
 # rig
 
-**A LEGO-style harness composer for Claude Code.** Compose bricks — *facets, patterns, steps, recipes* — at invocation time into a task-specific agent harness for dev-flow orchestration (review, implement, PR, and more). Claude Code native (command + skill + agents); no heavy DSL engine.
+**A quality-gated AI workbench for Claude Code.** It composes the right harness for each task, runs changes in an isolated worktree, checks the result with acceptance gates, and lets you accept or discard the diff safely.
 
 > 🇯🇵 日本語版は [README.ja.md](./README.ja.md) を参照。
 
-## Why rig
+## 1. What rig is
 
-- **LEGO composition** — don't run one fixed workflow. Assemble the bricks you need per task: `PARSE → RESOLVE → COMPOSE → RUN`. The classic intake→design→implement→verify→review→pr→merge flow is just *one recipe*.
-- **determinism-by-gate** — agent execution is non-deterministic (same input, varying output/quality). rig wraps quality-critical steps in **explicit acceptance gates** (`acceptance-gate`): the *path* varies, but the *output quality converges to the same bar every run*. Generation is non-deterministic; the result is deterministic in quality.
-- **context-minimal** — the orchestrator dispatches all real work to subagents and only aggregates structured reports + makes gate decisions. The parent context stays clean.
-- **run-continuity** — a mid-flow question won't quietly drop you out of the harness. Every RUN turn re-prints a one-line status header (`▸ rig | recipe … | step … | gate …`), re-anchors after any interruption, and marks step boundaries — so you can always *see* rig is still driving, and the orchestrator can't silently slide into direct, un-gated work. This even survives **context compaction**: a shipped `PreCompact` hook injects instructions to preserve the run-state, and `/rig:init` can mirror them into your CLAUDE.md "Compact Instructions".
-- **native-first** — instruction facets are thin and delegate to existing skills/commands/agents. The engine routes and gates; it does not reimplement.
-- **lightness by default** — interactive, size-aware, manual backend by default. Heavy machinery (autonomous loops, the Workflow backend, multi-stage fan-out) is opt-in.
-- **grows with you** — a two-tier knowledge layer (methodology + AI quirks) is injected into every run and accumulates learnings, so the system gets better over time.
+You describe a task in plain language. rig figures out what kind of task it is (bugfix / feature / refactor / review / docs / …), composes the harness it needs (`facets/personas/instructions/patterns` — LEGO-style bricks), runs the work in a **git worktree isolated from your working tree**, checks it against explicit **acceptance criteria** (build/lint/tests, no unrelated diff, no secret leak, findings labeled with severity, …), and only touches your real branch when you explicitly `accept`. "It says it's done" is never the bar — the gate is.
 
-## Install
+## 2. 30-second start
+
+```bash
+/rig:rig "fix the login screen bug"
+```
+
+That's it. Behind the scenes: rig classifies the task (`bugfix`), picks the matching recipe, opens an isolated worktree, implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
+
+```
+/rig:rig diff       # see what changed, and why it's safe (or not)
+/rig:rig accept     # bring the change into your working tree (blocked if the gate hasn't passed)
+/rig:rig discard    # throw the attempt away — your working tree was never touched
+```
+
+Point it at an existing Issue or PR instead of writing your own description:
+
+```bash
+/rig:rig gh issue 123        # read the issue, classify it, implement it
+/rig:rig gh pr 45 review     # review an open PR (security/design/test, 3-way)
+/rig:rig gh pr 45 fix        # fix a PR's review comments / failing CI, in an isolated worktree
+```
+
+## 3. Why it's safe
+
+- **Isolated worktree, not your branch.** Every task gets its own git worktree (`patterns/isolated-worktree`) and its own throwaway branch. rig never writes to your working tree directly — a failed or half-finished attempt costs you nothing.
+- **The gate is code, not a claim.** `scripts/workbench.py accept` mechanically refuses to merge a task whose acceptance criteria are `fail` or still `pending`. An AI saying "done" doesn't flip that switch — a recorded `pass` does.
+- **Explicit accept, explicit discard.** `accept` shows you the diff summary first and lands it as a **staged** change (never an auto-commit) — you still commit. `discard` requires the task-id spelled out and a `--yes` confirmation, and always shows what you're about to lose first.
+- **Safe-by-default triggers a hard stop.** Unrelated diffs, unexplained test failures, secret-shaped strings, destructive operations, unreviewed auth/authz changes, and undocumented public-API changes all fail their criterion — accept is blocked until you look at it.
+- **Run history survives.** `discard` deletes the worktree and branch but never the run log (`.rig/runs/<task-id>/`) — you can always see what was attempted and why it was rejected or dropped.
+
+## 4. Basic commands
+
+| command | what it does |
+|---|---|
+| `/rig:rig "<task>"` | classify → pick a recipe → isolated-worktree run → acceptance-gate → summary |
+| `/rig:rig status [id]` | current/most-recent task: step progress, gate state, pending diff, next action |
+| `/rig:rig diff [id]` | changed files + a plain-language summary (behavior change? risk? tests?) |
+| `/rig:rig accept [id] [--force]` | land the diff into your working tree (staged) — blocked unless the gate passed |
+| `/rig:rig discard <id> --yes` | delete the worktree/branch; run log stays |
+| `/rig:rig log [--limit N]` | history of past tasks: input, recipe, gate result |
+| `/rig:rig gh issue <n>` | read a GitHub Issue, classify it, run it through the workbench |
+| `/rig:rig gh pr <n> review` | 3-way (security/design/test) review of an open PR |
+| `/rig:rig gh pr <n> fix` | fix a PR's review comments / failing CI in an isolated worktree |
+| `/rig:rig gh ci` | check CI status for the current branch/PR |
+| `/rig:dev --recipe <name> --only <step> ...` | power-user entry: name the recipe/steps/flags yourself (same engine) |
+
+## 5. Execution flow
+
+```
+natural-language task
+        │
+        ▼
+①  classify (bugfix / feature / refactor / review / docs / security_review / …)
+        │
+        ▼
+②  pick the matching recipe (bugfix / feature / refactor / documentation / …)
+        │
+        ▼
+③  open an isolated worktree, run the recipe (implement / test / review, subagent-dispatched)
+        │
+        ▼
+④  acceptance-gate: check build / lint / tests / diff scope / secrets / severity-labeled findings
+        │
+        ▼
+⑤  summary + next action: /rig diff · /rig accept · /rig discard
+```
+
+Steps ①②④⑤ are driven by `facets/instructions/workbench`; the isolation in ③ is `patterns/isolated-worktree`, backed by the deterministic runner `scripts/workbench.py` (task-id issuance, worktree lifecycle, gate bookkeeping, accept/discard) — state and safety are enforced by code, not by prose discipline alone.
+
+## 6. Acceptance-gate
+
+Every task gets a criteria checklist drawn from four presets (`scripts/workbench.py gates` is the source of truth):
+
+| preset | applies to | sample criteria |
+|---|---|---|
+| `standard` | every task | no unrelated diff · tests pass or reasonable explanation · no type/lint errors · behavior & risk summary written |
+| `implementation` | bugfix / feature / refactor / test / performance / release_support (on top of `standard`) | implementation matches the request · tests added or existing coverage confirmed · public API changes documented · no unrelated refactor · no secret leak · no destructive operation |
+| `review` | review tasks | concrete findings only · severity labeled · file\:line references · false-positive risk considered · blocking vs. non-blocking separated |
+| `security` | security_review (on top of `review`) | input validation · authz/authn impact · secrets not exposed · dependency risk · unsafe shell/eval |
+
+Each criterion is recorded as `pass` / `fail` / `warn` with a note:
+
+```bash
+python3 scripts/workbench.py gate <task_id> --set no_lint_errors=pass --set tests_added_or_existing_tests_confirmed=warn:"existing coverage only"
+```
+
+`fail` or `pending` on any criterion blocks `accept` outright (exit 1). `warn` doesn't block, but it's surfaced every time — no silently-swept warnings.
+
+## 7. Isolated worktree
+
+```
+<repo parent>/rig-worktrees/<repo-name>/rig-YYYYMMDD-HHMMSS-<slug>/   ← throwaway worktree + branch
+<repo>/.rig/runs/rig-YYYYMMDD-HHMMSS-<slug>/                          ← run state (survives discard)
+  task.json        task_id / input / task_type / recipe / base branch+commit / worktree path / status
+  steps.json       per-step progress
+  acceptance.json  per-criterion pass/fail/warn + overall gate result
+  plan.md / diff.md / log.md / final.md   the model's prose (plan, diff summary, decisions, wrap-up)
+```
+
+`accept` squash-merges the task branch into your working tree as a **staged** change — never an auto-commit — then `discard` cleans up the worktree/branch (run log stays). Read-only tasks (a review, an investigation that hasn't decided to change anything) skip the worktree entirely with `--no-worktree`. See `patterns/isolated-worktree.md` for the full design.
+
+## 8. Reviewer drill
+
+`/rig:drill` measures reviewer quality as numbers, not opinions: known bug classes (authz hole, injection, N+1, breaking change, one-way migration, missing tests, …) are seeded into a throwaway diff, review fan-out runs against it, and each reviewer is scored against an answer key it never sees.
+
+```
+# Drill Result
+Persona: strict_senior_engineer
+
+## Score
+- Detection rate: 82%
+- False positive rate: 12%
+- Severity accuracy: 76%
+- Explanation quality: 70%
+
+## Missed Issues
+1. SQL injection risk in search query (src/search.py:88)
+2. Missing authorization check in user update endpoint (src/api/users.py:120)
+
+## Improvement Suggestions
+- Add a stronger security checklist for injection-class findings
+- Require data-flow inspection for user-controlled input
+```
+
+Five metrics per reviewer: `true_positive` / `false_positive` / `false_negative` / `severity_accuracy` (does the reviewer's severity match the seed's expected severity?) / `explanation_quality` (is the fix suggestion concrete, or generic?). Findings during a drill run use the detailed `output-contracts/review-findings` format (Blocking/Non-blocking, Severity, File\:line, Impact, Suggested fix) so severity and location are always machine-checkable. `--replay <persona>` re-runs archived diffs after a persona edit and diffs old vs. new verdicts — a snapshot test for reviewer personas. Nothing here touches real code; everything runs in a throwaway worktree.
+
+## 9. GitHub integration
+
+| command | read/write |
+|---|---|
+| `/rig:rig gh issue <n>` | read the Issue (title/body/labels/comments), classify as bugfix/feature/investigation, run it through the workbench |
+| `/rig:rig gh pr <n> review [--comment]` | read-only 3-way review by default; `--comment` posts to the PR (write always confirmed) |
+| `/rig:rig gh pr <n> fix` | read the PR's diff + review comments + failing CI, fix in an isolated worktree based on the PR's branch, stop at `accept` (nothing is pushed automatically) |
+| `/rig:rig gh ci` | check CI status for the current branch/PR, surface the failing job's error summary |
+
+Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
+
+## 10. Advanced customization
+
+### Install
 
 This repo ships a `.claude-plugin/marketplace.json`, so it installs via a marketplace. Plugin name: `rig`; marketplace name: `itoshun-local-plugins`.
 
-### A) From GitHub (recommended)
-
 ```bash
+# A) from GitHub (recommended)
 /plugin marketplace add itoh-shun/rig
 /plugin install rig@itoshun-local-plugins
-```
 
-### B) From a download (ZIP / clone)
-
-```bash
-# After extracting the ZIP or cloning, point at the folder:
+# B) from a download (ZIP / clone)
 /plugin marketplace add /path/to/rig
 /plugin install rig@itoshun-local-plugins
+
+# C) --plugin-dir (fast dev iteration)
+cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins
 ```
 
-### C) --plugin-dir (fast dev iteration)
+### The power-user entry: `/rig:dev`
+
+`/rig:rig "<task>"` auto-classifies and picks a recipe for you. `/rig:dev` is the same engine with everything explicit — name the recipe, slice the steps, add reviewers, dry-run the composition:
 
 ```bash
-cd /path/to/rig
-claude --plugin-dir .
-# reload after edits: /reload-plugins
-```
-
-### Invocation (namespaced)
-
-- **Command**: `/rig:dev` — the dev-flow entry point you type, with args. e.g. `/rig:dev --plan --only review "current changes"`
-- **Command**: `/rig:sales` — the sales-domain entry point. Default: review a deal record across 5 perspectives. **`--material` / `--script`**: turn your *dev assets* (README/CHANGELOG/code/releases) into a sales one-pager and a cold-call script — features translated to benefits, real features only, no hype. e.g. `/rig:sales ./deals/acme.md` · `/rig:sales --material --script`
-- **Command**: `/rig:talk` — a JARVIS-style conversational mode: speak naturally, it routes your intent to the right rig flow (dev/sales) and runs it. e.g. `/rig:talk just review my current changes`. A shipped `SessionStart` hook makes this the default for every interactive session — you don't need to type `/rig:talk` explicitly. It steps aside for subagent/headless runs and for explicit `/rig:*` commands.
-- **Command**: `/rig:goal` — a goal-driven loop: state a high-level goal and it converts it into acceptance criteria, then loops (assess → next step → delegate to an existing flow → check) until the goal is met. e.g. `/rig:goal "fix the login bug with regression coverage, through review"`
-- **Command**: `/rig:pr` — review an existing open PR: fetch it via GitHub MCP and run the 3-way (security/design/test) review to a structured verdict. e.g. `/rig:pr 1234 --adversarial`
-- **Command**: `/rig:magi` — an Evangelion-MAGI-style 3-sage council that decides *should we do this?*: a proposal is put to Melchior-1 (scientist = correctness), Balthasar-2 (mother = protection), and Casper-3 (woman = worth) in parallel, and a deterministic **majority vote** returns go/no-go on a MAGI console. e.g. `/rig:magi should we ship this breaking change now`
-- **Command**: `/rig:roast` 🌶️ — a savage stand-up-comedian code review: the findings are real (AI smell, readability, over/under-engineering, actual bugs), but delivered as roasts so the criticism actually gets read. Humor is the delivery; the verdict stays sober. e.g. `/rig:roast`
-- **Command**: `/rig:coin` 🪙 — the anti-bikeshed foil to magi: snap-decide a *trivial, reversible* 50/50 (or N-way) instead of overthinking it. It triages first — if the call turns out heavy/irreversible it refuses and routes you to `/rig:magi`. e.g. `/rig:coin tabs or spaces, just decide`
-- **Command**: `/rig:duck` 🦆 — rubber-duck debugging: explain your problem to a duck that only ever asks questions — it never writes code or gives the answer, so the insight stays yours (the proven "explain it and you spot the bug yourself" technique). e.g. `/rig:duck why does this return nil`
-- **Command**: `/rig:pre-mortem` ⚰️ — magi's dark sibling: *assume this already shipped and blew up in prod*, then work backward to the failure modes and pair each with the cheapest guardrail. Prospective hindsight finds more failures than "what could go wrong?". e.g. `/rig:pre-mortem this DB migration`
-- **Command**: `/rig:movie` 🎬 — a general **video-creation harness**, not just release trailers. A `video-director` persona authors the storyboard (shots / on-screen copy / VO / timing / music cues / per-beat source-map so nothing is overclaimed); `--target` picks the rendering pipeline: **hyperframes** (default; OSS HTML→deterministic MP4, GSAP-seekable, Apache-2.0; see [HeyGen HyperFrames](https://github.com/heygen-com/hyperframes); example: [`video/launch-film/`](./video/launch-film/)), **remotion** (React/TS Composition + Sequence), **davinci** (Fusion comp / Lua / Python script handed off to a human editor — **stub**), or **aviutl** (`.exo` + `.anm` Lua — **stub**, JP community). Default subject = the current project (code/README/working screens). `--release [version]` switches to the **release-movie** sub-recipe with CHANGELOG as source. Hype, but every beat is backed by a real source (code, feature, CHANGELOG item). The harness authors the composition/project; you run the render. e.g. `/rig:movie`, `/rig:movie "auth flow demo"`, `/rig:movie --target remotion`, `/rig:movie --release v0.30.0`
-- **Command**: `/rig:scenario` 🎬✍️ — the **scenario-writer** stage that runs *before* `/rig:movie`: writes the video's story (hook → problem → turn → payoff → CTA, with a VO draft and a per-beat source-map to real features), then **vets it** — `ai-smell-reviewer` (+ `ai-writing-smells`) strips AI smell, `sns-post-reviewer` judges hook/brand/over-claim, and `engagement-reviewer` judges whether it's actually **fun to watch** (hook, pacing, payoff, a memorable hero-beat — kills "correct but boring"); converged via acceptance-gate. The vet reuses existing bricks; only the entertainment axis needed a new reviewer. Optional **auteur lenses** (`--persona auteur/deconstructionist` raw/tense/form-breaking · `--persona auteur/humanist` warm/sincere/human-centred) add sharper directorial critique — name-free creator archetypes, two orthogonal eyes. e.g. `/rig:scenario before/after demo, for devs, 60s`
-- **Command**: `/rig:design` 🎨 — a UI/UX + a11y design harness. From a description it generates a **design spec / component spec / wireframe / a11y plan**, vetted in parallel by `ux-reviewer` (usability) and `a11y-reviewer` (WCAG 2.2), converged via acceptance-gate. Pass a **screen URL** and it switches to audit mode: Playwright captures the live screen (screenshot/DOM/axe-core) and scores UI/UX + a11y. `--ppt` (PowerPoint) / `--claudedesign` (claude.ai design) add extra outputs (combinable). e.g. `/rig:design login screen --ppt` · `/rig:design https://example.com/login`
-- **Command**: `/rig:init` — scaffold a repo for rig: a manifest (`.claude/rig.md`), knowledge dirs, and a CLAUDE.md "Compact Instructions" section (so a rig run survives context compaction). Writes are always confirmed; idempotent.
-- **Command**: `/rig:persona` — generate a reviewer persona from a description and save it per-product (project tier) or globally (`--user`), then inject it into a review with `--persona <name>`. e.g. `/rig:persona "a reviewer who understands 80s music"`
-- **Command**: `/rig:knowledge` — generate domain knowledge as **LLM-wiki pages** (one canonical, cross-linked `[[page]]` per concept) from a description or `--auto` (repo scan), saved globally (default, shared across products) or as a project overlay. Personas reference pages via `inject: [[slug]]` instead of embedding facts — so knowledge is shared, not siloed as each agent's tacit knowledge. `--research "<topic>"` harvests knowledge from the web (multi-source, cross-checked, cited, treated as untrusted data). rig now ships **8 canonical wiki pages** (appsec checklist, prompt-injection catalog for quarantine, expand-contract migrations, performance pitfalls, golden signals, semver/compat rules, license-compat table, loop engineering) injected into the matching reviewers. e.g. `/rig:knowledge --auto` · `/rig:knowledge --research "GraphQL N+1"`
-- **Command**: `/rig:import` 📥 — import an external skill from the net (a GitHub SKILL.md / plugin) into rig: analyze it, decide **delegate (preferred) → translate → knowledge-only**, generate bricks via the existing generators, and record provenance + SHA-256 in `skills-lock.json`. `--discover "<capability you want>"` searches the net for you (GitHub-wide search → ranked shortlist by fit/license/maintenance/overlap; falls back to generating your own via `/rig:persona`//rig:forge` — find it, or forge it). `--all` batch-imports every discovered candidate (one judgment-summary table, one approval, one lock write). Every import passes an **import-gate** before locking: generated personas are live-tested against a sample diff for contract compliance, recipes must pass `plan --json` + validate — imported *and proven working*. Also digests other ecosystems' dialects (`.cursorrules`, `AGENTS.md`, other repos' `CLAUDE.md`, MCP tool definitions). `--check-updates` diffs every locked skill against upstream (detection + proposal, never auto-follow). The counterpart of `/rig:forge` — bring in what already exists. e.g. `/rig:import anthropics/skills --path skills/frontend-design/SKILL.md` · `/rig:import ~/.claude/skills --all` · `/rig:import --check-updates`
-- **Command**: `/rig:drill` 🎯 — mutation-drill for your review harness: seed known bug classes (authz hole, N+1, breaking change, one-way migration…) into a throwaway worktree diff, run the review fan-out, and score **detection / miss / false-positive per reviewer** — persona quality as numbers, not opinions. `--replay <persona>` re-runs archived diffs after a persona edit and diffs the verdicts (snapshot tests for personas). e.g. `/rig:drill --seeds 10 --verify-findings`
-- **Command**: `/rig:sage` 🔮 — ask the Great Sage for the correct answer (a *That Time I Got Reincarnated as a Slime* homage, same "joke outside, real gate inside" style as `/rig:magi`): 《告》《解》… — investigate-then-assert with confidence + evidence anchors; "解答不能" declared honestly (fabrication is not a function it has). `--evolved` = Raphael: parallel hypothesis 演算, outcome 予測 with probabilities, and 提案 (best + runner-up). e.g. `/rig:sage why does this API 500 only in prod` · `/rig:sage --evolved redis or in-memory?`
-- **Command**: `/rig:party` 🎮 — your harness as an RPG **party screen**: Lv = DONE runs, per-reviewer sorties/REJECTs from telemetry, ⚔ detection rates from `/rig:drill`, 🏆 achievements machine-derived. Looks like a game, is actually a health dashboard — every line is real data, and "未測定" is a calibration to-do. Rendered by the deterministic `orchestrate.py party`. Opt-in `sage_notifications: true` adds Great-Sage-style acquisition notices (《告》スキル「…」を獲得しました) to import/persona/capture reports. e.g. `/rig:party`
-- **Command**: `/rig:export` 📤 — the counterpart of import: package a rig-grown brick (persona / recipe / pack) as a **standalone Claude Code skill** (SKILL.md + README + bundled references + LICENSE) — rig-specific contracts inlined, wiki injects bundled, gates translated to prose, provenance & license chain preserved. Publish it and others can `/rig:import` it back — absorb from the net, give back to the net. e.g. `/rig:export --persona house-authenticity`
-- **Command**: `/rig:catalog` — a cross-cutting registry (`--list --global`): scan every tier (shipped + global + project) and render a map of `domain × pack × persona × wiki × recipe` with where each lives — so as music/video/game harnesses pile up you can still see who is where doing what. Read-only, derived (no drift). `--validate --global` checks hygiene across tiers.
-- **Skill**: `/rig:rig` — the engine; also **auto-invoked** when you say things like "implement…", "review my changes", "finish the PR".
-
-## Quick start
-
-```bash
-/rig:dev --plan --only review "current changes"  # dry-run: show the composed harness, don't execute
-/rig:dev --only review                           # run a 3-way parallel review (security/design/test)
+/rig:dev --plan --only review "current changes"   # dry-run: show the composed harness, don't execute
+/rig:dev --only review                            # run a 3-way parallel review (security/design/test)
 /rig:dev --recipe release-flow --design "feature X"
-/rig:dev --recipe hotfix --issue 1234            # shortest path for an urgent fix
+/rig:dev --recipe hotfix --issue 1234             # shortest path for an urgent fix
 ```
-
-## Recipes (shipped)
-
-| recipe | what |
-|---|---|
-| `review-only` | 3-way parallel review (security/design/test) on current changes |
-| `release-flow` | intake→design?→implement→verify→review?→pr→merge (size-aware; `?` steps are conditional) |
-| `design-first` | design-heavy flow |
-| `hotfix` | shortest path (intake→implement→verify→pr) |
-| `debug` | bug-investigation flow: reproduce → isolate (root-cause hypothesis) → implement → verify (acceptance-gate) |
-| `adversarial-review` | adversarial review — eliminate AI tics, dead comments; enforce human readability (lazy-senior / cognitive-economist) |
-| `goal-loop` | goal-driven loop — turn a high-level goal into acceptance criteria, then converge to it by delegating existing flows each round (acceptance-gate + autonomous-loop) |
-| `pr-review` | review an existing open PR (fetched via GitHub MCP) with the 3-way (security/design/test) review + optional adversarial pass |
-| `de-ai-smell` | strip "AI smell" from prose (articles, READMEs, commit/PR text, posts) — `ai-smell-reviewer` removes hype/hedging/filler/template structure against a marker catalog (`ai-writing-smells`), preserving meaning, converged via acceptance-gate |
-| `sns-x-post` | semi-automated X (Twitter) posting for solo creators (e.g. song covers) — draft in your account voice → de-ai-smell → `sns-post-reviewer` judges hook/brand/risk and classifies routine-vs-needs-approval; routine auto-queues, judgment calls stop for you |
-| `magi` | Evangelion-MAGI-style 3-sage council — put a decision to Melchior (scientist=correctness) / Balthasar (mother=protection) / Casper (woman=worth) in parallel, decide go/no-go by deterministic majority vote (`magi-consensus`) on a MAGI console |
-| `roast` 🌶️ | savage-but-real code review — same targets as `adversarial-review` (AI smell, readability, bugs) delivered as roasts so the criticism gets read; verdict stays sober (`review-verdict`/`review-gate`) |
-| `coin` 🪙 | anti-bikeshed coin flip — snap-decide a trivial, reversible call; triages heavy/irreversible decisions out to `magi`. The foil to `magi` (match deliberation effort to decision weight) |
-| `duck` 🦆 | rubber-duck debugging — a duck that only asks questions (never writes code / gives the answer), so you spot the bug while explaining it; hands off the fix to `/rig:dev` |
-| `pre-mortem` ⚰️ | prospective-hindsight failure analysis — *assume it already broke in prod*, enumerate failure modes ranked by likelihood×impact, pair each with the cheapest guardrail (`premortem-report`); magi's "how it breaks" complement |
-| `sales-enablement` | dev assets (README/CHANGELOG/code) → a sales one-pager + cold-call script (`sales-collateral`) — features translated to benefits, real features only, gaps left as `[要記入]` placeholders; `--only material`/`--only script` for one |
-| `movie` 🎬 | general video-creation harness. `video-director` persona authors a storyboard; `--target hyperframes` (default, OSS HTML→MP4) / `remotion` (React/TS) / `davinci` (stub, hands-off to editor) / `aviutl` (stub, JP community). Default subject = the project itself. `release-movie` is a `--release` sub-recipe that swaps the source to CHANGELOG |
-| `scenario` 🎬✍️ | scenario-writer mode (front-stage of `/rig:movie`): write the video's story (hook→problem→turn→payoff→CTA + VO + source-map) then **vet** it by crossing existing bricks — `ai-smell-reviewer`+`ai-writing-smells` × `sns-post-reviewer`, converged via acceptance-gate (no new reviewers) |
-| `design` 🎨 | UI/UX + a11y design creation — generate spec / component spec / wireframe / a11y plan, vet in parallel with `ux-reviewer` + `a11y-reviewer` (WCAG), converge via acceptance-gate; `--ppt`/`--claudedesign` add outputs (design pack) |
-| `design-audit` 🎨 | URL audit of a live screen — Playwright captures screenshot/DOM/axe-core, then UI/UX + a11y parallel review to `design-verdict`; the audit counterpart of `design` (design pack) |
-
-## Domain packs (beyond dev)
-
-The engine ([`SKILL.md`](./skills/rig/SKILL.md)) is domain-agnostic. The same `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate machinery runs non-dev domains by adding a *pack* (entry command + recipe + persona/instruction/output-contract facets) without touching the engine.
-
-- **sales** — `/rig:sales <deal record>` runs the `deal-review` recipe: 5 perspectives (hearing / needs / proposal / closing / next-action) evaluated in parallel, converged via acceptance-gate, into an overall grade (S/A/B/C) + per-perspective verdict + concrete next actions + info gaps. Company-specifics (product strengths, ICP, pricing, competitors, winning patterns) live in [`facets/knowledge/sales-domain/`](./skills/rig/facets/knowledge/sales-domain/) — swap them and the pack transfers to another company. Input template: [`templates/deal-record.md`](./skills/rig/templates/deal-record.md). The pack also **generates collateral the other way**: `/rig:sales --material` / `--script` reads your *dev assets* (README/CHANGELOG/code/releases) and writes a sales one-pager + cold-call script (`sales-enablement` recipe) — features translated to benefits, real features only, no hype.
-- **talk** — `/rig:talk` is a conversational front-end (text in v1): speak in natural language and it normalizes intent, dynamically routes to the best `/rig:*` command, confirms before consequential actions, and replies in short spoken-style sentences. The engine is untouched — talk is just a thin natural-language layer in front of `PARSE`. Voice I/O (TTS/STT, user-selectable engines) is a future layer.
-- **goal** — `/rig:goal "<goal>"` runs the `goal-loop` recipe: it converts the goal into a machine/criteria-checkable **acceptance contract**, then drives a closed loop — *assess gap → pick the smallest next step → delegate it to an existing flow (`/rig:dev`, …) → check against the contract* — converging until the goal is met (and stopping there — no over-build) or escalating after two no-progress rounds. It's the marriage of two existing patterns: `acceptance-gate` (the goal **is** the contract) + `autonomous-loop` (hands-free continuation under `--autonomous`). The engine is untouched — goal is a thin loop driver around `RUN`. Unlike `talk` (a one-shot natural-language router), `goal` keeps looping until the goal converges. GitHub-checkable criteria (PR open / CI green / issue closeable) are verified via the GitHub MCP, so "just declare the goal, get to a mergeable PR" runs as one flow.
-- **pr-review** — `/rig:pr <number>` runs the `pr-review` recipe: it fetches an existing open PR via the GitHub MCP and runs the same 3-way (security/design/test) review (`+ --adversarial`) the dev flow uses, converged via acceptance-gate into a structured verdict — optionally posted back to the PR with `--comment` (write is always confirmed). Where `/rig:dev --only review` reviews *your working tree*, `/rig:pr` reviews *an existing PR*. The engine and reviewer bricks are shared, unchanged.
-- **humor** — two just-for-fun-but-real packs, all engine-untouched: **`/rig:roast`** 🌶️ delivers a real review (AI smell / readability / bugs) as savage stand-up jokes so the criticism actually lands — the verdict stays sober; **`/rig:coin`** 🪙 is the anti-bikeshed foil to magi, snap-deciding trivial *reversible* calls and triaging heavy ones out to `magi` (match deliberation effort to decision weight); **`/rig:duck`** 🦆 is rubber-duck debugging — a duck that only asks Socratic questions (never writes code or gives the answer) so you spot the bug while explaining it; and **`/rig:pre-mortem`** ⚰️ is magi's dark sibling — *assume it already broke in prod*, work backward to the failure modes and pair each with the cheapest guardrail (prospective hindsight finds more than "what could go wrong?"). Like talk/goal/magi, each is just a persona + a thin instruction (+ recipe) bolted on.
-- **magi** — `/rig:magi <proposal>` runs the `magi` recipe: an Evangelion-MAGI-style council that decides *should we?* rather than reviewing code line-by-line. The proposal is put in parallel to three orthogonal lenses — **Melchior-1** (the scientist: is it *correct*?), **Balthasar-2** (the mother: does it *endanger* what must be protected?), **Casper-3** (the woman: is it *worth* it?) — each voting 可決/否決/条件付可決 (`magi-verdict`). `magi-consensus` then settles it by a **deterministic majority vote** (the gate, not vibes) and prints a MAGI console; a no-go (or a tie needing more info) halts. Correct-but-dangerous or correct-but-not-worth-it proposals can be voted down — structuring "code that's merely correct doesn't ship in reality". The engine is untouched — magi is just three personas + an aggregation pattern.
-
-## Flags
 
 | flag | meaning |
 |---|---|
 | `--recipe <name>` | use a shipped/user/project recipe by name |
-| `--only <step>` / `--from <step>` | slice the execution range |
+| `--only <step>` / `--from <step>` / `--to <step>` / `--skip <step>` | slice or trim the execution range |
 | `--design` / `--review` / `--tdd` | force the step ON (default is size-aware) |
 | `--issue <id>` | feed an existing issue into intake |
 | `--plan` | compose and present the harness, then stop (dry-run) |
-| `--autonomous` | skip step gates (the capture gate is never lifted) |
+| `--autonomous` | skip step gates (the capture gate and acceptance-gate are never lifted) |
 | `--workflow` | use the ultracode Workflow execution backend (opt-in; heavy multi-stage only) |
 | `--save-recipe <name>` | save the composed harness as a recipe (`--user` for the user tier) |
-| `--capture` | persist run learnings to the knowledge layer without the confirm dialog (proposal + report are never skipped) |
-| `--list` | list available bricks/recipes/flags and stop (no run) |
-| `--validate` | doctor: check recipe→facet references, frontmatter schema, and §2 inventory drift; report and stop (no run) |
+| `--capture` | persist run learnings to the knowledge layer without the confirm dialog |
+| `--list` / `--validate` | list bricks/recipes/flags, or run the structural doctor — both stop before RUN |
 | `--adversarial` | add an adversarial-review step (AI-slop elimination + human readability) |
-| `--cross-llm` | code as if another vendor's LLM will review it: injects the `cross-llm-legibility` policy into implement (idiomatic, explicit, context-independent code that Codex/Copilot/GPT pass on the first read) + adds a `cross-llm-reviewer` (an external-LLM perspective) to the review fan-out |
-| `--persona <name>` | inject a named custom reviewer persona into the review fan-out (resolves project→user→shipped; pairs with `/rig:persona`) |
-| `--verify-findings` | adversarial verification of findings: every REJECT rationale and merge-blocking condition is challenged by an independent `finding-verifier` (evidence-anchored refutation); REFUTED findings don't reach the gate — the last line of false-positive control when running many reviewers |
-| `--global` | widen `--list` / `--validate` across tiers (shipped + global + project): `--list --global` is the cross-cutting registry map (`/rig:catalog`); `--validate --global` checks hygiene across tiers |
+| `--cross-llm` | write and review as if another vendor's LLM will read the code |
+| `--persona <name>` | inject a named custom reviewer persona into the review fan-out |
+| `--verify-findings` | adversarially verify REJECT rationale via an independent `finding-verifier` |
+| `--global` | widen `--list` / `--validate` across tiers (shipped + global + project) |
 
-## How it works
+Full flag/brick reference lives in [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2–§3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
 
-The engine (`skills/rig/SKILL.md`) runs four phases:
+### Shipped recipes (beyond bugfix/feature/refactor/documentation)
 
-1. **PARSE** — split the invocation into flags + free text; empty/ambiguous → interactive composition.
-2. **RESOLVE** — load the project manifest (or generic defaults) + recipe + flag overrides; apply size-aware defaults.
-3. **COMPOSE** — assemble each step's subagent prompt from facets in a fixed order (System=Persona / Knowledge head → Instruction → Output-Contract → Policy tail), inject the knowledge layer, bind native delegations. `--plan` stops here.
-4. **RUN** — execute via Claude Code primitives. Real work is dispatched to subagents; the parent only aggregates + gates. `acceptance-gate` converges quality; the "stuck twice" guard escalates to you.
+| recipe | what |
+|---|---|
+| `review-only` | 3-way parallel review (security/design/test) on current changes |
+| `release-flow` | intake→design?→implement→verify→review?→pr→merge (size-aware) |
+| `design-first` | design-heavy flow |
+| `hotfix` | shortest path (intake→implement→verify→pr) |
+| `debug` | bug-investigation flow: reproduce → isolate (root-cause hypothesis) → implement → verify |
+| `adversarial-review` | eliminate AI tics, dead comments; enforce human readability |
+| `goal-loop` | goal-driven loop — converge to a high-level goal by delegating existing flows each round |
+| `pr-review` | review an existing open PR (fetched via GitHub MCP) |
+| `de-ai-smell` | strip "AI smell" from prose (READMEs, commit/PR text, posts) |
+| `magi` | 3-sage council (correctness / protection / worth) that decides go/no-go by majority vote |
+| `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | humor packs with real content underneath — savage-but-real review, anti-bikeshed coin flip, rubber-duck debugging, prospective-hindsight failure analysis |
+| `design` 🎨 / `design-audit` 🎨 | UI/UX + a11y spec creation, and live-screen audit via Playwright |
+| `movie` 🎬 / `scenario` 🎬✍️ | a general video-creation harness and its scenario-writing front-stage |
 
-The full brick catalog (personas, policies, instructions, knowledge, output-contracts, patterns, recipes) lives in [`skills/rig/SKILL.md`](./skills/rig/SKILL.md).
+### Domain packs beyond dev
 
-## Customization (no fork needed)
+`/rig:sales`, `/rig:talk`, `/rig:goal`, `/rig:magi`, and the humor packs all bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched. See [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full pack table.
 
-- **Project manifest** — drop `<repo>/.claude/rig.md` to set build/lint/test commands, branch & CI strategy, reviewer, production-impact patterns, default recipe, etc. See [`skills/rig/manifests/_template.md`](./skills/rig/manifests/_template.md).
-- **Recipes** — add `<repo>/.claude/rig/recipes/*.md` (project) or `~/.claude/rig/recipes/*.md` (user); `extends` a shipped recipe and override just the diff. Or `--save-recipe`.
-- **Knowledge layer** — grow `~/.claude/rig/knowledge/{methodology,ai-quirks}/` (cross-project) and `<repo>/.claude/rig/knowledge/domain/` (per-project). Injected into every run.
+### Project manifest & knowledge layer
 
-## Standalone CLI (cross-project)
+Drop `<repo>/.claude/rig.md` to set build/lint/test commands, branch & CI strategy, reviewer, production-impact patterns, default recipe, default reviewer personas, etc. — see [`skills/rig/manifests/_template.md`](./skills/rig/manifests/_template.md). Recipes can be customized per-project (`<repo>/.claude/rig/recipes/*.md`) or per-user (`~/.claude/rig/recipes/*.md`) via `extends` + override, or `--save-recipe`. The knowledge layer (`~/.claude/rig/knowledge/{methodology,ai-quirks}/`, `<repo>/.claude/rig/knowledge/domain/`) is injected into every run and accumulates learnings over time.
 
-The deterministic orchestrator (`scripts/orchestrate.py`) is also usable from any directory as a plain CLI. Install the shim once:
+### Standalone CLI (cross-project)
+
+The deterministic orchestrator (`scripts/orchestrate.py`) also runs as a plain CLI from any directory:
 
 ```bash
-# inside the rig repo (or wherever the plugin is installed)
 python3 scripts/orchestrate.py install-shim          # → ~/.local/bin/rig (symlink)
-# then anywhere
 rig models                                            # discover LLM providers
 rig probe --provider codex                            # smoke-test a provider
 rig run review-only --provider rig --verifier-provider codex
 ```
 
-- **`$RIG_HOME` override** — point the shim at a different install: `RIG_HOME=/path/to/rig rig …`. Default resolution: `$RIG_HOME` → `~/.claude/plugins/data/rig-itoshun-local-plugins` → the script's own repo (dev).
-- **Project recipe overlay** — `<cwd>/.rig/recipes/<name>.md` shadows the built-in recipe of the same name when you run `rig <verb> <name>` from that project. Built-ins are still available by absolute path.
-- **`checks:`** declared in a recipe run in the **invocation cwd** (i.e. your project), not in the rig repo.
+`$RIG_HOME` overrides the install location; `<cwd>/.rig/recipes/<name>.md` overlays a project-local recipe over the shipped one of the same name; a recipe's `checks:` run in the invocation cwd (your project), not the rig repo.
 
-## Docs
+### Docs
 
 - [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
-- [`docs/architecture.md`](./docs/architecture.md) — architecture proof points (determinism, gate enforcement, judge measurement) with runnable commands
+- [`skills/rig/patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) — worktree/run-state design
+- [`docs/architecture.md`](./docs/architecture.md) — architecture proof points (determinism, gate enforcement, judge measurement)
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
 - [README.ja.md](./README.ja.md) — Japanese version
 

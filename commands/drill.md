@@ -15,7 +15,7 @@ $ARGUMENTS
 
 ## やること
 
-- **実測**：観点対応の**バグの種**（認可漏れ/N+1/破壊的変更/片道 migration/テスト欠落…）を一時 worktree の合成 diff に注入 → review fan-out → 答案キーと突き合わせて **検出/見逃し/誤検出のスコアボード**。`runs --personas` の間接指標を直接測定に格上げ。
+- **実測**：観点対応の**バグの種**（認可漏れ/N+1/破壊的変更/片道 migration/テスト欠落…）を一時 worktree の合成 diff に注入 → review fan-out（`output-contracts/review-findings` で severity・file:line・Blocking/Non-blocking を強制）→ 答案キーと突き合わせて **検出/見逃し/誤検出＋severity精度＋説明品質のスコアボード**。`runs --personas` の間接指標を直接測定に格上げ。persona 単位の `Drill Result`（Score / Missed Issues / Improvement Suggestions）も出力。
 - **`--verify-findings`**：反証者も同時採点（正しい種を REFUTED したら失点）。
 - **`--replay <persona>`**：ペルソナ編集後、アーカイブ済み過去 diff へ再実行して**新旧 verdict の差分表**＝ペルソナ開発の snapshot テスト。
 - 本物のコードは触らない（worktree・終了時破棄）。結果は `.rig/drill-results.jsonl` に蓄積。
