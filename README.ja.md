@@ -114,6 +114,24 @@ gate: standard + bugfix
 
 「ターミナルを5つ開いてどれが何をしていたか忘れた」を直接解消するのがこの `board`——実行の裏側がどうであれ、状態は必ず一箇所に集約される。
 
+### 視覚検証のスクリーンショット
+
+`visual-verify`（UI diff 確認）と `design-audit`（Playwright での画面取得）はいずれもスクリーンショットを生成する。これらは判断のための使い捨て証拠であって成果物ではない——結論は常に散文（`diff.md`）に残る：
+
+```
+<repo>/.rig/runs/<task-id>/visual/            ← task 紐づき（/rig:rig 経由で実行）
+<repo>/.rig/visual/adhoc/<ts>-<slug>/         ← ad-hoc（例: 単独の /rig:design <url> 監査）
+```
+
+`discard` は task の `visual/` を即時削除する（run log の JSON/MD は残る）。それ以外——accept 済み task の screenshot も含め——は経過日数で処分する：
+
+```bash
+python3 scripts/workbench.py gc --dry-run     # 14日超の対象をプレビュー
+python3 scripts/workbench.py gc               # 削除する
+```
+
+詳細ルールは [`patterns/visual-artifacts.md`](./skills/rig/patterns/visual-artifacts.md) を参照。
+
 ## 6. acceptance-gate
 
 全 task は `standard`（全 task_type 共通）＋ task_type 別プリセットの合成で基準リストを持つ（正本は `scripts/workbench.py gates`）：
