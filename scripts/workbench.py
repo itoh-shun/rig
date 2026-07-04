@@ -25,6 +25,7 @@ import datetime
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -610,7 +611,17 @@ def cmd_discard(args: argparse.Namespace) -> None:
     task["cleaned_at"] = now_iso()
     task["worktree_path"] = None
     save_task(d, task)
+
+    # 視覚検証の一時成果物（screenshot 等）は判断結果ではなく手段なので discard 時に即時削除する
+    # （run log 本体の JSON/MD は残す。詳細は patterns/visual-artifacts）。
+    visual_dir = d / "visual"
+    visual_removed = visual_dir.is_dir()
+    if visual_removed:
+        shutil.rmtree(visual_dir, ignore_errors=True)
+
     print(f"worktree と branch を削除しました。run log は {d.relative_to(root)}/ に残ります。")
+    if visual_removed:
+        print(f"視覚検証の一時画像（{visual_dir.relative_to(root)}/）も削除しました。")
 
 
 def _print_steps(d: pathlib.Path) -> None:
@@ -745,6 +756,49 @@ def cmd_gates(_args: argparse.Namespace) -> None:
     print("### task_type → presets")
     for tt, presets in TASK_TYPES.items():
         print(f"  {tt}: {' + '.join(presets)}")
+
+
+def _dir_age_days(p: pathlib.Path) -> float:
+    return (datetime.datetime.now().timestamp() - p.stat().st_mtime) / 86400.0
+
+
+def cmd_gc(args: argparse.Namespace) -> None:
+    """視覚検証の一時成果物（`patterns/visual-artifacts` 参照）を age-based に処分する。
+
+    task の status（accepted/discarded/running）は問わない——画像は再生成可能な検証手段
+    であり恒久記録ではないため。ソース・worktree・branch には一切触れない。
+    """
+    root = repo_root()
+    threshold_days = 14
+    if args.older_than:
+        m = re.match(r"^(\d+)d$", args.older_than)
+        if not m:
+            die(f"--older-than は '<N>d' 形式で指定してください（例: 14d。値: {args.older_than!r}）")
+        threshold_days = int(m.group(1))
+
+    candidates: list[pathlib.Path] = []
+    runs = runs_dir(root)
+    if runs.is_dir():
+        candidates.extend(p / "visual" for p in runs.iterdir() if (p / "visual").is_dir())
+    adhoc = root / ".rig" / "visual" / "adhoc"
+    if adhoc.is_dir():
+        candidates.extend(p for p in adhoc.iterdir() if p.is_dir())
+
+    to_remove = [p for p in candidates if _dir_age_days(p) >= threshold_days]
+
+    print(f"## rig gc（閾値: {threshold_days}日{'・dry-run' if args.dry_run else ''}）")
+    if not to_remove:
+        print("削除対象はありません。")
+        return
+    for p in sorted(to_remove):
+        rel = p.relative_to(root)
+        age = _dir_age_days(p)
+        prefix = "[dry-run] " if args.dry_run else ""
+        print(f"  {prefix}削除: {rel}/（{age:.1f}日経過）")
+        if not args.dry_run:
+            shutil.rmtree(p, ignore_errors=True)
+    verb = "が対象です（--dry-run のため未削除）" if args.dry_run else "を削除しました"
+    print(f"\n{len(to_remove)} 件{verb}。")
 
 
 def cmd_review(args: argparse.Namespace) -> None:
@@ -913,6 +967,11 @@ def main() -> None:
 
     p = sub.add_parser("gates", help="acceptance-gate プリセット定義を表示する")
     p.set_defaults(func=cmd_gates)
+
+    p = sub.add_parser("gc", help="視覚検証の一時画像（visual/）を age-based に処分する（patterns/visual-artifacts）")
+    p.add_argument("--older-than", help="この日数を超えたものを削除する（例: 14d。既定 14d）")
+    p.add_argument("--dry-run", action="store_true", help="削除せず対象だけ表示する")
+    p.set_defaults(func=cmd_gc)
 
     p = sub.add_parser("review", help="review 系タスクの persona 別 verdict を記録する（stats 用）")
     p.add_argument("task_id", nargs="?")

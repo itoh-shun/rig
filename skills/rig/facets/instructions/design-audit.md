@@ -9,8 +9,8 @@
 
 ### ② Playwright で取得（`mcp__playwright__*`）
 - ページを開く（`browser_navigate`）。
-- **スクリーンショット**を撮る（`browser_take_screenshot`。可能ならフルページ）。
-- **アクセシビリティツリー/DOM スナップショット**を取得する（`browser_snapshot`）。
+- **スクリーンショット**を撮る（`browser_take_screenshot`。可能ならフルページ）。保存先・処分ルールは `patterns/visual-artifacts` が正本：workbench task_id があれば `<repo>/.rig/runs/<task-id>/visual/`、無ければ `<repo>/.rig/visual/adhoc/<YYYYMMDD-HHMMSS>-<slug>/` に `design-audit-<viewport>.png` として保存する（恒久保存ではない・既定14日で `workbench.py gc` の対象）。
+- **アクセシビリティツリー/DOM スナップショット**を取得する（`browser_snapshot`）。取得物は同ディレクトリに `.json`/`.md` で置いてよい。
 - **axe-core スキャン**：`browser_evaluate` で axe をページに注入して実行し、違反一覧（基準・要素・深刻度）を得る。axe が使えない環境では DOM スナップショットからの手動判定に切り替え、その旨を明記する。
 - 必要に応じ**キーボード操作**（Tab 順・フォーカス可視）を `browser_press_key` で確認する。
 - 取得物の**全文を親 context に溜めない**。要約メタ（URL・主要要素・axe 違反件数）だけ保持し、生データは ③ で subagent に渡す。

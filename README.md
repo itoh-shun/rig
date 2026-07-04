@@ -114,6 +114,24 @@ Because isolation is per-task, running multiple tasks concurrently is safe by co
 
 This is the direct fix for "I opened five terminals and forgot what each one was doing" — `board` is a single source of truth regardless of how the work was dispatched.
 
+### Visual verification screenshots
+
+`visual-verify` (UI diff checks) and `design-audit` (Playwright screen capture) both produce screenshots. These are disposable evidence, not the deliverable — the conclusion lives in prose (`diff.md`), not the pixels:
+
+```
+<repo>/.rig/runs/<task-id>/visual/            ← task-scoped (ran via /rig:rig)
+<repo>/.rig/visual/adhoc/<ts>-<slug>/         ← ad-hoc (e.g. a standalone /rig:design <url> audit)
+```
+
+`discard` deletes a task's `visual/` immediately (the run log's JSON/MD stays). Everything else — including screenshots from accepted tasks — is pruned by age:
+
+```bash
+python3 scripts/workbench.py gc --dry-run     # preview what's 14+ days old
+python3 scripts/workbench.py gc               # delete it
+```
+
+See [`patterns/visual-artifacts.md`](./skills/rig/patterns/visual-artifacts.md) for the full rules.
+
 ## 6. Acceptance-gate
 
 Every task gets a criteria checklist drawn from `standard` (applies to every task) plus a task-type-specific preset on top (`scripts/workbench.py gates` is the source of truth):
