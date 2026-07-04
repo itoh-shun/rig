@@ -34,7 +34,7 @@ $ARGUMENTS
 
 ## flag
 
-- `--target hyperframes|remotion|davinci|aviutl` … レンダリングパイプラインを選ぶ（既定 **hyperframes**）。各 target の認証契約は `facets/instructions/render-<target>`：
+- `--target hyperframes|remotion|davinci|aviutl` … レンダリングパイプラインを選ぶ（既定 **hyperframes**）。各 target の認証契約は `render-<target>（各 target instruction）`：
   - `hyperframes`（既定）：素 HTML・Apache-2.0・OSS render・per-render 料金なし。エージェント完結に最適。
   - `remotion`：React/TS（Composition + Sequence・`useCurrentFrame()`）。React 文化のあるプロジェクトに馴染む。商用利用は公式ライセンス条件を確認。
   - `davinci`：プロ NLE。Fusion comp / Lua / Python script を素材として納品し、人間編集者が DaVinci で仕上げる前提（**stub・v0.x で契約のみ**）。

@@ -48,7 +48,7 @@ autonomy: interactive
 3. **storyboard** — `release-director` が制作台本を生成（CHANGELOG ソース対応表・ハイプだが嘘なし・コールドオープン→ビルド→リビール→CTA の構造）。
 4. **render** — `--target` に対応した `render-<target>` instruction の契約で実物を生成。
 
-手順本体は `facets/instructions/release-movie`（CHANGELOG ソースの差分手順）、target 別の契約は `facets/instructions/render-<target>`、演出は `release-director` に従う。
+手順本体は `facets/instructions/release-movie`（CHANGELOG ソースの差分手順）、target 別の契約は `render-<target>（各 target instruction）`、演出は `release-director` に従う。
 
 ## ガード（movie と同じ ＋ release 特有）
 

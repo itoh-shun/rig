@@ -1,6 +1,6 @@
 # instruction: video-direct
 
-**汎用の動画ディレクション skill（target 非依存）。** 意図 → 素材収集 → 目玉決定 → 絵コンテ（制作台本）まで。レンダリング実体（HTML/Remotion/DaVinci/AviUtl）は `facets/instructions/render-<target>` に従う。演出の作法は `video-director` persona が持つ。
+**汎用の動画ディレクション skill（target 非依存）。** 意図 → 素材収集 → 目玉決定 → 絵コンテ（制作台本）まで。レンダリング実体（HTML/Remotion/DaVinci/AviUtl）は `render-<target>（各 target instruction）` に従う。演出の作法は `video-director` persona が持つ。
 
 `/rig:movie` の起点。`--release` 指定時は `release-movie` instruction が CHANGELOG ソースの差分を上書きする（後方互換）。
 
@@ -24,7 +24,7 @@
    - **シーン表**: シーン番号・尺（秒）・映像（カット内容・構図）・テロップ（1 行）・VO（語り口）・BGM/SE キュー
    - **CTA**
    - **ソース対応表**: 各ビートが**実コード/実機能/実素材**のどこに紐づくか（誇張防止。`--release` 時は CHANGELOG 項目）
-5. **target ごとの実体化** — `facets/instructions/render-<target>` へ引き渡し、契約どおり生成。各 target instruction が出力場所と認証契約を持つ：
+5. **target ごとの実体化** — `render-<target>（各 target instruction）` へ引き渡し、契約どおり生成。各 target instruction が出力場所と認証契約を持つ：
    - `render-hyperframes`（既定）→ `video/<name>/index.html` 等＋ `web/<name>.html` の即プレビュー版（HyperFrames 認証契約厳守）
    - `render-remotion` → `video/<name>/` に Remotion プロジェクト（Composition + Sequence）
    - `render-davinci` → `video/<name>/` に Fusion comp / Lua / Python script ＋ STORYBOARD.md（人間編集者引き渡し）
