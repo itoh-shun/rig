@@ -1,6 +1,6 @@
 ---
-description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/gh のサブコマンドで実行状態を操作する。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | gh issue <n> | gh pr <n> review|fix | gh ci"
+description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/stats/review/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board` 一枚で全体像を見失わない。"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -22,6 +22,9 @@ $ARGUMENTS
 | `accept [<task_id>] [--force]` | `facets/instructions/workbench-ops`（メイン作業ツリーへ反映） |
 | `discard <task_id> [--yes]` | `facets/instructions/workbench-ops`（worktree/branch 破棄） |
 | `log [--limit N] [--json]` | `facets/instructions/workbench-ops`（実行ログ一覧） |
+| `board [--all]` | `facets/instructions/workbench-ops`（**全 task を一覧するダッシュボード**。複数タスクを並行で進めているときの単一の確認場所） |
+| `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
+| `review <task_id> --set <persona>=<verdict>` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |
 | `gh pr <n> fix` | `facets/instructions/gh-flow`（PR 指摘を隔離 worktree で修正） |
@@ -37,6 +40,27 @@ $ARGUMENTS
 - **`/rig:dev --recipe <name> --only <step> ...`** — recipe・step・flag を自分で明示的に組み合わせたいとき（既存の PARSE 全 flag が使える）。
 
 内部エンジンは共通（SKILL.md 一本）。本コマンドは workbench 経路（隔離 worktree ＋ 状態永続化 ＋ machine-gate）を既定にした入口という違いだけ。
+
+## 複数タスクを並行で進める（ターミナルを増やさない）
+
+1タスクずつ `/rig:rig "<task>"` を打つ代わりに、**まとめて積んで並列実行**したいときは `/rig:queue`（別ターミナル不要・headless プロセスの並列実行エンジン）に積む：
+
+```
+/rig:queue add "ログイン画面のバグを直して"
+/rig:queue add "在庫一覧に検索機能を追加して"
+/rig:queue add "READMEをわかりやすくして"
+/rig:queue go --provider rig --max-parallel 3
+```
+
+`go --provider rig` は各 item を `/rig:rig "<task>"` 経由で dispatch するため、**各タスクは自動的に自分専用の isolated worktree に隔離される**（並列実行中のプロセス同士がファイルを取り合う心配がない）。積んだ側は accept しない（queue の verifier は「gate まで確定したか」を判定するだけ）——完了後は:
+
+```
+/rig:rig board          # 今どのタスクがどこまで進んだか、1コマンドで一覧
+/rig:rig diff <id>      # 個別に差分確認
+/rig:rig accept <id>    # 個別に反映（他のタスクとぶつからない）
+```
+
+複数のターミナルを開いて「どれが何をしていたか忘れる」問題は、この `board` が単一の真実の情報源になることで解消する——実行がどこ（headless プロセス／このセッション）で起きていても、状態は必ず `.rig/runs/` に集約される。
 
 ## 例
 

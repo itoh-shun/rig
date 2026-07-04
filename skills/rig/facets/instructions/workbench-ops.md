@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig stats` / `/rig review`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -78,6 +78,16 @@ python3 scripts/workbench.py log --limit <N>
 ```
 
 出力（task id・実行日時・入力タスク・recipe・gate 結果）をそのまま提示する。「選択された recipe」「実行 step」「最終状態」「変更ファイル一覧」のうち log 一覧に出ない詳細（実行 step 一覧・変更ファイル一覧）が要る場合は、該当 task の `status <task_id>` / `diff <task_id>` を続けて呼ぶよう案内する（1コマンドに詰め込みすぎない・既存サブコマンドの再利用）。
+
+## `/rig board [--all]`
+
+```
+python3 scripts/workbench.py board [--all]
+```
+
+**複数タスクを並行で進めているときの単一の確認場所**（`/rig:rig` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも、全ての task は `.rig/runs/` に集約されるため同じ一覧に出る）。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
+
+「ターミナルをいくつも開いていて何をしていたか忘れる」状況は、このコマンド1つに集約することで解消する——ユーザーが並行タスクの状態を尋ねたら、まず `board` を提案する。
 
 ## `/rig review <task_id> --set <persona>=<verdict>`
 

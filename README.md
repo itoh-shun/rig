@@ -64,6 +64,7 @@ natural-language task
 | `/rig:rig accept [id] [--force]` | land the diff into your working tree (staged) — blocked unless the gate passed |
 | `/rig:rig discard <id> --yes` | delete the worktree/branch; run log stays |
 | `/rig:rig log [--limit N]` | history of past tasks: input, recipe, gate result |
+| `/rig:rig board [--all]` | **single dashboard of every active task** — running multiple tasks in parallel? this is the one place to check, no matter how many terminals or `/rig:queue` items are behind them |
 | `/rig:rig stats` | aggregate past runs: acceptance rate, gate outcomes, reviewer rubber-stamp detection |
 | `/rig:rig gh issue/pr/ci …` | GitHub Issue/PR/CI as input — see §13 |
 | `/rig:dev --recipe <name> --only <step> ...` | power-user entry: name the recipe/steps/flags yourself (same engine) — see §11 |
@@ -92,6 +93,26 @@ gate: standard + bugfix
 ```
 
 Read-only tasks (a review, an investigation that hasn't decided to change anything) skip the worktree entirely with `--no-worktree`. See [`patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) for the full design.
+
+### Running several tasks at once, without losing track
+
+Because isolation is per-task, running multiple tasks concurrently is safe by construction — each gets its own worktree and branch, so they can't step on each other. To actually run them in parallel (instead of typing `/rig:rig "<task>"` one at a time), queue them and go:
+
+```bash
+/rig:queue add "fix the login bug"
+/rig:queue add "add search to the inventory list"
+/rig:queue add "make the README clearer"
+/rig:queue go --provider rig --max-parallel 3   # dispatches 3 independent headless processes
+```
+
+`--provider rig` routes each queued item through `/rig:rig "<task>"`, so each one is isolated the same way a task you typed directly would be — no risk of the parallel processes fighting over the same files. Queue's own verifier only confirms the gate resolved and the task stayed isolated; it never accepts on your behalf. Once they're done:
+
+```bash
+/rig:rig board       # one table: every task, its type/recipe/step/gate — no matter which terminal or process ran it
+/rig:rig diff <id>   # then diff/accept/discard each individually, whenever you're ready
+```
+
+This is the direct fix for "I opened five terminals and forgot what each one was doing" — `board` is a single source of truth regardless of how the work was dispatched.
 
 ## 6. Acceptance-gate
 
@@ -351,6 +372,8 @@ Issue/PR bodies and comments are treated as untrusted external data — instruct
 **How do I know if a reviewer persona is any good?** `/rig:drill` scores detection/false-positive/severity/blocking/explanation quality against known bug seeds. `/rig:rig stats` flags reviewers with zero rejects across 5+ runs as possible rubber stamps.
 
 **What if two tasks run at once?** Each gets its own worktree and branch (`rig/<task-id>`) — they don't collide. `accept` operates on your main working tree, so accept one task's diff, commit it, and only then accept the next (accept refuses if your working tree isn't clean, precisely to keep this safe).
+
+**Can I work on several tasks in one session instead of juggling terminals?** Yes — see §5 "Running several tasks at once." Queue them with `/rig:queue add` + `/rig:queue go --provider rig --max-parallel N` (each dispatched task is isolated automatically), then check `/rig:rig board` for a single combined view instead of tracking N terminal windows in your head.
 
 ## Docs
 
