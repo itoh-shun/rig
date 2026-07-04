@@ -8,7 +8,7 @@ argument-hint: ""
 **まず `rig` skill を Skill ツールで起動すること。** このコマンドは入口であり、描画本体は決定論スクリプトにある（計算的センサー一次）:
 
 ```
-python3 scripts/orchestrate.py party
+orchestrate party
 ```
 
 を実行してそのまま表示する（$ARGUMENTS があれば注記として添える）。

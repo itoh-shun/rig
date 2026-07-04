@@ -2,7 +2,7 @@
 
 **`--plan` の表示仕様の正本。** `--plan` は COMPOSE で停止し、合成ハーネスを以下の正準フォーマットで提示する（RUN しない）。SKILL.md §5 は要約とポインタのみを持ち、ヘッダ・step テーブル・Gate/Checks/DAG/Knowledge/Reviewer Fan-out/Loop Config 各ブロックの詳細ルールはこのファイルが正本。`--plan` 実行時は必ずこれを読んで従う。
 
-> **⓪ RESOLVE はまずスクリプト**（SKILL.md §4「RESOLVE の一次実装はコード」）：named recipe なら `python3 scripts/orchestrate.py plan <recipe> --json --with "<flags>" --diff-git` を先に実行し、その `effective_steps` / 各 step の `active`・`why`（→ condition 列の注記）/ `errors`・`warnings` / `mode` / `size`（→ `diff:` 行）を本フォーマットの**データ源**として使う。以下のルールは「どう表示するか」であり、「何が実行されるか」の計算はスクリプト出力が正。スクリプトを呼べない環境・ad-hoc 合成では §4 散文規則で自力計算する。
+> **⓪ RESOLVE はまずスクリプト**（SKILL.md §4「RESOLVE の一次実装はコード」）：named recipe なら `orchestrate plan <recipe> --json --with "<flags>" --diff-git` を先に実行し、その `effective_steps` / 各 step の `active`・`why`（→ condition 列の注記）/ `errors`・`warnings` / `mode` / `size`（→ `diff:` 行）を本フォーマットの**データ源**として使う。以下のルールは「どう表示するか」であり、「何が実行されるか」の計算はスクリプト出力が正。スクリプトを呼べない環境・ad-hoc 合成では §4 散文規則で自力計算する。
 
 ### `--plan` の停止
 

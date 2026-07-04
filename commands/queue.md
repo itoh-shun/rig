@@ -16,10 +16,10 @@ $ARGUMENTS
 「1依頼ずつ流す」から「**溜めて一括**」へ。タスクを積み、まとめて並列実行する。
 
 ```
-python3 scripts/orchestrate.py queue add "<やること>"        # 積む
-python3 scripts/orchestrate.py queue list                    # 確認
-python3 scripts/orchestrate.py queue go --provider rig --max-parallel 3   # まとめて GO
-python3 scripts/orchestrate.py queue done <id>               # 手動で完了に
+orchestrate queue add "<やること>"        # 積む
+orchestrate queue list                    # 確認
+orchestrate queue go --provider rig --max-parallel 3   # まとめて GO
+orchestrate queue done <id>               # 手動で完了に
 ```
 
 - **go**＝積まれた全タスクを実行：独立タスクは**別プロセスで並列**、各タスクは生成→**独立検証（採点者≠生成者）**のゲートを通過、結果を一括レポート。中身は既存の orchestrate（並列・マルチプロバイダ・local LLM）をそのまま GO エンジンに使う。

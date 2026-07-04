@@ -16,33 +16,33 @@ $ARGUMENTS
 **① 半自動（モデルが各 step の作業をする）**
 ランナーが遷移を決め、モデルが各 step を委譲実行する：
 ```
-python3 scripts/orchestrate.py plan   <recipe>            # ステップ状態機械を算出（--plan 相当・モデル不要）
-python3 scripts/orchestrate.py init   <recipe> [--goal G] # run-state を作り最初のアクション
-python3 scripts/orchestrate.py next   run-state.json      # 次の遷移を決定論的に計算（START/ADVANCE/RETRY/AWAIT/BLOCKED/ESCALATE/DONE）
-python3 scripts/orchestrate.py check  run-state.json      # step の checks:（lint/test 等）を実行＝計算的センサー
-python3 scripts/orchestrate.py verdict run-state.json --by <reviewer> --pass|--fail   # 独立検証者の判定（採点者≠生成者）
+orchestrate plan   <recipe>            # ステップ状態機械を算出（--plan 相当・モデル不要）
+orchestrate init   <recipe> [--goal G] # run-state を作り最初のアクション
+orchestrate next   run-state.json      # 次の遷移を決定論的に計算（START/ADVANCE/RETRY/AWAIT/BLOCKED/ESCALATE/DONE）
+orchestrate check  run-state.json      # step の checks:（lint/test 等）を実行＝計算的センサー
+orchestrate verdict run-state.json --by <reviewer> --pass|--fail   # 独立検証者の判定（採点者≠生成者）
 ```
 
 **② 全自動（各 step を別プロセスの rig ハーネスで実行）**
 ```
-python3 scripts/orchestrate.py run <recipe> --provider rig --isolate \  # worktree 隔離（green だけ ff 合流）
+orchestrate run <recipe> --provider rig --isolate \  # worktree 隔離（green だけ ff 合流）
     [--verifier-provider rig] [--max-parallel N] [--quorum all|majority] [--goal G]
 ```
 - **`--provider rig`**：各 step を **`rig` skill で起動した別プロセス**として実行（rig を名前で呼ぶ＝再帰 rig ハーネス）。他に `claude` / `codex` / **`ollama`・`lmstudio`（ローカル LLM・OpenAI 互換）** / `cmd`（任意 CLI）/ `mock` も選べる。ローカル LLM は `--model <name>`（ollama 既定 `llama3.1`）・`--base-url <url>` で調整、要サーバ起動。
 
 **③ 動的モデル探索（利用可能なものを自動設定）**
 ```
-python3 scripts/orchestrate.py models [--save] [--json]   # 起動中の LLM サーバ/CLI を探索して一覧
-python3 scripts/orchestrate.py run <recipe> --provider ollama --auto-model   # 実機から動的にモデルを選ぶ
+orchestrate models [--save] [--json]   # 起動中の LLM サーバ/CLI を探索して一覧
+orchestrate run <recipe> --provider ollama --auto-model   # 実機から動的にモデルを選ぶ
 ```
 - `models`：`ollama`/`lmstudio` の `/v1/models` を叩いて**利用可能モデルを動的取得**、`claude`/`codex`/`rig` は CLI 有無を表示。`--save` で `~/.claude/rig/models.json` に保存（次回 `--auto-model` が参照）。
 - **`--auto-model`（`--auto-model-setting` も可）**：`--model` 未指定時、保存設定→実機の `/v1/models` 先頭→既定 の順でモデルを自動解決。サーバ不在でも crash せず既定にフォールバック。
 
 **④ プロバイダ疎通テスト（`probe`）**
 ```
-python3 scripts/orchestrate.py probe --provider codex                 # 検証ロールで1回叩く（VERDICT を確認）
-python3 scripts/orchestrate.py probe --provider codex --role generator
-python3 scripts/orchestrate.py probe --provider ollama --model llama3.1
+orchestrate probe --provider codex                 # 検証ロールで1回叩く（VERDICT を確認）
+orchestrate probe --provider codex --role generator
+orchestrate probe --provider ollama --model llama3.1
 ```
 プロバイダを**1回だけ**実行し、(1) 実際に投げるコマンド/エンドポイント、(2) 終了コード、(3) 生出力、(4) 契約（`VERDICT`/`STATUS`）がパースできるか を表示。exit 0＝rig から使える。`✗` のときは `--provider-cmd "codex exec --... {prompt}"`（cmd プロバイダ）で実コマンド/フラグを合わせる。
 - **並列検証**：gated step の `personas` を同時プロセスでファンアウト（`--max-parallel`）。集約は決定論（`--quorum all`＝全員一致／`majority`＝過半数）。
@@ -68,4 +68,4 @@ python3 scripts/orchestrate.py probe --provider ollama --model llama3.1
 
 - `--provider rig`/`claude` は**入れ子で claude が起動**＝コスト・再帰に注意。設計確認は `--provider mock`（別プロセスだが即返す決定論ダミー）。
 - ゲート未達 K 回で `ESCALATE`（無限ループ禁止）、自己採点（by=self）は `BLOCKED`。
-- 決定論は `python3 scripts/orchestrate.py selftest` で検証できる。
+- 決定論は `orchestrate selftest` で検証できる。
