@@ -1,6 +1,6 @@
 ---
-description: rig/movie — 動画を作る映像作家ハーネス。HTML 即プレビュー（HyperFrames）／Remotion／DaVinci／AviUtl を target で選べる。既定は実装中のプロジェクトのデモ動画を HyperFrames で。--release で CHANGELOG からのリリーストレーラー。ハイプだが嘘なし。
-argument-hint: ["何の動画か（省略時はこのプロジェクト全体）"] [--target hyperframes|remotion|davinci|aviutl] [--release [バージョン]] [--length 30s|60s|90s] [--aspect 16:9|9:16|1:1] [--plan]
+description: "rig/movie — 動画を作る映像作家ハーネス。HTML 即プレビュー（HyperFrames）／Remotion／DaVinci／AviUtl を target で選べる。既定は実装中のプロジェクトのデモ動画を HyperFrames で。--release で CHANGELOG からのリリーストレーラー。ハイプだが嘘なし。"
+argument-hint: "[\"何の動画か（省略時はこのプロジェクト全体）\"] [--target hyperframes|remotion|davinci|aviutl] [--release [バージョン]] [--length 30s|60s|90s] [--aspect 16:9|9:16|1:1] [--plan]"
 ---
 
 # rig/movie — 動画を作る映像作家 🎬
