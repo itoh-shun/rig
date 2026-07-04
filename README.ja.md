@@ -1,167 +1,247 @@
 # rig
 
-## 概要
+**Claude Code のための、品質保証つき AI ワークベンチ。** タスクに応じて必要なハーネスを自動構成し、隔離された worktree で変更を行い、acceptance-gate で検証し、最後にユーザーが差分を accept / discard できる。
 
-ブリック（facet / pattern / step）を起動時に動的に組み合わせ、タスクに最適化されたエージェント・ハーネスを engineering する汎用開発フロー・オーケストレータ。3-Stage フロー（計画→実装→検証）は数あるレシピの1つに過ぎず、プラグインそのものは特定フローに縛られない。Claude Code ネイティブ（command + skill + agents）として動作し、重い DSL エンジンや外部依存は持たない。ブリックを追加するだけで任意のフローを組み立てられる軽量な設計を原則とする。
+> 🇬🇧 English version: [README.md](./README.md)
 
-**run-continuity（中断後も駆動を切らさない）**: 開発の途中で質疑・脱線が挟まっても rig が静かに「素の Claude」へ戻らないよう、RUN 中は各ターン冒頭に状態ヘッダ（`▸ rig | recipe … | step … | gate …`）を再掲し、中断後は必ず再アンカーしてから現 step に戻る。step 境界にも印を出すので、**rig が今も駆動中だと常に目で確認できる**。**コンテキスト自動圧縮も生き延びる**：同梱の `PreCompact` フック（`hooks/`）が圧縮時に run-state の保全指示を注入し、`/rig:init` は同じ保全文を CLAUDE.md "Compact Instructions" にも置ける（詳細は `SKILL.md` §6 run-continuity）。
+## 1. rig とは何か
 
-## install
+自然文でタスクを頼むだけでいい。rig がタスクの種類（バグ修正/機能追加/リファクタ/レビュー/ドキュメント/…）を判定し、必要なブリック（persona / instruction / pattern — LEGO 式の部品）を組み合わせてハーネスを合成し、**現在の作業ツリーとは隔離された git worktree**で作業し、明示的な**受け入れ基準**（ビルド/lint/テスト・無関係な差分がないか・secret 漏洩がないか・指摘に重大度が付いているか等）で検証し、`accept` が呼ばれるまで本体には一切触れない。「できました」という自己申告は完了の根拠にならない——根拠は常にゲートの合否。
 
-本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、marketplace 経由でインストールできる（CC のバージョンにより手順が異なる場合がある）。プラグイン名は `rig`、marketplace 名は `itoshun-local-plugins`。
-
-### 方法 A: GitHub から（推奨）
+## 2. 30秒で使う
 
 ```bash
+/rig:rig "ログイン画面のバグを直して"
+```
+
+これだけでよい。裏側では、タスクを分類（`bugfix`）→ 対応する recipe を選択 → 隔離 worktree を作成 → 実装・テスト → acceptance-gate 判定 → 次アクションつきのサマリを返す:
+
+```
+/rig:rig diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
+/rig:rig accept     # 作業ツリーへ反映（gate が未達なら拒否される）
+/rig:rig discard    # 試みを破棄（作業ツリーは最初から一切触れられていない）
+```
+
+既存の Issue や PR をそのまま渡すこともできる:
+
+```bash
+/rig:rig gh issue 123        # Issue を読んで分類し、そのまま実装まで進める
+/rig:rig gh pr 45 review     # 既存 PR を3観点（security/design/test）でレビュー
+/rig:rig gh pr 45 fix        # PR のレビュー指摘や CI 失敗を隔離 worktree で修正
+```
+
+## 3. なぜ安全か
+
+- **隔離 worktree であって、あなたのブランチではない。** タスクごとに専用の git worktree（`patterns/isolated-worktree`）と使い捨てブランチを作る。rig は作業ツリーに直接書き込まない——失敗しても中断しても、あなたの手元は何も汚れない。
+- **ゲートは自己申告ではなくコード。** `scripts/workbench.py accept` は、受け入れ基準が `fail` か `pending` のまま残っている task を機械的に拒否する（終了コード1）。AI が「できました」と言っても何も変わらない——記録された `pass` だけが accept を許可する。
+- **accept も discard も必ず明示操作。** `accept` は差分サマリを先に提示してから **staged**（未コミット）として反映する——コミットは常に人が行う。`discard` は task-id の明示と `--yes` 確認を必須とし、常に破棄対象の変更ファイル一覧を先に見せる。
+- **安全側の検知は即ブロックにつながる。** 依頼にない diff・説明のないテスト失敗・secret らしき文字列・破壊的操作・レビュー未実施の認証/認可変更・説明のない公開 API 変更——いずれも該当 criterion を `fail` にし、確認するまで accept を止める。
+- **実行履歴は消えない。** `discard` は worktree/branch を削除するが run log（`.rig/runs/<task-id>/`）は残る。何を試み、なぜ却下・破棄したかは常に追跡できる。
+
+## 4. 基本コマンド
+
+| コマンド | 内容 |
+|---|---|
+| `/rig:rig "<タスク>"` | 分類 → recipe 選択 → 隔離 worktree での実行 → acceptance-gate → サマリ |
+| `/rig:rig status [id]` | 現在（または最新）の task：step 進行・gate 状態・未反映差分・次アクション |
+| `/rig:rig diff [id]` | 変更ファイル一覧＋散文サマリ（挙動変更・リスク・テストの有無） |
+| `/rig:rig accept [id] [--force]` | 作業ツリーへ反映（staged）——gate が pass していないと拒否される |
+| `/rig:rig discard <id> --yes` | worktree/branch を削除（run log は残る） |
+| `/rig:rig log [--limit N]` | 過去 task の履歴（入力・recipe・gate 結果） |
+| `/rig:rig gh issue <n>` | GitHub Issue を読んで分類し workbench に流す |
+| `/rig:rig gh pr <n> review` | 既存 PR を3観点で並列レビュー |
+| `/rig:rig gh pr <n> fix` | PR の指摘・CI 失敗を隔離 worktree で修正 |
+| `/rig:rig gh ci` | 現在の branch/PR の CI 状態を確認 |
+| `/rig:dev --recipe <name> --only <step> ...` | 上級者向け入口：recipe/step/flag を自分で明示する（エンジンは共通） |
+
+## 5. 実行フロー
+
+```
+自然文のタスク
+        │
+        ▼
+①  分類（bugfix / feature / refactor / review / documentation / security_review / …）
+        │
+        ▼
+②  対応する recipe を選択（bugfix / feature / refactor / documentation / …）
+        │
+        ▼
+③  隔離 worktree を開き、recipe を実行（実装/テスト/レビューを subagent に dispatch）
+        │
+        ▼
+④  acceptance-gate：build / lint / test / 差分スコープ / secret / 重大度付き所見を確認
+        │
+        ▼
+⑤  サマリ＋次アクション：/rig diff・/rig accept・/rig discard
+```
+
+①②④⑤ は `facets/instructions/workbench` が駆動し、③の隔離は `patterns/isolated-worktree`（決定論ランナー `scripts/workbench.py` が task-id 発行・worktree ライフサイクル・gate 記録・accept/discard を実装）が担う——状態と安全は散文の自制ではなくコードが強制する。
+
+## 6. acceptance-gate
+
+全 task は4つのプリセット（正本は `scripts/workbench.py gates`）から組んだ基準リストを持つ：
+
+| preset | 適用対象 | 基準の例 |
+|---|---|---|
+| `standard` | 全 task_type 共通 | 無関係な差分がない・テストが green か合理的説明がある・型/lintエラーなし・挙動/リスクサマリが書かれている |
+| `implementation` | bugfix/feature/refactor/test/performance/release_support（standard に上乗せ） | 実装が依頼と一致・テスト追加/既存担保を確認・公開API変更の説明・無関係な広範リファクタなし・secret漏洩なし・破壊的操作なし |
+| `review` | レビュー系タスク | 具体的な指摘のみ・重大度が付与されている・file:line参照がある・誤検出リスクを検討・Blocking/Non-blockingが分離 |
+| `security` | security_review（review に上乗せ） | 入力検証・認可認証への影響・secret非露出・依存リスク・危険なshell/eval |
+
+各基準は根拠つきで `pass` / `fail` / `warn` として記録する：
+
+```bash
+python3 scripts/workbench.py gate <task_id> --set no_lint_errors=pass --set tests_added_or_existing_tests_confirmed=warn:"既存テストのみで新規追加なし"
+```
+
+`fail` か `pending` が1件でも残っていれば `accept` は機械的に拒否される（終了コード1）。`warn` は accept を止めないが、常に提示され黙って握りつぶされることはない。
+
+## 7. isolated worktree
+
+```
+<repo の親>/rig-worktrees/<repo名>/rig-YYYYMMDD-HHMMSS-<slug>/   ← 使い捨て worktree + branch
+<repo>/.rig/runs/rig-YYYYMMDD-HHMMSS-<slug>/                      ← run state（discard 後も残る）
+  task.json        task_id / 入力 / task_type / recipe / base branch+commit / worktree path / status
+  steps.json       step ごとの進行状態
+  acceptance.json  基準ごとの pass/fail/warn ＋ 総合 gate 結果
+  plan.md / diff.md / log.md / final.md   モデルが書く散文（計画・差分要約・決定・まとめ）
+```
+
+`accept` は task branch を作業ツリーへ **squash merge（staged・コミットなし）**で反映し、`discard` が worktree/branch を後片付けする（run log は残る）。読み取り専用のタスク（レビュー・まだ直すと決まっていない調査）は `--no-worktree` で worktree を丸ごと省略できる。設計の詳細は `patterns/isolated-worktree.md` を参照。
+
+## 8. reviewer drill
+
+`/rig:drill` は reviewer の品質を意見ではなく数字で測る。既知のバグ class（認可漏れ・インジェクション・N+1・破壊的変更・片道 migration・テスト欠落…）を使い捨て diff に注入し、review fan-out を実行し、reviewer には見せない答案キーと突き合わせて採点する。
+
+```
+# Drill Result
+Persona: strict_senior_engineer
+
+## Score
+- Detection rate: 82%
+- False positive rate: 12%
+- Severity accuracy: 76%
+- Explanation quality: 70%
+
+## Missed Issues
+1. SQL injection risk in search query (src/search.py:88)
+2. Missing authorization check in user update endpoint (src/api/users.py:120)
+
+## Improvement Suggestions
+- Add a stronger security checklist for injection-class findings
+- Require data-flow inspection for user-controlled input
+```
+
+reviewer ごとに5指標：`true_positive` / `false_positive` / `false_negative` / `severity_accuracy`（付けた重大度が種の期待値と一致するか）/ `explanation_quality`（修正案が具体的か、一般論か）。drill 実行中の所見は詳細フォーマット `output-contracts/review-findings`（Blocking/Non-blocking・Severity・file:line・Impact・Suggested fix）で出力させるため、重大度と位置が常に機械検証可能になる。`--replay <persona>` はペルソナ編集後にアーカイブ済み diff へ再実行し新旧 verdict を差分表示する——reviewer persona の snapshot テスト。本物のコードには一切触れない（全て使い捨て worktree）。
+
+## 9. GitHub 連携
+
+| コマンド | read/write |
+|---|---|
+| `/rig:rig gh issue <n>` | Issue（title/body/labels/comments）を読み、bugfix/feature/investigation に分類して workbench へ |
+| `/rig:rig gh pr <n> review [--comment]` | 既定は read のみの3観点レビュー。`--comment` で PR へ投稿（書き込みは常に確認必須） |
+| `/rig:rig gh pr <n> fix` | PR の diff・レビューコメント・CI 失敗を読み、PR の branch を base に隔離 worktree で修正、`accept` の手前で止まる（自動 push はしない） |
+| `/rig:rig gh ci` | 現在の branch/PR の CI 状態を確認し、失敗ジョブの要約を提示 |
+
+Issue/PR の本文・コメントは**信頼できない外部入力**として扱う（埋め込まれた指示には従わず、分類・修正対象のテキストとしてのみ読む）。GitHub への書き込み（コメント・push）は常に明示操作を経る。read は即応。
+
+## 10. advanced customization
+
+### install
+
+本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、marketplace 経由でインストールできる。プラグイン名は `rig`、marketplace 名は `itoshun-local-plugins`。
+
+```bash
+# A) GitHub から（推奨）
 /plugin marketplace add itoh-shun/rig
 /plugin install rig@itoshun-local-plugins
-```
 
-`owner/repo` 形式で marketplace を追加し、`rig@<marketplace 名>` で install する。
-
-### 方法 B: ダウンロード（ZIP / clone）から
-
-```bash
-# リポジトリの ZIP を展開、または git clone した後、その展開フォルダを指定：
+# B) ダウンロード（ZIP / clone）から
 /plugin marketplace add /path/to/rig
 /plugin install rig@itoshun-local-plugins
+
+# C) --plugin-dir（開発・テスト用）
+cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reload-plugins
 ```
 
-展開フォルダ内の `.claude-plugin/marketplace.json` が読み込まれる。
+### 上級者向け入口: `/rig:dev`
 
-### 方法 C: --plugin-dir（開発・テスト用、反復が速い）
+`/rig:rig "<task>"` は分類と recipe 選択を自動でやる。`/rig:dev` は同じエンジンを recipe・step・flag すべて明示して使う入口：
 
 ```bash
-cd /path/to/rig
-claude --plugin-dir .
-# 編集後の再読み込み: /reload-plugins
+/rig:dev --plan --only review "現在の変更"        # ドライラン：構成だけ確認
+/rig:dev --only review                            # 3-way 並列レビューを実行
+/rig:dev --recipe release-flow --design "機能X"
+/rig:dev --recipe hotfix --issue 1234             # 緊急修正を最短経路で
 ```
 
-### 呼び出し（namespace に注意）
+| flag | 意味 |
+|---|---|
+| `--recipe <name>` | shipped/user/project の recipe を名前で指定 |
+| `--only`/`--from`/`--to`/`--skip <step>` | 実行範囲のスライス・除外 |
+| `--design` / `--review` / `--tdd` | 該当 step を強制 ON（既定は size-aware） |
+| `--issue <id>` | 既存 Issue を intake 入力に |
+| `--plan` | 合成ハーネスを提示して停止（ドライラン） |
+| `--autonomous` | step ゲートを省略（capture ゲート・acceptance-gate は解除されない） |
+| `--workflow` | ultracode Workflow バックエンドを使用（opt-in・重い多段時のみ） |
+| `--save-recipe <name>` | 合成結果を recipe として保存 |
+| `--capture` | 学びを確認ダイアログなしで知識層へ |
+| `--list` / `--validate` | ブリック/recipe/flag 一覧、または構造 doctor（いずれも RUN 前に停止） |
+| `--adversarial` | 敵対的レビュー step を追加 |
+| `--cross-llm` | 他社 LLM が読む前提のコード/レビュー規律を注入 |
+| `--persona <name>` | カスタム reviewer persona を review fan-out に追加 |
+| `--verify-findings` | REJECT 根拠を独立した `finding-verifier` で敵対的検証 |
+| `--global` | `--list`/`--validate` を全 tier 横断に拡大 |
 
-スラッシュコマンドはプラグイン名で namespace される：
+flag・ブリックの完全な一覧は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
 
-- **コマンド**: `/rig:dev` — 開発フローの入口。例: `/rig:dev --plan --only review "現在の変更"`
-- **コマンド**: `/rig:sales` — sales ドメインの入口。既定は商談記録を5観点で評価。**`--material` / `--script`** で**開発資材**（README/CHANGELOG/コード/リリース）から**営業1枚資料・荷電スクリプト**を生成（機能→ベネフィット翻訳・実在機能のみ・誇張なし）。例: `/rig:sales ./deals/acme.md` ・ `/rig:sales --material --script`
-- **コマンド**: `/rig:movie` 🎬 — **動画作成の汎用ハーネス**。`video-director` persona が制作台本（絵コンテ/テロップ/VO/尺/BGM・SE/ソース対応表）を起こし、`--target` でレンダリングパイプラインを選ぶ：**hyperframes**（既定・OSS HTML→決定論的 MP4・GSAP seekable・Apache-2.0、[HeyGen HyperFrames](https://github.com/heygen-com/hyperframes)、例 [`video/launch-film/`](./video/launch-film/)）／**remotion**（React/TS の Composition + Sequence）／**davinci**（Fusion comp / Lua / Python script を人間編集者へ素材納品・**stub**）／**aviutl**（拡張編集 `.exo` + `.anm` Lua・**stub**・日本語コミュニティ向け）。既定の対象は実装中のプロジェクト（コード/README/動く画面/開発フロー）。`--release [version]` で **release-movie** サブレシピへ切り替わり CHANGELOG をソースにする。ハイプだが全ビートが実出所（コード／機能／CHANGELOG 項目）の裏打ち。harness はコンポジション/プロジェクトまで生成し、render はユーザー環境。例: `/rig:movie`・`/rig:movie "認証フロー実装デモ"`・`/rig:movie --target remotion`・`/rig:movie --release v0.30.0`
-- **コマンド**: `/rig:scenario` 🎬✍️ — `/rig:movie` の**前段**＝シナリオライターモード。動画の物語（フック→課題→転換→ペイオフ→CTA・VO 草案・各ビートの source 対応）を書き、**検閲**する — `ai-smell-reviewer`（＋`ai-writing-smells`）で AI 臭・空ワードを、`sns-post-reviewer` でフック/ブランド/誇張リスクを、`engagement-reviewer` で**動画としての面白さ**（掴み・テンポ・ペイオフ・記憶に残る山場＝「正しいが退屈」を撃つ）を判定 → acceptance-gate で収束。検閲の土台は既存の掛け合わせ・面白さ軸だけ新設。任意で**作家性レンズ**（`--persona auteur/deconstructionist`＝解体派：本音/緊張/間/形式破壊 ・ `--persona auteur/humanist`＝人間派：温かさ/誠実/日常の発見）を足すと、より尖った演出批評が得られる（実名を避けた作家アーキタイプ・直交2軸）。例: `/rig:scenario before/after 紹介・開発者向け・60秒`
-- **コマンド**: `/rig:talk` — JARVIS 的な会話モード。話しかけると意図を汲んで適切な rig フロー(dev/sales)へ橋渡しして実行する。例: `/rig:talk 今の変更だけ軽くレビューして`。同梱の `SessionStart` フックにより、対話セッションでは既定でこの導線を通る（毎回 `/rig:talk` と打つ必要はない）。サブエージェント/headless 実行や明示的な `/rig:*` コマンドではこの限りでない。
-- **コマンド**: `/rig:goal` — ゴール駆動ループ。高レベルな目標を渡すと受け入れ基準に変換し「現状把握→次手→既存フローへ委譲→照合」を達成まで回す。例: `/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"`
-- **コマンド**: `/rig:pr` — 既存 PR レビュー。PR 番号/URL を GitHub MCP で取得し security/design/test の3観点で並列評価して structured verdict を返す。例: `/rig:pr 1234 --adversarial`
-- **コマンド**: `/rig:magi` — エヴァの MAGI を模した3賢者合議モード。「やるべきか？」の決定を Melchior-1（科学者＝正しさ）/ Balthasar-2（母＝守り）/ Casper-3（女＝価値）の直交3観点に並列で諮り、**決定論的な多数決**で go/no-go を MAGI コンソールに裁定する。例: `/rig:magi この破壊的変更を今リリースしていいか`
-- **コマンド**: `/rig:roast` 🌶️ — 毒舌スタンダップ芸人によるコードレビュー。指摘の中身は本物（AI 臭・可読性・過剰/不足・バグ）だが、ローストとして届けることで批判を**実際に読ませる**。笑いは配送装置で判定は素面。例: `/rig:roast`
-- **コマンド**: `/rig:coin` 🪙 — magi の対極。**可逆で些末**な 50/50（N 択可）を熟考せず即断する反-bikeshed ゲート。先にトリアージし、重い/不可逆と判明したら投げず `/rig:magi` へ回す。例: `/rig:coin タブかスペースか、もう決めて`
-- **コマンド**: `/rig:duck` 🦆 — ラバーダック・デバッグ。机のアヒルに問題を説明する会話モード。アヒルは**質問しかせず、コードも答えも出さない**ので、説明している本人が穴に気づく（実証済みの技法）。気づいた後の修正は `/rig:dev` 等へ委譲。例: `/rig:duck なぜか nil が返る`
-- **コマンド**: `/rig:pre-mortem` ⚰️ — 事前検死（magi の闇の兄弟）。「**もう本番で壊れた**」前提で失敗モードを断定形で逆算し、各々に最小ガードレールを対で出す。prospective hindsight は「何が起きうる?」より失敗を多く見つける。例: `/rig:pre-mortem この DB 移行`
-- **コマンド**: `/rig:init` — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md "Compact Instructions" 節を雛形生成（圧縮で rig 状態を失わない第2経路）。書き込みは確認必須・冪等。
-- **コマンド**: `/rig:persona` — 説明文から reviewer persona を生成し、product 単位(project 層・既定)か global(`--user`)に保存。`--persona <name>` で review に投入できる。例: `/rig:persona "80年代の音楽を理解しているレビュアー"`
-- **コマンド**: `/rig:knowledge` — ドメイン知識を **LLM-wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として生成。説明文 or `--auto`(repo 解析)から、global(既定・全プロダクト共有)/project overlay に保存。persona は事実を埋め込まず `inject: [[slug]]` で参照＝暗黙知化させない。`--research "<トピック>"` で web から収穫(多ソース・相互照合・出典必須・非信頼データとして読む)。shipped wiki は**8ページ**(appsec/injection手口/expand-contract/perf落とし穴/golden signals/semver/ライセンス互換/loop engineering)が対応 reviewer に inject 済み。例: `/rig:knowledge --auto` ・ `/rig:knowledge --research "GraphQL N+1"`
-- **コマンド**: `/rig:design` 🎨 — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から**デザイン仕様書／コンポーネント仕様／ワイヤー／a11y 計画**を生成し、`ux-reviewer`（ユーザビリティ）・`a11y-reviewer`（WCAG 2.2）で並列検閲して acceptance-gate で収束。引数に**画面 URL** を渡すと Playwright で実装画面を取得し UI/UX・a11y を**監査**する。`--ppt`(PowerPoint)・`--claudedesign`(claude.ai デザイン) で追加出力（併用可）。例: `/rig:design ログイン画面 --ppt` ・ `/rig:design https://example.com/login`
-- **コマンド**: `/rig:import` 📥 — ネット上の外部 skill(GitHub の SKILL.md / plugin)を rig に取り込む。解析して**委譲(最優先)→翻訳→知識のみ**を判断し、生成は既存ジェネレータへ委譲、出所と SHA-256 を `skills-lock.json` に記録。`--discover "<欲しい能力>"` でネットから探す(GitHub 横断検索→適合度/ライセンス/保守性/重複でランク→短リスト。見つからなければ `/rig:persona`/`/rig:forge` の自作へ＝探す→無ければ作る)。`--all` で走査候補全件を一括取り込み(判断サマリ一覧→一括承認1回→lock 一括記録)。lock 前に **import-gate**(persona はサンプル diff で契約遵守を実地試験・recipe は plan --json+validate)＝「取り込んで動いた」まで保証。`.cursorrules`/`AGENTS.md`/他 repo の `CLAUDE.md`/MCP ツール定義などの**方言**も翻訳対象。`--check-updates` で全取り込み skill の上流差分を検知(提案まで・自動追従なし)。`/rig:forge`(自作)の対＝既にあるものを取り込む。例: `/rig:import anthropics/skills --path skills/frontend-design/SKILL.md` ・ `/rig:import ~/.claude/skills --all` ・ `/rig:import --check-updates`
-- **コマンド**: `/rig:drill` 🎯 — reviewer 検出率の実測(ミューテーション・ドリル)。既知のバグの種を使い捨て worktree の diff に注入→review fan-out→**reviewer 別の検出/見逃し/誤検出スコアボード**＝ペルソナ品質を意見でなく数字に。`--replay <persona>` でペルソナ編集後に過去 diff へ再実行し verdict 差分(ペルソナの snapshot テスト)。例: `/rig:drill --seeds 10 --verify-findings`
-- **コマンド**: `/rig:sage` 🔮 — 大賢者に正解を問う(転スラ・オマージュ。`/rig:magi` と同じ「ネタだが中身は本物」流儀)。《告》《解》〜＝調べてから断定・確度+証拠アンカー必須・解答不能は臆さず宣言(**捏造は機能として存在しない**)。`--evolved`＝智慧之王: 複数仮説の並列演算・《予測》帰結+発生確率・《提案》最適解+次善。例: `/rig:sage なぜ本番だけ500?` ・ `/rig:sage --evolved Redis か in-memory か`
-- **コマンド**: `/rig:party` 🎮 — ハーネスを **RPG のパーティ画面**で見る: Lv=DONE数・出撃/REJECT=テレメトリ・⚔検出率=`/rig:drill` 実測・実績🏆=機械判定。ゲーム画面に見えて全行が実データの健康診断(「未測定」はそのまま較正TODO)。描画は決定論スクリプト `orchestrate.py party`。manifest `sage_notifications: true` で import/persona/capture の完了報告に大賢者スタイルの獲得通知(《告》スキル「…」を獲得しました)が付く。例: `/rig:party`
-- **コマンド**: `/rig:export` 📤 — import の対＝還元。rig で育てたブリック(persona/recipe/pack)を **rig を知らない人がそのまま使える独立 skill**(SKILL.md+README+references+LICENSE)に書き出す。契約はインライン展開・wiki は同梱・gate は散文に翻訳・出所とライセンスの連鎖を継承。GitHub に置けば他者が `/rig:import` で取り込める＝吸収と還元の輪。例: `/rig:export --persona house-authenticity`
-- **コマンド**: `/rig:catalog` — 横断レジストリ(`--list --global`)。全 tier(shipped＋global＋project)を走査し `domain×pack×persona×wiki×recipe` の地図を tier つきで表示＝「誰がどこで何してるか」を取り戻す。派生・読み取り専用。`--validate --global` は tier 横断の衛生点検。
-- **skill**: `/rig:rig` — 「実装したい」「レビューして」等の発話で**自動想起**もされる（エンジン本体）
+### shipped recipe（bugfix/feature/refactor/documentation 以外）
 
-> engine（`SKILL.md`）はドメイン非依存。同じ `PARSE → RESOLVE → COMPOSE → RUN` / context-minimal / acceptance-gate に、**pack を追加するだけ**で非開発ドメインや会話モード・ゴール駆動・PR レビューが乗る。`sales`（`/rig:sales`）・`talk`（`/rig:talk`）・`goal`（`/rig:goal`）・`pr-review`（`/rig:pr`）がその実証で、engine 本体は一切書き換えていない。`talk` は engine の前段（自然言語→構造化された rig 起動）だけを担う薄い層、`goal` は RUN の周回を駆動する薄いドライバ（既存の acceptance-gate＋autonomous-loop を組むだけ）、`pr-review` は dev のレビューを「対象＝既存 PR（GitHub MCP 取得）」に振り替えただけの薄い差分。talk が1発話を1フローへ橋渡しするのに対し、goal はゴール達成までループを回しきる。`magi`（`/rig:magi`）はコードの逐条レビューでなく**採否そのもの**を裁く decision pack で、3 persona（`magi/{melchior,balthasar,casper}`）＋集約 pattern（`magi-consensus`）を足すだけ＝engine 不変。正しさ（科学者）・守り（母）・価値（女）の直交3観点を多数決にかけ、「正しいだけのコードが現実には通らない」を構造化する。`roast`（`/rig:roast`）・`coin`（`/rig:coin`）は **humor pack** — いずれも engine 不変・persona＋薄い instruction を足すだけ。roast は本物の指摘を毒舌で配送（批判を読ませる）、coin は magi の対極（軽い可逆な決定を即断・重いものは magi へ誘導）。`duck`（`/rig:duck`）はラバーダック・デバッグ（アヒルが質問だけで本人に気づかせる）、`pre-mortem`（`/rig:pre-mortem`）は事前検死（「もう壊れた」前提で失敗モードを逆算＝magi の「どう壊れるか」補完）。ネタだが「中身は本物のゲート/レンズ」という rig の流儀を踏襲する。
+| recipe | 内容 |
+|---|---|
+| `review-only` | 現在の変更を3観点で並列レビュー |
+| `release-flow` | intake→design?→implement→verify→review?→pr→merge（size-aware） |
+| `design-first` | 設計フェーズ厚め |
+| `hotfix` | 最短パス（intake→implement→verify→pr） |
+| `debug` | 原因調査重視（reproduce→isolate→implement→verify） |
+| `adversarial-review` | AI の癖排除・人間可読性の敵対レビュー |
+| `goal-loop` | ゴール駆動ループ |
+| `pr-review` | 既存 PR のレビュー（GitHub MCP 取得） |
+| `de-ai-smell` | 散文の AI 臭除去 |
+| `magi` | 3賢者合議で go/no-go を多数決裁定 |
+| `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | 中身は本物のユーモア pack 群 |
+| `design` 🎨 / `design-audit` 🎨 | UI/UX・a11y の設計作成と URL 監査 |
+| `movie` 🎬 / `scenario` 🎬✍️ | 動画作成ハーネスとそのシナリオライター前段 |
 
-## ブリック目録・flag 一覧（正本は SKILL.md）
+### ドメイン pack（開発以外）
 
-ブリック（agent / persona / instruction / policy / knowledge / wiki / pattern / recipe / output-contract）と flag の**正本は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2（目録）・§3（flag）・§3.5（recipe スキーマ）**。README には表を複製しない（目録ドリフト防止＝`--validate` ④ の思想）。一覧は次で見る：
+`/rig:sales`・`/rig:talk`・`/rig:goal`・`/rig:magi`・humor pack 群は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。詳細は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 のブリック目録を参照。
 
-- **`/rig:dev --list`** — 全 tier の recipe を badge・`steps:` フィールドつきで一覧（表示仕様の正本: [`facets/instructions/list.md`](./skills/rig/facets/instructions/list.md)）
-- **`/rig:catalog`**（`--list --global`） — `domain × pack × persona × wiki × recipe` の横断レジストリ地図
-- **`python3 scripts/orchestrate.py plan <recipe> --json --with "<flags>" --diff-git`** — RESOLVE の確定結果（extends 解決・badge・実行 step 集合・condition 評価）の機械出力＝**RESOLVE の一次実装**（selftest が golden 検証）
+### manifest・知識層
 
-**reviewer 観点**は現在11枠（`agents/` と `facets/personas/` の二重構造）：既定 3-way（security / design / test）＋選択投入（performance / observability / api-compat / migration / docs — `--persona <name>` または manifest `default_personas` で投入）＋敵対レビュー（lazy-senior / cognitive-economist）＋**所見の反証者**（finding-verifier — `--verify-findings` で review-gate に挿入し、REJECT・必須条件を証拠ベースで反証。REFUTED はゲートに通さない＝false-positive 制御の最終段）。
+`<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。recipe は project 層（`<repo>/.claude/rig/recipes/*.md`）・user 層（`~/.claude/rig/recipes/*.md`）で `extends` による差分カスタマイズ、または `--save-recipe` で保存できる。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
 
-**実行テレメトリ**：全 RUN のサマリが `<cwd>/.rig/runs.jsonl` に自動追記される（capture と別物・承認不要の実行ログ）。`python3 scripts/orchestrate.py runs` で recipe 別集計（DONE 率・平均リトライ・エスカレーション）、`runs --personas` で**検証者別の票と剪定ヒント**（5票以上 REJECT ゼロ＝ゴム印疑い）が見られる＝reviewer をデータで剪定する。
+### 横断利用（CLI として）
 
-## クイック例
-
-```bash
-# 現在の変更を計画フェーズからレビューする
-/rig:dev --plan "現在の変更をレビュー"
-
-# レビューフェーズのみを単独実行する
-/rig:dev --only review
-
-# リリースフロー・レシピで機能Xを処理する
-/rig:dev --recipe release-flow "機能X"
-
-# 重い多段 fan-out に Workflow バックエンドを使う（明示 opt-in）
-/rig:dev --workflow --recipe release-flow "大規模リファクタ"
-
-# 知識蓄積を確認ダイアログなしで実行する
-/rig:dev --capture --recipe release-flow "機能Y"
-```
-
-## いつ「計算的オーケストレーション」になる？（選択基準）
-
-rig には2つの回し方があります。**舵を LLM が握る軽い散文エンジン（既定）**と、**舵をコードが握る決定論ランナー（`--orchestrate`）**。後者は遷移・ゲート・リトライ・停止・状態保持を `scripts/orchestrate.py` が強制し、各 step を別プロセスのエージェントで自走実行できます（並列検証・judge-panel・step-DAG 並列・マルチプロバイダ）。
-
-**ざっくりの目安**
-
-- サッと一発・対話的に進めたい → **既定エンジン**（何もしなくていい）
-- 品質を毎回同じ水準に固めたい／並列で回したい／自走させたい → **orchestrate**
-
-**いつ orchestrate を通るか（この条件で自動的に切り替わります）**
-
-| こういう時 | orchestrate？ | 理由 |
-|---|---|---|
-| 普通に `/rig:dev` を一発・対話で | ❌ 散文エンジン | 軽い・即時 |
-| `/rig:orchestrate` か `--orchestrate` を付けた | ✅ | 明示 |
-| recipe に `checks:`（lint/test 等の機械検証）がある | ✅ 自動 | 決定論ゲートで回す意図 |
-| recipe に `needs:`（step 依存）がある | ✅ 自動 | DAG 並列で回す意図 |
-| `rig.md` に `default_orchestrate: true` | ✅ 既定 | プロジェクト全体で常にカッチリ |
-| 自動 ON を今回だけ切りたい | ❌ | `--no-orchestrate` で打ち消し |
-| `/rig:persona` など単発生成 | ❌ | ループが無いので対象外 |
-
-自動で切り替わった時は、実行開始の1行で理由と戻し方を通知します（例：`🧭 計算的オーケストレーションで回します（理由: recipe に needs 宣言）。戻すには --no-orchestrate`）。実行中は run-status ヘッダに `orch: on`（明示）／`orch: auto`（自動）が出ます。事前に確認したいときは `orchestrate.py plan <recipe>` が `自動 orchestrate: auto ON/off（理由）` を表示します。
+決定論ランナー `scripts/orchestrate.py` は shim を1回置けばどのディレクトリからでも呼べる：
 
 ```bash
-# 明示してカッチリ自走（各 step を rig ハーネスで実行・3並列検証）
-/rig:orchestrate --run --provider rig --max-parallel 3
-
-# 複数モデルに作らせて勝ち筋を選ぶ（judge-panel）
-python3 scripts/orchestrate.py run release-flow --generators rig,claude,codex
-
-# 利用可能なローカル LLM を動的探索（--save で設定保存）
-python3 scripts/orchestrate.py models --save
-
-# ローカル LLM で回す（要サーバ）：生成 Claude × 検証 ollama
-python3 scripts/orchestrate.py run release-flow --provider rig --verifier-provider ollama --model llama3.1
-python3 scripts/orchestrate.py run release-flow --provider lmstudio --model local-model
-
-# モデルを実機から動的に選ぶ（--model 不要）
-python3 scripts/orchestrate.py run release-flow --provider ollama --auto-model
-
-# 今回だけ素のエンジンに戻す
-/rig:dev --no-orchestrate --recipe release-flow "機能Z"
-```
-
-使えるプロバイダ（`--provider` / `--verifier-provider` / `--generators`）：`rig`（推奨・各 step を rig ハーネスで起動）・`claude`・`codex`・**`ollama`・`lmstudio`（ローカル LLM・OpenAI 互換 HTTP・`--model`/`--base-url`）**・`cmd`（任意 CLI）・`mock`（テスト）。
-
-## 横断利用（CLI として）
-
-`scripts/orchestrate.py` は、shim を 1 回置けば **どのディレクトリからでも `rig` コマンドとして呼べる**：
-
-```bash
-# rig リポジトリ（またはプラグインインストール済みパス）で 1 回
 python3 scripts/orchestrate.py install-shim          # → ~/.local/bin/rig（symlink）
-# 以降はどの cwd からでも
 rig models                                           # 利用可能プロバイダ探索
 rig probe --provider codex                           # 疎通テスト
 rig run review-only --provider rig --verifier-provider codex
 ```
 
-- **`$RIG_HOME` で上書き**：別 install を使う場合 `RIG_HOME=/path/to/rig rig …`。解決順は `$RIG_HOME` → `~/.claude/plugins/data/rig-itoshun-local-plugins` → スクリプト隣接（dev）。
-- **プロジェクト overlay**：`<cwd>/.rig/recipes/<name>.md` が同名 built-in を**上書き解決**。built-in は絶対パス指定で引き続き使える。
-- **`checks:` の実行 cwd は呼び出し元プロジェクト**（rig リポジトリではない）＝ lint/test/build が「自分の手元のプロジェクト」に対して走る。
+`$RIG_HOME` で install 先を上書き、`<cwd>/.rig/recipes/<name>.md` が同名 built-in recipe をプロジェクト overlay、recipe の `checks:` は呼び出し元プロジェクト（rig リポジトリではない）の cwd で実行される。
 
-## ドキュメント
+### ドキュメント
 
-- `docs/testing-scenarios.md` — ディシプリン圧力シナリオ集（rationalize パターンと GREEN 応答の対比）
-- `skills/rig/SKILL.md` — エンジン本体（PARSE / RESOLVE / COMPOSE / RUN の全仕様 + rationalization 表 + red flags）
+- [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
+- [`skills/rig/patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) — worktree・run state の設計
+- [`docs/architecture.md`](./docs/architecture.md) — アーキテクチャの実証ポイント
+- [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
+- [README.md](./README.md) — English version
+
+## License
+
+[MIT](./LICENSE) © 2026 itoh-shun

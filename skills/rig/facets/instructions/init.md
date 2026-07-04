@@ -22,6 +22,10 @@
 - これで `/rig:init` 直後から `--save-recipe` / `/rig:persona` の書き込み先が存在し、「保存→一覧（`--list`）→再利用の輪」が初回から繋がる（保存先 dir 不在による失敗を防ぐ）。
 - `.claude/` は `.gitignore` 対象のことがある。**コミットして共有したい場合は知識層を除外しないよう** `.gitignore` を確認し、必要なら除外解除を**提案**する（勝手に書き換えない）。
 
+### ②-b `.gitignore` への `.rig/` 追加（workbench 実行状態）
+
+`/rig:rig`（`patterns/isolated-worktree`）の run state は `<repo>/.rig/runs/` に書かれる。ローカル実行ログであり共有リポジトリにコミットする性質のものではないため、`.gitignore` に `.rig/` が無ければ**追加を提案**する（他の gitignore 提案と同様、勝手に書き換えず確認を取る）。既に `.rig/` または親パターン（`.rig` 等）でカバーされていれば提案しない。
+
 ### ③ CLAUDE.md "Compact Instructions" 節（圧縮で rig 状態を失わない第2経路）
 
 `<repo>/CLAUDE.md` に "Compact Instructions" 節が無ければ、以下を**追記**する（既にあれば重複追記しない）。これは PreCompact フック（§6 run-continuity ④）と**同じ保全文の belt-and-suspenders**で、毎回の圧縮に自動適用される。
