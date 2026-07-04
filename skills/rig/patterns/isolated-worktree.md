@@ -6,8 +6,9 @@
 
 1. **task 登録** — `scripts/workbench.py new "<input>" --type <task_type> --slug <slug>` が task-id を発行し、`.rig/runs/<task-id>/` に run state を初期化、worktree と作業 branch を作成する。
 2. **隔離実行** — implement / verify 等の全 step を worktree の中で実行する（subagent への dispatch 時に worktree path を作業ディレクトリとして明示する）。メイン作業ツリーには一切書かない。
-3. **ゲート判定** — `workbench.py gate <task-id> --set <criterion>=<pass|fail|warn>` で基準ごとの合否を記録する。**fail か pending が1つでもあれば accept はコードが拒否する**（散文の自制ではなくランナーが強制）。
-4. **反映 or 破棄** — `accept` は branch をメイン作業ツリーへ **squash merge（staged・コミットなし）**する＝最終確定は必ず人（またはユーザーが明示した commit 操作）に残す。`discard` は worktree / branch を削除し、run log だけを残す。
+3. **ゲート判定** — `workbench.py gate <task-id> --set <criterion>=<passed|failed|warning|skipped>` で基準ごとの合否を記録する。gate 全体は `passed`/`passed_with_warnings`/`failed`/`pending`/`skipped` に集約される。**failed か pending が1つでもあれば accept はコードが拒否する**（散文の自制ではなくランナーが強制）。
+4. **accept 前提の確認** — `accept` はまず `worktree_exists`/`base_branch_recorded`/`diff_summary_generated`/`acceptance_gate_not_failed`/`no_unrelated_diff` の accept_requirements チェックリストを表示する。最初の3つは**構造的な前提**であり `--force` でも上書きできない（特に `diff_summary_generated`＝`diff.md` の存在は accept の必須条件）。
+5. **反映 or 破棄** — `accept` は branch をメイン作業ツリーへ **squash merge（staged・コミットなし）**する＝最終確定は必ず人（またはユーザーが明示した commit 操作）に残す。`discard` は worktree / branch を削除し、run log だけを残す。
 
 ## task-id と配置
 
@@ -25,9 +26,11 @@
   task.json        # task_id / input / task_type / recipe(+選択理由) / base_branch / base_commit /
                    # branch / worktree_path / status / created_at（スクリプトが管理）
   steps.json       # 実行 step の進行状態（workbench.py step --set <step>=<status>）
-  acceptance.json  # gate プリセット・基準ごとの合否・判定結果（workbench.py gate）
+  acceptance.json  # {task_id, task_type, presets, status, checks:[{name,status,detail}]}（workbench.py gate）
+  review.json      # review 系タスクの persona 別 verdict（workbench.py review・stats のゴム印検知に使用・任意）
   plan.md          # 実装計画（モデルが書く）
-  diff.md          # 差分の散文要約: 仕様変更の有無・既存挙動への影響・テスト・リスク（モデルが書く）
+  diff.md          # 差分の散文要約: `## Summary`/`## Risk`/`## Tests`/`## Unrelated diff` 見出し（モデルが書く。
+                   # `diff` サブコマンドが見出し単位で構造化表示し、accept の diff_summary_generated 要件の根拠になる）
   log.md           # 実行ログ: 分類根拠・recipe 選択理由・主要決定（モデルが書く）
   final.md         # 最終サマリ（モデルが書く）
 ```

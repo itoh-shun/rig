@@ -10,8 +10,11 @@ rig workbench — 品質保証つき AI 作業環境の決定論ランナー
 状態は `<repo>/.rig/runs/<task-id>/` に永続化する:
   task.json        タスクの正準メタ（入力・分類・base branch・worktree path・状態）
   steps.json       実行 step の進行状態
-  acceptance.json  acceptance-gate の基準と合否
-  plan.md / diff.md / log.md / final.md   モデルが書く散文成果物（本スクリプトは触らない）
+  acceptance.json  acceptance-gate の基準と合否（{task_id, status, checks[]}）
+  review.json      review 系タスクの persona 別 verdict（stats のゴム印検知に使用・任意）
+  plan.md / diff.md / log.md / final.md   モデルが書く散文成果物（本スクリプトは触らない。
+                                          diff.md は `## Summary` / `## Risk` / `## Tests` /
+                                          `## Unrelated diff` の見出しを持つと `diff` が構造化表示する）
 
 終了コード: 0=成功 / 1=エラー（accept のゲート未達・worktree 不整合を含む）
 依存: 標準ライブラリのみ（PyYAML 不要）
@@ -24,62 +27,100 @@ import pathlib
 import re
 import subprocess
 import sys
+from collections import Counter
 
 # ── acceptance-gate プリセット（正本。instruction はここを参照する）───────────────
 GATE_PRESETS: dict[str, list[str]] = {
     # 全 task_type 共通の標準 gate
     "standard": [
+        "task_intent_satisfied",
         "no_unrelated_diff",
-        "tests_pass_or_reasonable_explanation",
-        "no_type_errors",
-        "no_lint_errors",
-        "behavior_summary_written",
+        "diff_summary_written",
         "risk_summary_written",
-    ],
-    # 実装タスク用（standard に上乗せ）
-    "implementation": [
-        "implementation_matches_request",
-        "tests_added_or_existing_tests_confirmed",
-        "public_api_changes_documented",
-        "no_unrelated_refactor",
+        "tests_pass_or_explained",
+        "no_type_errors_or_explained",
         "no_secret_leak",
         "no_destructive_operation",
     ],
+    # bugfix 専用（standard に上乗せ）
+    "bugfix": [
+        "bug_cause_identified",
+        "fix_is_minimal",
+        "regression_test_added_or_explained",
+        "existing_behavior_preserved",
+        "no_unrelated_refactor",
+    ],
+    # feature 専用（standard に上乗せ）
+    "feature": [
+        "requirement_summary_written",
+        "implementation_matches_requirement",
+        "tests_added_or_explained",
+        "public_api_changes_documented",
+        "migration_or_backward_compatibility_considered",
+    ],
+    # refactor 専用（standard に上乗せ）
+    "refactor": [
+        "behavior_boundaries_identified",
+        "no_unintended_behavior_change",
+        "tests_confirm_behavior_preserved",
+        "no_unrelated_refactor",
+        "public_api_changes_documented_if_any",
+    ],
     # レビュータスク用（差分を作らないため standard を含まない）
     "review": [
-        "concrete_findings_only",
+        "findings_are_concrete",
         "severity_labeled",
-        "file_and_line_references_included",
+        "file_references_included",
+        "blocking_and_non_blocking_separated",
         "false_positive_risk_considered",
-        "blocking_and_non_blocking_items_separated",
     ],
     # セキュリティ確認用（review に上乗せ）
     "security": [
-        "input_validation_checked",
-        "authz_authn_impact_checked",
-        "secrets_not_exposed",
+        "authn_authz_impact_checked",
+        "user_input_flow_checked",
+        "secret_exposure_checked",
+        "unsafe_eval_or_shell_checked",
         "dependency_risk_checked",
-        "unsafe_shell_or_eval_checked",
     ],
 }
 
-# task_type → 適用 gate プリセット（合成順に列挙）
+# task_type → 適用 gate プリセット（合成順に列挙。先頭が base、以降は上乗せ）
 TASK_TYPES: dict[str, list[str]] = {
-    "bugfix": ["standard", "implementation"],
-    "feature": ["standard", "implementation"],
-    "refactor": ["standard", "implementation"],
-    "test": ["standard", "implementation"],
-    "performance": ["standard", "implementation"],
+    "bugfix": ["standard", "bugfix"],
+    "feature": ["standard", "feature"],
+    "refactor": ["standard", "refactor"],
+    "test": ["standard", "feature"],
+    "performance": ["standard", "bugfix"],
     "documentation": ["standard"],
     "design": ["standard"],
     "investigation": ["standard"],
-    "release_support": ["standard", "implementation"],
+    "release_support": ["standard"],
     "review": ["review"],
     "security_review": ["review", "security"],
 }
 
 VALID_STEP_STATUS = ("pending", "running", "passed", "failed", "skipped")
-VALID_CRITERION_STATUS = ("pending", "pass", "fail", "warn")
+VALID_CRITERION_STATUS = ("pending", "passed", "failed", "warning", "skipped")
+VALID_VERDICT = ("APPROVE", "REJECT", "APPROVE_WITH_CONDITIONS")
+
+STEP_ICON = {"passed": "✓", "failed": "✗", "running": "▸", "pending": "…", "skipped": "-"}
+CHECK_ICON = {"passed": "✓", "failed": "✗", "warning": "⚠", "pending": "…", "skipped": "-"}
+
+NEXT_ACTIONS = {
+    "running": "実行中。完了後に gate を判定してください（workbench.py gate <id> --set …）",
+    "gate_passed": "/rig diff で差分確認 → /rig accept で反映（または /rig discard で破棄）",
+    "gate_failed": "未達基準を修正して gate を再判定（failed のままなら /rig discard）",
+    "accepted": "git diff --staged を確認してコミット → /rig discard <id> で worktree を後片付け",
+    "discarded": "終了済み（run log のみ保持）",
+}
+
+RECOMMENDATION = {
+    "failed": "Fix the failed acceptance-gate criteria before accept（`workbench.py gate` で確認）。",
+    "pending": "残りの acceptance 基準を判定してから accept してください。",
+    "passed_with_warnings": "警告内容を確認したうえで、問題なければ accept してください。",
+    "passed": "accept して問題ありません。",
+    "skipped": "この task には gate 基準が設定されていません — 手動で確認してから accept してください。",
+}
 
 
 def now_iso() -> str:
@@ -178,28 +219,33 @@ def make_task_id(slug: str) -> str:
     return f"rig-{ts}-{slug}"
 
 
-# ── gate 構築 ────────────────────────────────────────────────────────────────
-def build_acceptance(task_type: str) -> dict:
+# ── gate 構築・判定 ──────────────────────────────────────────────────────────
+def build_acceptance(task_id: str, task_type: str) -> dict:
     presets = TASK_TYPES[task_type]
-    criteria: list[dict] = []
+    checks: list[dict] = []
     seen: set[str] = set()
     for preset in presets:
-        for cid in GATE_PRESETS[preset]:
-            if cid not in seen:
-                seen.add(cid)
-                criteria.append({"id": cid, "status": "pending", "note": ""})
-    return {"task_type": task_type, "presets": presets, "required": criteria,
-            "result": "pending", "checked_at": None}
+        for name in GATE_PRESETS[preset]:
+            if name not in seen:
+                seen.add(name)
+                checks.append({"name": name, "status": "pending", "detail": ""})
+    return {"task_id": task_id, "task_type": task_type, "presets": presets,
+            "status": "pending", "checks": checks, "checked_at": None}
 
 
-def gate_result(acc: dict) -> str:
-    statuses = [c["status"] for c in acc["required"]]
-    if any(s == "fail" for s in statuses):
+def gate_status(acc: dict) -> str:
+    """failed > pending > (全件 skipped なら skipped) > warning > passed の優先順位で判定する。"""
+    statuses = [c["status"] for c in acc["checks"]]
+    if not statuses:
+        return "skipped"
+    if any(s == "failed" for s in statuses):
         return "failed"
     if any(s == "pending" for s in statuses):
         return "pending"
-    if any(s == "warn" for s in statuses):
-        return "warning"
+    if all(s == "skipped" for s in statuses):
+        return "skipped"
+    if any(s == "warning" for s in statuses):
+        return "passed_with_warnings"
     return "passed"
 
 
@@ -214,6 +260,26 @@ def default_worktree_path(root: pathlib.Path, task_id: str) -> pathlib.Path:
 def worktree_dirty(wt: pathlib.Path) -> list[str]:
     proc = git(["status", "--porcelain"], cwd=wt)
     return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+# ── diff.md 構造化パーサ ─────────────────────────────────────────────────────
+def parse_diff_md(text: str) -> dict[str, str]:
+    """`## <heading>` 区切りの diff.md をセクション辞書に分解する（小文字キー）。"""
+    sections: dict[str, str] = {}
+    current: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        m = re.match(r"^##\s+(.+?)\s*$", line)
+        if m:
+            if current is not None:
+                sections[current] = "\n".join(buf).strip()
+            current = m.group(1).strip().lower()
+            buf = []
+        elif current is not None:
+            buf.append(line)
+    if current is not None:
+        sections[current] = "\n".join(buf).strip()
+    return sections
 
 
 # ── サブコマンド実装 ──────────────────────────────────────────────────────────
@@ -256,9 +322,18 @@ def cmd_new(args: argparse.Namespace) -> None:
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
     save_json(d / "steps.json", {"steps": []})
-    save_json(d / "acceptance.json", build_acceptance(args.type))
+    acc = build_acceptance(task_id, args.type)
+    save_json(d / "acceptance.json", acc)
+
+    # ── 選択理由の可視化バナー（Phase 1 §3・散文任せにせずコードが確定出力する）───
+    print("▸ rig")
+    print(f"task: {args.input}")
+    print(f"detected: {args.type}")
+    print(f"recipe: {args.recipe or '(未指定)'}" + (f" — {args.reason}" if args.reason else ""))
+    print(f"mode: {'isolated worktree' if worktree_path else 'not isolated (--no-worktree)'}")
+    print(f"gate: {' + '.join(acc['presets'])}")
+    print()
     print(f"task_id: {task_id}")
-    print(f"task_type: {args.type}")
     print(f"base_branch: {base_branch} @ {base_commit[:12]}")
     if worktree_path:
         print(f"worktree: {worktree_path} (branch: {branch})")
@@ -293,39 +368,38 @@ def cmd_gate(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
-    acc = load_json(d / "acceptance.json", build_acceptance(task["task_type"]))
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
 
-    known = {c["id"]: c for c in acc["required"]}
+    known = {c["name"]: c for c in acc["checks"]}
     for pair in args.set or []:
         if "=" not in pair:
-            die(f"--set は <criterion>=<pass|fail|warn> 形式で指定してください（値: {pair!r}）")
-        cid, status = pair.split("=", 1)
-        note = ""
+            die(f"--set は <criterion>=<status>[:detail] 形式で指定してください（値: {pair!r}）")
+        name, status = pair.split("=", 1)
+        detail = ""
         if ":" in status:
-            status, note = status.split(":", 1)
+            status, detail = status.split(":", 1)
         if status not in VALID_CRITERION_STATUS:
             die(f"criterion status '{status}' は不正です。有効: {', '.join(VALID_CRITERION_STATUS)}")
-        if cid not in known:
-            die(f"criterion '{cid}' はこの task の gate に存在しません。有効: {', '.join(known)}")
-        known[cid]["status"] = status
-        if note:
-            known[cid]["note"] = note
+        if name not in known:
+            die(f"criterion '{name}' はこの task の gate に存在しません。有効: {', '.join(known)}")
+        known[name]["status"] = status
+        if detail:
+            known[name]["detail"] = detail
 
-    acc["result"] = gate_result(acc)
+    acc["status"] = gate_status(acc)
     acc["checked_at"] = now_iso()
     save_json(d / "acceptance.json", acc)
 
-    if task["status"] == "running" and acc["result"] in ("passed", "warning", "failed"):
-        task["status"] = "gate_passed" if acc["result"] in ("passed", "warning") else "gate_failed"
+    if task["status"] == "running" and acc["status"] in ("passed", "passed_with_warnings", "failed", "skipped"):
+        task["status"] = "gate_failed" if acc["status"] == "failed" else "gate_passed"
         save_task(d, task)
 
-    print(f"## acceptance-gate: {task_id}  [{acc['result'].upper()}]")
+    print(f"## acceptance-gate: {task_id}  [{acc['status'].upper()}]")
     print(f"presets: {' + '.join(acc['presets'])}")
-    icon = {"pass": "✓", "fail": "✗", "warn": "⚠", "pending": "…"}
-    for c in acc["required"]:
-        note = f" — {c['note']}" if c.get("note") else ""
-        print(f"  {icon[c['status']]} {c['id']}{note}")
-    if acc["result"] == "failed":
+    for c in acc["checks"]:
+        detail = f" — {c['detail']}" if c.get("detail") else ""
+        print(f"  {CHECK_ICON[c['status']]} {c['name']}{detail}")
+    if acc["status"] == "failed":
         sys.exit(1)
 
 
@@ -348,26 +422,46 @@ def cmd_diff(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
     names, stat, dirty = _diff_lines(root, task)
+
     print(f"## rig diff: {task_id}")
     print(f"base: {task['base_branch']} @ {task['base_commit'][:12]}")
     if task.get("branch"):
         print(f"branch: {task['branch']}")
     print()
+    print("Changed files:")
     if not names and not dirty:
-        print("（変更なし）")
-        return
+        print("  （変更なし）")
     for line in names:
         print(f"  {line}")
     if stat:
-        print(f"\n{stat}")
+        print(f"  {stat}")
     if dirty:
         print(f"\n[WARN] worktree に未コミットの変更が {len(dirty)} 件あります（accept 前にコミットが必要）:")
         for line in dirty[:20]:
             print(f"  {line}")
+
     diff_md = d / "diff.md"
-    if diff_md.exists():
-        print(f"\n差分要約: {diff_md.relative_to(root)}（`/rig diff` の散文サマリ）")
+    sections = parse_diff_md(diff_md.read_text(encoding="utf-8")) if diff_md.exists() else {}
+    for label, key in (("Summary", "summary"), ("Risk", "risk"), ("Tests", "tests")):
+        print(f"\n{label}:")
+        print(f"  {sections[key]}" if sections.get(key) else "  （未記載）")
+
+    print("\nUnrelated diff:")
+    unrelated = next((c for c in acc["checks"] if c["name"] == "no_unrelated_diff"), None)
+    if "unrelated diff" in sections:
+        print(f"  {sections['unrelated diff']}")
+    elif unrelated:
+        print(f"  {CHECK_ICON[unrelated['status']]} {unrelated['status']}"
+              + (f" — {unrelated['detail']}" if unrelated.get("detail") else ""))
+    else:
+        print("  （未確認）")
+
+    if not diff_md.exists():
+        print(f"\n[NOTE] {diff_md.relative_to(root)} が未作成です。accept には diff summary の作成が必要です。")
+
+    print(f"\nRecommended:\n  {RECOMMENDATION[gate_status(acc)]}")
 
 
 def cmd_accept(args: argparse.Namespace) -> None:
@@ -379,25 +473,56 @@ def cmd_accept(args: argparse.Namespace) -> None:
         die(f"task '{task_id}' は既に accept 済みです")
     if task["status"] == "discarded":
         die(f"task '{task_id}' は discard 済みです")
-    if not task.get("worktree_path"):
-        die("この task は worktree を持ちません（--no-worktree RUN）。accept 対象の差分がありません")
 
-    # ① gate 判定（安全側に倒す: pass 以外は accept を止める）
-    acc = load_json(d / "acceptance.json")
-    result = gate_result(acc)
-    if result not in ("passed", "warning"):
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    status = gate_status(acc)
+    diff_md = d / "diff.md"
+    diff_summary_ok = diff_md.exists() and diff_md.read_text(encoding="utf-8").strip() != ""
+    unrelated = next((c for c in acc["checks"] if c["name"] == "no_unrelated_diff"), None)
+    unrelated_ok = (unrelated is None) or (unrelated["status"] in ("passed", "warning", "skipped"))
+    gate_ok = status in ("passed", "passed_with_warnings", "skipped")
+
+    # ── accept_requirements チェックリスト（Phase 3・全件を先に見せてから判定する）───
+    hard = [
+        ("worktree_exists", bool(task.get("worktree_path")) and pathlib.Path(task["worktree_path"]).is_dir()),
+        ("base_branch_recorded", bool(task.get("base_branch")) and bool(task.get("base_commit"))),
+        ("diff_summary_generated", diff_summary_ok),
+    ]
+    soft = [
+        ("acceptance_gate_not_failed", gate_ok),
+        ("no_unrelated_diff", unrelated_ok),
+    ]
+    print(f"## rig accept: {task_id} — accept_requirements")
+    for name, ok in hard + soft:
+        print(f"  {'✓' if ok else '✗'} {name}")
+
+    hard_fail = [name for name, ok in hard if not ok]
+    if hard_fail:
+        hints = {
+            "worktree_exists": "この task には worktree がありません（--no-worktree RUN、または既に discard 済み）",
+            "base_branch_recorded": "task.json に base_branch/base_commit が記録されていません（run-state 破損の可能性）",
+            "diff_summary_generated": f"{diff_md.relative_to(root)} が未作成です。`/rig diff` の散文サマリを先に書いてください",
+        }
+        die("accept できません（構造的な前提が未達・--force でも上書き不可）:\n"
+            + "\n".join(f"  - {n}: {hints[n]}" for n in hard_fail))
+
+    soft_fail = [name for name, ok in soft if not ok]
+    if soft_fail:
         if not args.force:
-            failed = [c["id"] for c in acc["required"] if c["status"] in ("fail", "pending")]
+            failed_checks = [c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")]
             die(
-                f"acceptance-gate が {result} のため accept できません（未達: {', '.join(failed)}）。\n"
-                f"  基準を満たしてから `workbench.py gate {task_id} --set <criterion>=pass` で更新するか、\n"
+                f"acceptance-gate が {status} のため accept できません（未達: {', '.join(failed_checks) or 'no_unrelated_diff'}）。\n"
+                f"  基準を満たしてから `workbench.py gate {task_id} --set <criterion>=passed` で更新するか、\n"
                 f"  リスクを理解した上で --force を付けてください（記録に残ります）"
             )
-        warn(f"acceptance-gate {result} を --force で上書きして accept します（task.json に forced: true を記録）")
+        warn(f"未達要件を --force で上書きして accept します（{', '.join(soft_fail)}）。task.json に forced: true を記録します")
         task["forced"] = True
-    if result == "warning":
-        warns = [f"{c['id']}（{c.get('note') or 'note なし'}）" for c in acc["required"] if c["status"] == "warn"]
+    if status == "passed_with_warnings":
+        warns = [f"{c['name']}（{c.get('detail') or 'detail なし'}）" for c in acc["checks"] if c["status"] == "warning"]
         warn("未解決の警告つきで accept します: " + " / ".join(warns))
+
+    if not task.get("worktree_path"):
+        die("この task は worktree を持ちません（--no-worktree RUN）。accept 対象の差分がありません")
 
     # ② worktree の整合チェック
     wt = pathlib.Path(task["worktree_path"])
@@ -441,7 +566,7 @@ def cmd_accept(args: argparse.Namespace) -> None:
     task["accepted_at"] = now_iso()
     save_task(d, task)
     names, stat, _ = _diff_lines(root, task)
-    print(f"## rig accept: {task_id} ✓")
+    print(f"\n## rig accept: {task_id} ✓")
     print(f"branch {branch} の変更（{ahead} commits）をメイン作業ツリーに **staged** として反映しました。")
     if stat:
         print(f"  {stat}")
@@ -488,42 +613,49 @@ def cmd_discard(args: argparse.Namespace) -> None:
     print(f"worktree と branch を削除しました。run log は {d.relative_to(root)}/ に残ります。")
 
 
-def _steps_summary(d: pathlib.Path) -> str:
+def _print_steps(d: pathlib.Path) -> None:
     steps = load_json(d / "steps.json", {"steps": []})["steps"]
+    print("Steps:")
     if not steps:
-        return "（未記録）"
-    icon = {"passed": "✓", "failed": "✗", "running": "▸", "pending": "…", "skipped": "-"}
-    return " → ".join(f"{s['name']}{icon.get(s['status'], '?')}" for s in steps)
+        print("  （未記録）")
+        return
+    for s in steps:
+        print(f"  {STEP_ICON.get(s['status'], '?')} {s['name']}"
+              + (f" ({s['status']})" if s["status"] not in ("passed",) else ""))
 
 
-NEXT_ACTIONS = {
-    "running": "実行中。完了後に gate を判定してください（workbench.py gate <id> --set …）",
-    "gate_passed": "/rig diff で差分確認 → /rig accept で反映（または /rig discard で破棄）",
-    "gate_failed": "未達基準を修正して gate を再判定（fail のままなら /rig discard）",
-    "accepted": "git diff --staged を確認してコミット → /rig discard <id> で worktree を後片付け",
-    "discarded": "終了済み（run log のみ保持）",
-}
+def _print_checks(acc: dict) -> None:
+    print(f"Gate: {acc['status'].upper()}  ({' + '.join(acc['presets'])})")
+    for c in acc["checks"]:
+        detail = f" — {c['detail']}" if c.get("detail") else ""
+        print(f"  {CHECK_ICON[c['status']]} {c['name']}{detail}")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
-    acc = load_json(d / "acceptance.json", build_acceptance(task["task_type"]))
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    acc["status"] = gate_status(acc)
+
     print(f"## rig status: {task_id}")
-    print(f"input:       {task['input']}")
-    print(f"task_type:   {task['task_type']}" + (f" / recipe: {task['recipe']}" if task.get("recipe") else ""))
+    print(f"task:        {task['input']}")
+    print(f"type:        {task['task_type']}" + (f" / recipe: {task['recipe']}" if task.get("recipe") else ""))
     print(f"status:      {task['status']}" + (" (forced)" if task.get("forced") else ""))
+    print(f"mode:        {'isolated worktree' if task.get('worktree_path') else 'not isolated'}")
     print(f"base:        {task['base_branch']} @ {task['base_commit'][:12]}")
     if task.get("worktree_path"):
         print(f"worktree:    {task['worktree_path']} (branch: {task['branch']})")
-    print(f"steps:       {_steps_summary(d)}")
-    print(f"gate:        {gate_result(acc)}  ({' + '.join(acc['presets'])})")
-    names, stat, dirty = _diff_lines(root, task)
+    print()
+    _print_steps(d)
+    print()
+    _print_checks(acc)
+    print()
     if task["status"] not in ("accepted", "discarded"):
+        names, stat, dirty = _diff_lines(root, task)
         pending = f"変更 {len(names)} ファイル" + (f"・未コミット {len(dirty)} 件" if dirty else "")
         print(f"未反映差分:  {pending if names or dirty else 'なし'}" + (f"（{stat}）" if stat else ""))
-    print(f"next:        {NEXT_ACTIONS.get(task['status'], '-')}")
+    print(f"Next: {NEXT_ACTIONS.get(task['status'], '-')}")
 
 
 def cmd_log(args: argparse.Namespace) -> None:
@@ -545,12 +677,13 @@ def cmd_log(args: argparse.Namespace) -> None:
     print(f"## rig log（最新 {len(entries)} 件）\n")
     for t in entries:
         d = base / t["task_id"]
-        acc = load_json(d / "acceptance.json", {"required": [], "presets": []})
+        acc = load_json(d / "acceptance.json", {"checks": [], "presets": []})
+        gs = gate_status(acc) if acc.get("checks") else "-"
         print(f"- {t['task_id']}  [{t['status']}]")
         print(f"    input: {t['input'][:60]}{'…' if len(t['input']) > 60 else ''}")
         print(f"    type: {t['task_type']}"
               + (f" / recipe: {t['recipe']}" if t.get("recipe") else "")
-              + f" / gate: {gate_result(acc) if acc.get('required') else '-'}"
+              + f" / gate: {gs}"
               + f" / created: {t['created_at']}")
 
 
@@ -566,6 +699,117 @@ def cmd_gates(_args: argparse.Namespace) -> None:
         print(f"  {tt}: {' + '.join(presets)}")
 
 
+def cmd_review(args: argparse.Namespace) -> None:
+    """review 系タスクの persona 別 verdict を記録する（stats のゴム印検知に使用）。"""
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    d = run_dir(root, task_id)
+    data = load_json(d / "review.json", {"task_id": task_id, "verdicts": []})
+    by_persona = {v["persona"]: v for v in data["verdicts"]}
+    for pair in args.set:
+        if "=" not in pair:
+            die(f"--set は <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS> 形式で指定してください（値: {pair!r}）")
+        persona, verdict = pair.split("=", 1)
+        if verdict not in VALID_VERDICT:
+            die(f"verdict '{verdict}' は不正です。有効: {', '.join(VALID_VERDICT)}")
+        by_persona[persona] = {"persona": persona, "verdict": verdict, "recorded_at": now_iso()}
+    data["verdicts"] = list(by_persona.values())
+    save_json(d / "review.json", data)
+    print(f"{task_id} review verdicts: " + " ".join(f"{v['persona']}={v['verdict']}" for v in data["verdicts"]))
+
+
+def cmd_stats(args: argparse.Namespace) -> None:
+    root = repo_root()
+    base = runs_dir(root)
+    tasks: list[dict] = []
+    if base.is_dir():
+        for p in sorted(base.iterdir()):
+            tj = p / "task.json"
+            if tj.exists():
+                tasks.append(load_json(tj))
+
+    if args.last:
+        m = re.match(r"^(\d+)d$", args.last)
+        if not m:
+            die(f"--last は '<N>d' 形式で指定してください（例: 30d。値: {args.last!r}）")
+        cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(days=int(m.group(1)))
+        tasks = [t for t in tasks if datetime.datetime.fromisoformat(t["created_at"]) >= cutoff]
+
+    if args.recipe:
+        tasks = [t for t in tasks if t.get("recipe") == args.recipe]
+
+    def _load_reviews(task_list: list[dict]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for t in task_list:
+            rj = base / t["task_id"] / "review.json"
+            if rj.exists():
+                out[t["task_id"]] = load_json(rj)
+        return out
+
+    if args.verifier:
+        candidate_reviews = _load_reviews(tasks)
+        tasks = [t for t in tasks
+                 if any(v["persona"] == args.verifier
+                        for v in candidate_reviews.get(t["task_id"], {}).get("verdicts", []))]
+
+    # フィルタ確定後の最終 tasks に対してのみ review.json を読む（--verifier 適用前の
+    # 候補集合を漏らさないよう、統計は必ず最終集合から作り直す）
+    review_by_task = _load_reviews(tasks)
+
+    if not tasks:
+        print("## rig stats\n\n対象 run がありません（フィルタを確認するか、`/rig \"<task>\"` を実行してください）")
+        return
+
+    accepted = sum(1 for t in tasks if t["status"] == "accepted")
+    discarded = sum(1 for t in tasks if t["status"] == "discarded")
+
+    gate_counts: Counter[str] = Counter()
+    for t in tasks:
+        acc = load_json(base / t["task_id"] / "acceptance.json", {"checks": []})
+        gate_counts[gate_status(acc) if acc.get("checks") else "skipped"] += 1
+    failed_gate = gate_counts.get("failed", 0)
+
+    recipe_counts = Counter(t.get("recipe") or f"(recipe未指定・{t['task_type']})" for t in tasks)
+
+    verifier_stats: Counter[str] = Counter()
+    verifier_rejects: Counter[str] = Counter()
+    for tid, rv in review_by_task.items():
+        for v in rv.get("verdicts", []):
+            verifier_stats[v["persona"]] += 1
+            if v["verdict"] == "REJECT":
+                verifier_rejects[v["persona"]] += 1
+
+    print("## rig stats\n")
+    print(f"Runs: {len(tasks)}")
+    print(f"Accepted: {accepted}")
+    print(f"Discarded: {discarded}")
+    print(f"Failed gate: {failed_gate}")
+
+    print("\nMost used recipes:")
+    for name, n in recipe_counts.most_common(5):
+        print(f"- {name}: {n}")
+
+    print("\nGate results:")
+    for status in ("passed", "passed_with_warnings", "failed", "pending", "skipped"):
+        if gate_counts.get(status):
+            print(f"- {status}: {gate_counts[status]}")
+
+    if verifier_stats:
+        print("\nVerifier behavior:")
+        rubber_stamp_warnings = []
+        for persona, runs in sorted(verifier_stats.items(), key=lambda kv: -kv[1]):
+            rejects = verifier_rejects.get(persona, 0)
+            print(f"- {persona}: {runs} runs, {rejects} rejects")
+            if runs >= 5 and rejects == 0:
+                rubber_stamp_warnings.append(f"{persona} has 0 rejects across {runs} runs. Possible rubber-stamp behavior.")
+        if rubber_stamp_warnings:
+            print("\nWarning:")
+            for w in rubber_stamp_warnings:
+                print(w)
+    else:
+        print("\nVerifier behavior: （未記録。`workbench.py review <task_id> --set <persona>=<verdict>` で記録すると集計されます）")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="rig workbench — run-state / worktree / acceptance-gate manager")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -576,7 +820,7 @@ def main() -> None:
     p.add_argument("--slug", help="task-id 用の短い英語 slug（省略時は input から導出）")
     p.add_argument("--base", help="base branch 名の明示（省略時は現在の branch）")
     p.add_argument("--recipe", help="選択した recipe 名")
-    p.add_argument("--reason", help="recipe 選択理由（log 用）")
+    p.add_argument("--reason", help="recipe 選択理由（バナー・log 用）")
     p.add_argument("--no-worktree", action="store_true", help="worktree を作らない（review 等の読み取り専用 RUN）")
     p.set_defaults(func=cmd_new)
 
@@ -588,17 +832,17 @@ def main() -> None:
 
     p = sub.add_parser("gate", help="acceptance-gate 基準の合否を記録・判定する")
     p.add_argument("task_id", nargs="?")
-    p.add_argument("--set", action="append", metavar="CRITERION=STATUS[:NOTE]",
-                   help=f"status: {', '.join(VALID_CRITERION_STATUS)}（NOTE は : 区切りで付記）")
+    p.add_argument("--set", action="append", metavar="CRITERION=STATUS[:DETAIL]",
+                   help=f"status: {', '.join(VALID_CRITERION_STATUS)}（DETAIL は : 区切りで付記）")
     p.set_defaults(func=cmd_gate)
 
-    p = sub.add_parser("diff", help="base からの変更差分（機械部分）を表示する")
+    p = sub.add_parser("diff", help="base からの変更差分を構造化表示する")
     p.add_argument("task_id", nargs="?")
     p.set_defaults(func=cmd_diff)
 
-    p = sub.add_parser("accept", help="gate pass を確認してメイン作業ツリーへ squash 反映する")
+    p = sub.add_parser("accept", help="accept_requirements と gate を確認してメイン作業ツリーへ squash 反映する")
     p.add_argument("task_id", nargs="?")
-    p.add_argument("--force", action="store_true", help="gate 未達を上書きして反映（記録に残る）")
+    p.add_argument("--force", action="store_true", help="gate 未達を上書きして反映（記録に残る。構造的前提の欠落は上書き不可）")
     p.set_defaults(func=cmd_accept)
 
     p = sub.add_parser("discard", help="worktree と branch を破棄する（run log は残す）")
@@ -617,6 +861,18 @@ def main() -> None:
 
     p = sub.add_parser("gates", help="acceptance-gate プリセット定義を表示する")
     p.set_defaults(func=cmd_gates)
+
+    p = sub.add_parser("review", help="review 系タスクの persona 別 verdict を記録する（stats 用）")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--set", action="append", required=True, metavar="PERSONA=VERDICT",
+                   help=f"verdict: {', '.join(VALID_VERDICT)}（複数可）")
+    p.set_defaults(func=cmd_review)
+
+    p = sub.add_parser("stats", help="過去 run を集計する（recipe 別・gate 別・verifier のゴム印検知）")
+    p.add_argument("--recipe", help="recipe 名で絞り込み")
+    p.add_argument("--verifier", help="persona 名で絞り込み（review.json に記録がある run のみ）")
+    p.add_argument("--last", help="直近 N 日に絞り込み（例: 30d）")
+    p.set_defaults(func=cmd_stats)
 
     args = parser.parse_args()
     args.func(args)

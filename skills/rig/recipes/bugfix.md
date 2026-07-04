@@ -39,18 +39,19 @@ steps:
     gate: acceptance-gate
     max_retries: 2
     acceptance:
+      - "task_intent_satisfied — 依頼の意図が満たされている"
       - "no_unrelated_diff — 依頼と無関係な差分が含まれていない"
-      - "tests_pass_or_reasonable_explanation — テストが green か、失敗の合理的説明がある"
-      - "no_type_errors — 型エラーなし"
-      - "no_lint_errors — lint エラーなし"
-      - "behavior_summary_written — 挙動変更のサマリが書かれている"
+      - "diff_summary_written — diff.md に差分の要約が書かれている"
       - "risk_summary_written — リスクサマリが書かれている"
-      - "implementation_matches_request — 実装が依頼内容と一致している"
-      - "tests_added_or_existing_tests_confirmed — テストを追加したか、既存テストで担保されることを確認した"
-      - "public_api_changes_documented — 公開 API 変更が説明されている"
-      - "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない"
+      - "tests_pass_or_explained — テストが green か、失敗の合理的説明がある"
+      - "no_type_errors_or_explained — 型エラーがないか、あれば説明がある"
       - "no_secret_leak — secret の混入がない"
       - "no_destructive_operation — 破壊的操作を含まない"
+      - "bug_cause_identified — 原因を特定した"
+      - "fix_is_minimal — 修正が最小限である"
+      - "regression_test_added_or_explained — 回帰テストを追加したか、不要な理由を説明した"
+      - "existing_behavior_preserved — 既存の正常系挙動を壊していない"
+      - "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない"
     personas: [implementer]
 ---
 
@@ -64,7 +65,7 @@ steps:
 |---|---|
 | `hotfix` | 最短パス。design/review を省略。verify の gate も軽量（build/lint のみ） |
 | `debug` | 原因不明時の調査重視（isolate で仮説列挙） |
-| **bugfix**（本 recipe） | 通常のバグ修正の既定。review_diff（3-way）＋ 12項目の acceptance-check まで通す |
+| **bugfix**（本 recipe） | 通常のバグ修正の既定。review_diff（3-way）＋ 13項目の acceptance-check まで通す |
 
 ## 展開手順
 
@@ -74,7 +75,7 @@ steps:
 4. **implement** — 最小限の修正を実施する。
 5. **test** — build/lint/test を実行する。
 6. **review_diff** — security/design/test の3観点並列レビュー（`review-gate`）。
-7. **acceptance** — `facets/instructions/acceptance-check` が12基準（standard 6 + implementation 6）を判定し `scripts/workbench.py gate` に記録する。`fail` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
+7. **acceptance** — `facets/instructions/acceptance-check` が13基準（standard 8 + bugfix 5）を判定し `scripts/workbench.py gate` に記録する。`failed` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
 
 ## isolated worktree との関係
 

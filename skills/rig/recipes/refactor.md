@@ -37,18 +37,19 @@ steps:
     gate: acceptance-gate
     max_retries: 2
     acceptance:
+      - "task_intent_satisfied — 依頼の意図が満たされている"
       - "no_unrelated_diff — 依頼と無関係な差分が含まれていない"
-      - "tests_pass_or_reasonable_explanation — テストが green か、失敗の合理的説明がある"
-      - "no_type_errors — 型エラーなし"
-      - "no_lint_errors — lint エラーなし"
-      - "behavior_summary_written — 挙動変更のサマリが書かれている（refactor は「変わっていない」ことの明記も可）"
+      - "diff_summary_written — diff.md に差分の要約が書かれている（refactor は「挙動は変わっていない」ことの明記も可）"
       - "risk_summary_written — リスクサマリが書かれている"
-      - "implementation_matches_request — リファクタが依頼スコープと一致している"
-      - "tests_added_or_existing_tests_confirmed — 既存テストで挙動不変が担保されることを確認した"
-      - "public_api_changes_documented — 意図的な公開 API 変更があれば説明されている"
-      - "no_unrelated_refactor — 依頼スコープを超えた変更が混ざっていない"
+      - "tests_pass_or_explained — テストが green か、失敗の合理的説明がある"
+      - "no_type_errors_or_explained — 型エラーがないか、あれば説明がある"
       - "no_secret_leak — secret の混入がない"
       - "no_destructive_operation — 破壊的操作を含まない"
+      - "behavior_boundaries_identified — 変えてはいけない挙動境界を特定した"
+      - "no_unintended_behavior_change — 意図しない挙動変化がない"
+      - "tests_confirm_behavior_preserved — テストが挙動不変を裏付けている"
+      - "no_unrelated_refactor — 依頼スコープを超えたリファクタが混ざっていない"
+      - "public_api_changes_documented_if_any — 意図的な公開 API 変更があれば説明されている"
     personas: [implementer]
 ---
 
@@ -66,7 +67,7 @@ steps:
 4. **implement** — 内部構造を変更する。
 5. **test** — build/lint/test を実行する。
 6. **compare_behavior** — ②の境界リストと実装後の挙動を突き合わせ、意図しない差異がないか確認する（`facets/instructions/compare-behavior`）。
-7. **acceptance** — 12基準の acceptance-check。`implementation_matches_request` は「境界を守りつつ目的を達成したか」で判定する。
+7. **acceptance** — 13基準（standard 8 + refactor 5）の acceptance-check。`no_unintended_behavior_change`/`tests_confirm_behavior_preserved` は「境界を守りつつ目的を達成したか」で判定する。
 
 ## review_diff を持たない理由
 

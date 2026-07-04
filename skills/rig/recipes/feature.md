@@ -44,18 +44,19 @@ steps:
     gate: acceptance-gate
     max_retries: 2
     acceptance:
+      - "task_intent_satisfied — 依頼の意図が満たされている"
       - "no_unrelated_diff — 依頼と無関係な差分が含まれていない"
-      - "tests_pass_or_reasonable_explanation — テストが green か、失敗の合理的説明がある"
-      - "no_type_errors — 型エラーなし"
-      - "no_lint_errors — lint エラーなし"
-      - "behavior_summary_written — 挙動変更のサマリが書かれている"
+      - "diff_summary_written — diff.md に差分の要約が書かれている"
       - "risk_summary_written — リスクサマリが書かれている"
-      - "implementation_matches_request — 実装が依頼内容と一致している"
-      - "tests_added_or_existing_tests_confirmed — テストを追加したか、既存テストで担保されることを確認した"
-      - "public_api_changes_documented — 公開 API 変更が説明されている"
-      - "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない"
+      - "tests_pass_or_explained — テストが green か、失敗の合理的説明がある"
+      - "no_type_errors_or_explained — 型エラーがないか、あれば説明がある"
       - "no_secret_leak — secret の混入がない"
       - "no_destructive_operation — 破壊的操作を含まない"
+      - "requirement_summary_written — 要件のサマリが書かれている"
+      - "implementation_matches_requirement — 実装が要件と一致している"
+      - "tests_added_or_explained — テストを追加したか、理由を説明した"
+      - "public_api_changes_documented — 公開 API 変更が説明されている"
+      - "migration_or_backward_compatibility_considered — 移行・後方互換性を検討した"
     personas: [implementer]
 ---
 
@@ -74,8 +75,8 @@ steps:
 5. **test** — build/lint/test を実行する。
 6. **update_docs_if_needed** — 公開挙動・API・設定を変えた場合のみドキュメントを更新する（無関係なら skip・`no_unrelated_diff` を守る）。
 7. **review_diff** — security/design/test の3観点並列レビュー。
-8. **acceptance** — 12基準の acceptance-check（`max_retries: 2`）。
+8. **acceptance** — 13基準（standard 8 + feature 5）の acceptance-check（`max_retries: 2`）。
 
 ## bugfix との違い
 
-`reproduce`/`plan`（原因調査）の代わりに `clarify_requirements`/`design`（要件・設計の合意形成）を挟む。実装対象が「直すべき既知の挙動」か「新しく作る挙動」かで、確定すべき情報の性質が違うため。
+`reproduce`/`plan`（原因調査）の代わりに `clarify_requirements`/`design`（要件・設計の合意形成）を挟む。実装対象が「直すべき既知の挙動」か「新しく作る挙動」かで、確定すべき情報の性質が違うため。gate も bugfix プリセット（原因/最小性/回帰）ではなく feature プリセット（要件一致/互換性）を使う。

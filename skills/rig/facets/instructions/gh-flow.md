@@ -46,7 +46,7 @@ PR の指摘（レビューコメント・CI 失敗）をもとに**隔離 workt
 ```
 python3 scripts/workbench.py new "PR #<n> のレビュー指摘を修正" --type bugfix --base <PRのbranch名>
 ```
-実装 → verify → acceptance-gate（standard + implementation preset）まで通す。
+実装 → verify → acceptance-gate（standard + bugfix preset）まで通す。**CI が failing だった場合**、修正後に CI 失敗が解消したかを `tests_pass_or_explained` 基準の根拠として使う（`workbench.py gate <task_id> --set tests_pass_or_explained=passed:"CI <workflow名> green（再実行で確認）"`。再実行で確認できない場合は `warning` にし detail に理由を残す）。
 
 ### ④ 差分の提示と accept 待ち
 
