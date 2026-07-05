@@ -4,11 +4,13 @@
 
 > 🇯🇵 日本語版は [README.ja.md](./README.ja.md) を参照。
 
-## 1. What rig is
+## 1. What is rig?
 
 You describe a task in plain language. rig figures out what kind of task it is (bugfix / feature / refactor / review / docs / …), composes the harness it needs (`facets/personas/instructions/patterns` — LEGO-style bricks), runs the work in a **git worktree isolated from your working tree**, checks it against explicit **acceptance criteria** (build/lint/tests, no unrelated diff, no secret leak, findings labeled with severity, …), and only touches your real branch when you explicitly `accept`. "It says it's done" is never the bar — the gate is.
 
 rig's value isn't running AI. It's structurally removing the dangerous parts of letting AI work unsupervised: isolation, verification, measurement, recording, and controlled hand-off.
+
+**Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. A separate set of playful/creative commands (MAGI council, roast, movie, …) shares the same gates but is explicitly marked experimental. §7 breaks all of this down by name.
 
 ## 2. 30-second start
 
@@ -26,16 +28,25 @@ That's the whole surface for a first run. Behind the scenes: rig classifies the 
 /rig:rig discard    # throw the attempt away — your working tree was never touched
 ```
 
-## 3. Why it's safe
+## 3. Main entrypoint
 
-- **Isolated worktree, not your branch.** Every task gets its own git worktree (`patterns/isolated-worktree`) and its own throwaway branch. rig never writes to your working tree directly — a failed or half-finished attempt costs you nothing.
-- **The gate is code, not a claim.** `scripts/workbench.py accept` mechanically refuses to land a task whose acceptance criteria are `failed`/`pending`. An AI saying "done" doesn't flip that switch — a recorded `passed` does.
-- **Verifiers are read-only, structurally.** Reviewer/verifier subagents run with restricted tool access (`claude --allowedTools Read,Grep,Glob`, `codex --sandbox read-only`) — they inspect and report, they cannot write files, commit, or run destructive commands. This is enforced at the process level, not by asking nicely (`scripts/orchestrate.py probe`/`selftest` verify it).
-- **Explicit accept, explicit discard.** `accept` first prints an `accept_requirements` checklist — `worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural prerequisites that even `--force` cannot bypass**. It then lands the change as a **staged** diff (never an auto-commit) — you still commit. `discard` requires the task-id spelled out and a `--yes` confirmation, and always shows what you're about to lose first.
-- **Safe-by-default triggers a hard stop.** Unrelated diffs, unexplained test failures, secret-shaped strings, destructive operations, unreviewed auth/authz changes, and undocumented public-API changes all fail their criterion — accept is blocked until you look at it.
-- **Run history survives.** `discard` deletes the worktree and branch but never the run log (`.rig/runs/<task-id>/`) — you can always see what was attempted and why it was rejected or dropped.
+The main command is:
 
-## 4. Basic flow
+```bash
+/rig:rig "fix the login bug"
+```
+
+Claude Code exposes plugin commands as `/<plugin-namespace>:<command>`, and this plugin's namespace happens to also be named `rig` — so the full form repeats the word. That's a namespacing artifact, not a design choice: **`/rig:rig` is the single main entrypoint**, the one worth memorizing before anything else in this doc.
+
+If the repeated name still bothers you, `/rig:talk` is a more conversational front door onto the same engine — useful when you'd rather describe the situation and let rig ask follow-ups than state a single task up front:
+
+```bash
+/rig:talk "the login bug is back, not sure why this time"
+```
+
+Use `/rig:rig` for the full gated workbench flow. Use `/rig:talk` when you want a conversational entrypoint into the same underlying engine.
+
+## 4. Core safety flow
 
 ```
 natural-language task
@@ -53,21 +64,13 @@ natural-language task
 ④  acceptance-gate: check intent / diff scope / risk / tests / secrets / severity-labeled findings
         │
         ▼
-⑤  summary + next action: /rig diff · /rig accept · /rig discard
+⑤  structured diff summary + next action
+        │
+        ▼
+user decision
+   ├─ accept  → land the staged diff into your working tree
+   └─ discard → delete the worktree; the run log stays
 ```
-
-| command | what it does |
-|---|---|
-| `/rig:rig "<task>"` | classify → pick a recipe → isolated-worktree run → acceptance-gate → summary |
-| `/rig:rig status [id]` | current/most-recent task: step checklist, gate checklist, pending diff, next action |
-| `/rig:rig diff [id]` | changed files + Summary/Risk/Tests/Unrelated-diff/Recommended |
-| `/rig:rig accept [id] [--force]` | land the diff into your working tree (staged) — blocked unless the gate passed |
-| `/rig:rig discard <id> --yes` | delete the worktree/branch; run log stays |
-| `/rig:rig log [--limit N]` | history of past tasks: input, recipe, gate result |
-| `/rig:rig board [--all]` | **single dashboard of every active task** — running multiple tasks in parallel? this is the one place to check, no matter how many terminals or `/rig:queue` items are behind them |
-| `/rig:rig stats` | aggregate past runs: acceptance rate, gate outcomes, reviewer rubber-stamp detection |
-| `/rig:rig gh issue/pr/ci …` | GitHub Issue/PR/CI as input — see §13 |
-| `/rig:dev --recipe <name> --only <step> ...` | power-user entry: name the recipe/steps/flags yourself (same engine) — see §11 |
 
 Every `new` task starts with a **routing banner** so you never wonder why rig picked what it picked:
 
@@ -80,7 +83,13 @@ mode: isolated worktree
 gate: standard + bugfix
 ```
 
-## 5. Isolated worktree
+See §8 for how the recipe behind step ② actually gets composed, and §5 for what backs steps ③–⑤.
+
+## 5. Why it is safe
+
+### Isolated worktree
+
+Every task gets its own git worktree (`patterns/isolated-worktree`) and its own throwaway branch. rig never writes to your working tree directly — a failed or half-finished attempt costs you nothing.
 
 ```
 <repo parent>/rig-worktrees/<repo-name>/rig-YYYYMMDD-HHMMSS-<slug>/   ← throwaway worktree + branch
@@ -94,9 +103,7 @@ gate: standard + bugfix
 
 Read-only tasks (a review, an investigation that hasn't decided to change anything) skip the worktree entirely with `--no-worktree`. See [`patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) for the full design.
 
-### Running several tasks at once, without losing track
-
-Because isolation is per-task, running multiple tasks concurrently is safe by construction — each gets its own worktree and branch, so they can't step on each other. To actually run them in parallel (instead of typing `/rig:rig "<task>"` one at a time), queue them and go:
+**Running several tasks at once, without losing track.** Because isolation is per-task, running multiple tasks concurrently is safe by construction — each gets its own worktree and branch, so they can't step on each other. To actually run them in parallel (instead of typing `/rig:rig "<task>"` one at a time), queue them and go:
 
 ```bash
 /rig:queue add "fix the login bug"
@@ -105,34 +112,20 @@ Because isolation is per-task, running multiple tasks concurrently is safe by co
 /rig:queue go --provider rig --max-parallel 3   # dispatches 3 independent headless processes
 ```
 
-`--provider rig` routes each queued item through `/rig:rig "<task>"`, so each one is isolated the same way a task you typed directly would be — no risk of the parallel processes fighting over the same files. Queue's own verifier only confirms the gate resolved and the task stayed isolated; it never accepts on your behalf. Once they're done:
+`--provider rig` routes each queued item through `/rig:rig "<task>"`, so each one is isolated the same way a task you typed directly would be — no risk of the parallel processes fighting over the same files. Queue's own verifier only confirms the gate resolved and the task stayed isolated; it never accepts on your behalf. Once they're done, `/rig:rig board` (§10) is the single place to check every task regardless of how many terminals or queue items are behind them.
 
-```bash
-/rig:rig board       # one table: every task, its type/recipe/step/gate — no matter which terminal or process ran it
-/rig:rig diff <id>   # then diff/accept/discard each individually, whenever you're ready
-```
-
-This is the direct fix for "I opened five terminals and forgot what each one was doing" — `board` is a single source of truth regardless of how the work was dispatched.
-
-### Visual verification screenshots
-
-`visual-verify` (UI diff checks) and `design-audit` (Playwright screen capture) both produce screenshots. These are disposable evidence, not the deliverable — the conclusion lives in prose (`diff.md`), not the pixels:
+**Visual verification screenshots.** `visual-verify` (UI diff checks) and `design-audit` (Playwright screen capture) both produce screenshots. These are disposable evidence, not the deliverable — the conclusion lives in prose (`diff.md`), not the pixels:
 
 ```
 <repo>/.rig/runs/<task-id>/visual/            ← task-scoped (ran via /rig:rig)
 <repo>/.rig/visual/adhoc/<ts>-<slug>/         ← ad-hoc (e.g. a standalone /rig:design <url> audit)
 ```
 
-`discard` deletes a task's `visual/` immediately (the run log's JSON/MD stays). Everything else — including screenshots from accepted tasks — is pruned by age:
+`discard` deletes a task's `visual/` immediately (the run log's JSON/MD stays). Everything else — including screenshots from accepted tasks — is pruned by age (`python3 scripts/workbench.py gc --dry-run` to preview, `gc` to delete what's 14+ days old). See [`patterns/visual-artifacts.md`](./skills/rig/patterns/visual-artifacts.md) for the full rules.
 
-```bash
-python3 scripts/workbench.py gc --dry-run     # preview what's 14+ days old
-python3 scripts/workbench.py gc               # delete it
-```
+### Acceptance gate
 
-See [`patterns/visual-artifacts.md`](./skills/rig/patterns/visual-artifacts.md) for the full rules.
-
-## 6. Acceptance-gate
+Acceptance gates decide whether a run is safe to hand off. The model cannot mark work as done by itself — a run must pass mechanical checks such as unrelated-diff detection, test/type/lint status, risk summary, and task-specific requirements. Failed or pending gates block `accept` outright.
 
 Every task gets a criteria checklist drawn from `standard` (applies to every task) plus a task-type-specific preset on top (`scripts/workbench.py gates` is the source of truth):
 
@@ -151,9 +144,109 @@ Each criterion is recorded as `passed` / `failed` / `warning` / `skipped` with a
 python3 scripts/workbench.py gate <task_id> --set no_type_errors_or_explained=passed --set tests_added_or_explained=warning:"existing coverage only"
 ```
 
-The gate as a whole resolves to `passed` / `passed_with_warnings` / `failed` / `pending` / `skipped`. `failed` or `pending` on any criterion blocks `accept` outright (exit 1). `warning` doesn't block, but it's surfaced every time — no silently-swept warnings.
+The gate as a whole resolves to `passed` / `passed_with_warnings` / `failed` / `pending` / `skipped`:
 
-## 7. diff / accept / discard
+```
+Gate:
+✓ task_intent_satisfied
+✓ no_unrelated_diff
+✓ diff_summary_written
+✓ risk_summary_written
+⚠ tests_pass_or_explained
+✓ no_secret_leak
+
+Overall:
+passed_with_warnings
+
+Next:
+Review /rig:rig diff, then choose accept or discard.
+```
+
+`failed` or `pending` on any criterion blocks `accept` outright (exit 1). `warning` doesn't block, but it's surfaced every time — no silently-swept warnings.
+
+### Read-only verifier
+
+rig separates the AI that implements from the AI that verifies, and the verifier is forced into read-only mode at the process level — not by asking nicely.
+
+Verifier/reviewer subagents run with restricted tool access (`claude --allowedTools Read,Grep,Glob`, `codex --sandbox read-only`). They can inspect files, grep context, read diffs, and report findings. They cannot edit files, run formatters that mutate files, commit changes, or modify the worktree. This prevents the reviewer from silently fixing or altering the artifact it is supposed to judge — a real risk when the same model class implements and reviews. `scripts/orchestrate.py probe`/`selftest` prove the restriction is actually applied per provider, not just documented.
+
+### Explicit accept / discard
+
+`accept` first prints an `accept_requirements` checklist — `worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural prerequisites that even `--force` cannot bypass**. It then lands the change as a **staged** diff (never an auto-commit) — you still commit. `discard` requires the task-id spelled out and a `--yes` confirmation, and always shows what you're about to lose first. Full walkthrough with example output in §9.
+
+### Run history
+
+`discard` deletes the worktree and branch but never the run log (`.rig/runs/<task-id>/`) — you can always see what was attempted and why it was rejected or dropped.
+
+This survives more than `discard`: a mid-flow interruption (a side question, a tool call, a long pause) doesn't quietly drop you out of the harness either. Every RUN turn re-prints a one-line status header:
+
+```
+▸ rig | task: rig-20260704-153012-login-fix | recipe: bugfix | step: test (4/7) | gate: pending | mode: isolated worktree
+```
+
+The next turn re-anchors on this header rather than sliding into direct, un-gated work. It even survives **context compaction**: a shipped `PreCompact` hook injects instructions to preserve the run-state, and `/rig:init` can mirror them into your CLAUDE.md "Compact Instructions."
+
+## 6. Core commands
+
+Core commands are the default safety workflow: route task, isolate work, verify, inspect diff, accept or discard.
+
+| command | what it does |
+|---|---|
+| `/rig:rig "<task>"` | classify → pick a recipe → isolated-worktree run → acceptance-gate → summary |
+| `/rig:talk "<task>"` | same engine, conversational entrypoint (§3) |
+| `/rig:dev ...` | same engine, everything explicit (recipe/steps/flags) — power-user entry, §13 |
+| `/rig:orchestrate` | same engine, step-level computational orchestration — §13 |
+| `/rig:rig status [id]` | current/most-recent task: step checklist, gate checklist, pending diff, next action |
+| `/rig:rig diff [id]` | changed files + Summary/Risk/Tests/Unrelated-diff/Recommended (§9) |
+| `/rig:rig accept [id] [--force]` | land the diff into your working tree (staged) — blocked unless the gate passed (§9) |
+| `/rig:rig discard <id> --yes` | delete the worktree/branch; run log stays (§9) |
+| `/rig:rig log [--limit N]` | history of past tasks: input, recipe, gate result |
+
+## 7. Feature status
+
+| Area | Status | Notes |
+|---|---:|---|
+| Natural task routing | Stable | `/rig:rig "<task>"` routes task to recipe (§4, §8) |
+| Isolated worktree | Stable | risky changes are isolated by default (§5) |
+| Acceptance gate | Stable | `failed`/`pending` gates block accept (§5) |
+| Diff / accept / discard | Stable | explicit, staged hand-off flow (§9) |
+| Read-only verifier | Stable | reviewers cannot mutate artifacts (§5), enforced per-provider |
+| Run history / run-continuity | Stable | run logs persist; state survives interruption and context compaction (§5) |
+| Validation (`--validate`) | Stable | structural doctor for the brick catalog itself, CI-enforced |
+| Board / stats | Beta | useful for observing multiple runs; output format still evolving (§10) |
+| Reviewer drill | Beta | measures reviewer quality with injected issues (§11) |
+| GitHub integration | Beta | Issue/PR/CI flow may evolve (§12) |
+| Queue (parallel dispatch) | Beta | safe by construction (isolation), UX still evolving (§5) |
+| Knowledge import/export/persona/catalog/forge | Beta | useful but not on the core safety path (§13) |
+| Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§13) |
+| Creative / party commands (MAGI, roast, movie, …) | Experimental | real gates underneath, playful delivery, kept out of the default path (§14) |
+
+Nothing in this table is aspirational — there's no "Planned" row because we don't document unshipped features here; proposals live as GitHub issues. If a command isn't listed, it isn't shipped yet.
+
+## 8. Task routing and recipes
+
+The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing (step ① in §4) uses four shipped recipes plus native delegation to the rest. This table is illustrative, not exhaustive — see `/rig:dev --list` or `/rig:catalog` for the full current set:
+
+| recipe | what |
+|---|---|
+| `bugfix` / `feature` / `refactor` / `documentation` | the four workbench defaults — inspect → … → acceptance |
+| `review-only` | 3-way parallel review (security/design/test) on current changes |
+| `pr-review` | review an existing open PR (fetched via GitHub MCP) |
+| `debug` | bug-investigation flow: reproduce → isolate (root-cause hypothesis) → implement → verify |
+| `release-flow` | intake→design?→implement→verify→review?→pr→merge (size-aware) |
+| `design-first` | design-heavy flow |
+| `hotfix` | shortest path (intake→implement→verify→pr) |
+| `adversarial-review` | eliminate AI tics, dead comments; enforce human readability |
+| `goal-loop` | goal-driven loop — converge to a high-level goal by delegating existing flows each round |
+| `de-ai-smell` | strip "AI smell" from prose (READMEs, commit/PR text, posts) |
+| `design` 🎨 / `design-audit` 🎨 | UI/UX + a11y spec creation, and live-screen audit via Playwright |
+| `magi` | 3-sage council (correctness / protection / worth) that decides go/no-go by majority vote |
+| `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | humor packs with real content underneath |
+| `movie` 🎬 / `scenario` 🎬✍️ | a general video-creation harness and its scenario-writing front-stage |
+
+`/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. `/rig:sales`, `/rig:talk`, `/rig:goal`, `/rig:magi`, and the humor packs all bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched.
+
+## 9. Diff / accept / discard
 
 **`/rig:rig diff`** parses `diff.md`'s `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` headings and prints them structured, plus a `Recommended:` line the *code* computes from gate state (not something the model writes, so it can't be wishful):
 
@@ -191,43 +284,29 @@ Recommended:
 
 **`/rig:rig discard <id> --yes`** always shows the changed-files list first; without `--yes` it's a dry-run preview. It deletes the worktree/branch — the run log (`.rig/runs/<task-id>/`) stays.
 
-## 8. Run-continuity
+## 10. Run board and stats
 
-A mid-flow question won't quietly drop you out of the harness. Every RUN turn re-prints a one-line status header:
+### Run board
 
-```
-▸ rig | task: rig-20260704-153012-login-fix | recipe: bugfix | step: test (4/7) | gate: pending | mode: isolated worktree
-```
-
-Interruptions (a side question, a tool call, a long pause) don't reset this — the next turn re-anchors: re-print the header, re-state which recipe/step is active, and resume from there rather than quietly sliding into direct, un-gated work. This even survives **context compaction**: a shipped `PreCompact` hook injects instructions to preserve the run-state, and `/rig:init` can mirror them into your CLAUDE.md "Compact Instructions".
-
-## 9. Reviewer drill
-
-`/rig:drill` measures reviewer quality as numbers, not opinions: known bug classes (authz hole, injection, N+1, breaking change, one-way migration, missing tests, …) are seeded into a throwaway diff, review fan-out runs against it, and each reviewer is scored against an answer key it never sees.
+When multiple AI tasks are running or completed, `/rig:rig board` is a management tower: one table showing every task's state, no matter how many terminals or `/rig:queue` items dispatched them.
 
 ```
-# Drill Result
-Persona: strict_senior_engineer
-
-## Score
-- Detection rate: 82%
-- False positive rate: 12%
-- Severity accuracy: 76%
-- Blocking accuracy: 81%
-- Explanation quality: 70%
-
-## Missed Issues
-1. SQL injection risk in search query (src/search.py:88)
-2. Missing authorization check in user update endpoint (src/api/users.py:120)
-
-## Recommended Persona Updates
-- [strengthen_security_focus] 2+ security-class misses — raise the priority of the security lens
-- [adjust_severity_rule] severity accuracy 76% (< 80%) — clarify the Critical/High/Medium/Low boundary
+[running    ] rig-20260705-091200-search-feature
+    add search to the inventory list
+    type=feature      recipe=feature      mode=isolated   step=implement(running)      gate=-
+[gate_passed] rig-20260705-090800-login-fix
+    fix the login bug
+    type=bugfix       recipe=bugfix       mode=isolated   step=acceptance(passed)      gate=passed
+[gate_failed] rig-20260705-091500-readme-clarity
+    make the README clearer
+    type=documentation recipe=documentation mode=isolated step=verify-commands(failed) gate=failed
 ```
 
-Six metrics per reviewer: `true_positive` / `false_positive` / `false_negative` / `severity_accuracy` (does the reviewer's severity match the seed's?) / `blocking_accuracy` (Blocking vs. Non-blocking placement) / `explanation_quality` (concrete fix, or generic advice?). `Recommended Persona Updates` picks only from four fixed categories (`add_checklist_item` / `adjust_severity_rule` / `add_false_positive_guard` / `strengthen_security_focus`) — no vague prose, so results roll up across runs. `--replay <persona>` re-runs archived diffs after a persona edit and diffs old vs. new verdicts — a snapshot test for reviewer personas. Nothing here touches real code; everything runs in a throwaway worktree.
+It tells you: which task is still running, which passed or failed its gate, which worktree holds changes, which run is ready for `diff` review, and which should be `discard`ed. `/rig:rig board --all` widens this to every task ever recorded, not just active ones.
 
-## 10. Telemetry
+### Stats
+
+`/rig:rig stats` summarizes past runs — an observation layer over the whole workbench, not just a single run's outcome:
 
 ```bash
 python3 scripts/workbench.py stats                          # everything
@@ -260,21 +339,60 @@ Warning:
 product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.
 ```
 
-Reviewer verdicts feed this from `/rig:rig review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` — record them as review tasks resolve, and rig will flag a reviewer that never says no. This is separate from `.rig/runs.jsonl` (the engine-wide execution telemetry `scripts/orchestrate.py runs` reads) — `workbench.py stats` is specifically the workbench task lifecycle (accepted/discarded/gate outcomes).
+It can reveal frequently-failing recipes, reviewers that never reject, gate types that often block accept, and the accept-vs-discard ratio. Reviewer verdicts feed this from `/rig:rig review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` — record them as review tasks resolve, and rig will flag a reviewer that never says no. This is separate from `.rig/runs.jsonl` (the engine-wide execution telemetry `scripts/orchestrate.py runs` reads) — `workbench.py stats` is specifically the workbench task lifecycle (accepted/discarded/gate outcomes).
 
-## 11. Advanced commands
+## 11. Reviewer drill
+
+Reviewer personas are not just prompts. rig can test them.
+
+`/rig:drill` injects known bug classes (authz hole, injection, N+1, breaking change, one-way migration, missing tests, …) into a throwaway diff, runs the review fan-out against it, and scores each reviewer against an answer key it never sees:
+
+```
+# Drill Result
+Persona: strict_senior_engineer
+
+## Score
+- Detection rate: 82%
+- False positive rate: 12%
+- Severity accuracy: 76%
+- Blocking accuracy: 81%
+- Explanation quality: 70%
+
+## Missed Issues
+1. SQL injection risk in search query (src/search.py:88)
+2. Missing authorization check in user update endpoint (src/api/users.py:120)
+
+## Recommended Persona Updates
+- [strengthen_security_focus] 2+ security-class misses — raise the priority of the security lens
+- [adjust_severity_rule] severity accuracy 76% (< 80%) — clarify the Critical/High/Medium/Low boundary
+```
+
+Six metrics per reviewer: `true_positive` / `false_positive` / `false_negative` / `severity_accuracy` (does the reviewer's severity match the seed's?) / `blocking_accuracy` (Blocking vs. Non-blocking placement) / `explanation_quality` (concrete fix, or generic advice?). `Recommended Persona Updates` picks only from four fixed categories (`add_checklist_item` / `adjust_severity_rule` / `add_false_positive_guard` / `strengthen_security_focus`) — no vague prose, so results roll up across runs. `--replay <persona>` re-runs archived diffs after a persona edit and diffs old vs. new verdicts — a snapshot test for reviewer personas. Nothing here touches real code; everything runs in a throwaway worktree.
+
+rig does not just run reviewers. It measures them.
+
+## 12. GitHub integration
+
+| command | read/write |
+|---|---|
+| `/rig:rig gh issue <n>` | read the Issue (title/body/labels/comments), classify as bugfix/feature/investigation, run it through the workbench |
+| `/rig:rig gh pr <n> review [--comment]` | read-only 3-way review by default; `--comment` posts to the PR (write always confirmed) |
+| `/rig:rig gh pr <n> fix` | read the PR's diff + review comments + failing CI, fix in an isolated worktree based on the PR's branch, stop at `accept` (nothing is pushed automatically); CI status feeds the `tests_pass_or_explained` gate criterion |
+| `/rig:rig gh ci` | check CI status for the current branch/PR, surface the failing job's error summary |
+
+Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
+
+## 13. Advanced commands
 
 ### Command map
 
 | tier | commands |
 |---|---|
-| **Core** | `/rig:rig`, `/rig:talk`, `/rig:dev`, `/rig:orchestrate` (step-level computational orchestration), `/rig:rig status\|diff\|accept\|discard` |
 | **Quality** | `/rig:drill`, `/rig:rig stats\|review`, `/rig:pr` (review-only entry), `/rig:harness` (audit your project's own dev harness), `/rig:qa` (spec-based test-case design) |
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
-| **Experimental** (real gates, playful delivery) | `/rig:magi`, `/rig:roast`, `/rig:sage`, `/rig:party`, `/rig:movie` (+ `/rig:scenario`, its script-writing precursor), `/rig:coin`, `/rig:duck`, `/rig:pre-mortem` |
 
-Core and Quality are what you need day-to-day. Everything else is opt-in power — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog. (`/rig:queue`, `/rig:init`, and `/rig:sales` are covered elsewhere in this README — §5, the FAQ, and §12 respectively.)
+These are useful after you understand the core safety flow (§4–§6) — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog. (`/rig:queue` is covered in §5, `/rig:init` in the FAQ, `/rig:sales` in §8, and Experimental commands have their own section — §14.)
 
 ### Install
 
@@ -341,41 +459,34 @@ rig run review-only --provider rig --verifier-provider codex
 
 `$RIG_HOME` overrides the install location; `<cwd>/.rig/recipes/<name>.md` overlays a project-local recipe over the shipped one of the same name; a recipe's `checks:` run in the invocation cwd (your project), not the rig repo.
 
-## 12. Recipes / facets / steps
+## 14. Experimental commands
 
-The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing uses four shipped recipes plus native delegation to the rest. This table is illustrative, not exhaustive — see `/rig:dev --list` or `/rig:catalog` below for the full current set:
+Experimental commands explore alternative collaboration, creativity, and playful workflows. They run on the same gates as everything else — a `magi` verdict or a `roast` review is real content, not a toy — but they're kept out of the default day-to-day path and out of the Core/Quality/Advanced tiers above so they don't crowd a first-time read of this README.
 
-| recipe | what |
+| commands | what |
 |---|---|
-| `bugfix` / `feature` / `refactor` / `documentation` | the four workbench defaults (§4) — inspect → … → acceptance |
-| `review-only` | 3-way parallel review (security/design/test) on current changes |
-| `pr-review` | review an existing open PR (fetched via GitHub MCP) |
-| `debug` | bug-investigation flow: reproduce → isolate (root-cause hypothesis) → implement → verify |
-| `release-flow` | intake→design?→implement→verify→review?→pr→merge (size-aware) |
-| `design-first` | design-heavy flow |
-| `hotfix` | shortest path (intake→implement→verify→pr) |
-| `adversarial-review` | eliminate AI tics, dead comments; enforce human readability |
-| `goal-loop` | goal-driven loop — converge to a high-level goal by delegating existing flows each round |
-| `de-ai-smell` | strip "AI smell" from prose (READMEs, commit/PR text, posts) |
-| `design` 🎨 / `design-audit` 🎨 | UI/UX + a11y spec creation, and live-screen audit via Playwright |
-| `magi` | 3-sage council (correctness / protection / worth) that decides go/no-go by majority vote |
-| `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | humor packs with real content underneath |
-| `movie` 🎬 / `scenario` 🎬✍️ | a general video-creation harness and its scenario-writing front-stage |
+| `/rig:magi`, `/rig:sage` | decision/wisdom modes — MAGI 3-council go/no-go vote, sage-style guidance |
+| `/rig:roast`, `/rig:coin`, `/rig:duck`, `/rig:pre-mortem` | humor packs with real content underneath (§8) |
+| `/rig:party` | party/status-rendering novelty on top of real run data |
+| `/rig:movie`, `/rig:scenario` | a general video-creation harness and its scenario-writing front-stage |
 
-`/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. `/rig:sales`, `/rig:talk`, `/rig:goal`, `/rig:magi`, and the humor packs all bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched.
+They are not required for the core AI workbench experience described in §4–§9.
 
-## 13. GitHub integration
+## 15. Implementation notes
 
-| command | read/write |
+What backs the claims above, concretely — this table exists so "documented" and "verified" don't quietly drift apart:
+
+| Feature | Evidence |
 |---|---|
-| `/rig:rig gh issue <n>` | read the Issue (title/body/labels/comments), classify as bugfix/feature/investigation, run it through the workbench |
-| `/rig:rig gh pr <n> review [--comment]` | read-only 3-way review by default; `--comment` posts to the PR (write always confirmed) |
-| `/rig:rig gh pr <n> fix` | read the PR's diff + review comments + failing CI, fix in an isolated worktree based on the PR's branch, stop at `accept` (nothing is pushed automatically); CI status feeds the `tests_pass_or_explained` gate criterion |
-| `/rig:rig gh ci` | check CI status for the current branch/PR, surface the failing job's error summary |
+| Recipe resolution, RESOLVE flags, size-aware routing | `scripts/orchestrate.py selftest` (resolve/RESOLVE sections) |
+| Isolated worktree lifecycle (create / merge / preserve-on-dirty / preserve-on-escalate) | `scripts/orchestrate.py selftest` (isolate section) |
+| Read-only verifier sandboxing (per-provider CLI flags) | `scripts/orchestrate.py probe` / `selftest` (probe section) |
+| Queue dispatch and state transitions | `scripts/orchestrate.py selftest` (queue section) |
+| Recipe/persona/command schema, brick-catalog drift | `scripts/validate.py` + `scripts/validate.py selftest` (CI-enforced on every PR) |
+| Acceptance-gate criteria, accept/discard mechanics | `scripts/workbench.py` — exercised against scratch git repos each release (see `CHANGELOG.md` entries for the verification notes) |
+| Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
 
-Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
-
-## 14. FAQ
+## 16. FAQ
 
 **Does `/rig:rig` replace `/rig:dev`?** No — `/rig:rig` auto-classifies and is the recommended default; `/rig:dev` is the same engine with recipe/step/flags spelled out explicitly, for when you want that control.
 
@@ -391,7 +502,7 @@ Issue/PR bodies and comments are treated as untrusted external data — instruct
 
 **What if two tasks run at once?** Each gets its own worktree and branch (`rig/<task-id>`) — they don't collide. `accept` operates on your main working tree, so accept one task's diff, commit it, and only then accept the next (accept refuses if your working tree isn't clean, precisely to keep this safe).
 
-**Can I work on several tasks in one session instead of juggling terminals?** Yes — see §5 "Running several tasks at once." Queue them with `/rig:queue add` + `/rig:queue go --provider rig --max-parallel N` (each dispatched task is isolated automatically), then check `/rig:rig board` for a single combined view instead of tracking N terminal windows in your head.
+**Can I work on several tasks in one session instead of juggling terminals?** Yes — see §5 "Isolated worktree → Running several tasks at once." Queue them with `/rig:queue add` + `/rig:queue go --provider rig --max-parallel N` (each dispatched task is isolated automatically), then check `/rig:rig board` (§10) for a single combined view instead of tracking N terminal windows in your head.
 
 ## Docs
 
