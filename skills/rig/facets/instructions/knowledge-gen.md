@@ -10,7 +10,7 @@
 | **`--auto` モード** | `/rig:knowledge --auto` | subagent が repo（コード構造・README・docs・命名）を解析し、ユビキタス言語・ドメインモデル・主要な規約・ADR 風の決定を蒸留してページ化 |
 | **`--graph` モード** | `/rig:knowledge --graph` | repo の**型付き知識グラフ**（entities＋typed relations）を1枚の wiki ページに蒸留（下記専用セクション） |
 
-- `--project`：project overlay（`<repo>/.claude/rig/knowledge/wiki/`）に保存。**既定は global**（`~/.claude/rig/knowledge/wiki/`＝全プロダクト共有。知人要件「base=global」）。
+- `--project`：project overlay（`<repo>/.claude/rig/knowledge/wiki/`）に保存。**既定は global**（`~/.claude/rig/knowledge/wiki/`＝全プロダクト共有。知人要件「base=global」）。（`/rig:persona` の既定は project・`--user` で global — knowledge はこれと意図的に逆の既定であり、symmetry を仮定しないこと・#224）
 - `--name <slug>`（任意）：単一ページの slug を明示。省略時は内容から slug を提案。
 
 ## 保存先（tier・`_wiki` と整合）
