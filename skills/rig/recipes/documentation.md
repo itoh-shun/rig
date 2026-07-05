@@ -1,6 +1,6 @@
 ---
 name: documentation
-description: workbench 既定の documentation フロー（inspect→identify_audience→draft→verify_commands→acceptance）。コマンド例の実行確認までを acceptance-check で締める。`/rig "<READMEをわかりやすく>"` 等から自動選択される。
+description: workbench 既定の documentation フロー（inspect→identify-audience→draft→verify-commands→acceptance）。コマンド例の実行確認までを acceptance-check で締める。`/rig "<READMEをわかりやすく>"` 等から自動選択される。
 scope: shipped
 autonomy: interactive
 steps:
@@ -9,7 +9,7 @@ steps:
     pattern: serial
     personas: [orchestrator]
     policies: [branch-strategy]
-  - id: identify_audience
+  - id: identify-audience
     instruction: identify-audience
     pattern: serial
     personas: [orchestrator]
@@ -17,7 +17,7 @@ steps:
     instruction: docs-draft
     pattern: serial
     personas: [implementer]
-  - id: verify_commands
+  - id: verify-commands
     instruction: verify-commands
     pattern: serial
     personas: [implementer]
@@ -47,11 +47,11 @@ steps:
 ## 展開手順
 
 1. **inspect** — 対象ドキュメント・目的・完了条件を確定する。
-2. **identify_audience** — 新規ユーザー / 既存ユーザー / コントリビューターのどれに向けて書くかを確定する（`facets/instructions/identify-audience`）。
+2. **identify-audience** — 新規ユーザー / 既存ユーザー / コントリビューターのどれに向けて書くかを確定する（`facets/instructions/identify-audience`）。
 3. **draft** — 対象ドキュメントを起草・改稿する（`facets/instructions/docs-draft`）。「最初の成功体験」を機能一覧より先に見せる・AI 特有の定型表現を避ける、を意識する。
-4. **verify_commands** — 本文中のコマンド例・コードブロックを実行確認する（`facets/instructions/verify-commands`）。「READMEのコマンド例が動かなくなる変更」（drill の種カタログにも載る典型的ドキュメント虚偽化）をここで機械的に防ぐ。
+4. **verify-commands** — 本文中のコマンド例・コードブロックを実行確認する（`facets/instructions/verify-commands`）。「READMEのコマンド例が動かなくなる変更」（drill の種カタログにも載る典型的ドキュメント虚偽化）をここで機械的に防ぐ。
 5. **acceptance** — standard 8基準の acceptance-check。
 
-## review_diff を持たない理由
+## review-diff を持たない理由
 
 散文の質は `recipes/de-ai-smell`（AI 臭除去・5観点スコアゲート）が専門に担う別 recipe であり、本 recipe で再実装しない。大規模なドキュメント改稿で AI 臭のチェックも要る場合は `/rig:dev --recipe de-ai-smell` を別途走らせることを提案する（Native-first・重複実装しない）。

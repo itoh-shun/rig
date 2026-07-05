@@ -95,6 +95,46 @@ def _check_pattern_or_gate(val: str | None, ctx: str, field: str) -> None:
     _check_exists(PATTERNS / f"{val}.md", ctx, field)
 
 
+_VALID_GATES = ("review-gate", "acceptance-gate", "magi-consensus")
+
+
+def _check_gate(val: str | None, ctx: str, field: str) -> None:
+    """gate は review-gate|acceptance-gate の2値のみ許容する（#198 の列挙値 FAIL・#227）。
+
+    `pattern` フィールドは patterns/ 配下のブリック名すべてを許容するため
+    `_check_pattern_or_gate`（実在チェック）を流用してよいが、`gate` は
+    その2値限定であり別の判定基準が要る（patterns/serial.md 等の実在に釣られて
+    誤って PASS させない）。
+    """
+    if not val or val in ("—", "-"):
+        return
+    if val not in _VALID_GATES:
+        _emit(
+            "FAIL",
+            f"{ctx} — {field}: 値 '{val}' は不正な列挙値です。"
+            f" 許容値: {', '.join(_VALID_GATES)}",
+        )
+
+
+_SIZE_TOKEN_RE = re.compile(r"\b(?:S|M|L|XL)\+")
+
+
+def _check_condition(val: str | None, ctx: str, field: str) -> None:
+    """condition は自由文中に size トークン（S+/M+/L+/XL+）を含むことを期待する（#109/#229/#230）。
+
+    正準形式を `size:` プレフィックス必須ではなく「size トークンの存在」で判定する
+    （release-flow.md の実運用値 `"--design または size L+"` を偽 WARN しないため）。
+    """
+    if val is None:
+        return
+    if not _SIZE_TOKEN_RE.search(str(val)):
+        _emit(
+            "WARN",
+            f"{ctx} — {field}: '{val}' に有効な size トークン（S+/M+/L+/XL+）が見つかりません"
+            f"（size-aware の RESOLVE 判定が意図通り働かない可能性）",
+        )
+
+
 # ── recipe 1件チェック ────────────────────────────────────────────────────────
 def check_recipe(path: pathlib.Path) -> None:
     ctx = f"recipe {path.stem}"
@@ -112,9 +152,9 @@ def check_recipe(path: pathlib.Path) -> None:
             _emit("FAIL", f"{ctx} — 必須フィールド `{k}` がありません")
         return  # 必須欠落は以降のチェックが意味をなさない
 
-    # name ↔ ファイル名
+    # name ↔ ファイル名（#216：validate.md が定義する FAIL に重大度を合わせる）
     if fm["name"] != path.stem:
-        _emit("WARN", f"{ctx} — name '{fm['name']}' がファイル名 '{path.stem}' と不一致")
+        _emit("FAIL", f"{ctx} — name '{fm['name']}' がファイル名 '{path.stem}' と不一致")
 
     # scope 値域
     if fm["scope"] not in ("shipped", "user", "project"):
@@ -159,6 +199,36 @@ def check_recipe(path: pathlib.Path) -> None:
     if vf_val is not None and not isinstance(vf_val, bool):
         _emit("FAIL", f"{ctx} — verify_findings '{vf_val!r}' は boolean (true/false) でなければなりません")
 
+    # adversarial 値域（#172/#228）
+    adversarial_val = fm.get("adversarial")
+    if adversarial_val is not None and not isinstance(adversarial_val, bool):
+        _emit("FAIL", f"{ctx} — adversarial '{adversarial_val!r}' は boolean (true/false) でなければなりません")
+
+    # visual 値域（#174/#228）
+    visual_val = fm.get("visual")
+    if visual_val is not None and not isinstance(visual_val, bool):
+        _emit("FAIL", f"{ctx} — visual '{visual_val!r}' は boolean (true/false) でなければなりません")
+
+    # no_orchestrate 値域（#178/#228）
+    no_orch_val = fm.get("no_orchestrate")
+    if no_orch_val is not None and not isinstance(no_orch_val, bool):
+        _emit("FAIL", f"{ctx} — no_orchestrate '{no_orch_val!r}' は boolean (true/false) でなければなりません")
+
+    # design 値域（#182/#228）
+    design_val = fm.get("design")
+    if design_val is not None and not isinstance(design_val, bool):
+        _emit("FAIL", f"{ctx} — design '{design_val!r}' は boolean (true/false) でなければなりません")
+
+    # review 値域（#182/#228）
+    review_val = fm.get("review")
+    if review_val is not None and not isinstance(review_val, bool):
+        _emit("FAIL", f"{ctx} — review '{review_val!r}' は boolean (true/false) でなければなりません")
+
+    # capture 値域（#184/#228）
+    capture_val = fm.get("capture")
+    if capture_val is not None and not isinstance(capture_val, bool):
+        _emit("FAIL", f"{ctx} — capture '{capture_val!r}' は boolean (true/false) でなければなりません")
+
     # ② extends チェーン（§4.2.2 + validate.md ①）
     parent_step_ids: list[str] = []
     extends_name: str | None = fm.get("extends")
@@ -198,10 +268,16 @@ def check_recipe(path: pathlib.Path) -> None:
         step_id = step.get("id") or f"[{i}]"
         step_ctx = f"{ctx}.{step_id}"
 
-        # id 必須 & 一意性
+        # id 必須・slug 形式（#197/#219）・一意性
         if not step.get("id"):
             _emit("FAIL", f"{ctx} — steps[{i}] に id がありません")
         else:
+            if not re.fullmatch(r"[a-z][a-z0-9-]*", step_id):
+                _emit(
+                    "FAIL",
+                    f"{step_ctx} — id '{step_id}' は不正な形式です。"
+                    f" id は [a-z][a-z0-9-]*（小文字英数字・ハイフンのみ、小文字始まり）で指定してください",
+                )
             if step_id in seen_ids:
                 _emit("FAIL", f"{ctx} — steps[].id '{step_id}' が重複しています")
             seen_ids.add(step_id)
@@ -229,9 +305,30 @@ def check_recipe(path: pathlib.Path) -> None:
             _check_exists(FACETS / "output-contracts" / f"{oc}.md", step_ctx, "output_contract",
                           hint_dir=FACETS / "output-contracts")
 
-        # pattern / gate → patterns/
+        # pattern → patterns/ 実在チェック（shipped tier のブリック名すべて許容）
         _check_pattern_or_gate(step.get("pattern"), step_ctx, "pattern")
-        _check_pattern_or_gate(step.get("gate"), step_ctx, "gate")
+        # gate → review-gate|acceptance-gate の2値のみ許容（#198 の列挙値 FAIL・#227）
+        _check_gate(step.get("gate"), step_ctx, "gate")
+
+        # checks: 型・空エントリ検証（#200 の CI 反映・#218）
+        checks_val = step.get("checks")
+        if checks_val is not None:
+            if not isinstance(checks_val, list):
+                _emit(
+                    "FAIL",
+                    f"{step_ctx} — checks の値がリストではありません（{checks_val!r}）。"
+                    f" checks はシェルコマンドの配列で指定してください（例: [\"npm test\"]）",
+                )
+            else:
+                for idx, cmd in enumerate(checks_val):
+                    if cmd == "":
+                        _emit(
+                            "FAIL",
+                            f"{step_ctx} — checks に空文字列エントリが含まれています（インデックス {idx}）",
+                        )
+
+        # condition 値検証（#109/#229/#230）
+        _check_condition(step.get("condition"), step_ctx, "condition")
 
         # max_retries 型・値域（§3.5）
         max_retries = step.get("max_retries")
@@ -615,8 +712,154 @@ def check_needs_cycles(recipe_files: list[pathlib.Path]) -> None:
                 dfs(sid, [])
 
 
+# ── release メタデータ整合（plugin.json ⇄ CHANGELOG.md・#231）───────────────────
+def check_release_metadata() -> None:
+    """plugin.json の version に対応する CHANGELOG.md の `## [x.y.z]` 節が存在するか検査する。
+
+    release.yml はこの対応が見つからない場合サイレントに auto-generated notes へ
+    フォールバックする（release 自体は止めない設計）。--validate 側は「気づかず混入する」
+    ことを防ぐために FAIL として検出する。
+    """
+    plugin_path = ROOT / ".claude-plugin" / "plugin.json"
+    changelog_path = ROOT / "CHANGELOG.md"
+    if not plugin_path.is_file() or not changelog_path.is_file():
+        return
+    try:
+        version = json.loads(plugin_path.read_text(encoding="utf-8"))["version"]
+    except Exception as exc:
+        _emit("FAIL", f"release — .claude-plugin/plugin.json の version が読めません: {exc}")
+        return
+    changelog = changelog_path.read_text(encoding="utf-8")
+    heading = f"## [{version}]"
+    if heading not in changelog:
+        _emit(
+            "FAIL",
+            f"release — CHANGELOG.md に plugin.json の version ({version}) に対応する"
+            f' "{heading}" 節がありません',
+        )
+    else:
+        _emit("PASS", f"release: plugin.json version ({version}) ⇄ CHANGELOG.md 対応節が一致")
+
+
+# ── skills-lock.json 整合（/rig:import の出所記録・#249）───────────────────────
+_VALID_IMPORT_MODES = ("delegate", "translate", "knowledge")
+
+
+def check_skills_lock() -> None:
+    """skills-lock.json のスキーマ・importedAs 参照整合を検査する。
+
+    ファイルが存在しない場合はサイレントスキップ（wiki/accumulated チェックと同じ方針）。
+    第一段は project 層（呼び出し元リポジトリ直下）のみを対象とする。
+    """
+    lock_path = ROOT / "skills-lock.json"
+    if not lock_path.is_file():
+        return
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _emit("FAIL", f"skills-lock — JSON として読めません: {exc}")
+        return
+    if not isinstance(data, dict) or "version" not in data or "skills" not in data:
+        _emit("FAIL", "skills-lock — トップレベルに version / skills キーが必要です")
+        return
+
+    skills = data["skills"]
+    entries = skills.items() if isinstance(skills, dict) else enumerate(skills or [])
+    ok = 0
+    for key, entry in entries:
+        ctx = f"skills-lock[{key}]"
+        if not isinstance(entry, dict):
+            _emit("FAIL", f"{ctx} — エントリが dict ではありません")
+            continue
+        bad = False
+        for field in ("source", "sourceType", "skillPath", "computedHash"):
+            if not entry.get(field):
+                _emit("FAIL", f"{ctx} — 必須フィールド `{field}` がありません")
+                bad = True
+        mode = entry.get("mode")
+        if mode is not None and mode not in _VALID_IMPORT_MODES:
+            _emit("FAIL", f"{ctx} — mode '{mode}' は不正な値です。許容値: {', '.join(_VALID_IMPORT_MODES)}")
+            bad = True
+        imported_as = entry.get("importedAs")
+        if imported_as is None:
+            _emit("WARN", f"{ctx} — importedAs が未記載です（どのブリックに翻訳されたかの traceability 欠落）")
+        else:
+            for p in (imported_as if isinstance(imported_as, list) else [imported_as]):
+                if not (ROOT / str(p)).exists():
+                    _emit("FAIL", f"{ctx} — importedAs '{p}' がリポジトリに存在しません")
+                    bad = True
+        if not bad:
+            ok += 1
+    _emit("PASS", f"skills-lock: {ok}/{len(skills)} 件スキーマ OK")
+
+
+# ── selftest（validate.py 自身の回帰テスト・#232）───────────────────────────────
+def run_selftest() -> None:
+    """FAIL/WARN 判定ロジックの実装ドリフトを、合成フィクスチャで回帰検出する。
+
+    `orchestrate.py selftest` と同じ位置づけ（doctor 自身の doctor）。実ファイルではなく
+    最小の recipe frontmatter を一時ディレクトリに書き出し、`check_recipe()` にそのままかけて
+    期待どおり FAIL するか/しないかを確認する（`check_recipe` のシグネチャは変更しない）。
+    第一段は #227（gate 列挙値）・#228（boolean 型・代表2件）・#219（id slug 形式）・
+    #218（checks 型・空エントリ）という、既に実害が出ていた4系統に絞る。
+    """
+    import tempfile
+
+    def recipe(name: str, extra_top: str, steps_yaml: str) -> str:
+        return (
+            f"---\nname: {name}\ndescription: selftest fixture\nscope: project\n"
+            f"autonomy: interactive\n{extra_top}steps:\n{steps_yaml}---\n\n# {name}\n"
+        )
+
+    scenarios: list[tuple[str, bool, str]] = [
+        ("gate-ok", False, recipe("gate-ok", "",
+            "  - id: verify\n    instruction: verify\n    gate: acceptance-gate\n")),
+        ("gate-bad-serial", True, recipe("gate-bad-serial", "",
+            "  - id: verify\n    instruction: verify\n    gate: serial\n")),
+        ("bool-bad-capture", True, recipe("bool-bad-capture", 'capture: "yes"\n',
+            "  - id: implement\n    instruction: implement\n")),
+        ("bool-bad-design", True, recipe("bool-bad-design", "design: 1\n",
+            "  - id: implement\n    instruction: implement\n")),
+        ("id-ok", False, recipe("id-ok", "",
+            "  - id: valid-step-2\n    instruction: implement\n")),
+        ("id-bad-space", True, recipe("id-bad-space", "",
+            '  - id: "My Step"\n    instruction: implement\n')),
+        ("checks-ok", False, recipe("checks-ok", "",
+            '  - id: verify\n    instruction: verify\n    checks: ["npm test"]\n')),
+        ("checks-bad-scalar", True, recipe("checks-bad-scalar", "",
+            '  - id: verify\n    instruction: verify\n    checks: "npm test"\n')),
+        ("checks-bad-empty", True, recipe("checks-bad-empty", "",
+            '  - id: verify\n    instruction: verify\n    checks: ["npm test", ""]\n')),
+    ]
+
+    ok = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = pathlib.Path(tmp)
+        for stem, expect_fail, content in scenarios:
+            fixture = tmp_path / f"{stem}.md"
+            fixture.write_text(content, encoding="utf-8")
+            start = len(results)
+            try:
+                check_recipe(fixture)
+            except Exception:
+                _emit("FAIL", f"selftest '{stem}' — check_recipe 実行時エラー:\n{traceback.format_exc()}")
+            got_fail = any(line.startswith("[FAIL]") for line in results[start:])
+            passed = got_fail == expect_fail
+            ok += passed
+            print(f"  [{'OK' if passed else 'NG'}] {stem}"
+                  f"（期待: {'FAIL' if expect_fail else 'no-FAIL'} / 実際: {'FAIL' if got_fail else 'no-FAIL'}）")
+
+    total = len(scenarios)
+    print(f"\nselftest: {ok}/{total} シナリオ OK")
+    sys.exit(0 if ok == total else 1)
+
+
 # ── メイン ────────────────────────────────────────────────────────────────────
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "selftest":
+        run_selftest()
+        return
+
     recipe_files = sorted(RECIPES.glob("*.md"))
     if not recipe_files:
         print("[WARN] recipes/ に .md ファイルが見つかりません")
@@ -667,6 +910,16 @@ def main() -> None:
         check_needs_cycles(recipe_files)
     except Exception:
         _emit("FAIL", f"needs 循環チェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_release_metadata()
+    except Exception:
+        _emit("FAIL", f"release メタデータチェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_skills_lock()
+    except Exception:
+        _emit("FAIL", f"skills-lock チェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     print("## rig --validate レポート（CI / shipped tier）\n")
     for line in results:

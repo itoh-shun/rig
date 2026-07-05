@@ -1,6 +1,6 @@
 ---
 name: refactor
-description: workbench 既定の refactor フロー（inspect→identify_behavior_boundaries→plan→implement→test→compare_behavior→acceptance）。挙動を変えないことを機械的に確認してから acceptance-check で締める。`/rig "<責務整理・重複除去>"` から自動選択される。
+description: workbench 既定の refactor フロー（inspect→identify-behavior-boundaries→plan→implement→test→compare-behavior→acceptance）。挙動を変えないことを機械的に確認してから acceptance-check で締める。`/rig "<責務整理・重複除去>"` から自動選択される。
 scope: shipped
 autonomy: interactive
 steps:
@@ -9,7 +9,7 @@ steps:
     pattern: serial
     personas: [orchestrator]
     policies: [branch-strategy]
-  - id: identify_behavior_boundaries
+  - id: identify-behavior-boundaries
     instruction: identify-behavior-boundaries
     pattern: serial
     personas: [implementer]
@@ -27,7 +27,7 @@ steps:
     pattern: serial
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]
-  - id: compare_behavior
+  - id: compare-behavior
     instruction: compare-behavior
     pattern: serial
     personas: [implementer]
@@ -57,18 +57,18 @@ steps:
 
 ## 使う場面
 
-`/rig "<責務整理・重複除去・可読性向上の依頼>"` から `task_type: refactor` として自動選択される workbench 既定 recipe。refactor 特有のリスク——「動いているように見えて実は挙動が変わった」——を `identify_behavior_boundaries` → `compare_behavior` の対で機械的に検知する。
+`/rig "<責務整理・重複除去・可読性向上の依頼>"` から `task_type: refactor` として自動選択される workbench 既定 recipe。refactor 特有のリスク——「動いているように見えて実は挙動が変わった」——を `identify-behavior-boundaries` → `compare-behavior` の対で機械的に検知する。
 
 ## 展開手順
 
 1. **inspect** — 何を整理したいか、対象範囲を確定する。
-2. **identify_behavior_boundaries** — 公開インターフェース・副作用・エラー挙動・性能特性のうち「変えてはいけない境界」を明文化する（`facets/instructions/identify-behavior-boundaries`）。これが answer key になる。
+2. **identify-behavior-boundaries** — 公開インターフェース・副作用・エラー挙動・性能特性のうち「変えてはいけない境界」を明文化する（`facets/instructions/identify-behavior-boundaries`）。これが answer key になる。
 3. **plan** — 境界を守ったまま目的（責務分離・重複除去等）を達成する変更方針を立てる（コード変更前）。
 4. **implement** — 内部構造を変更する。
 5. **test** — build/lint/test を実行する。
-6. **compare_behavior** — ②の境界リストと実装後の挙動を突き合わせ、意図しない差異がないか確認する（`facets/instructions/compare-behavior`）。
+6. **compare-behavior** — ②の境界リストと実装後の挙動を突き合わせ、意図しない差異がないか確認する（`facets/instructions/compare-behavior`）。
 7. **acceptance** — 13基準（standard 8 + refactor 5）の acceptance-check。`no_unintended_behavior_change`/`tests_confirm_behavior_preserved` は「境界を守りつつ目的を達成したか」で判定する。
 
-## review_diff を持たない理由
+## review-diff を持たない理由
 
-`bugfix`/`feature` と異なり本 recipe は既定で `review_diff`（3-way 並列レビュー）を含まない——refactor は「挙動不変の証明」が主眼であり、`compare_behavior` がその役目を担う。設計判断のレビューが要る規模（インターフェース変更を伴う等）は `--review` フラグまたは `--persona design-reviewer` で追加できる。
+`bugfix`/`feature` と異なり本 recipe は既定で `review-diff`（3-way 並列レビュー）を含まない——refactor は「挙動不変の証明」が主眼であり、`compare-behavior` がその役目を担う。設計判断のレビューが要る規模（インターフェース変更を伴う等）は `--review` フラグまたは `--persona design-reviewer` で追加できる。

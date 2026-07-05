@@ -14,7 +14,7 @@
 
 ### ③ 各基準の判定
 
-criterion ごとに、これまでの step（inspect / implement / test / review_diff 等）の成果物・実行結果から根拠を集めて `passed` / `failed` / `warning` / `skipped`（該当なし）を判定する。**推測で `passed` にしない**——判定できない場合は `warning` にし detail に「未確認」と明記する（false-positive よりは自制側に倒す。`output-contracts/review-verdict` の確信度ルールと同じ思想）。
+criterion ごとに、これまでの step（inspect / implement / test / review-diff 等）の成果物・実行結果から根拠を集めて `passed` / `failed` / `warning` / `skipped`（該当なし）を判定する。**推測で `passed` にしない**——判定できない場合は `warning` にし detail に「未確認」と明記する（false-positive よりは自制側に倒す。`output-contracts/review-verdict` の確信度ルールと同じ思想）。
 
 **standard プリセット（全 task_type 共通）**
 - `task_intent_satisfied`：intake で確定した依頼の意図と成果物を突き合わせる。
@@ -33,7 +33,7 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `no_unrelated_refactor`：修正に無関係なリファクタが混ざっていないか。
 
 **feature プリセット（feature・test）**
-- `requirement_summary_written`：clarify_requirements/intake で確定した AC が記録されているか。
+- `requirement_summary_written`：clarify-requirements/intake で確定した AC が記録されているか。
 - `implementation_matches_requirement`：実装内容と AC を突き合わせる。
 - `tests_added_or_explained`：新規テストの有無、無ければ既存テストで担保される旨の明示確認。
 - `public_api_changes_documented`：公開 API 変更が diff.md/README 等で説明されているか。
@@ -45,7 +45,7 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `no_unrelated_refactor`：依頼スコープを超えた変更がないか。
 - `public_api_changes_documented_if_any`：意図的な公開 API 変更があれば説明されているか（無ければ `skipped`）。
 
-review/security プリセット（`findings_are_concrete` 等）は review 系タスクの `review_diff`/`parallel-review` step 自体が output-contract で構造を強制するため、acceptance-check は reviewer の出力がその構造を満たしているかだけを確認する。
+review/security プリセット（`findings_are_concrete` 等）は review 系タスクの `review-diff`/`parallel-review` step 自体が output-contract で構造を強制するため、acceptance-check は reviewer の出力がその構造を満たしているかだけを確認する。
 
 ### ④ 記録
 

@@ -28,5 +28,8 @@ jobs:
       - name: Run rig structural validator
         run: python3 scripts/validate.py
 
+      - name: Run rig structural validator selftest (fixture regression)
+        run: python3 scripts/validate.py selftest
+
       - name: Run computational orchestrator selftest (determinism)
         run: python3 scripts/orchestrate.py selftest
