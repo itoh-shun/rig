@@ -268,13 +268,13 @@ Reviewer verdicts feed this from `/rig:rig review <task_id> --set <persona>=<APP
 
 | tier | commands |
 |---|---|
-| **Core** | `/rig:rig`, `/rig:talk`, `/rig:dev`, `/rig:rig status\|diff\|accept\|discard` |
-| **Quality** | `/rig:drill`, `/rig:rig stats\|review`, `/rig:pr` (review-only entry) |
-| **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona` |
-| **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks` |
-| **Experimental** (real gates, playful delivery) | `/rig:magi`, `/rig:roast`, `/rig:sage`, `/rig:party`, `/rig:movie`, `/rig:coin`, `/rig:duck`, `/rig:pre-mortem` |
+| **Core** | `/rig:rig`, `/rig:talk`, `/rig:dev`, `/rig:orchestrate` (step-level computational orchestration), `/rig:rig status\|diff\|accept\|discard` |
+| **Quality** | `/rig:drill`, `/rig:rig stats\|review`, `/rig:pr` (review-only entry), `/rig:harness` (audit your project's own dev harness), `/rig:qa` (spec-based test-case design) |
+| **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
+| **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
+| **Experimental** (real gates, playful delivery) | `/rig:magi`, `/rig:roast`, `/rig:sage`, `/rig:party`, `/rig:movie` (+ `/rig:scenario`, its script-writing precursor), `/rig:coin`, `/rig:duck`, `/rig:pre-mortem` |
 
-Core and Quality are what you need day-to-day. Everything else is opt-in power — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog.
+Core and Quality are what you need day-to-day. Everything else is opt-in power — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog. (`/rig:queue`, `/rig:init`, and `/rig:sales` are covered elsewhere in this README — §5, the FAQ, and §12 respectively.)
 
 ### Install
 
@@ -343,7 +343,7 @@ rig run review-only --provider rig --verifier-provider codex
 
 ## 12. Recipes / facets / steps
 
-The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing uses four shipped recipes plus native delegation to the rest:
+The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing uses four shipped recipes plus native delegation to the rest. This table is illustrative, not exhaustive — see `/rig:dev --list` or `/rig:catalog` below for the full current set:
 
 | recipe | what |
 |---|---|
