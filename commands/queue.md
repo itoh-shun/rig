@@ -1,6 +1,6 @@
 ---
 description: "rig/queue — タスクを積んで、まとめて GO。キューを管理ツール(GitHub/GitLab Issue)かローカルで持ち、go で全タスクを並列実行(各タスクをゲート通過)して結果を Issue に書き戻す。"
-argument-hint: "<add \"task\" | list | go | done id> [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
+argument-hint: "<add \"task\" | list | go | done id | retry id> [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
 ---
 
 # rig/queue — タスクキュー（積んで GO） 📋
@@ -17,14 +17,17 @@ $ARGUMENTS
 
 ```
 orchestrate queue add "<やること>"        # 積む
-orchestrate queue list                    # 確認
+orchestrate queue list                    # 確認（失敗理由・完了コメントは note として行末に表示）
 orchestrate queue go --provider rig --max-parallel 3   # まとめて GO
 orchestrate queue done <id>               # 手動で完了に
+orchestrate queue retry <id>              # failed（検証 FAIL）の item を queued に戻して再 GO 対象にする
 ```
 
 - **go**＝積まれた全タスクを実行：独立タスクは**別プロセスで並列**、各タスクは生成→**独立検証（採点者≠生成者）**のゲートを通過、結果を一括レポート。中身は既存の orchestrate（並列・マルチプロバイダ・local LLM）をそのまま GO エンジンに使う。
 - provider は `rig`（各タスクを rig ハーネスで実行・推奨）/ `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock`。
 - **`--provider rig`（既定）は各 item を `/rig:rig "<task>"` 経由で dispatch する**——`patterns/isolated-worktree` により各タスクが自動的に専用 worktree へ隔離されるため、**並列実行中の headless プロセス同士が同じファイルを取り合う心配がない**。queue の verifier は「gate まで確定したか」＋「本体の作業ツリーに書き込まず isolated worktree 内で完結したか」を判定するだけで、**accept はしない**（queue は隔離・実行・ゲートの層、反映はユーザーの明示操作）。
+- **`queue list` は done を除くアクティブ item（queued/running/failed）のみ表示する**（`local`/`github`/`gitlab` 共通）。完了済みタスクで一覧が肥大化しない。
+- **`queue retry <id>`**＝検証 FAIL で `failed` になった item を `queued` に戻し、次の `queue go` の実行対象に含める。プロバイダの一時的なタイムアウト等で落ちたタスクをタスク文の打ち直し（＝別 id・別 Issue）なしに再試行できる。
 
 ## 複数タスクを並行で進める（ターミナルを増やさず一括把握）
 
