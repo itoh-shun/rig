@@ -268,13 +268,13 @@ product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.
 
 | tier | コマンド |
 |---|---|
-| **Core** | `/rig:rig`、`/rig:talk`、`/rig:dev`、`/rig:rig status\|diff\|accept\|discard` |
-| **Quality** | `/rig:drill`、`/rig:rig stats\|review`、`/rig:pr`（既存 PR レビュー入口） |
-| **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona` |
-| **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks` |
-| **Experimental**（中身は本物・配送が遊び心） | `/rig:magi`、`/rig:roast`、`/rig:sage`、`/rig:party`、`/rig:movie`、`/rig:coin`、`/rig:duck`、`/rig:pre-mortem` |
+| **Core** | `/rig:rig`、`/rig:talk`、`/rig:dev`、`/rig:orchestrate`（step 単位の計算的オーケストレーション）、`/rig:rig status\|diff\|accept\|discard` |
+| **Quality** | `/rig:drill`、`/rig:rig stats\|review`、`/rig:pr`（既存 PR レビュー入口）、`/rig:harness`（自プロジェクトの開発ハーネス監査）、`/rig:qa`（仕様ベースのテストケース設計） |
+| **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
+| **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
+| **Experimental**（中身は本物・配送が遊び心） | `/rig:magi`、`/rig:roast`、`/rig:sage`、`/rig:party`、`/rig:movie`（＋その脚本前段 `/rig:scenario`）、`/rig:coin`、`/rig:duck`、`/rig:pre-mortem` |
 
-日常的に必要なのは Core と Quality。それ以外は opt-in の追加機能——全ブリック目録は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。
+日常的に必要なのは Core と Quality。それ以外は opt-in の追加機能——全ブリック目録は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。（`/rig:queue`・`/rig:init`・`/rig:sales` は本 README の別所——§5・FAQ・§12——でそれぞれ扱っている。）
 
 ### install
 
@@ -343,7 +343,7 @@ rig run review-only --provider rig --verifier-provider codex
 
 ## 12. recipes / facets / steps
 
-エンジン（`skills/rig/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティングは4つの shipped recipe＋既存資産への native 委譲で構成される：
+エンジン（`skills/rig/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティングは4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
 
 | recipe | 内容 |
 |---|---|
