@@ -41,3 +41,4 @@ done
 
 - `pattern: autonomous-loop` — 定期的に自律起動を繰り返すループパターン（1回完了通知とは異なる）
 - `pattern: serial` — 監視完了後に後続ステップを直列実行する場合に組み合わせる
+- `facets/instructions/loop-driver` — ②「1 tick 実行」の対象がバックグラウンドプロセスの完了待ち（ビルド/CI/デプロイ監視等）の場合、本パターンに委譲する（#220）
