@@ -18,7 +18,10 @@
 
 ### ② 1 tick 実行
 
-確定した対象を委譲実行する（rig フローなら通常 engine：PARSE→RESOLVE→COMPOSE→RUN へ。任意コマンドはそのまま実行）。**長い出力は親に引き込まず**、判定に要る要点だけ受け取る（context-minimal）。
+確定した対象を委譲実行する（rig フローなら通常 engine：PARSE→RESOLVE→COMPOSE→RUN へ。任意コマンドはそのまま実行）。
+**対象がバックグラウンドプロセスの完了待ち（ビルド/CI/デプロイ監視等）の場合は `patterns/monitor`
+（`Monitor` ツール + `until` ループでイベント駆動に1回だけ完了検知）に委譲する**（`tail -f` 禁止の
+理由も同パターン参照）。長い出力は親に引き込まず、判定に要る要点だけ受け取る（context-minimal）。
 
 ### ③ 停止判定
 
