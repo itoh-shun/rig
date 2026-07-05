@@ -1381,6 +1381,8 @@ def cmd_run(args):
 QUEUE_LABEL = "rig-queue"
 # queue list が可視化すべき「アクティブ」ラベル（rig-done は close 済みのため対象外・#211）。
 QUEUE_LABELS_ACTIVE = ["rig-queue", "rig-running", "rig-failed"]
+# queue が扱う全状態ラベル（旧ラベルの除去対象の算出に使う・#223）。
+QUEUE_LABELS_ALL = ["rig-queue", "rig-running", "rig-failed", "rig-done"]
 QUEUE_PATH = INVOCATION_CWD / ".rig" / "queue.json"
 
 
@@ -1434,14 +1436,16 @@ def queue_list(backend: str, cfg: dict) -> list[dict]:
     個別に問い合わせて id（github）／行（gitlab, テキストのみ）で dedup・merge する。
     """
     if backend == "local":
-        return _local_load()["items"]
+        # done（close 済み相当）は対象外（#215：github/gitlab は --state open で自然に除外される
+        # のに対し local だけ queue.json に永久に残っていた非対称を解消）。
+        return [it for it in _local_load()["items"] if it.get("status") != "done"]
     cli = _gh_cli(backend)
     R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
     if backend == "github":
         seen: dict[object, dict] = {}
         for label in QUEUE_LABELS_ACTIVE:
             argv = [cli, "issue", "list", "-l", label, "--state", "open",
-                    "--json", "number,title,labels"] + R
+                    "--json", "number,title,labels,comments"] + R
             rc, out, err = _cli_run(argv)
             if rc != 0:
                 return [{"id": None, "task": f"[{cli} error: {(err or '')[:120]}]", "status": "error"}]
@@ -1454,10 +1458,16 @@ def queue_list(backend: str, cfg: dict) -> list[dict]:
                 st = ("running" if "rig-running" in labels
                       else "failed" if "rig-failed" in labels
                       else "queued")
-                seen[x.get("number")] = {"id": x.get("number"), "task": x.get("title"), "status": st}
+                # 直近コメント（queue_set_status が書き込む失敗理由/完了コメント）を note として
+                # 表示に使う（#214：queue list が note を素通りしていた欠落を解消）。
+                comments = x.get("comments") or []
+                note = comments[-1].get("body", "") if comments else ""
+                seen[x.get("number")] = {"id": x.get("number"), "task": x.get("title"),
+                                          "status": st, "note": note}
         return list(seen.values())
-    # gitlab（glab）はテキスト出力のみで labels が取れないため、ラベルごとに問い合わせて
+    # gitlab（glab）はテキスト出力のみで labels/comments が取れないため、ラベルごとに問い合わせて
     # 行単位で dedup・merge する（status は従来どおり "queued" 固定。#211 の可視性回復が主目的）。
+    # note 表示は gitlab 未対応（id を個別取得できない既存の制約と同根・#214）。
     seen_lines: dict[str, dict] = {}
     for label in QUEUE_LABELS_ACTIVE:
         argv = [cli, "issue", "list", "-l", label, "--state", "open"] + R
@@ -1470,6 +1480,25 @@ def queue_list(backend: str, cfg: dict) -> list[dict]:
     return list(seen_lines.values())
 
 
+def _queue_relabel_args(status: str) -> list[str]:
+    """新 status に対応する gh/glab のラベル差し替え引数（`--add-label X --remove-label Y ...`）。
+
+    旧ラベルは QUEUE_LABEL 固定ではなく「新ラベル以外の全キューラベル」を除去対象にする
+    （#223：running→failed/done 等の遷移で旧ラベルが固定除去のまま残留し、queue_list の
+    ラベル→status 判定が誤った状態を返し続けるバグの修正）。フィールドを切り出すことで
+    selftest が argv 構築を直接検証できる（実 CLI 呼び出しを伴わない）。
+    """
+    label = {"queued": "rig-queue", "running": "rig-running",
+              "done": "rig-done", "failed": "rig-failed"}.get(status)
+    if not label:
+        return []
+    args = ["--add-label", label]
+    for old in QUEUE_LABELS_ALL:
+        if old != label:
+            args += ["--remove-label", old]
+    return args
+
+
 def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -> None:
     if backend == "local":
         q = _local_load()
@@ -1480,14 +1509,18 @@ def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -
         return
     cli = _gh_cli(backend)
     R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
-    label = {"running": "rig-running", "done": "rig-done", "failed": "rig-failed"}.get(status)
-    if label:
-        _cli_run([cli, "issue", "edit", str(item_id), "--add-label", label,
-                  "--remove-label", QUEUE_LABEL] + R)
+    relabel = _queue_relabel_args(status)
+    if relabel:
+        _cli_run([cli, "issue", "edit", str(item_id)] + relabel + R)
     if note:
         _cli_run([cli, "issue", "comment", str(item_id), "-b", note] + R)
     if status == "done":
         _cli_run([cli, "issue", "close", str(item_id)] + R)
+    elif status == "queued":
+        # retry（#213）：done で close 済みだった item も再度アクティブにするため reopen する
+        # （既に open の場合は no-op 扱いで crash しない。close 済みでない大半のケース＝failed
+        # からの retry では実質何もしない）。
+        _cli_run([cli, "issue", "reopen", str(item_id)] + R)
 
 
 def _build_queue_task_prompt(task: str, provider: str) -> str:
@@ -1524,8 +1557,8 @@ def _build_queue_verify_prompt(task: str, product: str) -> str:
 
 
 def cmd_queue(args):
-    if not args or args[0] not in ("add", "list", "go", "done"):
-        print("[ERROR] usage: queue <add|list|go|done> [...] "
+    if not args or args[0] not in ("add", "list", "go", "done", "retry"):
+        print("[ERROR] usage: queue <add|list|go|done|retry> [...] "
               "[--backend local|github|gitlab] [--repo owner/repo]")
         sys.exit(1)
     sub, rest = args[0], args[1:]
@@ -1562,13 +1595,23 @@ def cmd_queue(args):
         items = queue_list(backend, cfg)
         print(f"## rig queue [{backend}]  ({len(items)} 件)")
         for it in items:
-            print(f"  [{it.get('status','?'):<8}] #{it.get('id')}  {it.get('task')}")
+            line = f"  [{it.get('status','?'):<8}] #{it.get('id')}  {it.get('task')}"
+            note = it.get("note")
+            if note:
+                line += f" — {note}"
+            print(line)
         return
     if sub == "done":
         if not free:
             print("[ERROR] queue done <id>"); sys.exit(1)
         queue_set_status(backend, free[0], "done", "手動で done", cfg)
         print(f"done [{backend}]: #{free[0]}")
+        return
+    if sub == "retry":
+        if not free:
+            print("[ERROR] queue retry <id>"); sys.exit(1)
+        queue_set_status(backend, free[0], "queued", "", cfg)
+        print(f"retry [{backend}]: #{free[0]} → queued")
         return
     # go: 積まれた task をまとめて実行（独立 task は並列・各 task をゲート）
     items = [it for it in queue_list(backend, cfg) if it.get("status") == "queued"]
@@ -2051,7 +2094,7 @@ def cmd_selftest(_args):
            build_argv("claude", "generator", "P", {}), ["claude", "-p", "P", "--output-format", "text"])
     _, out_n = run_provider("mock", "verifier", "x", {})
     report("N probe: 検証出力に VERDICT", "VERDICT" in out_n, True)
-    # O: タスクキュー（local backend で積む→list→mock go・github は CLI 不在で graceful）
+    # O: タスクキュー（local backend で積む→list→mock go→note/retry/done-除外→github は CLI 不在で graceful）
     global QUEUE_PATH
     _orig_qp = QUEUE_PATH
     import tempfile
@@ -2062,12 +2105,28 @@ def cmd_selftest(_args):
     for it in q_items:                          # mock で go（生成→検証→done）
         _, vout = run_provider("mock", "verifier", "x", {}, persona="queue")
         queue_set_status("local", it["id"], "done" if "VERDICT: PASS" in vout else "failed", "", {})
-    q_done = [it for it in queue_list("local", {}) if it["status"] == "done"]
+    q_done_raw = [it for it in _local_load()["items"] if it["status"] == "done"]  # 生ストアで確認
+    q_done_in_list = [it for it in queue_list("local", {}) if it["status"] == "done"]  # #215: 出ない
+    note_text = "❌ rig: 検証 FAIL（mock→mock）"
+    target_id = q_items[0]["id"]
+    queue_set_status("local", target_id, "failed", note_text, {})  # #214 用に明示的に failed+note
+    q_note = next(it for it in queue_list("local", {}) if it["id"] == target_id)
+    queue_set_status("local", target_id, "queued", "", {})         # #213: retry と同じ呼び出し
+    q_retried = next(it for it in queue_list("local", {}) if it["id"] == target_id)
+    relabel_failed = _queue_relabel_args("failed")
+    relabel_removes = [relabel_failed[i + 1] for i in range(len(relabel_failed) - 1)
+                        if relabel_failed[i] == "--remove-label"]
     gh_item = queue_add("github", "t", {})      # gh 不在 → error（crash しない）
     QUEUE_PATH.unlink(missing_ok=True)
     QUEUE_PATH = _orig_qp
     report("O queue: 2件積んで list", len(q_items), 2)
-    report("O queue: mock go で全 done", len(q_done), 2)
+    report("O queue: mock go で全 done（生ストア確認）", len(q_done_raw), 2)
+    report("O queue: done item は queue_list（local）に出ない（#215）", len(q_done_in_list), 0)
+    report("O queue: failed item の note が list に反映（#214）", q_note.get("note"), note_text)
+    report("O queue: retry で queued に戻る（#213）", q_retried["status"], "queued")
+    report("O queue: retry で note がクリアされる（#213）", q_retried.get("note"), "")
+    report("O queue: running→failed で rig-running が除去対象（#223）",
+           "rig-running" in relabel_removes, True)
     report("O github backend は CLI 不在で graceful(error)", gh_item["status"], "error")
     # P: 実行テレメトリ（run_loop 経由の全シナリオが .rig/runs.jsonl に1行ずつ追記される）
     p_lines = []
