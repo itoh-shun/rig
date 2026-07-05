@@ -13,9 +13,9 @@
 `identify-audience` の読者像・詳細度に従い、以下を意識して書く：
 
 - 「最初の成功体験」を機能一覧より先に見せる（README トップの場合）
-- 動くコード例・コマンド例を用意する（`verify_commands` step で実行確認する前提）
+- 動くコード例・コマンド例を用意する（`verify-commands` step で実行確認する前提）
 - 冗長な前置き・AI 特有の定型表現（過剰な太字・箇条書きの濫用・「〜することができます」等）を避ける。必要なら `recipes/de-ai-smell` の観点（`facets/knowledge/ai-writing-smells`）を参照してセルフチェックする。
 
 ### ③ 引き継ぎ
 
-起草した内容を `verify_commands` step へ渡す（本文中のコマンド例・コードブロックを実行確認する対象として）。
+起草した内容を `verify-commands` step へ渡す（本文中のコマンド例・コードブロックを実行確認する対象として）。

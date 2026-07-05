@@ -1,6 +1,6 @@
 ---
 name: bugfix
-description: workbench 既定の bugfix フロー（inspect→reproduce→plan→implement→test→review_diff→acceptance）。隔離 worktree ＋ machine-gate な acceptance-check で締める。`/rig "<バグ修正>"` から自動選択される。
+description: workbench 既定の bugfix フロー（inspect→reproduce→plan→implement→test→review-diff→acceptance）。隔離 worktree ＋ machine-gate な acceptance-check で締める。`/rig "<バグ修正>"` から自動選択される。
 scope: shipped
 autonomy: interactive
 steps:
@@ -27,7 +27,7 @@ steps:
     pattern: serial
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]
-  - id: review_diff
+  - id: review-diff
     instruction: parallel-review
     pattern: parallel-fanout
     gate: review-gate
@@ -65,7 +65,7 @@ steps:
 |---|---|
 | `hotfix` | 最短パス。design/review を省略。verify の gate も軽量（build/lint のみ） |
 | `debug` | 原因不明時の調査重視（isolate で仮説列挙） |
-| **bugfix**（本 recipe） | 通常のバグ修正の既定。review_diff（3-way）＋ 13項目の acceptance-check まで通す |
+| **bugfix**（本 recipe） | 通常のバグ修正の既定。review-diff（3-way）＋ 13項目の acceptance-check まで通す |
 
 ## 展開手順
 
@@ -74,7 +74,7 @@ steps:
 3. **plan** — 根拠に基づき修正方針を立てる（`implement` instruction を読解・仮説列挙モードで使用。コード変更はまだ行わない — `recipes/debug` の isolate step と同じ考え方）。
 4. **implement** — 最小限の修正を実施する。
 5. **test** — build/lint/test を実行する。
-6. **review_diff** — security/design/test の3観点並列レビュー（`review-gate`）。
+6. **review-diff** — security/design/test の3観点並列レビュー（`review-gate`）。
 7. **acceptance** — `facets/instructions/acceptance-check` が13基準（standard 8 + bugfix 5）を判定し `scripts/workbench.py gate` に記録する。`failed` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
 
 ## isolated worktree との関係

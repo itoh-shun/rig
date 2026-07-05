@@ -95,7 +95,7 @@ python3 scripts/workbench.py board [--all]
 python3 scripts/workbench.py review <task_id> --set security-reviewer=APPROVE --set design-reviewer=REJECT
 ```
 
-review 系 step（`review_diff`/`parallel-review`/`pr-review`）で reviewer persona の verdict が確定したら記録する。verdict は `APPROVE`/`REJECT`/`APPROVE_WITH_CONDITIONS`。gate の合否そのものには影響しない**観測専用**の記録で、`/rig stats` の「Verifier behavior」（ゴム印検知）に使われる。review 系タスクの RUN では、review-gate の集約結果が出た時点でこのコマンドを呼ぶ運用にする。
+review 系 step（`review-diff`/`parallel-review`/`pr-review`）で reviewer persona の verdict が確定したら記録する。verdict は `APPROVE`/`REJECT`/`APPROVE_WITH_CONDITIONS`。gate の合否そのものには影響しない**観測専用**の記録で、`/rig stats` の「Verifier behavior」（ゴム印検知）に使われる。review 系タスクの RUN では、review-gate の集約結果が出た時点でこのコマンドを呼ぶ運用にする。
 
 ## `/rig stats [--recipe R] [--verifier P] [--last Nd]`
 
