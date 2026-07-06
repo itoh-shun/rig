@@ -282,6 +282,9 @@ Sub-commands:
   usage [--limit N] [--global] [--json] この rig-wb が実際に使われた履歴。
                                         既定は cwd の .rig/runs.jsonl（プロジェクト単位）、
                                         --global で ~/.rig/runs.jsonl（全プロジェクト横断）
+  bench [--tasks ...] [--provider X] [--allow-headless-in-cc] [--out <json>]
+                                        bare vs rig の A/B ベンチマーク
+                                        （組み込み task で客観指標を測定・課金 opt-in）
   version                               バージョン表示
 
 Environment:
@@ -313,6 +316,10 @@ def main() -> None:
         return
     if sub == "usage":
         _show_usage(rest)
+        return
+    if sub == "bench":
+        from . import bench as bench_mod
+        bench_mod.cmd_bench(rest)
         return
     if sub == "wb":
         _run_workbench(rest)
