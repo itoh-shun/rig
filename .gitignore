@@ -4,6 +4,11 @@
 # Python
 __pycache__/
 *.pyc
+*.egg-info/
+.venv/
+.venv-*/
+build/
+dist/
 
 # rig orchestrate runtime artifacts（cwd に dump される run-state）
 run-state.json
