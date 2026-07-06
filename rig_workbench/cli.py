@@ -165,26 +165,36 @@ _orch_delegates = {
 def _show_usage(argv: list[str]) -> None:
     """`.rig/runs.jsonl` から invoker 別の実行回数を集計する。
 
-    RIG_INVOKER が設定されていた run を「rig-wb 経由」として数え、それ以外を
-    「direct」として数える。`--json` で機械可読出力、`--limit N` で対象範囲を
-    絞れる。テレメトリが空でも「まだ使われていません」と明示する。
+    既定は cwd の `.rig/runs.jsonl`（プロジェクト単位の記録）。`--global` で
+    `~/.rig/runs.jsonl`（全プロジェクト横断のミラー）に切り替える。
+    `RIG_INVOKER` が設定されていた run を「rig-wb 経由」として数え、それ以外を
+    「direct」として数える。`--global` 時は `project` フィールドで来歴も表示する。
+    `--json` で機械可読出力、`--limit N` で対象範囲を絞れる。
     """
     import collections
-    import datetime
     import json as _json
     limit: int | None = None
     as_json = False
+    use_global = False
     i = 0
     while i < len(argv):
         if argv[i] == "--limit" and i + 1 < len(argv):
             limit = int(argv[i + 1]); i += 2
         elif argv[i] == "--json":
             as_json = True; i += 1
+        elif argv[i] in ("--global", "-g"):
+            use_global = True; i += 1
         else:
             i += 1
 
-    home = _rig_data_root()
-    runs_path = home / ".rig" / "runs.jsonl"
+    if use_global:
+        runs_path = pathlib.Path.home() / ".rig" / "runs.jsonl"
+        scope = "global (~/.rig/runs.jsonl・全プロジェクトのミラー)"
+    else:
+        home = _rig_data_root()
+        runs_path = home / ".rig" / "runs.jsonl"
+        scope = f"local (cwd={home})"
+
     entries: list[dict] = []
     if runs_path.exists():
         for line in runs_path.read_text(encoding="utf-8").splitlines():
@@ -201,27 +211,38 @@ def _show_usage(argv: list[str]) -> None:
 
     by_invoker: collections.Counter[str] = collections.Counter()
     last_ts_by: dict[str, str] = {}
+    by_project: collections.Counter[str] = collections.Counter()
     for e in entries:
         inv = e.get("invoker") or "direct (rig-wb 未経由)"
         by_invoker[inv] += 1
         ts = e.get("ts")
         if ts and (inv not in last_ts_by or ts > last_ts_by[inv]):
             last_ts_by[inv] = ts
+        if use_global:
+            proj = e.get("project") or "?"
+            by_project[proj] += 1
 
     if as_json:
-        print(_json.dumps({
+        payload = {
             "installed_version": __version__,
+            "scope": "global" if use_global else "local",
             "runs_path": str(runs_path),
             "total": len(entries),
             "by_invoker": dict(by_invoker),
             "last_seen_by_invoker": last_ts_by,
-        }, ensure_ascii=False, indent=2))
+        }
+        if use_global:
+            payload["by_project"] = dict(by_project)
+        print(_json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     print(f"## rig-wb usage — {__version__}")
+    print(f"scope: {scope}")
     print(f"runs 記録: {runs_path}")
     if not entries:
-        print(f"\n記録がありません。まだ `rig-wb ...` は使われていません。")
+        print("\n記録がありません。まだ `rig-wb ...` は使われていません。")
+        if not use_global:
+            print("`rig-wb usage --global` で `~/.rig/runs.jsonl` (横断) も見られます。")
         return
     print(f"\n直近 {len(entries)} run:")
     for inv, n in by_invoker.most_common():
@@ -234,6 +255,10 @@ def _show_usage(argv: list[str]) -> None:
     else:
         print(f"\n◆ rig-wb 経由: {rig_wb_runs} 回 / 全体 {len(entries)} 回 "
               f"({rig_wb_runs / len(entries) * 100:.0f}%)")
+    if use_global and by_project:
+        print("\nプロジェクト別:")
+        for proj, n in by_project.most_common():
+            print(f"  {n:4d} 回   {proj}")
 
 
 def _print_help() -> None:
@@ -254,8 +279,9 @@ Sub-commands:
                                         scripts/dashboard.py
   validate                              scripts/validate.py
   selftest                              orchestrate: selftest（golden 検証）
-  usage [--limit N] [--json]            この rig-wb が実際に使われた履歴
-                                        （runs.jsonl の invoker 別集計）
+  usage [--limit N] [--global] [--json] この rig-wb が実際に使われた履歴。
+                                        既定は cwd の .rig/runs.jsonl（プロジェクト単位）、
+                                        --global で ~/.rig/runs.jsonl（全プロジェクト横断）
   version                               バージョン表示
 
 Environment:

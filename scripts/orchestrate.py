@@ -574,6 +574,21 @@ def telemetry_append(state: dict, final: str) -> None:
     except Exception:
         pass
 
+    # ── グローバル・インデックス（~/.rig/runs.jsonl）にもミラー ────────────
+    # プロジェクト単位のログ（cwd/.rig）を残しつつ、「全プロジェクトで rig-wb を
+    # どれだけ使ったか」を横断集計できるようにする。`project` フィールドで来歴を保持。
+    # 書き込み失敗は握りつぶす（best-effort、cwd 側の記録が主）。
+    try:
+        global_path = pathlib.Path.home() / ".rig" / "runs.jsonl"
+        global_path.parent.mkdir(parents=True, exist_ok=True)
+        # cwd の記録が確定した後（rec が完成した状態）で project を付けて写す
+        global_rec = dict(rec)
+        global_rec["project"] = str(INVOCATION_CWD)
+        with global_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(global_rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 
 def load_state(path: pathlib.Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
