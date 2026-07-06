@@ -448,6 +448,17 @@ cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins
 
 Full flag/brick reference lives in [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2–§3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
 
+### Codex skill install
+
+Codex can use rig directly as a skill by exposing this repo's `skills/rig` folder under `~/.codex/skills`:
+
+```bash
+mkdir -p ~/.codex/skills
+ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
+```
+
+After restarting Codex, invoke it as `$rig`. In Codex, `$rig "fix the login bug"` is the equivalent of the Claude Code `/rig:rig "fix the login bug"` entrypoint. For cross-provider orchestration, `scripts/orchestrate.py` already knows how to call `codex exec` and enforces read-only mode for verifier roles.
+
 ### Project manifest & knowledge layer
 
 Drop `<repo>/.claude/rig.md` to set build/lint/test commands, branch & CI strategy, reviewer, production-impact patterns, default recipe, default reviewer personas, etc. — see [`skills/rig/manifests/_template.md`](./skills/rig/manifests/_template.md). The knowledge layer (`~/.claude/rig/knowledge/{methodology,ai-quirks}/`, `<repo>/.claude/rig/knowledge/domain/`) is injected into every run and accumulates learnings over time.

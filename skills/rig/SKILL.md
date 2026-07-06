@@ -1,7 +1,6 @@
 ---
 name: rig
-description: Use when you need dev-flow orchestration — implementing a feature, clearing an issue, reviewing current changes, completing a PR, going design-to-implementation, TDD, or composing a flow. 開発フローのオーケストレーション（実装着手 / Issue 対応 / 変更レビュー / PR 完了 / 設計→実装 / TDD / フロー組み立て）が要るとき、または `/rig:dev` が呼ばれたとき。
-user-invocable: true
+description: Use when you need dev-flow orchestration in Codex or Claude Code — implementing a feature, clearing an issue, reviewing current changes, completing a PR, going design-to-implementation, TDD, quality-gated workbench runs, or composing a flow. 開発フローのオーケストレーション（Codex / Claude Code での実装着手 / Issue 対応 / 変更レビュー / PR 完了 / 設計→実装 / TDD / workbench / フロー組み立て）が要るとき、または `$rig` / `/rig:rig` / `/rig:dev` が呼ばれたとき。
 ---
 
 # rig
@@ -11,6 +10,15 @@ user-invocable: true
 ブリック（facet / pattern / step / agent / recipe）を**起動時に組み合わせて**タスク専用のエージェント・ハーネスを engineering する、レゴ式ハーネス・コンポーザ。固定ワークフローではなく **PARSE → RESOLVE → COMPOSE → RUN** の4段で都度ハーネスを合成する。intake→design→implement→verify→review→pr→merge の「3-Stage フルフロー」は数ある recipe の1つにすぎない。
 
 **determinism-by-gate**: 非決定的な agent 実行を決定的な受け入れゲート（`patterns/acceptance-gate`）で挟み、経路は変動しても**毎回同じ品質**へ収束させる。これが rig の品質保証の核。
+
+### Codex 入口
+
+Codex では `$rig` が Claude Code の `/rig:rig` に相当する入口。slash command や `Agent` ツールが無い環境では、本文中の `/rig:*` は「この skill の該当 pack / instruction を使う」と読み替え、subagent dispatch は Codex の並列作業・`codex exec` provider・または `scripts/orchestrate.py` / `scripts/workbench.py` の決定論 runner で代替する。
+
+- 自然文タスク: `$rig "fix the login bug"` として扱い、§2 の workbench pack と `facets/instructions/workbench` を読む。
+- 低レベル指定: `$rig --recipe review-only --only review` のように、§3 の flag / recipe 解決規則をそのまま使う。
+- runner を使える場合: `python3 scripts/orchestrate.py ...` または `rig-wb ...` を優先し、Codex verifier は `codex exec --sandbox read-only` で読み取り専用にする（`scripts/orchestrate.py build_argv` が正本）。
+- Claude Code 固有の文言（`/rig:*`, `Agent`, `Task`, plugin command）は互換表現として扱い、Codex で同じ安全条件（隔離 worktree・acceptance-gate・明示 accept/discard）を満たす形に置き換える。
 
 ## 2. ブリック目録
 

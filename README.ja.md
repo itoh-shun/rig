@@ -448,6 +448,17 @@ cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reloa
 
 flag・ブリックの完全な一覧は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
 
+### Codex skill として使う
+
+Codex では、このリポジトリの `skills/rig` を `~/.codex/skills` から見えるようにすれば `$rig` skill として使える：
+
+```bash
+mkdir -p ~/.codex/skills
+ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
+```
+
+Codex を再起動したあと、`$rig "ログインバグを直して"` のように呼ぶ。Codex では `$rig` が Claude Code の `/rig:rig` 相当の入口になる。横断 runner は既に `codex exec` provider を持っており、検証ロールでは read-only sandbox を強制する。
+
 ### manifest・知識層
 
 `<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。

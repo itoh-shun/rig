@@ -1,0 +1,5 @@
+interface:
+  display_name: "rig"
+  short_description: "Quality-gated AI workbench flows"
+  brand_color: "#2563EB"
+  default_prompt: "Use $rig to plan and run a quality-gated development workflow for this task."
