@@ -7,6 +7,8 @@ argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id]
 
 **まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・recipe スキーマ・知識層注入）に厳密に従うこと。** そのうえで本コマンドは `$ARGUMENTS` の先頭語で2つの経路に分岐する。
 
+> **初回のみ**: `rig-wb` CLI が入っていないと Claude Code 外の provider（Codex / Cursor / plain terminal）から同じ workbench を叩けない。**`/rig:setup`** で pipx / uv / pip 経由で自動導入できる（`--yes` で確認省略・`--check` で検出のみ）。Claude Code の中だけで完結するなら不要——scripts/*.py が直接呼ばれるので `rig-wb` 無しでも動く。
+
 ```
 $ARGUMENTS
 ```
