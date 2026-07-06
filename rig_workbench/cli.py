@@ -137,6 +137,80 @@ _orch_delegates = {
 }
 
 
+def _show_usage(argv: list[str]) -> None:
+    """`.rig/runs.jsonl` から invoker 別の実行回数を集計する。
+
+    RIG_INVOKER が設定されていた run を「rig-wb 経由」として数え、それ以外を
+    「direct」として数える。`--json` で機械可読出力、`--limit N` で対象範囲を
+    絞れる。テレメトリが空でも「まだ使われていません」と明示する。
+    """
+    import collections
+    import datetime
+    import json as _json
+    limit: int | None = None
+    as_json = False
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--limit" and i + 1 < len(argv):
+            limit = int(argv[i + 1]); i += 2
+        elif argv[i] == "--json":
+            as_json = True; i += 1
+        else:
+            i += 1
+
+    home = _rig_home()
+    runs_path = home / ".rig" / "runs.jsonl"
+    entries: list[dict] = []
+    if runs_path.exists():
+        for line in runs_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(_json.loads(line))
+            except _json.JSONDecodeError:
+                continue
+
+    if limit is not None and limit > 0:
+        entries = entries[-limit:]
+
+    by_invoker: collections.Counter[str] = collections.Counter()
+    last_ts_by: dict[str, str] = {}
+    for e in entries:
+        inv = e.get("invoker") or "direct (rig-wb 未経由)"
+        by_invoker[inv] += 1
+        ts = e.get("ts")
+        if ts and (inv not in last_ts_by or ts > last_ts_by[inv]):
+            last_ts_by[inv] = ts
+
+    if as_json:
+        print(_json.dumps({
+            "installed_version": __version__,
+            "runs_path": str(runs_path),
+            "total": len(entries),
+            "by_invoker": dict(by_invoker),
+            "last_seen_by_invoker": last_ts_by,
+        }, ensure_ascii=False, indent=2))
+        return
+
+    print(f"## rig-wb usage — {__version__}")
+    print(f"runs 記録: {runs_path}")
+    if not entries:
+        print(f"\n記録がありません。まだ `rig-wb ...` は使われていません。")
+        return
+    print(f"\n直近 {len(entries)} run:")
+    for inv, n in by_invoker.most_common():
+        last = last_ts_by.get(inv, "?")
+        marker = "◆" if inv.startswith("rig-wb/") else " "
+        print(f"  {marker} {inv:35s}  {n:4d} 回   last: {last}")
+    rig_wb_runs = sum(n for inv, n in by_invoker.items() if inv.startswith("rig-wb/"))
+    if rig_wb_runs == 0:
+        print("\n※ まだ `rig-wb` 経由の run はゼロです（scripts/*.py の直呼びのみ）。")
+    else:
+        print(f"\n◆ rig-wb 経由: {rig_wb_runs} 回 / 全体 {len(entries)} 回 "
+              f"({rig_wb_runs / len(entries) * 100:.0f}%)")
+
+
 def _print_help() -> None:
     print(
         f"""rig-wb {__version__} — quality-gated AI workbench (pip flavor)
@@ -155,6 +229,8 @@ Sub-commands:
                                         scripts/dashboard.py
   validate                              scripts/validate.py
   selftest                              orchestrate: selftest（golden 検証）
+  usage [--limit N] [--json]            この rig-wb が実際に使われた履歴
+                                        （runs.jsonl の invoker 別集計）
   version                               バージョン表示
 
 Environment:
@@ -169,6 +245,12 @@ Examples:
 
 
 def main() -> None:
+    # 呼び出し元がこの CLI（`rig-wb`）であることを下流の scripts/*.py にも伝える。
+    # scripts/orchestrate.py の telemetry_append と workbench.py の audit_append が
+    # 拾って `.rig/runs.jsonl` / `.rig/audit.jsonl` に invoker 情報を残す。これで
+    # 「rig-wb 経由で回ったか、素の python3 scripts/... 直呼びか」を区別できる。
+    os.environ.setdefault("RIG_INVOKER", f"rig-wb/{__version__}")
+
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):
         _print_help()
@@ -177,6 +259,9 @@ def main() -> None:
     rest = argv[1:]
     if sub == "version" or sub == "--version":
         print(f"rig-wb {__version__}")
+        return
+    if sub == "usage":
+        _show_usage(rest)
         return
     if sub == "wb":
         _run_workbench(rest)

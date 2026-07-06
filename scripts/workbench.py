@@ -596,6 +596,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             "gate_status": status,
             "failed_checks": [c["name"] for c in acc["checks"]
                               if c["status"] in ("failed", "pending")],
+            "invoker": __import__("os").environ.get("RIG_INVOKER") or "direct",
         })
     if status == "passed_with_warnings":
         warns = [f"{c['name']}（{c.get('detail') or 'detail なし'}）" for c in acc["checks"] if c["status"] == "warning"]

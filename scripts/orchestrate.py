@@ -556,6 +556,7 @@ def telemetry_append(state: dict, final: str) -> None:
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "recipe": state["recipe"],
             "backend": "orchestrate",
+            "invoker": os.environ.get("RIG_INVOKER") or "direct",
             "final": final,
             "steps_total": len(state["steps"]),
             "steps_passed": sum(1 for st in ss.values() if st.get("status") == "passed"),
