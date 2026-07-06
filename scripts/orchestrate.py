@@ -96,6 +96,8 @@ def load_steps(fm: dict) -> list[dict]:
             "acceptance": list(s.get("acceptance") or []),
             "checks": list(s.get("checks") or []),          # 任意: 機械検証コマンド列
             "max_retries": s.get("max_retries") or DEFAULT_K,
+            "model": s.get("model"),                        # 任意: この step の generator model
+            "verifier_model": s.get("verifier_model"),      # 任意: この step の verifier model（分離指定用）
             "output_contract": s.get("output_contract"),
             "condition": s.get("condition"),                 # 任意: 条件付き step（size/flag）
         })
@@ -921,15 +923,21 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         # 各 step を「rig ハーネス」として claude ヘッドレスで起動（rig を名前で呼ぶ）。
         pre = RIG_VER_PREFIX if role == "verifier" else RIG_GEN_PREFIX
         argv = ["claude", "-p", pre + prompt, "--output-format", "text"]
+        if cfg.get("model"):
+            argv += ["--model", cfg["model"]]              # per-step model 対応
         return argv + _READONLY_ENFCE["claude"] if role == "verifier" else argv
     if provider == "claude":
         # ヘッドレス。実運用は権限モード等をユーザーが --provider-cmd で調整可。
         argv = ["claude", "-p", prompt, "--output-format", "text"]
+        if cfg.get("model"):
+            argv += ["--model", cfg["model"]]              # per-step model 対応
         return argv + _READONLY_ENFCE["claude"] if role == "verifier" else argv
     if provider == "codex":
         # --skip-git-repo-check: 非 git ディレクトリ（横断利用の overlay 先など）でも
         # codex が起動拒否しないように。サンドボックスは無効化しないので安全。
         argv = ["codex", "exec", "--skip-git-repo-check"]
+        if cfg.get("model"):
+            argv += ["-m", cfg["model"]]                   # per-step model 対応
         if role == "verifier":
             argv += _READONLY_ENFCE["codex"]
         return argv + [prompt]
@@ -1129,12 +1137,16 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
               cfg: dict, max_parallel: int) -> tuple[str | None, str, list[dict]]:
     """単独 or judge-panel で生成。複数なら全 generator を並列に走らせ、
     judge(ver) が最初に PASS した候補（generator 列の順＝決定論）を勝者に選ぶ。
-    返り値: (winner_provider | None, product, judged[])。"""
+    返り値: (winner_provider | None, product, judged[])。
+    per-step の `model:` / `verifier_model:` があれば cfg のコピーに inject する（並列安全）。"""
+    gen_cfg = {**cfg, "model": step["model"]} if step.get("model") else cfg
+    ver_cfg = {**cfg, "model": step["verifier_model"] or step.get("model") or cfg.get("model")} \
+              if (step.get("verifier_model") or step.get("model")) else cfg
     if len(gen_list) == 1:
-        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step), cfg)
+        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step), gen_cfg)
         return gen_list[0], out, []
     def _gen(p):
-        rc, out = run_provider(p, "generator", _build_prompt(state, step), cfg)
+        rc, out = run_provider(p, "generator", _build_prompt(state, step), gen_cfg)
         return {"provider": p, "rc": rc, "out": out}
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
@@ -1143,7 +1155,7 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     jver = ver[0] if isinstance(ver, list) else ver            # judge は先頭 verifier プロバイダ
     for c in cands:
         _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"]),
-                               cfg, persona="judge")
+                               ver_cfg, persona="judge")
         ok = ("VERDICT: PASS" in jout) and ("VERDICT: FAIL" not in jout)
         judged.append({"provider": c["provider"], "ok": ok})
         if ok and winner is None:
@@ -1175,9 +1187,12 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
                                "note": "winner=" + str(winner)})
         return
     # 観点検証＝N 人の独立レビュアーを並列プロセスで（採点者≠生成者）
+    # per-step の `verifier_model:` があれば cfg のコピーに inject（generator 側とは独立）
+    v_cfg = {**cfg, "model": step["verifier_model"] or step.get("model") or cfg.get("model")} \
+            if (step.get("verifier_model") or step.get("model")) else cfg
     personas = step["personas"] or ["independent"]
     results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out),
-                                     personas, cfg, max_parallel)
+                                     personas, v_cfg, max_parallel)
     passes, total = sum(1 for r in results if r["ok"]), len(results)
     par = "並列" if total > 1 else "単独"
     log(f"   ↳ {par}検証 {total} 人: PASS {passes}/{total}（quorum={quorum}）")
