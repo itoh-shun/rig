@@ -34,12 +34,16 @@ from . import __version__
 
 
 def _rig_home() -> pathlib.Path:
-    """rig repo root を返す。
+    """rig repo root を返す。scripts/*.py を辿れる場所が必要な subcommand 用。
 
     優先順位:
       1. 環境変数 `RIG_HOME`（他のリポジトリから使うときの正攻法・bin/orchestrate と同じ）
-      2. インストール元（pip install -e . でリポジトリ内・pip install rig-workbench で
-         `site-packages/rig_workbench/`）から辿れる repo root
+      2. インストール元（`pip install -e .` でリポジトリ内から入れた場合）
+      3. カレントディレクトリ / その親（`cd path/to/rig` して `rig-wb` を叩くケース）
+
+    どこにも見つからない場合、実行方法のヒントつきで例外を投げる。`usage` の
+    ように `.rig/runs.jsonl` だけあればよい subcommand はこれを呼ばずに
+    `_rig_data_root()` を使う。
     """
     env = os.environ.get("RIG_HOME")
     if env:
@@ -50,10 +54,31 @@ def _rig_home() -> pathlib.Path:
     for candidate in (here.parent, here.parent.parent):
         if (candidate / "scripts" / "orchestrate.py").exists():
             return candidate
+    cwd = pathlib.Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / "scripts" / "orchestrate.py").exists():
+            return candidate
     raise RuntimeError(
-        "rig repo root が見つかりません。RIG_HOME を設定するか、リポジトリ内で "
-        "`pip install -e .` してください。"
+        "rig repo root が見つかりません。以下のどれかを試してください:\n"
+        "  1. rig repo に cd してから rig-wb を叩く\n"
+        "  2. RIG_HOME を設定: export RIG_HOME=/path/to/rig\n"
+        "  3. rig repo 内で `pip install -e .` して開発版を使う\n"
+        "  ※ `rig-wb usage` は repo なしでも動きます (cwd の .rig/runs.jsonl を読む)"
     )
+
+
+def _rig_data_root() -> pathlib.Path:
+    """`.rig/runs.jsonl` / `.rig/audit.jsonl` を探す起点を返す。
+
+    scripts/*.py は不要。usage / dashboard など「実行ログを読むだけ」の subcommand
+    は cwd の `.rig/` を素直に見る。無ければ cwd の親を辿り、それも無ければ
+    `_rig_home()` にフォールバック。
+    """
+    cwd = pathlib.Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / ".rig").is_dir():
+            return candidate
+    return _rig_home()
 
 
 def _load_script(name: str) -> types.ModuleType:
@@ -158,7 +183,7 @@ def _show_usage(argv: list[str]) -> None:
         else:
             i += 1
 
-    home = _rig_home()
+    home = _rig_data_root()
     runs_path = home / ".rig" / "runs.jsonl"
     entries: list[dict] = []
     if runs_path.exists():
