@@ -1399,6 +1399,8 @@ def cmd_run(args):
             quorum = args[i + 1]; i += 2
         elif a == "--isolate":
             cfg["isolate"] = True; i += 1
+        elif a == "--allow-headless-in-cc":
+            cfg["allow_headless_in_cc"] = True; i += 1
         else:
             i += 1
     if not gen and generators:
@@ -1407,6 +1409,31 @@ def cmd_run(args):
         print("[ERROR] --provider <name>（または --generators a,b,c）が必須"
               "（rig|claude|codex|ollama|lmstudio|cmd|mock）。rig＝各 step を rig ハーネスとして起動（推奨）。"
               "ollama/lmstudio＝ローカル LLM（要サーバ・--model でモデル指定）。テストは mock。")
+        sys.exit(1)
+
+    # ── Claude Code 内からの誤起動ガード ─────────────────────────────────────
+    # Claude Code の session 内で `--provider claude` / `--provider rig` を使うと
+    # `claude -p` を subprocess で spawn する。これは既に走っている session と
+    # 別扱いになり、subscription の usage を別バケットに乗せるか、API キーが
+    # 設定されていればそちらへ課金される可能性がある（環境依存）。
+    # 明示的に `--allow-headless-in-cc` を付けなければ止める。
+    _cc_env = os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    _headless_claude = gen in ("claude", "rig") or ver in ("claude", "rig") or \
+        any(p in ("claude", "rig") for p in generators) or \
+        (isinstance(ver, list) and any(p in ("claude", "rig") for p in ver))
+    if _cc_env and _headless_claude and not cfg.get("allow_headless_in_cc"):
+        print(
+            "[BLOCKED] Claude Code の session 内で `--provider claude` / `--provider rig` は "
+            "`claude -p` を別 subprocess で spawn します。\n"
+            "\n"
+            "既にこの session で Claude を使っているので二重発火・別バケット課金の"
+            "可能性があります。次のどれかに切り替えてください:\n"
+            "\n"
+            "  1. `/rig:rig \"<task>\"` を使う (manual backend = Agent tool 経由・同 session)\n"
+            "  2. `--provider ollama` / `--provider lmstudio` (ローカル・課金なし)\n"
+            "  3. `--provider mock` (テスト用)\n"
+            "  4. どうしても headless で回したいなら `--allow-headless-in-cc` を明示\n"
+        )
         sys.exit(1)
     ver = ver or gen  # 未指定なら同プロバイダ（ただし別プロセス・別ロール）
     state = new_state(fm.get("name", path.stem), steps, goal)
