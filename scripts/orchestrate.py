@@ -107,65 +107,113 @@ def load_steps(fm: dict) -> list[dict]:
 # steps: フィールド）の決定論参照実装。散文エンジンの表示規則を CI（selftest Q）で
 # golden 検証できるようにする＝RESOLVE コード化フェーズ1。
 
-def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str]]:
-    """extends を1段だけ解決し、確定 steps を持つ frontmatter と警告列を返す（純関数的）。
+EXTENDS_MAX_DEPTH = 5  # 深すぎる継承は認知経済的に破綻するため CI で FAIL させる (#193)
 
-    マージ規則（§4.2.2）: 親 steps をベースに、子の同 id step は上書き（origin=override）、
-    `remove: true` は親から静的除外、子のみの step は末尾に追加（origin=added）。
-    親がさらに extends を持つ場合は無視して警告（孫継承なし）。
+
+def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
+                            warnings: list[str]) -> list[tuple[str | None, dict]]:
+    """extends チェーンを leaf → root の順に辿って [(name, fm), ...] を返す。
+
+    循環（A→B→A 等）と深さ超過（EXTENDS_MAX_DEPTH）は警告を出しつつ切り上げる。
+    ペアの name は途中で見つけた祖先の名前（leaf 自体は None）。
+    """
+    chain: list[tuple[str | None, dict]] = [(None, fm)]
+    trail: list[str] = [recipe_path.stem]   # 順序付きの継承経路（循環メッセージ用）
+    visited: set[str] = {recipe_path.stem}
+    current_fm = fm
+    current_path = recipe_path
+    while True:
+        parent_name = current_fm.get("extends")
+        if not parent_name:
+            return chain
+        if parent_name in visited:
+            warnings.append(f"extends: 循環継承を検知しました ({' → '.join(trail)} → {parent_name})。"
+                            f"このリンクをここで切り上げます")
+            return chain
+        if len(chain) >= EXTENDS_MAX_DEPTH:
+            warnings.append(f"extends: 継承深さの上限 {EXTENDS_MAX_DEPTH} を超えました "
+                            f"（'{parent_name}' 以降を無視）。認知経済的に浅く保ってください")
+            return chain
+        parent_path = None
+        fname = f"{parent_name}.md"
+        for base in (current_path.parent, PROJECT_RECIPES, RECIPES):
+            cand = base / fname
+            if cand.exists():
+                parent_path = cand
+                break
+        if parent_path is None:
+            warnings.append(f"extends: '{parent_name}' が解決できません（{' → '.join(trail)} から辿った）")
+            return chain
+        parent_fm = parse_frontmatter(parent_path)
+        chain.append((parent_name, parent_fm))
+        visited.add(parent_name)
+        trail.append(parent_name)
+        current_fm = parent_fm
+        current_path = parent_path
+
+
+def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str]]:
+    """extends を N 段まで解決し、確定 steps を持つ frontmatter と警告列を返す（純関数的）。
+
+    マージ規則（§4.2.2）:
+      - チェーンを [leaf, parent, grandparent, ..., root] の順に集める
+      - root の steps をベースに、祖先 → 親 → 子 の順に上書き適用する
+      - 各段で `remove: true` は親側から静的除外、既存 id は override、新規 id は末尾追加
+      - 循環継承・深さ上限 (EXTENDS_MAX_DEPTH) は警告で切り上げ
+      - 継承時の origin マーカーは最終的に "inherited" / "override" / "added" として残る
     """
     warnings: list[str] = []
-    parent_name = fm.get("extends")
     raw_steps = [s for s in (fm.get("steps") or []) if isinstance(s, dict)]
-    if not parent_name:
+    if not fm.get("extends"):
         for s in raw_steps:
             s.setdefault("_origin", None)
         return fm, warnings
 
-    parent_path = None
-    fname = f"{parent_name}.md"
-    for base in (recipe_path.parent, PROJECT_RECIPES, RECIPES):
-        cand = base / fname
-        if cand.exists():
-            parent_path = cand
-            break
-    if parent_path is None:
-        warnings.append(f"extends: '{parent_name}' が解決できません（子 steps のみで続行）")
+    chain = _resolve_extends_chain(fm, recipe_path, warnings)
+    if len(chain) == 1:
+        # extends は宣言されているが解決失敗（未検出 / 循環 / 深さ超）
         for s in raw_steps:
             s.setdefault("_origin", None)
         return fm, warnings
 
-    parent_fm = parse_frontmatter(parent_path)
-    if parent_fm.get("extends"):
-        warnings.append(f"多段継承: 親 '{parent_name}' の extends は無視されます（§4.2.2）")
-
+    # root ancestor の steps を "inherited" として base にする
+    root_fm = chain[-1][1]
     merged: list[dict] = []
-    for ps in (parent_fm.get("steps") or []):
+    for ps in (root_fm.get("steps") or []):
         if isinstance(ps, dict):
             m = dict(ps)
             m["_origin"] = "inherited"
             merged.append(m)
-    index = {s.get("id"): i for i, s in enumerate(merged)}
-    for cs in raw_steps:
-        cid = cs.get("id")
-        if cs.get("remove") is True:
-            if cid in index:
-                merged = [s for s in merged if s.get("id") != cid]
-                index = {s.get("id"): i for i, s in enumerate(merged)}
-            else:
-                warnings.append(f"remove: true の step '{cid}' は親に存在しません（#144 WARN）")
-            continue
-        m = dict(cs)
-        if cid in index:
-            m["_origin"] = "override"
-            merged[index[cid]] = m
-        else:
-            m["_origin"] = "added"
-            merged.append(m)
-            index[cid] = len(merged) - 1
 
-    out = dict(parent_fm)
-    out.update({k: v for k, v in fm.items() if k != "steps"})
+    # 祖先 → 親 → 子 の順に上書き適用（chain は leaf 先頭、reverse で root 先頭に）
+    for name, layer_fm in reversed(chain[:-1]):  # root 以外を root→leaf 順に
+        index = {s.get("id"): i for i, s in enumerate(merged)}
+        for cs in (layer_fm.get("steps") or []):
+            if not isinstance(cs, dict):
+                continue
+            cid = cs.get("id")
+            if cs.get("remove") is True:
+                if cid in index:
+                    merged = [s for s in merged if s.get("id") != cid]
+                    index = {s.get("id"): i for i, s in enumerate(merged)}
+                else:
+                    layer_label = name or "leaf"
+                    warnings.append(f"remove: true の step '{cid}' は継承元に存在しません "
+                                    f"（{layer_label} 側指定・#144 WARN）")
+                continue
+            m = dict(cs)
+            if cid in index:
+                m["_origin"] = "override"
+                merged[index[cid]] = m
+            else:
+                m["_origin"] = "added"
+                merged.append(m)
+                index[cid] = len(merged) - 1
+
+    # トップレベルキーは leaf 優先で全チェーン重ね（root → ... → leaf）
+    out: dict = {}
+    for _, layer_fm in reversed(chain):
+        out.update({k: v for k, v in layer_fm.items() if k != "steps"})
     out["steps"] = merged
     return out, warnings
 
@@ -1758,14 +1806,16 @@ def cmd_party(_args):
 
 
 def cmd_runs(args):
-    """実行テレメトリ一覧: runs [--limit N] [--recipe R] [--personas]。
+    """実行テレメトリ一覧: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD]。
 
     .rig/runs.jsonl（telemetry_append が追記・manual backend は SKILL.md §6 が同形式で追記）を
     読み、直近 N 件の一覧と recipe 別の集計（回数・DONE 率・平均リトライ・エスカレーション数）を出す。
     --personas は検証者（verdict の by）別の票を集計し、剪定判断の材料を出す。
+    --html <path> は scripts/dashboard.py に委譲して HTML ダッシュボードを書き出す（KPI・sparkline・
+    recipe 別バー・verifier 票・直近 run 表を単一ファイル HTML で・外部依存なし）。
     読み取り専用（--list / --validate と同じ点検モード）。
     """
-    limit, recipe, personas_mode = 10, None, False
+    limit, recipe, personas_mode, html_out, since = 10, None, False, None, None
     i = 0
     while i < len(args):
         if args[i] == "--limit" and i + 1 < len(args):
@@ -1774,8 +1824,25 @@ def cmd_runs(args):
             recipe = args[i + 1]; i += 2
         elif args[i] == "--personas":
             personas_mode = True; i += 1
+        elif args[i] == "--html" and i + 1 < len(args):
+            html_out = args[i + 1]; i += 2
+        elif args[i] == "--since" and i + 1 < len(args):
+            since = args[i + 1]; i += 2
         else:
             i += 1
+    if html_out:
+        dash = pathlib.Path(__file__).parent / "dashboard.py"
+        if not dash.exists():
+            print(f"[ERROR] dashboard.py が見つかりません: {dash}")
+            sys.exit(1)
+        cmd = [sys.executable, str(dash), "--repo", str(INVOCATION_CWD),
+               "--out", html_out, "--limit", str(limit)]
+        if recipe:
+            cmd += ["--recipe", recipe]
+        if since:
+            cmd += ["--since", since]
+        rc = subprocess.run(cmd).returncode
+        sys.exit(rc)
     if not RUNS_PATH.exists():
         print(f"実行記録がまだありません（{RUNS_PATH}）。orchestrate run / queue go、"
               "または manual backend のフロー完了（SKILL.md §6）で追記されます。")

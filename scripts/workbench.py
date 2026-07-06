@@ -21,6 +21,7 @@ rig workbench — 品質保証つき AI 作業環境の決定論ランナー
 """
 
 import argparse
+import contextlib
 import datetime
 import json
 import pathlib
@@ -28,6 +29,11 @@ import re
 import shutil
 import subprocess
 import sys
+
+try:
+    import fcntl  # POSIX: task 同時操作の排他 (task_lock)
+except ImportError:
+    fcntl = None  # type: ignore[assignment]  # Windows fallback（lock 無効）
 from collections import Counter
 
 # ── acceptance-gate プリセット（正本。instruction はここを参照する）───────────────
@@ -158,6 +164,61 @@ def current_branch(root: pathlib.Path) -> str:
 
 def runs_dir(root: pathlib.Path) -> pathlib.Path:
     return root / ".rig" / "runs"
+
+
+def audit_path(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / "audit.jsonl"
+
+
+def locks_dir(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / "locks"
+
+
+@contextlib.contextmanager
+def task_lock(root: pathlib.Path, task_id: str):
+    """task 単位の排他制御（`accept`/`discard`/`gate`/`step`/`review` の同時実行を防ぐ）。
+
+    fcntl.flock による非ブロッキング取得。取得失敗時は他プロセスが同 task を触っている
+    ことが確定なので、`die` で明示エラー（サイレントに競合させない）。ロックは
+    プロセス終了で自動解放（flock は fd tied なので kill 時も残らない）。
+    fcntl 不在（Windows 等）ではロックせず素通り＝WSL/Linux での並列 rig:queue go の
+    安全網。ファイルは残置（`.rig/` は gitignore 済み・空ファイル）。
+    """
+    if fcntl is None:
+        yield
+        return
+    ld = locks_dir(root)
+    ld.mkdir(parents=True, exist_ok=True)
+    lock_file = ld / f"{task_id}.lock"
+    with lock_file.open("a") as f:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            die(f"task '{task_id}' は他のプロセスが操作中です（{lock_file.relative_to(root)}）。"
+                "完了を待つか、詰まっているなら該当プロセスを確認してください")
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+
+
+def audit_append(root: pathlib.Path, event: dict) -> None:
+    """`.rig/audit.jsonl` に 1 行 JSON で追記する。
+
+    accept_requirements の force-proof を補う「gate 未達 --force 上書き」の恒久記録。
+    差別化ポイントの物理的強度を可視化するための証拠ログ。読み取りは `workbench.py audit`。
+    書き込み失敗はサイレントに握りつぶす（telemetry と同様の best-effort）。
+    """
+    try:
+        p = audit_path(root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    except Exception:
+        pass
 
 
 # ── run-state I/O ────────────────────────────────────────────────────────────
@@ -346,62 +407,64 @@ def cmd_new(args: argparse.Namespace) -> None:
 def cmd_step(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
-    d = run_dir(root, task_id)
-    data = load_json(d / "steps.json", {"steps": []})
-    for pair in args.set:
-        if "=" not in pair:
-            die(f"--set は <step>=<status> 形式で指定してください（値: {pair!r}）")
-        name, status = pair.split("=", 1)
-        if status not in VALID_STEP_STATUS:
-            die(f"step status '{status}' は不正です。有効: {', '.join(VALID_STEP_STATUS)}")
-        for step in data["steps"]:
-            if step["name"] == name:
-                step["status"] = status
-                step["updated_at"] = now_iso()
-                break
-        else:
-            data["steps"].append({"name": name, "status": status, "updated_at": now_iso()})
-    save_json(d / "steps.json", data)
-    print(f"{task_id} steps: " + " ".join(f"{s['name']}={s['status']}" for s in data["steps"]))
+    with task_lock(root, task_id):
+        d = run_dir(root, task_id)
+        data = load_json(d / "steps.json", {"steps": []})
+        for pair in args.set:
+            if "=" not in pair:
+                die(f"--set は <step>=<status> 形式で指定してください（値: {pair!r}）")
+            name, status = pair.split("=", 1)
+            if status not in VALID_STEP_STATUS:
+                die(f"step status '{status}' は不正です。有効: {', '.join(VALID_STEP_STATUS)}")
+            for step in data["steps"]:
+                if step["name"] == name:
+                    step["status"] = status
+                    step["updated_at"] = now_iso()
+                    break
+            else:
+                data["steps"].append({"name": name, "status": status, "updated_at": now_iso()})
+        save_json(d / "steps.json", data)
+        print(f"{task_id} steps: " + " ".join(f"{s['name']}={s['status']}" for s in data["steps"]))
 
 
 def cmd_gate(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
-    d, task = load_task(root, task_id)
-    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    with task_lock(root, task_id):
+        d, task = load_task(root, task_id)
+        acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
 
-    known = {c["name"]: c for c in acc["checks"]}
-    for pair in args.set or []:
-        if "=" not in pair:
-            die(f"--set は <criterion>=<status>[:detail] 形式で指定してください（値: {pair!r}）")
-        name, status = pair.split("=", 1)
-        detail = ""
-        if ":" in status:
-            status, detail = status.split(":", 1)
-        if status not in VALID_CRITERION_STATUS:
-            die(f"criterion status '{status}' は不正です。有効: {', '.join(VALID_CRITERION_STATUS)}")
-        if name not in known:
-            die(f"criterion '{name}' はこの task の gate に存在しません。有効: {', '.join(known)}")
-        known[name]["status"] = status
-        if detail:
-            known[name]["detail"] = detail
+        known = {c["name"]: c for c in acc["checks"]}
+        for pair in args.set or []:
+            if "=" not in pair:
+                die(f"--set は <criterion>=<status>[:detail] 形式で指定してください（値: {pair!r}）")
+            name, status = pair.split("=", 1)
+            detail = ""
+            if ":" in status:
+                status, detail = status.split(":", 1)
+            if status not in VALID_CRITERION_STATUS:
+                die(f"criterion status '{status}' は不正です。有効: {', '.join(VALID_CRITERION_STATUS)}")
+            if name not in known:
+                die(f"criterion '{name}' はこの task の gate に存在しません。有効: {', '.join(known)}")
+            known[name]["status"] = status
+            if detail:
+                known[name]["detail"] = detail
 
-    acc["status"] = gate_status(acc)
-    acc["checked_at"] = now_iso()
-    save_json(d / "acceptance.json", acc)
+        acc["status"] = gate_status(acc)
+        acc["checked_at"] = now_iso()
+        save_json(d / "acceptance.json", acc)
 
-    if task["status"] == "running" and acc["status"] in ("passed", "passed_with_warnings", "failed", "skipped"):
-        task["status"] = "gate_failed" if acc["status"] == "failed" else "gate_passed"
-        save_task(d, task)
+        if task["status"] == "running" and acc["status"] in ("passed", "passed_with_warnings", "failed", "skipped"):
+            task["status"] = "gate_failed" if acc["status"] == "failed" else "gate_passed"
+            save_task(d, task)
 
-    print(f"## acceptance-gate: {task_id}  [{acc['status'].upper()}]")
-    print(f"presets: {' + '.join(acc['presets'])}")
-    for c in acc["checks"]:
-        detail = f" — {c['detail']}" if c.get("detail") else ""
-        print(f"  {CHECK_ICON[c['status']]} {c['name']}{detail}")
-    if acc["status"] == "failed":
-        sys.exit(1)
+        print(f"## acceptance-gate: {task_id}  [{acc['status'].upper()}]")
+        print(f"presets: {' + '.join(acc['presets'])}")
+        for c in acc["checks"]:
+            detail = f" — {c['detail']}" if c.get("detail") else ""
+            print(f"  {CHECK_ICON[c['status']]} {c['name']}{detail}")
+        if acc["status"] == "failed":
+            sys.exit(1)
 
 
 def _diff_lines(root: pathlib.Path, task: dict) -> tuple[list[str], str, list[str]]:
@@ -468,6 +531,11 @@ def cmd_diff(args: argparse.Namespace) -> None:
 def cmd_accept(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
+    with task_lock(root, task_id):
+        _cmd_accept_locked(args, root, task_id)
+
+
+def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: str) -> None:
     d, task = load_task(root, task_id)
 
     if task["status"] == "accepted":
@@ -518,6 +586,17 @@ def cmd_accept(args: argparse.Namespace) -> None:
             )
         warn(f"未達要件を --force で上書きして accept します（{', '.join(soft_fail)}）。task.json に forced: true を記録します")
         task["forced"] = True
+        audit_append(root, {
+            "ts": now_iso(),
+            "action": "accept_force",
+            "task_id": task_id,
+            "task_type": task.get("task_type"),
+            "recipe": task.get("recipe"),
+            "bypassed": soft_fail,
+            "gate_status": status,
+            "failed_checks": [c["name"] for c in acc["checks"]
+                              if c["status"] in ("failed", "pending")],
+        })
     if status == "passed_with_warnings":
         warns = [f"{c['name']}（{c.get('detail') or 'detail なし'}）" for c in acc["checks"] if c["status"] == "warning"]
         warn("未解決の警告つきで accept します: " + " / ".join(warns))
@@ -581,6 +660,11 @@ def cmd_discard(args: argparse.Namespace) -> None:
     root = repo_root()
     if not args.task_id:
         die("discard は誤爆防止のため task_id の明示が必須です（`workbench.py log` で確認できます）")
+    with task_lock(root, args.task_id):
+        _cmd_discard_locked(args, root)
+
+
+def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
     d, task = load_task(root, args.task_id)
     task_id = task["task_id"]
 
@@ -805,19 +889,66 @@ def cmd_review(args: argparse.Namespace) -> None:
     """review 系タスクの persona 別 verdict を記録する（stats のゴム印検知に使用）。"""
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
-    d = run_dir(root, task_id)
-    data = load_json(d / "review.json", {"task_id": task_id, "verdicts": []})
-    by_persona = {v["persona"]: v for v in data["verdicts"]}
-    for pair in args.set:
-        if "=" not in pair:
-            die(f"--set は <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS> 形式で指定してください（値: {pair!r}）")
-        persona, verdict = pair.split("=", 1)
-        if verdict not in VALID_VERDICT:
-            die(f"verdict '{verdict}' は不正です。有効: {', '.join(VALID_VERDICT)}")
-        by_persona[persona] = {"persona": persona, "verdict": verdict, "recorded_at": now_iso()}
-    data["verdicts"] = list(by_persona.values())
-    save_json(d / "review.json", data)
-    print(f"{task_id} review verdicts: " + " ".join(f"{v['persona']}={v['verdict']}" for v in data["verdicts"]))
+    with task_lock(root, task_id):
+        d = run_dir(root, task_id)
+        data = load_json(d / "review.json", {"task_id": task_id, "verdicts": []})
+        by_persona = {v["persona"]: v for v in data["verdicts"]}
+        for pair in args.set:
+            if "=" not in pair:
+                die(f"--set は <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS> 形式で指定してください（値: {pair!r}）")
+            persona, verdict = pair.split("=", 1)
+            if verdict not in VALID_VERDICT:
+                die(f"verdict '{verdict}' は不正です。有効: {', '.join(VALID_VERDICT)}")
+            by_persona[persona] = {"persona": persona, "verdict": verdict, "recorded_at": now_iso()}
+        data["verdicts"] = list(by_persona.values())
+        save_json(d / "review.json", data)
+        print(f"{task_id} review verdicts: " + " ".join(f"{v['persona']}={v['verdict']}" for v in data["verdicts"]))
+
+
+def _load_audit(root: pathlib.Path) -> list[dict]:
+    p = audit_path(root)
+    if not p.exists():
+        return []
+    events: list[dict] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
+def cmd_audit(args: argparse.Namespace) -> None:
+    """`.rig/audit.jsonl` の force-bypass 記録を一覧する。
+
+    accept_requirements の "--force で外せない" 前提とは別に、gate 未達を --force で
+    上書きしたケースを恒久記録する監査ログ（差別化ポイントの物理的強度の証拠）。
+    """
+    root = repo_root()
+    events = _load_audit(root)
+    if args.action:
+        events = [e for e in events if e.get("action") == args.action]
+    if args.since:
+        events = [e for e in events if (e.get("ts") or "")[:10] >= args.since]
+    if not events:
+        print("## rig audit\n\n記録がありません（`accept --force` で追記されます）。")
+        return
+    limit = args.limit if args.limit else len(events)
+    shown = events[-limit:]
+    print(f"## rig audit（直近 {len(shown)} / 全 {len(events)} 件）\n")
+    for e in shown:
+        ts = e.get("ts", "?")
+        action = e.get("action", "?")
+        tid = e.get("task_id", "?")
+        by = ", ".join(e.get("bypassed") or [])
+        gate = e.get("gate_status", "?")
+        print(f"  {ts}  {action:16s}  task={tid}")
+        print(f"    bypassed: {by}  gate: {gate}")
+        if e.get("failed_checks"):
+            print(f"    failed: {', '.join(e['failed_checks'])}")
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
@@ -911,6 +1042,24 @@ def cmd_stats(args: argparse.Namespace) -> None:
     else:
         print("\nVerifier behavior: （未記録。`workbench.py review <task_id> --set <persona>=<verdict>` で記録すると集計されます）")
 
+    audit_events = _load_audit(root)
+    if args.last:
+        cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(days=int(m.group(1)))
+        audit_events = [e for e in audit_events
+                        if e.get("ts") and datetime.datetime.fromisoformat(e["ts"]) >= cutoff]
+    force_events = [e for e in audit_events if e.get("action") == "accept_force"]
+    if force_events:
+        by_bypass: Counter[str] = Counter()
+        for e in force_events:
+            for name in e.get("bypassed", []):
+                by_bypass[name] += 1
+        print(f"\nForce bypass ({len(force_events)} 件): "
+              "`accept --force` は accept_requirements の hard 前提を外せない（構造的強度）が、"
+              "soft 前提を上書きしたケースを記録している。")
+        for name, n in by_bypass.most_common():
+            print(f"- {name}: {n}")
+        print("（詳細は `workbench.py audit` で参照）")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="rig workbench — run-state / worktree / acceptance-gate manager")
@@ -984,6 +1133,12 @@ def main() -> None:
     p.add_argument("--verifier", help="persona 名で絞り込み（review.json に記録がある run のみ）")
     p.add_argument("--last", help="直近 N 日に絞り込み（例: 30d）")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("audit", help="`accept --force` 等の監査ログを一覧する（`.rig/audit.jsonl`）")
+    p.add_argument("--limit", type=int, help="直近 N 件のみ表示")
+    p.add_argument("--action", help="action 名で絞り込み（例: accept_force）")
+    p.add_argument("--since", help="YYYY-MM-DD 以降のみ表示")
+    p.set_defaults(func=cmd_audit)
 
     args = parser.parse_args()
     args.func(args)
