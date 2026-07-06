@@ -345,6 +345,34 @@ def parse_diff_md(text: str) -> dict[str, str]:
 
 
 # ── サブコマンド実装 ──────────────────────────────────────────────────────────
+def ensure_rig_gitignored(root: pathlib.Path) -> bool:
+    """`.rig/` を repo の `.gitignore` に追記する（無ければ）。返り値 = 追記したか。
+
+    `.rig/` には worktree state / runs / audit / lock が入るため、うっかり PR に紛れ
+    込まないよう最初の task 作成時に自動追記する。既に `.rig/` / `.rig` / `/.rig/` の
+    いずれかで無視されていれば何もしない（誤検知でユーザーの記述を壊さない）。
+    `.gitignore` が無い場合は新規作成する。git 管理外の root では何もしない。
+    """
+    if not (root / ".git").exists():
+        return False
+    gi = root / ".gitignore"
+    already = False
+    lines: list[str] = []
+    if gi.exists():
+        lines = gi.read_text(encoding="utf-8").splitlines()
+        for ln in lines:
+            s = ln.strip()
+            if s in (".rig/", ".rig", "/.rig/", "/.rig"):
+                already = True
+                break
+    if already:
+        return False
+    with gi.open("a", encoding="utf-8") as f:
+        # 既存末尾が改行で終わっているとは限らないので先頭にも改行を1つ
+        f.write("\n# rig workbench state (task worktrees, telemetry, audit, locks)\n.rig/\n")
+    return True
+
+
 def cmd_new(args: argparse.Namespace) -> None:
     root = repo_root()
     if args.type not in TASK_TYPES:
@@ -354,6 +382,10 @@ def cmd_new(args: argparse.Namespace) -> None:
     d = runs_dir(root) / task_id
     if d.exists():
         die(f"task '{task_id}' は既に存在します")
+
+    # `.rig/` を .gitignore に自動追記（無ければ）。誤って PR に混入するのを防ぐ保険。
+    if ensure_rig_gitignored(root):
+        print("◇ .gitignore に .rig/ を追記しました（PR 混入防止）")
 
     base_branch = args.base or current_branch(root)
     base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
