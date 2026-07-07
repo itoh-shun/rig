@@ -890,12 +890,57 @@ def cmd_status(args):
 
 MOCK_SRC = (
     "import sys\n"
+    "import os\n"
+    "import re\n"
+    "from pathlib import Path\n"
+    "prompt = sys.stdin.read()\n"
     "role = sys.argv[1] if len(sys.argv) > 1 else 'generator'\n"
     "persona = sys.argv[2] if len(sys.argv) > 2 else ''\n"
+    "step = re.search(r'step: ([^\\s]+)', prompt)\n"
+    "step_id = step.group(1) if step else ''\n"
+    "target = re.search(r'対象ファイル: ([^\\s]+)', prompt)\n"
+    "target_file = target.group(1) if target else ''\n"
+    "def write(path, text):\n"
+    "    if path:\n"
+    "        Path(path).write_text(text, encoding='utf-8')\n"
+    "def fix_for(text):\n"
+    "    if 'divide-by-zero' in text or 'ZeroDivisionError' in text or 'divide_all' in text:\n"
+    "        return (\n"
+    "            'def divide_all(numbers, divisor):\\n'\n"
+    "            '    if divisor == 0:\\n'\n"
+    "            '        return list(numbers)\\n'\n"
+    "            '    return [n / divisor for n in numbers]\\n'\n"
+    "        )\n"
+    "    if 'order-dedup' in text or 'dedup(' in text or '順序保持' in text:\n"
+    "        return 'def dedup(items):\\n    return list(dict.fromkeys(items))\\n'\n"
+    "    if 'sql-inject' in text or 'SQL injection' in text or 'get_user_by_name' in text:\n"
+    "        return (\n"
+    "            'import sqlite3\\n\\n'\n"
+    "            'def get_user_by_name(conn: sqlite3.Connection, name: str) -> tuple | None:\\n'\n"
+    "            '    cur = conn.cursor()\\n'\n"
+    "            '    cur.execute(\"SELECT id, name, role FROM users WHERE name = ?\", (name,))\\n'\n"
+    "            '    return cur.fetchone()\\n'\n"
+    "        )\n"
+    "    if 'dry-refactor' in text or '切り上げ抜け' in text or 'price_domestic_cool' in text:\n"
+    "        return (\n"
+    "            'import math\\n\\n'\n"
+    "            'def _price(weight_kg: float, unit_price: int, floor: int) -> int:\\n'\n"
+    "            '    units = math.ceil(weight_kg / 0.5)\\n'\n"
+    "            '    return max(floor, units * unit_price)\\n\\n'\n"
+    "            'def price_domestic(weight_kg: float) -> int:\\n'\n"
+    "            '    return _price(weight_kg, 200, 500)\\n\\n'\n"
+    "            'def price_domestic_cool(weight_kg: float) -> int:\\n'\n"
+    "            '    return _price(weight_kg, 300, 800)\\n'\n"
+    "        )\n"
+    "    return ''\n"
     "if role == 'verifier':\n"
     "    print('独立検証（mock）: ' + persona)\n"
     "    print('VERDICT: ' + ('FAIL' if 'fail' in persona else 'PASS'))\n"
     "else:\n"
+    "    if step_id == 'implement' and target_file:\n"
+    "        fix = fix_for(prompt)\n"
+    "        if fix:\n"
+    "            write(target_file, fix)\n"
     "    print('## step 実行結果（mock）')\n"
     "    print('STATUS: done')\n"
 )
@@ -1074,7 +1119,7 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
         return run_http_provider(provider, prompt, cfg)
     argv = build_argv(provider, role, prompt, cfg, persona)
     try:
-        r = subprocess.run(argv, input=prompt if provider in ("cmd",) else None,
+        r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600),
                            cwd=cfg.get("cwd") or None)
     except FileNotFoundError:
