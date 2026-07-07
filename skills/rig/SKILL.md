@@ -32,7 +32,7 @@ Codex では `$rig` が Claude Code の `/rig:rig` に相当する入口。slash
 | **knowledge facet** | subagent prompt に注入する知識層ブリック | `facets/knowledge/orchestration-patterns` `facets/knowledge/harness-engineering` `facets/knowledge/_layer` |
 | **wiki**（shipped tier・persona が `inject:` で参照） | 観点カタログの正準ページ（`_wiki` スキーマ・`sources`/`reviewed_at` 必須） | `facets/knowledge/wiki/{loop-engineering,appsec-checklist,injection-patterns,migration-expand-contract,performance-pitfalls,observability-golden-signals,api-compat-semver,license-compat-basics}` |
 | **pattern**（制御フロー） | step の実行制御テンプレ | `patterns/parallel-fanout` `patterns/review-gate` `patterns/structured-report` `patterns/serial` `patterns/autonomous-loop` `patterns/monitor` `patterns/workflow-backend` `patterns/acceptance-gate` |
-| **recipe**（step の束） | step＋pattern＋facet を固定したテンプレ workflow | `recipes/review-only` `recipes/release-flow` `recipes/design-first` `recipes/hotfix` `recipes/debug` `recipes/fast-bugfix` `recipes/adversarial-review`（dev-core 7 件。pack 追加分は下記） |
+| **recipe**（step の束） | step＋pattern＋facet を固定したテンプレ workflow | `recipes/review-only` `recipes/release-flow` `recipes/design-first` `recipes/hotfix` `recipes/debug` `recipes/fast-bugfix` `recipes/max-bugfix` `recipes/adversarial-review`（dev-core 8 件。pack 追加分は下記） |
 | **manifest** | プロジェクト設定・既定値テンプレ | `manifests/_template` |
 | **step** | フローの単位。instruction facet として library 化済み | intake / design / implement / verify / visual-verify / pr / merge（parallel-review を含む全 8 件） |
 
