@@ -1109,17 +1109,27 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     return sorted(res, key=lambda r: (r["persona"], r["provider"]))  # 完了順に依らず決定論
 
 
-def _build_step_contract(state: dict, step: dict) -> str:
+def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str:
     lines = [
         f"recipe: {state['recipe']}",
         f"step: {step['id']} ({step['instruction']})",
         f"goal: {state.get('goal') or '(なし)'}",
     ]
+    if st is not None:
+        attempt = int(st.get("retries", 0)) + 1
+        lines.append(f"attempt: {attempt}")
+        if st.get("last_failure"):
+            lines.append(f"previous_failure: {st['last_failure']}")
+        recent = state.get("history", [])[-3:]
+        if recent:
+            lines.append("recent_history:")
+            lines.extend([f"- {h.get('action')}:{h.get('step')}" for h in recent])
     if step["id"] == "implement":
         lines += [
             "must: 実際にコードを編集すること。読むだけで終わらない。",
             "must: 変更は最小限に絞る。無関係な整形や広いリファクタは禁止。",
             "must: tests を変更しない。変更が必要なら理由を明示する。",
+            "must: 差分が出るまで作業を続ける。no-op のまま終了しない。",
             "must: 可能な範囲で関連する test / lint を実行し、結果を確認する。",
             "report: CHANGED_FILES / COMMANDS_RUN / RESULT を簡潔に出す。",
         ]
@@ -1127,6 +1137,7 @@ def _build_step_contract(state: dict, step: dict) -> str:
         lines += [
             "must: 実際に test コマンドを実行すること。",
             "must: 失敗したら原因を特定し、最小修正して再実行する。",
+            "must: まだ失敗しているなら、次に何を変えるかを1行で明示する。",
             "must: pass / fail と実行したコマンドを明示する。",
             "report: COMMANDS_RUN / RESULT / REMAINING_RISK を簡潔に出す。",
         ]
@@ -1147,8 +1158,8 @@ def _build_step_contract(state: dict, step: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_prompt(state: dict, step: dict) -> str:
-    contract = _build_step_contract(state, step)
+def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
+    contract = _build_step_contract(state, step, st)
     return (
         f"あなたは rig のサブエージェント（{step['id']} 担当）。\n"
         f"{contract}\n"
@@ -1169,6 +1180,8 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
         r = subprocess.run(cmd, shell=True, cwd=cwd,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         st["checks"].append({"cmd": cmd, "ok": r.returncode == 0})
+    failed = [c["cmd"] for c in st["checks"] if not c["ok"]]
+    st["last_failure"] = None if not failed else "checks failed: " + "; ".join(failed)
 
 
 _HIST_LOCK = threading.Lock()
@@ -1184,10 +1197,10 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     ver_cfg = {**cfg, "model": step["verifier_model"] or step.get("model") or cfg.get("model")} \
               if (step.get("verifier_model") or step.get("model")) else cfg
     if len(gen_list) == 1:
-        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step), gen_cfg)
+        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg)
         return gen_list[0], out, []
     def _gen(p):
-        rc, out = run_provider(p, "generator", _build_prompt(state, step), gen_cfg)
+        rc, out = run_provider(p, "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg)
         return {"provider": p, "rc": rc, "out": out}
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
@@ -1692,7 +1705,7 @@ def _build_queue_task_prompt(task: str, provider: str) -> str:
             "gate が確定したら（passed/passed_with_warnings/failed のいずれか）、最後に "
             "'STATUS: done' を出力してください。"
         )
-    return _build_prompt({"recipe": "queue", "goal": task}, {"id": "task", "instruction": task})
+    return _build_prompt({"recipe": "queue", "goal": task}, {"id": "task", "instruction": task}, None)
 
 
 def _build_queue_verify_prompt(task: str, product: str) -> str:
