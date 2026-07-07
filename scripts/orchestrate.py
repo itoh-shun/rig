@@ -936,6 +936,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         # --skip-git-repo-check: 非 git ディレクトリ（横断利用の overlay 先など）でも
         # codex が起動拒否しないように。サンドボックスは無効化しないので安全。
         argv = ["codex", "exec", "--skip-git-repo-check"]
+        argv += ["--sandbox", "workspace-write" if role == "generator" else "read-only"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model 対応
         if role == "verifier":
@@ -1109,10 +1110,51 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     return sorted(res, key=lambda r: (r["persona"], r["provider"]))  # 完了順に依らず決定論
 
 
+def _build_step_contract(state: dict, step: dict) -> str:
+    lines = [
+        f"recipe: {state['recipe']}",
+        f"step: {step['id']} ({step['instruction']})",
+        f"goal: {state.get('goal') or '(なし)'}",
+    ]
+    if step["id"] == "implement":
+        lines += [
+            "must: 実際にコードを編集すること。読むだけで終わらない。",
+            "must: 変更は最小限に絞る。無関係な整形や広いリファクタは禁止。",
+            "must: tests を変更しない。変更が必要なら理由を明示する。",
+            "must: 可能な範囲で関連する test / lint を実行し、結果を確認する。",
+            "report: CHANGED_FILES / COMMANDS_RUN / RESULT を簡潔に出す。",
+        ]
+    elif step["id"] == "test":
+        lines += [
+            "must: 実際に test コマンドを実行すること。",
+            "must: 失敗したら原因を特定し、最小修正して再実行する。",
+            "must: pass / fail と実行したコマンドを明示する。",
+            "report: COMMANDS_RUN / RESULT / REMAINING_RISK を簡潔に出す。",
+        ]
+    elif step["id"] == "acceptance":
+        criteria = step.get("acceptance") or []
+        lines += [
+            "must: 最終確認のみを行い、受け入れ基準を機械的に照合する。",
+            "must: 変更内容とテスト結果が基準を満たすかを明示する。",
+            "must: 未達なら、何が不足かを具体的に書く。",
+        ]
+        if criteria:
+            lines.append("acceptance_criteria:")
+            lines.extend([f"- {c}" for c in criteria])
+    else:
+        lines += [
+            "must: 依頼を実際に前進させる。分析だけで終わらない。",
+        ]
+    return "\n".join(lines)
+
+
 def _build_prompt(state: dict, step: dict) -> str:
-    return (f"あなたは rig のサブエージェント（{step['id']} 担当）。recipe '{state['recipe']}' の "
-            f"step '{step['id']}'（instruction: {step['instruction']}）を実行してください。"
-            f"ゴール: {state.get('goal') or '(なし)'}。完了したら最後に 'STATUS: done' を出力。")
+    contract = _build_step_contract(state, step)
+    return (
+        f"あなたは rig のサブエージェント（{step['id']} 担当）。\n"
+        f"{contract}\n"
+        "出力は簡潔に。作業を完了したら最後に必ず 'STATUS: done' を出力。"
+    )
 
 
 def _build_verify_prompt(state: dict, step: dict, product: str) -> str:

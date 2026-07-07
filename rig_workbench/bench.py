@@ -26,6 +26,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -286,6 +287,24 @@ def _unrelated_diff(d: pathlib.Path, target: str) -> list[str]:
     return [f for f in files if f != target]
 
 
+def _git_status_lines(root: pathlib.Path) -> set[str]:
+    """呼び出し元 repo の汚れを set で返す。git repo でなければ空扱い。"""
+    r = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return set()
+    return {line for line in r.stdout.splitlines() if line.strip()}
+
+
+def _workspace_leaks(root: pathlib.Path, before: set[str]) -> list[str]:
+    """bench 対象 scratch の外側に新しく出た git status 行を検出する。"""
+    after = _git_status_lines(root)
+    return sorted(after - before)
+
+
 # ── mode: bare ─────────────────────────────────────────────────────────
 
 
@@ -306,6 +325,7 @@ def _extract_code(text: str) -> str:
 
 
 def _call_provider(provider: str, prompt: str, model: str | None, allow_headless_in_cc: bool,
+                    cwd: pathlib.Path,
                     mock_fix: str = "") -> tuple[str, float]:
     """provider に prompt を投げて (response_text, elapsed_s) を返す。
 
@@ -321,14 +341,19 @@ def _call_provider(provider: str, prompt: str, model: str | None, allow_headless
         argv = ["claude", "-p", prompt, "--output-format", "text"]
         if model:
             argv += ["--model", model]
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+        r = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=300)
         return r.stdout, time.time() - t0
     if provider == "codex":
-        argv = ["codex", "exec", "--skip-git-repo-check"]
+        # bare mode は「1発で答えを返す」比較対象なので、scratch repo を読むだけに固定する。
+        # これにより Codex が呼び出し元 repo root に補助ファイルを書いてしまう測定汚染を防ぐ。
+        argv = [
+            "codex", "exec", "--skip-git-repo-check",
+            "--cd", str(cwd), "--sandbox", "read-only", "--ephemeral",
+        ]
         if model:
             argv += ["-m", model]
         argv += [prompt]
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+        r = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=300)
         return r.stdout, time.time() - t0
     if provider in ("ollama", "lmstudio"):
         base = "http://localhost:11434/v1" if provider == "ollama" else "http://localhost:1234/v1"
@@ -353,27 +378,46 @@ def _call_provider(provider: str, prompt: str, model: str | None, allow_headless
 # ── mode: rig ──────────────────────────────────────────────────────────
 
 
+def _rig_wb_argv() -> list[str]:
+    """bench から呼ぶ rig-wb。
+
+    既定は現在ロード中の package を `python -m rig_workbench.cli` で呼ぶ。
+    PATH 上に古い rig-wb がある環境でも、bench と同じ版の runner を測れるようにする。
+    外部コマンドで測りたい場合だけ `RIG_BENCH_RIG_WB` に shell 風 argv を指定する。
+    """
+    override = os.environ.get("RIG_BENCH_RIG_WB")
+    if override:
+        return shlex.split(override)
+    return [sys.executable, "-m", "rig_workbench.cli"]
+
+
 def _rig_run(task: dict, workdir: pathlib.Path, provider: str, model: str | None,
-             allow_headless_in_cc: bool, max_steps: int) -> tuple[str, float]:
-    """rig-wb run bugfix を workdir で実行し、(stdout, elapsed_s) を返す。"""
-    goal = task["goal"]
+             allow_headless_in_cc: bool, max_steps: int, recipe: str) -> tuple[str, float, int]:
+    """rig-wb run を workdir で実行し、(stdout, elapsed_s, returncode) を返す。"""
+    # bare と rig で入力情報量を揃える。scratch repo にもファイルはあるが、headless
+    # provider が cwd を正しく探索しない場合でも同じ task basis で比較できるようにする。
+    goal = _build_bare_prompt(task)
     env = dict(os.environ)
+    candidate = pathlib.Path(__file__).resolve().parent.parent
+    # scratch cwd から `python -m rig_workbench.cli` を呼んでも開発版 package を import できるようにする。
+    env["PYTHONPATH"] = str(candidate) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     # RIG_HOME が無ければパッケージ位置から推定
     if not env.get("RIG_HOME"):
         # rig_workbench/ の親を仮に repo root にする（開発版でしか通らない・pip 版は要 export）
-        candidate = pathlib.Path(__file__).resolve().parent.parent
         if (candidate / "scripts" / "orchestrate.py").exists():
             env["RIG_HOME"] = str(candidate)
     t0 = time.time()
-    argv = ["rig-wb", "run", "bugfix", "--provider", provider,
-            "--max-steps", str(max_steps), "--out", str(workdir / "run-state.json"),
-            "--goal", goal]
+    argv = _rig_wb_argv() + [
+        "run", recipe, "--provider", provider,
+        "--max-steps", str(max_steps), "--out", str(workdir / "run-state.json"),
+        "--goal", goal,
+    ]
     if allow_headless_in_cc:
         argv += ["--allow-headless-in-cc"]
     if model:
         argv += ["--model", model]
     r = subprocess.run(argv, cwd=workdir, capture_output=True, text=True, timeout=1800, env=env)
-    return r.stdout + r.stderr, time.time() - t0
+    return r.stdout + r.stderr, time.time() - t0, r.returncode
 
 
 def _rig_read_state(workdir: pathlib.Path) -> dict:
@@ -391,6 +435,7 @@ def _rig_read_state(workdir: pathlib.Path) -> dict:
 
 def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
     results = {"task_id": task_id, "difficulty": task["difficulty"], "runs": []}
+    leak_root = pathlib.Path(args.leak_check_root).resolve() if args.leak_check_root else None
     for run_idx in range(args.runs):
         run_result: dict = {"run": run_idx + 1, "modes": {}}
 
@@ -398,15 +443,18 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
         if args.mode in ("both", "bare"):
             d = _setup_task_dir(task)
             try:
+                before = _git_status_lines(leak_root) if leak_root else set()
                 prompt = _build_bare_prompt(task)
                 resp, elapsed = _call_provider(args.provider, prompt, args.model,
                                                 args.allow_headless_in_cc,
+                                                cwd=d,
                                                 mock_fix=task.get("mock_fix", ""))
                 code = _extract_code(resp)
                 (d / task["target_file"]).write_text(code, encoding="utf-8")
                 t = _run_tests(task, d)
                 sc = _spec_check(task, d)
                 ud = _unrelated_diff(d, task["target_file"])
+                leaks = _workspace_leaks(leak_root, before) if leak_root else []
                 run_result["modes"]["bare"] = {
                     "elapsed_s": round(elapsed, 1),
                     "calls": 1,
@@ -414,6 +462,7 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
                     "test_stats": t,
                     "spec_check": sc,
                     "unrelated_files": ud,
+                    "workspace_leaks": leaks,
                     "gate_verdict": None,
                 }
             finally:
@@ -423,8 +472,10 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
         if args.mode in ("both", "rig"):
             d = _setup_task_dir(task)
             try:
-                out, elapsed = _rig_run(task, d, args.provider, args.model,
-                                        args.allow_headless_in_cc, args.max_steps)
+                before = _git_status_lines(leak_root) if leak_root else set()
+                out, elapsed, runner_exit = _rig_run(task, d, args.provider, args.model,
+                                                     args.allow_headless_in_cc, args.max_steps,
+                                                     args.rig_recipe)
                 state = _rig_read_state(d)
                 # step 数を calls の代理として使う
                 calls = sum(1 for s in state.get("step_state", {}).values()
@@ -432,6 +483,7 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
                 t = _run_tests(task, d)
                 sc = _spec_check(task, d)
                 ud = _unrelated_diff(d, task["target_file"])
+                leaks = _workspace_leaks(leak_root, before) if leak_root else []
                 # gate_verdict は review-diff / acceptance の verdict 集約
                 gate = None
                 for sid in ("review-diff", "acceptance"):
@@ -450,6 +502,9 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
                     "test_stats": t,
                     "spec_check": sc,
                     "unrelated_files": ud,
+                    "workspace_leaks": leaks,
+                    "runner_exit": runner_exit,
+                    "runner_output_tail": out[-1200:],
                     "gate_verdict": gate,
                     "reached_steps": [sid for sid, st in state.get("step_state", {}).items()
                                       if st.get("status") == "passed"],
@@ -476,7 +531,11 @@ def cmd_bench(argv: list[str]) -> None:
     p.add_argument("--runs", type=int, default=1, help="1 タスクあたりの反復 (default: 1)")
     p.add_argument("--max-steps", type=int, default=14,
                    help="rig mode の max-steps (default: 14 — bugfix 全 step 到達を狙う)")
+    p.add_argument("--rig-recipe", default="bugfix",
+                   help="rig mode で使う recipe (default: bugfix。軽量比較は fast-bugfix)")
     p.add_argument("--html", help="HTML dashboard の出力先 (bench 結果を可視化)")
+    p.add_argument("--leak-check-root", default=os.getcwd(),
+                   help="scratch 外への書き込み漏れを git status 差分で検出する root (default: cwd)")
     p.add_argument("--allow-headless-in-cc", action="store_true",
                    help="Claude Code 内から claude/rig provider を使う場合の opt-in")
     p.add_argument("--out", help="JSON 出力ファイル (省略時 stdout)")
@@ -490,6 +549,7 @@ def cmd_bench(argv: list[str]) -> None:
         "provider": args.provider,
         "model": args.model,
         "runs_per_task": args.runs,
+        "rig_recipe": args.rig_recipe,
         "tasks": [],
     }
     for tid in task_ids:
@@ -503,6 +563,7 @@ def cmd_bench(argv: list[str]) -> None:
                       f"elapsed={m['elapsed_s']}s  calls={m['calls']}  "
                       f"test_pass={m['test_pass']}  spec={m['spec_check']}  "
                       f"unrelated={len(m['unrelated_files'])}  "
+                      f"leaks={len(m.get('workspace_leaks', []))}  "
                       f"gate={m.get('gate_verdict', '-')}", flush=True)
 
     out_text = json.dumps(summary, ensure_ascii=False, indent=2)
@@ -604,6 +665,7 @@ def _render_html(summary: dict) -> str:
                 f'<td>{testcell(bare)}</td><td>{testcell(rig)}</td>'
                 f'<td>{speccell(bare)}</td><td>{speccell(rig)}</td>'
                 f'<td>{cell(bare, "unrelated_files")}</td><td>{cell(rig, "unrelated_files")}</td>'
+                f'<td>{cell(bare, "workspace_leaks")}</td><td>{cell(rig, "workspace_leaks")}</td>'
                 f'<td>{cell(rig, "reached_steps")}</td>'
                 f'</tr>'
             )
@@ -615,6 +677,7 @@ def _render_html(summary: dict) -> str:
         '<th>bare test</th><th>rig test</th>'
         '<th>bare spec</th><th>rig spec</th>'
         '<th>bare unrel</th><th>rig unrel</th>'
+        '<th>bare leaks</th><th>rig leaks</th>'
         '<th>rig reached_steps</th>'
         f'</tr></thead><tbody>{"".join(rows)}</tbody></table>'
     )
