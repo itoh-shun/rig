@@ -7,11 +7,15 @@ steps:
   - id: implement
     instruction: implement
     pattern: serial
+    checks:
+      - "test -n \"$(git diff --name-only -- '*.py')\""
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]
   - id: test
     instruction: verify
     pattern: serial
+    checks:
+      - "python3 -m pytest --tb=no -q"
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]
   - id: acceptance

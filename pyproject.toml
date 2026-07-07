@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rig-workbench"
-version = "1.10.1"
+version = "1.10.2"
 description = "rig — a quality-gated AI workbench that runs anywhere. Install as a pip package; drop into Claude Code / Codex / Cursor as a skill; recipe-driven workflow with force-proof accept, cross-LLM verifier, and isolated worktrees."
 readme = "README.md"
 requires-python = ">=3.10"

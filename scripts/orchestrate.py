@@ -601,10 +601,6 @@ def gate_outcome(step: dict, st: dict) -> str:
     """現ステップの合否を決定論的に判定する。
     返り値: pass | fail | incomplete | self-graded
     """
-    gate = step["gate"]
-    if not gate:
-        return "pass"  # ゲート無し step は素通り
-
     declared = step["checks"]
     ran = st["checks"]
     verdicts = st["verdicts"]
@@ -617,6 +613,9 @@ def gate_outcome(step: dict, st: dict) -> str:
             return "fail"
 
     # 推論的検証（verdict）— acceptance-gate/review-gate は独立判定を要求（checks 未宣言時）。
+    gate = step["gate"]
+    if not gate:
+        return "pass"  # ゲート無し step は素通り（checks が空なら）
     needs_verdict = gate in ("acceptance-gate", "review-gate") and not declared
     if needs_verdict and not verdicts:
         return "incomplete"            # 独立検証者の判定待ち

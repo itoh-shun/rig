@@ -394,9 +394,14 @@ def _rig_wb_argv() -> list[str]:
 def _rig_run(task: dict, workdir: pathlib.Path, provider: str, model: str | None,
              allow_headless_in_cc: bool, max_steps: int, recipe: str) -> tuple[str, float, int]:
     """rig-wb run を workdir で実行し、(stdout, elapsed_s, returncode) を返す。"""
-    # bare と rig で入力情報量を揃える。scratch repo にもファイルはあるが、headless
-    # provider が cwd を正しく探索しない場合でも同じ task basis で比較できるようにする。
-    goal = _build_bare_prompt(task)
+    # rig 側は「編集してテストを通す」契約にする。bare 用の「全文を返せ」は混ぜない。
+    files_text = "\n\n".join(f"# {name}\n{content}" for name, content in task["files"].items())
+    goal = (
+        f"{task['goal']}\n\n"
+        f"対象ファイル: {task['target_file']}\n"
+        f"テスト: {' '.join(shlex.quote(x) for x in task['test_cmd'])}\n\n"
+        f"参照ファイル:\n{files_text}"
+    )
     env = dict(os.environ)
     candidate = pathlib.Path(__file__).resolve().parent.parent
     # scratch cwd から `python -m rig_workbench.cli` を呼んでも開発版 package を import できるようにする。
