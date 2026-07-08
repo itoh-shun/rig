@@ -4,7 +4,7 @@
 
 ## 入力
 
-- **ソース指定**（いずれか1つ。`--discover`/`--check-updates`/`--update` 時は不要）：
+- **ソース指定**（いずれか1つ。`--discover`/`--check-updates`/`--update`/`--rescan` 時は不要）：
   - GitHub URL（`https://github.com/<owner>/<repo>` / blob URL 可）
   - `<owner>/<repo>` 短縮形
   - ローカルパス（clone 済みディレクトリ）
@@ -17,6 +17,7 @@
 - `--dry-run`：解析と翻訳提案まで（書き込み・lock 記録をしない）。
 - `--check-updates`：取り込み済み skill の**上流差分検知**モード（モード B）。ソース指定不要。
 - `--update <slug>`：上流更新の**差分再取り込み**モード（モード C）。ソース指定不要。
+- `--rescan [<slug> | --all]`：取り込み済みブリックの**継続的再検疫**モード（モード D・#275）。上流差分の有無に関わらず、手口カタログ更新後の較正等に使う。ソース指定不要。
 
 ## パイプライン（1件の取り込みが通る順序）
 
@@ -168,6 +169,23 @@ rig queue add "rig:import --update <slug>" --backend github --repo owner/repo
 ```
 
 検知（loop）→ 積む（queue）→ 直す（--update・gate つき）が全部 rig の既存機構で閉じる。
+
+### モード D：`--rescan [<slug> | --all]`（既存取り込み済み内容の継続再検疫・#275）
+
+モードB/Cの検疫は「**上流に差分があったとき**」にしか発火しない——上流が変わっていなくても、①手口カタログ`[[injection-patterns]]`自体が後から拡充された、②新たな脆弱性クラスが判明した、といったケースでは、**既に取り込み済みの内容**を上流差分と無関係に再スキャンする必要がある。
+
+1. `skills-lock.json`の対象エントリ（`<slug>`指定 or `--all`で全件）について、`importedAs`が指す**現在のrig側ブリック本文**（上流を再取得しない・ローカルの翻訳済み内容が対象）を、②検疫と同じ手口カタログで再スキャンする。
+2. 検出ゼロ＝`✓ 再検疫パス`。検出あり＝**当該ブリックを`[FLAGGED: 再検疫で検出 — <種別>]`として報告**し、自動では無効化しない（`--update`と同じく人の確認を挟む。偽陰性側に倒さない）。
+3. 結果一覧を`--check-updates`と同じ表形式で提示する。
+
+```
+## rig import --rescan --all
+
+  hyperframes            ✓ 再検疫パス
+  faceless-explainer     ⚠ FLAGGED — 手口カタログ拡充後に該当箇所を検出（詳細は引用付きで提示）
+```
+
+**定期運用**は`--check-updates`と同じ形で回せる：`/rig:loop --every 30d "/rig:import --rescan --all"`（手口カタログの更新頻度に対して`--check-updates`の週次より緩い周期で十分）。
 
 ## 原則
 

@@ -11,6 +11,12 @@
 | ビジネスリスク ＞ テストコスト（コアロジック、副作用、境界値） | `tdd` スキルを起動してレッド→グリーン→リファクタのサイクルで実装する |
 | それ以外（UI 微修正、設定変更、スキャフォールドなど） | `tdd` を省略して直接実装する |
 
+### ②-a 生成前secretスキャン（#273）
+
+subagentへ委譲する**前**に、対象ファイル群を軽く走査し、secretパターン（APIキー・PRIVATE KEYブロック・接続文字列等。`scripts/git-hooks/pre-commit`の正規表現カテゴリと同じ分類）に該当する既存の値が無いか確認する。該当箇所があれば、その値をsubagentへのプロンプトに含める際は伏字（`***REDACTED***`等）に置き換えてから渡す——読む必要があるのはファイルの構造・周辺コードであり、secretの値そのものではない。
+
+これは`no_secret_leak`（生成後・acceptance-check時のチェック）とは別の**多層防御**であり、代替ではない：生成後チェックは「新たに書き込んだ差分にsecretが混入していないか」、本ステップは「既存のsecretがAIのcontextに読み込まれること自体を防ぐ」。既にmaskingされていればacceptance-check側の検知対象にもならない。
+
 ### ② subagent への委譲
 
 実装はコンテキストを最小化した subagent 上で行う。subagent に渡す情報：
@@ -18,6 +24,7 @@
 - intake で確定したスコープ・AC
 - design フェーズがあれば設計ドキュメント
 - 選択した実装方針（TDD / 直接）
+- ②-aでmaskingが必要だった場合は、伏字化済みの内容（生のsecret値を渡さない）
 
 subagent の実装が完了したら diff をレビューしてから verify へ進む。
 
@@ -30,3 +37,7 @@ subagent の実装が完了したら diff をレビューしてから verify へ
 3. 重複・複雑さを取り除く（Refactor）
 
 `tdd` スキルの詳細手順は当該スキルに委ねる。本ファイルで再実装しない。
+
+### ④ observability計装の追加提案（review-diffからの橋渡し・#278）
+
+review-diff step で `observability-reviewer` が計装コード（ログ/メトリクス/トレース）の具体的な追加提案を伴う指摘をした場合、その提案を implement subagent への追加タスクとして渡し、本タスクの差分に直結する範囲でのみ計装コードを追加する。無関係な既存コードへの計装追加は行わない（`no_unrelated_diff`/`no_unrelated_refactor`基準を優先する）。追加した計装コードも通常の diff レビュー対象になる。
