@@ -1,0 +1,18 @@
+{
+  "description": "rig run-continuity for Codex CLI (#294) — Codex-native mirror of hooks/hooks.json's PreCompact wiring. Reuses the same hooks/preserve-rig-state.sh (it only emits stdout instructions; nothing in it is Claude-Code-specific), so there is exactly one script to maintain across both hosts. Install by copying or symlinking this file to <repo>/.codex/hooks.json (project-scoped) or merging its `PreCompact` entry into ~/.codex/hooks.json (personal, all repos).",
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env sh \"$(git rev-parse --show-toplevel)/hooks/preserve-rig-state.sh\"",
+            "statusMessage": "Preserving active rig run-state across compaction",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

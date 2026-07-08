@@ -501,6 +501,21 @@ Open this folder in VS Code and press `F5` (launches an Extension Development Ho
 
 **Honest verification note:** the state-parsing logic (`src/rigState.ts`) has no dependency on the `vscode` module, so it's unit-tested with plain Node (`npm run test:unit`) — confirming gate-status priority matches `workbench.py`'s `gate_status()` exactly, correct parsing of `task.json`/`acceptance.json`/`steps.json`, and the active-only filter matching `board`'s default. `tsc` compiles cleanly against `@types/vscode`. **This sandbox has no VS Code GUI, so actually loading the extension in a real Extension Host and confirming the Tree View renders and the file watcher fires has not been verified** — treat it as reviewed-but-not-live-tested.
 
+### Codex native-layer integration (#294)
+
+As of 2026, the Codex CLI has extension mechanisms (Skills, Hooks, Subagent TOML) that closely mirror Claude Code's. `orchestrate.py --provider codex` previously only ever treated Codex as a stateless one-shot `codex exec` subprocess call; the following wires rig into Codex's native layer too:
+
+| Mechanism | File added | What it does |
+|---|---|---|
+| Skills | `codex/skills/rig/SKILL.md` | A thin skill following Codex's `.agents/skills/<name>/SKILL.md` convention (`name`/`description` frontmatter). No new engine — it's a procedural pointer to the existing `workbench.py`/`orchestrate.py` |
+| Hooks | `codex/hooks.json` | Wires run-continuity into Codex's `PreCompact` event by reusing the exact same `hooks/preserve-rig-state.sh` (it contains nothing Claude-Code-specific, so there's nothing to duplicate) |
+| Subagents | `.codex/agents/security-reviewer.toml` | A Codex-native subagent definition with the same review axes and output contract as `agents/security-reviewer.md`. `sandbox_mode = "read-only"` asks Codex's own sandbox to enforce read-only, layered on top of — not replacing — rig's existing argv-level enforcement (`--sandbox read-only` in `orchestrate.py`'s `build_argv`); defense in depth per #294's requirement |
+| MCP | (docs only) | Register `scripts/mcp_server.py` (#263) under `[mcp_servers.rig]` in `~/.codex/config.toml` or `.codex/config.toml`: `command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]` |
+
+Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or `.agents/skills/rig/` at the repo root), copying `codex/hooks.json` to `.codex/hooks.json` (or merging its `PreCompact` entry into `~/.codex/hooks.json`), and leaving `.codex/agents/security-reviewer.toml` where it is — Codex picks up project-scoped agents from `.codex/agents/` automatically.
+
+**Honest verification note:** there is no `codex` CLI in this environment, so none of this has been exercised against a real Codex session. What was verified: `codex/hooks.json` is valid JSON; `.codex/agents/security-reviewer.toml` parses with Python's `tomllib` and only uses fields documented on [Codex's official Subagents page](https://developers.openai.com/codex/subagents) (`name`/`description`/`sandbox_mode`/`developer_instructions`); the existing stateless `--provider codex` path (`build_argv`'s `codex` branch, including the `--sandbox read-only` verifier enforcement) was left completely untouched by this batch, and `orchestrate.py selftest`'s existing coverage for it (e.g. `N probe: codex verifier は read-only サンドボックスを強制`) still passes, confirming backward compatibility. Actually loading the skill, firing the hook, having Codex enforce `sandbox_mode` on the subagent, and connecting to the MCP server all require a live Codex CLI and remain **unverified** — the paths/schemas here are sourced from Codex's official docs (Subagents/Hooks/Skills pages) but haven't been run live.
+
 ## 13. Advanced commands
 
 ### Command map
