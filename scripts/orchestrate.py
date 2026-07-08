@@ -605,11 +605,16 @@ def telemetry_append(state: dict, final: str) -> None:
         # step id → 直近の auto-route 決定（#264。同一 step が retry で複数回通っても最後の決定を採用）
         auto_routed: dict[str, dict] = {}
         step_model_overrides: dict[str, str] = {}
+        fable_events: dict[str, list] = {}
         for h in state.get("history", []):
             if h.get("action") == "AUTO_ROUTE":
                 auto_routed[h["step"]] = {"model": h.get("model"), "reason": h.get("reason")}
             elif h.get("action") == "STEP_MODEL_OVERRIDE":
                 step_model_overrides[h["step"]] = h.get("model")  # #293: 最後の指定が勝つ（retry を跨いでも同一値のはず）
+            elif h.get("action") in ("FABLE_REFUSAL", "FABLE_FALLBACK"):
+                fable_events.setdefault(h["step"], []).append(
+                    {k: v for k, v in h.items() if k not in ("action", "step")} |
+                    {"kind": "refusal" if h["action"] == "FABLE_REFUSAL" else "fallback"})  # #297
         rec = {
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "recipe": state["recipe"],
@@ -626,7 +631,8 @@ def telemetry_append(state: dict, final: str) -> None:
                        "verdicts": [{"by": v.get("by"), "ok": bool(v.get("ok"))}
                                     for v in ss[s["id"]].get("verdicts", [])],
                        **({"auto_route": auto_routed[s["id"]]} if s["id"] in auto_routed else {}),
-                       **({"model_override": step_model_overrides[s["id"]]} if s["id"] in step_model_overrides else {})}
+                       **({"model_override": step_model_overrides[s["id"]]} if s["id"] in step_model_overrides else {}),
+                       **({"fable_events": fable_events[s["id"]]} if s["id"] in fable_events else {})}
                       for s in state["steps"]],
         }
         RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1098,6 +1104,88 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
         return 1, f"[{provider} error: {e} @ {url}]"
 
 
+def _record_anthropic_usage(cfg: dict, usage: dict) -> None:
+    """Fable 5等Anthropic直叩き時のusageを`_record_token_usage`と同じaccumulatorに正規化して積む（#297）。
+    `input_tokens`→`prompt_tokens`・`output_tokens`→`completion_tokens`にマップし、
+    `cache_read_input_tokens`（フォールバック時に基本入力トークンの10%で課金される特殊項目）は
+    別フィールドで加算する——OpenAI互換スキーマ(#271/#296)を壊さず拡張する。"""
+    acc = cfg.get("_token_usage")
+    if acc is None:
+        return
+    with _TOKEN_LOCK:
+        a = acc.setdefault("anthropic", {"prompt_tokens": 0, "completion_tokens": 0,
+                                         "cache_read_input_tokens": 0, "calls": 0})
+        a["prompt_tokens"] += usage.get("input_tokens", 0) or 0
+        a["completion_tokens"] += usage.get("output_tokens", 0) or 0
+        a["cache_read_input_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+        a["calls"] += 1
+
+
+def run_anthropic_provider(prompt: str, cfg: dict, state: dict | None = None,
+                           step_id: str | None = None) -> tuple[int, str]:
+    """Anthropic Messages APIを直接叩く（Fable 5のrefusal-classifier→フォールバック検知用・#297）。
+
+    ollama/lmstudioのOpenAI互換 `run_http_provider` とは別スキーマ（Anthropic純正の
+    content blocks・`stop_reason`・`stop_details`）を扱う——`claude`/`rig` provider
+    （`claude -p --output-format text`のCLI経由）は構造化されたstop_reasonを一切
+    公開しないため対象外。この provider は Messages API を直接HTTPで叩く用途に限定する。
+
+    `cfg.get("fallback_model")` を指定すると `server-side-fallback-2026-06-01` beta を
+    要求する。サーバー側で透過的にフォールバックした場合は `state["history"]` に
+    `FABLE_FALLBACK` を記録した上で**通常のstep成果として処理を継続する**（rejectにしない
+    ＝#297の要求）。フォールバック未設定/尽きた直接拒否は `FABLE_REFUSAL` を記録し、
+    呼び出し側に「失敗」として伝える（rc=1・categoryをテキストに埋め込む＝silent失敗にしない）。
+    """
+    import urllib.request
+    base = (cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
+    url = f"{base}/v1/messages"
+    model = cfg.get("model") or "claude-fable-5"
+    fallback_model = cfg.get("fallback_model")
+    body: dict = {"model": model, "max_tokens": cfg.get("max_tokens", 1024),
+                 "messages": [{"role": "user", "content": prompt}]}
+    if fallback_model:
+        body["fallbacks"] = [{"model": fallback_model}]
+    headers = {"Content-Type": "application/json",
+              "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),
+              "x-api-key": cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")}
+    if fallback_model:
+        headers["anthropic-beta"] = "server-side-fallback-2026-06-01"
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return 1, f"[anthropic error: {e} @ {url}]"
+
+    if isinstance(data.get("usage"), dict):
+        _record_anthropic_usage(cfg, data["usage"])
+
+    blocks = data.get("content") or []
+    fallback_block = next((b for b in blocks if b.get("type") == "fallback"), None)
+    text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+
+    if data.get("stop_reason") == "refusal" and not fallback_block:
+        details = data.get("stop_details") or {}
+        category = details.get("category", "unknown")
+        if state is not None and step_id is not None:
+            with _HIST_LOCK:
+                state["history"].append({"action": "FABLE_REFUSAL", "step": step_id,
+                                         "category": category,
+                                         "explanation": details.get("explanation", "")})
+        return 1, f"[fable refusal: category={category}] {details.get('explanation', '')}"
+
+    if fallback_block:
+        if state is not None and step_id is not None:
+            with _HIST_LOCK:
+                state["history"].append({"action": "FABLE_FALLBACK", "step": step_id,
+                                         "from_model": (fallback_block.get("from") or {}).get("model"),
+                                         "to_model": (fallback_block.get("to") or {}).get("model")})
+        return 0, text  # フォールバックは透過的成功として扱う（gateを止めない・#297の要求）
+
+    return 0, text
+
+
 def discover_models(cfg: dict) -> dict:
     """利用可能なプロバイダとモデルを動的に探索する（決定論的にソート）。"""
     import shutil
@@ -1111,6 +1199,10 @@ def discover_models(cfg: dict) -> dict:
         out[p] = {"kind": "cli", "available": shutil.which(p) is not None, "models": []}
     out["rig"] = {"kind": "cli", "available": shutil.which("claude") is not None,
                   "note": "各 step を rig ハーネス(claude)で起動", "models": []}
+    out["anthropic"] = {"kind": "remote-api", "available": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                       "note": "Messages API直叩き（Fable 5 refusal-classifier→フォールバック検知・#297）。"
+                               "実際に到達可能かはANTHROPIC_API_KEYの有無のみで判定（liveの疎通確認はしない）",
+                       "models": []}
     return out
 
 
@@ -1146,9 +1238,12 @@ def cmd_models(args):
         print(f"\n保存: {_MODELS_CACHE_PATH}（{len(conf)} プロバイダ）— 次回 run --auto-model で使用")
 
 
-def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> tuple[int, str]:
+def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
+                 state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
     if provider in _OPENAI_BASE:
         return run_http_provider(provider, prompt, cfg)
+    if provider == "anthropic":
+        return run_anthropic_provider(prompt, cfg, state, step_id)
     argv = build_argv(provider, role, prompt, cfg, persona)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd",) else None,
@@ -1162,7 +1257,8 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
 
 
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
-                           cfg: dict, max_parallel: int) -> list[dict]:
+                           cfg: dict, max_parallel: int,
+                           state: dict | None = None, step_id: str | None = None) -> list[dict]:
     """N 人の検証者を同時プロセスで走らせ、(persona, provider) 順（決定論）に結果を返す。
 
     ver に list を渡すと**同じ persona を複数プロバイダで**走らせる＝モデル混成クォーラム
@@ -1175,7 +1271,7 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
 
     def _one(task):
         v, p = task
-        rc, out = run_provider(v, "verifier", prompt, cfg, persona=p)
+        rc, out = run_provider(v, "verifier", prompt, cfg, persona=p, state=state, step_id=step_id)
         ok = ("VERDICT: PASS" in out) and ("VERDICT: FAIL" not in out)
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok, "note": f"exit {rc}"}
 
@@ -1221,10 +1317,12 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     ver_cfg = {**cfg, "model": step.get("verifier_model") or step.get("model") or cfg.get("model")} \
               if (step.get("verifier_model") or step.get("model")) else cfg
     if len(gen_list) == 1:
-        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step), gen_cfg)
+        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step), gen_cfg,
+                              state=state, step_id=step["id"])
         return gen_list[0], out, []
     def _gen(p):
-        rc, out = run_provider(p, "generator", _build_prompt(state, step), gen_cfg)
+        rc, out = run_provider(p, "generator", _build_prompt(state, step), gen_cfg,
+                               state=state, step_id=step["id"])
         return {"provider": p, "rc": rc, "out": out}
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
@@ -1233,7 +1331,7 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     jver = ver[0] if isinstance(ver, list) else ver            # judge は先頭 verifier プロバイダ
     for c in cands:
         _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"]),
-                               ver_cfg, persona="judge")
+                               ver_cfg, persona="judge", state=state, step_id=step["id"])
         ok = ("VERDICT: PASS" in jout) and ("VERDICT: FAIL" not in jout)
         judged.append({"provider": c["provider"], "ok": ok})
         if ok and winner is None:
@@ -1289,7 +1387,7 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
             if (step.get("verifier_model") or step.get("model")) else cfg
     personas = step["personas"] or ["independent"]
     results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out),
-                                     personas, v_cfg, max_parallel)
+                                     personas, v_cfg, max_parallel, state=state, step_id=step["id"])
     passes, total = sum(1 for r in results if r["ok"]), len(results)
     par = "並列" if total > 1 else "単独"
     log(f"   ↳ {par}検証 {total} 人: PASS {passes}/{total}（quorum={quorum}）")
@@ -1666,7 +1764,7 @@ def cmd_ab(args):
         else:
             i += 1
     if not gen:
-        print("[ERROR] --provider が必須（rig|claude|codex|ollama|lmstudio|cmd|mock）")
+        print("[ERROR] --provider が必須（rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock）")
         sys.exit(1)
     ver = ver or gen
 
@@ -2255,29 +2353,41 @@ def cmd_runs(args):
         # 構造化usageを持たないため「未計測」のまま——HTTP系（ollama/lmstudio）のみ実測できる。
         by_recipe: dict[str, dict[str, dict]] = {}
         any_usage = False
+        fallback_count = refusal_count = 0
         for r in rows:
             tu = r.get("token_usage") or {}
-            if not tu:
-                continue
-            any_usage = True
-            rc = by_recipe.setdefault(r.get("recipe", "?"), {})
-            for provider, u in tu.items():
-                a = rc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
-                a["prompt_tokens"] += u.get("prompt_tokens", 0)
-                a["completion_tokens"] += u.get("completion_tokens", 0)
-                a["calls"] += u.get("calls", 0)
+            if tu:
+                any_usage = True
+                rc = by_recipe.setdefault(r.get("recipe", "?"), {})
+                for provider, u in tu.items():
+                    a = rc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0,
+                                                 "cache_read_input_tokens": 0, "calls": 0})
+                    a["prompt_tokens"] += u.get("prompt_tokens", 0)
+                    a["completion_tokens"] += u.get("completion_tokens", 0)
+                    a["cache_read_input_tokens"] += u.get("cache_read_input_tokens", 0)
+                    a["calls"] += u.get("calls", 0)
+            for s in r.get("steps", []):                       # #297: Fable フォールバック/拒否の発生数
+                for ev in s.get("fable_events", []):
+                    if ev.get("kind") == "fallback":
+                        fallback_count += 1
+                    elif ev.get("kind") == "refusal":
+                        refusal_count += 1
         print(f"## rig runs --cost（全 {len(rows)} run）\n")
         if not any_usage:
-            print("トークン計測なし（未計測）。HTTP系provider（ollama/lmstudio）はOpenAI互換APIの`usage`フィールドから"
+            print("トークン計測なし（未計測）。HTTP系provider（ollama/lmstudio/anthropic）はAPIの`usage`フィールドから"
                   "自動計測されます。claude/codexはCLI経由のため構造化usageを持たず、この集計の対象外です"
                   "（#296で参照したAnthropic公式Usage & Cost Admin APIの利用を検討してください）。")
-            return
-        for rcp, providers in sorted(by_recipe.items()):
-            print(f"  {rcp}:")
-            for provider, a in sorted(providers.items()):
-                total = a["prompt_tokens"] + a["completion_tokens"]
-                print(f"    {provider:<12} calls={a['calls']:<4} "
-                      f"prompt={a['prompt_tokens']:<8} completion={a['completion_tokens']:<8} total={total}")
+        else:
+            for rcp, providers in sorted(by_recipe.items()):
+                print(f"  {rcp}:")
+                for provider, a in sorted(providers.items()):
+                    total = a["prompt_tokens"] + a["completion_tokens"]
+                    cache = f" cache_read={a['cache_read_input_tokens']}" if a["cache_read_input_tokens"] else ""
+                    print(f"    {provider:<12} calls={a['calls']:<4} "
+                          f"prompt={a['prompt_tokens']:<8} completion={a['completion_tokens']:<8} total={total}{cache}")
+        if fallback_count or refusal_count:
+            print(f"\nFable 5 refusal-classifier（#297）: fallback={fallback_count} 件 / 直接拒否(refusal)={refusal_count} 件"
+                  "（fallback は透過的成功として処理継続・cache_readはフォールバック済みprefixの10%課金対象トークン数）")
         return
 
     print(f"## rig runs（直近 {min(limit, len(rows))} / 全 {len(rows)} 件）\n")
@@ -2355,7 +2465,7 @@ def cmd_probe(args):
         else:
             i += 1
     if not provider:
-        print("[ERROR] --provider <name> が必須（rig|claude|codex|ollama|lmstudio|cmd|mock）")
+        print("[ERROR] --provider <name> が必須（rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock）")
         sys.exit(1)
     prompt = ("ある成果が受け入れ基準を満たすか判定し、最後に必ず 'VERDICT: PASS' か "
               "'VERDICT: FAIL' を1行で出力してください。\n成果: 2 + 2 = 4"

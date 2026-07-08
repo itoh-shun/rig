@@ -501,6 +501,17 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 - 既存の`--provider codex`ステートレス呼び出し（`build_argv`の`codex`分岐、`--sandbox read-only`の検証者強制含む）は本バッチで一切変更しておらず、`orchestrate.py selftest`の既存テスト（`N probe: codex verifier は read-only サンドボックスを強制`等）がそのままPASSすることで後方互換を確認。
 - Skill配布形式・hooksの実際の発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIでの実行が必要で**未検証**です。ドキュメントに記載したパス・スキーマはCodex公式ドキュメント（Subagents/Hooks/Skills各ページ）に基づいていますが、ライブ環境での動作は今後の課題です。
 
+### Fable 5 refusal-classifier→フォールバック（`--provider anthropic`・#297）
+
+Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエストを安全フィルターで自動遮断し、Opus 4.8へフォールバックする仕組みを持つ。`orchestrate.py run --provider anthropic`はAnthropic Messages APIを直接HTTPで叩き、この遮否を検知・記録・透過的にハンドリングする（`claude`/`rig`のCLI経由providerは構造化`stop_reason`を持たないため対象外）：
+
+- `fallback_model`（例`claude-opus-4-8`）を設定すると`anthropic-beta: server-side-fallback-2026-06-01`を要求し、フォールバック成功時は`state["history"]`に`FABLE_FALLBACK`を記録して**gateを止めず処理を継続**する。
+- フォールバック未設定/尽きた直接拒否は`FABLE_REFUSAL`（category/explanation）を記録し、silent失敗にしない。
+- `runs --cost`にトークン計測（`cache_read_input_tokens`含む）とfallback/refusal発生件数を表示する。
+- 攻撃手法の議論が本業の`security-reviewer`等のpersonaへFable 5を`--step-model`（#293）で割り当てる場合は`fallback_model`必須（`agents/security-reviewer.md`参照）。
+
+**正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。**実際のAnthropic APIには接続していません**（実運用トラフィックが必要かつ課金リスクを避けるため）。使用したスキーマは`anthropics/claude-cookbooks`の`fable_5_fallback_billing/guide.ipynb`に基づいていますが、実モデルでの動作は未検証です。
+
 ## 13. Advanced commands
 
 ### コマンド分類
