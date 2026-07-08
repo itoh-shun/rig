@@ -487,6 +487,20 @@ Opt-in: nothing changes unless you start this server; existing CLI/skill usage i
 
 **Verification:** launched the server as a subprocess against a disposable repo and drove a full happy path purely over JSON-RPC — `initialize` → `tools/list` → `rig_task_new` (enqueue) → `rig_task_board` (recover task_id) → `rig_task_accept` (confirmed `isError: true` rejection while the gate is unmet) → `rig_task_gate` to mark every criterion `passed` → `rig_task_accept` (succeeds) — and confirmed the rejection text and the squash-accept result match direct CLI invocation exactly.
 
+### VS Code extension (`vscode-extension/`, #286)
+
+A sidebar view (Explorer panel "rig board") that shows `.rig/runs/` task/gate state without leaving the editor. **Read-only** — no accept/discard or any other write command is registered. It just reads the same JSON `workbench.py` already writes (`task.json`/`acceptance.json`/`steps.json`); no new state-management engine.
+
+```bash
+cd vscode-extension
+npm install
+npm run compile
+```
+
+Open this folder in VS Code and press `F5` (launches an Extension Development Host), or package it with `npx vsce package` and `code --install-extension` the resulting `.vsix`. See `vscode-extension/README.md` for details.
+
+**Honest verification note:** the state-parsing logic (`src/rigState.ts`) has no dependency on the `vscode` module, so it's unit-tested with plain Node (`npm run test:unit`) — confirming gate-status priority matches `workbench.py`'s `gate_status()` exactly, correct parsing of `task.json`/`acceptance.json`/`steps.json`, and the active-only filter matching `board`'s default. `tsc` compiles cleanly against `@types/vscode`. **This sandbox has no VS Code GUI, so actually loading the extension in a real Extension Host and confirming the Tree View renders and the file watcher fires has not been verified** — treat it as reviewed-but-not-live-tested.
+
 ## 13. Advanced commands
 
 ### Command map

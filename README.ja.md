@@ -468,6 +468,20 @@ opt-in：このサーバを起動しない限り何も変わらず、既存のCL
 
 **検証**：使い捨てリポジトリでサーバをsubprocessとして起動し、`initialize`→`tools/list`→`rig_task_new`（enqueue）→`rig_task_board`（task_id取得）→`rig_task_accept`（gate未達で`isError: true`拒否を確認）→`rig_task_gate`で全criterionを`passed`に設定→`rig_task_accept`（成功）というhappy pathをJSON-RPC経由のみで再現し、CLI直接実行時と同じ拒否文言・同じsquash反映結果になることを確認した。
 
+### VS Code拡張（`vscode-extension/`・#286）
+
+`.rig/runs/`のtask/gate状態をエディタのサイドバー（Explorer内「rig board」パネル）に常駐表示する拡張。**読み取り専用**——accept/discard等の書き込みコマンドは一切登録していない。`workbench.py`が書くJSON（`task.json`/`acceptance.json`/`steps.json`）をそのまま読むだけで、新しい状態管理エンジンは持たない。
+
+```bash
+cd vscode-extension
+npm install
+npm run compile
+```
+
+VS Codeでこのフォルダを開き`F5`（Extension Development Host起動）するか、`npx vsce package`で`.vsix`化して`code --install-extension`する。詳細は`vscode-extension/README.md`。
+
+**正直な検証範囲**：状態パース処理（`src/rigState.ts`）はvscodeモジュールに依存しないため、プレーンなNodeでユニットテスト済み（`npm run test:unit`）——gate状態の優先順位が`workbench.py`の`gate_status()`と完全一致すること、`task.json`/`acceptance.json`/`steps.json`の解析、`board`既定のactive-onlyフィルタ相当の挙動を確認。`tsc`は`@types/vscode`に対して型エラーなくコンパイルできることを確認済み。**この環境にはVS CodeのGUIが無いため、実際のExtension Host上でTree Viewが描画されファイル監視が発火することは未検証**——「レビュー済み・未ライブ検証」として扱ってください。
+
 ## 13. Advanced commands
 
 ### コマンド分類
