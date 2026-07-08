@@ -503,6 +503,26 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 - 既存の`--provider codex`ステートレス呼び出し（`build_argv`の`codex`分岐、`--sandbox read-only`の検証者強制含む）は本バッチで一切変更しておらず、`orchestrate.py selftest`の既存テスト（`N probe: codex verifier は read-only サンドボックスを強制`等）がそのままPASSすることで後方互換を確認。
 - Skill配布形式・hooksの実際の発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIでの実行が必要で**未検証**です。ドキュメントに記載したパス・スキーマはCodex公式ドキュメント（Subagents/Hooks/Skills各ページ）に基づいていますが、ライブ環境での動作は今後の課題です。
 
+### ホストアダプタ層（複数ホストへの一般化・#304）
+
+#294はCodex限定だったが、Cursor・GitHub Copilot CLI等も同様の拡張機構（hooks/skills/MCP）を持つ。ホストごとの差分（hookイベント名・skill配置規約・機能対応度）を`scripts/host_adapters.py`の`HOSTS`辞書1箇所に集約し、新規ホスト対応は1エントリ追加するだけで済む設計にした。第二弾としてCursorを追加し、設計の妥当性を検証した：
+
+```
+| Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
+| Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
+| Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+```
+（`python3 scripts/host_adapters.py`で再生成できる——このREADMEの表が古くなったら実行して差し替えること）
+
+Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
+- **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。
+- **skillは`.agents/skills/`もlegacy互換で読む**——`codex/skills/rig/SKILL.md`をそこに置けばCursorでもそのまま使える（新規ファイル不要）。
+- **`preCompact`はobservational-onlyで、run-continuityの状態注入はできない**（公式ドキュメントに明記）。ここは黙って「動いたふり」をせず`degrade`として明示し（`cursor/hooks.json`は状態保全を諦め、短い通知メッセージのみを返す設計にした）、README上もunsupportedと表示する。
+
+**正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`orchestrate.py selftest`の`HA`系10件）はコードとして検証済み。実際のCursor/Codex実機でのhook発火・skill読み込みは未検証（Codexは#294と同じ理由、Cursorはこの環境にCursor自体が無いため）。Claude Code向けの既存動作は本バッチで一切変更していない。
+
 ### Fable 5 refusal-classifier→フォールバック（`--provider anthropic`・#297）
 
 Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエストを安全フィルターで自動遮断し、Opus 4.8へフォールバックする仕組みを持つ。`orchestrate.py run --provider anthropic`はAnthropic Messages APIを直接HTTPで叩き、この遮否を検知・記録・透過的にハンドリングする（`claude`/`rig`のCLI経由providerは構造化`stop_reason`を持たないため対象外）：

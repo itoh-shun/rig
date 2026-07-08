@@ -518,6 +518,26 @@ Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or
 
 **Honest verification note:** there is no `codex` CLI in this environment, so none of this has been exercised against a real Codex session. What was verified: `codex/hooks.json` is valid JSON; `.codex/agents/security-reviewer.toml` parses with Python's `tomllib` and only uses fields documented on [Codex's official Subagents page](https://developers.openai.com/codex/subagents) (`name`/`description`/`sandbox_mode`/`developer_instructions`); the existing stateless `--provider codex` path (`build_argv`'s `codex` branch, including the `--sandbox read-only` verifier enforcement) was left completely untouched by this batch, and `orchestrate.py selftest`'s existing coverage for it (e.g. `N probe: codex verifier は read-only サンドボックスを強制`) still passes, confirming backward compatibility. Actually loading the skill, firing the hook, having Codex enforce `sandbox_mode` on the subagent, and connecting to the MCP server all require a live Codex CLI and remain **unverified** — the paths/schemas here are sourced from Codex's official docs (Subagents/Hooks/Skills pages) but haven't been run live.
 
+### Host adapter layer — generalizing beyond Codex (#304)
+
+#294 was Codex-only, but Cursor, GitHub Copilot CLI, and others have similar extension mechanisms (hooks/skills/MCP). `scripts/host_adapters.py` centralizes host-specific differences (hook event names, skill path conventions, capability level) into a single `HOSTS` dict — adding a new host means adding one entry, not touching rig's core. Cursor was added as the second host to validate the design:
+
+```
+| Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
+| Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
+| Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+```
+(regenerate with `python3 scripts/host_adapters.py` if this table goes stale)
+
+What building the Cursor entry actually surfaced (confirmed against `cursor.com/docs/hooks` and `/docs/skills`):
+- **Hook event names are camelCase** (`PreCompact` → `preCompact`, `UserPromptSubmit` → `beforeSubmitPrompt`) — exactly the cross-host divergence #304 anticipated.
+- **Cursor also reads `.agents/skills/`** for legacy Claude/Codex compatibility, so `codex/skills/rig/SKILL.md` installed there works for Cursor too — no new skill file needed.
+- **`preCompact` is documented as observational-only** — it cannot inject preserved run-state the way Claude Code's `PreCompact` does. Rather than pretend this works, that's declared as an explicit `degrade` (`cursor/hooks.json` gives up on state preservation and only returns a short notification), and the capability table marks it `unsupported`.
+
+**Honest verification note:** `scripts/host_adapters.py`'s mapping and its golden fixture test (10 `HA`-prefixed cases in `orchestrate.py selftest`) are verified as code. Actual hook firing / skill loading on a live Cursor or Codex install is unverified (Codex for the same reason as #294; there's no Cursor install in this environment either). Claude Code's existing behavior is completely unchanged by this batch.
+
 ### Fable 5 refusal-classifier → fallback handling (`--provider anthropic`, #297)
 
 Fable 5's safety filter auto-blocks requests in three categories (cyber/bio/reasoning_extraction) and can transparently fall back to Opus 4.8. `orchestrate.py run --provider anthropic` calls the Anthropic Messages API directly over HTTP to detect and handle this (the `claude`/`rig` CLI providers don't expose a structured `stop_reason`, so they're out of scope):

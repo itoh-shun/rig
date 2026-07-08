@@ -57,6 +57,9 @@ except ImportError:
     print("[ERROR] PyYAML が見つかりません。`pip install pyyaml`。")
     sys.exit(1)
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import host_adapters  # #304: ホストアダプタ層（同ディレクトリ内モジュール）
+
 def find_rig_home() -> pathlib.Path:
     """rig 資産（skills/, .claude-plugin/）の所在を解決する。
     優先順: $RIG_HOME → ~/.claude/plugins/data/rig-itoshun-local-plugins → __file__ 親（dev fallback）。
@@ -3069,6 +3072,29 @@ def cmd_selftest(_args):
            ("agent:lazy-senior-reviewer", "mirrors", "persona:lazy-senior") in eW, True)
     report("W graph: shipped tier に未解決エッジ 0",
            sum(1 for e in gW1["edges"] if not e["resolved"]), 0)
+
+    # HA: ホストアダプタ層（#304）— golden fixture test。HOSTS の翻訳結果が変わったら差分で気づく。
+    report("HA hook event: PreCompact → claude-code は同名",
+           host_adapters.translate_hook_event("PreCompact", "claude-code"), "PreCompact")
+    report("HA hook event: PreCompact → cursor は preCompact（camelCase）",
+           host_adapters.translate_hook_event("PreCompact", "cursor"), "preCompact")
+    report("HA hook event: UserPromptSubmit → cursor は beforeSubmitPrompt",
+           host_adapters.translate_hook_event("UserPromptSubmit", "cursor"), "beforeSubmitPrompt")
+    report("HA hook event: 未知ホストは None",
+           host_adapters.translate_hook_event("PreCompact", "no-such-host"), None)
+    report("HA capability: cursorのprecompact_context_injectionはunsupported",
+           host_adapters.capability("cursor", "precompact_context_injection"), "unsupported")
+    report("HA capability: claude-codeのprecompact_context_injectionはsupported",
+           host_adapters.capability("claude-code", "precompact_context_injection"), "supported")
+    report("HA capability: 未登録の機能はunsupported（黙ってsupported扱いにしない）",
+           host_adapters.capability("claude-code", "no-such-feature"), "unsupported")
+    report("HA degrade: cursorのprecompact degradeは宣言されている",
+           host_adapters.degrade_behavior("cursor", "precompact_context_injection") is not None, True)
+    report("HA degrade: claude-code（基準ホスト）はdegrade宣言なし",
+           host_adapters.degrade_behavior("claude-code", "precompact_context_injection"), None)
+    report("HA: 全ホストが同一のCANONICAL_EVENTSキー集合を持つ（対応表の抜け漏れ検知）",
+           all(set(host_adapters.HOSTS[h]["hook_events"]) == set(host_adapters.CANONICAL_EVENTS)
+               for h in host_adapters.HOSTS), True)
 
     print("\n" + ("PASS: 決定論オーケストレータは健全" if ok else "FAIL: セルフテスト不一致"))
     sys.exit(0 if ok else 1)
