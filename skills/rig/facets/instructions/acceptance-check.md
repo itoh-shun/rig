@@ -36,7 +36,7 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `requirement_summary_written`：clarify-requirements/intake で確定した AC が記録されているか。
 - `implementation_matches_requirement`：実装内容と AC を突き合わせる。
 - `tests_added_or_explained`：新規テストの有無、無ければ既存テストで担保される旨の明示確認。
-- `public_api_changes_documented`：公開 API 変更が diff.md/README 等で説明されているか。
+- `public_api_changes_documented`：公開 API 変更が diff.md/README 等で説明されているか。OpenAPI仕様がある場合は`python3 scripts/openapi_diff.py <変更前> <変更後>`（#288）でpath/method単位の追加/削除/変更を機械抽出し、diff.mdの説明と付き合わせる（説明に無い変更があれば`warning`）。
 - `migration_or_backward_compatibility_considered`：既存データ・既存呼び出し元への影響を検討したか。
 
 **refactor プリセット（refactor）**

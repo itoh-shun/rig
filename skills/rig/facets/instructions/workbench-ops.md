@@ -14,6 +14,17 @@ board・gate radar・drill 実測(reviewer confidence)・cost meter・safety str
 - drillが未実施のpersona、cost計測が未実装の項目は「未計測」と表示され、空値を成功のように見せない。
 - 複数タスクを並行しているときの状況把握は、まず`board`ではなく`cockpit`を提案してよい(gate/drill/safetyまで一望できるため)。
 
+### チャット通知（`scripts/notify.py`・#287）
+
+accept待ち・gate REJECT・エスカレーション等のイベントをSlack/Teamsに通知したい場合、opt-inで`scripts/notify.py`を使う：
+
+```
+python3 scripts/notify.py --webhook <incoming webhook URL> --format slack --message "task <id> がaccept待ちです"
+python3 scripts/notify.py --format teams --title rig --message "gate REJECT: <詳細>" --dry-run   # 送信前にpayload確認
+```
+
+webhook URLは`RIG_NOTIFY_WEBHOOK`環境変数でも指定できる。専用SDKは使わずurllibのみで完結する。通知の要否・タイミングの判断はこのスクリプト自身は行わない——呼び出し側(instruction層)が「このイベントは通知に値するか」を判断してから呼ぶ。
+
 ## `/rig install-git-hook [--which pre-commit|pre-push|both] [--force]`
 
 ```
