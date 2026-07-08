@@ -834,6 +834,126 @@ def cmd_board(args: argparse.Namespace) -> None:
         print("次のアクション: /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes")
 
 
+def _load_drill(root: pathlib.Path) -> list[dict]:
+    """`.rig/drill-results.jsonl`（/rig:drill の実測結果）を読む。
+    フォーマットは `{"ts": …, "scores": [{"reviewer","detected","seeded","false_positives"}]}`
+    （orchestrate.py の DRILL_PATH と同一ファイル・同一スキーマ）。"""
+    p = root / ".rig" / "drill-results.jsonl"
+    if not p.exists():
+        return []
+    out: list[dict] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def cmd_cockpit(args: argparse.Namespace) -> None:
+    """board・gate・drill・audit を一画面に集約する read-only Mission Control（#307）。
+
+    新しい常駐サービスや DB は持たない——既存の `.rig/runs/`・`drill-results.jsonl`・
+    `audit.jsonl` を読むだけで完結する。accept/discard 等の破壊的操作はここでは行わず、
+    次に打つべき既存コマンドを案内するだけ（v1 は read-only。集計ロジックは
+    board/stats/audit と同じ関数をそのまま再利用し、二重実装しない）。
+    """
+    root = repo_root()
+    base = runs_dir(root)
+    tasks: list[dict] = []
+    if base.is_dir():
+        for p in sorted(base.iterdir()):
+            tj = p / "task.json"
+            if tj.exists():
+                tasks.append(load_json(tj))
+    tasks.sort(key=lambda t: t["created_at"])
+    active = [t for t in tasks if t["status"] in ACTIVE_STATUSES]
+
+    print("━━━ rig cockpit — Mission Control（read-only）━━━━━━━━━━━━━━")
+
+    # ── Run timeline ──────────────────────────────────────────────────────
+    print(f"\n┌─ Run timeline（アクティブ {len(active)} / 全 {len(tasks)} 件）")
+    if not active:
+        print("│ アクティブな task はありません。")
+    for t in active:
+        d = base / t["task_id"]
+        acc = load_json(d / "acceptance.json", {"checks": []})
+        gs = gate_status(acc) if acc.get("checks") else "-"
+        label = t["input"][:44] + ("…" if len(t["input"]) > 44 else "")
+        print(f"│ [{t['status']:<11}] {t['task_id']:<28} gate={gs:<20} {label}")
+
+    # ── Gate radar ────────────────────────────────────────────────────────
+    gate_counts: Counter[str] = Counter()
+    for t in tasks:
+        acc = load_json(base / t["task_id"] / "acceptance.json", {"checks": []})
+        gate_counts[gate_status(acc) if acc.get("checks") else "skipped"] += 1
+    print("├─ Gate radar")
+    if tasks:
+        for status in ("passed", "passed_with_warnings", "failed", "pending", "skipped"):
+            if gate_counts.get(status):
+                print(f"│ {status}: {gate_counts[status]}")
+    else:
+        print("│ 未実行（run がありません）")
+
+    # ── Reviewer confidence（drill 実測）────────────────────────────────────
+    print("├─ Reviewer confidence（drill 実測）")
+    drills = _load_drill(root)
+    atk: dict[str, dict] = {}
+    for d in drills:
+        for s in d.get("scores", []):
+            a = atk.setdefault(s.get("reviewer", "?"), {"detected": 0, "seeded": 0, "fp": 0})
+            a["detected"] += s.get("detected", 0)
+            a["seeded"] += s.get("seeded", 0)
+            a["fp"] += s.get("false_positives", 0)
+    if not atk:
+        print("│ 未計測（`/rig:drill` を実行すると persona 別の検出率が表示されます）")
+    else:
+        for name, a in sorted(atk.items()):
+            if a["seeded"]:
+                rate = a["detected"] / a["seeded"] * 100
+                fp = f"・誤検出 {a['fp']}" if a["fp"] else ""
+                print(f"│ {name}: 検出率 {rate:.0f}%（{a['detected']}/{a['seeded']}{fp}）")
+            else:
+                print(f"│ {name}: 未計測")
+
+    # ── Cost meter（#271/#296 未実装の間は「未計測」を明示。空値を成功に見せない）──
+    print("├─ Cost meter")
+    print("│ 未計測（recipe/model 単位のコスト計測は #271/#296 で追加予定）")
+
+    # ── Safety strip ──────────────────────────────────────────────────────
+    audit_events = _load_audit(root)
+    force_events = [e for e in audit_events if e.get("action") == "accept_force"]
+    print("├─ Safety strip")
+    if force_events:
+        print(f"│ force-bypass: {len(force_events)} 件（詳細: `workbench.py audit`）")
+    else:
+        print("│ force-bypass の記録なし。")
+
+    # ── Next action rail ──────────────────────────────────────────────────
+    gate_passed = [t for t in active if t["status"] == "gate_passed"]
+    gate_failed = [t for t in active if t["status"] == "gate_failed"]
+    print("└─ Next action rail")
+    if gate_passed:
+        ids = ", ".join(t["task_id"] for t in gate_passed[:3])
+        more = " …" if len(gate_passed) > 3 else ""
+        print(f"  diff/accept 待ち {len(gate_passed)} 件: {ids}{more}")
+        print("    → `workbench.py diff <id>` / `workbench.py accept <id>`")
+    if gate_failed:
+        ids = ", ".join(t["task_id"] for t in gate_failed[:3])
+        more = " …" if len(gate_failed) > 3 else ""
+        print(f"  gate 未達 {len(gate_failed)} 件: {ids}{more}")
+        print("    → 未達基準を修正して再判定、または `workbench.py discard <id> --yes`")
+    if not gate_passed and not gate_failed:
+        print("  現時点で必要なアクションはありません。")
+
+    if active:
+        print("\nEvidence: 各 task の plan.md / diff.md / acceptance.json / review.json は "
+              ".rig/runs/<task-id>/ 配下。")
+
+
 def cmd_log(args: argparse.Namespace) -> None:
     root = repo_root()
     base = runs_dir(root)
@@ -1146,6 +1266,9 @@ def main() -> None:
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("cockpit", help="board・gate・drill・audit を一画面に集約する Mission Control（read-only）")
+    p.set_defaults(func=cmd_cockpit)
 
     p = sub.add_parser("gates", help="acceptance-gate プリセット定義を表示する")
     p.set_defaults(func=cmd_gates)

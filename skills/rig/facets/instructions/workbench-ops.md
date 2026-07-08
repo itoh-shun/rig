@@ -1,6 +1,18 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review` / `/rig cockpit`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない(§8 Native-first)。
+
+## `/rig cockpit`
+
+```
+python3 scripts/workbench.py cockpit
+```
+
+board・gate radar・drill 実測(reviewer confidence)・cost meter・safety strip(force-bypass 監査)・次アクション案内を**一画面に集約**する read-only Mission Control(#307)。既存の`board`/`stats`/`audit`/`drill-results.jsonl`をそのまま読むだけで、新しい常駐サービスやDBは持たない。
+
+- v1は読み取り専用。`accept`/`discard`はここでは実行せず、「Next action rail」が案内する既存コマンド(`workbench.py diff <id>` / `accept <id>` / `discard <id> --yes`)へ委譲する。
+- drillが未実施のpersona、cost計測が未実装の項目は「未計測」と表示され、空値を成功のように見せない。
+- 複数タスクを並行しているときの状況把握は、まず`board`ではなく`cockpit`を提案してよい(gate/drill/safetyまで一望できるため)。
 
 ## 共通ルール
 

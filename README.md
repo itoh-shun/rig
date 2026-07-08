@@ -347,6 +347,35 @@ product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.
 
 It can reveal frequently-failing recipes, reviewers that never reject, gate types that often block accept, and the accept-vs-discard ratio. Reviewer verdicts feed this from `/rig:rig review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` — record them as review tasks resolve, and rig will flag a reviewer that never says no. This is separate from `.rig/runs.jsonl` (the engine-wide execution telemetry `scripts/orchestrate.py runs` reads) — `workbench.py stats` is specifically the workbench task lifecycle (accepted/discarded/gate outcomes).
 
+### Cockpit
+
+`/rig:rig cockpit` puts board, gate radar, drill-measured reviewer confidence, a cost meter, and a force-bypass safety strip on one read-only screen — the single place to check "is everything actually safe right now," not just "what ran":
+
+```bash
+python3 scripts/workbench.py cockpit
+```
+
+```
+┌─ Run timeline（アクティブ 2 / 全 2 件）
+│ [gate_passed] rig-test-001                 gate=passed_with_warnings fix the login bug...
+│ [gate_failed] rig-test-002                 gate=failed               add search to inventory...
+├─ Gate radar
+│ passed_with_warnings: 1
+│ failed: 1
+├─ Reviewer confidence（drill 実測）
+│ design-reviewer: 検出率 100%（2/2）
+│ security-reviewer: 検出率 80%（4/5・誤検出 1）
+├─ Cost meter
+│ 未計測（recipe/model 単位のコスト計測は今後追加予定）
+├─ Safety strip
+│ force-bypass: 1 件（詳細: `workbench.py audit`）
+└─ Next action rail
+  diff/accept 待ち 1 件: rig-test-001 → `workbench.py diff <id>` / `accept <id>`
+  gate 未達 1 件: rig-test-002 → 修正して再判定、または `discard <id> --yes`
+```
+
+It's v1 and read-only by design: `accept`/`discard` aren't triggered from here, only recommended — the next-action rail always points back to the existing commands. Missing data (no drill run yet, cost metering not implemented) is shown as "未計測" (not measured), never as a blank that could be misread as a clean bill of health. It reuses `board`/`stats`/`audit`'s own aggregation functions rather than re-implementing them.
+
 ## 11. Reviewer drill
 
 Reviewer personas are not just prompts. rig can test them.

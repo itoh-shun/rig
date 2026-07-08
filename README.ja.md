@@ -347,6 +347,16 @@ product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.
 
 失敗しやすい recipe、まったく reject しない reviewer、accept を止めがちな gate、accept/discard の比率などが見える。`/rig:rig review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` で記録した verdict がここに集計される——review タスクの結果が確定するたびに記録しておくと、何でも通す reviewer を rig が検知してくれる。既存の `.rig/runs.jsonl`（`scripts/orchestrate.py runs` が読むエンジン全体の実行テレメトリ）とは別物——`workbench.py stats` は workbench task のライフサイクル（accept/discard/gate 結果）専用。
 
+### Cockpit
+
+`/rig:rig cockpit` は board・gate radar・drill 実測の reviewer confidence・cost meter・force-bypass の safety strip を1画面に集約する read-only コマンド。「何が動いたか」だけでなく「今すべてが本当に安全か」を1コマンドで確認できる:
+
+```bash
+python3 scripts/workbench.py cockpit
+```
+
+v1 は read-only が前提で、ここから直接 `accept`/`discard` は実行しない——next action rail が案内するだけで、実行は既存コマンドに委ねる。データが無い項目（drill未実施・cost計測未実装）は空欄ではなく「未計測」と明示し、健全に見えてしまう誤解を防ぐ。集計は `board`/`stats`/`audit` と同じ関数をそのまま再利用しており、二重実装していない。
+
 ## 11. reviewer drill
 
 reviewer persona は単なるプロンプトではない。rig では、それをテストできる。
