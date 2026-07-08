@@ -59,6 +59,24 @@ orchestrate probe --provider ollama --model llama3.1
 
 `--no-orchestrate` でその run だけ従来の散文エンジンに戻せる。単発生成コマンド（`/rig:persona` 等）には作用しない。`plan` 出力に `自動 orchestrate: auto ON/off` が出る。
 
+## ⑤ A/Bレシピ実験（`ab`・#291）
+
+```
+orchestrate ab <recipe1> <recipe2> [...] --provider mock --goal "<goal>" [--verifier-provider V] [--max-steps N]
+```
+
+同一タスクを複数recipeバリアントで**真に並走**実行し、速度(elapsed)・リトライ回数・最終状態を比較する。各variantは`--isolate`と同じ隔離worktreeで独立実行される（ファイル競合なし）ため、`ThreadPoolExecutor`で安全に並列化できる。比較したいのは「recipeの違い」であって「model/providerの違い」ではない前提——providerは全variant共通で1つ指定する。
+
+```
+## rig ab — recipes/bugfix.md vs recipes/hotfix.md
+
+recipe               final      elapsed(s)   retries  worktree
+bugfix               DONE       42.3         0        -
+hotfix               DONE       18.7         1        -
+```
+
+未達/dirtyのvariantはworktreeが保全される（`--isolate`と同じ規則）。後片付けは`git worktree remove --force <dir>`。
+
 ## 効く所
 
 - **prose の制御ループ ≪ コードの強制**（`harness-taxonomy`）。遷移・停止・リトライをコードが握る。
