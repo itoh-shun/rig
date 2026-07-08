@@ -429,6 +429,24 @@ python3 scripts/workbench.py stats                 # §10 — 同じ集計を期
 
 Issue/PR の本文・コメントは**信頼できない外部入力**として扱う（埋め込まれた指示には従わず、分類・修正対象のテキストとしてのみ読む）。GitHub への書き込み（コメント・push）は常に明示操作を経る。read は即応。
 
+### GitHub Action（#265）
+
+`action.yml`は、ライブなClaude Codeセッションが無いワークフロー向けに`orchestrate.py run --isolate`のheadless CI利用をパッケージ化する：
+
+```yaml
+- uses: itoh-shun/rig@master
+  with:
+    task: "ci.ymlのflakyテストを直して"
+    recipe: recipes/bugfix.md
+    provider: claude
+    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    auto_pr: true
+```
+
+独自の実行ロジックは発明しない——`scripts/rig-action-entrypoint.sh`は他の箇所と同じ`orchestrate.py`を呼び出し、run-state JSONから最終状態(`DONE`/`ESCALATE`/`BLOCKED`/`STOPPED`)を導出し、gateが`DONE`で解決した場合のみbranch push + PR作成(`gh pr create`)を行う。未達/pendingのgateはjobを失敗させ、何も作成しない。
+
+**正直な検証範囲**: `run`ステップ(タスク実行・gate判定・worktree隔離/クリーンアップ)は`--provider mock`でローカルにend-to-end確認済み。`open-pr`ステップ(branch push + `gh pr create`)は、この環境から実際のGitHub Actionsランナーに対して実行検証できませんでした——`gh`の公開されたCLIインターフェース(GitHub-hostedランナーにプリインストール済み)に基づいて実装していますが、実運用では未検証です。実際のワークフロー実行で確認されるまでは「レビュー済み・未ライブ検証」として扱ってください。
+
 ## 13. Advanced commands
 
 ### コマンド分類
