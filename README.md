@@ -487,6 +487,8 @@ Opt-in: nothing changes unless you start this server; existing CLI/skill usage i
 
 **Verification:** launched the server as a subprocess against a disposable repo and drove a full happy path purely over JSON-RPC — `initialize` → `tools/list` → `rig_task_new` (enqueue) → `rig_task_board` (recover task_id) → `rig_task_accept` (confirmed `isError: true` rejection while the gate is unmet) → `rig_task_gate` to mark every criterion `passed` → `rig_task_accept` (succeeds) — and confirmed the rejection text and the squash-accept result match direct CLI invocation exactly.
 
+**Self threat-scan (`orchestrate.py mcp-scan`, #303):** since the tools it exposes could themselves carry over-broad shell/network permissions, plaintext secret exposure, or hook-injection risk, there's a command that statically analyzes `scripts/mcp_server.py`'s tool definitions using three adversarial lenses (attacker/defender/auditor). It never executes anything (deterministic, no side effects). Wired into `validate.py` for CI — current overall verdict is MEDIUM (`rig_orchestrate_run` can affect the main working tree directly when `--isolate` isn't set, so callers are advised to pass `isolate: true`).
+
 ### VS Code extension (`vscode-extension/`, #286)
 
 A sidebar view (Explorer panel "rig board") that shows `.rig/runs/` task/gate state without leaving the editor. **Read-only** — no accept/discard or any other write command is registered. It just reads the same JSON `workbench.py` already writes (`task.json`/`acceptance.json`/`steps.json`); no new state-management engine.

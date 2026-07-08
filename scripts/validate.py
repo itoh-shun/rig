@@ -774,6 +774,35 @@ def check_release_metadata() -> None:
         _emit("PASS", f"release: plugin.json version ({version}) ⇄ CHANGELOG.md 対応節が一致")
 
 
+# ── MCPサーバの静的脅威分析（#303）─────────────────────────────────────────────
+def check_mcp_scan() -> None:
+    """`orchestrate.py mcp-scan`（#303）をCIの一部として実行する。
+
+    scripts/mcp_server.py（#263）が無い環境ではサイレントスキップ（他のオプトイン
+    チェックと同じ方針）。判定ロジックはorchestrate.py側の`mcp_scan()`に一元化し、
+    ここでは severity を FAIL/WARN/PASS にマッピングするだけ（二重実装しない）。
+    """
+    mcp_server_path = ROOT / "scripts" / "mcp_server.py"
+    if not mcp_server_path.is_file():
+        return
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import orchestrate  # noqa: E402 — 遅延import（validate.pyの他チェックに影響させない）
+    result = orchestrate.mcp_scan(mcp_server_path)
+    if not result["available"]:
+        _emit("WARN", f"mcp-scan — {result['reason']}")
+        return
+    sev = result["overall_severity"]
+    n_tools = len(result["tool_findings"])
+    if sev == "high":
+        _emit("FAIL", f"mcp-scan — 総合判定 HIGH（{n_tools} ツール中に要対応の残存リスクあり。詳細は"
+                      "`orchestrate.py mcp-scan`を実行して確認）")
+    elif sev == "medium":
+        _emit("WARN", f"mcp-scan — 総合判定 MEDIUM（{n_tools} ツール中に要確認の残存リスクあり。詳細は"
+                      "`orchestrate.py mcp-scan`を実行して確認）")
+    else:
+        _emit("PASS", f"mcp-scan — 総合判定 LOW（{n_tools} ツール、3層対抗推論で残存リスク低）")
+
+
 # ── skills-lock.json 整合（/rig:import の出所記録・#249）───────────────────────
 _VALID_IMPORT_MODES = ("delegate", "translate", "knowledge")
 
@@ -958,6 +987,11 @@ def main() -> None:
         check_skills_lock()
     except Exception:
         _emit("FAIL", f"skills-lock チェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_mcp_scan()
+    except Exception:
+        _emit("FAIL", f"mcp-scan チェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     print("## rig --validate レポート（CI / shipped tier）\n")
     for line in results:

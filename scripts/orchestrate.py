@@ -3252,6 +3252,125 @@ def cmd_graph(args):
     print("  1ホップ探索: graph --focus <name> ／ 機械可読: graph --json")
 
 
+# ── MCPサーバ自己脅威分析（#303）───────────────────────────────────────────────
+# scripts/mcp_server.py（#263）が公開するツール群を対象に、実行せず静的にのみ分析する。
+# 決定論・副作用なし（validate.pyと同じ位置付けでCIに組み込める）。
+_MCP_SECRET_RE = re.compile(
+    r"-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
+    r"|[Aa][Ww][Ss][A-Za-z_]*(SECRET|secret)[A-Za-z_]*\s*[=:]\s*[A-Za-z0-9/+=]{20,}"
+    r"|(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}"
+    r"|sk-[A-Za-z0-9]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
+)  # scripts/git-hooks/pre-commit の PATTERN と同一趣旨（shell正規表現のPython移植）
+_MCP_SHELL_RISK_RE = re.compile(r"shell\s*=\s*True|os\.system\(|os\.popen\(|[^_]eval\(|[^_]exec\(")
+
+
+def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
+    """`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析する。
+
+    実行しない（importして`TOOLS`辞書を読むだけ・subprocessは一切呼ばない）。
+    返り値はJSON化可能なdictで、`cmd_mcp_scan`（人間可読表示）と`validate.py`
+    （CI連携）の両方から共有する（判定ロジックをここ1箇所に集約）。
+    """
+    path = mcp_server_path or (pathlib.Path(__file__).parent / "mcp_server.py")
+    if not path.exists():
+        return {"available": False, "reason": f"{path} が見つかりません（#263未導入）", "tools": []}
+    source = path.read_text(encoding="utf-8")
+
+    module_findings = []
+    shell_hits = _MCP_SHELL_RISK_RE.findall(source)
+    module_findings.append({
+        "axis": "shell/network権限過剰",
+        "attacker": "ツール引数を任意のシェル文字列としてOS実行できれば、MCP経由で任意コマンド実行が可能になる",
+        "defender": "subprocess.run は argv リスト渡し（shell=True 不使用）。ツール引数はPythonリストの要素として"
+                   "そのまま argv に積まれるだけで、シェルによる再解釈を経由しない",
+        "auditor": "残存リスク: 低（shell=True/os.system/eval/execへの該当なし）" if not shell_hits else
+                  f"残存リスク: 要確認（shell実行相当のパターンを検出: {shell_hits}）",
+        "severity": "low" if not shell_hits else "high",
+    })
+    secret_hits = _MCP_SECRET_RE.findall(source)
+    module_findings.append({
+        "axis": "secret平文露出",
+        "attacker": "ツール定義やコメントに鍵/トークンがハードコードされていれば、MCPクライアント側にそのまま漏える",
+        "defender": "APIキー等はコード中に持たない設計（HTTP系providerは環境変数/cfg経由のみ）",
+        "auditor": "残存リスク: 低（既知の鍵/トークンパターンに一致する文字列なし）" if not secret_hits else
+                  "残存リスク: 要確認（secretパターンに一致する文字列を検出）",
+        "severity": "low" if not secret_hits else "high",
+    })
+    module_findings.append({
+        "axis": "hookインジェクション",
+        "attacker": "MCP経由の呼び出しが`.git/hooks/`やrig管理外のhookを不正に発火・改変できないか",
+        "defender": "全ツールは`workbench.py`/`orchestrate.py`の既存サブコマンドをそのまま呼ぶだけの薄いアダプタで、"
+                   "hookファイル自体への書き込み経路（`install-git-hook`相当）はMCPツール一覧に含まれていない",
+        "auditor": "残存リスク: 低（hookインストール系コマンドはMCPツールとして未公開）",
+        "severity": "low",
+    })
+
+    tool_findings = []
+    try:
+        sys.path.insert(0, str(path.parent))
+        import importlib
+        mcp_server = importlib.import_module("mcp_server")
+        importlib.reload(mcp_server)  # 他run由来のキャッシュを避け毎回静的に読み直す
+        tools = mcp_server.TOOLS
+    except Exception as e:
+        return {"available": False, "reason": f"TOOLS の import に失敗: {e}", "tools": []}
+
+    _ACCEPT_FAMILY = ("accept", "discard", "new", "gate")
+    for name, spec in sorted(tools.items()):
+        is_accept_family = any(h in name for h in _ACCEPT_FAMILY)
+        is_run = name == "rig_orchestrate_run"  # "rig_orchestrate_runs"（集計・read-only）と部分一致で混同しない
+        is_write = is_accept_family or is_run
+        if is_accept_family:
+            attacker = f"「{name}」の呼び出しだけでaccept_requirementsをバイパスして意図しない状態変更を起こせないか"
+            defender = ("force-proof要件（worktree_exists/base_branch_recorded/diff_summary_generated）は"
+                       "CLI本体（workbench.py）側のチェックでMCP経由でもバイパスできない")
+            verdict, severity = "残存リスク: 低（構造的前提はCLI側で強制、force-proof不可）", "low"
+        elif is_run:
+            attacker = f"「{name}」がrecipeのstepとして任意のコマンドを実行し、isolated worktree外に影響を及ぼせないか"
+            defender = ("`--isolate`はデフォルトではなく呼び出し側が明示指定する必要があり、"
+                       "隔離worktreeへの合流はDONE+clean+commitsの場合のみff-mergeされる（既存のisolate機構をそのまま利用）")
+            verdict = "残存リスク: 中（`isolate`未指定でのMCP呼び出しはメイン作業ツリーに直接影響しうる——呼び出し側が`isolate: true`を明示することを推奨）"
+            severity = "medium"
+        else:
+            attacker = f"「{name}」がread-only以上の副作用を持たないか"
+            defender = "board/status/diff等はファイル読み取りのみで状態を変更しない"
+            verdict, severity = "残存リスク: 低", "low"
+        tool_findings.append({
+            "tool": name, "kind": "write" if is_write else "read", "severity": severity,
+            "attacker": attacker, "defender": defender, "auditor_verdict": verdict,
+        })
+
+    _SEV_ORDER = {"low": 0, "medium": 1, "high": 2}
+    all_severities = [f["severity"] for f in module_findings] + [f["severity"] for f in tool_findings]
+    overall = max(all_severities, key=lambda s: _SEV_ORDER[s]) if all_severities else "low"
+    return {"available": True, "path": str(path), "module_findings": module_findings,
+            "tool_findings": tool_findings, "overall_severity": overall}
+
+
+def cmd_mcp_scan(args):
+    result = mcp_scan()
+    if "--json" in args:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    if not result["available"]:
+        print(f"[mcp-scan] {result['reason']}")
+        sys.exit(0)  # #263未導入は「対象なし」であってCI失敗ではない
+    print(f"## rig mcp-scan — {result['path']} の静的脅威分析（3層対抗推論・#303）\n")
+    print("### モジュールレベル（全ツール共通のsubprocess/secret経路）\n")
+    for f in result["module_findings"]:
+        print(f"- **{f['axis']}**")
+        print(f"  - 攻撃者視点: {f['attacker']}")
+        print(f"  - 防御者視点: {f['defender']}")
+        print(f"  - 監査者判定: {f['auditor']}")
+    print(f"\n### ツールレベル（{len(result['tool_findings'])} 件）\n")
+    for f in result["tool_findings"]:
+        print(f"- `{f['tool']}` [{f['kind']}] — {f['auditor_verdict']}")
+    label = {"high": "要対応（CI失敗）", "medium": "要確認（CI通過・警告扱い）", "low": "CI通過可"}
+    print(f"\n総合判定: {result['overall_severity'].upper()}（{label[result['overall_severity']]}）")
+    sys.exit(1 if result["overall_severity"] == "high" else 0)
+
+
 # ── エントリ ──────────────────────────────────────────────────────────────────
 COMMANDS = {
     "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
@@ -3259,7 +3378,7 @@ COMMANDS = {
     "run": cmd_run, "models": cmd_models, "probe": cmd_probe, "queue": cmd_queue,
     "runs": cmd_runs, "party": cmd_party, "graph": cmd_graph,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest, "ab": cmd_ab,
-    "fleet": cmd_fleet,
+    "fleet": cmd_fleet, "mcp-scan": cmd_mcp_scan,
 }
 
 

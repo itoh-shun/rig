@@ -468,6 +468,8 @@ opt-in：このサーバを起動しない限り何も変わらず、既存のCL
 
 **検証**：使い捨てリポジトリでサーバをsubprocessとして起動し、`initialize`→`tools/list`→`rig_task_new`（enqueue）→`rig_task_board`（task_id取得）→`rig_task_accept`（gate未達で`isError: true`拒否を確認）→`rig_task_gate`で全criterionを`passed`に設定→`rig_task_accept`（成功）というhappy pathをJSON-RPC経由のみで再現し、CLI直接実行時と同じ拒否文言・同じsquash反映結果になることを確認した。
 
+**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はMEDIUM（`rig_orchestrate_run`は`--isolate`未指定だとメイン作業ツリーに直接影響しうるため、呼び出し側で`isolate: true`を明示することを推奨、という具体的な指摘）。
+
 ### VS Code拡張（`vscode-extension/`・#286）
 
 `.rig/runs/`のtask/gate状態をエディタのサイドバー（Explorer内「rig board」パネル）に常駐表示する拡張。**読み取り専用**——accept/discard等の書き込みコマンドは一切登録していない。`workbench.py`が書くJSON（`task.json`/`acceptance.json`/`steps.json`）をそのまま読むだけで、新しい状態管理エンジンは持たない。
