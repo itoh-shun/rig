@@ -38,6 +38,8 @@ try:
     import fcntl  # POSIX: task 同時操作の排他 (task_lock)
 except ImportError:
     fcntl = None  # type: ignore[assignment]  # Windows fallback（lock 無効）
+
+import ast_diff  # 同ディレクトリ内モジュール（#280・セマンティックdiff補強）
 from collections import Counter
 
 # ── acceptance-gate プリセット（正本。instruction はここを参照する）───────────────
@@ -668,6 +670,33 @@ def _diff_lines(root: pathlib.Path, task: dict) -> tuple[list[str], str, list[st
     return names, stat, []
 
 
+def _semantic_diff_section(root: pathlib.Path, task: dict, names: list) -> list:
+    """変更された*.pyファイルをAST差分で要約する（#280）。テキストdiffの補強であり置換ではない。
+
+    non-Python / parse失敗ファイルは`ast_diff`自身が`supported: False`を返すため、
+    ここでは呼び出すファイルを絞る（Modified な *.py のみ）だけで、判定ロジックは持たない。
+    """
+    wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else root
+    base = task["base_commit"]
+    py_modified = []
+    for line in names:
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0] == "M" and parts[-1].endswith(".py"):
+            py_modified.append(parts[-1])
+    if not py_modified:
+        return []
+    out = ["", "Semantic diff (Python, #280):"]
+    for path in py_modified:
+        base_src = git(["show", f"{base}:{path}"], cwd=wt).stdout
+        try:
+            new_src = (wt / path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        result = ast_diff.semantic_diff(base_src, new_src)
+        out.append(ast_diff.format_summary(result, path))
+    return out
+
+
 def cmd_diff(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
@@ -691,6 +720,9 @@ def cmd_diff(args: argparse.Namespace) -> None:
         print(f"\n[WARN] worktree に未コミットの変更が {len(dirty)} 件あります（accept 前にコミットが必要）:")
         for line in dirty[:20]:
             print(f"  {line}")
+
+    for line in _semantic_diff_section(root, task, names):
+        print(line)
 
     diff_md = d / "diff.md"
     sections = parse_diff_md(diff_md.read_text(encoding="utf-8")) if diff_md.exists() else {}

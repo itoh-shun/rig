@@ -273,7 +273,7 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 
 ## 9. diff / accept / discard
 
-**`/rig:rig diff`** は `diff.md` の `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` 見出しを構造化して表示し、末尾に **コードが gate 状態から算出する** `Recommended:` 行を付す（モデルが書く行ではないので希望的観測が入らない）：
+**`/rig:rig diff`** は `diff.md` の `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` 見出しを構造化して表示し、末尾に **コードが gate 状態から算出する** `Recommended:` 行を付す（モデルが書く行ではないので希望的観測が入らない）。Modifiedな`*.py`ファイルには`ast`モジュールによるセマンティックdiff（シグネチャ変更／本体変更／意味的変更なしを区別、#280）も自動で挿入される：
 
 ```
 ## rig diff: rig-20260704-153012-login-fix

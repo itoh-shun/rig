@@ -273,7 +273,7 @@ The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time:
 
 ## 9. Diff / accept / discard
 
-**`/rig:rig diff`** parses `diff.md`'s `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` headings and prints them structured, plus a `Recommended:` line the *code* computes from gate state (not something the model writes, so it can't be wishful):
+**`/rig:rig diff`** parses `diff.md`'s `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` headings and prints them structured, plus a `Recommended:` line the *code* computes from gate state (not something the model writes, so it can't be wishful). Modified `*.py` files also get an automatic semantic-diff line (AST-based signature/body-change/no-semantic-change distinction, #280):
 
 ```
 ## rig diff: rig-20260704-153012-login-fix
