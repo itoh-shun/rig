@@ -1,6 +1,6 @@
 ---
 description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/stats/review/cockpit/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | cockpit | install-git-hook [--which pre-commit|pre-push|both] [--force] | gh issue <n> | gh pr <n> review|fix | gh ci"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | digest [--since 7d] | review <id> --set p=v | cockpit | install-git-hook [--which pre-commit|pre-push|both] [--force] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -26,6 +26,7 @@ $ARGUMENTS
 | `log [--limit N] [--json]` | `facets/instructions/workbench-ops`（実行ログ一覧） |
 | `board [--all]` | `facets/instructions/workbench-ops`（**全 task を一覧するダッシュボード**。複数タスクを並行で進めているときの単一の確認場所） |
 | `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
+| `digest [--since 7d]` | `facets/instructions/workbench-ops`（週次/月次のダイジェスト。よく落ちるgate・drill実績・ゴム印疑いをまとめて出す） |
 | `review <task_id> --set <persona>=<verdict>` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録） |
 | `cockpit` | `facets/instructions/workbench-ops`（**board・gate・drill・cost・auditを一画面に集約するMission Control**。read-only。次アクションを案内するのみで accept/discard 自体は実行しない） |
 | `install-git-hook [--which pre-commit\|pre-push\|both] [--force]` | `facets/instructions/workbench-ops`（secretパターンスキャンを `.git/hooks/` にopt-inインストール。rig経由でない commit/push にも最小限のセンサーを適用） |

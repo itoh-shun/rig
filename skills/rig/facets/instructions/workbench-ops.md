@@ -136,3 +136,11 @@ python3 scripts/workbench.py stats [--recipe bugfix] [--verifier security-review
 ```
 
 `.rig/runs/` 配下の全 task を集計し、そのまま提示する（Runs/Accepted/Discarded/Failed gate のサマリ→Most used recipes→Gate results→Verifier behavior）。**`Warning:` 行が出た場合は必ずそのまま伝える**——`<persona> has 0 rejects across N runs. Possible rubber-stamp behavior.` は N≥5 かつ REJECT 0 件の reviewer に対する自動検知であり、ゴム印化（何でも通す reviewer）の疑いを人に気づかせるための唯一のシグナル。黙って握りつぶさない。verdict が一件も記録されていない場合は「未記録」の旨を伝え、`/rig review` での記録を促す。
+
+## `/rig digest [--since 7d|30d|...]`
+
+```
+python3 scripts/workbench.py digest --since 7d
+```
+
+`stats`と同じ集計ロジック（`load_json`/`gate_status`/`review.json`の読み方）を期間で絞って再利用し、「Runs/Accepted/Discarded」「よく落ちるgate（criterion別failed件数）」「drill実績（期間内の実行回数・検出率）」「ゴム印疑い」を1回でまとめて出す（#285）。`stats`が随時の任意集計であるのに対し、`digest`は定期実行（週次/月次）を前提にした要約——`/rig:loop --every 7d "workbench.py digest"`のように定期チョアとして回せる。

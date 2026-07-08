@@ -1340,6 +1340,83 @@ def cmd_stats(args: argparse.Namespace) -> None:
         print("（詳細は `workbench.py audit` で参照）")
 
 
+def cmd_digest(args: argparse.Namespace) -> None:
+    """週次/月次のrunテレメトリ・ダイジェスト（#285）。`stats`と同じ集計ロジック
+    （load_json/gate_status/review.jsonの読み方）を再利用し、期間を切って
+    「よく落ちるgate」「drillでの検出実績」「ゴム印疑い」をまとめて出す。"""
+    root = repo_root()
+    base = runs_dir(root)
+
+    m = re.match(r"^(\d+)d$", args.since)
+    if not m:
+        die(f"--since は '<N>d' 形式で指定してください（例: 7d。値: {args.since!r}）")
+    cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(days=int(m.group(1)))
+
+    tasks: list[dict] = []
+    if base.is_dir():
+        for p in sorted(base.iterdir()):
+            tj = p / "task.json"
+            if tj.exists():
+                t = load_json(tj)
+                if datetime.datetime.fromisoformat(t["created_at"]) >= cutoff:
+                    tasks.append(t)
+
+    print(f"## rig digest（直近 {args.since}）\n")
+    if not tasks:
+        print("対象期間に run がありません。")
+        return
+
+    print(f"Runs: {len(tasks)}")
+    print(f"Accepted: {sum(1 for t in tasks if t['status'] == 'accepted')}")
+    print(f"Discarded: {sum(1 for t in tasks if t['status'] == 'discarded')}")
+
+    # よく落ちるgate（criterion単位の failed 件数）
+    crit_fail: Counter[str] = Counter()
+    for t in tasks:
+        acc = load_json(base / t["task_id"] / "acceptance.json", {"checks": []})
+        for c in acc.get("checks", []):
+            if c.get("status") == "failed":
+                crit_fail[c["name"]] += 1
+    print("\nよく落ちるgate:")
+    if crit_fail:
+        for name, n in crit_fail.most_common(5):
+            print(f"- {name}: {n}件")
+    else:
+        print("- (failed の記録なし)")
+
+    # drillでの検出実績（期間内）
+    drills = [d for d in _load_drill(root)
+              if d.get("ts") and datetime.datetime.fromisoformat(d["ts"]) >= cutoff]
+    detected = sum(s.get("detected", 0) for d in drills for s in d.get("scores", []))
+    seeded = sum(s.get("seeded", 0) for d in drills for s in d.get("scores", []))
+    print("\ndrill実績:")
+    if drills:
+        rate = f"{detected / seeded * 100:.0f}%" if seeded else "-"
+        print(f"- 実行 {len(drills)}回 / 検出 {detected}/{seeded}（{rate}）")
+    else:
+        print("- 期間内の実行なし")
+
+    # ゴム印疑い（stats と同じロジック）
+    review_by_task: dict[str, dict] = {}
+    for t in tasks:
+        rj = base / t["task_id"] / "review.json"
+        if rj.exists():
+            review_by_task[t["task_id"]] = load_json(rj)
+    verifier_stats: Counter[str] = Counter()
+    verifier_rejects: Counter[str] = Counter()
+    for rv in review_by_task.values():
+        for v in rv.get("verdicts", []):
+            verifier_stats[v["persona"]] += 1
+            if v["verdict"] == "REJECT":
+                verifier_rejects[v["persona"]] += 1
+    warnings = [f"{p} has 0 rejects across {n} runs. Possible rubber-stamp behavior."
+                for p, n in verifier_stats.items() if n >= 5 and verifier_rejects.get(p, 0) == 0]
+    if warnings:
+        print("\nゴム印疑い:")
+        for w in warnings:
+            print(f"- {w}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="rig workbench — run-state / worktree / acceptance-gate manager")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1423,6 +1500,10 @@ def main() -> None:
     p.add_argument("--verifier", help="persona 名で絞り込み（review.json に記録がある run のみ）")
     p.add_argument("--last", help="直近 N 日に絞り込み（例: 30d）")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("digest", help="週次/月次のrunテレメトリ・ダイジェスト（よく落ちるgate・drill実績・ゴム印疑い）")
+    p.add_argument("--since", default="7d", help="対象期間（例: 7d・30d。既定 7d）")
+    p.set_defaults(func=cmd_digest)
 
     p = sub.add_parser("audit", help="`accept --force` 等の監査ログを一覧する（`.rig/audit.jsonl`）")
     p.add_argument("--limit", type=int, help="直近 N 件のみ表示")

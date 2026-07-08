@@ -18,6 +18,14 @@ Three properties keep the safety flow real (not just documented):
 
 **Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. A separate set of playful/creative commands (MAGI council, roast, movie, …) shares the same gates but is explicitly marked experimental. §7 breaks all of this down by name.
 
+### Positioning (#267)
+
+rig is deliberately **not** a heavyweight external engine with its own standalone CLI, session model, and subagent runtime. When the host is Claude Code, rig reuses Claude Code's own native primitives — Skill invocation, subagent dispatch, hooks (`PreCompact` for run-continuity) — instead of reimplementing them; the plugin adds only the layer that's actually missing: recipe DAGs, the acceptance-gate, isolated worktrees, and telemetry. That's what "Claude Code native; no heavy DSL engine" means in `plugin.json`.
+
+This delegation is currently asymmetric across hosts. For `--provider codex` (and other non-Claude-Code providers), rig does **not** get to reuse an equivalent native layer — `orchestrate.py` calls the provider as a stateless one-shot subprocess and owns the entire control loop itself (state machine, retries, gate) rather than delegating any of it. Deepening that integration for Codex/Copilot/other hosts is tracked in #294/#304 and not yet done; until then, rig is "native" specifically on Claude Code, and "a self-contained harness calling out to a model" everywhere else.
+
+What doesn't vary by host: rig doesn't just claim its gate works, it measures whether it does. `/rig:drill` seeds known bug classes into a synthetic diff and scores each reviewer persona's actual detection rate; `/rig:rig stats` flags reviewers with zero rejects as possible rubber stamps. Most review-gate tooling stops at "a reviewer exists" — rig's differentiator is knowing, with numbers, whether that reviewer is actually catching anything.
+
 ## 2. 30-second start
 
 ```bash
@@ -416,6 +424,18 @@ Persona: strict_senior_engineer
 Six metrics per reviewer: `true_positive` / `false_positive` / `false_negative` / `severity_accuracy` (does the reviewer's severity match the seed's?) / `blocking_accuracy` (Blocking vs. Non-blocking placement) / `explanation_quality` (concrete fix, or generic advice?). `Recommended Persona Updates` picks only from four fixed categories (`add_checklist_item` / `adjust_severity_rule` / `add_false_positive_guard` / `strengthen_security_focus`) — no vague prose, so results roll up across runs. `--replay <persona>` re-runs archived diffs after a persona edit and diffs old vs. new verdicts — a snapshot test for reviewer personas. Nothing here touches real code; everything runs in a throwaway worktree.
 
 rig does not just run reviewers. It measures them.
+
+### Dogfooding (#284)
+
+The same measurement applies to rig's own development. Anyone maintaining a fork or a heavily-customized instance can generate the current numbers with the commands already covered above — no separate tooling needed:
+
+```bash
+python3 scripts/workbench.py digest --since 30d   # §10 — failing gates, drill detection rate, rubber-stamp warnings
+python3 scripts/workbench.py stats                 # §10 — the same aggregation, unscoped by time
+/rig:drill --replay                                # §11 — regression-test the reviewer personas themselves
+```
+
+**Honest scope note:** this repo does not currently auto-publish those numbers (e.g. a CI job that regenerates a badge or a docs page on every merge) — that's tracked as follow-up work, not implemented here. Today, "dogfooding" means the maintainer can run the above locally and paste the output into a PR description or release notes; it is not yet a live, continuously-updated public score.
 
 ## 12. GitHub integration
 
