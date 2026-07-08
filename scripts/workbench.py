@@ -436,6 +436,47 @@ def ensure_rig_gitignored(root: pathlib.Path) -> bool:
     return True
 
 
+_STOPWORDS = {"の", "を", "に", "は", "が", "で", "と", "も", "て", "た", "する", "して", "ください",
+              "the", "a", "an", "to", "for", "of", "in", "on", "and", "or", "is", "are"}
+
+
+def _tokenize(text: str) -> set[str]:
+    """雑な分かち書き（英数字連続＋残りは1文字ずつ）。形態素解析器を持ち込まない
+    軽量ヒューリスティックで十分——完全一致でなく「重なりの手がかり」があればよい。"""
+    words = re.findall(r"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", text.lower())
+    return {w for w in words if w not in _STOPWORDS and len(w) > 1}
+
+
+def find_similar_tasks(root: pathlib.Path, text: str, exclude_task_id: str | None = None,
+                       limit: int = 3, threshold: float = 0.25) -> list[dict]:
+    """過去taskの`input`と類似度（Jaccard係数・簡易分かち書き）が高い順に返す（#290・デジャブ検知）。
+    専用の埋め込み/検索エンジンは持ち込まない——`task.json`を舐めるだけの軽量な手がかり。"""
+    base = runs_dir(root)
+    if not base.is_dir():
+        return []
+    query = _tokenize(text)
+    if not query:
+        return []
+    scored: list[tuple[float, dict]] = []
+    for p in base.iterdir():
+        tj = p / "task.json"
+        if not tj.exists():
+            continue
+        t = load_json(tj)
+        if t["task_id"] == exclude_task_id:
+            continue
+        candidate = _tokenize(t.get("input", ""))
+        if not candidate:
+            continue
+        overlap = query & candidate
+        union = query | candidate
+        score = len(overlap) / len(union) if union else 0.0
+        if score >= threshold:
+            scored.append((score, t))
+    scored.sort(key=lambda x: -x[0])
+    return [t for _, t in scored[:limit]]
+
+
 def cmd_new(args: argparse.Namespace) -> None:
     root = repo_root()
     if args.type not in TASK_TYPES:
@@ -498,6 +539,13 @@ def cmd_new(args: argparse.Namespace) -> None:
     else:
         print("worktree: なし（--no-worktree 指定）")
     print(f"state: {d.relative_to(root)}/")
+
+    similar = find_similar_tasks(root, args.input, exclude_task_id=task_id)
+    if similar:
+        print("\n類似タスク（過去run・デジャブ検知#290）:")
+        for t in similar:
+            label = t["input"][:50] + ("…" if len(t["input"]) > 50 else "")
+            print(f"  - {t['task_id']}（{t['status']}）: {label}")
 
 
 def cmd_step(args: argparse.Namespace) -> None:
