@@ -501,6 +501,39 @@ def check_agents() -> None:
     _emit("PASS", f"agents: {ok}/{len(files)} 件 frontmatter OK")
 
 
+def check_drill_coverage() -> None:
+    """新規 reviewer persona が drill の種カタログから漏れていないかを検査する（#266）。
+
+    `agents/*-reviewer.md` のファイル名 stem（末尾 `-reviewer` を除いた部分）を、
+    `facets/instructions/drill.md` の種カタログ表「検出すべき観点」列と突き合わせる。
+    1件も対応する種が無ければ WARN——新しい reviewer を足したのに drill が較正できない
+    まま放置される（#266 が懸念した「未計測のまま気づかれない」状態）を機械的に検知する。
+    `finding-verifier` は検出役ではなく反証役（`--verify-findings` で別枠採点）のため対象外。
+    """
+    drill_path = SKILLS / "facets" / "instructions" / "drill.md"
+    if not AGENTS.is_dir() or not drill_path.is_file():
+        return
+    drill_text = drill_path.read_text(encoding="utf-8")
+
+    covered: set[str] = set()
+    for line in drill_text.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) != 5 or cells[2] in ("検出すべき観点", "---"):
+            continue
+        for domain in re.split(r"\s*/\s*", cells[2]):
+            if domain:
+                covered.add(domain)
+
+    reviewers = sorted(p.stem for p in AGENTS.glob("*-reviewer.md"))
+    uncovered = [name for name in reviewers if name[: -len("-reviewer")] not in covered]
+    if uncovered:
+        _emit("WARN", f"drill 網羅性 — {', '.join(uncovered)} が drill.md の種カタログ「検出すべき観点」に"
+              "見当たりません（未較正の可能性。/rig:drill で検出率を測れるよう種を追加してください）")
+    _emit("PASS", f"drill 網羅性: reviewer {len(reviewers)} 件中 {len(reviewers) - len(uncovered)} 件が種カタログでカバー")
+
+
 # ── §2 目録ドリフト（validate.md ④ の機械実装）────────────────────────────────
 def _expand_braces(token: str) -> list[str]:
     """`a/{b,c}-d` → [`a/b-d`, `a/c-d`]（1段のみ・§2 の記法に十分）。"""
@@ -885,6 +918,11 @@ def main() -> None:
         check_agents()
     except Exception:
         _emit("FAIL", f"agents チェック — 予期しないエラー:\n{traceback.format_exc()}")
+
+    try:
+        check_drill_coverage()
+    except Exception:
+        _emit("FAIL", f"drill 網羅性チェック — 予期しないエラー:\n{traceback.format_exc()}")
 
     try:
         check_catalog_drift()
