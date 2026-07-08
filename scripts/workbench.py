@@ -1652,6 +1652,201 @@ def cmd_stats(args: argparse.Namespace) -> None:
         print("（詳細は `workbench.py audit` で参照）")
 
 
+# ── セッション横断の継続的instinct学習層（#306）─────────────────────────────
+# 「このプロジェクトではこう書く」「ここはこう探索すると早い」のような、明確なgate失敗
+# ではなく暗黙のコツを軽量に蓄積・再注入する。facets/knowledge（検証済み知識）とは別枠
+# ——ここに書くのは信頼度つきの未検証パターンであり、知識層と混同しない。
+#
+# 実際のパターン抽出（diff/セッションから何を学ぶか）はモデル自身の仕事（Stop hookは
+# 「提案してよいか検討してください」という指示を出すだけ）。決定論的に扱うのは
+# 保存・減衰・競合解決・注入対象の選定——ここがworkbench.pyの責務。
+INSTINCTS_PATH_NAME = "instincts.jsonl"
+_INSTINCT_CONFIDENCE_THRESHOLD = 0.7   # これ未満は次回セッションに注入しない
+_INSTINCT_INJECT_CHAR_LIMIT = 500      # context-minimal原則を壊さない上限
+_INSTINCT_DECAY_DAYS = 30              # この日数 last_seen が更新されないと減衰
+_INSTINCT_DECAY_AMOUNT = 0.1
+_INSTINCT_EXPIRE_FLOOR = 0.2           # 減衰後この値を下回ったら status=expired
+
+# secret/個人情報/一時的な環境依存は学習禁止（レビューコメントの要求）。
+# scripts/git-hooks/pre-commit の PATTERN・scripts/orchestrate.py の _MCP_SECRET_RE と
+# 同一趣旨（各スクリプトはstdlib-onlyで完結させるためコピーを持つ——このリポジトリの規約）。
+_INSTINCT_SECRET_RE = re.compile(
+    r"-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
+    r"|[Aa][Ww][Ss][A-Za-z_]*(SECRET|secret)[A-Za-z_]*\s*[=:]\s*[A-Za-z0-9/+=]{20,}"
+    r"|(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}"
+    r"|sk-[A-Za-z0-9]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|/(home|Users)/[A-Za-z0-9_.-]+"        # ローカル絶対パス
+    r"|[A-Z][A-Z0-9_]{3,}\s*=\s*\S+"          # ENV_VAR=value 風の代入（一時的な環境依存の目印）
+)
+
+
+def _instinct_is_learnable(text: str) -> tuple[bool, str]:
+    """secret/個人情報/一時的な環境依存を含む候補を除外する（学習禁止フィルタ）。"""
+    if _INSTINCT_SECRET_RE.search(text):
+        return False, "secret/ローカルパス/環境依存らしき文字列を含むため除外"
+    if len(text) > 300:
+        return False, "300字を超えるため候補として大きすぎる（要約してから再提案）"
+    return True, ""
+
+
+def _instincts_path(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / INSTINCTS_PATH_NAME
+
+
+def load_instincts(root: pathlib.Path) -> list[dict]:
+    path = _instincts_path(root)
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            out.append(json.loads(line))
+    return out
+
+
+def save_instincts(root: pathlib.Path, instincts: list[dict]) -> None:
+    path = _instincts_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in instincts), encoding="utf-8")
+
+
+def add_instinct(root: pathlib.Path, text: str, evidence: str, task_id: str | None,
+                 confidence: float, supersedes: str | None = None) -> dict:
+    """新しいinstinct候補を記録する。学習禁止フィルタに触れる場合はValueErrorを送出する
+    （呼び出し側=CLIがユーザーにそのまま理由を見せる）。`supersedes`で明示的に既存のIDを
+    指定すると、その旧instinctを自動でmuteする（意味的な矛盾検知は行わない——
+    「このinstinctは古い/矛盾する」という判断はモデル自身が`--supersedes`で表明する）。
+    """
+    ok, reason = _instinct_is_learnable(text)
+    if not ok:
+        raise ValueError(reason)
+    instincts = load_instincts(root)
+    now = now_iso()
+    rec = {
+        "id": f"in-{hashlib.sha256((text + now).encode()).hexdigest()[:10]}",
+        "text": text, "evidence": evidence,
+        "source_task_ids": [task_id] if task_id else [],
+        "confidence": max(0.0, min(1.0, confidence)),
+        "first_seen": now, "last_seen": now, "hit_count": 1,
+        "decay_reason": None, "status": "active", "supersedes": [supersedes] if supersedes else [],
+    }
+    if supersedes:
+        for other in instincts:
+            if other["id"] == supersedes and other["status"] == "active":
+                other["status"] = "muted"
+                other["decay_reason"] = f"{rec['id']} により supersede（明示指定）"
+    instincts.append(rec)
+    save_instincts(root, instincts)
+    return rec
+
+
+def decay_instincts(root: pathlib.Path, now: datetime.datetime | None = None) -> int:
+    """`last_seen`が`_INSTINCT_DECAY_DAYS`日以上更新されていないactive instinctのconfidenceを
+    減衰させる。閾値を下回ればstatus=expiredにする。暗黙知は腐る、という前提を機械的に扱う。
+    戻り値は変更されたinstinct数。"""
+    now = now or datetime.datetime.now().astimezone()
+    instincts = load_instincts(root)
+    changed = 0
+    for rec in instincts:
+        if rec["status"] != "active":
+            continue
+        last_seen = datetime.datetime.fromisoformat(rec["last_seen"])
+        age_days = (now - last_seen).days
+        if age_days >= _INSTINCT_DECAY_DAYS:
+            rec["confidence"] = round(max(0.0, rec["confidence"] - _INSTINCT_DECAY_AMOUNT), 3)
+            changed += 1
+            if rec["confidence"] < _INSTINCT_EXPIRE_FLOOR:
+                rec["status"] = "expired"
+                rec["decay_reason"] = f"{age_days}日間ヒット無し・confidenceが{_INSTINCT_EXPIRE_FLOOR}未満に減衰"
+    if changed:
+        save_instincts(root, instincts)
+    return changed
+
+
+def select_for_injection(root: pathlib.Path, task_id: str | None = None) -> tuple[list, int]:
+    """次回セッション開始時に注入するinstinctを選ぶ（純粋な選定ロジック・決定論）。
+
+    confidence降順→id昇順（決定論）でactiveなものだけを走査し、`_INSTINCT_INJECT_CHAR_LIMIT`
+    文字に収まるだけ選ぶ（context-minimal原則）。`hit_count`をインクリメントし`last_seen`を
+    更新する（注入された=使われた、という実績を次のdecay判定に反映する）。
+    選んだinstinctのIDは`task_id`が渡されれば呼び出し側が注入ログに残せるよう返す。
+    """
+    instincts = load_instincts(root)
+    candidates = sorted(
+        (r for r in instincts if r["status"] == "active" and r["confidence"] >= _INSTINCT_CONFIDENCE_THRESHOLD),
+        key=lambda r: (-r["confidence"], r["id"]),
+    )
+    selected, total_chars = [], 0
+    now = now_iso()
+    for rec in candidates:
+        if total_chars + len(rec["text"]) > _INSTINCT_INJECT_CHAR_LIMIT:
+            continue
+        selected.append(rec)
+        total_chars += len(rec["text"])
+        rec["hit_count"] += 1
+        rec["last_seen"] = now
+    if selected:
+        save_instincts(root, instincts)
+    return selected, total_chars
+
+
+def cmd_instincts(args: argparse.Namespace) -> None:
+    root = repo_root()
+    if args.add:
+        try:
+            rec = add_instinct(root, args.add, args.evidence or "", args.task_id,
+                               args.confidence, args.supersedes)
+        except ValueError as e:
+            print(f"[ERROR] instinct候補を却下: {e}")
+            sys.exit(1)
+        print(f"instinct記録: {rec['id']}（confidence={rec['confidence']}）"
+              + (f"。{args.supersedes} をmuteしました" if args.supersedes else ""))
+        return
+    if args.mute or args.expire:
+        target_id, new_status = (args.mute, "muted") if args.mute else (args.expire, "expired")
+        instincts = load_instincts(root)
+        found = next((r for r in instincts if r["id"] == target_id), None)
+        if not found:
+            print(f"[ERROR] instinct '{target_id}' が見つかりません")
+            sys.exit(1)
+        found["status"] = new_status
+        found["decay_reason"] = f"手動で{new_status}に変更"
+        save_instincts(root, instincts)
+        print(f"{target_id} を {new_status} にしました。")
+        return
+    if args.decay:
+        n = decay_instincts(root)
+        print(f"{n} 件のinstinctを減衰させました（{_INSTINCT_DECAY_DAYS}日以上last_seen更新なし）。")
+        return
+    if args.inject_preview:
+        selected, total_chars = select_for_injection(root, args.task_id)
+        if args.json:
+            print(json.dumps({"selected": selected, "total_chars": total_chars}, ensure_ascii=False))
+            return
+        if not selected:
+            print("注入対象のinstinctはありません（confidence閾値未達 or 未登録）。")
+            return
+        print(f"## 次回注入されるinstinct（{len(selected)}件・{total_chars}/{_INSTINCT_INJECT_CHAR_LIMIT}字）\n")
+        for rec in selected:
+            print(f"- [{rec['confidence']}] {rec['text']}")
+        return
+    # 既定: 一覧表示（/rig:rig instincts）
+    instincts = load_instincts(root)
+    if not instincts:
+        print("記録されたinstinctはありません。")
+        return
+    print(f"## rig instincts（{len(instincts)} 件・facets/knowledgeとは別枠の未検証パターン）\n")
+    for rec in sorted(instincts, key=lambda r: -r["confidence"]):
+        mark = {"active": "●", "muted": "○", "expired": "×"}.get(rec["status"], "?")
+        inject = "→次回注入" if rec["status"] == "active" and rec["confidence"] >= _INSTINCT_CONFIDENCE_THRESHOLD else ""
+        print(f"{mark} [{rec['id']}] confidence={rec['confidence']} hit={rec['hit_count']} {inject}")
+        print(f"    {rec['text']}")
+        if rec.get("evidence"):
+            print(f"    根拠: {rec['evidence']}")
+    print(f"\n破棄: workbench.py instincts --mute <id> ／ 減衰実行: workbench.py instincts --decay")
+
+
 def cmd_digest(args: argparse.Namespace) -> None:
     """週次/月次のrunテレメトリ・ダイジェスト（#285）。`stats`と同じ集計ロジック
     （load_json/gate_status/review.jsonの読み方）を再利用し、期間を切って
@@ -1840,6 +2035,19 @@ def main() -> None:
     p = sub.add_parser("digest", help="週次/月次のrunテレメトリ・ダイジェスト（よく落ちるgate・drill実績・ゴム印疑い）")
     p.add_argument("--since", default="7d", help="対象期間（例: 7d・30d。既定 7d）")
     p.set_defaults(func=cmd_digest)
+
+    p = sub.add_parser("instincts", help="セッション横断の継続的instinct学習層を一覧・管理する（#306）")
+    p.add_argument("--add", metavar="TEXT", help="instinct候補を記録する（300字以内・secret/ローカルパス含む場合は却下）")
+    p.add_argument("--evidence", help="--add と併用。根拠の短い説明")
+    p.add_argument("--task-id", help="--add と併用。この候補の元になったtask_id")
+    p.add_argument("--confidence", type=float, default=0.5, help="--add と併用。初期confidence（既定0.5）")
+    p.add_argument("--supersedes", help="--add と併用。明示的にこのidのinstinctをmuteして置き換える")
+    p.add_argument("--mute", metavar="ID", help="指定idをmuteする（次回から注入されない）")
+    p.add_argument("--expire", metavar="ID", help="指定idをexpiredにする")
+    p.add_argument("--decay", action="store_true", help=f"last_seenが{_INSTINCT_DECAY_DAYS}日以上更新されていないactive instinctを減衰させる")
+    p.add_argument("--inject-preview", action="store_true", help="次回セッション開始時に実際に注入される内容をプレビューする")
+    p.add_argument("--json", action="store_true", help="--inject-preview と併用。機械可読なJSONで出力（hooks/inject-instincts.sh用）")
+    p.set_defaults(func=cmd_instincts)
 
     p = sub.add_parser("audit", help="`accept --force` 等の監査ログを一覧する（`.rig/audit.jsonl`）")
     p.add_argument("--limit", type=int, help="直近 N 件のみ表示")

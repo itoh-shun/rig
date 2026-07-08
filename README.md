@@ -557,6 +557,23 @@ An experimental backend that delegates review-gate parallel fan-out to Anthropic
 
 Builds on `--auto-route` (#264) by learning from `.rig/runs.jsonl`'s track record (gate pass rate per model) with a frequency-based approach — no ML model needed. **Defaults to shadow mode**: predictions are recorded but not applied until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static auto-route when there aren't enough reference runs or pass rate is too low, always recording the rejected candidates and why (counterfactuals). The exploration budget is hash-based rather than random, so it stays deterministic. See `commands/orchestrate.md` §⑩ for details. Regret logging (auto-calibrating "too cheap"/"too expensive" picks) is not implemented.
 
+### Continuous instinct-learning layer (`/rig:rig instincts`, #306)
+
+Separate from `facets/knowledge` (verified knowledge): a lightweight, confidence-scored store of implicit, project-specific patterns ("this repo prefers X", "this directory structure searches faster this way") in `.rig/instincts.jsonl`.
+
+```bash
+python3 scripts/workbench.py instincts --add "<short statement>" --evidence "<why>" --confidence 0.8
+python3 scripts/workbench.py instincts --add "<new policy>" --supersedes <old-id>   # mutes the contradicting old one
+python3 scripts/workbench.py instincts --decay             # confidence drops after 30 days unused; expires below 0.2
+python3 scripts/workbench.py instincts --inject-preview    # preview what the next session would inject
+```
+
+- **Extraction is the model's job** — `hooks/suggest-instincts.sh` (a `Stop` hook) only reminds the model to consider proposing one; it never manufactures a quota (most sessions won't have anything worth recording).
+- **Only confidence >= 0.7 gets injected**, capped at 500 characters total — `hooks/inject-instincts.sh` (a `SessionStart` hook) enforces both, keeping the context-minimal principle intact.
+- **Secrets/PII/local-env values are refused at `--add` time** (private keys, tokens, absolute home-directory paths, `ENV_VAR=value`-shaped strings) — rejected outright, not silently dropped.
+- **Conflicts are resolved explicitly, not inferred**: recognizing that two instincts contradict each other requires judgment, so it's the model's job to say so via `--supersedes <old-id>`, which mutes the old one so it's never injected alongside the new one.
+- **Honest scope**: automatic semantic contradiction *detection* isn't implemented — only the mechanical *resolution* once a contradiction is explicitly declared.
+
 ## 13. Advanced commands
 
 ### Command map

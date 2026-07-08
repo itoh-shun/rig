@@ -1,6 +1,6 @@
 ---
 description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/stats/review/cockpit/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | digest [--since 7d] | review <id> --set p=v | cockpit | install-git-hook [--which pre-commit|pre-push|both] [--force] | gh issue <n> | gh pr <n> review|fix | gh ci"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | digest [--since 7d] | review <id> --set p=v | cockpit | instincts [--add TEXT|--mute ID|--expire ID|--decay|--inject-preview] | install-git-hook [--which pre-commit|pre-push|both] [--force] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -29,6 +29,7 @@ $ARGUMENTS
 | `digest [--since 7d]` | `facets/instructions/workbench-ops`（週次/月次のダイジェスト。よく落ちるgate・drill実績・ゴム印疑いをまとめて出す） |
 | `review <task_id> --set <persona>=<verdict>` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録） |
 | `cockpit` | `facets/instructions/workbench-ops`（**board・gate・drill・cost・auditを一画面に集約するMission Control**。read-only。次アクションを案内するのみで accept/discard 自体は実行しない） |
+| `instincts [--add TEXT --evidence E --confidence C] [--mute ID\|--expire ID\|--decay\|--inject-preview]` | `facets/instructions/workbench-ops`（**セッション横断の継続的instinct学習層**。`facets/knowledge`とは別枠の未検証パターン。confidence>=0.7のみ次回セッションに軽量注入・#306） |
 | `install-git-hook [--which pre-commit\|pre-push\|both] [--force]` | `facets/instructions/workbench-ops`（secretパターンスキャンを `.git/hooks/` にopt-inインストール。rig経由でない commit/push にも最小限のセンサーを適用） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |

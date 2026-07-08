@@ -203,3 +203,22 @@ python3 scripts/workbench.py digest --since 7d
 ```
 
 `stats`と同じ集計ロジック（`load_json`/`gate_status`/`review.json`の読み方）を期間で絞って再利用し、「Runs/Accepted/Discarded」「よく落ちるgate（criterion別failed件数）」「drill実績（期間内の実行回数・検出率）」「ゴム印疑い」を1回でまとめて出す（#285）。`stats`が随時の任意集計であるのに対し、`digest`は定期実行（週次/月次）を前提にした要約——`/rig:loop --every 7d "workbench.py digest"`のように定期チョアとして回せる。
+
+## `/rig instincts` — セッション横断の継続的instinct学習層（#306）
+
+```
+python3 scripts/workbench.py instincts                                       # 一覧
+python3 scripts/workbench.py instincts --add "<短い1文>" --evidence "<根拠>" --confidence 0.8
+python3 scripts/workbench.py instincts --add "<新しい方針>" --supersedes <既存のid>  # 矛盾する旧instinctをmute
+python3 scripts/workbench.py instincts --mute <id> | --expire <id>
+python3 scripts/workbench.py instincts --decay          # 30日以上未使用のconfidenceを減衰・閾値未満はexpired
+python3 scripts/workbench.py instincts --inject-preview  # 次回注入される内容をプレビュー
+```
+
+`facets/knowledge`（検証済みの知識層）とは別枠——ここに蓄積するのは「このプロジェクトではこう書く」「この構成ではこう探索すると早い」のような**信頼度つき・未検証**の暗黙パターン。
+
+- **抽出はモデルの仕事**：`hooks/suggest-instincts.sh`（Stop hook）は「何か学んだら`instincts --add`で提案してよいか検討してください」というリマインダーを出すだけで、パターン抽出自体は行わない（判断が要る作業をhookに押し込まない、という既存方針の踏襲）。**毎セッション必ず1件提案する必要はない**——ノイズになる。
+- **注入はconfidence>=0.7のみ・文字数上限あり**：`hooks/inject-instincts.sh`（SessionStart hook）が`instincts --inject-preview --json`の出力をそのままadditionalContextとして注入する。500字を超える分は含めない（context-minimal原則）。
+- **secret/個人情報/一時的な環境依存は学習禁止**：`--add`時に鍵・トークン・ローカル絶対パス・ENV_VAR=value風の文字列を検出すると却下する（silent通過させない・却下理由をそのまま表示）。
+- **矛盾は明示的に解決する**：意味的な矛盾検知（「rigはruff優先」と「blackを使う」が矛盾する、という判断）はモデルの仕事——新しいinstinctを`--supersedes <旧id>`付きで登録すると、旧instinctが自動でmuteされ、同時に注入されることはない。
+- **減衰は機械的**：`last_seen`が30日以上更新されないactive instinctは`--decay`実行のたびにconfidenceが0.1ずつ下がり、0.2を下回るとexpiredになる（暗黙知は腐る、という前提）。
