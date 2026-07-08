@@ -143,6 +143,15 @@ def resolve_auto_route(step: dict, size: str) -> tuple[str | None, str]:
     return last.get("model"), f"size={size} がどの候補の max_size も超過 → 最終候補にフォールバック（{last.get('cost_tier', '?')}）"
 
 
+def unknown_step_model_ids(overrides: dict, steps: list) -> list:
+    """`--step-model`（#293）に渡された step-id のうち recipe に存在しないものを返す（純関数）。
+
+    空リスト＝全件既知＝silent無視せずCLI側でエラー終了させるための判定材料。
+    """
+    known_ids = {s["id"] for s in steps}
+    return sorted(set(overrides) - known_ids)
+
+
 # ── RESOLVE 参照実装（extends マージ・badge/steps フィールド導出）─────────────
 # SKILL.md §4.2.2（extends・1段のみ）と facets/instructions/list.md（badge 固定順・
 # steps: フィールド）の決定論参照実装。散文エンジンの表示規則を CI（selftest Q）で
@@ -595,9 +604,12 @@ def telemetry_append(state: dict, final: str) -> None:
         ss = state["step_state"]
         # step id → 直近の auto-route 決定（#264。同一 step が retry で複数回通っても最後の決定を採用）
         auto_routed: dict[str, dict] = {}
+        step_model_overrides: dict[str, str] = {}
         for h in state.get("history", []):
             if h.get("action") == "AUTO_ROUTE":
                 auto_routed[h["step"]] = {"model": h.get("model"), "reason": h.get("reason")}
+            elif h.get("action") == "STEP_MODEL_OVERRIDE":
+                step_model_overrides[h["step"]] = h.get("model")  # #293: 最後の指定が勝つ（retry を跨いでも同一値のはず）
         rec = {
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "recipe": state["recipe"],
@@ -613,7 +625,8 @@ def telemetry_append(state: dict, final: str) -> None:
                        "retries": ss[s["id"]].get("retries", 0),
                        "verdicts": [{"by": v.get("by"), "ok": bool(v.get("ok"))}
                                     for v in ss[s["id"]].get("verdicts", [])],
-                       **({"auto_route": auto_routed[s["id"]]} if s["id"] in auto_routed else {})}
+                       **({"auto_route": auto_routed[s["id"]]} if s["id"] in auto_routed else {}),
+                       **({"model_override": step_model_overrides[s["id"]]} if s["id"] in step_model_overrides else {})}
                       for s in state["steps"]],
         }
         RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1205,7 +1218,7 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     返り値: (winner_provider | None, product, judged[])。
     per-step の `model:` / `verifier_model:` があれば cfg のコピーに inject する（並列安全）。"""
     gen_cfg = {**cfg, "model": step["model"]} if step.get("model") else cfg
-    ver_cfg = {**cfg, "model": step["verifier_model"] or step.get("model") or cfg.get("model")} \
+    ver_cfg = {**cfg, "model": step.get("verifier_model") or step.get("model") or cfg.get("model")} \
               if (step.get("verifier_model") or step.get("model")) else cfg
     if len(gen_list) == 1:
         _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step), gen_cfg)
@@ -1241,6 +1254,15 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
                 state["history"].append({"action": "AUTO_ROUTE", "step": step["id"],
                                          "model": routed_model, "reason": reason})
             log(f"   ↳ auto-route: {routed_model}（{reason}）")
+    # 実行時 --step-model（#293）は recipe frontmatter の model: / auto-route より優先する
+    # （優先順位: 実行時指定 > recipe > 全体既定 --model）。
+    override_model = (cfg.get("step_model_overrides") or {}).get(step["id"])
+    if override_model:
+        effective_step = {**effective_step, "model": override_model}
+        with _HIST_LOCK:
+            state["history"].append({"action": "STEP_MODEL_OVERRIDE", "step": step["id"],
+                                     "model": override_model})
+        log(f"   ↳ step-model override: {override_model}")
     winner, out, judged = _generate(state, effective_step, gen_list, ver, cfg, max_parallel)
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
@@ -1263,7 +1285,7 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         return
     # 観点検証＝N 人の独立レビュアーを並列プロセスで（採点者≠生成者）
     # per-step の `verifier_model:` があれば cfg のコピーに inject（generator 側とは独立）
-    v_cfg = {**cfg, "model": step["verifier_model"] or step.get("model") or cfg.get("model")} \
+    v_cfg = {**cfg, "model": step.get("verifier_model") or step.get("model") or cfg.get("model")} \
             if (step.get("verifier_model") or step.get("model")) else cfg
     personas = step["personas"] or ["independent"]
     results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out),
@@ -1495,8 +1517,21 @@ def cmd_run(args):
             cfg["allow_headless_in_cc"] = True; i += 1
         elif a == "--auto-route":
             cfg["auto_route"] = True; i += 1
+        elif a == "--step-model" and i + 1 < len(args):
+            step_id, _, model = args[i + 1].partition("=")
+            if not step_id or not model:
+                print(f"[ERROR] --step-model は '<step-id>=<model>' 形式で指定してください（受け取った値: {args[i + 1]!r}）")
+                sys.exit(1)
+            cfg.setdefault("step_model_overrides", {})[step_id] = model
+            i += 2
         else:
             i += 1
+    if cfg.get("step_model_overrides"):
+        unknown = unknown_step_model_ids(cfg["step_model_overrides"], steps)
+        if unknown:
+            print(f"[ERROR] --step-model が存在しない step-id を指定しています: {', '.join(unknown)}"
+                  f"（recipe の step: {', '.join(s['id'] for s in steps)}）")
+            sys.exit(1)
     if not gen and generators:
         gen = generators[0]            # --generators だけでも可（先頭を代表に）
     if not gen:
@@ -2673,6 +2708,20 @@ def cmd_selftest(_args):
     report("Y auto-route: 同入力→同選択（決定論）", y_s == y_s2, True)
     report("Y auto-route: auto_route 未宣言時は None",
            resolve_auto_route({}, "S")[0], None)
+    # Z: 実行時 step-model 上書き（対話でその場でmodel割当・#293）
+    z_steps = [s(id="plan"), s(id="implement")]
+    z_unknown = unknown_step_model_ids({"plan": "fable", "nope": "opus"}, z_steps)
+    report("Z step-model: 存在しないstep-idを検出", z_unknown, ["nope"])
+    report("Z step-model: 全件既知なら空リスト",
+           unknown_step_model_ids({"plan": "fable"}, z_steps), [])
+    z_state = new_state("selftest-step-model", z_steps, "デモ")
+    z_final = run_loop(z_state, None, "mock", "mock",
+                       {"step_model_overrides": {"plan": "fable"}}, max_steps=20, quiet=True)
+    z_overrides = [h for h in z_state["history"] if h.get("action") == "STEP_MODEL_OVERRIDE"]
+    report("Z step-model: DONE まで実行できる", z_final, "DONE")
+    report("Z step-model: 指定したstepだけhistoryに記録される",
+           [h["step"] for h in z_overrides], ["plan"])
+    report("Z step-model: 指定したmodelがhistoryに残る", z_overrides[0]["model"], "fable")
     # V: パーティ編成画面（party）＝ runs/drill から RPG シートを描画
     global DRILL_PATH
     _orig_drill = DRILL_PATH
