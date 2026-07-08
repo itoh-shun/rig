@@ -58,7 +58,7 @@
    ```
    python3 scripts/workbench.py new "<input>" --type <task_type> --recipe <name> --reason "<選択理由>"
    ```
-   （isolate ✗ の task_type は `--no-worktree` を付ける。）
+   （isolate ✗ の task_type は `--no-worktree` を付ける。ユーザーが時間の見積もりを口にした場合は `--budget-minutes <N>` を付けてよい——超過時に`status`/`board`/`cockpit`が警告表示する。#281）
    このコマンドの標準出力が**そのまま Phase 1 の選択理由バナー**になる（`▸ rig` / `task:` / `detected:` / `recipe:` / `mode:` / `gate:`）。**バナーを自分で書き直さず、コマンド出力をそのまま提示する**（散文の再現に頼らずコードの確定出力を見せる）。出力された `task_id` と `worktree_path` を以降の全 dispatch で使う。
 2. **RUN**：選択した recipe を SKILL.md §5〜6（COMPOSE→RUN）どおりに合成・実行する。**subagent の作業ディレクトリを worktree_path に固定する**（context-minimal は維持：親は dispatch と集約のみ）。各 step 完了時に:
    ```

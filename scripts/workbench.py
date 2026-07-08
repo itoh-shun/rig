@@ -24,6 +24,7 @@ import argparse
 import contextlib
 import datetime
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -281,8 +282,58 @@ def make_task_id(slug: str) -> str:
     return f"rig-{ts}-{slug}"
 
 
+def budget_status(task: dict) -> tuple[float, float | None, bool]:
+    """(経過分, 予算分 or None, 超過かどうか) を返す（#281）。`budget_minutes` 未設定の
+    task では常に超過なし——見積もりを指定していないタスクを誤って警告しない。"""
+    created = datetime.datetime.fromisoformat(task["created_at"])
+    elapsed_min = (datetime.datetime.now().astimezone() - created).total_seconds() / 60.0
+    budget = task.get("budget_minutes")
+    over = bool(budget) and elapsed_min > budget
+    return elapsed_min, budget, over
+
+
+def load_access_control(root: pathlib.Path) -> dict:
+    """`.rig/access.json`（accept を許可する識別子の allowlist・#282）を読む。
+    形式: `{"default": ["alice","bob"], "<task_type>": [...]}`（`default` は該当 task_type
+    専用キーが無い場合のフォールバック）。ファイルが無ければ制限なし（後方互換・単独利用では
+    従来通り無制限で動作する）。壊れていても RUN は止めず、無制限側へフォールバックする。"""
+    p = root / ".rig" / "access.json"
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        warn(f"{p} が JSON として読めません。RBAC は無視します（無制限で動作）")
+        return {}
+
+
+def current_identity(root: pathlib.Path) -> str:
+    """accept 操作者の識別子。`RIG_USER` 環境変数 → `git config user.name` の順に解決する。"""
+    env = os.environ.get("RIG_USER")
+    if env:
+        return env
+    proc = git(["config", "user.name"], cwd=root, check=False)
+    return proc.stdout.strip() or "unknown"
+
+
+def load_gate_extensions(root: pathlib.Path) -> dict:
+    """`.rig/gate-extensions.json`（組織固有のacceptance基準・#283）を読む。
+    形式: `{"<task_type>": ["custom_criterion", …], "*": [...]}`（`*` は全 task_type に適用）。
+    無ければ空 dict（標準presetのみで動作＝後方互換）。壊れていても RUN は止めない。"""
+    p = root / ".rig" / "gate-extensions.json"
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        warn(f"{p} が JSON として読めません。カスタム基準は無視します")
+        return {}
+
+
 # ── gate 構築・判定 ──────────────────────────────────────────────────────────
-def build_acceptance(task_id: str, task_type: str) -> dict:
+def build_acceptance(task_id: str, task_type: str, root: pathlib.Path | None = None) -> dict:
     presets = TASK_TYPES[task_type]
     checks: list[dict] = []
     seen: set[str] = set()
@@ -291,7 +342,19 @@ def build_acceptance(task_id: str, task_type: str) -> dict:
             if name not in seen:
                 seen.add(name)
                 checks.append({"name": name, "status": "pending", "detail": ""})
+
+    custom_presets: list[str] = []
+    if root is not None:
+        ext = load_gate_extensions(root)
+        for key in ("*", task_type):
+            for name in ext.get(key) or []:
+                if name not in seen:
+                    seen.add(name)
+                    checks.append({"name": name, "status": "pending", "detail": "", "custom": True})
+                    custom_presets.append(name)
+
     return {"task_id": task_id, "task_type": task_type, "presets": presets,
+            "custom_criteria": custom_presets,
             "status": "pending", "checks": checks, "checked_at": None}
 
 
@@ -412,11 +475,12 @@ def cmd_new(args: argparse.Namespace) -> None:
         "status": "running",
         "created_at": now_iso(),
         "updated_at": now_iso(),
+        "budget_minutes": args.budget_minutes,   # 任意（#281）。未指定なら None＝警告なし
     }
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
     save_json(d / "steps.json", {"steps": []})
-    acc = build_acceptance(task_id, args.type)
+    acc = build_acceptance(task_id, args.type, root)
     save_json(d / "acceptance.json", acc)
 
     # ── 選択理由の可視化バナー（Phase 1 §3・散文任せにせずコードが確定出力する）───
@@ -464,7 +528,7 @@ def cmd_gate(args: argparse.Namespace) -> None:
     task_id = resolve_task_id(root, args.task_id)
     with task_lock(root, task_id):
         d, task = load_task(root, task_id)
-        acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+        acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
 
         known = {c["name"]: c for c in acc["checks"]}
         for pair in args.set or []:
@@ -518,7 +582,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
-    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     names, stat, dirty = _diff_lines(root, task)
 
     print(f"## rig diff: {task_id}")
@@ -575,7 +639,16 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     if task["status"] == "discarded":
         die(f"task '{task_id}' は discard 済みです")
 
-    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    # ── RBAC（.rig/access.json があるときだけ効く・#282。単独利用では無制限のまま）───
+    access = load_access_control(root)
+    if access:
+        allowed = access.get(task["task_type"]) or access.get("default") or []
+        who = current_identity(root)
+        if allowed and who not in allowed:
+            die(f"'{who}' には task_type '{task['task_type']}' の accept 権限がありません"
+                f"（許可: {', '.join(allowed)}）。`.rig/access.json` を確認するか、権限を持つ人に accept を依頼してください")
+
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     status = gate_status(acc)
     diff_md = d / "diff.md"
     diff_summary_ok = diff_md.exists() and diff_md.read_text(encoding="utf-8").strip() != ""
@@ -628,7 +701,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             "gate_status": status,
             "failed_checks": [c["name"] for c in acc["checks"]
                               if c["status"] in ("failed", "pending")],
-            "invoker": __import__("os").environ.get("RIG_INVOKER") or "direct",
+            "invoker": os.environ.get("RIG_INVOKER") or "direct",
         })
     if status == "passed_with_warnings":
         warns = [f"{c['name']}（{c.get('detail') or 'detail なし'}）" for c in acc["checks"] if c["status"] == "warning"]
@@ -763,7 +836,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
-    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     acc["status"] = gate_status(acc)
 
     print(f"## rig status: {task_id}")
@@ -774,6 +847,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"base:        {task['base_branch']} @ {task['base_commit'][:12]}")
     if task.get("worktree_path"):
         print(f"worktree:    {task['worktree_path']} (branch: {task['branch']})")
+    if task.get("budget_minutes"):
+        elapsed, budget, over = budget_status(task)
+        print(f"budget:      {elapsed:.0f}分 / {budget:.0f}分" + ("  ⚠ 予算超過" if over else ""))
     print()
     _print_steps(d)
     print()
@@ -824,7 +900,8 @@ def cmd_board(args: argparse.Namespace) -> None:
         last_step = f"{steps[-1]['name']}({steps[-1]['status']})" if steps else "-"
         mode = "isolated" if t.get("worktree_path") else "not-isolated"
 
-        print(f"[{t['status']:<11}] {t['task_id']}")
+        _, _, over_budget = budget_status(t)
+        print(f"[{t['status']:<11}] {t['task_id']}" + ("  ⚠ 予算超過" if over_budget else ""))
         print(f"    {t['input'][:70]}{'…' if len(t['input']) > 70 else ''}")
         print(f"    type={t['task_type']:<14} recipe={t.get('recipe') or '-':<14} "
               f"mode={mode:<13} step={last_step:<20} gate={gs}")
@@ -930,7 +1007,9 @@ def cmd_cockpit(args: argparse.Namespace) -> None:
         acc = load_json(d / "acceptance.json", {"checks": []})
         gs = gate_status(acc) if acc.get("checks") else "-"
         label = t["input"][:44] + ("…" if len(t["input"]) > 44 else "")
-        print(f"│ [{t['status']:<11}] {t['task_id']:<28} gate={gs:<20} {label}")
+        _, _, over_budget = budget_status(t)
+        budget_flag = "  ⚠予算超過" if over_budget else ""
+        print(f"│ [{t['status']:<11}] {t['task_id']:<28} gate={gs:<20} {label}{budget_flag}")
 
     # ── Gate radar ────────────────────────────────────────────────────────
     gate_counts: Counter[str] = Counter()
@@ -1273,6 +1352,7 @@ def main() -> None:
     p.add_argument("--recipe", help="選択した recipe 名")
     p.add_argument("--reason", help="recipe 選択理由（バナー・log 用）")
     p.add_argument("--no-worktree", action="store_true", help="worktree を作らない（review 等の読み取り専用 RUN）")
+    p.add_argument("--budget-minutes", type=float, help="見積もり時間（分）。超過は status/board/cockpit で警告表示（#281。未指定なら警告なし）")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("step", help="step の進行状態を記録する")

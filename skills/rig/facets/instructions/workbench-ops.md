@@ -83,6 +83,14 @@ accept 成功後（squash merge → **staged**・コミットはしない）:
 - `git diff --staged` で確認できる旨と、コミットは人（またはユーザーの明示指示）が行う旨を案内する。
 - 後片付け（`/rig discard <task_id>`）が worktree/branch のみを消し run log を残すことを案内する。
 
+### RBAC（`.rig/access.json`・#282）
+
+`.rig/access.json` が存在する場合のみ効く（無ければ従来通り無制限）。形式は `{"default": ["alice","bob"], "<task_type>": [...]}`。accept 操作者は `RIG_USER` 環境変数 → `git config user.name` の順で解決され、該当 task_type（無ければ `default`）の許可リストに無ければ `accept` は拒否される。チーム/組織で「誰でもacceptできる」を避けたい場合にのみ導入する。
+
+### 組織固有acceptance基準（`.rig/gate-extensions.json`・#283）
+
+`.rig/gate-extensions.json` に `{"<task_type>": ["custom_criterion", …], "*": [...]}` を書くと、標準presetに加えて組織固有の基準が `acceptance.json` に追加される（`custom: true` で区別）。判定方法は既存基準と同じ（`workbench.py gate <task_id> --set <custom基準名>=passed` 等）。ファイルが無ければ標準presetのみで従来通り動作する。
+
 ## `/rig discard [<task_id>] [--yes]`
 
 ```
