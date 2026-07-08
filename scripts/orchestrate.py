@@ -49,6 +49,7 @@ import time
 import pathlib
 import subprocess
 import concurrent.futures as futures
+from collections import Counter
 
 try:
     import yaml
@@ -2211,19 +2212,35 @@ def cmd_runs(args):
               f"{a['retries'] / a['n']:9.1f} {a['esc']:4d}")
 
     # ギャップ処方箋: 同一 (recipe, step) で2回以上エスカレーションしていたら能力調達を提案する
-    # （テレメトリ → /rig:import --discover / /rig:harness への接続＝自己補完ループの入口）
+    # （テレメトリ → /rig:import --discover / /rig:forge への接続＝自己補完ループの入口・#268）
     gaps: dict[tuple, int] = {}
+    gap_verifiers: dict[tuple, Counter] = {}
     for r in rows:
         esc_at = r.get("escalated_at")
-        if esc_at:
-            gaps[(r.get("recipe", "?"), esc_at)] = gaps.get((r.get("recipe", "?"), esc_at), 0) + 1
+        if not esc_at:
+            continue
+        key = (r.get("recipe", "?"), esc_at)
+        gaps[key] = gaps.get(key, 0) + 1
+        # 該当stepの検証票（誰がREJECTしていたか）を集計 → forgeへの下書き依頼を具体化する材料
+        for st in r.get("steps", []):
+            if st.get("id") != esc_at:
+                continue
+            c = gap_verifiers.setdefault(key, Counter())
+            for v in st.get("verdicts", []):
+                if not v.get("ok"):
+                    c[(v.get("by") or "?").split(":", 1)[-1]] += 1
     hot = {k: v for k, v in gaps.items() if v >= 2}
     if hot:
-        print("\n## ギャップ処方箋（同一 step でのエスカレーション反復）\n")
+        print("\n## ギャップ処方箋（同一 step でのエスカレーション反復・#268）\n")
         for (rcp, sid), n in sorted(hot.items(), key=lambda kv: -kv[1]):
-            print(f"  {rcp} / {sid}: エスカレーション {n} 回 — 能力調達を検討:"
-                  f" /rig:import --discover \"{sid} を強くする skill\""
-                  f" ／ 棚卸しは /rig:harness")
+            rejecters = gap_verifiers.get((rcp, sid), Counter())
+            who = ", ".join(name for name, _ in rejecters.most_common(3)) or "（検証票なし）"
+            forge_desc = f"{rcp} recipe の {sid} step で繰り返し詰まっている問題を解消する能力" \
+                         f"（REJECTが多いのは: {who}）"
+            print(f"  {rcp} / {sid}: エスカレーション {n} 回 — REJECT多め: {who}")
+            print(f"    下書き依頼: /rig:forge \"{forge_desc}\"")
+            print(f"    （forgeの下書きを確認・確定後、/rig:drill --replay で改善を再測定）")
+            print(f"    （skillを外部から探すなら: /rig:import --discover \"{sid} を強くする skill\"）")
 
 
 def cmd_probe(args):

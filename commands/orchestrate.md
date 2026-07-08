@@ -67,6 +67,14 @@ orchestrate ab <recipe1> <recipe2> [...] --provider mock --goal "<goal>" [--veri
 
 同一タスクを複数recipeバリアントで**真に並走**実行し、速度(elapsed)・リトライ回数・最終状態を比較する。各variantは`--isolate`と同じ隔離worktreeで独立実行される（ファイル競合なし）ため、`ThreadPoolExecutor`で安全に並列化できる。比較したいのは「recipeの違い」であって「model/providerの違い」ではない前提——providerは全variant共通で1つ指定する。
 
+## ⑥ ギャップ処方箋のforge下書き化（`runs`・#268）
+
+```
+orchestrate runs
+```
+
+同一(recipe, step)で2回以上エスカレーションしていると、「## ギャップ処方箋」に**具体的な`/rig:forge`下書き依頼コマンド**を表示する（該当stepでREJECTしたreviewer上位3件を検証票から特定し、説明文に埋め込む）。orchestrate.py自身はforgeを呼ばない(LLMが要る処理のため)——生成するのは「コピペで使えるforgeプロンプト」まで。下書き確認後の確定は人/AIが行い、`/rig:drill --replay`で改善を再測定する運用。
+
 ```
 ## rig ab — recipes/bugfix.md vs recipes/hotfix.md
 
