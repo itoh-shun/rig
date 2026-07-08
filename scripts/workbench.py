@@ -23,10 +23,13 @@ rig workbench — 品質保証つき AI 作業環境の決定論ランナー
 import argparse
 import contextlib
 import datetime
+import hashlib
+import hmac
 import json
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -280,6 +283,45 @@ def make_slug(text: str) -> str:
 def make_task_id(slug: str) -> str:
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"rig-{ts}-{slug}"
+
+
+def _provenance_key_path(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / "provenance.key"
+
+
+def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
+    """署名鍵（HMAC-SHA256・#299）。`.rig/`はgitignore済みでリポジトリに混入しない。
+    非対称鍵（Ed25519等）ではなく標準ライブラリのみで完結するHMACにした——
+    workbench.pyの「依存: 標準ライブラリのみ」原則を保つため。この設計の意味は
+    **ローカルでの改ざん検知**（鍵ファイルを持つ環境で事後に来歴が書き換えられて
+    いないかを確認できる）であり、鍵を共有していない第三者向けの署名検証
+    （SLSA/Ed25519が想定するような）ではない——READMEにこの範囲を明記する。"""
+    p = _provenance_key_path(root)
+    if p.is_file():
+        return p.read_bytes()
+    key = secrets.token_bytes(32)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(key)
+    try:
+        p.chmod(0o600)
+    except Exception:
+        pass
+    return key
+
+
+def _provenance_payload(record: dict) -> bytes:
+    return json.dumps(record, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def sign_provenance(root: pathlib.Path, record: dict) -> str:
+    key = load_or_create_provenance_key(root)
+    return hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
+
+
+def verify_provenance(root: pathlib.Path, record: dict, signature: str) -> bool:
+    key = load_or_create_provenance_key(root)
+    expected = hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 def budget_status(task: dict) -> tuple[float, float | None, bool]:
@@ -799,15 +841,54 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     task["status"] = "accepted"
     task["accepted_at"] = now_iso()
     save_task(d, task)
+
+    # ── 署名付き来歴（#299）── acceptした事実・根拠となったgate結果を改ざん検知可能な形で残す
+    provenance_record = {
+        "task_id": task_id,
+        "task_type": task["task_type"],
+        "recipe": task.get("recipe") or None,
+        "base_branch": task["base_branch"],
+        "base_commit": task["base_commit"],
+        "branch": branch,
+        "accepted_at": task["accepted_at"],
+        "gate_status": status,
+        "forced": bool(task.get("forced")),
+        "checks": sorted([{"name": c["name"], "status": c["status"]} for c in acc["checks"]],
+                         key=lambda c: c["name"]),
+    }
+    signature = sign_provenance(root, provenance_record)
+    save_json(d / "provenance.json", {"record": provenance_record, "signature": signature, "algo": "HMAC-SHA256"})
+
     names, stat, _ = _diff_lines(root, task)
     print(f"\n## rig accept: {task_id} ✓")
     print(f"branch {branch} の変更（{ahead} commits）をメイン作業ツリーに **staged** として反映しました。")
     if stat:
         print(f"  {stat}")
+    print(f"来歴: {(d / 'provenance.json').relative_to(root)}（`workbench.py verify-provenance {task_id}` で検証可能）")
     print("次のアクション:")
     print("  1) 内容確認: git diff --staged")
     print("  2) コミット: git commit")
     print(f"  3) 後片付け: workbench.py discard {task_id} --yes  （worktree と branch を削除・run log は残る）")
+
+
+def cmd_verify_provenance(args: argparse.Namespace) -> None:
+    """acceptした変更の署名付き来歴を検証する（#299）。鍵は`.rig/provenance.key`
+    （ローカルのみ・gitignore済み）——この検証は「同一環境内で事後に来歴レコードが
+    書き換えられていないか」を確認するものであり、鍵を共有しない第三者への
+    非対称署名（SLSA/Ed25519が想定する公開検証）ではない。"""
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    d, _task = load_task(root, task_id)
+    p = d / "provenance.json"
+    if not p.is_file():
+        die(f"task '{task_id}' に来歴レコードがありません（accept時に生成されます。まだacceptしていない可能性）")
+    data = load_json(p)
+    ok = verify_provenance(root, data["record"], data["signature"])
+    print(f"## rig verify-provenance: {task_id}")
+    print(f"署名: {'✓ valid（改ざんなし）' if ok else '✗ INVALID（レコードまたは鍵が変更された可能性）'}")
+    print(json.dumps(data["record"], ensure_ascii=False, indent=2))
+    if not ok:
+        sys.exit(1)
 
 
 def cmd_discard(args: argparse.Namespace) -> None:
@@ -1500,6 +1581,10 @@ def main() -> None:
     p.add_argument("task_id", nargs="?")
     p.add_argument("--force", action="store_true", help="gate 未達を上書きして反映（記録に残る。構造的前提の欠落は上書き不可）")
     p.set_defaults(func=cmd_accept)
+
+    p = sub.add_parser("verify-provenance", help="acceptした変更の署名付き来歴を検証する（#299）")
+    p.add_argument("task_id", nargs="?")
+    p.set_defaults(func=cmd_verify_provenance)
 
     p = sub.add_parser("discard", help="worktree と branch を破棄する（run log は残す）")
     p.add_argument("task_id", nargs="?")

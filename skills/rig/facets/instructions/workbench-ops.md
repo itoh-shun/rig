@@ -82,6 +82,11 @@ python3 scripts/workbench.py accept [<task_id>]
 accept 成功後（squash merge → **staged**・コミットはしない）:
 - `git diff --staged` で確認できる旨と、コミットは人（またはユーザーの明示指示）が行う旨を案内する。
 - 後片付け（`/rig discard <task_id>`）が worktree/branch のみを消し run log を残すことを案内する。
+- accept時に自動生成される署名付き来歴（`.rig/runs/<task_id>/provenance.json`）を`workbench.py verify-provenance <task_id>`で検証できる旨を案内する（#299。下記参照）。
+
+### 署名付き来歴（`verify-provenance`・#299）
+
+accept成功時、task_type/recipe/base/gate結果/checks一覧をHMAC-SHA256で署名した`provenance.json`を自動生成する（確認不要・診断ログと同格）。鍵は`.rig/provenance.key`（gitignore済み・ローカル限定）。**この署名の意味に注意**：SLSA/Ed25519が想定するような第三者への公開検証ではなく、**同一環境内での事後の改ざん検知**（レコードが書き換えられていないかの確認）に限定される。`workbench.py verify-provenance <task_id>`で検証し、`INVALID`が出た場合はレコードまたは鍵が変更された可能性があるとして扱う。
 
 ### RBAC（`.rig/access.json`・#282）
 
