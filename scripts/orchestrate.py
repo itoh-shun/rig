@@ -608,6 +608,7 @@ def telemetry_append(state: dict, final: str) -> None:
             "steps_passed": sum(1 for st in ss.values() if st.get("status") == "passed"),
             "retries": sum(st.get("retries", 0) for st in ss.values()),
             "escalated_at": (state.get("stopped") or {}).get("at") if state.get("stopped") else None,
+            "token_usage": state.get("token_usage") or {},  # #271/#296: provider→{prompt/completion_tokens,calls}
             "steps": [{"id": s["id"], "status": ss[s["id"]].get("status"),
                        "retries": ss[s["id"]].get("retries", 0),
                        "verdicts": [{"by": v.get("by"), "ok": bool(v.get("ok"))}
@@ -1050,6 +1051,22 @@ def _load_models_config() -> dict:
         return {}
 
 
+def _record_token_usage(cfg: dict, provider: str, usage: dict) -> None:
+    """OpenAI互換APIの`usage`フィールドを`cfg["_token_usage"]`に集計する（#271/#296）。
+    `cfg`はrun単位（`_run_ab_variant`ならvariant単位）で新しい dict を渡す前提——
+    複数run/variantを跨いで合算しないよう、呼び出し側が accumulator の寿命を管理する。
+    CLI系provider（claude/codex）は構造化usageを持たないため対象外（正直な制約。
+    #296で参照したAnthropic公式Usage & Cost Admin APIの方がそちら向けには適切）。"""
+    acc = cfg.get("_token_usage")
+    if acc is None:
+        return
+    with _TOKEN_LOCK:
+        a = acc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+        a["prompt_tokens"] += usage.get("prompt_tokens", 0) or 0
+        a["completion_tokens"] += usage.get("completion_tokens", 0) or 0
+        a["calls"] += 1
+
+
 def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     import urllib.request
     url = f"{_base_url(provider, cfg)}/chat/completions"
@@ -1061,6 +1078,8 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     try:
         with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
             data = json.loads(r.read().decode("utf-8"))
+        if isinstance(data.get("usage"), dict):
+            _record_token_usage(cfg, provider, data["usage"])
         return 0, data["choices"][0]["message"]["content"]
     except Exception as e:                      # 接続不可・モデル無し等は rc!=0 で握り潰す
         return 1, f"[{provider} error: {e} @ {url}]"
@@ -1176,6 +1195,7 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
 
 
 _HIST_LOCK = threading.Lock()
+_TOKEN_LOCK = threading.Lock()
 
 
 def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
@@ -1269,6 +1289,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     gen_list = generators or [gen]
     if any(s["needs"] for s in state["steps"]):
         final = run_dag(state, sp, gen_list, ver, cfg, max_steps, quiet, max_parallel, quorum)
+        state["token_usage"] = cfg.get("_token_usage") or {}
         telemetry_append(state, final)
         return final
     iters, last = 0, "—"
@@ -1291,6 +1312,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         break  # DONE / ESCALATE / BLOCKED / STOPPED
     if sp:
         save_state(state, sp)
+    state["token_usage"] = cfg.get("_token_usage") or {}
     telemetry_append(state, last)
     return last
 
@@ -1509,6 +1531,7 @@ def cmd_run(args):
         sys.exit(1)
     ver = ver or gen  # 未指定なら同プロバイダ（ただし別プロセス・別ロール）
     state = new_state(fm.get("name", path.stem), steps, goal)
+    cfg["_token_usage"] = {}  # このrun専用のトークン集計（#271/#296。runを跨いで合算しない）
     iso = None
     if cfg.get("isolate"):
         iso = setup_isolation(fm.get("name", path.stem))
@@ -1548,7 +1571,7 @@ def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: 
     steps = load_steps(fm)
     state = new_state(fm.get("name", recipe_path.stem), steps, goal)
     iso = setup_isolation(fm.get("name", recipe_path.stem))
-    variant_cfg = {**cfg, "cwd": iso["dir"]}
+    variant_cfg = {**cfg, "cwd": iso["dir"], "_token_usage": {}}  # variant固有の集計（他variantと混ぜない）
     state["isolation"] = iso
     t0 = time.monotonic()
     final = run_loop(state, out_path, gen, ver, variant_cfg, max_steps,
@@ -2118,7 +2141,7 @@ def cmd_runs(args):
     recipe 別バー・verifier 票・直近 run 表を単一ファイル HTML で・外部依存なし）。
     読み取り専用（--list / --validate と同じ点検モード）。
     """
-    limit, recipe, personas_mode, html_out, since = 10, None, False, None, None
+    limit, recipe, personas_mode, html_out, since, cost_mode = 10, None, False, None, None, False
     i = 0
     while i < len(args):
         if args[i] == "--limit" and i + 1 < len(args):
@@ -2127,6 +2150,8 @@ def cmd_runs(args):
             recipe = args[i + 1]; i += 2
         elif args[i] == "--personas":
             personas_mode = True; i += 1
+        elif args[i] == "--cost":
+            cost_mode = True; i += 1
         elif args[i] == "--html" and i + 1 < len(args):
             html_out = args[i + 1]; i += 2
         elif args[i] == "--since" and i + 1 < len(args):
@@ -2188,6 +2213,36 @@ def cmd_runs(args):
             print("\n  剪定ヒント: " + ", ".join(sorted(rubber))
                   + " は5票以上で一度も REJECT していません（ゴム印化 or 観点が効いていない可能性。"
                     "外すか観点を尖らせる検討材料）")
+        return
+
+    if cost_mode:
+        # recipe別・provider別のトークン集計（#271/#296）。CLI系provider（claude/codex）は
+        # 構造化usageを持たないため「未計測」のまま——HTTP系（ollama/lmstudio）のみ実測できる。
+        by_recipe: dict[str, dict[str, dict]] = {}
+        any_usage = False
+        for r in rows:
+            tu = r.get("token_usage") or {}
+            if not tu:
+                continue
+            any_usage = True
+            rc = by_recipe.setdefault(r.get("recipe", "?"), {})
+            for provider, u in tu.items():
+                a = rc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+                a["prompt_tokens"] += u.get("prompt_tokens", 0)
+                a["completion_tokens"] += u.get("completion_tokens", 0)
+                a["calls"] += u.get("calls", 0)
+        print(f"## rig runs --cost（全 {len(rows)} run）\n")
+        if not any_usage:
+            print("トークン計測なし（未計測）。HTTP系provider（ollama/lmstudio）はOpenAI互換APIの`usage`フィールドから"
+                  "自動計測されます。claude/codexはCLI経由のため構造化usageを持たず、この集計の対象外です"
+                  "（#296で参照したAnthropic公式Usage & Cost Admin APIの利用を検討してください）。")
+            return
+        for rcp, providers in sorted(by_recipe.items()):
+            print(f"  {rcp}:")
+            for provider, a in sorted(providers.items()):
+                total = a["prompt_tokens"] + a["completion_tokens"]
+                print(f"    {provider:<12} calls={a['calls']:<4} "
+                      f"prompt={a['prompt_tokens']:<8} completion={a['completion_tokens']:<8} total={total}")
         return
 
     print(f"## rig runs（直近 {min(limit, len(rows))} / 全 {len(rows)} 件）\n")

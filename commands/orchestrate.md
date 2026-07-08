@@ -85,6 +85,23 @@ hotfix               DONE       18.7         1        -
 
 未達/dirtyのvariantはworktreeが保全される（`--isolate`と同じ規則）。後片付けは`git worktree remove --force <dir>`。
 
+## ⑦ トークン/コスト集計（`runs --cost`・#271/#296）
+
+```
+orchestrate runs --cost
+```
+
+HTTP系provider（`ollama`/`lmstudio`など OpenAI 互換API）は応答JSONの`usage`フィールド（`prompt_tokens`/`completion_tokens`）を自動捕捉し、`runs.jsonl`の各runに`token_usage`として記録される。`runs --cost`はこれを recipe × provider でロールアップして表示する：
+
+```
+## rig runs --cost（全 3 run）
+
+  bugfix:
+    ollama       calls=4    prompt=812      completion=340      total=1152
+```
+
+**スコープの正直な限界**：`claude`/`codex`はCLI経由で呼び出すため構造化された`usage`を返さず、この集計の対象外（トークン計測なしと表示される）。それらのコスト把握には、Anthropic公式の Usage & Cost Admin API の利用を検討すること——rigはこれを模造・推定しない。
+
 ## 効く所
 
 - **prose の制御ループ ≪ コードの強制**（`harness-taxonomy`）。遷移・停止・リトライをコードが握る。
