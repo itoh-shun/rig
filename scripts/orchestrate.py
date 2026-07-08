@@ -983,8 +983,6 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv += ["--sandbox", "workspace-write" if role == "generator" else "read-only"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model 対応
-        if role == "verifier":
-            argv += _READONLY_ENFCE["codex"]
         return argv + [prompt]
     if provider == "cmd":
         tmpl = cfg.get("provider_cmd") or ""
@@ -1035,7 +1033,9 @@ def resolve_http_model(provider: str, cfg: dict) -> str:
         return cfg["model"]
     if cfg.get("auto_model"):
         saved = _load_models_config().get(provider, {})
-        if saved.get("default"):
+        # --base-url 明示時は、その endpoint と一致する保存設定だけを使う。
+        # 別 endpoint の古い default で実機探索が汚染されるのを避ける。
+        if saved.get("default") and (not cfg.get("base_url") or saved.get("base_url", "").rstrip("/") == _base_url(provider, cfg)):
             return saved["default"]
         live = list_models(provider, cfg)
         if live:
@@ -1126,7 +1126,31 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
         return 127, f"[provider not found: {provider}]"
     except subprocess.TimeoutExpired:
         return 124, "[provider timeout]"
-    return r.returncode, (r.stdout or "")
+    out = r.stdout or ""
+    if r.returncode != 0 and r.stderr:
+        out = (out + "\n" + r.stderr).strip()
+    return r.returncode, out
+
+
+def _excerpt(text: str, limit: int = 240) -> str:
+    return " ".join((text or "").split())[:limit]
+
+
+def _verdict_ok(out: str) -> bool:
+    """Parse verifier output across Rig's machine verdict and review-verdict contracts."""
+    text = out or ""
+    up = text.upper()
+    if "VERDICT: FAIL" in up or "判定: REJECT" in text:
+        return False
+    if "VERDICT: PASS" in up:
+        return True
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("判定:"):
+            continue
+        verdict = line.split(":", 1)[1].strip().upper()
+        return verdict in ("APPROVE", "APPROVE_WITH_CONDITIONS")
+    return False
 
 
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
@@ -1144,8 +1168,9 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     def _one(task):
         v, p = task
         rc, out = run_provider(v, "verifier", prompt, cfg, persona=p)
-        ok = ("VERDICT: PASS" in out) and ("VERDICT: FAIL" not in out)
-        return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok, "note": f"exit {rc}"}
+        ok = _verdict_ok(out)
+        return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
+                "note": f"exit {rc}; {_excerpt(out)}"}
 
     if len(tasks) == 1:
         return [_one(tasks[0])]
@@ -1213,9 +1238,15 @@ def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
 
 
 def _build_verify_prompt(state: dict, step: dict, product: str) -> str:
-    return (f"あなたは独立した検証者です（この step を生成したエージェントとは別プロセス・別ロール）。"
-            f"step '{step['id']}' の成果が受け入れ基準を満たすか判定し、最後に必ず "
-            f"'VERDICT: PASS' か 'VERDICT: FAIL' を出力してください。\n--- 成果 ---\n{product[:2000]}")
+    return (
+        f"あなたは独立した検証者です（この step を生成したエージェントとは別プロセス・別ロール）。\n"
+        f"step '{step['id']}' の成果が受け入れ基準を満たすか判定してください。\n"
+        "出力の最後の1行は必ず次のどちらかだけにしてください:\n"
+        "VERDICT: PASS\n"
+        "VERDICT: FAIL\n"
+        "説明はその前に短く書いて構いません。最後の1行に余計な文字、Markdown、句読点を付けないでください。\n"
+        f"--- 成果 ---\n{product[:2000]}"
+    )
 
 
 def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
@@ -1255,8 +1286,8 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     for c in cands:
         _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"]),
                                ver_cfg, persona="judge")
-        ok = ("VERDICT: PASS" in jout) and ("VERDICT: FAIL" not in jout)
-        judged.append({"provider": c["provider"], "ok": ok})
+        ok = _verdict_ok(jout)
+        judged.append({"provider": c["provider"], "ok": ok, "note": _excerpt(jout)})
         if ok and winner is None:
             winner, product = c["provider"], c["out"]
     return winner, product, judged
@@ -2309,8 +2340,9 @@ def cmd_selftest(_args):
     report("N probe: codex verifier は read-only サンドボックスを強制",
            build_argv("codex", "verifier", "P", {}),
            ["codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only", "P"])
-    report("N probe: codex generator はサンドボックス強制なし",
-           build_argv("codex", "generator", "P", {}), ["codex", "exec", "--skip-git-repo-check", "P"])
+    report("N probe: codex generator は workspace-write サンドボックス",
+           build_argv("codex", "generator", "P", {}),
+           ["codex", "exec", "--skip-git-repo-check", "--sandbox", "workspace-write", "P"])
     report("N probe: claude verifier は allowedTools を強制",
            build_argv("claude", "verifier", "P", {}),
            ["claude", "-p", "P", "--output-format", "text", "--allowedTools", "Read,Grep,Glob"])

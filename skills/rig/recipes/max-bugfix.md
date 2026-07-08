@@ -43,6 +43,10 @@ steps:
     pattern: serial
     gate: acceptance-gate
     max_retries: 2
+    checks:
+      - "test -n \"$(git diff --name-only -- '*.py')\""
+      - "git diff --check"
+      - "python3 -m pytest --tb=no -q"
     acceptance:
       - "task_intent_satisfied — 依頼の意図が満たされている"
       - "no_unrelated_diff — 依頼と無関係な差分が含まれていない"
@@ -71,11 +75,10 @@ steps:
 - `implement`: diff と `git diff --check` を強制
 - `test`: `pytest` を強制
 - `review-diff`: 通常の bugfix と同じ 3-way review
-- `acceptance`: 13 基準を維持しつつ `max_retries: 2`
+- `acceptance`: 13 基準を維持しつつ、diff/whitespace/test を機械チェックして `max_retries: 2`
 
 ## 使い分け
 
 - `fast-bugfix`: 小粒・低リスク・速度重視
 - `max-bugfix`: 小粒でも確実性を最優先
 - `bugfix`: 標準パス
-
