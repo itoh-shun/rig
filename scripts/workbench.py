@@ -871,6 +871,67 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     print(f"  3) 後片付け: workbench.py discard {task_id} --yes  （worktree と branch を削除・run log は残る）")
 
 
+_CONFIDENCE_THRESHOLD = 0.7  # #301: これ未満は「低確信」として追加レビュアー投入を推奨する目安
+
+
+def cmd_confidence(args: argparse.Namespace) -> None:
+    """drill実測の検出率から、gate判定に確信度の補助情報を添える（#301）。
+
+    既存のpass/fail判定は変えない——`acceptance.json`に`reviewer_confidence`を
+    追加するだけの補助情報。drill未実施のpersona/問題種別は「未計測」のまま
+    扱い、確信度を捏造しない。追加レビュアー投入の判断は人（またはAI）に委ねる
+    （このコマンド自身が自動でreviewerを追加投入することはしない）。
+    """
+    root = repo_root()
+    atk = aggregate_drill_confidence(root)
+
+    if not args.task_id and not args.persona:
+        if not atk:
+            print("drill実測がありません（`/rig:drill`を実行すると検出率が測定されます）")
+            return
+        print("## rig confidence（全persona・drill実測）")
+        for name, a in sorted(atk.items()):
+            if a["seeded"]:
+                rate = a["detected"] / a["seeded"]
+                flag = "  ⚠ 低確信" if rate < _CONFIDENCE_THRESHOLD else ""
+                print(f"  {name}: {rate:.0%}{flag}")
+            else:
+                print(f"  {name}: 未計測")
+        return
+
+    task_id = resolve_task_id(root, args.task_id)
+    d, task = load_task(root, task_id)
+    rj = d / "review.json"
+    reviewers = sorted({v["persona"] for v in load_json(rj, {"verdicts": []}).get("verdicts", [])}) if rj.exists() else []
+    if not reviewers:
+        print(f"task '{task_id}' には review.json の記録がありません"
+              "（`workbench.py review` でreviewerのverdictを記録してから実行してください）")
+        return
+
+    confidences: dict[str, float | None] = {}
+    for name in reviewers:
+        a = atk.get(name)
+        confidences[name] = round(a["detected"] / a["seeded"], 3) if (a and a["seeded"]) else None
+
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
+    acc["reviewer_confidence"] = confidences
+    save_json(d / "acceptance.json", acc)
+
+    print(f"## rig confidence: {task_id}")
+    low = []
+    for name, c in confidences.items():
+        if c is None:
+            print(f"  {name}: 未計測")
+        else:
+            flag = "  ⚠ 低確信" if c < _CONFIDENCE_THRESHOLD else ""
+            print(f"  {name}: {c:.0%}{flag}")
+            if c < _CONFIDENCE_THRESHOLD:
+                low.append(name)
+    if low:
+        print(f"\n低確信のreviewer（{', '.join(low)}）がいます。追加レビュアーの投入を検討してください"
+              f"（`workbench.py review {task_id} --set <追加persona>=<verdict>` で記録）。")
+
+
 def cmd_verify_provenance(args: argparse.Namespace) -> None:
     """acceptした変更の署名付き来歴を検証する（#299）。鍵は`.rig/provenance.key`
     （ローカルのみ・gitignore済み）——この検証は「同一環境内で事後に来歴レコードが
@@ -1190,6 +1251,19 @@ def _load_drill(root: pathlib.Path) -> list[dict]:
     return out
 
 
+def aggregate_drill_confidence(root: pathlib.Path) -> dict[str, dict]:
+    """persona別のdrill実測（detected/seeded/false_positives）を集計する（純関数）。
+    `cockpit`と`confidence`（#301）が同じ集計をそれぞれ再実装しないための共通ヘルパー。"""
+    atk: dict[str, dict] = {}
+    for d in _load_drill(root):
+        for s in d.get("scores", []):
+            a = atk.setdefault(s.get("reviewer", "?"), {"detected": 0, "seeded": 0, "fp": 0})
+            a["detected"] += s.get("detected", 0)
+            a["seeded"] += s.get("seeded", 0)
+            a["fp"] += s.get("false_positives", 0)
+    return atk
+
+
 def cmd_cockpit(args: argparse.Namespace) -> None:
     """board・gate・drill・audit を一画面に集約する read-only Mission Control（#307）。
 
@@ -1239,14 +1313,7 @@ def cmd_cockpit(args: argparse.Namespace) -> None:
 
     # ── Reviewer confidence（drill 実測）────────────────────────────────────
     print("├─ Reviewer confidence（drill 実測）")
-    drills = _load_drill(root)
-    atk: dict[str, dict] = {}
-    for d in drills:
-        for s in d.get("scores", []):
-            a = atk.setdefault(s.get("reviewer", "?"), {"detected": 0, "seeded": 0, "fp": 0})
-            a["detected"] += s.get("detected", 0)
-            a["seeded"] += s.get("seeded", 0)
-            a["fp"] += s.get("false_positives", 0)
+    atk = aggregate_drill_confidence(root)
     if not atk:
         print("│ 未計測（`/rig:drill` を実行すると persona 別の検出率が表示されます）")
     else:
@@ -1665,6 +1732,11 @@ def main() -> None:
     p.add_argument("task_id", nargs="?")
     p.add_argument("--force", action="store_true", help="gate 未達を上書きして反映（記録に残る。構造的前提の欠落は上書き不可）")
     p.set_defaults(func=cmd_accept)
+
+    p = sub.add_parser("confidence", help="drill実測の検出率からreviewerの確信度を表示する（#301）")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--persona", help="（未使用・将来のpersona単体指定用に予約）")
+    p.set_defaults(func=cmd_confidence)
 
     p = sub.add_parser("verify-provenance", help="acceptした変更の署名付き来歴を検証する（#299）")
     p.add_argument("task_id", nargs="?")
