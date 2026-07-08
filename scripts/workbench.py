@@ -834,6 +834,53 @@ def cmd_board(args: argparse.Namespace) -> None:
         print("次のアクション: /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes")
 
 
+_RIG_HOOK_MARKER = "# rig-managed-hook:"
+
+
+def cmd_install_git_hook(args: argparse.Namespace) -> None:
+    """`.git/hooks/<name>` に rig 提供の pre-commit/pre-push フックをインストールする（#298）。
+
+    `scripts/git-hooks/<name>` の実体をそのままコピーするだけ（新しい仕組みを発明しない）。
+    build/lint/test はプロジェクト固有でプレーンな git hook からは知りようがないため、
+    ここでカバーするのは acceptance-gate のうち機械的に判定できる部分（secret パターン
+    スキャン＝`no_secret_leak` 相当）のみ——rig を経由しない通常の commit/push にも
+    同じ最小限のセンサーを適用する opt-in オプション。
+
+    既存の hook が rig 由来（ファイル先頭付近に `_RIG_HOOK_MARKER` を持つ）でなければ、
+    ユーザーの既存 hook を黙って上書きしない（`--force` で明示上書き）。
+    """
+    root = repo_root()
+    git_dir = root / ".git"
+    if not git_dir.is_dir():
+        die(".git ディレクトリが見つかりません（git worktree のルートで実行してください）")
+
+    src_dir = pathlib.Path(__file__).resolve().parent / "git-hooks"
+    names = ["pre-commit", "pre-push"] if args.which == "both" else [args.which]
+
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in names:
+        src = src_dir / name
+        if not src.is_file():
+            die(f"hook テンプレートが見つかりません: {src}")
+        dest = hooks_dir / name
+        if dest.exists():
+            existing = dest.read_text(encoding="utf-8", errors="ignore")
+            is_ours = _RIG_HOOK_MARKER in existing[:400]
+            if not is_ours and not args.force:
+                first_line = existing.splitlines()[0] if existing.splitlines() else "(空)"
+                print(f"[SKIP] {dest} は既に存在し、rig 由来ではありません（1行目: {first_line}）。"
+                      "上書きするには --force を付けてください。")
+                continue
+        shutil.copyfile(src, dest)
+        dest.chmod(dest.stat().st_mode | 0o111)
+        print(f"✓ インストール: {dest}")
+
+    print("\n無効化: rm " + " ".join(str(hooks_dir / n) for n in names))
+    print("一時的にスキップ: git commit/push --no-verify")
+
+
 def _load_drill(root: pathlib.Path) -> list[dict]:
     """`.rig/drill-results.jsonl`（/rig:drill の実測結果）を読む。
     フォーマットは `{"ts": …, "scores": [{"reviewer","detected","seeded","false_positives"}]}`
@@ -1269,6 +1316,13 @@ def main() -> None:
 
     p = sub.add_parser("cockpit", help="board・gate・drill・audit を一画面に集約する Mission Control（read-only）")
     p.set_defaults(func=cmd_cockpit)
+
+    p = sub.add_parser("install-git-hook",
+                        help="acceptance-gate の secret-pattern scan を .git/hooks/ にインストールする（opt-in）")
+    p.add_argument("--which", choices=("pre-commit", "pre-push", "both"), default="both",
+                   help="インストール対象（既定: both）")
+    p.add_argument("--force", action="store_true", help="rig 由来でない既存 hook を上書きする")
+    p.set_defaults(func=cmd_install_git_hook)
 
     p = sub.add_parser("gates", help="acceptance-gate プリセット定義を表示する")
     p.set_defaults(func=cmd_gates)

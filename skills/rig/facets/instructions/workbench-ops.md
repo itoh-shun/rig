@@ -14,6 +14,18 @@ board・gate radar・drill 実測(reviewer confidence)・cost meter・safety str
 - drillが未実施のpersona、cost計測が未実装の項目は「未計測」と表示され、空値を成功のように見せない。
 - 複数タスクを並行しているときの状況把握は、まず`board`ではなく`cockpit`を提案してよい(gate/drill/safetyまで一望できるため)。
 
+## `/rig install-git-hook [--which pre-commit|pre-push|both] [--force]`
+
+```
+python3 scripts/workbench.py install-git-hook
+```
+
+acceptance-gateの計算的センサーのうち、プレーンなgit hookからも適用できる部分(secretパターンスキャン=`no_secret_leak`相当)を`.git/hooks/`にインストールする(#298)。build/lint/testはプロジェクト固有で hookからは知りようがないため対象外——「rigを経由しないcommit/pushにも最小限のセンサーを効かせたい」というopt-inオプション。
+
+- 既定は`pre-commit`/`pre-push`両方。`--which`で個別指定できる。
+- 既存のhookがrig由来でなければ黙って上書きしない。上書きするには`--force`を明示する。
+- インストール後も`git commit/push --no-verify`で個別にバイパス可能(rigのacceptance-gate自体を弱めるものではなく、rigを経由しない変更にも同じ最小限のセンサーを及ぼす追加レイヤー)。
+
 ## 共通ルール
 
 - サブコマンドの引数に `task_id` が省略された場合、`workbench.py` は `.rig/runs/` 内の**最新 task**を自動選択する。複数 task が並行している可能性がある場合（`workbench.py log --limit 5` で確認）は、曖昧さを避けるため task_id を明示するようユーザーに促す。

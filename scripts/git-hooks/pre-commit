@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# rig-managed-hook: pre-commit (#298)
+#
+# Same mechanical secret-pattern scan as scripts/git-hooks/pre-push, applied
+# to the staged diff before it becomes a commit. See that file for the
+# scope note (this is `no_secret_leak` only, not the full acceptance-gate —
+# build/lint/test are project-specific and not knowable from a plain hook).
+#
+# Opt-in only: installed via `python3 scripts/workbench.py install-git-hook`,
+# which refuses to silently overwrite a hook it did not install itself.
+set -eu
+
+PATTERN='-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----|[Aa][Ww][Ss][A-Za-z_]*(SECRET|secret)[A-Za-z_]*[[:space:]]*[=:][[:space:]]*[A-Za-z0-9/+=]{20,}|(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}'
+
+hits=$(git diff --cached 2>/dev/null | grep -nE -e "$PATTERN" || true)
+
+if [ -n "$hits" ]; then
+  echo "[rig pre-commit] possible secret pattern in staged changes:" >&2
+  echo "$hits" | head -20 >&2
+  echo "" >&2
+  echo "[rig pre-commit] commit blocked — mechanical pattern match, not the full acceptance-gate." >&2
+  echo "[rig pre-commit] false positive? re-run with: git commit --no-verify" >&2
+  exit 1
+fi
+exit 0

@@ -192,6 +192,17 @@ This survives more than `discard`: a mid-flow interruption (a side question, a t
 
 The next turn re-anchors on this header rather than sliding into direct, un-gated work. It even survives **context compaction**: a shipped `PreCompact` hook injects instructions to preserve the run-state, and `/rig:init` can mirror them into your CLAUDE.md "Compact Instructions."
 
+### Beyond rig-driven changes
+
+Everything above only protects changes that went through `/rig:rig`. A plain `git commit`/`git push` — made by a human, or by an AI working outside rig entirely — gets none of it. `build`/`lint`/`test` are project-specific and a plain git hook has no way to know them, but one piece of the gate *is* checkable mechanically without any project config: secret-pattern scanning (`no_secret_leak`). `/rig:rig install-git-hook` installs that one sensor as a real `pre-commit`/`pre-push` hook, opt-in and never silently overwriting a hook it didn't install itself (`--force` to override deliberately):
+
+```bash
+python3 scripts/workbench.py install-git-hook               # both pre-commit and pre-push
+python3 scripts/workbench.py install-git-hook --which pre-push
+```
+
+It's a mechanical tripwire, not a replacement for the AI-judged `no_secret_leak` criterion — false positives exist, and `git commit/push --no-verify` bypasses it per-call same as any other hook.
+
 ## 6. Core commands
 
 Core commands are the default safety workflow: route task, isolate work, verify, inspect diff, accept or discard.

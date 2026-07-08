@@ -1,6 +1,6 @@
 ---
 description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/stats/review/cockpit/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | cockpit | gh issue <n> | gh pr <n> review|fix | gh ci"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | cockpit | install-git-hook [--which pre-commit|pre-push|both] [--force] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -28,6 +28,7 @@ $ARGUMENTS
 | `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
 | `review <task_id> --set <persona>=<verdict>` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録） |
 | `cockpit` | `facets/instructions/workbench-ops`（**board・gate・drill・cost・auditを一画面に集約するMission Control**。read-only。次アクションを案内するのみで accept/discard 自体は実行しない） |
+| `install-git-hook [--which pre-commit\|pre-push\|both] [--force]` | `facets/instructions/workbench-ops`（secretパターンスキャンを `.git/hooks/` にopt-inインストール。rig経由でない commit/push にも最小限のセンサーを適用） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |
 | `gh pr <n> fix` | `facets/instructions/gh-flow`（PR 指摘を隔離 worktree で修正） |
@@ -77,6 +78,7 @@ $ARGUMENTS
 /rig:rig discard rig-20260704-153012-login-fix --yes
 /rig:rig log --limit 5
 /rig:rig cockpit                              # board/gate/drill/cost/auditを一画面に集約
+/rig:rig install-git-hook                     # secretスキャンをpre-commit/pre-pushにopt-inインストール
 /rig:rig gh issue 123
 /rig:rig gh pr 45 review
 /rig:rig gh pr 45 fix
