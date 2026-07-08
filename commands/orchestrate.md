@@ -125,6 +125,27 @@ orchestrate run <recipe> --provider anthropic --model claude-fable-5 --step-mode
 
 **正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。実際のAnthropic APIへは接続していない（課金・実運用リスクを避けるため）——実モデルでの`stop_reason: refusal`発火・実際のfallback課金は未検証。
 
+## ⑨ Managed Agents API委譲（`--parallel-backend managed-agents`・#295・実験的opt-in）
+
+観点検証（review-gateでのN人独立レビュアー並列実行）を、既存のsubprocess＋`ThreadPoolExecutor`ではなくAnthropic Managed Agents API（coordinator/worker構成のbeta）に委譲する実験的backend：
+
+```
+cfg["parallel_backend"] = "managed-agents"
+cfg["environment_id"] = "<Managed Agents用にプロビジョニング済みのenvironment id>"  # 必須
+```
+
+persona 1つにつきworker agentを1つ作成し、判断のみ行うcoordinatorが束ねる。**既定（未指定）は従来のsubprocess方式のまま**——この項目は完全にopt-inで、既存経路には一切影響しない。
+
+- workerの生出力（大きなdiff/ログ等）はAnthropicのマネージド環境内のスレッドに留まり、coordinatorには蒸留された結果のみが渡る、という設計だが、**この分離自体はAnthropicサーバ側の性質であり、rigのクライアントコードからは検証できない**。検証できるのはrig側のコードが生のworker出力を要求・保存・転送せずAPIの最終結果のみを読むことだけ。
+- `environment_id`未設定は即座にエラーを返す（silent失敗にしない）。
+- トークン使用量は`_token_usage`の`managed-agents`行に集計され、`runs --cost`で確認できる。
+
+**正直な限界**：
+- Managed Agents APIのREST エンドポイントパス（`/v1/agents`等）は、公式Python SDK（`client.beta.agents.create`等）のメソッド名からの推測です——SDKソースや公式REST APIリファレンスから直接確認したものではありません。実際に使う前に、`anthropic` Python SDKのソースまたは公式ドキュメントで正確なパスを確認してください。
+- モックHTTPサーバで一連のREST呼び出し（agent作成×N→coordinator作成→session作成→event送信→threads.listポーリング→集約）を検証済みですが、**実際のAnthropic APIには接続していません**。
+- イベントストリームをrun-continuityヘッダの進捗表示に統合する（issueの4番目の要求）は未実装——ポーリングによる最終結果取得のみで、リアルタイムの`session.thread_created`等のイベント型は扱っていません。
+- `selftest`が検証する決定論は「rig側の集約・エラーハンドリングコード」についてのみで、LLM自体の出力決定論（Managed Agents構成でのコーディネータ/ワーカーの振る舞い）は別問題です。
+
 ## 効く所
 
 - **prose の制御ループ ≪ コードの強制**（`harness-taxonomy`）。遷移・停止・リトライをコードが握る。

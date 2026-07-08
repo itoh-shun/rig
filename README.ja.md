@@ -512,6 +512,10 @@ Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエスト
 
 **正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。**実際のAnthropic APIには接続していません**（実運用トラフィックが必要かつ課金リスクを避けるため）。使用したスキーマは`anthropics/claude-cookbooks`の`fable_5_fallback_billing/guide.ipynb`に基づいていますが、実モデルでの動作は未検証です。
 
+### Managed Agents API委譲（実験的opt-in・#295）
+
+review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorではなくAnthropic Managed Agents API（coordinator/worker構成のbeta）に委譲する実験的backend。`cfg["parallel_backend"] = "managed-agents"` + `cfg["environment_id"]`（必須）で有効化——**既定は従来方式のまま**、完全にopt-in。詳細・正直な限界（RESTパスは公式SDKメソッド名からの推測／実APIには未接続／イベントストリーム統合は未実装）は`commands/orchestrate.md`「⑨」を参照。
+
 ## 13. Advanced commands
 
 ### コマンド分類

@@ -1282,6 +1282,131 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     return sorted(res, key=lambda r: (r["persona"], r["provider"]))  # 完了順に依らず決定論
 
 
+_MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
+
+
+def _managed_agents_request(base: str, path: str, cfg: dict, body: dict | None = None,
+                            method: str = "POST") -> dict:
+    """Managed Agents API（beta）への薄いHTTPラッパー（#295）。
+
+    **注記**: エンドポイントパス（`/v1/agents` 等）は公式SDK（`client.beta.agents.create`等）の
+    メソッド名からの推測であり、公式REST APIリファレンスから直接確認したものではない
+    （このスクリプトはstdlib-only方針のためSDKに依存せずurllibで直叩きする）。
+    実際のパスは`anthropic` Python SDKのソース／公式ドキュメントで確認してから使うこと。
+    """
+    import urllib.request
+    url = f"{base}/{path.lstrip('/')}"
+    headers = {"Content-Type": "application/json",
+              "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),
+              "anthropic-beta": _MANAGED_AGENTS_BETA,
+              "x-api-key": cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")}
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def run_managed_agents_fanout(prompt: str, personas: list[str], cfg: dict,
+                              state: dict | None = None, step_id: str | None = None) -> list[dict]:
+    """Anthropic Managed Agents API（coordinator/worker）へレビューのfan-outを委譲する（#295・opt-in実験実装）。
+
+    `cfg.get("parallel_backend") == "managed-agents"` のときのみ`_execute_step`から呼ばれる。
+    既定（未指定）は既存の`run_verifiers_parallel`（subprocess + ThreadPoolExecutor）のまま——
+    このbackendは完全にopt-inで、失敗しても既存経路には影響しない。
+
+    persona 1つにつきworker agentを1つ作成し、判断のみを行うcoordinatorが束ねる。
+    worker の生出力（大きなdiff/ログ等）はAnthropicのマネージド環境内のスレッドに留まり、
+    coordinatorには蒸留された結果のみが渡る——**この分離自体はAnthropicサーバ側の性質であり、
+    クライアントコードからは検証できない**。ここで検証できるのは「rig側のコードが生の
+    worker出力を要求／保存／transitせず、APIが返した最終結果のみを読む」ことだけ。
+    `cfg["environment_id"]`が必須（Managed Agentsのホスト環境）——未設定ならエラーで
+    即座に知らせる（silent失敗にしない）。
+    """
+    base = (cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
+    env_id = cfg.get("environment_id")
+    if not env_id:
+        return [{"by": "managed-agents:error", "persona": "-", "provider": "managed-agents",
+                 "ok": False, "note": "cfg['environment_id'] が未設定のためManaged Agentsを起動できません"}]
+    personas = personas or ["reviewer"]
+    model = cfg.get("model") or "claude-sonnet-5"
+    coordinator_model = cfg.get("coordinator_model") or model
+
+    try:
+        workers = []
+        for p in personas:
+            w = _managed_agents_request(base, "v1/agents", cfg, {
+                "name": f"worker-{p}", "model": model, "tools": [],
+                "system": f"あなたは{p}担当のreviewer workerです。判定結果のみをsubmit_resultで返してください。",
+                "betas": [_MANAGED_AGENTS_BETA],
+            })
+            workers.append((p, w["id"]))
+        coordinator = _managed_agents_request(base, "v1/agents", cfg, {
+            "name": "coordinator", "model": coordinator_model,
+            "multiagent": {"type": "coordinator",
+                          "agents": [{"type": "agent", "id": wid} for _, wid in workers]},
+            "system": "各workerに1つずつレビューを委譲し、結果を集約してください。",
+            "betas": [_MANAGED_AGENTS_BETA],
+        })
+        session = _managed_agents_request(base, "v1/sessions", cfg,
+                                          {"agent": coordinator["id"], "environment_id": env_id,
+                                           "betas": [_MANAGED_AGENTS_BETA]})
+        session_id = session["id"]
+        _managed_agents_request(base, f"v1/sessions/{session_id}/events", cfg, {
+            "betas": [_MANAGED_AGENTS_BETA],
+            "events": [{"type": "user.message", "content": [{"type": "text", "text": prompt}]}],
+        })
+
+        max_polls = cfg.get("managed_agents_max_polls", 30)
+        poll_interval = cfg.get("managed_agents_poll_interval", 2)
+        threads: list = []
+        for _ in range(max_polls):
+            resp = _managed_agents_request(base, f"v1/sessions/{session_id}/threads", cfg,
+                                           method="GET")
+            threads = resp.get("data") or resp.get("threads") or []
+            if len(threads) >= len(workers) + 1:  # workers + coordinator
+                break
+            time.sleep(poll_interval)
+
+        total_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
+        results = []
+        by_agent_id = {wid: p for p, wid in workers}
+        for t in threads:
+            u = t.get("usage") or {}
+            for k in total_usage:
+                total_usage[k] += u.get(k, 0) or 0
+            agent_id = t.get("agent_id") or t.get("agent", {}).get("id")
+            persona = by_agent_id.get(agent_id)
+            if persona is None:
+                continue  # coordinator自身のthread（workerではない）はレビュー票に数えない
+            text = "".join(b.get("text", "") for b in (t.get("content") or []) if b.get("type") == "text")
+            ok = ("VERDICT: PASS" in text) and ("VERDICT: FAIL" not in text)
+            results.append({"by": f"managed-agents:{persona}", "persona": persona,
+                            "provider": "managed-agents", "ok": ok, "note": f"session={session_id}"})
+
+        acc = cfg.get("_token_usage")
+        if acc is not None:
+            with _TOKEN_LOCK:
+                a = acc.setdefault("managed-agents", {"prompt_tokens": 0, "completion_tokens": 0,
+                                                       "cache_read_input_tokens": 0, "calls": 0})
+                a["prompt_tokens"] += total_usage["input_tokens"]
+                a["completion_tokens"] += total_usage["output_tokens"]
+                a["cache_read_input_tokens"] += total_usage["cache_read_input_tokens"]
+                a["calls"] += 1
+        if state is not None and step_id is not None:
+            with _HIST_LOCK:
+                state["history"].append({"action": "MANAGED_AGENTS_SESSION", "step": step_id,
+                                         "session_id": session_id, "workers": len(workers)})
+
+        missing = [p for p, _ in workers if p not in {r["persona"] for r in results}]
+        for p in missing:  # max_polls尽きても揃わなかったworkerは「未計測」明示（silent欠落にしない）
+            results.append({"by": f"managed-agents:{p}", "persona": p, "provider": "managed-agents",
+                            "ok": False, "note": f"timeout（session={session_id}・{max_polls}回ポーリングで未着）"})
+        return sorted(results, key=lambda r: r["persona"])  # 決定論（rig側の集約コードのみ。LLM出力自体の決定論は別問題）
+    except Exception as e:
+        return [{"by": "managed-agents:error", "persona": "-", "provider": "managed-agents",
+                 "ok": False, "note": f"managed-agents error: {e}"}]
+
+
 def _build_prompt(state: dict, step: dict) -> str:
     return (f"あなたは rig のサブエージェント（{step['id']} 担当）。recipe '{state['recipe']}' の "
             f"step '{step['id']}'（instruction: {step['instruction']}）を実行してください。"
@@ -1386,8 +1511,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     v_cfg = {**cfg, "model": step.get("verifier_model") or step.get("model") or cfg.get("model")} \
             if (step.get("verifier_model") or step.get("model")) else cfg
     personas = step["personas"] or ["independent"]
-    results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out),
-                                     personas, v_cfg, max_parallel, state=state, step_id=step["id"])
+    verify_prompt = _build_verify_prompt(state, step, out)
+    if cfg.get("parallel_backend") == "managed-agents":            # #295: opt-in実験backend
+        results = run_managed_agents_fanout(verify_prompt, personas, v_cfg,
+                                            state=state, step_id=step["id"])
+    else:
+        results = run_verifiers_parallel(ver, verify_prompt,
+                                         personas, v_cfg, max_parallel, state=state, step_id=step["id"])
     passes, total = sum(1 for r in results if r["ok"]), len(results)
     par = "並列" if total > 1 else "単独"
     log(f"   ↳ {par}検証 {total} 人: PASS {passes}/{total}（quorum={quorum}）")
