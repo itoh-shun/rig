@@ -891,6 +891,90 @@ def cmd_verify_provenance(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_record_commit(args: argparse.Namespace) -> None:
+    """acceptした変更をユーザーがコミットした後の commit SHA を task に紐付ける（#289/#300）。
+    `accept`は**staged**で止まり実コミットはしない設計のため、最終的な commit SHA は
+    workbench.py からは見えない——このコマンドで明示的にリンクして初めて
+    `trace-commit`（逆引き）が機能する（承認不要のログ・diff.md と同格）。"""
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    d, task = load_task(root, task_id)
+    sha = args.sha or git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
+    task["commit_sha"] = sha
+    save_task(d, task)
+    print(f"{task_id} を commit {sha[:12]} に紐付けました。")
+
+
+def cmd_record_outcome(args: argparse.Namespace) -> None:
+    """本番アウトカムを task に記録する（#289/#300）。gate予測（accept時のprovenance）と
+    実際に起きたことを事後に突き合わせるための実測データ——drillが合成バグで測るのに対し、
+    こちらは実世界での的中率を蓄積する。"""
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    d, _task = load_task(root, task_id)
+    outcome = {
+        "task_id": task_id,
+        "status": args.status,
+        "note": args.note or "",
+        "recorded_at": now_iso(),
+    }
+    save_json(d / "outcome.json", outcome)
+    print(f"{task_id} に本番アウトカムを記録しました: {args.status}" + (f"（{args.note}）" if args.note else ""))
+    if args.status == "incident":
+        print(f"\n次のアクション: `workbench.py trace-commit <sha>` でこの task の gate 結果を再確認し、"
+              f"必要なら `git revert` の計画を立ててください。")
+
+
+def cmd_trace_commit(args: argparse.Namespace) -> None:
+    """commit SHA から task-id を逆引きし、gate結果と記録済みアウトカムを突き合わせる（#289/#300）。
+    自動revertやPR作成はしない——「何を確認すべきか」を提示するところまでがこのコマンドの責務
+    （実際のrevert/PR作成は、この結果を見た人またはGitHub連携ツールに委ねる）。"""
+    root = repo_root()
+    base = runs_dir(root)
+    if not base.is_dir():
+        die("`.rig/runs/` がありません（run の記録がない）")
+    sha = args.sha
+    matches = []
+    for p in base.iterdir():
+        tj = p / "task.json"
+        if not tj.exists():
+            continue
+        t = load_json(tj)
+        recorded_sha = t.get("commit_sha") or ""
+        if recorded_sha and (recorded_sha == sha or recorded_sha.startswith(sha) or sha.startswith(recorded_sha)):
+            matches.append(t)
+    if not matches:
+        die(f"commit {sha} に紐付く task が見つかりません"
+            f"（`workbench.py record-commit <task_id> {sha}` で事前にリンクしてください）")
+    for t in matches:
+        task_id = t["task_id"]
+        d = base / task_id
+        print(f"## rig trace-commit: {sha} → {task_id}")
+        acc = load_json(d / "acceptance.json", {"checks": []})
+        gs = gate_status(acc) if acc.get("checks") else "-"
+        print(f"gate予測（accept時）: {gs}")
+        prov = load_json(d / "provenance.json", None) if (d / "provenance.json").exists() else None
+        if prov:
+            print(f"署名付き来歴: {(d / 'provenance.json').relative_to(root)}"
+                  f"（`workbench.py verify-provenance {task_id}` で検証可）")
+        outcome_path = d / "outcome.json"
+        if outcome_path.exists():
+            outcome = load_json(outcome_path)
+            print(f"記録済みアウトカム: {outcome['status']}"
+                  + (f"（{outcome['note']}）" if outcome.get("note") else "")
+                  + f" @ {outcome['recorded_at']}")
+            if outcome["status"] == "incident":
+                print("\n⚠ gateはpassedでも本番でincidentが記録されています。"
+                      "drillの較正材料として扱ってください（このgate/reviewerが見逃した観点は何か）。")
+                print(f"\nrevert計画の下書き:")
+                print(f"  git revert {sha}")
+                print(f"  # PRタイトル案: Revert \"{task_id}\"（本番incident対応）")
+                print(f"  # PR本文案: {task_id} が本番でincidentを引き起こしたため revert する。"
+                      f"詳細: {outcome.get('note') or '(note未記入)'}")
+        else:
+            print("記録済みアウトカム: なし（`workbench.py record-outcome` で記録できます）")
+
+
 def cmd_discard(args: argparse.Namespace) -> None:
     root = repo_root()
     if not args.task_id:
@@ -1585,6 +1669,21 @@ def main() -> None:
     p = sub.add_parser("verify-provenance", help="acceptした変更の署名付き来歴を検証する（#299）")
     p.add_argument("task_id", nargs="?")
     p.set_defaults(func=cmd_verify_provenance)
+
+    p = sub.add_parser("record-commit", help="acceptした変更の最終commit SHAをtaskに紐付ける（#289/#300）")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("sha", nargs="?", help="省略時は現在のHEAD")
+    p.set_defaults(func=cmd_record_commit)
+
+    p = sub.add_parser("record-outcome", help="本番アウトカムをtaskに記録する（#289/#300）")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--status", required=True, choices=("ok", "incident"), help="実際に起きたこと")
+    p.add_argument("--note", help="詳細メモ")
+    p.set_defaults(func=cmd_record_outcome)
+
+    p = sub.add_parser("trace-commit", help="commit SHAからtask-idを逆引きし、gate予測とアウトカムを突き合わせる（#289/#300）")
+    p.add_argument("sha", help="調べたいcommit SHA（省略不可）")
+    p.set_defaults(func=cmd_trace_commit)
 
     p = sub.add_parser("discard", help="worktree と branch を破棄する（run log は残す）")
     p.add_argument("task_id", nargs="?")
