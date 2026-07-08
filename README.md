@@ -466,6 +466,27 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 
 **Honest verification note:** the `run` step (task execution, gate evaluation, worktree isolation/cleanup) was verified end-to-end locally with `--provider mock`. The `open-pr` step (branch push + `gh pr create`) could not be exercised against a real GitHub Actions runner from this environment — it's implemented against `gh`'s documented CLI interface (pre-installed on GitHub-hosted runners) but hasn't been run live. Treat it as reviewed-but-not-live-tested until it's exercised in an actual workflow run.
 
+### MCP server (#263)
+
+To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:
+
+```bash
+python3 scripts/mcp_server.py
+```
+
+It listens for Model Context Protocol (JSON-RPC 2.0, line-delimited) on stdio. It doesn't depend on the official `mcp` SDK — to match `workbench.py`/`orchestrate.py`'s stdlib-only stance and avoid a heavy third-party dependency, it implements a minimal stdio transport with the standard library alone. No new execution engine: every tool is a thin adapter that shells out to `workbench.py`/`orchestrate.py`, so accept/discard's force-proof requirements (`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`, etc.) go through the exact same code path and can't be bypassed via MCP either.
+
+Tools provided:
+
+| Tool | Equivalent CLI |
+|---|---|
+| `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
+| `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
+
+Opt-in: nothing changes unless you start this server; existing CLI/skill usage is unaffected. To wire it into an MCP client (e.g. Claude Desktop), register `command: python3`, `args: ["<repo>/scripts/mcp_server.py"]` in its MCP config.
+
+**Verification:** launched the server as a subprocess against a disposable repo and drove a full happy path purely over JSON-RPC — `initialize` → `tools/list` → `rig_task_new` (enqueue) → `rig_task_board` (recover task_id) → `rig_task_accept` (confirmed `isError: true` rejection while the gate is unmet) → `rig_task_gate` to mark every criterion `passed` → `rig_task_accept` (succeeds) — and confirmed the rejection text and the squash-accept result match direct CLI invocation exactly.
+
 ## 13. Advanced commands
 
 ### Command map

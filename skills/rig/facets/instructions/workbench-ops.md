@@ -2,6 +2,10 @@
 
 **`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review` / `/rig cockpit`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない(§8 Native-first)。
 
+## MCPサーバ経由での操作（`scripts/mcp_server.py`・#263）
+
+Claude Codeセッションの外（別エージェント・CI・別プロセス）からこれらの操作を叩きたい場合は`python3 scripts/mcp_server.py`を起動する。stdlibのみでMCP stdio transport（JSON-RPC 2.0）を実装した薄いアダプタで、`rig_task_*`/`rig_orchestrate_*`ツールは本ファイルが説明する各`workbench.py`/`orchestrate.py`サブコマンドをサブプロセスでそのまま呼ぶ。**新しい判定ロジックは持たない**——accept/discardの安全要件は本ファイル記載のものとMCP経由で完全に同一。opt-in（起動しなければ何も変わらない）。詳細はREADME「MCPサーバ」節を参照。
+
 ## `/rig cockpit`
 
 ```
