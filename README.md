@@ -553,6 +553,10 @@ Fable 5's safety filter auto-blocks requests in three categories (cyber/bio/reas
 
 An experimental backend that delegates review-gate parallel fan-out to Anthropic's Managed Agents API (coordinator/worker, beta) instead of the existing subprocess + ThreadPoolExecutor path. Enable with `cfg["parallel_backend"] = "managed-agents"` plus `cfg["environment_id"]` (required) — **the default stays the existing mechanism**; this is fully opt-in. See `commands/orchestrate.md` §⑨ for details and honest limitations (REST paths are inferred from the documented SDK method names, it has not been connected to the real API, and event-stream integration into the run-continuity header is not implemented).
 
+### Learned auto-router from historical run data (`--auto-route-learn`, #305)
+
+Builds on `--auto-route` (#264) by learning from `.rig/runs.jsonl`'s track record (gate pass rate per model) with a frequency-based approach — no ML model needed. **Defaults to shadow mode**: predictions are recorded but not applied until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static auto-route when there aren't enough reference runs or pass rate is too low, always recording the rejected candidates and why (counterfactuals). The exploration budget is hash-based rather than random, so it stays deterministic. See `commands/orchestrate.md` §⑩ for details. Regret logging (auto-calibrating "too cheap"/"too expensive" picks) is not implemented.
+
 ## 13. Advanced commands
 
 ### Command map

@@ -538,6 +538,10 @@ Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエスト
 
 review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorではなくAnthropic Managed Agents API（coordinator/worker構成のbeta）に委譲する実験的backend。`cfg["parallel_backend"] = "managed-agents"` + `cfg["environment_id"]`（必須）で有効化——**既定は従来方式のまま**、完全にopt-in。詳細・正直な限界（RESTパスは公式SDKメソッド名からの推測／実APIには未接続／イベントストリーム統合は未実装）は`commands/orchestrate.md`「⑨」を参照。
 
+### 実績データから学習するauto-router（`--auto-route-learn`・#305）
+
+`--auto-route`（#264）を発展させ、`.rig/runs.jsonl`の実績（gate通過率）から頻度ベースで学習する（MLモデル不要）。**既定はshadow mode**——予測は記録するが実際の選択には使わず、`--auto-route-mode active`で初めて有効化する段階導入。参照run数不足・低pass_rate時は静的auto-routeへフォールバックし、棄却理由（counterfactual）を必ず記録する。exploration budgetは乱数ではなくハッシュベースで決定論的。詳細は`commands/orchestrate.md`「⑩」を参照。regret logging（安すぎ/高すぎの自動較正）は未実装。
+
 ## 13. Advanced commands
 
 ### コマンド分類

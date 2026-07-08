@@ -146,6 +146,23 @@ persona 1つにつきworker agentを1つ作成し、判断のみ行うcoordinato
 - イベントストリームをrun-continuityヘッダの進捗表示に統合する（issueの4番目の要求）は未実装——ポーリングによる最終結果取得のみで、リアルタイムの`session.thread_created`等のイベント型は扱っていません。
 - `selftest`が検証する決定論は「rig側の集約・エラーハンドリングコード」についてのみで、LLM自体の出力決定論（Managed Agents構成でのコーディネータ/ワーカーの振る舞い）は別問題です。
 
+## ⑩ 実績データから学習するauto-router（`--auto-route-learn`・#305）
+
+```
+orchestrate run <recipe> --provider mock --auto-route --auto-route-learn [--auto-route-mode active] \
+    [--exploration-pct N] [--exploration-date <bucket>]
+```
+
+`--auto-route`（#264、静的閾値）を発展させ、`.rig/runs.jsonl`の実績（過去にどのmodelでそのstepがgate通過したか）から頻度ベースで学習する（複雑なMLモデルは使わない）。
+
+- **既定はshadow mode**：予測を`state["history"]`（`LEARNED_ROUTE_PREDICTION`）に必ず記録するが、実際の選択には使わない——実際に使われるのは引き続き#264の静的auto-route。一定期間データを蓄積してから`--auto-route-mode active`で有効化する、という段階導入を想定。
+- **confidence threshold**：参照run数が3件未満、またはpass_rateが80%未満のmodelは棄却され（`counterfactuals`に理由付きで記録）、全候補が棄却されれば`sufficient: False`として#264の静的選択にフォールバックする。
+- **counterfactual記録**：選ばれなかった候補とその棄却理由（サンプル不足／pass_rate不足）を必ず記録し、ブラックボックス化しない。
+- **exploration budget**：`--exploration-pct N`（0-100）で、一定割合だけ次点候補を試して比較データを増やせる。乱数ではなく`--exploration-date`（既定は空文字列）と recipe/step のハッシュで決定論的に判定するため、同じ入力からは常に同じ選択になる。
+- 適用結果は`runs.jsonl`の`steps[].learned_route`に記録され、`AUTO_ROUTE`エントリ自体は#264と同じ形式のまま（学習ルートの理由が`reason`に埋め込まれる）。
+
+**未実装（regret logging）**：レビューコメントが提案した「安すぎた/高すぎた」を自動検知するregret loggingは、実際にリトライ時にmodelを変えて再実行する仕組みが必要で本バッチのスコープ外——現状は`steps[].status`（passed/failed）と`learned_route`の実績を`runs`/`stats`側で後から突き合わせることで手動較正できる、という段階に留まる。
+
 ## 効く所
 
 - **prose の制御ループ ≪ コードの強制**（`harness-taxonomy`）。遷移・停止・リトライをコードが握る。
