@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# rig-wb installer — pip/pipx を検知して git+URL 経由で導入する。
+# rig-wb installer — detects pip/pipx and installs via git+URL.
 #
-# 呼び方:
-#   scripts/install.sh                             # 対話モード（推奨）
-#   scripts/install.sh --yes                       # 確認なしで install
-#   scripts/install.sh --ref <branch|tag|sha>      # 特定 ref を指定（既定 master）
-#   scripts/install.sh --check                     # インストール可否だけ確認して終了
-#   scripts/install.sh --uninstall                 # rig-workbench を外す
+# Usage:
+#   scripts/install.sh                             # interactive mode (recommended)
+#   scripts/install.sh --yes                       # install without confirmation
+#   scripts/install.sh --ref <branch|tag|sha>      # pin a specific ref (default: master)
+#   scripts/install.sh --check                     # only check installability, then exit
+#   scripts/install.sh --uninstall                 # remove rig-workbench
 #
-# 戦略（優先順）:
-#   1. pipx が使えれば `pipx install`（隔離 venv・PATH に単発 CLI・推奨）
-#   2. pip があれば `pip install --user`（PEP 668 の場合は明示 --break-system-packages を促す）
-#   3. どちらも無ければエラー
+# Strategy (in order of preference):
+#   1. If pipx is available, `pipx install` (isolated venv, single CLI on PATH; recommended)
+#   2. If pip is available, `pip install --user` (on PEP 668, prompt for explicit --break-system-packages)
+#   3. Error if neither exists
 #
-# 冪等: 既に `rig-wb version` が通ればスキップ（--force で再インストール）。
+# Idempotent: skips if `rig-wb version` already succeeds (--force reinstalls).
 set -euo pipefail
 
 REPO_URL="git+https://github.com/itoh-shun/rig.git"
@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "[ERROR] 未知のフラグ: $1" >&2
+      echo "[ERROR] Unknown flag: $1" >&2
       exit 2
       ;;
   esac
@@ -47,24 +47,24 @@ done
 if command -v rig-wb >/dev/null 2>&1; then
   CURRENT=$(rig-wb version 2>/dev/null || echo "?")
   if [ "$UNINSTALL" -eq 1 ]; then
-    echo "◇ アンインストール: 現在 $CURRENT"
+    echo "◇ Uninstalling: currently $CURRENT"
     if command -v pipx >/dev/null 2>&1; then
       pipx uninstall rig-workbench || pip3 uninstall -y rig-workbench || true
     else
       pip3 uninstall -y rig-workbench || true
     fi
-    echo "✓ アンインストール完了"
+    echo "✓ Uninstall complete"
     exit 0
   fi
   if [ "$FORCE" -eq 0 ]; then
-    echo "✓ rig-wb は既にインストール済み: $CURRENT"
-    echo "  再インストールするには --force、外すには --uninstall。"
+    echo "✓ rig-wb is already installed: $CURRENT"
+    echo "  Use --force to reinstall, --uninstall to remove."
     exit 0
   fi
 fi
 
 if [ "$UNINSTALL" -eq 1 ]; then
-  echo "rig-wb は未インストール。何もしません。"
+  echo "rig-wb is not installed. Nothing to do."
   exit 0
 fi
 
@@ -84,7 +84,7 @@ if [ -n "$PYTHON_CMD" ] && "$PYTHON_CMD" -m pip --version >/dev/null 2>&1; then
   HAS_PIP=1
 fi
 
-# 決定ロジック: pipx > uv > pip
+# Decision logic: pipx > uv > pip
 METHOD=""
 if [ "$HAS_PIPX" -eq 1 ]; then
   METHOD="pipx"
@@ -94,12 +94,12 @@ elif [ "$HAS_PIP" -eq 1 ]; then
   METHOD="pip"
 fi
 
-echo "◇ 環境検知"
-echo "  python:     ${PYTHON_CMD:-なし}"
-echo "  pipx:       $([ "$HAS_PIPX" -eq 1 ] && echo 有り || echo なし)"
-echo "  uv:         $([ "$HAS_UV" -eq 1 ] && echo 有り || echo なし)"
-echo "  pip:        $([ "$HAS_PIP" -eq 1 ] && echo 有り || echo なし)"
-echo "  install 方法: ${METHOD:-なし}"
+echo "◇ Environment detection"
+echo "  python:     ${PYTHON_CMD:-none}"
+echo "  pipx:       $([ "$HAS_PIPX" -eq 1 ] && echo yes || echo no)"
+echo "  uv:         $([ "$HAS_UV" -eq 1 ] && echo yes || echo no)"
+echo "  pip:        $([ "$HAS_PIP" -eq 1 ] && echo yes || echo no)"
+echo "  install method: ${METHOD:-none}"
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
   [ -n "$METHOD" ] && exit 0 || exit 1
@@ -107,16 +107,16 @@ fi
 
 if [ -z "$METHOD" ]; then
   cat >&2 <<'EOF'
-[ERROR] pip / pipx / uv のいずれも見つかりません。以下のどれかを先に入れてください:
+[ERROR] None of pip / pipx / uv found. Install one of them first:
 
-  # 推奨: pipx（隔離 venv で CLI を単発インストール）
+  # Recommended: pipx (installs the CLI standalone in an isolated venv)
   # Debian/Ubuntu:
   sudo apt install pipx && pipx ensurepath
 
   # macOS:
   brew install pipx && pipx ensurepath
 
-  # 汎用:
+  # Generic:
   python3 -m pip install --user pipx && python3 -m pipx ensurepath
 EOF
   exit 1
@@ -126,23 +126,23 @@ fi
 SPEC="${REPO_URL}@${REF}"
 if [ "$YES" -eq 0 ]; then
   echo ""
-  echo "◇ 実行内容"
+  echo "◇ About to run"
   case "$METHOD" in
     pipx) echo "  pipx install \"$SPEC\"" ;;
     uv)   echo "  uv tool install \"$SPEC\"" ;;
     pip)  echo "  $PYTHON_CMD -m pip install --user \"$SPEC\"" ;;
   esac
   echo ""
-  read -r -p "続行しますか？ [y/N] " ANS
+  read -r -p "Continue? [y/N] " ANS
   case "$ANS" in
     y|Y|yes|Yes) ;;
-    *) echo "中止しました。"; exit 0 ;;
+    *) echo "Aborted."; exit 0 ;;
   esac
 fi
 
 # ── install ─────────────────────────────────────────────────────────────
 echo ""
-echo "◇ インストール中..."
+echo "◇ Installing..."
 case "$METHOD" in
   pipx)
     if [ "$FORCE" -eq 1 ]; then
@@ -159,15 +159,15 @@ case "$METHOD" in
     fi
     ;;
   pip)
-    # PEP 668 環境（Debian 系）では --break-system-packages が要る場合あり。
-    # ここでは素直に --user を試し、失敗したらメッセージで案内する。
+    # PEP 668 environments (Debian family) may require --break-system-packages.
+    # Try a plain --user first and show guidance if it fails.
     if ! $PYTHON_CMD -m pip install --user "$SPEC" 2>&1; then
       cat >&2 <<'EOF'
 
-[HINT] pip install --user が拒否されました。PEP 668 環境なら以下を試してください:
+[HINT] pip install --user was rejected. On a PEP 668 environment, try:
 
-  # pipx を入れる（推奨・上に案内あり）
-  # または一時的に:
+  # Install pipx (recommended; guidance above)
+  # Or, as a one-off:
   python3 -m pip install --user --break-system-packages "$SPEC"
 
 EOF
@@ -178,25 +178,25 @@ esac
 
 # ── verify ──────────────────────────────────────────────────────────────
 echo ""
-echo "◇ 検証"
+echo "◇ Verifying"
 if ! command -v rig-wb >/dev/null 2>&1; then
   cat >&2 <<'EOF'
-[WARN] rig-wb が PATH に見つかりません。以下を試してください:
+[WARN] rig-wb not found on PATH. Try the following:
 
-  # pipx 経由なら:
+  # If installed via pipx:
   pipx ensurepath && exec "$SHELL"
 
-  # pip --user 経由なら:
+  # If installed via pip --user:
   export PATH="$HOME/.local/bin:$PATH"
-  # または `.bashrc` / `.zshrc` に追記
+  # or add it to `.bashrc` / `.zshrc`
 
 EOF
   exit 1
 fi
 INSTALLED=$(rig-wb version)
-echo "✓ インストール完了: $INSTALLED"
+echo "✓ Install complete: $INSTALLED"
 echo ""
-echo "使い方:"
-echo "  rig-wb --help          # サブコマンド一覧"
-echo "  rig-wb wb board        # workbench の状態"
+echo "Usage:"
+echo "  rig-wb --help          # list sub-commands"
+echo "  rig-wb wb board        # workbench status"
 echo "  rig-wb runs --html /tmp/rig.html   # HTML dashboard"

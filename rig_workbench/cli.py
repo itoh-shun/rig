@@ -34,16 +34,17 @@ from . import __version__
 
 
 def _rig_home() -> pathlib.Path:
-    """rig repo root を返す。scripts/*.py を辿れる場所が必要な subcommand 用。
+    """Return the rig repo root. For subcommands that need access to scripts/*.py.
 
-    優先順位:
-      1. 環境変数 `RIG_HOME`（他のリポジトリから使うときの正攻法・bin/orchestrate と同じ）
-      2. インストール元（`pip install -e .` でリポジトリ内から入れた場合）
-      3. カレントディレクトリ / その親（`cd path/to/rig` して `rig-wb` を叩くケース）
+    Priority:
+      1. The `RIG_HOME` env var (the canonical way when used from another repo;
+         same as bin/orchestrate)
+      2. The install source (when installed from inside the repo via `pip install -e .`)
+      3. The current directory / its parents (the `cd path/to/rig` then `rig-wb` case)
 
-    どこにも見つからない場合、実行方法のヒントつきで例外を投げる。`usage` の
-    ように `.rig/runs.jsonl` だけあればよい subcommand はこれを呼ばずに
-    `_rig_data_root()` を使う。
+    If none is found, raises an exception with hints on how to run. Subcommands
+    like `usage` that only need `.rig/runs.jsonl` should use `_rig_data_root()`
+    instead of calling this.
     """
     env = os.environ.get("RIG_HOME")
     if env:
@@ -59,20 +60,20 @@ def _rig_home() -> pathlib.Path:
         if (candidate / "scripts" / "orchestrate.py").exists():
             return candidate
     raise RuntimeError(
-        "rig repo root が見つかりません。以下のどれかを試してください:\n"
-        "  1. rig repo に cd してから rig-wb を叩く\n"
-        "  2. RIG_HOME を設定: export RIG_HOME=/path/to/rig\n"
-        "  3. rig repo 内で `pip install -e .` して開発版を使う\n"
-        "  ※ `rig-wb usage` は repo なしでも動きます (cwd の .rig/runs.jsonl を読む)"
+        "rig repo root not found. Try one of the following:\n"
+        "  1. cd into the rig repo before running rig-wb\n"
+        "  2. Set RIG_HOME: export RIG_HOME=/path/to/rig\n"
+        "  3. Run `pip install -e .` inside the rig repo to use the dev version\n"
+        "  Note: `rig-wb usage` works without the repo (reads .rig/runs.jsonl in cwd)"
     )
 
 
 def _rig_data_root() -> pathlib.Path:
-    """`.rig/runs.jsonl` / `.rig/audit.jsonl` を探す起点を返す。
+    """Return the base directory to look for `.rig/runs.jsonl` / `.rig/audit.jsonl`.
 
-    scripts/*.py は不要。usage / dashboard など「実行ログを読むだけ」の subcommand
-    は cwd の `.rig/` を素直に見る。無ければ cwd の親を辿り、それも無ければ
-    `_rig_home()` にフォールバック。
+    scripts/*.py is not needed. Subcommands that only read run logs (usage,
+    dashboard, etc.) simply look at `.rig/` in cwd; if absent, walk up cwd's
+    parents, and fall back to `_rig_home()` as a last resort.
     """
     cwd = pathlib.Path.cwd().resolve()
     for candidate in (cwd, *cwd.parents):
@@ -82,11 +83,11 @@ def _rig_data_root() -> pathlib.Path:
 
 
 def _load_script(name: str) -> types.ModuleType:
-    """`scripts/<name>.py` を独立モジュールとして安全にロードする。
+    """Safely load `scripts/<name>.py` as a standalone module.
 
-    通常の `import scripts.foo` は scripts/ が package として設定されていないと
-    失敗するため、file-loader を使う。読み込んだモジュールは `sys.modules` に
-    キャッシュされ、以降の呼び出しは繰り返しにならない。
+    A plain `import scripts.foo` fails unless scripts/ is set up as a package,
+    so use a file loader instead. The loaded module is cached in `sys.modules`,
+    so subsequent calls do not reload it.
     """
     module_key = f"_rig_scripts_{name}"
     if module_key in sys.modules:
@@ -94,9 +95,9 @@ def _load_script(name: str) -> types.ModuleType:
     root = _rig_home()
     script_path = root / "scripts" / f"{name}.py"
     if not script_path.exists():
-        raise FileNotFoundError(f"scripts/{name}.py が見つかりません: {script_path}")
+        raise FileNotFoundError(f"scripts/{name}.py not found: {script_path}")
     spec = importlib.util.spec_from_file_location(module_key, script_path)
-    assert spec is not None and spec.loader is not None, f"import spec 失敗: {script_path}"
+    assert spec is not None and spec.loader is not None, f"import spec failed: {script_path}"
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_key] = module
     spec.loader.exec_module(module)
@@ -107,11 +108,11 @@ def _load_script(name: str) -> types.ModuleType:
 
 
 def _run_orchestrate_subcmd(argv: list[str]) -> None:
-    """`orchestrate.py` の main() に処理を渡す。
+    """Hand off to `orchestrate.py`'s main().
 
-    orchestrate.py は `sys.argv[1:]` を自分で読むので argv を差し替えてから呼ぶ。
-    scripts 側の COMMANDS ディスパッチが必要な subcommand（run/plan/runs/etc.）を
-    そのまま流用する。
+    orchestrate.py reads `sys.argv[1:]` itself, so swap argv before calling.
+    Subcommands that need the COMMANDS dispatch on the scripts side
+    (run/plan/runs/etc.) are reused as-is.
     """
     orch = _load_script("orchestrate")
     old = sys.argv
@@ -152,9 +153,10 @@ def _run_validate(argv: list[str]) -> None:
         sys.argv = old
 
 
-# subcommand -> handler。`rig-wb <sub> ...` で呼ぶときの一次表。
-# orchestrate.py に既にある subcommand は `_orch_delegates` に列挙し、
-# そのまま orchestrate 側の COMMANDS へ渡す（薄いラッパーで済ませる）。
+# subcommand -> handler. Primary table for `rig-wb <sub> ...` calls.
+# Subcommands that already exist in orchestrate.py are listed in
+# `_orch_delegates` and passed straight to orchestrate's COMMANDS
+# (a thin wrapper is enough).
 _orch_delegates = {
     "run", "plan", "runs", "init", "check", "verdict",
     "queue", "selftest", "list", "validate", "graph",
@@ -163,13 +165,14 @@ _orch_delegates = {
 
 
 def _show_usage(argv: list[str]) -> None:
-    """`.rig/runs.jsonl` から invoker 別の実行回数を集計する。
+    """Aggregate run counts per invoker from `.rig/runs.jsonl`.
 
-    既定は cwd の `.rig/runs.jsonl`（プロジェクト単位の記録）。`--global` で
-    `~/.rig/runs.jsonl`（全プロジェクト横断のミラー）に切り替える。
-    `RIG_INVOKER` が設定されていた run を「rig-wb 経由」として数え、それ以外を
-    「direct」として数える。`--global` 時は `project` フィールドで来歴も表示する。
-    `--json` で機械可読出力、`--limit N` で対象範囲を絞れる。
+    Defaults to `.rig/runs.jsonl` in cwd (per-project record). `--global`
+    switches to `~/.rig/runs.jsonl` (a mirror across all projects).
+    Runs that had `RIG_INVOKER` set are counted as "via rig-wb"; everything
+    else as "direct". With `--global`, provenance is also shown via the
+    `project` field. `--json` gives machine-readable output; `--limit N`
+    narrows the range.
     """
     import collections
     import json as _json
@@ -189,7 +192,7 @@ def _show_usage(argv: list[str]) -> None:
 
     if use_global:
         runs_path = pathlib.Path.home() / ".rig" / "runs.jsonl"
-        scope = "global (~/.rig/runs.jsonl・全プロジェクトのミラー)"
+        scope = "global (~/.rig/runs.jsonl, mirror across all projects)"
     else:
         home = _rig_data_root()
         runs_path = home / ".rig" / "runs.jsonl"
@@ -213,7 +216,7 @@ def _show_usage(argv: list[str]) -> None:
     last_ts_by: dict[str, str] = {}
     by_project: collections.Counter[str] = collections.Counter()
     for e in entries:
-        inv = e.get("invoker") or "direct (rig-wb 未経由)"
+        inv = e.get("invoker") or "direct (not via rig-wb)"
         by_invoker[inv] += 1
         ts = e.get("ts")
         if ts and (inv not in last_ts_by or ts > last_ts_by[inv]):
@@ -238,27 +241,27 @@ def _show_usage(argv: list[str]) -> None:
 
     print(f"## rig-wb usage — {__version__}")
     print(f"scope: {scope}")
-    print(f"runs 記録: {runs_path}")
+    print(f"runs log: {runs_path}")
     if not entries:
-        print("\n記録がありません。まだ `rig-wb ...` は使われていません。")
+        print("\nNo records found. `rig-wb ...` has not been used yet.")
         if not use_global:
-            print("`rig-wb usage --global` で `~/.rig/runs.jsonl` (横断) も見られます。")
+            print("Use `rig-wb usage --global` to see `~/.rig/runs.jsonl` (cross-project).")
         return
-    print(f"\n直近 {len(entries)} run:")
+    print(f"\nLast {len(entries)} runs:")
     for inv, n in by_invoker.most_common():
         last = last_ts_by.get(inv, "?")
         marker = "◆" if inv.startswith("rig-wb/") else " "
-        print(f"  {marker} {inv:35s}  {n:4d} 回   last: {last}")
+        print(f"  {marker} {inv:35s}  {n:4d} runs   last: {last}")
     rig_wb_runs = sum(n for inv, n in by_invoker.items() if inv.startswith("rig-wb/"))
     if rig_wb_runs == 0:
-        print("\n※ まだ `rig-wb` 経由の run はゼロです（scripts/*.py の直呼びのみ）。")
+        print("\nNote: no runs via `rig-wb` yet (only direct scripts/*.py calls).")
     else:
-        print(f"\n◆ rig-wb 経由: {rig_wb_runs} 回 / 全体 {len(entries)} 回 "
+        print(f"\n◆ via rig-wb: {rig_wb_runs} of {len(entries)} runs "
               f"({rig_wb_runs / len(entries) * 100:.0f}%)")
     if use_global and by_project:
-        print("\nプロジェクト別:")
+        print("\nBy project:")
         for proj, n in by_project.most_common():
-            print(f"  {n:4d} 回   {proj}")
+            print(f"  {n:4d} runs   {proj}")
 
 
 def _print_help() -> None:
@@ -269,26 +272,26 @@ Usage:
   rig-wb <sub> [args]
 
 Sub-commands:
-  run <recipe> --provider <name> ...    orchestrate: 自走実行
-  plan <recipe> [--json] [--with ...]   orchestrate: プラン提示
+  run <recipe> --provider <name> ...    orchestrate: autonomous run
+  plan <recipe> [--json] [--with ...]   orchestrate: show plan
   runs [--limit N] [--recipe R] [--html <path>]
-                                        orchestrate: テレメトリ一覧 / HTML dashboard
+                                        orchestrate: telemetry list / HTML dashboard
   queue add|list|go|done ...            orchestrate: queue backend
   wb <cmd> ...                          workbench: new/step/gate/accept/discard/board/audit/stats/…
   dashboard [--out <html>] [--since ...]
                                         scripts/dashboard.py
   validate                              scripts/validate.py
-  selftest                              orchestrate: selftest（golden 検証）
-  usage [--limit N] [--global] [--json] この rig-wb が実際に使われた履歴。
-                                        既定は cwd の .rig/runs.jsonl（プロジェクト単位）、
-                                        --global で ~/.rig/runs.jsonl（全プロジェクト横断）
+  selftest                              orchestrate: selftest (golden verification)
+  usage [--limit N] [--global] [--json] History of actual rig-wb usage.
+                                        Defaults to .rig/runs.jsonl in cwd (per-project);
+                                        --global reads ~/.rig/runs.jsonl (across all projects)
   bench [--tasks ...] [--provider X] [--allow-headless-in-cc] [--out <json>]
-                                        bare vs rig の A/B ベンチマーク
-                                        （組み込み task で客観指標を測定・課金 opt-in）
-  version                               バージョン表示
+                                        bare vs rig A/B benchmark
+                                        (objective metrics on built-in tasks; billing is opt-in)
+  version                               show version
 
 Environment:
-  RIG_HOME                              rig repo root を明示（省略時は自動検出）
+  RIG_HOME                              set the rig repo root explicitly (auto-detected if omitted)
 
 Examples:
   rig-wb run bugfix --provider claude --verifier-provider codex
@@ -299,10 +302,10 @@ Examples:
 
 
 def main() -> None:
-    # 呼び出し元がこの CLI（`rig-wb`）であることを下流の scripts/*.py にも伝える。
-    # scripts/orchestrate.py の telemetry_append と workbench.py の audit_append が
-    # 拾って `.rig/runs.jsonl` / `.rig/audit.jsonl` に invoker 情報を残す。これで
-    # 「rig-wb 経由で回ったか、素の python3 scripts/... 直呼びか」を区別できる。
+    # Tell downstream scripts/*.py that the caller is this CLI (`rig-wb`).
+    # telemetry_append in scripts/orchestrate.py and audit_append in workbench.py
+    # pick this up and record invoker info in `.rig/runs.jsonl` / `.rig/audit.jsonl`,
+    # so we can distinguish runs via rig-wb from direct `python3 scripts/...` calls.
     os.environ.setdefault("RIG_INVOKER", f"rig-wb/{__version__}")
 
     argv = sys.argv[1:]
@@ -333,8 +336,8 @@ def main() -> None:
     if sub in _orch_delegates:
         _run_orchestrate_subcmd([sub, *rest])
         return
-    print(f"[ERROR] 未知のサブコマンド: {sub!r}", file=sys.stderr)
-    print("       `rig-wb --help` で一覧を確認してください。", file=sys.stderr)
+    print(f"[ERROR] Unknown sub-command: {sub!r}", file=sys.stderr)
+    print("       Run `rig-wb --help` for the list of sub-commands.", file=sys.stderr)
     sys.exit(2)
 
 

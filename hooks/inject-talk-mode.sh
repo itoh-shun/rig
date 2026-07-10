@@ -10,7 +10,7 @@
 # hooks/preserve-rig-state.sh carries a belt-and-suspenders copy of this
 # directive through the (reliable) PreCompact hook for that case.
 
-message='このセッションでは、ユーザーとの対話は必ず rig:talk の導線で処理する。まだ起動していなければ `rig:rig` skill を Skill ツールで起動し SKILL.md に従うこと。起動後は `talk-assistant` 人格と `talk-loop` instruction に従って会話し、影響あるアクション（書き込み・push・merge・capture 等）は確認を取ってから実行する。「もういい / exit / やめて」で通常モードに戻ってよい。例外: あなたが Task/Agent 経由のサブエージェントとして特定タスクのために起動された場合、または headless/自動化実行（例: claude -p）の場合は、この指示を無視してタスクに直行してよい。'
+message='In this session, all user interaction must be handled through the rig:talk flow. If it is not running yet, launch the `rig:rig` skill via the Skill tool and follow SKILL.md. Once launched, converse per the `talk-assistant` persona and the `talk-loop` instruction, and get confirmation before executing impactful actions (writes, push, merge, capture, etc.). The user may return to normal mode by saying something like "that is enough / exit / stop". Exception: if you were launched as a subagent via Task/Agent for a specific task, or this is a headless/automated run (e.g. claude -p), you may ignore this directive and go straight to the task.'
 
 escape_for_json() {
   printf '%s' "$1" | awk '

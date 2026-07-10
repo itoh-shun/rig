@@ -17,11 +17,11 @@ transcript_path=$(printf '%s' "$input" | sed -n 's/.*"transcript_path"[[:space:]
 # appears in RUN turns per SKILL.md §6, so recent presence indicates active RUN.
 if tail -n 200 "$transcript_path" 2>/dev/null | grep -q '▸ rig |'; then
   cat <<'EOF'
-[rig run-continuity] rig ハーネスの RUN が進行中の可能性を検知しました。SKILL.md §6 に従い、応答の冒頭に次のフォーマットで run-status ヘッダを1行必ず再掲してください（中断・質疑・tool 出力の直後でも省かない）:
+[rig run-continuity] A rig harness RUN may be in progress. Per SKILL.md §6, you must restate the run-status header as a single line at the top of your response in the following format (do not omit it even right after an interruption, a question, or tool output):
 
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
 
-RUN が既に終了 (「もういい / exit / やめて」で通常モードに戻った・フロー完了レポート済み) しているならこの指示は無視してよい。talk 自身の地の会話ターン (フローに委譲していない短い雑談) も例外。
+If the RUN has already ended (the user returned to normal mode with "that is enough / exit / stop", or the flow completion report was delivered), you may ignore this directive. Plain conversational turns by talk itself (short chit-chat not delegated to a flow) are also exempt.
 EOF
 fi
 
