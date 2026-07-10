@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""互換 shim — 実装は rig_workbench/orchestrate/ パッケージへ移動した。
+"""Compatibility shim — the implementation moved to the rig_workbench/orchestrate/ package.
 
-`python3 scripts/orchestrate.py <cmd>`（bin/orchestrate・.claude-plugin/bin/rig 経由を
-含む）と、rig_workbench/cli.py が importlib でこのファイルを読み `.main()` を呼ぶ
-既存経路の両方を維持する。usage 表示（`print(__doc__)`）は cli モジュール側にある。
+Keeps both existing entry paths working: `python3 scripts/orchestrate.py <cmd>` (including
+via bin/orchestrate and .claude-plugin/bin/rig), and rig_workbench/cli.py loading this file
+with importlib and calling `.main()`. The usage text (`print(__doc__)`) lives in the cli module.
 """
 
 import pathlib
 import sys
 
-# repo root（scripts/ の親）を sys.path に入れて、どの cwd からでも
-# rig_workbench パッケージを import できるようにする。
+# Put the repo root (parent of scripts/) on sys.path so the rig_workbench
+# package can be imported from any cwd.
 _REPO_ROOT = str(pathlib.Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)

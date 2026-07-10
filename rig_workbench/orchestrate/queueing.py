@@ -9,14 +9,15 @@ import concurrent.futures as futures
 from . import config
 from .providers import _build_prompt, run_provider
 
-# ── タスクキュー（積んで GO・管理ツール連携）──────────────────────────────────
-# 「task を積む → まとめて GO」を、ローカル json か外部管理ツール(GitHub/GitLab Issue)で持つ。
-# backend は差し替え式：local（.rig/queue.json）／github（gh CLI）／gitlab（glab CLI）。
-# Issue 連携時はラベルで状態管理：rig-queue → rig-running → rig-done / rig-failed。
+# ── Task queue (stack up, then GO; tracker integration) ──────────────────────
+# Holds "stack tasks -> GO in one batch" in a local json file or an external tracker
+# (GitHub/GitLab Issues). Backends are swappable: local (.rig/queue.json) / github
+# (gh CLI) / gitlab (glab CLI).
+# With Issue integration, state is tracked via labels: rig-queue -> rig-running -> rig-done / rig-failed.
 QUEUE_LABEL = "rig-queue"
-# queue list が可視化すべき「アクティブ」ラベル（rig-done は close 済みのため対象外・#211）。
+# The "active" labels queue list should surface (rig-done is excluded: already closed; #211).
 QUEUE_LABELS_ACTIVE = ["rig-queue", "rig-running", "rig-failed"]
-# queue が扱う全状態ラベル（旧ラベルの除去対象の算出に使う・#223）。
+# All state labels the queue manages (used to compute which old labels to remove; #223).
 QUEUE_LABELS_ALL = ["rig-queue", "rig-running", "rig-failed", "rig-done"]
 QUEUE_PATH = config.INVOCATION_CWD / ".rig" / "queue.json"
 
@@ -26,12 +27,12 @@ def _gh_cli(backend: str) -> str:
 
 
 def _cli_run(argv: list[str]) -> tuple[int, str, str]:
-    """gh/glab を subprocess 実行。CLI 不在でも crash せず (127, "", err) を返す。"""
+    """Run gh/glab as a subprocess. Returns (127, "", err) instead of crashing when the CLI is absent."""
     try:
         r = subprocess.run(argv, capture_output=True, text=True)
         return r.returncode, r.stdout or "", r.stderr or ""
     except FileNotFoundError:
-        return 127, "", f"{argv[0]} が見つかりません（CLI 未インストール）"
+        return 127, "", f"{argv[0]} not found (CLI not installed)"
 
 
 def _local_load() -> dict:
@@ -64,15 +65,16 @@ def queue_add(backend: str, task: str, cfg: dict) -> dict:
 
 
 def queue_list(backend: str, cfg: dict) -> list[dict]:
-    """アクティブな item（queued/running/failed）を全て返す。done（close 済み）は対象外。
+    """Return every active item (queued/running/failed). done (already closed) is excluded.
 
-    ラベル遷移（queue_set_status）で旧ラベルは外れるため、単一ラベルの `-l` 絞り込みだと
-    running/failed に遷移した item が一覧から消える（#211）。QUEUE_LABELS_ACTIVE の各ラベルを
-    個別に問い合わせて id（github）／行（gitlab, テキストのみ）で dedup・merge する。
+    Label transitions (queue_set_status) drop the old label, so filtering by a single `-l`
+    label makes items that moved to running/failed vanish from the listing (#211). Query each
+    QUEUE_LABELS_ACTIVE label individually and dedup/merge by id (github) or by line (gitlab,
+    text-only output).
     """
     if backend == "local":
-        # done（close 済み相当）は対象外（#215：github/gitlab は --state open で自然に除外される
-        # のに対し local だけ queue.json に永久に残っていた非対称を解消）。
+        # done (equivalent to closed) is excluded (#215: github/gitlab exclude them naturally
+        # via --state open; this fixes the asymmetry where local kept them in queue.json forever).
         return [it for it in _local_load()["items"] if it.get("status") != "done"]
     cli = _gh_cli(backend)
     R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
@@ -93,16 +95,17 @@ def queue_list(backend: str, cfg: dict) -> list[dict]:
                 st = ("running" if "rig-running" in labels
                       else "failed" if "rig-failed" in labels
                       else "queued")
-                # 直近コメント（queue_set_status が書き込む失敗理由/完了コメント）を note として
-                # 表示に使う（#214：queue list が note を素通りしていた欠落を解消）。
+                # Use the latest comment (the failure reason / completion comment written by
+                # queue_set_status) as the displayed note (#214: fixes queue list dropping notes).
                 comments = x.get("comments") or []
                 note = comments[-1].get("body", "") if comments else ""
                 seen[x.get("number")] = {"id": x.get("number"), "task": x.get("title"),
                                           "status": st, "note": note}
         return list(seen.values())
-    # gitlab（glab）はテキスト出力のみで labels/comments が取れないため、ラベルごとに問い合わせて
-    # 行単位で dedup・merge する（status は従来どおり "queued" 固定。#211 の可視性回復が主目的）。
-    # note 表示は gitlab 未対応（id を個別取得できない既存の制約と同根・#214）。
+    # gitlab (glab) only has text output, with no labels/comments, so query per label and
+    # dedup/merge per line (status stays fixed at "queued" as before; #211 visibility recovery
+    # is the main goal). Note display is unsupported on gitlab (same root cause as the existing
+    # inability to fetch ids individually; #214).
     seen_lines: dict[str, dict] = {}
     for label in QUEUE_LABELS_ACTIVE:
         argv = [cli, "issue", "list", "-l", label, "--state", "open"] + R
@@ -116,12 +119,13 @@ def queue_list(backend: str, cfg: dict) -> list[dict]:
 
 
 def _queue_relabel_args(status: str) -> list[str]:
-    """新 status に対応する gh/glab のラベル差し替え引数（`--add-label X --remove-label Y ...`）。
+    """gh/glab relabel arguments for the new status (`--add-label X --remove-label Y ...`).
 
-    旧ラベルは QUEUE_LABEL 固定ではなく「新ラベル以外の全キューラベル」を除去対象にする
-    （#223：running→failed/done 等の遷移で旧ラベルが固定除去のまま残留し、queue_list の
-    ラベル→status 判定が誤った状態を返し続けるバグの修正）。フィールドを切り出すことで
-    selftest が argv 構築を直接検証できる（実 CLI 呼び出しを伴わない）。
+    The removal targets are "every queue label other than the new one", not a fixed
+    QUEUE_LABEL (#223: fixes the bug where transitions like running->failed/done left the old
+    label behind because removal was hard-coded, so queue_list's label->status mapping kept
+    returning the wrong state). Extracting this helper lets selftest verify the argv
+    construction directly (without real CLI calls).
     """
     label = {"queued": "rig-queue", "running": "rig-running",
               "done": "rig-done", "failed": "rig-failed"}.get(status)
@@ -152,43 +156,46 @@ def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -
     if status == "done":
         _cli_run([cli, "issue", "close", str(item_id)] + R)
     elif status == "queued":
-        # retry（#213）：done で close 済みだった item も再度アクティブにするため reopen する
-        # （既に open の場合は no-op 扱いで crash しない。close 済みでない大半のケース＝failed
-        # からの retry では実質何もしない）。
+        # retry (#213): reopen so that items already closed as done become active again
+        # (already-open issues are a no-op, no crash; for the common case of retrying from
+        # failed, i.e. not closed, this effectively does nothing).
         _cli_run([cli, "issue", "reopen", str(item_id)] + R)
 
 
 def _build_queue_task_prompt(task: str, provider: str) -> str:
-    """queue の各 item を dispatch する生成プロンプト。
+    """Generation prompt that dispatches each queue item.
 
-    `rig`/`claude` provider は headless `claude -p` の**別プロセス**として並列実行される
-    （`queue go --max-parallel N`）。複数プロセスが同じ作業ディレクトリを共有するため、
-    workbench の isolated worktree（`/rig:rig`）を経由させないと**並列タスクがファイルを
-    取り合う衝突リスク**がある。そのため rig/claude provider には `/rig:rig "<task>"` の
-    実行を明示指示し、各タスクを自動的に専用 worktree へ隔離する。
-    accept は queue の役目ではない（ユーザーが `/rig:rig board`→`accept` で個別に反映する）。
+    The `rig`/`claude` providers run in parallel as **separate processes** of headless
+    `claude -p` (`queue go --max-parallel N`). Multiple processes share the same working
+    directory, so without routing through the workbench's isolated worktree (`/rig:rig`)
+    there is a **risk of parallel tasks fighting over files**. Hence the rig/claude providers
+    are explicitly instructed to run `/rig:rig "<task>"`, which automatically isolates each
+    task in its own worktree.
+    Accepting is not the queue's job (the user applies results individually via
+    `/rig:rig board` -> `accept`).
     """
     if provider in ("rig", "claude"):
         return (
-            "`rig` skill を Skill ツールで起動し、`facets/instructions/workbench`"
-            "（`/rig:rig` 統一入口）に従って次のタスクを isolated worktree で実行してください。"
-            "他の queue 項目と並列に走っているため、**本体の作業ツリーには一切書き込まないこと**"
-            "（accept はしない。isolated worktree 内で分類・実装・acceptance-gate 判定までを行い、"
-            "反映は queue 完了後にユーザーが `/rig:rig board` で一覧し、個別に `/rig:rig accept` "
-            "するまで待つ）。\n"
-            f'実行: /rig:rig "{task}"\n'
-            "gate が確定したら（passed/passed_with_warnings/failed のいずれか）、最後に "
-            "'STATUS: done' を出力してください。"
+            "Invoke the `rig` skill via the Skill tool and execute the following task in an "
+            "isolated worktree per `facets/instructions/workbench` (the `/rig:rig` unified entry). "
+            "It runs in parallel with other queue items, so **never write to the main working tree** "
+            "(do not accept; do triage, implementation, and the acceptance-gate judgment inside the "
+            "isolated worktree, and leave applying to the user, who will list results with "
+            "`/rig:rig board` after the queue finishes and `/rig:rig accept` them individually).\n"
+            f'Run: /rig:rig "{task}"\n'
+            "Once the gate is settled (one of passed/passed_with_warnings/failed), output "
+            "'STATUS: done' at the end."
         )
     return _build_prompt({"recipe": "queue", "goal": task}, {"id": "task", "instruction": task}, None)
 
 
 def _build_queue_verify_prompt(task: str, product: str) -> str:
-    return (f"あなたは独立した検証者です（この step を生成したエージェントとは別プロセス・別ロール）。"
-            f"queue タスク「{task}」の実行結果について、(1) 受け入れ基準を満たしているか、"
-            f"(2) **本体の作業ツリーを直接変更せず isolated worktree 内で完結しているか**"
-            f"（accept 前に main へ書き込んでいないか）を判定し、最後に必ず "
-            f"'VERDICT: PASS' か 'VERDICT: FAIL' を出力してください。\n--- 成果 ---\n{product[:2000]}")
+    return (f"You are an independent verifier (a separate process and role from the agent that "
+            f"generated this step). For the result of queue task \"{task}\", judge (1) whether it "
+            f"meets the acceptance criteria, and (2) **whether it stayed entirely inside the "
+            f"isolated worktree without directly modifying the main working tree** (no writes to "
+            f"main before accept). End with exactly "
+            f"'VERDICT: PASS' or 'VERDICT: FAIL'.\n--- product ---\n{product[:2000]}")
 
 
 def cmd_queue(args):
@@ -223,12 +230,12 @@ def cmd_queue(args):
         if not free:
             print("[ERROR] queue add \"<task>\""); sys.exit(1)
         it = queue_add(backend, " ".join(free), cfg)
-        print(f"積んだ [{backend}]: #{it['id']} {it['task']}  ({it['status']})"
+        print(f"queued [{backend}]: #{it['id']} {it['task']}  ({it['status']})"
               + (f" — {it.get('note','')}" if it.get("status") == "error" else ""))
         return
     if sub == "list":
         items = queue_list(backend, cfg)
-        print(f"## rig queue [{backend}]  ({len(items)} 件)")
+        print(f"## rig queue [{backend}]  ({len(items)} items)")
         for it in items:
             line = f"  [{it.get('status','?'):<8}] #{it.get('id')}  {it.get('task')}"
             note = it.get("note")
@@ -239,7 +246,7 @@ def cmd_queue(args):
     if sub == "done":
         if not free:
             print("[ERROR] queue done <id>"); sys.exit(1)
-        queue_set_status(backend, free[0], "done", "手動で done", cfg)
+        queue_set_status(backend, free[0], "done", "manually marked done", cfg)
         print(f"done [{backend}]: #{free[0]}")
         return
     if sub == "retry":
@@ -248,12 +255,12 @@ def cmd_queue(args):
         queue_set_status(backend, free[0], "queued", "", cfg)
         print(f"retry [{backend}]: #{free[0]} → queued")
         return
-    # go: 積まれた task をまとめて実行（独立 task は並列・各 task をゲート）
+    # go: run the stacked tasks in one batch (independent tasks in parallel; each task gated)
     items = [it for it in queue_list(backend, cfg) if it.get("status") == "queued"]
     if not items:
-        print(f"キューは空です [{backend}]。`queue add` で積んでください。")
+        print(f"Queue is empty [{backend}]. Stack tasks with `queue add`.")
         return
-    print(f"## rig queue GO [{backend}]  {len(items)} 件 / provider={gen} / 並列={max_parallel}\n")
+    print(f"## rig queue GO [{backend}]  {len(items)} items / provider={gen} / parallel={max_parallel}\n")
 
     def _run_one(it):
         task = it["task"]
@@ -261,7 +268,7 @@ def cmd_queue(args):
         rc, out = run_provider(gen, "generator", _build_queue_task_prompt(task, gen), cfg)
         rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, out), cfg, persona="queue")
         ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
-        note = ("✅ rig: gate 確定（要 /rig:rig board → accept）" if ok else "❌ rig: 検証 FAIL") + f"（{gen}→{ver}）"
+        note = ("✅ rig: gate settled (needs /rig:rig board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
         queue_set_status(backend, it["id"], "done" if ok else "failed", note, cfg)
         return (it, ok)
 
@@ -270,6 +277,6 @@ def cmd_queue(args):
     done = sum(1 for _, ok in results if ok)
     for it, ok in results:
         print(f"  [{'DONE' if ok else 'FAIL'}] #{it['id']}  {it['task']}")
-    print(f"\n=== GO 完了: {done}/{len(results)} done [{backend}] ===")
+    print(f"\n=== GO complete: {done}/{len(results)} done [{backend}] ===")
     sys.exit(0 if done == len(results) else 1)
 

@@ -8,17 +8,18 @@ import pathlib
 from . import config
 from .recipes import parse_frontmatter
 
-# ── ブリック・グラフ（型付き関係の導出＝オントロジー層・#graph）───────────────
-# 「概念間の関係を型として明示する」オントロジーを、rig は**手で書かずコードで導出**する。
-# source of truth は各ブリックの frontmatter / steps: 定義そのもの＝グラフは腐らない。
-# オントロジー5要素との対応: クラス=kind / インスタンス=node / プロパティ=path /
-# 関係=typed edge（11種）/ 制約=validate.py check_graph（CI）。
+# ── Brick graph (derived typed relations = the ontology layer; #graph) ───────
+# rig derives the ontology (making relations between concepts explicit as types)
+# **from code, never by hand**. The source of truth is each brick's frontmatter /
+# steps: definitions themselves, so the graph never rots.
+# Mapping to the 5 ontology elements: class=kind / instance=node / property=path /
+# relation=typed edge (11 kinds) / constraint=validate.py check_graph (CI).
 
 _WIKI_LINK_RE = re.compile(r"\[\[([a-z0-9-]+)(?:\|[^\]]*)?\]\]")
 
 
 def _graph_body_links(path: pathlib.Path) -> list[str]:
-    """本文＋frontmatter links: から [[slug]] 参照を重複なしで抽出する。"""
+    """Extract [[slug]] references from the body plus frontmatter links:, deduplicated."""
     text = path.read_text(encoding="utf-8")
     seen: list[str] = []
     for slug in _WIKI_LINK_RE.findall(text):
@@ -28,10 +29,10 @@ def _graph_body_links(path: pathlib.Path) -> list[str]:
 
 
 def build_brick_graph() -> dict:
-    """shipped ブリック群の既存メタデータから型付きグラフを導出する（純関数・決定論）。
+    """Derive the typed graph from shipped bricks' existing metadata (pure function, deterministic).
 
     nodes: {id, kind, path} / edges: {from, rel, to, resolved}
-    rel 語彙（固定11種）: extends / injects / links-to / uses-instruction / uses-pattern /
+    rel vocabulary (fixed 11 kinds): extends / injects / links-to / uses-instruction / uses-pattern /
     gated-by / applies-policy / emits-contract / uses-persona / references / mirrors
     """
     skills = config.RIG_HOME / "skills" / "rig"
@@ -65,7 +66,7 @@ def build_brick_graph() -> dict:
             nodes[f"{kind}:{stem}"] = {"id": f"{kind}:{stem}", "kind": kind,
                                        "path": str(f.relative_to(config.RIG_HOME))}
 
-    # basename → persona id（recipe の personas: は basename 指定を許容）
+    # basename → persona id (a recipe's personas: may use basenames)
     persona_base: dict[str, list[str]] = {}
     for nid in nodes:
         if nid.startswith("persona:"):
@@ -77,7 +78,7 @@ def build_brick_graph() -> dict:
         hits = persona_base.get(name, [])
         return hits[0] if len(hits) == 1 else f"persona:{name}"
 
-    # persona → wiki（injects）
+    # persona → wiki (injects)
     for nid, n in list(nodes.items()):
         if n["kind"] != "persona":
             continue
@@ -87,7 +88,7 @@ def build_brick_graph() -> dict:
             if m:
                 add_edge(nid, "injects", f"wiki:{m.group(1)}")
 
-    # wiki → wiki（links-to・frontmatter links: ＋ 本文 [[slug]]）
+    # wiki → wiki (links-to; frontmatter links: plus body [[slug]])
     for nid, n in list(nodes.items()):
         if n["kind"] != "wiki":
             continue
@@ -95,7 +96,7 @@ def build_brick_graph() -> dict:
             if f"wiki:{slug}" != nid:
                 add_edge(nid, "links-to", f"wiki:{slug}")
 
-    # recipe → 各ブリック（steps: の生定義＝著者が書いた関係）
+    # recipe → each brick (raw steps: definitions = relations the author wrote)
     for nid, n in list(nodes.items()):
         if n["kind"] != "recipe":
             continue
@@ -118,7 +119,7 @@ def build_brick_graph() -> dict:
             if s.get("output_contract"):
                 add_edge(nid, "emits-contract", f"contract:{s['output_contract']}")
 
-    # agent → persona（mirrors・native-first の対）
+    # agent → persona (mirrors; the native-first counterpart)
     for nid, n in list(nodes.items()):
         if n["kind"] != "agent":
             continue
@@ -130,7 +131,7 @@ def build_brick_graph() -> dict:
                     if persona_id(c) in nodes), persona_id(cand[-1]))
         add_edge(nid, "mirrors", dst)
 
-    # command → instruction（本文の `facets/instructions/<name>` 明示参照のみ＝散文推測しない）
+    # command → instruction (only explicit `facets/instructions/<name>` references in the body; no prose guessing)
     ref_re = re.compile(r"facets/instructions/([a-z0-9-]+)")
     for nid, n in list(nodes.items()):
         if n["kind"] != "command":
@@ -148,7 +149,7 @@ def build_brick_graph() -> dict:
 
 
 def cmd_graph(args):
-    """graph [--json] [--focus <name>]: 型付きブリック・グラフを導出して表示する。"""
+    """graph [--json] [--focus <name>]: derive and display the typed brick graph."""
     g = build_brick_graph()
     if "--json" in args:
         print(json.dumps(g, ensure_ascii=False, indent=2))
@@ -158,13 +159,13 @@ def cmd_graph(args):
         ids = {n["id"] for n in g["nodes"] if n["id"] == name or n["id"].split(":", 1)[-1] == name
                or n["id"].split(":", 1)[-1].split("/")[-1] == name}
         if not ids:
-            print(f"[graph] focus に一致するノードがありません: {name}")
+            print(f"[graph] no node matches focus: {name}")
             sys.exit(1)
         for nid in sorted(ids):
             print(f"◈ {nid}")
             for e in g["edges"]:
                 if e["from"] == nid:
-                    print(f"  → {e['rel']} → {e['to']}" + ("" if e["resolved"] else "  (未解決)"))
+                    print(f"  → {e['rel']} → {e['to']}" + ("" if e["resolved"] else "  (unresolved)"))
             for e in g["edges"]:
                 if e["to"] == nid:
                     print(f"  ← {e['rel']} ← {e['from']}")
@@ -176,11 +177,11 @@ def cmd_graph(args):
     unresolved = [e for e in g["edges"] if not e["resolved"]]
     for e in g["edges"]:
         rels[e["rel"]] = rels.get(e["rel"], 0) + 1
-    print("ブリック・グラフ（型付き・frontmatter/steps から導出＝手書きしない）")
+    print("Brick graph (typed; derived from frontmatter/steps, never hand-written)")
     print(f"  nodes: {len(g['nodes'])}  (" + " / ".join(f"{k} {v}" for k, v in sorted(kinds.items())) + ")")
     print(f"  edges: {len(g['edges'])}  (" + " / ".join(f"{k} {v}" for k, v in sorted(rels.items())) + ")")
-    print(f"  未解決エッジ: {len(unresolved)}")
+    print(f"  unresolved edges: {len(unresolved)}")
     for e in unresolved:
         print(f"    ✗ {e['from']} → {e['rel']} → {e['to']}")
-    print("  1ホップ探索: graph --focus <name> ／ 機械可読: graph --json")
+    print("  one-hop exploration: graph --focus <name> / machine-readable: graph --json")
 

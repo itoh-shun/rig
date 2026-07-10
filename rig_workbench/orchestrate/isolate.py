@@ -7,10 +7,11 @@ import subprocess
 
 from . import config
 
-# ── worktree 隔離実行（--isolate）────────────────────────────────────────────
-# run を使い捨ての git worktree に隔離する：作業ツリーを汚さず、ゲート green の
-# 成果だけを元 branch へ ff 合流（未達・dirty・非 ff は branch を残して人へ）。
-# 「非決定的な生成をゲートの外に出さない」determinism-by-gate の空間版。
+# ── Isolated worktree runs (--isolate) ───────────────────────────────────────
+# Isolate the run in a disposable git worktree: never dirty the working tree, and
+# ff-merge only gate-green results into the original branch (unmet/dirty/non-ff
+# runs keep the branch for a human). The spatial version of determinism-by-gate:
+# non-deterministic generation never escapes the gate.
 
 _ISO_SEQ = 0
 
@@ -19,11 +20,11 @@ def setup_isolation(recipe_name: str) -> dict:
     r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
                        capture_output=True, text=True, cwd=str(config.INVOCATION_CWD))
     if r.returncode != 0:
-        raise SystemExit("[ERROR] --isolate は git リポジトリ内でのみ使えます")
+        raise SystemExit("[ERROR] --isolate can only be used inside a git repository")
     root = r.stdout.strip()
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     safe = re.sub(r"[^a-zA-Z0-9_-]", "-", recipe_name)
-    # 同一秒の連続 run でも衝突しないよう連番を付す（プロセス内カウンタ＋既存 branch 回避）
+    # Add a sequence number so back-to-back runs within the same second do not collide (in-process counter + avoids existing branches)
     global _ISO_SEQ
     _ISO_SEQ += 1
     name = f"{safe}-{ts}-{_ISO_SEQ}"
@@ -33,16 +34,16 @@ def setup_isolation(recipe_name: str) -> dict:
     a = subprocess.run(["git", "-C", root, "worktree", "add", "-b", branch, str(wdir), "HEAD"],
                        capture_output=True, text=True)
     if a.returncode != 0:
-        raise SystemExit(f"[ERROR] worktree 作成に失敗: {a.stderr.strip()[:200]}")
+        raise SystemExit(f"[ERROR] failed to create worktree: {a.stderr.strip()[:200]}")
     return {"root": root, "dir": str(wdir), "branch": branch}
 
 
 def teardown_isolation(iso: dict, final: str) -> str:
-    """終了状態に応じて worktree を後始末し、結果ラベルを返す（純関数的・副作用は git のみ）。
+    """Clean up the worktree according to the final state and return a result label (pure-function style; the only side effects are git).
 
-    DONE かつ clean かつ commit あり → 元 branch へ ff 合流して撤収（merged）
-    DONE かつ clean かつ commit なし → 撤収のみ（clean-removed）
-    それ以外（未達 / dirty / 元が dirty / 非 ff）→ worktree と branch を残す（kept）
+    DONE and clean with commits    -> ff-merge into the original branch and remove (merged)
+    DONE and clean with no commits -> remove only (clean-removed)
+    Anything else (unmet / dirty / dirty root / non-ff) -> keep the worktree and branch (kept)
     """
     root, wdir, branch = iso["root"], iso["dir"], iso["branch"]
     dirty = subprocess.run(["git", "-C", wdir, "status", "--porcelain"],

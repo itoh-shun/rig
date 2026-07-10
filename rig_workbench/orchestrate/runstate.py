@@ -27,10 +27,11 @@ def save_state(state: dict, path: pathlib.Path) -> None:
 
 
 def telemetry_append(state: dict, final: str) -> None:
-    """RUN 1回分のサマリを .rig/runs.jsonl に1行 JSON で追記する（実行テレメトリ）。
+    """Append a one-line JSON summary of a single RUN to .rig/runs.jsonl (run telemetry).
 
-    run-state.json と同格の実行ログであり knowledge 層ではない（承認不要・.rig/ は gitignore 済み）。
-    集計は `runs` サブコマンド。書き込み失敗で RUN の結果を壊さない（best-effort）。
+    An execution log on par with run-state.json, not the knowledge layer (no approval needed;
+    .rig/ is already gitignored). Aggregation is the `runs` subcommand. A write failure must
+    not break the RUN result (best-effort).
     """
     try:
         ss = state["step_state"]
@@ -56,14 +57,14 @@ def telemetry_append(state: dict, final: str) -> None:
     except Exception:
         pass
 
-    # ── グローバル・インデックス（~/.rig/runs.jsonl）にもミラー ────────────
-    # プロジェクト単位のログ（cwd/.rig）を残しつつ、「全プロジェクトで rig-wb を
-    # どれだけ使ったか」を横断集計できるようにする。`project` フィールドで来歴を保持。
-    # 書き込み失敗は握りつぶす（best-effort、cwd 側の記録が主）。
+    # ── Mirror into the global index (~/.rig/runs.jsonl) as well ─────────────
+    # Keep the per-project log (cwd/.rig) while enabling cross-project aggregation of
+    # how much rig-wb is used overall. The `project` field preserves provenance.
+    # Write failures are swallowed (best-effort; the cwd-side record is primary).
     try:
         global_path = pathlib.Path.home() / ".rig" / "runs.jsonl"
         global_path.parent.mkdir(parents=True, exist_ok=True)
-        # cwd の記録が確定した後（rec が完成した状態）で project を付けて写す
+        # After the cwd record is finalized (rec fully built), copy it with project attached
         global_rec = dict(rec)
         global_rec["project"] = str(config.INVOCATION_CWD)
         with global_path.open("a", encoding="utf-8") as f:
@@ -76,31 +77,31 @@ def load_state(path: pathlib.Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# ── ゲート評価（決定論・純関数）────────────────────────────────────────────────
+# ── Gate evaluation (deterministic, pure functions) ──────────────────────────
 def gate_outcome(step: dict, st: dict) -> str:
-    """現ステップの合否を決定論的に判定する。
-    返り値: pass | fail | incomplete | self-graded
+    """Deterministically judge the current step's pass/fail.
+    Returns: pass | fail | incomplete | self-graded
     """
     declared = step["checks"]
     ran = st["checks"]
     verdicts = st["verdicts"]
 
-    # 計算的センサー（checks）— 宣言があれば一次根拠。全件実行＆全 ok を要求。
+    # Machine sensors (checks) — if declared, the primary evidence. Require all run and all ok.
     if declared:
         if len(ran) < len(declared):
-            return "incomplete"        # まだ check していない
+            return "incomplete"        # not yet checked
         if any(not c["ok"] for c in ran):
             return "fail"
 
-    # 推論的検証（verdict）— acceptance-gate/review-gate は独立判定を要求（checks 未宣言時）。
+    # Inferential verification (verdict) — acceptance-gate/review-gate require an independent judgment (when no checks declared).
     gate = step["gate"]
     if not gate:
-        return "pass"  # ゲート無し step は素通り（checks が空なら）
+        return "pass"  # gate-less steps pass through (when checks are empty)
     needs_verdict = gate in ("acceptance-gate", "review-gate") and not declared
     if needs_verdict and not verdicts:
-        return "incomplete"            # 独立検証者の判定待ち
+        return "incomplete"            # awaiting the independent verifier's judgment
 
-    # 採点者≠生成者の強制（self-grading バイアス防止・policies/independent-verification）
+    # Enforce grader != generator (prevents self-grading bias; policies/independent-verification)
     if any(str(v.get("by", "")).lower() in ("", "self", "generator", "producer") for v in verdicts):
         return "self-graded"
     if any(not v["ok"] for v in verdicts):
@@ -110,15 +111,15 @@ def gate_outcome(step: dict, st: dict) -> str:
 
 
 def compute_next(state: dict) -> tuple[str, str]:
-    """状態から次のアクションを決定論的に計算して適用する（state を破壊的更新）。
-    返り値: (action_code, message)
+    """Deterministically compute and apply the next action from the state (mutates state).
+    Returns: (action_code, message)
     """
     if state["stopped"]:
-        return "STOPPED", f"停止済み: {state['stopped']['reason']}"
+        return "STOPPED", f"Stopped: {state['stopped']['reason']}"
     steps = state["steps"]
     if state["cursor"] >= len(steps):
         state["done"] = True
-        return "DONE", "全ステップ完了。"
+        return "DONE", "All steps complete."
 
     step = steps[state["cursor"]]
     sid = step["id"]
@@ -127,42 +128,42 @@ def compute_next(state: dict) -> tuple[str, str]:
     if st["status"] == "pending":
         st["status"] = "running"
         state["history"].append({"action": "START", "step": sid})
-        gate = step["gate"] or "なし"
+        gate = step["gate"] or "none"
         need = []
         if step["checks"]:
-            need.append(f"check（{len(step['checks'])} 件の機械検証）")
+            need.append(f"check ({len(step['checks'])} machine checks)")
         if step["gate"] in ("acceptance-gate", "review-gate") and not step["checks"]:
-            need.append("verdict（独立検証者の判定・採点者≠生成者）")
-        need_s = " → ".join(need) if need else "（ゲート無し＝作業後そのまま next）"
-        return "START", (f"step `{sid}` を実行（instruction: {step['instruction']} / gate: {gate}）。"
-                         f"作業を委譲し、{need_s} を済ませてから `next`。")
+            need.append("verdict (independent verifier judgment; grader != generator)")
+        need_s = " → ".join(need) if need else "(no gate: just run next after the work)"
+        return "START", (f"Run step `{sid}` (instruction: {step['instruction']} / gate: {gate}). "
+                         f"Delegate the work, finish {need_s}, then `next`.")
 
     # status == "running"
     outcome = gate_outcome(step, st)
     if outcome == "incomplete":
-        return "AWAIT", f"step `{sid}` はゲート評価待ち。`check` / `verdict` を実行してから `next`。"
+        return "AWAIT", f"step `{sid}` awaits gate evaluation. Run `check` / `verdict`, then `next`."
     if outcome == "self-graded":
-        return "BLOCKED", (f"step `{sid}`: 生成者自身の判定（by=self/generator）は不可。"
-                           f"独立した検証者の `verdict` が必要（採点者≠生成者）。")
+        return "BLOCKED", (f"step `{sid}`: a verdict from the generator itself (by=self/generator) is invalid. "
+                           f"An independent verifier's `verdict` is required (grader != generator).")
     if outcome == "pass":
         st["status"] = "passed"
         state["cursor"] += 1
         state["history"].append({"action": "PASS", "step": sid})
         if state["cursor"] >= len(steps):
             state["done"] = True
-            return "DONE", f"step `{sid}` 合格。全ステップ完了。"
+            return "DONE", f"step `{sid}` passed. All steps complete."
         nxt = steps[state["cursor"]]["id"]
-        return "ADVANCE", f"step `{sid}` 合格 → 次は step `{nxt}`。`next` で開始。"
+        return "ADVANCE", f"step `{sid}` passed → next is step `{nxt}`. Start it with `next`."
     # fail
     st["retries"] += 1
     K = step["max_retries"]
     state["history"].append({"action": "FAIL", "step": sid, "try": st["retries"]})
     if st["retries"] >= K:
-        state["stopped"] = {"reason": f"step `{sid}` がゲート未達のまま {K} 回 → エスカレーション", "at": sid}
-        return "ESCALATE", state["stopped"]["reason"] + "（無限ループ禁止・ユーザーへ）。"
-    # リトライ: この step をやり直し（記録はリセット）
+        state["stopped"] = {"reason": f"step `{sid}` failed the gate {K} times → escalating", "at": sid}
+        return "ESCALATE", state["stopped"]["reason"] + " (no infinite loops; hand off to the user)."
+    # Retry: redo this step (records are reset)
     st["status"] = "pending"
     st["checks"] = []
     st["verdicts"] = []
-    return "RETRY", f"step `{sid}` 未達 → やり直し（try {st['retries']+1}/{K}）。指摘を反映して再実行。"
+    return "RETRY", f"step `{sid}` failed → retrying (try {st['retries']+1}/{K}). Address the findings and rerun."
 

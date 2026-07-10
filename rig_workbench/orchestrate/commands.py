@@ -15,20 +15,20 @@ from .runstate import compute_next, load_state, new_state, save_state
 from .providers import run_loop
 from .isolate import setup_isolation, teardown_isolation
 
-# ── コマンド ──────────────────────────────────────────────────────────────────
+# ── Commands ──────────────────────────────────────────────────────────────────
 def render_plan(recipe: str, steps: list[dict]) -> str:
     auto, why = auto_orchestrate(steps)
-    lines = [f"## rig 計算的プラン: {recipe}", "",
-             f"ステップ数: {len(steps)} ／ 遷移はコードが強制（決定論）",
-             f"自動 orchestrate: {'auto ON' if auto else 'off'}（{why}）", ""]
+    lines = [f"## rig computational plan: {recipe}", "",
+             f"Steps: {len(steps)} / transitions enforced by code (deterministic)",
+             f"Auto orchestrate: {'auto ON' if auto else 'off'} ({why})", ""]
     for i, s in enumerate(steps):
-        gate = s["gate"] or "なし"
-        sensor = ("計算的センサー " + str(len(s["checks"])) + "件"
+        gate = s["gate"] or "none"
+        sensor = (str(len(s["checks"])) + " machine sensor(s)"
                   if s["checks"] else
-                  ("独立 verdict 要" if s["gate"] in ("acceptance-gate", "review-gate") else "—"))
-        lines.append(f"  [{i}] {s['id']}  gate={gate}  K={s['max_retries']}  検証={sensor}")
+                  ("independent verdict required" if s["gate"] in ("acceptance-gate", "review-gate") else "—"))
+        lines.append(f"  [{i}] {s['id']}  gate={gate}  K={s['max_retries']}  verify={sensor}")
     lines.append("")
-    lines.append("停止条件: 各 step はゲート未達が K 回でエスカレーション（無限ループ禁止）。")
+    lines.append("Stop condition: each step escalates after K gate failures (no infinite loops).")
     return "\n".join(lines)
 
 
@@ -48,7 +48,7 @@ def cmd_plan(args):
         else:
             i += 1
     if use_git_diff and diff_lines is None:
-        diff_lines = git_diff_lines()  # 取得不能は None → size S 既定（#185）
+        diff_lines = git_diff_lines()  # None if unavailable → size defaults to S (#185)
     if with_flags is not None or diff_lines is not None or use_git_diff:
         plan = resolve_effective(path, with_flags, diff_lines, manifest=load_manifest())
     else:
@@ -107,12 +107,12 @@ def cmd_check(args):
     state = load_state(sp)
     step, st = _current_running(state)
     if not step:
-        print("[ERROR] 実行中(running)の step がありません。先に `next` で START してください。")
+        print("[ERROR] no running step. START one with `next` first.")
         sys.exit(1)
     if not step["checks"]:
-        print(f"step `{step['id']}` に checks: は未宣言（機械検証なし）。verdict を使ってください。")
+        print(f"step `{step['id']}` declares no checks: (no machine verification). Use verdict instead.")
         return
-    print(f"## check: step `{step['id']}` の計算的センサー（{len(step['checks'])} 件）")
+    print(f"## check: machine sensors for step `{step['id']}` ({len(step['checks'])} checks)")
     st["checks"] = []
     all_ok = True
     for cmd in step["checks"]:
@@ -123,7 +123,7 @@ def cmd_check(args):
         st["checks"].append({"cmd": cmd, "ok": ok})
         print(f"  [{'OK ' if ok else 'NG '}] {cmd}  (exit {r.returncode})")
     save_state(state, sp)
-    print(f"→ {'全件 OK' if all_ok else 'NG あり'}。`next` で遷移を計算。")
+    print(f"→ {'all OK' if all_ok else 'some NG'}. Compute the transition with `next`.")
 
 
 def cmd_verdict(args):
@@ -131,7 +131,7 @@ def cmd_verdict(args):
     state = load_state(sp)
     step, st = _current_running(state)
     if not step:
-        print("[ERROR] 実行中(running)の step がありません。")
+        print("[ERROR] no running step.")
         sys.exit(1)
     by, ok, note = None, None, ""
     i = 1
@@ -147,12 +147,12 @@ def cmd_verdict(args):
         else:
             i += 1
     if by is None or ok is None:
-        print("[ERROR] --by <検証者名> と --pass|--fail が必須。")
+        print("[ERROR] --by <verifier-name> and --pass|--fail are required.")
         sys.exit(1)
     st["verdicts"].append({"by": by, "ok": ok, "note": note})
     save_state(state, sp)
-    guard = "（独立）" if by.lower() not in ("self", "generator", "producer") else "（⚠ 生成者自身＝無効）"
-    print(f"verdict 記録: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}。`next` へ。")
+    guard = " (independent)" if by.lower() not in ("self", "generator", "producer") else " (⚠ generator itself = invalid)"
+    print(f"verdict recorded: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}. Proceed with `next`.")
 
 
 def cmd_next(args):
@@ -228,52 +228,52 @@ def cmd_run(args):
         else:
             i += 1
     if not gen and generators:
-        gen = generators[0]            # --generators だけでも可（先頭を代表に）
+        gen = generators[0]            # --generators alone is fine (first one as representative)
     if not gen:
-        print("[ERROR] --provider <name>（または --generators a,b,c）が必須"
-              "（rig|claude|codex|ollama|lmstudio|cmd|mock）。rig＝各 step を rig ハーネスとして起動（推奨）。"
-              "ollama/lmstudio＝ローカル LLM（要サーバ・--model でモデル指定）。テストは mock。")
+        print("[ERROR] --provider <name> (or --generators a,b,c) is required"
+              " (rig|claude|codex|ollama|lmstudio|cmd|mock). rig = launch each step as a rig harness (recommended)."
+              " ollama/lmstudio = local LLM (server required; pick a model with --model). Use mock for tests.")
         sys.exit(1)
 
-    # ── Claude Code 内からの誤起動ガード ─────────────────────────────────────
-    # Claude Code の session 内で `--provider claude` / `--provider rig` を使うと
-    # `claude -p` を subprocess で spawn する。これは既に走っている session と
-    # 別扱いになり、subscription の usage を別バケットに乗せるか、API キーが
-    # 設定されていればそちらへ課金される可能性がある（環境依存）。
-    # 明示的に `--allow-headless-in-cc` を付けなければ止める。
+    # ── Guard against accidental launches from inside Claude Code ────────────
+    # Using `--provider claude` / `--provider rig` inside a Claude Code session
+    # spawns `claude -p` as a subprocess. That counts separately from the already
+    # running session and may land subscription usage in a different bucket, or
+    # bill an API key if one is configured (environment-dependent).
+    # Stop unless `--allow-headless-in-cc` is given explicitly.
     _cc_env = os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID")
     _headless_claude = gen in ("claude", "rig") or ver in ("claude", "rig") or \
         any(p in ("claude", "rig") for p in generators) or \
         (isinstance(ver, list) and any(p in ("claude", "rig") for p in ver))
     if _cc_env and _headless_claude and not cfg.get("allow_headless_in_cc"):
         print(
-            "[BLOCKED] Claude Code の session 内で `--provider claude` / `--provider rig` は "
-            "`claude -p` を別 subprocess で spawn します。\n"
+            "[BLOCKED] Inside a Claude Code session, `--provider claude` / `--provider rig` "
+            "spawns `claude -p` as a separate subprocess.\n"
             "\n"
-            "既にこの session で Claude を使っているので二重発火・別バケット課金の"
-            "可能性があります。次のどれかに切り替えてください:\n"
+            "You are already using Claude in this session, so this risks double-firing and "
+            "billing to a different bucket. Switch to one of:\n"
             "\n"
-            "  1. `/rig:rig \"<task>\"` を使う (manual backend = Agent tool 経由・同 session)\n"
-            "  2. `--provider ollama` / `--provider lmstudio` (ローカル・課金なし)\n"
-            "  3. `--provider mock` (テスト用)\n"
-            "  4. どうしても headless で回したいなら `--allow-headless-in-cc` を明示\n"
+            "  1. Use `/rig:rig \"<task>\"` (manual backend = via the Agent tool, same session)\n"
+            "  2. `--provider ollama` / `--provider lmstudio` (local, no billing)\n"
+            "  3. `--provider mock` (for tests)\n"
+            "  4. If you really must run headless, pass `--allow-headless-in-cc` explicitly\n"
         )
         sys.exit(1)
-    ver = ver or gen  # 未指定なら同プロバイダ（ただし別プロセス・別ロール）
+    ver = ver or gen  # default to the same provider (but a separate process and role)
     state = new_state(fm.get("name", path.stem), steps, goal)
     iso = None
     if cfg.get("isolate"):
         iso = setup_isolation(fm.get("name", path.stem))
         cfg["cwd"] = iso["dir"]
         state["isolation"] = iso
-        print(f"◈ 隔離実行: worktree={iso['dir']} / branch={iso['branch']}")
+        print(f"◈ Isolated run: worktree={iso['dir']} / branch={iso['branch']}")
     print(render_plan(state["recipe"], steps))
     panel = f" / judge-panel={','.join(generators)}" if len(generators) > 1 else ""
     if isinstance(ver, list):
         panel += f" / model-quorum={','.join(ver)}"
-    dag = " / DAG並列" if any(s["needs"] for s in steps) else ""
-    print(f"\n自走実行: provider={gen} / verifier={'+'.join(ver) if isinstance(ver, list) else ver} / "
-          f"max-steps={max_steps} / 並列={max_parallel} / quorum={quorum}{panel}{dag}\n")
+    dag = " / DAG-parallel" if any(s["needs"] for s in steps) else ""
+    print(f"\nAutonomous run: provider={gen} / verifier={'+'.join(ver) if isinstance(ver, list) else ver} / "
+          f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}\n")
     final = run_loop(state, out, gen, ver, cfg, max_steps,
                      max_parallel=max_parallel, quorum=quorum,
                      generators=(generators or None))
@@ -281,11 +281,11 @@ def cmd_run(args):
         outcome = teardown_isolation(iso, final)
         state["isolation"]["outcome"] = outcome
         save_state(state, out)
-        label = {"merged": f"ゲート green → {iso['branch']} を ff 合流して撤収",
-                 "clean-removed": "変更なし → worktree を撤収",
-                 "kept": f"worktree と branch を保全（検分してください）: {iso['dir']}"}[outcome]
-        print(f"◈ 隔離実行の結末: {label}")
-    print(f"\n=== 終了: {final} ===  run-state: {out}")
+        label = {"merged": f"gate green → ff-merged {iso['branch']} and removed the worktree",
+                 "clean-removed": "no changes → removed the worktree",
+                 "kept": f"worktree and branch preserved (please inspect): {iso['dir']}"}[outcome]
+        print(f"◈ Isolated run outcome: {label}")
+    print(f"\n=== Finished: {final} ===  run-state: {out}")
     sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
 
 def _read_jsonl(path: pathlib.Path) -> list[dict]:
@@ -302,17 +302,17 @@ def _read_jsonl(path: pathlib.Path) -> list[dict]:
     return rows
 
 def cmd_party(_args):
-    """パーティ編成画面（/rig:party）: テレメトリ・drill 実測・ブリック在庫から RPG 風ステータスを描画する。
+    """Party roster screen (/rig:party): render RPG-style stats from telemetry, measured drills, and the brick inventory.
 
-    ゲーム画面に見えるが全行が実データ（runs.jsonl / drill-results.jsonl / shipped ブリック）＝
-    ハーネスの健康診断ダッシュボード。読み取り専用。"""
+    Looks like a game screen, but every line is real data (runs.jsonl / drill-results.jsonl /
+    shipped bricks) = a health-check dashboard for the harness. Read-only."""
     runs = _read_jsonl(config.RUNS_PATH)
     drills = _read_jsonl(config.DRILL_PATH)
     done = sum(1 for r in runs if r.get("final") == "DONE")
     esc = sum(1 for r in runs if r.get("escalated_at"))
     total = len(runs)
 
-    # 検証票の集計（出撃回数・REJECT 数。by は "provider:persona"）
+    # Tally verifier votes (sortie counts, REJECT counts; by is "provider:persona")
     votes: dict[str, dict] = {}
     for r in runs:
         for st in r.get("steps", []):
@@ -322,7 +322,7 @@ def cmd_party(_args):
                 a["sorties"] += 1
                 a["rejects"] += 0 if v.get("ok") else 1
 
-    # drill 検出率（drill.md のスキーマ: {"ts":…, "scores":[{"reviewer","detected","seeded","false_positives"}]}）
+    # drill detection rate (drill.md schema: {"ts":…, "scores":[{"reviewer","detected","seeded","false_positives"}]})
     atk: dict[str, dict] = {}
     for d in drills:
         for s in d.get("scores", []):
@@ -331,7 +331,7 @@ def cmd_party(_args):
             a["seeded"] += s.get("seeded", 0)
             a["fp"] += s.get("false_positives", 0)
 
-    # 連続ノーエスカレーションの最長 streak（実績用）
+    # Longest consecutive no-escalation streak (for achievements)
     streak = best = 0
     for r in runs:
         streak = 0 if r.get("escalated_at") else streak + 1
@@ -340,10 +340,10 @@ def cmd_party(_args):
     def _line(name: str, bench: bool = False) -> str:
         v = votes.get(name, {"sorties": 0, "rejects": 0})
         a = atk.get(name)
-        power = (f"⚔ 検出率 {a['detected'] / a['seeded'] * 100:3.0f}%（drill {a['detected']}/{a['seeded']}"
-                 + (f"・誤検出 {a['fp']}" if a["fp"] else "") + "）") if a and a["seeded"] else "⚔ 検出率 未測定（/rig:drill で較正）"
-        tag = "（控え）" if bench and v["sorties"] == 0 else ""
-        return f"│ {name:22s} {power}  出撃 {v['sorties']:3d} / REJECT {v['rejects']}{tag}"
+        power = (f"⚔ detection {a['detected'] / a['seeded'] * 100:3.0f}% (drill {a['detected']}/{a['seeded']}"
+                 + (f", false-pos {a['fp']}" if a["fp"] else "") + ")") if a and a["seeded"] else "⚔ detection unmeasured (calibrate with /rig:drill)"
+        tag = " (reserve)" if bench and v["sorties"] == 0 else ""
+        return f"│ {name:22s} {power}  sorties {v['sorties']:3d} / REJECT {v['rejects']}{tag}"
 
     party = ["security-reviewer", "design-reviewer", "test-reviewer"]
     bench = ["performance-reviewer", "observability-reviewer", "api-compat-reviewer",
@@ -352,48 +352,49 @@ def cmd_party(_args):
         if extra not in party:
             party.append(extra)
 
-    print("━━━ rig パーティ編成（/rig:party）━━━━━━━━━━━━━━━")
+    print("━━━ rig party roster (/rig:party) ━━━━━━━━━━━━━━━")
     rate = f"{esc / total * 100:.0f}%" if total else "—"
-    print(f"Lv.{done}  出走 {total} 回 / DONE {done} / エスカレーション率 {rate}")
-    print("┌─ パーティ（review fan-out）" + "─" * 30)
+    print(f"Lv.{done}  runs {total} / DONE {done} / escalation rate {rate}")
+    print("┌─ party (review fan-out)" + "─" * 30)
     for name in party:
         print(_line(name))
     if "finding-verifier" in votes:
         fv = votes["finding-verifier"]
-        print(f"│ {'finding-verifier':22s} 🛡 反証 {fv['sorties']} 回（棄却の質は runs --personas で監査）")
-    print("├─ 控え（--persona で出撃）" + "─" * 31)
+        print(f"│ {'finding-verifier':22s} 🛡 rebuttals {fv['sorties']} (audit rejection quality with runs --personas)")
+    print("├─ reserves (deploy with --persona)" + "─" * 31)
     for name in bench:
         print(_line(name, bench=True))
     print("└" + "─" * 56)
 
     badges = []
     if done >= 1:
-        badges.append("🏆 初DONE")
+        badges.append("🏆 First DONE")
     if best >= 10:
-        badges.append("🏆 十連戦無傷（10連続ノーエスカレーション）")
+        badges.append("🏆 Ten flawless battles (10 consecutive no-escalation)")
     if total >= 100:
-        badges.append("🏆 百戦錬磨（100 runs）")
+        badges.append("🏆 Battle-hardened (100 runs)")
     if any(a["seeded"] and a["detected"] == a["seeded"] and a["seeded"] >= 2 for a in atk.values()):
-        badges.append("🏆 満点狙撃手（drill 全種検出）")
+        badges.append("🏆 Perfect marksman (all drill seeds detected)")
     wiki_n = len(list((config.INVOCATION_CWD / ".claude" / "rig" / "knowledge" / "wiki").glob("*.md"))) \
         if (config.INVOCATION_CWD / ".claude" / "rig" / "knowledge" / "wiki").is_dir() else 0
     if wiki_n >= 10:
-        badges.append(f"🏆 大図書館（project wiki {wiki_n} ページ）")
-    print("実績: " + (" / ".join(badges) if badges else "（まだなし — まず1本 DONE させよう）"))
+        badges.append(f"🏆 Grand library (project wiki {wiki_n} pages)")
+    print("Achievements: " + (" / ".join(badges) if badges else "(none yet — get one run to DONE first)"))
     if not runs:
-        print("\n（テレメトリなし: RUN を回すと .rig/runs.jsonl に蓄積され、この画面が育つ）")
+        print("\n(no telemetry: RUNs accumulate in .rig/runs.jsonl and grow this screen)")
     if not drills:
-        print("（検出率 未測定: /rig:drill で reviewer の攻撃力を較正できる）")
+        print("(detection unmeasured: /rig:drill calibrates reviewer attack power)")
 
 def cmd_runs(args):
-    """実行テレメトリ一覧: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD]。
+    """Run telemetry listing: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD].
 
-    .rig/runs.jsonl（telemetry_append が追記・manual backend は SKILL.md §6 が同形式で追記）を
-    読み、直近 N 件の一覧と recipe 別の集計（回数・DONE 率・平均リトライ・エスカレーション数）を出す。
-    --personas は検証者（verdict の by）別の票を集計し、剪定判断の材料を出す。
-    --html <path> は scripts/dashboard.py に委譲して HTML ダッシュボードを書き出す（KPI・sparkline・
-    recipe 別バー・verifier 票・直近 run 表を単一ファイル HTML で・外部依存なし）。
-    読み取り専用（--list / --validate と同じ点検モード）。
+    Reads .rig/runs.jsonl (appended by telemetry_append; the manual backend appends the same
+    format per SKILL.md §6) and prints the latest N runs plus per-recipe aggregates (count,
+    DONE rate, average retries, escalation count).
+    --personas tallies votes per verifier (the verdict's by), providing input for pruning decisions.
+    --html <path> delegates to scripts/dashboard.py to write an HTML dashboard (KPIs, sparkline,
+    per-recipe bars, verifier votes, recent-run table in a single-file HTML with no external deps).
+    Read-only (the same inspection mode as --list / --validate).
     """
     limit, recipe, personas_mode, html_out, since = 10, None, False, None, None
     i = 0
@@ -413,7 +414,7 @@ def cmd_runs(args):
     if html_out:
         dash = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "dashboard.py"
         if not dash.exists():
-            print(f"[ERROR] dashboard.py が見つかりません: {dash}")
+            print(f"[ERROR] dashboard.py not found: {dash}")
             sys.exit(1)
         cmd = [sys.executable, str(dash), "--repo", str(config.INVOCATION_CWD),
                "--out", html_out, "--limit", str(limit)]
@@ -424,8 +425,8 @@ def cmd_runs(args):
         rc = subprocess.run(cmd).returncode
         sys.exit(rc)
     if not config.RUNS_PATH.exists():
-        print(f"実行記録がまだありません（{config.RUNS_PATH}）。orchestrate run / queue go、"
-              "または manual backend のフロー完了（SKILL.md §6）で追記されます。")
+        print(f"No run records yet ({config.RUNS_PATH}). They are appended by orchestrate run / "
+              "queue go, or by completing a manual-backend flow (SKILL.md §6).")
         return
     rows = []
     for line in config.RUNS_PATH.read_text(encoding="utf-8").splitlines():
@@ -434,15 +435,15 @@ def cmd_runs(args):
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError:
-            continue  # 壊れた行はスキップ（追記型ログの耐性）
+            continue  # skip broken lines (resilience for an append-only log)
     if recipe:
         rows = [r for r in rows if r.get("recipe") == recipe]
     if not rows:
-        print("該当する実行記録がありません。")
+        print("No matching run records.")
         return
 
     if personas_mode:
-        # 検証者別集計: 各 run の steps[].verdicts[] を by で集約する
+        # Per-verifier tally: aggregate each run's steps[].verdicts[] by their by field
         stats: dict[str, dict] = {}
         for r in rows:
             for st in r.get("steps", []):
@@ -452,22 +453,22 @@ def cmd_runs(args):
                     a["votes"] += 1
                     a["ok" if v.get("ok") else "reject"] += 1
         if not stats:
-            print("verdict 記録がまだありません（review-gate / acceptance-gate を通る run で蓄積されます）。")
+            print("No verdict records yet (they accumulate from runs that pass review-gate / acceptance-gate).")
             return
-        print(f"## rig runs --personas（全 {len(rows)} run の検証票）\n")
-        print(f"  {'verifier':28s} {'votes':>6s} {'PASS':>6s} {'REJECT':>7s} {'REJECT率':>8s}")
+        print(f"## rig runs --personas (verifier votes across {len(rows)} runs)\n")
+        print(f"  {'verifier':28s} {'votes':>6s} {'PASS':>6s} {'REJECT':>7s} {'REJECT%':>8s}")
         for by in sorted(stats, key=lambda k: -stats[k]["votes"]):
             a = stats[by]
             print(f"  {by:28s} {a['votes']:6d} {a['ok']:6d} {a['reject']:7d} "
                   f"{a['reject'] / a['votes'] * 100:7.0f}%")
         rubber = [by for by, a in stats.items() if a["votes"] >= 5 and a["reject"] == 0]
         if rubber:
-            print("\n  剪定ヒント: " + ", ".join(sorted(rubber))
-                  + " は5票以上で一度も REJECT していません（ゴム印化 or 観点が効いていない可能性。"
-                    "外すか観点を尖らせる検討材料）")
+            print("\n  Pruning hint: " + ", ".join(sorted(rubber))
+                  + " cast 5+ votes without a single REJECT (possible rubber-stamping, or the lens"
+                    " has no bite; consider dropping them or sharpening the lens)")
         return
 
-    print(f"## rig runs（直近 {min(limit, len(rows))} / 全 {len(rows)} 件）\n")
+    print(f"## rig runs (latest {min(limit, len(rows))} of {len(rows)})\n")
     for r in rows[-limit:]:
         esc = f" / escalated@{r['escalated_at']}" if r.get("escalated_at") else ""
         print(f"  {r.get('ts', '?'):25s} {r.get('recipe', '?'):20s} {r.get('final', '?'):9s} "
@@ -481,15 +482,15 @@ def cmd_runs(args):
         a["done"] += 1 if r.get("final") == "DONE" else 0
         a["retries"] += r.get("retries", 0)
         a["esc"] += 1 if r.get("escalated_at") else 0
-    print("\n## recipe 別集計\n")
-    print(f"  {'recipe':20s} {'runs':>5s} {'DONE率':>7s} {'平均retry':>9s} {'esc':>4s}")
+    print("\n## Per-recipe aggregates\n")
+    print(f"  {'recipe':20s} {'runs':>5s} {'DONE%':>7s} {'avg-retry':>9s} {'esc':>4s}")
     for name in sorted(agg):
         a = agg[name]
         print(f"  {name:20s} {a['n']:5d} {a['done'] / a['n'] * 100:6.0f}% "
               f"{a['retries'] / a['n']:9.1f} {a['esc']:4d}")
 
-    # ギャップ処方箋: 同一 (recipe, step) で2回以上エスカレーションしていたら能力調達を提案する
-    # （テレメトリ → /rig:import --discover / /rig:harness への接続＝自己補完ループの入口）
+    # Gap prescriptions: if the same (recipe, step) escalated twice or more, suggest acquiring capability
+    # (telemetry → /rig:import --discover / /rig:harness = the entry to the self-completion loop)
     gaps: dict[tuple, int] = {}
     for r in rows:
         esc_at = r.get("escalated_at")
@@ -497,15 +498,15 @@ def cmd_runs(args):
             gaps[(r.get("recipe", "?"), esc_at)] = gaps.get((r.get("recipe", "?"), esc_at), 0) + 1
     hot = {k: v for k, v in gaps.items() if v >= 2}
     if hot:
-        print("\n## ギャップ処方箋（同一 step でのエスカレーション反復）\n")
+        print("\n## Gap prescriptions (repeated escalations at the same step)\n")
         for (rcp, sid), n in sorted(hot.items(), key=lambda kv: -kv[1]):
-            print(f"  {rcp} / {sid}: エスカレーション {n} 回 — 能力調達を検討:"
-                  f" /rig:import --discover \"{sid} を強くする skill\""
-                  f" ／ 棚卸しは /rig:harness")
+            print(f"  {rcp} / {sid}: escalated {n} times — consider acquiring capability:"
+                  f" /rig:import --discover \"skill to strengthen {sid}\""
+                  f" / take inventory with /rig:harness")
 
 def cmd_install_shim(args):
-    """~/.local/bin/rig （または --to で指定したパス）に shim を symlink で配置する。
-    1 回実行すれば、以降どのディレクトリからでも `rig <subcommand>` で起動できる。"""
+    """Place the shim as a symlink at ~/.local/bin/rig (or the path given via --to).
+    Run once; afterwards `rig <subcommand>` works from any directory."""
     target = pathlib.Path("~/.local/bin/rig").expanduser()
     force = False
     i = 0
@@ -519,19 +520,19 @@ def cmd_install_shim(args):
             i += 1
     src = config.RIG_HOME / ".claude-plugin" / "bin" / "rig"
     if not src.exists():
-        print(f"[ERROR] shim 元が見つかりません: {src}")
+        print(f"[ERROR] shim source not found: {src}")
         sys.exit(1)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
         if not force:
-            print(f"[ERROR] 既に存在: {target}（上書きは --force）")
+            print(f"[ERROR] already exists: {target} (overwrite with --force)")
             sys.exit(1)
         target.unlink()
     target.symlink_to(src)
     print(f"✓ symlink: {target} → {src}")
     path_dirs = (os.environ.get("PATH") or "").split(os.pathsep)
     if str(target.parent) not in path_dirs:
-        print(f"⚠ {target.parent} が $PATH に無いようです。次を追加してください：")
+        print(f"⚠ {target.parent} does not seem to be on $PATH. Add this:")
         print(f"    export PATH=\"{target.parent}:$PATH\"")
-    print(f"確認: `rig models` または `rig --help`（RIG_HOME={config.RIG_HOME}）")
+    print(f"Verify: `rig models` or `rig --help` (RIG_HOME={config.RIG_HOME})")
 

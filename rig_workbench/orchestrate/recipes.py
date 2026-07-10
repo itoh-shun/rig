@@ -9,12 +9,12 @@ import subprocess
 try:
     import yaml
 except ImportError:
-    print("[ERROR] PyYAML が見つかりません。`pip install pyyaml`。")
+    print("[ERROR] PyYAML not found. `pip install pyyaml`.")
     sys.exit(1)
 
 from . import config
 
-# ── recipe 読み込み ───────────────────────────────────────────────────────────
+# ── Recipe loading ────────────────────────────────────────────────────────────
 def parse_frontmatter(path: pathlib.Path) -> dict:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
@@ -26,7 +26,7 @@ def parse_frontmatter(path: pathlib.Path) -> dict:
 
 
 def load_steps(fm: dict) -> list[dict]:
-    """recipe frontmatter から決定論的なステップ定義列を抽出する（純関数）。"""
+    """Extract the deterministic step definition list from recipe frontmatter (pure function)."""
     out = []
     for s in (fm.get("steps") or []):
         if not isinstance(s, dict):
@@ -37,36 +37,36 @@ def load_steps(fm: dict) -> list[dict]:
             "instruction": s.get("instruction"),
             "gate": None if gate in (None, "—", "-") else gate,
             "pattern": s.get("pattern"),
-            "personas": list(s.get("personas") or []),       # 並列検証者のロール
-            "needs": list(s.get("needs") or []),             # 任意: 依存 step（DAG 並列）
+            "personas": list(s.get("personas") or []),       # roles of parallel verifiers
+            "needs": list(s.get("needs") or []),             # optional: dependency steps (DAG parallelism)
             "acceptance": list(s.get("acceptance") or []),
-            "checks": list(s.get("checks") or []),          # 任意: 機械検証コマンド列
+            "checks": list(s.get("checks") or []),          # optional: machine-verification commands
             "max_retries": s.get("max_retries") or config.DEFAULT_K,
-            "model": s.get("model"),                        # 任意: この step の generator model
-            "verifier_model": s.get("verifier_model"),      # 任意: この step の verifier model（分離指定用）
+            "model": s.get("model"),                        # optional: generator model for this step
+            "verifier_model": s.get("verifier_model"),      # optional: verifier model for this step (separate assignment)
             "output_contract": s.get("output_contract"),
-            "condition": s.get("condition"),                 # 任意: 条件付き step（size/flag）
+            "condition": s.get("condition"),                 # optional: conditional step (size/flag)
         })
     return out
 
 
-# ── RESOLVE 参照実装（extends マージ・badge/steps フィールド導出）─────────────
-# SKILL.md §4.2.2（extends・1段のみ）と facets/instructions/list.md（badge 固定順・
-# steps: フィールド）の決定論参照実装。散文エンジンの表示規則を CI（selftest Q）で
-# golden 検証できるようにする＝RESOLVE コード化フェーズ1。
+# ── RESOLVE reference implementation (extends merge; badge/steps field derivation) ──
+# Deterministic reference implementation of SKILL.md §4.2.2 (extends, one level at a time)
+# and facets/instructions/list.md (fixed badge order, steps: field). Lets CI (selftest Q)
+# golden-verify the prose engine's display rules — phase 1 of codifying RESOLVE.
 
-EXTENDS_MAX_DEPTH = 5  # 深すぎる継承は認知経済的に破綻するため CI で FAIL させる (#193)
+EXTENDS_MAX_DEPTH = 5  # inheritance that is too deep collapses cognitive economy, so CI FAILs it (#193)
 
 
 def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
                             warnings: list[str]) -> list[tuple[str | None, dict]]:
-    """extends チェーンを leaf → root の順に辿って [(name, fm), ...] を返す。
+    """Walk the extends chain leaf -> root and return [(name, fm), ...].
 
-    循環（A→B→A 等）と深さ超過（EXTENDS_MAX_DEPTH）は警告を出しつつ切り上げる。
-    ペアの name は途中で見つけた祖先の名前（leaf 自体は None）。
+    Cycles (A->B->A etc.) and depth overruns (EXTENDS_MAX_DEPTH) emit a warning and cut off.
+    The pair's name is the ancestor's name found along the way (the leaf itself is None).
     """
     chain: list[tuple[str | None, dict]] = [(None, fm)]
-    trail: list[str] = [recipe_path.stem]   # 順序付きの継承経路（循環メッセージ用）
+    trail: list[str] = [recipe_path.stem]   # ordered inheritance path (for cycle messages)
     visited: set[str] = {recipe_path.stem}
     current_fm = fm
     current_path = recipe_path
@@ -75,12 +75,12 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         if not parent_name:
             return chain
         if parent_name in visited:
-            warnings.append(f"extends: 循環継承を検知しました ({' → '.join(trail)} → {parent_name})。"
-                            f"このリンクをここで切り上げます")
+            warnings.append(f"extends: circular inheritance detected ({' → '.join(trail)} → {parent_name}); "
+                            f"cutting the chain off here")
             return chain
         if len(chain) >= EXTENDS_MAX_DEPTH:
-            warnings.append(f"extends: 継承深さの上限 {EXTENDS_MAX_DEPTH} を超えました "
-                            f"（'{parent_name}' 以降を無視）。認知経済的に浅く保ってください")
+            warnings.append(f"extends: inheritance depth limit {EXTENDS_MAX_DEPTH} exceeded "
+                            f"(ignoring '{parent_name}' and beyond). Keep chains shallow for cognitive economy")
             return chain
         parent_path = None
         fname = f"{parent_name}.md"
@@ -90,7 +90,7 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
                 parent_path = cand
                 break
         if parent_path is None:
-            warnings.append(f"extends: '{parent_name}' が解決できません（{' → '.join(trail)} から辿った）")
+            warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
             return chain
         parent_fm = parse_frontmatter(parent_path)
         chain.append((parent_name, parent_fm))
@@ -101,14 +101,14 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
 
 
 def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str]]:
-    """extends を N 段まで解決し、確定 steps を持つ frontmatter と警告列を返す（純関数的）。
+    """Resolve extends up to N levels; return frontmatter with finalized steps plus warnings (pure-function style).
 
-    マージ規則（§4.2.2）:
-      - チェーンを [leaf, parent, grandparent, ..., root] の順に集める
-      - root の steps をベースに、祖先 → 親 → 子 の順に上書き適用する
-      - 各段で `remove: true` は親側から静的除外、既存 id は override、新規 id は末尾追加
-      - 循環継承・深さ上限 (EXTENDS_MAX_DEPTH) は警告で切り上げ
-      - 継承時の origin マーカーは最終的に "inherited" / "override" / "added" として残る
+    Merge rules (§4.2.2):
+      - Collect the chain in [leaf, parent, grandparent, ..., root] order
+      - Start from the root's steps and apply overrides ancestor -> parent -> child
+      - At each layer, `remove: true` statically drops the inherited step, an existing id overrides, a new id appends
+      - Circular inheritance and the depth limit (EXTENDS_MAX_DEPTH) warn and cut off
+      - Origin markers from inheritance end up as "inherited" / "override" / "added"
     """
     warnings: list[str] = []
     raw_steps = [s for s in (fm.get("steps") or []) if isinstance(s, dict)]
@@ -119,12 +119,12 @@ def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str
 
     chain = _resolve_extends_chain(fm, recipe_path, warnings)
     if len(chain) == 1:
-        # extends は宣言されているが解決失敗（未検出 / 循環 / 深さ超）
+        # extends is declared but resolution failed (not found / cycle / depth exceeded)
         for s in raw_steps:
             s.setdefault("_origin", None)
         return fm, warnings
 
-    # root ancestor の steps を "inherited" として base にする
+    # Use the root ancestor's steps as the base, marked "inherited"
     root_fm = chain[-1][1]
     merged: list[dict] = []
     for ps in (root_fm.get("steps") or []):
@@ -133,8 +133,8 @@ def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str
             m["_origin"] = "inherited"
             merged.append(m)
 
-    # 祖先 → 親 → 子 の順に上書き適用（chain は leaf 先頭、reverse で root 先頭に）
-    for name, layer_fm in reversed(chain[:-1]):  # root 以外を root→leaf 順に
+    # Apply overrides ancestor -> parent -> child (chain is leaf-first; reverse puts root first)
+    for name, layer_fm in reversed(chain[:-1]):  # everything but root, in root->leaf order
         index = {s.get("id"): i for i, s in enumerate(merged)}
         for cs in (layer_fm.get("steps") or []):
             if not isinstance(cs, dict):
@@ -146,8 +146,8 @@ def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str
                     index = {s.get("id"): i for i, s in enumerate(merged)}
                 else:
                     layer_label = name or "leaf"
-                    warnings.append(f"remove: true の step '{cid}' は継承元に存在しません "
-                                    f"（{layer_label} 側指定・#144 WARN）")
+                    warnings.append(f"remove: true step '{cid}' does not exist in the inherited base "
+                                    f"(declared by {layer_label}; #144 WARN)")
                 continue
             m = dict(cs)
             if cid in index:
@@ -158,7 +158,7 @@ def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str
                 merged.append(m)
                 index[cid] = len(merged) - 1
 
-    # トップレベルキーは leaf 優先で全チェーン重ね（root → ... → leaf）
+    # Top-level keys: layer the whole chain with the leaf winning (root -> ... -> leaf)
     out: dict = {}
     for _, layer_fm in reversed(chain):
         out.update({k: v for k, v in layer_fm.items() if k != "steps"})
@@ -167,15 +167,16 @@ def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str
 
 
 def _abbrev_condition(cond: str) -> str:
-    """condition 値を steps: フィールドの略記に変換する（list.md #160・20字以内）。"""
+    """Convert a condition value to the steps: field abbreviation (list.md #160; max 20 chars)."""
     flags = re.findall(r"--[a-z][a-z0-9-]*", cond or "")
-    m = re.search(r"size\s*[:：]?\s*([SMLX]+\+?)", cond or "")
+    # U+FF1A = full-width colon; conditions written in Japanese recipes may use it
+    m = re.search(r"size\s*[:\uff1a]?\s*([SMLX]+\+?)", cond or "")
     parts = flags + ([m.group(1)] if m else [])
     return ("|".join(parts) or "cond")[:20]
 
 
 def derive_badges(fm: dict, steps: list[dict]) -> list[str]:
-    """--list badge を固定順で導出する（facets/instructions/list.md の並び順と1対1）。"""
+    """Derive the --list badges in fixed order (1:1 with the ordering in facets/instructions/list.md)."""
     badges: list[str] = []
     if fm.get("tdd") is True:
         badges.append("tdd")
@@ -213,7 +214,7 @@ def derive_badges(fm: dict, steps: list[dict]) -> list[str]:
 
 
 def derive_steps_field(steps: list[dict]) -> str:
-    """--list / catalog の steps: フィールド（id 列＋condition 略記）を導出する（list.md #79/#160）。"""
+    """Derive the steps: field for --list / catalog (id list + condition abbreviations) (list.md #79/#160)."""
     parts = []
     for s in steps:
         sid = s.get("id") or "?"
@@ -222,13 +223,13 @@ def derive_steps_field(steps: list[dict]) -> str:
     return ", ".join(parts)
 
 
-# ── RESOLVE 参照実装フェーズ2（condition 評価・size 判定・スライス・flag 優先順位）──
-# SKILL.md §4.3（flag override）・§4.3.1（--only/--from/--to/--skip）・§4.4（size-aware）の
-# 決定論参照実装。selftest R が golden 検証する。
+# ── RESOLVE reference implementation phase 2 (condition evaluation, size classing, slicing, flag precedence) ──
+# Deterministic reference implementation of SKILL.md §4.3 (flag override), §4.3.1
+# (--only/--from/--to/--skip), and §4.4 (size-aware). Golden-verified by selftest R.
 
 _SIZE_RANK = {"S": 0, "M": 1, "L": 2, "XL": 3}
 
-# recipe frontmatter キー → 等価フラグ（§4.3 の「キーの解釈」群）
+# recipe frontmatter key -> equivalent flag (the §4.3 "key interpretation" set)
 _KEY_TO_FLAG = {
     "tdd": "--tdd", "design": "--design", "review": "--review", "visual": "--visual",
     "adversarial": "--adversarial", "cross_llm": "--cross-llm", "orchestrate": "--orchestrate",
@@ -238,7 +239,7 @@ _KEY_TO_FLAG = {
 
 
 def git_diff_lines() -> int | None:
-    """`git diff HEAD --numstat` の増減行数合計（staged + unstaged・§4.4/#185）。取得不能は None。"""
+    """Total added+removed lines from `git diff HEAD --numstat` (staged + unstaged; §4.4/#185). None if unavailable."""
     try:
         r = subprocess.run(["git", "diff", "HEAD", "--numstat"],
                            capture_output=True, text=True, timeout=10, cwd=config.INVOCATION_CWD)
@@ -256,7 +257,7 @@ def git_diff_lines() -> int | None:
 
 
 def load_manifest() -> dict:
-    """`<cwd>/.claude/rig.md` の frontmatter を読む（無ければ空 dict・§4.1）。"""
+    """Read the frontmatter of `<cwd>/.claude/rig.md` (empty dict if absent; §4.1)."""
     path = config.INVOCATION_CWD / ".claude" / "rig.md"
     if not path.exists():
         return {}
@@ -268,7 +269,7 @@ def load_manifest() -> dict:
 
 
 def size_class(diff_lines: int | None, thresholds: dict | None = None) -> str:
-    """diff 増減行数 → size class（§4.4。diff 不明は S 既定）。"""
+    """diff added+removed lines -> size class (§4.4; unknown diff defaults to S)."""
     th = {"S_max": 100, "M_max": 200, "L_max": 400}
     th.update(thresholds or {})
     if diff_lines is None:
@@ -283,25 +284,26 @@ def size_class(diff_lines: int | None, thresholds: dict | None = None) -> str:
 
 
 def evaluate_condition(cond: str | None, flags: set[str], size: str) -> tuple[bool, str]:
-    """condition 式（例 "--design または size L+"）を評価する（フラグ成分 OR size 成分）。
+    """Evaluate a condition expression (e.g. "--design or size L+") — flag component OR size component.
 
-    どちらの成分も無い・解釈できない condition は常時 OFF（--validate #109 と同じ扱い）。
+    A condition with neither component, or an uninterpretable one, is always OFF (same handling as --validate #109).
     """
     if not cond:
-        return True, "condition なし"
+        return True, "no condition"
     cond_flags = re.findall(r"--[a-z][a-z0-9-]*", cond)
     hit = sorted(set(cond_flags) & flags)
     if hit:
-        return True, f"flag 解決（{' '.join(hit)}）"
-    m = re.search(r"size\s*[:：]?\s*([SMLX]+)\+?", cond)
+        return True, f"resolved by flag ({' '.join(hit)})"
+    # U+FF1A = full-width colon; conditions written in Japanese recipes may use it
+    m = re.search(r"size\s*[:\uff1a]?\s*([SMLX]+)\+?", cond)
     if m and m.group(1) in _SIZE_RANK:
         need = m.group(1)
         if _SIZE_RANK[size] >= _SIZE_RANK[need]:
-            return True, f"size {need}+ 充足（size {size}）"
-        return False, f"size {need}+ 未満（size {size}）"
+            return True, f"size {need}+ met (size {size})"
+        return False, f"size {need}+ not met (size {size})"
     if cond_flags:
-        return False, f"flag 未指定（{' '.join(sorted(set(cond_flags)))}）"
-    return False, "condition 不正（常時 OFF・#109）"
+        return False, f"flag not set ({' '.join(sorted(set(cond_flags)))})"
+    return False, "invalid condition (always OFF; #109)"
 
 
 def _levenshtein(a: str, b: str) -> int:
@@ -323,10 +325,11 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
                       diff_lines: int | None = None,
                       thresholds: dict | None = None,
                       manifest: dict | None = None) -> dict:
-    """RESOLVE の確定結果＝flag override・condition 評価・スライス適用後の実行 step 集合を返す。
+    """Return RESOLVE's final result: the executable step set after flag overrides, condition evaluation, and slicing.
 
-    §4.3/§4.3.1/§4.4 の決定論実装。errors があれば実行不能（散文エンジンの ERROR 停止と同じ）。
-    manifest（§4.1）は size_thresholds と default_orchestrate を反映する。
+    Deterministic implementation of §4.3/§4.3.1/§4.4. Any errors mean the run cannot proceed
+    (same as the prose engine's ERROR stop). The manifest (§4.1) contributes size_thresholds
+    and default_orchestrate.
     """
     plan = resolve_plan_json(recipe_path)
     fm = parse_frontmatter(recipe_path)
@@ -336,7 +339,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     warnings = list(plan["warnings"])
     errors: list[str] = []
 
-    # ① 有効フラグ集合 ＝ 明示フラグ ∪ recipe キー等価フラグ（§4.3「キーの解釈」）
+    # (1) effective flag set = explicit flags ∪ recipe-key equivalent flags (§4.3 "key interpretation")
     fset = set(flags or [])
     for key, flg in _KEY_TO_FLAG.items():
         if fm.get(key) is True:
@@ -346,7 +349,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     if fm.get("backend") == "workflow":
         fset.add("--workflow")
 
-    # ② size 判定（§4.4）と condition 評価
+    # (2) size classification (§4.4) and condition evaluation
     size = size_class(diff_lines, thresholds)
     steps = [dict(s) for s in plan["steps"]]
     for s in steps:
@@ -355,7 +358,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     ids = [s["id"] for s in steps]
     active_ids = [s["id"] for s in steps if s["active"]]
 
-    # ③ スライス（§4.3.1・condition 評価後のリストに適用）
+    # (3) slicing (§4.3.1; applied to the list after condition evaluation)
     def _slice_val(name: str) -> str | None:
         lst = flags or []
         return lst[lst.index(name) + 1] if name in lst and lst.index(name) + 1 < len(lst) else None
@@ -364,22 +367,22 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     skips = [v for i, v in enumerate(flags or []) if i > 0 and (flags or [])[i - 1] == "--skip"]
 
     if only and frm:
-        warnings.append("--only と --from の同時指定: --only 優先・--from 無視")
+        warnings.append("--only and --from both specified: --only wins; --from ignored")
         frm = None
     if only and to:
-        warnings.append("--only と --to の同時指定: --only 優先・--to 無視")
+        warnings.append("--only and --to both specified: --only wins; --to ignored")
         to = None
     if only and skips:
-        warnings.append("--only と --skip の同時指定: --only 優先・--skip 無視")
+        warnings.append("--only and --skip both specified: --only wins; --skip ignored")
         skips = []
 
     def _check_id(sid: str, flag: str) -> bool:
         if sid in ids:
             return True
         sug = _suggest(sid, ids)
-        errors.append(f"{flag} {sid}: step が見つかりません"
-                      + (f"（もしかして: {', '.join(sug)}）" if sug else "")
-                      + f"。実行可能な step-id: {', '.join(ids)}")
+        errors.append(f"{flag} {sid}: step not found"
+                      + (f" (did you mean: {', '.join(sug)})" if sug else "")
+                      + f". Available step-ids: {', '.join(ids)}")
         return False
 
     for sid, flg in ((only, "--only"), (frm, "--from"), (to, "--to")):
@@ -387,38 +390,38 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
             _check_id(sid, flg)
     if only and only in ids and only not in active_ids:
         cond = next(s.get("condition") for s in steps if s["id"] == only)
-        errors.append(f"--only {only}: condition (\"{cond}\") が現在 OFF です"
-                      f"（{next(s['why'] for s in steps if s['id'] == only)}）。"
-                      f"有効化フラグを追加してください。")
+        errors.append(f"--only {only}: condition (\"{cond}\") is currently OFF "
+                      f"({next(s['why'] for s in steps if s['id'] == only)}). "
+                      f"Add the enabling flag.")
     if frm and to and frm in ids and to in ids and ids.index(frm) > ids.index(to):
-        errors.append(f"--from {frm} --to {to}: step 順序が逆です。実行可能な step-id: {', '.join(ids)}")
+        errors.append(f"--from {frm} --to {to}: step order is reversed. Available step-ids: {', '.join(ids)}")
 
     for sid in skips:
         if sid not in ids:
-            _check_id(sid, "--skip")  # 存在しない id は ERROR（ケース A）
+            _check_id(sid, "--skip")  # nonexistent id is an ERROR (case A)
             continue
         st = next(s for s in steps if s["id"] == sid)
         if not st["active"]:
-            warnings.append(f"--skip {sid}: {sid} step はすでに condition-OFF です（--skip は不要）")
+            warnings.append(f"--skip {sid}: step {sid} is already condition-OFF (--skip unnecessary)")
         if st.get("gate") == "acceptance-gate":
-            warnings.append(f"--skip {sid}: {sid} step は gate: acceptance-gate を持ちます"
-                            " — 品質収束ループがスキップされます")
+            warnings.append(f"--skip {sid}: step {sid} has gate: acceptance-gate"
+                            " — the quality convergence loop will be skipped")
 
-    # ④ active/why の確定（スライス > --skip > condition。明示スキップが最終的に勝つ）
+    # (4) finalize active/why (slice > --skip > condition; explicit skip wins in the end)
     for s in steps:
         sid = s["id"]
         if only:
             if sid != only:
-                s["active"], s["why"] = False, "slice 範囲外（--only）"
+                s["active"], s["why"] = False, "outside slice (--only)"
         else:
             if frm and frm in ids and ids.index(sid) < ids.index(frm):
-                s["active"], s["why"] = False, "slice 範囲外（--from）"
+                s["active"], s["why"] = False, "outside slice (--from)"
             if to and to in ids and ids.index(sid) > ids.index(to):
-                s["active"], s["why"] = False, "slice 範囲外（--to）"
+                s["active"], s["why"] = False, "outside slice (--to)"
         if sid in skips:
             s["active"], s["why"] = False, "[SKIP: --skip flag]"
 
-    # ⑤ モードサマリ（orchestrate は on > off(打ち消し) > auto の優先順・§4.3）
+    # (5) mode summary (orchestrate precedence: on > off (negation) > auto; §4.3)
     auto, auto_why = auto_orchestrate(plan["steps"],
                                       manifest_default=manifest.get("default_orchestrate") is True)
     if "--orchestrate" in fset:
@@ -426,7 +429,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     elif "--no-orchestrate" in fset:
         orch = "off"
     elif auto:
-        orch = f"auto（{auto_why}）"
+        orch = f"auto ({auto_why})"
     else:
         orch = "off"
     mode = {
@@ -437,7 +440,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
         "capture": "off" if "--no-capture" in fset else ("auto" if "--capture" in fset else "ask"),
     }
     if "--capture" in fset and "--no-capture" in fset:
-        warnings.append("--capture と --no-capture の同時指定: --no-capture 優先（§7.3）")
+        warnings.append("--capture and --no-capture both specified: --no-capture wins (§7.3)")
 
     plan.update({
         "flags": sorted(fset),
@@ -453,7 +456,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
 
 
 def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
-    """recipe を RESOLVE し、--list/--plan 表示の計算フィールドを JSON で返す（決定論）。"""
+    """RESOLVE the recipe and return the computed fields of the --list/--plan display as JSON (deterministic)."""
     fm = parse_frontmatter(recipe_path)
     extends_name = fm.get("extends")
     resolved_fm, warnings = resolve_extends(fm, recipe_path)
@@ -473,9 +476,9 @@ def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
     }
 
 def resolve_recipe(name: str) -> pathlib.Path:
-    """recipe を解決する。
-    優先順: 絶対/相対パス実在 → cwd/.rig/recipes/<name>.md（プロジェクト overlay） → RIG_HOME/skills/rig/recipes/<name>.md（built-in）。
-    overlay が built-in と同名なら overlay が勝つ＝プロジェクト固有レシピで上書き可能。"""
+    """Resolve a recipe.
+    Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/rig/recipes/<name>.md (built-in).
+    An overlay with the same name as a built-in wins, so project-specific recipes can override."""
     p = pathlib.Path(name)
     if p.exists():
         return p
@@ -483,25 +486,24 @@ def resolve_recipe(name: str) -> pathlib.Path:
     bases = [config.PROJECT_RECIPES]
     org = os.environ.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")
     if org:
-        bases.append(pathlib.Path(org).expanduser() / "recipes")  # org tier（チーム共有・§5）
+        bases.append(pathlib.Path(org).expanduser() / "recipes")  # org tier (team-shared; §5)
     bases.append(config.RECIPES)
     for base in bases:
         cand = base / fname
         if cand.exists():
             return cand
-    print(f"[ERROR] recipe が見つかりません: {name}\n"
-          f"  探索: " + ", ".join(str(b / fname) for b in bases))
+    print(f"[ERROR] recipe not found: {name}\n"
+          f"  searched: " + ", ".join(str(b / fname) for b in bases))
     sys.exit(1)
 
 
 def auto_orchestrate(steps: list[dict], manifest_default: bool = False) -> tuple[bool, str]:
-    """この recipe が --orchestrate を自動有効化するか（決定論・SKILL §4.3 と同じ規則）。"""
+    """Whether this recipe auto-enables --orchestrate (deterministic; same rules as SKILL §4.3)."""
     has_checks = any(s["checks"] for s in steps)
     has_needs = any(s["needs"] for s in steps)
     if has_checks or has_needs:
-        why = "・".join(x for x in (["checks"] if has_checks else []) + (["needs"] if has_needs else []))
-        return True, f"recipe に {why} 宣言あり"
+        why = "+".join(x for x in (["checks"] if has_checks else []) + (["needs"] if has_needs else []))
+        return True, f"recipe declares {why}"
     if manifest_default:
         return True, "manifest default_orchestrate: true"
-    return False, "明示 opt-in のみ（自動有効化なし）"
-
+    return False, "explicit opt-in only (no auto-enable)"
