@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# rig CLI shim — orchestrate.py をどこからでも呼べるようにするラッパー。
-#   - $RIG_HOME が設定されていればそれを使う。
-#   - そうでなければ symlink を realpath で辿って rig 本体を特定する。
-# 配置例: ~/.local/bin/rig → <RIG_HOME>/.claude-plugin/bin/rig（`rig install-shim` が張る）。
+# rig CLI shim — wrapper so orchestrate.py can be called from anywhere.
+#   - Uses $RIG_HOME if it is set.
+#   - Otherwise resolves symlinks via realpath to locate the rig checkout.
+# Typical placement: ~/.local/bin/rig -> <RIG_HOME>/.claude-plugin/bin/rig (created by `rig install-shim`).
 set -e
 if [ -n "${RIG_HOME:-}" ] && [ -f "$RIG_HOME/scripts/orchestrate.py" ]; then
   exec python3 "$RIG_HOME/scripts/orchestrate.py" "$@"

@@ -253,15 +253,15 @@ def render_kpi(k: dict) -> str:
         ("avg retries", k["avg_retries"], value_class("avg_retries", k["avg_retries"])),
     ]
     return "\n".join(
-        f'<div class="kpi"><div class="label">{esc(l)}</div>'
+        f'<div class="kpi"><div class="label">{esc(label)}</div>'
         f'<div class="value {c}">{esc(v)}</div></div>'
-        for l, v, c in tiles
+        for label, v, c in tiles
     )
 
 
 def render_bars(pairs: list[tuple[str, int]], label_width: str = "12rem") -> str:
     if not pairs:
-        return '<p class="sub">データ無し</p>'
+        return '<p class="sub">no data</p>'
     top = max(v for _, v in pairs)
     rows = []
     for name, v in pairs:
@@ -276,7 +276,7 @@ def render_bars(pairs: list[tuple[str, int]], label_width: str = "12rem") -> str
 
 def render_spark(days: list[tuple[str, int]]) -> str:
     if not days:
-        return '<p class="sub">データ無し</p>'
+        return '<p class="sub">no data</p>'
     top = max(v for _, v in days)
     bins = []
     for d, v in days:
@@ -287,16 +287,16 @@ def render_spark(days: list[tuple[str, int]]) -> str:
     first = days[0][0] if days else ""
     last = days[-1][0] if days else ""
     total = sum(v for _, v in days)
-    caption = f'<p class="sub">{esc(first)} → {esc(last)} · 計 {total} 回</p>'
+    caption = f'<p class="sub">{esc(first)} → {esc(last)} · {total} runs total</p>'
     return f'<div class="spark">{"".join(bins)}</div>{caption}'
 
 
 def render_verifiers(votes: list[dict]) -> str:
     if not votes:
-        return '<p class="sub">verdict 記録なし</p>'
+        return '<p class="sub">no verdicts recorded</p>'
     rows = ['<tr><th>verifier</th><th>total</th><th>OK</th><th>REJECT</th><th>REJECT%</th><th></th></tr>']
     for v in votes:
-        badge = '<span class="badge rubber-stamp">ゴム印疑</span>' if v["rubber_stamp"] else ""
+        badge = '<span class="badge rubber-stamp">rubber stamp?</span>' if v["rubber_stamp"] else ""
         rows.append(
             f'<tr><td>{esc(v["name"])}</td><td>{v["total"]}</td>'
             f'<td>{v["ok"]}</td><td>{v["reject"]}</td>'
@@ -307,7 +307,7 @@ def render_verifiers(votes: list[dict]) -> str:
 
 def render_recent(rows: list[dict]) -> str:
     if not rows:
-        return '<p class="sub">データ無し</p>'
+        return '<p class="sub">no data</p>'
     head = "<tr><th>ts</th><th>recipe</th><th>backend</th><th>final</th><th>steps</th><th>retries</th></tr>"
     body = []
     for r in rows:
@@ -338,7 +338,7 @@ def render(runs: list[dict], meta: dict) -> str:
     sub_bits.append(f"generated={meta['generated']}")
     sub = " · ".join(sub_bits)
     return f"""<!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -353,7 +353,7 @@ def render(runs: list[dict], meta: dict) -> str:
 {render_kpi(k)}
 </div>
 
-<h2>runs / 日</h2>
+<h2>runs / day</h2>
 <div class="card">
 {render_spark(days)}
 </div>
@@ -363,12 +363,12 @@ def render(runs: list[dict], meta: dict) -> str:
 {render_bars(recipes)}
 </div>
 
-<h2>verifiers · vote 集計</h2>
+<h2>verifiers · vote counts</h2>
 <div class="card">
 {render_verifiers(votes)}
 </div>
 
-<h2>直近 {min(len(runs), meta.get("limit", 20))} run</h2>
+<h2>last {min(len(runs), meta.get("limit", 20))} runs</h2>
 <div class="card">
 {render_recent(recent_rows)}
 </div>

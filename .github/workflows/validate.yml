@@ -1,9 +1,8 @@
 name: validate
 
-# shipped tier の recipe 構造を自動チェック。
-# validate.md ①②③ のサブセット（frontmatter スキーマ・step 参照・extends チェーン）を
-# Python スクリプト（scripts/validate.py）で機械的に検査する。
-# FAIL があれば PR をブロック / master push を通さない。
+# Quality gates for the repo itself: structural validator (+ its selftest),
+# orchestrator selftest, ruff lint, and the pytest suite.
+# Any failure blocks the PR / rejects the master push.
 
 on:
   pull_request:
@@ -23,7 +22,10 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install pyyaml ruff pytest
+
+      - name: Lint (ruff)
+        run: ruff check scripts rig_workbench tests
 
       - name: Run rig structural validator
         run: python3 scripts/validate.py
@@ -33,3 +35,6 @@ jobs:
 
       - name: Run computational orchestrator selftest (determinism)
         run: python3 scripts/orchestrate.py selftest
+
+      - name: Run pytest suite
+        run: pytest -q

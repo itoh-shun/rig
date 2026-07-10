@@ -25,7 +25,7 @@ $ARGUMENTS
 
 ## なぜこれが要るか
 
-rig は **Claude Code 内の skill として動く**（`/rig:rig`）だけでなく、`pip install rig-workbench` で入る **`rig-wb` CLI としても動く**。他プロバイダ（Codex plugin / Cursor rules / Copilot extension）の skill も同じ `rig-wb` を叩けば同一の workbench（recipe / gate / accept / dashboard）が使える。**「AI コーディングツールを乗り換えず、その中に skill として住む」** ための土台。
+rig は **Claude Code 内の skill として動く**（`/rig:go`）だけでなく、`pip install rig-workbench` で入る **`rig-wb` CLI としても動く**。他プロバイダ（Codex plugin / Cursor rules / Copilot extension）の skill も同じ `rig-wb` を叩けば同一の workbench（recipe / gate / accept / dashboard）が使える。**「AI コーディングツールを乗り換えず、その中に skill として住む」** ための土台。
 
 ## flag
 

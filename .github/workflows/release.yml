@@ -1,14 +1,17 @@
 name: release
 
-# リリース自動化（タグ push 不要）。
-# - master に version bump が入ったら、plugin.json の version から v<version> タグ＋Release を
-#   サーバ側（GITHUB_TOKEN）で自動作成する。手元での `git push --tags` は不要。
-# - 手動で v* タグを push した場合もフォールバックで Release を作る。
-# - どちらの経路も、その版の Release が既にあればスキップ（冪等＝同じ版を二重に作らない）。
+# Release automation (no tag push needed).
+# - When a version bump lands on master, a v<version> tag + Release is created
+#   automatically server-side (GITHUB_TOKEN) from plugin.json's version. No local
+#   `git push --tags` required.
+# - Manually pushing a v* tag also creates a Release as a fallback.
+# - Both paths skip if a Release for that version already exists (idempotent —
+#   never creates the same version twice).
 #
-# 仕組み: `gh release create v<version> --target <sha>` はタグと Release を1発で作る。
-# クライアントからのタグ push は環境ポリシーで 403 だが、Actions 内の GITHUB_TOKEN は
-# contents:write でタグ/Release を作成できるため、この経路なら通る。
+# How it works: `gh release create v<version> --target <sha>` creates the tag and
+# Release in one shot. Tag pushes from clients get 403 by environment policy, but
+# the GITHUB_TOKEN inside Actions can create tags/Releases with contents:write,
+# so this path goes through.
 on:
   push:
     branches: [master]
@@ -23,19 +26,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # CHANGELOG 抽出 / 自動生成ノート用に全履歴
+          fetch-depth: 0   # full history for CHANGELOG extraction / auto-generated notes
 
       - name: Resolve target version and ref
         id: target
         run: |
           set -euo pipefail
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            # 手動タグ push 経路: タグ名から版を取り、既存タグをそのまま使う
+            # Manual tag push path: take the version from the tag name and use the existing tag as-is
             VERSION="${GITHUB_REF_NAME#v}"
             TAG="${GITHUB_REF_NAME}"
             TARGET="${GITHUB_REF_NAME}"
           else
-            # master push 経路: plugin.json の version を読み、この push のコミットにタグを作る
+            # master push path: read the version from plugin.json and tag this push's commit
             VERSION="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])")"
             TAG="v${VERSION}"
             TARGET="${GITHUB_SHA}"
@@ -52,7 +55,7 @@ jobs:
           set -euo pipefail
           if gh release view "${{ steps.target.outputs.tag }}" >/dev/null 2>&1; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Release ${{ steps.target.outputs.tag }} は既存 — スキップ"
+            echo "::notice::Release ${{ steps.target.outputs.tag }} already exists — skipping"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -74,7 +77,7 @@ jobs:
             echo "source=changelog" >> "$GITHUB_OUTPUT"
           else
             echo "source=auto" >> "$GITHUB_OUTPUT"
-            echo "::notice::CHANGELOG に $VERSION 節なし — 自動生成ノートを使用"
+            echo "::notice::No $VERSION section in CHANGELOG — using auto-generated notes"
           fi
 
       - name: Create tag + release

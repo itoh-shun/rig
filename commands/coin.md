@@ -1,5 +1,5 @@
 ---
-description: "rig/coin — コイン投げ即決モード。可逆で些末な 50/50（N 択可）を熟考させず即断する反-bikeshed ゲート。重い/不可逆な決定はトリアージで弾いて magi に回す。magi の対極。"
+description: "[experimental] rig/coin — コイン投げ即決モード。可逆で些末な 50/50（N 択可）を熟考させず即断する反-bikeshed ゲート。重い/不可逆な決定はトリアージで弾いて magi に回す。magi の対極。"
 argument-hint: "[決めたいこと（2択 or 選択肢）] [--autonomous]"
 ---
 

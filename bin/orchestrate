@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
-# rig orchestrate — Claude Code のプラグイン bin/ 自動 PATH 追加を使い、
-# cwd に依存せず scripts/orchestrate.py を呼べるようにするラッパー。
-#   - $RIG_HOME が設定されていればそれを使う。
-#   - そうでなければ symlink を realpath で辿って rig 本体を特定する。
+# rig orchestrate — wrapper that uses Claude Code's automatic plugin bin/ PATH
+# addition so scripts/orchestrate.py can be called regardless of cwd.
+#   - Uses $RIG_HOME if it is set.
+#   - Otherwise resolves symlinks via realpath to locate the rig checkout.
 set -e
 if [ -n "${RIG_HOME:-}" ] && [ -f "$RIG_HOME/scripts/orchestrate.py" ]; then
   exec python3 "$RIG_HOME/scripts/orchestrate.py" "$@"

@@ -5,6 +5,49 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
 
 > リリースタグは GitHub 側で発行する（実行環境の都合でタグ push を別途行う運用）。
 
+## [1.11.0] - 2026-07-10
+
+### Changed — self-application release: the quality bar rig sells now applies to rig itself
+
+- **Monolith split**: `scripts/orchestrate.py` (2,781 lines) is now a 21-line
+  compatibility shim; the implementation lives in `rig_workbench/orchestrate/`
+  as ten cohesive modules (config / recipes / runstate / providers / isolate /
+  queueing / graph / selftest / commands / cli). Selftest output is
+  byte-identical to the pre-split baseline.
+- **English everywhere in code**: all CLI output, comments, docstrings, help
+  text, installer messages, CI workflow comments, and hook-injected directives
+  are now English. The Japanese review-verdict protocol token and
+  full-width-colon condition regexes are preserved as escaped literals — they
+  are live wire-format contracts.
+- **Main entry renamed to `/rig:go`**: `/rig:rig` remains as a compatibility
+  alias. Experimental commands (magi, sage, roast, coin, duck, pre-mortem,
+  party, movie, scenario) are now marked `[experimental]` in their
+  descriptions. `plugin.json`'s description shrank from 2,192 to 384 chars.
+
+### Added
+
+- **Project-recipe trust gate**: recipes under `<cwd>/.rig/recipes/` (which can
+  overlay shipped recipes and whose `checks:` run as shell commands) now
+  require one-time explicit consent — `--allow-project-recipes` or
+  `RIG_ALLOW_PROJECT_RECIPES=1` — recorded as a content hash in
+  `~/.claude/rig/trusted-recipes.json` (`RIG_TRUST_STORE` overrides). An
+  edited file re-requires consent. Covers name resolution, explicit overlay
+  paths, and `extends`-chain parents.
+- **pytest suite**: 54 unit tests (`tests/`) covering recipe resolution,
+  run-state/gate transitions, queue backends, brick-graph shape, CLI smoke,
+  and the trust gate — all asserts on machine tokens, sandboxed via tmp_path.
+- **CI hardening**: `validate.yml` now also runs `ruff check` (0 findings,
+  down from 65) and the pytest suite. `validate.py` gained a version-sync
+  check across plugin.json / pyproject.toml / `rig_workbench/__init__.py`.
+
+### Verification
+
+- `python3 scripts/orchestrate.py selftest` → PASS (90 [OK], byte-stable)
+- `python3 scripts/validate.py` → PASS 45 / WARN 18 / FAIL 0
+- `python3 scripts/validate.py selftest` → 9/9 scenarios OK
+- `ruff check scripts rig_workbench tests` → all checks passed
+- `pytest -q` → 54 passed
+
 ## [1.10.6] - 2026-07-08
 
 ### Fixed — verifier が review-verdict 契約を解釈できるようにした

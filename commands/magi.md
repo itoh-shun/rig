@@ -1,5 +1,5 @@
 ---
-description: "rig/magi — エヴァの MAGI を模した3賢者合議モード。提案を Melchior(科学者=正しさ)/Balthasar(母=守り)/Casper(女=価値)の3観点に並列で諮り、多数決で go/no-go を裁定する。「やるべきか」を裁く decision モード。"
+description: "[experimental] rig/magi — エヴァの MAGI を模した3賢者合議モード。提案を Melchior(科学者=正しさ)/Balthasar(母=守り)/Casper(女=価値)の3観点に並列で諮り、多数決で go/no-go を裁定する。「やるべきか」を裁く decision モード。"
 argument-hint: "[裁定にかける提案・選択肢・質問] [--plan] [--autonomous]"
 ---
 

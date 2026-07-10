@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """
-rig workbench — 品質保証つき AI 作業環境の決定論ランナー
+rig workbench — deterministic runner for a quality-assured AI work environment
 
-`/rig "<task>"` 統一入口（facets/instructions/workbench.md）の裏で、
-**状態管理・隔離 worktree・acceptance-gate 判定・accept/discard の安全**をコードが強制する。
-タスク分類・recipe 選択・実装・レビューはモデルの仕事、状態と安全はこのスクリプトの仕事
-（patterns/computational-orchestration と同じ「舵をコードが握る」思想の workbench 版）。
+Behind the unified `/rig "<task>"` entry point (facets/instructions/workbench.md),
+this code enforces **state management, isolated worktrees, acceptance-gate
+verdicts, and accept/discard safety**. Task classification, recipe selection,
+implementation, and review are the model's job; state and safety are this
+script's job (the workbench version of the "code holds the helm" philosophy
+from patterns/computational-orchestration).
 
-状態は `<repo>/.rig/runs/<task-id>/` に永続化する:
-  task.json        タスクの正準メタ（入力・分類・base branch・worktree path・状態）
-  steps.json       実行 step の進行状態
-  acceptance.json  acceptance-gate の基準と合否（{task_id, status, checks[]}）
-  review.json      review 系タスクの persona 別 verdict（stats のゴム印検知に使用・任意）
-  plan.md / diff.md / log.md / final.md   モデルが書く散文成果物（本スクリプトは触らない。
-                                          diff.md は `## Summary` / `## Risk` / `## Tests` /
-                                          `## Unrelated diff` の見出しを持つと `diff` が構造化表示する）
+State is persisted under `<repo>/.rig/runs/<task-id>/`:
+  task.json        canonical task metadata (input, classification, base branch, worktree path, status)
+  steps.json       progress state of executed steps
+  acceptance.json  acceptance-gate criteria and verdicts ({task_id, status, checks[]})
+  review.json      per-persona verdicts for review tasks (used by stats for rubber-stamp detection; optional)
+  plan.md / diff.md / log.md / final.md   prose artifacts written by the model (this script doesn't touch them.
+                                          If diff.md has `## Summary` / `## Risk` / `## Tests` /
+                                          `## Unrelated diff` headings, `diff` renders them structured)
 
-終了コード: 0=成功 / 1=エラー（accept のゲート未達・worktree 不整合を含む）
-依存: 標準ライブラリのみ（PyYAML 不要）
+Exit codes: 0=success / 1=error (includes accept gate failures and worktree inconsistencies)
+Dependencies: standard library only (no PyYAML needed)
 """
 
 import argparse
@@ -31,14 +33,14 @@ import subprocess
 import sys
 
 try:
-    import fcntl  # POSIX: task 同時操作の排他 (task_lock)
+    import fcntl  # POSIX: mutual exclusion for concurrent task operations (task_lock)
 except ImportError:
-    fcntl = None  # type: ignore[assignment]  # Windows fallback（lock 無効）
+    fcntl = None  # type: ignore[assignment]  # Windows fallback (locking disabled)
 from collections import Counter
 
-# ── acceptance-gate プリセット（正本。instruction はここを参照する）───────────────
+# ── acceptance-gate presets (source of truth; the instruction references this) ──
 GATE_PRESETS: dict[str, list[str]] = {
-    # 全 task_type 共通の標準 gate
+    # Standard gate shared by all task_types
     "standard": [
         "task_intent_satisfied",
         "no_unrelated_diff",
@@ -49,7 +51,7 @@ GATE_PRESETS: dict[str, list[str]] = {
         "no_secret_leak",
         "no_destructive_operation",
     ],
-    # bugfix 専用（standard に上乗せ）
+    # bugfix-specific (layered on top of standard)
     "bugfix": [
         "bug_cause_identified",
         "fix_is_minimal",
@@ -57,7 +59,7 @@ GATE_PRESETS: dict[str, list[str]] = {
         "existing_behavior_preserved",
         "no_unrelated_refactor",
     ],
-    # feature 専用（standard に上乗せ）
+    # feature-specific (layered on top of standard)
     "feature": [
         "requirement_summary_written",
         "implementation_matches_requirement",
@@ -65,7 +67,7 @@ GATE_PRESETS: dict[str, list[str]] = {
         "public_api_changes_documented",
         "migration_or_backward_compatibility_considered",
     ],
-    # refactor 専用（standard に上乗せ）
+    # refactor-specific (layered on top of standard)
     "refactor": [
         "behavior_boundaries_identified",
         "no_unintended_behavior_change",
@@ -73,7 +75,7 @@ GATE_PRESETS: dict[str, list[str]] = {
         "no_unrelated_refactor",
         "public_api_changes_documented_if_any",
     ],
-    # レビュータスク用（差分を作らないため standard を含まない）
+    # For review tasks (produces no diff, so standard is not included)
     "review": [
         "findings_are_concrete",
         "severity_labeled",
@@ -81,7 +83,7 @@ GATE_PRESETS: dict[str, list[str]] = {
         "blocking_and_non_blocking_separated",
         "false_positive_risk_considered",
     ],
-    # セキュリティ確認用（review に上乗せ）
+    # For security checks (layered on top of review)
     "security": [
         "authn_authz_impact_checked",
         "user_input_flow_checked",
@@ -91,7 +93,7 @@ GATE_PRESETS: dict[str, list[str]] = {
     ],
 }
 
-# task_type → 適用 gate プリセット（合成順に列挙。先頭が base、以降は上乗せ）
+# task_type → applied gate presets (listed in composition order: first is base, rest are layered on)
 TASK_TYPES: dict[str, list[str]] = {
     "bugfix": ["standard", "bugfix"],
     "feature": ["standard", "feature"],
@@ -114,19 +116,19 @@ STEP_ICON = {"passed": "✓", "failed": "✗", "running": "▸", "pending": "…
 CHECK_ICON = {"passed": "✓", "failed": "✗", "warning": "⚠", "pending": "…", "skipped": "-"}
 
 NEXT_ACTIONS = {
-    "running": "実行中。完了後に gate を判定してください（workbench.py gate <id> --set …）",
-    "gate_passed": "/rig diff で差分確認 → /rig accept で反映（または /rig discard で破棄）",
-    "gate_failed": "未達基準を修正して gate を再判定（failed のままなら /rig discard）",
-    "accepted": "git diff --staged を確認してコミット → /rig discard <id> で worktree を後片付け",
-    "discarded": "終了済み（run log のみ保持）",
+    "running": "Running. Evaluate the gate after completion (workbench.py gate <id> --set …)",
+    "gate_passed": "Review the diff with /rig diff → apply with /rig accept (or drop with /rig discard)",
+    "gate_failed": "Fix the unmet criteria and re-evaluate the gate (if still failed, /rig discard)",
+    "accepted": "Review git diff --staged and commit → clean up the worktree with /rig discard <id>",
+    "discarded": "Finished (only the run log is kept)",
 }
 
 RECOMMENDATION = {
-    "failed": "Fix the failed acceptance-gate criteria before accept（`workbench.py gate` で確認）。",
-    "pending": "残りの acceptance 基準を判定してから accept してください。",
-    "passed_with_warnings": "警告内容を確認したうえで、問題なければ accept してください。",
-    "passed": "accept して問題ありません。",
-    "skipped": "この task には gate 基準が設定されていません — 手動で確認してから accept してください。",
+    "failed": "Fix the failed acceptance-gate criteria before accept (check with `workbench.py gate`).",
+    "pending": "Evaluate the remaining acceptance criteria before accepting.",
+    "passed_with_warnings": "Review the warnings, then accept if they are acceptable.",
+    "passed": "Safe to accept.",
+    "skipped": "This task has no gate criteria configured — verify manually before accepting.",
 }
 
 
@@ -143,18 +145,18 @@ def warn(msg: str) -> None:
     print(f"[WARN] {msg}")
 
 
-# ── git ヘルパー ──────────────────────────────────────────────────────────────
+# ── git helpers ───────────────────────────────────────────────────────────────
 def git(args: list[str], cwd: pathlib.Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
     proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
     if check and proc.returncode != 0:
-        die(f"git {' '.join(args)} が失敗しました: {proc.stderr.strip()}")
+        die(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc
 
 
 def repo_root() -> pathlib.Path:
     proc = git(["rev-parse", "--show-toplevel"], check=False)
     if proc.returncode != 0:
-        die("git リポジトリ内で実行してください")
+        die("Run this inside a git repository")
     return pathlib.Path(proc.stdout.strip())
 
 
@@ -176,13 +178,15 @@ def locks_dir(root: pathlib.Path) -> pathlib.Path:
 
 @contextlib.contextmanager
 def task_lock(root: pathlib.Path, task_id: str):
-    """task 単位の排他制御（`accept`/`discard`/`gate`/`step`/`review` の同時実行を防ぐ）。
+    """Per-task mutual exclusion (prevents concurrent `accept`/`discard`/`gate`/`step`/`review`).
 
-    fcntl.flock による非ブロッキング取得。取得失敗時は他プロセスが同 task を触っている
-    ことが確定なので、`die` で明示エラー（サイレントに競合させない）。ロックは
-    プロセス終了で自動解放（flock は fd tied なので kill 時も残らない）。
-    fcntl 不在（Windows 等）ではロックせず素通り＝WSL/Linux での並列 rig:queue go の
-    安全網。ファイルは残置（`.rig/` は gitignore 済み・空ファイル）。
+    Non-blocking acquisition via fcntl.flock. If acquisition fails, another
+    process is definitely operating on the same task, so `die` with an explicit
+    error (never race silently). The lock is released automatically on process
+    exit (flock is fd-tied, so it doesn't linger even on kill). Without fcntl
+    (e.g. Windows) this is a no-op — the safety net applies to parallel
+    rig:queue go on WSL/Linux. Lock files are left in place (`.rig/` is
+    gitignored; the files are empty).
     """
     if fcntl is None:
         yield
@@ -194,8 +198,8 @@ def task_lock(root: pathlib.Path, task_id: str):
         try:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            die(f"task '{task_id}' は他のプロセスが操作中です（{lock_file.relative_to(root)}）。"
-                "完了を待つか、詰まっているなら該当プロセスを確認してください")
+            die(f"task '{task_id}' is being operated on by another process ({lock_file.relative_to(root)}). "
+                "Wait for it to finish, or inspect the process if it appears stuck")
         try:
             yield
         finally:
@@ -206,11 +210,12 @@ def task_lock(root: pathlib.Path, task_id: str):
 
 
 def audit_append(root: pathlib.Path, event: dict) -> None:
-    """`.rig/audit.jsonl` に 1 行 JSON で追記する。
+    """Append a single JSON line to `.rig/audit.jsonl`.
 
-    accept_requirements の force-proof を補う「gate 未達 --force 上書き」の恒久記録。
-    差別化ポイントの物理的強度を可視化するための証拠ログ。読み取りは `workbench.py audit`。
-    書き込み失敗はサイレントに握りつぶす（telemetry と同様の best-effort）。
+    Permanent record of "--force overrides of an unmet gate", complementing the
+    force-proof of accept_requirements. Evidence log that makes the physical
+    strength of the differentiator visible. Read via `workbench.py audit`.
+    Write failures are swallowed silently (best-effort, like telemetry).
     """
     try:
         p = audit_path(root)
@@ -225,7 +230,7 @@ def audit_append(root: pathlib.Path, event: dict) -> None:
 def run_dir(root: pathlib.Path, task_id: str) -> pathlib.Path:
     d = runs_dir(root) / task_id
     if not d.is_dir():
-        die(f"task '{task_id}' が見つかりません（{d.relative_to(root)}）。`workbench.py log` で一覧できます")
+        die(f"task '{task_id}' not found ({d.relative_to(root)}). List tasks with `workbench.py log`")
     return d
 
 
@@ -233,7 +238,7 @@ def load_json(path: pathlib.Path, default: dict | None = None) -> dict:
     if not path.exists():
         if default is not None:
             return default
-        die(f"{path} が存在しません")
+        die(f"{path} does not exist")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -265,7 +270,7 @@ def resolve_task_id(root: pathlib.Path, given: str | None) -> str:
         return given
     tid = latest_task_id(root)
     if not tid:
-        die("実行履歴がありません（.rig/runs/ が空）。まず `/rig \"<task>\"` を実行してください")
+        die("No run history (.rig/runs/ is empty). Run `/rig \"<task>\"` first")
     return tid
 
 
@@ -281,7 +286,7 @@ def make_task_id(slug: str) -> str:
     return f"rig-{ts}-{slug}"
 
 
-# ── gate 構築・判定 ──────────────────────────────────────────────────────────
+# ── gate construction / evaluation ───────────────────────────────────────────
 def build_acceptance(task_id: str, task_type: str) -> dict:
     presets = TASK_TYPES[task_type]
     checks: list[dict] = []
@@ -296,7 +301,7 @@ def build_acceptance(task_id: str, task_type: str) -> dict:
 
 
 def gate_status(acc: dict) -> str:
-    """failed > pending > (全件 skipped なら skipped) > warning > passed の優先順位で判定する。"""
+    """Evaluate with priority: failed > pending > (skipped if all skipped) > warning > passed."""
     statuses = [c["status"] for c in acc["checks"]]
     if not statuses:
         return "skipped"
@@ -324,9 +329,9 @@ def worktree_dirty(wt: pathlib.Path) -> list[str]:
     return [line for line in proc.stdout.splitlines() if line.strip()]
 
 
-# ── diff.md 構造化パーサ ─────────────────────────────────────────────────────
+# ── structured diff.md parser ────────────────────────────────────────────────
 def parse_diff_md(text: str) -> dict[str, str]:
-    """`## <heading>` 区切りの diff.md をセクション辞書に分解する（小文字キー）。"""
+    """Split diff.md, delimited by `## <heading>`, into a section dict (lowercase keys)."""
     sections: dict[str, str] = {}
     current: str | None = None
     buf: list[str] = []
@@ -344,14 +349,15 @@ def parse_diff_md(text: str) -> dict[str, str]:
     return sections
 
 
-# ── サブコマンド実装 ──────────────────────────────────────────────────────────
+# ── subcommand implementations ────────────────────────────────────────────────
 def ensure_rig_gitignored(root: pathlib.Path) -> bool:
-    """`.rig/` を repo の `.gitignore` に追記する（無ければ）。返り値 = 追記したか。
+    """Append `.rig/` to the repo's `.gitignore` if missing. Returns whether it was appended.
 
-    `.rig/` には worktree state / runs / audit / lock が入るため、うっかり PR に紛れ
-    込まないよう最初の task 作成時に自動追記する。既に `.rig/` / `.rig` / `/.rig/` の
-    いずれかで無視されていれば何もしない（誤検知でユーザーの記述を壊さない）。
-    `.gitignore` が無い場合は新規作成する。git 管理外の root では何もしない。
+    `.rig/` holds worktree state / runs / audit / locks, so it is appended
+    automatically on the first task creation to keep it from slipping into a PR.
+    If it is already ignored as `.rig/` / `.rig` / `/.rig/` (any variant), do
+    nothing (never clobber the user's entries on a false positive).
+    If `.gitignore` is missing, create it. Do nothing when root is not git-managed.
     """
     if not (root / ".git").exists():
         return False
@@ -368,7 +374,7 @@ def ensure_rig_gitignored(root: pathlib.Path) -> bool:
     if already:
         return False
     with gi.open("a", encoding="utf-8") as f:
-        # 既存末尾が改行で終わっているとは限らないので先頭にも改行を1つ
+        # The existing file may not end with a newline, so lead with one
         f.write("\n# rig workbench state (task worktrees, telemetry, audit, locks)\n.rig/\n")
     return True
 
@@ -376,16 +382,16 @@ def ensure_rig_gitignored(root: pathlib.Path) -> bool:
 def cmd_new(args: argparse.Namespace) -> None:
     root = repo_root()
     if args.type not in TASK_TYPES:
-        die(f"task_type '{args.type}' は不正です。有効: {', '.join(TASK_TYPES)}")
+        die(f"task_type '{args.type}' is invalid. Valid: {', '.join(TASK_TYPES)}")
     slug = args.slug or make_slug(args.input)
     task_id = make_task_id(slug)
     d = runs_dir(root) / task_id
     if d.exists():
-        die(f"task '{task_id}' は既に存在します")
+        die(f"task '{task_id}' already exists")
 
-    # `.rig/` を .gitignore に自動追記（無ければ）。誤って PR に混入するのを防ぐ保険。
+    # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
     if ensure_rig_gitignored(root):
-        print("◇ .gitignore に .rig/ を追記しました（PR 混入防止）")
+        print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
 
     base_branch = args.base or current_branch(root)
     base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
@@ -419,11 +425,11 @@ def cmd_new(args: argparse.Namespace) -> None:
     acc = build_acceptance(task_id, args.type)
     save_json(d / "acceptance.json", acc)
 
-    # ── 選択理由の可視化バナー（Phase 1 §3・散文任せにせずコードが確定出力する）───
+    # ── Selection-rationale banner (Phase 1 §3: code prints this deterministically instead of leaving it to prose) ──
     print("▸ rig")
     print(f"task: {args.input}")
     print(f"detected: {args.type}")
-    print(f"recipe: {args.recipe or '(未指定)'}" + (f" — {args.reason}" if args.reason else ""))
+    print(f"recipe: {args.recipe or '(unspecified)'}" + (f" — {args.reason}" if args.reason else ""))
     print(f"mode: {'isolated worktree' if worktree_path else 'not isolated (--no-worktree)'}")
     print(f"gate: {' + '.join(acc['presets'])}")
     print()
@@ -432,7 +438,7 @@ def cmd_new(args: argparse.Namespace) -> None:
     if worktree_path:
         print(f"worktree: {worktree_path} (branch: {branch})")
     else:
-        print("worktree: なし（--no-worktree 指定）")
+        print("worktree: none (--no-worktree specified)")
     print(f"state: {d.relative_to(root)}/")
 
 
@@ -444,10 +450,10 @@ def cmd_step(args: argparse.Namespace) -> None:
         data = load_json(d / "steps.json", {"steps": []})
         for pair in args.set:
             if "=" not in pair:
-                die(f"--set は <step>=<status> 形式で指定してください（値: {pair!r}）")
+                die(f"--set must be given as <step>=<status> (got: {pair!r})")
             name, status = pair.split("=", 1)
             if status not in VALID_STEP_STATUS:
-                die(f"step status '{status}' は不正です。有効: {', '.join(VALID_STEP_STATUS)}")
+                die(f"step status '{status}' is invalid. Valid: {', '.join(VALID_STEP_STATUS)}")
             for step in data["steps"]:
                 if step["name"] == name:
                     step["status"] = status
@@ -469,15 +475,15 @@ def cmd_gate(args: argparse.Namespace) -> None:
         known = {c["name"]: c for c in acc["checks"]}
         for pair in args.set or []:
             if "=" not in pair:
-                die(f"--set は <criterion>=<status>[:detail] 形式で指定してください（値: {pair!r}）")
+                die(f"--set must be given as <criterion>=<status>[:detail] (got: {pair!r})")
             name, status = pair.split("=", 1)
             detail = ""
             if ":" in status:
                 status, detail = status.split(":", 1)
             if status not in VALID_CRITERION_STATUS:
-                die(f"criterion status '{status}' は不正です。有効: {', '.join(VALID_CRITERION_STATUS)}")
+                die(f"criterion status '{status}' is invalid. Valid: {', '.join(VALID_CRITERION_STATUS)}")
             if name not in known:
-                die(f"criterion '{name}' はこの task の gate に存在しません。有効: {', '.join(known)}")
+                die(f"criterion '{name}' does not exist in this task's gate. Valid: {', '.join(known)}")
             known[name]["status"] = status
             if detail:
                 known[name]["detail"] = detail
@@ -500,7 +506,7 @@ def cmd_gate(args: argparse.Namespace) -> None:
 
 
 def _diff_lines(root: pathlib.Path, task: dict) -> tuple[list[str], str, list[str]]:
-    """(name-status 行, shortstat, worktree 未コミット行) を返す。"""
+    """Return (name-status lines, shortstat, uncommitted worktree lines)."""
     wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else None
     if wt and wt.is_dir():
         base = task["base_commit"]
@@ -508,7 +514,7 @@ def _diff_lines(root: pathlib.Path, task: dict) -> tuple[list[str], str, list[st
         stat = git(["diff", "--shortstat", f"{base}...HEAD"], cwd=wt).stdout.strip()
         dirty = worktree_dirty(wt)
         return names, stat, dirty
-    # worktree なし RUN（レビュー等）はメイン作業ツリーの現状 diff を対象にする
+    # Worktree-less runs (reviews etc.) diff against the current state of the main working tree
     names = git(["diff", "--name-status", "HEAD"], cwd=root).stdout.splitlines()
     stat = git(["diff", "--shortstat", "HEAD"], cwd=root).stdout.strip()
     return names, stat, []
@@ -528,13 +534,13 @@ def cmd_diff(args: argparse.Namespace) -> None:
     print()
     print("Changed files:")
     if not names and not dirty:
-        print("  （変更なし）")
+        print("  (no changes)")
     for line in names:
         print(f"  {line}")
     if stat:
         print(f"  {stat}")
     if dirty:
-        print(f"\n[WARN] worktree に未コミットの変更が {len(dirty)} 件あります（accept 前にコミットが必要）:")
+        print(f"\n[WARN] worktree has {len(dirty)} uncommitted change(s) (must be committed before accept):")
         for line in dirty[:20]:
             print(f"  {line}")
 
@@ -542,7 +548,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
     sections = parse_diff_md(diff_md.read_text(encoding="utf-8")) if diff_md.exists() else {}
     for label, key in (("Summary", "summary"), ("Risk", "risk"), ("Tests", "tests")):
         print(f"\n{label}:")
-        print(f"  {sections[key]}" if sections.get(key) else "  （未記載）")
+        print(f"  {sections[key]}" if sections.get(key) else "  (not written)")
 
     print("\nUnrelated diff:")
     unrelated = next((c for c in acc["checks"] if c["name"] == "no_unrelated_diff"), None)
@@ -552,10 +558,10 @@ def cmd_diff(args: argparse.Namespace) -> None:
         print(f"  {CHECK_ICON[unrelated['status']]} {unrelated['status']}"
               + (f" — {unrelated['detail']}" if unrelated.get("detail") else ""))
     else:
-        print("  （未確認）")
+        print("  (not checked)")
 
     if not diff_md.exists():
-        print(f"\n[NOTE] {diff_md.relative_to(root)} が未作成です。accept には diff summary の作成が必要です。")
+        print(f"\n[NOTE] {diff_md.relative_to(root)} has not been created. A diff summary is required before accept.")
 
     print(f"\nRecommended:\n  {RECOMMENDATION[gate_status(acc)]}")
 
@@ -571,9 +577,9 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     d, task = load_task(root, task_id)
 
     if task["status"] == "accepted":
-        die(f"task '{task_id}' は既に accept 済みです")
+        die(f"task '{task_id}' has already been accepted")
     if task["status"] == "discarded":
-        die(f"task '{task_id}' は discard 済みです")
+        die(f"task '{task_id}' has already been discarded")
 
     acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
     status = gate_status(acc)
@@ -583,7 +589,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     unrelated_ok = (unrelated is None) or (unrelated["status"] in ("passed", "warning", "skipped"))
     gate_ok = status in ("passed", "passed_with_warnings", "skipped")
 
-    # ── accept_requirements チェックリスト（Phase 3・全件を先に見せてから判定する）───
+    # ── accept_requirements checklist (Phase 3: show all items first, then judge) ──
     hard = [
         ("worktree_exists", bool(task.get("worktree_path")) and pathlib.Path(task["worktree_path"]).is_dir()),
         ("base_branch_recorded", bool(task.get("base_branch")) and bool(task.get("base_commit"))),
@@ -600,11 +606,11 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     hard_fail = [name for name, ok in hard if not ok]
     if hard_fail:
         hints = {
-            "worktree_exists": "この task には worktree がありません（--no-worktree RUN、または既に discard 済み）",
-            "base_branch_recorded": "task.json に base_branch/base_commit が記録されていません（run-state 破損の可能性）",
-            "diff_summary_generated": f"{diff_md.relative_to(root)} が未作成です。`/rig diff` の散文サマリを先に書いてください",
+            "worktree_exists": "this task has no worktree (--no-worktree run, or already discarded)",
+            "base_branch_recorded": "task.json has no base_branch/base_commit recorded (run-state may be corrupted)",
+            "diff_summary_generated": f"{diff_md.relative_to(root)} has not been created. Write the `/rig diff` prose summary first",
         }
-        die("accept できません（構造的な前提が未達・--force でも上書き不可）:\n"
+        die("Cannot accept (structural preconditions unmet; not overridable even with --force):\n"
             + "\n".join(f"  - {n}: {hints[n]}" for n in hard_fail))
 
     soft_fail = [name for name, ok in soft if not ok]
@@ -612,11 +618,11 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         if not args.force:
             failed_checks = [c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")]
             die(
-                f"acceptance-gate が {status} のため accept できません（未達: {', '.join(failed_checks) or 'no_unrelated_diff'}）。\n"
-                f"  基準を満たしてから `workbench.py gate {task_id} --set <criterion>=passed` で更新するか、\n"
-                f"  リスクを理解した上で --force を付けてください（記録に残ります）"
+                f"Cannot accept because the acceptance-gate is {status} (unmet: {', '.join(failed_checks) or 'no_unrelated_diff'}).\n"
+                f"  Satisfy the criteria and update via `workbench.py gate {task_id} --set <criterion>=passed`, or\n"
+                f"  pass --force if you understand the risk (it will be recorded)"
             )
-        warn(f"未達要件を --force で上書きして accept します（{', '.join(soft_fail)}）。task.json に forced: true を記録します")
+        warn(f"Accepting with unmet requirements overridden by --force ({', '.join(soft_fail)}). Recording forced: true in task.json")
         task["forced"] = True
         audit_append(root, {
             "ts": now_iso(),
@@ -631,48 +637,49 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             "invoker": __import__("os").environ.get("RIG_INVOKER") or "direct",
         })
     if status == "passed_with_warnings":
-        warns = [f"{c['name']}（{c.get('detail') or 'detail なし'}）" for c in acc["checks"] if c["status"] == "warning"]
-        warn("未解決の警告つきで accept します: " + " / ".join(warns))
+        warns = [f"{c['name']} ({c.get('detail') or 'no detail'})" for c in acc["checks"] if c["status"] == "warning"]
+        warn("Accepting with unresolved warnings: " + " / ".join(warns))
 
     if not task.get("worktree_path"):
-        die("この task は worktree を持ちません（--no-worktree RUN）。accept 対象の差分がありません")
+        die("This task has no worktree (--no-worktree run). There is no diff to accept")
 
-    # ② worktree の整合チェック
+    # (2) Worktree consistency check
     wt = pathlib.Path(task["worktree_path"])
     if not wt.is_dir():
-        die(f"worktree {wt} が存在しません")
+        die(f"worktree {wt} does not exist")
     dirty = worktree_dirty(wt)
     if dirty:
         die(
-            f"worktree に未コミットの変更が {len(dirty)} 件あります。"
-            f"worktree 側でコミットしてから accept してください（git -C {wt} add -A && git -C {wt} commit）"
+            f"worktree has {len(dirty)} uncommitted change(s). "
+            f"Commit them in the worktree before accepting (git -C {wt} add -A && git -C {wt} commit)"
         )
     branch = task["branch"]
     ahead = git(["rev-list", "--count", f"{task['base_commit']}..{branch}"], cwd=root).stdout.strip()
     if ahead == "0":
-        die(f"branch {branch} に base からのコミットがありません（accept する差分なし）")
+        die(f"branch {branch} has no commits on top of base (no diff to accept)")
 
-    # ②-b メイン作業ツリーの整合チェック（squash merge 失敗時に `git reset --hard HEAD` で
-    # 安全に巻き戻せることを事前に保証する。`git merge --squash` は失敗時に MERGE_HEAD を
-    # 作らないため `git merge --abort` が効かず、事前チェックなしでは reset --hard がユーザーの
-    # 既存の未コミット変更ごと消し飛ばしてしまう）
+    # (2)-b Main working tree consistency check (guarantees up front that a failed
+    # squash merge can be safely rolled back with `git reset --hard HEAD`.
+    # `git merge --squash` does not create MERGE_HEAD on failure, so
+    # `git merge --abort` doesn't work — without this pre-check, reset --hard
+    # would wipe out the user's existing uncommitted changes)
     root_dirty = git(["status", "--porcelain"], cwd=root).stdout.splitlines()
     if root_dirty:
         die(
-            f"作業ツリーに未コミットの変更が {len(root_dirty)} 件あります。"
-            f"accept は squash merge の安全な巻き戻しを保証するため、作業ツリーがクリーンな状態でのみ実行できます。"
-            f"先にコミットするか stash してください（git status で確認）"
+            f"The working tree has {len(root_dirty)} uncommitted change(s). "
+            f"accept only runs on a clean working tree so that the squash merge can be safely rolled back. "
+            f"Commit or stash first (check with git status)"
         )
 
-    # ③ メイン作業ツリーへ squash merge（コミットはしない＝最終確定は人/モデルの明示操作）
+    # (3) Squash merge into the main working tree (no commit = the final decision is an explicit human/model action)
     proc = git(["merge", "--squash", branch], cwd=root, check=False)
     if proc.returncode != 0:
-        # コンフリクト: squash merge は MERGE_HEAD を作らず `merge --abort` が効かないため、
-        # 直前に作業ツリーがクリーンだったことを保証した上で reset --hard で巻き戻す。
+        # Conflict: squash merge doesn't create MERGE_HEAD so `merge --abort` doesn't work.
+        # Having just guaranteed the working tree was clean, roll back with reset --hard.
         git(["reset", "--hard", "HEAD"], cwd=root, check=False)
         die(
-            f"squash merge がコンフリクトしました（base からの乖離）。作業ツリーは反映前の状態に戻しました:\n{proc.stderr.strip()}\n"
-            f"  worktree 側で `git -C {wt} rebase {task['base_branch']}` してコンフリクトを解消してから再実行してください"
+            f"squash merge conflicted (divergence from base). The working tree was restored to its pre-merge state:\n{proc.stderr.strip()}\n"
+            f"  Run `git -C {wt} rebase {task['base_branch']}` in the worktree to resolve the conflicts, then retry"
         )
 
     task["status"] = "accepted"
@@ -680,19 +687,19 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     save_task(d, task)
     names, stat, _ = _diff_lines(root, task)
     print(f"\n## rig accept: {task_id} ✓")
-    print(f"branch {branch} の変更（{ahead} commits）をメイン作業ツリーに **staged** として反映しました。")
+    print(f"Applied the changes from branch {branch} ({ahead} commits) to the main working tree as **staged**.")
     if stat:
         print(f"  {stat}")
-    print("次のアクション:")
-    print("  1) 内容確認: git diff --staged")
-    print("  2) コミット: git commit")
-    print(f"  3) 後片付け: workbench.py discard {task_id} --yes  （worktree と branch を削除・run log は残る）")
+    print("Next actions:")
+    print("  1) Review: git diff --staged")
+    print("  2) Commit: git commit")
+    print(f"  3) Clean up: workbench.py discard {task_id} --yes  (removes the worktree and branch; keeps the run log)")
 
 
 def cmd_discard(args: argparse.Namespace) -> None:
     root = repo_root()
     if not args.task_id:
-        die("discard は誤爆防止のため task_id の明示が必須です（`workbench.py log` で確認できます）")
+        die("discard requires an explicit task_id to prevent accidents (see `workbench.py log`)")
     with task_lock(root, args.task_id):
         _cmd_discard_locked(args, root)
 
@@ -704,17 +711,17 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
     names, stat, dirty = _diff_lines(root, task)
     print(f"## rig discard: {task_id}")
     print(f"input: {task['input']}")
-    print("破棄対象の変更ファイル:")
+    print("Changed files to be discarded:")
     if names or dirty:
         for line in names:
             print(f"  {line}")
         for line in dirty:
             print(f"  {line}  (uncommitted)")
     else:
-        print("  （変更なし）")
+        print("  (no changes)")
 
     if not args.yes:
-        die("確認のため --yes を付けて再実行してください（変更は上に表示したとおり失われます）")
+        die("Re-run with --yes to confirm (the changes listed above will be lost)")
 
     wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else None
     if wt and wt.is_dir():
@@ -723,29 +730,30 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
         proc = git(["rev-parse", "--verify", task["branch"]], cwd=root, check=False)
         if proc.returncode == 0:
             git(["branch", "-D", task["branch"]], cwd=root)
-    if task["status"] != "accepted":  # accept 済みの後片付けは状態を維持する
+    if task["status"] != "accepted":  # cleanup after accept keeps the accepted status
         task["status"] = "discarded"
     task["cleaned_at"] = now_iso()
     task["worktree_path"] = None
     save_task(d, task)
 
-    # 視覚検証の一時成果物（screenshot 等）は判断結果ではなく手段なので discard 時に即時削除する
-    # （run log 本体の JSON/MD は残す。詳細は patterns/visual-artifacts）。
+    # Temporary visual-verification artifacts (screenshots etc.) are a means, not
+    # a decision record, so delete them immediately on discard
+    # (the run log's JSON/MD is kept. See patterns/visual-artifacts).
     visual_dir = d / "visual"
     visual_removed = visual_dir.is_dir()
     if visual_removed:
         shutil.rmtree(visual_dir, ignore_errors=True)
 
-    print(f"worktree と branch を削除しました。run log は {d.relative_to(root)}/ に残ります。")
+    print(f"Removed the worktree and branch. The run log remains at {d.relative_to(root)}/.")
     if visual_removed:
-        print(f"視覚検証の一時画像（{visual_dir.relative_to(root)}/）も削除しました。")
+        print(f"Also removed temporary visual-verification images ({visual_dir.relative_to(root)}/).")
 
 
 def _print_steps(d: pathlib.Path) -> None:
     steps = load_json(d / "steps.json", {"steps": []})["steps"]
     print("Steps:")
     if not steps:
-        print("  （未記録）")
+        print("  (none recorded)")
         return
     for s in steps:
         print(f"  {STEP_ICON.get(s['status'], '?')} {s['name']}"
@@ -781,8 +789,8 @@ def cmd_status(args: argparse.Namespace) -> None:
     print()
     if task["status"] not in ("accepted", "discarded"):
         names, stat, dirty = _diff_lines(root, task)
-        pending = f"変更 {len(names)} ファイル" + (f"・未コミット {len(dirty)} 件" if dirty else "")
-        print(f"未反映差分:  {pending if names or dirty else 'なし'}" + (f"（{stat}）" if stat else ""))
+        pending = f"{len(names)} file(s) changed" + (f", {len(dirty)} uncommitted" if dirty else "")
+        print(f"Pending diff: {pending if names or dirty else 'none'}" + (f" ({stat})" if stat else ""))
     print(f"Next: {NEXT_ACTIONS.get(task['status'], '-')}")
 
 
@@ -790,11 +798,13 @@ ACTIVE_STATUSES = ("running", "gate_passed", "gate_failed")
 
 
 def cmd_board(args: argparse.Namespace) -> None:
-    """全 task を一覧する単一ダッシュボード。
+    """Single dashboard listing all tasks.
 
-    `/rig:rig` を直接叩いた task も `/rig:queue go --provider rig` 経由で並列実行された
-    task も同じ `.rig/runs/` に積まれるため、複数タスクを並行で進めていても**ターミナルを
-    いくつも開かず1コマンドで全体像を見る**——「何をしていたか忘れる」を構造的に解消する。
+    Tasks started directly via `/rig:rig` and tasks run in parallel via
+    `/rig:queue go --provider rig` all land in the same `.rig/runs/`, so even
+    with several tasks in flight you can **see the whole picture with one
+    command instead of juggling terminals** — structurally solving
+    "I forgot what I was doing".
     """
     root = repo_root()
     base = runs_dir(root)
@@ -809,11 +819,11 @@ def cmd_board(args: argparse.Namespace) -> None:
         tasks = [t for t in tasks if t["status"] in ACTIVE_STATUSES]
     tasks.sort(key=lambda t: t["created_at"])
 
-    scope = "全 task" if args.all else "アクティブ"
-    print(f"## rig board（{scope}: {len(tasks)} 件）\n")
+    scope = "all tasks" if args.all else "active"
+    print(f"## rig board ({scope}: {len(tasks)})\n")
     if not tasks:
-        print("アクティブな task がありません。" if not args.all else "task がありません（.rig/runs/ が空）。")
-        print("\n新しいタスクを始めるには: /rig:rig \"<task>\"")
+        print("No active tasks." if not args.all else "No tasks (.rig/runs/ is empty).")
+        print("\nTo start a new task: /rig:rig \"<task>\"")
         return
 
     for t in tasks:
@@ -829,9 +839,9 @@ def cmd_board(args: argparse.Namespace) -> None:
         print(f"    type={t['task_type']:<14} recipe={t.get('recipe') or '-':<14} "
               f"mode={mode:<13} step={last_step:<20} gate={gs}")
     if not args.all:
-        print(f"\n({sum(1 for t in tasks if t['status'] == 'gate_failed')} 件 gate_failed / "
-              f"{sum(1 for t in tasks if t['status'] == 'gate_passed')} 件 diff/accept 待ち)")
-        print("次のアクション: /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes")
+        print(f"\n({sum(1 for t in tasks if t['status'] == 'gate_failed')} gate_failed / "
+              f"{sum(1 for t in tasks if t['status'] == 'gate_passed')} awaiting diff/accept)")
+        print("Next actions: /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes")
 
 
 def cmd_log(args: argparse.Namespace) -> None:
@@ -848,9 +858,9 @@ def cmd_log(args: argparse.Namespace) -> None:
         print(json.dumps(entries, ensure_ascii=False, indent=2))
         return
     if not entries:
-        print("実行履歴がありません（.rig/runs/ が空）")
+        print("No run history (.rig/runs/ is empty)")
         return
-    print(f"## rig log（最新 {len(entries)} 件）\n")
+    print(f"## rig log (latest {len(entries)})\n")
     for t in entries:
         d = base / t["task_id"]
         acc = load_json(d / "acceptance.json", {"checks": [], "presets": []})
@@ -864,7 +874,7 @@ def cmd_log(args: argparse.Namespace) -> None:
 
 
 def cmd_gates(_args: argparse.Namespace) -> None:
-    print("## acceptance-gate プリセット（正本）\n")
+    print("## acceptance-gate presets (source of truth)\n")
     for name, criteria in GATE_PRESETS.items():
         print(f"### {name}")
         for c in criteria:
@@ -880,17 +890,18 @@ def _dir_age_days(p: pathlib.Path) -> float:
 
 
 def cmd_gc(args: argparse.Namespace) -> None:
-    """視覚検証の一時成果物（`patterns/visual-artifacts` 参照）を age-based に処分する。
+    """Age-based disposal of temporary visual-verification artifacts (see `patterns/visual-artifacts`).
 
-    task の status（accepted/discarded/running）は問わない——画像は再生成可能な検証手段
-    であり恒久記録ではないため。ソース・worktree・branch には一切触れない。
+    Task status (accepted/discarded/running) is irrelevant — the images are a
+    regenerable verification means, not permanent records. Never touches
+    sources, worktrees, or branches.
     """
     root = repo_root()
     threshold_days = 14
     if args.older_than:
         m = re.match(r"^(\d+)d$", args.older_than)
         if not m:
-            die(f"--older-than は '<N>d' 形式で指定してください（例: 14d。値: {args.older_than!r}）")
+            die(f"--older-than must be given as '<N>d' (e.g. 14d; got: {args.older_than!r})")
         threshold_days = int(m.group(1))
 
     candidates: list[pathlib.Path] = []
@@ -903,23 +914,23 @@ def cmd_gc(args: argparse.Namespace) -> None:
 
     to_remove = [p for p in candidates if _dir_age_days(p) >= threshold_days]
 
-    print(f"## rig gc（閾値: {threshold_days}日{'・dry-run' if args.dry_run else ''}）")
+    print(f"## rig gc (threshold: {threshold_days} days{', dry-run' if args.dry_run else ''})")
     if not to_remove:
-        print("削除対象はありません。")
+        print("Nothing to remove.")
         return
     for p in sorted(to_remove):
         rel = p.relative_to(root)
         age = _dir_age_days(p)
         prefix = "[dry-run] " if args.dry_run else ""
-        print(f"  {prefix}削除: {rel}/（{age:.1f}日経過）")
+        print(f"  {prefix}remove: {rel}/ ({age:.1f} days old)")
         if not args.dry_run:
             shutil.rmtree(p, ignore_errors=True)
-    verb = "が対象です（--dry-run のため未削除）" if args.dry_run else "を削除しました"
-    print(f"\n{len(to_remove)} 件{verb}。")
+    verb = "candidate(s) (not removed due to --dry-run)" if args.dry_run else "removed"
+    print(f"\n{len(to_remove)} {verb}.")
 
 
 def cmd_review(args: argparse.Namespace) -> None:
-    """review 系タスクの persona 別 verdict を記録する（stats のゴム印検知に使用）。"""
+    """Record per-persona verdicts for review tasks (used by stats for rubber-stamp detection)."""
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     with task_lock(root, task_id):
@@ -928,10 +939,10 @@ def cmd_review(args: argparse.Namespace) -> None:
         by_persona = {v["persona"]: v for v in data["verdicts"]}
         for pair in args.set:
             if "=" not in pair:
-                die(f"--set は <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS> 形式で指定してください（値: {pair!r}）")
+                die(f"--set must be given as <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS> (got: {pair!r})")
             persona, verdict = pair.split("=", 1)
             if verdict not in VALID_VERDICT:
-                die(f"verdict '{verdict}' は不正です。有効: {', '.join(VALID_VERDICT)}")
+                die(f"verdict '{verdict}' is invalid. Valid: {', '.join(VALID_VERDICT)}")
             by_persona[persona] = {"persona": persona, "verdict": verdict, "recorded_at": now_iso()}
         data["verdicts"] = list(by_persona.values())
         save_json(d / "review.json", data)
@@ -955,10 +966,12 @@ def _load_audit(root: pathlib.Path) -> list[dict]:
 
 
 def cmd_audit(args: argparse.Namespace) -> None:
-    """`.rig/audit.jsonl` の force-bypass 記録を一覧する。
+    """List force-bypass records from `.rig/audit.jsonl`.
 
-    accept_requirements の "--force で外せない" 前提とは別に、gate 未達を --force で
-    上書きしたケースを恒久記録する監査ログ（差別化ポイントの物理的強度の証拠）。
+    Separate from the "not overridable with --force" premise of
+    accept_requirements, this audit log permanently records cases where an
+    unmet gate was overridden with --force (evidence of the differentiator's
+    physical strength).
     """
     root = repo_root()
     events = _load_audit(root)
@@ -967,11 +980,11 @@ def cmd_audit(args: argparse.Namespace) -> None:
     if args.since:
         events = [e for e in events if (e.get("ts") or "")[:10] >= args.since]
     if not events:
-        print("## rig audit\n\n記録がありません（`accept --force` で追記されます）。")
+        print("## rig audit\n\nNo records (entries are appended by `accept --force`).")
         return
     limit = args.limit if args.limit else len(events)
     shown = events[-limit:]
-    print(f"## rig audit（直近 {len(shown)} / 全 {len(events)} 件）\n")
+    print(f"## rig audit (latest {len(shown)} / {len(events)} total)\n")
     for e in shown:
         ts = e.get("ts", "?")
         action = e.get("action", "?")
@@ -997,7 +1010,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
     if args.last:
         m = re.match(r"^(\d+)d$", args.last)
         if not m:
-            die(f"--last は '<N>d' 形式で指定してください（例: 30d。値: {args.last!r}）")
+            die(f"--last must be given as '<N>d' (e.g. 30d; got: {args.last!r})")
         cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(days=int(m.group(1)))
         tasks = [t for t in tasks if datetime.datetime.fromisoformat(t["created_at"]) >= cutoff]
 
@@ -1018,12 +1031,13 @@ def cmd_stats(args: argparse.Namespace) -> None:
                  if any(v["persona"] == args.verifier
                         for v in candidate_reviews.get(t["task_id"], {}).get("verdicts", []))]
 
-    # フィルタ確定後の最終 tasks に対してのみ review.json を読む（--verifier 適用前の
-    # 候補集合を漏らさないよう、統計は必ず最終集合から作り直す）
+    # Read review.json only for the final task set after filtering (so the
+    # stats are always rebuilt from the final set, never leaking the candidate
+    # set from before --verifier was applied)
     review_by_task = _load_reviews(tasks)
 
     if not tasks:
-        print("## rig stats\n\n対象 run がありません（フィルタを確認するか、`/rig \"<task>\"` を実行してください）")
+        print("## rig stats\n\nNo matching runs (check the filters, or run `/rig \"<task>\"`)")
         return
 
     accepted = sum(1 for t in tasks if t["status"] == "accepted")
@@ -1035,7 +1049,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
         gate_counts[gate_status(acc) if acc.get("checks") else "skipped"] += 1
     failed_gate = gate_counts.get("failed", 0)
 
-    recipe_counts = Counter(t.get("recipe") or f"(recipe未指定・{t['task_type']})" for t in tasks)
+    recipe_counts = Counter(t.get("recipe") or f"(no recipe, {t['task_type']})" for t in tasks)
 
     verifier_stats: Counter[str] = Counter()
     verifier_rejects: Counter[str] = Counter()
@@ -1073,7 +1087,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
             for w in rubber_stamp_warnings:
                 print(w)
     else:
-        print("\nVerifier behavior: （未記録。`workbench.py review <task_id> --set <persona>=<verdict>` で記録すると集計されます）")
+        print("\nVerifier behavior: (none recorded. Record with `workbench.py review <task_id> --set <persona>=<verdict>` to include here)")
 
     audit_events = _load_audit(root)
     if args.last:
@@ -1086,91 +1100,91 @@ def cmd_stats(args: argparse.Namespace) -> None:
         for e in force_events:
             for name in e.get("bypassed", []):
                 by_bypass[name] += 1
-        print(f"\nForce bypass ({len(force_events)} 件): "
-              "`accept --force` は accept_requirements の hard 前提を外せない（構造的強度）が、"
-              "soft 前提を上書きしたケースを記録している。")
+        print(f"\nForce bypass ({len(force_events)}): "
+              "`accept --force` cannot bypass the hard preconditions of accept_requirements (structural strength); "
+              "this records the cases where soft preconditions were overridden.")
         for name, n in by_bypass.most_common():
             print(f"- {name}: {n}")
-        print("（詳細は `workbench.py audit` で参照）")
+        print("(see `workbench.py audit` for details)")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="rig workbench — run-state / worktree / acceptance-gate manager")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("new", help="タスクを登録し isolated worktree を作成する")
-    p.add_argument("input", help="ユーザーの自然文タスク")
-    p.add_argument("--type", required=True, help=f"task_type（{', '.join(TASK_TYPES)}）")
-    p.add_argument("--slug", help="task-id 用の短い英語 slug（省略時は input から導出）")
-    p.add_argument("--base", help="base branch 名の明示（省略時は現在の branch）")
-    p.add_argument("--recipe", help="選択した recipe 名")
-    p.add_argument("--reason", help="recipe 選択理由（バナー・log 用）")
-    p.add_argument("--no-worktree", action="store_true", help="worktree を作らない（review 等の読み取り専用 RUN）")
+    p = sub.add_parser("new", help="register a task and create an isolated worktree")
+    p.add_argument("input", help="the user's natural-language task")
+    p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
+    p.add_argument("--slug", help="short English slug for the task-id (derived from input if omitted)")
+    p.add_argument("--base", help="explicit base branch name (defaults to the current branch)")
+    p.add_argument("--recipe", help="name of the selected recipe")
+    p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
+    p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
     p.set_defaults(func=cmd_new)
 
-    p = sub.add_parser("step", help="step の進行状態を記録する")
+    p = sub.add_parser("step", help="record step progress")
     p.add_argument("task_id", nargs="?")
     p.add_argument("--set", action="append", required=True, metavar="STEP=STATUS",
-                   help=f"status: {', '.join(VALID_STEP_STATUS)}（複数可）")
+                   help=f"status: {', '.join(VALID_STEP_STATUS)} (repeatable)")
     p.set_defaults(func=cmd_step)
 
-    p = sub.add_parser("gate", help="acceptance-gate 基準の合否を記録・判定する")
+    p = sub.add_parser("gate", help="record and evaluate acceptance-gate criteria")
     p.add_argument("task_id", nargs="?")
     p.add_argument("--set", action="append", metavar="CRITERION=STATUS[:DETAIL]",
-                   help=f"status: {', '.join(VALID_CRITERION_STATUS)}（DETAIL は : 区切りで付記）")
+                   help=f"status: {', '.join(VALID_CRITERION_STATUS)} (append DETAIL after a colon)")
     p.set_defaults(func=cmd_gate)
 
-    p = sub.add_parser("diff", help="base からの変更差分を構造化表示する")
+    p = sub.add_parser("diff", help="show the diff against base in a structured format")
     p.add_argument("task_id", nargs="?")
     p.set_defaults(func=cmd_diff)
 
-    p = sub.add_parser("accept", help="accept_requirements と gate を確認してメイン作業ツリーへ squash 反映する")
+    p = sub.add_parser("accept", help="check accept_requirements and the gate, then squash-apply into the main working tree")
     p.add_argument("task_id", nargs="?")
-    p.add_argument("--force", action="store_true", help="gate 未達を上書きして反映（記録に残る。構造的前提の欠落は上書き不可）")
+    p.add_argument("--force", action="store_true", help="apply despite an unmet gate (recorded; missing structural preconditions cannot be overridden)")
     p.set_defaults(func=cmd_accept)
 
-    p = sub.add_parser("discard", help="worktree と branch を破棄する（run log は残す）")
+    p = sub.add_parser("discard", help="discard the worktree and branch (keeps the run log)")
     p.add_argument("task_id", nargs="?")
-    p.add_argument("--yes", action="store_true", help="破棄の最終確認")
+    p.add_argument("--yes", action="store_true", help="final confirmation for discarding")
     p.set_defaults(func=cmd_discard)
 
-    p = sub.add_parser("status", help="現在（または指定 task）の実行状態を表示する")
+    p = sub.add_parser("status", help="show the run state of the current (or given) task")
     p.add_argument("task_id", nargs="?")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("board", help="全 task を一覧するダッシュボード（既定はアクティブのみ）")
-    p.add_argument("--all", action="store_true", help="accepted/discarded も含めて全 task を表示する")
+    p = sub.add_parser("board", help="dashboard listing all tasks (active only by default)")
+    p.add_argument("--all", action="store_true", help="show all tasks including accepted/discarded")
     p.set_defaults(func=cmd_board)
 
-    p = sub.add_parser("log", help="過去の実行ログを一覧する")
+    p = sub.add_parser("log", help="list past run logs")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_log)
 
-    p = sub.add_parser("gates", help="acceptance-gate プリセット定義を表示する")
+    p = sub.add_parser("gates", help="show the acceptance-gate preset definitions")
     p.set_defaults(func=cmd_gates)
 
-    p = sub.add_parser("gc", help="視覚検証の一時画像（visual/）を age-based に処分する（patterns/visual-artifacts）")
-    p.add_argument("--older-than", help="この日数を超えたものを削除する（例: 14d。既定 14d）")
-    p.add_argument("--dry-run", action="store_true", help="削除せず対象だけ表示する")
+    p = sub.add_parser("gc", help="age-based disposal of temporary visual-verification images (visual/) (patterns/visual-artifacts)")
+    p.add_argument("--older-than", help="remove items older than this many days (e.g. 14d; default 14d)")
+    p.add_argument("--dry-run", action="store_true", help="only show candidates, without deleting")
     p.set_defaults(func=cmd_gc)
 
-    p = sub.add_parser("review", help="review 系タスクの persona 別 verdict を記録する（stats 用）")
+    p = sub.add_parser("review", help="record per-persona verdicts for review tasks (for stats)")
     p.add_argument("task_id", nargs="?")
     p.add_argument("--set", action="append", required=True, metavar="PERSONA=VERDICT",
-                   help=f"verdict: {', '.join(VALID_VERDICT)}（複数可）")
+                   help=f"verdict: {', '.join(VALID_VERDICT)} (repeatable)")
     p.set_defaults(func=cmd_review)
 
-    p = sub.add_parser("stats", help="過去 run を集計する（recipe 別・gate 別・verifier のゴム印検知）")
-    p.add_argument("--recipe", help="recipe 名で絞り込み")
-    p.add_argument("--verifier", help="persona 名で絞り込み（review.json に記録がある run のみ）")
-    p.add_argument("--last", help="直近 N 日に絞り込み（例: 30d）")
+    p = sub.add_parser("stats", help="aggregate past runs (by recipe, by gate, verifier rubber-stamp detection)")
+    p.add_argument("--recipe", help="filter by recipe name")
+    p.add_argument("--verifier", help="filter by persona name (only runs recorded in review.json)")
+    p.add_argument("--last", help="restrict to the last N days (e.g. 30d)")
     p.set_defaults(func=cmd_stats)
 
-    p = sub.add_parser("audit", help="`accept --force` 等の監査ログを一覧する（`.rig/audit.jsonl`）")
-    p.add_argument("--limit", type=int, help="直近 N 件のみ表示")
-    p.add_argument("--action", help="action 名で絞り込み（例: accept_force）")
-    p.add_argument("--since", help="YYYY-MM-DD 以降のみ表示")
+    p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")
+    p.add_argument("--limit", type=int, help="show only the latest N entries")
+    p.add_argument("--action", help="filter by action name (e.g. accept_force)")
+    p.add_argument("--since", help="show only entries since YYYY-MM-DD")
     p.set_defaults(func=cmd_audit)
 
     args = parser.parse_args()

@@ -1,16 +1,17 @@
-"""rig-wb bench — bare vs rig の A/B ベンチマークランナー (MVP)。
+"""rig-wb bench — bare vs rig A/B benchmark runner (MVP).
 
-同一 LLM で:
-  - bare mode: 1 発 `claude -p` / `codex exec` / ollama HTTP 等でタスクを解かせる
-  - rig mode:  `rig-wb run <recipe> --provider <same>` で recipe を回す
+With the same LLM:
+  - bare mode: solve the task in one shot via `claude -p` / `codex exec` / ollama HTTP, etc.
+  - rig mode:  run the recipe via `rig-wb run <recipe> --provider <same>`
 
-各 task を /tmp/ 下の scratch worktree に配置し、両モードで解いてから同一 test を実行、
-metrics を JSON にまとめる。**既定 provider = `mock`** (フレームワーク動作確認用・課金なし)、
-実測は `--provider claude` などを明示。
+Each task is placed in a scratch worktree under /tmp/, solved in both modes,
+then the same tests are run and metrics are collected into JSON.
+**Default provider = `mock`** (for framework smoke-testing; no billing);
+pass `--provider claude` etc. explicitly for real measurements.
 
-MVP 制限:
-  - 外部 YAML spec は次回
-  - --runs N は 1 タスクあたりの反復回数（分散を見たい時）
+MVP limitations:
+  - external YAML specs come later
+  - --runs N is the number of repetitions per task (to inspect variance)
 
 Usage:
     rig-wb bench --provider mock --out /tmp/bench.json --html /tmp/bench.html
@@ -34,7 +35,7 @@ import urllib.request
 from . import __version__
 
 
-# ── 組み込みタスク定義 ─────────────────────────────────────────────────
+# ── built-in task definitions ──────────────────────────────────────────
 
 
 BUILTIN_TASKS: dict[str, dict] = {
@@ -44,12 +45,12 @@ BUILTIN_TASKS: dict[str, dict] = {
             "buggy.py": (
                 "def divide_all(numbers, divisor):\n"
                 "    \"\"\"\n"
-                "    リストの各要素を divisor で割った結果を返す。\n"
-                "    ただし、divisor が 0 の場合は元の要素をそのまま返す。\n"
+                "    Return each element of the list divided by divisor.\n"
+                "    However, if divisor is 0, return the original elements unchanged.\n"
                 "    \"\"\"\n"
                 "    result = []\n"
                 "    for n in numbers:\n"
-                "        result.append(n / divisor)   # BUG: divisor==0 で ZeroDivisionError\n"
+                "        result.append(n / divisor)   # BUG: ZeroDivisionError when divisor==0\n"
                 "    return result\n"
             ),
             "test_divide.py": (
@@ -57,7 +58,7 @@ BUILTIN_TASKS: dict[str, dict] = {
                 "def test_normal():\n"
                 "    assert divide_all([10, 20, 30], 2) == [5.0, 10.0, 15.0]\n\n"
                 "def test_zero_divisor():\n"
-                "    # divisor が 0 なら元の要素をそのまま返す仕様\n"
+                "    # Spec: if divisor is 0, return the original elements unchanged\n"
                 "    assert divide_all([1, 2, 3], 0) == [1, 2, 3]\n\n"
                 "def test_empty():\n"
                 "    assert divide_all([], 5) == []\n"
@@ -65,7 +66,7 @@ BUILTIN_TASKS: dict[str, dict] = {
         },
         "target_file": "buggy.py",
         "test_cmd": ["python3", "-m", "pytest", "test_divide.py", "--tb=no", "-q"],
-        "goal": "buggy.py のバグを直してください。tests は変更禁止。",
+        "goal": "Fix the bug in buggy.py. Do not modify the tests.",
         "spec_check_code": (
             "from buggy import divide_all\n"
             "assert divide_all([1, 2, 3], 0) == [1, 2, 3], 'spec violation'"
@@ -83,16 +84,16 @@ BUILTIN_TASKS: dict[str, dict] = {
             "order_dedup.py": (
                 "def dedup(items):\n"
                 "    \"\"\"\n"
-                "    重複を除去し、初出現の順序を保持したリストを返す。\n"
+                "    Return a list with duplicates removed, preserving first-seen order.\n"
                 "      dedup([3, 1, 2, 1, 3]) == [3, 1, 2]\n"
                 "      dedup(['a', 'b', 'a', 'c']) == ['a', 'b', 'c']\n"
                 "    \"\"\"\n"
-                "    return list(set(items))   # BUG: set() は順序保持しない\n"
+                "    return list(set(items))   # BUG: set() does not preserve order\n"
             ),
             "test_order_dedup.py": (
                 "from order_dedup import dedup\n\n"
                 "def test_unique():\n"
-                "    # 弱いテスト: 集合として一致するかだけ\n"
+                "    # Weak test: only checks equality as a set\n"
                 "    assert set(dedup([3, 1, 2, 1, 3])) == {1, 2, 3}\n\n"
                 "def test_length():\n"
                 "    assert len(dedup([3, 1, 2, 1, 3])) == 3\n"
@@ -100,10 +101,10 @@ BUILTIN_TASKS: dict[str, dict] = {
         },
         "target_file": "order_dedup.py",
         "test_cmd": ["python3", "-m", "pytest", "test_order_dedup.py", "--tb=no", "-q"],
-        "goal": "order_dedup.py にバグがあるかもしれません。修正が必要なら直してください。tests は変更禁止。",
+        "goal": "order_dedup.py may contain a bug. Fix it if a fix is needed. Do not modify the tests.",
         "spec_check_code": (
             "from order_dedup import dedup\n"
-            "assert dedup([3, 1, 2, 1, 3]) == [3, 1, 2], 'spec violation (順序保持)'"
+            "assert dedup([3, 1, 2, 1, 3]) == [3, 1, 2], 'spec violation (order preservation)'"
         ),
         "mock_fix": (
             "def dedup(items):\n"
@@ -116,10 +117,10 @@ BUILTIN_TASKS: dict[str, dict] = {
             "userdb.py": (
                 "import sqlite3\n\n"
                 "def get_user_by_name(conn: sqlite3.Connection, name: str) -> tuple | None:\n"
-                "    \"\"\"users テーブルから name で 1 行返す。\n"
-                "    ヒント: name はユーザー入力（信頼できない）。\n"
+                "    \"\"\"Return one row from the users table matched by name.\n"
+                "    Hint: name is user input (untrusted).\n"
                 "    \"\"\"\n"
-                "    # BUG: 文字列連結による SQL injection の温床\n"
+                "    # BUG: string concatenation invites SQL injection\n"
                 "    cur = conn.cursor()\n"
                 "    cur.execute(f\"SELECT id, name, role FROM users WHERE name = '{name}'\")\n"
                 "    return cur.fetchone()\n"
@@ -145,31 +146,31 @@ BUILTIN_TASKS: dict[str, dict] = {
         "target_file": "userdb.py",
         "test_cmd": ["python3", "-m", "pytest", "test_userdb.py", "--tb=no", "-q"],
         "goal": (
-            "userdb.py にセキュリティ上の問題があります。修正してください。"
-            "tests は変更禁止。修正した userdb.py の全文だけを ```python ... ``` 形式で返してください。"
+            "userdb.py has a security issue. Fix it. "
+            "Do not modify the tests. Return only the full fixed userdb.py in a ```python ... ``` block."
         ),
         "spec_check_code": (
-            # 悪意入力での DROP TABLE を実行させないか / 引用符の脱出で管理者化しないか
+            # Does malicious input execute DROP TABLE? Does quote escaping grant admin?
             "import sqlite3\n"
             "from userdb import get_user_by_name\n"
             "c = sqlite3.connect(':memory:')\n"
             "c.execute(\"CREATE TABLE users(id INTEGER, name TEXT, role TEXT)\")\n"
             "c.execute(\"INSERT INTO users VALUES(1, 'alice', 'admin')\")\n"
-            "# SQL injection 試行 1: users テーブルの中身を全部返そうとする\n"
+            "# SQL injection attempt 1: try to dump the entire users table\n"
             "r1 = get_user_by_name(c, \"' OR '1'='1\")\n"
-            "assert r1 is None, f'SQL injection 通ってる: {r1}'\n"
-            "# SQL injection 試行 2: 別テーブルを消そうとする\n"
+            "assert r1 is None, f'SQL injection got through: {r1}'\n"
+            "# SQL injection attempt 2: try to drop another table\n"
             "try:\n"
             "    get_user_by_name(c, \"'; DROP TABLE users; --\")\n"
             "except Exception:\n"
             "    pass\n"
             "assert c.execute(\"SELECT COUNT(*) FROM users\").fetchone()[0] == 1, "
-            "'DROP TABLE 通ってる'\n"
+            "'DROP TABLE got through'\n"
         ),
         "mock_fix": (
             "import sqlite3\n\n"
             "def get_user_by_name(conn: sqlite3.Connection, name: str) -> tuple | None:\n"
-            "    \"\"\"users テーブルから name で 1 行返す。parametrized query 使用。\"\"\"\n"
+            "    \"\"\"Return one row from the users table matched by name. Uses a parametrized query.\"\"\"\n"
             "    cur = conn.cursor()\n"
             "    cur.execute(\"SELECT id, name, role FROM users WHERE name = ?\", (name,))\n"
             "    return cur.fetchone()\n"
@@ -180,14 +181,14 @@ BUILTIN_TASKS: dict[str, dict] = {
         "files": {
             "shipping.py": (
                 "def price_domestic(weight_kg: float) -> int:\n"
-                "    \"\"\"国内配送料。0.5kg 刻みで切り上げ、1 単位 200 円、下限 500 円。\"\"\"\n"
+                "    \"\"\"Domestic shipping fee. Round up in 0.5kg increments, 200 yen per unit, 500 yen minimum.\"\"\"\n"
                 "    import math\n"
                 "    units = math.ceil(weight_kg / 0.5)\n"
                 "    return max(500, units * 200)\n\n"
                 "def price_domestic_cool(weight_kg: float) -> int:\n"
-                "    \"\"\"国内クール便。基本は price_domestic と同じロジックだが単価 300 円、下限 800 円。\"\"\"\n"
-                "    # BUG: price_domestic と重複したロジックが手書きされ、しかも切り上げが天井関数抜け\n"
-                "    units = int(weight_kg / 0.5)   # ← ここが切り捨てで仕様と合わない\n"
+                "    \"\"\"Domestic refrigerated shipping. Same logic as price_domestic but 300 yen per unit, 800 yen minimum.\"\"\"\n"
+                "    # BUG: hand-written duplicate of price_domestic's logic, and the ceiling is missing\n"
+                "    units = int(weight_kg / 0.5)   # <- truncates here, violating the spec\n"
                 "    return max(800, units * 300)\n"
             ),
             "test_shipping.py": (
@@ -199,20 +200,20 @@ BUILTIN_TASKS: dict[str, dict] = {
                 "    assert price_domestic(1.5) == 600\n\n"
                 "def test_cool_min():\n"
                 "    assert price_domestic_cool(0.1) == 800\n"
-                "    # 弱い test: 中間値は書かれてない\n"
+                "    # Weak test: no intermediate values covered\n"
             ),
         },
         "target_file": "shipping.py",
         "test_cmd": ["python3", "-m", "pytest", "test_shipping.py", "--tb=no", "-q"],
         "goal": (
-            "shipping.py にバグと重複コードがあります。修正してください。"
-            "tests は変更禁止。修正した shipping.py の全文だけを ```python ... ``` 形式で返してください。"
+            "shipping.py has a bug and duplicated code. Fix them. "
+            "Do not modify the tests. Return only the full fixed shipping.py in a ```python ... ``` block."
         ),
         "spec_check_code": (
             "from shipping import price_domestic_cool\n"
-            "# 仕様: 0.5kg 刻みで切り上げ、単価 300、下限 800\n"
+            "# Spec: round up in 0.5kg increments, 300 per unit, 800 minimum\n"
             "assert price_domestic_cool(1.1) == 900, "
-            "f'切り上げ抜けバグ残ってる: got {price_domestic_cool(1.1)} expected 900'\n"
+            "f'missing round-up bug still present: got {price_domestic_cool(1.1)} expected 900'\n"
             "assert price_domestic_cool(2.0) == 1200, "
             "f'{price_domestic_cool(2.0)} != 1200'\n"
         ),
@@ -222,24 +223,24 @@ BUILTIN_TASKS: dict[str, dict] = {
             "    units = math.ceil(weight_kg / 0.5)\n"
             "    return max(floor, units * unit_price)\n\n"
             "def price_domestic(weight_kg: float) -> int:\n"
-            "    \"\"\"国内配送料。0.5kg 刻みで切り上げ、1 単位 200 円、下限 500 円。\"\"\"\n"
+            "    \"\"\"Domestic shipping fee. Round up in 0.5kg increments, 200 yen per unit, 500 yen minimum.\"\"\"\n"
             "    return _price(weight_kg, 200, 500)\n\n"
             "def price_domestic_cool(weight_kg: float) -> int:\n"
-            "    \"\"\"国内クール便。単価 300 円、下限 800 円。\"\"\"\n"
+            "    \"\"\"Domestic refrigerated shipping. 300 yen per unit, 800 yen minimum.\"\"\"\n"
             "    return _price(weight_kg, 300, 800)\n"
         ),
     },
 }
 
 
-_MOCK_FIX_FOR: dict[str, str] = {}   # 廃止 (task[\"mock_fix\"] を使う)
+_MOCK_FIX_FOR: dict[str, str] = {}   # deprecated (use task["mock_fix"])
 
 
 # ── task setup ─────────────────────────────────────────────────────────
 
 
 def _setup_task_dir(task: dict) -> pathlib.Path:
-    """task の files を新規 tmp dir に展開し、git 初期化＋初回 commit まで済ませる。"""
+    """Expand the task's files into a fresh tmp dir, init git, and make the initial commit."""
     d = pathlib.Path(tempfile.mkdtemp(prefix="rig-bench-"))
     for name, content in task["files"].items():
         (d / name).write_text(content, encoding="utf-8")
@@ -253,7 +254,7 @@ def _setup_task_dir(task: dict) -> pathlib.Path:
 
 def _reset_task_dir(d: pathlib.Path) -> None:
     subprocess.run(["git", "checkout", "-q", "."], cwd=d, check=True)
-    # __pycache__ は無視
+    # ignore __pycache__
     for pc in d.rglob("__pycache__"):
         shutil.rmtree(pc, ignore_errors=True)
 
@@ -261,7 +262,7 @@ def _reset_task_dir(d: pathlib.Path) -> None:
 def _run_tests(task: dict, d: pathlib.Path) -> dict:
     r = subprocess.run(task["test_cmd"], cwd=d, capture_output=True, text=True, timeout=60)
     passed = int((re.search(r"(\d+) passed", r.stdout) or ["0", "0"])[1] if hasattr(re.search(r"(\d+) passed", r.stdout), "group") else 0)
-    # 上のワンライナが読みにくいので愚直に
+    # the one-liner above is hard to read, so do it plainly
     m_p = re.search(r"(\d+) passed", r.stdout)
     m_f = re.search(r"(\d+) failed", r.stdout)
     passed = int(m_p.group(1)) if m_p else 0
@@ -270,7 +271,7 @@ def _run_tests(task: dict, d: pathlib.Path) -> dict:
 
 
 def _spec_check(task: dict, d: pathlib.Path) -> str:
-    """spec_check_code を run。PASS / FAIL: <detail> を返す。"""
+    """Run spec_check_code. Returns PASS or FAIL: <detail>."""
     try:
         subprocess.run(
             ["python3", "-c", task["spec_check_code"]],
@@ -288,7 +289,7 @@ def _unrelated_diff(d: pathlib.Path, target: str) -> list[str]:
 
 
 def _git_status_lines(root: pathlib.Path) -> set[str]:
-    """呼び出し元 repo の汚れを set で返す。git repo でなければ空扱い。"""
+    """Return the calling repo's dirty state as a set. Treated as empty if not a git repo."""
     r = subprocess.run(
         ["git", "-C", str(root), "status", "--porcelain"],
         capture_output=True,
@@ -300,7 +301,7 @@ def _git_status_lines(root: pathlib.Path) -> set[str]:
 
 
 def _workspace_leaks(root: pathlib.Path, before: set[str]) -> list[str]:
-    """bench 対象 scratch の外側に新しく出た git status 行を検出する。"""
+    """Detect git status lines that newly appeared outside the bench scratch dir."""
     after = _git_status_lines(root)
     return sorted(after - before)
 
@@ -314,7 +315,7 @@ def _build_bare_prompt(task: dict) -> str:
     )
     return (
         f"{task['goal']}\n\n"
-        f"修正した {task['target_file']} の全文だけを ```python ... ``` 形式で返してください。他の説明は不要。\n\n"
+        f"Return only the full fixed {task['target_file']} in a ```python ... ``` block. No other explanation.\n\n"
         f"{files_text}"
     )
 
@@ -327,16 +328,17 @@ def _extract_code(text: str) -> str:
 def _call_provider(provider: str, prompt: str, model: str | None, allow_headless_in_cc: bool,
                     cwd: pathlib.Path,
                     mock_fix: str = "") -> tuple[str, float]:
-    """provider に prompt を投げて (response_text, elapsed_s) を返す。
+    """Send the prompt to the provider and return (response_text, elapsed_s).
 
-    provider="mock" 時は `mock_fix` を code として返す（framework 動作確認用・LLM 呼ばない）。
+    With provider="mock", returns `mock_fix` as the code (framework smoke-testing;
+    no LLM call).
     """
     t0 = time.time()
     if provider == "claude":
         if not allow_headless_in_cc and (os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID")):
             raise SystemExit(
-                "[bench] Claude Code 内から --provider claude は既定で BLOCK (課金安全)。"
-                "実測なら --allow-headless-in-cc を明示してください。"
+                "[bench] --provider claude from inside Claude Code is BLOCKED by default (billing safety). "
+                "Pass --allow-headless-in-cc explicitly for real measurements."
             )
         argv = ["claude", "-p", prompt, "--output-format", "text"]
         if model:
@@ -344,8 +346,9 @@ def _call_provider(provider: str, prompt: str, model: str | None, allow_headless
         r = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=300)
         return r.stdout, time.time() - t0
     if provider == "codex":
-        # bare mode は「1発で答えを返す」比較対象なので、scratch repo を読むだけに固定する。
-        # これにより Codex が呼び出し元 repo root に補助ファイルを書いてしまう測定汚染を防ぐ。
+        # bare mode is the "answer in one shot" baseline, so restrict it to reading
+        # the scratch repo only. This prevents measurement contamination where Codex
+        # writes helper files into the calling repo root.
         argv = [
             "codex", "exec", "--skip-git-repo-check",
             "--cd", str(cwd), "--sandbox", "read-only", "--ephemeral",
@@ -372,18 +375,19 @@ def _call_provider(provider: str, prompt: str, model: str | None, allow_headless
         return data["choices"][0]["message"]["content"], time.time() - t0
     if provider == "mock":
         return f"```python\n{mock_fix}\n```", 0.01
-    raise SystemExit(f"[bench] 未知の provider: {provider}")
+    raise SystemExit(f"[bench] Unknown provider: {provider}")
 
 
 # ── mode: rig ──────────────────────────────────────────────────────────
 
 
 def _rig_wb_argv() -> list[str]:
-    """bench から呼ぶ rig-wb。
+    """The rig-wb invocation used by bench.
 
-    既定は現在ロード中の package を `python -m rig_workbench.cli` で呼ぶ。
-    PATH 上に古い rig-wb がある環境でも、bench と同じ版の runner を測れるようにする。
-    外部コマンドで測りたい場合だけ `RIG_BENCH_RIG_WB` に shell 風 argv を指定する。
+    By default, calls the currently loaded package via `python -m rig_workbench.cli`,
+    so bench measures the same version of the runner even when an older rig-wb is
+    on PATH. Only set `RIG_BENCH_RIG_WB` to a shell-style argv when you want to
+    measure an external command instead.
     """
     override = os.environ.get("RIG_BENCH_RIG_WB")
     if override:
@@ -393,22 +397,23 @@ def _rig_wb_argv() -> list[str]:
 
 def _rig_run(task: dict, workdir: pathlib.Path, provider: str, model: str | None,
              allow_headless_in_cc: bool, max_steps: int, recipe: str) -> tuple[str, float, int]:
-    """rig-wb run を workdir で実行し、(stdout, elapsed_s, returncode) を返す。"""
-    # rig 側は「編集してテストを通す」契約にする。bare 用の「全文を返せ」は混ぜない。
+    """Run rig-wb run in workdir and return (stdout, elapsed_s, returncode)."""
+    # The rig side gets an "edit and make the tests pass" contract. Do not mix in
+    # the bare-mode "return the full file" instruction.
     files_text = "\n\n".join(f"# {name}\n{content}" for name, content in task["files"].items())
     goal = (
         f"{task['goal']}\n\n"
-        f"対象ファイル: {task['target_file']}\n"
-        f"テスト: {' '.join(shlex.quote(x) for x in task['test_cmd'])}\n\n"
-        f"参照ファイル:\n{files_text}"
+        f"Target file: {task['target_file']}\n"
+        f"Tests: {' '.join(shlex.quote(x) for x in task['test_cmd'])}\n\n"
+        f"Reference files:\n{files_text}"
     )
     env = dict(os.environ)
     candidate = pathlib.Path(__file__).resolve().parent.parent
-    # scratch cwd から `python -m rig_workbench.cli` を呼んでも開発版 package を import できるようにする。
+    # Make the dev package importable even when `python -m rig_workbench.cli` is called from the scratch cwd.
     env["PYTHONPATH"] = str(candidate) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    # RIG_HOME が無ければパッケージ位置から推定
+    # If RIG_HOME is unset, infer it from the package location
     if not env.get("RIG_HOME"):
-        # rig_workbench/ の親を仮に repo root にする（開発版でしか通らない・pip 版は要 export）
+        # Assume rig_workbench/'s parent is the repo root (only works for the dev version; pip installs need an explicit export)
         if (candidate / "scripts" / "orchestrate.py").exists():
             env["RIG_HOME"] = str(candidate)
     t0 = time.time()
@@ -432,10 +437,10 @@ def _rig_read_state(workdir: pathlib.Path) -> dict:
     return json.loads(sp.read_text(encoding="utf-8"))
 
 
-# mock provider の正解は task["mock_fix"] に定義済み（重複ブロック削除）
+# The mock provider's answer is defined in task["mock_fix"] (duplicate block removed)
 
 
-# ── 単一 task の bench 実行 ────────────────────────────────────────────
+# ── bench execution for a single task ──────────────────────────────────
 
 
 def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
@@ -482,14 +487,14 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
                                                      args.allow_headless_in_cc, args.max_steps,
                                                      args.rig_recipe)
                 state = _rig_read_state(d)
-                # step 数を calls の代理として使う
+                # use the step count as a proxy for calls
                 calls = sum(1 for s in state.get("step_state", {}).values()
                             if s.get("status") in ("passed", "running"))
                 t = _run_tests(task, d)
                 sc = _spec_check(task, d)
                 ud = _unrelated_diff(d, task["target_file"])
                 leaks = _workspace_leaks(leak_root, before) if leak_root else []
-                # gate_verdict は review-diff / acceptance の verdict 集約
+                # gate_verdict aggregates the review-diff / acceptance verdicts
                 gate = None
                 for sid in ("review-diff", "acceptance"):
                     st = state.get("step_state", {}).get(sid, {})
@@ -526,24 +531,24 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
 
 def cmd_bench(argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog="rig-wb bench",
-                                description="rig-wb bench — bare vs rig の A/B ベンチマーク (MVP)")
+                                description="rig-wb bench — bare vs rig A/B benchmark (MVP)")
     p.add_argument("--tasks", nargs="+", choices=list(BUILTIN_TASKS.keys()) + ["all"],
-                   default=["all"], help="実行タスク (default: all)")
+                   default=["all"], help="tasks to run (default: all)")
     p.add_argument("--mode", choices=["bare", "rig", "both"], default="both")
     p.add_argument("--provider", default="mock",
-                   help="claude / codex / ollama / lmstudio / mock (default: mock・課金なし)")
-    p.add_argument("--model", help="model 名 (--provider claude|codex|ollama|lmstudio 用)")
-    p.add_argument("--runs", type=int, default=1, help="1 タスクあたりの反復 (default: 1)")
+                   help="claude / codex / ollama / lmstudio / mock (default: mock, no billing)")
+    p.add_argument("--model", help="model name (for --provider claude|codex|ollama|lmstudio)")
+    p.add_argument("--runs", type=int, default=1, help="repetitions per task (default: 1)")
     p.add_argument("--max-steps", type=int, default=14,
-                   help="rig mode の max-steps (default: 14 — bugfix 全 step 到達を狙う)")
+                   help="max-steps for rig mode (default: 14 — aims to reach every bugfix step)")
     p.add_argument("--rig-recipe", default="bugfix",
-                   help="rig mode で使う recipe (default: bugfix。軽量比較は fast-bugfix)")
-    p.add_argument("--html", help="HTML dashboard の出力先 (bench 結果を可視化)")
+                   help="recipe used in rig mode (default: bugfix; use fast-bugfix for a lightweight comparison)")
+    p.add_argument("--html", help="output path for the HTML dashboard (visualizes bench results)")
     p.add_argument("--leak-check-root", default=os.getcwd(),
-                   help="scratch 外への書き込み漏れを git status 差分で検出する root (default: cwd)")
+                   help="root where writes leaking outside the scratch dir are detected via git status diff (default: cwd)")
     p.add_argument("--allow-headless-in-cc", action="store_true",
-                   help="Claude Code 内から claude/rig provider を使う場合の opt-in")
-    p.add_argument("--out", help="JSON 出力ファイル (省略時 stdout)")
+                   help="opt-in for using the claude/rig provider from inside Claude Code")
+    p.add_argument("--out", help="JSON output file (stdout if omitted)")
     args = p.parse_args(argv)
 
     task_ids = list(BUILTIN_TASKS.keys()) if args.tasks == ["all"] or "all" in args.tasks else args.tasks
@@ -561,7 +566,7 @@ def cmd_bench(argv: list[str]) -> None:
         print(f"\n=== task: {tid} ({BUILTIN_TASKS[tid]['difficulty']}) ===", flush=True)
         r = _bench_task(tid, BUILTIN_TASKS[tid], args)
         summary["tasks"].append(r)
-        # 要点だけ即時表示
+        # print just the highlights immediately
         for run in r["runs"]:
             for mode, m in run["modes"].items():
                 print(f"  run={run['run']} mode={mode:5s}  "
@@ -574,7 +579,7 @@ def cmd_bench(argv: list[str]) -> None:
     out_text = json.dumps(summary, ensure_ascii=False, indent=2)
     if args.out:
         pathlib.Path(args.out).write_text(out_text, encoding="utf-8")
-        print(f"\n書き込み: {args.out}")
+        print(f"\nWrote: {args.out}")
     else:
         print("\n" + out_text)
 
@@ -588,7 +593,7 @@ def cmd_bench(argv: list[str]) -> None:
 
 
 def _render_html(summary: dict) -> str:
-    """bench 結果を単一 HTML で可視化する。stdlib のみ・外部依存なし。"""
+    """Visualize bench results as a single HTML page. stdlib only, no external deps."""
     import html as _html
 
     def esc(s) -> str:
@@ -596,7 +601,7 @@ def _render_html(summary: dict) -> str:
 
     tasks = summary.get("tasks", [])
 
-    # 集計: bare vs rig の平均 elapsed / calls / test_pass 率 / spec_pass 率
+    # Aggregate: bare vs rig average elapsed / calls / test_pass rate / spec_pass rate
     def aggregate(mode: str) -> dict:
         elapsed, calls, tests, specs, n = [], [], 0, 0, 0
         for t in tasks:
@@ -639,7 +644,7 @@ def _render_html(summary: dict) -> str:
     kpi_bare_sp = f"{a_bare.get('spec_pass_rate', '-')}"
     kpi_rig_sp = f"{a_rig.get('spec_pass_rate', '-')}"
 
-    # per-task 表
+    # per-task table
     rows = []
     for t in tasks:
         for run in t["runs"]:
@@ -732,17 +737,17 @@ def _render_html(summary: dict) -> str:
     )
 
     return (
-        "<!doctype html><html lang='ja'><head><meta charset='utf-8'>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>rig-wb bench dashboard</title>"
         f"<style>{css}</style></head><body>"
         "<h1>rig-wb bench dashboard</h1>"
         f"{meta}"
         "<div class='kpi-grid'>"
-        f"{kpi('平均 elapsed (s)', kpi_bare_avg_e, kpi_rig_avg_e)}"
-        f"{kpi('平均 calls', kpi_bare_avg_c, kpi_rig_avg_c)}"
-        f"{kpi('test pass 率 (%)', kpi_bare_tp, kpi_rig_tp)}"
-        f"{kpi('spec pass 率 (%)', kpi_bare_sp, kpi_rig_sp)}"
+        f"{kpi('avg elapsed (s)', kpi_bare_avg_e, kpi_rig_avg_e)}"
+        f"{kpi('avg calls', kpi_bare_avg_c, kpi_rig_avg_c)}"
+        f"{kpi('test pass rate (%)', kpi_bare_tp, kpi_rig_tp)}"
+        f"{kpi('spec pass rate (%)', kpi_bare_sp, kpi_rig_sp)}"
         "</div>"
         f"{table}"
         "<footer>rig-wb bench · <code>rig-wb bench --html &lt;path&gt;</code></footer>"
