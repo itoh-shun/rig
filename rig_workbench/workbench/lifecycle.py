@@ -1,0 +1,188 @@
+"""workbench lifecycle: task registration and progress recording — new/step/gate/review
+(split from scripts/workbench.py)."""
+
+import argparse
+import pathlib
+import sys
+
+from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
+                     VALID_STEP_STATUS, VALID_VERDICT)
+from .state import (build_acceptance, current_branch, default_worktree_path,
+                    die, gate_status, git, load_json, load_task, make_slug,
+                    make_task_id, now_iso, repo_root, resolve_task_id, run_dir,
+                    runs_dir, save_json, save_task, task_lock)
+
+
+def ensure_rig_gitignored(root: pathlib.Path) -> bool:
+    """Append `.rig/` to the repo's `.gitignore` if missing. Returns whether it was appended.
+
+    `.rig/` holds worktree state / runs / audit / locks, so it is appended
+    automatically on the first task creation to keep it from slipping into a PR.
+    If it is already ignored as `.rig/` / `.rig` / `/.rig/` (any variant), do
+    nothing (never clobber the user's entries on a false positive).
+    If `.gitignore` is missing, create it. Do nothing when root is not git-managed.
+    """
+    if not (root / ".git").exists():
+        return False
+    gi = root / ".gitignore"
+    already = False
+    lines: list[str] = []
+    if gi.exists():
+        lines = gi.read_text(encoding="utf-8").splitlines()
+        for ln in lines:
+            s = ln.strip()
+            if s in (".rig/", ".rig", "/.rig/", "/.rig"):
+                already = True
+                break
+    if already:
+        return False
+    with gi.open("a", encoding="utf-8") as f:
+        # The existing file may not end with a newline, so lead with one
+        f.write("\n# rig workbench state (task worktrees, telemetry, audit, locks)\n.rig/\n")
+    return True
+
+
+def cmd_new(args: argparse.Namespace) -> None:
+    root = repo_root()
+    if args.type not in TASK_TYPES:
+        die(f"task_type '{args.type}' is invalid. Valid: {', '.join(TASK_TYPES)}")
+    slug = args.slug or make_slug(args.input)
+    task_id = make_task_id(slug)
+    d = runs_dir(root) / task_id
+    if d.exists():
+        die(f"task '{task_id}' already exists")
+
+    # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
+    if ensure_rig_gitignored(root):
+        print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
+
+    base_branch = args.base or current_branch(root)
+    base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
+
+    worktree_path: str | None = None
+    branch: str | None = None
+    if not args.no_worktree:
+        wt = default_worktree_path(root, task_id)
+        branch = f"rig/{task_id}"
+        wt.parent.mkdir(parents=True, exist_ok=True)
+        git(["worktree", "add", "-b", branch, str(wt), "HEAD"], cwd=root)
+        worktree_path = str(wt)
+
+    task = {
+        "task_id": task_id,
+        "input": args.input,
+        "task_type": args.type,
+        "recipe": args.recipe or "",
+        "recipe_reason": args.reason or "",
+        "base_branch": base_branch,
+        "base_commit": base_commit,
+        "branch": branch,
+        "worktree_path": worktree_path,
+        "status": "running",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    d.mkdir(parents=True, exist_ok=True)
+    save_json(d / "task.json", task)
+    save_json(d / "steps.json", {"steps": []})
+    acc = build_acceptance(task_id, args.type)
+    save_json(d / "acceptance.json", acc)
+
+    # ── Selection-rationale banner (Phase 1 §3: code prints this deterministically instead of leaving it to prose) ──
+    print("▸ rig")
+    print(f"task: {args.input}")
+    print(f"detected: {args.type}")
+    print(f"recipe: {args.recipe or '(unspecified)'}" + (f" — {args.reason}" if args.reason else ""))
+    print(f"mode: {'isolated worktree' if worktree_path else 'not isolated (--no-worktree)'}")
+    print(f"gate: {' + '.join(acc['presets'])}")
+    print()
+    print(f"task_id: {task_id}")
+    print(f"base_branch: {base_branch} @ {base_commit[:12]}")
+    if worktree_path:
+        print(f"worktree: {worktree_path} (branch: {branch})")
+    else:
+        print("worktree: none (--no-worktree specified)")
+    print(f"state: {d.relative_to(root)}/")
+
+
+def cmd_step(args: argparse.Namespace) -> None:
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    with task_lock(root, task_id):
+        d = run_dir(root, task_id)
+        data = load_json(d / "steps.json", {"steps": []})
+        for pair in args.set:
+            if "=" not in pair:
+                die(f"--set must be given as <step>=<status> (got: {pair!r})")
+            name, status = pair.split("=", 1)
+            if status not in VALID_STEP_STATUS:
+                die(f"step status '{status}' is invalid. Valid: {', '.join(VALID_STEP_STATUS)}")
+            for step in data["steps"]:
+                if step["name"] == name:
+                    step["status"] = status
+                    step["updated_at"] = now_iso()
+                    break
+            else:
+                data["steps"].append({"name": name, "status": status, "updated_at": now_iso()})
+        save_json(d / "steps.json", data)
+        print(f"{task_id} steps: " + " ".join(f"{s['name']}={s['status']}" for s in data["steps"]))
+
+
+def cmd_gate(args: argparse.Namespace) -> None:
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    with task_lock(root, task_id):
+        d, task = load_task(root, task_id)
+        acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+
+        known = {c["name"]: c for c in acc["checks"]}
+        for pair in args.set or []:
+            if "=" not in pair:
+                die(f"--set must be given as <criterion>=<status>[:detail] (got: {pair!r})")
+            name, status = pair.split("=", 1)
+            detail = ""
+            if ":" in status:
+                status, detail = status.split(":", 1)
+            if status not in VALID_CRITERION_STATUS:
+                die(f"criterion status '{status}' is invalid. Valid: {', '.join(VALID_CRITERION_STATUS)}")
+            if name not in known:
+                die(f"criterion '{name}' does not exist in this task's gate. Valid: {', '.join(known)}")
+            known[name]["status"] = status
+            if detail:
+                known[name]["detail"] = detail
+
+        acc["status"] = gate_status(acc)
+        acc["checked_at"] = now_iso()
+        save_json(d / "acceptance.json", acc)
+
+        if task["status"] == "running" and acc["status"] in ("passed", "passed_with_warnings", "failed", "skipped"):
+            task["status"] = "gate_failed" if acc["status"] == "failed" else "gate_passed"
+            save_task(d, task)
+
+        print(f"## acceptance-gate: {task_id}  [{acc['status'].upper()}]")
+        print(f"presets: {' + '.join(acc['presets'])}")
+        for c in acc["checks"]:
+            detail = f" — {c['detail']}" if c.get("detail") else ""
+            print(f"  {CHECK_ICON[c['status']]} {c['name']}{detail}")
+        if acc["status"] == "failed":
+            sys.exit(1)
+
+
+def cmd_review(args: argparse.Namespace) -> None:
+    """Record per-persona verdicts for review tasks (used by stats for rubber-stamp detection)."""
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    with task_lock(root, task_id):
+        d = run_dir(root, task_id)
+        data = load_json(d / "review.json", {"task_id": task_id, "verdicts": []})
+        by_persona = {v["persona"]: v for v in data["verdicts"]}
+        for pair in args.set:
+            if "=" not in pair:
+                die(f"--set must be given as <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS> (got: {pair!r})")
+            persona, verdict = pair.split("=", 1)
+            if verdict not in VALID_VERDICT:
+                die(f"verdict '{verdict}' is invalid. Valid: {', '.join(VALID_VERDICT)}")
+            by_persona[persona] = {"persona": persona, "verdict": verdict, "recorded_at": now_iso()}
+        data["verdicts"] = list(by_persona.values())
+        save_json(d / "review.json", data)
+        print(f"{task_id} review verdicts: " + " ".join(f"{v['persona']}={v['verdict']}" for v in data["verdicts"]))
