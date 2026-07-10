@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-rig 構造バリデータ（CI 用）
+rig structure validator (for CI)
 
-shipped tier の recipe frontmatter・step 参照・extends チェーン・persona frontmatter を機械的に検査する。
---validate instruction（facets/instructions/validate.md）の①②③（＋③-b persona スキーマ）サブセットを実装。
-Claude 不要・ファイルシステムのみで完結。
+Mechanically checks shipped-tier recipe frontmatter, step references, extends
+chains, and persona frontmatter.
+Implements the (1)(2)(3) (+ (3)-b persona schema) subset of the --validate
+instruction (facets/instructions/validate.md).
+No Claude required — runs entirely on the filesystem.
 
-終了コード: 0=合格 / 1=FAIL あり
+Exit code: 0=pass / 1=has FAIL
 """
 
 import sys
@@ -19,10 +21,10 @@ import traceback
 try:
     import yaml
 except ImportError:
-    print("[ERROR] PyYAML が見つかりません。`pip install pyyaml` で導入してください。")
+    print("[ERROR] PyYAML not found. Install it with `pip install pyyaml`.")
     sys.exit(1)
 
-# ── パス定数 ────────────────────────────────────────────────────────────────
+# ── path constants ───────────────────────────────────────────────────────────
 ROOT     = pathlib.Path(__file__).parent.parent
 SKILLS   = ROOT / "skills" / "rig"
 RECIPES  = SKILLS / "recipes"
@@ -30,7 +32,7 @@ FACETS   = SKILLS / "facets"
 PATTERNS = SKILLS / "patterns"
 AGENTS   = ROOT / "agents"
 
-# ── カウンタ ─────────────────────────────────────────────────────────────────
+# ── counters ─────────────────────────────────────────────────────────────────
 results: list[str] = []
 _pass = _warn = _fail = 0
 
@@ -46,7 +48,7 @@ def _emit(level: str, msg: str) -> None:
     results.append(f"[{level}] {msg}")
 
 
-# ── frontmatter パーサ ────────────────────────────────────────────────────────
+# ── frontmatter parser ───────────────────────────────────────────────────────
 def parse_frontmatter(path: pathlib.Path) -> tuple[dict | None, str]:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
@@ -61,31 +63,31 @@ def parse_frontmatter(path: pathlib.Path) -> tuple[dict | None, str]:
         return None, str(exc)
 
 
-# ── 参照解決ヘルパー ──────────────────────────────────────────────────────────
+# ── reference resolution helpers ─────────────────────────────────────────────
 def _check_exists(path: pathlib.Path, ctx: str, field: str, hint_dir: pathlib.Path | None = None) -> bool:
     if path.exists():
         return True
     rel = path.relative_to(ROOT) if ROOT in path.parents or path.is_relative_to(ROOT) else path
-    msg = f"{ctx} — {field}: {rel} が存在しません"
+    msg = f"{ctx} — {field}: {rel} does not exist"
     if hint_dir is not None and hint_dir.is_dir():
         available = sorted(p.stem for p in hint_dir.glob("*.md"))
         if available:
-            msg += f"（期待パス: {rel}／利用可能: {', '.join(available)}）"
+            msg += f" (expected path: {rel}; available: {', '.join(available)})"
     _emit("FAIL", msg)
     return False
 
 
 def _resolve_persona(name: str, ctx: str) -> bool:
-    """persona を shipped facets → agents の順で解決する（§5 tier 解決の shipped 相当）。"""
-    # facets/personas/<name>.md（/ 区切りでサブディレクトリ可）
+    """Resolve a persona in shipped facets → agents order (shipped equivalent of §5 tier resolution)."""
+    # facets/personas/<name>.md (subdirectories allowed via / separator)
     facet_path = FACETS / "personas" / pathlib.Path(name.replace("/", "/") + ".md")
     if facet_path.exists():
         return True
-    # agents/<name>.md（repo root 直下）
+    # agents/<name>.md (directly under repo root)
     agent_path = AGENTS / f"{name}.md"
     if agent_path.exists():
         return True
-    _emit("FAIL", f"{ctx} — personas[{name!r}] が解決できません（facets/personas/ および agents/）")
+    _emit("FAIL", f"{ctx} — personas[{name!r}] cannot be resolved (looked in facets/personas/ and agents/)")
     return False
 
 
@@ -99,20 +101,20 @@ _VALID_GATES = ("review-gate", "acceptance-gate", "magi-consensus")
 
 
 def _check_gate(val: str | None, ctx: str, field: str) -> None:
-    """gate は review-gate|acceptance-gate の2値のみ許容する（#198 の列挙値 FAIL・#227）。
+    """gate only allows the two values review-gate|acceptance-gate (enum FAIL from #198; #227).
 
-    `pattern` フィールドは patterns/ 配下のブリック名すべてを許容するため
-    `_check_pattern_or_gate`（実在チェック）を流用してよいが、`gate` は
-    その2値限定であり別の判定基準が要る（patterns/serial.md 等の実在に釣られて
-    誤って PASS させない）。
+    The `pattern` field allows every brick name under patterns/, so reusing
+    `_check_pattern_or_gate` (existence check) is fine there, but `gate` is
+    limited to those two values and needs a separate criterion (do not let the
+    existence of e.g. patterns/serial.md cause a false PASS).
     """
     if not val or val in ("—", "-"):
         return
     if val not in _VALID_GATES:
         _emit(
             "FAIL",
-            f"{ctx} — {field}: 値 '{val}' は不正な列挙値です。"
-            f" 許容値: {', '.join(_VALID_GATES)}",
+            f"{ctx} — {field}: value '{val}' is an invalid enum value."
+            f" Allowed values: {', '.join(_VALID_GATES)}",
         )
 
 
@@ -120,131 +122,132 @@ _SIZE_TOKEN_RE = re.compile(r"\b(?:S|M|L|XL)\+")
 
 
 def _check_condition(val: str | None, ctx: str, field: str) -> None:
-    """condition は自由文中に size トークン（S+/M+/L+/XL+）を含むことを期待する（#109/#229/#230）。
+    """condition is expected to contain a size token (S+/M+/L+/XL+) in its free text (#109/#229/#230).
 
-    正準形式を `size:` プレフィックス必須ではなく「size トークンの存在」で判定する
-    （release-flow.md の実運用値 `"--design または size L+"` を偽 WARN しないため）。
+    The canonical form is judged by "presence of a size token" rather than a
+    mandatory `size:` prefix (to avoid a false WARN on release-flow.md's
+    real-world value `"--design or size L+"`).
     """
     if val is None:
         return
     if not _SIZE_TOKEN_RE.search(str(val)):
         _emit(
             "WARN",
-            f"{ctx} — {field}: '{val}' に有効な size トークン（S+/M+/L+/XL+）が見つかりません"
-            f"（size-aware の RESOLVE 判定が意図通り働かない可能性）",
+            f"{ctx} — {field}: no valid size token (S+/M+/L+/XL+) found in '{val}'"
+            f" (the size-aware RESOLVE decision may not work as intended)",
         )
 
 
-# ── recipe 1件チェック ────────────────────────────────────────────────────────
+# ── per-recipe check ─────────────────────────────────────────────────────────
 def check_recipe(path: pathlib.Path) -> None:
     ctx = f"recipe {path.stem}"
     fm, raw = parse_frontmatter(path)
 
     if fm is None:
-        _emit("FAIL", f"{ctx} — frontmatter が読めません（YAML エラー: {raw[:80]}）")
+        _emit("FAIL", f"{ctx} — frontmatter cannot be parsed (YAML error: {raw[:80]})")
         return
 
-    # ① 必須トップレベルキー（§3.5）
+    # (1) required top-level keys (§3.5)
     required_top = ["name", "description", "scope", "steps", "autonomy"]
     missing = [k for k in required_top if k not in fm or fm[k] is None]
     if missing:
         for k in missing:
-            _emit("FAIL", f"{ctx} — 必須フィールド `{k}` がありません")
-        return  # 必須欠落は以降のチェックが意味をなさない
+            _emit("FAIL", f"{ctx} — required field `{k}` is missing")
+        return  # further checks are meaningless with required fields missing
 
-    # name ↔ ファイル名（#216：validate.md が定義する FAIL に重大度を合わせる）
+    # name ↔ filename (#216: match the FAIL severity defined by validate.md)
     if fm["name"] != path.stem:
-        _emit("FAIL", f"{ctx} — name '{fm['name']}' がファイル名 '{path.stem}' と不一致")
+        _emit("FAIL", f"{ctx} — name '{fm['name']}' does not match filename '{path.stem}'")
 
-    # scope 値域
+    # scope value range
     if fm["scope"] not in ("shipped", "user", "project"):
-        _emit("FAIL", f"{ctx} — scope '{fm['scope']}' は shipped|user|project でなければなりません")
+        _emit("FAIL", f"{ctx} — scope '{fm['scope']}' must be shipped|user|project")
 
-    # autonomy 値域
+    # autonomy value range
     if fm["autonomy"] not in ("interactive", "autonomous"):
-        _emit("FAIL", f"{ctx} — autonomy '{fm['autonomy']}' は interactive|autonomous でなければなりません")
+        _emit("FAIL", f"{ctx} — autonomy '{fm['autonomy']}' must be interactive|autonomous")
 
-    # backend 値域（#52）
+    # backend value range (#52)
     backend_val = fm.get("backend")
     if backend_val is not None and backend_val not in ("manual", "workflow"):
-        _emit("FAIL", f"{ctx} — backend '{backend_val}' は manual|workflow でなければなりません")
+        _emit("FAIL", f"{ctx} — backend '{backend_val}' must be manual|workflow")
 
-    # tdd 値域（#56）
+    # tdd value range (#56)
     tdd_val = fm.get("tdd")
     if tdd_val is not None and not isinstance(tdd_val, bool):
-        _emit("FAIL", f"{ctx} — tdd '{tdd_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — tdd '{tdd_val!r}' must be a boolean (true/false)")
 
-    # no_default_personas 値域（#70）
+    # no_default_personas value range (#70)
     ndp_val = fm.get("no_default_personas")
     if ndp_val is not None and not isinstance(ndp_val, bool):
-        _emit("FAIL", f"{ctx} — no_default_personas '{ndp_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — no_default_personas '{ndp_val!r}' must be a boolean (true/false)")
 
-    # orchestrate 値域（#129/#151）
+    # orchestrate value range (#129/#151)
     orch_val = fm.get("orchestrate")
     if orch_val is not None and not isinstance(orch_val, bool):
-        _emit("FAIL", f"{ctx} — orchestrate '{orch_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — orchestrate '{orch_val!r}' must be a boolean (true/false)")
 
-    # cross_llm 値域（#130/#151）
+    # cross_llm value range (#130/#151)
     cross_llm_val = fm.get("cross_llm")
     if cross_llm_val is not None and not isinstance(cross_llm_val, bool):
-        _emit("FAIL", f"{ctx} — cross_llm '{cross_llm_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — cross_llm '{cross_llm_val!r}' must be a boolean (true/false)")
 
-    # no_capture 値域（#137/#151）
+    # no_capture value range (#137/#151)
     no_capture_val = fm.get("no_capture")
     if no_capture_val is not None and not isinstance(no_capture_val, bool):
-        _emit("FAIL", f"{ctx} — no_capture '{no_capture_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — no_capture '{no_capture_val!r}' must be a boolean (true/false)")
 
-    # verify_findings 値域（review-gate 敵対的検証・§3.5）
+    # verify_findings value range (review-gate adversarial verification; §3.5)
     vf_val = fm.get("verify_findings")
     if vf_val is not None and not isinstance(vf_val, bool):
-        _emit("FAIL", f"{ctx} — verify_findings '{vf_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — verify_findings '{vf_val!r}' must be a boolean (true/false)")
 
-    # adversarial 値域（#172/#228）
+    # adversarial value range (#172/#228)
     adversarial_val = fm.get("adversarial")
     if adversarial_val is not None and not isinstance(adversarial_val, bool):
-        _emit("FAIL", f"{ctx} — adversarial '{adversarial_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — adversarial '{adversarial_val!r}' must be a boolean (true/false)")
 
-    # visual 値域（#174/#228）
+    # visual value range (#174/#228)
     visual_val = fm.get("visual")
     if visual_val is not None and not isinstance(visual_val, bool):
-        _emit("FAIL", f"{ctx} — visual '{visual_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — visual '{visual_val!r}' must be a boolean (true/false)")
 
-    # no_orchestrate 値域（#178/#228）
+    # no_orchestrate value range (#178/#228)
     no_orch_val = fm.get("no_orchestrate")
     if no_orch_val is not None and not isinstance(no_orch_val, bool):
-        _emit("FAIL", f"{ctx} — no_orchestrate '{no_orch_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — no_orchestrate '{no_orch_val!r}' must be a boolean (true/false)")
 
-    # design 値域（#182/#228）
+    # design value range (#182/#228)
     design_val = fm.get("design")
     if design_val is not None and not isinstance(design_val, bool):
-        _emit("FAIL", f"{ctx} — design '{design_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — design '{design_val!r}' must be a boolean (true/false)")
 
-    # review 値域（#182/#228）
+    # review value range (#182/#228)
     review_val = fm.get("review")
     if review_val is not None and not isinstance(review_val, bool):
-        _emit("FAIL", f"{ctx} — review '{review_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — review '{review_val!r}' must be a boolean (true/false)")
 
-    # capture 値域（#184/#228）
+    # capture value range (#184/#228)
     capture_val = fm.get("capture")
     if capture_val is not None and not isinstance(capture_val, bool):
-        _emit("FAIL", f"{ctx} — capture '{capture_val!r}' は boolean (true/false) でなければなりません")
+        _emit("FAIL", f"{ctx} — capture '{capture_val!r}' must be a boolean (true/false)")
 
-    # ② extends チェーン（§4.2.2 + validate.md ①）
+    # (2) extends chain (§4.2.2 + validate.md (1))
     parent_step_ids: list[str] = []
     extends_name: str | None = fm.get("extends")
     if extends_name:
         parent_path = RECIPES / f"{extends_name}.md"
         if not parent_path.exists():
-            _emit("FAIL", f"{ctx} — extends: '{extends_name}' が見つかりません")
+            _emit("FAIL", f"{ctx} — extends: '{extends_name}' not found")
         else:
             parent_fm, _ = parse_frontmatter(parent_path)
             if parent_fm:
-                # 孫継承チェック（#42）
+                # grandchild inheritance check (#42)
                 if parent_fm.get("extends"):
                     _emit(
                         "WARN",
-                        f"{ctx} (extends: {extends_name}) — {extends_name} も extends を持ちます"
-                        f"（多段継承 = 孫継承。RUN 時に親の extends が無視されます。SKILL.md §4.2.2）",
+                        f"{ctx} (extends: {extends_name}) — {extends_name} also has extends"
+                        f" (multi-level inheritance = grandchild extends; the parent's extends is ignored at RUN time. SKILL.md §4.2.2)",
                     )
                 parent_step_ids = [
                     s.get("id", "")
@@ -252,40 +255,40 @@ def check_recipe(path: pathlib.Path) -> None:
                     if isinstance(s, dict)
                 ]
 
-    # ③ steps チェック
+    # (3) steps checks
     steps = fm.get("steps")
     if not isinstance(steps, list) or len(steps) == 0:
-        _emit("FAIL", f"{ctx} — steps[] が空か不正です")
-        _emit("PASS", f"{ctx}: 参照チェック省略（steps 不正）")
+        _emit("FAIL", f"{ctx} — steps[] is empty or invalid")
+        _emit("PASS", f"{ctx}: reference checks skipped (invalid steps)")
         return
 
     seen_ids: set[str] = set()
     for i, step in enumerate(steps):
         if not isinstance(step, dict):
-            _emit("FAIL", f"{ctx} — steps[{i}] が dict でなければなりません")
+            _emit("FAIL", f"{ctx} — steps[{i}] must be a dict")
             continue
 
         step_id = step.get("id") or f"[{i}]"
         step_ctx = f"{ctx}.{step_id}"
 
-        # id 必須・slug 形式（#197/#219）・一意性
+        # id required, slug format (#197/#219), uniqueness
         if not step.get("id"):
-            _emit("FAIL", f"{ctx} — steps[{i}] に id がありません")
+            _emit("FAIL", f"{ctx} — steps[{i}] has no id")
         else:
             if not re.fullmatch(r"[a-z][a-z0-9-]*", step_id):
                 _emit(
                     "FAIL",
-                    f"{step_ctx} — id '{step_id}' は不正な形式です。"
-                    f" id は [a-z][a-z0-9-]*（小文字英数字・ハイフンのみ、小文字始まり）で指定してください",
+                    f"{step_ctx} — id '{step_id}' has an invalid format."
+                    f" Use [a-z][a-z0-9-]* (lowercase alphanumerics and hyphens only, starting with a lowercase letter)",
                 )
             if step_id in seen_ids:
-                _emit("FAIL", f"{ctx} — steps[].id '{step_id}' が重複しています")
+                _emit("FAIL", f"{ctx} — steps[].id '{step_id}' is duplicated")
             seen_ids.add(step_id)
 
-        # instruction 必須
+        # instruction required
         instr = step.get("instruction")
         if not instr:
-            _emit("FAIL", f"{step_ctx} — instruction がありません")
+            _emit("FAIL", f"{step_ctx} — instruction is missing")
         else:
             _check_exists(FACETS / "instructions" / f"{instr}.md", step_ctx, "instruction",
                           hint_dir=FACETS / "instructions")
@@ -305,61 +308,61 @@ def check_recipe(path: pathlib.Path) -> None:
             _check_exists(FACETS / "output-contracts" / f"{oc}.md", step_ctx, "output_contract",
                           hint_dir=FACETS / "output-contracts")
 
-        # pattern → patterns/ 実在チェック（shipped tier のブリック名すべて許容）
+        # pattern → existence check under patterns/ (any shipped-tier brick name allowed)
         _check_pattern_or_gate(step.get("pattern"), step_ctx, "pattern")
-        # gate → review-gate|acceptance-gate の2値のみ許容（#198 の列挙値 FAIL・#227）
+        # gate → only the two values review-gate|acceptance-gate allowed (enum FAIL from #198; #227)
         _check_gate(step.get("gate"), step_ctx, "gate")
 
-        # checks: 型・空エントリ検証（#200 の CI 反映・#218）
+        # checks: type / empty-entry validation (CI adoption of #200; #218)
         checks_val = step.get("checks")
         if checks_val is not None:
             if not isinstance(checks_val, list):
                 _emit(
                     "FAIL",
-                    f"{step_ctx} — checks の値がリストではありません（{checks_val!r}）。"
-                    f" checks はシェルコマンドの配列で指定してください（例: [\"npm test\"]）",
+                    f"{step_ctx} — checks value is not a list ({checks_val!r})."
+                    f" Specify checks as an array of shell commands (e.g. [\"npm test\"])",
                 )
             else:
                 for idx, cmd in enumerate(checks_val):
                     if cmd == "":
                         _emit(
                             "FAIL",
-                            f"{step_ctx} — checks に空文字列エントリが含まれています（インデックス {idx}）",
+                            f"{step_ctx} — checks contains an empty-string entry (index {idx})",
                         )
 
-        # condition 値検証（#109/#229/#230）
+        # condition value validation (#109/#229/#230)
         _check_condition(step.get("condition"), step_ctx, "condition")
 
-        # max_retries 型・値域（§3.5）
+        # max_retries type / value range (§3.5)
         max_retries = step.get("max_retries")
         if max_retries is not None:
             if not isinstance(max_retries, int) or max_retries < 1:
                 _emit(
                     "FAIL",
-                    f"{step_ctx} — max_retries は整数かつ ≥1 でなければなりません（値: {max_retries!r}）",
+                    f"{step_ctx} — max_retries must be an integer ≥1 (value: {max_retries!r})",
                 )
             if step.get("gate") != "acceptance-gate":
                 _emit(
                     "WARN",
-                    f"{step_ctx} — max_retries が gate: acceptance-gate でない step に設定されています（無効コンテキスト）",
+                    f"{step_ctx} — max_retries is set on a step without gate: acceptance-gate (no effect in this context)",
                 )
 
-        # acceptance-gate + acceptance[] 存在推奨
+        # acceptance-gate + acceptance[] presence recommended
         if step.get("gate") == "acceptance-gate" and not step.get("acceptance"):
             _emit(
                 "WARN",
-                f"{step_ctx} — gate: acceptance-gate ですが acceptance[] が未定義（ゲートが常時通過する可能性）",
+                f"{step_ctx} — gate: acceptance-gate but acceptance[] is undefined (the gate may always pass)",
             )
 
-        # extends 子 step ID 突き合わせ（#41）
+        # match child step IDs against extends parent (#41)
         if parent_step_ids and step_id not in parent_step_ids and step.get("id"):
             _emit(
                 "WARN",
-                f"{ctx} (extends: {extends_name}) — child step `{step_id}` は parent に存在しません"
-                f"（override タイポの可能性。新規 step として追加する意図なら無視可。SKILL.md §4.2.2）",
+                f"{ctx} (extends: {extends_name}) — child step `{step_id}` does not exist in parent"
+                f" (possible override typo; ignore if a new step is intended. SKILL.md §4.2.2)",
             )
 
-    # needs: 参照切れチェック（チェック A・#152）
+    # needs: broken-reference check (check A; #152)
     for step in steps:
         if not isinstance(step, dict):
             continue
@@ -373,27 +376,28 @@ def check_recipe(path: pathlib.Path) -> None:
             if needed_id not in seen_ids:
                 _emit(
                     "FAIL",
-                    f"{ctx}.{step_id} — needs に未定義の step-id {needed_id!r} が含まれます。"
-                    f" 有効な step-id: {', '.join(sorted(seen_ids))}",
+                    f"{ctx}.{step_id} — needs contains undefined step-id {needed_id!r}."
+                    f" Valid step-ids: {', '.join(sorted(seen_ids))}",
                 )
 
     _emit("PASS", f"{ctx}: OK")
 
 
-# ── persona facet スキーマチェック ────────────────────────────────────────────
+# ── persona facet schema check ───────────────────────────────────────────────
 def check_personas() -> None:
-    """shipped persona facet の frontmatter スキーマを検査する。
+    """Check the frontmatter schema of shipped persona facets.
 
-    - frontmatter が存在し YAML として読めること（FAIL）
-    - `name` が personas/ からの相対パス（拡張子なし・`/` 区切り）と一致すること（FAIL。
-      recipe `personas[]` / `--persona <name>` の名前解決と整合しなくなるため）
-    - `description` が非空文字列であること（FAIL。catalog / --list の表示に使う）
-    - `inject` がある場合はリスト型であること（FAIL。wiki 参照 §5 の宣言形式）
+    - frontmatter exists and parses as YAML (FAIL)
+    - `name` matches the path relative to personas/ (no extension, `/` separated)
+      (FAIL, since recipe `personas[]` / `--persona <name>` name resolution
+      would break otherwise)
+    - `description` is a non-empty string (FAIL; used for catalog / --list display)
+    - `inject`, if present, is a list (FAIL; declaration format of wiki reference §5)
     """
     personas_dir = FACETS / "personas"
     persona_files = sorted(personas_dir.rglob("*.md"))
     if not persona_files:
-        _emit("WARN", "facets/personas/ に .md ファイルが見つかりません")
+        _emit("WARN", "no .md files found in facets/personas/")
         return
 
     ok = 0
@@ -404,48 +408,49 @@ def check_personas() -> None:
 
         if fm is None:
             if path.read_text(encoding="utf-8").startswith("---"):
-                _emit("FAIL", f"{ctx} — frontmatter が読めません（YAML エラー: {raw[:80]}）")
+                _emit("FAIL", f"{ctx} — frontmatter cannot be parsed (YAML error: {raw[:80]})")
             else:
-                _emit("FAIL", f"{ctx} — frontmatter がありません（name/description が必須）")
+                _emit("FAIL", f"{ctx} — frontmatter is missing (name/description are required)")
             continue
 
         bad = False
         if fm.get("name") != rel_name:
-            _emit("FAIL", f"{ctx} — name '{fm.get('name')}' が相対パス '{rel_name}' と不一致")
+            _emit("FAIL", f"{ctx} — name '{fm.get('name')}' does not match relative path '{rel_name}'")
             bad = True
         desc = fm.get("description")
         if not isinstance(desc, str) or not desc.strip():
-            _emit("FAIL", f"{ctx} — description が空または未定義です")
+            _emit("FAIL", f"{ctx} — description is empty or undefined")
             bad = True
         inject = fm.get("inject")
         if inject is not None and not isinstance(inject, list):
-            _emit("FAIL", f"{ctx} — inject はリスト型でなければなりません（値: {inject!r}）")
+            _emit("FAIL", f"{ctx} — inject must be a list (value: {inject!r})")
             bad = True
         elif isinstance(inject, list):
-            # shipped persona の inject は shipped wiki tier に解決できなければならない
-            # （user/project tier は新規インストール環境に存在しないため FAIL）
+            # inject in a shipped persona must resolve within the shipped wiki tier
+            # (user/project tiers do not exist in fresh installs, hence FAIL)
             wiki_dir = FACETS / "knowledge" / "wiki"
             for entry in inject:
                 m = re.match(r"^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$", str(entry).strip())
                 if not m:
-                    _emit("FAIL", f"{ctx} — inject エントリ {entry!r} が [[slug]] 形式ではありません")
+                    _emit("FAIL", f"{ctx} — inject entry {entry!r} is not in [[slug]] format")
                     bad = True
                     continue
                 slug = m.group(1)
                 if not (wiki_dir / f"{slug}.md").exists():
-                    _emit("FAIL", f"{ctx} — inject [[{slug}]] が shipped wiki"
-                                  f"（skills/rig/facets/knowledge/wiki/{slug}.md）に解決できません")
+                    _emit("FAIL", f"{ctx} — inject [[{slug}]] does not resolve to the shipped wiki"
+                                  f" (skills/rig/facets/knowledge/wiki/{slug}.md)")
                     bad = True
         if not bad:
             ok += 1
 
-    _emit("PASS", f"personas: {ok}/{len(persona_files)} 件スキーマ OK")
+    _emit("PASS", f"personas: {ok}/{len(persona_files)} schema OK")
 
 
-# ── commands / agents frontmatter チェック ──────────────────────────────────
-# v0.77（frontmatter YAML 不正で全コマンド未登録）・v0.78（予約名 skill 衝突）の
-# 実バグ class を CI で再発防止する。
-_RESERVED_COMMAND_NAMES = {"skill", "status"}  # 経験的に衝突（skill）/衝突回避で改名済み（status→party）
+# ── commands / agents frontmatter checks ─────────────────────────────────────
+# Prevent regressions in CI of the real bug classes from v0.77 (invalid
+# frontmatter YAML left all commands unregistered) and v0.78 (reserved-name
+# collision with `skill`).
+_RESERVED_COMMAND_NAMES = {"skill", "status"}  # collided in practice (skill) / renamed to avoid collision (status→party)
 
 
 def check_commands() -> None:
@@ -459,21 +464,21 @@ def check_commands() -> None:
         fm, raw = parse_frontmatter(path)
         bad = False
         if fm is None:
-            _emit("FAIL", f"{ctx} — frontmatter が YAML として読めません（全コマンド未登録バグの再発 class）: {raw[:80]}")
+            _emit("FAIL", f"{ctx} — frontmatter cannot be parsed as YAML (regression class of the all-commands-unregistered bug): {raw[:80]}")
             continue
         desc = fm.get("description")
         if not isinstance(desc, str) or not desc.strip():
-            _emit("FAIL", f"{ctx} — description が空または文字列ではありません")
+            _emit("FAIL", f"{ctx} — description is empty or not a string")
             bad = True
         ah = fm.get("argument-hint")
         if ah is not None and not isinstance(ah, str):
-            _emit("FAIL", f"{ctx} — argument-hint '{ah!r}' は文字列でなければなりません（配列で書くと YAML 崩れの温床）")
+            _emit("FAIL", f"{ctx} — argument-hint '{ah!r}' must be a string (writing it as an array invites broken YAML)")
             bad = True
         if path.stem in _RESERVED_COMMAND_NAMES:
-            _emit("WARN", f"{ctx} — '{path.stem}' は CC 組み込みと衝突した実績のある名前です（skill→forge / status→party の前例）")
+            _emit("WARN", f"{ctx} — '{path.stem}' is a name with a track record of colliding with CC built-ins (precedents: skill→forge / status→party)")
         if not bad:
             ok += 1
-    _emit("PASS", f"commands: {ok}/{len(files)} 件 frontmatter OK")
+    _emit("PASS", f"commands: {ok}/{len(files)} frontmatter OK")
 
 
 def check_agents() -> None:
@@ -486,24 +491,24 @@ def check_agents() -> None:
         fm, raw = parse_frontmatter(path)
         bad = False
         if fm is None:
-            _emit("FAIL", f"{ctx} — frontmatter が YAML として読めません: {raw[:80]}")
+            _emit("FAIL", f"{ctx} — frontmatter cannot be parsed as YAML: {raw[:80]}")
             continue
         if fm.get("name") != path.stem:
-            _emit("FAIL", f"{ctx} — name '{fm.get('name')}' がファイル名 '{path.stem}' と不一致（subagent_type 解決が壊れる）")
+            _emit("FAIL", f"{ctx} — name '{fm.get('name')}' does not match filename '{path.stem}' (breaks subagent_type resolution)")
             bad = True
         if not isinstance(fm.get("description"), str) or not fm["description"].strip():
-            _emit("FAIL", f"{ctx} — description が空または未定義です")
+            _emit("FAIL", f"{ctx} — description is empty or undefined")
             bad = True
         if not fm.get("tools"):
-            _emit("WARN", f"{ctx} — tools が未定義（read-only reviewer は Read, Grep, Glob, Bash を明示推奨）")
+            _emit("WARN", f"{ctx} — tools is undefined (read-only reviewers should explicitly list Read, Grep, Glob, Bash)")
         if not bad:
             ok += 1
-    _emit("PASS", f"agents: {ok}/{len(files)} 件 frontmatter OK")
+    _emit("PASS", f"agents: {ok}/{len(files)} frontmatter OK")
 
 
-# ── §2 目録ドリフト（validate.md ④ の機械実装）────────────────────────────────
+# ── §2 catalog drift (mechanical implementation of validate.md (4)) ──────────
 def _expand_braces(token: str) -> list[str]:
-    """`a/{b,c}-d` → [`a/b-d`, `a/c-d`]（1段のみ・§2 の記法に十分）。"""
+    """`a/{b,c}-d` → [`a/b-d`, `a/c-d`] (single level only; sufficient for §2 notation)."""
     m = re.search(r"\{([^{}]+)\}", token)
     if not m:
         return [token]
@@ -514,8 +519,9 @@ def _expand_braces(token: str) -> list[str]:
 
 
 def check_catalog_drift() -> None:
-    """SKILL.md §2 のバッククォート・ブリック参照 → 実ファイル（幽霊エントリ＝FAIL）、
-    実ファイル → SKILL.md 記載（追記漏れ＝WARN）を突き合わせる。"""
+    """Cross-check backticked brick references in SKILL.md §2 → real files
+    (ghost entries = FAIL), and real files → SKILL.md listings (missing
+    entries = WARN)."""
     skill = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
     s2 = skill[skill.index("## 2."):skill.index("## 3.")]
 
@@ -540,10 +546,10 @@ def check_catalog_drift() -> None:
         else:
             exists = path.exists() or path.with_suffix(".md").exists()
         if not exists:
-            _emit("FAIL", f"§2 目録 — `{tok}` が実ファイルに解決できません（幽霊エントリ）")
+            _emit("FAIL", f"§2 catalog — `{tok}` does not resolve to a real file (ghost entry)")
             ghosts += 1
 
-    # brace 記法（{a,b}-reviewer 等）で登録されたブリックも展開済みトークンから照合する
+    # bricks registered via brace notation ({a,b}-reviewer etc.) are also matched against expanded tokens
     expanded_stems = {pathlib.Path(tok).stem for tok, _ in tokens}
     missing = 0
     for sub in ("recipes", "facets/instructions", "facets/personas"):
@@ -551,14 +557,14 @@ def check_catalog_drift() -> None:
             if f.stem.startswith("_"):
                 continue
             if f.stem not in skill and f.stem not in expanded_stems:
-                _emit("WARN", f"§2 目録 — {sub}/{f.relative_to(SKILLS / sub)} が SKILL.md に未記載（pack 追加分への追記漏れ?）")
+                _emit("WARN", f"§2 catalog — {sub}/{f.relative_to(SKILLS / sub)} is not listed in SKILL.md (missed listing for a pack addition?)")
                 missing += 1
-    _emit("PASS", f"§2 目録ドリフト: 参照 {len(tokens)} 件（幽霊 {ghosts}）／追記漏れ疑い {missing} 件")
+    _emit("PASS", f"§2 catalog drift: {len(tokens)} references ({ghosts} ghosts) / {missing} suspected missing listings")
 
 
-# ── shipped wiki 衛生チェック（賞味期限含む）──────────────────────────────────
+# ── shipped wiki hygiene check (including freshness) ─────────────────────────
 def check_wiki() -> None:
-    """shipped wiki ページの frontmatter 衛生と賞味期限（reviewed_at・180日）を検査する。"""
+    """Check frontmatter hygiene and freshness (reviewed_at; 180 days) of shipped wiki pages."""
     import datetime
     wiki_dir = FACETS / "knowledge" / "wiki"
     if not wiki_dir.is_dir():
@@ -570,44 +576,45 @@ def check_wiki() -> None:
         fm, raw = parse_frontmatter(path)
         bad = False
         if fm is None:
-            _emit("FAIL", f"{ctx} — frontmatter が読めません（YAML エラー: {raw[:80]}）")
+            _emit("FAIL", f"{ctx} — frontmatter cannot be parsed (YAML error: {raw[:80]})")
             continue
         if fm.get("slug") != path.stem:
-            _emit("FAIL", f"{ctx} — slug '{fm.get('slug')}' がファイル名 '{path.stem}' と不一致")
+            _emit("FAIL", f"{ctx} — slug '{fm.get('slug')}' does not match filename '{path.stem}'")
             bad = True
         if fm.get("status") not in ("canonical", "draft", "deprecated"):
-            _emit("FAIL", f"{ctx} — status '{fm.get('status')}' は canonical|draft|deprecated でなければなりません")
+            _emit("FAIL", f"{ctx} — status '{fm.get('status')}' must be canonical|draft|deprecated")
             bad = True
         ra = fm.get("reviewed_at")
         if ra is not None:
             try:
                 d = ra if isinstance(ra, datetime.date) else datetime.date.fromisoformat(str(ra))
                 if (datetime.date.today() - d).days > 180:
-                    _emit("WARN", f"{ctx} — reviewed_at が180日超（{d}）: 内容を見直して更新するか deprecated に（知識の賞味期限）")
+                    _emit("WARN", f"{ctx} — reviewed_at is over 180 days old ({d}): review and update the content or mark it deprecated (knowledge freshness)")
             except ValueError:
-                _emit("FAIL", f"{ctx} — reviewed_at '{ra}' が YYYY-MM-DD 形式ではありません")
+                _emit("FAIL", f"{ctx} — reviewed_at '{ra}' is not in YYYY-MM-DD format")
                 bad = True
         if not bad:
             ok += 1
-    _emit("PASS", f"wiki: {ok}/{len(pages)} 件スキーマ OK（shipped tier）")
+    _emit("PASS", f"wiki: {ok}/{len(pages)} schema OK (shipped tier)")
 
 
 
-# ── ブリック・グラフ整合チェック（オントロジー制約・#graph）─────────────────
+# ── brick graph consistency check (ontology constraints; #graph) ─────────────
 def check_graph() -> None:
-    """orchestrate.py graph --json（型付きグラフの一次実装）を呼び、未解決エッジを検査する。
+    """Call orchestrate.py graph --json (the primary implementation of the typed graph) and check for unresolved edges.
 
-    導出ロジックを再実装せず subprocess で一次実装を叩く（散文とコードの二重化を作らない）。
-    他チェックが既に担う rel（injects=check_personas / uses-*=check_recipe）は二重報告を避けて
-    スキップし、ここでは **links-to（wiki 相互リンク切れ）= FAIL / references・mirrors = WARN**
-    のみを担当する。
+    Instead of reimplementing the derivation logic, invoke the primary
+    implementation via subprocess (avoid duplicating prose and code). Relations
+    already covered by other checks (injects=check_personas / uses-*=check_recipe)
+    are skipped to avoid double reporting; this check only handles
+    **links-to (broken wiki cross-links) = FAIL / references & mirrors = WARN**.
     """
     import subprocess
     proc = subprocess.run(
         [sys.executable, str(pathlib.Path(__file__).parent / "orchestrate.py"), "graph", "--json"],
         capture_output=True, text=True, env={**os.environ, "RIG_HOME": str(ROOT)})
     if proc.returncode != 0:
-        _emit("FAIL", f"graph — orchestrate.py graph --json が失敗しました: {proc.stderr[:200]}")
+        _emit("FAIL", f"graph — orchestrate.py graph --json failed: {proc.stderr[:200]}")
         return
     g = json.loads(proc.stdout)
     covered = {"injects", "uses-persona", "uses-instruction", "uses-pattern",
@@ -618,21 +625,22 @@ def check_graph() -> None:
             continue
         bad += 1
         if e["rel"] == "links-to":
-            _emit("FAIL", f"graph — wiki リンク切れ: {e['from']} → [[{e['to'].split(':', 1)[1]}]] が存在しません")
+            _emit("FAIL", f"graph — broken wiki link: {e['from']} → [[{e['to'].split(':', 1)[1]}]] does not exist")
         elif e["rel"] == "mirrors":
-            _emit("WARN", f"graph — {e['from']} に対応する persona がありません（native-first の対が欠落）")
+            _emit("WARN", f"graph — no persona corresponding to {e['from']} (missing native-first counterpart)")
         else:
-            _emit("WARN", f"graph — {e['from']} が {e['to']} を参照していますが解決できません")
+            _emit("WARN", f"graph — {e['from']} references {e['to']} but it cannot be resolved")
     if bad == 0:
-        _emit("PASS", f"graph: {len(g['nodes'])} nodes / {len(g['edges'])} edges — 型付きグラフに未解決なし")
+        _emit("PASS", f"graph: {len(g['nodes'])} nodes / {len(g['edges'])} edges — no unresolved edges in the typed graph")
 
 
-# ── extends 循環参照チェック（#71・DFS）──────────────────────────────────────
+# ── extends circular-reference check (#71; DFS) ──────────────────────────────
 def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
-    """A→B→…→A の循環を DFS で検出する（#42 の深さチェックと独立）。
+    """Detect A→B→…→A cycles via DFS (independent of the depth check in #42).
 
-    shipped tier のグラフのみを見る（cross-tier の循環は Claude 版 --validate が担当）。
-    検出した循環は経路つきで 1 サイクル 1 回だけ FAIL 報告する。
+    Only looks at the shipped-tier graph (cross-tier cycles are handled by the
+    Claude-side --validate). Each detected cycle is reported as FAIL exactly
+    once, with its path.
     """
     parent: dict[str, str] = {}
     for path in recipe_files:
@@ -645,8 +653,8 @@ def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
         path_list: list[str] = []
         in_path: set[str] = set()
         node = start
-        while node in parent:           # extends 先がある間だけ辿る
-            if node in in_path:         # 現在の経路を再訪 = 循環
+        while node in parent:           # follow only while an extends target exists
+            if node in in_path:         # revisiting the current path = cycle
                 cycle = path_list[path_list.index(node):] + [node]
                 key = frozenset(cycle)
                 if key not in reported:
@@ -658,12 +666,13 @@ def check_extends_cycles(recipe_files: list[pathlib.Path]) -> None:
             node = parent[node]
 
 
-# ── needs: 循環依存チェック（チェック B・#152・DFS）─────────────────────────────
+# ── needs: circular-dependency check (check B; #152; DFS) ────────────────────
 def check_needs_cycles(recipe_files: list[pathlib.Path]) -> None:
-    """各 recipe の needs: DAG を DFS で走査し、循環依存を検出する（#152）。
+    """Walk each recipe's needs: DAG via DFS and detect circular dependencies (#152).
 
-    shipped tier のグラフのみを見る（cross-tier の循環は Claude 版 --validate が担当）。
-    check_extends_cycles と同じロジック・同じ severity（FAIL）。
+    Only looks at the shipped-tier graph (cross-tier cycles are handled by the
+    Claude-side --validate). Same logic and same severity (FAIL) as
+    check_extends_cycles.
     """
     for recipe_path in recipe_files:
         fm, _ = parse_frontmatter(recipe_path)
@@ -680,7 +689,7 @@ def check_needs_cycles(recipe_files: list[pathlib.Path]) -> None:
                 needs = step.get("needs") or []
                 graph[sid] = [str(n) for n in needs if isinstance(n, str) and n in valid_ids or True]
 
-        # DFS 色付けアルゴリズム（白=未訪問 / 灰=処理中 / 黒=完了）
+        # DFS coloring algorithm (white=unvisited / gray=in progress / black=done)
         WHITE, GRAY, BLACK = 0, 1, 2
         color: dict[str, int] = {sid: WHITE for sid in valid_ids}
         reported: set[str] = set()
@@ -699,7 +708,7 @@ def check_needs_cycles(recipe_files: list[pathlib.Path]) -> None:
                         reported.add(cycle_key)
                         _emit(
                             "FAIL",
-                            f"recipe {recipe_path.stem}: needs 循環依存 — {cycle_key}",
+                            f"recipe {recipe_path.stem}: needs circular dependency — {cycle_key}",
                         )
                     return True
                 if color[dep] == WHITE:
@@ -712,13 +721,13 @@ def check_needs_cycles(recipe_files: list[pathlib.Path]) -> None:
                 dfs(sid, [])
 
 
-# ── release メタデータ整合（plugin.json ⇄ CHANGELOG.md・#231）───────────────────
+# ── release metadata consistency (plugin.json ⇄ CHANGELOG.md; #231) ──────────
 def check_release_metadata() -> None:
-    """plugin.json の version に対応する CHANGELOG.md の `## [x.y.z]` 節が存在するか検査する。
+    """Check that CHANGELOG.md has a `## [x.y.z]` section matching plugin.json's version.
 
-    release.yml はこの対応が見つからない場合サイレントに auto-generated notes へ
-    フォールバックする（release 自体は止めない設計）。--validate 側は「気づかず混入する」
-    ことを防ぐために FAIL として検出する。
+    release.yml silently falls back to auto-generated notes when this match is
+    not found (by design it does not block the release itself). The --validate
+    side detects it as FAIL to prevent it from slipping in unnoticed.
     """
     plugin_path = ROOT / ".claude-plugin" / "plugin.json"
     changelog_path = ROOT / "CHANGELOG.md"
@@ -727,29 +736,30 @@ def check_release_metadata() -> None:
     try:
         version = json.loads(plugin_path.read_text(encoding="utf-8"))["version"]
     except Exception as exc:
-        _emit("FAIL", f"release — .claude-plugin/plugin.json の version が読めません: {exc}")
+        _emit("FAIL", f"release — cannot read version from .claude-plugin/plugin.json: {exc}")
         return
     changelog = changelog_path.read_text(encoding="utf-8")
     heading = f"## [{version}]"
     if heading not in changelog:
         _emit(
             "FAIL",
-            f"release — CHANGELOG.md に plugin.json の version ({version}) に対応する"
-            f' "{heading}" 節がありません',
+            f"release — CHANGELOG.md has no \"{heading}\" section matching"
+            f" the plugin.json version ({version})",
         )
     else:
-        _emit("PASS", f"release: plugin.json version ({version}) ⇄ CHANGELOG.md 対応節が一致")
+        _emit("PASS", f"release: plugin.json version ({version}) ⇄ CHANGELOG.md section match")
 
 
-# ── skills-lock.json 整合（/rig:import の出所記録・#249）───────────────────────
+# ── skills-lock.json consistency (/rig:import provenance record; #249) ───────
 _VALID_IMPORT_MODES = ("delegate", "translate", "knowledge")
 
 
 def check_skills_lock() -> None:
-    """skills-lock.json のスキーマ・importedAs 参照整合を検査する。
+    """Check the schema and importedAs reference consistency of skills-lock.json.
 
-    ファイルが存在しない場合はサイレントスキップ（wiki/accumulated チェックと同じ方針）。
-    第一段は project 層（呼び出し元リポジトリ直下）のみを対象とする。
+    Silently skips when the file does not exist (same policy as the
+    wiki/accumulated checks). The first stage only targets the project layer
+    (directly under the calling repository).
     """
     lock_path = ROOT / "skills-lock.json"
     if not lock_path.is_file():
@@ -757,10 +767,10 @@ def check_skills_lock() -> None:
     try:
         data = json.loads(lock_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        _emit("FAIL", f"skills-lock — JSON として読めません: {exc}")
+        _emit("FAIL", f"skills-lock — cannot be parsed as JSON: {exc}")
         return
     if not isinstance(data, dict) or "version" not in data or "skills" not in data:
-        _emit("FAIL", "skills-lock — トップレベルに version / skills キーが必要です")
+        _emit("FAIL", "skills-lock — top level must have version / skills keys")
         return
 
     skills = data["skills"]
@@ -769,39 +779,41 @@ def check_skills_lock() -> None:
     for key, entry in entries:
         ctx = f"skills-lock[{key}]"
         if not isinstance(entry, dict):
-            _emit("FAIL", f"{ctx} — エントリが dict ではありません")
+            _emit("FAIL", f"{ctx} — entry is not a dict")
             continue
         bad = False
         for field in ("source", "sourceType", "skillPath", "computedHash"):
             if not entry.get(field):
-                _emit("FAIL", f"{ctx} — 必須フィールド `{field}` がありません")
+                _emit("FAIL", f"{ctx} — required field `{field}` is missing")
                 bad = True
         mode = entry.get("mode")
         if mode is not None and mode not in _VALID_IMPORT_MODES:
-            _emit("FAIL", f"{ctx} — mode '{mode}' は不正な値です。許容値: {', '.join(_VALID_IMPORT_MODES)}")
+            _emit("FAIL", f"{ctx} — mode '{mode}' is an invalid value. Allowed values: {', '.join(_VALID_IMPORT_MODES)}")
             bad = True
         imported_as = entry.get("importedAs")
         if imported_as is None:
-            _emit("WARN", f"{ctx} — importedAs が未記載です（どのブリックに翻訳されたかの traceability 欠落）")
+            _emit("WARN", f"{ctx} — importedAs is not recorded (missing traceability of which bricks it was translated into)")
         else:
             for p in (imported_as if isinstance(imported_as, list) else [imported_as]):
                 if not (ROOT / str(p)).exists():
-                    _emit("FAIL", f"{ctx} — importedAs '{p}' がリポジトリに存在しません")
+                    _emit("FAIL", f"{ctx} — importedAs '{p}' does not exist in the repository")
                     bad = True
         if not bad:
             ok += 1
-    _emit("PASS", f"skills-lock: {ok}/{len(skills)} 件スキーマ OK")
+    _emit("PASS", f"skills-lock: {ok}/{len(skills)} schema OK")
 
 
-# ── selftest（validate.py 自身の回帰テスト・#232）───────────────────────────────
+# ── selftest (regression test of validate.py itself; #232) ───────────────────
 def run_selftest() -> None:
-    """FAIL/WARN 判定ロジックの実装ドリフトを、合成フィクスチャで回帰検出する。
+    """Detect implementation drift in the FAIL/WARN decision logic via synthetic fixtures.
 
-    `orchestrate.py selftest` と同じ位置づけ（doctor 自身の doctor）。実ファイルではなく
-    最小の recipe frontmatter を一時ディレクトリに書き出し、`check_recipe()` にそのままかけて
-    期待どおり FAIL するか/しないかを確認する（`check_recipe` のシグネチャは変更しない）。
-    第一段は #227（gate 列挙値）・#228（boolean 型・代表2件）・#219（id slug 形式）・
-    #218（checks 型・空エントリ）という、既に実害が出ていた4系統に絞る。
+    Same positioning as `orchestrate.py selftest` (the doctor's own doctor).
+    Writes minimal recipe frontmatter to a temporary directory instead of real
+    files, runs it through `check_recipe()` as-is, and verifies it does/does not
+    FAIL as expected (the signature of `check_recipe` stays unchanged).
+    The first stage focuses on the 4 classes that already caused real damage:
+    #227 (gate enum values), #228 (boolean types; 2 representative cases),
+    #219 (id slug format), and #218 (checks type / empty entries).
     """
     import tempfile
 
@@ -842,19 +854,19 @@ def run_selftest() -> None:
             try:
                 check_recipe(fixture)
             except Exception:
-                _emit("FAIL", f"selftest '{stem}' — check_recipe 実行時エラー:\n{traceback.format_exc()}")
+                _emit("FAIL", f"selftest '{stem}' — error while running check_recipe:\n{traceback.format_exc()}")
             got_fail = any(line.startswith("[FAIL]") for line in results[start:])
             passed = got_fail == expect_fail
             ok += passed
             print(f"  [{'OK' if passed else 'NG'}] {stem}"
-                  f"（期待: {'FAIL' if expect_fail else 'no-FAIL'} / 実際: {'FAIL' if got_fail else 'no-FAIL'}）")
+                  f" (expected: {'FAIL' if expect_fail else 'no-FAIL'} / actual: {'FAIL' if got_fail else 'no-FAIL'})")
 
     total = len(scenarios)
-    print(f"\nselftest: {ok}/{total} シナリオ OK")
+    print(f"\nselftest: {ok}/{total} scenarios OK")
     sys.exit(0 if ok == total else 1)
 
 
-# ── メイン ────────────────────────────────────────────────────────────────────
+# ── main ─────────────────────────────────────────────────────────────────────
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "selftest":
         run_selftest()
@@ -862,78 +874,78 @@ def main() -> None:
 
     recipe_files = sorted(RECIPES.glob("*.md"))
     if not recipe_files:
-        print("[WARN] recipes/ に .md ファイルが見つかりません")
+        print("[WARN] no .md files found in recipes/")
         sys.exit(0)
 
     for recipe_path in recipe_files:
         try:
             check_recipe(recipe_path)
         except Exception:
-            _emit("FAIL", f"recipe {recipe_path.stem} — 予期しないエラー:\n{traceback.format_exc()}")
+            _emit("FAIL", f"recipe {recipe_path.stem} — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_personas()
     except Exception:
-        _emit("FAIL", f"persona スキーマチェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"persona schema check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_commands()
     except Exception:
-        _emit("FAIL", f"commands チェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"commands check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_agents()
     except Exception:
-        _emit("FAIL", f"agents チェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"agents check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_catalog_drift()
     except Exception:
-        _emit("FAIL", f"§2 目録ドリフトチェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"§2 catalog drift check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_wiki()
     except Exception:
-        _emit("FAIL", f"wiki 衛生チェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"wiki hygiene check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_graph()
     except Exception:
-        _emit("FAIL", f"graph 整合チェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"graph consistency check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_extends_cycles(recipe_files)
     except Exception:
-        _emit("FAIL", f"extends 循環チェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"extends cycle check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_needs_cycles(recipe_files)
     except Exception:
-        _emit("FAIL", f"needs 循環チェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"needs cycle check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_release_metadata()
     except Exception:
-        _emit("FAIL", f"release メタデータチェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"release metadata check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_skills_lock()
     except Exception:
-        _emit("FAIL", f"skills-lock チェック — 予期しないエラー:\n{traceback.format_exc()}")
+        _emit("FAIL", f"skills-lock check — unexpected error:\n{traceback.format_exc()}")
 
-    print("## rig --validate レポート（CI / shipped tier）\n")
+    print("## rig --validate report (CI / shipped tier)\n")
     for line in results:
         print(line)
     print()
     print(f"PASS: {_pass} / WARN: {_warn} / FAIL: {_fail}")
 
     if _fail > 0:
-        print("\n不合格: FAIL が1件以上あります")
+        print("\nFAILED: one or more FAIL results")
         sys.exit(1)
     elif _warn > 0:
-        print("\n合格（要対応 WARN あり）")
+        print("\nPASSED (with WARNs to address)")
     else:
-        print("\n合格")
+        print("\nPASSED")
 
 
 if __name__ == "__main__":
