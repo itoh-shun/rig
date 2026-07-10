@@ -1,0 +1,72 @@
+"""validation selftest: regression test of the validator itself (split from scripts/validate.py)."""
+
+import pathlib
+import sys
+import traceback
+
+from . import state
+from .recipes import check_recipe
+from .state import _emit
+
+
+# ── selftest (regression test of validate.py itself; #232) ───────────────────
+def run_selftest() -> None:
+    """Detect implementation drift in the FAIL/WARN decision logic via synthetic fixtures.
+
+    Same positioning as `orchestrate.py selftest` (the doctor's own doctor).
+    Writes minimal recipe frontmatter to a temporary directory instead of real
+    files, runs it through `check_recipe()` as-is, and verifies it does/does not
+    FAIL as expected (the signature of `check_recipe` stays unchanged).
+    The first stage focuses on the 4 classes that already caused real damage:
+    #227 (gate enum values), #228 (boolean types; 2 representative cases),
+    #219 (id slug format), and #218 (checks type / empty entries).
+    """
+    import tempfile
+
+    def recipe(name: str, extra_top: str, steps_yaml: str) -> str:
+        return (
+            f"---\nname: {name}\ndescription: selftest fixture\nscope: project\n"
+            f"autonomy: interactive\n{extra_top}steps:\n{steps_yaml}---\n\n# {name}\n"
+        )
+
+    scenarios: list[tuple[str, bool, str]] = [
+        ("gate-ok", False, recipe("gate-ok", "",
+            "  - id: verify\n    instruction: verify\n    gate: acceptance-gate\n")),
+        ("gate-bad-serial", True, recipe("gate-bad-serial", "",
+            "  - id: verify\n    instruction: verify\n    gate: serial\n")),
+        ("bool-bad-capture", True, recipe("bool-bad-capture", 'capture: "yes"\n',
+            "  - id: implement\n    instruction: implement\n")),
+        ("bool-bad-design", True, recipe("bool-bad-design", "design: 1\n",
+            "  - id: implement\n    instruction: implement\n")),
+        ("id-ok", False, recipe("id-ok", "",
+            "  - id: valid-step-2\n    instruction: implement\n")),
+        ("id-bad-space", True, recipe("id-bad-space", "",
+            '  - id: "My Step"\n    instruction: implement\n')),
+        ("checks-ok", False, recipe("checks-ok", "",
+            '  - id: verify\n    instruction: verify\n    checks: ["npm test"]\n')),
+        ("checks-bad-scalar", True, recipe("checks-bad-scalar", "",
+            '  - id: verify\n    instruction: verify\n    checks: "npm test"\n')),
+        ("checks-bad-empty", True, recipe("checks-bad-empty", "",
+            '  - id: verify\n    instruction: verify\n    checks: ["npm test", ""]\n')),
+    ]
+
+    ok = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = pathlib.Path(tmp)
+        for stem, expect_fail, content in scenarios:
+            fixture = tmp_path / f"{stem}.md"
+            fixture.write_text(content, encoding="utf-8")
+            start = len(state.results)
+            try:
+                check_recipe(fixture)
+            except Exception:
+                _emit("FAIL", f"selftest '{stem}' — error while running check_recipe:\n{traceback.format_exc()}")
+            got_fail = any(line.startswith("[FAIL]") for line in state.results[start:])
+            passed = got_fail == expect_fail
+            ok += passed
+            print(f"  [{'OK' if passed else 'NG'}] {stem}"
+                  f" (expected: {'FAIL' if expect_fail else 'no-FAIL'} / actual: {'FAIL' if got_fail else 'no-FAIL'})")
+
+    total = len(scenarios)
+    print(f"\nselftest: {ok}/{total} scenarios OK")
+    sys.exit(0 if ok == total else 1)
