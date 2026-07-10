@@ -62,7 +62,7 @@ def telemetry_append(state: dict, final: str) -> None:
     # how much rig-wb is used overall. The `project` field preserves provenance.
     # Write failures are swallowed (best-effort; the cwd-side record is primary).
     try:
-        global_path = pathlib.Path.home() / ".rig" / "runs.jsonl"
+        global_path = config.GLOBAL_RUNS_PATH
         global_path.parent.mkdir(parents=True, exist_ok=True)
         # After the cwd record is finalized (rec fully built), copy it with project attached
         global_rec = dict(rec)

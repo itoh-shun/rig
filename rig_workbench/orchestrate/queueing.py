@@ -138,15 +138,19 @@ def _queue_relabel_args(status: str) -> list[str]:
     return args
 
 
-def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -> None:
+def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -> bool:
+    """Returns whether the item was found (local) / the update was attempted (gh)."""
     if backend == "local":
         q = _local_load()
+        matched = False
         for it in q["items"]:
             if str(it["id"]) == str(item_id):
                 it["status"] = status
                 it["note"] = note[:300]
-        _local_save(q)
-        return
+                matched = True
+        if matched:
+            _local_save(q)
+        return matched
     cli = _gh_cli(backend)
     R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
     relabel = _queue_relabel_args(status)
@@ -161,6 +165,7 @@ def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -
         # (already-open issues are a no-op, no crash; for the common case of retrying from
         # failed, i.e. not closed, this effectively does nothing).
         _cli_run([cli, "issue", "reopen", str(item_id)] + R)
+    return True
 
 
 def _build_queue_task_prompt(task: str, provider: str) -> str:

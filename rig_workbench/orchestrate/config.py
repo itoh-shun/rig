@@ -22,5 +22,6 @@ RECIPES = RIG_HOME / "skills" / "rig" / "recipes"
 INVOCATION_CWD = pathlib.Path(os.getcwd()).resolve()
 PROJECT_RECIPES = INVOCATION_CWD / ".rig" / "recipes"  # project overlay
 RUNS_PATH = INVOCATION_CWD / ".rig" / "runs.jsonl"     # run telemetry (an execution log on par with run-state)
+GLOBAL_RUNS_PATH = pathlib.Path.home() / ".rig" / "runs.jsonl"  # cross-project mirror (rebindable, e.g. in tests)
 DRILL_PATH = INVOCATION_CWD / ".rig" / "drill-results.jsonl"  # measured /rig:drill results (detection rate)
 DEFAULT_K = 2  # default acceptance-gate retry limit (SKILL §3.5)
