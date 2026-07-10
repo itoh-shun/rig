@@ -14,6 +14,83 @@ except ImportError:
 
 from . import config
 
+# ── Project-recipe trust gate ─────────────────────────────────────────────────
+# A repository can ship `.rig/recipes/*.md` that overlays a shipped recipe of
+# the same name, and a recipe's `checks:` lines run as shell commands in the
+# invocation cwd. Cloning a repo must therefore never be enough to get its
+# commands executed: loading a project-local recipe requires explicit consent.
+#
+# Consent, in precedence order:
+#   1. a recorded content hash in the trust store (a previously allowed,
+#      unchanged file passes silently; any edit re-requires consent)
+#   2. `--allow-project-recipes` on the command line, or
+#      `RIG_ALLOW_PROJECT_RECIPES=1` in the environment — both record the
+#      hash so later runs hit (1)
+# Anything else refuses with instructions. Shipped (RIG_HOME) and org-tier
+# recipes are exempt: both locations are configured by the user, not by the
+# repository being worked on.
+
+def _trust_store_path() -> pathlib.Path:
+    env = os.environ.get("RIG_TRUST_STORE")
+    if env:
+        return pathlib.Path(env).expanduser()
+    return pathlib.Path.home() / ".claude" / "rig" / "trusted-recipes.json"
+
+
+def _load_trust_store() -> dict:
+    p = _trust_store_path()
+    if not p.exists():
+        return {}
+    try:
+        import json
+        return json.loads(p.read_text(encoding="utf-8")) or {}
+    except (ValueError, OSError):
+        return {}
+
+
+def _record_trust(path: pathlib.Path, digest: str) -> None:
+    import json
+    p = _trust_store_path()
+    store = _load_trust_store()
+    store[str(path)] = digest
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _is_project_recipe(path: pathlib.Path) -> bool:
+    try:
+        overlay = config.PROJECT_RECIPES.resolve()
+        return path.resolve().is_relative_to(overlay)
+    except OSError:
+        return False
+
+
+def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
+    """Consent gate for project-local recipe overlays. Returns path if allowed, exits otherwise."""
+    if not _is_project_recipe(path):
+        return path
+    import hashlib
+    resolved = path.resolve()
+    digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    if _load_trust_store().get(str(resolved)) == digest:
+        return path
+    allowed = ("--allow-project-recipes" in sys.argv
+               or os.environ.get("RIG_ALLOW_PROJECT_RECIPES") == "1")
+    if allowed:
+        _record_trust(resolved, digest)
+        print(f"[trust] project recipe allowed and recorded: {resolved}")
+        return path
+    print(f"[ERROR] untrusted project-local recipe: {resolved}\n"
+          f"  Recipes under <cwd>/.rig/recipes/ come from the repository you are working\n"
+          f"  on, and their `checks:` lines execute as shell commands. First use requires\n"
+          f"  explicit consent:\n"
+          f"    re-run with --allow-project-recipes   (records a content hash; silent next time)\n"
+          f"    or set RIG_ALLOW_PROJECT_RECIPES=1\n"
+          f"  Review the file first: {resolved}\n"
+          f"  Trust store: {_trust_store_path()}")
+    sys.exit(2)
+
+
 # ── Recipe loading ────────────────────────────────────────────────────────────
 def parse_frontmatter(path: pathlib.Path) -> dict:
     text = path.read_text(encoding="utf-8")
@@ -92,6 +169,7 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         if parent_path is None:
             warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
             return chain
+        ensure_recipe_trusted(parent_path)
         parent_fm = parse_frontmatter(parent_path)
         chain.append((parent_name, parent_fm))
         visited.add(parent_name)
@@ -481,7 +559,7 @@ def resolve_recipe(name: str) -> pathlib.Path:
     An overlay with the same name as a built-in wins, so project-specific recipes can override."""
     p = pathlib.Path(name)
     if p.exists():
-        return p
+        return ensure_recipe_trusted(p)
     fname = name if name.endswith(".md") else f"{name}.md"
     bases = [config.PROJECT_RECIPES]
     org = os.environ.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")
@@ -491,7 +569,7 @@ def resolve_recipe(name: str) -> pathlib.Path:
     for base in bases:
         cand = base / fname
         if cand.exists():
-            return cand
+            return ensure_recipe_trusted(cand)
     print(f"[ERROR] recipe not found: {name}\n"
           f"  searched: " + ", ".join(str(b / fname) for b in bases))
     sys.exit(1)
