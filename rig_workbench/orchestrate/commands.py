@@ -40,11 +40,14 @@ def cmd_plan(args):
     i = 1
     while i < len(args):
         if args[i] == "--with" and i + 1 < len(args):
-            with_flags = shlex.split(args[i + 1]); i += 2
+            with_flags = shlex.split(args[i + 1])
+            i += 2
         elif args[i] == "--diff-lines" and i + 1 < len(args):
-            diff_lines = int(args[i + 1]); i += 2
+            diff_lines = int(args[i + 1])
+            i += 2
         elif args[i] == "--diff-git":
-            use_git_diff = True; i += 1
+            use_git_diff = True
+            i += 1
         else:
             i += 1
     if use_git_diff and diff_lines is None:
@@ -78,9 +81,11 @@ def cmd_init(args):
     i = 1
     while i < len(args):
         if args[i] == "--goal" and i + 1 < len(args):
-            goal = args[i + 1]; i += 2
+            goal = args[i + 1]
+            i += 2
         elif args[i] == "--out" and i + 1 < len(args):
-            out = pathlib.Path(args[i + 1]); i += 2
+            out = pathlib.Path(args[i + 1])
+            i += 2
         else:
             i += 1
     state = new_state(fm.get("name", path.stem), steps, goal)
@@ -137,13 +142,17 @@ def cmd_verdict(args):
     i = 1
     while i < len(args):
         if args[i] == "--by" and i + 1 < len(args):
-            by = args[i + 1]; i += 2
+            by = args[i + 1]
+            i += 2
         elif args[i] == "--pass":
-            ok = True; i += 1
+            ok = True
+            i += 1
         elif args[i] == "--fail":
-            ok = False; i += 1
+            ok = False
+            i += 1
         elif args[i] == "--note" and i + 1 < len(args):
-            note = args[i + 1]; i += 2
+            note = args[i + 1]
+            i += 2
         else:
             i += 1
     if by is None or ok is None:
@@ -196,35 +205,50 @@ def cmd_run(args):
     while i < len(args):
         a = args[i]
         if a == "--provider" and i + 1 < len(args):
-            gen = args[i + 1]; i += 2
+            gen = args[i + 1]
+            i += 2
         elif a == "--generators" and i + 1 < len(args):
-            generators = [g.strip() for g in args[i + 1].split(",") if g.strip()]; i += 2
+            generators = [g.strip() for g in args[i + 1].split(",") if g.strip()]
+            i += 2
         elif a == "--verifier-provider" and i + 1 < len(args):
-            ver = args[i + 1]; i += 2
+            ver = args[i + 1]
+            i += 2
         elif a == "--verifier-providers" and i + 1 < len(args):
-            ver = [v.strip() for v in args[i + 1].split(",") if v.strip()]; i += 2
+            ver = [v.strip() for v in args[i + 1].split(",") if v.strip()]
+            i += 2
         elif a == "--provider-cmd" and i + 1 < len(args):
-            cfg["provider_cmd"] = args[i + 1]; i += 2
+            cfg["provider_cmd"] = args[i + 1]
+            i += 2
         elif a == "--model" and i + 1 < len(args):
-            cfg["model"] = args[i + 1]; i += 2
+            cfg["model"] = args[i + 1]
+            i += 2
         elif a == "--base-url" and i + 1 < len(args):
-            cfg["base_url"] = args[i + 1]; i += 2
+            cfg["base_url"] = args[i + 1]
+            i += 2
         elif a in ("--auto-model", "--auto-model-setting"):
-            cfg["auto_model"] = True; i += 1
+            cfg["auto_model"] = True
+            i += 1
         elif a == "--goal" and i + 1 < len(args):
-            goal = args[i + 1]; i += 2
+            goal = args[i + 1]
+            i += 2
         elif a == "--out" and i + 1 < len(args):
-            out = pathlib.Path(args[i + 1]); i += 2
+            out = pathlib.Path(args[i + 1])
+            i += 2
         elif a == "--max-steps" and i + 1 < len(args):
-            max_steps = int(args[i + 1]); i += 2
+            max_steps = int(args[i + 1])
+            i += 2
         elif a == "--max-parallel" and i + 1 < len(args):
-            max_parallel = int(args[i + 1]); i += 2
+            max_parallel = int(args[i + 1])
+            i += 2
         elif a == "--quorum" and i + 1 < len(args):
-            quorum = args[i + 1]; i += 2
+            quorum = args[i + 1]
+            i += 2
         elif a == "--isolate":
-            cfg["isolate"] = True; i += 1
+            cfg["isolate"] = True
+            i += 1
         elif a == "--allow-headless-in-cc":
-            cfg["allow_headless_in_cc"] = True; i += 1
+            cfg["allow_headless_in_cc"] = True
+            i += 1
         else:
             i += 1
     if not gen and generators:
@@ -400,15 +424,20 @@ def cmd_runs(args):
     i = 0
     while i < len(args):
         if args[i] == "--limit" and i + 1 < len(args):
-            limit = int(args[i + 1]); i += 2
+            limit = int(args[i + 1])
+            i += 2
         elif args[i] == "--recipe" and i + 1 < len(args):
-            recipe = args[i + 1]; i += 2
+            recipe = args[i + 1]
+            i += 2
         elif args[i] == "--personas":
-            personas_mode = True; i += 1
+            personas_mode = True
+            i += 1
         elif args[i] == "--html" and i + 1 < len(args):
-            html_out = args[i + 1]; i += 2
+            html_out = args[i + 1]
+            i += 2
         elif args[i] == "--since" and i + 1 < len(args):
-            since = args[i + 1]; i += 2
+            since = args[i + 1]
+            i += 2
         else:
             i += 1
     if html_out:
@@ -513,9 +542,11 @@ def cmd_install_shim(args):
     while i < len(args):
         a = args[i]
         if a == "--to" and i + 1 < len(args):
-            target = pathlib.Path(args[i + 1]).expanduser(); i += 2
+            target = pathlib.Path(args[i + 1]).expanduser()
+            i += 2
         elif a in ("--force", "-f"):
-            force = True; i += 1
+            force = True
+            i += 1
         else:
             i += 1
     src = config.RIG_HOME / ".claude-plugin" / "bin" / "rig"

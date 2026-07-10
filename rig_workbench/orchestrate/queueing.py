@@ -2,7 +2,6 @@
 
 import sys
 import json
-import pathlib
 import subprocess
 import concurrent.futures as futures
 
@@ -51,7 +50,8 @@ def queue_add(backend: str, task: str, cfg: dict) -> dict:
     if backend == "local":
         q = _local_load()
         item = {"id": q["next_id"], "task": task, "status": "queued", "note": ""}
-        q["items"].append(item); q["next_id"] += 1
+        q["items"].append(item)
+        q["next_id"] += 1
         _local_save(q)
         return item
     cli = _gh_cli(backend)
@@ -91,7 +91,7 @@ def queue_list(backend: str, cfg: dict) -> list[dict]:
             except Exception:
                 rows = []
             for x in rows:
-                labels = {l.get("name") for l in (x.get("labels") or [])}
+                labels = {lbl.get("name") for lbl in (x.get("labels") or [])}
                 st = ("running" if "rig-running" in labels
                       else "failed" if "rig-failed" in labels
                       else "queued")
@@ -143,7 +143,8 @@ def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -
         q = _local_load()
         for it in q["items"]:
             if str(it["id"]) == str(item_id):
-                it["status"] = status; it["note"] = note[:300]
+                it["status"] = status
+                it["note"] = note[:300]
         _local_save(q)
         return
     cli = _gh_cli(backend)
@@ -211,24 +212,32 @@ def cmd_queue(args):
     while i < len(rest):
         a = rest[i]
         if a == "--backend" and i + 1 < len(rest):
-            backend = rest[i + 1]; i += 2
+            backend = rest[i + 1]
+            i += 2
         elif a == "--repo" and i + 1 < len(rest):
-            cfg["repo"] = rest[i + 1]; i += 2
+            cfg["repo"] = rest[i + 1]
+            i += 2
         elif a == "--provider" and i + 1 < len(rest):
-            gen = rest[i + 1]; i += 2
+            gen = rest[i + 1]
+            i += 2
         elif a == "--verifier-provider" and i + 1 < len(rest):
-            ver = rest[i + 1]; i += 2
+            ver = rest[i + 1]
+            i += 2
         elif a == "--max-parallel" and i + 1 < len(rest):
-            max_parallel = int(rest[i + 1]); i += 2
+            max_parallel = int(rest[i + 1])
+            i += 2
         elif a == "--provider-cmd" and i + 1 < len(rest):
-            cfg["provider_cmd"] = rest[i + 1]; i += 2
+            cfg["provider_cmd"] = rest[i + 1]
+            i += 2
         else:
-            free.append(a); i += 1
+            free.append(a)
+            i += 1
     ver = ver or gen
 
     if sub == "add":
         if not free:
-            print("[ERROR] queue add \"<task>\""); sys.exit(1)
+            print("[ERROR] queue add \"<task>\"")
+            sys.exit(1)
         it = queue_add(backend, " ".join(free), cfg)
         print(f"queued [{backend}]: #{it['id']} {it['task']}  ({it['status']})"
               + (f" — {it.get('note','')}" if it.get("status") == "error" else ""))
@@ -245,13 +254,15 @@ def cmd_queue(args):
         return
     if sub == "done":
         if not free:
-            print("[ERROR] queue done <id>"); sys.exit(1)
+            print("[ERROR] queue done <id>")
+            sys.exit(1)
         queue_set_status(backend, free[0], "done", "manually marked done", cfg)
         print(f"done [{backend}]: #{free[0]}")
         return
     if sub == "retry":
         if not free:
-            print("[ERROR] queue retry <id>"); sys.exit(1)
+            print("[ERROR] queue retry <id>")
+            sys.exit(1)
         queue_set_status(backend, free[0], "queued", "", cfg)
         print(f"retry [{backend}]: #{free[0]} → queued")
         return

@@ -220,7 +220,8 @@ def cmd_models(args):
     i = 0
     while i < len(args):
         if args[i] == "--base-url" and i + 1 < len(args):
-            cfg["base_url"] = args[i + 1]; i += 2
+            cfg["base_url"] = args[i + 1]
+            i += 2
         else:
             i += 1
     found = discover_models(cfg)
@@ -577,15 +578,20 @@ def cmd_probe(args):
     while i < len(args):
         a = args[i]
         if a == "--provider" and i + 1 < len(args):
-            provider = args[i + 1]; i += 2
+            provider = args[i + 1]
+            i += 2
         elif a == "--role" and i + 1 < len(args):
-            role = args[i + 1]; i += 2
+            role = args[i + 1]
+            i += 2
         elif a == "--model" and i + 1 < len(args):
-            cfg["model"] = args[i + 1]; i += 2
+            cfg["model"] = args[i + 1]
+            i += 2
         elif a == "--base-url" and i + 1 < len(args):
-            cfg["base_url"] = args[i + 1]; i += 2
+            cfg["base_url"] = args[i + 1]
+            i += 2
         elif a == "--provider-cmd" and i + 1 < len(args):
-            cfg["provider_cmd"] = args[i + 1]; i += 2
+            cfg["provider_cmd"] = args[i + 1]
+            i += 2
         else:
             i += 1
     if not provider:
@@ -609,6 +615,6 @@ def cmd_probe(args):
     print("  --- output (first 600 chars) ---")
     print("  " + (out or "")[:600].replace("\n", "\n  "))
     print(f"  → {sig} detected: " + ("✓ parseable (usable from rig)" if found
-                                else f"✗ not found (prompt/flag tuning needed; the cmd provider accepts an explicit command)"))
+                                else "✗ not found (prompt/flag tuning needed; the cmd provider accepts an explicit command)"))
     sys.exit(0 if (rc == 0 and found) else 1)
 

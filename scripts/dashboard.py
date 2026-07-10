@@ -253,9 +253,9 @@ def render_kpi(k: dict) -> str:
         ("avg retries", k["avg_retries"], value_class("avg_retries", k["avg_retries"])),
     ]
     return "\n".join(
-        f'<div class="kpi"><div class="label">{esc(l)}</div>'
+        f'<div class="kpi"><div class="label">{esc(label)}</div>'
         f'<div class="value {c}">{esc(v)}</div></div>'
-        for l, v, c in tiles
+        for label, v, c in tiles
     )
 
 

@@ -1,6 +1,5 @@
 """Trust gate for project-local recipe overlays (<cwd>/.rig/recipes)."""
 
-import pathlib
 
 import pytest
 

@@ -43,13 +43,15 @@ def cmd_selftest(_args):
     config.RUNS_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_runs_selftest.jsonl"
     config.RUNS_PATH.unlink(missing_ok=True)
 
-    import io, contextlib
+    import io
+    import contextlib
 
-    s = lambda **k: {"id": k["id"], "instruction": "x", "gate": k.get("gate"),
-                     "pattern": k.get("pattern"), "personas": k.get("personas", []),
-                     "needs": k.get("needs", []),
-                     "acceptance": [], "checks": k.get("checks", []),
-                     "max_retries": k.get("max_retries", DEFAULT_K), "output_contract": None}
+    def s(**k):
+        return {"id": k["id"], "instruction": "x", "gate": k.get("gate"),
+                "pattern": k.get("pattern"), "personas": k.get("personas", []),
+                "needs": k.get("needs", []),
+                "acceptance": [], "checks": k.get("checks", []),
+                "max_retries": k.get("max_retries", DEFAULT_K), "output_contract": None}
 
     # Scenario A: happy path (no-gate → checks pass → verdict pass → DONE)
     stepsA = [s(id="design"),
@@ -199,7 +201,8 @@ def cmd_selftest(_args):
     import tempfile
     queueing.QUEUE_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_queue_selftest.json"
     queueing.QUEUE_PATH.unlink(missing_ok=True)
-    queue_add("local", "task-A", {}); queue_add("local", "task-B", {})
+    queue_add("local", "task-A", {})
+    queue_add("local", "task-B", {})
     q_items = queue_list("local", {})
     for it in q_items:                          # go with mock (generate → verify → done)
         _, vout = run_provider("mock", "verifier", "x", {}, persona="queue")
@@ -230,7 +233,7 @@ def cmd_selftest(_args):
     # P: run telemetry (every run_loop scenario appends one line to .rig/runs.jsonl)
     p_lines = []
     if config.RUNS_PATH.exists():
-        p_lines = [json.loads(l) for l in config.RUNS_PATH.read_text(encoding="utf-8").splitlines() if l.strip()]
+        p_lines = [json.loads(line) for line in config.RUNS_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     p_first = p_lines[0] if p_lines else {}
     config.RUNS_PATH.unlink(missing_ok=True)
     config.RUNS_PATH = _orig_runs
@@ -330,8 +333,10 @@ def cmd_selftest(_args):
     with contextlib.redirect_stdout(buf_v):
         cmd_party([])
     v_out = buf_v.getvalue()
-    config.RUNS_PATH.unlink(missing_ok=True); config.DRILL_PATH.unlink(missing_ok=True)
-    config.RUNS_PATH = _orig_runs; config.DRILL_PATH = _orig_drill
+    config.RUNS_PATH.unlink(missing_ok=True)
+    config.DRILL_PATH.unlink(missing_ok=True)
+    config.RUNS_PATH = _orig_runs
+    config.DRILL_PATH = _orig_drill
     report("V party: renders Lv and achievements", "Lv.1" in v_out and "🏆 First DONE" in v_out, True)
     report("V party: reflects drill detection rate and sorties/REJECT",
            "detection 100% (drill 2/2)" in v_out and "sorties   1 / REJECT 1" in v_out, True)
@@ -378,14 +383,16 @@ def cmd_selftest(_args):
     _g("config", "user.email", "selftest@rig")
     _g("config", "user.name", "rig-selftest")
     (xroot / "base.txt").write_text("base\n")
-    _g("add", "."); _g("commit", "-q", "-m", "base")
+    _g("add", ".")
+    _g("commit", "-q", "-m", "base")
     config.INVOCATION_CWD = xroot
     # X-1: DONE with commits and clean → ff-merge and remove
     iso1 = setup_isolation("demo")
     report("X isolate: worktree and branch created",
            pathlib.Path(iso1["dir"]).is_dir() and iso1["branch"].startswith("rig/run-demo-"), True)
     (pathlib.Path(iso1["dir"]) / "made.txt").write_text("x\n")
-    _g("add", ".", cwd=iso1["dir"]); _g("commit", "-q", "-m", "work", cwd=iso1["dir"])
+    _g("add", ".", cwd=iso1["dir"])
+    _g("commit", "-q", "-m", "work", cwd=iso1["dir"])
     report("X isolate: DONE+commit+clean ff-merges (merged)", teardown_isolation(iso1, "DONE"), "merged")
     report("X isolate: after merge the product is in root", (xroot / "made.txt").exists(), True)
     report("X isolate: worktree gone after removal", pathlib.Path(iso1["dir"]).exists(), False)

@@ -182,11 +182,14 @@ def _show_usage(argv: list[str]) -> None:
     i = 0
     while i < len(argv):
         if argv[i] == "--limit" and i + 1 < len(argv):
-            limit = int(argv[i + 1]); i += 2
+            limit = int(argv[i + 1])
+            i += 2
         elif argv[i] == "--json":
-            as_json = True; i += 1
+            as_json = True
+            i += 1
         elif argv[i] in ("--global", "-g"):
-            use_global = True; i += 1
+            use_global = True
+            i += 1
         else:
             i += 1
 

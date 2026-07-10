@@ -749,6 +749,24 @@ def check_release_metadata() -> None:
     else:
         _emit("PASS", f"release: plugin.json version ({version}) ⇄ CHANGELOG.md section match")
 
+    # plugin.json is the release workflow's source of truth, but the pip package
+    # carries its own two copies of the version — keep all three in lockstep.
+    others = {
+        "pyproject.toml": re.search(
+            r'^version\s*=\s*"([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+            re.MULTILINE),
+        "rig_workbench/__init__.py": re.search(
+            r'^__version__\s*=\s*"([^"]+)"',
+            (ROOT / "rig_workbench" / "__init__.py").read_text(encoding="utf-8"), re.MULTILINE),
+    }
+    for label, m in others.items():
+        if m is None:
+            _emit("FAIL", f"release — no version field found in {label}")
+        elif m.group(1) != version:
+            _emit("FAIL", f"release — {label} version ({m.group(1)}) != plugin.json ({version})")
+        else:
+            _emit("PASS", f"release: plugin.json version ({version}) ⇄ {label} match")
+
 
 # ── skills-lock.json consistency (/rig:import provenance record; #249) ───────
 _VALID_IMPORT_MODES = ("delegate", "translate", "knowledge")
