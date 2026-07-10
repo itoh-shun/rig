@@ -9,8 +9,9 @@ import subprocess
 try:
     import yaml
 except ImportError:
-    print("[ERROR] PyYAML not found. `pip install pyyaml`.")
-    sys.exit(1)
+    # Don't kill importers (pytest collection, library use) at import time —
+    # fail with the CLI hint on first actual use instead (parse_frontmatter).
+    yaml = None
 
 from . import config
 
@@ -93,6 +94,9 @@ def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
 
 # ── Recipe loading ────────────────────────────────────────────────────────────
 def parse_frontmatter(path: pathlib.Path) -> dict:
+    if yaml is None:
+        print("[ERROR] PyYAML not found. `pip install pyyaml`.")
+        sys.exit(1)
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
         return {}

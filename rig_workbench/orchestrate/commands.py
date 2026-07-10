@@ -58,6 +58,8 @@ def cmd_plan(args):
         plan = resolve_plan_json(path)
     if "--json" in args:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
+        if plan.get("errors"):
+            sys.exit(1)  # same exit contract as the non-JSON path
         return
     print(render_plan(plan["recipe"], plan["steps"]))
     for w in plan.get("warnings", []):
