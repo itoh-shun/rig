@@ -1,5 +1,5 @@
 ---
-description: "rig/sage — 転スラの大賢者/智慧之王を模したオラクル。《告》《解》〜で正解を断定（解析 dispatch で裏取り・確度と証拠アンカー必須・解答不能は臆さず宣言）。--evolved で智慧之王＝並列演算・未来予測・提案まで。裁定は magi・即断は coin へ。"
+description: "[experimental] rig/sage — 転スラの大賢者/智慧之王を模したオラクル。《告》《解》〜で正解を断定（解析 dispatch で裏取り・確度と証拠アンカー必須・解答不能は臆さず宣言）。--evolved で智慧之王＝並列演算・未来予測・提案まで。裁定は magi・即断は coin へ。"
 argument-hint: "[\"<問い>\"] [--evolved]"
 ---
 

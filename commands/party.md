@@ -1,5 +1,5 @@
 ---
-description: "rig/party — パーティ編成画面 🎮。テレメトリ(runs.jsonl)・drill 実測(検出率)・ブリック在庫から RPG 風キャラクターシート(Lv/出撃/REJECT/検出率/実績)を描画。ゲーム画面に見えるが全行が実データ=ハーネスの健康診断ダッシュボード。読み取り専用。"
+description: "[experimental] rig/party — パーティ編成画面 🎮。テレメトリ(runs.jsonl)・drill 実測(検出率)・ブリック在庫から RPG 風キャラクターシート(Lv/出撃/REJECT/検出率/実績)を描画。ゲーム画面に見えるが全行が実データ=ハーネスの健康診断ダッシュボード。読み取り専用。"
 argument-hint: ""
 ---
 

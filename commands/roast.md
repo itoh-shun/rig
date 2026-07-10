@@ -1,5 +1,5 @@
 ---
-description: "rig/roast — 毒舌ロースト・レビュー。現在の変更を辛辣で笑える言い回しでレビューするが、指摘の中身は本物（AI 臭・可読性・過剰/不足・バグ）。笑いで批判のエゴ防御を下げて指摘を実際に読ませる adversarial-review の humor 変種。"
+description: "[experimental] rig/roast — 毒舌ロースト・レビュー。現在の変更を辛辣で笑える言い回しでレビューするが、指摘の中身は本物（AI 臭・可読性・過剰/不足・バグ）。笑いで批判のエゴ防御を下げて指摘を実際に読ませる adversarial-review の humor 変種。"
 argument-hint: "[レビュー対象（省略可・既定は現在の変更）] [--plan]"
 ---
 
