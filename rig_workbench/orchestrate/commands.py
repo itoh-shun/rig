@@ -12,7 +12,7 @@ from .recipes import (auto_orchestrate, git_diff_lines, load_manifest, load_step
                       parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state
-from .providers import run_loop
+from .providers import parse_step_model_spec, run_loop, unknown_step_model_ids
 from .isolate import setup_isolation, teardown_isolation
 
 # ── Commands ──────────────────────────────────────────────────────────────────
@@ -190,7 +190,8 @@ def cmd_status(args):
 def cmd_run(args):
     if not args:
         print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
-              "[--provider-cmd \"...{prompt}...\"] [--max-steps N] [--goal G] [--out f] [--isolate]")
+              "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
+              "[--max-steps N] [--goal G] [--out f] [--isolate]")
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
@@ -203,6 +204,7 @@ def cmd_run(args):
     max_parallel = 4
     quorum = "all"
     cfg: dict = {}
+    step_models: dict[str, str] = {}
     i = 1
     while i < len(args):
         a = args[i]
@@ -223,6 +225,15 @@ def cmd_run(args):
             i += 2
         elif a == "--model" and i + 1 < len(args):
             cfg["model"] = args[i + 1]
+            i += 2
+        elif a == "--step-model" and i + 1 < len(args):
+            # Runtime per-step model override (repeatable; #293).
+            # Precedence: --step-model > recipe frontmatter `model:` > global --model.
+            parsed = parse_step_model_spec(args[i + 1])
+            if parsed is None:
+                print(f"[ERROR] --step-model expects <step-id>=<model> (e.g. plan=sonnet), got: {args[i + 1]}")
+                sys.exit(1)
+            step_models[parsed[0]] = parsed[1]
             i += 2
         elif a == "--base-url" and i + 1 < len(args):
             cfg["base_url"] = args[i + 1]
@@ -253,6 +264,14 @@ def cmd_run(args):
             i += 1
         else:
             i += 1
+    # Unknown step ids abort the run before anything executes (no silent ignores; #293)
+    unknown = unknown_step_model_ids(step_models, steps)
+    if unknown:
+        print(f"[ERROR] --step-model: unknown step id(s): {', '.join(unknown)} "
+              f"(recipe `{fm.get('name', path.stem)}` steps: {', '.join(s['id'] for s in steps)})")
+        sys.exit(1)
+    if step_models:
+        cfg["step_models"] = step_models
     if not gen and generators:
         gen = generators[0]            # --generators alone is fine (first one as representative)
     if not gen:
@@ -287,6 +306,8 @@ def cmd_run(args):
         sys.exit(1)
     ver = ver or gen  # default to the same provider (but a separate process and role)
     state = new_state(fm.get("name", path.stem), steps, goal)
+    for sid, model in step_models.items():   # record runtime overrides in run-state (traceable later)
+        state["history"].append({"action": "STEP_MODEL_OVERRIDE", "step": sid, "model": model})
     iso = None
     if cfg.get("isolate"):
         iso = setup_isolation(fm.get("name", path.stem))
@@ -298,8 +319,10 @@ def cmd_run(args):
     if isinstance(ver, list):
         panel += f" / model-quorum={','.join(ver)}"
     dag = " / DAG-parallel" if any(s["needs"] for s in steps) else ""
+    overrides = ("\nStep-model overrides: "
+                 + ", ".join(f"{k}={v}" for k, v in step_models.items())) if step_models else ""
     print(f"\nAutonomous run: provider={gen} / verifier={'+'.join(ver) if isinstance(ver, list) else ver} / "
-          f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}\n")
+          f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}{overrides}\n")
     final = run_loop(state, out, gen, ver, cfg, max_steps,
                      max_parallel=max_parallel, quorum=quorum,
                      generators=(generators or None))
