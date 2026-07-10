@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -104,3 +104,25 @@ python3 scripts/workbench.py stats [--recipe bugfix] [--verifier security-review
 ```
 
 `.rig/runs/` 配下の全 task を集計し、そのまま提示する（Runs/Accepted/Discarded/Failed gate のサマリ→Most used recipes→Gate results→Verifier behavior）。**`Warning:` 行が出た場合は必ずそのまま伝える**——`<persona> has 0 rejects across N runs. Possible rubber-stamp behavior.` は N≥5 かつ REJECT 0 件の reviewer に対する自動検知であり、ゴム印化（何でも通す reviewer）の疑いを人に気づかせるための唯一のシグナル。黙って握りつぶさない。verdict が一件も記録されていない場合は「未記録」の旨を伝え、`/rig review` での記録を促す。
+
+## `/rig gc [--older-than <N>d] [--dry-run]`
+
+```
+python3 scripts/workbench.py gc [--older-than 14d] [--dry-run]
+```
+
+視覚検証成果物（`.rig/runs/<task_id>/visual/` と `.rig/visual/adhoc/*`、`patterns/visual-artifacts` が正本）の age-based 処分。閾値は既定14日（`--older-than <N>d` で変更、例 `7d`）。task の status（accepted/discarded/running）は問わない——画像は再生成可能な検証手段であって恒久記録ではない。**ソース・worktree・branch には一切触れない**。
+
+1. まず `--dry-run` で呼び、`[dry-run] remove: <path>/ (<age> days old)` の候補一覧をそのままユーザーに提示する。
+2. ユーザーの確認を得てから `--dry-run` なしで再実行する（discard と同じプレビュー→実行の二段。スクリプト自体は `--dry-run` なしで即削除するため、確認はこの instruction 側の責務）。
+3. `Nothing to remove.` の場合はそのまま伝えて終了する。
+
+## `/rig audit [--limit N] [--action A] [--since YYYY-MM-DD]`
+
+```
+python3 scripts/workbench.py audit [--limit 10] [--action accept_force] [--since 2026-07-01]
+```
+
+`accept --force` 等で acceptance-gate の未達基準を上書きした際の恒久記録（`.rig/audit.jsonl`）の一覧。各エントリ（ts・action・task_id・bypassed 基準・gate 状態・failed checks）をそのまま提示する——整形の追加は不要。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`）・`--since`（YYYY-MM-DD 以降）。
+
+``No records (entries are appended by `accept --force`).`` の場合は「force-bypass の履歴が無い＝gate を押し切った accept が一度も無い」ことを意味するので、その旨をそのまま伝える。ユーザーが「force で通した履歴を見たい」「gate を無視した accept が無いか確認したい」と言ったらこのコマンドを提案する（**読み取り専用**——記録の追記は `workbench.py accept --force` 側が自動で行い、ここからは書き込まない）。

@@ -1,6 +1,6 @@
 ---
-description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/stats/review/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gh issue <n> | gh pr <n> review|fix | gh ci"
+description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/stats/review/gc/audit/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board` 一枚で全体像を見失わない。"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -27,6 +27,8 @@ $ARGUMENTS
 | `board [--all]` | `facets/instructions/workbench-ops`（**全 task を一覧するダッシュボード**。複数タスクを並行で進めているときの単一の確認場所） |
 | `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
 | `review <task_id> --set <persona>=<verdict>` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録） |
+| `gc [--older-than <N>d] [--dry-run]` | `facets/instructions/workbench-ops`（視覚検証成果物（`.rig/runs/*/visual/`・`.rig/visual/adhoc/*`）の age-based 処分。既定14日・`--dry-run` で候補表示のみ） |
+| `audit [--limit N] [--action A] [--since YYYY-MM-DD]` | `facets/instructions/workbench-ops`（`accept --force` 等の恒久監査ログ `.rig/audit.jsonl` の一覧・絞り込み） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |
 | `gh pr <n> fix` | `facets/instructions/gh-flow`（PR 指摘を隔離 worktree で修正） |
@@ -75,6 +77,8 @@ $ARGUMENTS
 /rig:go accept
 /rig:go discard rig-20260704-153012-login-fix --yes
 /rig:go log --limit 5
+/rig:go gc --dry-run
+/rig:go audit --limit 10
 /rig:go gh issue 123
 /rig:go gh pr 45 review
 /rig:go gh pr 45 fix
