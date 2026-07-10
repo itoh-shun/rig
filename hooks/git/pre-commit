@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# rig-githooks v1 (managed by `rig-wb githooks` — do not edit by hand; reinstall to update)
+#
+# pre-commit — rig's computational acceptance sensors as a native git hook
+# (itoh-shun/rig#298). Applies the machine-checkable part of the acceptance
+# gate to plain human `git commit`, independent of any Claude Code session.
+#
+# Checks (computational only — NO AI/LLM criteria run here):
+#   1. lint          — the `lint:` command from the project manifest .claude/rig.md
+#   2. secret scan   — fast grep for secret-looking patterns in the staged diff
+#
+# Escape hatches (set to any value other than 0):
+#   RIG_HOOK_SKIP=1            skip the whole hook
+#   RIG_HOOK_SKIP_LINT=1       skip only the lint check
+#   RIG_HOOK_SKIP_SECRETS=1    skip only the secret-pattern scan
+#
+# No manifest (.claude/rig.md) => the hook is a no-op (a notice is printed).
+set -u
+
+say() { printf 'rig pre-commit: %s\n' "$*" >&2; }
+
+_truthy() { [ -n "${1:-}" ] && [ "${1:-}" != "0" ]; }
+
+if _truthy "${RIG_HOOK_SKIP:-}"; then
+  say "RIG_HOOK_SKIP set — skipping all checks"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+manifest="$repo_root/.claude/rig.md"
+
+if [ ! -f "$manifest" ]; then
+  say "no project manifest ($manifest) — hook is a no-op (run /rig:init to create one)"
+  exit 0
+fi
+
+# Read a top-level `key: "value"` line from the manifest's YAML block.
+# Handles double/single quoted values and trailing `# comments`.
+read_manifest_cmd() {
+  local key="$1" line val
+  line="$(grep -m1 -E "^${key}:" "$manifest" 2>/dev/null)" || return 0
+  val="${line#*:}"
+  val="${val#"${val%%[![:space:]]*}"}"        # ltrim
+  case "$val" in
+    \"*) val="${val#\"}"; val="${val%%\"*}" ;;
+    \'*) val="${val#\'}"; val="${val%%\'*}" ;;
+    *)   val="${val%%#*}" ;;
+  esac
+  val="${val%"${val##*[![:space:]]}"}"        # rtrim
+  printf '%s' "$val"
+}
+
+fail=0
+
+# ── 1) lint ──────────────────────────────────────────────────────────────
+if _truthy "${RIG_HOOK_SKIP_LINT:-}"; then
+  say "lint: skipped (RIG_HOOK_SKIP_LINT)"
+else
+  lint_cmd="$(read_manifest_cmd lint)"
+  if [ -z "$lint_cmd" ]; then
+    say "lint: no command configured in manifest — skipped"
+  else
+    say "lint: $lint_cmd"
+    if ! (cd "$repo_root" && eval "$lint_cmd") </dev/null; then
+      say "lint FAILED (bypass once: RIG_HOOK_SKIP_LINT=1 git commit ...)"
+      fail=1
+    fi
+  fi
+fi
+
+# ── 2) secret-pattern scan of staged additions ───────────────────────────
+if _truthy "${RIG_HOOK_SKIP_SECRETS:-}"; then
+  say "secrets: skipped (RIG_HOOK_SKIP_SECRETS)"
+else
+  # AWS access keys, PEM private-key headers, GitHub / Slack / sk- style tokens,
+  # Google API keys. Fast + dumb on purpose: patterns only, no entropy analysis.
+  secret_patterns='(AKIA|ASIA)[0-9A-Z]{16}'
+  secret_patterns="$secret_patterns"'|-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----'
+  secret_patterns="$secret_patterns"'|gh[pousr]_[A-Za-z0-9]{20,}'
+  secret_patterns="$secret_patterns"'|github_pat_[A-Za-z0-9_]{20,}'
+  secret_patterns="$secret_patterns"'|xox[baprs]-[0-9A-Za-z-]{10,}'
+  secret_patterns="$secret_patterns"'|sk-(ant-)?[A-Za-z0-9_-]{20,}'
+  secret_patterns="$secret_patterns"'|AIza[0-9A-Za-z_-]{35}'
+
+  staged_added="$(git diff --cached --diff-filter=ACMR -U0 --no-color 2>/dev/null \
+    | grep -E '^\+' | grep -vE '^\+\+\+' || true)"
+  hits="$(printf '%s\n' "$staged_added" | grep -cE "$secret_patterns" || true)"
+  if [ "${hits:-0}" -gt 0 ]; then
+    say "secret-pattern match in staged changes ($hits line(s)):"
+    printf '%s\n' "$staged_added" | grep -nE "$secret_patterns" | head -20 >&2
+    say "commit blocked (bypass once: RIG_HOOK_SKIP_SECRETS=1 git commit ...)"
+    fail=1
+  else
+    say "secrets: clean"
+  fi
+fi
+
+exit "$fail"

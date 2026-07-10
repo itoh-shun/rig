@@ -288,6 +288,9 @@ Sub-commands:
   usage [--limit N] [--global] [--json] History of actual rig-wb usage.
                                         Defaults to .rig/runs.jsonl in cwd (per-project);
                                         --global reads ~/.rig/runs.jsonl (across all projects)
+  githooks install|uninstall|status [--force]
+                                        native git pre-commit/pre-push hooks
+                                        (computational sensors only; issue #298)
   bench [--tasks ...] [--provider X] [--allow-headless-in-cc] [--out <json>]
                                         bare vs rig A/B benchmark
                                         (objective metrics on built-in tasks; billing is opt-in)
@@ -327,6 +330,9 @@ def main() -> None:
         from . import bench as bench_mod
         bench_mod.cmd_bench(rest)
         return
+    if sub == "githooks":
+        from . import githooks as githooks_mod
+        sys.exit(githooks_mod.cmd_githooks(rest))
     if sub == "wb":
         _run_workbench(rest)
         return
