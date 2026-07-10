@@ -45,6 +45,12 @@ def repo_root() -> pathlib.Path:
     return pathlib.Path(proc.stdout.strip())
 
 
+def maybe_repo_root() -> pathlib.Path | None:
+    """Like repo_root(), but returns None outside a git repository instead of dying."""
+    proc = git(["rev-parse", "--show-toplevel"], check=False)
+    return pathlib.Path(proc.stdout.strip()) if proc.returncode == 0 else None
+
+
 def current_branch(root: pathlib.Path) -> str:
     return git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=root).stdout.strip()
 
@@ -187,16 +193,125 @@ def make_task_id(slug: str) -> str:
     return f"rig-{ts}-{slug}"
 
 
+# ── project-level gate extensions (.rig/gates.json; issue #283) ──────────────
+PROJECT_GATES_REL = ".rig/gates.json"
+_SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_GATES_ALLOWED_KEYS = ("extra_criteria", "descriptions", "openapi_paths")
+# Any of these keys signal an attempt to remove/weaken built-in criteria — rejected outright.
+_GATES_REMOVAL_KEYS = ("remove", "remove_criteria", "removals", "disable",
+                       "disable_criteria", "override", "overrides")
+
+
+def project_gates_path(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / "gates.json"
+
+
+def load_project_gates(root: pathlib.Path) -> dict:
+    """Load and validate `.rig/gates.json` — project-level acceptance-gate extensions.
+
+    The file is JSON on purpose: gate config must always be parseable with the
+    standard library alone, so YAML (an optional third-party parser) is
+    deliberately avoided here.
+
+    Accepted shape (all keys optional; absent file → {} = no-op):
+      {
+        "extra_criteria": {"<preset-or-task_type>": ["slug_criterion", ...]},
+        "descriptions":   {"slug_criterion": "human description"},
+        "openapi_paths":  ["api/openapi.json", ...]   # schema_diff sensor (issue #288)
+      }
+
+    Shape errors are hard errors (die), never warnings: a silently ignored gate
+    criterion is the worst possible failure mode for this file. Config is
+    additive only — removal/override keys are rejected because letting repo
+    config weaken built-in criteria would undermine the gate's security posture.
+    """
+    p = project_gates_path(root)
+    if not p.exists():
+        return {}
+    rel = PROJECT_GATES_REL
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        die(f"{rel} is not valid JSON: {e}")
+    if not isinstance(data, dict):
+        die(f"{rel} must be a JSON object, got {type(data).__name__}")
+
+    for key in data:
+        if key in _GATES_REMOVAL_KEYS:
+            die(f"{rel}: key '{key}' is not allowed. Project gate config is additive only — "
+                "removing or weakening built-in criteria is not supported (security posture: "
+                "a repo file must never be able to lower the gate)")
+        if key not in _GATES_ALLOWED_KEYS:
+            die(f"{rel}: unknown key '{key}' (allowed: {', '.join(_GATES_ALLOWED_KEYS)})")
+
+    extra = data.get("extra_criteria", {})
+    if not isinstance(extra, dict):
+        die(f"{rel}: 'extra_criteria' must be an object mapping preset/task_type → list of criteria")
+    declared: set[str] = set()
+    for target, crits in extra.items():
+        if target not in GATE_PRESETS and target not in TASK_TYPES:
+            die(f"{rel}: extra_criteria key '{target}' is neither a gate preset "
+                f"({', '.join(GATE_PRESETS)}) nor a task_type ({', '.join(TASK_TYPES)})")
+        if not isinstance(crits, list) or not all(isinstance(c, str) for c in crits):
+            die(f"{rel}: extra_criteria['{target}'] must be a list of criterion id strings")
+        for c in crits:
+            if not _SLUG_RE.match(c):
+                die(f"{rel}: criterion id '{c}' in extra_criteria['{target}'] is not a slug "
+                    "(expected ^[a-z][a-z0-9_]*$, max 64 chars)")
+            declared.add(c)
+
+    descs = data.get("descriptions", {})
+    if not isinstance(descs, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in descs.items()):
+        die(f"{rel}: 'descriptions' must be an object mapping criterion id → string")
+    builtin = {name for crits in GATE_PRESETS.values() for name in crits}
+    for k in descs:
+        if k not in declared and k not in builtin:
+            die(f"{rel}: descriptions key '{k}' matches no declared extra criterion "
+                "and no built-in criterion (typo would be silently ignored otherwise)")
+
+    openapi = data.get("openapi_paths", [])
+    if not isinstance(openapi, list) or not all(isinstance(s, str) and s for s in openapi):
+        die(f"{rel}: 'openapi_paths' must be a list of non-empty relative path strings")
+    for s in openapi:
+        if s.startswith("/") or ".." in pathlib.PurePosixPath(s).parts:
+            die(f"{rel}: openapi_paths entry '{s}' must be a repo-relative path "
+                "(no absolute paths, no '..')")
+
+    return data
+
+
 # ── gate construction / evaluation ───────────────────────────────────────────
-def build_acceptance(task_id: str, task_type: str) -> dict:
+def build_acceptance(task_id: str, task_type: str, root: pathlib.Path | None = None) -> dict:
+    """Compose the acceptance gate for a task_type from GATE_PRESETS, plus any
+    project-level extra criteria from `.rig/gates.json` when `root` is given.
+    Custom criteria start pending like built-ins and carry origin="project" so
+    displays can tell them apart."""
     presets = TASK_TYPES[task_type]
+    project = load_project_gates(root) if root is not None else {}
+    extra = project.get("extra_criteria", {})
+    descriptions = project.get("descriptions", {})
     checks: list[dict] = []
     seen: set[str] = set()
+
+    def add(name: str, origin: str | None = None) -> None:
+        if name in seen:
+            return
+        seen.add(name)
+        check = {"name": name, "status": "pending", "detail": ""}
+        if origin:
+            check["origin"] = origin
+            if name in descriptions:
+                check["description"] = descriptions[name]
+        checks.append(check)
+
     for preset in presets:
         for name in GATE_PRESETS[preset]:
-            if name not in seen:
-                seen.add(name)
-                checks.append({"name": name, "status": "pending", "detail": ""})
+            add(name)
+        for name in extra.get(preset, []):
+            add(name, origin="project")
+    for name in extra.get(task_type, []):
+        add(name, origin="project")
     return {"task_id": task_id, "task_type": task_type, "presets": presets,
             "status": "pending", "checks": checks, "checked_at": None}
 

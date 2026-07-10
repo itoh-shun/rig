@@ -10,8 +10,8 @@ from collections import Counter
 from .config import (ACTIVE_STATUSES, CHECK_ICON, GATE_PRESETS, NEXT_ACTIONS,
                      STEP_ICON, TASK_TYPES)
 from .state import (_diff_lines, _load_audit, build_acceptance, die,
-                    gate_status, load_json, load_task, repo_root,
-                    resolve_task_id, runs_dir)
+                    gate_status, load_json, load_project_gates, load_task,
+                    maybe_repo_root, repo_root, resolve_task_id, runs_dir)
 
 
 def _print_steps(d: pathlib.Path) -> None:
@@ -28,15 +28,18 @@ def _print_steps(d: pathlib.Path) -> None:
 def _print_checks(acc: dict) -> None:
     print(f"Gate: {acc['status'].upper()}  ({' + '.join(acc['presets'])})")
     for c in acc["checks"]:
+        origin = " [project]" if c.get("origin") == "project" else ""
         detail = f" — {c['detail']}" if c.get("detail") else ""
-        print(f"  {CHECK_ICON[c['status']]} {c['name']}{detail}")
+        print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}")
+        for line in c.get("api_diff") or []:
+            print(f"      api: {line}")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
-    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     acc["status"] = gate_status(acc)
 
     print(f"## rig status: {task_id}")
@@ -145,6 +148,18 @@ def cmd_gates(_args: argparse.Namespace) -> None:
     print("### task_type → presets")
     for tt, presets in TASK_TYPES.items():
         print(f"  {tt}: {' + '.join(presets)}")
+
+    # Project-level extensions (.rig/gates.json; origin: project) — shown only
+    # inside a git repo that declares them (additive only, never removals).
+    root = maybe_repo_root()
+    gates = load_project_gates(root) if root else {}
+    extra = gates.get("extra_criteria") or {}
+    if extra:
+        descs = gates.get("descriptions") or {}
+        print("\n### project extra criteria (.rig/gates.json, origin: project)")
+        for target, crits in extra.items():
+            for c in crits:
+                print(f"  {target} + {c}" + (f" — {descs[c]}" if c in descs else ""))
 
 
 def cmd_audit(args: argparse.Namespace) -> None:
