@@ -27,6 +27,7 @@ from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .digest import cmd_digest
+from .injection import cmd_scan_injection
 from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
@@ -104,6 +105,16 @@ def main() -> None:
     p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")
     p.add_argument("--diff", metavar="TASK_ID", help="scan only the task worktree's diff vs its base commit")
     p.set_defaults(func=cmd_scan_secrets)
+
+    p = sub.add_parser("scan-injection", help="deterministic prompt-injection-marker scan "
+                       "(machine backing for no_injection_markers; invisible Unicode is fail-grade, "
+                       "override phrases warning-grade)")
+    p.add_argument("paths", nargs="*", help="files/directories to scan "
+                   "(default: the repo's prose surfaces — .claude/rig.md, .claude/rig/knowledge, "
+                   ".claude/rig/personas, .rig/recipes/*.md)")
+    p.add_argument("--diff", metavar="TASK_ID",
+                   help="scan the task worktree's diff vs base + its prose surfaces (what the gate sensor sees)")
+    p.set_defaults(func=cmd_scan_injection)
 
     p = sub.add_parser("digest", help="periodic telemetry digest in Markdown (runs / gates / force-accepts / rubber-stamps / drills)")
     p.add_argument("--period", choices=("week", "month"), default="week",

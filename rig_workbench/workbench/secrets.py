@@ -177,13 +177,18 @@ def scan_paths(paths: list[pathlib.Path]) -> list[dict]:
     return findings
 
 
-# ── diff-scoped scan (used by --diff and the gate sensor) ─────────────────────
+# ── diff-scoped scan (used by --diff and the gate sensors) ────────────────────
+# The helpers here are deliberately generic (they carry no secret semantics) so
+# the other diff-scoped gate sensors (hardening.py, injection.py) reuse them
+# instead of re-parsing unified diffs.
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
 
 
-def scan_diff_text(diff_text: str) -> list[dict]:
-    """Scan only the ADDED lines of a unified diff; line numbers refer to the new file."""
-    findings: list[dict] = []
+def iter_added_lines(diff_text: str):
+    """Yield (rel, lineno, text) for every ADDED line of a unified diff.
+
+    Line numbers refer to the NEW file; lines of deleted files (new side is
+    /dev/null) are not yielded."""
     rel: str | None = None
     lineno = 0
     for line in diff_text.splitlines():
@@ -197,23 +202,45 @@ def scan_diff_text(diff_text: str) -> list[dict]:
             continue
         if line.startswith("+") and not line.startswith("+++"):
             if rel is not None:
-                findings.extend(scan_line(line[1:], rel, lineno))
+                yield rel, lineno, line[1:]
             lineno += 1
         elif line.startswith(" "):
             lineno += 1  # context line (absent with -U0, handled for safety)
+
+
+def worktree_diff_text(wt: pathlib.Path, base_commit: str) -> str:
+    """Unified (-U0) diff of the worktree vs its base commit: committed +
+    uncommitted changes. Empty string when git fails (e.g. worktree gone)."""
+    proc = git(["diff", "--unified=0", "--no-color", base_commit], cwd=wt, check=False)
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def untracked_files(wt: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
+    """(absolute path, repo-relative path) of untracked files, minus
+    vendored/VCS/state trees (WALK_SKIP_DIRS). Invisible to `git diff`."""
+    proc = git(["ls-files", "--others", "--exclude-standard"], cwd=wt, check=False)
+    out: list[tuple[pathlib.Path, str]] = []
+    for rel in proc.stdout.splitlines() if proc.returncode == 0 else []:
+        f = wt / rel
+        if f.is_file() and not any(part in WALK_SKIP_DIRS for part in pathlib.PurePosixPath(rel).parts):
+            out.append((f, rel))
+    return out
+
+
+def scan_diff_text(diff_text: str) -> list[dict]:
+    """Scan only the ADDED lines of a unified diff; line numbers refer to the new file."""
+    findings: list[dict] = []
+    for rel, lineno, text in iter_added_lines(diff_text):
+        findings.extend(scan_line(text, rel, lineno))
     return findings
 
 
 def scan_worktree_diff(wt: pathlib.Path, base_commit: str) -> list[dict]:
     """Everything the task introduced on top of base: committed + uncommitted
     changes (`git diff <base>`) plus untracked files (invisible to git diff)."""
-    proc = git(["diff", "--unified=0", "--no-color", base_commit], cwd=wt, check=False)
-    findings = scan_diff_text(proc.stdout) if proc.returncode == 0 else []
-    proc = git(["ls-files", "--others", "--exclude-standard"], cwd=wt, check=False)
-    for rel in proc.stdout.splitlines() if proc.returncode == 0 else []:
-        f = wt / rel
-        if f.is_file() and not any(part in WALK_SKIP_DIRS for part in pathlib.PurePosixPath(rel).parts):
-            findings.extend(scan_file(f, rel))
+    findings = scan_diff_text(worktree_diff_text(wt, base_commit))
+    for f, rel in untracked_files(wt):
+        findings.extend(scan_file(f, rel))
     return findings
 
 
