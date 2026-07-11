@@ -398,16 +398,44 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
 _HIST_LOCK = threading.Lock()
 
 
+# ── Per-step model assignment (issue #293) ────────────────────────────────────
+def parse_step_model_spec(spec: str) -> tuple[str, str] | None:
+    """Parse one --step-model value ("<step-id>=<model>"). Returns (step_id, model), or None if malformed (pure)."""
+    sid, sep, model = spec.partition("=")
+    if not sep or not sid.strip() or not model.strip():
+        return None
+    return sid.strip(), model.strip()
+
+
+def unknown_step_model_ids(step_models: dict, steps: list[dict]) -> list[str]:
+    """Step ids named by --step-model that do not exist in the recipe (pure; sorted).
+    Non-empty means the run must abort before any execution (no silent ignores)."""
+    known = {s["id"] for s in steps}
+    return sorted(sid for sid in step_models if sid not in known)
+
+
+def effective_step_models(step: dict, cfg: dict) -> tuple[str | None, str | None]:
+    """Effective (generator_model, verifier_model) for one step (pure).
+    Generator precedence: runtime --step-model > recipe `model:` > global --model.
+    Verifier: recipe `verifier_model:` > the effective generator model.
+    The same resolution point will host per-step *provider* assignment later (#293 follow-up)."""
+    gen = ((cfg.get("step_models") or {}).get(step["id"])
+           or step.get("model") or cfg.get("model"))
+    ver = step.get("verifier_model") or gen
+    return gen, ver
+
+
 def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
               cfg: dict, max_parallel: int) -> tuple[str | None, str, list[dict]]:
     """Generate solo or via judge-panel. With multiple generators, run them all in parallel and
     let the judge (ver) pick the first PASSing candidate (in generator-list order = deterministic)
     as the winner.
     Returns: (winner_provider | None, product, judged[]).
-    Per-step `model:` / `verifier_model:` are injected into a copy of cfg (parallel-safe)."""
-    gen_cfg = {**cfg, "model": step["model"]} if step.get("model") else cfg
-    ver_cfg = {**cfg, "model": step["verifier_model"] or step.get("model") or cfg.get("model")} \
-              if (step.get("verifier_model") or step.get("model")) else cfg
+    Per-step models (runtime --step-model > recipe `model:`/`verifier_model:` > global --model)
+    are injected into a copy of cfg (parallel-safe)."""
+    gen_model, ver_model = effective_step_models(step, cfg)
+    gen_cfg = {**cfg, "model": gen_model} if gen_model else cfg
+    ver_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     if len(gen_list) == 1:
         _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg)
         return gen_list[0], out, []
@@ -432,10 +460,14 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
+    gen_model, ver_model = effective_step_models(step, cfg)
+    if gen_model:
+        st["model"] = gen_model                     # actually-used generator model (run-state/telemetry attribution)
     winner, out, judged = _generate(state, step, gen_list, ver, cfg, max_parallel)
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
-                                 "provider": winner or gen_list[0], "out": out[:200]})
+                                 "provider": winner or gen_list[0], "out": out[:200],
+                                 **({"model": gen_model} if gen_model else {})})
     if judged:
         log(f"   ↳ judge-panel {len(judged)} candidates → winner: {winner or '(none)'}")
     else:
@@ -454,8 +486,7 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         return
     # Lens verification = N independent reviewers in parallel processes (grader != generator)
     # Per-step `verifier_model:` is injected into a copy of cfg (independent of the generator side)
-    v_cfg = {**cfg, "model": step["verifier_model"] or step.get("model") or cfg.get("model")} \
-            if (step.get("verifier_model") or step.get("model")) else cfg
+    v_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     personas = step["personas"] or ["independent"]
     results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out),
                                      personas, v_cfg, max_parallel)

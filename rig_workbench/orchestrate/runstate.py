@@ -47,6 +47,7 @@ def telemetry_append(state: dict, final: str) -> None:
             "escalated_at": (state.get("stopped") or {}).get("at") if state.get("stopped") else None,
             "steps": [{"id": s["id"], "status": ss[s["id"]].get("status"),
                        "retries": ss[s["id"]].get("retries", 0),
+                       "model": ss[s["id"]].get("model"),  # actually-used generator model (#293; None = provider default)
                        "verdicts": [{"by": v.get("by"), "ok": bool(v.get("ok"))}
                                     for v in ss[s["id"]].get("verdicts", [])]}
                       for s in state["steps"]],

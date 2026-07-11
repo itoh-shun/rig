@@ -7,6 +7,8 @@ import sys
 
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
+from .schema_diff import apply_schema_sensor
+from .secrets import apply_secret_sensor
 from .state import (build_acceptance, current_branch, default_worktree_path,
                     die, gate_status, git, load_json, load_task, make_slug,
                     make_task_id, now_iso, repo_root, resolve_task_id, run_dir,
@@ -52,6 +54,10 @@ def cmd_new(args: argparse.Namespace) -> None:
     if d.exists():
         die(f"task '{task_id}' already exists")
 
+    # Compose the gate first: a malformed `.rig/gates.json` must abort here,
+    # before any run dir / worktree is created (no partial state on error).
+    acc = build_acceptance(task_id, args.type, root)
+
     # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
     if ensure_rig_gitignored(root):
         print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
@@ -85,7 +91,6 @@ def cmd_new(args: argparse.Namespace) -> None:
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
     save_json(d / "steps.json", {"steps": []})
-    acc = build_acceptance(task_id, args.type)
     save_json(d / "acceptance.json", acc)
 
     # ── Selection-rationale banner (Phase 1 §3: code prints this deterministically instead of leaving it to prose) ──
@@ -133,9 +138,10 @@ def cmd_gate(args: argparse.Namespace) -> None:
     task_id = resolve_task_id(root, args.task_id)
     with task_lock(root, task_id):
         d, task = load_task(root, task_id)
-        acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+        acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
 
         known = {c["name"]: c for c in acc["checks"]}
+        explicit_set: set[str] = set()
         for pair in args.set or []:
             if "=" not in pair:
                 die(f"--set must be given as <criterion>=<status>[:detail] (got: {pair!r})")
@@ -150,6 +156,15 @@ def cmd_gate(args: argparse.Namespace) -> None:
             known[name]["status"] = status
             if detail:
                 known[name]["detail"] = detail
+            explicit_set.add(name)
+
+        # Machine sensor (issue #288): verify public_api_changes_documented
+        # against the actual base↔worktree OpenAPI diff before evaluating.
+        sensor_notes = apply_schema_sensor(root, d, task, acc)
+        # Machine sensor (issue #273): diff-scoped secret scan backing
+        # no_secret_leak. Fail-grade: findings block accept; an explicit
+        # --set no_secret_leak=passed in this invocation is the escape hatch.
+        sensor_notes += apply_secret_sensor(root, d, task, acc, explicit_set=explicit_set)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()
@@ -162,8 +177,11 @@ def cmd_gate(args: argparse.Namespace) -> None:
         print(f"## acceptance-gate: {task_id}  [{acc['status'].upper()}]")
         print(f"presets: {' + '.join(acc['presets'])}")
         for c in acc["checks"]:
+            origin = " [project]" if c.get("origin") == "project" else ""
             detail = f" — {c['detail']}" if c.get("detail") else ""
-            print(f"  {CHECK_ICON[c['status']]} {c['name']}{detail}")
+            print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}")
+        for note in sensor_notes:
+            print(note)
         if acc["status"] == "failed":
             sys.exit(1)
 

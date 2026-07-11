@@ -17,6 +17,7 @@ import traceback
 from . import state
 from .catalog import check_catalog_drift, check_graph, check_wiki
 from .config import RECIPES
+from .drill import check_drill_coverage
 from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
 from .release import check_release_metadata, check_skills_lock
@@ -80,6 +81,11 @@ def main() -> None:
         check_needs_cycles(recipe_files)
     except Exception:
         _emit("FAIL", f"needs cycle check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_drill_coverage(recipe_files)
+    except Exception:
+        _emit("FAIL", f"drill coverage check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_release_metadata()

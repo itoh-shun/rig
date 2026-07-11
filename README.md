@@ -18,6 +18,14 @@ Three properties keep the safety flow real (not just documented):
 
 **Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. A separate set of playful/creative commands (MAGI council, roast, movie, …) shares the same gates but is explicitly marked experimental. §7 breaks all of this down by name.
 
+### Positioning
+
+rig is deliberately **not** a heavyweight external engine with its own DSL. Inside a Claude Code session it is a thin quality/safety layer composed from Claude Code's own primitives — slash commands (`commands/`), the skill (`skills/rig`), subagents (`agents/`), and hooks (`hooks/`). The isolation, the gate, and the accept step add discipline to the session you already work in; they don't replace it with another tool.
+
+The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §13 "Standalone CLI". An MCP server exposing this same engine is proposed but not shipped; per §7's rule, that proposal lives as a GitHub issue (#263), not as a documented feature.
+
+And the differentiator over "we have quality gates" framings: rig's gates and reviewers are **measured, not asserted**. `/rig:drill` (§11) scores each reviewer persona's actual detection rate against injected known bugs, and `/rig:go stats` (§10) flags rubber-stamp reviewers and frequently-failing gates from real run history. A gate you can't measure is a hope; rig treats gate efficacy as data.
+
 ## 2. 30-second start
 
 ```bash
@@ -143,6 +151,8 @@ Every task gets a criteria checklist drawn from `standard` (applies to every tas
 | `refactor` | refactor | `behavior_boundaries_identified` · `no_unintended_behavior_change` · `tests_confirm_behavior_preserved` · `no_unrelated_refactor` · `public_api_changes_documented_if_any` |
 | `review` | review | `findings_are_concrete` · `severity_labeled` · `file_references_included` · `blocking_and_non_blocking_separated` · `false_positive_risk_considered` |
 | `security` | security_review (on top of `review`) | `authn_authz_impact_checked` · `user_input_flow_checked` · `secret_exposure_checked` · `unsafe_eval_or_shell_checked` · `dependency_risk_checked` |
+
+Projects can extend this list via **`.rig/gates.json`** — `extra_criteria` adds custom criteria per preset or task type (tagged `[project]` in displays), `descriptions` labels them. The config is **additive only**: removal/override keys are rejected outright, so a repo file can never weaken the built-in gate. Two criteria are also backed by machine sensors rather than self-report: `public_api_changes_documented` runs an OpenAPI schema diff (auto-detects `openapi.json`/`swagger.json` etc., or takes explicit `openapi_paths`) and downgrades the check to `warning` when the API changed but the diff summary doesn't say so — warning-grade, it never fails the gate on its own; `no_secret_leak` runs a deterministic secret scan over the task diff (`workbench.py scan-secrets`) and sets the check to **failed** on any finding — excerpts are always masked, and a reviewed false positive is cleared explicitly with `--set no_secret_leak=passed`.
 
 Each criterion is recorded as `passed` / `failed` / `warning` / `skipped` with a detail:
 
@@ -472,6 +482,9 @@ python3 scripts/orchestrate.py install-shim          # → ~/.local/bin/rig (sym
 rig models                                            # discover LLM providers
 rig probe --provider codex                            # smoke-test a provider (also proves the read-only sandbox)
 rig run review-only --provider rig --verifier-provider codex
+rig run bugfix --provider rig --step-model implement=claude-opus-4-8   # per-step model override (--step-model > recipe model: > --model)
+rig-wb githooks install                              # pip flavor: native pre-commit (manifest lint + staged secret scan) / pre-push (build+test) hooks; RIG_HOOK_SKIP*=1 bypasses
+rig-wb wb digest --period week                       # Markdown telemetry digest: runs / gates / force-accepts / rubber stamps / drills
 ```
 
 `$RIG_HOME` overrides the install location; `<cwd>/.rig/recipes/<name>.md` overlays a project-local recipe over the shipped one of the same name; a recipe's `checks:` run in the invocation cwd (your project), not the rig repo.

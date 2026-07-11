@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig digest`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -104,3 +104,49 @@ python3 scripts/workbench.py stats [--recipe bugfix] [--verifier security-review
 ```
 
 `.rig/runs/` 配下の全 task を集計し、そのまま提示する（Runs/Accepted/Discarded/Failed gate のサマリ→Most used recipes→Gate results→Verifier behavior）。**`Warning:` 行が出た場合は必ずそのまま伝える**——`<persona> has 0 rejects across N runs. Possible rubber-stamp behavior.` は N≥5 かつ REJECT 0 件の reviewer に対する自動検知であり、ゴム印化（何でも通す reviewer）の疑いを人に気づかせるための唯一のシグナル。黙って握りつぶさない。verdict が一件も記録されていない場合は「未記録」の旨を伝え、`/rig review` での記録を促す。
+
+## `/rig gc [--older-than <N>d] [--dry-run]`
+
+```
+python3 scripts/workbench.py gc [--older-than 14d] [--dry-run]
+```
+
+視覚検証成果物（`.rig/runs/<task_id>/visual/` と `.rig/visual/adhoc/*`、`patterns/visual-artifacts` が正本）の age-based 処分。閾値は既定14日（`--older-than <N>d` で変更、例 `7d`）。task の status（accepted/discarded/running）は問わない——画像は再生成可能な検証手段であって恒久記録ではない。**ソース・worktree・branch には一切触れない**。
+
+1. まず `--dry-run` で呼び、`[dry-run] remove: <path>/ (<age> days old)` の候補一覧をそのままユーザーに提示する。
+2. ユーザーの確認を得てから `--dry-run` なしで再実行する（discard と同じプレビュー→実行の二段。スクリプト自体は `--dry-run` なしで即削除するため、確認はこの instruction 側の責務）。
+3. `Nothing to remove.` の場合はそのまま伝えて終了する。
+
+## `/rig audit [--limit N] [--action A] [--since YYYY-MM-DD]`
+
+```
+python3 scripts/workbench.py audit [--limit 10] [--action accept_force] [--since 2026-07-01]
+```
+
+`accept --force` 等で acceptance-gate の未達基準を上書きした際の恒久記録（`.rig/audit.jsonl`）の一覧。各エントリ（ts・action・task_id・bypassed 基準・gate 状態・failed checks）をそのまま提示する——整形の追加は不要。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`）・`--since`（YYYY-MM-DD 以降）。
+
+``No records (entries are appended by `accept --force`).`` の場合は「force-bypass の履歴が無い＝gate を押し切った accept が一度も無い」ことを意味するので、その旨をそのまま伝える。ユーザーが「force で通した履歴を見たい」「gate を無視した accept が無いか確認したい」と言ったらこのコマンドを提案する（**読み取り専用**——記録の追記は `workbench.py accept --force` 側が自動で行い、ここからは書き込まない）。
+
+## `/rig scan-secrets [paths…] [--diff <task_id>]`
+
+```
+python3 scripts/workbench.py scan-secrets [paths…]
+python3 scripts/workbench.py scan-secrets --diff <task_id>
+```
+
+決定論シークレットスキャン（gate 基準 `no_secret_leak` の機械センサーと同一実装）。引数なしはカレントディレクトリ全体、paths 指定でファイル/ディレクトリ、`--diff <task_id>` は該当 task worktree の base commit からの差分（追加行＋未追跡ファイル）だけを走査する（paths と `--diff` の同時指定は不可）。検出対象は既知クレデンシャル形式（AWS/GitHub/Slack/Anthropic/OpenAI/Google のキー・PEM 秘密鍵・JWT）＋汎用の高エントロピー検出（lockfile・`node_modules/` 等はエントロピー検出のみ許容リストで除外——名前つきパターンはそこでも走る）。
+
+1. 出力の抜粋は**常にマスク済み**（先頭4文字＋末尾2文字のみ残る）——秘密の生値は findings に含まれないため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
+2. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、findings があれば `no_secret_leak` を **failed** にする（warning ではない＝accept を機械的に止める。schema センサーと違い fail-grade）。
+3. 人が偽陽性と確認した場合の脱出口は `gate <task_id> --set no_secret_leak=passed`（明示 pass が優先され、`secret_override` として check に記録される）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+
+## `/rig digest [--period week|month] [--out PATH]`
+
+```
+python3 scripts/workbench.py digest [--period week|month] [--out <path>]
+```
+
+`.rig/` に蓄積されたテレメトリのローリング集計ダイジェスト（`week`=直近7日・既定／`month`=直近30日）を Markdown で出力する：orchestrate run 件数（final 別）・workbench task 状態・gate 合否率と落ちやすい基準・ゴム印疑い reviewer・force-accept（`accept --force`）件数・drill 検出率（記録がある場合のみ）。`--out <path>` で stdout の代わりにファイルへ書く。
+
+- **読み取り専用**（集計のみ・状態を変更しない）。出力 Markdown はそのままユーザーに提示してよい（整形の追加は不要）。
+- 集計は `stats` と同じ helper を再利用しており数字が食い違わない。個別の深掘り（`--recipe`/`--verifier` 絞り込み）は `/rig stats`、期間の定点観測は `digest` と使い分ける。`stats` 同様、ゴム印警告が出た場合は必ずそのまま伝える。

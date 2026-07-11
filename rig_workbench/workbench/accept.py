@@ -18,7 +18,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
-    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     names, stat, dirty = _diff_lines(root, task)
 
     print(f"## rig diff: {task_id}")
@@ -75,7 +75,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     if task["status"] == "discarded":
         die(f"task '{task_id}' has already been discarded")
 
-    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"]))
+    acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     status = gate_status(acc)
     diff_md = d / "diff.md"
     diff_summary_ok = diff_md.exists() and diff_md.read_text(encoding="utf-8").strip() != ""

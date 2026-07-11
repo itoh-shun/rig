@@ -61,11 +61,12 @@ steps:
 ```
 orchestrate run <recipe> --provider <claude|codex|cmd|mock> \
     [--verifier-provider <name>] [--provider-cmd "tool {prompt}"] [--isolate] \
-    [--goal G] [--max-steps N] [--out run-state.json]
+    [--step-model <step-id>=<model>]… [--goal G] [--max-steps N] [--out run-state.json]
 ```
 
 - **プロバイダ抽象（マルチプロバイダ）**：**`rig`（各 step を `rig` skill で起動した別プロセス＝再帰 rig ハーネス・推奨）** / `claude`（`claude -p`）/ `codex`（`codex exec`）/ **`ollama`・`lmstudio`（ローカル LLM・OpenAI 互換 HTTP）** / `cmd`（任意 CLI を `{prompt}` テンプレートで）/ `mock`（決定論ダミー・テスト用）。生成と検証で**別プロバイダ**を指定できる（例 `--provider rig --verifier-provider codex`＝別モデルが独立検証）。`rig` は各 step を rig の engine（PARSE→RESOLVE→COMPOSE→RUN）で実行し、検証者は独立レビュアーとして `VERDICT: PASS|FAIL` を返す。
 - **ローカル LLM（`ollama`/`lmstudio`）**：OpenAI 互換エンドポイント（既定 `:11434`/`:1234`、`--base-url` で上書き）へ HTTP で問い合わせる。`--model <name>` でモデル指定（ollama 既定 `llama3.1`）。要：ローカルサーバ起動＋モデル取得。各リクエストは独立＝context 隔離は保たれる。サーバ不在時はゲート FAIL→エスカレーション（crash しない）。
+- **step 単位のモデル上書き（`--step-model`）**：`--step-model <step-id>=<model>`（繰り返し可）で特定 step の generator モデルだけを実行時に差し替える。優先順位は **`--step-model` > recipe の `model:` > `--model`**。未知の step-id は実行前に ERROR（黙って無視しない）、上書きは run-state の history に `STEP_MODEL_OVERRIDE` として記録される（#293）。
 - **動的モデル探索**：`orchestrate models [--save]` で起動中のサーバの `/v1/models` を叩いて**利用可能モデルを動的取得**（`claude`/`codex`/`rig` は CLI 有無）。`run --auto-model`（=`--auto-model-setting`）は `--model` 未指定時、保存設定（`~/.claude/rig/models.json`）→実機の先頭モデル→既定 の順で**自動解決**。サーバ不在でも既定にフォールバック（graceful）。
 - **プロセス隔離**：step ごとに新規プロセス＝**毎回クリーンな context**（Context Rot 対策の構造版）。親が肥大しない（Thin Harness）。
 - **構造的な独立検証**：gated step で checks 未宣言なら、**別プロセスの verifier** が `VERDICT: PASS|FAIL` を返す。by は `<provider>:<persona>`＝生成者と別（`policies/independent-verification` をプロセス境界で強制）。さらに **verifier ロールの CLI には読み取り専用権限を argv で固定付与**する（claude→`--allowedTools Read,Grep,Glob`／codex→`--sandbox read-only`）＝「検証役は書かない」がプロンプトのお願いではなく**機構**になる（採点者≠生成者の第2段）。

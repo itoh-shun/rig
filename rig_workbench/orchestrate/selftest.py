@@ -12,7 +12,8 @@ from .recipes import (auto_orchestrate, git_diff_lines, load_manifest,
                       resolve_effective, resolve_plan_json)
 from .runstate import compute_next, new_state
 from .providers import (_OPENAI_BASE, build_argv, discover_models,
-                        resolve_http_model, run_loop, run_provider)
+                        parse_step_model_spec, resolve_http_model, run_loop,
+                        run_provider, unknown_step_model_ids)
 from .queueing import (_local_load, _queue_relabel_args, queue_add, queue_list,
                        queue_set_status)
 from .isolate import setup_isolation, teardown_isolation
@@ -425,6 +426,32 @@ def cmd_selftest(_args):
            ("agent:lazy-senior-reviewer", "mirrors", "persona:lazy-senior") in eW, True)
     report("W graph: zero unresolved edges in the shipped tier",
            sum(1 for e in gW1["edges"] if not e["resolved"]), 0)
+
+    # ── Scenario Z: runtime per-step model assignment (--step-model; #293) ──
+    # Precedence: runtime --step-model > recipe frontmatter `model:` > global --model;
+    # the actually-used model per step is recorded in run-state; unknown step ids are rejected.
+    config.RUNS_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_runs_stepmodel_selftest.jsonl"
+    config.RUNS_PATH.unlink(missing_ok=True)
+    stepsZ = [{**s(id="plan"), "model": "recipe-m"}, s(id="implement")]
+    stateZ1 = new_state("stepmodel", stepsZ, None)
+    finalZ1 = run_loop(stateZ1, None, "mock", "mock",
+                       {"model": "global-m", "step_models": {"plan": "runtime-m"}}, 20, quiet=True)
+    stateZ2 = new_state("stepmodel", stepsZ, None)
+    run_loop(stateZ2, None, "mock", "mock", {"model": "global-m"}, 20, quiet=True)
+    config.RUNS_PATH.unlink(missing_ok=True)
+    config.RUNS_PATH = _orig_runs
+    report("Z step-model: runtime override beats recipe model (recorded in run-state)",
+           stateZ1["step_state"]["plan"].get("model"), "runtime-m")
+    report("Z step-model: global --model is the fallback for unnamed steps",
+           stateZ1["step_state"]["implement"].get("model"), "global-m")
+    report("Z step-model: recipe model beats global --model when no override",
+           stateZ2["step_state"]["plan"].get("model"), "recipe-m")
+    report("Z step-model: overridden run still reaches DONE", finalZ1, "DONE")
+    report("Z step-model: unknown step id is detected before execution",
+           unknown_step_model_ids({"nope": "m", "plan": "m"}, stepsZ), ["nope"])
+    report("Z step-model: malformed spec is rejected, valid spec parses",
+           (parse_step_model_spec("plan"), parse_step_model_spec("plan=sonnet")),
+           (None, ("plan", "sonnet")))
 
     print("\n" + ("PASS: the deterministic orchestrator is healthy" if ok else "FAIL: selftest mismatch"))
     sys.exit(0 if ok else 1)

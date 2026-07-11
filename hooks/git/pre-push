@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# rig-githooks v1 (managed by `rig-wb githooks` — do not edit by hand; reinstall to update)
+#
+# pre-push — rig's computational acceptance sensors as a native git hook
+# (itoh-shun/rig#298). Applies the machine-checkable part of the acceptance
+# gate to plain human `git push`, independent of any Claude Code session.
+#
+# Checks (computational only — NO AI/LLM criteria run here):
+#   1. build — the `build:` command from the project manifest .claude/rig.md
+#   2. test  — the `test:` command from the project manifest .claude/rig.md
+#
+# Escape hatches (set to any value other than 0):
+#   RIG_HOOK_SKIP=1          skip the whole hook
+#   RIG_HOOK_SKIP_BUILD=1    skip only the build check
+#   RIG_HOOK_SKIP_TEST=1     skip only the test check
+#
+# No manifest (.claude/rig.md) => the hook is a no-op (a notice is printed).
+set -u
+
+say() { printf 'rig pre-push: %s\n' "$*" >&2; }
+
+_truthy() { [ -n "${1:-}" ] && [ "${1:-}" != "0" ]; }
+
+if _truthy "${RIG_HOOK_SKIP:-}"; then
+  say "RIG_HOOK_SKIP set — skipping all checks"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+manifest="$repo_root/.claude/rig.md"
+
+if [ ! -f "$manifest" ]; then
+  say "no project manifest ($manifest) — hook is a no-op (run /rig:init to create one)"
+  exit 0
+fi
+
+# Read a top-level `key: "value"` line from the manifest's YAML block.
+# Handles double/single quoted values and trailing `# comments`.
+read_manifest_cmd() {
+  local key="$1" line val
+  line="$(grep -m1 -E "^${key}:" "$manifest" 2>/dev/null)" || return 0
+  val="${line#*:}"
+  val="${val#"${val%%[![:space:]]*}"}"        # ltrim
+  case "$val" in
+    \"*) val="${val#\"}"; val="${val%%\"*}" ;;
+    \'*) val="${val#\'}"; val="${val%%\'*}" ;;
+    *)   val="${val%%#*}" ;;
+  esac
+  val="${val%"${val##*[![:space:]]}"}"        # rtrim
+  printf '%s' "$val"
+}
+
+fail=0
+
+run_check() {
+  local name="$1" skip_var_value="$2" cmd
+  if _truthy "$skip_var_value"; then
+    say "$name: skipped (RIG_HOOK_SKIP_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]'))"
+    return 0
+  fi
+  cmd="$(read_manifest_cmd "$name")"
+  if [ -z "$cmd" ]; then
+    say "$name: no command configured in manifest — skipped"
+    return 0
+  fi
+  say "$name: $cmd"
+  # </dev/null so the command cannot swallow the ref list git feeds pre-push on stdin.
+  if ! (cd "$repo_root" && eval "$cmd") </dev/null; then
+    say "$name FAILED (bypass once: RIG_HOOK_SKIP_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')=1 git push ...)"
+    fail=1
+  fi
+}
+
+run_check build "${RIG_HOOK_SKIP_BUILD:-}"
+run_check test "${RIG_HOOK_SKIP_TEST:-}"
+
+exit "$fail"

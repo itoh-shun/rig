@@ -14,6 +14,8 @@ The dashboard shows:
   - Runs per day (sparkline bar chart)
   - Runs by recipe (horizontal bar chart)
   - Verifier vote counts (detects "rubber-stamp" reviewers with 0 REJECT)
+  - Drill detection rate over time (`.rig/drill-results.jsonl`, /rig:drill; #266)
+  - Acceptance-gate per-criterion failure counts (`.rig/runs/*/acceptance.json`; #266)
   - Recent runs table (last N)
 """
 
@@ -40,11 +42,11 @@ def find_repo_root(start: pathlib.Path) -> pathlib.Path:
     return p
 
 
-def load_runs(runs_path: pathlib.Path) -> list[dict]:
-    if not runs_path.exists():
+def load_jsonl(path: pathlib.Path) -> list[dict]:
+    if not path.exists():
         return []
     out: list[dict] = []
-    for line in runs_path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -53,6 +55,10 @@ def load_runs(runs_path: pathlib.Path) -> list[dict]:
         except json.JSONDecodeError:
             continue
     return out
+
+
+def load_runs(runs_path: pathlib.Path) -> list[dict]:
+    return load_jsonl(runs_path)
 
 
 def filter_runs(runs: list[dict], recipe: str | None, since: str | None) -> list[dict]:
@@ -139,6 +145,63 @@ def verifier_votes(runs: list[dict]) -> list[dict]:
 
 def recent(runs: list[dict], n: int) -> list[dict]:
     return list(reversed(runs[-n:]))
+
+
+def drill_series(results: list[dict]) -> list[dict]:
+    """Per /rig:drill run: overall detection rate (schema: facets/instructions/drill.md §③).
+
+    Each `.rig/drill-results.jsonl` line is
+    {"ts": …, "seeds": n, "scores": [{"reviewer": …, "detected": d, "seeded": s, …}]}.
+    """
+    out: list[dict] = []
+    for r in results:
+        scores = [s for s in (r.get("scores") or []) if isinstance(s, dict)]
+        try:
+            detected = sum(int(s.get("detected") or 0) for s in scores)
+            seeded = sum(int(s.get("seeded") or 0) for s in scores)
+        except (TypeError, ValueError):
+            continue
+        if seeded <= 0:
+            continue
+        out.append({
+            "ts": str(r.get("ts") or "?"),
+            "rate": round(detected / seeded * 100, 1),
+            "detected": detected,
+            "seeded": seeded,
+            "reviewers": len(scores),
+        })
+    return out
+
+
+def gate_criteria_failures(root: pathlib.Path) -> list[dict]:
+    """Per-criterion acceptance-gate outcomes across `.rig/runs/*/acceptance.json`.
+
+    acceptance.json schema (workbench state.py build_acceptance):
+    {"task_id": …, "status": …, "checks": [{"name": …, "status":
+    pending|passed|failed|warning|skipped, "detail": …}]}.
+    """
+    stats: dict[str, dict] = {}
+    base = root / ".rig" / "runs"
+    if base.is_dir():
+        for acc_path in sorted(base.glob("*/acceptance.json")):
+            try:
+                acc = json.loads(acc_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            for c in acc.get("checks") or []:
+                if not isinstance(c, dict):
+                    continue
+                name = c.get("name") or "?"
+                status = c.get("status")
+                rec = stats.setdefault(name, {"evaluated": 0, "failed": 0, "warning": 0})
+                if status in ("passed", "failed", "warning"):
+                    rec["evaluated"] += 1
+                if status == "failed":
+                    rec["failed"] += 1
+                elif status == "warning":
+                    rec["warning"] += 1
+    out = [{"name": name, **rec} for name, rec in stats.items() if rec["evaluated"]]
+    return sorted(out, key=lambda x: (-x["failed"], -x["warning"], x["name"]))
 
 
 # ── rendering ───────────────────────────────────────────────────────────────
@@ -305,6 +368,41 @@ def render_verifiers(votes: list[dict]) -> str:
     return f'<table>{"".join(rows)}</table>'
 
 
+def render_drill(series: list[dict]) -> str:
+    if not series:
+        return ('<p class="sub">no data — run <code>/rig:drill</code> to measure reviewer '
+                'detection rates (accumulates in <code>.rig/drill-results.jsonl</code>)</p>')
+    bins = []
+    for s in series:
+        bins.append(
+            f'<div class="bin" style="height:{int(round(s["rate"]))}%" '
+            f'data-label="{esc(s["ts"])}: {s["rate"]}% ({s["detected"]}/{s["seeded"]} seeds, '
+            f'{s["reviewers"]} reviewers)"></div>'
+        )
+    latest = series[-1]
+    caption = (f'<p class="sub">{esc(series[0]["ts"])} → {esc(latest["ts"])} · '
+               f'latest {latest["rate"]}% ({latest["detected"]}/{latest["seeded"]}) · '
+               f'{len(series)} drill runs</p>')
+    return f'<div class="spark">{"".join(bins)}</div>{caption}'
+
+
+def render_gate_criteria(criteria: list[dict]) -> str:
+    if not criteria:
+        return ('<p class="sub">no data — acceptance-gate criteria accumulate in '
+                '<code>.rig/runs/&lt;task&gt;/acceptance.json</code> as tasks pass the gate</p>')
+    rows = ['<tr><th>criterion</th><th>evaluated</th><th>failed</th><th>warning</th>'
+            '<th>fail%</th></tr>']
+    for c in criteria:
+        fail_ratio = round(c["failed"] / c["evaluated"] * 100, 1) if c["evaluated"] else 0.0
+        fail_cls = ' class="status-escalate"' if c["failed"] else ""
+        rows.append(
+            f'<tr><td>{esc(c["name"])}</td><td>{c["evaluated"]}</td>'
+            f'<td{fail_cls}>{c["failed"]}</td><td>{c["warning"]}</td>'
+            f'<td>{fail_ratio}%</td></tr>'
+        )
+    return f'<table>{"".join(rows)}</table>'
+
+
 def render_recent(rows: list[dict]) -> str:
     if not rows:
         return '<p class="sub">no data</p>'
@@ -324,11 +422,14 @@ def render_recent(rows: list[dict]) -> str:
     return f'<table>{head}{"".join(body)}</table>'
 
 
-def render(runs: list[dict], meta: dict) -> str:
+def render(runs: list[dict], meta: dict,
+           drill_results: list[dict] | None = None,
+           gate_criteria: list[dict] | None = None) -> str:
     k = kpi(runs)
     days = by_day(runs)
     recipes = by_recipe(runs)
     votes = verifier_votes(runs)
+    drill = drill_series(drill_results or [])
     recent_rows = recent(runs, meta.get("limit", 20))
     sub_bits = []
     if meta.get("recipe"):
@@ -368,6 +469,16 @@ def render(runs: list[dict], meta: dict) -> str:
 {render_verifiers(votes)}
 </div>
 
+<h2>drill · detection rate over time</h2>
+<div class="card">
+{render_drill(drill)}
+</div>
+
+<h2>acceptance gate · per-criterion failures</h2>
+<div class="card">
+{render_gate_criteria(gate_criteria or [])}
+</div>
+
 <h2>last {min(len(runs), meta.get("limit", 20))} runs</h2>
 <div class="card">
 {render_recent(recent_rows)}
@@ -401,6 +512,8 @@ def main() -> None:
     runs_path = root / ".rig" / "runs.jsonl"
     runs = load_runs(runs_path)
     runs = filter_runs(runs, args.recipe, args.since)
+    drill_results = load_jsonl(root / ".rig" / "drill-results.jsonl")
+    gate_criteria = gate_criteria_failures(root)
 
     meta = {
         "limit": args.limit,
@@ -409,7 +522,7 @@ def main() -> None:
         "generated": dt.datetime.now().isoformat(timespec="seconds"),
         "repo": str(root),
     }
-    output = render(runs, meta)
+    output = render(runs, meta, drill_results=drill_results, gate_criteria=gate_criteria)
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
