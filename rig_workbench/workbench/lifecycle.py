@@ -7,6 +7,8 @@ import sys
 
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
+from .hardening import apply_tamper_sensor
+from .injection import apply_injection_sensor
 from .schema_diff import apply_schema_sensor
 from .secrets import apply_secret_sensor
 from .state import (build_acceptance, current_branch, default_worktree_path,
@@ -165,6 +167,14 @@ def cmd_gate(args: argparse.Namespace) -> None:
         # no_secret_leak. Fail-grade: findings block accept; an explicit
         # --set no_secret_leak=passed in this invocation is the escape hatch.
         sensor_notes += apply_secret_sensor(root, d, task, acc, explicit_set=explicit_set)
+        # Anti-tamper sensor: gate/CI-config edits in the diff are fail-grade,
+        # test-weakening patterns warning-grade; --set no_gate_tampering=passed
+        # is the recorded escape hatch (tamper_override).
+        sensor_notes += apply_tamper_sensor(root, d, task, acc, explicit_set=explicit_set)
+        # Injection-marker sensor: invisible Unicode is fail-grade,
+        # instruction-override phrases warning-grade; --set
+        # no_injection_markers=passed is the recorded escape hatch.
+        sensor_notes += apply_injection_sensor(root, d, task, acc, explicit_set=explicit_set)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()

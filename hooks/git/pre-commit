@@ -50,11 +50,56 @@ read_manifest_cmd() {
   printf '%s' "$val"
 }
 
+# ── manifest trust gate (Rules-File-Backdoor hardening) ──────────────────
+# The manifest is repo-controlled and its lint: command is eval'd below, so a
+# hostile commit could otherwise run arbitrary shell here. Only eval if the
+# manifest's SHA-256 matches the hash recorded in the rig trust store
+# (written by `rig-wb githooks install`, `--allow-project-manifest`, or
+# RIG_ALLOW_PROJECT_MANIFEST=1 — the last one also records consent).
+# Untrusted => the manifest-driven checks are skipped (the secret scan still
+# runs) and the commit is NOT blocked: the hook degrades, it doesn't lock out.
+manifest_trusted() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$manifest" "${RIG_TRUST_STORE:-$HOME/.claude/rig/trusted-recipes.json}" \
+    "${RIG_ALLOW_PROJECT_MANIFEST:-}" <<'PY'
+import hashlib, json, os, sys
+manifest, store, allow = sys.argv[1], sys.argv[2], sys.argv[3]
+digest = hashlib.sha256(open(manifest, "rb").read()).hexdigest()
+key = os.path.realpath(manifest)
+try:
+    with open(store, encoding="utf-8") as fh:
+        data = json.load(fh) or {}
+except (OSError, ValueError):
+    data = {}
+if data.get(key) == digest:
+    sys.exit(0)
+if allow and allow != "0":
+    data[key] = digest
+    os.makedirs(os.path.dirname(store) or ".", exist_ok=True)
+    with open(store, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
+manifest_ok=0
+if manifest_trusted; then
+  manifest_ok=1
+else
+  say "manifest not trusted (new or edited since consent) — skipping manifest-driven checks"
+  say "  review $manifest, then consent with: RIG_ALLOW_PROJECT_MANIFEST=1 git commit ..."
+  say "  (records a content hash; silent next time) or reinstall: rig-wb githooks install"
+fi
+
 fail=0
 
 # ── 1) lint ──────────────────────────────────────────────────────────────
 if _truthy "${RIG_HOOK_SKIP_LINT:-}"; then
   say "lint: skipped (RIG_HOOK_SKIP_LINT)"
+elif [ "$manifest_ok" != "1" ]; then
+  say "lint: skipped (untrusted manifest)"
 else
   lint_cmd="$(read_manifest_cmd lint)"
   if [ -z "$lint_cmd" ]; then

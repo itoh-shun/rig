@@ -92,6 +92,68 @@ def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
     sys.exit(2)
 
 
+# ── Project-manifest trust gate ───────────────────────────────────────────────
+# The project manifest `.claude/rig.md` is repo-controlled too (Rules-File-
+# Backdoor / AIShellJack class): it adds a recipe search tier (org_dir), sets
+# default flags/personas, and its lint:/build:/test: commands are eval'd by
+# the shipped pre-commit/pre-push git hooks. Same trust model as recipes
+# (content hash in the shared trust store), separate consent switch.
+
+# (path, digest) pairs already warned about in this process — load_manifest()
+# sits on hot paths (plan, every recipe resolve), so warn once, not per call.
+_warned_manifests: set[tuple[str, str]] = set()
+
+
+def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
+    """Consent gate for the project manifest `.claude/rig.md`. True = usable.
+
+    Mirrors ensure_recipe_trusted (same trust store, hash-recorded consent via
+    `--allow-project-manifest` in argv or `RIG_ALLOW_PROJECT_MANIFEST=1`; an
+    unchanged file passes silently, any edit re-requires consent) but with a
+    deliberately different failure mode:
+
+    - Recipes execute shell commands (`checks:`) the moment they load, so an
+      untrusted recipe must refuse HARD (sys.exit) — running it at all is the
+      hazard.
+    - The manifest only contributes defaults (org_dir search tier, default
+      flags/personas, size thresholds); ignoring it degrades behavior to
+      "no manifest present", which is always safe. load_manifest() is also on
+      hot paths (plan etc.), so an untrusted manifest degrades SOFT: warn one
+      line, return False, and the caller behaves as if the file were absent.
+
+    Exception: `require=True` (for command paths where the user explicitly
+    asked for manifest-driven behavior) exits 2 with the full consent
+    instructions, like the recipe gate.
+    """
+    import hashlib
+    resolved = path.resolve()
+    digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    if _load_trust_store().get(str(resolved)) == digest:
+        return True
+    allowed = ("--allow-project-manifest" in sys.argv
+               or os.environ.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
+    if allowed:
+        _record_trust(resolved, digest)
+        print(f"[trust] project manifest allowed and recorded: {resolved}")
+        return True
+    if require:
+        print(f"[ERROR] untrusted project manifest: {resolved}\n"
+              f"  The manifest comes from the repository you are working on and drives\n"
+              f"  recipe search paths, default flags/personas, and the git hooks'\n"
+              f"  lint/build/test commands. First use requires explicit consent:\n"
+              f"    re-run with --allow-project-manifest   (records a content hash; silent next time)\n"
+              f"    or set RIG_ALLOW_PROJECT_MANIFEST=1\n"
+              f"  Review the file first: {resolved}\n"
+              f"  Trust store: {_trust_store_path()}")
+        sys.exit(2)
+    key = (str(resolved), digest)
+    if key not in _warned_manifests:
+        _warned_manifests.add(key)
+        print(f"[WARN] untrusted project manifest ignored: {resolved} "
+              f"(consent: --allow-project-manifest or RIG_ALLOW_PROJECT_MANIFEST=1)")
+    return False
+
+
 # ── Recipe loading ────────────────────────────────────────────────────────────
 def parse_frontmatter(path: pathlib.Path) -> dict:
     if yaml is None:
@@ -338,14 +400,26 @@ def git_diff_lines() -> int | None:
         return None
 
 
-def load_manifest() -> dict:
-    """Read the frontmatter of `<cwd>/.claude/rig.md` (empty dict if absent; §4.1)."""
+def load_manifest(require: bool = False) -> dict:
+    """Read the frontmatter of `<cwd>/.claude/rig.md` (empty dict if absent; §4.1).
+
+    The manifest is gated by ensure_manifest_trusted() BEFORE any value is
+    used: untrusted content is not parsed at all and {} is returned (fail-safe:
+    behave as if no manifest exists) with a one-line warning — no hard exit,
+    because this runs on hot paths (plan etc.) and the manifest only supplies
+    defaults. `require=True` instead exits 2 with consent instructions, for
+    command paths where the user explicitly asked for manifest-driven behavior.
+    """
     path = config.INVOCATION_CWD / ".claude" / "rig.md"
     if not path.exists():
         return {}
     try:
+        if not ensure_manifest_trusted(path, require=require):
+            return {}
         fm = parse_frontmatter(path)
         return fm if isinstance(fm, dict) else {}
+    except SystemExit:
+        raise
     except Exception:
         return {}
 

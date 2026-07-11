@@ -145,14 +145,14 @@ acceptance-gate は、run を反映候補として渡してよいかを判定す
 
 | preset | 上乗せ対象 | 基準の例 |
 |---|---|---|
-| `standard` | 全 task_type | `task_intent_satisfied`・`no_unrelated_diff`・`diff_summary_written`・`risk_summary_written`・`tests_pass_or_explained`・`no_type_errors_or_explained`・`no_secret_leak`・`no_destructive_operation` |
+| `standard` | 全 task_type | `task_intent_satisfied`・`no_unrelated_diff`・`diff_summary_written`・`risk_summary_written`・`tests_pass_or_explained`・`no_type_errors_or_explained`・`no_secret_leak`・`no_gate_tampering`・`no_injection_markers`・`no_destructive_operation` |
 | `bugfix` | bugfix, performance | `bug_cause_identified`・`fix_is_minimal`・`regression_test_added_or_explained`・`existing_behavior_preserved`・`no_unrelated_refactor` |
 | `feature` | feature, test | `requirement_summary_written`・`implementation_matches_requirement`・`tests_added_or_explained`・`public_api_changes_documented`・`migration_or_backward_compatibility_considered` |
 | `refactor` | refactor | `behavior_boundaries_identified`・`no_unintended_behavior_change`・`tests_confirm_behavior_preserved`・`no_unrelated_refactor`・`public_api_changes_documented_if_any` |
 | `review` | review | `findings_are_concrete`・`severity_labeled`・`file_references_included`・`blocking_and_non_blocking_separated`・`false_positive_risk_considered` |
 | `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |
 
-この基準リストはプロジェクト側で **`.rig/gates.json`** から拡張できる——`extra_criteria` で preset / task_type 別に独自基準を追加（表示には `[project]` タグ）、`descriptions` で説明を付ける。設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。また2つの基準は自己申告でなく機械センサーが裏付ける：`public_api_changes_documented` は OpenAPI schema-diff（`openapi.json`/`swagger.json` 等を自動検出、`openapi_paths` で明示可）で、API が変わったのに diff サマリに記述が無ければ `warning` に落とす——warning-grade であり単独で gate を fail にはしない。`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）で、検出があれば **failed** にする——抜粋は常にマスク済みで、人が確認した偽陽性は `--set no_secret_leak=passed` で明示的に解除する。
+この基準リストはプロジェクト側で **`.rig/gates.json`** から拡張できる——`extra_criteria` で preset / task_type 別に独自基準を追加（表示には `[project]` タグ）、`descriptions` で説明を付ける。設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。また4つの基準は自己申告でなく機械センサーが裏付ける：`public_api_changes_documented` は OpenAPI schema-diff（`openapi.json`/`swagger.json` 等を自動検出、`openapi_paths` で明示可）で、API が変わったのに diff サマリに記述が無ければ `warning` に落とす——warning-grade であり単独で gate を fail にはしない。`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）で、検出があれば **failed** にする——抜粋は常にマスク済みで、人が確認した偽陽性は `--set no_secret_leak=passed` で明示的に解除する。`no_gate_tampering` は task diff への anti-tamper スキャン——`.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（人がレビューした上での上書きは `--set no_gate_tampering=passed` で行い、check に記録される）。`no_injection_markers` は diff＋repo の prose 面へのプロンプトインジェクション・マーカースキャン（`workbench.py scan-injection`）——不可視/bidi Unicode は fail-grade・指示上書きフレーズは warning-grade で、抜粋中の不可視文字は `<U+XXXX>` エスケープで描画され、脱出口は `--set no_injection_markers=passed`（記録される）。
 
 各基準は根拠つきで `passed` / `failed` / `warning` / `skipped` として記録する：
 
@@ -184,7 +184,7 @@ Review /rig:go diff, then choose accept or discard.
 
 rig は「実装する AI」と「検証する AI」を分離し、検証側はプロセスレベルで read-only に固定される——お願いではなく強制として。
 
-reviewer/verifier subagent はツールアクセスを制限して起動する（`claude --allowedTools Read,Grep,Glob`・`codex --sandbox read-only`）。ファイル確認、grep、diff 確認、指摘の作成はできる。一方でファイル編集、破壊的な shell 操作、formatter による変更、commit、worktree 変更はできない。これにより、レビュー担当が評価対象の成果物を勝手に修正してしまうことを防ぐ——実装と検証を同系統のモデルにまかせるときの実在するリスク。`scripts/orchestrate.py probe`/`selftest` が、この制限が文書上だけでなくプロバイダごとに実際に適用されていることを検証している。
+reviewer/verifier subagent はツールアクセスを制限して起動する（`claude --allowedTools Read,Grep,Glob`・`codex --sandbox read-only`）。ファイル確認、grep、diff 確認、指摘の作成はできる。一方でファイル編集、破壊的な shell 操作、formatter による変更、commit、worktree 変更はできない。これにより、レビュー担当が評価対象の成果物を勝手に修正してしまうことを防ぐ——実装と検証を同系統のモデルにまかせるときの実在するリスク。さらに verifier は生成側の自己申告レポートでなく **worktree の実際の git diff を一次証拠として判定する**——レポートは「未検証の主張」と明示ラベルづけして渡されるだけ——そして基準ごとの `CRITERION n: PASS|FAIL|UNKNOWN` 行を出し、判定は最後に置く。`scripts/orchestrate.py probe`/`selftest` が、この制限が文書上だけでなくプロバイダごとに実際に適用されていることを検証している。
 
 ### 明示的な accept / discard
 
@@ -490,6 +490,8 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 `$RIG_HOME` で install 先を上書き、`<cwd>/.rig/recipes/<name>.md` が同名 built-in recipe をプロジェクト overlay、recipe の `checks:` は呼び出し元プロジェクト（rig リポジトリではない）の cwd で実行される。
 
 **プロジェクト recipe は初回のみ明示的な同意が必要。** プロジェクトローカルの recipe は shipped recipe を同名で overlay でき、その `checks:` 行は shell コマンドとして実行される——つまり repo を clone しただけでそのコマンドが動いてはいけない。`<cwd>/.rig/recipes/` 配下の recipe の初回ロードは拒否され、`--allow-project-recipes` フラグまたは `RIG_ALLOW_PROJECT_RECIPES=1` で明示的に同意して初めて読み込まれる。同意はコンテンツハッシュとして `~/.claude/rig/trusted-recipes.json` に記録され（保存先は `RIG_TRUST_STORE` で上書き可）、以降は黙って通る——ただしファイルを編集すると再同意が必要になる。shipped と org 層の recipe は対象外：あの置き場は作業対象のリポジトリではなく、あなた自身が設定する場所だから。
+
+プロジェクト manifest `.claude/rig.md` も同じ trust store の背後にあり、専用の同意スイッチ（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`）を持つ。manifest は既定値を供給するだけなので、未同意でも recipe のようにハード拒否せず **soft degrade** する——警告1行を出して「manifest が無い」場合と同じ挙動に落ちる。同梱の git hook は manifest の lint/build/test コマンドを eval する前に記録済みハッシュを検証し、`rig-wb githooks install` がそのハッシュを記録する：hook のインストール＝その時点の manifest への同意であり、以後ファイルを編集すると再同意が必要になる。
 
 ## 14. Experimental commands
 

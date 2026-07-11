@@ -35,6 +35,10 @@ def _print_checks(acc: dict) -> None:
             print(f"      api: {line}")
         for line in c.get("secret_findings") or []:
             print(f"      secret: {line}")
+        for line in c.get("tamper_findings") or []:
+            print(f"      tamper: {line}")
+        for line in c.get("injection_findings") or []:
+            print(f"      inject: {line}")
 
 
 def cmd_status(args: argparse.Namespace) -> None:

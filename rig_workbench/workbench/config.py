@@ -11,6 +11,8 @@ GATE_PRESETS: dict[str, list[str]] = {
         "tests_pass_or_explained",
         "no_type_errors_or_explained",
         "no_secret_leak",
+        "no_gate_tampering",     # anti-tamper sensor (hardening.py) — covers bugfix/feature too (they layer on standard)
+        "no_injection_markers",  # injection-marker sensor (injection.py)
         "no_destructive_operation",
     ],
     # bugfix-specific (layered on top of standard)

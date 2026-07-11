@@ -11,7 +11,8 @@ from .config import DEFAULT_K
 from .recipes import (auto_orchestrate, git_diff_lines, load_manifest,
                       resolve_effective, resolve_plan_json)
 from .runstate import compute_next, new_state
-from .providers import (_OPENAI_BASE, build_argv, discover_models,
+from .providers import (_OPENAI_BASE, _judge_output, _parse_criteria, _verdict_ok,
+                        build_argv, discover_models,
                         parse_step_model_spec, resolve_http_model, run_loop,
                         run_provider, unknown_step_model_ids)
 from .queueing import (_local_load, _queue_relabel_args, queue_add, queue_list,
@@ -452,6 +453,50 @@ def cmd_selftest(_args):
     report("Z step-model: malformed spec is rejected, valid spec parses",
            (parse_step_model_spec("plan"), parse_step_model_spec("plan=sonnet")),
            (None, ("plan", "sonnet")))
+
+    # ── Scenario Y: judge hardening (evidence-first verdict / per-criterion lines / multi-PASS set) ──
+    # Y-1: evidence-first review-verdict contract — the rationale quotes another verdict line,
+    # yet the LAST 判定: line (contract-mandated final position) decides.
+    y_ev = ("根拠:\n"
+            "1. 過去レビューの引用 — a.py:1\n"
+            "判定: REJECT\n"          # quoted verdict inside the rationale (must NOT decide)
+            "2. 該当修正を確認 — b.py:2\n"
+            "3. テスト追加を確認 — c.py:3\n"
+            "判定: APPROVE\n確信度: 高")
+    report("Y evidence-first: the LAST 判定 line wins over a quoted one", _verdict_ok(y_ev), True)
+    y_machine = "evidence x — a.py:1\nthe report itself said \"VERDICT: FAIL\" once\nVERDICT: PASS"
+    report("Y evidence-first: machine VERDICT prefers the final line", _verdict_ok(y_machine), True)
+    # Y-2: per-criterion verdicts (tolerant parse; UNKNOWN escape; all-UNKNOWN+PASS fails closed)
+    y_crit = ("reasoning — a.py:1\nCRITERION 1: PASS — a.py:1\n"
+              "criterion 2: unknown - not observable\nVERDICT: PASS")
+    ok_y, crit_y = _judge_output(y_crit)
+    report("Y per-criterion lines parse (tolerant, UNKNOWN recorded)",
+           (ok_y, [c["verdict"] for c in crit_y]), (True, ["PASS", "UNKNOWN"]))
+    y_allunk = "reasoning\nCRITERION 1: UNKNOWN — n/a\nCRITERION 2: UNKNOWN — n/a\nVERDICT: PASS"
+    report("Y all-UNKNOWN + VERDICT PASS fails closed", _judge_output(y_allunk)[0], False)
+    report("Y old format (no CRITERION lines) keeps old behavior",
+           _judge_output("short note\nVERDICT: PASS"), (True, []))
+    # Y-3: mock end-to-end — criteria land in the verdict record; multi-PASS judge-panel
+    # records order_sensitive + the pass-set (all candidates judged; first-in-list wins).
+    config.RUNS_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_runs_judge_selftest.jsonl"
+    config.RUNS_PATH.unlink(missing_ok=True)
+    stepsY = [s(id="review", gate="review-gate")]
+    stateY = new_state("judge-harden", stepsY, None)
+    finalY = run_loop(stateY, None, "mock", "mock", {}, 20, quiet=True)
+    vY = stateY["step_state"]["review"]["verdicts"][0]
+    stepsY2 = [s(id="impl", gate="acceptance-gate")]
+    stateY2 = new_state("judge-multi", stepsY2, None)
+    finalY2 = run_loop(stateY2, None, "mock", "mock", {}, 20, quiet=True,
+                       max_parallel=2, generators=["mock", "mock"])
+    vY2 = stateY2["step_state"]["impl"]["verdicts"][0]
+    config.RUNS_PATH.unlink(missing_ok=True)
+    config.RUNS_PATH = _orig_runs
+    report("Y mock verifier's criteria are recorded in the verdict",
+           (finalY, [c["verdict"] for c in vY.get("criteria", [])]), ("DONE", ["PASS"]))
+    report("Y multi-PASS panel records order_sensitive + pass-set (deterministic winner)",
+           (finalY2, vY2.get("order_sensitive"), vY2.get("pass_set")),
+           ("DONE", True, ["mock", "mock"]))
+    report("Y empty parse helper: no CRITERION lines → empty criteria", _parse_criteria("VERDICT: PASS"), [])
 
     print("\n" + ("PASS: the deterministic orchestrator is healthy" if ok else "FAIL: selftest mismatch"))
     sys.exit(0 if ok else 1)

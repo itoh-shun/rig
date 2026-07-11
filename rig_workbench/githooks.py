@@ -85,11 +85,34 @@ def hook_state(path: pathlib.Path) -> str:
     return "rig" if is_rig_hook(path) else "foreign"
 
 
+def _record_manifest_trust(repo: pathlib.Path) -> None:
+    """Record the current manifest's content hash in the rig trust store.
+
+    Installing the hooks IS consent for the manifest as it exists right now:
+    the user just opted in to running its lint/build/test commands. The hooks
+    verify this hash before eval'ing anything, so a later edit to
+    `.claude/rig.md` re-requires consent (RIG_ALLOW_PROJECT_MANIFEST=1 or a
+    reinstall after review). No manifest yet => nothing to record.
+    """
+    manifest = repo / ".claude" / "rig.md"
+    if not manifest.is_file():
+        return
+    import hashlib
+
+    from .orchestrate import recipes
+
+    resolved = manifest.resolve()
+    digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    recipes._record_trust(resolved, digest)
+    print(f"[OK] trusted manifest recorded (sha256): {resolved}")
+
+
 def install(repo: pathlib.Path, force: bool = False) -> int:
     """Copy hook templates into the repo's hooks dir. Returns a process exit code.
 
     Existing rig-managed hooks are refreshed in place; existing foreign hooks
-    are refused (exit 1) unless `force` is set.
+    are refused (exit 1) unless `force` is set. Installation also records the
+    current project manifest's hash as trusted (see _record_manifest_trust).
     """
     templates = _templates_dir()
     hooks_dir = _hooks_dir(repo)
@@ -116,6 +139,7 @@ def install(repo: pathlib.Path, force: bool = False) -> int:
         print(f"[ERROR] {len(refused)} hook(s) not installed: {', '.join(refused)}",
               file=sys.stderr)
         return 1
+    _record_manifest_trust(repo)
     print("githooks: computational sensors only (build/lint/test/secret-scan); "
           "no AI criteria run in hooks. Skip with RIG_HOOK_SKIP=1.")
     return 0

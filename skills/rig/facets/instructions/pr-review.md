@@ -22,9 +22,13 @@
 
 各 subagent の出力は `output-contracts/review-verdict` に従わせる。`--adversarial` 指定時は lazy-senior / cognitive-economist の敵対レビュー step（`facets/instructions/adversarial-review`）を追加する。
 
+**suppression の注入（`facets/policies/suppression-memory`）**: `.rig/review-suppressions.jsonl` に有効な suppression があれば、各 reviewer prompt へ「このリポジトリで検証済みの非問題 — 該当コードに実質的変更が無い限り再指摘しない」として注入する。
+
 ### ③ 集約（`acceptance-gate` 内で `review-gate`）
 
 3 verdict が揃ったら `review-gate` で統合し、recipe の acceptance（3観点判定済み／指摘が「どのファイルの何を・なぜ・どう直すか」分かる粒度／総合 verdict が出ている）へ収束させる。未達なら不足観点を再 dispatch する。
+
+`finding-verifier` による反証を行った場合は `facets/policies/suppression-memory` に従い記録する: **REFUTED** 所見（および user が却下した条件）は `.rig/review-suppressions.jsonl` へ追記し、既存 suppression にマッチする **UPHELD** 所見はサイレントに落とさずゲートへ通して当該 suppression に期限切れフラグを付ける。
 
 ### ④ 報告と任意の投稿
 
@@ -37,6 +41,8 @@
 
 **GitHub MCP メソッド**: `add_issue_comment`
 （plain コメント。`pull_request_review_write` はリポジトリ権限・ブランチ保護ルールへの影響が大きいため、デフォルトは低リスク側を選ぶ）
+
+**投稿内容の統制（`facets/policies/comment-policy`）**: 何を PR に届けるかは同 policy に従う — Critical/High は常に投稿、Medium/Low は nit（上限5件・超過は「+N similar」ロールアップ）、diff が導入していない所見は `Pre-existing:` note（REJECT 根拠にしない）、rig が既にレビューした PR への再レビューは Important のみ＋修正済み指摘を「resolved」とマーク（蒸し返さない）。
 
 **投稿内容（Markdown 正準構造）**:
 

@@ -18,7 +18,7 @@ MAGI 合議の **routing**。提案（go/no-go を問う決定・設計トレー
 - **BALTHASAR-2（母）**: `facets/personas/magi/balthasar` を合成 — 被害半径・可逆性・安定・将来負担で投票。
 - **CASPER-3（女）**: `facets/personas/magi/casper` を合成 — 価値・問題の同定・単純さ・直感で投票。
 
-各号機の出力は `output-contracts/magi-verdict` に従わせる（`判定:` 行を先頭に・自分の評価軸に閉じる）。
+各号機の出力は `output-contracts/magi-verdict` に従わせる（根拠を先に述べ `判定:` 行を末尾に・自分の評価軸に閉じる）。
 
 ### ③ 合議（`pattern: magi-consensus`）
 

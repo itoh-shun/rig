@@ -28,6 +28,21 @@ def _git(repo, *args, env=None):
     return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, env=e)
 
 
+@pytest.fixture(autouse=True)
+def isolated_trust_store(tmp_path, monkeypatch):
+    """Point the manifest trust store at a scratch file for every test.
+
+    githooks.install records the manifest hash and the hooks read the store
+    before eval'ing manifest commands; neither must touch the developer's
+    real ~/.claude/rig/trusted-recipes.json. The env var propagates into hook
+    subprocesses via _git's os.environ copy.
+    """
+    store = tmp_path / "trusted-recipes.json"
+    monkeypatch.setenv("RIG_TRUST_STORE", str(store))
+    monkeypatch.delenv("RIG_ALLOW_PROJECT_MANIFEST", raising=False)
+    return store
+
+
 @pytest.fixture
 def scratch_repo(tmp_path):
     """Fresh git repo with identity configured and one initial commit."""
@@ -221,8 +236,9 @@ def test_pre_commit_skip_env_bypasses(scratch_repo):
 
 
 def test_pre_commit_clean_commit_passes_and_runs_lint(scratch_repo):
-    githooks.install(scratch_repo)
+    # Manifest first: install records its hash (installation IS consent).
     _write_manifest(scratch_repo, lint='"echo LINT_RAN"')
+    githooks.install(scratch_repo)
     (scratch_repo / "clean.txt").write_text("nothing secret here\n", encoding="utf-8")
     _git(scratch_repo, "add", ".")
     r = _git(scratch_repo, "commit", "-m", "clean")
@@ -231,8 +247,8 @@ def test_pre_commit_clean_commit_passes_and_runs_lint(scratch_repo):
 
 
 def test_pre_commit_failing_lint_blocks(scratch_repo):
-    githooks.install(scratch_repo)
     _write_manifest(scratch_repo, lint='"false"')
+    githooks.install(scratch_repo)
     (scratch_repo / "clean.txt").write_text("ok\n", encoding="utf-8")
     _git(scratch_repo, "add", ".")
     r = _git(scratch_repo, "commit", "-m", "lint fails")
@@ -245,9 +261,9 @@ def test_pre_commit_failing_lint_blocks(scratch_repo):
 
 
 def test_pre_push_runs_test_command(scratch_repo, tmp_path):
-    githooks.install(scratch_repo)
     marker = tmp_path / "test_ran.marker"
     _write_manifest(scratch_repo, test=f'"touch {marker}"')
+    githooks.install(scratch_repo)
     _git(scratch_repo, "add", ".")
     assert _git(scratch_repo, "commit", "-m", "manifest").returncode == 0
     # Bare remote so `git push` triggers pre-push without any network.
@@ -260,8 +276,8 @@ def test_pre_push_runs_test_command(scratch_repo, tmp_path):
 
 
 def test_pre_push_failing_test_blocks_push(scratch_repo, tmp_path):
-    githooks.install(scratch_repo)
     _write_manifest(scratch_repo, test='"false"')
+    githooks.install(scratch_repo)
     _git(scratch_repo, "add", ".")
     assert _git(scratch_repo, "commit", "-m", "manifest").returncode == 0
     remote = tmp_path / "remote.git"
@@ -273,3 +289,84 @@ def test_pre_push_failing_test_blocks_push(scratch_repo, tmp_path):
     # Whole-hook skip lets the push through.
     r = _git(scratch_repo, "push", "origin", "HEAD", env={"RIG_HOOK_SKIP": "1"})
     assert r.returncode == 0, r.stderr
+
+
+# ── manifest trust gate (Rules-File-Backdoor hardening) ──────────────────
+
+
+def _store_json(store):
+    import json
+    return json.loads(store.read_text(encoding="utf-8"))
+
+
+def test_install_records_manifest_hash(scratch_repo, isolated_trust_store):
+    import hashlib
+    _write_manifest(scratch_repo, lint='"echo LINT_RAN"')
+    assert githooks.install(scratch_repo) == 0
+    manifest = (scratch_repo / ".claude" / "rig.md").resolve()
+    expected = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert _store_json(isolated_trust_store)[str(manifest)] == expected
+
+
+def test_install_without_manifest_records_nothing(scratch_repo, isolated_trust_store):
+    assert githooks.install(scratch_repo) == 0
+    assert not isolated_trust_store.exists()
+
+
+def test_pre_commit_edited_manifest_skips_lint_but_still_scans_secrets(scratch_repo):
+    _write_manifest(scratch_repo, lint='"echo LINT_RAN"')
+    githooks.install(scratch_repo)
+    # Attacker (or anyone) edits the manifest after consent was recorded.
+    _write_manifest(scratch_repo, lint='"echo INJECTED > pwned.txt"')
+    (scratch_repo / "clean.txt").write_text("nothing secret\n", encoding="utf-8")
+    _git(scratch_repo, "add", "clean.txt")
+    r = _git(scratch_repo, "commit", "-m", "edited manifest")
+    # Hook degrades: refuses the eval, does not block the commit.
+    assert r.returncode == 0, r.stderr
+    assert "manifest not trusted" in r.stderr
+    assert "LINT_RAN" not in r.stdout + r.stderr
+    assert not (scratch_repo / "pwned.txt").exists()
+    # ...but the secret scan still runs on the next commit attempt.
+    (scratch_repo / "config.py").write_text(
+        f'ACCESS_KEY = "{FAKE_AWS_KEY}"\n', encoding="utf-8"
+    )
+    _git(scratch_repo, "add", "config.py")
+    r = _git(scratch_repo, "commit", "-m", "leak under untrusted manifest")
+    assert r.returncode != 0
+    assert "secret-pattern match" in r.stderr
+
+
+def test_pre_commit_consent_env_retrusts_and_records(scratch_repo):
+    _write_manifest(scratch_repo, lint='"echo LINT_RAN"')
+    githooks.install(scratch_repo)
+    _write_manifest(scratch_repo, lint='"echo LINT_V2"')  # edit → re-requires consent
+    (scratch_repo / "a.txt").write_text("a\n", encoding="utf-8")
+    _git(scratch_repo, "add", "a.txt")
+    r = _git(scratch_repo, "commit", "-m", "consent",
+             env={"RIG_ALLOW_PROJECT_MANIFEST": "1"})
+    assert r.returncode == 0, r.stderr
+    assert "LINT_V2" in r.stdout + r.stderr
+    # Consent was recorded: the next commit runs the lint without the env var.
+    (scratch_repo / "b.txt").write_text("b\n", encoding="utf-8")
+    _git(scratch_repo, "add", "b.txt")
+    r = _git(scratch_repo, "commit", "-m", "after consent")
+    assert r.returncode == 0, r.stderr
+    assert "LINT_V2" in r.stdout + r.stderr
+
+
+def test_pre_push_edited_manifest_skips_but_allows_push(scratch_repo, tmp_path):
+    marker = tmp_path / "test_ran.marker"
+    _write_manifest(scratch_repo, test=f'"touch {marker}"')
+    githooks.install(scratch_repo)
+    _git(scratch_repo, "add", ".")
+    assert _git(scratch_repo, "commit", "-m", "manifest",
+                env={"RIG_HOOK_SKIP": "1"}).returncode == 0
+    # Edit after consent: pre-push must not eval the (now-untrusted) commands.
+    _write_manifest(scratch_repo, test=f'"touch {marker}"', build='"echo evil"')
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    _git(scratch_repo, "remote", "add", "origin", str(remote))
+    r = _git(scratch_repo, "push", "origin", "HEAD")
+    assert r.returncode == 0, r.stderr
+    assert "manifest not trusted" in r.stderr
+    assert not marker.exists()
