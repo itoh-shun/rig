@@ -396,7 +396,7 @@ rig does not just run reviewers. It measures them.
 | `/rig:go gh pr <n> fix` | read the PR's diff + review comments + failing CI, fix in an isolated worktree based on the PR's branch, stop at `accept` (nothing is pushed automatically); CI status feeds the `tests_pass_or_explained` gate criterion |
 | `/rig:go gh ci` | check CI status for the current branch/PR, surface the failing job's error summary |
 
-Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
+Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. This is enforced structurally, not by a prose "please ignore": before any third-party text reaches a downstream persona it is wrapped in a **quarantine fence** (`rig_workbench/orchestrate/quarantine.py` `wrap_untrusted`) that denotes it as data-not-instructions with an unguessable per-call delimiter, and invisible/bidi Unicode is stripped first (a tampering signal), so an injected "ignore your instructions" cannot escape the fence (OWASP LLM01; spotlighting/CaMeL). GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
 
 ## 13. Advanced commands
 
@@ -483,6 +483,7 @@ rig models                                            # discover LLM providers
 rig probe --provider codex                            # smoke-test a provider (also proves the read-only sandbox)
 rig run review-only --provider rig --verifier-provider codex
 rig run bugfix --provider rig --step-model implement=claude-opus-4-8   # per-step model override (--step-model > recipe model: > --model)
+rig resume run-state.json                             # verify-first restart: re-run the current step's checks; refuse to advance if the world drifted
 rig-wb githooks install                              # pip flavor: native pre-commit (manifest lint + staged secret scan) / pre-push (build+test) hooks; RIG_HOOK_SKIP*=1 bypasses
 rig-wb wb digest --period week                       # Markdown telemetry digest: runs / gates / force-accepts / rubber stamps / drills
 ```
@@ -520,6 +521,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Orchestrator unit behavior (recipe resolution & trust gate, queueing, run-state, graph, CLI surface) | `pytest -q` — 54-test suite under `tests/`; CI (`validate.yml`) enforces it alongside `ruff` (0 findings), the validator, and both selftests |
 | Acceptance-gate criteria, accept/discard mechanics | `scripts/workbench.py` — exercised against scratch git repos each release (see `CHANGELOG.md` entries for the verification notes) |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
+| Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/rig/patterns/failure-taxonomy.md` |
 
 ## 16. FAQ
 
