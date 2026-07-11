@@ -8,6 +8,7 @@ import sys
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
 from .schema_diff import apply_schema_sensor
+from .secrets import apply_secret_sensor
 from .state import (build_acceptance, current_branch, default_worktree_path,
                     die, gate_status, git, load_json, load_task, make_slug,
                     make_task_id, now_iso, repo_root, resolve_task_id, run_dir,
@@ -140,6 +141,7 @@ def cmd_gate(args: argparse.Namespace) -> None:
         acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
 
         known = {c["name"]: c for c in acc["checks"]}
+        explicit_set: set[str] = set()
         for pair in args.set or []:
             if "=" not in pair:
                 die(f"--set must be given as <criterion>=<status>[:detail] (got: {pair!r})")
@@ -154,10 +156,15 @@ def cmd_gate(args: argparse.Namespace) -> None:
             known[name]["status"] = status
             if detail:
                 known[name]["detail"] = detail
+            explicit_set.add(name)
 
         # Machine sensor (issue #288): verify public_api_changes_documented
         # against the actual base↔worktree OpenAPI diff before evaluating.
         sensor_notes = apply_schema_sensor(root, d, task, acc)
+        # Machine sensor (issue #273): diff-scoped secret scan backing
+        # no_secret_leak. Fail-grade: findings block accept; an explicit
+        # --set no_secret_leak=passed in this invocation is the escape hatch.
+        sensor_notes += apply_secret_sensor(root, d, task, acc, explicit_set=explicit_set)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()

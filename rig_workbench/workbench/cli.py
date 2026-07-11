@@ -26,9 +26,11 @@ import argparse
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
+from .digest import cmd_digest
 from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
+from .secrets import cmd_scan_secrets
 
 
 def main() -> None:
@@ -97,6 +99,17 @@ def main() -> None:
     p.add_argument("--set", action="append", required=True, metavar="PERSONA=VERDICT",
                    help=f"verdict: {', '.join(VALID_VERDICT)} (repeatable)")
     p.set_defaults(func=cmd_review)
+
+    p = sub.add_parser("scan-secrets", help="deterministic secret scan (machine backing for no_secret_leak; findings are always masked)")
+    p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")
+    p.add_argument("--diff", metavar="TASK_ID", help="scan only the task worktree's diff vs its base commit")
+    p.set_defaults(func=cmd_scan_secrets)
+
+    p = sub.add_parser("digest", help="periodic telemetry digest in Markdown (runs / gates / force-accepts / rubber-stamps / drills)")
+    p.add_argument("--period", choices=("week", "month"), default="week",
+                   help="rolling window: week = last 7 days (default), month = last 30 days")
+    p.add_argument("--out", metavar="PATH", help="write the Markdown to this file instead of stdout")
+    p.set_defaults(func=cmd_digest)
 
     p = sub.add_parser("stats", help="aggregate past runs (by recipe, by gate, verifier rubber-stamp detection)")
     p.add_argument("--recipe", help="filter by recipe name")
