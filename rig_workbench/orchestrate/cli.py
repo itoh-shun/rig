@@ -20,6 +20,8 @@ The model does each step's "work", but this runner decides "what happens next":
   check  <state.json>                Run the current step's checks: (shell) and record pass/fail (machine sensor)
   verdict<state.json> --by N --pass  Record an independent verifier's judgment (enforces grader != generator)
   next   <state.json>                Deterministically compute, apply, and print the next transition
+  resume <state.json>                Verify-first resume: print a digest, RE-RUN the current step's checks
+                                     (refuse to advance if the world drifted), then continue via `next`
   status <state.json>                Print the current state
   runs   [--limit N] [--recipe R] [--personas]  Run telemetry (.rig/runs.jsonl): listing, per-recipe aggregates, per-verifier vote tallies
   party                              Party roster screen (/rig:party): renders RPG-style stats from telemetry / measured drills
@@ -39,7 +41,7 @@ Dependencies: Python3 + PyYAML (same as validate.py). Exit code 0=success / 1=er
 import sys
 
 from .commands import (cmd_check, cmd_init, cmd_install_shim, cmd_next, cmd_party,
-                       cmd_plan, cmd_run, cmd_runs, cmd_status, cmd_verdict)
+                       cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status, cmd_verdict)
 from .providers import cmd_models, cmd_probe
 from .queueing import cmd_queue
 from .graph import cmd_graph
@@ -50,6 +52,7 @@ COMMANDS = {
     "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
     "verdict": cmd_verdict, "next": cmd_next, "status": cmd_status,
     "run": cmd_run, "models": cmd_models, "probe": cmd_probe, "queue": cmd_queue,
+    "resume": cmd_resume,
     "runs": cmd_runs, "party": cmd_party, "graph": cmd_graph,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest,
 }

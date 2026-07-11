@@ -143,6 +143,20 @@ def verifier_votes(runs: list[dict]) -> list[dict]:
     return sorted(out, key=lambda x: -x["total"])
 
 
+def failure_modes(runs: list[dict]) -> list[tuple[str, int]]:
+    """Distribution of `failure_mode` taxonomy codes across ESCALATE/BLOCKED runs.
+
+    Codes are written by runstate.classify_failure (absent on successful runs); the
+    vocabulary and gate/brick mapping live in skills/rig/patterns/failure-taxonomy.md.
+    """
+    counts: collections.Counter[str] = collections.Counter()
+    for r in runs:
+        code = r.get("failure_mode")
+        if code:
+            counts[str(code)] += 1
+    return counts.most_common()
+
+
 def recent(runs: list[dict], n: int) -> list[dict]:
     return list(reversed(runs[-n:]))
 
@@ -403,6 +417,13 @@ def render_gate_criteria(criteria: list[dict]) -> str:
     return f'<table>{"".join(rows)}</table>'
 
 
+def render_failure_modes(pairs: list[tuple[str, int]]) -> str:
+    if not pairs:
+        return ('<p class="sub">no data — failure-mode codes are recorded for ESCALATE/BLOCKED '
+                'runs (see <code>skills/rig/patterns/failure-taxonomy.md</code>); none observed yet</p>')
+    return render_bars(pairs)
+
+
 def render_recent(rows: list[dict]) -> str:
     if not rows:
         return '<p class="sub">no data</p>'
@@ -429,6 +450,7 @@ def render(runs: list[dict], meta: dict,
     days = by_day(runs)
     recipes = by_recipe(runs)
     votes = verifier_votes(runs)
+    fmodes = failure_modes(runs)
     drill = drill_series(drill_results or [])
     recent_rows = recent(runs, meta.get("limit", 20))
     sub_bits = []
@@ -467,6 +489,11 @@ def render(runs: list[dict], meta: dict,
 <h2>verifiers · vote counts</h2>
 <div class="card">
 {render_verifiers(votes)}
+</div>
+
+<h2>failure modes · distribution</h2>
+<div class="card">
+{render_failure_modes(fmodes)}
 </div>
 
 <h2>drill · detection rate over time</h2>

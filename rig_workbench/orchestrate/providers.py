@@ -11,6 +11,7 @@ import subprocess
 import concurrent.futures as futures
 
 from . import config
+from .quarantine import wrap_untrusted
 from .runstate import compute_next, gate_outcome, save_state, telemetry_append
 
 # ── Execution layer (external runners, provider abstraction) ─────────────────
@@ -400,10 +401,18 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
 
 
 def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str:
+    # The goal is external task text — it can originate from a GitHub Issue/PR
+    # body or comment (via gh-flow) or a queue item, i.e. third-party-authored
+    # content. Structurally quarantine it (wrap_untrusted) so an implementing
+    # persona reads it as DATA describing the task, never as instructions that
+    # override this harness (OWASP LLM01 / spotlighting / CaMeL). Absent goals
+    # keep the original "(none)" sentinel — nothing external to fence.
+    goal = state.get("goal")
+    goal_line = wrap_untrusted(goal, "task text") if goal else "(none)"
     lines = [
         f"recipe: {state['recipe']}",
         f"step: {step['id']} ({step['instruction']})",
-        f"goal: {state.get('goal') or '(none)'}",
+        f"goal: {goal_line}",
     ]
     if st is not None:
         attempt = int(st.get("retries", 0)) + 1
