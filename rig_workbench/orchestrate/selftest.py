@@ -10,7 +10,7 @@ from . import queueing
 from .config import DEFAULT_K
 from .recipes import (auto_orchestrate, git_diff_lines, load_manifest,
                       resolve_effective, resolve_plan_json)
-from .runstate import compute_next, new_state
+from .runstate import classify_failure, compute_next, new_state, save_state
 from .providers import (_OPENAI_BASE, _judge_output, _parse_criteria, _verdict_ok,
                         build_argv, discover_models,
                         parse_step_model_spec, resolve_http_model, run_loop,
@@ -19,7 +19,7 @@ from .queueing import (_local_load, _queue_relabel_args, queue_add, queue_list,
                        queue_set_status)
 from .isolate import setup_isolation, teardown_isolation
 from .graph import build_brick_graph
-from .commands import _current_running, cmd_party, cmd_runs
+from .commands import _current_running, cmd_party, cmd_resume, cmd_runs
 
 # ── Determinism selftest ──────────────────────────────────────────────────────
 def _drive(steps, script):
@@ -497,6 +497,55 @@ def cmd_selftest(_args):
            (finalY2, vY2.get("order_sensitive"), vY2.get("pass_set")),
            ("DONE", True, ["mock", "mock"]))
     report("Y empty parse helper: no CRITERION lines → empty criteria", _parse_criteria("VERDICT: PASS"), [])
+
+    # ── Scenario AA: verify-first resume ritual (re-verify machine checks before continuing) ──
+    # A resumed run re-runs the current step's checks to confirm the world still matches the
+    # recorded state: trivially-true check → digest + ADVANCE; a recorded pass that is now
+    # false → "world drifted" → REFUSE to advance (exit non-zero). Deterministic (true/false).
+    def _run_resume(state_dict):
+        p = pathlib.Path(tempfile.mktemp(prefix="rig_resume_selftest_", suffix=".json"))
+        save_state(state_dict, p)
+        buf = io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(buf):
+            try:
+                cmd_resume([str(p)])
+            except SystemExit as e:
+                code = e.code or 0
+        p.unlink(missing_ok=True)
+        return buf.getvalue(), code
+
+    stateAA1 = new_state("resume-ok", [s(id="verify", gate="acceptance-gate", checks=["true"]),
+                                       s(id="review", gate="review-gate")], None)
+    stateAA1["step_state"]["verify"]["status"] = "running"
+    stateAA1["step_state"]["verify"]["checks"] = [{"cmd": "true", "ok": True}]
+    outAA1, codeAA1 = _run_resume(stateAA1)
+    stateAA2 = new_state("resume-drift", [s(id="verify", gate="acceptance-gate", checks=["false"])], None)
+    stateAA2["step_state"]["verify"]["status"] = "running"
+    stateAA2["step_state"]["verify"]["checks"] = [{"cmd": "false", "ok": True}]  # recorded as passing
+    outAA2, codeAA2 = _run_resume(stateAA2)
+    report("AA resume: digest reports recipe/cursor and re-verifies then ADVANCEs",
+           ("cursor=0/2" in outAA1 and "re-verify" in outAA1 and "▶ ADVANCE" in outAA1, codeAA1),
+           (True, 0))
+    report("AA resume: world-drift (recorded pass now fails) refuses to advance (exit≠0)",
+           ("WORLD DRIFTED" in outAA2 and "▶ ADVANCE" not in outAA2, codeAA2 != 0),
+           (True, True))
+
+    # ── Scenario FM: failure-mode taxonomy (deterministic classification from state) ──
+    # classify_failure gives a reproducible MAST-style code from run-state alone:
+    # a self-graded stop (BLOCKED) and a K-exhausted stop (ESCALATE) map to fixed codes;
+    # a successful run carries no failure mode. See skills/rig/patterns/failure-taxonomy.md.
+    _, stFM_self = _drive([s(id="review", gate="review-gate")],
+                          [("next", None), ("verdict", ("self", True)), ("next", None)])
+    _, stFM_kx = _drive([s(id="verify", gate="acceptance-gate", checks=["false"], max_retries=2)],
+                        [("next", None), ("check", False), ("next", None),
+                         ("next", None), ("check", False), ("next", None)])
+    _, stFM_ok = _drive(stepsA, scriptA)
+    report("FM classify: self-graded stop → verification:self-grading",
+           classify_failure(stFM_self), "verification:self-grading")
+    report("FM classify: K-exhausted checks stop → verification:incorrect-implementation",
+           classify_failure(stFM_kx), "verification:incorrect-implementation")
+    report("FM classify: successful run has no failure mode", classify_failure(stFM_ok), None)
 
     print("\n" + ("PASS: the deterministic orchestrator is healthy" if ok else "FAIL: selftest mismatch"))
     sys.exit(0 if ok else 1)

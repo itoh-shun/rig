@@ -40,6 +40,55 @@ def _verdict_summary(v: dict) -> dict:
     return rec
 
 
+def classify_failure(state: dict) -> str | None:
+    """Best-guess a MAST-style failure-mode code for a stopped / escalated / blocked run.
+
+    Pure and deterministic: derives a taxonomy code purely from signals already present in
+    `state` (no model call). The vocabulary and the "which rig gate/brick should have caught
+    it" mapping live in `skills/rig/patterns/failure-taxonomy.md` (adapted from MAST,
+    arXiv 2503.13657 — 3 categories / 14 modes). Returns a code string, or None when the state
+    shows no failure (a successful or still-running run — successful runs carry no failure_mode).
+
+    Design note (MODEL-suggested-but-deterministically-stored): this is the deterministic
+    best-guess from state. A richer classification could be model-supplied later (e.g. an
+    escalation reviewer emitting a code); a future caller may pass that through instead, but
+    the value telemetry records here is always the reproducible from-state one.
+
+    Signal rules (first match wins):
+      - a verdict from the generator itself (by=self/generator/producer/"") → `verification:self-grading`
+        (self-graded gate; the BLOCKED path — grader != generator was violated).
+      - escalated (stopped) on a step whose declared machine `checks` ran and failed →
+        `verification:incorrect-implementation` (K retries exhausted; the sensor kept catching a bad impl).
+      - escalated on a gated step (acceptance/review-gate) with no declared checks and no verdict →
+        `verification:missing` (no independent verification was ever produced — a no-verifier stall).
+      - any other stopped run → `unclassified` (a code exists but the signal is ambiguous; never silently dropped).
+      - no failure signal → None.
+    """
+    ss = state.get("step_state") or {}
+
+    # Self-grading can be present without `stopped` (compute_next returns BLOCKED without stopping).
+    for st in ss.values():
+        for v in st.get("verdicts") or []:
+            if str(v.get("by", "")).lower() in ("", "self", "generator", "producer"):
+                return "verification:self-grading"
+
+    stopped = state.get("stopped")
+    if not stopped:
+        return None  # successful or in-progress run — no failure mode
+
+    sid = stopped.get("at")
+    step = next((s for s in (state.get("steps") or []) if s.get("id") == sid), None)
+    st = ss.get(sid, {})
+    if step is not None:
+        declared = step.get("checks") or []
+        ran = st.get("checks") or []
+        if declared and any(not c.get("ok") for c in ran):
+            return "verification:incorrect-implementation"
+        if step.get("gate") in ("acceptance-gate", "review-gate") and not declared and not st.get("verdicts"):
+            return "verification:missing"
+    return "unclassified"
+
+
 def telemetry_append(state: dict, final: str) -> None:
     """Append a one-line JSON summary of a single RUN to .rig/runs.jsonl (run telemetry).
 
@@ -66,6 +115,11 @@ def telemetry_append(state: dict, final: str) -> None:
                                     for v in ss[s["id"]].get("verdicts", [])]}
                       for s in state["steps"]],
         }
+        # Failure-mode taxonomy (additive; absent for successful runs). Deterministic best-guess
+        # from state — see classify_failure / skills/rig/patterns/failure-taxonomy.md.
+        failure_mode = classify_failure(state)
+        if failure_mode is not None:
+            rec["failure_mode"] = failure_mode
         config.RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with config.RUNS_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
