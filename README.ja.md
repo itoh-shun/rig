@@ -152,6 +152,8 @@ acceptance-gate は、run を反映候補として渡してよいかを判定す
 | `review` | review | `findings_are_concrete`・`severity_labeled`・`file_references_included`・`blocking_and_non_blocking_separated`・`false_positive_risk_considered` |
 | `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |
 
+この基準リストはプロジェクト側で **`.rig/gates.json`** から拡張できる——`extra_criteria` で preset / task_type 別に独自基準を追加（表示には `[project]` タグ）、`descriptions` で説明を付ける。設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。また2つの基準は自己申告でなく機械センサーが裏付ける：`public_api_changes_documented` は OpenAPI schema-diff（`openapi.json`/`swagger.json` 等を自動検出、`openapi_paths` で明示可）で、API が変わったのに diff サマリに記述が無ければ `warning` に落とす——warning-grade であり単独で gate を fail にはしない。`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）で、検出があれば **failed** にする——抜粋は常にマスク済みで、人が確認した偽陽性は `--set no_secret_leak=passed` で明示的に解除する。
+
 各基準は根拠つきで `passed` / `failed` / `warning` / `skipped` として記録する：
 
 ```bash
@@ -480,6 +482,9 @@ python3 scripts/orchestrate.py install-shim          # → ~/.local/bin/rig（sy
 rig models                                           # 利用可能プロバイダ探索
 rig probe --provider codex                           # 疎通テスト（read-only サンドボックス強制の実証も兼ねる）
 rig run review-only --provider rig --verifier-provider codex
+rig run bugfix --provider rig --step-model implement=claude-opus-4-8   # step 単位のモデル上書き（--step-model > recipe model: > --model）
+rig-wb githooks install                              # pip 版：native pre-commit（manifest lint＋staged シークレットスキャン）/ pre-push（build＋test）フック。RIG_HOOK_SKIP*=1 で回避
+rig-wb wb digest --period week                       # テレメトリの Markdown ダイジェスト（runs / gate / force-accept / ゴム印 / drill）
 ```
 
 `$RIG_HOME` で install 先を上書き、`<cwd>/.rig/recipes/<name>.md` が同名 built-in recipe をプロジェクト overlay、recipe の `checks:` は呼び出し元プロジェクト（rig リポジトリではない）の cwd で実行される。
