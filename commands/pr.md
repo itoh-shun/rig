@@ -25,7 +25,7 @@ $ARGUMENTS
 ## flag
 
 - `--adversarial` … 敵対的レビュー（AI の癖排除・人間可読性・不要コメント除去）step を追加。
-- `--comment` … 結果を PR にコメント/レビューとして投稿（**書き込み＝確認必須**。`--autonomous` でも解除されない。既定は提示のみ）。
+- `--comment` … 結果を PR にコメント/レビューとして投稿（**書き込み＝確認必須**。`--autonomous` でも解除されない。既定は提示のみ）。投稿内容は `facets/policies/comment-policy` に従う（Critical/High は常に投稿・Medium/Low は nit 上限5件＋「+N similar」ロールアップ・`Pre-existing:` note・再レビューは Important のみ＋修正済みを resolved マーク）。
 - `--plan` … 構成を提示して停止（ドライラン）。
 
 ## 例
