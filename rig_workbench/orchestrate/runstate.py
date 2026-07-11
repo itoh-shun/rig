@@ -26,6 +26,20 @@ def save_state(state: dict, path: pathlib.Path) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _verdict_summary(v: dict) -> dict:
+    """One verdict's runs.jsonl summary (pure). Additive: per-criterion verdicts and the
+    judge-panel multi-PASS record (order_sensitive + pass_set) only appear when present,
+    so old-format verdicts keep the historical {by, ok} shape."""
+    rec = {"by": v.get("by"), "ok": bool(v.get("ok"))}
+    if v.get("criteria"):
+        rec["criteria"] = [{"n": c.get("n"), "verdict": c.get("verdict"),
+                            "anchor": c.get("anchor", "")} for c in v["criteria"]]
+    if v.get("order_sensitive"):
+        rec["order_sensitive"] = True
+        rec["pass_set"] = v.get("pass_set", [])
+    return rec
+
+
 def telemetry_append(state: dict, final: str) -> None:
     """Append a one-line JSON summary of a single RUN to .rig/runs.jsonl (run telemetry).
 
@@ -48,7 +62,7 @@ def telemetry_append(state: dict, final: str) -> None:
             "steps": [{"id": s["id"], "status": ss[s["id"]].get("status"),
                        "retries": ss[s["id"]].get("retries", 0),
                        "model": ss[s["id"]].get("model"),  # actually-used generator model (#293; None = provider default)
-                       "verdicts": [{"by": v.get("by"), "ok": bool(v.get("ok"))}
+                       "verdicts": [_verdict_summary(v)
                                     for v in ss[s["id"]].get("verdicts", [])]}
                       for s in state["steps"]],
         }

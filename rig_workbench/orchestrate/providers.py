@@ -2,6 +2,7 @@
 
 import sys
 import os
+import re
 import json
 import shlex
 import threading
@@ -64,6 +65,8 @@ MOCK_SRC = (
     "    return ''\n"
     "if role == 'verifier':\n"
     "    print('independent verification (mock): ' + persona)\n"
+    "    print('evidence: mock inspection of the product - mock.py:1')\n"
+    "    print('CRITERION 1: ' + ('FAIL' if 'fail' in persona else 'PASS') + ' - mock.py:1')\n"
     "    print('VERDICT: ' + ('FAIL' if 'fail' in persona else 'PASS'))\n"
     "else:\n"
     "    if step_id == 'implement' and target_file:\n"
@@ -268,23 +271,105 @@ def _excerpt(text: str, limit: int = 240) -> str:
     return " ".join((text or "").split())[:limit]
 
 
+# \u2500\u2500 Output truncation budget \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# Cap for provider outputs captured into state/history/prompts and for git-diff
+# evidence embedded in verify prompts. Head+tail clip with an explicit marker;
+# the full text is spooled to the run dir (next to the run-state file) if one exists.
+OUTPUT_CAP_CHARS = 30_000
+
+
+def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None = None) -> str:
+    """Head+tail clip to cap chars with a '[...truncated N chars...]' marker (pure)."""
+    text = text or ""
+    if len(text) <= cap:
+        return text
+    head_n = cap * 2 // 3
+    tail_n = cap - head_n
+    where = f"; full output at {full_path}" if full_path else ""
+    marker = f"\n[...truncated {len(text) - cap} chars{where}]\n"
+    return text[:head_n] + marker + text[-tail_n:]
+
+
+def _spool_full_output(text: str, cfg: dict, label: str) -> str | None:
+    """Write the full text to <run_dir>/step-outputs/<label>.txt. None if no run dir (best-effort)."""
+    run_dir = (cfg or {}).get("run_dir")
+    if not run_dir:
+        return None
+    try:
+        d = pathlib.Path(run_dir) / "step-outputs"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{label}.txt"
+        p.write_text(text, encoding="utf-8")
+        return str(p)
+    except Exception:
+        return None
+
+
+def _capture_output(text: str, cfg: dict, label: str) -> str:
+    """Apply the truncation budget to a captured provider output; spool the full text if possible."""
+    text = text or ""
+    if len(text) <= OUTPUT_CAP_CHARS:
+        return text
+    return _clip_output(text, full_path=_spool_full_output(text, cfg, label))
+
+
 def _verdict_ok(out: str) -> bool:
-    """Parse verifier output across Rig's machine verdict and review-verdict contracts."""
+    """Parse verifier output across Rig's machine verdict and review-verdict contracts.
+
+    Evidence-first: both contracts put reasoning BEFORE the verdict, so the rationale may
+    quote another verdict line. Prefer the LAST line that starts with a verdict token
+    (`VERDICT:` / \u5224\u5b9a:) \u2014 the contract-mandated final position \u2014 over any earlier
+    quote. \u5224\u5b9a ("hantei") is the verdict-line label of the Japanese review-verdict
+    output contract (facets/output-contracts/review-verdict.md); keep parsing it.
+    Token vocabulary and semantics are unchanged (PASS/APPROVE/APPROVE_WITH_CONDITIONS pass;
+    FAIL/REJECT/unparseable fail closed). Legacy whole-text scan remains as a fallback for
+    outputs with no line-anchored verdict."""
     text = out or ""
-    up = text.upper()
-    # \u5224\u5b9a ("hantei") is the verdict-line label of the Japanese review-verdict
-    # output contract (facets/output-contracts/review-verdict.md); keep parsing it.
-    if "VERDICT: FAIL" in up or "\u5224\u5b9a: REJECT" in text:
-        return False
-    if "VERDICT: PASS" in up:
-        return True
+    last = None
     for line in text.splitlines():
         line = line.strip()
-        if not line.startswith("\u5224\u5b9a:"):
-            continue
-        verdict = line.split(":", 1)[1].strip().upper()
-        return verdict in ("APPROVE", "APPROVE_WITH_CONDITIONS")
-    return False
+        if line.upper().startswith("VERDICT:") or line.startswith("\u5224\u5b9a:"):
+            last = line
+    if last is not None:
+        verdict = last.split(":", 1)[1].strip().upper()
+        return verdict.startswith(("PASS", "APPROVE"))  # REJECT/FAIL/garbage \u2192 fail-closed
+    up = text.upper()
+    if "VERDICT: FAIL" in up or "\u5224\u5b9a: REJECT" in text:
+        return False
+    return "VERDICT: PASS" in up
+
+
+# Per-criterion verdict lines (`CRITERION <n>: PASS|FAIL|UNKNOWN \u2014 <anchor>`), tolerant of
+# dash/colon variants. UNKNOWN is the explicit escape hatch for "insufficient evidence"
+# (prevents the judge guessing PASS when it could not verify; see demystifying-evals).
+_CRITERION_RE = re.compile(
+    r"^\s*CRITERION\s+(\d+)\s*:\s*(PASS|FAIL|UNKNOWN)\b[\s\u2014\u2013:-]*(.*)$",
+    re.IGNORECASE)
+
+
+def _parse_criteria(out: str) -> list[dict]:
+    """Tolerant parse of per-criterion verdict lines. Missing lines = empty list (old-format
+    tolerance = old behavior). Later duplicates win; result sorted by criterion number (pure)."""
+    found: dict[int, dict] = {}
+    for line in (out or "").splitlines():
+        m = _CRITERION_RE.match(line)
+        if m:
+            found[int(m.group(1))] = {"n": int(m.group(1)), "verdict": m.group(2).upper(),
+                                      "anchor": m.group(3).strip()}
+    return [found[n] for n in sorted(found)]
+
+
+def _judge_output(out: str) -> tuple[bool, list[dict]]:
+    """Overall verdict + per-criterion verdicts for one verifier output.
+
+    UNKNOWN on a single criterion does not fail the gate by itself (it is recorded), but
+    all-UNKNOWN criteria combined with VERDICT PASS downgrades to fail-closed: a judge that
+    could verify nothing yet passes is rubber-stamping (style-over-substance mitigation)."""
+    criteria = _parse_criteria(out)
+    ok = _verdict_ok(out)
+    if ok and criteria and all(c["verdict"] == "UNKNOWN" for c in criteria):
+        ok = False
+    return ok, criteria
 
 
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
@@ -303,9 +388,9 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     def _one(task):
         v, p = task
         rc, out = run_provider(v, "verifier", prompt, cfg, persona=p)
-        ok = _verdict_ok(out)
+        ok, criteria = _judge_output(out)
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
-                "note": f"exit {rc}; {_excerpt(out)}"}
+                "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
 
     if len(tasks) == 1:
         return [_one(tasks[0])]
@@ -372,16 +457,67 @@ def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
     )
 
 
-def _build_verify_prompt(state: dict, step: dict, product: str) -> str:
-    return (
-        f"You are an independent verifier (a separate process and role from the agent that generated this step).\n"
-        f"Judge whether the product of step '{step['id']}' meets the acceptance criteria.\n"
-        "The very last line of your output must be exactly one of:\n"
-        "VERDICT: PASS\n"
-        "VERDICT: FAIL\n"
-        "A short explanation may precede it. Do not add extra characters, Markdown, or punctuation to the last line.\n"
-        f"--- product ---\n{product[:2000]}"
-    )
+def _git_diff_evidence(cfg: dict) -> str | None:
+    """Capture `git diff HEAD` (fallback: `git diff`) from the step's cwd/worktree as primary
+    verification evidence, clipped to OUTPUT_CAP_CHARS (head+tail with a truncation marker).
+    Returns None (→ caller falls back to report-only verification) when the step has no cwd,
+    git is unavailable, or the diff is empty."""
+    cwd = (cfg or {}).get("cwd")
+    if not cwd:
+        return None
+    for args in (["git", "diff", "HEAD"], ["git", "diff"]):
+        try:
+            r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if r.returncode == 0:
+            out = r.stdout or ""
+            return _clip_output(out) if out.strip() else None
+    return None
+
+
+def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None = None) -> str:
+    """Verify-prompt with the diff as primary evidence (when available) and the generator's
+    report explicitly labeled as unverified claims — the judge must check claims against the
+    diff instead of trusting the generator's transcript (CodeJudgeBench / MT-Bench findings).
+    Contract: evidence-anchored reasoning first, per-criterion lines, VERDICT as the last line."""
+    criteria = step.get("acceptance") or []
+    lines = [
+        "You are an independent verifier (a separate process and role from the agent that generated this step).",
+        f"Judge whether the product of step '{step['id']}' meets the acceptance criteria.",
+    ]
+    if criteria:
+        lines.append("Acceptance criteria:")
+        lines += [f"  {n}. {c}" for n, c in enumerate(criteria, 1)]
+    lines += [
+        "Output format (strict):",
+        "1. First, 2-5 lines of evidence-anchored reasoning (each line cites file:line or a short",
+        "   quote of the evidence). Reason BEFORE judging; never state a verdict first.",
+    ]
+    if criteria:
+        lines += [
+            "2. Then exactly one line per acceptance criterion, in order:",
+            "   CRITERION <n>: PASS|FAIL|UNKNOWN — <anchor>",
+            "   Use UNKNOWN when the evidence is insufficient to judge that criterion; do not guess.",
+        ]
+    lines += [
+        "Finally, the very last line of your output must be exactly one of:",
+        "VERDICT: PASS",
+        "VERDICT: FAIL",
+        "Do not add extra characters, Markdown, or punctuation to the last line, and do not",
+        "place the verdict before the reasoning.",
+    ]
+    if diff:
+        lines += [
+            "--- diff (primary evidence: the actual changes) ---",
+            diff,
+            "--- report below is the generator's own claims — verify them against the diff, do not trust them ---",
+            (product or "")[:2000],
+            "Check each claim in the report against the diff; a claim with no supporting evidence in the diff is unverified.",
+        ]
+    else:
+        lines += ["--- product ---", (product or "")[:2000]]
+    return "\n".join(lines)
 
 
 def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
@@ -428,9 +564,12 @@ def effective_step_models(step: dict, cfg: dict) -> tuple[str | None, str | None
 def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
               cfg: dict, max_parallel: int) -> tuple[str | None, str, list[dict]]:
     """Generate solo or via judge-panel. With multiple generators, run them all in parallel and
-    let the judge (ver) pick the first PASSing candidate (in generator-list order = deterministic)
-    as the winner.
-    Returns: (winner_provider | None, product, judged[]).
+    have the judge (ver) evaluate EVERY candidate (never stop at the first PASS — position
+    bias / order effects, MT-Bench §3). Winner selection stays deterministic and documented:
+    among all PASSing candidates, the first in generator-list order wins; the judged[] entries
+    record the full pass-set so a multi-PASS (order-sensitive) pick is visible in telemetry.
+    Returns: (winner_provider | None, product, judged[]); the winning judged entry is marked
+    with "winner": True.
     Per-step models (runtime --step-model > recipe `model:`/`verifier_model:` > global --model)
     are injected into a copy of cfg (parallel-safe)."""
     gen_model, ver_model = effective_step_models(step, cfg)
@@ -438,22 +577,27 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     ver_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     if len(gen_list) == 1:
         _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg)
-        return gen_list[0], out, []
+        return gen_list[0], _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"), []
     def _gen(p):
         rc, out = run_provider(p, "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg)
         return {"provider": p, "rc": rc, "out": out}
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
     cands.sort(key=lambda c: gen_list.index(c["provider"]))   # evaluate in generation order = deterministic
+    for i, c in enumerate(cands):
+        c["out"] = _capture_output(c["out"], cfg, f"{step['id']}-{c['provider']}-cand{i + 1}")
     judged, winner, product = [], None, cands[0]["out"]
     jver = ver[0] if isinstance(ver, list) else ver            # the judge is the first verifier provider
-    for c in cands:
-        _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"]),
+    diff = _git_diff_evidence(cfg)                             # verify the diff, not the transcript
+    for c in cands:                                            # judge ALL candidates (no early stop)
+        _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"], diff),
                                ver_cfg, persona="judge")
-        ok = _verdict_ok(jout)
-        judged.append({"provider": c["provider"], "ok": ok, "note": _excerpt(jout)})
+        ok, criteria = _judge_output(jout)
+        judged.append({"provider": c["provider"], "ok": ok, "criteria": criteria,
+                       "note": _excerpt(jout)})
         if ok and winner is None:
             winner, product = c["provider"], c["out"]
+            judged[-1]["winner"] = True
     return winner, product, judged
 
 
@@ -480,15 +624,26 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         return
     ver_label = "+".join(ver) if isinstance(ver, list) else ver
     if judged:
-        # judge-panel: the judge selects, so its gate judgment is adopted (pass if there is a winner)
-        st["verdicts"].append({"by": f"{ver_label}:judge-panel", "ok": winner is not None,
-                               "note": "winner=" + str(winner)})
+        # judge-panel: the judge selects, so its gate judgment is adopted (pass if there is a winner).
+        # All candidates were judged; with multiple PASSes the first in generator-list order wins
+        # (deterministic), and the full pass-set is recorded (order_sensitive) instead of
+        # silently stopping at the first PASS.
+        rec = {"by": f"{ver_label}:judge-panel", "ok": winner is not None,
+               "criteria": next((j.get("criteria", []) for j in judged if j.get("winner")), []),
+               "note": "winner=" + str(winner)}
+        pass_set = [j["provider"] for j in judged if j["ok"]]
+        if len(pass_set) > 1:
+            rec["order_sensitive"] = True
+            rec["pass_set"] = pass_set
+            rec["note"] += f"; multi-pass {pass_set} → kept first in generator-list order"
+        st["verdicts"].append(rec)
         return
     # Lens verification = N independent reviewers in parallel processes (grader != generator)
     # Per-step `verifier_model:` is injected into a copy of cfg (independent of the generator side)
     v_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     personas = step["personas"] or ["independent"]
-    results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out),
+    results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out,
+                                                               _git_diff_evidence(cfg)),
                                      personas, v_cfg, max_parallel)
     passes, total = sum(1 for r in results if r["ok"]), len(results)
     par = "parallel" if total > 1 else "solo"
@@ -509,6 +664,8 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
+    if sp is not None:      # run dir = where the run-state lives; full over-budget outputs spool there
+        cfg = {**cfg, "run_dir": cfg.get("run_dir") or str(pathlib.Path(sp).resolve().parent)}
     if any(s["needs"] for s in state["steps"]):
         final = run_dag(state, sp, gen_list, ver, cfg, max_steps, quiet, max_parallel, quorum)
         telemetry_append(state, final)
