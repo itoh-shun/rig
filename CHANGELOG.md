@@ -5,6 +5,57 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
 
 > リリースタグは GitHub 側で発行する（実行環境の都合でタグ push を別途行う運用）。
 
+## [1.14.0] - 2026-07-11
+
+### Changed — research-hardened release: 5 workstreams from a 2024-2026 literature sweep
+
+Backed by a five-theme survey (LLM-as-judge reliability, agent-harness
+design, AI code-review market, mutation testing, agent security) — every
+change below cites its evidence in the commit messages.
+
+- **Verifier judge hardening** (MT-Bench / Style-over-Substance /
+  CodeJudgeBench / Anthropic eval guidance): verifiers now judge the
+  actual worktree `git diff` as primary evidence — the generator's
+  report is bounded and labeled as unverified claims; all verdict
+  contracts flipped to evidence-first with the verdict as the last line
+  (extraction takes the last verdict-token line, so quoted verdicts no
+  longer force FAIL); per-criterion `CRITERION n: PASS|FAIL|UNKNOWN`
+  verdicts with fail-closed all-UNKNOWN handling; judge-panel multi-PASS
+  is recorded (`order_sensitive` + pass set) instead of silent
+  first-PASS-wins; 30k-char output budget with spooled full text.
+- **Anti-tamper gate sensor** (`no_gate_tampering`, METR reward-hacking
+  evidence): edits to `.rig/gates.json`, `.rig/recipes/`, or CI
+  workflows inside the task diff fail the gate; test modification/
+  deletion, assert-removal, and skip-markers warn on bugfix/feature.
+- **Injection-marker sensor** (`no_injection_markers`, Rules-File-
+  Backdoor evidence): invisible/bidi Unicode fails (rendered only as
+  U+XXXX escapes), instruction-override phrases warn; scans the diff
+  plus repo prose surfaces; `scan-injection` standalone subcommand.
+- **Manifest consent gate**: `.claude/rig.md` (repo-controlled, drives
+  hook-eval'd commands and recipe search tiers) now uses the recipe
+  trust store — soft-degrade to "no manifest" when untrusted; the git
+  hooks verify the hash before eval; `githooks install` records consent.
+- **Drill science** (selective-mutation literature): clean no-bug
+  control diffs measure per-persona `clean_fp_rate`; finding-verifier
+  screens seeds for the equivalent-mutant problem (`invalid_seeds`);
+  seed catalog gains CWE/ODC provenance and 8 rows (XSS, path traversal,
+  hard-coded secret, deserialization, missing authn, resource
+  exhaustion, off-by-one, TOCTOU); Wilson 95% intervals for n<10 and
+  history-aggregated persona-update triggers.
+- **Review market mechanisms** (Bugbot dismissal-learning 52->80%,
+  Anthropic Code Review knobs): `.rig/review-suppressions.jsonl`
+  records verifier-refuted findings as injectable non-issues (an UPHELD
+  finding always beats a suppression); severity-gated comment policy
+  (nit cap 5 + rollup, Pre-existing marker, Important-only re-reviews).
+
+### Verification
+
+- `python3 scripts/orchestrate.py selftest` → PASS (incl. new scenario Y)
+- `python3 scripts/validate.py` → PASS 46 / WARN 8 / FAIL 0
+- `python3 scripts/validate.py selftest` → 12/12 scenarios OK
+- `ruff check scripts rig_workbench tests` → all checks passed
+- `pytest -q` → 241 passed
+
 ## [1.13.0] - 2026-07-11
 
 ### Added — issue-backlog sweep: 6 features from the roadmap triage
