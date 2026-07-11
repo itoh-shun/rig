@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig digest`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -139,6 +139,19 @@ python3 scripts/workbench.py scan-secrets --diff <task_id>
 1. 出力の抜粋は**常にマスク済み**（先頭4文字＋末尾2文字のみ残る）——秘密の生値は findings に含まれないため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、findings があれば `no_secret_leak` を **failed** にする（warning ではない＝accept を機械的に止める。schema センサーと違い fail-grade）。
 3. 人が偽陽性と確認した場合の脱出口は `gate <task_id> --set no_secret_leak=passed`（明示 pass が優先され、`secret_override` として check に記録される）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+
+## `/rig scan-injection [paths…] [--diff <task_id>]`
+
+```
+python3 scripts/workbench.py scan-injection [paths…]
+python3 scripts/workbench.py scan-injection --diff <task_id>
+```
+
+決定論プロンプトインジェクション・マーカースキャン（gate 基準 `no_injection_markers` の機械センサーと同一実装）。引数なしは repo の **prose 面**（エージェントが指示として読み込む repo 管理下のファイル＝`.claude/rig.md`・`.claude/rig/knowledge/**`・`.claude/rig/personas/**`・`.rig/recipes/*.md`）、paths 指定でファイル/ディレクトリ、`--diff <task_id>` は該当 task worktree の base commit からの差分（追加行＋未追跡ファイル）**＋その worktree の prose 面全文**を走査する＝gate センサーが見るものと同一（paths と `--diff` の同時指定は不可）。検出クラスは2種：**不可視/bidi Unicode**（zero-width・bidi 制御 U+200B–200F / U+202A–202E / U+2060–2064 / U+FEFF。ソースにも散文にも正当な用途がない＝**fail-grade**）と**指示上書きフレーズ**（"ignore previous instructions" 等。プロンプトについて書かれたドキュメントが正当に含みうる＝**warning-grade**）。
+
+1. 出力の抜粋では不可視文字が `<U+XXXX>` エスケープとして描画される（生の不可視文字は findings に含まれない）ため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
+2. `workbench.py gate` は評価のたびにこの scanner を自動適用し、不可視 Unicode 検出で `no_injection_markers` を **failed** に（accept を機械的に止める）、フレーズのみなら **warning** にする。同様に、gate 評価ごとに anti-tamper センサー（`no_gate_tampering`）も走る——task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（こちらは gate 内蔵センサーのみで単独 scan コマンドは持たない）。
+3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 
 ## `/rig digest [--period week|month] [--out PATH]`
 

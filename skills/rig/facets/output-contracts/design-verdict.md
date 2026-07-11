@@ -2,13 +2,11 @@
 
 ## output-contract: design-verdict
 
-UI/UX・a11y レビュー担当（`design/ux-reviewer` / `design/a11y-reviewer`）が共通で遵守する出力構造。機械抽出を前提に判定を先頭に置き、前置き・挨拶・補足説明は禁止する。
+UI/UX・a11y レビュー担当（`design/ux-reviewer` / `design/a11y-reviewer`）が共通で遵守する出力構造。**evidence-first**：所見・条件を先に書き、判定は最後に置く（判定を先に出すと理由付けの前に結論へコミットするため）。機械抽出は**末尾**の `判定:` 行（最後に現れる `判定:` 行）から行う。前置き・挨拶・補足説明は禁止する。
 
 ### 形式
 
 ```
-判定: <APPROVE|REJECT|APPROVE_WITH_CONDITIONS>
-
 UI/UX 所見:
 1. [重大度: 高|中|低] （所見・該当箇所・なぜ問題か・どう直すか）
 2. …
@@ -22,11 +20,14 @@ a11y 所見:
 - （リリース/採用前に必須。なければ省略）
 【フォローアップ可】
 - （任意・後続対応。なければ省略）
+
+判定: <APPROVE|REJECT|APPROVE_WITH_CONDITIONS>
 ```
 
 ### ルール
 
-- **判定を最初の行に必ず出力する**（`判定:` で始まる行）。判定語は `APPROVE` / `REJECT` / `APPROVE_WITH_CONDITIONS` のいずれか。
+- **所見を最初に出力する**（evidence-first）。判定より前に、UI/UX 所見・a11y 所見を必ず書く。判定から書き始めてはならない。
+- **判定は末尾に必ず出力する**（`判定:` で始まる行。最終行）。所見の本文中で判定行を引用してもよいが、機械抽出は**最後に現れる** `判定:` 行を採用する。判定語は `APPROVE` / `REJECT` / `APPROVE_WITH_CONDITIONS` のいずれか（従来と同一の語彙・意味）。
 - **UI/UX 所見**は各項目に重大度を付す。`ui-ux-heuristics` の観点名を可能な限り名指す。所見なしなら「指摘なし」の1行。
 - **a11y 所見**は各項目に **WCAG 達成基準番号・レベル・重大度** を付す。`a11y-wcag` の基準を名指す。所見なしなら「指摘なし」の1行。
 - 目標 WCAG レベル未達（既定 AA）の違反が1つでもあれば判定は `APPROVE` にしない（`REJECT` または `APPROVE_WITH_CONDITIONS`）。
