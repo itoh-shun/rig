@@ -3,6 +3,7 @@
 import sys
 import os
 import json
+import time
 import shlex
 import pathlib
 import subprocess
@@ -109,6 +110,21 @@ def _current_running(state: dict):
     return step, st
 
 
+def _run_checks(checks: list[str]) -> list[dict]:
+    """Run each declared shell check in INVOCATION_CWD; return [{cmd, ok, rc}] records.
+
+    The single source of truth for the machine-sensor subprocess loop: both `check`
+    and `resume` call this so they stay byte-for-byte identical (same shell, cwd, and
+    stdout/stderr suppression). Pure I/O — no printing, no state mutation.
+    """
+    results = []
+    for cmd in checks:
+        r = subprocess.run(cmd, shell=True, cwd=str(config.INVOCATION_CWD),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        results.append({"cmd": cmd, "ok": (r.returncode == 0), "rc": r.returncode})
+    return results
+
+
 def cmd_check(args):
     sp = _state_path(args)
     state = load_state(sp)
@@ -120,17 +136,96 @@ def cmd_check(args):
         print(f"step `{step['id']}` declares no checks: (no machine verification). Use verdict instead.")
         return
     print(f"## check: machine sensors for step `{step['id']}` ({len(step['checks'])} checks)")
-    st["checks"] = []
-    all_ok = True
-    for cmd in step["checks"]:
-        r = subprocess.run(cmd, shell=True, cwd=str(config.INVOCATION_CWD),
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        ok = (r.returncode == 0)
-        all_ok = all_ok and ok
-        st["checks"].append({"cmd": cmd, "ok": ok})
-        print(f"  [{'OK ' if ok else 'NG '}] {cmd}  (exit {r.returncode})")
+    results = _run_checks(step["checks"])
+    st["checks"] = [{"cmd": r["cmd"], "ok": r["ok"]} for r in results]
+    all_ok = all(r["ok"] for r in results)
+    for r in results:
+        print(f"  [{'OK ' if r['ok'] else 'NG '}] {r['cmd']}  (exit {r['rc']})")
     save_state(state, sp)
     print(f"→ {'all OK' if all_ok else 'some NG'}. Compute the transition with `next`.")
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Compact human duration (e.g. 2h05m, 3d04h) for the resume mtime-gap cue."""
+    seconds = int(seconds)
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, _ = divmod(rem, 60)
+    if days:
+        return f"{days}d{hours:02d}h"
+    if hours:
+        return f"{hours}h{mins:02d}m"
+    return f"{mins}m"
+
+
+def cmd_resume(args):
+    """Verify-first resume ritual (session-startup ritual for long-running agents).
+
+    Re-verifies the world before continuing a persisted run: prints a compact digest,
+    RE-RUNS the current running step's declared machine checks, and only then computes
+    the next action. If a previously-passing check now fails, the recorded state is stale
+    ("world drifted") and we REFUSE to advance (exit non-zero). Side effects match
+    `check` + `next` (state is written the same way); idempotent.
+    """
+    sp = _state_path(args)
+    state = load_state(sp)
+    steps = state["steps"]
+    total = len(steps)
+    n_passed = sum(1 for st in state["step_state"].values() if st.get("status") == "passed")
+
+    # ── Digest ───────────────────────────────────────────────────────────────
+    print(f"## resume: {state['recipe']}  cursor={state['cursor']}/{total}  "
+          f"done={n_passed}/{total}  stopped={bool(state['stopped'])}")
+    for s in steps:
+        st = state["step_state"][s["id"]]
+        rejects = [v for v in st["verdicts"] if not v.get("ok")]
+        tail = (f"  ⚠ {len(rejects)} REJECT (by {', '.join(str(v.get('by')) for v in rejects)})"
+                if rejects else "")
+        print(f"  {s['id']:<14} {st['status']:<9} "
+              f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
+              f"verdicts={len(st['verdicts'])}{tail}")
+    if state["stopped"]:
+        print(f"  ⚠ ESCALATED: {state['stopped']['reason']} (at {state['stopped'].get('at')})")
+
+    # ── mtime gap (informational only) ───────────────────────────────────────
+    try:
+        gap = time.time() - sp.stat().st_mtime
+    except OSError:
+        gap = 0.0
+    if gap >= 3600:
+        print(f"↺ resumed after ~{_fmt_duration(gap)} (run-state may predate a context "
+              f"compaction; re-verifying before continuing)")
+
+    # ── Verify-first: re-run the current running step's machine checks ────────
+    step, st = _current_running(state)
+    if step and step["checks"]:
+        print(f"## re-verify: re-running {len(step['checks'])} machine check(s) for "
+              f"current step `{step['id']}`")
+        prior = {c["cmd"]: c["ok"] for c in st["checks"]}
+        results = _run_checks(step["checks"])
+        drifted = []
+        for r in results:
+            note = ""
+            if prior.get(r["cmd"]) is True and not r["ok"]:
+                note = "  ← DRIFT (was passing, now fails)"
+                drifted.append(r["cmd"])
+            print(f"  [{'OK ' if r['ok'] else 'NG '}] {r['cmd']}  (exit {r['rc']}){note}")
+        # Persist the fresh sensor readings (same side effect as `check`).
+        st["checks"] = [{"cmd": r["cmd"], "ok": r["ok"]} for r in results]
+        save_state(state, sp)
+        if drifted:
+            print(f"✗ WORLD DRIFTED: {len(drifted)} previously-passing check(s) now fail. "
+                  f"The recorded state is stale — REFUSING to advance. Re-run step "
+                  f"`{step['id']}` before continuing.")
+            sys.exit(1)
+        print("✓ world still matches the recorded state.")
+
+    # ── Continue seamlessly (identical to `next`) ────────────────────────────
+    action, msg = compute_next(state)
+    save_state(state, sp)
+    print(f"▶ {action}: {msg}")
+    if action == "ESCALATE":
+        sys.exit(1)
 
 
 def cmd_verdict(args):
