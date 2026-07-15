@@ -1,7 +1,7 @@
 {
   "name": "rig",
   "version": "1.15.0",
-  "description": "rig — a quality-gated AI workbench for Claude Code. Give /rig:go (the main entry) a natural-language task: it classifies the task, runs it in an isolated git worktree, and checks the result against an acceptance gate — the diff only lands in your working tree on an explicit accept. Track parallel tasks with /rig:go board; compose recipes, personas, and knowledge as reusable bricks.",
+  "description": "rig — a quality-gated AI workbench for Claude Code. Give /rig:go (the main entry) a natural-language task: it classifies the task, runs it in an isolated git worktree, and checks the result against an acceptance gate — the diff only lands in your working tree on an explicit accept. Track parallel tasks with /rig:go board; compose recipes, personas, and knowledge as reusable bricks. scripts/mcp_server.py exposes the same task/orchestrate operations over a stdlib-only MCP stdio server, so an external agent, CI, or another process can drive rig without a live Claude Code session — opt-in, no new engine, accept/discard safety unchanged.",
   "author": {
     "name": "itoshun"
   }

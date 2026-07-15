@@ -7,6 +7,10 @@
 - サブコマンドの引数に `task_id` が省略された場合、`workbench.py` は `.rig/runs/` 内の**最新 task**を自動選択する。複数 task が並行している可能性がある場合（`workbench.py log --limit 5` で確認）は、曖昧さを避けるため task_id を明示するようユーザーに促す。
 - どのサブコマンドも**親 context に長い diff 本文を引き込まない**（context-minimal）。`workbench.py diff` の出力（ファイル一覧＋shortstat）はそのまま見せてよいが、個々のコード片の要約は `diff.md`（RUN 中にモデルが書いた散文）を参照する。
 
+## MCPサーバ経由での操作（`scripts/mcp_server.py`・#263）
+
+Claude Codeセッションの外（別エージェント・CI・別プロセス）からこれらの操作を叩きたい場合は`python3 scripts/mcp_server.py`を起動する。stdlibのみでMCP stdio transport（JSON-RPC 2.0）を実装した薄いアダプタで、`rig_task_*`/`rig_orchestrate_*`ツールは本ファイルが説明する各`workbench.py`/`orchestrate.py`サブコマンドをサブプロセスでそのまま呼ぶ。**新しい判定ロジックは持たない**——accept/discardの安全要件は本ファイル記載のものとMCP経由で完全に同一。opt-in（起動しなければ何も変わらない）。詳細はREADME「MCPサーバ」節を参照。
+
 ## `/rig status [<task_id>]`
 
 ```

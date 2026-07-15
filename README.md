@@ -387,6 +387,25 @@ Six metrics per reviewer: `true_positive` / `false_positive` / `false_negative` 
 
 rig does not just run reviewers. It measures them.
 
+### MCP server (#263)
+
+To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:
+
+```bash
+python3 scripts/mcp_server.py
+```
+
+It listens for Model Context Protocol (JSON-RPC 2.0, line-delimited) on stdio. It doesn't depend on the official `mcp` SDK — to match `workbench.py`/`orchestrate.py`'s stdlib-only stance and avoid a heavy third-party dependency, it implements a minimal stdio transport with the standard library alone. No new execution engine: every tool is a thin adapter that shells out to `workbench.py`/`orchestrate.py`, so accept/discard's force-proof requirements (`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`, etc.) go through the exact same code path and can't be bypassed via MCP either.
+
+Tools provided:
+
+| Tool | Equivalent CLI |
+|---|---|
+| `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
+| `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
+
+Opt-in: nothing changes unless you start this server; existing CLI/skill usage is unaffected. To wire it into an MCP client (e.g. Claude Desktop), register `command: python3`, `args: ["<repo>/scripts/mcp_server.py"]` in its MCP config.
+
 ## 12. GitHub integration
 
 | command | read/write |

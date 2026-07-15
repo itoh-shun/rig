@@ -387,6 +387,25 @@ reviewer ごとに6指標：`true_positive` / `false_positive` / `false_negative
 
 rig は reviewer を動かすだけではない。reviewer を測定する。
 
+### MCPサーバ（#263）
+
+Claude Codeセッションの外（別エージェント・CI・別プロセス）からrigを操作したい場合は、`scripts/mcp_server.py`を起動する：
+
+```bash
+python3 scripts/mcp_server.py
+```
+
+stdioでModel Context Protocol（JSON-RPC 2.0、line-delimited）を待ち受ける。`mcp`公式SDKには依存しない——サードパーティ製の重い依存を増やさない方針を、workbench.py/orchestrate.pyのstdlib-only方針と揃えるため、stdlibのみで最小限のstdio transportを実装している。新しい実行エンジンは無い：全ツールはサブプロセスで`workbench.py`/`orchestrate.py`をそのまま呼ぶ薄いアダプタで、accept/discardのforce-proof要件（`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`等）はCLIと完全に同じコードパスを通るためMCP経由でもバイパスできない。
+
+提供ツール：
+
+| ツール | 相当するCLI |
+|---|---|
+| `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
+| `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
+
+opt-in：このサーバを起動しない限り何も変わらず、既存のCLI/skill経由の利用はそのまま有効。MCPクライアント（Claude Desktop等）から使う場合は、`command: python3`, `args: ["<repo>/scripts/mcp_server.py"]`をMCP設定に登録する。
+
 ## 12. GitHub 連携
 
 | コマンド | read/write |
