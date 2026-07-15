@@ -207,3 +207,14 @@ python3 scripts/workbench.py digest [--period week|month] [--out <path>]
 
 - **読み取り専用**（集計のみ・状態を変更しない）。出力 Markdown はそのままユーザーに提示してよい（整形の追加は不要）。
 - 集計は `stats` と同じ helper を再利用しており数字が食い違わない。個別の深掘り（`--recipe`/`--verifier` 絞り込み）は `/rig stats`、期間の定点観測は `digest` と使い分ける。`stats` 同様、ゴム印警告が出た場合は必ずそのまま伝える。
+
+### チャット通知（`scripts/notify.py`・#287）
+
+accept待ち・gate REJECT・エスカレーション等のイベントをSlack/Teamsに通知したい場合、opt-inで`scripts/notify.py`を使う：
+
+```
+python3 scripts/notify.py --webhook <incoming webhook URL> --format slack --message "task <id> がaccept待ちです"
+python3 scripts/notify.py --format teams --title rig --message "gate REJECT: <詳細>" --dry-run   # 送信前にpayload確認
+```
+
+webhook URLは`RIG_NOTIFY_WEBHOOK`環境変数でも指定できる。専用SDKは使わずurllibのみで完結する。通知の要否・タイミングの判断はこのスクリプト自身は行わない——呼び出し側(instruction層)が「このイベントは通知に値するか」を判断してから呼ぶ。
