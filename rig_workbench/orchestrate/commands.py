@@ -570,6 +570,100 @@ def _read_jsonl(path: pathlib.Path) -> list[dict]:
             continue
     return rows
 
+
+def cmd_fleet(args):
+    """Aggregate multiple repositories' `.rig/runs.jsonl`/`drill-results.jsonl` across projects (#272).
+
+    Read-only, no side effects — no repository's `.rig/` data is ever written to. Meant for
+    orgs/consultancies with multiple projects/clients, to compare per-persona detection power
+    across repositories. Repository paths are explicit only (no auto-discovery reaching out
+    over a network for anything).
+    """
+    repos_arg = None
+    anonymize = False
+    as_json = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--repos" and i + 1 < len(args):
+            repos_arg = args[i + 1]
+            i += 2
+        elif a == "--anonymize":
+            anonymize = True
+            i += 1
+        elif a == "--json":
+            as_json = True
+            i += 1
+        else:
+            i += 1
+    if not repos_arg:
+        print("[ERROR] usage: fleet --repos <path1>,<path2>,... [--anonymize] [--json]")
+        sys.exit(1)
+
+    repo_paths = [pathlib.Path(p).expanduser().resolve() for p in repos_arg.split(",") if p.strip()]
+    if not repo_paths:
+        print("[ERROR] --repos has no valid paths")
+        sys.exit(1)
+
+    per_repo = []
+    persona_totals: dict[str, dict] = {}
+    persona_by_repo: dict[str, dict[str, dict]] = {}
+    for idx, rp in enumerate(repo_paths):
+        label = f"repo-{idx + 1}" if anonymize else str(rp)
+        runs = _read_jsonl(rp / ".rig" / "runs.jsonl")
+        drills = _read_jsonl(rp / ".rig" / "drill-results.jsonl")
+        done = sum(1 for r in runs if r.get("final") == "DONE")
+        repo_personas: dict[str, dict] = {}
+        for d in drills:
+            for s in d.get("scores", []):
+                name = s.get("reviewer", "?")
+                g = persona_totals.setdefault(name, {"detected": 0, "seeded": 0})
+                g["detected"] += s.get("detected", 0)
+                g["seeded"] += s.get("seeded", 0)
+                r_ = repo_personas.setdefault(name, {"detected": 0, "seeded": 0})
+                r_["detected"] += s.get("detected", 0)
+                r_["seeded"] += s.get("seeded", 0)
+        persona_by_repo[label] = repo_personas
+        per_repo.append({"repo": label, "runs": len(runs), "done": done, "drills": len(drills),
+                         "exists": (rp / ".rig").is_dir()})
+
+    def _rate(a: dict) -> float | None:
+        return round(a["detected"] / a["seeded"], 3) if a.get("seeded") else None
+
+    result = {
+        "repos": per_repo,
+        "persona_totals": {name: {**a, "rate": _rate(a)} for name, a in persona_totals.items()},
+        "persona_by_repo": {repo: {name: {**a, "rate": _rate(a)} for name, a in personas.items()}
+                           for repo, personas in persona_by_repo.items()},
+    }
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    print(f"## rig fleet — {len(repo_paths)} repos\n")
+    print(f"{'repo':<40} {'runs':<8} {'done':<8} drills")
+    for r in per_repo:
+        note = "" if r["exists"] else "  (no .rig/)"
+        print(f"{r['repo']:<40} {r['runs']:<8} {r['done']:<8} {r['drills']}{note}")
+
+    if persona_totals:
+        print("\nPer-persona detection rate (summed across all repos):")
+        for name, a in sorted(result["persona_totals"].items(), key=lambda kv: -(kv[1]["rate"] or 0)):
+            rate = f"{a['rate'] * 100:.0f}%" if a["rate"] is not None else "unmeasured"
+            print(f"  {name}: {rate} ({a['detected']}/{a['seeded']})")
+        print("\nPer-persona cross-repo comparison (which project detects more/less):")
+        for name in sorted(persona_totals):
+            per_repo_rates = []
+            for repo, personas in persona_by_repo.items():
+                a = personas.get(name)
+                if a and a.get("seeded"):
+                    per_repo_rates.append(f"{repo}={_rate(a) * 100:.0f}%")
+            if per_repo_rates:
+                print(f"  {name}: " + " / ".join(per_repo_rates))
+    else:
+        print("\nPer-persona detection rate: unmeasured (no /rig:drill runs in the target repos)")
+
+
 def cmd_party(_args):
     """Party roster screen (/rig:party): render RPG-style stats from telemetry, measured drills, and the brick inventory.
 

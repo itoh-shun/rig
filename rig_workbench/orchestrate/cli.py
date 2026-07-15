@@ -35,6 +35,9 @@ The model does each step's "work", but this runner decides "what happens next":
   ab <recipe1> <recipe2> ...          Run the same goal through multiple recipe variants concurrently and compare
     --provider <name> --goal G        speed/retries/results (#291). Each variant runs in its own isolated worktree
                                      (same path as --isolate), so variants never conflict.
+  fleet --repos p1,p2,... [--anonymize] [--json]
+                                     Aggregate multiple repositories' runs.jsonl/drill-results.jsonl across projects
+                                     (#272). Read-only; compares per-persona detection rate across repositories.
   run ... --auto-route                For steps declaring auto_route.candidates ({model,cost_tier,max_size}), deterministically
                                      picks the cheapest candidate that covers the measured diff size (#264). A fallback only:
                                      runtime --step-model and the recipe's own model: both still win outright. The decision is
@@ -59,8 +62,8 @@ Dependencies: Python3 + PyYAML (same as validate.py). Exit code 0=success / 1=er
 
 import sys
 
-from .commands import (cmd_ab, cmd_check, cmd_init, cmd_install_shim, cmd_next, cmd_party,
-                       cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status, cmd_verdict)
+from .commands import (cmd_ab, cmd_check, cmd_fleet, cmd_init, cmd_install_shim, cmd_next,
+                       cmd_party, cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status, cmd_verdict)
 from .providers import cmd_models, cmd_probe
 from .queueing import cmd_queue
 from .graph import cmd_graph
@@ -75,7 +78,7 @@ COMMANDS = {
     "resume": cmd_resume,
     "runs": cmd_runs, "party": cmd_party, "graph": cmd_graph,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest,
-    "mcp-scan": cmd_mcp_scan, "ab": cmd_ab,
+    "mcp-scan": cmd_mcp_scan, "ab": cmd_ab, "fleet": cmd_fleet,
 }
 
 
