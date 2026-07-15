@@ -580,6 +580,10 @@ Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエスト
 
 review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorではなくAnthropic Managed Agents API（coordinator/worker構成のbeta）に委譲する実験的backend。`cfg["parallel_backend"] = "managed-agents"` + `cfg["environment_id"]`（必須）で有効化——**既定は従来方式のまま**、完全にopt-in。詳細・正直な限界（RESTパスは公式SDKメソッド名からの推測／実APIには未接続／イベントストリーム統合は未実装）は`commands/orchestrate.md`「⑧」を参照。
 
+### VS Code拡張 — rig board（読み取り専用・#286）
+
+`vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する（エディタを離れず`/rig:rig board`相当を見られる）。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけ——新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲（状態パースロジックはplain Nodeでユニットテスト済み／実際のVS Code Extension Hostでの動作確認はこの環境では未検証）は`vscode-extension/README.md`参照。
+
 ### manifest・知識層
 
 `<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。

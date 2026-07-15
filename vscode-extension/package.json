@@ -1,0 +1,62 @@
+{
+  "name": "rig-board",
+  "displayName": "rig board",
+  "description": "Read-only sidebar view of rig's .rig/runs/ task/gate state (#286). Never writes — no accept/discard from the extension.",
+  "version": "0.1.0",
+  "publisher": "itoh-shun",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "workspaceContains:.rig/runs"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "rigBoard",
+          "name": "rig board",
+          "contextualTitle": "rig board"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "rigBoard.refresh",
+        "title": "rig board: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "rigBoard.toggleShowAll",
+        "title": "rig board: Toggle Show All (incl. accepted/discarded)",
+        "icon": "$(list-filter)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "rigBoard.refresh",
+          "when": "view == rigBoard",
+          "group": "navigation"
+        },
+        {
+          "command": "rigBoard.toggleShowAll",
+          "when": "view == rigBoard",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test:unit": "node ./out/test/rigState.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
