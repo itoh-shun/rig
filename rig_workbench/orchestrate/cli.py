@@ -45,6 +45,9 @@ The model does each step's "work", but this runner decides "what happens next":
                                      (hashed from --exploration-date + recipe/step, never randomness).
   graph  [--json | --focus <name>]   Derive a **typed graph** (11 relations: injects/extends/uses-*/mirrors, etc.) from shipped bricks.
                                      Never hand-written: frontmatter is the source of truth (validate check_graph enforces consistency in CI)
+  mcp-scan [--json]                  Static threat analysis of scripts/mcp_server.py's tool definitions via three-layer adversarial
+                                     reasoning (attacker/defender/auditor) for shell/network over-permission, secret exposure, and
+                                     hook-injection risk (#303). Never executes anything; deterministic; wired into --validate.
   install-shim [--to PATH] [--force] Symlink the shim into ~/.local/bin/rig (cross-project entry point; run once)
   selftest                           Self-verification of determinism (proves same input -> same transitions)
 
@@ -58,6 +61,7 @@ from .commands import (cmd_check, cmd_init, cmd_install_shim, cmd_next, cmd_part
 from .providers import cmd_models, cmd_probe
 from .queueing import cmd_queue
 from .graph import cmd_graph
+from .mcp_scan import cmd_mcp_scan
 from .selftest import cmd_selftest
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -68,6 +72,7 @@ COMMANDS = {
     "resume": cmd_resume,
     "runs": cmd_runs, "party": cmd_party, "graph": cmd_graph,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest,
+    "mcp-scan": cmd_mcp_scan,
 }
 
 

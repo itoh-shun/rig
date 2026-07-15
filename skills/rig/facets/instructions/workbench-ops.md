@@ -11,6 +11,14 @@
 
 Claude Codeセッションの外（別エージェント・CI・別プロセス）からこれらの操作を叩きたい場合は`python3 scripts/mcp_server.py`を起動する。stdlibのみでMCP stdio transport（JSON-RPC 2.0）を実装した薄いアダプタで、`rig_task_*`/`rig_orchestrate_*`ツールは本ファイルが説明する各`workbench.py`/`orchestrate.py`サブコマンドをサブプロセスでそのまま呼ぶ。**新しい判定ロジックは持たない**——accept/discardの安全要件は本ファイル記載のものとMCP経由で完全に同一。opt-in（起動しなければ何も変わらない）。詳細はREADME「MCPサーバ」節を参照。
 
+### MCP自己脅威分析（`orchestrate.py mcp-scan`・#303）
+
+```
+python3 scripts/orchestrate.py mcp-scan [--json]
+```
+
+`scripts/mcp_server.py`が公開するツール定義を対象に、shell/network権限過剰・secret平文露出・hookインジェクションの3観点を3層対抗推論（攻撃者→防御者→監査者）で静的分析する。**実行しない**（`TOOLS`辞書とソーステキストを読むだけ・決定論・副作用なし）。`validate.py`の`check_mcp_scan()`から自動的に呼ばれ、総合判定HIGHはCI FAIL、MEDIUMはWARNとして扱われる（`rig_orchestrate_run`は`--isolate`未指定でメイン作業ツリーに影響しうるためMEDIUM判定——呼び出し側での`isolate: true`明示を推奨、という具体的な注意喚起がここで機械的に出る）。
+
 ## `/rig status [<task_id>]`
 
 ```

@@ -406,6 +406,8 @@ stdioでModel Context Protocol（JSON-RPC 2.0、line-delimited）を待ち受け
 
 opt-in：このサーバを起動しない限り何も変わらず、既存のCLI/skill経由の利用はそのまま有効。MCPクライアント（Claude Desktop等）から使う場合は、`command: python3`, `args: ["<repo>/scripts/mcp_server.py"]`をMCP設定に登録する。
 
+**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はMEDIUM（`rig_orchestrate_run`は`--isolate`未指定だとメイン作業ツリーに直接影響しうるため、呼び出し側で`isolate: true`を明示することを推奨、という具体的な指摘）。
+
 ### コストティア自動ルーティング（`--auto-route`・`--auto-route-learn`・#264・#305）
 
 recipeのstepは`auto_route.candidates`（`{model, cost_tier, max_size}`の列、安い順に宣言）を持てる。`orchestrate.py run --auto-route`は、現在の diff size を測定し、その`max_size`をカバーする最も安い候補を決定論的に選ぶ——あくまでフォールバックで、実行時の`--step-model`とrecipe自身の`model:`はどちらも優先されたまま。選択結果は`runs.jsonl`の`steps[].auto_route`に記録される。
