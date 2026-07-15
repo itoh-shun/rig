@@ -218,6 +218,24 @@ python3 scripts/workbench.py digest [--period week|month] [--out <path>]
 - **読み取り専用**（集計のみ・状態を変更しない）。出力 Markdown はそのままユーザーに提示してよい（整形の追加は不要）。
 - 集計は `stats` と同じ helper を再利用しており数字が食い違わない。個別の深掘り（`--recipe`/`--verifier` 絞り込み）は `/rig stats`、期間の定点観測は `digest` と使い分ける。`stats` 同様、ゴム印警告が出た場合は必ずそのまま伝える。
 
+## `/rig instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview]`
+
+```
+python3 scripts/workbench.py instincts
+python3 scripts/workbench.py instincts --add "<短い独立した文>" --evidence "<根拠>" [--task-id <id>] [--confidence 0.0-1.0] [--supersedes <old-id>]
+python3 scripts/workbench.py instincts --mute <id> | --expire <id> | --decay | --inject-preview [--json]
+```
+
+**セッション横断の継続的instinct学習層（#306）**。`facets/knowledge`（検証済み知識のwiki）とは完全に別枠——ここに書くのは「このプロジェクトではこう書く」「ここはこう探索すると早い」のような、confidence つきの**未検証パターン**であり、知識層と混同しない。
+
+- **`--add`**：新しいinstinct候補を`.rig/instincts.jsonl`に記録する。secret・トークン・ローカル絶対パス（`/home/…`/`/Users/…`）・`ENV_VAR=value`風の代入・300字超のテキストは**却下**され、理由がそのまま表示される（黙って捨てない）。何を学ぶかの判断（今回のセッションで本当に再利用価値のあるパターンか）は完全にモデル自身の仕事——`hooks/suggest-instincts.sh`（Stop hook）は「提案を検討してください」と促すだけで、抽出そのものは行わない。ほとんどのセッションには提案すべきものが無い、という前提を崩さない。
+- **`--supersedes <old-id>`**：2つのinstinctが矛盾するという判断自体は人/モデルの仕事——このコマンドは**明示された**supersede関係を機械的にmuteするだけで、意味的な矛盾を自動検知しない。既存instinctが古くなった/誤りだったと判断したら必ずこれを使う。
+- **`--decay`**：`last_seen`が30日以上更新されていないactive instinctのconfidenceを0.1下げる。0.2を下回ればstatus=expired。暗黙知は放置すれば腐る、という前提を機械的に扱う——定期実行（例: digest やcron相当）が望ましいが必須ではない。
+- **`--inject-preview [--json]`**：次回セッション開始時に実際に注入される内容をプレビューする。confidence>=0.7のactive instinctのみ、合計500字までに収まる分だけ選ばれる（context-minimal原則）。`--json`は`hooks/inject-instincts.sh`（SessionStart hook）が機械的に読む形式で、人向けには使わない。
+- **既定（引数なし）**：全instinctを一覧表示する（status記号 ●active/○muted/×expired、confidence、hit_count、根拠）。
+
+`--mute`/`--expire`はユーザーが明示的に「このinstinctはもう要らない」「間違っていた」と判断した場合の手動操作。
+
 ### チャット通知（`scripts/notify.py`・#287）
 
 accept待ち・gate REJECT・エスカレーション等のイベントをSlack/Teamsに通知したい場合、opt-inで`scripts/notify.py`を使う：

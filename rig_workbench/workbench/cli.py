@@ -30,6 +30,7 @@ from .confidence import cmd_confidence
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
+from .instincts import _INSTINCT_DECAY_DAYS, cmd_instincts
 from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
@@ -155,6 +156,23 @@ def main() -> None:
     p.add_argument("--verifier", help="filter by persona name (only runs recorded in review.json)")
     p.add_argument("--last", help="restrict to the last N days (e.g. 30d)")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("instincts", help="list/manage the continuous cross-session instinct-learning layer (#306)")
+    p.add_argument("--add", metavar="TEXT", help="record an instinct candidate "
+                   "(300 chars max; rejected if it contains a secret/local path)")
+    p.add_argument("--evidence", help="with --add: a short explanation of why this is believed")
+    p.add_argument("--task-id", help="with --add: the task_id this candidate came from")
+    p.add_argument("--confidence", type=float, default=0.5, help="with --add: initial confidence (default 0.5)")
+    p.add_argument("--supersedes", help="with --add: explicitly mute this id, replacing it with the new one")
+    p.add_argument("--mute", metavar="ID", help="mute the given id (stops being injected)")
+    p.add_argument("--expire", metavar="ID", help="set the given id to expired")
+    p.add_argument("--decay", action="store_true",
+                   help=f"decay active instincts whose last_seen hasn't refreshed in {_INSTINCT_DECAY_DAYS}+ days")
+    p.add_argument("--inject-preview", action="store_true",
+                   help="preview what would actually be injected at the next session start")
+    p.add_argument("--json", action="store_true",
+                   help="with --inject-preview: machine-readable JSON (for hooks/inject-instincts.sh)")
+    p.set_defaults(func=cmd_instincts)
 
     p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")
     p.add_argument("--limit", type=int, help="show only the latest N entries")

@@ -1,5 +1,5 @@
 {
-  "description": "rig hooks — (1) run-continuity: preserve the active harness run-state across context compaction, and carry the talk-always-on directive across compaction (PreCompact stdout becomes custom compaction instructions). (2) talk-always-on: inject a standing instruction so interactive sessions default to routing user turns through rig:talk (SessionStart additionalContext). (3) run-continuity-reminder: on each user prompt, if an active rig RUN is detected in the recent transcript (via the run-status header signature), re-inject the SKILL.md §6 directive so the model re-emits the header at the top of its response (backstops the prose-only directive which loses recency across many turns and tool calls).",
+  "description": "rig hooks — (1) run-continuity: preserve the active harness run-state across context compaction, and carry the talk-always-on directive across compaction (PreCompact stdout becomes custom compaction instructions). (2) talk-always-on: inject a standing instruction so interactive sessions default to routing user turns through rig:talk (SessionStart additionalContext). (3) run-continuity-reminder: on each user prompt, if an active rig RUN is detected in the recent transcript (via the run-status header signature), re-inject the SKILL.md §6 directive so the model re-emits the header at the top of its response (backstops the prose-only directive which loses recency across many turns and tool calls). (4) continuous instinct-learning (#306): SessionStart injects high-confidence (>=0.7) learned patterns from .rig/instincts.jsonl (capped at 500 chars, separate from facets/knowledge); Stop reminds the model to consider proposing a new one when something durably useful was learned this session.",
   "hooks": {
     "PreCompact": [
       {
@@ -21,6 +21,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-talk-mode.sh"
           }
         ]
+      },
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-instincts.sh"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -29,6 +38,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/remind-rig-header.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/suggest-instincts.sh"
           }
         ]
       }
