@@ -513,6 +513,26 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 - 既存の`--provider codex`ステートレス呼び出し（`build_argv`の`codex`分岐、`--sandbox read-only`の検証者強制含む）は本バッチで一切変更しておらず、`orchestrate.py selftest`の既存テストがそのままPASSすることで後方互換を確認。
 - Skill配布形式・hooksの実際の発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIでの実行が必要で**未検証**です。
 
+### ホストアダプタ層（複数ホストへの一般化・#304）
+
+#294はCodex限定だったが、Cursor・GitHub Copilot CLI等も同様の拡張機構（hooks/skills/MCP）を持つ。ホストごとの差分（hookイベント名・skill配置規約・機能対応度）を`scripts/host_adapters.py`の`HOSTS`辞書1箇所に集約し、新規ホスト対応は1エントリ追加するだけで済む設計にした。第二弾としてCursorを追加し、設計の妥当性を検証した：
+
+```
+| Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
+| Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
+| Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+```
+（`python3 scripts/host_adapters.py`で再生成できる——このREADMEの表が古くなったら実行して差し替えること）
+
+Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
+- **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。
+- **skillは`.agents/skills/`もlegacy互換で読む**——`codex/skills/rig/SKILL.md`をそこに置けばCursorでもそのまま使える（新規ファイル不要）。
+- **`preCompact`はobservational-onlyで、run-continuityの状態注入はできない**（公式ドキュメントに明記）。ここは黙って「動いたふり」をせず`degrade`として明示し（`cursor/hooks.json`は状態保全を諦め、短い通知メッセージのみを返す設計にした）、READMEの表上もunsupportedと表示する。
+
+**正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`tests/test_host_adapters.py`）はコードとして検証済み。実際のCursor/Codex実機でのhook発火・skill読み込みは未検証（Codexは上記と同じ理由、Cursorはこの環境にCursor自体が無いため）。Claude Code向けの既存動作は本バッチで一切変更していない。
+
 ### manifest・知識層
 
 `<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。

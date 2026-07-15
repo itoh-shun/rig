@@ -7,6 +7,8 @@ description: Quality-gated AI workbench for Claude Code, ported for Codex CLI (#
 
 This is a **thin procedural pointer**, not a reimplementation of rig's engine. All state, worktree isolation, and acceptance-gate logic live in `scripts/workbench.py` and `scripts/orchestrate.py` — the same stdlib-only scripts Claude Code's `/rig:rig` and `/rig:orchestrate` shell out to. This skill exists so Codex gets the same "native-layer" integration Claude Code has (per rig issue #294), instead of only reaching rig through a stateless `codex exec` subprocess call from `orchestrate.py`'s `--provider codex`.
 
+Note (#304): Cursor's skill discovery also scans `.agents/skills/` for legacy Claude/Codex compatibility, so this same file — installed once at `.agents/skills/rig/SKILL.md` — is picked up by Cursor too. No separate Cursor-specific skill file is needed. See `scripts/host_adapters.py` for the full host capability matrix (this file is host-agnostic; only hooks and subagent definitions differ per host).
+
 **Do not reimplement gate logic, worktree management, or state files in prose.** Call the scripts; they are the source of truth.
 
 ## Task workflow (workbench.py)
