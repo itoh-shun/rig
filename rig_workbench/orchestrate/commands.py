@@ -8,6 +8,7 @@ import shlex
 import pathlib
 import subprocess
 import concurrent.futures as futures
+from collections import Counter
 
 from . import config
 from .recipes import (auto_orchestrate, git_diff_lines, load_manifest, load_steps,
@@ -906,19 +907,35 @@ def cmd_runs(args):
               f"{a['retries'] / a['n']:9.1f} {a['esc']:4d}")
 
     # Gap prescriptions: if the same (recipe, step) escalated twice or more, suggest acquiring capability
-    # (telemetry → /rig:import --discover / /rig:harness = the entry to the self-completion loop)
+    # (telemetry → /rig:import --discover / /rig:forge = the entry to the self-completion loop; #268)
     gaps: dict[tuple, int] = {}
+    gap_verifiers: dict[tuple, Counter] = {}
     for r in rows:
         esc_at = r.get("escalated_at")
-        if esc_at:
-            gaps[(r.get("recipe", "?"), esc_at)] = gaps.get((r.get("recipe", "?"), esc_at), 0) + 1
+        if not esc_at:
+            continue
+        key = (r.get("recipe", "?"), esc_at)
+        gaps[key] = gaps.get(key, 0) + 1
+        # Tally that step's verdicts (who rejected) so the /rig:forge draft can name names.
+        for st in r.get("steps", []):
+            if st.get("id") != esc_at:
+                continue
+            c = gap_verifiers.setdefault(key, Counter())
+            for v in st.get("verdicts", []):
+                if not v.get("ok"):
+                    c[(v.get("by") or "?").split(":", 1)[-1]] += 1
     hot = {k: v for k, v in gaps.items() if v >= 2}
     if hot:
-        print("\n## Gap prescriptions (repeated escalations at the same step)\n")
+        print("\n## Gap prescriptions (repeated escalations at the same step; #268)\n")
         for (rcp, sid), n in sorted(hot.items(), key=lambda kv: -kv[1]):
-            print(f"  {rcp} / {sid}: escalated {n} times — consider acquiring capability:"
-                  f" /rig:import --discover \"skill to strengthen {sid}\""
-                  f" / take inventory with /rig:harness")
+            rejecters = gap_verifiers.get((rcp, sid), Counter())
+            who = ", ".join(name for name, _ in rejecters.most_common(3)) or "(no verdicts recorded)"
+            forge_desc = (f"capability to resolve the recurring failure in the {sid} step of the "
+                          f"{rcp} recipe (most rejections from: {who})")
+            print(f"  {rcp} / {sid}: escalated {n} times — most rejections from: {who}")
+            print(f"    draft request: /rig:forge \"{forge_desc}\"")
+            print("    (after confirming forge's draft, re-measure with /rig:drill --replay)")
+            print(f"    (to search for an external skill instead: /rig:import --discover \"skill to strengthen {sid}\")")
 
 def cmd_install_shim(args):
     """Place the shim as a symlink at ~/.local/bin/rig (or the path given via --to).

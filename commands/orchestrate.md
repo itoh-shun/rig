@@ -83,6 +83,14 @@ hotfix               DONE       18.7         1        -
 
 未達/dirtyのvariantはworktreeが保全される（`--isolate`と同じ規則）。後片付けは`git worktree remove --force <dir>`。
 
+**⑦ ギャップ処方箋のforge下書き化（`runs`・#268）**
+
+```
+orchestrate runs
+```
+
+同一(recipe, step)で2回以上エスカレーションしていると、「## Gap prescriptions」に**具体的な`/rig:forge`下書き依頼コマンド**を表示する（該当stepでREJECTしたreviewer上位3件を検証票（`steps[].verdicts`）から特定し、説明文に埋め込む）。orchestrate.py自身はforgeを呼ばない（LLMが要る処理のため）——生成するのは「コピペで使えるforgeプロンプト」まで。下書き確認・確定は人/AIが行い、`/rig:drill --replay`で改善を再測定する運用。
+
 ## 自動有効化（明示しなくても通る）
 
 `--orchestrate` を明示しなくても、次のとき自動で orchestrate を通る（§4.3）：
