@@ -26,6 +26,7 @@ import argparse
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
+from .confidence import cmd_confidence
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
@@ -69,6 +70,11 @@ def main() -> None:
     p.add_argument("task_id", nargs="?")
     p.add_argument("--force", action="store_true", help="apply despite an unmet gate (recorded; missing structural preconditions cannot be overridden)")
     p.set_defaults(func=cmd_accept)
+
+    p = sub.add_parser("confidence", help="show reviewer confidence from drill-measured detection rate (#301)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--persona", help="(reserved for future single-persona lookup; unused)")
+    p.set_defaults(func=cmd_confidence)
 
     p = sub.add_parser("record-commit", help="link the final commit SHA of an accepted change to its task (#289, #300)")
     p.add_argument("task_id", nargs="?")
