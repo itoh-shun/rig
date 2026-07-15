@@ -286,7 +286,7 @@ def cmd_run(args):
     if not args:
         print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
               "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
-              "[--max-steps N] [--goal G] [--out f] [--isolate]")
+              "[--max-steps N] [--goal G] [--out f] [--isolate] [--auto-route]")
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
@@ -356,6 +356,9 @@ def cmd_run(args):
             i += 1
         elif a == "--allow-headless-in-cc":
             cfg["allow_headless_in_cc"] = True
+            i += 1
+        elif a == "--auto-route":
+            cfg["auto_route"] = True
             i += 1
         else:
             i += 1

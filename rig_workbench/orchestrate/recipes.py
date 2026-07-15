@@ -189,6 +189,7 @@ def load_steps(fm: dict) -> list[dict]:
             "verifier_model": s.get("verifier_model"),      # optional: verifier model for this step (separate assignment)
             "output_contract": s.get("output_contract"),
             "condition": s.get("condition"),                 # optional: conditional step (size/flag)
+            "auto_route": s.get("auto_route"),               # optional: --auto-route candidates (#264)
         })
     return out
 
@@ -437,6 +438,32 @@ def size_class(diff_lines: int | None, thresholds: dict | None = None) -> str:
     if diff_lines <= th["L_max"]:
         return "L"
     return "XL"
+
+
+def resolve_auto_route(step: dict, size: str) -> tuple[str | None, str]:
+    """Pick the cheapest candidate from `step["auto_route"]["candidates"]` (each a
+    {model, cost_tier, max_size}) that covers the current size class (#264; pure function,
+    selftest-covered for determinism).
+
+    Candidates are scanned in declared order (cheapest first) and the first whose
+    `max_size` is >= the current size wins (early-adopt the first "big enough" tier).
+    Falls back to the last (most capable) candidate if none cover it. Returns
+    (None, reason) when `auto_route` isn't declared or has no candidates — callers
+    fall back to the existing `model:` / `--model` precedence.
+    """
+    ar = step.get("auto_route")
+    if not isinstance(ar, dict) or not ar.get("candidates"):
+        return None, "auto_route not declared"
+    candidates = ar["candidates"]
+    size_idx = _SIZE_RANK.get(size, max(_SIZE_RANK.values()))
+    for c in candidates:
+        c_max = c.get("max_size", "XL")
+        c_idx = _SIZE_RANK.get(c_max, max(_SIZE_RANK.values()))
+        if c_idx >= size_idx:
+            return c.get("model"), f"size={size} -> candidate with max_size={c_max} ({c.get('cost_tier', '?')})"
+    last = candidates[-1]
+    return last.get("model"), (f"size={size} exceeds every candidate's max_size -> "
+                                f"falling back to the last candidate ({last.get('cost_tier', '?')})")
 
 
 def evaluate_condition(cond: str | None, flags: set[str], size: str) -> tuple[bool, str]:

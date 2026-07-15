@@ -98,6 +98,11 @@ def telemetry_append(state: dict, final: str) -> None:
     """
     try:
         ss = state["step_state"]
+        # step id -> most recent auto-route decision (#264; a step retried keeps its last decision)
+        auto_routed: dict[str, dict] = {}
+        for h in state.get("history", []):
+            if h.get("action") == "AUTO_ROUTE":
+                auto_routed[h["step"]] = {"model": h.get("model"), "reason": h.get("reason")}
         rec = {
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "recipe": state["recipe"],
@@ -113,7 +118,8 @@ def telemetry_append(state: dict, final: str) -> None:
                        "retries": ss[s["id"]].get("retries", 0),
                        "model": ss[s["id"]].get("model"),  # actually-used generator model (#293; None = provider default)
                        "verdicts": [_verdict_summary(v)
-                                    for v in ss[s["id"]].get("verdicts", [])]}
+                                    for v in ss[s["id"]].get("verdicts", [])],
+                       **({"auto_route": auto_routed[s["id"]]} if s["id"] in auto_routed else {})}
                       for s in state["steps"]],
         }
         # Failure-mode taxonomy (additive; absent for successful runs). Deterministic best-guess

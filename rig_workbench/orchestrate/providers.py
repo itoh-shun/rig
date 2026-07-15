@@ -12,6 +12,7 @@ import concurrent.futures as futures
 
 from . import config
 from .quarantine import wrap_untrusted
+from .recipes import git_diff_lines, load_manifest, resolve_auto_route, size_class
 from .runstate import compute_next, gate_outcome, save_state, telemetry_append
 
 # ── Execution layer (external runners, provider abstraction) ─────────────────
@@ -637,10 +638,25 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
-    gen_model, ver_model = effective_step_models(step, cfg)
+    effective_step = step
+    # Cost-tier auto-routing (#264): only a fallback default. Runtime --step-model and the
+    # recipe's own `model:` both still win outright — auto_route never overrides an explicit
+    # choice, it only fills in when neither is set (sits between recipe model: and the global
+    # --model default).
+    if (cfg.get("auto_route") and step.get("auto_route") and not step.get("model")
+            and not (cfg.get("step_models") or {}).get(step["id"])):
+        size = size_class(git_diff_lines(), load_manifest().get("size_thresholds"))
+        routed_model, reason = resolve_auto_route(step, size)
+        if routed_model:
+            effective_step = {**step, "model": routed_model}
+            with _HIST_LOCK:
+                state["history"].append({"action": "AUTO_ROUTE", "step": step["id"],
+                                         "model": routed_model, "reason": reason})
+            log(f"   ↳ auto-route: {routed_model} ({reason})")
+    gen_model, ver_model = effective_step_models(effective_step, cfg)
     if gen_model:
         st["model"] = gen_model                     # actually-used generator model (run-state/telemetry attribution)
-    winner, out, judged = _generate(state, step, gen_list, ver, cfg, max_parallel)
+    winner, out, judged = _generate(state, effective_step, gen_list, ver, cfg, max_parallel)
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
                                  "provider": winner or gen_list[0], "out": out[:200],
