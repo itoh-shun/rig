@@ -1,6 +1,6 @@
 ---
-description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/stats/review/gc/audit/scan-secrets/scan-injection/digest/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | gh issue <n> | gh pr <n> review|fix | gh ci"
+description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/review/gc/audit/scan-secrets/scan-injection/digest/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -25,6 +25,7 @@ $ARGUMENTS
 | `discard <task_id> [--yes]` | `facets/instructions/workbench-ops`（worktree/branch 破棄） |
 | `log [--limit N] [--json]` | `facets/instructions/workbench-ops`（実行ログ一覧） |
 | `board [--all]` | `facets/instructions/workbench-ops`（**全 task を一覧するダッシュボード**。複数タスクを並行で進めているときの単一の確認場所） |
+| `cockpit` | `facets/instructions/workbench-ops`（**board・gate・drill・cost・auditを一画面に集約するMission Control**。read-only。次アクションを案内するのみで accept/discard 自体は実行しない） |
 | `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
 | `review <task_id> --set <persona>=<verdict>` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録） |
 | `gc [--older-than <N>d] [--dry-run]` | `facets/instructions/workbench-ops`（視覚検証成果物（`.rig/runs/*/visual/`・`.rig/visual/adhoc/*`）の age-based 処分。既定14日・`--dry-run` で候補表示のみ） |

@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -142,6 +142,23 @@ python3 scripts/workbench.py board [--all]
 **複数タスクを並行で進めているときの単一の確認場所**（`/rig:rig` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも、全ての task は `.rig/runs/` に集約されるため同じ一覧に出る）。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
 
 「ターミナルをいくつも開いていて何をしていたか忘れる」状況は、このコマンド1つに集約することで解消する——ユーザーが並行タスクの状態を尋ねたら、まず `board` を提案する。
+
+## `/rig cockpit`
+
+```
+python3 scripts/workbench.py cockpit
+```
+
+**board・gate・drill・cost・auditを一画面に集約するMission Control（read-only・#307）**。新しい常駐サービスやDBは持たない——既存の`.rig/runs/`・`drill-results.jsonl`・`runs.jsonl`・`audit.jsonl`を読むだけで完結し、`board`/`stats`/`audit`/`confidence`が既に持つ集計関数をそのまま再利用する（二重実装しない）。出力は6段構成：
+
+1. **Run timeline** — アクティブtaskの一覧（`board`と同じ非終端状態のみ）
+2. **Gate radar** — 全taskのgate状態別集計（`stats`と同じ`gate_status_counts`）
+3. **Reviewer confidence** — drill実測の検出率（`/rig confidence`と同じ`aggregate_drill_confidence`。未計測は「Unmeasured」と明示——空欄を健全と誤読させない）
+4. **Cost meter** — `.rig/runs.jsonl`のtoken_usage合計（`orchestrate.py runs --cost`と同じデータソース。詳細な recipe/provider別内訳は`runs --cost`側を案内する）
+5. **Safety strip** — force-bypass件数（`audit`と同じ`force_bypass_counter`）
+6. **Next action rail** — `gate_passed`（diff/accept待ち）・`gate_failed`（要修正 or discard）のtask_idを直接案内
+
+**v1は完全にread-only**——accept/discard等の破壊的操作はここでは一切行わず、次に打つべき既存コマンドを案内するだけ。出力はそのままユーザーに提示してよい（整形の追加は不要）。ユーザーが「全体を一目で見たい」「今何をすればいいか教えて」と言ったら、`board`より先にこのコマンドを提案する。
 
 ## `/rig review <task_id> --set <persona>=<verdict>`
 

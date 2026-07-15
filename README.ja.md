@@ -320,6 +320,14 @@ Recommended:
 
 確認できる内容：どのタスクがまだ実行中か、どれが gate を通った/落ちたか、どの worktree に変更があるか、どの run が diff 確認待ちか、どれを discard すべきか。`/rig:go board --all` はアクティブなものだけでなく記録済み全 task に範囲を広げる。
 
+### Cockpit — Mission Control（`/rig:go cockpit`・read-only・#307）
+
+Run timeline・Gate radar・drill実測のreviewer confidence・cost meter・force-bypass safety stripを1画面に集約する——`board`/`stats`/`audit`/`confidence`を個別に叩く代わりに全体像を一度に見たいときに使う。新しい永続化層は無く、それらのコマンドが既に持つ集計関数（`.rig/runs/`・`drill-results.jsonl`・`runs.jsonl`・`audit.jsonl`）をそのまま再利用するため、ずれが生じない。**v1は完全にread-only**——accept/discardは既存コマンドのまま、cockpitは次に打つべきコマンドを案内するだけ。未計測のデータ（drill未実行・token usage未記録）は空欄ではなく「Unmeasured」と明示する（健全と誤読させない）。
+
+```
+python3 scripts/workbench.py cockpit
+```
+
 ### Stats
 
 `/rig:go stats` は過去の run を集計する——単一 run の結果ではなく、workbench 全体を観測する層：

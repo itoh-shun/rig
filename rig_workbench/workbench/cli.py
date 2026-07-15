@@ -24,6 +24,7 @@ Dependencies: standard library only (no PyYAML needed)
 import argparse
 
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
+from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -115,6 +116,9 @@ def main() -> None:
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("cockpit", help="read-only Mission Control aggregating board/gate/drill/cost/audit onto one screen (#307)")
+    p.set_defaults(func=cmd_cockpit)
 
     p = sub.add_parser("gates", help="show the acceptance-gate preset definitions")
     p.set_defaults(func=cmd_gates)

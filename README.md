@@ -320,6 +320,14 @@ When multiple AI tasks are running or completed, `/rig:go board` is a management
 
 It tells you: which task is still running, which passed or failed its gate, which worktree holds changes, which run is ready for `diff` review, and which should be `discard`ed. `/rig:go board --all` widens this to every task ever recorded, not just active ones.
 
+### Cockpit — Mission Control (`/rig:go cockpit`, read-only, #307)
+
+One screen aggregating the run timeline, gate radar, drill-measured reviewer confidence, a cost meter, and a force-bypass safety strip — for when you want the whole picture at once instead of running `board`/`stats`/`audit`/`confidence` separately. No new persistence: it reuses those commands' existing aggregation functions (`.rig/runs/`, `drill-results.jsonl`, `runs.jsonl`, `audit.jsonl`), so nothing here can drift out of sync with them. **v1 is read-only** — accept/discard stay in their own commands; cockpit only points at the next command to run. Missing data (no drill run yet, no token usage recorded) is shown as "Unmeasured" rather than a blank that could be misread as healthy.
+
+```
+python3 scripts/workbench.py cockpit
+```
+
 ### Stats
 
 `/rig:go stats` summarizes past runs — an observation layer over the whole workbench, not just a single run's outcome:
