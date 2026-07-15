@@ -32,6 +32,9 @@ The model does each step's "work", but this runner decides "what happens next":
                                      original branch; unmet/dirty/non-ff runs preserve the worktree and branch
                                      (the spatial version of determinism-by-gate).
                                      Verifier-role CLIs get read-only permissions pinned via argv (claude --allowedTools / codex --sandbox read-only)
+  ab <recipe1> <recipe2> ...          Run the same goal through multiple recipe variants concurrently and compare
+    --provider <name> --goal G        speed/retries/results (#291). Each variant runs in its own isolated worktree
+                                     (same path as --isolate), so variants never conflict.
   run ... --auto-route                For steps declaring auto_route.candidates ({model,cost_tier,max_size}), deterministically
                                      picks the cheapest candidate that covers the measured diff size (#264). A fallback only:
                                      runtime --step-model and the recipe's own model: both still win outright. The decision is
@@ -56,7 +59,7 @@ Dependencies: Python3 + PyYAML (same as validate.py). Exit code 0=success / 1=er
 
 import sys
 
-from .commands import (cmd_check, cmd_init, cmd_install_shim, cmd_next, cmd_party,
+from .commands import (cmd_ab, cmd_check, cmd_init, cmd_install_shim, cmd_next, cmd_party,
                        cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status, cmd_verdict)
 from .providers import cmd_models, cmd_probe
 from .queueing import cmd_queue
@@ -72,7 +75,7 @@ COMMANDS = {
     "resume": cmd_resume,
     "runs": cmd_runs, "party": cmd_party, "graph": cmd_graph,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest,
-    "mcp-scan": cmd_mcp_scan,
+    "mcp-scan": cmd_mcp_scan, "ab": cmd_ab,
 }
 
 

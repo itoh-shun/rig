@@ -7,6 +7,7 @@ import time
 import shlex
 import pathlib
 import subprocess
+import concurrent.futures as futures
 
 from . import config
 from .recipes import (auto_orchestrate, git_diff_lines, load_manifest, load_steps,
@@ -447,6 +448,114 @@ def cmd_run(args):
         print(f"◈ Isolated run outcome: {label}")
     print(f"\n=== Finished: {final} ===  run-state: {out}")
     sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
+
+
+def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: str,
+                    cfg: dict, max_steps: int, max_parallel: int, quorum: str,
+                    out_path: pathlib.Path) -> dict:
+    """Run one variant (recipe) in its own isolated worktree and return a comparison summary
+    (#291's `ab` helper). Folds the same execution path as cmd_run
+    (setup_isolation -> run_loop -> teardown_isolation) into one function so multiple variants
+    can genuinely run concurrently from a ThreadPoolExecutor (each variant has its own worktree,
+    so no file collisions; quiet=True avoids interleaved output)."""
+    fm, _warns = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    steps = load_steps(fm)
+    state = new_state(fm.get("name", recipe_path.stem), steps, goal)
+    iso = setup_isolation(fm.get("name", recipe_path.stem))
+    variant_cfg = {**cfg, "cwd": iso["dir"], "_token_usage": {}}  # per-variant accumulator (#271/#296)
+    state["isolation"] = iso
+    t0 = time.monotonic()
+    final = run_loop(state, out_path, gen, ver, variant_cfg, max_steps,
+                     quiet=True, max_parallel=max_parallel, quorum=quorum)
+    elapsed = round(time.monotonic() - t0, 1)
+    outcome = teardown_isolation(iso, final)
+    state["isolation"]["outcome"] = outcome
+    save_state(state, out_path)
+    retries = sum(st.get("retries", 0) for st in state["step_state"].values())
+    return {
+        "recipe": recipe_path.stem,
+        "final": final,
+        "elapsed_sec": elapsed,
+        "retries": retries,
+        "worktree_outcome": outcome,
+        "worktree_dir": iso["dir"] if outcome == "kept" else None,
+    }
+
+
+def cmd_ab(args):
+    """Run the same goal through multiple recipe variants concurrently and compare
+    speed/retries/results (#291).
+
+    Each variant runs in its own isolated worktree, exactly like `cmd_run --isolate` (no file
+    collisions), so running them genuinely concurrently (ThreadPoolExecutor) is safe. --provider
+    selects the generator/verifier role the same way `run` does — the comparison is about
+    recipe differences, not model/provider differences.
+    """
+    if len(args) < 2:
+        print("[ERROR] usage: ab <recipe1> <recipe2> [...] --provider <name> --goal G "
+              "[--verifier-provider V] [--max-steps N] [--model M]")
+        sys.exit(1)
+    recipes: list[str] = []
+    i = 0
+    while i < len(args) and not args[i].startswith("--"):
+        recipes.append(args[i])
+        i += 1
+    if len(recipes) < 2:
+        print("[ERROR] specify 2 or more recipes to compare")
+        sys.exit(1)
+
+    gen = ver = None
+    goal = None
+    max_steps = 40
+    max_parallel = 4
+    quorum = "all"
+    cfg: dict = {}
+    while i < len(args):
+        a = args[i]
+        if a == "--provider" and i + 1 < len(args):
+            gen = args[i + 1]
+            i += 2
+        elif a == "--verifier-provider" and i + 1 < len(args):
+            ver = args[i + 1]
+            i += 2
+        elif a == "--goal" and i + 1 < len(args):
+            goal = args[i + 1]
+            i += 2
+        elif a == "--max-steps" and i + 1 < len(args):
+            max_steps = int(args[i + 1])
+            i += 2
+        elif a == "--model" and i + 1 < len(args):
+            cfg["model"] = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    if not gen:
+        print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock)")
+        sys.exit(1)
+    ver = ver or gen
+
+    resolved = [resolve_recipe(r) for r in recipes]
+    results: list[dict | None] = [None] * len(resolved)
+    print(f"◈ A/B experiment: {' vs '.join(recipes)} (provider={gen} / {len(resolved)} concurrent variants)\n")
+    with futures.ThreadPoolExecutor(max_workers=len(resolved)) as ex:
+        fut_to_idx = {
+            ex.submit(_run_ab_variant, path, goal, gen, ver, dict(cfg), max_steps, max_parallel, quorum,
+                     pathlib.Path(f"ab-{path.stem}-state.json")): idx
+            for idx, path in enumerate(resolved)
+        }
+        for fut in futures.as_completed(fut_to_idx):
+            results[fut_to_idx[fut]] = fut.result()
+
+    print(f"## rig ab — {' vs '.join(recipes)}\n")
+    print(f"{'recipe':<20} {'final':<10} {'elapsed(s)':<12} {'retries':<8} worktree")
+    for r in results:
+        wt = r["worktree_dir"] or "-"
+        print(f"{r['recipe']:<20} {r['final']:<10} {r['elapsed_sec']:<12} {r['retries']:<8} {wt}")
+    kept = [r for r in results if r["worktree_outcome"] == "kept"]
+    if kept:
+        print(f"\n{len(kept)} worktree(s) were preserved (unmet/dirty). After inspecting, clean up with "
+              f"`git worktree remove --force <dir>`.")
+
 
 def _read_jsonl(path: pathlib.Path) -> list[dict]:
     if not path.exists():

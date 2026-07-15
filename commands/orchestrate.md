@@ -65,6 +65,24 @@ orchestrate run <recipe> --provider anthropic --model claude-fable-5 --step-mode
 
 **正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。実際のAnthropic APIへは接続していない（課金・実運用リスクを避けるため）——実モデルでの`stop_reason: refusal`発火・実際のfallback課金は未検証。
 
+**⑥ A/Bレシピ実験（`ab`・#291）**
+
+```
+orchestrate ab <recipe1> <recipe2> [...] --provider mock --goal "<goal>" [--verifier-provider V] [--max-steps N]
+```
+
+同一タスクを複数recipeバリアントで**真に並走**実行し、速度(elapsed)・リトライ回数・最終状態を比較する。各variantは`--isolate`と同じ隔離worktreeで独立実行される（ファイル競合なし）ため、`ThreadPoolExecutor`で安全に並列化できる。比較したいのは「recipeの違い」であって「model/providerの違い」ではない前提——providerは全variant共通で1つ指定する。
+
+```
+## rig ab — recipes/bugfix.md vs recipes/hotfix.md
+
+recipe               final      elapsed(s)   retries  worktree
+bugfix               DONE       42.3         0        -
+hotfix               DONE       18.7         1        -
+```
+
+未達/dirtyのvariantはworktreeが保全される（`--isolate`と同じ規則）。後片付けは`git worktree remove --force <dir>`。
+
 ## 自動有効化（明示しなくても通る）
 
 `--orchestrate` を明示しなくても、次のとき自動で orchestrate を通る（§4.3）：
