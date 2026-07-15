@@ -89,6 +89,12 @@ accept 成功後（squash merge → **staged**・コミットはしない）:
 
 `.rig/access.json` が存在する場合のみ効く（無ければ従来通り無制限）。形式は `{"default": ["alice","bob"], "<task_type>": [...]}`。accept 操作者は `RIG_USER` 環境変数 → `git config user.name` の順で解決され、該当 task_type（無ければ `default`）の許可リストに無ければ `accept` は拒否される。チーム/組織で「誰でもacceptできる」を避けたい場合にのみ導入する。
 
+### 署名付き来歴（`verify-provenance`・#299）
+
+`accept` は成功のたびに `.rig/runs/<task_id>/provenance.json`（task_type/recipe/base/gate結果/checks を含むレコード＋署名）を書く。鍵は `.rig/provenance.key`（初回accept時に自動生成・gitignore済み・第三者と共有しない）で HMAC-SHA256 署名する。`workbench.py verify-provenance <task_id>` で署名検証でき、レコードまたは鍵が事後に改変されていれば `✗ INVALID` で exit 1 になる。
+
+**スコープの誠実な明示**：これは非対称鍵（Ed25519/SLSA）による第三者公開検証ではない——鍵を持つ**同一環境内での事後改ざん検知**にとどまる（stdlib-onlyのworkbench.py依存原則を保つための意図的な選択）。SLSA相当の公開検証が要る場合は別途の仕組みが必要と案内する。
+
 ## 本番アウトカムへのフィードバックループ（`record-commit`/`record-outcome`/`trace-commit`・#289/#300）
 
 acceptance-gateはmerge時点の**予測**にすぎない。以下の3コマンドで、実際に何が起きたかを事後に突き合わせられるようにする：

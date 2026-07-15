@@ -23,7 +23,7 @@ Dependencies: standard library only (no PyYAML needed)
 
 import argparse
 
-from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc
+from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -92,6 +92,10 @@ def main() -> None:
     p = sub.add_parser("trace-commit", help="reverse-look-up a commit SHA to its task, gate prediction, and recorded outcome (#289, #300)")
     p.add_argument("sha", help="the commit SHA to look up")
     p.set_defaults(func=cmd_trace_commit)
+
+    p = sub.add_parser("verify-provenance", help="verify an accepted task's signed provenance record (#299)")
+    p.add_argument("task_id", nargs="?")
+    p.set_defaults(func=cmd_verify_provenance)
 
     p = sub.add_parser("discard", help="discard the worktree and branch (keeps the run log)")
     p.add_argument("task_id", nargs="?")

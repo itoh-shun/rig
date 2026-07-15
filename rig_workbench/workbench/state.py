@@ -3,10 +3,13 @@
 
 import contextlib
 import datetime
+import hashlib
+import hmac
 import json
 import os
 import pathlib
 import re
+import secrets
 import subprocess
 import sys
 
@@ -320,6 +323,45 @@ def budget_status(task: dict) -> tuple[float, float | None, bool]:
     budget = task.get("budget_minutes")
     over = bool(budget) and elapsed_min > budget
     return elapsed_min, budget, over
+
+
+# ── signed provenance (issue #299) ───────────────────────────────────────────
+def _provenance_key_path(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / "provenance.key"
+
+
+def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
+    """The HMAC-SHA256 signing key (#299). Lives under `.rig/` (gitignored), so it never
+    enters the repo. Deliberately HMAC rather than asymmetric signing (Ed25519/SLSA) to
+    keep workbench.py stdlib-only. This gives same-machine tamper-evidence — proof a
+    provenance record hasn't been edited after the fact on a machine holding the key —
+    not third-party public verification the way SLSA/Ed25519 provide."""
+    p = _provenance_key_path(root)
+    if p.is_file():
+        return p.read_bytes()
+    key = secrets.token_bytes(32)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(key)
+    try:
+        p.chmod(0o600)
+    except Exception:
+        pass
+    return key
+
+
+def _provenance_payload(record: dict) -> bytes:
+    return json.dumps(record, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def sign_provenance(root: pathlib.Path, record: dict) -> str:
+    key = load_or_create_provenance_key(root)
+    return hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
+
+
+def verify_provenance(root: pathlib.Path, record: dict, signature: str) -> bool:
+    key = load_or_create_provenance_key(root)
+    expected = hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 # ── gate construction / evaluation ───────────────────────────────────────────
