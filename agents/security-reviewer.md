@@ -26,3 +26,7 @@ tools: Read, Grep, Glob, Bash
 - 条件（あれば「マージ前必須」「フォローアップ可」を分けて箇条書き）
 - 残債（本タスク外で検知したもの）
 全体 200-400字。冗長な前置き禁止。
+
+## モデル割当時の注意（#293/#297）
+
+このpersonaは攻撃手法・脆弱性の議論そのものが本業のため、`--step-model`（#293）でFable 5を割り当てると、Fableのrefusal-classifier（cyber/bio/reasoning_extractionの3分類）に高い確率で抵触しうる。orchestrate.pyの`anthropic` provider（#297）はrefusal検知時に`server-side-fallback-2026-06-01` beta経由でOpus 4.8へ透過的にフォールバックし、発生を`state["history"]`（`FABLE_FALLBACK`/`FABLE_REFUSAL`）と`runs --cost`に記録するが、フォールバック未設定のまま素のFable 5を割り当てるとgateがこのstepで原因不明のまま失敗しうる。security-reviewer相当のpersonaにFable 5を使う場合は`fallback_model`（例: `claude-opus-4-8`）を必ず設定すること。

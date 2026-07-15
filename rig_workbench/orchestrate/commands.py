@@ -638,34 +638,47 @@ def cmd_runs(args):
 
     if cost_mode:
         # Per-recipe, per-provider token rollup (#271/#296). CLI providers (claude/codex) don't
-        # expose structured usage and stay "unmeasured" — only HTTP providers (ollama/lmstudio)
-        # are actually metered here.
+        # expose structured usage and stay "unmeasured" — only HTTP providers (ollama/lmstudio/
+        # anthropic) are actually metered here.
         by_recipe: dict[str, dict[str, dict]] = {}
         any_usage = False
+        fallback_count = refusal_count = 0
         for r in rows:
             tu = r.get("token_usage") or {}
-            if not tu:
-                continue
-            any_usage = True
-            rc = by_recipe.setdefault(r.get("recipe", "?"), {})
-            for provider, u in tu.items():
-                a = rc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
-                a["prompt_tokens"] += u.get("prompt_tokens", 0)
-                a["completion_tokens"] += u.get("completion_tokens", 0)
-                a["calls"] += u.get("calls", 0)
+            if tu:
+                any_usage = True
+                rc = by_recipe.setdefault(r.get("recipe", "?"), {})
+                for provider, u in tu.items():
+                    a = rc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0,
+                                                 "cache_read_input_tokens": 0, "calls": 0})
+                    a["prompt_tokens"] += u.get("prompt_tokens", 0)
+                    a["completion_tokens"] += u.get("completion_tokens", 0)
+                    a["cache_read_input_tokens"] += u.get("cache_read_input_tokens", 0)
+                    a["calls"] += u.get("calls", 0)
+            for s in r.get("steps", []):                       # #297: Fable fallback/refusal occurrence count
+                for ev in s.get("fable_events", []):
+                    if ev.get("kind") == "fallback":
+                        fallback_count += 1
+                    elif ev.get("kind") == "refusal":
+                        refusal_count += 1
         print(f"## rig runs --cost ({len(rows)} runs)\n")
         if not any_usage:
-            print("No token usage recorded (unmeasured). HTTP providers (ollama/lmstudio) are metered "
-                  "automatically from the OpenAI-compatible `usage` field. claude/codex run via CLI and "
+            print("No token usage recorded (unmeasured). HTTP providers (ollama/lmstudio/anthropic) are metered "
+                  "automatically from the usage field. claude/codex run via CLI and "
                   "don't expose structured usage, so they're out of scope here — see Anthropic's Usage & "
                   "Cost Admin API for those instead of estimating.")
-            return
-        for rcp, providers in sorted(by_recipe.items()):
-            print(f"  {rcp}:")
-            for provider, a in sorted(providers.items()):
-                total = a["prompt_tokens"] + a["completion_tokens"]
-                print(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
-                      f"completion={a['completion_tokens']:8d}  total={total:8d}")
+        else:
+            for rcp, providers in sorted(by_recipe.items()):
+                print(f"  {rcp}:")
+                for provider, a in sorted(providers.items()):
+                    total = a["prompt_tokens"] + a["completion_tokens"]
+                    cache = f"  cache_read={a['cache_read_input_tokens']}" if a["cache_read_input_tokens"] else ""
+                    print(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
+                          f"completion={a['completion_tokens']:8d}  total={total:8d}{cache}")
+        if fallback_count or refusal_count:
+            print(f"\nFable 5 refusal-classifier (#297): fallback={fallback_count}  direct-refusal={refusal_count}  "
+                  "(a fallback is treated as a transparent success and doesn't block the gate; cache_read is the "
+                  "fallback-prefix token count billed at 10%)")
         return
 
     print(f"## rig runs (latest {min(limit, len(rows))} of {len(rows)})\n")

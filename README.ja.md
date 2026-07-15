@@ -533,6 +533,17 @@ Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skill
 
 **正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`tests/test_host_adapters.py`）はコードとして検証済み。実際のCursor/Codex実機でのhook発火・skill読み込みは未検証（Codexは上記と同じ理由、Cursorはこの環境にCursor自体が無いため）。Claude Code向けの既存動作は本バッチで一切変更していない。
 
+### Fable 5 refusal-classifier→フォールバック（`--provider anthropic`・#297）
+
+Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエストを安全フィルターで自動遮断し、Opus 4.8へフォールバックする仕組みを持つ。`orchestrate.py run --provider anthropic`はAnthropic Messages APIを直接HTTPで叩き、この遮否を検知・記録・透過的にハンドリングする（`claude`/`rig`のCLI経由providerは構造化`stop_reason`を持たないため対象外）：
+
+- `fallback_model`（例`claude-opus-4-8`）を設定すると`anthropic-beta: server-side-fallback-2026-06-01`を要求し、フォールバック成功時は`state["history"]`に`FABLE_FALLBACK`を記録して**gateを止めず処理を継続**する。
+- フォールバック未設定/尽きた直接拒否は`FABLE_REFUSAL`（category/explanation）を記録し、silent失敗にしない。
+- `runs --cost`にトークン計測（`cache_read_input_tokens`含む）とfallback/refusal発生件数を表示する。
+- 攻撃手法の議論が本業の`security-reviewer`等のpersonaへFable 5を`--step-model`（#293）で割り当てる場合は`fallback_model`必須（`agents/security-reviewer.md`参照）。
+
+**正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。**実際のAnthropic APIには接続していません**（実運用トラフィックが必要かつ課金リスクを避けるため）。使用したスキーマは`anthropics/claude-cookbooks`の`fable_5_fallback_billing/guide.ipynb`に基づいていますが、実モデルでの動作は未検証です。
+
 ### manifest・知識層
 
 `<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
