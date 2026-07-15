@@ -9,6 +9,15 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
 
 ### Added
 
+- **AST-based semantic diff summary for Python (#280)**:
+  `scripts/ast_diff.py` compares Python source with the stdlib `ast`
+  module (top-level/class-level def/class comparison) to distinguish
+  signature changes, body-only changes, additions/removals, and
+  cosmetic-only edits (identical AST despite differing text).
+  `workbench.py diff` now inserts a "Semantic diff (Python)" section
+  for Modified `*.py` files, augmenting rather than replacing
+  `diff.md`'s prose Summary. Non-Python/unparseable files simply don't
+  get this section and fall back to the existing text diff.
 - **Confidence-weighted gate via drill detection rate (#301)**: new
   `workbench.py confidence [<task_id>]` surfaces drill-measured
   detection rate per reviewer as a supplementary signal alongside the

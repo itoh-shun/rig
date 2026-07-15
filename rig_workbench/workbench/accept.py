@@ -6,12 +6,49 @@ import datetime
 import pathlib
 import re
 import shutil
+import sys
 
 from .config import CHECK_ICON, RECOMMENDATION
 from .state import (_diff_lines, audit_append, build_acceptance, die,
                     gate_status, git, load_json, load_task, now_iso,
                     parse_diff_md, repo_root, resolve_task_id, runs_dir,
                     save_task, task_lock, warn, worktree_dirty)
+
+# scripts/ast_diff.py is a standalone, dependency-free script (also runnable directly
+# as `python3 scripts/ast_diff.py <base.py> <new.py>`); reuse it here rather than
+# duplicating its logic (#280).
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+import ast_diff  # noqa: E402
+
+
+def _semantic_diff_section(root: pathlib.Path, task: dict, names: list) -> list:
+    """Summarize changed *.py files with an AST diff (#280). Augments the text diff, never replaces it.
+
+    Non-Python / unparseable files simply get `supported: False` from `ast_diff` itself —
+    this function only narrows down which files to call it on (Modified *.py only) and
+    holds no judgment logic of its own.
+    """
+    wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else root
+    base = task["base_commit"]
+    py_modified = []
+    for line in names:
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0] == "M" and parts[-1].endswith(".py"):
+            py_modified.append(parts[-1])
+    if not py_modified:
+        return []
+    out = ["", "Semantic diff (Python, #280):"]
+    for path in py_modified:
+        base_src = git(["show", f"{base}:{path}"], cwd=wt).stdout
+        try:
+            new_src = (wt / path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        result = ast_diff.semantic_diff(base_src, new_src)
+        out.append(ast_diff.format_summary(result, path))
+    return out
 
 
 def cmd_diff(args: argparse.Namespace) -> None:
@@ -37,6 +74,9 @@ def cmd_diff(args: argparse.Namespace) -> None:
         print(f"\n[WARN] worktree has {len(dirty)} uncommitted change(s) (must be committed before accept):")
         for line in dirty[:20]:
             print(f"  {line}")
+
+    for line in _semantic_diff_section(root, task, names):
+        print(line)
 
     diff_md = d / "diff.md"
     sections = parse_diff_md(diff_md.read_text(encoding="utf-8")) if diff_md.exists() else {}

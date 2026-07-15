@@ -45,6 +45,19 @@ python3 scripts/workbench.py diff [<task_id>]
 
 `diff.md` が無いまま accept を試みると `scripts/workbench.py accept` が `diff_summary_generated` 要件で機械的に拒否する（§ accept 参照）。
 
+### セマンティックdiff（`scripts/ast_diff.py`・#280）
+
+`diff`は`Changed files:`の直後に`Semantic diff (Python, #280):`section を自動挿入する。base からの変更で **Modified な `*.py` ファイル**だけを対象に、Python標準の`ast`モジュールでtop-level/class内のdef/class単位を比較し：
+
+- シグネチャ変更（引数追加・削除・デフォルト変更）
+- 本体変更（シグネチャは同じだがロジックが変わった）
+- 追加/削除されたdef・class
+- **意味的変更なし**（フォーマット・コメントのみでASTが完全一致）
+
+を機械的に区別して1行ずつ表示する。これは`diff.md`の`Summary`（人/AIが書く散文）を**置き換えるのではなく補強する**——「AST上は意味的変更なし」と出ていても、意図的なフォーマット変更でない限りSummaryは省略しない。
+
+対応言語はPythonのみ（stdlibの`ast`で完結するため）。非Pythonファイル・parse失敗ファイルはこのsection自体に現れず（Modified `*.py`のみを対象にする設計）、テキストdiff（`Changed files:`のname-status）にそのままフォールバックする。
+
 ## `/rig accept [<task_id>] [--force]`
 
 ```
