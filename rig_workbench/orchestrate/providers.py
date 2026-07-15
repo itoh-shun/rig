@@ -185,6 +185,28 @@ def _load_models_config() -> dict:
         return {}
 
 
+_TOKEN_LOCK = threading.Lock()
+
+
+def _record_token_usage(cfg: dict, provider: str, usage: dict) -> None:
+    """Roll up an OpenAI-compatible `usage` payload into `cfg["_token_usage"]` (#271/#296).
+
+    `cfg` is expected to carry a per-run (or, for `_run_ab_variant`, per-variant)
+    accumulator dict — callers own that lifetime so usage never blends across runs.
+    CLI-based providers (claude/codex) don't expose structured usage and stay out of
+    scope here; Anthropic's Usage & Cost Admin API is the right tool for those instead
+    of estimating.
+    """
+    acc = cfg.get("_token_usage")
+    if acc is None:
+        return
+    with _TOKEN_LOCK:
+        a = acc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+        a["prompt_tokens"] += usage.get("prompt_tokens", 0) or 0
+        a["completion_tokens"] += usage.get("completion_tokens", 0) or 0
+        a["calls"] += 1
+
+
 def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     import urllib.request
     url = f"{_base_url(provider, cfg)}/chat/completions"
@@ -196,6 +218,8 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     try:
         with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
             data = json.loads(r.read().decode("utf-8"))
+        if isinstance(data.get("usage"), dict):
+            _record_token_usage(cfg, provider, data["usage"])
         return 0, data["choices"][0]["message"]["content"]
     except Exception as e:                      # connection failures, missing models etc. become rc!=0
         return 1, f"[{provider} error: {e} @ {url}]"
@@ -677,6 +701,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         cfg = {**cfg, "run_dir": cfg.get("run_dir") or str(pathlib.Path(sp).resolve().parent)}
     if any(s["needs"] for s in state["steps"]):
         final = run_dag(state, sp, gen_list, ver, cfg, max_steps, quiet, max_parallel, quorum)
+        state["token_usage"] = cfg.get("_token_usage") or {}
         telemetry_append(state, final)
         return final
     iters, last = 0, "—"
@@ -699,6 +724,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         break  # DONE / ESCALATE / BLOCKED / STOPPED
     if sp:
         save_state(state, sp)
+    state["token_usage"] = cfg.get("_token_usage") or {}
     telemetry_append(state, last)
     return last
 

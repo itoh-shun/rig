@@ -23,7 +23,9 @@ The model does each step's "work", but this runner decides "what happens next":
   resume <state.json>                Verify-first resume: print a digest, RE-RUN the current step's checks
                                      (refuse to advance if the world drifted), then continue via `next`
   status <state.json>                Print the current state
-  runs   [--limit N] [--recipe R] [--personas]  Run telemetry (.rig/runs.jsonl): listing, per-recipe aggregates, per-verifier vote tallies
+  runs   [--limit N] [--recipe R] [--personas] [--cost]  Run telemetry (.rig/runs.jsonl): listing, per-recipe aggregates,
+                                     per-verifier vote tallies, and (--cost) per-recipe/provider token rollups for
+                                     HTTP providers (ollama/lmstudio; claude/codex have no structured usage — #271/#296)
   party                              Party roster screen (/rig:party): renders RPG-style stats from telemetry / measured drills
   run ... --verifier-providers a,b,c Mixed-model quorum: run the same verification persona across different providers (votes are provider:persona)
   run ... --isolate                  Run isolated in a disposable git worktree. Only gate-green commits ff-merge back into the

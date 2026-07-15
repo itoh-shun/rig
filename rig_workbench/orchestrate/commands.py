@@ -298,7 +298,7 @@ def cmd_run(args):
     max_steps = 40
     max_parallel = 4
     quorum = "all"
-    cfg: dict = {}
+    cfg: dict = {"_token_usage": {}}  # per-run token accumulator (#271/#296); never merged across runs
     step_models: dict[str, str] = {}
     i = 1
     while i < len(args):
@@ -540,7 +540,7 @@ def cmd_runs(args):
     per-recipe bars, verifier votes, recent-run table in a single-file HTML with no external deps).
     Read-only (the same inspection mode as --list / --validate).
     """
-    limit, recipe, personas_mode, html_out, since = 10, None, False, None, None
+    limit, recipe, personas_mode, html_out, since, cost_mode = 10, None, False, None, None, False
     i = 0
     while i < len(args):
         if args[i] == "--limit" and i + 1 < len(args):
@@ -551,6 +551,9 @@ def cmd_runs(args):
             i += 2
         elif args[i] == "--personas":
             personas_mode = True
+            i += 1
+        elif args[i] == "--cost":
+            cost_mode = True
             i += 1
         elif args[i] == "--html" and i + 1 < len(args):
             html_out = args[i + 1]
@@ -615,6 +618,38 @@ def cmd_runs(args):
             print("\n  Pruning hint: " + ", ".join(sorted(rubber))
                   + " cast 5+ votes without a single REJECT (possible rubber-stamping, or the lens"
                     " has no bite; consider dropping them or sharpening the lens)")
+        return
+
+    if cost_mode:
+        # Per-recipe, per-provider token rollup (#271/#296). CLI providers (claude/codex) don't
+        # expose structured usage and stay "unmeasured" — only HTTP providers (ollama/lmstudio)
+        # are actually metered here.
+        by_recipe: dict[str, dict[str, dict]] = {}
+        any_usage = False
+        for r in rows:
+            tu = r.get("token_usage") or {}
+            if not tu:
+                continue
+            any_usage = True
+            rc = by_recipe.setdefault(r.get("recipe", "?"), {})
+            for provider, u in tu.items():
+                a = rc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+                a["prompt_tokens"] += u.get("prompt_tokens", 0)
+                a["completion_tokens"] += u.get("completion_tokens", 0)
+                a["calls"] += u.get("calls", 0)
+        print(f"## rig runs --cost ({len(rows)} runs)\n")
+        if not any_usage:
+            print("No token usage recorded (unmeasured). HTTP providers (ollama/lmstudio) are metered "
+                  "automatically from the OpenAI-compatible `usage` field. claude/codex run via CLI and "
+                  "don't expose structured usage, so they're out of scope here — see Anthropic's Usage & "
+                  "Cost Admin API for those instead of estimating.")
+            return
+        for rcp, providers in sorted(by_recipe.items()):
+            print(f"  {rcp}:")
+            for provider, a in sorted(providers.items()):
+                total = a["prompt_tokens"] + a["completion_tokens"]
+                print(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
+                      f"completion={a['completion_tokens']:8d}  total={total:8d}")
         return
 
     print(f"## rig runs (latest {min(limit, len(rows))} of {len(rows)})\n")

@@ -108,6 +108,7 @@ def telemetry_append(state: dict, final: str) -> None:
             "steps_passed": sum(1 for st in ss.values() if st.get("status") == "passed"),
             "retries": sum(st.get("retries", 0) for st in ss.values()),
             "escalated_at": (state.get("stopped") or {}).get("at") if state.get("stopped") else None,
+            "token_usage": state.get("token_usage") or {},  # #271/#296: provider -> {prompt/completion_tokens, calls}
             "steps": [{"id": s["id"], "status": ss[s["id"]].get("status"),
                        "retries": ss[s["id"]].get("retries", 0),
                        "model": ss[s["id"]].get("model"),  # actually-used generator model (#293; None = provider default)
