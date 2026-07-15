@@ -12,7 +12,8 @@ import concurrent.futures as futures
 
 from . import config
 from .quarantine import wrap_untrusted
-from .recipes import git_diff_lines, load_manifest, resolve_auto_route, size_class
+from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
+                      resolve_auto_route, size_class)
 from .runstate import compute_next, gate_outcome, save_state, telemetry_append
 
 # ── Execution layer (external runners, provider abstraction) ─────────────────
@@ -568,6 +569,22 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
 _HIST_LOCK = threading.Lock()
 
 
+def _read_runs_jsonl(path: pathlib.Path) -> list[dict]:
+    """Local copy of commands.py's _read_jsonl (kept private to avoid a providers<->commands
+    import cycle: commands.py already imports from providers.py)."""
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
 # ── Per-step model assignment (issue #293) ────────────────────────────────────
 def parse_step_model_spec(spec: str) -> tuple[str, str] | None:
     """Parse one --step-model value ("<step-id>=<model>"). Returns (step_id, model), or None if malformed (pure)."""
@@ -647,12 +664,38 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
             and not (cfg.get("step_models") or {}).get(step["id"])):
         size = size_class(git_diff_lines(), load_manifest().get("size_thresholds"))
         routed_model, reason = resolve_auto_route(step, size)
-        if routed_model:
-            effective_step = {**step, "model": routed_model}
+        applied_model, applied_reason = routed_model, reason  # #264's static pick (default/fallback)
+
+        # #305: learned route from historical data. Default is shadow mode — the prediction is
+        # always recorded in history, but only affects the actual choice under
+        # --auto-route-mode active (staged rollout: shadow -> confidence threshold -> active).
+        if cfg.get("auto_route_learn"):
+            runs_rows = _read_runs_jsonl(config.RUNS_PATH)
+            expl_key = f"{state['recipe']}:{step['id']}:{cfg.get('exploration_date', '')}"
+            learned = learned_auto_route(state["recipe"], step["id"], step["auto_route"]["candidates"],
+                                         runs_rows, exploration_key=expl_key,
+                                         exploration_pct=cfg.get("exploration_pct", 0))
+            active = cfg.get("auto_route_mode", "shadow") == "active"
+            with _HIST_LOCK:
+                state["history"].append({"action": "LEARNED_ROUTE_PREDICTION", "step": step["id"],
+                                         "sufficient": learned["sufficient"],
+                                         "predicted_model": learned.get("model"),
+                                         "evidence": learned.get("evidence"),
+                                         "explored_from": learned.get("explored_from"),
+                                         "counterfactuals": learned["counterfactuals"], "applied": False})
+            if learned["sufficient"] and active:
+                applied_model, applied_reason = learned["model"], f"learned route (evidence: {learned['evidence']})"
+                state["history"][-1]["applied"] = True  # upgrade the PREDICTION just pushed to "actually applied"
+                log(f"   ↳ learned-route (active): {applied_model}")
+            elif not learned["sufficient"]:
+                log("   ↳ learned-route: insufficient sample, falling back to static auto-route")
+
+        if applied_model:
+            effective_step = {**step, "model": applied_model}
             with _HIST_LOCK:
                 state["history"].append({"action": "AUTO_ROUTE", "step": step["id"],
-                                         "model": routed_model, "reason": reason})
-            log(f"   ↳ auto-route: {routed_model} ({reason})")
+                                         "model": applied_model, "reason": applied_reason})
+            log(f"   ↳ auto-route: {applied_model} ({applied_reason})")
     gen_model, ver_model = effective_step_models(effective_step, cfg)
     if gen_model:
         st["model"] = gen_model                     # actually-used generator model (run-state/telemetry attribution)

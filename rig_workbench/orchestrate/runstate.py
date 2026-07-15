@@ -100,9 +100,12 @@ def telemetry_append(state: dict, final: str) -> None:
         ss = state["step_state"]
         # step id -> most recent auto-route decision (#264; a step retried keeps its last decision)
         auto_routed: dict[str, dict] = {}
+        learned_predictions: dict[str, dict] = {}
         for h in state.get("history", []):
             if h.get("action") == "AUTO_ROUTE":
                 auto_routed[h["step"]] = {"model": h.get("model"), "reason": h.get("reason")}
+            elif h.get("action") == "LEARNED_ROUTE_PREDICTION":
+                learned_predictions[h["step"]] = {k: v for k, v in h.items() if k not in ("action", "step")}  # #305
         rec = {
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "recipe": state["recipe"],
@@ -119,7 +122,8 @@ def telemetry_append(state: dict, final: str) -> None:
                        "model": ss[s["id"]].get("model"),  # actually-used generator model (#293; None = provider default)
                        "verdicts": [_verdict_summary(v)
                                     for v in ss[s["id"]].get("verdicts", [])],
-                       **({"auto_route": auto_routed[s["id"]]} if s["id"] in auto_routed else {})}
+                       **({"auto_route": auto_routed[s["id"]]} if s["id"] in auto_routed else {}),
+                       **({"learned_route": learned_predictions[s["id"]]} if s["id"] in learned_predictions else {})}
                       for s in state["steps"]],
         }
         # Failure-mode taxonomy (additive; absent for successful runs). Deterministic best-guess

@@ -36,6 +36,13 @@ The model does each step's "work", but this runner decides "what happens next":
                                      picks the cheapest candidate that covers the measured diff size (#264). A fallback only:
                                      runtime --step-model and the recipe's own model: both still win outright. The decision is
                                      recorded in run-state history and runs.jsonl's steps[].auto_route.
+  run ... --auto-route-learn          Learns from runs.jsonl's track record (which model actually got used, did the step pass)
+    [--auto-route-mode shadow|active] instead of only the static size thresholds (#305; frequency-based, no ML model). Defaults
+    [--exploration-pct N]             to shadow mode: predictions are always recorded (steps[].learned_route) but only override
+    [--exploration-date D]            the applied model under --auto-route-mode active. Insufficient samples/pass-rate fall back
+                                     to #264's static auto-route, with every rejected candidate's reason recorded (no black box).
+                                     --exploration-pct lets a deterministic fraction of runs try the next-cheapest candidate
+                                     (hashed from --exploration-date + recipe/step, never randomness).
   graph  [--json | --focus <name>]   Derive a **typed graph** (11 relations: injects/extends/uses-*/mirrors, etc.) from shipped bricks.
                                      Never hand-written: frontmatter is the source of truth (validate check_graph enforces consistency in CI)
   install-shim [--to PATH] [--force] Symlink the shim into ~/.local/bin/rig (cross-project entry point; run once)

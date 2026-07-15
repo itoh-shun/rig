@@ -25,6 +25,10 @@ CANDIDATES = {"auto_route": {"candidates": [
 def tmp_telemetry(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global-runs.jsonl")
+    # Pin the measured diff size to 0 (-> size class "S") regardless of the ambient repo's
+    # actual git status, so these tests don't depend on whether the working tree is dirty.
+    from rig_workbench.orchestrate import providers
+    monkeypatch.setattr(providers, "git_diff_lines", lambda: 0)
     return tmp_path / "runs.jsonl"
 
 
@@ -80,7 +84,7 @@ def test_auto_route_applies_when_nothing_else_set(step_factory, tmp_telemetry):
     step = _routed_step(step_factory)
     state = new_state("t", [step], None)
     run_loop(state, None, "mock", "mock", {"auto_route": True}, 20, quiet=True)
-    # no diff in this test environment -> git_diff_lines() is None -> size_class defaults to "S"
+    # git_diff_lines() is pinned to 0 by tmp_telemetry -> size class "S"
     assert state["step_state"]["implement"]["model"] == "haiku"
 
 

@@ -286,7 +286,8 @@ def cmd_run(args):
     if not args:
         print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
               "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
-              "[--max-steps N] [--goal G] [--out f] [--isolate] [--auto-route]")
+              "[--max-steps N] [--goal G] [--out f] [--isolate] [--auto-route] "
+              "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
@@ -360,6 +361,18 @@ def cmd_run(args):
         elif a == "--auto-route":
             cfg["auto_route"] = True
             i += 1
+        elif a == "--auto-route-learn":     # #305: learned route from historical data (default shadow mode)
+            cfg["auto_route_learn"] = True
+            i += 1
+        elif a == "--auto-route-mode" and i + 1 < len(args):
+            cfg["auto_route_mode"] = args[i + 1]  # shadow (default: record prediction only) | active (actually used)
+            i += 2
+        elif a == "--exploration-pct" and i + 1 < len(args):
+            cfg["exploration_pct"] = int(args[i + 1])
+            i += 2
+        elif a == "--exploration-date" and i + 1 < len(args):
+            cfg["exploration_date"] = args[i + 1]  # explicit date/bucket string, not randomness, for determinism
+            i += 2
         else:
             i += 1
     # Unknown step ids abort the run before anything executes (no silent ignores; #293)
