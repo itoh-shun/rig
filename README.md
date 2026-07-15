@@ -572,6 +572,10 @@ Fable 5's safety filter auto-blocks requests in three categories (cyber/bio/reas
 
 **Honest verification note:** verified against a mock HTTP server reproducing the Anthropic Messages API's response shape, across three cases — direct refusal, successful server-side fallback, and a normal response with neither. **Not connected to the real Anthropic API** (that would require live traffic and carries real billing risk). The schema used here is sourced from `anthropics/claude-cookbooks`' `fable_5_fallback_billing/guide.ipynb`, but behavior against the real model is unverified.
 
+### Managed Agents API delegation (experimental, opt-in, #295)
+
+An experimental backend that delegates review-gate parallel fan-out to Anthropic's Managed Agents API (coordinator/worker, beta) instead of the existing subprocess + ThreadPoolExecutor path. Enable with `cfg["parallel_backend"] = "managed-agents"` plus `cfg["environment_id"]` (required) — **the default stays the existing mechanism**; this is fully opt-in. See `commands/orchestrate.md` §⑧ for details and honest limitations (REST paths are inferred from the documented SDK method names, it has not been connected to the real API, and event-stream integration into the run-continuity header is not implemented).
+
 ### Project manifest & knowledge layer
 
 Drop `<repo>/.claude/rig.md` to set build/lint/test commands, branch & CI strategy, reviewer, production-impact patterns, default recipe, default reviewer personas, etc. — see [`skills/rig/manifests/_template.md`](./skills/rig/manifests/_template.md). The knowledge layer (`~/.claude/rig/knowledge/{methodology,ai-quirks}/`, `<repo>/.claude/rig/knowledge/domain/`) is injected into every run and accumulates learnings over time.

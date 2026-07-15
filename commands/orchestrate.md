@@ -91,6 +91,22 @@ orchestrate runs
 
 同一(recipe, step)で2回以上エスカレーションしていると、「## Gap prescriptions」に**具体的な`/rig:forge`下書き依頼コマンド**を表示する（該当stepでREJECTしたreviewer上位3件を検証票（`steps[].verdicts`）から特定し、説明文に埋め込む）。orchestrate.py自身はforgeを呼ばない（LLMが要る処理のため）——生成するのは「コピペで使えるforgeプロンプト」まで。下書き確認・確定は人/AIが行い、`/rig:drill --replay`で改善を再測定する運用。
 
+**⑧ Managed Agents API委譲（review-gate並列fan-out・実験的opt-in・#295）**
+
+```python
+cfg["parallel_backend"] = "managed-agents"
+cfg["environment_id"] = "<Managed Agentsのホスト環境ID>"  # 必須
+```
+
+`_execute_step`のreview-gate並列検証は既定で`run_verifiers_parallel`（subprocess + ThreadPoolExecutor）を使う。`cfg["parallel_backend"] == "managed-agents"`のときのみ、`run_managed_agents_fanout`がAnthropic Managed Agents API（coordinator/worker構成のbeta・`managed-agents-2026-04-01`）へ委譲する——**既定経路は完全に無変更**。persona 1つにつきworker agentを1つ作成し、判断のみのcoordinatorが束ねる。`threads.list`をポーリングし、全workerが揃うか`managed_agents_max_polls`（既定30・`managed_agents_poll_interval`既定2秒）に達したら打ち切る。戻り値の形は`run_verifiers_parallel`と同じ（`{by, persona, provider, ok, note}`の列）なので`_execute_step`のpass/fail判定ロジックは変更不要。
+
+- **必須**: `cfg["environment_id"]`（Managed Agentsのホスト環境）。未設定なら即座にエラー票を返す（silent失敗にしない）。
+- **未報告worker**: `max_polls`尽きても揃わなかったworkerは`timeout`票として明示（黙って欠落させない）。
+- **トークン計測**: workerスレッドの`usage`を`cfg["_token_usage"]["managed-agents"]`に集計（`runs --cost`と同じ集計経路）。
+- **history**: `MANAGED_AGENTS_SESSION`アクション（session_id・worker数）を`state["history"]`に記録。event-stream自体のrun-continuityヘッダ統合は未実装。
+
+**正直な検証範囲**：REST エンドポイントパス（`/v1/agents`等）は公式Python SDKのメソッド名（`client.beta.agents.create`等、`anthropics/claude-cookbooks`の`managed_agents/CMA_plan_big_execute_small.ipynb`参照）からの推測であり、公式RESTリファレンスから直接確認したものではない。モックHTTPサーバで全呼び出し順序（worker/coordinator作成・session作成・event送信・threadsポーリング・集計・environment_id未設定のエラー経路）を検証済みだが、**実際のAPIには未接続**。worker/coordinator間のコンテキスト分離はAnthropicサーバ側の性質でありクライアントコードからは検証できない——ここで検証したのは「rig側のコードが生のworker出力を要求／転送せず、APIの返した最終結果のみを読む」ことのみ。
+
 ## 自動有効化（明示しなくても通る）
 
 `--orchestrate` を明示しなくても、次のとき自動で orchestrate を通る（§4.3）：

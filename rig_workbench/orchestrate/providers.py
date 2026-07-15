@@ -4,11 +4,13 @@ import sys
 import os
 import re
 import json
+import time
 import shlex
 import threading
 import pathlib
 import subprocess
 import concurrent.futures as futures
+import urllib.request
 
 from . import config
 from .quarantine import wrap_untrusted
@@ -521,6 +523,133 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     return sorted(res, key=lambda r: (r["persona"], r["provider"]))  # deterministic regardless of completion order
 
 
+_MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
+
+
+def _managed_agents_request(base: str, path: str, cfg: dict, body: dict | None = None,
+                            method: str = "POST") -> dict:
+    """Thin HTTP wrapper over the (beta) Managed Agents API (#295).
+
+    **Note**: endpoint paths (`/v1/agents` etc.) are inferred from the documented Python
+    SDK method names (`client.beta.agents.create` etc.), not confirmed directly against an
+    official REST reference (this script stays stdlib-only, so it hits the endpoints with
+    urllib rather than depending on the SDK). Confirm the actual paths against the
+    `anthropic` Python SDK source / official docs before relying on this in production.
+    """
+    url = f"{base}/{path.lstrip('/')}"
+    headers = {"Content-Type": "application/json",
+              "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),
+              "anthropic-beta": _MANAGED_AGENTS_BETA,
+              "x-api-key": cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")}
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def run_managed_agents_fanout(prompt: str, personas: list[str], cfg: dict,
+                              state: dict | None = None, step_id: str | None = None) -> list[dict]:
+    """Delegate review fan-out to the Anthropic Managed Agents API (coordinator/worker beta;
+    #295, opt-in experimental backend).
+
+    Only called from `_execute_step` when `cfg.get("parallel_backend") == "managed-agents"`.
+    The default (unset) stays on the existing `run_verifiers_parallel` (subprocess +
+    ThreadPoolExecutor) — this backend is entirely opt-in and its failure never touches the
+    existing path.
+
+    One worker agent is created per persona; a judgment-only coordinator fans out to them.
+    A worker's raw output (a large diff/log, etc.) stays inside its managed-environment
+    thread — only the coordinator's distilled result crosses back. **That isolation itself
+    is an Anthropic server-side property this client code cannot verify.** What this code
+    does guarantee is that rig never requests, stores, or forwards raw worker output beyond
+    the API's own returned result. `cfg["environment_id"]` is required (the Managed Agents
+    host environment) — if unset, this errors immediately rather than failing silently.
+    """
+    base = (cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
+    env_id = cfg.get("environment_id")
+    if not env_id:
+        return [{"by": "managed-agents:error", "persona": "-", "provider": "managed-agents",
+                 "ok": False, "note": "cfg['environment_id'] is unset; cannot start Managed Agents"}]
+    personas = personas or ["reviewer"]
+    model = cfg.get("model") or "claude-sonnet-5"
+    coordinator_model = cfg.get("coordinator_model") or model
+
+    try:
+        workers = []
+        for p in personas:
+            w = _managed_agents_request(base, "v1/agents", cfg, {
+                "name": f"worker-{p}", "model": model, "tools": [],
+                "system": f"You are the {p} reviewer worker. Return only your verdict via submit_result.",
+                "betas": [_MANAGED_AGENTS_BETA],
+            })
+            workers.append((p, w["id"]))
+        coordinator = _managed_agents_request(base, "v1/agents", cfg, {
+            "name": "coordinator", "model": coordinator_model,
+            "multiagent": {"type": "coordinator",
+                          "agents": [{"type": "agent", "id": wid} for _, wid in workers]},
+            "system": "Delegate one review to each worker and aggregate the results.",
+            "betas": [_MANAGED_AGENTS_BETA],
+        })
+        session = _managed_agents_request(base, "v1/sessions", cfg,
+                                          {"agent": coordinator["id"], "environment_id": env_id,
+                                           "betas": [_MANAGED_AGENTS_BETA]})
+        session_id = session["id"]
+        _managed_agents_request(base, f"v1/sessions/{session_id}/events", cfg, {
+            "betas": [_MANAGED_AGENTS_BETA],
+            "events": [{"type": "user.message", "content": [{"type": "text", "text": prompt}]}],
+        })
+
+        max_polls = cfg.get("managed_agents_max_polls", 30)
+        poll_interval = cfg.get("managed_agents_poll_interval", 2)
+        threads: list = []
+        for _ in range(max_polls):
+            resp = _managed_agents_request(base, f"v1/sessions/{session_id}/threads", cfg,
+                                           method="GET")
+            threads = resp.get("data") or resp.get("threads") or []
+            if len(threads) >= len(workers) + 1:  # workers + coordinator
+                break
+            time.sleep(poll_interval)
+
+        total_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
+        results = []
+        by_agent_id = {wid: p for p, wid in workers}
+        for t in threads:
+            u = t.get("usage") or {}
+            for k in total_usage:
+                total_usage[k] += u.get(k, 0) or 0
+            agent_id = t.get("agent_id") or t.get("agent", {}).get("id")
+            persona = by_agent_id.get(agent_id)
+            if persona is None:
+                continue  # the coordinator's own thread (not a worker) isn't counted as a review vote
+            text = "".join(b.get("text", "") for b in (t.get("content") or []) if b.get("type") == "text")
+            ok = ("VERDICT: PASS" in text) and ("VERDICT: FAIL" not in text)
+            results.append({"by": f"managed-agents:{persona}", "persona": persona,
+                            "provider": "managed-agents", "ok": ok, "note": f"session={session_id}"})
+
+        acc = cfg.get("_token_usage")
+        if acc is not None:
+            with _TOKEN_LOCK:
+                a = acc.setdefault("managed-agents", {"prompt_tokens": 0, "completion_tokens": 0,
+                                                       "cache_read_input_tokens": 0, "calls": 0})
+                a["prompt_tokens"] += total_usage["input_tokens"]
+                a["completion_tokens"] += total_usage["output_tokens"]
+                a["cache_read_input_tokens"] += total_usage["cache_read_input_tokens"]
+                a["calls"] += 1
+        if state is not None and step_id is not None:
+            with _HIST_LOCK:
+                state["history"].append({"action": "MANAGED_AGENTS_SESSION", "step": step_id,
+                                         "session_id": session_id, "workers": len(workers)})
+
+        missing = [p for p, _ in workers if p not in {r["persona"] for r in results}]
+        for p in missing:  # a worker that never reported in even after max_polls is marked "unmeasured", not silently dropped
+            results.append({"by": f"managed-agents:{p}", "persona": p, "provider": "managed-agents",
+                            "ok": False, "note": f"timeout (session={session_id}; not in after {max_polls} polls)"})
+        return sorted(results, key=lambda r: r["persona"])  # deterministic (rig's own aggregation code only; the LLM outputs themselves are a separate concern)
+    except Exception as e:
+        return [{"by": "managed-agents:error", "persona": "-", "provider": "managed-agents",
+                 "ok": False, "note": f"managed-agents error: {e}"}]
+
+
 def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str:
     # The goal is external task text — it can originate from a GitHub Issue/PR
     # body or comment (via gh-flow) or a queue item, i.e. third-party-authored
@@ -831,9 +960,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     # Per-step `verifier_model:` is injected into a copy of cfg (independent of the generator side)
     v_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     personas = step["personas"] or ["independent"]
-    results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out,
-                                                               _git_diff_evidence(cfg)),
-                                     personas, v_cfg, max_parallel, state=state, step_id=step["id"])
+    verify_prompt = _build_verify_prompt(state, step, out, _git_diff_evidence(cfg))
+    if cfg.get("parallel_backend") == "managed-agents":  # #295: opt-in experimental backend
+        results = run_managed_agents_fanout(verify_prompt, personas, v_cfg,
+                                            state=state, step_id=step["id"])
+    else:
+        results = run_verifiers_parallel(ver, verify_prompt,
+                                         personas, v_cfg, max_parallel, state=state, step_id=step["id"])
     passes, total = sum(1 for r in results if r["ok"]), len(results)
     par = "parallel" if total > 1 else "solo"
     log(f"   ↳ {par} verification x{total}: PASS {passes}/{total} (quorum={quorum})")
