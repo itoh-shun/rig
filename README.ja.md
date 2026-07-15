@@ -494,6 +494,25 @@ ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
 
 Codex を再起動したあと、`$rig "ログインバグを直して"` のように呼ぶ。Codex では `$rig` が Claude Code の `/rig:go` 相当の入口になる。横断 runner は既に `codex exec` provider を持っており、検証ロールでは read-only sandbox を強制する。
 
+### Codexネイティブ層統合（#294）
+
+Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skills・Hooks・Subagent TOML）を持つ。上記のskillシンボリックリンク方式に加え、本リポジトリはCodexネイティブな等価物も同梱する：
+
+| 機構 | 追加したファイル | 内容 |
+|---|---|---|
+| Skills | `codex/skills/rig/SKILL.md` | Codexの`.agents/skills/<name>/SKILL.md`規約（`name`/`description` frontmatter）に沿った薄いskill。新しいエンジンは作らず、既存の`workbench.py`/`orchestrate.py`への手続き的ポインタに留める |
+| Hooks | `codex/hooks.json` | `PreCompact`イベントで既存の`hooks/preserve-rig-state.sh`をそのまま再利用（Claude Code専用の記述は含まれていないスクリプトなので複製不要）。run-continuityをCodexの圧縮イベントにも配線 |
+| Subagents | `.codex/agents/security-reviewer.toml` | `agents/security-reviewer.md`と同じ評価軸・出力契約を持つCodexネイティブsubagent定義。`sandbox_mode = "read-only"`でCodex自身のサンドボックスにもread-only強制を効かせる——rig側の`orchestrate.py`argv注入（`--sandbox read-only`）による既存の強制は変更せず残す（多層防御） |
+| MCP | （手順のみ） | `scripts/mcp_server.py`（#263）を`~/.codex/config.toml`または`.codex/config.toml`の`[mcp_servers.rig]`に`command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]`として登録する |
+
+インストール：`codex/skills/rig/`を`~/.agents/skills/rig/`（または repo 直下の`.agents/skills/rig/`）へコピー/シンボリックリンク、`codex/hooks.json`を`.codex/hooks.json`にコピーまたは`~/.codex/hooks.json`の`PreCompact`にマージ。`.codex/agents/security-reviewer.toml`はリポジトリ直下に置くだけでproject-scoped agentとして認識される（Codexの規約）。
+
+**正直な検証範囲**：この環境には`codex` CLIが無く、実際のCodexセッションでの動作確認はできていません。実施した検証は次の通り：
+- `codex/hooks.json`はJSONとして妥当。
+- `.codex/agents/security-reviewer.toml`は`tomllib`でパース可能で、[Codex公式ドキュメント](https://developers.openai.com/codex/subagents)に記載のフィールド（`name`/`description`/`sandbox_mode`/`developer_instructions`）のみを使用。
+- 既存の`--provider codex`ステートレス呼び出し（`build_argv`の`codex`分岐、`--sandbox read-only`の検証者強制含む）は本バッチで一切変更しておらず、`orchestrate.py selftest`の既存テストがそのままPASSすることで後方互換を確認。
+- Skill配布形式・hooksの実際の発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIでの実行が必要で**未検証**です。
+
 ### manifest・知識層
 
 `<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
