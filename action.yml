@@ -1,0 +1,79 @@
+name: 'rig'
+description: >-
+  Run a rig task headlessly in CI — isolated worktree, acceptance-gate, and
+  (optionally) an auto-opened PR only when the gate passes. Wraps
+  `scripts/orchestrate.py run --isolate`; does not implement its own
+  execution engine.
+author: 'itoshun'
+
+inputs:
+  task:
+    description: 'Natural-language goal passed to the recipe (--goal).'
+    required: true
+  recipe:
+    description: 'Recipe file or name to run (e.g. recipes/bugfix.md, or a name resolvable by orchestrate.py).'
+    required: true
+  provider:
+    description: 'Generator/verifier provider (claude, codex, ollama, lmstudio, cmd, mock).'
+    required: false
+    default: 'mock'
+  verifier_provider:
+    description: 'Verifier provider, if different from `provider`.'
+    required: false
+    default: ''
+  model:
+    description: 'Optional --model override passed through to orchestrate.py.'
+    required: false
+    default: ''
+  max_steps:
+    description: 'Optional --max-steps override.'
+    required: false
+    default: ''
+  auto_pr:
+    description: 'If "true", push the isolated branch and open a PR when the gate passes. Never happens on gate failure.'
+    required: false
+    default: 'false'
+  anthropic_api_key:
+    description: 'ANTHROPIC_API_KEY, forwarded to the environment when provider needs it. Pass via secrets.'
+    required: false
+    default: ''
+  github_token:
+    description: 'Token used for `gh pr create` when auto_pr is true. Defaults to the workflow token.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  final:
+    description: 'Final orchestrate.py state (DONE, ESCALATE, BLOCKED, STOPPED).'
+    value: ${{ steps.run.outputs.final }}
+  pr_url:
+    description: 'URL of the PR opened by auto_pr (empty if not created).'
+    value: ${{ steps.pr.outputs.pr_url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run rig task (isolated worktree + acceptance-gate)
+      id: run
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        RIG_TASK: ${{ inputs.task }}
+        RIG_RECIPE: ${{ inputs.recipe }}
+        RIG_PROVIDER: ${{ inputs.provider }}
+        RIG_VERIFIER_PROVIDER: ${{ inputs.verifier_provider }}
+        RIG_MODEL: ${{ inputs.model }}
+        RIG_MAX_STEPS: ${{ inputs.max_steps }}
+      run: |
+        "${GITHUB_ACTION_PATH}/scripts/rig-action-entrypoint.sh" run
+      # The real logic lives in the entrypoint script (no long shell inline in action.yml).
+
+    - name: Open PR on green gate (auto_pr only)
+      id: pr
+      if: ${{ inputs.auto_pr == 'true' && steps.run.outputs.final == 'DONE' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        RIG_TASK: ${{ inputs.task }}
+      run: |
+        "${GITHUB_ACTION_PATH}/scripts/rig-action-entrypoint.sh" open-pr
