@@ -27,6 +27,7 @@ from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .digest import cmd_digest
+from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
 from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
@@ -68,6 +69,21 @@ def main() -> None:
     p.add_argument("task_id", nargs="?")
     p.add_argument("--force", action="store_true", help="apply despite an unmet gate (recorded; missing structural preconditions cannot be overridden)")
     p.set_defaults(func=cmd_accept)
+
+    p = sub.add_parser("record-commit", help="link the final commit SHA of an accepted change to its task (#289, #300)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("sha", nargs="?", help="defaults to the current HEAD")
+    p.set_defaults(func=cmd_record_commit)
+
+    p = sub.add_parser("record-outcome", help="record a production outcome for a task (#289, #300)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--status", required=True, choices=("ok", "incident"), help="what actually happened")
+    p.add_argument("--note", help="free-text detail")
+    p.set_defaults(func=cmd_record_outcome)
+
+    p = sub.add_parser("trace-commit", help="reverse-look-up a commit SHA to its task, gate prediction, and recorded outcome (#289, #300)")
+    p.add_argument("sha", help="the commit SHA to look up")
+    p.set_defaults(func=cmd_trace_commit)
 
     p = sub.add_parser("discard", help="discard the worktree and branch (keeps the run log)")
     p.add_argument("task_id", nargs="?")
