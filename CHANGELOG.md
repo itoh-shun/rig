@@ -9,6 +9,15 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
 
 ### Added
 
+- **Talk-mode structured logging and deja-vu detection (#292, #290)**:
+  `talk-loop.md` step 7 captures decisions/confirmed-assumptions/
+  open-questions from the requirement negotiation into `talk-log.md`
+  (an unapproved log, same tier as `diff.md`) once a task-id exists.
+  `workbench.py new`'s `find_similar_tasks()` scores past task inputs
+  by Jaccard overlap on a rough tokenization (no embeddings/search
+  engine), surfacing a "Similar tasks" section in the routing banner
+  above a similarity threshold. Verified: a paraphrased duplicate task
+  is caught, an unrelated task isn't.
 - **Multi-recipe A/B experiment mode and streaming-gate guidance
   (#291, #302)**: `orchestrate.py ab <recipe1> <recipe2>...` runs the
   same goal through multiple recipe variants concurrently

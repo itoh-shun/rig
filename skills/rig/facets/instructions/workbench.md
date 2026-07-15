@@ -59,7 +59,7 @@
    python3 scripts/workbench.py new "<input>" --type <task_type> --recipe <name> --reason "<選択理由>"
    ```
    （isolate ✗ の task_type は `--no-worktree` を付ける。）
-   このコマンドの標準出力が**そのまま Phase 1 の選択理由バナー**になる（`▸ rig` / `task:` / `detected:` / `recipe:` / `mode:` / `gate:`）。**バナーを自分で書き直さず、コマンド出力をそのまま提示する**（散文の再現に頼らずコードの確定出力を見せる）。出力された `task_id` と `worktree_path` を以降の全 dispatch で使う。
+   このコマンドの標準出力が**そのまま Phase 1 の選択理由バナー**になる（`▸ rig` / `task:` / `detected:` / `recipe:` / `mode:` / `gate:`）。**バナーを自分で書き直さず、コマンド出力をそのまま提示する**（散文の再現に頼らずコードの確定出力を見せる）。出力された `task_id` と `worktree_path` を以降の全 dispatch で使う。過去の類似タスクが見つかった場合は「Similar tasks」欄が続けて出る（#290・デジャブ検知）——単純な語の重なりによる簡易ヒントであり、当時の対応が今回にそのまま使える保証はない。参考程度に提示し、詳細が要れば `workbench.py status <類似task_id>` を案内する。
 2. **RUN**：選択した recipe を SKILL.md §5〜6（COMPOSE→RUN）どおりに合成・実行する。**subagent の作業ディレクトリを worktree_path に固定する**（context-minimal は維持：親は dispatch と集約のみ）。各 step 完了時に:
    ```
    python3 scripts/workbench.py step <task_id> --set <step-id>=passed|failed|skipped
