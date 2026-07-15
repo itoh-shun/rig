@@ -387,6 +387,18 @@ Six metrics per reviewer: `true_positive` / `false_positive` / `false_negative` 
 
 rig does not just run reviewers. It measures them.
 
+### Dogfooding (#284)
+
+The same measurement applies to rig's own development. Anyone maintaining a fork or a heavily-customized instance can generate the current numbers with the commands already covered above — no separate tooling needed:
+
+```bash
+python3 scripts/workbench.py digest --period month   # §10 — failing gates, drill detection rate, rubber-stamp warnings
+python3 scripts/workbench.py stats                    # §10 — the same aggregation, unscoped by time
+/rig:drill --replay                                   # §11 — regression-test the reviewer personas themselves
+```
+
+**Honest scope note:** this repo does not currently auto-publish those numbers (e.g. a CI job that regenerates a badge or a docs page on every merge) — that's tracked as follow-up work, not implemented here. Today, "dogfooding" means the maintainer can run the above locally and paste the output into a PR description or release notes; it is not yet a live, continuously-updated public score.
+
 ### MCP server (#263)
 
 To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:

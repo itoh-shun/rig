@@ -387,6 +387,18 @@ reviewer ごとに6指標：`true_positive` / `false_positive` / `false_negative
 
 rig は reviewer を動かすだけではない。reviewer を測定する。
 
+### Dogfooding（#284）
+
+同じ測定はrig自身の開発にも適用できる。fork/カスタム運用のメンテナーは、既出のコマンドだけで現在の数値を出せる（専用ツール不要）：
+
+```bash
+python3 scripts/workbench.py digest --period month   # §10 — 落ちがちなgate・drill検出率・ゴム印警告
+python3 scripts/workbench.py stats                    # §10 — 同じ集計を期間指定なしで
+/rig:drill --replay                                   # §11 — reviewer persona自体の回帰確認
+```
+
+**正直なスコープ注記**：このリポジトリは現状、これらの数値を自動公開する仕組み（マージ毎にbadgeやdocsページを再生成するCIジョブ等）を持たない——それは今後の課題であり、本リリースでは未実装。現時点の「dogfooding」は、メンテナーが上記をローカルで実行しPR説明やリリースノートに貼り付ける運用を指し、継続更新される公開スコアではない。
+
 ### MCPサーバ（#263）
 
 Claude Codeセッションの外（別エージェント・CI・別プロセス）からrigを操作したい場合は、`scripts/mcp_server.py`を起動する：
