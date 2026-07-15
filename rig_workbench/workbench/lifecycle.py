@@ -133,6 +133,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         "status": "running",
         "created_at": now_iso(),
         "updated_at": now_iso(),
+        "budget_minutes": args.budget_minutes,   # optional (#281); None = no warning
     }
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)

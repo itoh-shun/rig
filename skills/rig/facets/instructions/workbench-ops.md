@@ -85,6 +85,10 @@ accept 成功後（squash merge → **staged**・コミットはしない）:
 - 後片付け（`/rig discard <task_id>`）が worktree/branch のみを消し run log を残すことを案内する。
 - ユーザーが`git commit`した後は、`workbench.py record-commit <task_id>`を案内する（後で本番アウトカムを逆引きできるようにするための紐付け。#289/#300。下記参照）。
 
+### RBAC（`.rig/access.json`・#282）
+
+`.rig/access.json` が存在する場合のみ効く（無ければ従来通り無制限）。形式は `{"default": ["alice","bob"], "<task_type>": [...]}`。accept 操作者は `RIG_USER` 環境変数 → `git config user.name` の順で解決され、該当 task_type（無ければ `default`）の許可リストに無ければ `accept` は拒否される。チーム/組織で「誰でもacceptできる」を避けたい場合にのみ導入する。
+
 ## 本番アウトカムへのフィードバックループ（`record-commit`/`record-outcome`/`trace-commit`・#289/#300）
 
 acceptance-gateはmerge時点の**予測**にすぎない。以下の3コマンドで、実際に何が起きたかを事後に突き合わせられるようにする：

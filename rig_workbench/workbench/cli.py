@@ -48,6 +48,8 @@ def main() -> None:
     p.add_argument("--recipe", help="name of the selected recipe")
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
+    p.add_argument("--budget-minutes", type=float,
+                   help="estimated time in minutes; going over is flagged in status/board (#281, advisory only)")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("step", help="record step progress")

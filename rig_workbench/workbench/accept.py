@@ -9,10 +9,11 @@ import shutil
 import sys
 
 from .config import CHECK_ICON, RECOMMENDATION
-from .state import (_diff_lines, audit_append, build_acceptance, die,
-                    gate_status, git, load_json, load_task, now_iso,
-                    parse_diff_md, repo_root, resolve_task_id, runs_dir,
-                    save_task, task_lock, warn, worktree_dirty)
+from .state import (_diff_lines, audit_append, build_acceptance,
+                    current_identity, die, gate_status, git, load_access_control,
+                    load_json, load_task, now_iso, parse_diff_md, repo_root,
+                    resolve_task_id, runs_dir, save_task, task_lock, warn,
+                    worktree_dirty)
 
 # scripts/ast_diff.py is a standalone, dependency-free script (also runnable directly
 # as `python3 scripts/ast_diff.py <base.py> <new.py>`); reuse it here rather than
@@ -114,6 +115,16 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         die(f"task '{task_id}' has already been accepted")
     if task["status"] == "discarded":
         die(f"task '{task_id}' has already been discarded")
+
+    # ── RBAC (only takes effect if .rig/access.json exists; #282. Solo use stays unrestricted) ──
+    access = load_access_control(root)
+    if access:
+        allowed = access.get(task["task_type"]) or access.get("default") or []
+        who = current_identity(root)
+        if allowed and who not in allowed:
+            die(f"'{who}' is not permitted to accept task_type '{task['task_type']}' "
+                f"(allowed: {', '.join(allowed)}). Check `.rig/access.json` or ask someone "
+                "with permission to accept this.")
 
     acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     status = gate_status(acc)

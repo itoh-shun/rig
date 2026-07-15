@@ -4,6 +4,7 @@
 import contextlib
 import datetime
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -279,6 +280,46 @@ def load_project_gates(root: pathlib.Path) -> dict:
                 "(no absolute paths, no '..')")
 
     return data
+
+
+# ── RBAC (.rig/access.json; issue #282) ──────────────────────────────────────
+def load_access_control(root: pathlib.Path) -> dict:
+    """Read `.rig/access.json` (the allowlist of identities permitted to `accept`, #282).
+
+    Shape: `{"default": ["alice","bob"], "<task_type>": [...]}` (`default` is the
+    fallback when there's no key for the specific task_type). Absent file means
+    unrestricted (backward compatible — solo use behaves exactly as before). A
+    malformed file never blocks a run; it falls back to unrestricted."""
+    p = root / ".rig" / "access.json"
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        warn(f"{p} does not parse as JSON. Ignoring RBAC (running unrestricted)")
+        return {}
+
+
+def current_identity(root: pathlib.Path) -> str:
+    """The identity performing `accept`. Resolved via the RIG_USER env var, then `git config user.name`."""
+    env = os.environ.get("RIG_USER")
+    if env:
+        return env
+    proc = git(["config", "user.name"], cwd=root, check=False)
+    return proc.stdout.strip() or "unknown"
+
+
+# ── time/cost budget warnings (issue #281) ───────────────────────────────────
+def budget_status(task: dict) -> tuple[float, float | None, bool]:
+    """(elapsed minutes, budget minutes or None, over-budget) for a task (#281). A task
+    with no `budget_minutes` set is never over-budget — a task that never declared an
+    estimate shouldn't get a false warning."""
+    created = datetime.datetime.fromisoformat(task["created_at"])
+    elapsed_min = (datetime.datetime.now().astimezone() - created).total_seconds() / 60.0
+    budget = task.get("budget_minutes")
+    over = bool(budget) and elapsed_min > budget
+    return elapsed_min, budget, over
 
 
 # ── gate construction / evaluation ───────────────────────────────────────────
