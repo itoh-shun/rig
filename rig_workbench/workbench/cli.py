@@ -23,11 +23,15 @@ Dependencies: standard library only (no PyYAML needed)
 
 import argparse
 
-from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc
+from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
+from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
+from .confidence import cmd_confidence
 from .digest import cmd_digest
+from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
+from .instincts import _INSTINCT_DECAY_DAYS, cmd_instincts
 from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
@@ -46,6 +50,8 @@ def main() -> None:
     p.add_argument("--recipe", help="name of the selected recipe")
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
+    p.add_argument("--budget-minutes", type=float,
+                   help="estimated time in minutes; going over is flagged in status/board (#281, advisory only)")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("step", help="record step progress")
@@ -69,6 +75,30 @@ def main() -> None:
     p.add_argument("--force", action="store_true", help="apply despite an unmet gate (recorded; missing structural preconditions cannot be overridden)")
     p.set_defaults(func=cmd_accept)
 
+    p = sub.add_parser("confidence", help="show reviewer confidence from drill-measured detection rate (#301)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--persona", help="(reserved for future single-persona lookup; unused)")
+    p.set_defaults(func=cmd_confidence)
+
+    p = sub.add_parser("record-commit", help="link the final commit SHA of an accepted change to its task (#289, #300)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("sha", nargs="?", help="defaults to the current HEAD")
+    p.set_defaults(func=cmd_record_commit)
+
+    p = sub.add_parser("record-outcome", help="record a production outcome for a task (#289, #300)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--status", required=True, choices=("ok", "incident"), help="what actually happened")
+    p.add_argument("--note", help="free-text detail")
+    p.set_defaults(func=cmd_record_outcome)
+
+    p = sub.add_parser("trace-commit", help="reverse-look-up a commit SHA to its task, gate prediction, and recorded outcome (#289, #300)")
+    p.add_argument("sha", help="the commit SHA to look up")
+    p.set_defaults(func=cmd_trace_commit)
+
+    p = sub.add_parser("verify-provenance", help="verify an accepted task's signed provenance record (#299)")
+    p.add_argument("task_id", nargs="?")
+    p.set_defaults(func=cmd_verify_provenance)
+
     p = sub.add_parser("discard", help="discard the worktree and branch (keeps the run log)")
     p.add_argument("task_id", nargs="?")
     p.add_argument("--yes", action="store_true", help="final confirmation for discarding")
@@ -86,6 +116,9 @@ def main() -> None:
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("cockpit", help="read-only Mission Control aggregating board/gate/drill/cost/audit onto one screen (#307)")
+    p.set_defaults(func=cmd_cockpit)
 
     p = sub.add_parser("gates", help="show the acceptance-gate preset definitions")
     p.set_defaults(func=cmd_gates)
@@ -127,6 +160,23 @@ def main() -> None:
     p.add_argument("--verifier", help="filter by persona name (only runs recorded in review.json)")
     p.add_argument("--last", help="restrict to the last N days (e.g. 30d)")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("instincts", help="list/manage the continuous cross-session instinct-learning layer (#306)")
+    p.add_argument("--add", metavar="TEXT", help="record an instinct candidate "
+                   "(300 chars max; rejected if it contains a secret/local path)")
+    p.add_argument("--evidence", help="with --add: a short explanation of why this is believed")
+    p.add_argument("--task-id", help="with --add: the task_id this candidate came from")
+    p.add_argument("--confidence", type=float, default=0.5, help="with --add: initial confidence (default 0.5)")
+    p.add_argument("--supersedes", help="with --add: explicitly mute this id, replacing it with the new one")
+    p.add_argument("--mute", metavar="ID", help="mute the given id (stops being injected)")
+    p.add_argument("--expire", metavar="ID", help="set the given id to expired")
+    p.add_argument("--decay", action="store_true",
+                   help=f"decay active instincts whose last_seen hasn't refreshed in {_INSTINCT_DECAY_DAYS}+ days")
+    p.add_argument("--inject-preview", action="store_true",
+                   help="preview what would actually be injected at the next session start")
+    p.add_argument("--json", action="store_true",
+                   help="with --inject-preview: machine-readable JSON (for hooks/inject-instincts.sh)")
+    p.set_defaults(func=cmd_instincts)
 
     p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")
     p.add_argument("--limit", type=int, help="show only the latest N entries")

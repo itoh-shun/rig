@@ -264,7 +264,7 @@ The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time:
 
 ## 9. Diff / accept / discard
 
-**`/rig:go diff`** parses `diff.md`'s `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` headings and prints them structured, plus a `Recommended:` line the *code* computes from gate state (not something the model writes, so it can't be wishful):
+**`/rig:go diff`** parses `diff.md`'s `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` headings and prints them structured, plus a `Recommended:` line the *code* computes from gate state (not something the model writes, so it can't be wishful). Modified `*.py` files also get an automatic semantic-diff line (AST-based signature/body-change/no-semantic-change distinction, #280):
 
 ```
 ## rig diff: rig-20260704-153012-login-fix
@@ -319,6 +319,14 @@ When multiple AI tasks are running or completed, `/rig:go board` is a management
 ```
 
 It tells you: which task is still running, which passed or failed its gate, which worktree holds changes, which run is ready for `diff` review, and which should be `discard`ed. `/rig:go board --all` widens this to every task ever recorded, not just active ones.
+
+### Cockpit — Mission Control (`/rig:go cockpit`, read-only, #307)
+
+One screen aggregating the run timeline, gate radar, drill-measured reviewer confidence, a cost meter, and a force-bypass safety strip — for when you want the whole picture at once instead of running `board`/`stats`/`audit`/`confidence` separately. No new persistence: it reuses those commands' existing aggregation functions (`.rig/runs/`, `drill-results.jsonl`, `runs.jsonl`, `audit.jsonl`), so nothing here can drift out of sync with them. **v1 is read-only** — accept/discard stay in their own commands; cockpit only points at the next command to run. Missing data (no drill run yet, no token usage recorded) is shown as "Unmeasured" rather than a blank that could be misread as healthy.
+
+```
+python3 scripts/workbench.py cockpit
+```
 
 ### Stats
 
@@ -387,6 +395,45 @@ Six metrics per reviewer: `true_positive` / `false_positive` / `false_negative` 
 
 rig does not just run reviewers. It measures them.
 
+### Dogfooding (#284)
+
+The same measurement applies to rig's own development. Anyone maintaining a fork or a heavily-customized instance can generate the current numbers with the commands already covered above — no separate tooling needed:
+
+```bash
+python3 scripts/workbench.py digest --period month   # §10 — failing gates, drill detection rate, rubber-stamp warnings
+python3 scripts/workbench.py stats                    # §10 — the same aggregation, unscoped by time
+/rig:drill --replay                                   # §11 — regression-test the reviewer personas themselves
+```
+
+**Honest scope note:** this repo does not currently auto-publish those numbers (e.g. a CI job that regenerates a badge or a docs page on every merge) — that's tracked as follow-up work, not implemented here. Today, "dogfooding" means the maintainer can run the above locally and paste the output into a PR description or release notes; it is not yet a live, continuously-updated public score.
+
+### MCP server (#263)
+
+To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:
+
+```bash
+python3 scripts/mcp_server.py
+```
+
+It listens for Model Context Protocol (JSON-RPC 2.0, line-delimited) on stdio. It doesn't depend on the official `mcp` SDK — to match `workbench.py`/`orchestrate.py`'s stdlib-only stance and avoid a heavy third-party dependency, it implements a minimal stdio transport with the standard library alone. No new execution engine: every tool is a thin adapter that shells out to `workbench.py`/`orchestrate.py`, so accept/discard's force-proof requirements (`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`, etc.) go through the exact same code path and can't be bypassed via MCP either.
+
+Tools provided:
+
+| Tool | Equivalent CLI |
+|---|---|
+| `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
+| `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
+
+Opt-in: nothing changes unless you start this server; existing CLI/skill usage is unaffected. To wire it into an MCP client (e.g. Claude Desktop), register `command: python3`, `args: ["<repo>/scripts/mcp_server.py"]` in its MCP config.
+
+**Self threat-scan (`orchestrate.py mcp-scan`, #303):** since the tools it exposes could themselves carry over-broad shell/network permissions, plaintext secret exposure, or hook-injection risk, there's a command that statically analyzes `scripts/mcp_server.py`'s tool definitions using three adversarial lenses (attacker/defender/auditor). It never executes anything (deterministic, no side effects). Wired into `validate.py` for CI — current overall verdict is MEDIUM (`rig_orchestrate_run` can affect the main working tree directly when `--isolate` isn't set, so callers are advised to pass `isolate: true`).
+
+### Cost-tier auto-routing (`--auto-route`, `--auto-route-learn`, #264, #305)
+
+Recipe steps can declare `auto_route.candidates` (a list of `{model, cost_tier, max_size}`, cheapest first). `orchestrate.py run --auto-route` deterministically picks the cheapest candidate whose `max_size` covers the measured diff size — a fallback only: runtime `--step-model` and the recipe's own `model:` both still win outright. The decision is recorded in `runs.jsonl`'s `steps[].auto_route`.
+
+`--auto-route-learn` builds on that with a frequency-based (no ML model) read of `.rig/runs.jsonl`'s own track record — which model actually got used for a given recipe/step, and did the step pass. **Defaults to shadow mode**: predictions are always recorded (`steps[].learned_route`) but don't change what runs until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static `--auto-route` choice when there aren't enough reference runs or the pass rate is too low, always recording the rejected candidates and why (counterfactuals, so it stays auditable rather than a black box). `--exploration-pct N` lets a deterministic fraction of runs try the next-cheapest candidate instead (hashed from `--exploration-date` + recipe/step — never randomness, so results stay reproducible). Regret logging (auto-calibrating "too cheap"/"too expensive" picks after the fact) isn't implemented — comparing `steps[].status` against `learned_route` by hand via `runs`/`stats` is the fallback.
+
 ## 12. GitHub integration
 
 | command | read/write |
@@ -397,6 +444,24 @@ rig does not just run reviewers. It measures them.
 | `/rig:go gh ci` | check CI status for the current branch/PR, surface the failing job's error summary |
 
 Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. This is enforced structurally, not by a prose "please ignore": before any third-party text reaches a downstream persona it is wrapped in a **quarantine fence** (`rig_workbench/orchestrate/quarantine.py` `wrap_untrusted`) that denotes it as data-not-instructions with an unguessable per-call delimiter, and invisible/bidi Unicode is stripped first (a tampering signal), so an injected "ignore your instructions" cannot escape the fence (OWASP LLM01; spotlighting/CaMeL). GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
+
+### GitHub Action (#265)
+
+`action.yml` packages headless CI usage of `orchestrate.py run --isolate` for workflows that don't have a live Claude Code session:
+
+```yaml
+- uses: itoh-shun/rig@master
+  with:
+    task: "Fix the flaky test in ci.yml"
+    recipe: recipes/bugfix.md
+    provider: claude
+    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    auto_pr: true
+```
+
+It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` shells out to the same `orchestrate.py` used everywhere else, derives the final status (`DONE`/`ESCALATE`/`BLOCKED`/`STOPPED`) from the run-state JSON, and only pushes a branch + opens a PR (via `gh pr create`) when the gate resolved `DONE`. A failing or pending gate fails the job and creates nothing.
+
+**Honest verification note:** the `run` step (task execution, gate evaluation, worktree isolation/cleanup) was verified end-to-end locally with `--provider mock`. The `open-pr` step (branch push + `gh pr create`) could not be exercised against a real GitHub Actions runner from this environment — it's implemented against `gh`'s documented CLI interface (pre-installed on GitHub-hosted runners) but hasn't been run live. Treat it as reviewed-but-not-live-tested until it's exercised in an actual workflow run.
 
 ## 13. Advanced commands
 
@@ -468,6 +533,66 @@ ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
 ```
 
 After restarting Codex, invoke it as `$rig`. In Codex, `$rig "fix the login bug"` is the equivalent of the Claude Code `/rig:go "fix the login bug"` entrypoint. For cross-provider orchestration, `scripts/orchestrate.py` already knows how to call `codex exec` and enforces read-only mode for verifier roles.
+
+### Codex native-layer integration (#294)
+
+As of 2026, the Codex CLI has extension mechanisms (Skills, Hooks, Subagent TOML) that closely mirror Claude Code's. Beyond the symlink-a-skill approach above, this repo also ships Codex-native equivalents:
+
+| Mechanism | File added | What it does |
+|---|---|---|
+| Skills | `codex/skills/rig/SKILL.md` | A thin skill following Codex's `.agents/skills/<name>/SKILL.md` convention (`name`/`description` frontmatter). No new engine — it's a procedural pointer to the existing `workbench.py`/`orchestrate.py` |
+| Hooks | `codex/hooks.json` | Wires run-continuity into Codex's `PreCompact` event by reusing the exact same `hooks/preserve-rig-state.sh` (it contains nothing Claude-Code-specific, so there's nothing to duplicate) |
+| Subagents | `.codex/agents/security-reviewer.toml` | A Codex-native subagent definition with the same review axes and output contract as `agents/security-reviewer.md`. `sandbox_mode = "read-only"` asks Codex's own sandbox to enforce read-only, layered on top of — not replacing — rig's existing argv-level enforcement (`--sandbox read-only` in `orchestrate.py`'s `build_argv`); defense in depth |
+| MCP | (docs only) | Register `scripts/mcp_server.py` (#263) under `[mcp_servers.rig]` in `~/.codex/config.toml` or `.codex/config.toml`: `command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]` |
+
+Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or `.agents/skills/rig/` at the repo root), copying `codex/hooks.json` to `.codex/hooks.json` (or merging its `PreCompact` entry into `~/.codex/hooks.json`), and leaving `.codex/agents/security-reviewer.toml` where it is — Codex picks up project-scoped agents from `.codex/agents/` automatically.
+
+**Honest verification note:** there is no `codex` CLI in this environment, so none of this has been exercised against a real Codex session. What was verified: `codex/hooks.json` is valid JSON; `.codex/agents/security-reviewer.toml` parses with Python's `tomllib` and only uses fields documented on [Codex's official Subagents page](https://developers.openai.com/codex/subagents) (`name`/`description`/`sandbox_mode`/`developer_instructions`); the existing stateless `--provider codex` path (`build_argv`'s `codex` branch, including the `--sandbox read-only` verifier enforcement) was left completely untouched, and `orchestrate.py selftest`'s existing coverage for it still passes, confirming backward compatibility. Actually loading the skill, firing the hook, having Codex enforce `sandbox_mode` on the subagent, and connecting to the MCP server all require a live Codex CLI and remain **unverified** — the paths/schemas here are sourced from Codex's official docs (Subagents/Hooks/Skills pages) but haven't been run live.
+
+### Host adapter layer — generalizing beyond Codex (#304)
+
+#294 was Codex-only, but Cursor, GitHub Copilot CLI, and others have similar extension mechanisms (hooks/skills/MCP). `scripts/host_adapters.py` centralizes host-specific differences (hook event names, skill path conventions, capability level) into a single `HOSTS` dict — adding a new host means adding one entry, not touching rig's core. Cursor was added as the second host to validate the design:
+
+```
+| Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
+| Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
+| Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+```
+(regenerate with `python3 scripts/host_adapters.py` if this table goes stale)
+
+What building the Cursor entry actually surfaced (confirmed against `cursor.com/docs/hooks` and `/docs/skills`):
+- **Hook event names are camelCase** (`PreCompact` → `preCompact`, `UserPromptSubmit` → `beforeSubmitPrompt`) — exactly the cross-host divergence #304 anticipated.
+- **Cursor also reads `.agents/skills/`** for legacy Claude/Codex compatibility, so `codex/skills/rig/SKILL.md` installed there works for Cursor too — no new skill file needed.
+- **`preCompact` is documented as observational-only** — it cannot inject preserved run-state the way Claude Code's `PreCompact` does. Rather than pretend this works, that's declared as an explicit `degrade` (`cursor/hooks.json` gives up on state preservation and only returns a short notification), and the capability table marks it `unsupported`.
+
+**Honest verification note:** `scripts/host_adapters.py`'s mapping and its golden-fixture test (`tests/test_host_adapters.py`) are verified as code. Actual hook firing / skill loading on a live Cursor or Codex install is unverified (Codex for the same reason as above; there's no Cursor install in this environment either). Claude Code's existing behavior is completely unchanged by this batch.
+
+### Fable 5 refusal-classifier → fallback handling (`--provider anthropic`, #297)
+
+Fable 5's safety filter auto-blocks requests in three categories (cyber/bio/reasoning_extraction) and can transparently fall back to Opus 4.8. `orchestrate.py run --provider anthropic` calls the Anthropic Messages API directly over HTTP to detect and handle this (the `claude`/`rig` CLI providers don't expose a structured `stop_reason`, so they're out of scope):
+
+- Set `fallback_model` (e.g. `claude-opus-4-8`) to request `anthropic-beta: server-side-fallback-2026-06-01`; on a successful fallback, `FABLE_FALLBACK` is recorded in `state["history"]` and **the gate is not blocked** — the step continues with the fallback's output as a normal result.
+- A direct refusal (no fallback configured, or exhausted) records `FABLE_REFUSAL` (category/explanation) instead of failing silently.
+- `runs --cost` shows token usage (including `cache_read_input_tokens`) and a fallback/refusal occurrence count.
+- If you assign Fable 5 to a persona whose job is discussing attack techniques (e.g. `security-reviewer`) via `--step-model` (#293), always set `fallback_model` — see `agents/security-reviewer.md`.
+
+**Honest verification note:** verified against a mock HTTP server reproducing the Anthropic Messages API's response shape, across three cases — direct refusal, successful server-side fallback, and a normal response with neither. **Not connected to the real Anthropic API** (that would require live traffic and carries real billing risk). The schema used here is sourced from `anthropics/claude-cookbooks`' `fable_5_fallback_billing/guide.ipynb`, but behavior against the real model is unverified.
+
+### Managed Agents API delegation (experimental, opt-in, #295)
+
+An experimental backend that delegates review-gate parallel fan-out to Anthropic's Managed Agents API (coordinator/worker, beta) instead of the existing subprocess + ThreadPoolExecutor path. Enable with `cfg["parallel_backend"] = "managed-agents"` plus `cfg["environment_id"]` (required) — **the default stays the existing mechanism**; this is fully opt-in. See `commands/orchestrate.md` §⑧ for details and honest limitations (REST paths are inferred from the documented SDK method names, it has not been connected to the real API, and event-stream integration into the run-continuity header is not implemented).
+
+### VS Code extension — rig board (read-only, #286)
+
+`vscode-extension/` is a **read-only** sidebar Tree View of `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:rig board`. It parses the same `task.json`/`acceptance.json`/`steps.json` `scripts/workbench.py` already writes — no new state-management engine, and no accept/discard or any other write command is registered anywhere in the extension. See `vscode-extension/README.md` for install instructions (not yet published to the Marketplace) and honest verification scope (the parsing logic is unit-tested with plain Node; actually loading the extension in a live VS Code Extension Host is unverified in this environment).
+
+### Continuous cross-session instinct-learning layer (`instincts`, #306)
+
+`workbench.py instincts` manages `.rig/instincts.jsonl` — lightweight, confidence-scored, **unverified** patterns ("this project tends to be written this way", "searching here is faster"), completely separate from `facets/knowledge`'s verified wiki. `--add` rejects secrets/tokens/local absolute paths/`ENV_VAR=value`-shaped candidates outright, with the reason always shown. `--decay` lowers confidence for instincts unused 30+ days, expiring below 0.2 — implicit knowledge rots by design rather than accumulating forever. Conflict resolution is explicit, not inferred: `--supersedes <old-id>` is how the model declares that two instincts contradict, muting the old one. Only confidence >= 0.7 is selected for injection, capped at 500 chars total (context-minimal). `hooks/suggest-instincts.sh` (Stop) reminds the model to consider proposing a pattern — it doesn't extract one itself, since deciding what's durably useful is a judgment call the hook can't make. `hooks/inject-instincts.sh` (SessionStart) injects the selected instincts as `additionalContext`.
+
+Honest scope: automatic semantic contradiction *detection* isn't implemented — only the mechanical *resolution* once a contradiction is explicitly declared via `--supersedes`. Pattern extraction itself is left entirely to the model's judgment.
 
 ### Project manifest & knowledge layer
 

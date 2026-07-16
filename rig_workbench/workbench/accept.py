@@ -3,15 +3,54 @@
 
 import argparse
 import datetime
+import json
 import pathlib
 import re
 import shutil
+import sys
 
 from .config import CHECK_ICON, RECOMMENDATION
-from .state import (_diff_lines, audit_append, build_acceptance, die,
-                    gate_status, git, load_json, load_task, now_iso,
-                    parse_diff_md, repo_root, resolve_task_id, runs_dir,
-                    save_task, task_lock, warn, worktree_dirty)
+from .state import (_diff_lines, audit_append, build_acceptance,
+                    current_identity, die, gate_status, git, load_access_control,
+                    load_json, load_task, now_iso, parse_diff_md, repo_root,
+                    resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
+                    task_lock, verify_provenance, warn, worktree_dirty)
+
+# scripts/ast_diff.py is a standalone, dependency-free script (also runnable directly
+# as `python3 scripts/ast_diff.py <base.py> <new.py>`); reuse it here rather than
+# duplicating its logic (#280).
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+import ast_diff  # noqa: E402
+
+
+def _semantic_diff_section(root: pathlib.Path, task: dict, names: list) -> list:
+    """Summarize changed *.py files with an AST diff (#280). Augments the text diff, never replaces it.
+
+    Non-Python / unparseable files simply get `supported: False` from `ast_diff` itself —
+    this function only narrows down which files to call it on (Modified *.py only) and
+    holds no judgment logic of its own.
+    """
+    wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else root
+    base = task["base_commit"]
+    py_modified = []
+    for line in names:
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0] == "M" and parts[-1].endswith(".py"):
+            py_modified.append(parts[-1])
+    if not py_modified:
+        return []
+    out = ["", "Semantic diff (Python, #280):"]
+    for path in py_modified:
+        base_src = git(["show", f"{base}:{path}"], cwd=wt).stdout
+        try:
+            new_src = (wt / path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        result = ast_diff.semantic_diff(base_src, new_src)
+        out.append(ast_diff.format_summary(result, path))
+    return out
 
 
 def cmd_diff(args: argparse.Namespace) -> None:
@@ -37,6 +76,9 @@ def cmd_diff(args: argparse.Namespace) -> None:
         print(f"\n[WARN] worktree has {len(dirty)} uncommitted change(s) (must be committed before accept):")
         for line in dirty[:20]:
             print(f"  {line}")
+
+    for line in _semantic_diff_section(root, task, names):
+        print(line)
 
     diff_md = d / "diff.md"
     sections = parse_diff_md(diff_md.read_text(encoding="utf-8")) if diff_md.exists() else {}
@@ -74,6 +116,16 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         die(f"task '{task_id}' has already been accepted")
     if task["status"] == "discarded":
         die(f"task '{task_id}' has already been discarded")
+
+    # ── RBAC (only takes effect if .rig/access.json exists; #282. Solo use stays unrestricted) ──
+    access = load_access_control(root)
+    if access:
+        allowed = access.get(task["task_type"]) or access.get("default") or []
+        who = current_identity(root)
+        if allowed and who not in allowed:
+            die(f"'{who}' is not permitted to accept task_type '{task['task_type']}' "
+                f"(allowed: {', '.join(allowed)}). Check `.rig/access.json` or ask someone "
+                "with permission to accept this.")
 
     acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     status = gate_status(acc)
@@ -179,15 +231,57 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     task["status"] = "accepted"
     task["accepted_at"] = now_iso()
     save_task(d, task)
+
+    # ── signed provenance (#299) — a tamper-evident record of the accept decision and the
+    # gate result it was based on. HMAC-SHA256 with a locally-held key: same-machine
+    # tamper-evidence, not third-party public verification (see sign_provenance docstring).
+    provenance_record = {
+        "task_id": task_id,
+        "task_type": task["task_type"],
+        "recipe": task.get("recipe") or None,
+        "base_branch": task["base_branch"],
+        "base_commit": task["base_commit"],
+        "branch": branch,
+        "accepted_at": task["accepted_at"],
+        "gate_status": status,
+        "forced": bool(task.get("forced")),
+        "checks": sorted([{"name": c["name"], "status": c["status"]} for c in acc["checks"]],
+                         key=lambda c: c["name"]),
+    }
+    signature = sign_provenance(root, provenance_record)
+    save_json(d / "provenance.json", {"record": provenance_record, "signature": signature, "algo": "HMAC-SHA256"})
+
     names, stat, _ = _diff_lines(root, task)
     print(f"\n## rig accept: {task_id} ✓")
     print(f"Applied the changes from branch {branch} ({ahead} commits) to the main working tree as **staged**.")
     if stat:
         print(f"  {stat}")
+    print(f"Provenance: {(d / 'provenance.json').relative_to(root)} "
+          f"(verify with `workbench.py verify-provenance {task_id}`)")
     print("Next actions:")
     print("  1) Review: git diff --staged")
     print("  2) Commit: git commit")
     print(f"  3) Clean up: workbench.py discard {task_id} --yes  (removes the worktree and branch; keeps the run log)")
+
+
+def cmd_verify_provenance(args: argparse.Namespace) -> None:
+    """Verify an accepted task's signed provenance record (#299). The key lives at
+    `.rig/provenance.key` (local only, gitignored) — this checks that the record hasn't
+    been edited after the fact on this same machine, not a third-party public signature
+    (SLSA/Ed25519 public verification is a different, heavier guarantee)."""
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    d, _task = load_task(root, task_id)
+    p = d / "provenance.json"
+    if not p.is_file():
+        die(f"task '{task_id}' has no provenance record (created at accept time; this task may not be accepted yet)")
+    data = load_json(p)
+    ok = verify_provenance(root, data["record"], data["signature"])
+    print(f"## rig verify-provenance: {task_id}")
+    print(f"signature: {'✓ valid (untampered)' if ok else '✗ INVALID (record or key may have changed)'}")
+    print(json.dumps(data["record"], ensure_ascii=False, indent=2))
+    if not ok:
+        sys.exit(1)
 
 
 def cmd_discard(args: argparse.Namespace) -> None:

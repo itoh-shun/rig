@@ -7,6 +7,8 @@ import time
 import shlex
 import pathlib
 import subprocess
+import concurrent.futures as futures
+from collections import Counter
 
 from . import config
 from .recipes import (auto_orchestrate, git_diff_lines, load_manifest, load_steps,
@@ -286,7 +288,8 @@ def cmd_run(args):
     if not args:
         print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
               "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
-              "[--max-steps N] [--goal G] [--out f] [--isolate]")
+              "[--max-steps N] [--goal G] [--out f] [--isolate] [--auto-route] "
+              "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
@@ -298,7 +301,7 @@ def cmd_run(args):
     max_steps = 40
     max_parallel = 4
     quorum = "all"
-    cfg: dict = {}
+    cfg: dict = {"_token_usage": {}}  # per-run token accumulator (#271/#296); never merged across runs
     step_models: dict[str, str] = {}
     i = 1
     while i < len(args):
@@ -357,6 +360,21 @@ def cmd_run(args):
         elif a == "--allow-headless-in-cc":
             cfg["allow_headless_in_cc"] = True
             i += 1
+        elif a == "--auto-route":
+            cfg["auto_route"] = True
+            i += 1
+        elif a == "--auto-route-learn":     # #305: learned route from historical data (default shadow mode)
+            cfg["auto_route_learn"] = True
+            i += 1
+        elif a == "--auto-route-mode" and i + 1 < len(args):
+            cfg["auto_route_mode"] = args[i + 1]  # shadow (default: record prediction only) | active (actually used)
+            i += 2
+        elif a == "--exploration-pct" and i + 1 < len(args):
+            cfg["exploration_pct"] = int(args[i + 1])
+            i += 2
+        elif a == "--exploration-date" and i + 1 < len(args):
+            cfg["exploration_date"] = args[i + 1]  # explicit date/bucket string, not randomness, for determinism
+            i += 2
         else:
             i += 1
     # Unknown step ids abort the run before anything executes (no silent ignores; #293)
@@ -432,6 +450,114 @@ def cmd_run(args):
     print(f"\n=== Finished: {final} ===  run-state: {out}")
     sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
 
+
+def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: str,
+                    cfg: dict, max_steps: int, max_parallel: int, quorum: str,
+                    out_path: pathlib.Path) -> dict:
+    """Run one variant (recipe) in its own isolated worktree and return a comparison summary
+    (#291's `ab` helper). Folds the same execution path as cmd_run
+    (setup_isolation -> run_loop -> teardown_isolation) into one function so multiple variants
+    can genuinely run concurrently from a ThreadPoolExecutor (each variant has its own worktree,
+    so no file collisions; quiet=True avoids interleaved output)."""
+    fm, _warns = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    steps = load_steps(fm)
+    state = new_state(fm.get("name", recipe_path.stem), steps, goal)
+    iso = setup_isolation(fm.get("name", recipe_path.stem))
+    variant_cfg = {**cfg, "cwd": iso["dir"], "_token_usage": {}}  # per-variant accumulator (#271/#296)
+    state["isolation"] = iso
+    t0 = time.monotonic()
+    final = run_loop(state, out_path, gen, ver, variant_cfg, max_steps,
+                     quiet=True, max_parallel=max_parallel, quorum=quorum)
+    elapsed = round(time.monotonic() - t0, 1)
+    outcome = teardown_isolation(iso, final)
+    state["isolation"]["outcome"] = outcome
+    save_state(state, out_path)
+    retries = sum(st.get("retries", 0) for st in state["step_state"].values())
+    return {
+        "recipe": recipe_path.stem,
+        "final": final,
+        "elapsed_sec": elapsed,
+        "retries": retries,
+        "worktree_outcome": outcome,
+        "worktree_dir": iso["dir"] if outcome == "kept" else None,
+    }
+
+
+def cmd_ab(args):
+    """Run the same goal through multiple recipe variants concurrently and compare
+    speed/retries/results (#291).
+
+    Each variant runs in its own isolated worktree, exactly like `cmd_run --isolate` (no file
+    collisions), so running them genuinely concurrently (ThreadPoolExecutor) is safe. --provider
+    selects the generator/verifier role the same way `run` does — the comparison is about
+    recipe differences, not model/provider differences.
+    """
+    if len(args) < 2:
+        print("[ERROR] usage: ab <recipe1> <recipe2> [...] --provider <name> --goal G "
+              "[--verifier-provider V] [--max-steps N] [--model M]")
+        sys.exit(1)
+    recipes: list[str] = []
+    i = 0
+    while i < len(args) and not args[i].startswith("--"):
+        recipes.append(args[i])
+        i += 1
+    if len(recipes) < 2:
+        print("[ERROR] specify 2 or more recipes to compare")
+        sys.exit(1)
+
+    gen = ver = None
+    goal = None
+    max_steps = 40
+    max_parallel = 4
+    quorum = "all"
+    cfg: dict = {}
+    while i < len(args):
+        a = args[i]
+        if a == "--provider" and i + 1 < len(args):
+            gen = args[i + 1]
+            i += 2
+        elif a == "--verifier-provider" and i + 1 < len(args):
+            ver = args[i + 1]
+            i += 2
+        elif a == "--goal" and i + 1 < len(args):
+            goal = args[i + 1]
+            i += 2
+        elif a == "--max-steps" and i + 1 < len(args):
+            max_steps = int(args[i + 1])
+            i += 2
+        elif a == "--model" and i + 1 < len(args):
+            cfg["model"] = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    if not gen:
+        print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock)")
+        sys.exit(1)
+    ver = ver or gen
+
+    resolved = [resolve_recipe(r) for r in recipes]
+    results: list[dict | None] = [None] * len(resolved)
+    print(f"◈ A/B experiment: {' vs '.join(recipes)} (provider={gen} / {len(resolved)} concurrent variants)\n")
+    with futures.ThreadPoolExecutor(max_workers=len(resolved)) as ex:
+        fut_to_idx = {
+            ex.submit(_run_ab_variant, path, goal, gen, ver, dict(cfg), max_steps, max_parallel, quorum,
+                     pathlib.Path(f"ab-{path.stem}-state.json")): idx
+            for idx, path in enumerate(resolved)
+        }
+        for fut in futures.as_completed(fut_to_idx):
+            results[fut_to_idx[fut]] = fut.result()
+
+    print(f"## rig ab — {' vs '.join(recipes)}\n")
+    print(f"{'recipe':<20} {'final':<10} {'elapsed(s)':<12} {'retries':<8} worktree")
+    for r in results:
+        wt = r["worktree_dir"] or "-"
+        print(f"{r['recipe']:<20} {r['final']:<10} {r['elapsed_sec']:<12} {r['retries']:<8} {wt}")
+    kept = [r for r in results if r["worktree_outcome"] == "kept"]
+    if kept:
+        print(f"\n{len(kept)} worktree(s) were preserved (unmet/dirty). After inspecting, clean up with "
+              f"`git worktree remove --force <dir>`.")
+
+
 def _read_jsonl(path: pathlib.Path) -> list[dict]:
     if not path.exists():
         return []
@@ -444,6 +570,100 @@ def _read_jsonl(path: pathlib.Path) -> list[dict]:
         except json.JSONDecodeError:
             continue
     return rows
+
+
+def cmd_fleet(args):
+    """Aggregate multiple repositories' `.rig/runs.jsonl`/`drill-results.jsonl` across projects (#272).
+
+    Read-only, no side effects — no repository's `.rig/` data is ever written to. Meant for
+    orgs/consultancies with multiple projects/clients, to compare per-persona detection power
+    across repositories. Repository paths are explicit only (no auto-discovery reaching out
+    over a network for anything).
+    """
+    repos_arg = None
+    anonymize = False
+    as_json = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--repos" and i + 1 < len(args):
+            repos_arg = args[i + 1]
+            i += 2
+        elif a == "--anonymize":
+            anonymize = True
+            i += 1
+        elif a == "--json":
+            as_json = True
+            i += 1
+        else:
+            i += 1
+    if not repos_arg:
+        print("[ERROR] usage: fleet --repos <path1>,<path2>,... [--anonymize] [--json]")
+        sys.exit(1)
+
+    repo_paths = [pathlib.Path(p).expanduser().resolve() for p in repos_arg.split(",") if p.strip()]
+    if not repo_paths:
+        print("[ERROR] --repos has no valid paths")
+        sys.exit(1)
+
+    per_repo = []
+    persona_totals: dict[str, dict] = {}
+    persona_by_repo: dict[str, dict[str, dict]] = {}
+    for idx, rp in enumerate(repo_paths):
+        label = f"repo-{idx + 1}" if anonymize else str(rp)
+        runs = _read_jsonl(rp / ".rig" / "runs.jsonl")
+        drills = _read_jsonl(rp / ".rig" / "drill-results.jsonl")
+        done = sum(1 for r in runs if r.get("final") == "DONE")
+        repo_personas: dict[str, dict] = {}
+        for d in drills:
+            for s in d.get("scores", []):
+                name = s.get("reviewer", "?")
+                g = persona_totals.setdefault(name, {"detected": 0, "seeded": 0})
+                g["detected"] += s.get("detected", 0)
+                g["seeded"] += s.get("seeded", 0)
+                r_ = repo_personas.setdefault(name, {"detected": 0, "seeded": 0})
+                r_["detected"] += s.get("detected", 0)
+                r_["seeded"] += s.get("seeded", 0)
+        persona_by_repo[label] = repo_personas
+        per_repo.append({"repo": label, "runs": len(runs), "done": done, "drills": len(drills),
+                         "exists": (rp / ".rig").is_dir()})
+
+    def _rate(a: dict) -> float | None:
+        return round(a["detected"] / a["seeded"], 3) if a.get("seeded") else None
+
+    result = {
+        "repos": per_repo,
+        "persona_totals": {name: {**a, "rate": _rate(a)} for name, a in persona_totals.items()},
+        "persona_by_repo": {repo: {name: {**a, "rate": _rate(a)} for name, a in personas.items()}
+                           for repo, personas in persona_by_repo.items()},
+    }
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    print(f"## rig fleet — {len(repo_paths)} repos\n")
+    print(f"{'repo':<40} {'runs':<8} {'done':<8} drills")
+    for r in per_repo:
+        note = "" if r["exists"] else "  (no .rig/)"
+        print(f"{r['repo']:<40} {r['runs']:<8} {r['done']:<8} {r['drills']}{note}")
+
+    if persona_totals:
+        print("\nPer-persona detection rate (summed across all repos):")
+        for name, a in sorted(result["persona_totals"].items(), key=lambda kv: -(kv[1]["rate"] or 0)):
+            rate = f"{a['rate'] * 100:.0f}%" if a["rate"] is not None else "unmeasured"
+            print(f"  {name}: {rate} ({a['detected']}/{a['seeded']})")
+        print("\nPer-persona cross-repo comparison (which project detects more/less):")
+        for name in sorted(persona_totals):
+            per_repo_rates = []
+            for repo, personas in persona_by_repo.items():
+                a = personas.get(name)
+                if a and a.get("seeded"):
+                    per_repo_rates.append(f"{repo}={_rate(a) * 100:.0f}%")
+            if per_repo_rates:
+                print(f"  {name}: " + " / ".join(per_repo_rates))
+    else:
+        print("\nPer-persona detection rate: unmeasured (no /rig:drill runs in the target repos)")
+
 
 def cmd_party(_args):
     """Party roster screen (/rig:party): render RPG-style stats from telemetry, measured drills, and the brick inventory.
@@ -540,7 +760,7 @@ def cmd_runs(args):
     per-recipe bars, verifier votes, recent-run table in a single-file HTML with no external deps).
     Read-only (the same inspection mode as --list / --validate).
     """
-    limit, recipe, personas_mode, html_out, since = 10, None, False, None, None
+    limit, recipe, personas_mode, html_out, since, cost_mode = 10, None, False, None, None, False
     i = 0
     while i < len(args):
         if args[i] == "--limit" and i + 1 < len(args):
@@ -551,6 +771,9 @@ def cmd_runs(args):
             i += 2
         elif args[i] == "--personas":
             personas_mode = True
+            i += 1
+        elif args[i] == "--cost":
+            cost_mode = True
             i += 1
         elif args[i] == "--html" and i + 1 < len(args):
             html_out = args[i + 1]
@@ -617,6 +840,51 @@ def cmd_runs(args):
                     " has no bite; consider dropping them or sharpening the lens)")
         return
 
+    if cost_mode:
+        # Per-recipe, per-provider token rollup (#271/#296). CLI providers (claude/codex) don't
+        # expose structured usage and stay "unmeasured" — only HTTP providers (ollama/lmstudio/
+        # anthropic) are actually metered here.
+        by_recipe: dict[str, dict[str, dict]] = {}
+        any_usage = False
+        fallback_count = refusal_count = 0
+        for r in rows:
+            tu = r.get("token_usage") or {}
+            if tu:
+                any_usage = True
+                rc = by_recipe.setdefault(r.get("recipe", "?"), {})
+                for provider, u in tu.items():
+                    a = rc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0,
+                                                 "cache_read_input_tokens": 0, "calls": 0})
+                    a["prompt_tokens"] += u.get("prompt_tokens", 0)
+                    a["completion_tokens"] += u.get("completion_tokens", 0)
+                    a["cache_read_input_tokens"] += u.get("cache_read_input_tokens", 0)
+                    a["calls"] += u.get("calls", 0)
+            for s in r.get("steps", []):                       # #297: Fable fallback/refusal occurrence count
+                for ev in s.get("fable_events", []):
+                    if ev.get("kind") == "fallback":
+                        fallback_count += 1
+                    elif ev.get("kind") == "refusal":
+                        refusal_count += 1
+        print(f"## rig runs --cost ({len(rows)} runs)\n")
+        if not any_usage:
+            print("No token usage recorded (unmeasured). HTTP providers (ollama/lmstudio/anthropic) are metered "
+                  "automatically from the usage field. claude/codex run via CLI and "
+                  "don't expose structured usage, so they're out of scope here — see Anthropic's Usage & "
+                  "Cost Admin API for those instead of estimating.")
+        else:
+            for rcp, providers in sorted(by_recipe.items()):
+                print(f"  {rcp}:")
+                for provider, a in sorted(providers.items()):
+                    total = a["prompt_tokens"] + a["completion_tokens"]
+                    cache = f"  cache_read={a['cache_read_input_tokens']}" if a["cache_read_input_tokens"] else ""
+                    print(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
+                          f"completion={a['completion_tokens']:8d}  total={total:8d}{cache}")
+        if fallback_count or refusal_count:
+            print(f"\nFable 5 refusal-classifier (#297): fallback={fallback_count}  direct-refusal={refusal_count}  "
+                  "(a fallback is treated as a transparent success and doesn't block the gate; cache_read is the "
+                  "fallback-prefix token count billed at 10%)")
+        return
+
     print(f"## rig runs (latest {min(limit, len(rows))} of {len(rows)})\n")
     for r in rows[-limit:]:
         esc = f" / escalated@{r['escalated_at']}" if r.get("escalated_at") else ""
@@ -639,19 +907,35 @@ def cmd_runs(args):
               f"{a['retries'] / a['n']:9.1f} {a['esc']:4d}")
 
     # Gap prescriptions: if the same (recipe, step) escalated twice or more, suggest acquiring capability
-    # (telemetry → /rig:import --discover / /rig:harness = the entry to the self-completion loop)
+    # (telemetry → /rig:import --discover / /rig:forge = the entry to the self-completion loop; #268)
     gaps: dict[tuple, int] = {}
+    gap_verifiers: dict[tuple, Counter] = {}
     for r in rows:
         esc_at = r.get("escalated_at")
-        if esc_at:
-            gaps[(r.get("recipe", "?"), esc_at)] = gaps.get((r.get("recipe", "?"), esc_at), 0) + 1
+        if not esc_at:
+            continue
+        key = (r.get("recipe", "?"), esc_at)
+        gaps[key] = gaps.get(key, 0) + 1
+        # Tally that step's verdicts (who rejected) so the /rig:forge draft can name names.
+        for st in r.get("steps", []):
+            if st.get("id") != esc_at:
+                continue
+            c = gap_verifiers.setdefault(key, Counter())
+            for v in st.get("verdicts", []):
+                if not v.get("ok"):
+                    c[(v.get("by") or "?").split(":", 1)[-1]] += 1
     hot = {k: v for k, v in gaps.items() if v >= 2}
     if hot:
-        print("\n## Gap prescriptions (repeated escalations at the same step)\n")
+        print("\n## Gap prescriptions (repeated escalations at the same step; #268)\n")
         for (rcp, sid), n in sorted(hot.items(), key=lambda kv: -kv[1]):
-            print(f"  {rcp} / {sid}: escalated {n} times — consider acquiring capability:"
-                  f" /rig:import --discover \"skill to strengthen {sid}\""
-                  f" / take inventory with /rig:harness")
+            rejecters = gap_verifiers.get((rcp, sid), Counter())
+            who = ", ".join(name for name, _ in rejecters.most_common(3)) or "(no verdicts recorded)"
+            forge_desc = (f"capability to resolve the recurring failure in the {sid} step of the "
+                          f"{rcp} recipe (most rejections from: {who})")
+            print(f"  {rcp} / {sid}: escalated {n} times — most rejections from: {who}")
+            print(f"    draft request: /rig:forge \"{forge_desc}\"")
+            print("    (after confirming forge's draft, re-measure with /rig:drill --replay)")
+            print(f"    (to search for an external skill instead: /rig:import --discover \"skill to strengthen {sid}\")")
 
 def cmd_install_shim(args):
     """Place the shim as a symlink at ~/.local/bin/rig (or the path given via --to).

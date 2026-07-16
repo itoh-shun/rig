@@ -9,8 +9,8 @@ from collections import Counter
 
 from .config import (ACTIVE_STATUSES, CHECK_ICON, GATE_PRESETS, NEXT_ACTIONS,
                      STEP_ICON, TASK_TYPES)
-from .state import (_diff_lines, _load_audit, build_acceptance, die,
-                    gate_status, load_json, load_project_gates, load_task,
+from .state import (_diff_lines, _load_audit, budget_status, build_acceptance,
+                    die, gate_status, load_json, load_project_gates, load_task,
                     maybe_repo_root, repo_root, resolve_task_id, runs_dir)
 
 
@@ -56,6 +56,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"base:        {task['base_branch']} @ {task['base_commit'][:12]}")
     if task.get("worktree_path"):
         print(f"worktree:    {task['worktree_path']} (branch: {task['branch']})")
+    if task.get("budget_minutes"):
+        elapsed, budget, over = budget_status(task)
+        print(f"budget:      {elapsed:.0f}min / {budget:.0f}min" + ("  ⚠ over budget" if over else ""))
     print()
     _print_steps(d)
     print()
@@ -105,7 +108,8 @@ def cmd_board(args: argparse.Namespace) -> None:
         last_step = f"{steps[-1]['name']}({steps[-1]['status']})" if steps else "-"
         mode = "isolated" if t.get("worktree_path") else "not-isolated"
 
-        print(f"[{t['status']:<11}] {t['task_id']}")
+        _, _, over_budget = budget_status(t)
+        print(f"[{t['status']:<11}] {t['task_id']}" + ("  ⚠ over budget" if over_budget else ""))
         print(f"    {t['input'][:70]}{'…' if len(t['input']) > 70 else ''}")
         print(f"    type={t['task_type']:<14} recipe={t.get('recipe') or '-':<14} "
               f"mode={mode:<13} step={last_step:<20} gate={gs}")

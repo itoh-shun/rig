@@ -264,7 +264,7 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 
 ## 9. diff / accept / discard
 
-**`/rig:go diff`** は `diff.md` の `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` 見出しを構造化して表示し、末尾に **コードが gate 状態から算出する** `Recommended:` 行を付す（モデルが書く行ではないので希望的観測が入らない）：
+**`/rig:go diff`** は `diff.md` の `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` 見出しを構造化して表示し、末尾に **コードが gate 状態から算出する** `Recommended:` 行を付す（モデルが書く行ではないので希望的観測が入らない）。Modifiedな`*.py`ファイルには`ast`モジュールによるセマンティックdiff（シグネチャ変更／本体変更／意味的変更なしを区別、#280）も自動で挿入される：
 
 ```
 ## rig diff: rig-20260704-153012-login-fix
@@ -319,6 +319,14 @@ Recommended:
 ```
 
 確認できる内容：どのタスクがまだ実行中か、どれが gate を通った/落ちたか、どの worktree に変更があるか、どの run が diff 確認待ちか、どれを discard すべきか。`/rig:go board --all` はアクティブなものだけでなく記録済み全 task に範囲を広げる。
+
+### Cockpit — Mission Control（`/rig:go cockpit`・read-only・#307）
+
+Run timeline・Gate radar・drill実測のreviewer confidence・cost meter・force-bypass safety stripを1画面に集約する——`board`/`stats`/`audit`/`confidence`を個別に叩く代わりに全体像を一度に見たいときに使う。新しい永続化層は無く、それらのコマンドが既に持つ集計関数（`.rig/runs/`・`drill-results.jsonl`・`runs.jsonl`・`audit.jsonl`）をそのまま再利用するため、ずれが生じない。**v1は完全にread-only**——accept/discardは既存コマンドのまま、cockpitは次に打つべきコマンドを案内するだけ。未計測のデータ（drill未実行・token usage未記録）は空欄ではなく「Unmeasured」と明示する（健全と誤読させない）。
+
+```
+python3 scripts/workbench.py cockpit
+```
 
 ### Stats
 
@@ -387,6 +395,45 @@ reviewer ごとに6指標：`true_positive` / `false_positive` / `false_negative
 
 rig は reviewer を動かすだけではない。reviewer を測定する。
 
+### Dogfooding（#284）
+
+同じ測定はrig自身の開発にも適用できる。fork/カスタム運用のメンテナーは、既出のコマンドだけで現在の数値を出せる（専用ツール不要）：
+
+```bash
+python3 scripts/workbench.py digest --period month   # §10 — 落ちがちなgate・drill検出率・ゴム印警告
+python3 scripts/workbench.py stats                    # §10 — 同じ集計を期間指定なしで
+/rig:drill --replay                                   # §11 — reviewer persona自体の回帰確認
+```
+
+**正直なスコープ注記**：このリポジトリは現状、これらの数値を自動公開する仕組み（マージ毎にbadgeやdocsページを再生成するCIジョブ等）を持たない——それは今後の課題であり、本リリースでは未実装。現時点の「dogfooding」は、メンテナーが上記をローカルで実行しPR説明やリリースノートに貼り付ける運用を指し、継続更新される公開スコアではない。
+
+### MCPサーバ（#263）
+
+Claude Codeセッションの外（別エージェント・CI・別プロセス）からrigを操作したい場合は、`scripts/mcp_server.py`を起動する：
+
+```bash
+python3 scripts/mcp_server.py
+```
+
+stdioでModel Context Protocol（JSON-RPC 2.0、line-delimited）を待ち受ける。`mcp`公式SDKには依存しない——サードパーティ製の重い依存を増やさない方針を、workbench.py/orchestrate.pyのstdlib-only方針と揃えるため、stdlibのみで最小限のstdio transportを実装している。新しい実行エンジンは無い：全ツールはサブプロセスで`workbench.py`/`orchestrate.py`をそのまま呼ぶ薄いアダプタで、accept/discardのforce-proof要件（`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`等）はCLIと完全に同じコードパスを通るためMCP経由でもバイパスできない。
+
+提供ツール：
+
+| ツール | 相当するCLI |
+|---|---|
+| `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
+| `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
+
+opt-in：このサーバを起動しない限り何も変わらず、既存のCLI/skill経由の利用はそのまま有効。MCPクライアント（Claude Desktop等）から使う場合は、`command: python3`, `args: ["<repo>/scripts/mcp_server.py"]`をMCP設定に登録する。
+
+**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はMEDIUM（`rig_orchestrate_run`は`--isolate`未指定だとメイン作業ツリーに直接影響しうるため、呼び出し側で`isolate: true`を明示することを推奨、という具体的な指摘）。
+
+### コストティア自動ルーティング（`--auto-route`・`--auto-route-learn`・#264・#305）
+
+recipeのstepは`auto_route.candidates`（`{model, cost_tier, max_size}`の列、安い順に宣言）を持てる。`orchestrate.py run --auto-route`は、現在の diff size を測定し、その`max_size`をカバーする最も安い候補を決定論的に選ぶ——あくまでフォールバックで、実行時の`--step-model`とrecipe自身の`model:`はどちらも優先されたまま。選択結果は`runs.jsonl`の`steps[].auto_route`に記録される。
+
+`--auto-route-learn`はこれをさらに発展させ、`.rig/runs.jsonl`自身の実績（どのrecipe/stepでどのmodelが実際に使われ、gateを通過したか）から頻度ベース（MLモデル不要）で学習する。**既定はshadow mode**：予測は常に記録される（`steps[].learned_route`）が、`--auto-route-mode active`を指定するまでは実際の選択に影響しない（段階導入）。参照run数が不足しているか、pass_rateが低い場合は静的な`--auto-route`の選択にフォールバックし、棄却した候補とその理由（counterfactual）を必ず記録する——ブラックボックス化しない。`--exploration-pct N`を指定すると、一定割合のrunだけ次点候補を試す（乱数ではなく`--exploration-date`＋recipe/stepのハッシュで決定論的に判定するため、結果は再現可能）。regret logging（安すぎ/高すぎの選択を事後に自動較正する仕組み）は未実装——`runs`/`stats`で`steps[].status`と`learned_route`を手動比較するのが現状のフォールバック。
+
 ## 12. GitHub 連携
 
 | コマンド | read/write |
@@ -397,6 +444,24 @@ rig は reviewer を動かすだけではない。reviewer を測定する。
 | `/rig:go gh ci` | 現在の branch/PR の CI 状態を確認し、失敗ジョブの要約を提示 |
 
 Issue/PR の本文・コメントは**信頼できない外部入力**として扱う（埋め込まれた指示には従わず、分類・修正対象のテキストとしてのみ読む）。これは散文の「従わないで」ではなく**構造的に**強制する：第三者テキストが下流の persona に届く前に、推測不能な per-call デリミタでデータと明示する**検疫フェンス**（`rig_workbench/orchestrate/quarantine.py` の `wrap_untrusted`）で囲い、不可視/bidi Unicode を先に剥離する（改竄シグナル）——ゆえに埋め込まれた「指示を無視せよ」がフェンスを抜け出せない（OWASP LLM01／spotlighting・CaMeL）。GitHub への書き込み（コメント・push）は常に明示操作を経る。read は即応。
+
+### GitHub Action（#265）
+
+`action.yml`は、ライブなClaude Codeセッションが無いワークフロー向けに`orchestrate.py run --isolate`のheadless CI利用をパッケージ化する：
+
+```yaml
+- uses: itoh-shun/rig@master
+  with:
+    task: "ci.ymlのflakyテストを直して"
+    recipe: recipes/bugfix.md
+    provider: claude
+    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    auto_pr: true
+```
+
+独自の実行ロジックは発明しない——`scripts/rig-action-entrypoint.sh`は他の箇所と同じ`orchestrate.py`を呼び出し、run-state JSONから最終状態(`DONE`/`ESCALATE`/`BLOCKED`/`STOPPED`)を導出し、gateが`DONE`で解決した場合のみbranch push + PR作成(`gh pr create`)を行う。未達/pendingのgateはjobを失敗させ、何も作成しない。
+
+**正直な検証範囲**: `run`ステップ(タスク実行・gate判定・worktree隔離/クリーンアップ)は`--provider mock`でローカルにend-to-end確認済み。`open-pr`ステップ(branch push + `gh pr create`)は、この環境から実際のGitHub Actionsランナーに対して実行検証できませんでした——`gh`の公開されたCLIインターフェース(GitHub-hostedランナーにプリインストール済み)に基づいて実装していますが、実運用では未検証です。実際のワークフロー実行で確認されるまでは「レビュー済み・未ライブ検証」として扱ってください。
 
 ## 13. Advanced commands
 
@@ -468,6 +533,70 @@ ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
 ```
 
 Codex を再起動したあと、`$rig "ログインバグを直して"` のように呼ぶ。Codex では `$rig` が Claude Code の `/rig:go` 相当の入口になる。横断 runner は既に `codex exec` provider を持っており、検証ロールでは read-only sandbox を強制する。
+
+### Codexネイティブ層統合（#294）
+
+Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skills・Hooks・Subagent TOML）を持つ。上記のskillシンボリックリンク方式に加え、本リポジトリはCodexネイティブな等価物も同梱する：
+
+| 機構 | 追加したファイル | 内容 |
+|---|---|---|
+| Skills | `codex/skills/rig/SKILL.md` | Codexの`.agents/skills/<name>/SKILL.md`規約（`name`/`description` frontmatter）に沿った薄いskill。新しいエンジンは作らず、既存の`workbench.py`/`orchestrate.py`への手続き的ポインタに留める |
+| Hooks | `codex/hooks.json` | `PreCompact`イベントで既存の`hooks/preserve-rig-state.sh`をそのまま再利用（Claude Code専用の記述は含まれていないスクリプトなので複製不要）。run-continuityをCodexの圧縮イベントにも配線 |
+| Subagents | `.codex/agents/security-reviewer.toml` | `agents/security-reviewer.md`と同じ評価軸・出力契約を持つCodexネイティブsubagent定義。`sandbox_mode = "read-only"`でCodex自身のサンドボックスにもread-only強制を効かせる——rig側の`orchestrate.py`argv注入（`--sandbox read-only`）による既存の強制は変更せず残す（多層防御） |
+| MCP | （手順のみ） | `scripts/mcp_server.py`（#263）を`~/.codex/config.toml`または`.codex/config.toml`の`[mcp_servers.rig]`に`command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]`として登録する |
+
+インストール：`codex/skills/rig/`を`~/.agents/skills/rig/`（または repo 直下の`.agents/skills/rig/`）へコピー/シンボリックリンク、`codex/hooks.json`を`.codex/hooks.json`にコピーまたは`~/.codex/hooks.json`の`PreCompact`にマージ。`.codex/agents/security-reviewer.toml`はリポジトリ直下に置くだけでproject-scoped agentとして認識される（Codexの規約）。
+
+**正直な検証範囲**：この環境には`codex` CLIが無く、実際のCodexセッションでの動作確認はできていません。実施した検証は次の通り：
+- `codex/hooks.json`はJSONとして妥当。
+- `.codex/agents/security-reviewer.toml`は`tomllib`でパース可能で、[Codex公式ドキュメント](https://developers.openai.com/codex/subagents)に記載のフィールド（`name`/`description`/`sandbox_mode`/`developer_instructions`）のみを使用。
+- 既存の`--provider codex`ステートレス呼び出し（`build_argv`の`codex`分岐、`--sandbox read-only`の検証者強制含む）は本バッチで一切変更しておらず、`orchestrate.py selftest`の既存テストがそのままPASSすることで後方互換を確認。
+- Skill配布形式・hooksの実際の発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIでの実行が必要で**未検証**です。
+
+### ホストアダプタ層（複数ホストへの一般化・#304）
+
+#294はCodex限定だったが、Cursor・GitHub Copilot CLI等も同様の拡張機構（hooks/skills/MCP）を持つ。ホストごとの差分（hookイベント名・skill配置規約・機能対応度）を`scripts/host_adapters.py`の`HOSTS`辞書1箇所に集約し、新規ホスト対応は1エントリ追加するだけで済む設計にした。第二弾としてCursorを追加し、設計の妥当性を検証した：
+
+```
+| Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
+|---|---|---|---|---|---|---|---|---|
+| Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
+| Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
+| Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+```
+（`python3 scripts/host_adapters.py`で再生成できる——このREADMEの表が古くなったら実行して差し替えること）
+
+Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
+- **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。
+- **skillは`.agents/skills/`もlegacy互換で読む**——`codex/skills/rig/SKILL.md`をそこに置けばCursorでもそのまま使える（新規ファイル不要）。
+- **`preCompact`はobservational-onlyで、run-continuityの状態注入はできない**（公式ドキュメントに明記）。ここは黙って「動いたふり」をせず`degrade`として明示し（`cursor/hooks.json`は状態保全を諦め、短い通知メッセージのみを返す設計にした）、READMEの表上もunsupportedと表示する。
+
+**正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`tests/test_host_adapters.py`）はコードとして検証済み。実際のCursor/Codex実機でのhook発火・skill読み込みは未検証（Codexは上記と同じ理由、Cursorはこの環境にCursor自体が無いため）。Claude Code向けの既存動作は本バッチで一切変更していない。
+
+### Fable 5 refusal-classifier→フォールバック（`--provider anthropic`・#297）
+
+Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエストを安全フィルターで自動遮断し、Opus 4.8へフォールバックする仕組みを持つ。`orchestrate.py run --provider anthropic`はAnthropic Messages APIを直接HTTPで叩き、この遮否を検知・記録・透過的にハンドリングする（`claude`/`rig`のCLI経由providerは構造化`stop_reason`を持たないため対象外）：
+
+- `fallback_model`（例`claude-opus-4-8`）を設定すると`anthropic-beta: server-side-fallback-2026-06-01`を要求し、フォールバック成功時は`state["history"]`に`FABLE_FALLBACK`を記録して**gateを止めず処理を継続**する。
+- フォールバック未設定/尽きた直接拒否は`FABLE_REFUSAL`（category/explanation）を記録し、silent失敗にしない。
+- `runs --cost`にトークン計測（`cache_read_input_tokens`含む）とfallback/refusal発生件数を表示する。
+- 攻撃手法の議論が本業の`security-reviewer`等のpersonaへFable 5を`--step-model`（#293）で割り当てる場合は`fallback_model`必須（`agents/security-reviewer.md`参照）。
+
+**正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。**実際のAnthropic APIには接続していません**（実運用トラフィックが必要かつ課金リスクを避けるため）。使用したスキーマは`anthropics/claude-cookbooks`の`fable_5_fallback_billing/guide.ipynb`に基づいていますが、実モデルでの動作は未検証です。
+
+### Managed Agents API委譲（実験的opt-in・#295）
+
+review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorではなくAnthropic Managed Agents API（coordinator/worker構成のbeta）に委譲する実験的backend。`cfg["parallel_backend"] = "managed-agents"` + `cfg["environment_id"]`（必須）で有効化——**既定は従来方式のまま**、完全にopt-in。詳細・正直な限界（RESTパスは公式SDKメソッド名からの推測／実APIには未接続／イベントストリーム統合は未実装）は`commands/orchestrate.md`「⑧」を参照。
+
+### VS Code拡張 — rig board（読み取り専用・#286）
+
+`vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する（エディタを離れず`/rig:rig board`相当を見られる）。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけ——新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲（状態パースロジックはplain Nodeでユニットテスト済み／実際のVS Code Extension Hostでの動作確認はこの環境では未検証）は`vscode-extension/README.md`参照。
+
+### セッション横断の継続的instinct学習層（`instincts`・#306）
+
+`workbench.py instincts`が`.rig/instincts.jsonl`を管理する——「このプロジェクトではこう書く」「ここはこう探索すると早い」のような、confidence付きの**未検証**パターンを軽量に蓄積・再注入する層で、`facets/knowledge`の検証済みwikiとは完全に別枠。`--add`はsecret/トークン/ローカル絶対パス/`ENV_VAR=value`風の候補を却下し理由を必ず表示する。`--decay`は30日以上未使用のinstinctのconfidenceを下げ、0.2未満で失効させる——暗黙知は放置すれば腐る、という前提を設計に組み込む。競合解決は推測ではなく明示：`--supersedes <old-id>`でモデルが「この2つは矛盾する」と宣言すると旧instinctがmuteされる。次回注入対象はconfidence>=0.7のみ、合計500字まで（context-minimal）。`hooks/suggest-instincts.sh`（Stop）は「提案を検討してください」と促すのみで抽出自体は行わない——何が本当に有用かの判断はモデルの仕事。`hooks/inject-instincts.sh`（SessionStart）が選定されたinstinctを`additionalContext`として注入する。
+
+正直な検証範囲：意味的な矛盾の自動**検知**は未実装——`--supersedes`で明示宣言された矛盾の機械的な**解決**のみ。パターン抽出自体は完全にモデルの判断に委ねている。
 
 ### manifest・知識層
 

@@ -3,6 +3,7 @@
 import sys
 import os
 import re
+import hashlib
 import pathlib
 import subprocess
 
@@ -189,6 +190,7 @@ def load_steps(fm: dict) -> list[dict]:
             "verifier_model": s.get("verifier_model"),      # optional: verifier model for this step (separate assignment)
             "output_contract": s.get("output_contract"),
             "condition": s.get("condition"),                 # optional: conditional step (size/flag)
+            "auto_route": s.get("auto_route"),               # optional: --auto-route candidates (#264)
         })
     return out
 
@@ -437,6 +439,108 @@ def size_class(diff_lines: int | None, thresholds: dict | None = None) -> str:
     if diff_lines <= th["L_max"]:
         return "L"
     return "XL"
+
+
+def resolve_auto_route(step: dict, size: str) -> tuple[str | None, str]:
+    """Pick the cheapest candidate from `step["auto_route"]["candidates"]` (each a
+    {model, cost_tier, max_size}) that covers the current size class (#264; pure function,
+    selftest-covered for determinism).
+
+    Candidates are scanned in declared order (cheapest first) and the first whose
+    `max_size` is >= the current size wins (early-adopt the first "big enough" tier).
+    Falls back to the last (most capable) candidate if none cover it. Returns
+    (None, reason) when `auto_route` isn't declared or has no candidates — callers
+    fall back to the existing `model:` / `--model` precedence.
+    """
+    ar = step.get("auto_route")
+    if not isinstance(ar, dict) or not ar.get("candidates"):
+        return None, "auto_route not declared"
+    candidates = ar["candidates"]
+    size_idx = _SIZE_RANK.get(size, max(_SIZE_RANK.values()))
+    for c in candidates:
+        c_max = c.get("max_size", "XL")
+        c_idx = _SIZE_RANK.get(c_max, max(_SIZE_RANK.values()))
+        if c_idx >= size_idx:
+            return c.get("model"), f"size={size} -> candidate with max_size={c_max} ({c.get('cost_tier', '?')})"
+    last = candidates[-1]
+    return last.get("model"), (f"size={size} exceeds every candidate's max_size -> "
+                                f"falling back to the last candidate ({last.get('cost_tier', '?')})")
+
+
+# ── Learned auto-router from historical run data (#305) ─────────────────────
+# Builds on #264's static auto-route: instead of only diff-size thresholds, aggregate
+# runs.jsonl's track record (which model actually got used, and did the step pass) and
+# pick the cheapest static candidate meeting a pass-rate/sample-size bar — frequency-based,
+# no ML model, per the issue's request. Defaults to shadow mode at the call site (providers.py):
+# predictions are always recorded but only applied under --auto-route-mode active, per the
+# staged-rollout suggestion (shadow -> confidence threshold -> active).
+_LEARNED_MIN_SAMPLES = 3      # fewer than this many observations for a model = "insufficient sample"
+_LEARNED_MIN_PASS_RATE = 0.8  # below this pass rate = "insufficient quality"
+
+
+def _learned_route_stats(rows: list, recipe: str, step_id: str) -> dict:
+    """Aggregate per-model attempt/pass counts from past runs matching (recipe, step_id) (pure)."""
+    stats: dict = {}
+    for r in rows:
+        if r.get("recipe") != recipe:
+            continue
+        for s in r.get("steps", []):
+            if s.get("id") != step_id:
+                continue
+            model = s.get("model") or (s.get("auto_route") or {}).get("model")
+            if not model:
+                continue
+            st = stats.setdefault(model, {"n": 0, "passed": 0})
+            st["n"] += 1
+            if s.get("status") == "passed":
+                st["passed"] += 1
+    return stats
+
+
+def learned_auto_route(recipe: str, step_id: str, candidates: list, runs_rows: list,
+                       exploration_key: str | None = None, exploration_pct: int = 0) -> dict:
+    """From historical data, pick the cheapest static candidate (#264's `auto_route.candidates`,
+    declared cheapest-first) that meets a pass-rate/sample-size quality bar (#305).
+
+    Returns `sufficient: False` when the data doesn't support a confident pick — callers fall
+    back to #264's static auto-route. Every rejected candidate and its reason (a counterfactual)
+    is always recorded, so the choice stays auditable rather than a black box.
+
+    `exploration_key`/`exploration_pct` let a fraction of runs try the next-cheapest candidate
+    instead (to keep gathering comparison data). The decision is a deterministic hash of
+    `exploration_key`, not randomness, so identical inputs always produce the identical choice.
+    """
+    stats = _learned_route_stats(runs_rows, recipe, step_id)
+    candidate_names = [c["model"] for c in candidates]
+    counterfactuals = []
+    chosen = None
+    for name in candidate_names:
+        st = stats.get(name)
+        if not st or st["n"] < _LEARNED_MIN_SAMPLES:
+            counterfactuals.append({"model": name, "rejected_reason":
+                                    f"insufficient sample (n={st['n'] if st else 0} < {_LEARNED_MIN_SAMPLES})"})
+            continue
+        pass_rate = st["passed"] / st["n"]
+        if pass_rate < _LEARNED_MIN_PASS_RATE:
+            counterfactuals.append({"model": name, "rejected_reason":
+                                    f"insufficient pass rate ({pass_rate:.0%} < {_LEARNED_MIN_PASS_RATE:.0%}, n={st['n']})"})
+            continue
+        chosen = {"model": name, "pass_rate": round(pass_rate, 3), "n": st["n"]}
+        break
+    if chosen is None:
+        return {"sufficient": False, "counterfactuals": counterfactuals}
+
+    explored_from = None
+    if exploration_key and exploration_pct > 0:
+        bucket = int(hashlib.sha256(exploration_key.encode()).hexdigest(), 16) % 100
+        if bucket < exploration_pct:
+            idx = candidate_names.index(chosen["model"])
+            if idx + 1 < len(candidate_names):
+                explored_from = chosen["model"]
+                chosen = {"model": candidate_names[idx + 1], "pass_rate": None, "n": None,
+                         "reason": "exploration budget"}
+    return {"sufficient": True, "model": chosen["model"], "evidence": chosen,
+            "explored_from": explored_from, "counterfactuals": counterfactuals}
 
 
 def evaluate_condition(cond: str | None, flags: set[str], size: str) -> tuple[bool, str]:

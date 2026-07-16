@@ -3,9 +3,13 @@
 
 import contextlib
 import datetime
+import hashlib
+import hmac
 import json
+import os
 import pathlib
 import re
+import secrets
 import subprocess
 import sys
 
@@ -279,6 +283,85 @@ def load_project_gates(root: pathlib.Path) -> dict:
                 "(no absolute paths, no '..')")
 
     return data
+
+
+# ── RBAC (.rig/access.json; issue #282) ──────────────────────────────────────
+def load_access_control(root: pathlib.Path) -> dict:
+    """Read `.rig/access.json` (the allowlist of identities permitted to `accept`, #282).
+
+    Shape: `{"default": ["alice","bob"], "<task_type>": [...]}` (`default` is the
+    fallback when there's no key for the specific task_type). Absent file means
+    unrestricted (backward compatible — solo use behaves exactly as before). A
+    malformed file never blocks a run; it falls back to unrestricted."""
+    p = root / ".rig" / "access.json"
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        warn(f"{p} does not parse as JSON. Ignoring RBAC (running unrestricted)")
+        return {}
+
+
+def current_identity(root: pathlib.Path) -> str:
+    """The identity performing `accept`. Resolved via the RIG_USER env var, then `git config user.name`."""
+    env = os.environ.get("RIG_USER")
+    if env:
+        return env
+    proc = git(["config", "user.name"], cwd=root, check=False)
+    return proc.stdout.strip() or "unknown"
+
+
+# ── time/cost budget warnings (issue #281) ───────────────────────────────────
+def budget_status(task: dict) -> tuple[float, float | None, bool]:
+    """(elapsed minutes, budget minutes or None, over-budget) for a task (#281). A task
+    with no `budget_minutes` set is never over-budget — a task that never declared an
+    estimate shouldn't get a false warning."""
+    created = datetime.datetime.fromisoformat(task["created_at"])
+    elapsed_min = (datetime.datetime.now().astimezone() - created).total_seconds() / 60.0
+    budget = task.get("budget_minutes")
+    over = bool(budget) and elapsed_min > budget
+    return elapsed_min, budget, over
+
+
+# ── signed provenance (issue #299) ───────────────────────────────────────────
+def _provenance_key_path(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / "provenance.key"
+
+
+def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
+    """The HMAC-SHA256 signing key (#299). Lives under `.rig/` (gitignored), so it never
+    enters the repo. Deliberately HMAC rather than asymmetric signing (Ed25519/SLSA) to
+    keep workbench.py stdlib-only. This gives same-machine tamper-evidence — proof a
+    provenance record hasn't been edited after the fact on a machine holding the key —
+    not third-party public verification the way SLSA/Ed25519 provide."""
+    p = _provenance_key_path(root)
+    if p.is_file():
+        return p.read_bytes()
+    key = secrets.token_bytes(32)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(key)
+    try:
+        p.chmod(0o600)
+    except Exception:
+        pass
+    return key
+
+
+def _provenance_payload(record: dict) -> bytes:
+    return json.dumps(record, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def sign_provenance(root: pathlib.Path, record: dict) -> str:
+    key = load_or_create_provenance_key(root)
+    return hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
+
+
+def verify_provenance(root: pathlib.Path, record: dict, signature: str) -> bool:
+    key = load_or_create_provenance_key(root)
+    expected = hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 # ── gate construction / evaluation ───────────────────────────────────────────

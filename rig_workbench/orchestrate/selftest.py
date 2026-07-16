@@ -354,15 +354,19 @@ def cmd_selftest(_args):
     report("U model-quorum: 2 providers x 1 persona = 2 votes", len(vU1), 2)
     report("U model-quorum: vote by is provider:persona", all(v["by"] == "mock:x" for v in vU1), True)
     report("U model-quorum: DONE + deterministic", (finalU1, u_det), ("DONE", True))
-    # T: gap prescriptions (repeated escalations at the same step → --discover suggestion)
+    # T: gap prescriptions (repeated escalations at the same step → forge draft + --discover; #268)
     config.RUNS_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_runs_gap_selftest.jsonl"
     config.RUNS_PATH.unlink(missing_ok=True)
     with config.RUNS_PATH.open("w", encoding="utf-8") as f:
         for esc in ("verify", "verify", None):
+            steps = ([{"id": "verify", "status": "failed", "retries": 2,
+                       "verdicts": [{"by": "mock:security-reviewer", "ok": False},
+                                    {"by": "mock:security-reviewer", "ok": False},
+                                    {"by": "mock:qa-reviewer", "ok": True}]}] if esc else [])
             f.write(json.dumps({"ts": "t", "recipe": "release-flow", "backend": "orchestrate",
                                 "final": "ESCALATE" if esc else "DONE", "steps_total": 1,
                                 "steps_passed": 0 if esc else 1, "retries": 2 if esc else 0,
-                                "escalated_at": esc, "steps": []}) + "\n")
+                                "escalated_at": esc, "steps": steps}) + "\n")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         cmd_runs([])
@@ -371,6 +375,8 @@ def cmd_selftest(_args):
     config.RUNS_PATH = _orig_runs
     report("T gap: 2 escalations produce a prescription", "Gap prescriptions" in t_out and "--discover" in t_out, True)
     report("T gap: pinpoints the step", "release-flow / verify: escalated 2 times" in t_out, True)
+    report("T gap: names the top rejecting reviewer", "security-reviewer" in t_out, True)
+    report("T gap: emits a ready-to-paste /rig:forge draft", '/rig:forge "' in t_out, True)
     for f in qdir.iterdir():
         f.unlink()
     qdir.rmdir()

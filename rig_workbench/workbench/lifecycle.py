@@ -3,6 +3,7 @@
 
 import argparse
 import pathlib
+import re
 import sys
 
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
@@ -44,6 +45,49 @@ def ensure_rig_gitignored(root: pathlib.Path) -> bool:
         # The existing file may not end with a newline, so lead with one
         f.write("\n# rig workbench state (task worktrees, telemetry, audit, locks)\n.rig/\n")
     return True
+
+
+_STOPWORDS = {"の", "を", "に", "は", "が", "で", "と", "も", "て", "た", "する", "して", "ください",
+              "the", "a", "an", "to", "for", "of", "in", "on", "and", "or", "is", "are"}
+
+
+def _tokenize(text: str) -> set[str]:
+    """Rough tokenization (contiguous alphanumerics, everything else char-by-char). A lightweight
+    heuristic that skips bringing in a real morphological analyzer — a hint of overlap is enough,
+    exact matching isn't the goal."""
+    words = re.findall(r"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", text.lower())
+    return {w for w in words if w not in _STOPWORDS and len(w) > 1}
+
+
+def find_similar_tasks(root: pathlib.Path, text: str, exclude_task_id: str | None = None,
+                       limit: int = 3, threshold: float = 0.25) -> list[dict]:
+    """Return past tasks whose `input` is most similar (Jaccard coefficient over rough
+    tokenization) to `text`, highest first (#290, deja-vu detection). No dedicated
+    embeddings/search engine is brought in — this is just a lightweight scan of task.json."""
+    base = runs_dir(root)
+    if not base.is_dir():
+        return []
+    query = _tokenize(text)
+    if not query:
+        return []
+    scored: list[tuple[float, dict]] = []
+    for p in base.iterdir():
+        tj = p / "task.json"
+        if not tj.exists():
+            continue
+        t = load_json(tj)
+        if t["task_id"] == exclude_task_id:
+            continue
+        candidate = _tokenize(t.get("input", ""))
+        if not candidate:
+            continue
+        overlap = query & candidate
+        union = query | candidate
+        score = len(overlap) / len(union) if union else 0.0
+        if score >= threshold:
+            scored.append((score, t))
+    scored.sort(key=lambda x: -x[0])
+    return [t for _, t in scored[:limit]]
 
 
 def cmd_new(args: argparse.Namespace) -> None:
@@ -89,6 +133,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         "status": "running",
         "created_at": now_iso(),
         "updated_at": now_iso(),
+        "budget_minutes": args.budget_minutes,   # optional (#281); None = no warning
     }
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
@@ -110,6 +155,13 @@ def cmd_new(args: argparse.Namespace) -> None:
     else:
         print("worktree: none (--no-worktree specified)")
     print(f"state: {d.relative_to(root)}/")
+
+    similar = find_similar_tasks(root, args.input, exclude_task_id=task_id)
+    if similar:
+        print("\nSimilar tasks (past runs, deja-vu detection #290):")
+        for t in similar:
+            label = t["input"][:50] + ("…" if len(t["input"]) > 50 else "")
+            print(f"  - {t['task_id']} ({t['status']}): {label}")
 
 
 def cmd_step(args: argparse.Namespace) -> None:

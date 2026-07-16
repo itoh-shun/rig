@@ -18,6 +18,7 @@ from . import state
 from .catalog import check_catalog_drift, check_graph, check_wiki
 from .config import RECIPES
 from .drill import check_drill_coverage
+from .mcp_scan import check_mcp_scan
 from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
 from .release import check_release_metadata, check_skills_lock
@@ -96,6 +97,11 @@ def main() -> None:
         check_skills_lock()
     except Exception:
         _emit("FAIL", f"skills-lock check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_mcp_scan()
+    except Exception:
+        _emit("FAIL", f"mcp-scan check — unexpected error:\n{traceback.format_exc()}")
 
     print("## rig --validate report (CI / shipped tier)\n")
     for line in state.results:

@@ -4,14 +4,18 @@ import sys
 import os
 import re
 import json
+import time
 import shlex
 import threading
 import pathlib
 import subprocess
 import concurrent.futures as futures
+import urllib.request
 
 from . import config
 from .quarantine import wrap_untrusted
+from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
+                      resolve_auto_route, size_class)
 from .runstate import compute_next, gate_outcome, save_state, telemetry_append
 
 # ── Execution layer (external runners, provider abstraction) ─────────────────
@@ -185,6 +189,28 @@ def _load_models_config() -> dict:
         return {}
 
 
+_TOKEN_LOCK = threading.Lock()
+
+
+def _record_token_usage(cfg: dict, provider: str, usage: dict) -> None:
+    """Roll up an OpenAI-compatible `usage` payload into `cfg["_token_usage"]` (#271/#296).
+
+    `cfg` is expected to carry a per-run (or, for `_run_ab_variant`, per-variant)
+    accumulator dict — callers own that lifetime so usage never blends across runs.
+    CLI-based providers (claude/codex) don't expose structured usage and stay out of
+    scope here; Anthropic's Usage & Cost Admin API is the right tool for those instead
+    of estimating.
+    """
+    acc = cfg.get("_token_usage")
+    if acc is None:
+        return
+    with _TOKEN_LOCK:
+        a = acc.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+        a["prompt_tokens"] += usage.get("prompt_tokens", 0) or 0
+        a["completion_tokens"] += usage.get("completion_tokens", 0) or 0
+        a["calls"] += 1
+
+
 def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     import urllib.request
     url = f"{_base_url(provider, cfg)}/chat/completions"
@@ -196,9 +222,97 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     try:
         with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
             data = json.loads(r.read().decode("utf-8"))
+        if isinstance(data.get("usage"), dict):
+            _record_token_usage(cfg, provider, data["usage"])
         return 0, data["choices"][0]["message"]["content"]
     except Exception as e:                      # connection failures, missing models etc. become rc!=0
         return 1, f"[{provider} error: {e} @ {url}]"
+
+
+def _record_anthropic_usage(cfg: dict, usage: dict) -> None:
+    """Normalize a direct Anthropic-Messages-API usage payload into the same accumulator
+    _record_token_usage uses (#297). Maps `input_tokens`->`prompt_tokens` and
+    `output_tokens`->`completion_tokens`; `cache_read_input_tokens` (billed at 10% of base
+    input tokens on a fallback) is accumulated in its own field — extends rather than
+    breaks the OpenAI-compatible schema (#271/#296)."""
+    acc = cfg.get("_token_usage")
+    if acc is None:
+        return
+    with _TOKEN_LOCK:
+        a = acc.setdefault("anthropic", {"prompt_tokens": 0, "completion_tokens": 0,
+                                         "cache_read_input_tokens": 0, "calls": 0})
+        a["prompt_tokens"] += usage.get("input_tokens", 0) or 0
+        a["completion_tokens"] += usage.get("output_tokens", 0) or 0
+        a["cache_read_input_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+        a["calls"] += 1
+
+
+def run_anthropic_provider(prompt: str, cfg: dict, state: dict | None = None,
+                           step_id: str | None = None) -> tuple[int, str]:
+    """Call the Anthropic Messages API directly (for Fable 5 refusal-classifier + fallback
+    detection, #297).
+
+    A separate schema from the OpenAI-compatible `run_http_provider` (ollama/lmstudio) —
+    Anthropic's own content blocks / `stop_reason` / `stop_details`. The `claude`/`rig`
+    CLI providers (via `claude -p --output-format text`) never expose a structured
+    stop_reason at all, so they're out of scope; this provider is for hitting the
+    Messages API directly over HTTP only.
+
+    Setting `cfg.get("fallback_model")` requests the `server-side-fallback-2026-06-01`
+    beta. When the server transparently falls back, `FABLE_FALLBACK` is recorded in
+    `state["history"]` and **the step continues as a normal success** (never rejected —
+    per #297's requirement). A direct refusal (no fallback configured, or fallback
+    exhausted) records `FABLE_REFUSAL` and is reported to the caller as a failure
+    (rc=1, with the category embedded in the text — never a silent failure).
+    """
+    import urllib.request
+    base = (cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
+    url = f"{base}/v1/messages"
+    model = cfg.get("model") or "claude-fable-5"
+    fallback_model = cfg.get("fallback_model")
+    body: dict = {"model": model, "max_tokens": cfg.get("max_tokens", 1024),
+                 "messages": [{"role": "user", "content": prompt}]}
+    if fallback_model:
+        body["fallbacks"] = [{"model": fallback_model}]
+    headers = {"Content-Type": "application/json",
+              "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),
+              "x-api-key": cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")}
+    if fallback_model:
+        headers["anthropic-beta"] = "server-side-fallback-2026-06-01"
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return 1, f"[anthropic error: {e} @ {url}]"
+
+    if isinstance(data.get("usage"), dict):
+        _record_anthropic_usage(cfg, data["usage"])
+
+    blocks = data.get("content") or []
+    fallback_block = next((b for b in blocks if b.get("type") == "fallback"), None)
+    text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+
+    if data.get("stop_reason") == "refusal" and not fallback_block:
+        details = data.get("stop_details") or {}
+        category = details.get("category", "unknown")
+        if state is not None and step_id is not None:
+            with _HIST_LOCK:
+                state["history"].append({"action": "FABLE_REFUSAL", "step": step_id,
+                                         "category": category,
+                                         "explanation": details.get("explanation", "")})
+        return 1, f"[fable refusal: category={category}] {details.get('explanation', '')}"
+
+    if fallback_block:
+        if state is not None and step_id is not None:
+            with _HIST_LOCK:
+                state["history"].append({"action": "FABLE_FALLBACK", "step": step_id,
+                                         "from_model": (fallback_block.get("from") or {}).get("model"),
+                                         "to_model": (fallback_block.get("to") or {}).get("model")})
+        return 0, text  # a fallback is treated as a transparent success (never blocks the gate; #297)
+
+    return 0, text
 
 
 def discover_models(cfg: dict) -> dict:
@@ -214,6 +328,11 @@ def discover_models(cfg: dict) -> dict:
         out[p] = {"kind": "cli", "available": shutil.which(p) is not None, "models": []}
     out["rig"] = {"kind": "cli", "available": shutil.which("claude") is not None,
                   "note": "launches each step as a rig harness (claude)", "models": []}
+    out["anthropic"] = {"kind": "remote-api", "available": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                       "note": "direct Messages API calls (Fable 5 refusal-classifier + fallback "
+                               "detection, #297); reachability is judged only by whether "
+                               "ANTHROPIC_API_KEY is set, no live connectivity check",
+                       "models": []}
     return out
 
 
@@ -250,9 +369,12 @@ def cmd_models(args):
         print(f"\nSaved: {_MODELS_CACHE_PATH} ({len(conf)} providers) — used by the next run --auto-model")
 
 
-def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> tuple[int, str]:
+def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
+                 state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
     if provider in _OPENAI_BASE:
         return run_http_provider(provider, prompt, cfg)
+    if provider == "anthropic":
+        return run_anthropic_provider(prompt, cfg, state, step_id)
     argv = build_argv(provider, role, prompt, cfg, persona)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
@@ -374,7 +496,8 @@ def _judge_output(out: str) -> tuple[bool, list[dict]]:
 
 
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
-                           cfg: dict, max_parallel: int) -> list[dict]:
+                           cfg: dict, max_parallel: int,
+                           state: dict | None = None, step_id: str | None = None) -> list[dict]:
     """Run N verifiers in concurrent processes and return results in (persona, provider) order (deterministic).
 
     Passing a list as ver runs **the same persona across multiple providers** = a mixed-model
@@ -388,7 +511,7 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
 
     def _one(task):
         v, p = task
-        rc, out = run_provider(v, "verifier", prompt, cfg, persona=p)
+        rc, out = run_provider(v, "verifier", prompt, cfg, persona=p, state=state, step_id=step_id)
         ok, criteria = _judge_output(out)
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
                 "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
@@ -398,6 +521,133 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     with _f.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         res = list(ex.map(_one, tasks))
     return sorted(res, key=lambda r: (r["persona"], r["provider"]))  # deterministic regardless of completion order
+
+
+_MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
+
+
+def _managed_agents_request(base: str, path: str, cfg: dict, body: dict | None = None,
+                            method: str = "POST") -> dict:
+    """Thin HTTP wrapper over the (beta) Managed Agents API (#295).
+
+    **Note**: endpoint paths (`/v1/agents` etc.) are inferred from the documented Python
+    SDK method names (`client.beta.agents.create` etc.), not confirmed directly against an
+    official REST reference (this script stays stdlib-only, so it hits the endpoints with
+    urllib rather than depending on the SDK). Confirm the actual paths against the
+    `anthropic` Python SDK source / official docs before relying on this in production.
+    """
+    url = f"{base}/{path.lstrip('/')}"
+    headers = {"Content-Type": "application/json",
+              "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),
+              "anthropic-beta": _MANAGED_AGENTS_BETA,
+              "x-api-key": cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")}
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def run_managed_agents_fanout(prompt: str, personas: list[str], cfg: dict,
+                              state: dict | None = None, step_id: str | None = None) -> list[dict]:
+    """Delegate review fan-out to the Anthropic Managed Agents API (coordinator/worker beta;
+    #295, opt-in experimental backend).
+
+    Only called from `_execute_step` when `cfg.get("parallel_backend") == "managed-agents"`.
+    The default (unset) stays on the existing `run_verifiers_parallel` (subprocess +
+    ThreadPoolExecutor) — this backend is entirely opt-in and its failure never touches the
+    existing path.
+
+    One worker agent is created per persona; a judgment-only coordinator fans out to them.
+    A worker's raw output (a large diff/log, etc.) stays inside its managed-environment
+    thread — only the coordinator's distilled result crosses back. **That isolation itself
+    is an Anthropic server-side property this client code cannot verify.** What this code
+    does guarantee is that rig never requests, stores, or forwards raw worker output beyond
+    the API's own returned result. `cfg["environment_id"]` is required (the Managed Agents
+    host environment) — if unset, this errors immediately rather than failing silently.
+    """
+    base = (cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
+    env_id = cfg.get("environment_id")
+    if not env_id:
+        return [{"by": "managed-agents:error", "persona": "-", "provider": "managed-agents",
+                 "ok": False, "note": "cfg['environment_id'] is unset; cannot start Managed Agents"}]
+    personas = personas or ["reviewer"]
+    model = cfg.get("model") or "claude-sonnet-5"
+    coordinator_model = cfg.get("coordinator_model") or model
+
+    try:
+        workers = []
+        for p in personas:
+            w = _managed_agents_request(base, "v1/agents", cfg, {
+                "name": f"worker-{p}", "model": model, "tools": [],
+                "system": f"You are the {p} reviewer worker. Return only your verdict via submit_result.",
+                "betas": [_MANAGED_AGENTS_BETA],
+            })
+            workers.append((p, w["id"]))
+        coordinator = _managed_agents_request(base, "v1/agents", cfg, {
+            "name": "coordinator", "model": coordinator_model,
+            "multiagent": {"type": "coordinator",
+                          "agents": [{"type": "agent", "id": wid} for _, wid in workers]},
+            "system": "Delegate one review to each worker and aggregate the results.",
+            "betas": [_MANAGED_AGENTS_BETA],
+        })
+        session = _managed_agents_request(base, "v1/sessions", cfg,
+                                          {"agent": coordinator["id"], "environment_id": env_id,
+                                           "betas": [_MANAGED_AGENTS_BETA]})
+        session_id = session["id"]
+        _managed_agents_request(base, f"v1/sessions/{session_id}/events", cfg, {
+            "betas": [_MANAGED_AGENTS_BETA],
+            "events": [{"type": "user.message", "content": [{"type": "text", "text": prompt}]}],
+        })
+
+        max_polls = cfg.get("managed_agents_max_polls", 30)
+        poll_interval = cfg.get("managed_agents_poll_interval", 2)
+        threads: list = []
+        for _ in range(max_polls):
+            resp = _managed_agents_request(base, f"v1/sessions/{session_id}/threads", cfg,
+                                           method="GET")
+            threads = resp.get("data") or resp.get("threads") or []
+            if len(threads) >= len(workers) + 1:  # workers + coordinator
+                break
+            time.sleep(poll_interval)
+
+        total_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
+        results = []
+        by_agent_id = {wid: p for p, wid in workers}
+        for t in threads:
+            u = t.get("usage") or {}
+            for k in total_usage:
+                total_usage[k] += u.get(k, 0) or 0
+            agent_id = t.get("agent_id") or t.get("agent", {}).get("id")
+            persona = by_agent_id.get(agent_id)
+            if persona is None:
+                continue  # the coordinator's own thread (not a worker) isn't counted as a review vote
+            text = "".join(b.get("text", "") for b in (t.get("content") or []) if b.get("type") == "text")
+            ok = ("VERDICT: PASS" in text) and ("VERDICT: FAIL" not in text)
+            results.append({"by": f"managed-agents:{persona}", "persona": persona,
+                            "provider": "managed-agents", "ok": ok, "note": f"session={session_id}"})
+
+        acc = cfg.get("_token_usage")
+        if acc is not None:
+            with _TOKEN_LOCK:
+                a = acc.setdefault("managed-agents", {"prompt_tokens": 0, "completion_tokens": 0,
+                                                       "cache_read_input_tokens": 0, "calls": 0})
+                a["prompt_tokens"] += total_usage["input_tokens"]
+                a["completion_tokens"] += total_usage["output_tokens"]
+                a["cache_read_input_tokens"] += total_usage["cache_read_input_tokens"]
+                a["calls"] += 1
+        if state is not None and step_id is not None:
+            with _HIST_LOCK:
+                state["history"].append({"action": "MANAGED_AGENTS_SESSION", "step": step_id,
+                                         "session_id": session_id, "workers": len(workers)})
+
+        missing = [p for p, _ in workers if p not in {r["persona"] for r in results}]
+        for p in missing:  # a worker that never reported in even after max_polls is marked "unmeasured", not silently dropped
+            results.append({"by": f"managed-agents:{p}", "persona": p, "provider": "managed-agents",
+                            "ok": False, "note": f"timeout (session={session_id}; not in after {max_polls} polls)"})
+        return sorted(results, key=lambda r: r["persona"])  # deterministic (rig's own aggregation code only; the LLM outputs themselves are a separate concern)
+    except Exception as e:
+        return [{"by": "managed-agents:error", "persona": "-", "provider": "managed-agents",
+                 "ok": False, "note": f"managed-agents error: {e}"}]
 
 
 def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str:
@@ -543,6 +793,22 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
 _HIST_LOCK = threading.Lock()
 
 
+def _read_runs_jsonl(path: pathlib.Path) -> list[dict]:
+    """Local copy of commands.py's _read_jsonl (kept private to avoid a providers<->commands
+    import cycle: commands.py already imports from providers.py)."""
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
 # ── Per-step model assignment (issue #293) ────────────────────────────────────
 def parse_step_model_spec(spec: str) -> tuple[str, str] | None:
     """Parse one --step-model value ("<step-id>=<model>"). Returns (step_id, model), or None if malformed (pure)."""
@@ -585,10 +851,12 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     gen_cfg = {**cfg, "model": gen_model} if gen_model else cfg
     ver_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     if len(gen_list) == 1:
-        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg)
+        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg,
+                              state=state, step_id=step["id"])
         return gen_list[0], _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"), []
     def _gen(p):
-        rc, out = run_provider(p, "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg)
+        rc, out = run_provider(p, "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg,
+                               state=state, step_id=step["id"])
         return {"provider": p, "rc": rc, "out": out}
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
@@ -600,7 +868,7 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     diff = _git_diff_evidence(cfg)                             # verify the diff, not the transcript
     for c in cands:                                            # judge ALL candidates (no early stop)
         _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"], diff),
-                               ver_cfg, persona="judge")
+                               ver_cfg, persona="judge", state=state, step_id=step["id"])
         ok, criteria = _judge_output(jout)
         judged.append({"provider": c["provider"], "ok": ok, "criteria": criteria,
                        "note": _excerpt(jout)})
@@ -613,10 +881,51 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
-    gen_model, ver_model = effective_step_models(step, cfg)
+    effective_step = step
+    # Cost-tier auto-routing (#264): only a fallback default. Runtime --step-model and the
+    # recipe's own `model:` both still win outright — auto_route never overrides an explicit
+    # choice, it only fills in when neither is set (sits between recipe model: and the global
+    # --model default).
+    if (cfg.get("auto_route") and step.get("auto_route") and not step.get("model")
+            and not (cfg.get("step_models") or {}).get(step["id"])):
+        size = size_class(git_diff_lines(), load_manifest().get("size_thresholds"))
+        routed_model, reason = resolve_auto_route(step, size)
+        applied_model, applied_reason = routed_model, reason  # #264's static pick (default/fallback)
+
+        # #305: learned route from historical data. Default is shadow mode — the prediction is
+        # always recorded in history, but only affects the actual choice under
+        # --auto-route-mode active (staged rollout: shadow -> confidence threshold -> active).
+        if cfg.get("auto_route_learn"):
+            runs_rows = _read_runs_jsonl(config.RUNS_PATH)
+            expl_key = f"{state['recipe']}:{step['id']}:{cfg.get('exploration_date', '')}"
+            learned = learned_auto_route(state["recipe"], step["id"], step["auto_route"]["candidates"],
+                                         runs_rows, exploration_key=expl_key,
+                                         exploration_pct=cfg.get("exploration_pct", 0))
+            active = cfg.get("auto_route_mode", "shadow") == "active"
+            with _HIST_LOCK:
+                state["history"].append({"action": "LEARNED_ROUTE_PREDICTION", "step": step["id"],
+                                         "sufficient": learned["sufficient"],
+                                         "predicted_model": learned.get("model"),
+                                         "evidence": learned.get("evidence"),
+                                         "explored_from": learned.get("explored_from"),
+                                         "counterfactuals": learned["counterfactuals"], "applied": False})
+            if learned["sufficient"] and active:
+                applied_model, applied_reason = learned["model"], f"learned route (evidence: {learned['evidence']})"
+                state["history"][-1]["applied"] = True  # upgrade the PREDICTION just pushed to "actually applied"
+                log(f"   ↳ learned-route (active): {applied_model}")
+            elif not learned["sufficient"]:
+                log("   ↳ learned-route: insufficient sample, falling back to static auto-route")
+
+        if applied_model:
+            effective_step = {**step, "model": applied_model}
+            with _HIST_LOCK:
+                state["history"].append({"action": "AUTO_ROUTE", "step": step["id"],
+                                         "model": applied_model, "reason": applied_reason})
+            log(f"   ↳ auto-route: {applied_model} ({applied_reason})")
+    gen_model, ver_model = effective_step_models(effective_step, cfg)
     if gen_model:
         st["model"] = gen_model                     # actually-used generator model (run-state/telemetry attribution)
-    winner, out, judged = _generate(state, step, gen_list, ver, cfg, max_parallel)
+    winner, out, judged = _generate(state, effective_step, gen_list, ver, cfg, max_parallel)
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
                                  "provider": winner or gen_list[0], "out": out[:200],
@@ -651,9 +960,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     # Per-step `verifier_model:` is injected into a copy of cfg (independent of the generator side)
     v_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     personas = step["personas"] or ["independent"]
-    results = run_verifiers_parallel(ver, _build_verify_prompt(state, step, out,
-                                                               _git_diff_evidence(cfg)),
-                                     personas, v_cfg, max_parallel)
+    verify_prompt = _build_verify_prompt(state, step, out, _git_diff_evidence(cfg))
+    if cfg.get("parallel_backend") == "managed-agents":  # #295: opt-in experimental backend
+        results = run_managed_agents_fanout(verify_prompt, personas, v_cfg,
+                                            state=state, step_id=step["id"])
+    else:
+        results = run_verifiers_parallel(ver, verify_prompt,
+                                         personas, v_cfg, max_parallel, state=state, step_id=step["id"])
     passes, total = sum(1 for r in results if r["ok"]), len(results)
     par = "parallel" if total > 1 else "solo"
     log(f"   ↳ {par} verification x{total}: PASS {passes}/{total} (quorum={quorum})")
@@ -677,6 +990,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         cfg = {**cfg, "run_dir": cfg.get("run_dir") or str(pathlib.Path(sp).resolve().parent)}
     if any(s["needs"] for s in state["steps"]):
         final = run_dag(state, sp, gen_list, ver, cfg, max_steps, quiet, max_parallel, quorum)
+        state["token_usage"] = cfg.get("_token_usage") or {}
         telemetry_append(state, final)
         return final
     iters, last = 0, "—"
@@ -699,6 +1013,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         break  # DONE / ESCALATE / BLOCKED / STOPPED
     if sp:
         save_state(state, sp)
+    state["token_usage"] = cfg.get("_token_usage") or {}
     telemetry_append(state, last)
     return last
 
@@ -792,7 +1107,7 @@ def cmd_probe(args):
         else:
             i += 1
     if not provider:
-        print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|cmd|mock)")
+        print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock)")
         sys.exit(1)
     prompt = ("Judge whether a product meets its acceptance criteria and end with exactly one line: "
               "'VERDICT: PASS' or 'VERDICT: FAIL'.\nProduct: 2 + 2 = 4"
@@ -803,6 +1118,10 @@ def cmd_probe(args):
     if provider in _OPENAI_BASE:
         print(f"  endpoint : {_base_url(provider, cfg)}/chat/completions")
         print(f"  model    : {resolve_http_model(provider, cfg)}")
+    elif provider == "anthropic":
+        base = (cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
+        print(f"  endpoint : {base}/v1/messages")
+        print(f"  model    : {cfg.get('model') or 'claude-fable-5'}")
     else:
         argv = build_argv(provider, role, "<PROMPT>", cfg, "probe")
         print("  command  : " + " ".join(shlex.quote(a) for a in argv))

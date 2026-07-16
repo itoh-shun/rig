@@ -98,6 +98,19 @@ def telemetry_append(state: dict, final: str) -> None:
     """
     try:
         ss = state["step_state"]
+        # step id -> most recent auto-route decision (#264; a step retried keeps its last decision)
+        auto_routed: dict[str, dict] = {}
+        learned_predictions: dict[str, dict] = {}
+        fable_events: dict[str, list] = {}
+        for h in state.get("history", []):
+            if h.get("action") == "AUTO_ROUTE":
+                auto_routed[h["step"]] = {"model": h.get("model"), "reason": h.get("reason")}
+            elif h.get("action") == "LEARNED_ROUTE_PREDICTION":
+                learned_predictions[h["step"]] = {k: v for k, v in h.items() if k not in ("action", "step")}  # #305
+            elif h.get("action") in ("FABLE_REFUSAL", "FABLE_FALLBACK"):
+                fable_events.setdefault(h["step"], []).append(
+                    {k: v for k, v in h.items() if k not in ("action", "step")} |
+                    {"kind": "refusal" if h["action"] == "FABLE_REFUSAL" else "fallback"})  # #297
         rec = {
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "recipe": state["recipe"],
@@ -108,11 +121,15 @@ def telemetry_append(state: dict, final: str) -> None:
             "steps_passed": sum(1 for st in ss.values() if st.get("status") == "passed"),
             "retries": sum(st.get("retries", 0) for st in ss.values()),
             "escalated_at": (state.get("stopped") or {}).get("at") if state.get("stopped") else None,
+            "token_usage": state.get("token_usage") or {},  # #271/#296: provider -> {prompt/completion_tokens, calls}
             "steps": [{"id": s["id"], "status": ss[s["id"]].get("status"),
                        "retries": ss[s["id"]].get("retries", 0),
                        "model": ss[s["id"]].get("model"),  # actually-used generator model (#293; None = provider default)
                        "verdicts": [_verdict_summary(v)
-                                    for v in ss[s["id"]].get("verdicts", [])]}
+                                    for v in ss[s["id"]].get("verdicts", [])],
+                       **({"auto_route": auto_routed[s["id"]]} if s["id"] in auto_routed else {}),
+                       **({"learned_route": learned_predictions[s["id"]]} if s["id"] in learned_predictions else {}),
+                       **({"fable_events": fable_events[s["id"]]} if s["id"] in fable_events else {})}
                       for s in state["steps"]],
         }
         # Failure-mode taxonomy (additive; absent for successful runs). Deterministic best-guess

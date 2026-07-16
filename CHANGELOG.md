@@ -5,6 +5,339 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
 
 > リリースタグは GitHub 側で発行する（実行環境の都合でタグ push を別途行う運用）。
 
+## [1.16.0] - 2026-07-16
+
+### Added — issue-backlog sweep (#263–#307) + writing-quality layer
+
+- **Cognitive-rhythm grounding + deterministic prose-rhythm sensor**:
+  `knowledge/ai-writing-smells` gains a summarized (own-wording,
+  attributed) cognitive-rhythm principle — dense prose reads as boring
+  when the reader's cognitive mode never switches — plus compact
+  practice rules (opening tension, section bridges, list landing,
+  tension ledger, density waves, topic test). `scripts/prose_rhythm.py`
+  (stdlib-only, deterministic) machine-measures the surface proxies:
+  long-sentence runs, uniform sentence-length variance, ending
+  repetition, uniform paragraph shapes, progress-narration phrases
+  (topic-test deletion candidates), and connective density. Advisory
+  by design — exit code never gates; the semantic judgment stays with
+  `ai-smell-reviewer`, which now gets numbers instead of impressions
+  (wired into de-ai-smell's detection step as an optional pre-pass).
+- **`/rig:rig cockpit` — read-only Mission Control dashboard (#307)**:
+  Aggregates run timeline, gate radar, drill-measured reviewer
+  confidence, a cost meter, and a force-bypass safety strip onto one
+  screen by reusing `board`/`stats`/`audit`/`confidence`'s existing
+  aggregation functions (`read_all_tasks`, `gate_status_counts`,
+  `aggregate_drill_confidence`, `force_bypass_counter`) — no new
+  persistence, no duplicated logic. The cost meter reads the same
+  `.rig/runs.jsonl` token-usage telemetry `orchestrate.py runs --cost`
+  already produces (#271/#296, which didn't exist yet when this
+  feature was originally designed). v1 is read-only: accept/discard
+  stay in the existing commands, cockpit only recommends. Missing data
+  (no drill run, no token usage recorded) is shown as "Unmeasured"
+  rather than a blank that could be misread as healthy.
+- **Continuous cross-session instinct-learning layer (#306)**:
+  `workbench.py` gains an `instincts` subcommand managing
+  `.rig/instincts.jsonl` (id/text/evidence/source_task_ids/confidence/
+  first_seen/last_seen/hit_count/decay_reason/status/supersedes) —
+  completely separate from `facets/knowledge`'s verified wiki.
+  `--add` rejects secrets/tokens/absolute home-directory paths/
+  `ENV_VAR=value`-shaped candidates outright, with the reason shown
+  (never a silent drop). `--decay` lowers confidence by 0.1 for active
+  instincts unused for 30+ days, expiring below 0.2 — implicit
+  knowledge rots by design rather than accumulating forever. Conflict
+  resolution is explicit, not inferred: recognizing two instincts
+  contradict each other needs judgment, so `--supersedes <old-id>` is
+  how the model declares it, which mutes the old one. Only confidence
+  >= 0.7 gets selected for injection, capped at 500 chars total
+  (`select_for_injection`), keeping context-minimal intact.
+  `hooks/suggest-instincts.sh` (Stop) reminds the model to consider
+  proposing a pattern — it doesn't extract one itself, since deciding
+  what's durably useful is a judgment call the hook can't make; most
+  sessions won't have anything worth recording.
+  `hooks/inject-instincts.sh` (SessionStart) injects the selected
+  instincts as `additionalContext`. Both wired into `hooks/hooks.json`
+  without touching the existing inject-talk-mode.sh/
+  preserve-rig-state.sh/remind-rig-header.sh hooks. Verified end-to-end
+  in a disposable repo: secret-pattern rejection, supersedes-based
+  muting excluding the old instinct from `--inject-preview`, decay
+  after backdating `last_seen`, and CLI-level mute/expire/decay/list.
+  Honest scope: automatic semantic contradiction *detection* isn't
+  implemented — only the mechanical *resolution* once a contradiction
+  is explicitly declared via `--supersedes`. Pattern extraction itself
+  is left entirely to the model's judgment.
+- **Read-only VS Code extension for rig board (#286)**:
+  `vscode-extension/` shows `.rig/runs/` task/gate state in an Explorer
+  sidebar panel, refreshed via a FileSystemWatcher. It's read-only by
+  construction — no accept/discard or any other write command is
+  registered. The state-parsing logic (`rigState.ts`) has no dependency
+  on the `vscode` module, so it's unit-tested with plain Node; the
+  gate-status priority order is ported to match `workbench.py`'s
+  `gate_status()` exactly. Compiles cleanly against `@types/vscode`;
+  actually loading it inside a live VS Code Extension Host is
+  unverified in this environment (no VS Code GUI available here).
+- **Experimental Managed Agents API backend for review fan-out (#295)**:
+  `run_managed_agents_fanout()`, an opt-in alternative to the existing
+  subprocess + ThreadPoolExecutor review-gate fan-out, delegates to
+  Anthropic's Managed Agents API (coordinator/worker beta,
+  `managed-agents-2026-04-01`) via raw urllib calls (no SDK dependency,
+  consistent with orchestrate.py's stdlib-only stance). One worker
+  agent per persona, a judgment-only coordinator, polled via
+  `threads.list` until all workers report in. Returns the same shape as
+  `run_verifiers_parallel` so `_execute_step`'s pass/fail logic is
+  unchanged. Only used when `cfg["parallel_backend"] ==
+  "managed-agents"` — the existing default path is completely
+  untouched. Honest scope: the REST endpoint paths are inferred from
+  the documented Python SDK method names, not confirmed against an
+  official REST reference. Verified against a mock HTTP server
+  reproducing the full call sequence (worker/coordinator creation,
+  session creation, event send, threads polling, aggregation,
+  environment_id-missing error path, unreported-worker timeout,
+  connection failure) — not connected to the real API.
+- **Signed provenance via HMAC-SHA256 on accept (#299)**:
+  `accept` now writes `.rig/runs/<task_id>/provenance.json`
+  (task_type/recipe/base/gate status/checks) signed with a
+  locally-generated HMAC-SHA256 key (`.rig/provenance.key`,
+  gitignored). `workbench.py verify-provenance <task_id>` checks the
+  signature and exits 1 on mismatch or tamper. Scoped deliberately to
+  HMAC rather than asymmetric signing (Ed25519/SLSA) to keep
+  workbench.py's stdlib-only dependency policy — this gives
+  same-machine tamper-evidence, not third-party public verification.
+  Documented clearly in code and workbench-ops.md so it isn't mistaken
+  for the heavier guarantee. Verified end-to-end in a throwaway repo:
+  sign, verify (valid), tamper the record, re-verify (INVALID, exit 1).
+- **Gap prescription now drafts a concrete `/rig:forge` request (#268)**:
+  `orchestrate runs`' existing hot-gap detection (same recipe+step
+  escalating 2+ times) now cross-references that step's recorded
+  verdicts to name the top rejecting reviewers, and prints a
+  ready-to-paste `/rig:forge "..."` request describing exactly what's
+  failing (in addition to the existing `/rig:import --discover`
+  suggestion). `orchestrate.py` doesn't invoke forge itself — that
+  needs an LLM — it closes the gap between "detected" and "actionable"
+  as far as a deterministic script can. Verified via `orchestrate
+  selftest` with synthetic `runs.jsonl` data: two escalations on the
+  same step with a rejecting reviewer produce a prompt naming that
+  reviewer.
+- **RBAC for accept and time/cost budget warnings (#282, #281)**:
+  `.rig/access.json` (opt-in) restricts `accept` to an allowlist per
+  task_type, identity resolved via the `RIG_USER` env var or `git
+  config user.name`. Absent file = unrestricted, same as before.
+  `--budget-minutes` on `workbench.py new`: `status`/`board` show a
+  ⚠ marker past the estimate. Advisory only, never blocks. Both are
+  additive and default to today's unrestricted behavior when their
+  config is absent. Verified end-to-end in a throwaway repo: the
+  budget marker shows in status/board, and RBAC blocks/allows accept
+  correctly by identity.
+- **Security/quality batch — secret masking, SAST adapter, rescan,
+  flaky, observability bridge (#273, #274, #275, #276, #277, #278,
+  #279)**:
+  - `implement.md`: pre-generation secret scan before subagent
+    dispatch, masking existing secrets rather than letting them into
+    context.
+  - `acceptance-check.md`: documents `no_suspicious_code_similarity`
+    and `dependency_license_and_cve_checked` as opt-in criteria
+    (enabled via `.rig/gates.json`'s `extra_criteria`), plus
+    `sast_findings_clear` tied to the new adapter below.
+  - `scripts/sast_adapter.py`: converts Semgrep-style JSON into a
+    single worst-case-aggregated acceptance criterion (`workbench.py
+    gate` rejects unregistered criterion names, so per-finding checks
+    don't fit its model — one aggregate check does). Verified
+    end-to-end in a throwaway repo.
+  - `skill-import.md`: new `--rescan` mode re-scans already-imported
+    bricks against the injection-patterns catalog independent of
+    upstream diffs.
+  - `verify.md`: distinguishes known-flaky test failures (rerun/CI
+    history) from genuine regressions before marking
+    `tests_pass_or_explained`.
+  - `observability-reviewer.md` + `implement.md`: findings now carry
+    concrete instrumentation suggestions, bridged into an implement
+    step scoped to this task's diff only (no unrelated-code
+    instrumentation sweeps).
+- **Slack/Teams webhook notifications (#287)**: `scripts/notify.py`
+  posts to Slack/Teams incoming webhooks via urllib only (no SDK
+  dependency) — `--format slack|teams`, `--dry-run` to inspect the
+  payload without sending, `RIG_NOTIFY_WEBHOOK` env var support.
+  Verified against a local HTTP server for both formats plus dry-run
+  and the no-webhook error path. Deciding whether/when an event
+  warrants a notification stays the caller's job (the instruction
+  layer), not this script's.
+- **Cross-repository fleet aggregation (#272)**: `orchestrate.py
+  fleet --repos p1,p2,...` reads `runs.jsonl` and
+  `drill-results.jsonl` from multiple repos read-only, aggregating run
+  counts and per-persona detection rate across projects, plus a
+  per-repo breakdown to see where a given reviewer persona performs
+  better or worse. `--anonymize` swaps repo paths for `repo-N` labels.
+  No repo's `.rig/` data is written to.
+- **Dogfooding section in the README (#284)**: documents how a
+  maintainer measures rig's own gate efficacy with the existing
+  `workbench.py digest --period month` / `stats` / `/rig:drill
+  --replay` commands — no new tooling. Honest scope note: this repo
+  doesn't auto-publish those numbers (no CI job regenerating a badge
+  on merge); today "dogfooding" means running the commands locally.
+- **Talk-mode structured logging and deja-vu detection (#292, #290)**:
+  `talk-loop.md` step 7 captures decisions/confirmed-assumptions/
+  open-questions from the requirement negotiation into `talk-log.md`
+  (an unapproved log, same tier as `diff.md`) once a task-id exists.
+  `workbench.py new`'s `find_similar_tasks()` scores past task inputs
+  by Jaccard overlap on a rough tokenization (no embeddings/search
+  engine), surfacing a "Similar tasks" section in the routing banner
+  above a similarity threshold. Verified: a paraphrased duplicate task
+  is caught, an unrelated task isn't.
+- **Multi-recipe A/B experiment mode and streaming-gate guidance
+  (#291, #302)**: `orchestrate.py ab <recipe1> <recipe2>...` runs the
+  same goal through multiple recipe variants concurrently
+  (ThreadPoolExecutor), each in its own isolated worktree via the
+  existing `setup_isolation`/`teardown_isolation` path so variants
+  never conflict. Reports elapsed time, retry count, and final status
+  per variant; incomplete/dirty variants keep their worktree for
+  inspection, same rule as `--isolate`. `implement.md` gains an
+  opt-in note on streaming lightweight checks (type/lint only) at
+  natural checkpoints during large (size L/XL) implementations, to
+  reduce end-of-verify pileup — final pass/fail still comes from the
+  normal acceptance-gate.
+- **GitHub Action for headless CI usage (#265)**: `action.yml`
+  (composite) wraps `orchestrate.py run --isolate` for workflows
+  without a live Claude Code session. `scripts/rig-action-entrypoint.sh`
+  derives the final status from the run-state JSON (`done`/`stopped`
+  fields, the same logic `orchestrate.py` itself uses) and only pushes
+  a branch + opens a PR via `gh pr create` when the gate resolved
+  `DONE` — a failing or pending gate fails the job and creates
+  nothing. Honest scope: verified the `run` path end-to-end locally
+  with `--provider mock`; the `open-pr` path (branch push + `gh pr
+  create`) needs a live GitHub Actions runner and isn't exercised
+  here.
+- **Static threat scan for rig's own MCP tools (#303)**: adds
+  `orchestrate.py mcp-scan [--json]`, which statically analyzes
+  `scripts/mcp_server.py`'s TOOLS definitions across three adversarial
+  lenses (attacker/defender/auditor) for shell/network
+  over-permission, plaintext secret exposure, and hook-injection risk.
+  Never executes anything — reads the TOOLS dict and source text only,
+  deterministic, no side effects. Module-level findings cover the
+  shared subprocess/secret path; tool-level findings classify each
+  tool as read/write and flag `rig_orchestrate_run` as MEDIUM severity
+  since it can affect the main working tree directly when `--isolate`
+  isn't set — with the concrete mitigation (`isolate: true`) spelled
+  out. `validate.py`'s new `check_mcp_scan()` wires the overall
+  verdict into CI (HIGH->FAIL, MEDIUM->WARN, LOW->PASS), silently
+  skipping when `mcp_server.py` isn't present.
+- **AST-based semantic diff summary for Python (#280)**:
+  `scripts/ast_diff.py` compares Python source with the stdlib `ast`
+  module (top-level/class-level def/class comparison) to distinguish
+  signature changes, body-only changes, additions/removals, and
+  cosmetic-only edits (identical AST despite differing text).
+  `workbench.py diff` now inserts a "Semantic diff (Python)" section
+  for Modified `*.py` files, augmenting rather than replacing
+  `diff.md`'s prose Summary. Non-Python/unparseable files simply don't
+  get this section and fall back to the existing text diff.
+- **Confidence-weighted gate via drill detection rate (#301)**: new
+  `workbench.py confidence [<task_id>]` surfaces drill-measured
+  detection rate per reviewer as a supplementary signal alongside the
+  existing pass/fail gate — task-scoped calls record
+  `reviewer_confidence` into `acceptance.json` without touching gate
+  logic itself. Below a 70% threshold it's flagged low-confidence and
+  an additional reviewer is suggested, never auto-dispatched.
+  Unmeasured personas stay "unmeasured" rather than a fabricated score.
+  `aggregate_drill_confidence()` is a shared, pure aggregation function
+  so nothing re-derives it independently.
+- **Fable 5 refusal-classifier and server-side fallback handling
+  (#297)**: a new `anthropic` provider (`run_anthropic_provider`) calls
+  the Anthropic Messages API directly over HTTP — the `claude`/`rig`
+  CLI providers use `--output-format text` and never expose a
+  structured `stop_reason`, so this is a separate code path. On
+  `stop_reason: "refusal"` with no fallback content block, records
+  `FABLE_REFUSAL` (category/explanation) in state history and returns
+  rc=1 (not a silent failure). When a `{"type": "fallback"}` content
+  block is present (the `server-side-fallback-2026-06-01` beta
+  succeeded), records `FABLE_FALLBACK` and treats the step as a normal
+  success — the gate is not blocked. Usage
+  (input/output/`cache_read_input_tokens`) is normalized into the
+  existing #271/#296 token_usage accumulator and surfaced in `runs
+  --cost`, alongside a fallback/refusal occurrence count.
+  `agents/security-reviewer.md` and `commands/orchestrate.md` now warn
+  that assigning Fable 5 to attack-technique-focused personas via
+  `--step-model` (#293) requires setting `fallback_model`. Honest
+  scope: verified against a mock HTTP server reproducing the Anthropic
+  Messages API's response shape — not connected to the real Anthropic
+  API (billing/live-traffic risk).
+- **Host adapter layer generalizing native-layer integration beyond
+  Codex (#304)**: `scripts/host_adapters.py` centralizes per-host
+  differences (hook event names, skill path conventions, capability
+  matrix, degrade behavior) into a single `HOSTS` dict, so adding a new
+  host means adding one entry rather than touching rig's core. Cursor
+  was added as the second host to validate the design (researched
+  against Cursor's official docs): hook event names are camelCase
+  (`PreCompact` -> `preCompact`), Cursor reads `.agents/skills/` for
+  legacy compatibility so Codex's existing `SKILL.md` works unmodified,
+  and `preCompact` is documented as observational-only — `cursor/hooks.json`
+  declares this as an honest degrade instead of pretending it works.
+  Claude Code's and Codex's existing files are unchanged; the adapter
+  only maps to what's already shipped.
+- **Codex CLI native-layer integration (#294)**: `codex/skills/rig/SKILL.md`
+  (Codex's `.agents/skills/<name>/SKILL.md` convention, a thin pointer to
+  the existing `workbench.py`/`orchestrate.py` — no new engine),
+  `codex/hooks.json` (`PreCompact` wired to the existing
+  `hooks/preserve-rig-state.sh`, reused as-is), and
+  `.codex/agents/security-reviewer.toml` (a Codex-native subagent
+  mirroring `agents/security-reviewer.md`'s review axes and output
+  contract, with `sandbox_mode = "read-only"` layered on top of
+  `orchestrate.py`'s existing argv-level read-only enforcement — defense
+  in depth, not a replacement). Honest scope: this environment has no
+  codex CLI, so none of it has been exercised live — hooks.json validates
+  as JSON and the TOML parses with `tomllib` using only documented
+  fields, but actual skill loading, hook firing, sandbox enforcement, and
+  MCP connection are unverified. The existing stateless `--provider
+  codex` path is untouched.
+- **Production outcome feedback loop (#289, #300)**: `accept` lands a
+  staged diff, so workbench never sees the final commit SHA a human
+  creates. `workbench.py record-commit <task_id> [<sha>]` links
+  task_id -> sha explicitly. `record-outcome <task_id> --status
+  ok|incident` logs what actually happened in production — the
+  real-world counterpart to drill's synthetic detection rate.
+  `trace-commit <sha>` reverse-looks-up a sha to its task, shows the
+  original gate prediction plus any recorded outcome, and drafts a
+  revert plan (command + PR title/body) when the outcome is
+  "incident" — it never creates the PR or runs the revert itself,
+  that stays a human/GH-tool step.
+- **Learned auto-router from historical run data (#305)**:
+  `learned_auto_route()` aggregates `.rig/runs.jsonl`'s track record
+  (which model actually got used per recipe/step, and did the step
+  pass) and picks the cheapest static `--auto-route` (#264) candidate
+  meeting a pass-rate/sample threshold — frequency-based, no ML model.
+  Defaults to shadow mode: predictions are always recorded
+  (`LEARNED_ROUTE_PREDICTION` in history, `steps[].learned_route` in
+  telemetry) but only applied when `--auto-route-mode active` is set.
+  Insufficient samples or low pass rate falls back to the static
+  auto-route, with every rejected candidate and its reason recorded
+  (counterfactuals) so the choice stays auditable.
+  `--exploration-pct`/`--exploration-date` let a deterministic fraction
+  of runs try the next-cheapest candidate (hash-based, no randomness).
+  Honest scope: regret logging (auto-calibrating "too cheap"/"too
+  expensive" picks) is not implemented.
+- **Cost-tier auto-routing (#264)**: recipe steps can declare
+  `auto_route.candidates` (`{model, cost_tier, max_size}`, cheapest
+  first). `orchestrate.py run --auto-route` resolves the first candidate
+  whose `max_size` covers the measured diff size (reusing the existing
+  `size_class`/`git_diff_lines`/manifest machinery), falling back to the
+  most capable candidate if none fit. It's a fallback only — runtime
+  `--step-model` and the recipe's own `model:` both still win outright.
+  The decision is recorded in run-state history and `runs.jsonl`'s
+  `steps[].auto_route`. `resolve_auto_route()` is a pure, tested function
+  proving determinism (same input -> same choice).
+- **MCP server (#263)**: `scripts/mcp_server.py` implements a minimal MCP
+  stdio transport (JSON-RPC 2.0, line-delimited) without depending on the
+  `mcp` SDK, matching workbench.py/orchestrate.py's stdlib-only stance. It
+  exposes 14 tools (`rig_task_*`, `rig_orchestrate_*`) that shell out to
+  the existing workbench.py/orchestrate.py CLIs — no new engine, and
+  accept/discard's force-proof requirements go through the identical code
+  path so they can't be bypassed via MCP.
+- **Token/cost usage metering for HTTP-based providers (#271, #296)**:
+  `orchestrate.py` now captures the OpenAI-compatible `usage` field from
+  ollama/lmstudio responses (`_record_token_usage`, thread-safe) and rolls
+  it up per-run as `token_usage` in `runs.jsonl`; `orchestrate.py runs
+  --cost` aggregates it by recipe/provider. CLI-based providers
+  (claude/codex) don't expose structured usage and are explicitly out of
+  scope — the command says so and points to Anthropic's Usage & Cost
+  Admin API instead of estimating.
+
 ## [1.15.0] - 2026-07-11
 
 ### Added — three more research-backed hardening items

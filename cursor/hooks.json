@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "description": "rig hooks for Cursor (#304, generalized from #294's Codex adapter via scripts/host_adapters.py). Cursor's `preCompact` is documented as purely observational (cursor.com/docs/hooks) — it cannot inject preserved context into the compaction the way Claude Code's PreCompact does. This hook is an honest degrade: it emits a short notification, not a state-preservation attempt. See scripts/host_adapters.py's HOSTS['cursor']['degrade'] for the declared fallback behavior.",
+  "hooks": {
+    "preCompact": [
+      {
+        "command": "/usr/bin/env sh -c \"echo '{\\\"user_message\\\": \\\"[rig] compaction is happening — Cursor cannot preserve rig run-state through preCompact (observational-only hook); re-anchor to the active task manually if one was in progress.\\\"}'\"",
+        "type": "command",
+        "timeout": 5
+      }
+    ]
+  }
+}

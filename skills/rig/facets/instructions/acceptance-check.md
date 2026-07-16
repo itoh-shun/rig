@@ -47,6 +47,14 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 
 review/security プリセット（`findings_are_concrete` 等）は review 系タスクの `review-diff`/`parallel-review` step 自体が output-contract で構造を強制するため、acceptance-check は reviewer の出力がその構造を満たしているかだけを確認する。
 
+### 任意基準（`.rig/gates.json`の`extra_criteria`経由で有効化）
+
+以下は標準presetには含めない（過検知/低精度のリスクがあるため既定offとし、プロジェクトが`.rig/gates.json`の`extra_criteria`で明示的に該当preset/task_typeへ追加したときだけ判定する。`workbench.py gate --set <name>=...`は`extra_criteria`に登録済みの criterion 名しか受け付けない）。判定方法だけをここに定義しておく：
+
+- `no_suspicious_code_similarity`（#274）：生成コードが既知の公開コードと酷似していないか。目視/検索で確認できる範囲でよい（専用ツールが無い場合はweb検索での類似コード確認や、ライセンス表記の要求されるコード片の混入がないかの確認に留める）。確証がない場合は`warning`にし、判断根拠をdetailに残す。
+- `dependency_license_and_cve_checked`（#277）：package manifest（`package.json`/`pyproject.toml`等）に新規/更新依存があれば、そのライセンス種別が禁止リストに抵触しないか、既知の重大脆弱性（CVE）が無いかを確認する。依存の追加が無いtaskは`skipped`。
+- `sast_findings_clear`（#276）：`scripts/sast_adapter.py <tool> <output.json> --apply <task_id>`で機械判定する（Semgrep等の出力をworst-case集約した1criterionとして反映）。ツール出力が無い場合は`skipped`。
+
 ### ④ 記録
 
 ```
