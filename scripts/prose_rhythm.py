@@ -12,12 +12,31 @@ this gives that reviewer numbers instead of impressions.
 Metrics (all deterministic, stdlib-only):
   long-run       3+ consecutive long sentences (no short "beat" between them)
   uniform-beat   sentence lengths with low variance (same-length monotony)
+  low-burstiness adjacent sentences barely differ in length — even when the
+                 document-wide variance passes, a locally flat beat reads
+                 monotone (#318; independent field measurement reached the
+                 same conclusion: AI smell shows in rhythm before vocabulary)
   ending-run     3+ consecutive sentences with the same normalized ending
-  uniform-para   paragraphs of near-identical sentence counts (template shape)
+  uniform-para   paragraph sentence-counts with low variation (template
+                 shape — catches the "every paragraph is 3 sentences" tic,
+                 not just exact equality)
   progress       progress-narration phrases — sentences that update the
                  *document* ("this section covers...") rather than the
                  *situation*; candidates for deletion under the topic test
   connectives    share of sentences opening with an explicit connective
+
+Informational (reported, never flagged): taigendome_ratio — the share of
+sentences ending on a noun (体言止め). Field measurement found AI-generated
+Japanese uses taigendome at near-zero rates while human prose mixes it in,
+so a long document at exactly 0% is itself a weak AI signal — but "add
+taigendome" is a style call, not a defect, hence informational only.
+
+Honest scope on the thresholds: they are uncalibrated heuristics, chosen by
+eyeball against a handful of documents — NOT calibrated against a human-
+prose corpus (that is the proper method, and what the field measurement
+above did with 137 human / 406 AI documents). Mora-based length measurement
+would beat character counts but needs morphological analysis, which a
+stdlib-only script cannot do; character counts are the honest approximation.
 
 Usage:
   python3 scripts/prose_rhythm.py <file.md> [file2...]
@@ -36,13 +55,17 @@ import statistics
 import sys
 
 # Tunable, documented thresholds. Deterministic — change them here, not per run.
+# Uncalibrated heuristics (see module docstring): the proper method is
+# calibration against a human-prose corpus, which has not been done here.
 LONG_SENTENCE_CHARS = 55      # a sentence this long or longer counts as "long"
 LONG_RUN_MIN = 3              # this many consecutive long sentences = a flagged run
 UNIFORM_CV_MAX = 0.30         # coefficient of variation below this = monotone beat
 UNIFORM_MIN_SENTENCES = 8     # need at least this many sentences to judge uniformity
+BURSTINESS_MIN = 0.35         # mean adjacent length-delta / mean length below this = flat beat
 ENDING_RUN_MIN = 3            # this many identical consecutive endings = flagged
 CONNECTIVE_RATIO_MAX = 0.40   # more than this share of connective-led sentences = flagged
 UNIFORM_PARA_MIN = 4          # need at least this many paragraphs to judge shape
+UNIFORM_PARA_CV_MAX = 0.25    # paragraph sentence-count CV below this = template shape
 
 _SENTENCE_END_RE = re.compile(r"(?<=[。！？!?])")
 _ENDING_RE = re.compile(
@@ -61,6 +84,9 @@ _PROGRESS_PATTERNS = (
     r"まとめると", r"要するに",
 )
 _PROGRESS_RE = re.compile("|".join(f"(?:{p})" for p in _PROGRESS_PATTERNS))
+# Kanji / katakana — a sentence ending on one of these with no verbal/copula
+# ending is counted as taigendome (体言止め). Rough by design (no morphology).
+_NOUNISH_LAST_RE = re.compile(r"[一-鿿゠-ヿ]")
 
 
 def strip_non_prose(text: str) -> str:
@@ -137,6 +163,21 @@ def analyze(text: str) -> dict:
                              "detail": f"sentence-length CV {cv:.2f} < {UNIFORM_CV_MAX} across {len(lengths)} sentences",
                              "excerpt": ""})
 
+    # low-burstiness: adjacent sentences barely differ in length (#318).
+    # Document-wide CV can pass while the local beat is still flat — e.g. a
+    # slow monotone drift from short to long sentences has variance but no
+    # short/long alternation. Burstiness = mean |len[i]-len[i-1]| / mean len.
+    burstiness = None
+    if len(lengths) >= UNIFORM_MIN_SENTENCES:
+        mean = statistics.mean(lengths)
+        deltas = [abs(a - b) for a, b in zip(lengths, lengths[1:])]
+        burstiness = (statistics.mean(deltas) / mean) if mean else 0.0
+        if burstiness < BURSTINESS_MIN:
+            findings.append({"metric": "low-burstiness",
+                             "detail": f"adjacent length variation {burstiness:.2f} < {BURSTINESS_MIN} "
+                                       f"across {len(lengths)} sentences (flat local beat)",
+                             "excerpt": ""})
+
     # ending-run: 3+ consecutive identical normalized endings
     prev_end, end_run, end_start = "", 0, ""
     for s in sentences + [""]:
@@ -151,12 +192,20 @@ def analyze(text: str) -> dict:
             end_run, end_start = 1, s
         prev_end = e
 
-    # uniform-para: paragraphs of near-identical sentence counts
+    # uniform-para: paragraph sentence-counts with low variation (#318 relaxed
+    # from exact equality to CV — catches the "every paragraph is 2-3
+    # sentences" template tic field measurement found in some model families).
     para_counts = [len(split_sentences(p)) for p in paragraphs]
-    if len(para_counts) >= UNIFORM_PARA_MIN and len(set(para_counts)) == 1 and para_counts[0] > 1:
-        findings.append({"metric": "uniform-para",
-                         "detail": f"{len(para_counts)} paragraphs, every one exactly {para_counts[0]} sentences",
-                         "excerpt": ""})
+    if len(para_counts) >= UNIFORM_PARA_MIN and statistics.mean(para_counts) > 1:
+        p_mean = statistics.mean(para_counts)
+        p_cv = statistics.pstdev(para_counts) / p_mean
+        if p_cv < UNIFORM_PARA_CV_MAX:
+            shape = (f"every one exactly {para_counts[0]} sentences"
+                     if len(set(para_counts)) == 1
+                     else f"sentence-count CV {p_cv:.2f} < {UNIFORM_PARA_CV_MAX}")
+            findings.append({"metric": "uniform-para",
+                             "detail": f"{len(para_counts)} paragraphs, {shape}",
+                             "excerpt": ""})
 
     # progress: document-updating (not situation-updating) sentences
     for s in sentences:
@@ -177,9 +226,26 @@ def analyze(text: str) -> dict:
     else:
         ratio = 0.0
 
+    # taigendome ratio (informational, never a finding): sentences ending on a
+    # noun — no verbal/copula ending matched and the last character is
+    # kanji/katakana. Field measurement found AI-generated Japanese sits at
+    # ~0% while human prose mixes taigendome in, so a long document at exactly
+    # 0% is a weak AI signal — but "add taigendome" is a style call, not a
+    # defect, hence report-only.
+    n_taigen = 0
+    for s in sentences:
+        if normalized_ending(s):
+            continue
+        body = s.rstrip("。！？!?、,.）)」』")
+        if body and _NOUNISH_LAST_RE.match(body[-1]):
+            n_taigen += 1
+    taigen_ratio = (n_taigen / len(sentences)) if sentences else 0.0
+
     return {"sentences": len(sentences), "paragraphs": len(paragraphs),
             "length_cv": round(cv, 3) if cv is not None else None,
+            "burstiness": round(burstiness, 3) if burstiness is not None else None,
             "connective_ratio": round(ratio, 3),
+            "taigendome_ratio": round(taigen_ratio, 3),
             "findings": findings}
 
 
@@ -187,7 +253,9 @@ def format_report(result: dict, label: str) -> str:
     lines = [f"## prose-rhythm: {label}",
              f"sentences: {result['sentences']}  paragraphs: {result['paragraphs']}  "
              f"length-CV: {result['length_cv'] if result['length_cv'] is not None else 'n/a'}  "
-             f"connective-ratio: {result['connective_ratio']:.0%}"]
+             f"burstiness: {result['burstiness'] if result['burstiness'] is not None else 'n/a'}  "
+             f"connective-ratio: {result['connective_ratio']:.0%}  "
+             f"taigendome: {result['taigendome_ratio']:.0%}"]
     if not result["findings"]:
         lines.append("No rhythm findings. (Surface proxies only — a clean report does not mean the prose has rhythm; it means the script found nothing.)")
         return "\n".join(lines)
