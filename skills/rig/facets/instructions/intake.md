@@ -15,6 +15,8 @@
 
 スコープが曖昧・広すぎる場合は `superpowers:brainstorming` スキルを参照し、ユーザーとともに範囲を絞り込む。
 
+**「どこ」の特定にコードベース探索が要る場合（§8 Native-first）**：ホストが read-only の **Explore エージェント型**を公開していれば、探索 dispatch はそれで行う——構造的に書き込み不能なので調査段階の dispatch として安全で、汎用 subagent より速く安い。無ければ通常の subagent で探索する（従来通り）。親 context に探索結果の生ログを引き込まない原則（context-minimal）はどちらでも同じ。
+
 ### ② サイズ見積もり
 
 | サイズ | 目安 |
