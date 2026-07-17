@@ -7,7 +7,7 @@
 - `--seeds <n>`（任意・既定 5）：注入する種の数。
 - `--corpus standard|project|all`（任意・既定 `standard`・#270）：種の選定元。`standard`＝下記①の**標準コーパス**（plugin 同梱・リポジトリを問わず同じ物差し）のみ。`project`＝プロジェクト固有コーパス `.claude/rig/drill-corpus.md`（①と同じ列構成の表）のみ。`all`＝両方（結果の各 run 行は `corpus` タグで区別されるため混ざらない）。project コーパスが無いのに `project`/`all` を指定したら「無い」と明示して standard に fallback する。
 - `--clean`（任意）：**クリーン・コントロール専用モード**（下記③-a）。バグの種を一切注入せず、no-bug diff だけで同じ fan-out を走らせて per-persona の `clean_fp_rate` を実測する。**省略時（既定）はミックスモード**＝種入りの合成 diff に加えてクリーン diff を1本混ぜ、検出率と `clean_fp_rate` を同一 run で測る。
-- `--personas <a,b,…>`（任意）：試す reviewer 集合。省略時は 3-way＋manifest `default_personas`。
+- `--personas <a,b,…>`（任意）：試す reviewer 集合。省略時は 3-way＋manifest `default_personas`。in-session 実行では **`native-code-review`**（ホスト組み込みの `/code-review` skill・`parallel-review` ②のネイティブ・レーン）も集合に含められる——組み込み skill も persona と同じ物差しで検出率を実測する（headless drill では不可・黙って省く）。
 - `--replay [<persona>]`：**回帰リプレイモード**（下記④）。種を注入せず、アーカイブ済みの過去 diff に再実行して verdict の差分を見る。
 - `--verify-findings`：反証者（`finding-verifier`）も同時に測る（正しい種を REFUTED したら反証者の失点）。
 

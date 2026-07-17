@@ -821,6 +821,7 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 
 - **instruction facet は薄く、既存の skill / command / agent に委譲する。** エンジンは **routing ＋ gating** であり、機能の**再実装ではない**。
 - **起動時に利用可能な skill / agent / command を確認**し、該当するものがあればそれを使う。無い場合に限り手動ステップへフォールバックする。
+- **ホスト組み込み（Claude Code built-in）の skill も在庫に含める**：セッションが `/code-review`・`/security-review`・`/verify` 等を公開していれば、rig の対応フローが**補助レーン**として使う（review 系は `parallel-review` ②のネイティブ・レーン、verify は ②-b）。2つの規律を必ず守る——(1) **測定に服させる**：ネイティブ skill の票も persona 名（`native-code-review` 等）で記録し、stats/drill の計測対象にする（測れないレビュアーを使わない）。(2) **代替にしない**：セッションと同じモデルで走るため、独立検証（採点者≠生成者）の主クォーラムは persona/クロスプロバイダ側に残す。headless 実行には組み込み skill が無いので黙って省く（構造は不変）。
 - この非対称（在庫があれば委譲、無ければ最小限の自前手順）が context とメンテコストを抑える。
 
 ## 9. アンチパターン

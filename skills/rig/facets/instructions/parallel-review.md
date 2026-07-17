@@ -24,6 +24,13 @@
 - **migration 観点**（`migration-reviewer`）: DB/データ移行を含む変更（往路と復路・expand-contract・ロック時間・データ検証）に推奨。
 - **docs 観点**（`docs-reviewer`）: 公開挙動を変える変更（README/CHANGELOG/コメント/設定例が虚偽化していないか）に推奨。
 
+**ネイティブ・レーン（任意・host組み込みskillを1票として使う・§8 Native-first）**: ホストのClaude Codeセッションが組み込みのレビューskill（`/code-review`。security_review タスクなら加えて `/security-review`）を公開している場合、persona群の fan-out に**追加の1票**として載せてよい：
+
+- Skill ツールで起動し、返ってきた findings を**同じ契約に翻訳**する——各指摘に severity・`file:line`・Blocking/Non-blocking を付け、欠けている severity は推定して「推定」と明記する（契約は `output-contracts/review-verdict`/`review-findings` のまま。ネイティブ側の形式を新契約にしない）。
+- verdict は persona 名 **`native-code-review`**（/security-review なら `native-security-review`）として `workbench.py review --set native-code-review=<verdict>` で記録する——これで既存の persona と同じく `stats` のゴム印検知・履歴集計の対象になり、in-session の `/rig:drill` では fan-out に含めれば**検出率も実測できる**（「測れないレビュアーは使わない」の原則にネイティブ skill も従う）。
+- **代替ではなく追加**：ネイティブ skill はセッションと同じモデルで走るため、これ**だけ**にすると生成者と同クラスのモデルの自己レビューに退化する（`policies/independent-verification` 違反）。persona レーン（クロスプロバイダ可）が主クォーラムのままで、ネイティブ・レーンは補助票。
+- **可用性**：組み込み skill は生きた Claude Code セッションにのみ存在する。headless 実行（orchestrate.py の provider 経路・CI・MCP）には無いので、そこでは**このレーンを黙って省く**（fan-out の構造は変わらない）。
+
 **観点カタログの注入**: dispatch する各 reviewer について、同名の persona facet が `inject: ["[[slug]]"]` を宣言していれば、wiki ページを tier 解決して Knowledge 位置へ注入する（**agent 経由の dispatch でも同様**＝agent と persona で知識が非対称にならない）。
 
 **suppression の注入（`facets/policies/suppression-memory`）**: `.rig/review-suppressions.jsonl` に有効な suppression があれば、各 reviewer prompt へ「このリポジトリで検証済みの非問題 — 該当コードに実質的変更が無い限り再指摘しない」として注入する（照合・ライフサイクルは同 policy が正本）。
