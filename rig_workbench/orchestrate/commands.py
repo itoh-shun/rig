@@ -11,8 +11,8 @@ import concurrent.futures as futures
 from collections import Counter
 
 from . import config
-from .recipes import (auto_orchestrate, git_diff_lines, load_manifest, load_steps,
-                      parse_frontmatter, resolve_effective, resolve_extends,
+from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_manifest,
+                      load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state
 from .providers import parse_step_model_spec, run_loop, unknown_step_model_ids
@@ -453,16 +453,33 @@ def cmd_run(args):
 
 def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: str,
                     cfg: dict, max_steps: int, max_parallel: int, quorum: str,
-                    out_path: pathlib.Path) -> dict:
+                    out_path: pathlib.Path, manifest_src: pathlib.Path | None = None,
+                    label: str | None = None) -> dict:
     """Run one variant (recipe) in its own isolated worktree and return a comparison summary
     (#291's `ab` helper). Folds the same execution path as cmd_run
     (setup_isolation -> run_loop -> teardown_isolation) into one function so multiple variants
     can genuinely run concurrently from a ThreadPoolExecutor (each variant has its own worktree,
-    so no file collisions; quiet=True avoids interleaved output)."""
+    so no file collisions; quiet=True avoids interleaved output).
+
+    `manifest_src` (#317, manifest A/B): the given file is written into the
+    variant worktree as `.claude/rig.md` and its content hash is recorded in
+    the trust store (explicit CLI provision = consent, the same consent model
+    --allow-project-manifest uses). Nested provider invocations running with
+    cwd=worktree resolve THAT manifest; the main working tree is never touched.
+    Honest scope: this parent orchestrate process's own load_manifest() calls
+    (e.g. --auto-route size classing) still read the invoking repo's manifest —
+    manifest A/B exercises what nested providers see."""
     fm, _warns = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
     steps = load_steps(fm)
     state = new_state(fm.get("name", recipe_path.stem), steps, goal)
     iso = setup_isolation(fm.get("name", recipe_path.stem))
+    if manifest_src is not None:
+        import hashlib
+        dst = pathlib.Path(iso["dir"]) / ".claude" / "rig.md"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        content = manifest_src.read_bytes()
+        dst.write_bytes(content)
+        _record_trust(dst.resolve(), hashlib.sha256(content).hexdigest())
     variant_cfg = {**cfg, "cwd": iso["dir"], "_token_usage": {}}  # per-variant accumulator (#271/#296)
     state["isolation"] = iso
     t0 = time.monotonic()
@@ -474,7 +491,7 @@ def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: 
     save_state(state, out_path)
     retries = sum(st.get("retries", 0) for st in state["step_state"].values())
     return {
-        "recipe": recipe_path.stem,
+        "recipe": label or recipe_path.stem,
         "final": final,
         "elapsed_sec": elapsed,
         "retries": retries,
@@ -492,18 +509,16 @@ def cmd_ab(args):
     selects the generator/verifier role the same way `run` does — the comparison is about
     recipe differences, not model/provider differences.
     """
-    if len(args) < 2:
+    if len(args) < 1:
         print("[ERROR] usage: ab <recipe1> <recipe2> [...] --provider <name> --goal G "
-              "[--verifier-provider V] [--max-steps N] [--model M]")
+              "[--verifier-provider V] [--max-steps N] [--model M]\n"
+              "       ab <recipe> --manifest-a <path> --manifest-b <path> --provider <name> --goal G")
         sys.exit(1)
     recipes: list[str] = []
     i = 0
     while i < len(args) and not args[i].startswith("--"):
         recipes.append(args[i])
         i += 1
-    if len(recipes) < 2:
-        print("[ERROR] specify 2 or more recipes to compare")
-        sys.exit(1)
 
     gen = ver = None
     goal = None
@@ -511,6 +526,7 @@ def cmd_ab(args):
     max_parallel = 4
     quorum = "all"
     cfg: dict = {}
+    manifest_a = manifest_b = None
     while i < len(args):
         a = args[i]
         if a == "--provider" and i + 1 < len(args):
@@ -528,26 +544,58 @@ def cmd_ab(args):
         elif a == "--model" and i + 1 < len(args):
             cfg["model"] = args[i + 1]
             i += 2
+        elif a == "--manifest-a" and i + 1 < len(args):
+            manifest_a = pathlib.Path(args[i + 1])
+            i += 2
+        elif a == "--manifest-b" and i + 1 < len(args):
+            manifest_b = pathlib.Path(args[i + 1])
+            i += 2
         else:
             i += 1
+
+    manifest_mode = manifest_a is not None or manifest_b is not None
+    if manifest_mode:
+        # Rule A/B (#317): same recipe, two manifests. Everything else stays
+        # identical so the measured difference is the rules', nothing else's.
+        if not (manifest_a and manifest_b):
+            print("[ERROR] manifest A/B needs BOTH --manifest-a and --manifest-b")
+            sys.exit(1)
+        if len(recipes) != 1:
+            print("[ERROR] manifest A/B compares one recipe under two manifests — give exactly 1 recipe")
+            sys.exit(1)
+        for p in (manifest_a, manifest_b):
+            if not p.is_file():
+                print(f"[ERROR] manifest file '{p}' does not exist")
+                sys.exit(1)
+    elif len(recipes) < 2:
+        print("[ERROR] specify 2 or more recipes to compare")
+        sys.exit(1)
     if not gen:
         print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock)")
         sys.exit(1)
     ver = ver or gen
 
-    resolved = [resolve_recipe(r) for r in recipes]
-    results: list[dict | None] = [None] * len(resolved)
-    print(f"◈ A/B experiment: {' vs '.join(recipes)} (provider={gen} / {len(resolved)} concurrent variants)\n")
-    with futures.ThreadPoolExecutor(max_workers=len(resolved)) as ex:
+    if manifest_mode:
+        path = resolve_recipe(recipes[0])
+        variants = [(path, manifest_a, f"A({manifest_a.stem})", pathlib.Path("ab-manifest-a-state.json")),
+                    (path, manifest_b, f"B({manifest_b.stem})", pathlib.Path("ab-manifest-b-state.json"))]
+        title = f"{recipes[0]} under {manifest_a.name} vs {manifest_b.name}"
+    else:
+        variants = [(resolve_recipe(r), None, None, None) for r in recipes]
+        variants = [(p, m, lbl, pathlib.Path(f"ab-{p.stem}-state.json")) for p, m, lbl, _ in variants]
+        title = " vs ".join(recipes)
+    results: list[dict | None] = [None] * len(variants)
+    print(f"◈ A/B experiment: {title} (provider={gen} / {len(variants)} concurrent variants)\n")
+    with futures.ThreadPoolExecutor(max_workers=len(variants)) as ex:
         fut_to_idx = {
             ex.submit(_run_ab_variant, path, goal, gen, ver, dict(cfg), max_steps, max_parallel, quorum,
-                     pathlib.Path(f"ab-{path.stem}-state.json")): idx
-            for idx, path in enumerate(resolved)
+                     out_path, manifest, lbl): idx
+            for idx, (path, manifest, lbl, out_path) in enumerate(variants)
         }
         for fut in futures.as_completed(fut_to_idx):
             results[fut_to_idx[fut]] = fut.result()
 
-    print(f"## rig ab — {' vs '.join(recipes)}\n")
+    print(f"## rig ab — {title}\n")
     print(f"{'recipe':<20} {'final':<10} {'elapsed(s)':<12} {'retries':<8} worktree")
     for r in results:
         wt = r["worktree_dir"] or "-"
@@ -879,6 +927,24 @@ def cmd_runs(args):
                     cache = f"  cache_read={a['cache_read_input_tokens']}" if a["cache_read_input_tokens"] else ""
                     print(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
                           f"completion={a['completion_tokens']:8d}  total={total:8d}{cache}")
+            # Harness-context load (#319): per-provider prompt weight, derived from the
+            # rollup above (no new metering). The prompt includes the user's own task
+            # text, so this is an UPPER BOUND on harness overhead, not the overhead
+            # itself — separating the injected step-contract/knowledge share would
+            # need per-segment metering that doesn't exist yet.
+            by_provider: dict[str, dict] = {}
+            for providers in by_recipe.values():
+                for provider, a in providers.items():
+                    t = by_provider.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+                    for k in t:
+                        t[k] += a[k]
+            print("\n  Harness-context load (upper bound — prompts include the task text itself):")
+            for provider, t in sorted(by_provider.items()):
+                if not t["calls"]:
+                    continue
+                per_call = t["prompt_tokens"] / t["calls"]
+                ratio = (t["prompt_tokens"] / t["completion_tokens"]) if t["completion_tokens"] else float("inf")
+                print(f"    {provider:16s} avg prompt/call={per_call:8.0f}  prompt:completion={ratio:.1f}:1")
         if fallback_count or refusal_count:
             print(f"\nFable 5 refusal-classifier (#297): fallback={fallback_count}  direct-refusal={refusal_count}  "
                   "(a fallback is treated as a transparent success and doesn't block the gate; cache_read is the "

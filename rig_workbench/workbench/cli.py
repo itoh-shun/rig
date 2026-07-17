@@ -28,6 +28,7 @@ from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
+from .destructive import cmd_scan_destructive
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
@@ -36,6 +37,8 @@ from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
 from .secrets import cmd_scan_secrets
+from .stale_refs import cmd_stale_refs
+from .streaming import cmd_stream_checks
 
 
 def main() -> None:
@@ -147,7 +150,32 @@ def main() -> None:
                    ".claude/rig/personas, .rig/recipes/*.md)")
     p.add_argument("--diff", metavar="TASK_ID",
                    help="scan the task worktree's diff vs base + its prose surfaces (what the gate sensor sees)")
+    p.add_argument("--deps", action="store_true",
+                   help="scan dependency trees' prose files (node_modules/vendor/third_party "
+                        "*.md/*.rst/*.txt) for agent-directed hidden instructions — explicit "
+                        "opt-in, never part of the default surfaces (#320)")
     p.set_defaults(func=cmd_scan_injection)
+
+    p = sub.add_parser("stream-checks", help="mid-implementation lightweight checks — fast "
+                       "secret/injection/destructive sensors as hints; never blocks the gate (#302)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--watch", action="store_true", help="poll and re-scan when the diff changes")
+    p.add_argument("--interval", type=float, default=5.0, help="poll interval seconds (with --watch; default 5)")
+    p.add_argument("--max-passes", type=int, default=None, help="stop after N passes (with --watch; default unbounded)")
+    p.set_defaults(func=cmd_stream_checks)
+
+    p = sub.add_parser("stale-refs", help="stale path-reference check over the manifest and "
+                       "project knowledge (WARN-only, exit 0; backtick-quoted relative paths only) (#316)")
+    p.add_argument("paths", nargs="*", help="files/directories to scan "
+                   "(default: .claude/rig.md + .claude/rig/knowledge/**/*.md)")
+    p.set_defaults(func=cmd_stale_refs)
+
+    p = sub.add_parser("scan-destructive", help="deterministic destructive-command scan "
+                       "(machine backing for no_destructive_operation; rm -rf / mkfs / dd / DROP DATABASE "
+                       "are fail-grade, context-dependent patterns warning-grade) (#315)")
+    p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")
+    p.add_argument("--diff", metavar="TASK_ID", help="scan only the task worktree's diff vs its base commit")
+    p.set_defaults(func=cmd_scan_destructive)
 
     p = sub.add_parser("digest", help="periodic telemetry digest in Markdown (runs / gates / force-accepts / rubber-stamps / drills)")
     p.add_argument("--period", choices=("week", "month"), default="week",

@@ -151,8 +151,11 @@ def summarize(diff: dict) -> list[str]:
 
 
 # ── schema file location ──────────────────────────────────────────────────────
-def _exists_at_ref(wt: pathlib.Path, ref: str, rel: str) -> bool:
-    return git(["cat-file", "-e", f"{ref}:{rel}"], cwd=wt, check=False).returncode == 0
+def _existing_at_ref(wt: pathlib.Path, ref: str, rels: list[str]) -> set[str]:
+    """Which of `rels` exist at `ref` — one batched `git ls-tree` call instead
+    of one `cat-file -e` per candidate (#321: 12 probes → 1)."""
+    proc = git(["ls-tree", "-r", "--name-only", ref, "--", *rels], cwd=wt, check=False)
+    return set(proc.stdout.splitlines()) if proc.returncode == 0 else set()
 
 
 def schema_paths(wt: pathlib.Path, base_ref: str, gates: dict) -> list[str]:
@@ -162,13 +165,10 @@ def schema_paths(wt: pathlib.Path, base_ref: str, gates: dict) -> list[str]:
     explicit = gates.get("openapi_paths")
     if explicit:
         return list(explicit)
-    found: list[str] = []
-    for d in AUTO_DIRS:
-        for name in AUTO_NAMES:
-            rel = f"{d}/{name}" if d else name
-            if (wt / rel).is_file() or _exists_at_ref(wt, base_ref, rel):
-                found.append(rel)
-    return found
+    candidates = [f"{d}/{name}" if d else name for d in AUTO_DIRS for name in AUTO_NAMES]
+    missing = [rel for rel in candidates if not (wt / rel).is_file()]
+    at_base = _existing_at_ref(wt, base_ref, missing) if missing else set()
+    return [rel for rel in candidates if (wt / rel).is_file() or rel in at_base]
 
 
 # ── the sensor (called from cmd_gate) ─────────────────────────────────────────

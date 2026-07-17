@@ -17,15 +17,21 @@ from .state import build_acceptance, load_json, load_task, repo_root, resolve_ta
 _CONFIDENCE_THRESHOLD = 0.7  # below this, flagged low-confidence and an extra reviewer is suggested
 
 
-def aggregate_drill_confidence(root: pathlib.Path) -> dict[str, dict]:
+def aggregate_drill_confidence(root: pathlib.Path, corpus: str | None = None) -> dict[str, dict]:
     """Aggregate per-persona drill measurements (detected/seeded/false_positives) across
     every recorded drill run (pure function; the shared helper so nothing re-derives
-    this aggregation independently)."""
+    this aggregation independently).
+
+    `corpus` (#270) filters runs by their seed-selection source ("standard" /
+    "project"); rows without the field predate the distinction and count as
+    "standard" (pre-#270 runs only ever used the shipped catalog). None = all."""
     drill_path = root / ".rig" / "drill-results.jsonl"
     atk: dict[str, dict] = {}
     if not drill_path.exists():
         return atk
     for d in _read_jsonl(drill_path):
+        if corpus is not None and d.get("corpus", "standard") != corpus:
+            continue
         for s in d.get("scores") or []:
             if not isinstance(s, dict):
                 continue

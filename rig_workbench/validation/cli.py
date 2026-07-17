@@ -17,12 +17,13 @@ import traceback
 from . import state
 from .catalog import check_catalog_drift, check_graph, check_wiki
 from .config import RECIPES
-from .drill import check_drill_coverage
+from .drill import check_corpus_integrity, check_drill_coverage
 from .mcp_scan import check_mcp_scan
 from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
 from .release import check_release_metadata, check_skills_lock
 from .selftest import run_selftest
+from .stale_refs import check_stale_refs
 from .state import _emit
 
 
@@ -89,6 +90,11 @@ def main() -> None:
         _emit("FAIL", f"drill coverage check — unexpected error:\n{traceback.format_exc()}")
 
     try:
+        check_corpus_integrity()
+    except Exception:
+        _emit("FAIL", f"drill corpus check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
         check_release_metadata()
     except Exception:
         _emit("FAIL", f"release metadata check — unexpected error:\n{traceback.format_exc()}")
@@ -102,6 +108,11 @@ def main() -> None:
         check_mcp_scan()
     except Exception:
         _emit("FAIL", f"mcp-scan check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_stale_refs()
+    except Exception:
+        _emit("FAIL", f"stale-refs check — unexpected error:\n{traceback.format_exc()}")
 
     print("## rig --validate report (CI / shipped tier)\n")
     for line in state.results:

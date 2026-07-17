@@ -223,6 +223,51 @@ python3 scripts/workbench.py scan-injection --diff <task_id>
 1. 出力の抜粋では不可視文字が `<U+XXXX>` エスケープとして描画される（生の不可視文字は findings に含まれない）ため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を自動適用し、不可視 Unicode 検出で `no_injection_markers` を **failed** に（accept を機械的に止める）、フレーズのみなら **warning** にする。同様に、gate 評価ごとに anti-tamper センサー（`no_gate_tampering`）も走る——task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（こちらは gate 内蔵センサーのみで単独 scan コマンドは持たない）。
 3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+4. **`--deps`（#320・明示opt-in）**：依存ツリー（`node_modules`/`vendor`/`third_party`）配下の**prose面のみ**（`*.md`/`*.rst`/`*.txt`——ソースコードは対象外）を走査する。サードパーティ依存のドキュメントにエージェント向けの隠し指示を仕込むサプライチェーン攻撃（依存のREADMEがエージェントに出力削除を指示していた実例）への対抗。既定面には**決して含めない**（巨大ツリーの常時走査はコストが見合わない＋AI系ライブラリのREADMEはプロンプト例を正当に含むためフレーズ検出の偽陽性が多い）。検出時の推奨アクション（文脈確認→本物ならピン止め/隔離/上流報告。不可視Unicodeは正当な用途ゼロなので即隔離）は出力自体に含まれる。
+
+## `/rig stream-checks [<task_id>] [--watch --interval N --max-passes M]`
+
+```
+python3 scripts/workbench.py stream-checks <task_id>
+python3 scripts/workbench.py stream-checks <task_id> --watch --interval 5
+```
+
+**実装中の軽量ストリーミングチェック（#302）**。高速な機械センサー3種（secret/injection/destructive——diffスコープ・LLM不要・数十ms）をtask worktreeに対してその場で走らせ、findingsを**ヒントとして**表示する。長い実装stepで「verifyまで待って指摘をまとめて食らう」手戻りを減らすための、gateの**プレビュー**。
+
+- **構造的にgateをブロックできない**: このコマンドはacceptance.jsonを読みも書きもせず、常にexit 0。合否は従来通りgate評価（同じ検出器がそこでもう一度走る）が決める。
+- **opt-in**: 何も自動では呼ばない。`implement.md`が「実装の節目で呼んでよい」と案内するのみ（小さい変更では不要）。
+- `--watch --interval N`はポーリング監視（diffのhashが変わったときだけ再表示——静かなworktreeでは黙る）。`--max-passes M`で回数を制限（テスト/CI用）。
+
+## `/rig stale-refs [paths…]`
+
+```
+python3 scripts/workbench.py stale-refs [paths…]
+```
+
+manifest・知識層の**経年劣化検知**（#316）。引数なしは `.claude/rig.md`＋`.claude/rig/knowledge/**/*.md`、paths指定でファイル/ディレクトリを走査し、**バッククォートで引用された相対パス参照のうち、実在しなくなったもの**をWARNとして列挙する。ルールファイルに残った死んだパスは後続タスクの探索を汚染し続ける——鮮度スタンプ（wikiの`reviewed_at`）が時間の代理指標なのに対し、これは「参照先がまだ在るか」の直接シグナル。
+
+- **保守的な抽出**（誤検知を出さないことを最優先）: バッククォート引用・2セグメント以上・拡張子か末尾`/`つきのトークンのみ。URL・絶対パス・`~`・プレースホルダ（`<>`・`{}`・`*`・`$`・`path/to`・`...`）・コードフェンス内は対象外。**地の文のパスは意図的にスコープ外**（パースなしでは誤検知工場になる）。
+- **解決は祖先ディレクトリ歩き**: 参照元ファイルのディレクトリからルートまでのどこかで実在すればOK（SKILL.mdはskillディレクトリ相対で語る、という文書の習慣に合わせる）。
+- **WARNのみ・exit 0**（検出があってもブロックしない）: 消すか直すか「これから作るパスだから残す」かは人/モデルの判断。`.rig/`（実行後にのみ存在するランタイム状態）は既定で除外。
+- rig自身のリポジトリではvalidate.pyの`check_stale_refs`が同じロジックをshipped docs 201ファイルに適用している（他文脈の構造例——ユーザープロジェクトの`video/`や`src/`等——は明示除外リストで管理）。
+
+## `/rig scan-destructive [paths…] [--diff <task_id>]`
+
+```
+python3 scripts/workbench.py scan-destructive [paths…]
+python3 scripts/workbench.py scan-destructive --diff <task_id>
+```
+
+決定論の破壊的コマンドスキャン（gate 基準 `no_destructive_operation` の機械センサーと同一実装・#315）。引数なしはカレントディレクトリ、paths 指定でファイル/ディレクトリ、`--diff <task_id>` は該当 task worktree の base commit からの差分（追加行＋未追跡ファイル）＋**大量削除カウント**を走査する。検出は2段階：
+
+- **fail-grade**（文脈によらず危険）：`rm -rf /`（ルート/`/*`）・`mkfs`・`dd of=/dev/…`・`DROP DATABASE`
+- **warning-grade**（文脈依存・要レビュー）：絶対パス/変数展開/`~` への `rm -rf`・`git clean -f…`・`git reset --hard`・`--force-with-lease` なしの `git push --force`・`DROP TABLE`/`TRUNCATE`・`chmod -R 777`・base 比 20 ファイル以上の削除
+
+相対パスの `rm -rf build/` は**意図的に検出しない**（Makefile の clean target 等で日常的に正当。このセンサーが守りたいのは絶対パスと空変数展開の事故）。
+
+1. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、fail-grade 検出で `no_destructive_operation` を **failed** に、warning のみなら **warning** にする。
+2. 人がレビューして問題なしと確認した場合の脱出口は `gate <task_id> --set no_destructive_operation=passed`（`destructive_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+3. **スコープの正直な明示**：これは**差分に書き込まれた**破壊的コマンド（スクリプト・CI設定・マイグレーション）の検出であり、エージェントが実行時に打つコマンドの傍受ではない（それはホストのパーミッション機構の責務）。rig が完全に管理できる成果物＝diff の中の時限爆弾を人に見せるのがこのセンサーの仕事。
 
 ## `/rig digest [--period week|month] [--out PATH]`
 

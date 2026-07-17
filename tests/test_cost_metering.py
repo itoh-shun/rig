@@ -55,3 +55,30 @@ def test_telemetry_append_defaults_token_usage_to_empty(tmp_path, monkeypatch, s
     telemetry_append(state, "DONE")
     rec = json.loads(config.RUNS_PATH.read_text(encoding="utf-8").splitlines()[-1])
     assert rec["token_usage"] == {}
+
+
+def test_runs_cost_shows_harness_context_load(tmp_path, monkeypatch, capsys):
+    """#319: --cost derives per-provider prompt weight from the existing rollup
+    (avg prompt/call + prompt:completion ratio) with the upper-bound caveat."""
+    import json
+
+    from rig_workbench.orchestrate import config
+    from rig_workbench.orchestrate.commands import cmd_runs
+
+    runs = tmp_path / "runs.jsonl"
+    rows = [
+        {"ts": "t", "recipe": "bugfix", "final": "DONE",
+         "token_usage": {"ollama": {"prompt_tokens": 900, "completion_tokens": 100, "calls": 3}}},
+        {"ts": "t", "recipe": "review", "final": "DONE",
+         "token_usage": {"ollama": {"prompt_tokens": 300, "completion_tokens": 100, "calls": 1}}},
+    ]
+    runs.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    monkeypatch.setattr(config, "RUNS_PATH", runs)
+
+    cmd_runs(["--cost"])
+    out = capsys.readouterr().out
+    assert "Harness-context load" in out
+    assert "upper bound" in out  # the honest caveat is part of the output
+    # 1200 prompt tokens over 4 calls = 300/call; 1200:200 = 6.0:1
+    assert "avg prompt/call=     300" in out
+    assert "prompt:completion=6.0:1" in out

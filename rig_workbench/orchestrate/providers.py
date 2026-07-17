@@ -10,7 +10,6 @@ import threading
 import pathlib
 import subprocess
 import concurrent.futures as futures
-import urllib.request
 
 from . import config
 from .quarantine import wrap_untrusted
@@ -536,6 +535,7 @@ def _managed_agents_request(base: str, path: str, cfg: dict, body: dict | None =
     urllib rather than depending on the SDK). Confirm the actual paths against the
     `anthropic` Python SDK source / official docs before relying on this in production.
     """
+    import urllib.request
     url = f"{base}/{path.lstrip('/')}"
     headers = {"Content-Type": "application/json",
               "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),

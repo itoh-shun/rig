@@ -5,6 +5,145 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
 
 > リリースタグは GitHub 側で発行する（実行環境の都合でタグ push を別途行う運用）。
 
+## [1.17.0] - 2026-07-17
+
+### Changed
+
+- **Response-speed pass (#321)** — behavior-identical, measured:
+  one gate evaluation went from 23 git subprocesses / 114ms to
+  6 / 76ms (sensors now share one diff fetch via an opt-in
+  `shared_diff_cache()` scoped to the evaluation, and the schema
+  sensor batch-probes its 12 OpenAPI candidates with a single
+  `ls-tree` instead of one `cat-file -e` each); `orchestrate.py`
+  startup dropped 170ms → 143ms by returning `urllib.request` to
+  function-local imports; the plugin description was rewritten from
+  6,283 to 1,454 chars (77% less context loaded per session). All
+  497 tests pass unchanged — sensor verdicts and outputs are
+  identical.
+
+### Added
+
+- **Streaming gate — mid-implementation lightweight checks (#302)**:
+  `workbench.py stream-checks <task_id> [--watch --interval N]` runs
+  the fast machine sensors (secret / injection / destructive —
+  diff-scoped, no LLM, tens of milliseconds) against the task worktree
+  on demand, printing findings as hints. The issue's core requirements
+  are enforced by shape, not promise: the command never reads or
+  writes acceptance.json and always exits 0, so it structurally cannot
+  block the final gate — the same detectors run again at gate time,
+  where pass/fail is actually decided; streaming is a preview of that
+  verdict. Opt-in (nothing calls it automatically; implement.md
+  suggests it at natural checkpoints on L/XL implementations), and
+  diff-scoped so cost is bounded by the change. `--watch` re-scans
+  only when the diff hash changes.
+- **Standard drill corpus + prose/design seed classes (#270, #266)**:
+  the seed catalog in `facets/instructions/drill.md` is now formally
+  the **standard corpus** (`corpus_version: 2`, 27 seed classes) — the
+  same language-agnostic yardstick on any repository. `--corpus
+  standard|project|all` selects the seed source (project =
+  `.claude/rig/drill-corpus.md`, same table schema); each
+  drill-results.jsonl run row carries `corpus`/`corpus_version` so
+  standard and project-specific scores never blend (rows without the
+  field predate the distinction and count as standard), and
+  `aggregate_drill_confidence()` gains a corpus filter. v2 adds 9
+  prose/design seed classes — AI-smell markers, UX-heuristic and
+  WCAG violations, unsourced hype in posts, engagement-structure
+  defects, over-the-line attacks (roast), and sales-flow gaps
+  (hearing/proposal/closing) — making de-ai-smell, design,
+  design-audit, sns-x-post, scenario, roast, and deal-review
+  drillable: coverage went from 9/25 to 16/25 gate-bearing recipes,
+  clearing all 7 per-recipe validate WARNs (the remaining WARN —
+  gate-bearing recipes with no reviewer personas at all — is
+  structural: drill measures reviewers, and stats' rubber-stamp
+  detection covers those recipes instead). `validate.py` gains
+  `check_corpus_integrity` (version marker present, every row carries
+  class/provenance/perspective, severity/blocking in range) so corpus
+  rot is machine-caught.
+- **Manifest A/B — rule changes measured, not guessed (#317)**:
+  `orchestrate.py ab <recipe> --manifest-a <path> --manifest-b <path>`
+  runs the same recipe concurrently under two manifests — additive rule
+  changes can't be evaluated statically, only by running real tasks
+  under both. Each variant's worktree gets its manifest written as
+  `.claude/rig.md` (the main working tree is never touched) with its
+  content hash trust-recorded (explicit CLI provision = consent, the
+  `--allow-project-manifest` consent model). Comparison rows are
+  labeled `A(<stem>)`/`B(<stem>)`. Honest scope: the variant manifest
+  takes effect for nested provider invocations running inside the
+  worktree (cwd-based resolution); the parent orchestrate process's
+  own `load_manifest()` still reads the invoking repo's manifest.
+  Recipe/provider/model stay identical across variants — the measured
+  difference is the rules'. The existing recipe-comparison mode is
+  unchanged.
+- **`scan-injection --deps` — dependency-tree hidden-instruction scan
+  (#320)**: explicit opt-in scan of prose files (`*.md`/`*.rst`/
+  `*.txt`, never source) under `node_modules`/`vendor`/`third_party`
+  for agent-directed injection markers — countering supply-chain
+  attacks that plant hidden instructions in third-party docs. Never
+  part of the default surfaces (huge trees; AI-library READMEs
+  legitimately contain prompt examples, making phrase findings
+  especially false-positive-prone there). Invisible unicode stays
+  fail-grade — zero legitimate uses, and exactly the hiding mechanism
+  such attacks rely on. Recommended actions (review in context; if
+  real, pin/quarantine and report upstream) print with the findings.
+- **Harness-context load in `runs --cost` (#319)**: the per-recipe
+  rollup now closes with a per-provider summary of prompt weight —
+  average prompt tokens per call and the prompt:completion ratio —
+  derived entirely from the existing token_usage telemetry (no new
+  metering). The output states the honest caveat inline: prompts
+  include the user's own task text, so this is an upper bound on
+  harness overhead, not the overhead itself; separating the injected
+  step-contract/knowledge share would need per-segment metering that
+  doesn't exist yet.
+- **prose_rhythm v2 — burstiness, paragraph-CV, field-measurement
+  corrections (#318)**: `low-burstiness` catches a locally flat beat
+  (mean adjacent sentence-length delta / mean length) that
+  document-wide CV misses — a slow short-to-long drift has variance
+  but no alternation. `uniform-para` relaxes from exact sentence-count
+  equality to a CV threshold, catching the "every paragraph is 2-3
+  sentences" template tic. `taigendome_ratio` is reported
+  informationally (never flagged): independent field measurement
+  (7 models × 406 documents vs a 137-document human corpus) found
+  AI-generated Japanese uses 体言止め at near-zero rates while humans
+  mix it in — the *absence* is the signal, reversing the folk belief.
+  The same measurement's corrections land in ai-writing-smells
+  (attributed): sentence-initial repetition is a *human* habit (93% of
+  human documents), and rhythm monotony varies sharply by model family
+  ("clean vocabulary, monotone rhythm" exists — grounds for rejecting
+  on the rhythm layer even when every vocabulary marker passes). The
+  thresholds' honest status (uncalibrated heuristics; mora-based
+  measurement impossible stdlib-only) is now stated in the docstring.
+- **Stale path-reference check for the manifest/knowledge layer (#316)**:
+  `workbench.py stale-refs [paths…]` scans `.claude/rig.md` and the
+  project knowledge layer for backtick-quoted relative path references
+  whose target no longer exists — the direct rot signal, next to the
+  time-proxy freshness stamps (wiki `reviewed_at`, instinct decay).
+  Deliberately conservative extraction (two-plus segments, extension or
+  trailing slash, no URLs/absolute/placeholder tokens, code fences
+  skipped; bare prose paths are out of scope by design) and
+  ancestor-walk resolution (a doc may speak relative to any contextual
+  root between its own directory and the repo root), so the
+  false-positive rate on real docs is near zero. WARN-only, exit 0 —
+  fixing or deleting a reference stays a judgment call. `validate.py`
+  applies the same logic to rig's own 201 shipped docs via
+  `check_stale_refs` (curated example-namespace excludes for paths that
+  describe user projects or other repos), with a clean baseline.
+- **Destructive-command sensor backing `no_destructive_operation` (#315)**:
+  deterministic scan of the task diff (added lines + untracked files)
+  for destructive command patterns, wired into every `gate` evaluation
+  the same way the secret/injection sensors are. Unambiguous destroyers
+  (`rm -rf /`, `mkfs`, `dd of=/dev/...`, `DROP DATABASE`) are
+  fail-grade; context-dependent patterns (absolute-path/variable/`~`
+  `rm -rf`, `git clean -f`, `git reset --hard`, `git push --force`
+  without `--force-with-lease`, `DROP TABLE`/`TRUNCATE`,
+  `chmod -R 777`) and mass deletions (>= 20 files vs base) are
+  warning-grade. Relative-path `rm -rf build/` is deliberately not
+  flagged (everyday-legitimate in clean targets). Explicit
+  `--set no_destructive_operation=passed` is the recorded escape hatch
+  (`destructive_override`). Standalone CLI: `scan-destructive`. Honest
+  scope: detects destructive commands written into the diff — it does
+  not intercept commands the agent executes at run time (that is the
+  host permission system's job).
+
 ## [1.16.0] - 2026-07-16
 
 ### Added — issue-backlog sweep (#263–#307) + writing-quality layer

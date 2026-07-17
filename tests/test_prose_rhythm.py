@@ -144,3 +144,54 @@ def test_cli_stdin_clean_text():
 def test_cli_missing_file_errors():
     r = _run_cli(["/nonexistent/x.md"])
     assert r.returncode == 2
+
+
+# ---- low-burstiness (#318) ---------------------------------------------------
+
+def test_slow_length_drift_flags_low_burstiness_but_not_uniform_beat():
+    # Lengths drift 10,14,...,66: document-wide CV is high (no uniform-beat),
+    # but adjacent sentences barely differ — the local beat is flat.
+    text = "".join("あ" * (10 + 4 * i - 1) + "。" for i in range(15))
+    metrics = _metrics(text)
+    assert "low-burstiness" in metrics
+    assert "uniform-beat" not in metrics
+
+
+def test_alternating_lengths_have_healthy_burstiness():
+    text = (SHORT + LONG) * 5
+    assert "low-burstiness" not in _metrics(text)
+
+
+# ---- uniform-para CV relaxation (#318) ---------------------------------------
+
+def test_near_identical_paragraph_counts_flagged_by_cv():
+    para3 = "一文目はこう始まる。二文目で流す。三文目で止める。"
+    para2 = "一文目はこう始まる。二文目で止める。"
+    text = "\n\n".join([para3, para3, para3, para2])  # counts 3,3,3,2 -> CV ~0.16
+    found = [f for f in prose_rhythm.analyze(text)["findings"] if f["metric"] == "uniform-para"]
+    assert len(found) == 1
+    assert "CV" in found[0]["detail"]
+
+
+def test_varied_paragraph_shapes_not_flagged():
+    paras = ["短い一文だけ。",
+             "一文。二文。三文。四文。",
+             "一文。二文。",
+             "一文。二文。三文。四文。五文。六文。七文。"]
+    text = "\n\n".join(paras)
+    assert "uniform-para" not in _metrics(text)
+
+
+# ---- taigendome ratio (informational, #318) ----------------------------------
+
+def test_taigendome_ratio_counts_noun_endings():
+    text = "決め手は速度。実装は三日で終わった。残った課題は移行。"
+    r = prose_rhythm.analyze(text)
+    assert r["taigendome_ratio"] == round(2 / 3, 3)
+
+
+def test_taigendome_zero_for_verbal_endings_and_never_a_finding():
+    text = "走った。止まった。考えた。"
+    r = prose_rhythm.analyze(text)
+    assert r["taigendome_ratio"] == 0.0
+    assert all(f["metric"] != "taigendome" for f in r["findings"])
