@@ -28,6 +28,7 @@ from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
+from .destructive import cmd_scan_destructive
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
@@ -148,6 +149,13 @@ def main() -> None:
     p.add_argument("--diff", metavar="TASK_ID",
                    help="scan the task worktree's diff vs base + its prose surfaces (what the gate sensor sees)")
     p.set_defaults(func=cmd_scan_injection)
+
+    p = sub.add_parser("scan-destructive", help="deterministic destructive-command scan "
+                       "(machine backing for no_destructive_operation; rm -rf / mkfs / dd / DROP DATABASE "
+                       "are fail-grade, context-dependent patterns warning-grade) (#315)")
+    p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")
+    p.add_argument("--diff", metavar="TASK_ID", help="scan only the task worktree's diff vs its base commit")
+    p.set_defaults(func=cmd_scan_destructive)
 
     p = sub.add_parser("digest", help="periodic telemetry digest in Markdown (runs / gates / force-accepts / rubber-stamps / drills)")
     p.add_argument("--period", choices=("week", "month"), default="week",

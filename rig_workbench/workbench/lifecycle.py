@@ -8,6 +8,7 @@ import sys
 
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
+from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
 from .schema_diff import apply_schema_sensor
@@ -227,6 +228,11 @@ def cmd_gate(args: argparse.Namespace) -> None:
         # instruction-override phrases warning-grade; --set
         # no_injection_markers=passed is the recorded escape hatch.
         sensor_notes += apply_injection_sensor(root, d, task, acc, explicit_set=explicit_set)
+        # Destructive-command sensor (#315): unambiguous destroyers (rm -rf /,
+        # mkfs, dd of=/dev, DROP DATABASE) are fail-grade, context-dependent
+        # patterns and mass deletions warning-grade; --set
+        # no_destructive_operation=passed is the recorded escape hatch.
+        sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()
