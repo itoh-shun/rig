@@ -12,7 +12,7 @@ from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
 from .schema_diff import apply_schema_sensor
-from .secrets import apply_secret_sensor
+from .secrets import apply_secret_sensor, shared_diff_cache
 from .state import (build_acceptance, current_branch, default_worktree_path,
                     die, gate_status, git, load_json, load_task, make_slug,
                     make_task_id, now_iso, repo_root, resolve_task_id, run_dir,
@@ -213,26 +213,30 @@ def cmd_gate(args: argparse.Namespace) -> None:
                 known[name]["detail"] = detail
             explicit_set.add(name)
 
-        # Machine sensor (issue #288): verify public_api_changes_documented
-        # against the actual base↔worktree OpenAPI diff before evaluating.
-        sensor_notes = apply_schema_sensor(root, d, task, acc)
-        # Machine sensor (issue #273): diff-scoped secret scan backing
-        # no_secret_leak. Fail-grade: findings block accept; an explicit
-        # --set no_secret_leak=passed in this invocation is the escape hatch.
-        sensor_notes += apply_secret_sensor(root, d, task, acc, explicit_set=explicit_set)
-        # Anti-tamper sensor: gate/CI-config edits in the diff are fail-grade,
-        # test-weakening patterns warning-grade; --set no_gate_tampering=passed
-        # is the recorded escape hatch (tamper_override).
-        sensor_notes += apply_tamper_sensor(root, d, task, acc, explicit_set=explicit_set)
-        # Injection-marker sensor: invisible Unicode is fail-grade,
-        # instruction-override phrases warning-grade; --set
-        # no_injection_markers=passed is the recorded escape hatch.
-        sensor_notes += apply_injection_sensor(root, d, task, acc, explicit_set=explicit_set)
-        # Destructive-command sensor (#315): unambiguous destroyers (rm -rf /,
-        # mkfs, dd of=/dev, DROP DATABASE) are fail-grade, context-dependent
-        # patterns and mass deletions warning-grade; --set
-        # no_destructive_operation=passed is the recorded escape hatch.
-        sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
+        # The sensors below all scan the same worktree diff; shared_diff_cache
+        # dedupes their identical git diff / ls-files calls for the duration of
+        # this one evaluation (#321 — measured 8 redundant subprocesses without it).
+        with shared_diff_cache():
+            # Machine sensor (issue #288): verify public_api_changes_documented
+            # against the actual base↔worktree OpenAPI diff before evaluating.
+            sensor_notes = apply_schema_sensor(root, d, task, acc)
+            # Machine sensor (issue #273): diff-scoped secret scan backing
+            # no_secret_leak. Fail-grade: findings block accept; an explicit
+            # --set no_secret_leak=passed in this invocation is the escape hatch.
+            sensor_notes += apply_secret_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # Anti-tamper sensor: gate/CI-config edits in the diff are fail-grade,
+            # test-weakening patterns warning-grade; --set no_gate_tampering=passed
+            # is the recorded escape hatch (tamper_override).
+            sensor_notes += apply_tamper_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # Injection-marker sensor: invisible Unicode is fail-grade,
+            # instruction-override phrases warning-grade; --set
+            # no_injection_markers=passed is the recorded escape hatch.
+            sensor_notes += apply_injection_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # Destructive-command sensor (#315): unambiguous destroyers (rm -rf /,
+            # mkfs, dd of=/dev, DROP DATABASE) are fail-grade, context-dependent
+            # patterns and mass deletions warning-grade; --set
+            # no_destructive_operation=passed is the recorded escape hatch.
+            sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()

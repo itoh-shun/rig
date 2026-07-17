@@ -41,6 +41,7 @@ how manual overrides already work for every criterion.
 """
 
 import argparse
+import contextlib
 import math
 import pathlib
 import re
@@ -208,22 +209,57 @@ def iter_added_lines(diff_text: str):
             lineno += 1  # context line (absent with -U0, handled for safety)
 
 
+# ── shared diff cache (#321) ──────────────────────────────────────────────────
+# One gate evaluation runs 4+ diff-scoped sensors, and each used to shell out
+# for the identical `git diff` / `git ls-files` — measured at 8 redundant git
+# subprocesses per evaluation. The cache is OPT-IN via the shared_diff_cache()
+# context manager (cmd_gate wraps the sensor batch in it): direct calls stay
+# uncached, so unit tests and any long-lived caller that mutates the worktree
+# between calls structurally cannot see stale results.
+_diff_memo: dict | None = None
+
+
+@contextlib.contextmanager
+def shared_diff_cache():
+    """Within this context, worktree_diff_text/untracked_files results are
+    memoized per (worktree, base) so the sensor batch of one gate evaluation
+    shells out once instead of once per sensor. Never nest-sensitive: the memo
+    is dropped on exit."""
+    global _diff_memo
+    _diff_memo = {}
+    try:
+        yield
+    finally:
+        _diff_memo = None
+
+
 def worktree_diff_text(wt: pathlib.Path, base_commit: str) -> str:
     """Unified (-U0) diff of the worktree vs its base commit: committed +
     uncommitted changes. Empty string when git fails (e.g. worktree gone)."""
+    key = ("diff", str(wt), base_commit)
+    if _diff_memo is not None and key in _diff_memo:
+        return _diff_memo[key]
     proc = git(["diff", "--unified=0", "--no-color", base_commit], cwd=wt, check=False)
-    return proc.stdout if proc.returncode == 0 else ""
+    out = proc.stdout if proc.returncode == 0 else ""
+    if _diff_memo is not None:
+        _diff_memo[key] = out
+    return out
 
 
 def untracked_files(wt: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
     """(absolute path, repo-relative path) of untracked files, minus
     vendored/VCS/state trees (WALK_SKIP_DIRS). Invisible to `git diff`."""
+    key = ("untracked", str(wt))
+    if _diff_memo is not None and key in _diff_memo:
+        return _diff_memo[key]
     proc = git(["ls-files", "--others", "--exclude-standard"], cwd=wt, check=False)
     out: list[tuple[pathlib.Path, str]] = []
     for rel in proc.stdout.splitlines() if proc.returncode == 0 else []:
         f = wt / rel
         if f.is_file() and not any(part in WALK_SKIP_DIRS for part in pathlib.PurePosixPath(rel).parts):
             out.append((f, rel))
+    if _diff_memo is not None:
+        _diff_memo[key] = out
     return out
 
 
