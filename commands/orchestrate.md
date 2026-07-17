@@ -83,6 +83,14 @@ hotfix               DONE       18.7         1        -
 
 未達/dirtyのvariantはworktreeが保全される（`--isolate`と同じ規則）。後片付けは`git worktree remove --force <dir>`。
 
+**ルールA/B（manifest差分・#317）**：同一recipeを、manifestだけ差し替えた2条件で並走させる——「ルールに足す変更」は静的に評価できず、実タスクを走らせて比較するしかない、という運用知見への対応。
+
+```
+orchestrate ab <recipe> --manifest-a <path> --manifest-b <path> --provider mock --goal "<goal>"
+```
+
+各variantのworktree内に指定manifestを`.claude/rig.md`として書き込み（メイン作業ツリーは触らない）、content hashを信頼ストアに記録する（**CLIで明示的に渡した＝同意**。`--allow-project-manifest`と同じ同意モデル）。比較表の行ラベルは`A(<stem>)`/`B(<stem>)`でどちらのmanifestか明示される。**正直なスコープ**：variantのmanifestが効くのは**worktree内をcwdとして走る入れ子provider呼び出し**（cwd基準でmanifestを解決するため）。親orchestrateプロセス自身の`load_manifest()`（--auto-routeのサイズ分類等）は呼び出し元repoのmanifestを読み続ける。recipe/provider/modelは全variant共通——測っているのは「ルールの違い」だけ。
+
 **⑦ ギャップ処方箋のforge下書き化（`runs`・#268）**
 
 ```
