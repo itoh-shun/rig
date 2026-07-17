@@ -10,6 +10,8 @@ You describe a task in plain language. rig figures out what kind of task it is (
 
 rig's value isn't running AI. It's structurally removing the dangerous parts of letting AI work unsupervised: isolation, verification, measurement, recording, and controlled hand-off.
 
+Put precisely: **rig does not automatically produce quality — it makes the AI unable to ignore the quality bar you define.** Defining that bar stays human work; rig's job is enforcement and measurement. And it costs something: rig deliberately trades speed and tokens for that safety — if you just want code written fast, ask the model directly.
+
 Three properties keep the safety flow real (not just documented):
 
 - **Force-proof accept requirements.** `accept` blocks landing when structural prerequisites are missing (worktree, base branch, diff summary). `--force` overrides *soft* gate failures (recorded to `.rig/audit.jsonl`), but cannot bypass the *hard* prerequisites — the checkpoints live where a flag can't remove them.
@@ -34,13 +36,22 @@ And the differentiator over "we have quality gates" framings: rig's gates and re
 /rig:go "check my current changes are safe"
 ```
 
-That's the whole surface for a first run. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
+That's the whole surface for a first run — **zero configuration**: no manifest, no gates.json, no persona setup. Those are all later opt-ins; the safety flow works out of the box. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
 
 ```
 /rig:go diff       # see what changed, and why it's safe (or not)
 /rig:go accept     # bring the change into your working tree (blocked if the gate hasn't passed)
 /rig:go discard    # throw the attempt away — your working tree was never touched
 ```
+
+What actually changes versus asking the model directly:
+
+| | asking directly | through rig |
+|---|---|---|
+| a failed attempt | litters your working tree | discarded with its worktree — your tree untouched |
+| "it's done" | you take the model's word | the acceptance-gate's verdict is the evidence |
+| review quality | unknown | measured — `/rig:drill` scores each reviewer's real detection rate |
+| what happened | a chat log | run log, audit trail, signed provenance |
 
 ## 3. Main entrypoint
 
