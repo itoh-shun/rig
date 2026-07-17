@@ -879,6 +879,24 @@ def cmd_runs(args):
                     cache = f"  cache_read={a['cache_read_input_tokens']}" if a["cache_read_input_tokens"] else ""
                     print(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
                           f"completion={a['completion_tokens']:8d}  total={total:8d}{cache}")
+            # Harness-context load (#319): per-provider prompt weight, derived from the
+            # rollup above (no new metering). The prompt includes the user's own task
+            # text, so this is an UPPER BOUND on harness overhead, not the overhead
+            # itself — separating the injected step-contract/knowledge share would
+            # need per-segment metering that doesn't exist yet.
+            by_provider: dict[str, dict] = {}
+            for providers in by_recipe.values():
+                for provider, a in providers.items():
+                    t = by_provider.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
+                    for k in t:
+                        t[k] += a[k]
+            print("\n  Harness-context load (upper bound — prompts include the task text itself):")
+            for provider, t in sorted(by_provider.items()):
+                if not t["calls"]:
+                    continue
+                per_call = t["prompt_tokens"] / t["calls"]
+                ratio = (t["prompt_tokens"] / t["completion_tokens"]) if t["completion_tokens"] else float("inf")
+                print(f"    {provider:16s} avg prompt/call={per_call:8.0f}  prompt:completion={ratio:.1f}:1")
         if fallback_count or refusal_count:
             print(f"\nFable 5 refusal-classifier (#297): fallback={fallback_count}  direct-refusal={refusal_count}  "
                   "(a fallback is treated as a transparent success and doesn't block the gate; cache_read is the "
