@@ -225,6 +225,19 @@ python3 scripts/workbench.py scan-injection --diff <task_id>
 3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 4. **`--deps`（#320・明示opt-in）**：依存ツリー（`node_modules`/`vendor`/`third_party`）配下の**prose面のみ**（`*.md`/`*.rst`/`*.txt`——ソースコードは対象外）を走査する。サードパーティ依存のドキュメントにエージェント向けの隠し指示を仕込むサプライチェーン攻撃（依存のREADMEがエージェントに出力削除を指示していた実例）への対抗。既定面には**決して含めない**（巨大ツリーの常時走査はコストが見合わない＋AI系ライブラリのREADMEはプロンプト例を正当に含むためフレーズ検出の偽陽性が多い）。検出時の推奨アクション（文脈確認→本物ならピン止め/隔離/上流報告。不可視Unicodeは正当な用途ゼロなので即隔離）は出力自体に含まれる。
 
+## `/rig stream-checks [<task_id>] [--watch --interval N --max-passes M]`
+
+```
+python3 scripts/workbench.py stream-checks <task_id>
+python3 scripts/workbench.py stream-checks <task_id> --watch --interval 5
+```
+
+**実装中の軽量ストリーミングチェック（#302）**。高速な機械センサー3種（secret/injection/destructive——diffスコープ・LLM不要・数十ms）をtask worktreeに対してその場で走らせ、findingsを**ヒントとして**表示する。長い実装stepで「verifyまで待って指摘をまとめて食らう」手戻りを減らすための、gateの**プレビュー**。
+
+- **構造的にgateをブロックできない**: このコマンドはacceptance.jsonを読みも書きもせず、常にexit 0。合否は従来通りgate評価（同じ検出器がそこでもう一度走る）が決める。
+- **opt-in**: 何も自動では呼ばない。`implement.md`が「実装の節目で呼んでよい」と案内するのみ（小さい変更では不要）。
+- `--watch --interval N`はポーリング監視（diffのhashが変わったときだけ再表示——静かなworktreeでは黙る）。`--max-passes M`で回数を制限（テスト/CI用）。
+
 ## `/rig stale-refs [paths…]`
 
 ```

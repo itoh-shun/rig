@@ -38,6 +38,7 @@ from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
 from .secrets import cmd_scan_secrets
 from .stale_refs import cmd_stale_refs
+from .streaming import cmd_stream_checks
 
 
 def main() -> None:
@@ -154,6 +155,14 @@ def main() -> None:
                         "*.md/*.rst/*.txt) for agent-directed hidden instructions — explicit "
                         "opt-in, never part of the default surfaces (#320)")
     p.set_defaults(func=cmd_scan_injection)
+
+    p = sub.add_parser("stream-checks", help="mid-implementation lightweight checks — fast "
+                       "secret/injection/destructive sensors as hints; never blocks the gate (#302)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--watch", action="store_true", help="poll and re-scan when the diff changes")
+    p.add_argument("--interval", type=float, default=5.0, help="poll interval seconds (with --watch; default 5)")
+    p.add_argument("--max-passes", type=int, default=None, help="stop after N passes (with --watch; default unbounded)")
+    p.set_defaults(func=cmd_stream_checks)
 
     p = sub.add_parser("stale-refs", help="stale path-reference check over the manifest and "
                        "project knowledge (WARN-only, exit 0; backtick-quoted relative paths only) (#316)")
