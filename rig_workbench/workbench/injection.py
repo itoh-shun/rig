@@ -66,6 +66,17 @@ PROSE_SURFACE_FILES = (".claude/rig.md",)
 PROSE_SURFACE_DIRS = (".claude/rig/knowledge", ".claude/rig/personas")
 PROSE_SURFACE_GLOBS = (".rig/recipes/*.md",)
 
+# Dependency trees (#320): supply-chain attacks have planted agent-directed
+# instructions in third-party docs (the jqwik incident — a hidden instruction
+# telling agents to delete their output). Scanning these is explicit opt-in
+# (--deps) because the trees are huge and READMEs of AI-adjacent libraries
+# legitimately contain prompt examples — override-phrase findings here are
+# especially false-positive-prone (hence warning-grade as always), while
+# invisible unicode stays fail-grade: it has zero legitimate uses, and is
+# exactly the hiding mechanism such attacks use.
+DEP_ROOTS = ("node_modules", "vendor", "third_party")
+DEP_PROSE_SUFFIXES = (".md", ".markdown", ".rst", ".txt")
+
 EXCERPT_MAX = 60
 
 
@@ -156,6 +167,22 @@ def prose_surface_paths(base_dir: pathlib.Path) -> list[tuple[pathlib.Path, str]
         for f in sorted(base_dir.glob(pattern)):
             if f.is_file():
                 out.append((f, f.relative_to(base_dir).as_posix()))
+    return out
+
+
+def dep_prose_paths(root: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
+    """(absolute path, repo-relative path) of prose files (docs, not source)
+    under the dependency roots that exist. Own walker on purpose: scan_paths'
+    generic tree walk skips node_modules via WALK_SKIP_DIRS — correct for
+    every other scan, overridden here explicitly."""
+    out: list[tuple[pathlib.Path, str]] = []
+    for dep_root in DEP_ROOTS:
+        d = root / dep_root
+        if not d.is_dir():
+            continue
+        for f in sorted(d.rglob("*")):
+            if f.is_file() and f.suffix.lower() in DEP_PROSE_SUFFIXES:
+                out.append((f, f.relative_to(root).as_posix()))
     return out
 
 
@@ -263,8 +290,33 @@ def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 def cmd_scan_injection(args: argparse.Namespace) -> None:
-    if args.diff and args.paths:
-        die("give either paths or --diff <task-id>, not both")
+    deps_mode = getattr(args, "deps", False)
+    if sum(bool(x) for x in (args.diff, args.paths, deps_mode)) > 1:
+        die("give paths, --diff <task-id>, or --deps — not a combination")
+    if deps_mode:
+        root = repo_root()
+        surfaces = dep_prose_paths(root)
+        findings = []
+        for f, rel in surfaces:
+            findings.extend(scan_file(f, rel))
+        present = [d for d in DEP_ROOTS if (root / d).is_dir()]
+        scope = (f"dependency prose surfaces of {root} ({len(surfaces)} file(s) under "
+                 f"{', '.join(present)})" if present
+                 else f"dependency prose surfaces of {root} (no {'/'.join(DEP_ROOTS)} present)")
+        print(f"## scan-injection: {scope}")
+        if not findings:
+            print("No injection markers found.")
+            return
+        n_fail = sum(1 for f in findings if f["grade"] == "fail")
+        print(f"{len(findings)} injection marker(s) found "
+              f"({n_fail} invisible-unicode fail-grade, {len(findings) - n_fail} phrase warning-grade):")
+        for line in format_findings(findings):
+            print(f"  {line}")
+        print("Recommended actions: review the finding in context (AI-library READMEs "
+              "legitimately contain prompt examples — phrase findings here are "
+              "false-positive-prone); if real, pin/quarantine the dependency and report upstream. "
+              "Invisible unicode has no legitimate use and warrants immediate quarantine.")
+        sys.exit(1)
     if args.diff:
         root = repo_root()
         _, task = load_task(root, args.diff)

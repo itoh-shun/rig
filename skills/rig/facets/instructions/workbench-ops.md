@@ -223,6 +223,7 @@ python3 scripts/workbench.py scan-injection --diff <task_id>
 1. 出力の抜粋では不可視文字が `<U+XXXX>` エスケープとして描画される（生の不可視文字は findings に含まれない）ため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を自動適用し、不可視 Unicode 検出で `no_injection_markers` を **failed** に（accept を機械的に止める）、フレーズのみなら **warning** にする。同様に、gate 評価ごとに anti-tamper センサー（`no_gate_tampering`）も走る——task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（こちらは gate 内蔵センサーのみで単独 scan コマンドは持たない）。
 3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+4. **`--deps`（#320・明示opt-in）**：依存ツリー（`node_modules`/`vendor`/`third_party`）配下の**prose面のみ**（`*.md`/`*.rst`/`*.txt`——ソースコードは対象外）を走査する。サードパーティ依存のドキュメントにエージェント向けの隠し指示を仕込むサプライチェーン攻撃（依存のREADMEがエージェントに出力削除を指示していた実例）への対抗。既定面には**決して含めない**（巨大ツリーの常時走査はコストが見合わない＋AI系ライブラリのREADMEはプロンプト例を正当に含むためフレーズ検出の偽陽性が多い）。検出時の推奨アクション（文脈確認→本物ならピン止め/隔離/上流報告。不可視Unicodeは正当な用途ゼロなので即隔離）は出力自体に含まれる。
 
 ## `/rig stale-refs [paths…]`
 

@@ -149,6 +149,10 @@ def main() -> None:
                    ".claude/rig/personas, .rig/recipes/*.md)")
     p.add_argument("--diff", metavar="TASK_ID",
                    help="scan the task worktree's diff vs base + its prose surfaces (what the gate sensor sees)")
+    p.add_argument("--deps", action="store_true",
+                   help="scan dependency trees' prose files (node_modules/vendor/third_party "
+                        "*.md/*.rst/*.txt) for agent-directed hidden instructions — explicit "
+                        "opt-in, never part of the default surfaces (#320)")
     p.set_defaults(func=cmd_scan_injection)
 
     p = sub.add_parser("stale-refs", help="stale path-reference check over the manifest and "
