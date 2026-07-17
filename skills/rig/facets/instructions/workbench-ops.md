@@ -224,6 +224,19 @@ python3 scripts/workbench.py scan-injection --diff <task_id>
 2. `workbench.py gate` は評価のたびにこの scanner を自動適用し、不可視 Unicode 検出で `no_injection_markers` を **failed** に（accept を機械的に止める）、フレーズのみなら **warning** にする。同様に、gate 評価ごとに anti-tamper センサー（`no_gate_tampering`）も走る——task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（こちらは gate 内蔵センサーのみで単独 scan コマンドは持たない）。
 3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 
+## `/rig stale-refs [paths…]`
+
+```
+python3 scripts/workbench.py stale-refs [paths…]
+```
+
+manifest・知識層の**経年劣化検知**（#316）。引数なしは `.claude/rig.md`＋`.claude/rig/knowledge/**/*.md`、paths指定でファイル/ディレクトリを走査し、**バッククォートで引用された相対パス参照のうち、実在しなくなったもの**をWARNとして列挙する。ルールファイルに残った死んだパスは後続タスクの探索を汚染し続ける——鮮度スタンプ（wikiの`reviewed_at`）が時間の代理指標なのに対し、これは「参照先がまだ在るか」の直接シグナル。
+
+- **保守的な抽出**（誤検知を出さないことを最優先）: バッククォート引用・2セグメント以上・拡張子か末尾`/`つきのトークンのみ。URL・絶対パス・`~`・プレースホルダ（`<>`・`{}`・`*`・`$`・`path/to`・`...`）・コードフェンス内は対象外。**地の文のパスは意図的にスコープ外**（パースなしでは誤検知工場になる）。
+- **解決は祖先ディレクトリ歩き**: 参照元ファイルのディレクトリからルートまでのどこかで実在すればOK（SKILL.mdはskillディレクトリ相対で語る、という文書の習慣に合わせる）。
+- **WARNのみ・exit 0**（検出があってもブロックしない）: 消すか直すか「これから作るパスだから残す」かは人/モデルの判断。`.rig/`（実行後にのみ存在するランタイム状態）は既定で除外。
+- rig自身のリポジトリではvalidate.pyの`check_stale_refs`が同じロジックをshipped docs 201ファイルに適用している（他文脈の構造例——ユーザープロジェクトの`video/`や`src/`等——は明示除外リストで管理）。
+
 ## `/rig scan-destructive [paths…] [--diff <task_id>]`
 
 ```

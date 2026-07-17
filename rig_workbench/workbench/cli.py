@@ -37,6 +37,7 @@ from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
 from .secrets import cmd_scan_secrets
+from .stale_refs import cmd_stale_refs
 
 
 def main() -> None:
@@ -149,6 +150,12 @@ def main() -> None:
     p.add_argument("--diff", metavar="TASK_ID",
                    help="scan the task worktree's diff vs base + its prose surfaces (what the gate sensor sees)")
     p.set_defaults(func=cmd_scan_injection)
+
+    p = sub.add_parser("stale-refs", help="stale path-reference check over the manifest and "
+                       "project knowledge (WARN-only, exit 0; backtick-quoted relative paths only) (#316)")
+    p.add_argument("paths", nargs="*", help="files/directories to scan "
+                   "(default: .claude/rig.md + .claude/rig/knowledge/**/*.md)")
+    p.set_defaults(func=cmd_stale_refs)
 
     p = sub.add_parser("scan-destructive", help="deterministic destructive-command scan "
                        "(machine backing for no_destructive_operation; rm -rf / mkfs / dd / DROP DATABASE "

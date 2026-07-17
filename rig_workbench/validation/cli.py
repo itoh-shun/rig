@@ -23,6 +23,7 @@ from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
 from .release import check_release_metadata, check_skills_lock
 from .selftest import run_selftest
+from .stale_refs import check_stale_refs
 from .state import _emit
 
 
@@ -102,6 +103,11 @@ def main() -> None:
         check_mcp_scan()
     except Exception:
         _emit("FAIL", f"mcp-scan check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_stale_refs()
+    except Exception:
+        _emit("FAIL", f"stale-refs check — unexpected error:\n{traceback.format_exc()}")
 
     print("## rig --validate report (CI / shipped tier)\n")
     for line in state.results:
