@@ -60,6 +60,70 @@ def parse_seed_perspectives(drill_md: pathlib.Path) -> set[str]:
     return perspectives
 
 
+_CORPUS_VERSION_RE_STR = r"corpus_version:\s*(\d+)"
+_VALID_SEVERITIES = ("Critical", "High", "Medium", "Low")
+_VALID_BLOCKING = ("Blocking", "Non-blocking")
+
+
+def parse_seed_rows(drill_md: pathlib.Path) -> list[dict]:
+    """Data rows of the seed-catalog table as dicts keyed by header cell."""
+    if not drill_md.exists():
+        return []
+    rows: list[dict] = []
+    headers: list[str] | None = None
+    for line in drill_md.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            headers = None
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if _PERSPECTIVE_HEADER in cells:
+            headers = cells
+            continue
+        if headers is None or len(cells) != len(headers):
+            continue
+        if all(set(c) <= set("-: ") for c in cells):
+            continue  # separator row
+        rows.append(dict(zip(headers, cells)))
+    return rows
+
+
+def check_corpus_integrity(drill_instruction: pathlib.Path | None = None) -> None:
+    """WARN on standard-corpus rot (#270): missing version marker, empty
+    class/provenance/perspective cells, or out-of-range severity/blocking.
+    The corpus is the drill's answer key — a malformed row silently corrupts
+    every score computed from it."""
+    import re
+
+    drill_md = drill_instruction or (FACETS / "instructions" / "drill.md")
+    if not drill_md.exists():
+        _emit("WARN", f"drill corpus — {drill_md.name} not found (cannot check corpus integrity)")
+        return
+    text = drill_md.read_text(encoding="utf-8")
+    m = re.search(_CORPUS_VERSION_RE_STR, text)
+    if not m:
+        _emit("WARN", "drill corpus — no `corpus_version:` marker in the seed catalog "
+                      "(bump it on every corpus change so scores stay comparable per version)")
+        return
+    version = int(m.group(1))
+    rows = parse_seed_rows(drill_md)
+    problems: list[str] = []
+    for row in rows:
+        label = row.get("種の class", "?")
+        if not row.get("種の class") or not row.get("cwe/odc") or not row.get(_PERSPECTIVE_HEADER):
+            problems.append(f"{label}: empty class/provenance/perspective cell")
+        if row.get("期待 severity") not in _VALID_SEVERITIES:
+            problems.append(f"{label}: severity '{row.get('期待 severity')}' not in {_VALID_SEVERITIES}")
+        if row.get("期待 blocking") not in _VALID_BLOCKING:
+            problems.append(f"{label}: blocking '{row.get('期待 blocking')}' not in {_VALID_BLOCKING}")
+    if problems:
+        for p in problems:
+            _emit("WARN", f"drill corpus — {p}")
+        return
+    _emit("PASS", f"drill corpus: standard corpus v{version} — {len(rows)} seed classes, "
+                  "all rows carry class/provenance/perspective and valid severity/blocking")
+
+
 def _base_name(persona: str) -> str:
     """Last path segment of a persona reference (sales/hearing-reviewer → hearing-reviewer)."""
     return persona.rsplit("/", 1)[-1].strip()

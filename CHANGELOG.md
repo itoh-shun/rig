@@ -23,6 +23,42 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
 
 ### Added
 
+- **Streaming gate — mid-implementation lightweight checks (#302)**:
+  `workbench.py stream-checks <task_id> [--watch --interval N]` runs
+  the fast machine sensors (secret / injection / destructive —
+  diff-scoped, no LLM, tens of milliseconds) against the task worktree
+  on demand, printing findings as hints. The issue's core requirements
+  are enforced by shape, not promise: the command never reads or
+  writes acceptance.json and always exits 0, so it structurally cannot
+  block the final gate — the same detectors run again at gate time,
+  where pass/fail is actually decided; streaming is a preview of that
+  verdict. Opt-in (nothing calls it automatically; implement.md
+  suggests it at natural checkpoints on L/XL implementations), and
+  diff-scoped so cost is bounded by the change. `--watch` re-scans
+  only when the diff hash changes.
+- **Standard drill corpus + prose/design seed classes (#270, #266)**:
+  the seed catalog in `facets/instructions/drill.md` is now formally
+  the **standard corpus** (`corpus_version: 2`, 27 seed classes) — the
+  same language-agnostic yardstick on any repository. `--corpus
+  standard|project|all` selects the seed source (project =
+  `.claude/rig/drill-corpus.md`, same table schema); each
+  drill-results.jsonl run row carries `corpus`/`corpus_version` so
+  standard and project-specific scores never blend (rows without the
+  field predate the distinction and count as standard), and
+  `aggregate_drill_confidence()` gains a corpus filter. v2 adds 9
+  prose/design seed classes — AI-smell markers, UX-heuristic and
+  WCAG violations, unsourced hype in posts, engagement-structure
+  defects, over-the-line attacks (roast), and sales-flow gaps
+  (hearing/proposal/closing) — making de-ai-smell, design,
+  design-audit, sns-x-post, scenario, roast, and deal-review
+  drillable: coverage went from 9/25 to 16/25 gate-bearing recipes,
+  clearing all 7 per-recipe validate WARNs (the remaining WARN —
+  gate-bearing recipes with no reviewer personas at all — is
+  structural: drill measures reviewers, and stats' rubber-stamp
+  detection covers those recipes instead). `validate.py` gains
+  `check_corpus_integrity` (version marker present, every row carries
+  class/provenance/perspective, severity/blocking in range) so corpus
+  rot is machine-caught.
 - **Manifest A/B — rule changes measured, not guessed (#317)**:
   `orchestrate.py ab <recipe> --manifest-a <path> --manifest-b <path>`
   runs the same recipe concurrently under two manifests — additive rule
