@@ -1,7 +1,10 @@
 """Unit tests for rig_workbench.orchestrate.recipes (parse/RESOLVE, pure functions)."""
 
+import hashlib
+
 import pytest
 
+from rig_workbench.orchestrate import config
 from rig_workbench.orchestrate.recipes import (auto_orchestrate, evaluate_condition,
                                                parse_frontmatter, resolve_effective,
                                                resolve_plan_json, size_class)
@@ -54,6 +57,53 @@ def test_parse_frontmatter_roundtrip(write_recipe):
     assert fm["autonomy"] == "interactive"
     assert [s["id"] for s in fm["steps"]] == ["intake", "design", "implement", "verify"]
     assert fm["steps"][3]["gate"] == "acceptance-gate"
+
+
+def test_load_steps_preserves_executor(write_recipe):
+    path = write_recipe("adaptive", """---
+name: adaptive
+steps:
+  - id: assess
+    instruction: adaptive-assess
+    executor: risk-assess
+---""")
+    assert resolve_plan_json(path)["steps"][0]["executor"] == "risk-assess"
+
+
+def test_adaptive_bugfix_recipe_has_bounded_executor_flow():
+    path = config.RECIPES / "adaptive-bugfix.md"
+    plan = resolve_plan_json(path)
+
+    assert [step["id"] for step in plan["steps"]] == [
+        "implement",
+        "assess",
+        "targeted-review",
+        "acceptance",
+    ]
+    assert [step["executor"] for step in plan["steps"]] == [
+        "generate",
+        "risk-assess",
+        "targeted-review",
+        "checks-only",
+    ]
+    assert plan["steps"][-1]["checks"] == ["git diff --check"]
+    body = path.read_text(encoding="utf-8")
+    assert "two-call normal" in body
+    assert "three-call repair budget" in body
+    assert "four-call multi-domain budget" in body
+    assert "safe stop" in body
+
+
+def test_existing_bugfix_recipe_bytes_are_unchanged():
+    expected = {
+        "bugfix.md": "bbf216319c3056819198df84a34e35bcff51ae476b11966ec2ab47e9197a8d8b",
+        "fast-bugfix.md": "398447decc09a69432f7a63efae704eb3f1ed3dc752c04dfd82d5fd6555dd45e",
+    }
+    actual = {
+        name: hashlib.sha256((config.RECIPES / name).read_bytes()).hexdigest()
+        for name in expected
+    }
+    assert actual == expected
 
 
 def test_parse_frontmatter_missing_or_unterminated(tmp_path):

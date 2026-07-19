@@ -12,6 +12,7 @@ import subprocess
 import concurrent.futures as futures
 
 from . import config
+from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
@@ -826,6 +827,26 @@ def _git_diff_evidence(cfg: dict) -> str | None:
     return None
 
 
+def _git_changed_files(cfg: dict) -> list[str]:
+    """Return deterministic changed paths for adaptive risk analysis."""
+    cwd = (cfg or {}).get("cwd")
+    if not cwd:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    return sorted(path.strip() for path in result.stdout.splitlines() if path.strip())
+
+
 def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None = None) -> str:
     """Verify-prompt with the diff as primary evidence (when available) and the generator's
     report explicitly labeled as unverified claims — the judge must check claims against the
@@ -896,6 +917,33 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
 _HIST_LOCK = threading.Lock()
 
 
+def _uses_adaptive_executors(state: dict) -> bool:
+    return any(step.get("executor", "generate") != "generate" for step in state["steps"])
+
+
+def _run_provider_counted(
+    state: dict,
+    provider: str,
+    role: str,
+    prompt: str,
+    cfg: dict,
+    persona: str = "",
+    step_id: str | None = None,
+) -> tuple[int, str]:
+    if _uses_adaptive_executors(state):
+        with _HIST_LOCK:
+            state["adaptive"]["invocations"] += 1
+    return run_provider(
+        provider,
+        role,
+        prompt,
+        cfg,
+        persona=persona,
+        state=state,
+        step_id=step_id,
+    )
+
+
 def _read_runs_jsonl(path: pathlib.Path) -> list[dict]:
     """Local copy of commands.py's _read_jsonl (kept private to avoid a providers<->commands
     import cycle: commands.py already imports from providers.py)."""
@@ -954,12 +1002,25 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     gen_cfg = {**cfg, "model": gen_model} if gen_model else cfg
     ver_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     if len(gen_list) == 1:
-        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg,
-                              state=state, step_id=step["id"])
+        _, out = _run_provider_counted(
+            state,
+            gen_list[0],
+            "generator",
+            _build_prompt(state, step, state["step_state"][step["id"]]),
+            gen_cfg,
+            step_id=step["id"],
+        )
         return gen_list[0], _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"), []
+
     def _gen(p):
-        rc, out = run_provider(p, "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg,
-                               state=state, step_id=step["id"])
+        rc, out = _run_provider_counted(
+            state,
+            p,
+            "generator",
+            _build_prompt(state, step, state["step_state"][step["id"]]),
+            gen_cfg,
+            step_id=step["id"],
+        )
         return {"provider": p, "rc": rc, "out": out}
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
@@ -970,8 +1031,15 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     jver = ver[0] if isinstance(ver, list) else ver            # the judge is the first verifier provider
     diff = _git_diff_evidence(cfg)                             # verify the diff, not the transcript
     for c in cands:                                            # judge ALL candidates (no early stop)
-        _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"], diff),
-                               ver_cfg, persona="judge", state=state, step_id=step["id"])
+        _, jout = _run_provider_counted(
+            state,
+            jver,
+            "verifier",
+            _build_verify_prompt(state, step, c["out"], diff),
+            ver_cfg,
+            persona="judge",
+            step_id=step["id"],
+        )
         ok, criteria = _judge_output(jout)
         judged.append({"provider": c["provider"], "ok": ok, "criteria": criteria,
                        "note": _excerpt(jout)})
@@ -981,9 +1049,252 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     return winner, product, judged
 
 
+_ADAPTIVE_OUTPUT_CRITERIA = [
+    "Blocking findings include a concrete REPRODUCTION line.",
+    "Blocking findings include one allowlisted MECHANICAL_CHECK line.",
+    "The final line is VERDICT: PASS or VERDICT: FAIL.",
+]
+
+
+def _adaptive_finding_fields(output: str) -> tuple[str | None, str | None]:
+    reproduction = None
+    mechanical_check = None
+    for line in (output or "").splitlines():
+        if line.startswith("REPRODUCTION:"):
+            reproduction = line.partition(":")[2].strip() or None
+        elif line.startswith("MECHANICAL_CHECK:"):
+            mechanical_check = line.partition(":")[2].strip() or None
+    return reproduction, mechanical_check
+
+
+def _adaptive_has_explicit_fail(output: str) -> bool:
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    return bool(lines and lines[-1] == "VERDICT: FAIL")
+
+
+def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> str:
+    assessment = state["adaptive"]["assessment"] or {}
+    allowlist = sorted(_adaptive_check_allowlist(state, cfg))
+    lines = [
+        f"You are the '{persona}' targeted reviewer.",
+        "Review the actual diff using only the recorded risk evidence.",
+        f"RISK_EVIDENCE: {json.dumps(assessment.get('signals', []), ensure_ascii=False)}",
+        "For a blocking finding, include both lines:",
+        "REPRODUCTION: <one concrete failure or attack scenario>",
+        "MECHANICAL_CHECK: <one exact command from the task check allowlist>",
+        "A FAIL without both lines remains blocking but cannot trigger automatic repair.",
+        "End with exactly VERDICT: PASS or VERDICT: FAIL.",
+        "TASK_CHECK_ALLOWLIST:",
+    ]
+    lines.extend(f"- {command}" for command in allowlist)
+    lines.extend([
+        "--- diff ---",
+        diff or "(no diff evidence available)",
+    ])
+    return "\n".join(lines)
+
+
+def _adaptive_budget_verdict() -> dict:
+    return {
+        "by": "adaptive-budget",
+        "ok": False,
+        "note": "invocation budget exhausted",
+    }
+
+
+def execute_adaptive_review(
+    state: dict,
+    step: dict,
+    ver: str | list[str],
+    cfg: dict,
+    max_parallel: int = 4,
+    log=lambda *args: None,
+) -> list[dict]:
+    """Run the deterministic primary and optional secondary review lenses."""
+    del max_parallel
+    assessment = state["adaptive"].get("assessment") or {}
+    personas = [
+        persona
+        for persona in (assessment.get("primary"), assessment.get("secondary"))
+        if persona
+    ]
+    provider = ver[0] if isinstance(ver, list) else ver
+    diff = _git_diff_evidence(cfg) or ""
+    verdicts = []
+    for persona in personas:
+        if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
+            return [_adaptive_budget_verdict()]
+        rc, out = _run_provider_counted(
+            state,
+            provider,
+            "verifier",
+            _adaptive_review_prompt(state, persona, diff, cfg),
+            cfg,
+            persona=persona,
+            step_id=step["id"],
+        )
+        parsed_ok, criteria = _judge_output(out)
+        ok = rc == 0 and parsed_ok
+        reproduction, mechanical_check = _adaptive_finding_fields(out)
+        verdict = {
+            "by": f"{provider}:{persona}",
+            "persona": persona,
+            "risk_evidence": assessment.get("signals", []),
+            "output_criteria": list(_ADAPTIVE_OUTPUT_CRITERIA),
+            "ok": ok,
+            "criteria": criteria,
+            "note": f"exit {rc}; {_excerpt(out)}",
+        }
+        if reproduction is not None:
+            verdict["reproduction"] = reproduction
+        if mechanical_check is not None:
+            verdict["mechanical_check"] = mechanical_check
+        verdict["repair_eligible"] = bool(
+            not ok
+            and reproduction is not None
+            and mechanical_check is not None
+            and _adaptive_has_explicit_fail(out)
+        )
+        verdicts.append(verdict)
+        log(f"   竊ｳ targeted review: {persona} {'PASS' if ok else 'FAIL'}")
+    return verdicts
+
+
+def _adaptive_check_allowlist(state: dict, cfg: dict) -> set[str]:
+    configured = (cfg.get("checks") or []) + (cfg.get("check_allowlist") or [])
+    declared = [
+        command
+        for recipe_step in state["steps"]
+        for command in recipe_step.get("checks", [])
+    ]
+    return {
+        command
+        for command in configured + declared
+        if isinstance(command, str) and command
+    }
+
+
+def execute_informed_repair(
+    state: dict,
+    step: dict,
+    st: dict,
+    finding: dict,
+    gen_list: list[str],
+    cfg: dict,
+    log=lambda *args: None,
+) -> bool:
+    """Attempt one repair only for an exact user/task-allowlisted mechanical check."""
+    check = finding.get("mechanical_check")
+    if not finding.get("repair_eligible"):
+        return False
+    if check not in _adaptive_check_allowlist(state, cfg):
+        return False
+    if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
+        st["verdicts"] = [_adaptive_budget_verdict()]
+        return False
+
+    repair_step = next(
+        (
+            candidate
+            for candidate in state["steps"]
+            if candidate.get("executor", "generate") == "generate"
+        ),
+        step,
+    )
+    repair_state = dict(state["step_state"][repair_step["id"]])
+    repair_state["last_failure"] = finding["note"]
+    generator_model, _ = effective_step_models(repair_step, cfg)
+    generator_cfg = {**cfg, "model": generator_model} if generator_model else cfg
+    _run_provider_counted(
+        state,
+        gen_list[0],
+        "generator",
+        _build_prompt(state, repair_step, repair_state),
+        generator_cfg,
+        step_id=repair_step["id"],
+    )
+
+    cwd = cfg.get("cwd") or str(config.INVOCATION_CWD)
+    try:
+        result = subprocess.run(
+            check,
+            shell=True,
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        exit_status = result.returncode
+    except (OSError, subprocess.SubprocessError):
+        exit_status = 127
+    state["history"].append({
+        "action": "INFORMED_REPAIR",
+        "step": step["id"],
+        "check": check,
+        "exit_status": exit_status,
+    })
+    log(f"   竊ｳ informed repair check: {check} (exit {exit_status})")
+    return exit_status == 0
+
+
+def _execute_targeted_review(
+    state: dict,
+    step: dict,
+    st: dict,
+    gen_list: list[str],
+    ver: str | list[str],
+    cfg: dict,
+    max_parallel: int,
+    log,
+) -> None:
+    verdicts = execute_adaptive_review(
+        state,
+        step,
+        ver,
+        cfg,
+        max_parallel=max_parallel,
+        log=log,
+    )
+    st["verdicts"] = verdicts
+    primary_finding = verdicts[0] if verdicts else None
+    if not primary_finding or primary_finding["ok"]:
+        return
+    if execute_informed_repair(
+        state,
+        step,
+        st,
+        primary_finding,
+        gen_list,
+        cfg,
+        log=log,
+    ):
+        verdicts[0] = {
+            "by": "adaptive-repair",
+            "ok": True,
+            "note": f"mechanical check passed: {primary_finding['mechanical_check']}",
+        }
+
+
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
+    executor = step.get("executor", "generate")
+    if executor == "risk-assess":
+        assessment = analyze_diff(_git_diff_evidence(cfg) or "", _git_changed_files(cfg))
+        state["adaptive"]["assessment"] = assessment.to_dict()
+        state["adaptive"]["invocation_limit"] = invocation_limit(assessment)
+        state["history"].append({
+            "action": "RISK_ASSESS",
+            "step": step["id"],
+            "assessment": assessment.to_dict(),
+        })
+        return
+    if executor == "targeted-review":
+        _execute_targeted_review(state, step, st, gen_list, ver, cfg, max_parallel, log)
+        return
+    if executor == "checks-only":
+        _run_step_checks(step, st, cfg)
+        return
+
     effective_step = step
     # Cost-tier auto-routing (#264): only a fallback default. Runtime --step-model and the
     # recipe's own `model:` both still win outright — auto_route never overrides an explicit

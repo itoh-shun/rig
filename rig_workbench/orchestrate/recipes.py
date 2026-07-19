@@ -194,6 +194,7 @@ def load_steps(fm: dict) -> list[dict]:
         out.append({
             "id": s.get("id"),
             "instruction": s.get("instruction"),
+            "executor": s.get("executor") or "generate",
             "gate": None if gate in (None, "—", "-") else gate,
             "pattern": s.get("pattern"),
             "personas": list(s.get("personas") or []),       # roles of parallel verifiers
