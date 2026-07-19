@@ -149,3 +149,25 @@ def test_missing_manifest_is_silent_empty(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("RIG_TRUST_STORE", str(tmp_path / "trusted.json"))
     assert recipes.load_manifest() == {}
     assert capsys.readouterr().out == ""
+
+
+# ── concurrent trust recording (#329) ─────────────────────────────────────
+
+
+def test_record_trust_is_thread_safe_no_lost_updates(tmp_path, monkeypatch):
+    """Manifest A/B records trust from parallel variant threads (commands.py); an
+    unlocked read-modify-write loses entries under contention (the flaky
+    test_manifest_ab failure). Hammer the store from many threads and require
+    every entry to survive."""
+    import json
+    import pathlib
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = tmp_path / "trusted.json"
+    monkeypatch.setenv("RIG_TRUST_STORE", str(store))
+    entries = [(pathlib.Path(f"/w/variant-{i}/.claude/rig.md"), f"digest-{i}") for i in range(32)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda e: recipes._record_trust(*e), entries))
+    data = json.loads(store.read_text(encoding="utf-8"))
+    assert len(data) == 32
+    assert all(data[str(p)] == d for p, d in entries)
