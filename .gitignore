@@ -19,3 +19,4 @@ node_modules/
 video/
 .rig/
 .worktrees/
+.superpowers/
