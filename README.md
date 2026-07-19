@@ -418,6 +418,27 @@ python3 scripts/workbench.py stats                    # §10 — the same aggreg
 
 **Honest scope note:** this repo does not currently auto-publish those numbers (e.g. a CI job that regenerates a badge or a docs page on every merge) — that's tracked as follow-up work, not implemented here. Today, "dogfooding" means the maintainer can run the above locally and paste the output into a PR description or release notes; it is not yet a live, continuously-updated public score.
 
+### Does rig actually help? Two benchmarks, two different claims (#330)
+
+"Is rig worth using" splits into two separable claims, and only one of them can be answered without spending money.
+
+**Claim A — rig guarantees a mechanical floor a bare loop doesn't.** `rig-wb sensor-bench` runs the secrets/injection/destructive machine sensors' `scan_line` directly against a fixed corpus of known-bad lines (a hardcoded AWS key, a `-----BEGIN...PRIVATE KEY-----` header, an instruction-override phrase, `rm -rf /`, …) and known-safe near-misses (an env-var reference, `rm -rf build/`, prose that merely mentions "previous configuration"). No LLM call, no billing, fully deterministic:
+
+```bash
+python3 -m rig_workbench.cli sensor-bench     # or: rig-wb sensor-bench
+```
+
+Current corpus: 10/10 known-bad lines caught, 0/7 false positives on the safe near-misses. The point isn't the specific number — it's that a bare `claude -p` loop has **no number here at all**: nothing runs these checks unless something is wired to run them, so its guaranteed catch rate on this exact corpus is 0% by construction. This is a floor, not a ceiling — it proves nothing about judgment-requiring defects (design flaws, wrong business logic); that's what `/rig:drill` (§11 above) and Claim B measure.
+
+**Claim B — same model, rig-mediated output is measurably better.** This one needs a real LLM and therefore real billing — it cannot be proven from this environment without your explicit go-ahead. `rig-wb bench` (shipped since v1.9.0) already implements the harness: for each built-in task it runs **bare** (`claude -p` in one shot) and **rig** (the `fast-bugfix`/`bugfix` recipe) in separate scratch worktrees against the same starting code, then measures (1) whether the visible test suite passes, (2) whether a **hidden spec-check** the model never sees also passes (each task ships a deliberately weak visible test plus a stronger held-out assertion — the gap between the two is exactly what a rubber-stamped bare answer misses), (3) unrelated file changes, and (4) workspace leaks outside the scratch dir:
+
+```bash
+rig-wb bench --provider mock --out /tmp/bench.json --html /tmp/bench.html   # wiring smoke test only — no billing, no evidence
+rig-wb bench --provider claude --allow-headless-in-cc --html /tmp/bench.html # the real measurement — billing applies
+```
+
+**Honest scope note:** `--provider mock` (the default) proves the harness plumbing works — MOCK_SRC has the built-in tasks' fixes hardcoded, so both arms trivially "pass." It is **not evidence for Claim B**; only a run with a real provider is. Run it yourself when you want the number for your own model/version — this repo does not run and publish it automatically (same honest-scope stance as dogfooding above, and for the same reason: it costs real money on every run).
+
 ### MCP server (#263)
 
 To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:
