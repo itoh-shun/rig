@@ -171,6 +171,7 @@ git commit -m "feat: add deterministic adaptive risk analysis"
 - Adds recipe step field: `executor: generate | risk-assess | targeted-review | checks-only`
 - Adds run-state fields: `adaptive.assessment`, `adaptive.invocation_limit`, `adaptive.invocations`
 - Produces: `execute_adaptive_review(...) -> list[dict]`
+- Produces: `execute_informed_repair(...) -> bool`
 
 - [ ] **Step 1: Write failing recipe and state tests**
 
@@ -271,7 +272,18 @@ The verifier prompt requires blocking findings to contain both
 remains a failing verdict and cannot trigger automatic repair. Persist persona,
 risk evidence, output criteria, and the bounded note in `st["verdicts"]`.
 
-- [ ] **Step 6: Add the opt-in recipe**
+- [ ] **Step 6: Implement one informed repair when the finding is verifiable**
+
+After a failing primary review, parse `MECHANICAL_CHECK:` and accept it only
+when it exactly matches one of the commands supplied through `--check`.
+Otherwise retain the failing verdict and stop. For an allowed check, call the
+generator once with the bounded reviewer finding as `previous_failure`, run
+the allowed check, and replace the failing verdict with a passing
+`adaptive-repair` verdict only when the check exits zero. Record
+`INFORMED_REPAIR`, the check, and its exit status in history. Never execute a
+reviewer-authored command that was not supplied by the user or task manifest.
+
+- [ ] **Step 7: Add the opt-in recipe**
 
 ```yaml
 ---
@@ -308,17 +320,20 @@ steps:
 The body documents two-call normal behavior, three-call repair budget,
 four-call multi-domain budget, and safe-stop behavior.
 
-- [ ] **Step 7: Test clean, high-risk, malformed, and budget-exhausted paths**
+- [ ] **Step 8: Test clean, high-risk, malformed, repair, and budget-exhausted paths**
 
 Use monkeypatched `run_provider` outputs to assert:
 
 - normal path calls generator once and primary reviewer once;
 - two high-risk domains call one generator and two reviewers;
 - malformed reviewer output fails closed;
+- a blocking finding with an allowlisted check calls one informed repair and
+  passes only after that check succeeds;
+- a blocking finding with an unlisted check never executes that command;
 - budget exhaustion stops without another provider call;
 - existing `bugfix` and `fast-bugfix` plans are byte-for-byte unchanged.
 
-- [ ] **Step 8: Run focused tests and commit**
+- [ ] **Step 9: Run focused tests and commit**
 
 Run: `.\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py tests/test_adaptive_risk.py tests/test_recipes.py tests/test_retry_feedback.py`
 
@@ -704,4 +719,3 @@ explicit executors.
 Run: `git diff HEAD~6 --check` and `git status --short`.
 
 Expected: no whitespace errors and only intended files.
-
