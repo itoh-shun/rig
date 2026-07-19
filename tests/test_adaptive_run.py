@@ -239,6 +239,124 @@ def test_adaptive_budget_is_checked_before_initial_generator(
     assert not any(item["action"] == "EXEC" for item in state["history"])
 
 
+def test_failed_initial_generator_stops_before_adaptive_review(
+    step_factory, monkeypatch, tmp_path
+):
+    calls = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append((role, persona))
+        return 7, "generator failed"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("adaptive-bugfix", _adaptive_steps(step_factory), "fix")
+
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"cwd": str(tmp_path)},
+        20,
+        quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert calls == [("generator", "")]
+    assert state["adaptive"]["invocations"] == 1
+    assert state["adaptive"]["assessment"] is None
+    assert state["stopped"] == {
+        "reason": "adaptive generator failed (exit 7)",
+        "kind": "BLOCKED",
+        "at": "implement",
+    }
+    assert not any(item["action"] == "RISK_ASSESS" for item in state["history"])
+
+
+def test_adaptive_gated_generate_counts_verifier_provider_call(
+    step_factory, monkeypatch, tmp_path
+):
+    calls = []
+    steps = [
+        step_factory(
+            id="gated-generate",
+            gate="review-gate",
+            personas=["independent"],
+        ),
+        step_factory(id="finish"),
+    ]
+    steps[0]["executor"] = "generate"
+    steps[1]["executor"] = "checks-only"
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append((role, persona))
+        if role == "verifier":
+            return 0, "No defect.\nVERDICT: PASS"
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("adaptive-bugfix", steps, "fix")
+
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"cwd": str(tmp_path)},
+        20,
+        quiet=True,
+    )
+
+    assert final == "DONE"
+    assert calls == [("generator", ""), ("verifier", "independent")]
+    assert state["adaptive"]["invocations"] == 2
+
+
+def test_adaptive_gated_generate_enforces_budget_before_verifier_call(
+    step_factory, monkeypatch, tmp_path
+):
+    calls = []
+    steps = [
+        step_factory(
+            id="gated-generate",
+            gate="review-gate",
+            personas=["independent"],
+        ),
+        step_factory(id="finish"),
+    ]
+    steps[0]["executor"] = "generate"
+    steps[1]["executor"] = "checks-only"
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append((role, persona))
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("adaptive-bugfix", steps, "fix")
+    state["adaptive"]["invocation_limit"] = 1
+
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"cwd": str(tmp_path)},
+        20,
+        quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert calls == [("generator", "")]
+    assert state["adaptive"]["invocations"] == 1
+    assert state["stopped"]["reason"] == "adaptive invocation budget exhausted"
+
+
 def test_secondary_budget_exhaustion_preserves_primary_review_evidence(
     step_factory, monkeypatch, tmp_path
 ):
@@ -365,6 +483,38 @@ def test_legacy_verdict_parser_remains_permissive():
     assert providers._verdict_ok("reason\nVERDICT: PASS trailing") is True
 
 
+def test_pass_with_conditions_is_declared_in_adaptive_reviewer_prompt(
+    step_factory, monkeypatch, tmp_path
+):
+    reviewer_prompts = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        if role == "verifier":
+            reviewer_prompts.append(prompt)
+            return 0, "Non-blocking follow-up noted.\nVERDICT: PASS_WITH_CONDITIONS"
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    monkeypatch.setattr(providers, "_run_step_checks", _pass_step_checks)
+    state = new_state("adaptive-bugfix", _adaptive_steps(step_factory), "fix")
+
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"cwd": str(tmp_path)},
+        20,
+        quiet=True,
+    )
+
+    assert final == "DONE"
+    assert len(reviewer_prompts) == 1
+    assert "VERDICT: PASS_WITH_CONDITIONS" in reviewer_prompts[0]
+
+
 def test_unknown_executor_stops_without_provider_call(
     step_factory, monkeypatch, tmp_path
 ):
@@ -398,6 +548,71 @@ def test_unknown_executor_stops_without_provider_call(
         "kind": "BLOCKED",
         "at": "implement",
     }
+
+
+def test_final_iteration_stop_returns_blocked_instead_of_stale_start(
+    step_factory, monkeypatch, tmp_path
+):
+    calls = []
+    steps = _adaptive_steps(step_factory)
+    steps[0]["executor"] = "generat"
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append((role, persona))
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("adaptive-bugfix", steps, "fix")
+
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"cwd": str(tmp_path)},
+        1,
+        quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert calls == []
+
+
+def test_cmd_run_rejects_explicit_empty_executor_without_provider_call(
+    write_recipe, monkeypatch, tmp_path
+):
+    recipe = write_recipe("empty-executor", """---
+name: empty-executor
+steps:
+  - id: invalid
+    instruction: must-not-run
+    executor: ""
+---""")
+    calls = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append((role, persona))
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+
+    with pytest.raises(SystemExit) as exc:
+        commands.cmd_run([
+            str(recipe),
+            "--provider",
+            "mock",
+            "--max-steps",
+            "1",
+            "--out",
+            str(tmp_path / "state.json"),
+        ])
+
+    assert exc.value.code != 0
+    assert calls == []
 
 
 def test_nonzero_reviewer_exit_cannot_pass(step_factory, monkeypatch, tmp_path):

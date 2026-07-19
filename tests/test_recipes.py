@@ -70,6 +70,23 @@ steps:
     assert resolve_plan_json(path)["steps"][0]["executor"] == "risk-assess"
 
 
+def test_load_steps_defaults_only_a_missing_executor(write_recipe):
+    path = write_recipe("executor-defaults", """---
+name: executor-defaults
+steps:
+  - id: omitted
+    instruction: legacy-generate
+  - id: explicit-empty
+    instruction: invalid-adaptive
+    executor: ""
+---""")
+
+    steps = resolve_plan_json(path)["steps"]
+
+    assert steps[0]["executor"] == "generate"
+    assert steps[1]["executor"] == ""
+
+
 def test_adaptive_bugfix_recipe_has_bounded_executor_flow():
     path = config.RECIPES / "adaptive-bugfix.md"
     plan = resolve_plan_json(path)

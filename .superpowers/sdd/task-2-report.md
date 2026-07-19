@@ -282,3 +282,70 @@ Result:
   terminal kind so `cmd_run` exits nonzero.
 - Repeatable CLI `--check` values are appended only to `checks-only` acceptance steps and are
   the sole semantic-repair allowlist. Recipe acceptance checks remain final sensors only.
+
+## Remaining Review Fixes
+
+### RED Evidence
+
+Command:
+
+`C:\Users\Succh\work\rig\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py tests/test_recipes.py`
+
+Result before the remaining production fixes:
+
+`7 failed, 49 passed in 1.47s`
+
+- A nonzero initial adaptive generator continued into risk assessment and review.
+- Generic verifier fan-out bypassed adaptive invocation counting and pre-call budget checks.
+- Recipe loading defaulted an explicit empty executor to `generate`.
+- A stop set on the final `max_steps` iteration returned stale `START`, causing a zero CLI exit.
+- The strict parser accepted `PASS_WITH_CONDITIONS`, but the adaptive reviewer prompt did not
+  declare that output.
+
+### GREEN Evidence
+
+Required focused command:
+
+`C:\Users\Succh\work\rig\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py tests/test_recipes.py tests/test_retry_feedback.py`
+
+Result:
+
+`63 passed in 1.00s`
+
+Targeted legacy compatibility command:
+
+`C:\Users\Succh\work\rig\.venv\Scripts\python.exe -m pytest -q tests/test_step_model.py tests/test_runstate.py tests/test_persona_briefs.py::test_run_verifiers_parallel_injects_distinct_briefs_per_persona`
+
+Result:
+
+`19 passed in 0.90s`
+
+Ruff command:
+
+`C:\Users\Succh\work\rig\.venv\Scripts\python.exe -m ruff check rig_workbench/orchestrate/providers.py rig_workbench/orchestrate/recipes.py tests/test_adaptive_run.py tests/test_recipes.py`
+
+Result:
+
+`All checks passed!`
+
+`git diff --check` exited zero with only the existing LF-to-CRLF working-copy warnings.
+
+### Remaining-Fix Self-Review
+
+- Solo generator exit status is propagated internally and blocks only adaptive execution on a
+  nonzero status; legacy non-adaptive behavior is unchanged.
+- Generic verifier fan-out uses the counted provider boundary only when the state contains
+  adaptive executors. Its legacy direct-call path remains intact.
+- Executor loading now defaults only when the key is absent. Explicit empty, null, and unknown
+  values reach fail-closed executor validation before any provider call.
+- Final loop status is derived from `state.stopped` even when the stop occurs on the last allowed
+  iteration, so `BLOCKED` and `ESCALATE` propagate to the CLI.
+- The adaptive reviewer prompt and recorded output criteria explicitly allow exact final
+  `VERDICT: PASS_WITH_CONDITIONS`; `_adaptive_final_verdict` remains strict and the legacy
+  permissive parser remains unchanged.
+
+### Remaining Concern
+
+The full suite was intentionally not run per task instructions. Verification was limited to the
+three required focused files and compatibility tests covering the shared legacy paths touched by
+these fixes.

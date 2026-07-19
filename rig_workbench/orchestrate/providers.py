@@ -602,7 +602,26 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
         brief = _load_persona_brief(p)
         persona_prompt = (f"You are the '{p}' reviewer. Judge strictly from this brief:\n\n"
                           f"{brief}\n\n---\n\n{prompt}") if brief else prompt
-        rc, out = run_provider(v, "verifier", persona_prompt, cfg, persona=p, state=state, step_id=step_id)
+        if state is not None and _uses_adaptive_executors(state):
+            rc, out = _run_provider_counted(
+                state,
+                v,
+                "verifier",
+                persona_prompt,
+                cfg,
+                persona=p,
+                step_id=step_id,
+            )
+        else:
+            rc, out = run_provider(
+                v,
+                "verifier",
+                persona_prompt,
+                cfg,
+                persona=p,
+                state=state,
+                step_id=step_id,
+            )
         ok, criteria = _judge_output(out)
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
                 "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
@@ -995,21 +1014,21 @@ def effective_step_models(step: dict, cfg: dict) -> tuple[str | None, str | None
 
 
 def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
-              cfg: dict, max_parallel: int) -> tuple[str | None, str, list[dict]]:
+              cfg: dict, max_parallel: int) -> tuple[str | None, str, list[dict], int | None]:
     """Generate solo or via judge-panel. With multiple generators, run them all in parallel and
     have the judge (ver) evaluate EVERY candidate (never stop at the first PASS — position
     bias / order effects, MT-Bench §3). Winner selection stays deterministic and documented:
     among all PASSing candidates, the first in generator-list order wins; the judged[] entries
     record the full pass-set so a multi-PASS (order-sensitive) pick is visible in telemetry.
-    Returns: (winner_provider | None, product, judged[]); the winning judged entry is marked
-    with "winner": True.
+    Returns: (winner_provider | None, product, judged[], solo_exit_status | None); the
+    winning judged entry is marked with "winner": True.
     Per-step models (runtime --step-model > recipe `model:`/`verifier_model:` > global --model)
     are injected into a copy of cfg (parallel-safe)."""
     gen_model, ver_model = effective_step_models(step, cfg)
     gen_cfg = {**cfg, "model": gen_model} if gen_model else cfg
     ver_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     if len(gen_list) == 1:
-        _, out = _run_provider_counted(
+        rc, out = _run_provider_counted(
             state,
             gen_list[0],
             "generator",
@@ -1017,7 +1036,12 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
             gen_cfg,
             step_id=step["id"],
         )
-        return gen_list[0], _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"), []
+        return (
+            gen_list[0],
+            _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"),
+            [],
+            rc,
+        )
 
     def _gen(p):
         rc, out = _run_provider_counted(
@@ -1053,13 +1077,13 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
         if ok and winner is None:
             winner, product = c["provider"], c["out"]
             judged[-1]["winner"] = True
-    return winner, product, judged
+    return winner, product, judged, None
 
 
 _ADAPTIVE_OUTPUT_CRITERIA = [
     "Blocking findings include a concrete REPRODUCTION line.",
     "Blocking findings include one allowlisted MECHANICAL_CHECK line.",
-    "The final line is VERDICT: PASS or VERDICT: FAIL.",
+    "The final line is VERDICT: PASS, VERDICT: PASS_WITH_CONDITIONS, or VERDICT: FAIL.",
 ]
 
 
@@ -1102,7 +1126,11 @@ def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> 
         "REPRODUCTION: <one concrete failure or attack scenario>",
         "MECHANICAL_CHECK: <one exact command from the task check allowlist>",
         "A FAIL without both lines remains blocking but cannot trigger automatic repair.",
-        "End with exactly VERDICT: PASS or VERDICT: FAIL.",
+        "Use PASS_WITH_CONDITIONS only for non-blocking follow-up work.",
+        "End with exactly one of these final lines:",
+        "VERDICT: PASS",
+        "VERDICT: PASS_WITH_CONDITIONS",
+        "VERDICT: FAIL",
         "TASK_CHECK_ALLOWLIST:",
     ]
     lines.extend(f"- {command}" for command in allowlist)
@@ -1403,7 +1431,25 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     gen_model, ver_model = effective_step_models(effective_step, cfg)
     if gen_model:
         st["model"] = gen_model                     # actually-used generator model (run-state/telemetry attribution)
-    winner, out, judged = _generate(state, effective_step, gen_list, ver, cfg, max_parallel)
+    winner, out, judged, generator_rc = _generate(
+        state,
+        effective_step,
+        gen_list,
+        ver,
+        cfg,
+        max_parallel,
+    )
+    if (
+        _uses_adaptive_executors(state)
+        and generator_rc != 0
+    ):
+        if not state.get("stopped"):
+            state["stopped"] = {
+                "reason": f"adaptive generator failed (exit {generator_rc})",
+                "kind": "BLOCKED",
+                "at": step["id"],
+            }
+        return
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
                                  "provider": winner or gen_list[0], "out": out[:200],
@@ -1491,6 +1537,8 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         if action == "STOPPED" and state.get("stopped"):
             last = state["stopped"].get("kind") or action
         break  # DONE / ESCALATE / BLOCKED / STOPPED
+    if state.get("stopped"):
+        last = state["stopped"].get("kind", "ESCALATE")
     if sp:
         save_state(state, sp)
     state["token_usage"] = cfg.get("_token_usage") or {}
