@@ -29,6 +29,19 @@ Result: `7 passed in 0.06s`
 
 Result: `All checks passed!`
 
+## Final Constraint Fix Evidence
+
+Reformatted only the security assertion in `tests/test_adaptive_risk.py` so the line length
+is within the required 100-character limit.
+
+`..\\..\\.venv\\Scripts\\python.exe -m pytest -q tests/test_adaptive_risk.py`
+
+Result: `13 passed in 0.10s`
+
+`..\\..\\.venv\\Scripts\\python.exe -m ruff check rig_workbench/orchestrate/adaptive.py tests/test_adaptive_risk.py`
+
+Result: `All checks passed!`
+
 ## Files Changed
 
 - `rig_workbench/orchestrate/adaptive.py`: frozen value objects, deterministic regex-based

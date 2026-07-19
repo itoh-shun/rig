@@ -130,4 +130,7 @@ def test_common_security_forms_select_security(line, evidence):
     result = analyze_diff("+ " + line, ["service.py"])
 
     assert result.primary == "security-reviewer"
-    assert any(signal.domain == "security" and evidence in signal.evidence for signal in result.signals)
+    assert any(
+        signal.domain == "security" and evidence in signal.evidence
+        for signal in result.signals
+    )
