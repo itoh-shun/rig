@@ -230,6 +230,100 @@ BUILTIN_TASKS: dict[str, dict] = {
             "    return _price(weight_kg, 300, 800)\n"
         ),
     },
+    "auth-bypass-sibling": {
+        # Designed for #330's Claim B: does a review pass catch what a narrow
+        # one-shot fix of the LITERALLY reported symptom misses? The bug
+        # report names get_profile only; update_profile has the identical
+        # missing-ownership-check pattern one method down, mentioned nowhere
+        # in the goal or the (deliberately weak) visible tests. A bare answer
+        # that patches exactly what was asked plausibly leaves it open; a
+        # security-reviewer persona's job is to notice the sibling.
+        "difficulty": "security",
+        "files": {
+            "profile_service.py": (
+                "class ProfileService:\n"
+                "    \"\"\"In-memory profile store. current_user_id is who is making the "
+                "call; requested_user_id is whose profile is being accessed.\"\"\"\n"
+                "    def __init__(self):\n"
+                "        self._profiles = {}\n\n"
+                "    def create_profile(self, user_id, data):\n"
+                "        self._profiles[user_id] = dict(data)\n\n"
+                "    def get_profile(self, current_user_id, requested_user_id):\n"
+                "        \"\"\"Return the requested profile.\n"
+                "        BUG (reported): any logged-in user can read any other user's\n"
+                "        profile by passing a different requested_user_id — no ownership\n"
+                "        check.\n"
+                "        \"\"\"\n"
+                "        return self._profiles.get(requested_user_id)\n\n"
+                "    def update_profile(self, current_user_id, requested_user_id, data):\n"
+                "        \"\"\"Update the requested profile. Has the exact same "
+                "missing-ownership-check pattern as get_profile, but this is not "
+                "mentioned in the bug report.\"\"\"\n"
+                "        if requested_user_id not in self._profiles:\n"
+                "            return False\n"
+                "        self._profiles[requested_user_id].update(data)\n"
+                "        return True\n"
+            ),
+            "test_profile_service.py": (
+                "from profile_service import ProfileService\n\n"
+                "def _svc():\n"
+                "    s = ProfileService()\n"
+                "    s.create_profile('alice', {'bio': 'hi'})\n"
+                "    s.create_profile('bob', {'bio': 'yo'})\n"
+                "    return s\n\n"
+                "def test_owner_can_read_own_profile():\n"
+                "    s = _svc()\n"
+                "    assert s.get_profile('alice', 'alice') == {'bio': 'hi'}\n\n"
+                "def test_stranger_cannot_read_other_profile():\n"
+                "    # This is the ONLY reported bug: fix so this passes.\n"
+                "    s = _svc()\n"
+                "    assert s.get_profile('bob', 'alice') is None\n"
+                "    # Weak test: update_profile's cross-user case is never exercised.\n"
+            ),
+        },
+        "target_file": "profile_service.py",
+        "test_cmd": ["python3", "-m", "pytest", "test_profile_service.py", "--tb=no", "-q"],
+        "goal": (
+            "Users report they can view other users' profiles: calling get_profile "
+            "with someone else's user id returns that person's data, even though "
+            "they aren't that user. Fix this. Do not modify the tests. Return only "
+            "the full fixed profile_service.py in a ```python ... ``` block."
+        ),
+        "spec_check_code": (
+            "from profile_service import ProfileService\n"
+            "s = ProfileService()\n"
+            "s.create_profile('alice', {'bio': 'hi'})\n"
+            "s.create_profile('bob', {'bio': 'yo'})\n"
+            "# The reported bug, re-verified\n"
+            "assert s.get_profile('bob', 'alice') is None, 'reported bug not fixed'\n"
+            "assert s.get_profile('alice', 'alice') == {'bio': 'hi'}, "
+            "'owner access broken by the fix'\n"
+            "# The same missing-ownership-check pattern exists in update_profile, one\n"
+            "# method down, never mentioned in the bug report or the tests. A narrow\n"
+            "# patch of only get_profile leaves this open.\n"
+            "s.update_profile('bob', 'alice', {'bio': 'HACKED'})\n"
+            "assert s._profiles['alice']['bio'] == 'hi', "
+            "f'update_profile cross-user write not blocked: {s._profiles[\"alice\"]}'\n"
+        ),
+        "mock_fix": (
+            "class ProfileService:\n"
+            "    def __init__(self):\n"
+            "        self._profiles = {}\n\n"
+            "    def create_profile(self, user_id, data):\n"
+            "        self._profiles[user_id] = dict(data)\n\n"
+            "    def get_profile(self, current_user_id, requested_user_id):\n"
+            "        if current_user_id != requested_user_id:\n"
+            "            return None\n"
+            "        return self._profiles.get(requested_user_id)\n\n"
+            "    def update_profile(self, current_user_id, requested_user_id, data):\n"
+            "        if current_user_id != requested_user_id:\n"
+            "            return False\n"
+            "        if requested_user_id not in self._profiles:\n"
+            "            return False\n"
+            "        self._profiles[requested_user_id].update(data)\n"
+            "        return True\n"
+        ),
+    },
 }
 
 

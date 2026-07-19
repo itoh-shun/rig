@@ -69,6 +69,44 @@ def test_render_html_does_not_crash_on_empty_summary():
     assert "<html" in html
 
 
+def test_auth_bypass_sibling_narrow_fix_passes_visible_tests_but_fails_spec(tmp_path):
+    # This task's whole point (#330's Claim B): a fix that patches only the
+    # literally-reported get_profile bug passes the (deliberately weak)
+    # visible tests, but fails the hidden spec_check that also exercises the
+    # unreported sibling method update_profile. If this stops being true the
+    # task no longer measures what it claims to.
+    task = bench.BUILTIN_TASKS["auth-bypass-sibling"]
+    d = bench._setup_task_dir(task)
+    narrow_fix = (
+        "class ProfileService:\n"
+        "    def __init__(self):\n"
+        "        self._profiles = {}\n\n"
+        "    def create_profile(self, user_id, data):\n"
+        "        self._profiles[user_id] = dict(data)\n\n"
+        "    def get_profile(self, current_user_id, requested_user_id):\n"
+        "        if current_user_id != requested_user_id:\n"
+        "            return None\n"
+        "        return self._profiles.get(requested_user_id)\n\n"
+        "    def update_profile(self, current_user_id, requested_user_id, data):\n"
+        "        if requested_user_id not in self._profiles:\n"
+        "            return False\n"
+        "        self._profiles[requested_user_id].update(data)\n"
+        "        return True\n"
+    )
+    (d / task["target_file"]).write_text(narrow_fix, encoding="utf-8")
+    t = bench._run_tests(task, d)
+    assert t["failed"] == 0 and t["passed"] > 0  # visible tests: pass
+    assert bench._spec_check(task, d) != "PASS"  # hidden spec: catches the sibling gap
+
+
+def test_auth_bypass_sibling_original_file_fails_both_checks(tmp_path):
+    task = bench.BUILTIN_TASKS["auth-bypass-sibling"]
+    d = bench._setup_task_dir(task)
+    t = bench._run_tests(task, d)
+    assert t["failed"] > 0
+    assert bench._spec_check(task, d) != "PASS"
+
+
 def test_render_html_includes_task_rows():
     summary = {
         "generated": "x", "rig_wb_version": "0", "provider": "mock", "runs_per_task": 1,
