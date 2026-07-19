@@ -1,3 +1,5 @@
+import pytest
+
 from rig_workbench.orchestrate.adaptive import (
     RiskAssessment,
     RiskSignal,
@@ -61,19 +63,35 @@ def test_risk_values_are_frozen_and_serialized_stably():
     else:
         raise AssertionError("RiskSignal must be frozen")
 
+    try:
+        assessment.primary = "test-reviewer"
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("RiskAssessment must be frozen")
+
 
 def test_signals_rank_by_severity_domain_then_evidence():
     result = analyze_diff(
         "+ assert response.status == 200\n"
-        "+ execute(user_sql)\n"
-        "+ public_api = True\n",
+        "+ SELECT * FROM users WHERE id = 1\n"
+        "+ app.get('/v2/users', handler)\n",
         ["tests/api_test.py", "service.py"],
     )
 
-    assert list(result.signals) == sorted(
-        result.signals,
-        key=lambda signal: (-signal.severity, signal.domain, signal.evidence),
-    )
+    assert [
+        (signal.domain, signal.severity, signal.evidence)
+        for signal in result.signals
+    ] == [
+        ("design", 3, "app.get('/v2/users', handler)"),
+        ("security", 3, "SELECT * FROM users WHERE id = 1"),
+        ("test", 2, "assert response.status == 200"),
+        ("test", 2, "tests/api_test.py"),
+    ]
+    assert [result.primary, result.secondary] == [
+        "design-reviewer",
+        "security-reviewer",
+    ]
 
 
 def test_representative_risk_families_map_to_review_domains():
@@ -95,3 +113,21 @@ def test_design_file_changes_are_reviewed_without_matching_diff_text():
 
     assert result.primary == "design-reviewer"
     assert result.signals[0].evidence == "src/configuration.py"
+
+
+@pytest.mark.parametrize(
+    ("line", "evidence"),
+    [
+        ("SELECT * FROM users", "SELECT * FROM users"),
+        ("resource.owner_id != current_user_id", "resource.owner_id"),
+        ("untrusted_payload", "untrusted_payload"),
+        ("authenticate(request)", "authenticate(request)"),
+        ("os.system(command)", "os.system(command)"),
+        ("eval(user_input)", "eval(user_input)"),
+    ],
+)
+def test_common_security_forms_select_security(line, evidence):
+    result = analyze_diff("+ " + line, ["service.py"])
+
+    assert result.primary == "security-reviewer"
+    assert any(signal.domain == "security" and evidence in signal.evidence for signal in result.signals)

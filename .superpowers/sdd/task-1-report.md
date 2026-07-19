@@ -55,3 +55,34 @@ future workflows may need additional vocabulary as new diff shapes appear. The f
 pytest command was also attempted with a 120-second timeout and produced numerous failures before
 timing out; those failures were outside the two owned implementation/test files, while the
 focused Task 1 suite and Ruff checks passed.
+
+## Review Fix Evidence
+
+Added review-gap tests before changing production code. The focused command:
+
+`..\\..\\.venv\\Scripts\\python.exe -m pytest -q tests/test_adaptive_risk.py`
+
+failed with the expected security-routing gaps:
+
+`2 failed, 11 passed in 0.20s`
+
+The failures were `authenticate(request)` and `os.system(command)`, both incorrectly
+returning `test-reviewer`.
+
+The replacement ordering test now asserts the exact ordered tuples:
+
+`design/app.get('/v2/users', handler)` -> `security/SELECT * FROM users WHERE id = 1` ->
+`test/assert response.status == 200` -> `test/tests/api_test.py`, with primary
+`design-reviewer` and secondary `security-reviewer`. The SQL and public API samples match
+the production rules directly. Additional parameterized cases cover SQL, ownership, trust
+boundary, `authenticate`, `os.system`, and `eval`; frozen behavior now covers both dataclasses.
+
+After adding the minimal `authenticate(` and `os.system(`/`os.popen(` security patterns:
+
+`..\\..\\.venv\\Scripts\\python.exe -m pytest -q tests/test_adaptive_risk.py`
+
+Result: `13 passed in 0.08s`
+
+`..\\..\\.venv\\Scripts\\python.exe -m ruff check rig_workbench/orchestrate/adaptive.py tests/test_adaptive_risk.py`
+
+Result: `All checks passed!`

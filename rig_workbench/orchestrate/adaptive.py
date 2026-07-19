@@ -42,9 +42,10 @@ _REVIEWERS = {
 
 _RULES = (
     ("security", 3, re.compile(
-        r"authentication|authorization|current_user|requested_user|ownership|"
+        r"authentication|authenticate\(|authorization|current_user|requested_user|ownership|"
         r"\bsql\b|select\s+.+\s+from|insert\s+into|update\s+.+\s+set|"
-        r"secret|api[_-]?key|password|token|subprocess|shell\s*=|exec\(|eval\(|"
+        r"secret|api[_-]?key|password|token|subprocess|os\.(?:system|popen)\(|"
+        r"shell\s*=|exec\(|eval\(|"
         r"trust[- ]boundary|untrusted",
         re.IGNORECASE,
     )),
