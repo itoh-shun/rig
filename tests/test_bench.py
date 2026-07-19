@@ -107,6 +107,118 @@ def test_auth_bypass_sibling_original_file_fails_both_checks(tmp_path):
     assert bench._spec_check(task, d) != "PASS"
 
 
+def test_classify_outcome_bare_clean_pass():
+    m = {"spec_check": "PASS"}
+    assert bench.classify_outcome(m, "bare") == "clean_pass"
+
+
+def test_classify_outcome_bare_silent_defect():
+    # bare mode always "completes" (no escalation mechanism), so a failed
+    # spec_check with no runner_exit at all still counts as a claim of done.
+    m = {"spec_check": "FAIL: spec violation"}
+    assert bench.classify_outcome(m, "bare") == "silent_defect"
+
+
+def test_classify_outcome_bare_never_yields_stop_outcomes():
+    # bare has no escalation mechanism, so "completed" is always True for it —
+    # safe_stop and stopped_wrong are structurally impossible in bare mode,
+    # regardless of what a (nonsensical for bare) runner_exit key would say.
+    for spec_check in ("PASS", "FAIL: x"):
+        m = {"spec_check": spec_check, "runner_exit": 1}
+        assert bench.classify_outcome(m, "bare") in ("clean_pass", "silent_defect")
+
+
+def test_classify_outcome_rig_clean_pass():
+    m = {"spec_check": "PASS", "runner_exit": 0}
+    assert bench.classify_outcome(m, "rig") == "clean_pass"
+
+
+def test_classify_outcome_rig_silent_defect():
+    # completed (runner_exit == 0, i.e. claimed done) but the hidden spec is
+    # broken — the worst outcome: nothing signals a human should look closer.
+    m = {"spec_check": "FAIL: spec violation", "runner_exit": 0}
+    assert bench.classify_outcome(m, "rig") == "silent_defect"
+
+
+def test_classify_outcome_rig_safe_stop():
+    # escalated/stopped (runner_exit != 0) but the code was actually right —
+    # over-conservative but honest.
+    m = {"spec_check": "PASS", "runner_exit": 1}
+    assert bench.classify_outcome(m, "rig") == "safe_stop"
+
+
+def test_classify_outcome_rig_stopped_wrong():
+    m = {"spec_check": "FAIL: spec violation", "runner_exit": 1}
+    assert bench.classify_outcome(m, "rig") == "stopped_wrong"
+
+
+def test_classify_outcome_rig_defaults_runner_exit_to_zero():
+    # missing runner_exit key should be treated as "completed" (0), not crash
+    m = {"spec_check": "PASS"}
+    assert bench.classify_outcome(m, "rig") == "clean_pass"
+
+
+def test_render_html_includes_silent_defect_and_safe_stop_kpi_labels():
+    summary = {
+        "generated": "x", "rig_wb_version": "0", "provider": "mock", "runs_per_task": 1,
+        "tasks": [{
+            "task_id": "divide-by-zero", "difficulty": "simple",
+            "runs": [{"run": 1, "modes": {
+                "bare": {"elapsed_s": 0.1, "calls": 1, "test_pass": True, "spec_check": "FAIL: x",
+                        "unrelated_files": [], "workspace_leaks": [], "outcome": "silent_defect"},
+                "rig": {"elapsed_s": 0.4, "calls": 3, "test_pass": False, "spec_check": "PASS",
+                       "unrelated_files": [], "workspace_leaks": [], "reached_steps": ["s1"],
+                       "runner_exit": 1, "outcome": "safe_stop"},
+            }}],
+        }],
+    }
+    html = bench._render_html(summary)
+    assert "silent defects" in html
+    assert "safe stops" in html
+    assert "silent_defect" in html
+    assert "safe_stop" in html
+
+
+def test_render_html_tolerates_results_missing_outcome_key():
+    # Old JSON written before this change has no "outcome" key in mode dicts.
+    # _render_html must not crash — it should classify on the fly via m.get().
+    summary = {
+        "generated": "x", "rig_wb_version": "0", "provider": "mock", "runs_per_task": 1,
+        "tasks": [{
+            "task_id": "divide-by-zero", "difficulty": "simple",
+            "runs": [{"run": 1, "modes": {
+                "bare": {"elapsed_s": 0.1, "calls": 1, "test_pass": True, "spec_check": "PASS",
+                        "unrelated_files": [], "workspace_leaks": []},
+                "rig": {"elapsed_s": 0.4, "calls": 3, "test_pass": True, "spec_check": "PASS",
+                       "unrelated_files": [], "workspace_leaks": [], "reached_steps": ["s1"],
+                       "runner_exit": 0},
+            }}],
+        }],
+    }
+    html = bench._render_html(summary)
+    assert "<html" in html
+    assert "clean_pass" in html
+
+
+def test_cmd_bench_mock_smoke_prints_outcome_clean_pass_for_both_modes(tmp_path):
+    out_path = tmp_path / "bench-out.json"
+    r = subprocess.run(
+        [sys.executable, "-m", "rig_workbench.cli", "bench",
+         "--tasks", "divide-by-zero", "--provider", "mock", "--runs", "1",
+         "--out", str(out_path)],
+        capture_output=True, text=True, timeout=60, cwd=REPO_ROOT,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    stdout_lines = [ln for ln in r.stdout.splitlines() if ln.strip().startswith("run=")]
+    assert len(stdout_lines) == 2, r.stdout
+    for line in stdout_lines:
+        assert "outcome=clean_pass" in line, line
+    data = json.loads(out_path.read_text(encoding="utf-8"))
+    run = data["tasks"][0]["runs"][0]
+    assert run["modes"]["bare"]["outcome"] == "clean_pass"
+    assert run["modes"]["rig"]["outcome"] == "clean_pass"
+
+
 def test_render_html_includes_task_rows():
     summary = {
         "generated": "x", "rig_wb_version": "0", "provider": "mock", "runs_per_task": 1,

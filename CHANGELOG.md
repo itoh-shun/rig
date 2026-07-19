@@ -48,6 +48,18 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
   asked passes the visible tests and fails the hidden spec — locked
   in by a regression test so the corpus can't silently drift.
 
+  bench results now carry an asymmetric outcome classification
+  (`classify_outcome`), because "failed" means opposite things in the
+  two arms: `silent_defect` (claimed done, hidden spec broken — the
+  worst outcome, nothing signals a human to look) vs `safe_stop`
+  (rig-only: escalated to a human although the code was actually
+  right — over-conservative but honest) vs `stopped_wrong` /
+  `clean_pass`. The live hard-task run produced exactly this split
+  (bare: 1 silent defect in 3 runs; rig: 0 silent defects, 2 safe
+  stops), so the report format now names it instead of burying it in
+  exit codes. Surfaced per-run in stdout, as HTML KPI tiles, and as
+  per-task outcome columns; old JSON without the field still renders.
+
 - **grok-build host adapter + `--provider grok` (#328)**: grok-build
   (xAI's terminal coding agent) documents full Claude Code
   compatibility — plugins/skills/hooks/MCP/CLAUDE.md auto-load with
@@ -92,6 +104,24 @@ rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応�
   or sections — density up, count unchanged.
 
 ### Fixed
+
+- **Gate-failure RETRY was blind — reviewer findings were discarded
+  before the retry generator ever saw them (#333, discovered by a live
+  #330 bench run)**: `compute_next`'s RETRY path reset
+  `st["verdicts"]` (the reviewers' evidence-anchored findings) and
+  nothing wrote `last_failure` for gate-verdict failures, so the
+  retried generator received only `attempt: 2` — no idea what the
+  reviewers rejected. rig paid for 3 independent reviews, then threw
+  them away and re-rolled the dice; the observed "1/3 PASS → retry →
+  1/3 PASS → escalate on objectively-correct code" is exactly what
+  blind retries look like. Fix: `_distill_failures` summarizes failed
+  checks + dissenting verdicts (bounded: 240 chars/finding, 800
+  total) BEFORE the reset; the summary lands in `st["last_failure"]`
+  (feeding the pre-existing `previous_failure:` line in the next
+  attempt's step contract) and on the FAIL history entry (so
+  ESCALATE leaves an audit trail of why). Honest scope: this informs
+  the retry, it does not guarantee the retry converges — the effect
+  is measured by the #330 bench, not assumed.
 
 - **headless review-diff's 3-way review was 3 identical samples of one
   question, not 3 distinct lenses (#332, discovered by a live #330

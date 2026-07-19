@@ -163,6 +163,30 @@ def load_state(path: pathlib.Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _distill_failures(st: dict) -> str | None:
+    """Distill this attempt's failed checks and dissenting verdicts into one short string
+    for the retry generator (#333: reviewer findings must survive the RETRY record reset,
+    or the retry is blind — it never sees why the previous attempt failed).
+
+    Pure: reads only st["checks"] / st["verdicts"] (as populated for the just-failed attempt,
+    before compute_next resets them). Returns None when there is nothing to report.
+    """
+    parts = []
+    for c in st.get("checks") or []:
+        if not c.get("ok"):
+            parts.append(f"check failed: {c.get('cmd')}")
+    for v in st.get("verdicts") or []:
+        if not v.get("ok"):
+            note = str(v.get("note", ""))[:240]
+            parts.append(f"{v.get('by')}: {note}")
+    if not parts:
+        return None
+    joined = "; ".join(parts)
+    if len(joined) > 800:
+        joined = joined[:800] + "…"
+    return joined
+
+
 # ── Gate evaluation (deterministic, pure functions) ──────────────────────────
 def gate_outcome(step: dict, st: dict) -> str:
     """Deterministically judge the current step's pass/fail.
@@ -243,13 +267,22 @@ def compute_next(state: dict) -> tuple[str, str]:
     # fail
     st["retries"] += 1
     K = step["max_retries"]
-    state["history"].append({"action": "FAIL", "step": sid, "try": st["retries"]})
+    # Distill BEFORE the reset below (or an ESCALATE too) wipes checks/verdicts — reviewer
+    # findings must survive the record reset or the retry is blind (#333).
+    findings = _distill_failures(st)
+    fail_entry = {"action": "FAIL", "step": sid, "try": st["retries"]}
+    if findings is not None:
+        fail_entry["findings"] = findings
+    state["history"].append(fail_entry)
     if st["retries"] >= K:
         state["stopped"] = {"reason": f"step `{sid}` failed the gate {K} times → escalating", "at": sid}
         return "ESCALATE", state["stopped"]["reason"] + " (no infinite loops; hand off to the user)."
-    # Retry: redo this step (records are reset)
+    # Retry: redo this step (records are reset), but carry the distilled findings forward
+    # via last_failure so _build_step_contract's previous_failure: line still shows them.
     st["status"] = "pending"
     st["checks"] = []
     st["verdicts"] = []
+    if findings is not None:
+        st["last_failure"] = findings
     return "RETRY", f"step `{sid}` failed → retrying (try {st['retries']+1}/{K}). Address the findings and rerun."
 
