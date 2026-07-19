@@ -92,6 +92,7 @@ def test_adaptive_bugfix_recipe_has_bounded_executor_flow():
     assert "three-call repair budget" in body
     assert "four-call multi-domain budget" in body
     assert "safe stop" in body
+    assert "CLI `--check`" in body
 
 
 def test_existing_bugfix_recipe_bytes_are_unchanged():

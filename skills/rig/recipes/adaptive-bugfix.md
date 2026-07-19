@@ -35,7 +35,8 @@ risk-selected reviewer.
 
 The three-call repair budget permits one informed repair only when a blocking
 review finding provides both a reproduction and a mechanical command that
-exactly matches a user or task check allowlist entry.
+exactly matches a command supplied through the CLI `--check` allowlist. The
+recipe's own acceptance checks cannot authorize semantic repair.
 
 The four-call multi-domain budget permits a second independent reviewer when
 the deterministic assessment finds two high-risk domains. Risk assessment and
@@ -44,4 +45,4 @@ mechanical checks do not consume provider invocations.
 Malformed review output, an unverifiable blocking finding, a non-allowlisted
 reviewer command, a failed post-repair check, or an exhausted invocation budget
 causes a safe stop. Reviewer-authored commands are never executed unless they
-exactly match the trusted check allowlist.
+exactly match the CLI `--check` allowlist.

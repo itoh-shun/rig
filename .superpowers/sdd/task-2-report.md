@@ -10,7 +10,7 @@ Implemented the opt-in adaptive bugfix runner integration:
 - `targeted-review` runs the deterministic primary reviewer and optional secondary reviewer.
 - Provider calls are counted at the call boundary for adaptive runs.
 - One informed repair is allowed only for an explicit blocking finding whose exact
-  `MECHANICAL_CHECK` appears in the user/task allowlist.
+  `MECHANICAL_CHECK` appears in the CLI `--check` allowlist.
 - Malformed output, nonzero reviewer exit, failed repair checks, unlisted commands, and
   exhausted budgets fail closed.
 - The shipped `adaptive-bugfix` recipe documents normal, repair, multi-domain, and safe-stop
@@ -126,14 +126,14 @@ Result:
 
 ## Security Review
 
-- Reviewer commands are parsed as data and cannot execute unless the exact command is present
-  in `cfg["checks"]`, `cfg["check_allowlist"]`, or a recipe-declared check.
+- Reviewer commands are parsed as data and cannot execute unless the exact command was supplied
+  through CLI `--check` and is present in `cfg["checks"]`.
 - Repair requires nonempty `REPRODUCTION` and `MECHANICAL_CHECK` fields plus an exact final
   `VERDICT: FAIL`.
 - The allowlist is shown to the reviewer, but exact membership is checked again immediately
   before `shell=True`.
 - A nonzero reviewer process exit cannot produce a passing verdict.
-- Budget checks happen before targeted review and repair provider calls.
+- Budget checks happen before generator, targeted review, and repair provider calls.
 - A nonzero or failed mechanical check retains the original failing reviewer verdict.
 
 ## Self-Review
@@ -158,3 +158,127 @@ produced `3 failed, 44 passed` because the pre-existing mock provider invokes `p
 is not installed on this Windows host. Direct evidence was `RC 127` with
 `[provider not found: mock]`. Task 2 did not change `MOCK_SRC`, `build_argv`, or that executable
 selection, so no out-of-scope compatibility change was made.
+
+## Review Fixes
+
+### RED Evidence
+
+#### Strict Adaptive Verdicts and Unknown Executors
+
+Command:
+
+`..\..\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py::test_adaptive_pass_with_trailing_output_fails_closed tests/test_adaptive_run.py::test_unknown_executor_stops_without_provider_call`
+
+Result before fixes:
+
+`2 failed`
+
+- `VERDICT: PASS` followed by trailing output incorrectly completed as `DONE`.
+- A typo executor reached provider generation and only failed later.
+
+#### Repair Proof, Structured Feedback, and Allowlist Separation
+
+Command:
+
+`..\..\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py::test_allowlisted_blocking_finding_gets_one_informed_repair tests/test_adaptive_run.py::test_failed_repair_generator_cannot_run_check_or_pass tests/test_adaptive_run.py::test_noop_repair_generator_cannot_run_check_or_pass tests/test_adaptive_run.py::test_recipe_acceptance_check_is_not_a_repair_allowlist`
+
+Result before fixes:
+
+`4 failed`
+
+- Repair prompt omitted the complete `MECHANICAL_CHECK` and long reproduction tail.
+- A repair generator exiting `1` still passed after a zero-exit check.
+- A no-op repair still passed after a zero-exit check.
+- Recipe `git diff --check` incorrectly authorized a semantic repair.
+
+#### Adaptive Budget and Evidence Preservation
+
+Command:
+
+`..\..\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py::test_adaptive_multi_generator_panel_stops_before_provider_calls tests/test_adaptive_run.py::test_adaptive_budget_is_checked_before_initial_generator tests/test_adaptive_run.py::test_secondary_budget_exhaustion_preserves_primary_review_evidence`
+
+Result before fixes:
+
+`3 failed`
+
+- A two-generator adaptive panel entered generation/judging instead of stopping at zero calls.
+- An already exhausted budget still reached the generation path.
+- Secondary-review exhaustion replaced the collected primary verdict.
+
+#### Real CLI Check Parsing
+
+Command:
+
+`..\..\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py::test_cmd_run_parses_repeatable_checks_and_separates_repair_allowlist`
+
+Result before fixes:
+
+`1 failed`
+
+`cmd_run` ignored both repeatable `--check` values and did not expose a repair allowlist.
+
+#### Terminal Status and Execution Accounting
+
+The three rejected adaptive paths initially returned `STOPPED` rather than the stored
+`BLOCKED` kind:
+
+`3 failed`
+
+An exhausted initial generator also recorded a false `EXEC` history entry:
+
+`1 failed`
+
+The recipe CLI-only documentation assertion failed before the wording was corrected:
+
+`1 failed`
+
+### GREEN Evidence
+
+Focused review-fix groups passed after their minimal implementations:
+
+- Strict adaptive parsing and unknown executor: `2 passed`
+- Repair proof and allowlist separation: `5 passed`
+- Panel/budget/evidence handling: `3 passed`
+- Repeatable CLI check parsing: `1 passed`
+- Terminal `BLOCKED` propagation: `3 passed`
+- No-call execution accounting: `1 passed`
+
+Final focused command:
+
+`..\..\.venv\Scripts\python.exe -m pytest -q tests/test_adaptive_run.py tests/test_adaptive_risk.py tests/test_recipes.py tests/test_retry_feedback.py`
+
+Result:
+
+`69 passed in 0.61s`
+
+Command/state compatibility command:
+
+`..\..\.venv\Scripts\python.exe -m pytest -q tests/test_step_model.py tests/test_runstate.py`
+
+Result:
+
+`18 passed in 0.91s`
+
+Final Ruff command:
+
+`..\..\.venv\Scripts\python.exe -m ruff check rig_workbench/orchestrate/providers.py rig_workbench/orchestrate/commands.py rig_workbench/orchestrate/recipes.py rig_workbench/orchestrate/runstate.py tests/test_adaptive_run.py tests/test_recipes.py`
+
+Result:
+
+`All checks passed!`
+
+### Review-Fix Self-Review
+
+- Adaptive parsing accepts only exact final non-empty lines `VERDICT: PASS`,
+  `VERDICT: PASS_WITH_CONDITIONS`, or `VERDICT: FAIL`; the generic legacy parser is unchanged.
+- Repair requires generator exit zero, a changed post-repair diff, and a zero-exit exact CLI
+  check. Any failed proof retains the original failing reviewer verdict.
+- Structured repair feedback preserves bounded reviewer, reproduction, mechanical-check, and
+  review-note fields; reproduction content beyond the old 240-character excerpt is tested.
+- Adaptive provider calls are budget-checked and counted once at the shared call boundary.
+  Multi-generator adaptive panels are rejected before any call.
+- Budget failure records append to previously collected reviewer evidence.
+- Unknown executors stop as `BLOCKED` before any provider call, and `run_loop` propagates that
+  terminal kind so `cmd_run` exits nonzero.
+- Repeatable CLI `--check` values are appended only to `checks-only` acceptance steps and are
+  the sole semantic-repair allowlist. Recipe acceptance checks remain final sensors only.

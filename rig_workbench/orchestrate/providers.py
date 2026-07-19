@@ -932,6 +932,13 @@ def _run_provider_counted(
 ) -> tuple[int, str]:
     if _uses_adaptive_executors(state):
         with _HIST_LOCK:
+            if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
+                state["stopped"] = {
+                    "reason": "adaptive invocation budget exhausted",
+                    "kind": "BLOCKED",
+                    "at": step_id or "",
+                }
+                return 125, "[adaptive invocation budget exhausted]"
             state["adaptive"]["invocations"] += 1
     return run_provider(
         provider,
@@ -1068,8 +1075,20 @@ def _adaptive_finding_fields(output: str) -> tuple[str | None, str | None]:
 
 
 def _adaptive_has_explicit_fail(output: str) -> bool:
-    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
-    return bool(lines and lines[-1] == "VERDICT: FAIL")
+    return _adaptive_final_verdict(output) == "FAIL"
+
+
+def _adaptive_final_verdict(output: str) -> str | None:
+    lines = [line for line in (output or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+    final = lines[-1]
+    tokens = {
+        "VERDICT: PASS": "PASS",
+        "VERDICT: PASS_WITH_CONDITIONS": "PASS_WITH_CONDITIONS",
+        "VERDICT: FAIL": "FAIL",
+    }
+    return tokens.get(final)
 
 
 def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> str:
@@ -1123,7 +1142,7 @@ def execute_adaptive_review(
     verdicts = []
     for persona in personas:
         if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
-            return [_adaptive_budget_verdict()]
+            return verdicts + [_adaptive_budget_verdict()]
         rc, out = _run_provider_counted(
             state,
             provider,
@@ -1133,8 +1152,9 @@ def execute_adaptive_review(
             persona=persona,
             step_id=step["id"],
         )
-        parsed_ok, criteria = _judge_output(out)
-        ok = rc == 0 and parsed_ok
+        adaptive_verdict = _adaptive_final_verdict(out)
+        criteria = _parse_criteria(out)
+        ok = rc == 0 and adaptive_verdict in ("PASS", "PASS_WITH_CONDITIONS")
         reproduction, mechanical_check = _adaptive_finding_fields(out)
         verdict = {
             "by": f"{provider}:{persona}",
@@ -1161,17 +1181,25 @@ def execute_adaptive_review(
 
 
 def _adaptive_check_allowlist(state: dict, cfg: dict) -> set[str]:
-    configured = (cfg.get("checks") or []) + (cfg.get("check_allowlist") or [])
-    declared = [
-        command
-        for recipe_step in state["steps"]
-        for command in recipe_step.get("checks", [])
-    ]
+    del state
     return {
         command
-        for command in configured + declared
+        for command in (cfg.get("checks") or [])
         if isinstance(command, str) and command
     }
+
+
+def _bounded_repair_finding(finding: dict) -> str:
+    reproduction = str(finding.get("reproduction") or "")[:2000]
+    mechanical_check = str(finding.get("mechanical_check") or "")[:1000]
+    reviewer = str(finding.get("by") or "")[:200]
+    note = str(finding.get("note") or "")[:500]
+    return "\n".join([
+        f"REVIEWER: {reviewer}",
+        f"REPRODUCTION: {reproduction}",
+        f"MECHANICAL_CHECK: {mechanical_check}",
+        f"REVIEW_NOTE: {note}",
+    ])
 
 
 def execute_informed_repair(
@@ -1190,7 +1218,7 @@ def execute_informed_repair(
     if check not in _adaptive_check_allowlist(state, cfg):
         return False
     if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
-        st["verdicts"] = [_adaptive_budget_verdict()]
+        st["verdicts"].append(_adaptive_budget_verdict())
         return False
 
     repair_step = next(
@@ -1201,11 +1229,12 @@ def execute_informed_repair(
         ),
         step,
     )
+    before_diff = _git_diff_evidence(cfg) or ""
     repair_state = dict(state["step_state"][repair_step["id"]])
-    repair_state["last_failure"] = finding["note"]
+    repair_state["last_failure"] = _bounded_repair_finding(finding)
     generator_model, _ = effective_step_models(repair_step, cfg)
     generator_cfg = {**cfg, "model": generator_model} if generator_model else cfg
-    _run_provider_counted(
+    generator_rc, _ = _run_provider_counted(
         state,
         gen_list[0],
         "generator",
@@ -1213,6 +1242,20 @@ def execute_informed_repair(
         generator_cfg,
         step_id=repair_step["id"],
     )
+    after_diff = _git_diff_evidence(cfg) or ""
+    diff_changed = after_diff != before_diff
+
+    history_entry = {
+        "action": "INFORMED_REPAIR",
+        "step": step["id"],
+        "check": check,
+        "generator_exit_status": generator_rc,
+        "diff_changed": diff_changed,
+        "exit_status": None,
+    }
+    if generator_rc != 0 or not diff_changed:
+        state["history"].append(history_entry)
+        return False
 
     cwd = cfg.get("cwd") or str(config.INVOCATION_CWD)
     try:
@@ -1226,12 +1269,8 @@ def execute_informed_repair(
         exit_status = result.returncode
     except (OSError, subprocess.SubprocessError):
         exit_status = 127
-    state["history"].append({
-        "action": "INFORMED_REPAIR",
-        "step": step["id"],
-        "check": check,
-        "exit_status": exit_status,
-    })
+    history_entry["exit_status"] = exit_status
+    state["history"].append(history_entry)
     log(f"   竊ｳ informed repair check: {check} (exit {exit_status})")
     return exit_status == 0
 
@@ -1278,6 +1317,31 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
     executor = step.get("executor", "generate")
+    if executor not in ("generate", "risk-assess", "targeted-review", "checks-only"):
+        state["stopped"] = {
+            "reason": f"unknown executor: {executor}",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
+    if executor == "generate" and _uses_adaptive_executors(state) and len(gen_list) != 1:
+        state["stopped"] = {
+            "reason": "adaptive executor requires exactly one generator",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
+    if (
+        executor == "generate"
+        and _uses_adaptive_executors(state)
+        and state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]
+    ):
+        state["stopped"] = {
+            "reason": "adaptive invocation budget exhausted",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
     if executor == "risk-assess":
         assessment = analyze_diff(_git_diff_evidence(cfg) or "", _git_changed_files(cfg))
         state["adaptive"]["assessment"] = assessment.to_dict()
@@ -1424,6 +1488,8 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
             if sp:
                 save_state(state, sp)
             continue
+        if action == "STOPPED" and state.get("stopped"):
+            last = state["stopped"].get("kind") or action
         break  # DONE / ESCALATE / BLOCKED / STOPPED
     if sp:
         save_state(state, sp)
