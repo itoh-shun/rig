@@ -178,7 +178,8 @@ def cmd_selftest(_args):
     report("L no crash without a server; rc!=0", rc_l != 0, True)
     # M: dynamic model discovery (--auto-model) — graceful, no crash, even without a server
     found = discover_models({"base_url": "http://127.0.0.1:1/v1", "timeout": 2})
-    report("M discover returns every provider", set(found) >= {"ollama", "lmstudio", "claude", "codex", "rig"}, True)
+    report("M discover returns every provider",
+           set(found) >= {"ollama", "lmstudio", "claude", "codex", "grok", "rig"}, True)
     report("M absent server → reachable=False", found["ollama"]["reachable"], False)
     report("M auto-model resolution falls back to the default",
            resolve_http_model("ollama", {"auto_model": True, "base_url": "http://127.0.0.1:1/v1", "timeout": 2}),
@@ -194,8 +195,26 @@ def cmd_selftest(_args):
     report("N probe: claude verifier enforces allowedTools",
            build_argv("claude", "verifier", "P", {}),
            ["claude", "-p", "P", "--output-format", "text", "--allowedTools", "Read,Grep,Glob"])
-    report("N probe: claude generator has no permission flags",
-           build_argv("claude", "generator", "P", {}), ["claude", "-p", "P", "--output-format", "text"])
+    # #331: headless claude -p has no one to approve Edit/Write calls, so the
+    # generator needs an explicit permission mode or it silently writes nothing
+    # (confirmed live: an unpermissioned `claude -p` left a target file untouched).
+    report("N probe: claude generator gets acceptEdits (can write; live-confirmed #331)",
+           build_argv("claude", "generator", "P", {}),
+           ["claude", "-p", "P", "--output-format", "text", "--permission-mode", "acceptEdits"])
+    report("N probe: rig-provider generator also gets acceptEdits",
+           "--permission-mode" in build_argv("rig", "generator", "P", {}), True)
+    report("N probe: rig-provider verifier stays read-only (unaffected by #331)",
+           "--allowedTools" in build_argv("rig", "verifier", "P", {}), True)
+    # grok (#328): headless `grok -p` — no read-only/sandbox flag is documented, so verifier and
+    # generator argv are identical (the read-only stance lives in the prompt contract only), and
+    # --always-approve must never appear (it would auto-approve tool executions).
+    report("N probe: grok verifier == generator argv (no documented sandbox flag)",
+           build_argv("grok", "verifier", "P", {}) == build_argv("grok", "generator", "P", {}), True)
+    report("N probe: grok argv is plain-output headless with per-step model",
+           build_argv("grok", "verifier", "P", {"model": "grok-4"}),
+           ["grok", "-p", "P", "--output-format", "plain", "-m", "grok-4"])
+    report("N probe: grok never gets --always-approve",
+           "--always-approve" in build_argv("grok", "generator", "P", {}), False)
     _, out_n = run_provider("mock", "verifier", "x", {})
     report("N probe: verifier output contains VERDICT", "VERDICT" in out_n, True)
     # O: task queue (local backend: add → list → mock go → note/retry/done-exclusion → github graceful without CLI)

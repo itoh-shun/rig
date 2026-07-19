@@ -6,6 +6,7 @@ import re
 import hashlib
 import pathlib
 import subprocess
+import threading
 
 try:
     import yaml
@@ -50,13 +51,27 @@ def _load_trust_store() -> dict:
         return {}
 
 
+# Guards _record_trust's read-modify-write (#329): manifest A/B runs variants in
+# parallel threads and each records its own manifest, so an unlocked load->write
+# loses one entry. Scope: in-process threads only — concurrent writes from
+# SEPARATE processes are still last-writer-wins over the whole store (the atomic
+# replace below prevents corruption, not cross-process merging); in practice the
+# only concurrent writers are A/B variant threads inside one orchestrate process.
+_TRUST_WRITE_LOCK = threading.Lock()
+
+
 def _record_trust(path: pathlib.Path, digest: str) -> None:
     import json
-    p = _trust_store_path()
-    store = _load_trust_store()
-    store[str(path)] = digest
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    with _TRUST_WRITE_LOCK:
+        p = _trust_store_path()
+        store = _load_trust_store()
+        store[str(path)] = digest
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # Atomic replace: readers never observe a half-written store (a partial
+        # read would parse as invalid JSON -> {} -> every trust entry "lost").
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, p)
 
 
 def _is_project_recipe(path: pathlib.Path) -> bool:

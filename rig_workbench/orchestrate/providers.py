@@ -66,6 +66,25 @@ MOCK_SRC = (
     "            'def price_domestic_cool(weight_kg: float) -> int:\\n'\n"
     "            '    return _price(weight_kg, 300, 800)\\n'\n"
     "        )\n"
+    "    if 'auth-bypass-sibling' in text or 'ProfileService' in text or 'get_profile' in text:\n"
+    "        return (\n"
+    "            'class ProfileService:\\n'\n"
+    "            '    def __init__(self):\\n'\n"
+    "            '        self._profiles = {}\\n\\n'\n"
+    "            '    def create_profile(self, user_id, data):\\n'\n"
+    "            '        self._profiles[user_id] = dict(data)\\n\\n'\n"
+    "            '    def get_profile(self, current_user_id, requested_user_id):\\n'\n"
+    "            '        if current_user_id != requested_user_id:\\n'\n"
+    "            '            return None\\n'\n"
+    "            '        return self._profiles.get(requested_user_id)\\n\\n'\n"
+    "            '    def update_profile(self, current_user_id, requested_user_id, data):\\n'\n"
+    "            '        if current_user_id != requested_user_id:\\n'\n"
+    "            '            return False\\n'\n"
+    "            '        if requested_user_id not in self._profiles:\\n'\n"
+    "            '            return False\\n'\n"
+    "            '        self._profiles[requested_user_id].update(data)\\n'\n"
+    "            '        return True\\n'\n"
+    "        )\n"
     "    return ''\n"
     "if role == 'verifier':\n"
     "    print('independent verification (mock): ' + persona)\n"
@@ -96,6 +115,19 @@ _READONLY_ENFCE = {
     "codex":  ["--sandbox", "read-only"],              # codex exec sandbox
 }
 
+# The generator's counterpart problem (#331, discovered by a live #330 bench run):
+# headless `claude -p` has no one to approve Edit/Write tool calls, so without an
+# explicit permission mode the generator asks for approval it can never receive and
+# silently writes nothing — confirmed live in this environment (`claude -p "edit
+# x.py..." ` left the file untouched; the identical call with `--permission-mode
+# acceptEdits` applied the edit). `acceptEdits` is the minimum-privilege fix: file
+# edits are allowed, nothing else is blanket-bypassed (not `--dangerously-skip-
+# permissions`). `codex`'s generator branch already gets `--sandbox workspace-write`
+# from codex's own mechanism, so it isn't affected by this.
+_GENERATOR_EDIT_ENFCE = {
+    "claude": ["--permission-mode", "acceptEdits"],
+}
+
 
 def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
     if provider == "mock":
@@ -106,13 +138,13 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv = ["claude", "-p", pre + prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
-        return argv + _READONLY_ENFCE["claude"] if role == "verifier" else argv
+        return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "claude":
         # Headless. In production the user can tune permission modes etc. via --provider-cmd.
         argv = ["claude", "-p", prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
-        return argv + _READONLY_ENFCE["claude"] if role == "verifier" else argv
+        return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "codex":
         # --skip-git-repo-check: keep codex from refusing to start in non-git directories
         # (e.g. overlay targets in cross-project use). The sandbox stays enabled, so this is safe.
@@ -121,6 +153,20 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
         return argv + [prompt]
+    if provider == "grok":
+        # grok-build headless (`grok -p`, claude-CLI-shaped syntax;
+        # docs.x.ai/build/cli/headless-scripting). Honest gap (#328): no
+        # read-only/sandbox flag is documented for grok headless, so the
+        # verifier role's read-only stance rests on the prompt contract alone —
+        # one enforcement layer thinner than claude (--allowedTools) or codex
+        # (--sandbox read-only). Deliberately NOT passing --always-approve
+        # (it auto-approves tool executions; a verifier must never get it, and
+        # a generator that needs it can opt in via
+        # --provider-cmd "grok -p {prompt} --always-approve").
+        argv = ["grok", "-p", prompt, "--output-format", "plain"]
+        if cfg.get("model"):
+            argv += ["-m", cfg["model"]]                   # per-step model support
+        return argv
     if provider == "cmd":
         tmpl = cfg.get("provider_cmd") or ""
         if not tmpl:
@@ -323,7 +369,7 @@ def discover_models(cfg: dict) -> dict:
         out[p] = {"kind": "local-http", "base_url": _base_url(p, cfg),
                   "reachable": bool(models), "models": models,
                   "default": models[0] if models else None}
-    for p in ("claude", "codex"):               # CLI providers: presence only
+    for p in ("claude", "codex", "grok"):       # CLI providers: presence only
         out[p] = {"kind": "cli", "available": shutil.which(p) is not None, "models": []}
     out["rig"] = {"kind": "cli", "available": shutil.which("claude") is not None,
                   "note": "launches each step as a rig harness (claude)", "models": []}
@@ -435,6 +481,15 @@ def _capture_output(text: str, cfg: dict, label: str) -> str:
     return _clip_output(text, full_path=_spool_full_output(text, cfg, label))
 
 
+# #334: pass-with-conditions tokens, both contracts. PASS_WITH_CONDITIONS is the headless
+# `VERDICT:` path's counterpart of the review-verdict contract's APPROVE_WITH_CONDITIONS
+# (facets/output-contracts/review-verdict.md) \u2014 advisory findings (improvement suggestions,
+# conditions the task forbids satisfying, style) pass instead of rounding up to FAIL and
+# deadlocking quorum=all. Listed explicitly so the match is intentional, not a side effect of
+# verdict.startswith("PASS") happening to also catch "PASS_WITH_CONDITIONS".
+_PASS_TOKENS = ("PASS", "PASS_WITH_CONDITIONS", "APPROVE", "APPROVE_WITH_CONDITIONS")
+
+
 def _verdict_ok(out: str) -> bool:
     """Parse verifier output across Rig's machine verdict and review-verdict contracts.
 
@@ -443,9 +498,9 @@ def _verdict_ok(out: str) -> bool:
     (`VERDICT:` / \u5224\u5b9a:) \u2014 the contract-mandated final position \u2014 over any earlier
     quote. \u5224\u5b9a ("hantei") is the verdict-line label of the Japanese review-verdict
     output contract (facets/output-contracts/review-verdict.md); keep parsing it.
-    Token vocabulary and semantics are unchanged (PASS/APPROVE/APPROVE_WITH_CONDITIONS pass;
-    FAIL/REJECT/unparseable fail closed). Legacy whole-text scan remains as a fallback for
-    outputs with no line-anchored verdict."""
+    Token vocabulary and semantics are unchanged (PASS/PASS_WITH_CONDITIONS/APPROVE/
+    APPROVE_WITH_CONDITIONS pass; FAIL/REJECT/unparseable fail closed \u2014 see _PASS_TOKENS).
+    Legacy whole-text scan remains as a fallback for outputs with no line-anchored verdict."""
     text = out or ""
     last = None
     for line in text.splitlines():
@@ -454,10 +509,15 @@ def _verdict_ok(out: str) -> bool:
             last = line
     if last is not None:
         verdict = last.split(":", 1)[1].strip().upper()
+        if verdict in _PASS_TOKENS:
+            return True
+        # tolerate trailing punctuation/notes on an otherwise-recognized token
         return verdict.startswith(("PASS", "APPROVE"))  # REJECT/FAIL/garbage \u2192 fail-closed
     up = text.upper()
     if "VERDICT: FAIL" in up or "\u5224\u5b9a: REJECT" in text:
         return False
+    # also matches "VERDICT: PASS_WITH_CONDITIONS" (PASS is a prefix of it) \u2014 intentional,
+    # see _PASS_TOKENS above.
     return "VERDICT: PASS" in up
 
 
@@ -494,6 +554,30 @@ def _judge_output(out: str) -> tuple[bool, list[dict]]:
     return ok, criteria
 
 
+def _load_persona_brief(persona: str) -> str | None:
+    """Resolve a persona name (e.g. "security-reviewer", "sales/hearing-reviewer") to its
+    facets/personas/<name>.md body, frontmatter stripped. None when unresolvable — callers
+    must fall back to the generic prompt rather than silently injecting nothing.
+
+    #332: for the interactive "manual backend" (the `/rig` skill driven via the Agent tool)
+    each reviewer persona genuinely IS a distinct subagent reading this file as its system
+    prompt. The headless CLI path (`--provider claude/codex/rig/grok`) never read it — every
+    reviewer in a review-diff fan-out received the exact same generic verify prompt, so
+    "3-way review" was 3 identical samples of one question, not 3 distinct lenses. Confirmed
+    by a live #330 bench run: reviewers disagreed (1/3, 2/3 PASS) on code that was already
+    objectively correct — consistent with sampling noise on an undifferentiated prompt, not
+    genuine multi-perspective review."""
+    path = config.PERSONAS / f"{persona}.md"
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4:]
+    return text.strip() or None
+
+
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
                            cfg: dict, max_parallel: int,
                            state: dict | None = None, step_id: str | None = None) -> list[dict]:
@@ -502,7 +586,11 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     Passing a list as ver runs **the same persona across multiple providers** = a mixed-model
     quorum (heterogeneous votes correlate less than N votes from identical models; disagreement
     itself is a signal). Each vote's by is recorded as "provider:persona" in telemetry and can
-    be audited per model via runs --personas."""
+    be audited per model via runs --personas.
+
+    Each verifier's prompt is prefixed with its persona's facets/personas/<name>.md brief when
+    one resolves (#332) — real reviewer diversity, not just a decorative label. Falls back to
+    the shared generic prompt when no matching persona file exists (e.g. "independent")."""
     import concurrent.futures as _f
     vers = ver if isinstance(ver, list) else [ver]
     personas = personas or ["reviewer"]
@@ -510,7 +598,10 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
 
     def _one(task):
         v, p = task
-        rc, out = run_provider(v, "verifier", prompt, cfg, persona=p, state=state, step_id=step_id)
+        brief = _load_persona_brief(p)
+        persona_prompt = (f"You are the '{p}' reviewer. Judge strictly from this brief:\n\n"
+                          f"{brief}\n\n---\n\n{prompt}") if brief else prompt
+        rc, out = run_provider(v, "verifier", persona_prompt, cfg, persona=p, state=state, step_id=step_id)
         ok, criteria = _judge_output(out)
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
                 "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
@@ -760,8 +851,20 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
             "   Use UNKNOWN when the evidence is insufficient to judge that criterion; do not guess.",
         ]
     lines += [
+        # #334: headless verify was binary PASS/FAIL, so advisory findings (hardening
+        # suggestions, conditions the task itself forbids satisfying, style nits) got
+        # rounded up to FAIL and quorum=all deadlocked on them. This ports the
+        # interactive review-verdict contract's APPROVE_WITH_CONDITIONS semantics
+        # (facets/output-contracts/review-verdict.md) to the headless path. It is not
+        # a weakening: a genuine blocking defect still must FAIL.
+        "Use FAIL ONLY for a blocking defect you can state as a one-line concrete",
+        "failure or attack scenario.",
+        "Non-blocking findings — improvement suggestions, hardening advice, conditions",
+        "the task itself forbids you from satisfying (e.g. tests you are told not to",
+        "modify), style — belong in the reasoning lines, with VERDICT: PASS_WITH_CONDITIONS.",
         "Finally, the very last line of your output must be exactly one of:",
         "VERDICT: PASS",
+        "VERDICT: PASS_WITH_CONDITIONS",
         "VERDICT: FAIL",
         "Do not add extra characters, Markdown, or punctuation to the last line, and do not",
         "place the verdict before the reasoning.",
@@ -1107,7 +1210,7 @@ def cmd_probe(args):
         else:
             i += 1
     if not provider:
-        print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock)")
+        print("[ERROR] --provider <name> is required (rig|claude|codex|grok|ollama|lmstudio|anthropic|cmd|mock)")
         sys.exit(1)
     prompt = ("Judge whether a product meets its acceptance criteria and end with exactly one line: "
               "'VERDICT: PASS' or 'VERDICT: FAIL'.\nProduct: 2 + 2 = 4"

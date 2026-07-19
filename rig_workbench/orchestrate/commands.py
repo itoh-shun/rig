@@ -389,7 +389,7 @@ def cmd_run(args):
         gen = generators[0]            # --generators alone is fine (first one as representative)
     if not gen:
         print("[ERROR] --provider <name> (or --generators a,b,c) is required"
-              " (rig|claude|codex|ollama|lmstudio|cmd|mock). rig = launch each step as a rig harness (recommended)."
+              " (rig|claude|codex|grok|ollama|lmstudio|cmd|mock). rig = launch each step as a rig harness (recommended)."
               " ollama/lmstudio = local LLM (server required; pick a model with --model). Use mock for tests.")
         sys.exit(1)
 
@@ -571,7 +571,7 @@ def cmd_ab(args):
         print("[ERROR] specify 2 or more recipes to compare")
         sys.exit(1)
     if not gen:
-        print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock)")
+        print("[ERROR] --provider <name> is required (rig|claude|codex|grok|ollama|lmstudio|anthropic|cmd|mock)")
         sys.exit(1)
     ver = ver or gen
 

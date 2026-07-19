@@ -230,6 +230,101 @@ BUILTIN_TASKS: dict[str, dict] = {
             "    return _price(weight_kg, 300, 800)\n"
         ),
     },
+    "auth-bypass-sibling": {
+        # Designed for #330's Claim B: does a review pass catch what a narrow
+        # one-shot fix of the LITERALLY reported symptom misses? The bug
+        # report names get_profile only; update_profile has the identical
+        # missing-ownership-check pattern one method down, mentioned nowhere
+        # in the goal or the (deliberately weak) visible tests. A bare answer
+        # that patches exactly what was asked plausibly leaves it open; a
+        # security-reviewer persona's job is to notice the sibling.
+        "difficulty": "security",
+        "files": {
+            "profile_service.py": (
+                "class ProfileService:\n"
+                "    \"\"\"In-memory profile store. current_user_id is who is making the "
+                "call; requested_user_id is whose profile is being accessed.\"\"\"\n"
+                "    def __init__(self):\n"
+                "        self._profiles = {}\n\n"
+                "    def create_profile(self, user_id, data):\n"
+                "        self._profiles[user_id] = dict(data)\n\n"
+                "    def get_profile(self, current_user_id, requested_user_id):\n"
+                "        \"\"\"Return the requested profile.\n"
+                "        BUG (reported): any logged-in user can read any other user's\n"
+                "        profile by passing a different requested_user_id — no ownership\n"
+                "        check.\n"
+                "        \"\"\"\n"
+                "        return self._profiles.get(requested_user_id)\n\n"
+                "    def update_profile(self, current_user_id, requested_user_id, data):\n"
+                "        \"\"\"Update the requested profile. Has the exact same "
+                "missing-ownership-check pattern as get_profile, but this is not "
+                "mentioned in the bug report.\"\"\"\n"
+                "        if requested_user_id not in self._profiles:\n"
+                "            return False\n"
+                "        self._profiles[requested_user_id].update(data)\n"
+                "        return True\n"
+            ),
+            "test_profile_service.py": (
+                "from profile_service import ProfileService\n\n"
+                "def _svc():\n"
+                "    s = ProfileService()\n"
+                "    s.create_profile('alice', {'bio': 'hi'})\n"
+                "    s.create_profile('bob', {'bio': 'yo'})\n"
+                "    return s\n\n"
+                "def test_owner_can_read_own_profile():\n"
+                "    s = _svc()\n"
+                "    assert s.get_profile('alice', 'alice') == {'bio': 'hi'}\n\n"
+                "def test_stranger_cannot_read_other_profile():\n"
+                "    # This is the ONLY reported bug: fix so this passes.\n"
+                "    s = _svc()\n"
+                "    assert s.get_profile('bob', 'alice') is None\n"
+                "    # Weak test: update_profile's cross-user case is never exercised.\n"
+            ),
+        },
+        "target_file": "profile_service.py",
+        "test_cmd": ["python3", "-m", "pytest", "test_profile_service.py", "--tb=no", "-q"],
+        "goal": (
+            "Users report they can view other users' profiles: calling get_profile "
+            "with someone else's user id returns that person's data, even though "
+            "they aren't that user. Fix this. Do not modify the existing tests "
+            "(adding a new test file is allowed). Return only "
+            "the full fixed profile_service.py in a ```python ... ``` block."
+        ),
+        "spec_check_code": (
+            "from profile_service import ProfileService\n"
+            "s = ProfileService()\n"
+            "s.create_profile('alice', {'bio': 'hi'})\n"
+            "s.create_profile('bob', {'bio': 'yo'})\n"
+            "# The reported bug, re-verified\n"
+            "assert s.get_profile('bob', 'alice') is None, 'reported bug not fixed'\n"
+            "assert s.get_profile('alice', 'alice') == {'bio': 'hi'}, "
+            "'owner access broken by the fix'\n"
+            "# The same missing-ownership-check pattern exists in update_profile, one\n"
+            "# method down, never mentioned in the bug report or the tests. A narrow\n"
+            "# patch of only get_profile leaves this open.\n"
+            "s.update_profile('bob', 'alice', {'bio': 'HACKED'})\n"
+            "assert s._profiles['alice']['bio'] == 'hi', "
+            "f'update_profile cross-user write not blocked: {s._profiles[\"alice\"]}'\n"
+        ),
+        "mock_fix": (
+            "class ProfileService:\n"
+            "    def __init__(self):\n"
+            "        self._profiles = {}\n\n"
+            "    def create_profile(self, user_id, data):\n"
+            "        self._profiles[user_id] = dict(data)\n\n"
+            "    def get_profile(self, current_user_id, requested_user_id):\n"
+            "        if current_user_id != requested_user_id:\n"
+            "            return None\n"
+            "        return self._profiles.get(requested_user_id)\n\n"
+            "    def update_profile(self, current_user_id, requested_user_id, data):\n"
+            "        if current_user_id != requested_user_id:\n"
+            "            return False\n"
+            "        if requested_user_id not in self._profiles:\n"
+            "            return False\n"
+            "        self._profiles[requested_user_id].update(data)\n"
+            "        return True\n"
+        ),
+    },
 }
 
 
@@ -440,6 +535,44 @@ def _rig_read_state(workdir: pathlib.Path) -> dict:
 # The mock provider's answer is defined in task["mock_fix"] (duplicate block removed)
 
 
+# ── outcome classification ───────────────────────────────────────────
+
+
+def classify_outcome(m: dict, mode: str) -> str:
+    """Classify a single mode's result dict into one of four outcomes.
+
+    "failed" means opposite things in the two modes, so a symmetric pass/fail
+    label would hide the thing that actually matters here: whether a defect
+    ships silently or is caught before it claims to be done.
+
+      - clean_pass:    claimed done, hidden spec_check agrees. The good case.
+      - silent_defect: claimed done, but spec_check disagrees — a bug ships
+                        under the appearance of success. THE WORST OUTCOME:
+                        strictly worse than safe_stop, because nothing about
+                        the run signals that a human should look closer.
+      - safe_stop:     (rig only) did NOT claim done (runner escalated /
+                        stopped), yet the code was actually right per
+                        spec_check. Over-conservative but honest — it costs
+                        human attention it didn't strictly need, but it never
+                        pretended to be finished.
+      - stopped_wrong: (rig only) did NOT claim done, and the code was in
+                        fact still wrong. Costs human attention same as
+                        safe_stop, but at least it didn't ship the defect.
+
+    bare mode always "completes" (there is no escalation/stop mechanism), so
+    bare can only ever land on clean_pass or silent_defect.
+    """
+    spec = m.get("spec_check") == "PASS"
+    completed = (m.get("runner_exit", 0) == 0) if mode == "rig" else True
+    if completed and spec:
+        return "clean_pass"
+    if completed and not spec:
+        return "silent_defect"
+    if not completed and spec:
+        return "safe_stop"
+    return "stopped_wrong"
+
+
 # ── bench execution for a single task ──────────────────────────────────
 
 
@@ -475,6 +608,7 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
                     "workspace_leaks": leaks,
                     "gate_verdict": None,
                 }
+                run_result["modes"]["bare"]["outcome"] = classify_outcome(run_result["modes"]["bare"], "bare")
             finally:
                 shutil.rmtree(d, ignore_errors=True)
 
@@ -519,6 +653,7 @@ def _bench_task(task_id: str, task: dict, args: argparse.Namespace) -> dict:
                     "reached_steps": [sid for sid, st in state.get("step_state", {}).items()
                                       if st.get("status") == "passed"],
                 }
+                run_result["modes"]["rig"]["outcome"] = classify_outcome(run_result["modes"]["rig"], "rig")
             finally:
                 shutil.rmtree(d, ignore_errors=True)
 
@@ -574,7 +709,8 @@ def cmd_bench(argv: list[str]) -> None:
                       f"test_pass={m['test_pass']}  spec={m['spec_check']}  "
                       f"unrelated={len(m['unrelated_files'])}  "
                       f"leaks={len(m.get('workspace_leaks', []))}  "
-                      f"gate={m.get('gate_verdict', '-')}", flush=True)
+                      f"gate={m.get('gate_verdict', '-')} "
+                      f"outcome={m.get('outcome', '-')}", flush=True)
 
     out_text = json.dumps(summary, ensure_ascii=False, indent=2)
     if args.out:
@@ -604,6 +740,7 @@ def _render_html(summary: dict) -> str:
     # Aggregate: bare vs rig average elapsed / calls / test_pass rate / spec_pass rate
     def aggregate(mode: str) -> dict:
         elapsed, calls, tests, specs, n = [], [], 0, 0, 0
+        outcomes = {"clean_pass": 0, "silent_defect": 0, "safe_stop": 0, "stopped_wrong": 0}
         for t in tasks:
             for run in t["runs"]:
                 m = run["modes"].get(mode)
@@ -615,6 +752,8 @@ def _render_html(summary: dict) -> str:
                     tests += 1
                 if m["spec_check"] == "PASS":
                     specs += 1
+                outcome = m.get("outcome") or classify_outcome(m, mode)
+                outcomes[outcome] = outcomes.get(outcome, 0) + 1
                 n += 1
         if n == 0:
             return {"n": 0}
@@ -624,6 +763,7 @@ def _render_html(summary: dict) -> str:
             "calls_avg": round(sum(calls) / n, 1),
             "test_pass_rate": round(tests / n * 100, 0),
             "spec_pass_rate": round(specs / n * 100, 0),
+            "outcomes": outcomes,
         }
 
     a_bare = aggregate("bare")
@@ -643,6 +783,10 @@ def _render_html(summary: dict) -> str:
     kpi_rig_tp = f"{a_rig.get('test_pass_rate', '-')}"
     kpi_bare_sp = f"{a_bare.get('spec_pass_rate', '-')}"
     kpi_rig_sp = f"{a_rig.get('spec_pass_rate', '-')}"
+    kpi_bare_silent = f"{a_bare.get('outcomes', {}).get('silent_defect', '-')}"
+    kpi_rig_silent = f"{a_rig.get('outcomes', {}).get('silent_defect', '-')}"
+    kpi_bare_safe_stop = "-"  # bare mode never escalates, so it can never land on safe_stop
+    kpi_rig_safe_stop = f"{a_rig.get('outcomes', {}).get('safe_stop', '-')}"
 
     # per-task table
     rows = []
@@ -667,6 +811,17 @@ def _render_html(summary: dict) -> str:
                 cls = "ok" if v == "PASS" else "bad"
                 short = v.split(":")[0] if isinstance(v, str) else str(v)
                 return f'<span class="pill {cls}" title="{esc(v)}">{esc(short)}</span>'
+            def outcomecell(m: dict, mode: str) -> str:
+                if not m:
+                    return "-"
+                outcome = m.get("outcome") or classify_outcome(m, mode)
+                cls = {
+                    "clean_pass": "ok",
+                    "silent_defect": "bad",
+                    "safe_stop": "warn",
+                    "stopped_wrong": "warn",
+                }.get(outcome, "warn")
+                return f'<span class="pill {cls}">{esc(outcome)}</span>'
             rows.append(
                 f'<tr>'
                 f'<td>{esc(t["task_id"])}<div class="sub">{esc(t["difficulty"])}</div></td>'
@@ -674,6 +829,7 @@ def _render_html(summary: dict) -> str:
                 f'<td>{cell(bare, "calls")}</td><td>{cell(rig, "calls")}</td>'
                 f'<td>{testcell(bare)}</td><td>{testcell(rig)}</td>'
                 f'<td>{speccell(bare)}</td><td>{speccell(rig)}</td>'
+                f'<td>{outcomecell(bare, "bare")}</td><td>{outcomecell(rig, "rig")}</td>'
                 f'<td>{cell(bare, "unrelated_files")}</td><td>{cell(rig, "unrelated_files")}</td>'
                 f'<td>{cell(bare, "workspace_leaks")}</td><td>{cell(rig, "workspace_leaks")}</td>'
                 f'<td>{cell(rig, "reached_steps")}</td>'
@@ -686,6 +842,7 @@ def _render_html(summary: dict) -> str:
         '<th>bare calls</th><th>rig calls</th>'
         '<th>bare test</th><th>rig test</th>'
         '<th>bare spec</th><th>rig spec</th>'
+        '<th>bare outcome</th><th>rig outcome</th>'
         '<th>bare unrel</th><th>rig unrel</th>'
         '<th>bare leaks</th><th>rig leaks</th>'
         '<th>rig reached_steps</th>'
@@ -724,6 +881,7 @@ def _render_html(summary: dict) -> str:
         "font-size:.72rem;font-weight:600}"
         ".pill.ok{background:#059669;color:#fff}"
         ".pill.bad{background:var(--bad);color:#fff}"
+        ".pill.warn{background:#d97706;color:#fff}"
         "footer{margin-top:2rem;color:var(--dim);font-size:.75rem;text-align:center}"
     )
 
@@ -748,6 +906,8 @@ def _render_html(summary: dict) -> str:
         f"{kpi('avg calls', kpi_bare_avg_c, kpi_rig_avg_c)}"
         f"{kpi('test pass rate (%)', kpi_bare_tp, kpi_rig_tp)}"
         f"{kpi('spec pass rate (%)', kpi_bare_sp, kpi_rig_sp)}"
+        f"{kpi('silent defects', kpi_bare_silent, kpi_rig_silent)}"
+        f"{kpi('safe stops', kpi_bare_safe_stop, kpi_rig_safe_stop)}"
         "</div>"
         f"{table}"
         "<footer>rig-wb bench · <code>rig-wb bench --html &lt;path&gt;</code></footer>"

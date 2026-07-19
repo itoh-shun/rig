@@ -294,6 +294,8 @@ Sub-commands:
   bench [--tasks ...] [--provider X] [--allow-headless-in-cc] [--out <json>]
                                         bare vs rig A/B benchmark
                                         (objective metrics on built-in tasks; billing is opt-in)
+  sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
+                                        (no LLM, no billing; secrets/injection/destructive)
   version                               show version
 
 Environment:
@@ -329,6 +331,10 @@ def main() -> None:
     if sub == "bench":
         from . import bench as bench_mod
         bench_mod.cmd_bench(rest)
+        return
+    if sub == "sensor-bench":
+        from . import sensor_bench as sensor_bench_mod
+        sensor_bench_mod.cmd_sensor_bench(rest)
         return
     if sub == "githooks":
         from . import githooks as githooks_mod

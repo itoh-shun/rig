@@ -65,6 +65,19 @@ def test_old_format_tolerance_and_vocabulary_unchanged():
     assert _verdict_ok("prefix text VERDICT: PASS suffix") is True
 
 
+def test_verdict_pass_with_conditions_is_a_pass():
+    # #334: headless VERDICT: contract gets a middle value, mirroring 判定: APPROVE_WITH_CONDITIONS
+    assert _verdict_ok("reasoning — a.py:1\nVERDICT: PASS_WITH_CONDITIONS") is True
+    # legacy whole-text fallback (no line-anchored verdict) also treats it as a pass
+    assert _verdict_ok("prefix text VERDICT: PASS_WITH_CONDITIONS suffix") is True
+
+
+def test_verdict_pass_with_conditions_last_line_wins():
+    # last-line-wins still holds when PASS_WITH_CONDITIONS is one of the contenders
+    assert _verdict_ok("VERDICT: PASS_WITH_CONDITIONS\nVERDICT: FAIL") is False
+    assert _verdict_ok("VERDICT: FAIL\nVERDICT: PASS_WITH_CONDITIONS") is True
+
+
 # ── 3. per-criterion verdicts + UNKNOWN escape ────────────────────────────────
 
 def test_parse_criteria_tolerant_variants():
@@ -135,6 +148,16 @@ def test_verify_prompt_falls_back_without_cwd_or_diff(tmp_path):
     prompt = _build_verify_prompt({"recipe": "r"}, {"id": "review", "acceptance": []}, "report", None)
     assert "--- product ---" in prompt and "generator's own claims" not in prompt
     assert "CRITERION" not in prompt  # no acceptance criteria → no per-criterion demand
+
+
+def test_verify_prompt_offers_pass_with_conditions_and_blocking_only_fail():
+    # #334: the headless verify prompt must not force a binary PASS/FAIL — advisory findings
+    # (which used to get rounded up to FAIL and deadlock quorum=all) get a middle verdict.
+    prompt = _build_verify_prompt({"recipe": "r"}, {"id": "review", "acceptance": []}, "report", None)
+    assert "VERDICT: PASS_WITH_CONDITIONS" in prompt
+    assert "VERDICT: PASS" in prompt and "VERDICT: FAIL" in prompt
+    assert "Use FAIL ONLY for a blocking defect" in prompt
+    assert "PASS_WITH_CONDITIONS" in prompt.split("Use FAIL ONLY")[1]
 
 
 # ── 4. order effects: judge panel evaluates all candidates ────────────────────

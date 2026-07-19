@@ -10,6 +10,8 @@ You describe a task in plain language. rig figures out what kind of task it is (
 
 rig's value isn't running AI. It's structurally removing the dangerous parts of letting AI work unsupervised: isolation, verification, measurement, recording, and controlled hand-off.
 
+Put precisely: **rig does not automatically produce quality — it makes the AI unable to ignore the quality bar you define.** Defining that bar stays human work; rig's job is enforcement and measurement. And it costs something: rig deliberately trades speed and tokens for that safety — if you just want code written fast, ask the model directly.
+
 Three properties keep the safety flow real (not just documented):
 
 - **Force-proof accept requirements.** `accept` blocks landing when structural prerequisites are missing (worktree, base branch, diff summary). `--force` overrides *soft* gate failures (recorded to `.rig/audit.jsonl`), but cannot bypass the *hard* prerequisites — the checkpoints live where a flag can't remove them.
@@ -34,13 +36,22 @@ And the differentiator over "we have quality gates" framings: rig's gates and re
 /rig:go "check my current changes are safe"
 ```
 
-That's the whole surface for a first run. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
+That's the whole surface for a first run — **zero configuration**: no manifest, no gates.json, no persona setup. Those are all later opt-ins; the safety flow works out of the box. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
 
 ```
 /rig:go diff       # see what changed, and why it's safe (or not)
 /rig:go accept     # bring the change into your working tree (blocked if the gate hasn't passed)
 /rig:go discard    # throw the attempt away — your working tree was never touched
 ```
+
+What actually changes versus asking the model directly:
+
+| | asking directly | through rig |
+|---|---|---|
+| a failed attempt | litters your working tree | discarded with its worktree — your tree untouched |
+| "it's done" | you take the model's word | the acceptance-gate's verdict is the evidence |
+| review quality | unknown | measured — `/rig:drill` scores each reviewer's real detection rate |
+| what happened | a chat log | run log, audit trail, signed provenance |
 
 ## 3. Main entrypoint
 
@@ -407,6 +418,27 @@ python3 scripts/workbench.py stats                    # §10 — the same aggreg
 
 **Honest scope note:** this repo does not currently auto-publish those numbers (e.g. a CI job that regenerates a badge or a docs page on every merge) — that's tracked as follow-up work, not implemented here. Today, "dogfooding" means the maintainer can run the above locally and paste the output into a PR description or release notes; it is not yet a live, continuously-updated public score.
 
+### Does rig actually help? Two benchmarks, two different claims (#330)
+
+"Is rig worth using" splits into two separable claims, and only one of them can be answered without spending money.
+
+**Claim A — rig guarantees a mechanical floor a bare loop doesn't.** `rig-wb sensor-bench` runs the secrets/injection/destructive machine sensors' `scan_line` directly against a fixed corpus of known-bad lines (a hardcoded AWS key, a `-----BEGIN...PRIVATE KEY-----` header, an instruction-override phrase, `rm -rf /`, …) and known-safe near-misses (an env-var reference, `rm -rf build/`, prose that merely mentions "previous configuration"). No LLM call, no billing, fully deterministic:
+
+```bash
+python3 -m rig_workbench.cli sensor-bench     # or: rig-wb sensor-bench
+```
+
+Current corpus: 10/10 known-bad lines caught, 0/7 false positives on the safe near-misses. The point isn't the specific number — it's that a bare `claude -p` loop has **no number here at all**: nothing runs these checks unless something is wired to run them, so its guaranteed catch rate on this exact corpus is 0% by construction. This is a floor, not a ceiling — it proves nothing about judgment-requiring defects (design flaws, wrong business logic); that's what `/rig:drill` (§11 above) and Claim B measure.
+
+**Claim B — same model, rig-mediated output is measurably better.** This one needs a real LLM and therefore real billing — it cannot be proven from this environment without your explicit go-ahead. `rig-wb bench` (shipped since v1.9.0) already implements the harness: for each built-in task it runs **bare** (`claude -p` in one shot) and **rig** (the `fast-bugfix`/`bugfix` recipe) in separate scratch worktrees against the same starting code, then measures (1) whether the visible test suite passes, (2) whether a **hidden spec-check** the model never sees also passes (each task ships a deliberately weak visible test plus a stronger held-out assertion — the gap between the two is exactly what a rubber-stamped bare answer misses), (3) unrelated file changes, and (4) workspace leaks outside the scratch dir:
+
+```bash
+rig-wb bench --provider mock --out /tmp/bench.json --html /tmp/bench.html   # wiring smoke test only — no billing, no evidence
+rig-wb bench --provider claude --allow-headless-in-cc --html /tmp/bench.html # the real measurement — billing applies
+```
+
+**Honest scope note:** `--provider mock` (the default) proves the harness plumbing works — MOCK_SRC has the built-in tasks' fixes hardcoded, so both arms trivially "pass." It is **not evidence for Claim B**; only a run with a real provider is. Run it yourself when you want the number for your own model/version — this repo does not run and publish it automatically (same honest-scope stance as dogfooding above, and for the same reason: it costs real money on every run).
+
 ### MCP server (#263)
 
 To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:
@@ -559,8 +591,11 @@ Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or
 | Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
 | Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
 | Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+| Grok Build | unverified | unverified | unverified | unverified | unverified | unverified | unverified | unverified |
 ```
 (regenerate with `python3 scripts/host_adapters.py` if this table goes stale)
+
+**grok-build (#328)** is the cheapest host so far: it documents full Claude Code compatibility (auto-loads Claude Code plugins/skills/hooks/MCP/CLAUDE.md with zero configuration), so its `HOSTS` entry is a **native passthrough** — no event renaming, no relocated files; rig's existing Claude Code layout *is* the integration. Every capability is marked `unverified` (the compat claim is theirs; there is no grok CLI in this environment to exercise it), and one gap is declared explicitly: grok's headless mode documents no read-only/sandbox flag, so when using `--provider grok` (a `grok -p` headless branch in `build_argv`, with per-step `-m` model support), the verifier role's read-only enforcement rests on the prompt contract alone — one layer thinner than `claude` (`--allowedTools`) or `codex` (`--sandbox read-only`). `--always-approve` is deliberately never passed (it auto-approves tool executions; a generator that wants it can opt in via `--provider-cmd`).
 
 What building the Cursor entry actually surfaced (confirmed against `cursor.com/docs/hooks` and `/docs/skills`):
 - **Hook event names are camelCase** (`PreCompact` → `preCompact`, `UserPromptSubmit` → `beforeSubmitPrompt`) — exactly the cross-host divergence #304 anticipated.

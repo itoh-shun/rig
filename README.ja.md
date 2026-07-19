@@ -10,6 +10,8 @@
 
 rig の本当の価値は、AI を動かすこと自体ではない。AI に作業を任せるときの危険な部分を、**隔離・検証・測定・記録・反映制御**によって構造的に潰すことにある。
 
+正確に言えば：**rig は品質を自動的に生むのではなく、あなたが定義した品質基準を AI に無視させず実行するツール**である。基準作りは人間の仕事のまま——rig の仕事は強制と測定。そして対価がある：rig はその安全のために速度とトークンを意図的に払う設計であり、とにかく速くコードを書かせたいだけならモデルに直接頼むほうがいい。
+
 安全性の核が「documented だけで実装が伴わない」状態にならないよう、3 つの性質を配線に組み込んでいる:
 
 - **Force-proof な accept 前提条件** — `accept` は構造的前提（worktree の存在・base branch の記録・diff サマリの作成）が欠けていると `--force` でも通らない。`--force` が上書きできるのは soft な gate 未達だけで、そのときは `.rig/audit.jsonl` に記録が残る（`workbench.py audit`）。checkpoint はフラグで外せない場所に置く。
@@ -34,13 +36,22 @@ rig は意図的に、独自 DSL を持つ重量級の外部エンジン**では
 /rig:go "今の変更が安全か確認して"
 ```
 
-最初はこれだけでいい。裏側では、タスクを分類 → 対応する recipe を選択 → 隔離 worktree を作成（レビュー等の読み取り専用タスクは省略）→ 実装・テスト → acceptance-gate 判定 → 次アクションつきのサマリを返す:
+最初はこれだけでいい——**設定ゼロ**：manifest も gates.json も persona 設定も不要（すべて後から足す opt-in）。安全フローは箱から出してすぐ動く。裏側では、タスクを分類 → 対応する recipe を選択 → 隔離 worktree を作成（レビュー等の読み取り専用タスクは省略）→ 実装・テスト → acceptance-gate 判定 → 次アクションつきのサマリを返す:
 
 ```
 /rig:go diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
 /rig:go accept     # 作業ツリーへ反映（gate が未達なら拒否される）
 /rig:go discard    # 試みを破棄（作業ツリーは最初から一切触れられていない）
 ```
+
+モデルに直接頼む場合と実際に何が変わるか：
+
+| | 直接頼む | rig 経由 |
+|---|---|---|
+| 失敗した変更 | 作業ツリーに残る | worktree ごと破棄——本体は無傷 |
+| 「できました」 | 信じるしかない | acceptance-gate の合否が根拠 |
+| レビューの質 | 不明 | `/rig:drill` が各 reviewer の検出率を実測 |
+| 何が起きたか | チャットログ | run log・監査証跡・署名付き来歴 |
 
 ## 3. メイン入口
 
@@ -407,6 +418,27 @@ python3 scripts/workbench.py stats                    # §10 — 同じ集計を
 
 **正直なスコープ注記**：このリポジトリは現状、これらの数値を自動公開する仕組み（マージ毎にbadgeやdocsページを再生成するCIジョブ等）を持たない——それは今後の課題であり、本リリースでは未実装。現時点の「dogfooding」は、メンテナーが上記をローカルで実行しPR説明やリリースノートに貼り付ける運用を指し、継続更新される公開スコアではない。
 
+### rigを使う意味は証明できるか——2本のベンチマーク、2つの異なる主張（#330）
+
+「rigを使う意味があるか」は、性質の異なる2つの主張に分かれる。片方だけが**課金なしで**証明できる。
+
+**主張A——rigは素のループには存在しない機械的な床を保証する。** `rig-wb sensor-bench`は、secrets/injection/destructiveの各機械センサーの`scan_line`を、既知の悪パターン（ハードコードされたAWSキー、`-----BEGIN...PRIVATE KEY-----`ヘッダ、指示上書きフレーズ、`rm -rf /`……）と、紛らわしいが安全な近似パターン（env変数参照、`rm -rf build/`、「以前の設定」に言及するだけの文章）から成る固定コーパスに直接ぶつける。LLM呼び出しゼロ・課金ゼロ・完全決定論：
+
+```bash
+python3 -m rig_workbench.cli sensor-bench     # または: rig-wb sensor-bench
+```
+
+現在のコーパスでの結果：既知の悪パターン10/10を捕捉、安全な近似パターンでの誤検知0/7。重要なのは具体的な数値そのものではなく、素の`claude -p`ループには**この数値自体が存在しない**という点——何かがそれらのチェックを配線しない限り実行されないため、このコーパスに対する保証捕捉率は構造的に0%になる。これは床であって天井ではない——判断を要する欠陥（設計上の欠陥・誤った業務ロジック）については何も証明しない。それは`/rig:drill`（上記§11）と主張Bの領分。
+
+**主張B——同じモデルでも、rig経由の出力の方が測定可能なレベルで優れている。** これには実LLMが必要で、実際の課金が発生する——この環境からユーザーの明示的な許可なしに証明することはできない。`rig-wb bench`（v1.9.0から同梱済み）は既にそのハーネスを実装している：組み込みの各タスクについて**bare**（`claude -p`を1発）と**rig**（`fast-bugfix`/`bugfixレシピ`）を、同じ開始コードに対して別々の使い捨てworktreeで実行し、(1) 可視のテストスイートが通るか、(2) モデルが一度も見ない**隠しspec-check**も通るか（各タスクには意図的に弱い可視テストと、より強いheld-out assertionの両方が同梱されており、その差分がまさにゴム印判定されたbare回答が見逃すもの）、(3) 無関係なファイル変更、(4) scratchディレクトリ外へのワークスペース汚染、を測定する：
+
+```bash
+rig-wb bench --provider mock --out /tmp/bench.json --html /tmp/bench.html   # 配線のスモークテストのみ——課金なし、証拠にならない
+rig-wb bench --provider claude --allow-headless-in-cc --html /tmp/bench.html # 本番の実測——課金が発生する
+```
+
+**正直なスコープ注記**：`--provider mock`（既定）はハーネスの配線が動くことを証明するのみ——MOCK_SRCが組み込みタスクの修正をハードコードしているため両腕が自明に「通る」。これは**主張Bの証拠にはならない**。実プロバイダでの実行のみが証拠になる。自分のモデル・バージョンでの数値が欲しければ自分で実行すること——このリポジトリはこれを自動実行・自動公開しない（上記dogfoodingと同じ誠実なスタンス、理由も同じ：実行の度に実際のコストがかかるため）。
+
 ### MCPサーバ（#263）
 
 Claude Codeセッションの外（別エージェント・CI・別プロセス）からrigを操作したい場合は、`scripts/mcp_server.py`を起動する：
@@ -563,8 +595,11 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 | Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
 | Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
 | Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+| Grok Build | unverified | unverified | unverified | unverified | unverified | unverified | unverified | unverified |
 ```
 （`python3 scripts/host_adapters.py`で再生成できる——このREADMEの表が古くなったら実行して差し替えること）
+
+**grok-build（#328）**はこれまでで最も安いホスト対応：grok-buildはClaude Code完全互換（plugins/skills/hooks/MCP/CLAUDE.mdをゼロ設定で自動読込）を公式に謳っているため、`HOSTS`エントリは**native passthrough**——イベント名変換もファイル再配置も不要で、rigの既存Claude Codeレイアウトがそのまま統合になる。全capabilityは`unverified`（互換性の主張は先方のドキュメントであり、この環境にgrok CLIが無いため実機未検証）。ギャップも1点明示：grokのheadlessモードにはread-only/sandboxフラグが文書化されていないため、`--provider grok`（`build_argv`の`grok -p` headless分岐。step別`-m`モデル指定対応）使用時、検証者ロールのread-only強制は**プロンプト契約のみ**に依る——`claude`（`--allowedTools`）や`codex`（`--sandbox read-only`）より1層薄い。`--always-approve`は意図的に渡さない（ツール実行を自動承認するフラグであり、検証者に渡してはならない。必要なgeneratorは`--provider-cmd`でopt-in可能）。
 
 Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
 - **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。

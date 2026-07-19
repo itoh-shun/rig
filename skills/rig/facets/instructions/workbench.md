@@ -36,9 +36,21 @@
 
 ### ② recipe 選択とルーティング
 
+**②-a サイズ・ティア判定（#324）**：task_type の確定後、recipe を選ぶ前に入力からサイズ・ティアを見積もる。**軽量化するのは step 数と verifier 数であって安全機構ではない**——隔離 worktree と acceptance-gate は全ティアで維持する（§9.1「サイズは context-minimal の免除条件ではない」と同じ規律。「小さいから直接実行」はしない）。
+
+| ティア | 判定の手がかり（入力テキストから） | 効果 |
+|---|---|---|
+| **S（軽量）** | 単一ファイル・数行規模が自明（「typo」「一行」「名前だけ」「この関数の」等）、再現手順・対処が入力に含まれている | bugfix は **`recipes/fast-bugfix`** へ誘導（reviewer fan-out なし・最小 gate）。他 task_type は従来 recipe＋size-aware step skipping（§4.3） |
+| **M（標準）** | 複数ファイル・新設ロジックの気配 | 従来どおり（下表） |
+| **L（フル）** | アーキテクチャ変更・外部依存追加・認証/認可・データ移行に触れる語 | 下表＋design/review 系 step を ON（§4.3 の L 側既定） |
+
+- ティアと判定理由は routing banner の `recipe:` 行の理由に含めて表示する（例: `recipe: fast-bugfix — S判定（単一関数のtypo・対処自明）`）。黙って軽くしない。
+- **ユーザーの明示指定（`--recipe`・`--only` 等）は常にティア自動判定に勝つ**。
+- **S 判定の誤りからのエスカレーション**：`fast-bugfix` で走り始めて stuck-guard（2回詰まり）に達したら、そのまま粘らず「S 判定が誤りだった可能性が高い。`recipes/bugfix`（フル）で仕切り直すか」をユーザーに提案する。判定ミスの記録は log.md に1行残す（ティア判定の較正材料）。
+
 | task_type | 選択する recipe | isolate（worktree） | 備考 |
 |---|---|---|---|
-| `bugfix` | `recipes/bugfix` | ✓ | |
+| `bugfix` | `recipes/bugfix`（**S ティアは `recipes/fast-bugfix`**） | ✓ | |
 | `feature` | `recipes/feature` | ✓ | |
 | `refactor` | `recipes/refactor` | ✓ | |
 | `documentation` | `recipes/documentation` | ✓ | |
