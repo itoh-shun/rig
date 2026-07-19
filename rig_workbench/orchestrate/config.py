@@ -19,6 +19,7 @@ def find_rig_home() -> pathlib.Path:
 
 RIG_HOME = find_rig_home()
 RECIPES = RIG_HOME / "skills" / "rig" / "recipes"
+PERSONAS = RIG_HOME / "skills" / "rig" / "facets" / "personas"
 INVOCATION_CWD = pathlib.Path(os.getcwd()).resolve()
 PROJECT_RECIPES = INVOCATION_CWD / ".rig" / "recipes"  # project overlay
 RUNS_PATH = INVOCATION_CWD / ".rig" / "runs.jsonl"     # run telemetry (an execution log on par with run-state)

@@ -540,6 +540,30 @@ def _judge_output(out: str) -> tuple[bool, list[dict]]:
     return ok, criteria
 
 
+def _load_persona_brief(persona: str) -> str | None:
+    """Resolve a persona name (e.g. "security-reviewer", "sales/hearing-reviewer") to its
+    facets/personas/<name>.md body, frontmatter stripped. None when unresolvable — callers
+    must fall back to the generic prompt rather than silently injecting nothing.
+
+    #332: for the interactive "manual backend" (the `/rig` skill driven via the Agent tool)
+    each reviewer persona genuinely IS a distinct subagent reading this file as its system
+    prompt. The headless CLI path (`--provider claude/codex/rig/grok`) never read it — every
+    reviewer in a review-diff fan-out received the exact same generic verify prompt, so
+    "3-way review" was 3 identical samples of one question, not 3 distinct lenses. Confirmed
+    by a live #330 bench run: reviewers disagreed (1/3, 2/3 PASS) on code that was already
+    objectively correct — consistent with sampling noise on an undifferentiated prompt, not
+    genuine multi-perspective review."""
+    path = config.PERSONAS / f"{persona}.md"
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4:]
+    return text.strip() or None
+
+
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
                            cfg: dict, max_parallel: int,
                            state: dict | None = None, step_id: str | None = None) -> list[dict]:
@@ -548,7 +572,11 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     Passing a list as ver runs **the same persona across multiple providers** = a mixed-model
     quorum (heterogeneous votes correlate less than N votes from identical models; disagreement
     itself is a signal). Each vote's by is recorded as "provider:persona" in telemetry and can
-    be audited per model via runs --personas."""
+    be audited per model via runs --personas.
+
+    Each verifier's prompt is prefixed with its persona's facets/personas/<name>.md brief when
+    one resolves (#332) — real reviewer diversity, not just a decorative label. Falls back to
+    the shared generic prompt when no matching persona file exists (e.g. "independent")."""
     import concurrent.futures as _f
     vers = ver if isinstance(ver, list) else [ver]
     personas = personas or ["reviewer"]
@@ -556,7 +584,10 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
 
     def _one(task):
         v, p = task
-        rc, out = run_provider(v, "verifier", prompt, cfg, persona=p, state=state, step_id=step_id)
+        brief = _load_persona_brief(p)
+        persona_prompt = (f"You are the '{p}' reviewer. Judge strictly from this brief:\n\n"
+                          f"{brief}\n\n---\n\n{prompt}") if brief else prompt
+        rc, out = run_provider(v, "verifier", persona_prompt, cfg, persona=p, state=state, step_id=step_id)
         ok, criteria = _judge_output(out)
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
                 "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
