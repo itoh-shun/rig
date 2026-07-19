@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "py-pagination-boundary",
+  "language": "python",
+  "difficulty": "boundary",
+  "risk_domains": ["boundary", "test"],
+  "goal": "Return an empty page for every page number below one.",
+  "test_command": ["python", "-m", "pytest", "-q"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["pagination.py", "test_pagination.py"]
+}

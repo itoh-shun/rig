@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "py-api-compat-rename",
+  "language": "python",
+  "difficulty": "compatibility",
+  "risk_domains": ["api-compat", "test"],
+  "goal": "Restore the renamed format_message API with its original optional prefix argument.",
+  "test_command": ["python", "-m", "pytest", "-q"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["messages.py", "test_messages.py"]
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "ts-api-compat-export",
+  "language": "typescript",
+  "difficulty": "compatibility",
+  "risk_domains": ["api-compat", "test"],
+  "goal": "Restore the legacy times export with its optional factor while preserving multiply.",
+  "test_command": ["node", "--test", "test_math.ts"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["math.ts", "test_math.ts"]
+}
