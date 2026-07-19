@@ -17,6 +17,8 @@ result = subprocess.run(
     ["node", "--input-type=module", "--eval", script],
     capture_output=True,
     text=True,
+    encoding="utf-8",
+    errors="replace",
 )
 if result.returncode:
     sys.stdout.write(result.stdout)

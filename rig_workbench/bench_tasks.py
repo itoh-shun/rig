@@ -15,6 +15,11 @@ from dataclasses import dataclass
 
 
 SCHEMA_VERSION = 1
+_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+_HIDDEN_ARTIFACT = re.compile(
+    r"^\.?hidden(?:[_-](?:check|checks|spec|specs|test|tests))(?:[._-].*)?$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -35,10 +40,10 @@ class CheckResult:
     variant: str
     public_returncode: int
     hidden_returncode: int
-    public_stdout: str
-    public_stderr: str
-    hidden_stdout: str
-    hidden_stderr: str
+    public_stdout: str | None
+    public_stderr: str | None
+    hidden_stdout: str | None
+    hidden_stderr: str | None
 
     @property
     def public_passed(self) -> bool:
@@ -50,14 +55,73 @@ class CheckResult:
 
     @property
     def public_output(self) -> str:
-        return self.public_stdout + self.public_stderr
+        return (self.public_stdout or "") + (self.public_stderr or "")
 
     @property
     def hidden_output(self) -> str:
-        return self.hidden_stdout + self.hidden_stderr
+        return (self.hidden_stdout or "") + (self.hidden_stderr or "")
 
 
-def _require_command(data: dict[str, object], field: str, source: pathlib.Path) -> tuple[str, ...]:
+def _is_link_like(path: pathlib.Path | os.DirEntry[str]) -> bool:
+    if path.is_symlink():
+        return True
+    metadata = path.stat(follow_symlinks=False) if isinstance(path, os.DirEntry) else path.lstat()
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    return bool(attributes & _REPARSE_POINT)
+
+
+def _validate_source_tree(root: pathlib.Path, label: str) -> None:
+    if _is_link_like(root):
+        raise ValueError(f"{label}: source root is a link")
+
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.name.casefold() == ".git":
+                    raise ValueError(f"{label}: Git metadata is forbidden: {entry.path}")
+                if _HIDDEN_ARTIFACT.fullmatch(entry.name):
+                    raise ValueError(
+                        f"{label}: reserved hidden check artifact is forbidden: {entry.path}"
+                    )
+                if _is_link_like(entry):
+                    raise ValueError(f"{label}: link-like source entry is forbidden: {entry.path}")
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(pathlib.Path(entry.path))
+
+
+def _validate_schema_path(
+    value: str,
+    field: str,
+    source: pathlib.Path,
+    root: pathlib.Path,
+) -> None:
+    normalized = value.replace("\\", "/")
+    posix_path = pathlib.PurePosixPath(normalized)
+    windows_path = pathlib.PureWindowsPath(value)
+    unsafe = (
+        "\x00" in value
+        or posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
+        or normalized.startswith("//")
+        or ".." in posix_path.parts
+    )
+    if not unsafe:
+        root_resolved = root.resolve(strict=False)
+        candidate = root.joinpath(*posix_path.parts).resolve(strict=False)
+        unsafe = not candidate.is_relative_to(root_resolved)
+    if unsafe:
+        raise ValueError(f"{source}: {field} contains unsafe path {value!r}")
+
+
+def _require_command(
+    data: dict[str, object],
+    field: str,
+    source: pathlib.Path,
+    root: pathlib.Path,
+) -> tuple[str, ...]:
     value = data.get(field)
     if (
         not isinstance(value, list)
@@ -65,10 +129,8 @@ def _require_command(data: dict[str, object], field: str, source: pathlib.Path) 
         or not all(isinstance(part, str) and part for part in value)
     ):
         raise ValueError(f"{source}: {field} must be a non-empty string list")
-    for part in value[1:]:
-        candidate = pathlib.PurePosixPath(part.replace("\\", "/"))
-        if candidate.is_absolute() or ".." in candidate.parts:
-            raise ValueError(f"{source}: {field} contains unsafe path {part!r}")
+    for part in value:
+        _validate_schema_path(part, field, source, root)
     return tuple(value)
 
 
@@ -76,6 +138,7 @@ def _require_relative_paths(
     data: dict[str, object],
     field: str,
     source: pathlib.Path,
+    root: pathlib.Path,
 ) -> tuple[str, ...]:
     value = data.get(field)
     if not isinstance(value, list) or not value:
@@ -84,9 +147,7 @@ def _require_relative_paths(
     for item in value:
         if not isinstance(item, str) or not item:
             raise ValueError(f"{source}: {field} must contain non-empty strings")
-        candidate = pathlib.PurePosixPath(item.replace("\\", "/"))
-        if candidate.is_absolute() or ".." in candidate.parts:
-            raise ValueError(f"{source}: {field} contains unsafe path {item!r}")
+        _validate_schema_path(item, field, source, root)
         paths.append(item)
     return tuple(paths)
 
@@ -98,26 +159,20 @@ def _load_task(metadata_path: pathlib.Path) -> BenchTask:
 
     task_root = metadata_path.parent
     repo = task_root / "repo"
-    expected_files = _require_relative_paths(data, "expected_files", metadata_path)
-    test_command = _require_command(data, "test_command", metadata_path)
-    hidden_command = _require_command(data, "hidden_command", metadata_path)
+    expected_files = _require_relative_paths(data, "expected_files", metadata_path, repo)
+    test_command = _require_command(data, "test_command", metadata_path, repo)
+    hidden_command = _require_command(data, "hidden_command", metadata_path, task_root)
 
     for required in (repo, task_root / "canonical", task_root / "narrow"):
         if not required.is_dir():
             raise ValueError(f"{metadata_path}: missing directory {required.name}")
+        _validate_source_tree(required, f"{metadata_path}:{required.name}")
     if not (task_root / "hidden_check.py").is_file():
         raise ValueError(f"{metadata_path}: missing hidden_check.py")
     for relative in expected_files:
-        if not (repo / relative).is_file():
+        relative_path = pathlib.PurePosixPath(relative.replace("\\", "/"))
+        if not repo.joinpath(*relative_path.parts).is_file():
             raise ValueError(f"{metadata_path}: missing expected file {relative}")
-
-    hidden_names = {
-        pathlib.PurePosixPath(part.replace("\\", "/")).name
-        for part in hidden_command[1:]
-        if not part.startswith("-")
-    }
-    if any(path.is_file() and path.name in hidden_names for path in repo.rglob("*")):
-        raise ValueError(f"{metadata_path}: hidden check present under repo")
 
     string_fields = ("id", "language", "difficulty", "goal")
     if any(not isinstance(data.get(field), str) or not data[field] for field in string_fields):
@@ -164,16 +219,29 @@ def _remove_tree(path: pathlib.Path) -> None:
     shutil.rmtree(path, onerror=make_writable)
 
 
+def _copy_source(source: pathlib.Path, destination: pathlib.Path) -> None:
+    _validate_source_tree(source, str(source))
+
+    def ignore_git(_directory: str, names: list[str]) -> set[str]:
+        return {name for name in names if name.casefold() == ".git"}
+
+    shutil.copytree(source, destination, dirs_exist_ok=True, ignore=ignore_git)
+
+
 def materialize(task: BenchTask) -> pathlib.Path:
+    source = task.root / "repo"
+    _validate_source_tree(source, str(source))
     workspace = pathlib.Path(tempfile.mkdtemp(prefix=f"rig-bench-{task.id}-"))
     try:
-        shutil.copytree(task.root / "repo", workspace, dirs_exist_ok=True)
+        _copy_source(source, workspace)
         subprocess.run(
             ["git", "init", "-q"],
             cwd=workspace,
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         subprocess.run(
             ["git", "add", "."],
@@ -181,6 +249,8 @@ def materialize(task: BenchTask) -> pathlib.Path:
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         subprocess.run(
             [
@@ -198,6 +268,8 @@ def materialize(task: BenchTask) -> pathlib.Path:
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     except Exception:
         _remove_tree(workspace)
@@ -215,11 +287,14 @@ def run_variant_contract(task: BenchTask, variant: str) -> CheckResult:
     if variant not in {"original", "narrow", "canonical"}:
         raise ValueError(f"unknown benchmark variant {variant!r}")
 
+    variant_source = task.root / variant if variant != "original" else None
+    if variant_source is not None:
+        _validate_source_tree(variant_source, str(variant_source))
     workspace = materialize(task)
     hidden_root = pathlib.Path(tempfile.mkdtemp(prefix=f"rig-bench-hidden-{task.id}-"))
     try:
-        if variant != "original":
-            shutil.copytree(task.root / variant, workspace, dirs_exist_ok=True)
+        if variant_source is not None:
+            _copy_source(variant_source, workspace)
 
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
@@ -229,6 +304,8 @@ def run_variant_contract(task: BenchTask, variant: str) -> CheckResult:
             env=environment,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
 
@@ -243,6 +320,8 @@ def run_variant_contract(task: BenchTask, variant: str) -> CheckResult:
             env=environment,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         return CheckResult(

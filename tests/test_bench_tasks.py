@@ -9,6 +9,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 PYTHON_TASK_IDS = (
@@ -25,6 +26,7 @@ TYPESCRIPT_TASK_IDS = (
     "ts-async-error-propagation",
     "ts-generated-file-modification",
 )
+REPO_ROOT = Path(__file__).parents[1]
 
 
 def _remove_tree(path: Path) -> None:
@@ -155,6 +157,194 @@ def test_load_tasks_rejects_hidden_check_inside_repo(tmp_path: Path) -> None:
         load_tasks(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "/etc/passwd",
+        "C:\\Windows\\win.ini",
+        "C:drive-relative.py",
+        "\\\\server\\share\\hidden_check.py",
+        "//server/share/hidden_check.py",
+        "..\\outside.py",
+        "nested/../../outside.py",
+    ],
+)
+@pytest.mark.parametrize("field", ["expected_files", "test_command", "hidden_command"])
+def test_load_tasks_rejects_nonportable_or_escaping_schema_paths(
+    tmp_path: Path,
+    field: str,
+    unsafe_path: str,
+) -> None:
+    from rig_workbench.bench_tasks import load_tasks
+
+    task_root = _write_task(tmp_path)
+    value = [unsafe_path] if field == "expected_files" else ["python", unsafe_path]
+    _update_metadata(task_root, **{field: value})
+
+    with pytest.raises(ValueError, match=rf"{field} contains unsafe path"):
+        load_tasks(tmp_path)
+
+
+@pytest.mark.parametrize("field", ["test_command", "hidden_command"])
+@pytest.mark.parametrize(
+    "unsafe_executable",
+    [
+        "/bin/sh",
+        "C:\\tools\\python.exe",
+        "\\\\server\\share\\runner.exe",
+        "..\\runner.exe",
+    ],
+)
+def test_load_tasks_rejects_nonportable_command_executables(
+    tmp_path: Path,
+    field: str,
+    unsafe_executable: str,
+) -> None:
+    from rig_workbench.bench_tasks import load_tasks
+
+    task_root = _write_task(tmp_path)
+    _update_metadata(task_root, **{field: [unsafe_executable]})
+
+    with pytest.raises(ValueError, match=rf"{field} contains unsafe path"):
+        load_tasks(tmp_path)
+
+
+def test_hidden_artifact_rejection_does_not_depend_on_command_form(tmp_path: Path) -> None:
+    from rig_workbench.bench_tasks import load_tasks
+
+    task_root = _write_task(tmp_path)
+    _update_metadata(task_root, hidden_command=["python", "-m", "hidden_check"])
+    (task_root / "repo" / "hidden_check.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hidden"):
+        load_tasks(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "hidden-check.mjs",
+        "hidden_spec.ts",
+        ".hidden_checks",
+        "hidden_tests.py",
+    ],
+)
+def test_load_tasks_rejects_reserved_hidden_artifact_patterns(
+    tmp_path: Path,
+    artifact: str,
+) -> None:
+    from rig_workbench.bench_tasks import load_tasks
+
+    task_root = _write_task(tmp_path)
+    artifact_path = task_root / "repo" / "nested" / artifact
+    artifact_path.parent.mkdir()
+    artifact_path.write_text("hidden material\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hidden"):
+        load_tasks(tmp_path)
+
+
+@pytest.mark.parametrize("source_name", ["repo", "narrow", "canonical"])
+@pytest.mark.parametrize("git_kind", ["directory", "file"])
+def test_load_tasks_rejects_git_metadata_in_copyable_sources(
+    tmp_path: Path,
+    source_name: str,
+    git_kind: str,
+) -> None:
+    from rig_workbench.bench_tasks import load_tasks
+
+    task_root = _write_task(tmp_path)
+    nested = task_root / source_name / "nested"
+    nested.mkdir()
+    git_path = nested / ".git"
+    if git_kind == "directory":
+        hooks = git_path / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / "pre-commit").write_text("hostile hook\n", encoding="utf-8")
+    else:
+        git_path.write_text("gitdir: ../../attacker\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Git metadata"):
+        load_tasks(tmp_path)
+
+
+def test_materialize_revalidates_repo_before_copy(tmp_path: Path) -> None:
+    from rig_workbench.bench_tasks import load_tasks, materialize
+
+    task_root = _write_task(tmp_path)
+    task = load_tasks(tmp_path)["sample-task"]
+    hooks = task_root / "repo" / ".git" / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "post-checkout").write_text("hostile hook\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Git metadata"):
+        materialize(task)
+
+
+def test_variant_overlay_is_revalidated_before_copy(tmp_path: Path) -> None:
+    from rig_workbench.bench_tasks import load_tasks, run_variant_contract
+
+    task_root = _write_task(tmp_path)
+    task = load_tasks(tmp_path)["sample-task"]
+    (task_root / "canonical" / ".git").write_text(
+        "gitdir: ../../attacker\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Git metadata"):
+        run_variant_contract(task, "canonical")
+
+
+@pytest.mark.parametrize("source_name", ["repo", "narrow", "canonical"])
+@pytest.mark.parametrize("target_kind", ["file", "directory"])
+def test_load_tasks_rejects_links_in_copyable_sources(
+    tmp_path: Path,
+    target_kind: str,
+    source_name: str,
+) -> None:
+    from rig_workbench.bench_tasks import load_tasks
+
+    task_root = _write_task(tmp_path)
+    outside = tmp_path / "outside"
+    if target_kind == "directory":
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret\n", encoding="utf-8")
+    else:
+        outside.write_text("secret\n", encoding="utf-8")
+    link = task_root / source_name / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=target_kind == "directory")
+    except OSError as error:
+        pytest.skip(f"links are unavailable on this host: {error}")
+
+    with pytest.raises(ValueError, match="link"):
+        load_tasks(tmp_path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction regression")
+def test_load_tasks_rejects_windows_junctions(tmp_path: Path) -> None:
+    from rig_workbench.bench_tasks import load_tasks
+
+    task_root = _write_task(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    junction = task_root / "repo" / "junction"
+    created = subprocess.run(
+        ["cmd.exe", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if created.returncode:
+        pytest.skip(f"junctions are unavailable on this host: {created.stderr}")
+    try:
+        with pytest.raises(ValueError, match="link"):
+            load_tasks(tmp_path)
+    finally:
+        junction.rmdir()
+
+
 def test_materialize_copies_only_repo_and_commits_starting_state(tmp_path: Path) -> None:
     from rig_workbench.bench_tasks import load_tasks, materialize
 
@@ -214,6 +404,75 @@ def test_run_variant_contract_enforces_public_and_hidden_outcomes(
     assert result.variant == variant
     assert result.public_passed is public_passed, result.public_output
     assert result.hidden_passed is hidden_passed, result.hidden_output
+
+
+def test_run_variant_contract_decodes_utf8_with_replacement(tmp_path: Path) -> None:
+    from rig_workbench.bench_tasks import load_tasks, run_variant_contract
+
+    task_root = _write_task(tmp_path)
+    (task_root / "repo" / "emit.py").write_text(
+        "import sys\nsys.stdout.buffer.write('public: \u2713\\n'.encode('utf-8') + b'\\x81')\n",
+        encoding="utf-8",
+    )
+    (task_root / "hidden_check.py").write_text(
+        "import sys\nsys.stdout.buffer.write('hidden: \u2713\\n'.encode('utf-8') + b'\\x81')\n",
+        encoding="utf-8",
+    )
+    _update_metadata(task_root, test_command=["python", "emit.py"])
+    task = load_tasks(tmp_path)["sample-task"]
+
+    result = run_variant_contract(task, "original")
+
+    assert result.public_passed
+    assert result.hidden_passed
+    assert result.public_output == "public: \u2713\n\ufffd"
+    assert result.hidden_output == "hidden: \u2713\n\ufffd"
+
+
+def test_check_result_output_properties_tolerate_missing_streams() -> None:
+    from rig_workbench.bench_tasks import CheckResult
+
+    result = CheckResult(
+        variant="original",
+        public_returncode=0,
+        hidden_returncode=1,
+        public_stdout=None,
+        public_stderr="public error",
+        hidden_stdout="hidden output",
+        hidden_stderr=None,
+    )
+
+    assert result.public_output == "public error"
+    assert result.hidden_output == "hidden output"
+
+
+def test_ci_exercises_declared_python_and_node_runtime_floors() -> None:
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires-python = ">=3.10"' in pyproject
+
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "validate.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(workflow_text)
+    validate_job = workflow["jobs"]["validate"]
+    python_versions = {
+        str(version) for version in validate_job["strategy"]["matrix"]["python-version"]
+    }
+    assert "3.10" in python_versions
+
+    setup_node = next(
+        step
+        for step in validate_job["steps"]
+        if step.get("uses", "").startswith("actions/setup-node@")
+    )
+    assert int(setup_node["with"]["node-version"].split(".")[0]) >= 22
+
+    paid_markers = (
+        "--provider claude",
+        "--provider codex",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+    )
+    assert not any(marker in workflow_text for marker in paid_markers)
 
 
 def test_default_corpus_contains_five_python_repository_tasks() -> None:
