@@ -345,6 +345,52 @@ def test_load_tasks_rejects_windows_junctions(tmp_path: Path) -> None:
         junction.rmdir()
 
 
+def test_copy_rejects_entry_swapped_to_link_after_initial_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import rig_workbench.bench_tasks as bench_tasks
+
+    source = tmp_path / "source"
+    swapped = source / "swapped"
+    swapped.mkdir(parents=True)
+    (swapped / "benign.txt").write_text("benign\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret\n", encoding="utf-8")
+    destination = tmp_path / "destination"
+    injected = False
+
+    def swap_entry(path: Path) -> None:
+        nonlocal injected
+        if injected or path != swapped:
+            return
+        injected = True
+        shutil.rmtree(path)
+        if os.name == "nt":
+            created = subprocess.run(
+                ["cmd.exe", "/c", "mklink", "/J", str(path), str(outside)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if created.returncode:
+                pytest.skip(f"junctions are unavailable on this host: {created.stderr}")
+        else:
+            path.symlink_to(outside, target_is_directory=True)
+
+    monkeypatch.setattr(bench_tasks, "_before_copy_entry", swap_entry, raising=False)
+    try:
+        with pytest.raises(ValueError, match="link"):
+            bench_tasks._copy_source(source, destination)
+        assert injected
+        assert not (destination / "swapped" / "secret.txt").exists()
+    finally:
+        if os.name == "nt" and injected and swapped.exists():
+            swapped.rmdir()
+
+
 def test_materialize_copies_only_repo_and_commits_starting_state(tmp_path: Path) -> None:
     from rig_workbench.bench_tasks import load_tasks, materialize
 
@@ -446,9 +492,35 @@ def test_check_result_output_properties_tolerate_missing_streams() -> None:
     assert result.hidden_output == "hidden output"
 
 
+def test_node_runtime_floor_rejects_22_17_and_accepts_22_18(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import rig_workbench.bench_tasks as bench_tasks
+
+    monkeypatch.setattr(
+        bench_tasks,
+        "_installed_node_version",
+        lambda: "v22.17.9",
+        raising=False,
+    )
+    with pytest.raises(RuntimeError, match=r"Node >=22\.18\.0"):
+        bench_tasks._require_supported_node()
+
+    for accepted_version in ("v22.18.0", "v22.19.1", "v23.0.0"):
+        monkeypatch.setattr(
+            bench_tasks,
+            "_installed_node_version",
+            lambda version=accepted_version: version,
+        )
+        bench_tasks._require_supported_node()
+
+
 def test_ci_exercises_declared_python_and_node_runtime_floors() -> None:
+    from rig_workbench.bench_tasks import MIN_NODE_VERSION
+
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.10"' in pyproject
+    assert MIN_NODE_VERSION == (22, 18, 0)
 
     workflow_path = REPO_ROOT / ".github" / "workflows" / "validate.yml"
     workflow_text = workflow_path.read_text(encoding="utf-8")
@@ -464,7 +536,8 @@ def test_ci_exercises_declared_python_and_node_runtime_floors() -> None:
         for step in validate_job["steps"]
         if step.get("uses", "").startswith("actions/setup-node@")
     )
-    assert int(setup_node["with"]["node-version"].split(".")[0]) >= 22
+    ci_node_version = tuple(int(part) for part in setup_node["with"]["node-version"].split("."))
+    assert ci_node_version >= MIN_NODE_VERSION
 
     paid_markers = (
         "--provider claude",
