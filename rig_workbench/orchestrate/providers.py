@@ -96,6 +96,19 @@ _READONLY_ENFCE = {
     "codex":  ["--sandbox", "read-only"],              # codex exec sandbox
 }
 
+# The generator's counterpart problem (#331, discovered by a live #330 bench run):
+# headless `claude -p` has no one to approve Edit/Write tool calls, so without an
+# explicit permission mode the generator asks for approval it can never receive and
+# silently writes nothing — confirmed live in this environment (`claude -p "edit
+# x.py..." ` left the file untouched; the identical call with `--permission-mode
+# acceptEdits` applied the edit). `acceptEdits` is the minimum-privilege fix: file
+# edits are allowed, nothing else is blanket-bypassed (not `--dangerously-skip-
+# permissions`). `codex`'s generator branch already gets `--sandbox workspace-write`
+# from codex's own mechanism, so it isn't affected by this.
+_GENERATOR_EDIT_ENFCE = {
+    "claude": ["--permission-mode", "acceptEdits"],
+}
+
 
 def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
     if provider == "mock":
@@ -106,13 +119,13 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv = ["claude", "-p", pre + prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
-        return argv + _READONLY_ENFCE["claude"] if role == "verifier" else argv
+        return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "claude":
         # Headless. In production the user can tune permission modes etc. via --provider-cmd.
         argv = ["claude", "-p", prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
-        return argv + _READONLY_ENFCE["claude"] if role == "verifier" else argv
+        return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "codex":
         # --skip-git-repo-check: keep codex from refusing to start in non-git directories
         # (e.g. overlay targets in cross-project use). The sandbox stays enabled, so this is safe.
