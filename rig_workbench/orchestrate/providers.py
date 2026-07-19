@@ -481,6 +481,15 @@ def _capture_output(text: str, cfg: dict, label: str) -> str:
     return _clip_output(text, full_path=_spool_full_output(text, cfg, label))
 
 
+# #334: pass-with-conditions tokens, both contracts. PASS_WITH_CONDITIONS is the headless
+# `VERDICT:` path's counterpart of the review-verdict contract's APPROVE_WITH_CONDITIONS
+# (facets/output-contracts/review-verdict.md) \u2014 advisory findings (improvement suggestions,
+# conditions the task forbids satisfying, style) pass instead of rounding up to FAIL and
+# deadlocking quorum=all. Listed explicitly so the match is intentional, not a side effect of
+# verdict.startswith("PASS") happening to also catch "PASS_WITH_CONDITIONS".
+_PASS_TOKENS = ("PASS", "PASS_WITH_CONDITIONS", "APPROVE", "APPROVE_WITH_CONDITIONS")
+
+
 def _verdict_ok(out: str) -> bool:
     """Parse verifier output across Rig's machine verdict and review-verdict contracts.
 
@@ -489,9 +498,9 @@ def _verdict_ok(out: str) -> bool:
     (`VERDICT:` / \u5224\u5b9a:) \u2014 the contract-mandated final position \u2014 over any earlier
     quote. \u5224\u5b9a ("hantei") is the verdict-line label of the Japanese review-verdict
     output contract (facets/output-contracts/review-verdict.md); keep parsing it.
-    Token vocabulary and semantics are unchanged (PASS/APPROVE/APPROVE_WITH_CONDITIONS pass;
-    FAIL/REJECT/unparseable fail closed). Legacy whole-text scan remains as a fallback for
-    outputs with no line-anchored verdict."""
+    Token vocabulary and semantics are unchanged (PASS/PASS_WITH_CONDITIONS/APPROVE/
+    APPROVE_WITH_CONDITIONS pass; FAIL/REJECT/unparseable fail closed \u2014 see _PASS_TOKENS).
+    Legacy whole-text scan remains as a fallback for outputs with no line-anchored verdict."""
     text = out or ""
     last = None
     for line in text.splitlines():
@@ -500,10 +509,15 @@ def _verdict_ok(out: str) -> bool:
             last = line
     if last is not None:
         verdict = last.split(":", 1)[1].strip().upper()
+        if verdict in _PASS_TOKENS:
+            return True
+        # tolerate trailing punctuation/notes on an otherwise-recognized token
         return verdict.startswith(("PASS", "APPROVE"))  # REJECT/FAIL/garbage \u2192 fail-closed
     up = text.upper()
     if "VERDICT: FAIL" in up or "\u5224\u5b9a: REJECT" in text:
         return False
+    # also matches "VERDICT: PASS_WITH_CONDITIONS" (PASS is a prefix of it) \u2014 intentional,
+    # see _PASS_TOKENS above.
     return "VERDICT: PASS" in up
 
 
@@ -837,8 +851,20 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
             "   Use UNKNOWN when the evidence is insufficient to judge that criterion; do not guess.",
         ]
     lines += [
+        # #334: headless verify was binary PASS/FAIL, so advisory findings (hardening
+        # suggestions, conditions the task itself forbids satisfying, style nits) got
+        # rounded up to FAIL and quorum=all deadlocked on them. This ports the
+        # interactive review-verdict contract's APPROVE_WITH_CONDITIONS semantics
+        # (facets/output-contracts/review-verdict.md) to the headless path. It is not
+        # a weakening: a genuine blocking defect still must FAIL.
+        "Use FAIL ONLY for a blocking defect you can state as a one-line concrete",
+        "failure or attack scenario.",
+        "Non-blocking findings — improvement suggestions, hardening advice, conditions",
+        "the task itself forbids you from satisfying (e.g. tests you are told not to",
+        "modify), style — belong in the reasoning lines, with VERDICT: PASS_WITH_CONDITIONS.",
         "Finally, the very last line of your output must be exactly one of:",
         "VERDICT: PASS",
+        "VERDICT: PASS_WITH_CONDITIONS",
         "VERDICT: FAIL",
         "Do not add extra characters, Markdown, or punctuation to the last line, and do not",
         "place the verdict before the reasoning.",

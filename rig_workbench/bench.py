@@ -286,7 +286,8 @@ BUILTIN_TASKS: dict[str, dict] = {
         "goal": (
             "Users report they can view other users' profiles: calling get_profile "
             "with someone else's user id returns that person's data, even though "
-            "they aren't that user. Fix this. Do not modify the tests. Return only "
+            "they aren't that user. Fix this. Do not modify the existing tests "
+            "(adding a new test file is allowed). Return only "
             "the full fixed profile_service.py in a ```python ... ``` block."
         ),
         "spec_check_code": (
