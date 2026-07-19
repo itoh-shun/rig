@@ -8,13 +8,14 @@ import pathlib
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
 from typing import Mapping
 
-from .bench_tasks import BenchTask, _copy_source
+from .bench_tasks import BenchTask, _copy_source, _remove_tree
 
 
 SUPPORTED_PROVIDERS = frozenset({"claude", "codex", "ollama", "lmstudio", "mock"})
@@ -22,6 +23,7 @@ _OPENAI_ENDPOINTS = {
     "ollama": "http://localhost:11434/v1/chat/completions",
     "lmstudio": "http://localhost:1234/v1/chat/completions",
 }
+_LOCAL_DEFAULT_MODELS = {"ollama": "llama3.1", "lmstudio": "local-model"}
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,41 @@ class ProviderAttempt:
     stdout: str
     stderr: str
     infra_error: str | None
+
+
+def resolve_pair_model(
+    provider: str,
+    requested_model: str | None,
+    options: Mapping[str, object] | None,
+) -> str:
+    if requested_model:
+        return requested_model
+    if provider == "mock":
+        return "mock"
+    if provider not in _OPENAI_ENDPOINTS:
+        raise ValueError(f"provider {provider!r} requires an explicit model")
+
+    settings = options or {}
+    configured_base = settings.get("base_url")
+    if configured_base:
+        base_url = str(configured_base).rstrip("/")
+    else:
+        base_url = _OPENAI_ENDPOINTS[provider].removesuffix("/chat/completions")
+    request = urllib.request.Request(f"{base_url}/models", method="GET")
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=float(settings.get("model_timeout_s", 5)),
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        discovered = [
+            item.get("id")
+            for item in payload.get("data", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
+        ]
+    except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+        discovered = []
+    return discovered[0] if discovered else _LOCAL_DEFAULT_MODELS[provider]
 
 
 def _agent_prompt(goal: str) -> str:
@@ -83,6 +120,8 @@ def build_bare_attempt(
     goal: str,
     workspace: pathlib.Path,
     model: str | None = None,
+    *,
+    claude_no_session_persistence: bool = True,
 ) -> BareInvocation:
     if provider not in SUPPORTED_PROVIDERS:
         raise ValueError(f"unknown benchmark provider {provider!r}")
@@ -96,6 +135,8 @@ def build_bare_attempt(
         command = ["claude", "-p", prompt, "--output-format", "text"]
         if model:
             command.extend(["--model", model])
+        if claude_no_session_persistence:
+            command.append("--no-session-persistence")
         command.extend(["--permission-mode", "acceptEdits"])
         argv = tuple(command)
     elif provider == "codex":
@@ -121,6 +162,7 @@ def build_bare_attempt(
         prompt=prompt,
         argv=argv,
         endpoint=endpoint,
+        ephemeral=provider != "claude" or claude_no_session_persistence,
     )
 
 
@@ -183,7 +225,13 @@ def run_bare(
             ),
         )
 
-    invocation = build_bare_attempt(provider, task.goal, workspace, model)
+    invocation = build_bare_attempt(
+        provider,
+        task.goal,
+        workspace,
+        model,
+        claude_no_session_persistence=bool(settings.get("claude_no_session_persistence", True)),
+    )
     if provider in _OPENAI_ENDPOINTS and settings.get("base_url"):
         base_url = str(settings["base_url"]).rstrip("/")
         invocation = replace(invocation, endpoint=f"{base_url}/chat/completions")
@@ -210,6 +258,11 @@ def run_bare(
         stdout = _stream_text(error.stdout or error.output)
         stderr = _stream_text(error.stderr)
         infra_error = f"timeout: provider exceeded {timeout_s:g}s"
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        returncode = 126
+        stdout = ""
+        stderr = str(error)
+        infra_error = f"runtime_launch_failure: {type(error).__name__}: {error}"
     else:
         returncode = completed.returncode
         stdout = completed.stdout or ""
@@ -234,12 +287,35 @@ def run_rig(
     workspace: pathlib.Path,
     options: Mapping[str, object] | None,
 ) -> ProviderAttempt:
+    settings = dict(options or {})
+    configured_artifacts = settings.get("artifact_dir")
+    managed_artifacts = configured_artifacts is None
+    artifact_dir = (
+        pathlib.Path(tempfile.mkdtemp(prefix=f"rig-bench-artifacts-{task.id}-"))
+        if managed_artifacts
+        else pathlib.Path(configured_artifacts)
+    )
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    settings["artifact_dir"] = artifact_dir
+    try:
+        return _run_rig_with_artifacts(task, provider, model, workspace, settings)
+    finally:
+        if managed_artifacts:
+            _remove_tree(artifact_dir)
+
+
+def _run_rig_with_artifacts(
+    task: BenchTask,
+    provider: str,
+    model: str | None,
+    workspace: pathlib.Path,
+    settings: Mapping[str, object],
+) -> ProviderAttempt:
     started = time.monotonic()
     workspace = pathlib.Path(workspace)
-    settings = options or {}
-    state_path = workspace / "run-state.json"
-    if provider == "mock":
-        return _run_mock_rig(task, model, workspace, state_path, settings, started)
+    artifact_dir = pathlib.Path(settings["artifact_dir"])
+    state_path = artifact_dir / "run-state.json"
+    counter_path = artifact_dir / "provider-calls.jsonl"
 
     command = [*_rig_command(settings), "run", "adaptive-bugfix", "--provider", provider]
     command.extend(["--goal", task.goal, "--check", public_check_command(task)])
@@ -255,6 +331,8 @@ def run_rig(
         command.extend(["--model", model])
     if settings.get("allow_headless_in_cc"):
         command.append("--allow-headless-in-cc")
+    if provider == "claude" and settings.get("claude_no_session_persistence", True):
+        command.append("--no-session-persistence")
     if settings.get("base_url"):
         command.extend(["--base-url", str(settings["base_url"])])
 
@@ -265,7 +343,17 @@ def run_rig(
     environment["PYTHONPATH"] = os.pathsep.join(
         part for part in (str(package_root), existing_pythonpath) if part
     )
-    environment.setdefault("RIG_HOME", str(package_root))
+    environment["RIG_HOME"] = str(package_root)
+    environment["RIG_RUNS_PATH"] = str(artifact_dir / "runs.jsonl")
+    environment["RIG_GLOBAL_RUNS_PATH"] = str(artifact_dir / "global-runs.jsonl")
+    environment["RIG_STEP_OUTPUT_DIR"] = str(artifact_dir / "step-outputs")
+    environment["RIG_BENCH_CALL_COUNTER"] = str(counter_path)
+    environment["PYTHONUTF8"] = "1"
+    if provider == "mock":
+        scenario = str(settings.get("mock_scenario", "success"))
+        environment["RIG_BENCH_MOCK_SCENARIO"] = scenario
+        source_variant = "narrow" if scenario == "partial" else "canonical"
+        environment["RIG_BENCH_MOCK_CANONICAL"] = str(task.root / source_variant)
     try:
         completed = subprocess.run(
             command,
@@ -283,30 +371,36 @@ def run_rig(
             model=model,
             returncode=127,
             elapsed_s=time.monotonic() - started,
-            invocations=0,
+            invocations=_read_call_count(counter_path),
             stdout="",
             stderr=str(error),
             infra_error=f"missing_executable: benchmark runner: {error}",
         )
     except subprocess.TimeoutExpired as error:
-        state = _read_run_state(state_path)
-        invocations = max(1, _state_invocations(state))
         return ProviderAttempt(
             provider=provider,
             model=model,
             returncode=124,
             elapsed_s=time.monotonic() - started,
-            invocations=invocations,
+            invocations=_read_call_count(counter_path),
             stdout=_stream_text(error.stdout or error.output),
             stderr=_stream_text(error.stderr),
             infra_error=f"timeout: rig runner exceeded {timeout_s:g}s",
         )
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return ProviderAttempt(
+            provider=provider,
+            model=model,
+            returncode=126,
+            elapsed_s=time.monotonic() - started,
+            invocations=_read_call_count(counter_path),
+            stdout="",
+            stderr=str(error),
+            infra_error=f"runtime_launch_failure: {type(error).__name__}: {error}",
+        )
 
     state = _read_run_state(state_path)
-    invocations = _state_invocations(state)
     infra_error = _rig_infra_error(completed.stdout or "", completed.stderr or "", state)
-    if infra_error and invocations == 0:
-        invocations = 1
     if not state and infra_error is None:
         infra_error = "harness_state_missing: rig runner did not write run-state.json"
     return ProviderAttempt(
@@ -314,7 +408,7 @@ def run_rig(
         model=model,
         returncode=completed.returncode,
         elapsed_s=time.monotonic() - started,
-        invocations=invocations,
+        invocations=_read_call_count(counter_path),
         stdout=completed.stdout or "",
         stderr=completed.stderr or "",
         infra_error=infra_error,
@@ -340,62 +434,6 @@ def _rig_command(settings: Mapping[str, object]) -> tuple[str, ...]:
     return (sys.executable, "-m", "rig_workbench.cli")
 
 
-def _run_mock_rig(
-    task: BenchTask,
-    model: str | None,
-    workspace: pathlib.Path,
-    state_path: pathlib.Path,
-    settings: Mapping[str, object],
-    started: float,
-) -> ProviderAttempt:
-    scenario = str(settings.get("mock_scenario", "success"))
-    if scenario == "success":
-        _copy_source(task.root / "canonical", workspace)
-        returncode = 0
-        invocations = int(settings.get("mock_rig_invocations", 2))
-        stderr = ""
-        infra_error = None
-    elif scenario == "partial":
-        _copy_source(task.root / "narrow", workspace)
-        returncode = 1
-        invocations = 1
-        stderr = "mock rig provider stopped after partial edits"
-        infra_error = "provider_failure: mock rig provider stopped after partial edits"
-    elif scenario == "timeout":
-        returncode = 124
-        invocations = 1
-        stderr = "mock rig provider timed out"
-        infra_error = "timeout: mock rig provider timed out"
-    elif scenario == "malformed":
-        returncode = 1
-        invocations = int(settings.get("mock_rig_invocations", 2))
-        stderr = "mock rig provider returned malformed output"
-        infra_error = None
-    else:
-        returncode = 1
-        invocations = 1
-        stderr = f"unknown mock rig scenario: {scenario}"
-        infra_error = f"provider_failure: unknown mock rig scenario: {scenario}"
-    state = {
-        "recipe": "adaptive-bugfix",
-        "goal": task.goal,
-        "adaptive": {"invocations": invocations},
-        "checks": [public_check_command(task)],
-        "mock_scenario": scenario,
-    }
-    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    return ProviderAttempt(
-        provider="mock",
-        model=model,
-        returncode=returncode,
-        elapsed_s=time.monotonic() - started,
-        invocations=invocations,
-        stdout="mock adaptive run completed" if returncode == 0 else "",
-        stderr=stderr,
-        infra_error=infra_error,
-    )
-
-
 def _read_run_state(path: pathlib.Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -404,21 +442,24 @@ def _read_run_state(path: pathlib.Path) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _state_invocations(state: dict) -> int:
-    value = (state.get("adaptive") or {}).get("invocations", 0)
-    return value if isinstance(value, int) and value >= 0 else 0
+def _read_call_count(path: pathlib.Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line)
+    except OSError:
+        return 0
 
 
 def _rig_infra_error(stdout: str, stderr: str, state: dict) -> str | None:
     detail = f"{stdout}\n{stderr}\n{json.dumps(state, ensure_ascii=True)}".casefold()
     if "provider not found" in detail or "no such file or directory" in detail:
         return "missing_executable: provider executable was not found"
-    if "provider timeout" in detail:
+    if "provider timeout" in detail or "generator failed (exit 124)" in detail:
         return "timeout: provider call timed out"
     if any(
         marker in detail
         for marker in (
             "authentication failed",
+            "provider authentication failure",
             "not authenticated",
             "not logged in",
             "unauthorized",
@@ -426,8 +467,12 @@ def _rig_infra_error(stdout: str, stderr: str, state: dict) -> str | None:
         )
     ):
         return "authentication_failure: provider rejected credentials"
+    if "provider endpoint failure" in detail:
+        return "endpoint_failure: local provider endpoint failed"
     if "connection refused" in detail or "endpoint" in detail and "error" in detail:
         return "endpoint_failure: local provider endpoint failed"
+    if '"action": "exec_failed"' in detail or "adaptive generator failed" in detail:
+        return "provider_failure: provider call failed"
     return None
 
 
@@ -461,7 +506,23 @@ def _run_http_bare(
         else:
             infra_error = f"endpoint_failure: HTTP {error.code}"
         return _http_error_attempt(invocation, started, str(error), infra_error)
-    except (urllib.error.URLError, TimeoutError) as error:
+    except TimeoutError as error:
+        return _http_error_attempt(
+            invocation,
+            started,
+            str(error),
+            f"timeout: {error}",
+        )
+    except urllib.error.URLError as error:
+        reason = error.reason
+        category = "timeout" if isinstance(reason, TimeoutError) else "endpoint_failure"
+        return _http_error_attempt(
+            invocation,
+            started,
+            str(error),
+            f"{category}: {error}",
+        )
+    except OSError as error:
         return _http_error_attempt(
             invocation,
             started,
@@ -476,15 +537,37 @@ def _run_http_bare(
             f"malformed_output: {error}",
         )
 
-    applied = subprocess.run(
-        ["git", "apply", "--whitespace=nowarn", "-"],
-        cwd=invocation.cwd,
-        input=patch,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        _validate_unified_diff(invocation.cwd, patch)
+    except ValueError as error:
+        return _http_error_attempt(
+            invocation,
+            started,
+            str(error),
+            f"malformed_output: {error}",
+        )
+
+    try:
+        checked = _run_git_apply(invocation.cwd, patch, check_only=True)
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return _git_apply_infra_attempt(invocation, started, error)
+    if checked.returncode != 0:
+        detail = (checked.stderr or "git apply rejected provider output").strip()
+        return ProviderAttempt(
+            provider=invocation.provider,
+            model=invocation.model,
+            returncode=1,
+            elapsed_s=time.monotonic() - started,
+            invocations=1,
+            stdout=patch,
+            stderr=detail,
+            infra_error=f"malformed_output: {detail}",
+        )
+
+    try:
+        applied = _run_git_apply(invocation.cwd, patch, check_only=False)
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return _git_apply_infra_attempt(invocation, started, error)
     if applied.returncode != 0:
         detail = (applied.stderr or "git apply rejected provider output").strip()
         return ProviderAttempt(
@@ -507,6 +590,110 @@ def _run_http_bare(
         stderr=applied.stderr or "",
         infra_error=None,
     )
+
+
+def _run_git_apply(
+    workspace: pathlib.Path,
+    patch: str,
+    *,
+    check_only: bool,
+) -> subprocess.CompletedProcess[str]:
+    command = ["git", "apply"]
+    if check_only:
+        command.append("--check")
+    command.extend(["--whitespace=nowarn", "-"])
+    return subprocess.run(
+        command,
+        cwd=workspace,
+        input=patch,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def _git_apply_infra_attempt(
+    invocation: BareInvocation,
+    started: float,
+    error: Exception,
+) -> ProviderAttempt:
+    category = "missing_executable" if isinstance(error, FileNotFoundError) else "runtime_launch_failure"
+    return _http_error_attempt(
+        invocation,
+        started,
+        str(error),
+        f"{category}: git apply: {type(error).__name__}: {error}",
+    )
+
+
+def _validate_unified_diff(workspace: pathlib.Path, patch: str) -> None:
+    paths: list[str] = []
+    for line in patch.splitlines():
+        if line in {"new file mode 120000", "new mode 120000"}:
+            raise ValueError("symbolic-link patches are not allowed")
+        if line.startswith("diff --git "):
+            try:
+                fields = shlex.split(line)
+            except ValueError as error:
+                raise ValueError(f"invalid diff header: {error}") from error
+            if len(fields) != 4:
+                raise ValueError("invalid diff --git header")
+            paths.extend(fields[2:4])
+            continue
+        for prefix in ("--- ", "+++ ", "rename from ", "rename to ", "copy from ", "copy to "):
+            if line.startswith(prefix):
+                paths.append(_patch_header_path(line.removeprefix(prefix)))
+                break
+
+    normalized = {
+        path for path in (_normalize_patch_path(raw_path) for raw_path in paths) if path is not None
+    }
+    if not normalized:
+        raise ValueError("provider output does not contain a unified diff")
+    for relative in normalized:
+        candidate = workspace
+        for part in pathlib.PurePosixPath(relative).parts:
+            candidate /= part
+            if _path_is_link(candidate):
+                raise ValueError(f"patch target traverses a symbolic link: {relative}")
+
+
+def _patch_header_path(value: str) -> str:
+    value = value.split("\t", 1)[0].strip()
+    if value.startswith('"'):
+        try:
+            fields = shlex.split(value)
+        except ValueError as error:
+            raise ValueError(f"invalid quoted patch path: {error}") from error
+        if len(fields) != 1:
+            raise ValueError("invalid quoted patch path")
+        return fields[0]
+    return value
+
+
+def _normalize_patch_path(raw_path: str) -> str | None:
+    path = raw_path.replace("\\", "/")
+    if path == "/dev/null":
+        return None
+    if path.startswith(("a/", "b/")):
+        path = path[2:]
+    posix_path = pathlib.PurePosixPath(path)
+    windows_path = pathlib.PureWindowsPath(path)
+    if posix_path.is_absolute() or windows_path.is_absolute():
+        raise ValueError(f"absolute patch path is not allowed: {raw_path}")
+    if any(part == ".." for part in posix_path.parts):
+        raise ValueError(f"patch path traversal is not allowed: {raw_path}")
+    if not posix_path.parts or posix_path.parts[0].casefold() == ".git":
+        raise ValueError(f"reserved patch path is not allowed: {raw_path}")
+    return posix_path.as_posix()
+
+
+def _path_is_link(path: pathlib.Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
 
 
 def _http_error_attempt(

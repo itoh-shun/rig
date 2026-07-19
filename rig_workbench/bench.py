@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from typing import Mapping
 
 from . import __version__
-from .bench_providers import ProviderAttempt, run_bare, run_rig
+from .bench_providers import ProviderAttempt, resolve_pair_model, run_bare, run_rig
 from .bench_tasks import (
     BenchTask,
     _command,
@@ -35,6 +35,7 @@ class CommandResult:
     stdout: str
     stderr: str
     elapsed_s: float
+    infra_error: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -157,6 +158,7 @@ def _run_command(
             stdout="",
             stderr=str(error),
             elapsed_s=time.monotonic() - started,
+            infra_error=f"missing_executable: {error}",
         )
     except subprocess.TimeoutExpired as error:
         return CommandResult(
@@ -165,6 +167,16 @@ def _run_command(
             stdout=_stream_text(error.stdout or error.output),
             stderr=_stream_text(error.stderr),
             elapsed_s=time.monotonic() - started,
+            infra_error=f"timeout: command exceeded {timeout_s:g}s",
+        )
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return CommandResult(
+            command=command,
+            returncode=126,
+            stdout="",
+            stderr=str(error),
+            elapsed_s=time.monotonic() - started,
+            infra_error=f"runtime_launch_failure: {type(error).__name__}: {error}",
         )
     return CommandResult(
         command=command,
@@ -187,7 +199,35 @@ def _evaluate_workspace(
     options: Mapping[str, object],
 ) -> tuple[CommandResult, CommandResult]:
     if task.language.casefold() == "typescript":
-        _require_supported_node()
+        try:
+            _require_supported_node()
+        except FileNotFoundError as error:
+            infra_error = f"missing_executable: {error}"
+            runtime_detail = str(error)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            infra_error = f"runtime_launch_failure: {type(error).__name__}: {error}"
+            runtime_detail = str(error)
+        else:
+            infra_error = None
+            runtime_detail = ""
+        if infra_error is not None:
+            public = CommandResult(
+                command=tuple(_command(task.test_command)),
+                returncode=127,
+                stdout="",
+                stderr=runtime_detail,
+                elapsed_s=0.0,
+                infra_error=infra_error,
+            )
+            hidden = CommandResult(
+                command=(*_command(task.hidden_command), str(workspace)),
+                returncode=127,
+                stdout="",
+                stderr=runtime_detail,
+                elapsed_s=0.0,
+                infra_error=infra_error,
+            )
+            return public, hidden
     timeout_s = float(options.get("check_timeout_s", 60))
     environment = os.environ.copy()
     environment["PYTHONUTF8"] = "1"
@@ -218,8 +258,8 @@ def _evaluate_workspace(
     return public, hidden
 
 
-def _read_runner_state(workspace: pathlib.Path) -> dict | None:
-    path = workspace / "run-state.json"
+def _read_runner_state(artifact_dir: pathlib.Path) -> dict | None:
+    path = artifact_dir / "run-state.json"
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -280,7 +320,7 @@ def _failed_attempt(
         model=model,
         returncode=1,
         elapsed_s=time.monotonic() - started,
-        invocations=1,
+        invocations=0,
         stdout="",
         stderr=str(error),
         infra_error=f"harness_failure: {type(error).__name__}: {error}",
@@ -294,10 +334,15 @@ def run_pair(
     model: str | None,
     options: Mapping[str, object] | None = None,
 ) -> PairResult:
-    settings = options or {}
+    settings = dict(options or {})
+    model = resolve_pair_model(provider, model, settings)
     order = planned_arm_order(run_index)
     pair_started = time.monotonic()
     workspaces: dict[str, pathlib.Path] = {}
+    artifact_dir = pathlib.Path(
+        tempfile.mkdtemp(prefix=f"rig-bench-artifacts-{task.id}-{run_index:03d}-")
+    )
+    settings["artifact_dir"] = str(artifact_dir)
     try:
         # Planning is complete before execution: neither arm can affect the other's copy.
         workspaces["bare"] = materialize(task)
@@ -319,8 +364,9 @@ def run_pair(
             except Exception as error:
                 attempt = _failed_attempt(provider, model, arm_started, error)
 
-            runner_state = _read_runner_state(workspace) if name == "rig" else None
-            (workspace / "run-state.json").unlink(missing_ok=True)
+            runner_state = _read_runner_state(artifact_dir) if name == "rig" else None
+            if name == "rig" and artifact_dir.exists():
+                _remove_tree(artifact_dir)
             git_status, changed_files = _git_evidence(workspace)
             public, hidden = _evaluate_workspace(task, workspace, settings)
             attempts = (attempt,)
@@ -333,7 +379,12 @@ def run_pair(
                 hidden_check=hidden,
                 elapsed_s=time.monotonic() - arm_started,
                 invocation_count=sum(item.invocations for item in attempts),
-                completed=attempt.infra_error is None and attempt.returncode == 0,
+                completed=(
+                    attempt.infra_error is None
+                    and attempt.returncode == 0
+                    and public.infra_error is None
+                    and hidden.infra_error is None
+                ),
                 runner_state=runner_state,
             )
         return PairResult(
@@ -348,6 +399,8 @@ def run_pair(
             elapsed_s=time.monotonic() - pair_started,
         )
     finally:
+        if artifact_dir.exists():
+            _remove_tree(artifact_dir)
         for workspace in workspaces.values():
             if workspace.exists():
                 _remove_tree(workspace)
@@ -358,6 +411,8 @@ def classify_outcome(arm: ArmResult | dict, mode: str | None = None) -> str:
         attempts = arm.attempts
         completed = arm.completed
         hidden_passed = arm.hidden_check.passed
+        if arm.public_test.infra_error or arm.hidden_check.infra_error:
+            return "infra_error"
     else:
         attempts = arm.get("attempts") or ()
         if any(
@@ -367,6 +422,11 @@ def classify_outcome(arm: ArmResult | dict, mode: str | None = None) -> str:
                 else attempt.get("infra_error")
             )
             for attempt in attempts
+        ):
+            return "infra_error"
+        if any(
+            isinstance(arm.get(name), dict) and arm[name].get("infra_error")
+            for name in ("public_test", "hidden_check")
         ):
             return "infra_error"
         completed = arm.get("completed")
@@ -394,6 +454,7 @@ def run_benchmark(
     runs: int,
     options: Mapping[str, object] | None = None,
 ) -> dict:
+    model = resolve_pair_model(provider, model, options)
     task_results = []
     for task in tasks:
         pairs = [

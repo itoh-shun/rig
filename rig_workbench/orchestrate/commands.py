@@ -364,6 +364,9 @@ def cmd_run(args):
         elif a == "--allow-headless-in-cc":
             cfg["allow_headless_in_cc"] = True
             i += 1
+        elif a == "--no-session-persistence":
+            cfg["claude_no_session_persistence"] = True
+            i += 1
         elif a == "--auto-route":
             cfg["auto_route"] = True
             i += 1

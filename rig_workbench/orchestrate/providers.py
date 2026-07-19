@@ -18,6 +18,8 @@ from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
 from .runstate import compute_next, gate_outcome, save_state, telemetry_append
 
+_BENCH_COUNTER_LOCK = threading.Lock()
+
 # ── Execution layer (external runners, provider abstraction) ─────────────────
 # Run each step as an "agent in a separate process" = context isolated at the process boundary.
 # Verification runs on a "different provider / different process" = grader != generator by construction.
@@ -27,6 +29,7 @@ MOCK_SRC = (
     "import sys\n"
     "import os\n"
     "import re\n"
+    "import shutil\n"
     "from pathlib import Path\n"
     "prompt = sys.stdin.read()\n"
     "role = sys.argv[1] if len(sys.argv) > 1 else 'generator'\n"
@@ -87,13 +90,24 @@ MOCK_SRC = (
     "            '        return True\\n'\n"
     "        )\n"
     "    return ''\n"
+    "def apply_benchmark_canonical():\n"
+    "    canonical = os.environ.get('RIG_BENCH_MOCK_CANONICAL')\n"
+    "    if not canonical:\n"
+    "        return False\n"
+    "    root = Path(canonical)\n"
+    "    for source in root.rglob('*'):\n"
+    "        if source.is_file():\n"
+    "            destination = Path.cwd() / source.relative_to(root)\n"
+    "            destination.parent.mkdir(parents=True, exist_ok=True)\n"
+    "            shutil.copy2(source, destination)\n"
+    "    return True\n"
     "if role == 'verifier':\n"
     "    print('independent verification (mock): ' + persona)\n"
     "    print('evidence: mock inspection of the product - mock.py:1')\n"
     "    print('CRITERION 1: ' + ('FAIL' if 'fail' in persona else 'PASS') + ' - mock.py:1')\n"
     "    print('VERDICT: ' + ('FAIL' if 'fail' in persona else 'PASS'))\n"
     "else:\n"
-    "    if step_id == 'implement' and target_file:\n"
+    "    if step_id == 'implement' and not apply_benchmark_canonical() and target_file:\n"
     "        fix = fix_for(prompt)\n"
     "        if fix:\n"
     "            write(target_file, fix)\n"
@@ -132,19 +146,23 @@ _GENERATOR_EDIT_ENFCE = {
 
 def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
     if provider == "mock":
-        return ["python3", "-c", MOCK_SRC, role, persona]
+        return [sys.executable, "-c", MOCK_SRC, role, persona]
     if provider == "rig":
         # Launch each step as a "rig harness" via headless claude (invokes rig by name).
         pre = RIG_VER_PREFIX if role == "verifier" else RIG_GEN_PREFIX
         argv = ["claude", "-p", pre + prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
+        if cfg.get("claude_no_session_persistence"):
+            argv.append("--no-session-persistence")
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "claude":
         # Headless. In production the user can tune permission modes etc. via --provider-cmd.
         argv = ["claude", "-p", prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
+        if cfg.get("claude_no_session_persistence"):
+            argv.append("--no-session-persistence")
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "codex":
         # --skip-git-repo-check: keep codex from refusing to start in non-git directories
@@ -258,6 +276,7 @@ def _record_token_usage(cfg: dict, provider: str, usage: dict) -> None:
 
 
 def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
+    import urllib.error
     import urllib.request
     url = f"{_base_url(provider, cfg)}/chat/completions"
     model = resolve_http_model(provider, cfg)
@@ -271,8 +290,19 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
         if isinstance(data.get("usage"), dict):
             _record_token_usage(cfg, provider, data["usage"])
         return 0, data["choices"][0]["message"]["content"]
-    except Exception as e:                      # connection failures, missing models etc. become rc!=0
-        return 1, f"[{provider} error: {e} @ {url}]"
+    except urllib.error.HTTPError as error:
+        category = "authentication failure" if error.code in {401, 403} else "endpoint failure"
+        return 1, f"[provider {category}: HTTP {error.code} @ {url}]"
+    except TimeoutError as error:
+        return 1, f"[provider timeout: {error} @ {url}]"
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            return 1, f"[provider timeout: {error} @ {url}]"
+        return 1, f"[provider endpoint failure: {error} @ {url}]"
+    except OSError as error:
+        return 1, f"[provider endpoint failure: {error} @ {url}]"
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+        return 1, f"[provider malformed output: {error}]"
 
 
 def _record_anthropic_usage(cfg: dict, usage: dict) -> None:
@@ -415,8 +445,54 @@ def cmd_models(args):
         print(f"\nSaved: {_MODELS_CACHE_PATH} ({len(conf)} providers) — used by the next run --auto-model")
 
 
+def _record_benchmark_provider_call(
+    provider: str,
+    role: str,
+    persona: str,
+    step_id: str | None,
+) -> str | None:
+    counter_path = os.environ.get("RIG_BENCH_CALL_COUNTER")
+    if not counter_path:
+        return None
+    path = pathlib.Path(counter_path)
+    record = json.dumps(
+        {
+            "provider": provider,
+            "role": role,
+            "persona": persona,
+            "step_id": step_id,
+            "pid": os.getpid(),
+            "started_ns": time.time_ns(),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    try:
+        with _BENCH_COUNTER_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+            descriptor = os.open(path, flags, 0o600)
+            try:
+                if os.write(descriptor, record) != len(record):
+                    raise OSError("short benchmark call-journal write")
+            finally:
+                os.close(descriptor)
+    except OSError as error:
+        return str(error)
+    return None
+
+
 def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
                  state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
+    journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
+    if journal_error is not None:
+        return 126, f"[benchmark call counter error: {journal_error}]"
+    if provider == "mock":
+        scenario = os.environ.get("RIG_BENCH_MOCK_SCENARIO", "success")
+        if scenario == "timeout":
+            return 124, "[provider timeout]"
+        if scenario == "malformed" and role == "verifier":
+            return 0, "mock verifier omitted its required verdict"
     if provider in _OPENAI_BASE:
         return run_http_provider(provider, prompt, cfg)
     if provider == "anthropic":
@@ -462,10 +538,15 @@ def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None =
 def _spool_full_output(text: str, cfg: dict, label: str) -> str | None:
     """Write the full text to <run_dir>/step-outputs/<label>.txt. None if no run dir (best-effort)."""
     run_dir = (cfg or {}).get("run_dir")
-    if not run_dir:
+    configured_output_dir = os.environ.get("RIG_STEP_OUTPUT_DIR")
+    if not run_dir and not configured_output_dir:
         return None
     try:
-        d = pathlib.Path(run_dir) / "step-outputs"
+        d = (
+            pathlib.Path(configured_output_dir)
+            if configured_output_dir
+            else pathlib.Path(run_dir) / "step-outputs"
+        )
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{label}.txt"
         p.write_text(text, encoding="utf-8")
@@ -1443,6 +1524,14 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         _uses_adaptive_executors(state)
         and generator_rc != 0
     ):
+        with _HIST_LOCK:
+            state["history"].append({
+                "action": "EXEC_FAILED",
+                "step": step["id"],
+                "provider": winner or gen_list[0],
+                "exit_status": generator_rc,
+                "out": out[:1000],
+            })
         if not state.get("stopped"):
             state["stopped"] = {
                 "reason": f"adaptive generator failed (exit {generator_rc})",

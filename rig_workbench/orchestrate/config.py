@@ -3,6 +3,12 @@
 import os
 import pathlib
 
+
+def _env_path(name: str, default: pathlib.Path) -> pathlib.Path:
+    value = os.environ.get(name)
+    return pathlib.Path(value).expanduser().resolve() if value else default
+
+
 def find_rig_home() -> pathlib.Path:
     """Resolve where the rig assets (skills/, .claude-plugin/) live.
     Priority: $RIG_HOME -> ~/.claude/plugins/data/rig-itoshun-local-plugins -> parent of __file__ (dev fallback).
@@ -22,7 +28,10 @@ RECIPES = RIG_HOME / "skills" / "rig" / "recipes"
 PERSONAS = RIG_HOME / "skills" / "rig" / "facets" / "personas"
 INVOCATION_CWD = pathlib.Path(os.getcwd()).resolve()
 PROJECT_RECIPES = INVOCATION_CWD / ".rig" / "recipes"  # project overlay
-RUNS_PATH = INVOCATION_CWD / ".rig" / "runs.jsonl"     # run telemetry (an execution log on par with run-state)
-GLOBAL_RUNS_PATH = pathlib.Path.home() / ".rig" / "runs.jsonl"  # cross-project mirror (rebindable, e.g. in tests)
+RUNS_PATH = _env_path("RIG_RUNS_PATH", INVOCATION_CWD / ".rig" / "runs.jsonl")
+GLOBAL_RUNS_PATH = _env_path(
+    "RIG_GLOBAL_RUNS_PATH",
+    pathlib.Path.home() / ".rig" / "runs.jsonl",
+)
 DRILL_PATH = INVOCATION_CWD / ".rig" / "drill-results.jsonl"  # measured /rig:drill results (detection rate)
 DEFAULT_K = 2  # default acceptance-gate retry limit (SKILL §3.5)
