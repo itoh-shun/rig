@@ -570,8 +570,11 @@ Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or
 | Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
 | Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
 | Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+| Grok Build | unverified | unverified | unverified | unverified | unverified | unverified | unverified | unverified |
 ```
 (regenerate with `python3 scripts/host_adapters.py` if this table goes stale)
+
+**grok-build (#328)** is the cheapest host so far: it documents full Claude Code compatibility (auto-loads Claude Code plugins/skills/hooks/MCP/CLAUDE.md with zero configuration), so its `HOSTS` entry is a **native passthrough** — no event renaming, no relocated files; rig's existing Claude Code layout *is* the integration. Every capability is marked `unverified` (the compat claim is theirs; there is no grok CLI in this environment to exercise it), and one gap is declared explicitly: grok's headless mode documents no read-only/sandbox flag, so when using `--provider grok` (a `grok -p` headless branch in `build_argv`, with per-step `-m` model support), the verifier role's read-only enforcement rests on the prompt contract alone — one layer thinner than `claude` (`--allowedTools`) or `codex` (`--sandbox read-only`). `--always-approve` is deliberately never passed (it auto-approves tool executions; a generator that wants it can opt in via `--provider-cmd`).
 
 What building the Cursor entry actually surfaced (confirmed against `cursor.com/docs/hooks` and `/docs/skills`):
 - **Hook event names are camelCase** (`PreCompact` → `preCompact`, `UserPromptSubmit` → `beforeSubmitPrompt`) — exactly the cross-host divergence #304 anticipated.

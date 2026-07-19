@@ -121,6 +121,20 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
         return argv + [prompt]
+    if provider == "grok":
+        # grok-build headless (`grok -p`, claude-CLI-shaped syntax;
+        # docs.x.ai/build/cli/headless-scripting). Honest gap (#328): no
+        # read-only/sandbox flag is documented for grok headless, so the
+        # verifier role's read-only stance rests on the prompt contract alone —
+        # one enforcement layer thinner than claude (--allowedTools) or codex
+        # (--sandbox read-only). Deliberately NOT passing --always-approve
+        # (it auto-approves tool executions; a verifier must never get it, and
+        # a generator that needs it can opt in via
+        # --provider-cmd "grok -p {prompt} --always-approve").
+        argv = ["grok", "-p", prompt, "--output-format", "plain"]
+        if cfg.get("model"):
+            argv += ["-m", cfg["model"]]                   # per-step model support
+        return argv
     if provider == "cmd":
         tmpl = cfg.get("provider_cmd") or ""
         if not tmpl:
@@ -323,7 +337,7 @@ def discover_models(cfg: dict) -> dict:
         out[p] = {"kind": "local-http", "base_url": _base_url(p, cfg),
                   "reachable": bool(models), "models": models,
                   "default": models[0] if models else None}
-    for p in ("claude", "codex"):               # CLI providers: presence only
+    for p in ("claude", "codex", "grok"):       # CLI providers: presence only
         out[p] = {"kind": "cli", "available": shutil.which(p) is not None, "models": []}
     out["rig"] = {"kind": "cli", "available": shutil.which("claude") is not None,
                   "note": "launches each step as a rig harness (claude)", "models": []}
@@ -1107,7 +1121,7 @@ def cmd_probe(args):
         else:
             i += 1
     if not provider:
-        print("[ERROR] --provider <name> is required (rig|claude|codex|ollama|lmstudio|anthropic|cmd|mock)")
+        print("[ERROR] --provider <name> is required (rig|claude|codex|grok|ollama|lmstudio|anthropic|cmd|mock)")
         sys.exit(1)
     prompt = ("Judge whether a product meets its acceptance criteria and end with exactly one line: "
               "'VERDICT: PASS' or 'VERDICT: FAIL'.\nProduct: 2 + 2 = 4"

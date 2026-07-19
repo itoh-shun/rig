@@ -574,8 +574,11 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 | Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
 | Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
 | Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
+| Grok Build | unverified | unverified | unverified | unverified | unverified | unverified | unverified | unverified |
 ```
 （`python3 scripts/host_adapters.py`で再生成できる——このREADMEの表が古くなったら実行して差し替えること）
+
+**grok-build（#328）**はこれまでで最も安いホスト対応：grok-buildはClaude Code完全互換（plugins/skills/hooks/MCP/CLAUDE.mdをゼロ設定で自動読込）を公式に謳っているため、`HOSTS`エントリは**native passthrough**——イベント名変換もファイル再配置も不要で、rigの既存Claude Codeレイアウトがそのまま統合になる。全capabilityは`unverified`（互換性の主張は先方のドキュメントであり、この環境にgrok CLIが無いため実機未検証）。ギャップも1点明示：grokのheadlessモードにはread-only/sandboxフラグが文書化されていないため、`--provider grok`（`build_argv`の`grok -p` headless分岐。step別`-m`モデル指定対応）使用時、検証者ロールのread-only強制は**プロンプト契約のみ**に依る——`claude`（`--allowedTools`）や`codex`（`--sandbox read-only`）より1層薄い。`--always-approve`は意図的に渡さない（ツール実行を自動承認するフラグであり、検証者に渡してはならない。必要なgeneratorは`--provider-cmd`でopt-in可能）。
 
 Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
 - **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。

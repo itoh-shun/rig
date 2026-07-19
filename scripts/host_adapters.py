@@ -94,6 +94,43 @@ HOSTS: dict[str, dict] = {
         },
         "source": "cursor.com/docs/{hooks,skills} (newly researched for #304)",
     },
+    "grok-build": {
+        "display_name": "Grok Build",
+        # The cheapest host so far: grok-build documents FULL Claude Code
+        # compatibility — it auto-loads Claude Code marketplaces, plugins,
+        # skills, MCP, agents, hooks, and CLAUDE.md-family instruction files
+        # with zero configuration. So this entry is a native passthrough:
+        # no event-name translation, no relocated skill files, no config
+        # conversion. rig's existing Claude Code layout IS the integration.
+        # Everything below is documentation-sourced and unverified against a
+        # live instance (this environment has no grok CLI) — same honest
+        # stance as the Codex entry.
+        "capabilities": {
+            "skills": "unverified",          # documented as Claude-Code-compatible auto-load; not exercised live
+            "hooks": "unverified",
+            "subagents": "unverified",
+            "mcp": "unverified",
+            "read_only_sandbox": "unverified",  # sandboxing exists as a feature, but no headless read-only flag is documented
+            "precompact_context_injection": "unverified",
+            "session_start": "unverified", "tool_acl": "unverified",
+        },
+        "hook_events": {  # Claude Code compat layer -> canonical names pass through unchanged
+            "PreCompact": "PreCompact", "SessionStart": "SessionStart",
+            "SubagentStart": "SubagentStart", "SubagentStop": "SubagentStop",
+            "Stop": "Stop", "UserPromptSubmit": "UserPromptSubmit",
+        },
+        "hooks_config_path": "hooks/hooks.json",  # the Claude Code file itself — no host-specific copy needed
+        "skill_paths": ["skills/rig/SKILL.md",     # read via the compat layer
+                        ".grok/skills/", "~/.grok/skills/"],  # grok-native locations (not needed for rig)
+        "mcp_config_key": "mcpServers",
+        "degrade": {
+            "read_only_sandbox": "warn — grok's headless mode documents no read-only/sandbox flag, so the "
+                "verifier role's read-only enforcement rests solely on rig's argv/prompt-level injection "
+                "(one layer of the usual defense-in-depth is absent; called out in docs)",
+        },
+        "source": "docs.x.ai/build/{features/skills-plugins-marketplaces,cli/headless-scripting} "
+                  "(researched for #328; compat claim is theirs, unverified live)",
+    },
 }
 
 CANONICAL_EVENTS = ("PreCompact", "SessionStart", "SubagentStart", "SubagentStop", "Stop", "UserPromptSubmit")

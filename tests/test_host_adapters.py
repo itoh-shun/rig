@@ -50,6 +50,29 @@ def test_degrade_claude_code_baseline_host_has_no_degrades():
     assert host_adapters.degrade_behavior("claude-code", "precompact_context_injection") is None
 
 
+def test_hook_events_grok_build_pass_through_unchanged():
+    # grok-build documents full Claude Code compatibility (#328): canonical
+    # event names must survive translation untouched — any renaming here would
+    # mean the entry stopped being a native passthrough.
+    assert all(host_adapters.translate_hook_event(e, "grok-build") == e
+               for e in host_adapters.CANONICAL_EVENTS)
+
+
+def test_capability_grok_build_is_all_unverified_never_supported():
+    # Nothing has been exercised against a live grok CLI, so no capability may
+    # claim "supported" — the compat claim is theirs, not ours.
+    assert set(host_adapters.HOSTS["grok-build"]["capabilities"].values()) == {"unverified"}
+
+
+def test_degrade_grok_build_read_only_sandbox_gap_is_declared():
+    assert host_adapters.degrade_behavior("grok-build", "read_only_sandbox") is not None
+
+
+def test_grok_build_reuses_the_claude_code_hooks_config_verbatim():
+    assert (host_adapters.HOSTS["grok-build"]["hooks_config_path"]
+            == host_adapters.HOSTS["claude-code"]["hooks_config_path"])
+
+
 def test_every_host_shares_the_same_canonical_event_key_set():
     assert all(set(host_adapters.HOSTS[h]["hook_events"]) == set(host_adapters.CANONICAL_EVENTS)
                for h in host_adapters.HOSTS)
