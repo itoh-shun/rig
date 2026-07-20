@@ -317,17 +317,51 @@ def _git_evidence(workspace: pathlib.Path) -> tuple[tuple[str, ...], tuple[str, 
     return status_lines, changed_files
 
 
-def _workspace_status(root: pathlib.Path) -> frozenset[str]:
-    status = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain=v1"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+def _workspace_snapshot(root: pathlib.Path) -> dict[str, str]:
+    commands = (
+        ("diff", "--name-only", "-z", "HEAD"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+        ("ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
     )
-    if status.returncode != 0:
-        return frozenset()
-    return frozenset(line for line in status.stdout.splitlines() if line.strip())
+    paths: set[str] = set()
+    for arguments in commands:
+        result = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return {}
+        paths.update(
+            os.fsdecode(item).replace("\\", "/") for item in result.stdout.split(b"\0") if item
+        )
+    return {
+        relative: _workspace_fingerprint(root / pathlib.PurePosixPath(relative))
+        for relative in paths
+    }
+
+
+def _workspace_fingerprint(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        metadata = path.lstat()
+    except OSError:
+        digest.update(b"missing")
+        return digest.hexdigest()
+
+    digest.update(str(metadata.st_mode).encode("ascii"))
+    if path.is_symlink():
+        digest.update(os.fsencode(os.readlink(path)))
+    elif path.is_file():
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+    return digest.hexdigest()
+
+
+def _workspace_changes(before: dict[str, str], after: dict[str, str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+    )
 
 
 def _failed_attempt(
@@ -377,7 +411,7 @@ def run_pair(
             arm_started = time.monotonic()
             workspace = workspaces[name]
             leak_root = pathlib.Path(settings.get("leak_check_root", pathlib.Path.cwd()))
-            leak_status_before = _workspace_status(leak_root)
+            leak_snapshot_before = _workspace_snapshot(leak_root)
             try:
                 attempt = (
                     run_bare(task, provider, model, workspace, settings)
@@ -391,7 +425,10 @@ def run_pair(
             if name == "rig" and artifact_dir.exists():
                 _remove_tree(artifact_dir)
             git_status, changed_files = _git_evidence(workspace)
-            workspace_leaks = tuple(sorted(_workspace_status(leak_root) - leak_status_before))
+            workspace_leaks = _workspace_changes(
+                leak_snapshot_before,
+                _workspace_snapshot(leak_root),
+            )
             expected_files = {path.replace("\\", "/") for path in task.expected_files}
             unrelated_files = tuple(
                 path

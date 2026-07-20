@@ -189,7 +189,87 @@ def test_run_pair_records_workspace_writes_outside_scratch_root(monkeypatch, tmp
         {"leak_check_root": str(leak_root)},
     )
 
-    assert pair.arms["bare"].workspace_leaks == ("?? leaked.txt",)
+    assert pair.arms["bare"].workspace_leaks == ("leaked.txt",)
+    assert pair.arms["rig"].workspace_leaks == ()
+
+
+def test_run_pair_records_ignored_workspace_writes_outside_scratch_root(monkeypatch, tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    leak_root = tmp_path / "calling-repo"
+    leak_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=leak_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "bench@rig.local"],
+        cwd=leak_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "rig-bench"],
+        cwd=leak_root,
+        check=True,
+    )
+    (leak_root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=leak_root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "before"], cwd=leak_root, check=True)
+    real_run_bare = bench.run_bare
+
+    def leaking_bare(*args, **kwargs):
+        ignored = leak_root / "ignored"
+        ignored.mkdir()
+        (ignored / "leaked.txt").write_text("outside\n", encoding="utf-8")
+        return real_run_bare(*args, **kwargs)
+
+    monkeypatch.setattr(bench, "run_bare", leaking_bare)
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(leak_root)},
+    )
+
+    assert pair.arms["bare"].workspace_leaks == ("ignored/leaked.txt",)
+    assert pair.arms["rig"].workspace_leaks == ()
+
+
+def test_run_pair_records_further_writes_to_pre_dirty_workspace_path(monkeypatch, tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    leak_root = tmp_path / "calling-repo"
+    leak_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=leak_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "bench@rig.local"],
+        cwd=leak_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "rig-bench"],
+        cwd=leak_root,
+        check=True,
+    )
+    marker = leak_root / "tracked.txt"
+    marker.write_text("committed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=leak_root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "before"], cwd=leak_root, check=True)
+    marker.write_text("dirty before\n", encoding="utf-8")
+    real_run_bare = bench.run_bare
+
+    def leaking_bare(*args, **kwargs):
+        marker.write_text("dirty after\n", encoding="utf-8")
+        return real_run_bare(*args, **kwargs)
+
+    monkeypatch.setattr(bench, "run_bare", leaking_bare)
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(leak_root)},
+    )
+
+    assert pair.arms["bare"].workspace_leaks == ("tracked.txt",)
     assert pair.arms["rig"].workspace_leaks == ()
 
 
