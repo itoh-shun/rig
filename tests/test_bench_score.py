@@ -194,6 +194,37 @@ def test_failed_attempts_count_toward_invocation_cost():
     assert score.call_ratio == pytest.approx(2.0)
 
 
+def test_infrastructure_attempts_count_toward_cost_outside_quality_denominators():
+    pairs = _acceptance_pairs()
+    high_call_infra = _arm(
+        "rig",
+        completed=False,
+        invocations=20,
+        infra_error="timeout",
+    )
+    pairs[0] = replace(
+        pairs[0],
+        arms={**pairs[0].arms, "rig": high_call_infra},
+    )
+    pairs.append(
+        _pair(
+            0,
+            4,
+            bare=_arm("bare", hidden_passed=False),
+            rig=_arm("rig", hidden_passed=False, invocations=2),
+        )
+    )
+
+    score = score_provider(pairs)
+
+    assert score.verdict == "fail"
+    assert score.relative_reduction == pytest.approx(0.5)
+    assert score.rig_safe_stop_rate == pytest.approx(6 / 30)
+    assert score.infra_error_rate == pytest.approx(1 / 62)
+    assert score.call_ratio == pytest.approx(80 / 31)
+    assert any("call ratio" in reason for reason in score.reasons)
+
+
 @pytest.mark.parametrize(
     "pairs",
     [

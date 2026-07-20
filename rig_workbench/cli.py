@@ -108,13 +108,9 @@ def _load_script(name: str) -> types.ModuleType:
 
 
 def _run_orchestrate_subcmd(argv: list[str]) -> None:
-    """Hand off to `orchestrate.py`'s main().
+    """Hand off to the package-native orchestrator entry point."""
+    from .orchestrate import cli as orch
 
-    orchestrate.py reads `sys.argv[1:]` itself, so swap argv before calling.
-    Subcommands that need the COMMANDS dispatch on the scripts side
-    (run/plan/runs/etc.) are reused as-is.
-    """
-    orch = _load_script("orchestrate")
     old = sys.argv
     try:
         sys.argv = ["orchestrate.py", *argv]

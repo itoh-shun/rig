@@ -471,6 +471,10 @@ def _rig_infra_error(stdout: str, stderr: str, state: dict) -> str | None:
         return "endpoint_failure: local provider endpoint failed"
     if "connection refused" in detail or "endpoint" in detail and "error" in detail:
         return "endpoint_failure: local provider endpoint failed"
+    if "provider malformed output" in detail:
+        return "malformed_output: local provider patch was rejected"
+    if "provider patch application failure" in detail:
+        return "runtime_launch_failure: local provider patch could not be applied"
     if '"action": "exec_failed"' in detail or "adaptive generator failed" in detail:
         return "provider_failure: provider call failed"
     return None

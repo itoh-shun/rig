@@ -7,10 +7,12 @@ while nothing is read from or written to the real repo's .rig/ state.
 import base64
 import csv
 import hashlib
+import importlib.metadata
 import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import venv
@@ -81,6 +83,30 @@ def _venv_python(root):
     return root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def _venv_rig_wb(root):
+    return root / ("Scripts/rig-wb.exe" if os.name == "nt" else "bin/rig-wb")
+
+
+def _provision_distributions_offline(root, names):
+    destination_site = (
+        root / "Lib" / "site-packages"
+        if os.name == "nt"
+        else root / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    )
+    for name in names:
+        distribution = importlib.metadata.distribution(name)
+        for relative in distribution.files or ():
+            relative_path = pathlib.Path(str(relative))
+            if ".." in relative_path.parts:
+                continue
+            source = pathlib.Path(distribution.locate_file(relative))
+            if not source.is_file():
+                continue
+            destination = destination_site / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+
+
 def _isolated_env():
     env = {key: value for key, value in os.environ.items() if key in ISOLATED_ENV_KEYS}
     env.update(PIP_DISABLE_PIP_VERSION_CHECK="1", PIP_NO_INDEX="1")
@@ -126,6 +152,10 @@ def _build_wheel_offline(root):
             "Root-Is-Purelib: true\n"
             "Tag: py3-none-any\n"
         ).encode(),
+        f"{dist_info}/entry_points.txt": (
+            "[console_scripts]\n"
+            "rig-wb = rig_workbench.cli:main\n"
+        ).encode(),
     }
     records = []
     with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -148,7 +178,7 @@ def _build_wheel_offline(root):
     return wheel
 
 
-def test_installed_wheel_loads_every_benchmark_task_and_resource(tmp_path):
+def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_path):
     assert not tmp_path.resolve().is_relative_to(REPO_ROOT.resolve())
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
@@ -156,12 +186,18 @@ def test_installed_wheel_loads_every_benchmark_task_and_resource(tmp_path):
 
     install_root = tmp_path / "installed"
     venv.EnvBuilder(with_pip=True).create(install_root)
+    _provision_distributions_offline(
+        install_root,
+        ("PyYAML", "pytest", "colorama", "iniconfig", "packaging", "pluggy", "Pygments"),
+    )
     python = _venv_python(install_root)
     install = subprocess.run(
         [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
         env=_isolated_env(),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
     assert install.returncode == 0, install.stdout + install.stderr
@@ -214,6 +250,62 @@ def test_installed_wheel_loads_every_benchmark_task_and_resource(tmp_path):
     assert pathlib.Path(installed["rig_workbench"]).is_relative_to(site_packages)
     assert installed["tasks"] == expected_ids
     assert installed["resources"] == expected_resources
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=outside, check=True)
+    rig_wb = _venv_rig_wb(install_root)
+    plan_result = subprocess.run(
+        [str(rig_wb), "plan", "adaptive-bugfix", "--json"],
+        cwd=outside,
+        env=_isolated_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    assert plan_result.returncode == 0, plan_result.stdout + plan_result.stderr
+    plan = json.loads(plan_result.stdout)
+    assert [step["executor"] for step in plan["steps"]] == [
+        "generate",
+        "risk-assess",
+        "targeted-review",
+        "checks-only",
+    ]
+
+    bench_output = outside / "bench.json"
+    bench_result = subprocess.run(
+        [
+            str(rig_wb),
+            "bench",
+            "--provider",
+            "mock",
+            "--tasks",
+            "py-auth-sibling-write",
+            "--runs",
+            "1",
+            "--out",
+            str(bench_output),
+        ],
+        cwd=outside,
+        env=_isolated_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert bench_result.returncode == 1, bench_result.stdout + bench_result.stderr
+    summary = json.loads(bench_output.read_text(encoding="utf-8"))
+    paired_runs = summary["tasks"][0]["runs"]
+    assert summary["provider"] == "mock"
+    assert len(paired_runs) == 1
+    assert set(paired_runs[0]["arms"]) == {"bare", "rig"}
+    assert all(
+        arm["attempts"][0]["infra_error"] is None
+        for arm in paired_runs[0]["arms"].values()
+    )
 
 
 def test_bench_help_documents_evidence_and_exit_contract(tmp_path):

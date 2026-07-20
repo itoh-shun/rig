@@ -11,6 +11,7 @@ import pathlib
 import subprocess
 import concurrent.futures as futures
 
+from .. import bench_providers as _bench_provider_patches
 from . import config
 from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
@@ -493,6 +494,8 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
             return 124, "[provider timeout]"
         if scenario == "malformed" and role == "verifier":
             return 0, "mock verifier omitted its required verdict"
+    if provider in _OPENAI_BASE and role == "generator" and cfg.get("cwd"):
+        return _run_local_patch_generator(provider, prompt, cfg)
     if provider in _OPENAI_BASE:
         return run_http_provider(provider, prompt, cfg)
     if provider == "anthropic":
@@ -512,6 +515,41 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
     return r.returncode, out
 
 
+def _run_local_patch_generator(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
+    """Give tool-free local generators writable parity through a validated patch."""
+    workspace = pathlib.Path(cfg["cwd"])
+    try:
+        patch_prompt = _bench_provider_patches._patch_prompt(prompt, workspace)
+    except OSError as error:
+        return 1, f"[provider workspace snapshot failure: {type(error).__name__}: {error}]"
+
+    returncode, patch = run_http_provider(provider, patch_prompt, cfg)
+    if returncode != 0:
+        return returncode, patch
+
+    try:
+        _bench_provider_patches._validate_unified_diff(workspace, patch)
+    except ValueError as error:
+        return 1, f"[provider malformed output: {error}]"
+
+    try:
+        checked = _bench_provider_patches._run_git_apply(workspace, patch, check_only=True)
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return 1, f"[provider patch application failure: {type(error).__name__}: {error}]"
+    if checked.returncode != 0:
+        detail = (checked.stderr or "git apply rejected provider output").strip()
+        return 1, f"[provider malformed output: {detail}]"
+
+    try:
+        applied = _bench_provider_patches._run_git_apply(workspace, patch, check_only=False)
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return 1, f"[provider patch application failure: {type(error).__name__}: {error}]"
+    if applied.returncode != 0:
+        detail = (applied.stderr or "git apply rejected provider output").strip()
+        return 1, f"[provider malformed output: {detail}]"
+    return 0, patch
+
+
 def _excerpt(text: str, limit: int = 240) -> str:
     return " ".join((text or "").split())[:limit]
 
@@ -521,6 +559,7 @@ def _excerpt(text: str, limit: int = 240) -> str:
 # evidence embedded in verify prompts. Head+tail clip with an explicit marker;
 # the full text is spooled to the run dir (next to the run-state file) if one exists.
 OUTPUT_CAP_CHARS = 30_000
+UNTRACKED_EVIDENCE_FILE_CAP_BYTES = 16_000
 
 
 def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None = None) -> str:
@@ -909,26 +948,125 @@ def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
 
 
 def _git_diff_evidence(cfg: dict) -> str | None:
-    """Capture `git diff HEAD` (fallback: `git diff`) from the step's cwd/worktree as primary
-    verification evidence, clipped to OUTPUT_CAP_CHARS (head+tail with a truncation marker).
-    Returns None (→ caller falls back to report-only verification) when the step has no cwd,
-    git is unavailable, or the diff is empty."""
+    """Capture bounded tracked and untracked workspace changes as review evidence.
+
+    Returns None when the step has no cwd, git is unavailable, or no evidence exists.
+    """
     cwd = (cfg or {}).get("cwd")
     if not cwd:
         return None
+    tracked = None
     for args in (["git", "diff", "HEAD"], ["git", "diff"]):
         try:
-            r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(
+                args,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
         except (OSError, subprocess.SubprocessError):
             return None
-        if r.returncode == 0:
-            out = r.stdout or ""
-            return _clip_output(out) if out.strip() else None
-    return None
+        if result.returncode == 0:
+            tracked = result.stdout or ""
+            break
+    if tracked is None:
+        return None
+
+    parts = [tracked] if tracked.strip() else []
+    root = pathlib.Path(cwd)
+    for relative, path in _git_untracked_files(root):
+        parts.append(_untracked_diff_evidence(relative, path))
+    evidence = "\n".join(part.rstrip("\n") for part in parts if part).strip()
+    return _clip_output(evidence) if evidence else None
+
+
+def _git_untracked_files(root: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=root,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    files = []
+    for raw_path in (result.stdout or b"").split(b"\0"):
+        if not raw_path:
+            continue
+        relative = raw_path.decode("utf-8", errors="replace").replace("\\", "/")
+        safe_path = _safe_untracked_path(root, relative)
+        if safe_path is not None:
+            files.append((relative, safe_path))
+    return sorted(files, key=lambda item: item[0])
+
+
+def _safe_untracked_path(root: pathlib.Path, relative: str) -> pathlib.Path | None:
+    posix_path = pathlib.PurePosixPath(relative)
+    windows_path = pathlib.PureWindowsPath(relative)
+    if (
+        not posix_path.parts
+        or posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or any(part in {"", ".", ".."} for part in posix_path.parts)
+        or posix_path.parts[0].casefold() == ".git"
+        or any(ord(character) < 32 for character in relative)
+    ):
+        return None
+
+    root_resolved = root.resolve()
+    candidate = root.joinpath(*posix_path.parts)
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(root_resolved)
+    except (OSError, ValueError):
+        return None
+    current = root
+    for part in posix_path.parts:
+        current /= part
+        is_junction = getattr(current, "is_junction", None)
+        if current.is_symlink() or bool(is_junction and is_junction()):
+            return None
+    return candidate if candidate.is_file() else None
+
+
+def _untracked_diff_evidence(relative: str, path: pathlib.Path) -> str:
+    header = (
+        f"diff --git a/{relative} b/{relative}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{relative}\n"
+        "@@ untracked file @@\n"
+    )
+    try:
+        with path.open("rb") as stream:
+            payload = stream.read(UNTRACKED_EVIDENCE_FILE_CAP_BYTES + 1)
+    except OSError as error:
+        return header + f"[untracked content unavailable: {type(error).__name__}]"
+
+    truncated = len(payload) > UNTRACKED_EVIDENCE_FILE_CAP_BYTES
+    payload = payload[:UNTRACKED_EVIDENCE_FILE_CAP_BYTES]
+    if b"\0" in payload:
+        return header + "[binary untracked content omitted]"
+
+    text = payload.decode("utf-8", errors="replace")
+    body = "\n".join(f"+{line}" for line in text.splitlines())
+    if truncated:
+        body += (
+            f"\n+[...untracked content truncated at "
+            f"{UNTRACKED_EVIDENCE_FILE_CAP_BYTES} bytes...]"
+        )
+    return header + body
 
 
 def _git_changed_files(cfg: dict) -> list[str]:
-    """Return deterministic changed paths for adaptive risk analysis."""
+    """Return deterministic tracked and safe untracked paths for adaptive risk analysis."""
     cwd = (cfg or {}).get("cwd")
     if not cwd:
         return []
@@ -938,13 +1076,17 @@ def _git_changed_files(cfg: dict) -> list[str]:
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (OSError, subprocess.SubprocessError):
         return []
     if result.returncode != 0:
         return []
-    return sorted(path.strip() for path in result.stdout.splitlines() if path.strip())
+    tracked = {path.strip().replace("\\", "/") for path in result.stdout.splitlines() if path.strip()}
+    untracked = {relative for relative, _path in _git_untracked_files(pathlib.Path(cwd))}
+    return sorted(tracked | untracked)
 
 
 def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None = None) -> str:
@@ -993,7 +1135,7 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
     if diff:
         lines += [
             "--- diff (primary evidence: the actual changes) ---",
-            diff,
+            wrap_untrusted(diff, "repository diff evidence"),
             "--- report below is the generator's own claims — verify them against the diff, do not trust them ---",
             (product or "")[:2000],
             "Check each claim in the report against the diff; a claim with no supporting evidence in the diff is unverified.",
@@ -1199,10 +1341,12 @@ def _adaptive_final_verdict(output: str) -> str | None:
 def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> str:
     assessment = state["adaptive"]["assessment"] or {}
     allowlist = sorted(_adaptive_check_allowlist(state, cfg))
+    risk_evidence = json.dumps(assessment.get("signals", []), ensure_ascii=False)
     lines = [
         f"You are the '{persona}' targeted reviewer.",
         "Review the actual diff using only the recorded risk evidence.",
-        f"RISK_EVIDENCE: {json.dumps(assessment.get('signals', []), ensure_ascii=False)}",
+        "RISK_EVIDENCE (quarantined data):",
+        wrap_untrusted(risk_evidence, "adaptive risk evidence"),
         "For a blocking finding, include both lines:",
         "REPRODUCTION: <one concrete failure or attack scenario>",
         "MECHANICAL_CHECK: <one exact command from the task check allowlist>",
@@ -1216,8 +1360,12 @@ def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> 
     ]
     lines.extend(f"- {command}" for command in allowlist)
     lines.extend([
-        "--- diff ---",
-        diff or "(no diff evidence available)",
+        "--- diff (quarantined data) ---",
+        (
+            wrap_untrusted(diff, "repository diff evidence")
+            if diff
+            else "(no diff evidence available)"
+        ),
     ])
     return "\n".join(lines)
 

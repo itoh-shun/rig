@@ -59,8 +59,17 @@ def _arm_evidence_issue(arm: ArmResult | None) -> str | None:
 
 
 def _invocation_cost(arm: ArmResult) -> int:
-    retained_cost = sum(attempt.invocations for attempt in arm.attempts)
-    return max(arm.invocation_count, retained_cost)
+    retained_cost = sum(
+        attempt.invocations
+        for attempt in arm.attempts
+        if isinstance(attempt.invocations, int) and attempt.invocations >= 0
+    )
+    reported_cost = (
+        arm.invocation_count
+        if isinstance(arm.invocation_count, int) and arm.invocation_count >= 0
+        else 0
+    )
+    return max(reported_cost, retained_cost)
 
 
 def score_provider(pairs: list[PairResult]) -> ProviderScore:
@@ -136,8 +145,16 @@ def score_provider(pairs: list[PairResult]) -> ProviderScore:
         if valid_rig_outcomes
         else 0.0
     )
-    bare_calls = sum(_invocation_cost(pair.arms["bare"]) for pair in valid_pairs)
-    rig_calls = sum(_invocation_cost(pair.arms["rig"]) for pair in valid_pairs)
+    bare_calls = sum(
+        _invocation_cost(pair.arms["bare"])
+        for pair in pairs
+        if pair.arms.get("bare") is not None
+    )
+    rig_calls = sum(
+        _invocation_cost(pair.arms["rig"])
+        for pair in pairs
+        if pair.arms.get("rig") is not None
+    )
     call_ratio = rig_calls / bare_calls if bare_calls else math.inf
 
     acceptance_failures = []

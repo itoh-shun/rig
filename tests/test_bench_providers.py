@@ -373,6 +373,81 @@ def test_local_provider_applies_a_multifile_unified_diff(
     assert corpus_task.goal in body["messages"][0]["content"]
 
 
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio"])
+def test_local_rig_generator_applies_safety_validated_unified_diff(
+    monkeypatch, provider, corpus_workspace
+):
+    target = corpus_workspace / "profile_service.py"
+    original = target.read_text(encoding="utf-8")
+    target.write_text("# adaptive local edit\n" + original, encoding="utf-8")
+    patch = subprocess.run(
+        ["git", "diff", "--", target.name],
+        cwd=corpus_workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    ).stdout
+    target.write_text(original, encoding="utf-8")
+    prompts = []
+
+    def fake_http(requested_provider, prompt, cfg):
+        prompts.append((requested_provider, prompt, cfg))
+        return 0, patch
+
+    monkeypatch.setattr(orchestrate_providers, "run_http_provider", fake_http)
+
+    returncode, output = orchestrate_providers.run_provider(
+        provider,
+        "generator",
+        "Fix the profile authorization bug.",
+        {"cwd": str(corpus_workspace), "model": "same-model"},
+    )
+
+    assert returncode == 0, output
+    assert target.read_text(encoding="utf-8").startswith("# adaptive local edit")
+    assert prompts[0][0] == provider
+    assert "unified diff" in prompts[0][1].lower()
+    assert "profile_service.py" in prompts[0][1]
+    assert original.splitlines()[0] in prompts[0][1]
+
+
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio"])
+def test_local_rig_generator_rejects_unsafe_patch_without_applying_it(
+    monkeypatch, provider, corpus_workspace
+):
+    patch = (
+        "diff --git a/../escaped.py b/../escaped.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/../escaped.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+escaped = True\n"
+    )
+    monkeypatch.setattr(
+        orchestrate_providers,
+        "run_http_provider",
+        lambda *_args, **_kwargs: (0, patch),
+    )
+    monkeypatch.setattr(
+        bench_providers,
+        "_run_git_apply",
+        lambda *_args, **_kwargs: pytest.fail("unsafe patch reached git apply"),
+    )
+
+    returncode, output = orchestrate_providers.run_provider(
+        provider,
+        "generator",
+        "Make an unsafe edit.",
+        {"cwd": str(corpus_workspace), "model": "same-model"},
+    )
+
+    assert returncode != 0
+    assert "patch path traversal" in output
+    assert not (corpus_workspace.parent / "escaped.py").exists()
+
+
 def test_local_provider_endpoint_failure_is_explicit_and_counted(
     monkeypatch, corpus_task, corpus_workspace
 ):

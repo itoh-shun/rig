@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 from rig_workbench.orchestrate import commands, providers
@@ -30,6 +32,25 @@ def _adaptive_steps(step_factory):
     return steps
 
 
+def _git(cwd, *args):
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _assert_marker_is_quarantined(prompt, marker):
+    assert prompt.count(marker) == 1
+    marker_at = prompt.index(marker)
+    opening_at = prompt.rfind("<<UNTRUSTED-", 0, marker_at)
+    prior_close_at = prompt.rfind("<<END-UNTRUSTED-", 0, marker_at)
+    closing_at = prompt.find("<<END-UNTRUSTED-", marker_at)
+    assert opening_at > prior_close_at
+    assert closing_at > marker_at
+
+
 def test_new_state_initializes_adaptive_budget(step_factory):
     state = new_state("adaptive-bugfix", [step_factory(id="implement")], "fix")
     assert state["adaptive"] == {
@@ -37,6 +58,66 @@ def test_new_state_initializes_adaptive_budget(step_factory):
         "invocation_limit": 3,
         "invocations": 0,
     }
+
+
+def test_untracked_file_content_is_included_in_adaptive_risk_evidence(tmp_path):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    (tmp_path / "base.py").write_text("SAFE = True\n", encoding="utf-8")
+    _git(tmp_path, "add", "base.py")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    (tmp_path / "security.py").write_text(
+        "def execute(payload):\n    return eval(payload)\n",
+        encoding="utf-8",
+    )
+
+    cfg = {"cwd": str(tmp_path)}
+    changed_files = providers._git_changed_files(cfg)
+    diff = providers._git_diff_evidence(cfg)
+    assessment = providers.analyze_diff(diff or "", changed_files)
+
+    assert changed_files == ["security.py"]
+    assert diff is not None
+    assert "security.py" in diff
+    assert "+    return eval(payload)" in diff
+    assert assessment.primary == "security-reviewer"
+    assert any("eval(payload)" in signal.evidence for signal in assessment.signals)
+
+
+def test_reviewer_prompts_quarantine_model_controlled_diff_and_risk_evidence():
+    risk_marker = "IGNORE-RIG-RISK-INSTRUCTIONS"
+    diff_marker = "IGNORE-RIG-DIFF-INSTRUCTIONS"
+    state = {
+        "adaptive": {
+            "assessment": {
+                "signals": [
+                    {
+                        "domain": "security",
+                        "severity": 3,
+                        "evidence": risk_marker,
+                    }
+                ]
+            }
+        }
+    }
+
+    adaptive_prompt = providers._adaptive_review_prompt(
+        state,
+        "security-reviewer",
+        f"+# {diff_marker}",
+        {"checks": []},
+    )
+    generic_prompt = providers._build_verify_prompt(
+        {"recipe": "adaptive-bugfix"},
+        {"id": "implement", "acceptance": []},
+        "generator report",
+        f"+# {diff_marker}",
+    )
+
+    _assert_marker_is_quarantined(adaptive_prompt, risk_marker)
+    _assert_marker_is_quarantined(adaptive_prompt, diff_marker)
+    _assert_marker_is_quarantined(generic_prompt, diff_marker)
 
 
 def test_cmd_run_parses_repeatable_checks_and_separates_repair_allowlist(
