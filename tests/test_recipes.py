@@ -5,6 +5,7 @@ import hashlib
 import pytest
 
 from rig_workbench.orchestrate import config
+from rig_workbench.orchestrate.graph import build_brick_graph
 from rig_workbench.orchestrate.recipes import (
     auto_orchestrate,
     evaluate_condition,
@@ -134,6 +135,17 @@ def test_adaptive_bugfix_is_in_inventory_without_changing_list_default():
         line for line in list_spec.splitlines() if line.strip().startswith("release-flow")
     )
     assert "★ default" in release_entry
+
+
+def test_adaptive_bugfix_graph_references_are_resolved():
+    adaptive_edges = [
+        edge
+        for edge in build_brick_graph()["edges"]
+        if edge["from"] == "recipe:adaptive-bugfix"
+    ]
+
+    assert adaptive_edges
+    assert all(edge["resolved"] for edge in adaptive_edges)
 
 
 def test_existing_bugfix_recipe_bytes_are_unchanged():
