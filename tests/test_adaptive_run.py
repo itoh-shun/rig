@@ -1,3 +1,5 @@
+import os
+import pathlib
 import subprocess
 
 import pytest
@@ -83,6 +85,80 @@ def test_untracked_file_content_is_included_in_adaptive_risk_evidence(tmp_path):
     assert "+    return eval(payload)" in diff
     assert assessment.primary == "security-reviewer"
     assert any("eval(payload)" in signal.evidence for signal in assessment.signals)
+
+
+def test_untracked_symlink_path_is_retained_without_reading_linked_content(
+    monkeypatch, tmp_path
+):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    (tmp_path / "base.py").write_text("SAFE = True\n", encoding="utf-8")
+    _git(tmp_path, "add", "base.py")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    target = tmp_path.parent / f"{tmp_path.name}-linked-security.py"
+    secret = "LINKED-CONTENT-MUST-NOT-BE-READ"
+    target.write_text(secret, encoding="utf-8")
+    link = tmp_path / "security.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        link.write_text(secret, encoding="utf-8")
+        real_is_symlink = pathlib.Path.is_symlink
+        monkeypatch.setattr(
+            pathlib.Path,
+            "is_symlink",
+            lambda path: path == link or real_is_symlink(path),
+        )
+
+    cfg = {"cwd": str(tmp_path)}
+    changed_files = providers._git_changed_files(cfg)
+    diff = providers._git_diff_evidence(cfg)
+
+    assert changed_files == ["security.py"]
+    assert diff is not None
+    assert "security.py" in diff
+    assert "linked content omitted" in diff
+    assert secret not in diff
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction coverage")
+def test_untracked_junction_child_is_retained_without_following_target(
+    monkeypatch, tmp_path
+):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "commit", "--allow-empty", "-q", "-m", "base")
+    outside = tmp_path.parent / f"{tmp_path.name}-junction-target"
+    outside.mkdir()
+    secret = "JUNCTION-CONTENT-MUST-NOT-BE-READ"
+    (outside / "security.py").write_text(secret, encoding="utf-8")
+    junction = tmp_path / "linked"
+    created = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+    )
+    if created.returncode != 0:
+        pytest.skip(f"junction creation unavailable: {created.stderr}")
+
+    real_run = providers.subprocess.run
+
+    def git_reported_path(args, **kwargs):
+        if args[:2] == ["git", "ls-files"]:
+            return subprocess.CompletedProcess(args, 0, stdout=b"linked/security.py\0", stderr=b"")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(providers.subprocess, "run", git_reported_path)
+    cfg = {"cwd": str(tmp_path)}
+
+    assert providers._git_changed_files(cfg) == ["linked/security.py"]
+    diff = providers._git_diff_evidence(cfg)
+    assert diff is not None
+    assert "linked/security.py" in diff
+    assert "linked content omitted" in diff
+    assert secret not in diff
 
 
 def test_reviewer_prompts_quarantine_model_controlled_diff_and_risk_evidence():

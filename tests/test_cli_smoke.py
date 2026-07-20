@@ -19,6 +19,7 @@ import venv
 import zipfile
 
 import pytest
+from packaging.requirements import Requirement
 
 from rig_workbench import cli
 from rig_workbench import __version__
@@ -87,14 +88,26 @@ def _venv_rig_wb(root):
     return root / ("Scripts/rig-wb.exe" if os.name == "nt" else "bin/rig-wb")
 
 
-def _provision_distributions_offline(root, names):
+def _provision_distributions_offline(root, requirements):
+    """Copy the wheel-declared dependency closure from the host's offline environment."""
     destination_site = (
         root / "Lib" / "site-packages"
         if os.name == "nt"
         else root / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
     )
-    for name in names:
+    pending = [Requirement(requirement) for requirement in requirements]
+    copied = set()
+    while pending:
+        requirement = pending.pop()
+        if requirement.marker is not None and not requirement.marker.evaluate():
+            continue
+        name = requirement.name
+        normalized = name.casefold().replace("-", "_")
+        if normalized in copied:
+            continue
+        copied.add(normalized)
         distribution = importlib.metadata.distribution(name)
+        pending.extend(Requirement(item) for item in distribution.requires or ())
         for relative in distribution.files or ():
             relative_path = pathlib.Path(str(relative))
             if ".." in relative_path.parts:
@@ -139,13 +152,23 @@ def _build_wheel_offline(root):
 
     wheel = root / f"rig_workbench-{__version__}-py3-none-any.whl"
     dist_info = f"rig_workbench-{__version__}.dist-info"
+    egg_info = next(egg_root.glob("*.egg-info"))
+    package_metadata = (egg_info / "PKG-INFO").read_text(encoding="utf-8")
+    runtime_requirements = []
+    for line in (egg_info / "requires.txt").read_text(encoding="utf-8").splitlines():
+        if line.startswith("["):
+            break
+        if line:
+            runtime_requirements.append(line)
+    metadata_headers, separator, metadata_body = package_metadata.partition("\n\n")
+    dependency_headers = "".join(
+        f"\nRequires-Dist: {requirement}" for requirement in runtime_requirements
+    )
+    package_metadata = (
+        metadata_headers + dependency_headers + separator + metadata_body
+    ).encode("utf-8")
     generated = {
-        f"{dist_info}/METADATA": (
-            "Metadata-Version: 2.1\n"
-            "Name: rig-workbench\n"
-            f"Version: {__version__}\n"
-            "Requires-Python: >=3.10\n"
-        ).encode(),
+        f"{dist_info}/METADATA": package_metadata,
         f"{dist_info}/WHEEL": (
             "Wheel-Version: 1.0\n"
             "Generator: rig-workbench offline packaging smoke\n"
@@ -184,24 +207,6 @@ def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_pa
     wheel_dir.mkdir()
     wheel = _build_wheel_offline(wheel_dir)
 
-    install_root = tmp_path / "installed"
-    venv.EnvBuilder(with_pip=True).create(install_root)
-    _provision_distributions_offline(
-        install_root,
-        ("PyYAML", "pytest", "colorama", "iniconfig", "packaging", "pluggy", "Pygments"),
-    )
-    python = _venv_python(install_root)
-    install = subprocess.run(
-        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
-        env=_isolated_env(),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=120,
-    )
-    assert install.returncode == 0, install.stdout + install.stderr
-
     expected_resources = sorted(
         path.relative_to(REPO_ROOT / "benchmarks").as_posix()
         for path in (REPO_ROOT / "benchmarks" / "tasks").rglob("*")
@@ -214,7 +219,32 @@ def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_pa
             if name.startswith("benchmarks/tasks/")
             and pathlib.PurePosixPath(name).suffix in BENCH_RESOURCE_SUFFIXES
         )
+        metadata_name = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = archive.read(metadata_name).decode("utf-8")
     assert wheel_resources == expected_resources
+    requires_dist = [
+        line.removeprefix("Requires-Dist:").strip()
+        for line in metadata.splitlines()
+        if line.startswith("Requires-Dist:")
+    ]
+    assert any(requirement.lower().startswith("pytest") for requirement in requires_dist)
+
+    install_root = tmp_path / "installed"
+    venv.EnvBuilder(with_pip=True).create(install_root)
+    _provision_distributions_offline(install_root, requires_dist)
+    python = _venv_python(install_root)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        env=_isolated_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
 
     probe = subprocess.run(
         [

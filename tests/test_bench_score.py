@@ -35,6 +35,7 @@ def _arm(
     name: str,
     *,
     completed: bool = True,
+    public_passed: bool = True,
     hidden_passed: bool = True,
     invocations: int = 1,
     attempts: tuple[ProviderAttempt, ...] | None = None,
@@ -46,7 +47,7 @@ def _arm(
         attempts=retained_attempts,
         git_status=(" M implementation.py",),
         changed_files=("implementation.py",),
-        public_test=_command_result(passed=True),
+        public_test=_command_result(passed=public_passed),
         hidden_check=_command_result(passed=hidden_passed),
         elapsed_s=0.2,
         invocation_count=invocations,
@@ -98,6 +99,39 @@ def _acceptance_pairs() -> list[PairResult]:
 def test_classify_outcome_uses_completion_and_hidden_evidence():
     assert classify_outcome(_arm("bare", hidden_passed=False)) == "silent_defect"
     assert classify_outcome(_arm("rig", completed=False)) == "safe_stop"
+
+
+@pytest.mark.parametrize("arm_name", ["bare", "rig"])
+def test_public_failure_with_hidden_pass_is_never_a_clean_pass(arm_name):
+    arm = _arm(
+        arm_name,
+        completed=True,
+        public_passed=False,
+        hidden_passed=True,
+    )
+
+    assert classify_outcome(arm) == "safe_stop"
+
+
+def test_public_failure_is_scored_as_safe_stop_not_clean_pass():
+    pairs = _acceptance_pairs()
+    public_failure = _arm(
+        "rig",
+        completed=True,
+        public_passed=False,
+        hidden_passed=True,
+        invocations=2,
+    )
+    pairs[11] = replace(
+        pairs[11],
+        arms={**pairs[11].arms, "rig": public_failure},
+    )
+
+    score = score_provider(pairs)
+
+    assert score.verdict == "fail"
+    assert score.rig_safe_stop_rate == pytest.approx(7 / 30)
+    assert any("safe-stop rate" in reason for reason in score.reasons)
 
 
 def test_score_provider_passes_exact_acceptance_boundaries():
@@ -255,6 +289,7 @@ def test_unrelated_diff_or_workspace_leak_fails_score(evidence):
     ("arm_name", "field", "value"),
     [
         ("bare", "completed", None),
+        ("bare", "public_test", None),
         ("rig", "hidden_check", None),
         ("rig", "invocation_count", None),
     ],

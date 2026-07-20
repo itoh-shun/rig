@@ -550,6 +550,7 @@ def run_pair(
                     attempt.infra_error is None
                     and attempt.returncode == 0
                     and public.infra_error is None
+                    and public.passed
                     and hidden.infra_error is None
                 ),
                 runner_state=runner_state,
@@ -597,9 +598,16 @@ def classify_outcome(arm: ArmResult | dict, mode: str | None = None) -> str:
     if completed is None:
         completed = arm.get("runner_exit", 0) == 0 if mode == "rig" else True
     hidden = arm.get("hidden_check")
+    public = arm.get("public_test")
+    if "public_test" in arm and (
+        not isinstance(public, dict) or not isinstance(public.get("passed"), bool)
+    ):
+        return "invalid"
     hidden_passed = (
         hidden.get("passed") if isinstance(hidden, dict) else arm.get("spec_check") == "PASS"
     )
+    if "public_test" in arm:
+        completed = completed and public["passed"]
     if completed and hidden_passed:
         return "clean_pass"
     if completed and not hidden_passed:

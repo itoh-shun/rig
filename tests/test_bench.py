@@ -105,6 +105,36 @@ def test_run_pair_retains_every_failed_provider_attempt():
         assert arm.invocation_count == 1
 
 
+def test_run_pair_requires_public_and_hidden_pass_for_both_arms(monkeypatch):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    public_failure = bench.CommandResult(
+        command=("python", "-m", "pytest"),
+        returncode=1,
+        stdout="",
+        stderr="public failure",
+        elapsed_s=0.1,
+    )
+    hidden_pass = bench.CommandResult(
+        command=("python", "hidden_check.py"),
+        returncode=0,
+        stdout="",
+        stderr="",
+        elapsed_s=0.1,
+    )
+    monkeypatch.setattr(
+        bench,
+        "_evaluate_workspace",
+        lambda *_args: (public_failure, hidden_pass),
+    )
+
+    pair = bench.run_pair(task, 1, "mock", None, {})
+
+    for arm in pair.arms.values():
+        assert arm.completed is False
+        assert bench.classify_outcome(arm) == "safe_stop"
+        assert arm.to_dict()["outcome"] == "safe_stop"
+
+
 def test_unhandled_adapter_failure_does_not_guess_a_provider_call(monkeypatch):
     task = bench_tasks.load_tasks()["py-auth-sibling-write"]
     monkeypatch.setattr(

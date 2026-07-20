@@ -8,6 +8,7 @@ import time
 import shlex
 import threading
 import pathlib
+import stat
 import subprocess
 import concurrent.futures as futures
 
@@ -560,6 +561,9 @@ def _excerpt(text: str, limit: int = 240) -> str:
 # the full text is spooled to the run dir (next to the run-state file) if one exists.
 OUTPUT_CAP_CHARS = 30_000
 UNTRACKED_EVIDENCE_FILE_CAP_BYTES = 16_000
+UNTRACKED_LINK_OMISSION = (
+    "[untracked linked content omitted: symbolic link, junction, or reparse path]"
+)
 
 
 def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None = None) -> str:
@@ -977,13 +981,19 @@ def _git_diff_evidence(cfg: dict) -> str | None:
 
     parts = [tracked] if tracked.strip() else []
     root = pathlib.Path(cwd)
-    for relative, path in _git_untracked_files(root):
-        parts.append(_untracked_diff_evidence(relative, path))
+    for relative, path, omission in _git_untracked_files(root):
+        parts.append(
+            _untracked_diff_evidence(relative, path)
+            if path is not None
+            else _untracked_omitted_evidence(relative, omission)
+        )
     evidence = "\n".join(part.rstrip("\n") for part in parts if part).strip()
     return _clip_output(evidence) if evidence else None
 
 
-def _git_untracked_files(root: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+def _git_untracked_files(
+    root: pathlib.Path,
+) -> list[tuple[str, pathlib.Path | None, str | None]]:
     try:
         result = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
@@ -1001,13 +1011,15 @@ def _git_untracked_files(root: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
         if not raw_path:
             continue
         relative = raw_path.decode("utf-8", errors="replace").replace("\\", "/")
-        safe_path = _safe_untracked_path(root, relative)
-        if safe_path is not None:
-            files.append((relative, safe_path))
+        safe_path, omission = _safe_untracked_path(root, relative)
+        if safe_path is not None or omission is not None:
+            files.append((relative, safe_path, omission))
     return sorted(files, key=lambda item: item[0])
 
 
-def _safe_untracked_path(root: pathlib.Path, relative: str) -> pathlib.Path | None:
+def _safe_untracked_path(
+    root: pathlib.Path, relative: str
+) -> tuple[pathlib.Path | None, str | None]:
     posix_path = pathlib.PurePosixPath(relative)
     windows_path = pathlib.PureWindowsPath(relative)
     if (
@@ -1018,32 +1030,43 @@ def _safe_untracked_path(root: pathlib.Path, relative: str) -> pathlib.Path | No
         or posix_path.parts[0].casefold() == ".git"
         or any(ord(character) < 32 for character in relative)
     ):
-        return None
+        return None, None
 
-    root_resolved = root.resolve()
     candidate = root.joinpath(*posix_path.parts)
-    try:
-        resolved = candidate.resolve()
-        resolved.relative_to(root_resolved)
-    except (OSError, ValueError):
-        return None
     current = root
     for part in posix_path.parts:
         current /= part
-        is_junction = getattr(current, "is_junction", None)
-        if current.is_symlink() or bool(is_junction and is_junction()):
-            return None
-    return candidate if candidate.is_file() else None
+        try:
+            metadata = current.lstat()
+            is_junction = getattr(current, "is_junction", None)
+            file_attributes = getattr(metadata, "st_file_attributes", 0)
+            is_reparse = bool(
+                file_attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            )
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or current.is_symlink()
+                or bool(is_junction and is_junction())
+                or is_reparse
+            ):
+                return None, UNTRACKED_LINK_OMISSION
+        except OSError:
+            return None, None
+    return (candidate, None) if candidate.is_file() else (None, None)
 
 
-def _untracked_diff_evidence(relative: str, path: pathlib.Path) -> str:
-    header = (
+def _untracked_evidence_header(relative: str) -> str:
+    return (
         f"diff --git a/{relative} b/{relative}\n"
         "new file mode 100644\n"
         "--- /dev/null\n"
         f"+++ b/{relative}\n"
         "@@ untracked file @@\n"
     )
+
+
+def _untracked_diff_evidence(relative: str, path: pathlib.Path) -> str:
+    header = _untracked_evidence_header(relative)
     try:
         with path.open("rb") as stream:
             payload = stream.read(UNTRACKED_EVIDENCE_FILE_CAP_BYTES + 1)
@@ -1063,6 +1086,10 @@ def _untracked_diff_evidence(relative: str, path: pathlib.Path) -> str:
             f"{UNTRACKED_EVIDENCE_FILE_CAP_BYTES} bytes...]"
         )
     return header + body
+
+
+def _untracked_omitted_evidence(relative: str, omission: str | None) -> str:
+    return _untracked_evidence_header(relative) + (omission or "[untracked content omitted]")
 
 
 def _git_changed_files(cfg: dict) -> list[str]:
@@ -1085,7 +1112,9 @@ def _git_changed_files(cfg: dict) -> list[str]:
     if result.returncode != 0:
         return []
     tracked = {path.strip().replace("\\", "/") for path in result.stdout.splitlines() if path.strip()}
-    untracked = {relative for relative, _path in _git_untracked_files(pathlib.Path(cwd))}
+    untracked = {
+        relative for relative, _path, _omission in _git_untracked_files(pathlib.Path(cwd))
+    }
     return sorted(tracked | untracked)
 
 
