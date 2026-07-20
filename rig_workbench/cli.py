@@ -153,14 +153,107 @@ def _run_validate(argv: list[str]) -> None:
         sys.argv = old
 
 
+def _print_bench_contract_help() -> None:
+    print(
+        """Benchmark evidence contract:
+  --corpus <path>             load an external corpus instead of the packaged tasks
+  --runs N                    planned pairs per task; validity still requires
+                              3 valid pairs for each of at least 10 tasks
+  output                      schema v2; old schema-v1 reports remain renderable
+  --provider mock             WIRING ONLY, not quality evidence
+  --allow-paid-provider       explicit opt-in required for claude/codex execution
+  exits                       0=pass; 1=completed non-pass; 2=CLI/schema error
+"""
+    )
+
+
+def _bench_provider(argv: list[str]) -> str:
+    for index, arg in enumerate(argv):
+        if arg == "--provider" and index + 1 < len(argv):
+            return argv[index + 1]
+        if arg.startswith("--provider="):
+            return arg.partition("=")[2]
+    return "mock"
+
+
+def _benchmark_exit_code(summary: dict[str, object]) -> int:
+    if summary.get("schema_version") != 2:
+        raise ValueError("benchmark schema v2 summary required")
+    score = summary.get("score")
+    if not isinstance(score, dict):
+        raise ValueError("benchmark schema v2 score required")
+    verdict = score.get("verdict")
+    if verdict == "pass":
+        return 0
+    if verdict in {"fail", "invalid", "inconclusive"}:
+        return 1
+    raise ValueError(f"benchmark schema v2 verdict is invalid: {verdict!r}")
+
+
+def _run_bench(argv: list[str]) -> None:
+    from . import bench as bench_mod
+
+    if any(arg in {"-h", "--help"} for arg in argv):
+        _print_bench_contract_help()
+    allow_paid = "--allow-paid-provider" in argv
+    filtered_argv = [arg for arg in argv if arg != "--allow-paid-provider"]
+    provider = _bench_provider(filtered_argv)
+    if provider in {"claude", "codex"} and not allow_paid:
+        print(
+            f"[ERROR] --provider {provider} requires explicit --allow-paid-provider opt-in.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    summary: dict[str, object] | None = None
+    run_benchmark = bench_mod.run_benchmark
+
+    def capture_summary(*args, **kwargs):
+        nonlocal summary
+        summary = run_benchmark(*args, **kwargs)
+        return summary
+
+    bench_mod.run_benchmark = capture_summary
+    try:
+        bench_mod.cmd_bench(filtered_argv)
+    except (OSError, ValueError) as error:
+        print(f"[ERROR] benchmark CLI/schema error: {error}", file=sys.stderr)
+        raise SystemExit(2) from error
+    finally:
+        bench_mod.run_benchmark = run_benchmark
+
+    if summary is None:
+        print("[ERROR] benchmark schema v2 summary was not produced.", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        exit_code = _benchmark_exit_code(summary)
+    except ValueError as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        raise SystemExit(2) from error
+    raise SystemExit(exit_code)
+
+
 # subcommand -> handler. Primary table for `rig-wb <sub> ...` calls.
 # Subcommands that already exist in orchestrate.py are listed in
 # `_orch_delegates` and passed straight to orchestrate's COMMANDS
 # (a thin wrapper is enough).
 _orch_delegates = {
-    "run", "plan", "runs", "init", "check", "verdict",
-    "queue", "selftest", "list", "validate", "graph",
-    "party", "models", "probe", "install-shim", "review",
+    "run",
+    "plan",
+    "runs",
+    "init",
+    "check",
+    "verdict",
+    "queue",
+    "selftest",
+    "list",
+    "validate",
+    "graph",
+    "party",
+    "models",
+    "probe",
+    "install-shim",
+    "review",
 }
 
 
@@ -176,6 +269,7 @@ def _show_usage(argv: list[str]) -> None:
     """
     import collections
     import json as _json
+
     limit: int | None = None
     as_json = False
     use_global = False
@@ -259,8 +353,10 @@ def _show_usage(argv: list[str]) -> None:
     if rig_wb_runs == 0:
         print("\nNote: no runs via `rig-wb` yet (only direct scripts/*.py calls).")
     else:
-        print(f"\n◆ via rig-wb: {rig_wb_runs} of {len(entries)} runs "
-              f"({rig_wb_runs / len(entries) * 100:.0f}%)")
+        print(
+            f"\n◆ via rig-wb: {rig_wb_runs} of {len(entries)} runs "
+            f"({rig_wb_runs / len(entries) * 100:.0f}%)"
+        )
     if use_global and by_project:
         print("\nBy project:")
         for proj, n in by_project.most_common():
@@ -291,9 +387,9 @@ Sub-commands:
   githooks install|uninstall|status [--force]
                                         native git pre-commit/pre-push hooks
                                         (computational sensors only; issue #298)
-  bench [--tasks ...] [--provider X] [--allow-headless-in-cc] [--out <json>]
+  bench [--corpus PATH] [--tasks ...] [--provider X] [--runs N] [--out <json>]
                                         bare vs rig A/B benchmark
-                                        (objective metrics on built-in tasks; billing is opt-in)
+                                        (schema v2; paid providers require explicit opt-in)
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
   version                               show version
@@ -329,15 +425,16 @@ def main() -> None:
         _show_usage(rest)
         return
     if sub == "bench":
-        from . import bench as bench_mod
-        bench_mod.cmd_bench(rest)
+        _run_bench(rest)
         return
     if sub == "sensor-bench":
         from . import sensor_bench as sensor_bench_mod
+
         sensor_bench_mod.cmd_sensor_bench(rest)
         return
     if sub == "githooks":
         from . import githooks as githooks_mod
+
         sys.exit(githooks_mod.cmd_githooks(rest))
     if sub == "wb":
         _run_workbench(rest)

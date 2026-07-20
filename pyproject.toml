@@ -56,11 +56,17 @@ rig-wb = "rig_workbench.cli:main"       # pip installer 経由の CLI entrypoint
 # main() を importlib で薄く呼び出す。
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["rig_workbench*"]
+include = ["rig_workbench*", "benchmarks*"]
 exclude = ["tests*", "docs*", "video*", "web*"]
 
 [tool.setuptools.package-data]
 rig_workbench = ["py.typed"]
+benchmarks = [
+  "tasks/**/*.json",
+  "tasks/**/*.py",
+  "tasks/**/*.ts",
+  "tasks/**/*.txt",
+]
 
 [tool.ruff]
 line-length = 100

@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added the opt-in `adaptive-bugfix` recipe. Its normal path uses two model
+  calls (implementation and one targeted review); deterministic diff-risk
+  assessment selects the reviewer, with a second review or one bounded repair
+  call only when risk or failed checks justify it. Existing default recipe
+  routing is unchanged.
+- Rebuilt `rig-wb bench` around 10 repository-shaped Python and TypeScript
+  tasks, paired writable bare/rig workspaces, externally isolated hidden
+  checks, exact provider-call journals, and provider/model-scoped scoring.
+  Acceptance requires at least 3 valid pairs for each of at least 10 tasks,
+  at least 50% fewer rig silent defects, no more than 20% rig safe stops,
+  average rig calls no more than 2.5x bare, and no more than 10% infrastructure
+  errors. A zero bare silent-defect count is inconclusive, not a pass.
+- Benchmark JSON is now schema version 2 and records corpus, provider, concrete
+  model, validity, outcomes, calls, infrastructure errors, unrelated diffs,
+  and workspace leaks. The HTML renderer retains compatibility with schema-v1
+  reports. Mock results are labeled `WIRING ONLY`.
+- Real Claude/Codex benchmark execution now requires the explicit
+  `--allow-paid-provider` opt-in. Benchmark CLI exit codes are `0` for a
+  passing result, `1` for completed fail/invalid/inconclusive results, and `2`
+  for CLI or schema errors.
+
 rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応。
 形式は [Keep a Changelog](https://keepachangelog.com/) に準拠（日付は JST）。
 

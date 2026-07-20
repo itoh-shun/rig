@@ -22,6 +22,7 @@ recipe を全 tier 走査（§4.2.1 と同じ project → user → shipped 順�
   strict-tdd    [7 steps · autonomous · tdd · gated · workflow]  steps: intake, design?[--design|L+], implement, verify, review?[--review|L+], pr, merge  extends: release-flow [shipped]  — TDD 強制の full-flow
 ### shipped  (skills/rig/recipes/)
 #### dev (core)
+  adaptive-bugfix [4 steps]  steps: implement, assess, targeted-review, acceptance  - opt-in adaptive flow; default recipe unchanged
   review-only   [1 step  · interactive · gated]  steps: review  — 現変更への 3-way 並列レビュー
   release-flow  [7 steps · interactive · gated]  steps: intake, design?[--design|L+], implement, verify, review?[--review|L+], pr, merge  — intake→design?→implement→verify→review?→pr→merge  ★ default
   hotfix        [4 steps · interactive · gated]  steps: intake, implement, verify, pr  — 最短経路 (intake→implement→verify→pr)

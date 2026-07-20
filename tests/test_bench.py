@@ -328,7 +328,7 @@ def test_cmd_bench_mock_uses_external_corpus_and_writes_paired_json(tmp_path):
         timeout=60,
     )
 
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert completed.returncode == 1, completed.stdout + completed.stderr
     data = json.loads(output.read_text(encoding="utf-8"))
     assert data["provider"] == "mock"
     assert data["model"] == "mock"

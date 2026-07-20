@@ -5,9 +5,14 @@ import hashlib
 import pytest
 
 from rig_workbench.orchestrate import config
-from rig_workbench.orchestrate.recipes import (auto_orchestrate, evaluate_condition,
-                                               parse_frontmatter, resolve_effective,
-                                               resolve_plan_json, size_class)
+from rig_workbench.orchestrate.recipes import (
+    auto_orchestrate,
+    evaluate_condition,
+    parse_frontmatter,
+    resolve_effective,
+    resolve_plan_json,
+    size_class,
+)
 
 BASE = """---
 name: base-flow
@@ -60,18 +65,23 @@ def test_parse_frontmatter_roundtrip(write_recipe):
 
 
 def test_load_steps_preserves_executor(write_recipe):
-    path = write_recipe("adaptive", """---
+    path = write_recipe(
+        "adaptive",
+        """---
 name: adaptive
 steps:
   - id: assess
     instruction: adaptive-assess
     executor: risk-assess
----""")
+---""",
+    )
     assert resolve_plan_json(path)["steps"][0]["executor"] == "risk-assess"
 
 
 def test_load_steps_defaults_only_a_missing_executor(write_recipe):
-    path = write_recipe("executor-defaults", """---
+    path = write_recipe(
+        "executor-defaults",
+        """---
 name: executor-defaults
 steps:
   - id: omitted
@@ -79,7 +89,8 @@ steps:
   - id: explicit-empty
     instruction: invalid-adaptive
     executor: ""
----""")
+---""",
+    )
 
     steps = resolve_plan_json(path)["steps"]
 
@@ -112,14 +123,26 @@ def test_adaptive_bugfix_recipe_has_bounded_executor_flow():
     assert "CLI `--check`" in body
 
 
+def test_adaptive_bugfix_is_in_inventory_without_changing_list_default():
+    skill_root = config.RECIPES.parent
+    skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    list_spec = (skill_root / "facets/instructions/list.md").read_text(encoding="utf-8")
+
+    assert "`recipes/adaptive-bugfix`" in skill
+    assert "adaptive-bugfix" in list_spec
+    release_entry = next(
+        line for line in list_spec.splitlines() if line.strip().startswith("release-flow")
+    )
+    assert "★ default" in release_entry
+
+
 def test_existing_bugfix_recipe_bytes_are_unchanged():
     expected = {
         "bugfix.md": "bbf216319c3056819198df84a34e35bcff51ae476b11966ec2ab47e9197a8d8b",
         "fast-bugfix.md": "398447decc09a69432f7a63efae704eb3f1ed3dc752c04dfd82d5fd6555dd45e",
     }
     actual = {
-        name: hashlib.sha256((config.RECIPES / name).read_bytes()).hexdigest()
-        for name in expected
+        name: hashlib.sha256((config.RECIPES / name).read_bytes()).hexdigest() for name in expected
     }
     assert actual == expected
 
@@ -136,15 +159,23 @@ def test_parse_frontmatter_missing_or_unterminated(tmp_path):
 def test_resolve_plan_json_structure(write_recipe):
     p = write_recipe("base-flow", BASE)
     plan = resolve_plan_json(p)
-    assert set(plan) >= {"recipe", "extends", "autonomy", "badges", "steps_field",
-                         "n_steps", "steps", "warnings"}
+    assert set(plan) >= {
+        "recipe",
+        "extends",
+        "autonomy",
+        "badges",
+        "steps_field",
+        "n_steps",
+        "steps",
+        "warnings",
+    }
     assert plan["recipe"] == "base-flow"
     assert plan["extends"] is None
     assert plan["n_steps"] == 4
     assert [s["id"] for s in plan["steps"]] == ["intake", "design", "implement", "verify"]
     # condition abbreviation is a machine token derived from the flag name
     assert plan["steps_field"] == "intake, design?[--design|L+], implement, verify"
-    assert "gated" in plan["badges"]           # acceptance-gate step present
+    assert "gated" in plan["badges"]  # acceptance-gate step present
     assert "orchestrate(auto)" in plan["badges"]  # checks declared
 
 
@@ -204,16 +235,25 @@ def test_resolve_effective_mode_summary(write_recipe):
     p = write_recipe("base-flow", BASE)
     eff = resolve_effective(p, [], diff_lines=10)
     assert eff["mode"]["autonomy"] == "interactive"
-    assert eff["mode"]["orchestrate"].startswith("auto")   # checks declared -> auto
+    assert eff["mode"]["orchestrate"].startswith("auto")  # checks declared -> auto
     assert eff["mode"]["tdd"] is False
     off = resolve_effective(p, ["--no-orchestrate"], diff_lines=10)
     assert off["mode"]["orchestrate"] == "off"
 
 
-@pytest.mark.parametrize("lines,expected", [
-    (None, "S"), (0, "S"), (100, "S"), (101, "M"), (200, "M"),
-    (201, "L"), (400, "L"), (401, "XL"),
-])
+@pytest.mark.parametrize(
+    "lines,expected",
+    [
+        (None, "S"),
+        (0, "S"),
+        (100, "S"),
+        (101, "M"),
+        (200, "M"),
+        (201, "L"),
+        (400, "L"),
+        (401, "XL"),
+    ],
+)
 def test_size_class_default_thresholds(lines, expected):
     assert size_class(lines) == expected
 
@@ -225,7 +265,7 @@ def test_size_class_custom_thresholds():
 
 
 def test_evaluate_condition_tokens():
-    assert evaluate_condition(None, set(), "S")[0] is True   # empty condition always on
+    assert evaluate_condition(None, set(), "S")[0] is True  # empty condition always on
     on, _ = evaluate_condition("--design or size L+", {"--design"}, "S")
     assert on is True
     off, _ = evaluate_condition("--design or size L+", set(), "M")
@@ -233,7 +273,7 @@ def test_evaluate_condition_tokens():
     size_on, _ = evaluate_condition("--design or size L+", set(), "XL")
     assert size_on is True
     garbage, _ = evaluate_condition("always maybe", set(), "XL")
-    assert garbage is False   # uninterpretable condition is always OFF
+    assert garbage is False  # uninterpretable condition is always OFF
 
 
 def test_auto_orchestrate(step_factory):
