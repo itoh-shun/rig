@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Mapping
 
 from . import __version__
@@ -119,6 +119,12 @@ class PairResult:
             "arms": {name: arm.to_dict() for name, arm in self.arms.items()},
             "elapsed_s": self.elapsed_s,
         }
+
+
+@dataclass(frozen=True)
+class _WorkspaceSnapshot:
+    files: dict[str, str]
+    error: str | None = None
 
 
 def planned_arm_order(run_index: int) -> tuple[str, str]:
@@ -317,27 +323,91 @@ def _git_evidence(workspace: pathlib.Path) -> tuple[tuple[str, ...], tuple[str, 
     return status_lines, changed_files
 
 
-def _workspace_snapshot(root: pathlib.Path) -> dict[str, str]:
-    commands = (
-        ("diff", "--name-only", "-z", "HEAD"),
-        ("ls-files", "--others", "--exclude-standard", "-z"),
-        ("ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
-    )
-    paths: set[str] = set()
-    for arguments in commands:
-        result = subprocess.run(
-            ["git", "-C", str(root), *arguments],
+def _workspace_snapshot(root: pathlib.Path) -> _WorkspaceSnapshot:
+    try:
+        probe = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
         )
-        if result.returncode != 0:
-            return {}
-        paths.update(
-            os.fsdecode(item).replace("\\", "/") for item in result.stdout.split(b"\0") if item
+        if probe.returncode != 0 or probe.stdout.strip() != b"true":
+            return _snapshot_command_failure(("rev-parse", "--is-inside-work-tree"), probe)
+
+        symbolic_head = subprocess.run(
+            ["git", "-C", str(root), "symbolic-ref", "--quiet", "HEAD"],
+            capture_output=True,
         )
-    return {
-        relative: _workspace_fingerprint(root / pathlib.PurePosixPath(relative))
-        for relative in paths
-    }
+        if symbolic_head.returncode == 0:
+            head_ref = os.fsdecode(symbolic_head.stdout).strip()
+            head = subprocess.run(
+                ["git", "-C", str(root), "show-ref", "--verify", "--quiet", head_ref],
+                capture_output=True,
+            )
+            if head.returncode not in (0, 1):
+                return _snapshot_command_failure(
+                    ("show-ref", "--verify", "--quiet", head_ref),
+                    head,
+                )
+            tracked_command = (
+                ("diff", "--name-only", "-z", "HEAD")
+                if head.returncode == 0
+                else ("ls-files", "--cached", "-z")
+            )
+        elif symbolic_head.returncode == 1:
+            detached_head = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+                capture_output=True,
+            )
+            if detached_head.returncode != 0:
+                return _snapshot_command_failure(
+                    ("rev-parse", "--verify", "HEAD"),
+                    detached_head,
+                )
+            tracked_command = ("diff", "--name-only", "-z", "HEAD")
+        else:
+            return _snapshot_command_failure(
+                ("symbolic-ref", "--quiet", "HEAD"),
+                symbolic_head,
+            )
+
+        paths: set[str] = set()
+        commands = (
+            tracked_command,
+            ("ls-files", "--others", "--exclude-standard", "-z"),
+            ("ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
+        )
+        for arguments in commands:
+            result = subprocess.run(
+                ["git", "-C", str(root), *arguments],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                return _snapshot_command_failure(arguments, result)
+            paths.update(
+                os.fsdecode(item).replace("\\", "/") for item in result.stdout.split(b"\0") if item
+            )
+        return _WorkspaceSnapshot(
+            files={
+                relative: _workspace_fingerprint(root / pathlib.PurePosixPath(relative))
+                for relative in paths
+            }
+        )
+    except OSError as error:
+        return _WorkspaceSnapshot(
+            files={},
+            error=f"workspace snapshot failed: {type(error).__name__}: {error}",
+        )
+
+
+def _snapshot_command_failure(
+    arguments: tuple[str, ...],
+    result: subprocess.CompletedProcess[bytes],
+) -> _WorkspaceSnapshot:
+    detail = os.fsdecode(result.stderr).strip() or "no error detail"
+    command = " ".join(("git", *arguments))
+    return _WorkspaceSnapshot(
+        files={},
+        error=f"workspace snapshot failed: {command} exited {result.returncode}: {detail}",
+    )
 
 
 def _workspace_fingerprint(path: pathlib.Path) -> str:
@@ -358,9 +428,16 @@ def _workspace_fingerprint(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def _workspace_changes(before: dict[str, str], after: dict[str, str]) -> tuple[str, ...]:
+def _workspace_changes(
+    before: _WorkspaceSnapshot,
+    after: _WorkspaceSnapshot,
+) -> tuple[str, ...]:
     return tuple(
-        sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+        sorted(
+            path
+            for path in before.files.keys() | after.files.keys()
+            if before.files.get(path) != after.files.get(path)
+        )
     )
 
 
@@ -412,23 +489,44 @@ def run_pair(
             workspace = workspaces[name]
             leak_root = pathlib.Path(settings.get("leak_check_root", pathlib.Path.cwd()))
             leak_snapshot_before = _workspace_snapshot(leak_root)
-            try:
-                attempt = (
-                    run_bare(task, provider, model, workspace, settings)
-                    if name == "bare"
-                    else run_rig(task, provider, model, workspace, settings)
+            if leak_snapshot_before.error:
+                attempt = _failed_attempt(
+                    provider,
+                    model,
+                    arm_started,
+                    RuntimeError(leak_snapshot_before.error),
                 )
-            except Exception as error:
-                attempt = _failed_attempt(provider, model, arm_started, error)
+            else:
+                try:
+                    attempt = (
+                        run_bare(task, provider, model, workspace, settings)
+                        if name == "bare"
+                        else run_rig(task, provider, model, workspace, settings)
+                    )
+                except Exception as error:
+                    attempt = _failed_attempt(provider, model, arm_started, error)
 
             runner_state = _read_runner_state(artifact_dir) if name == "rig" else None
             if name == "rig" and artifact_dir.exists():
                 _remove_tree(artifact_dir)
             git_status, changed_files = _git_evidence(workspace)
-            workspace_leaks = _workspace_changes(
-                leak_snapshot_before,
-                _workspace_snapshot(leak_root),
-            )
+            leak_snapshot_after = _workspace_snapshot(leak_root)
+            if leak_snapshot_before.error:
+                workspace_leaks = ()
+            elif leak_snapshot_after.error:
+                workspace_leaks = ()
+                detail = f"harness_failure: {leak_snapshot_after.error}"
+                attempt = replace(
+                    attempt,
+                    returncode=1,
+                    stderr="\n".join(part for part in (attempt.stderr, detail) if part),
+                    infra_error="; ".join(part for part in (attempt.infra_error, detail) if part),
+                )
+            else:
+                workspace_leaks = _workspace_changes(
+                    leak_snapshot_before,
+                    leak_snapshot_after,
+                )
             expected_files = {path.replace("\\", "/") for path in task.expected_files}
             unrelated_files = tuple(
                 path

@@ -273,6 +273,35 @@ def test_run_pair_records_further_writes_to_pre_dirty_workspace_path(monkeypatch
     assert pair.arms["rig"].workspace_leaks == ()
 
 
+def test_run_pair_marks_workspace_snapshot_failure_as_infrastructure_error(tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    non_git_root = tmp_path / "not-a-repository"
+    non_git_root.mkdir()
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(non_git_root)},
+    )
+
+    for arm in pair.arms.values():
+        assert bench.classify_outcome(arm) == "infra_error"
+        assert "workspace snapshot failed" in arm.attempts[0].infra_error
+
+
+def test_workspace_snapshot_accepts_valid_empty_repository(tmp_path):
+    empty_repo = tmp_path / "empty-repository"
+    empty_repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=empty_repo, check=True)
+
+    snapshot = bench._workspace_snapshot(empty_repo)
+
+    assert snapshot.error is None
+    assert snapshot.files == {}
+
+
 def test_cmd_bench_mock_uses_external_corpus_and_writes_paired_json(tmp_path):
     output = tmp_path / "bench.json"
 
