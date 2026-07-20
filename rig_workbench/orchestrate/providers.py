@@ -4,6 +4,7 @@ import sys
 import os
 import re
 import json
+import hashlib
 import time
 import shlex
 import threading
@@ -11,6 +12,7 @@ import pathlib
 import stat
 import subprocess
 import concurrent.futures as futures
+from dataclasses import dataclass
 
 from .. import bench_providers as _bench_provider_patches
 from . import config
@@ -561,9 +563,20 @@ def _excerpt(text: str, limit: int = 240) -> str:
 # the full text is spooled to the run dir (next to the run-state file) if one exists.
 OUTPUT_CAP_CHARS = 30_000
 UNTRACKED_EVIDENCE_FILE_CAP_BYTES = 16_000
+UNTRACKED_PATH_DISPLAY_CAP_CHARS = 1_024
 UNTRACKED_LINK_OMISSION = (
     "[untracked linked content omitted: symbolic link, junction, or reparse path]"
 )
+UNTRACKED_UNSAFE_OMISSION = "[untracked content omitted: unsafe Git-reported path]"
+UNTRACKED_UNAVAILABLE_OMISSION = "[untracked content omitted: path unavailable or unreadable]"
+
+
+@dataclass(frozen=True)
+class _UntrackedGitPath:
+    raw: bytes
+    display: str
+    path: pathlib.Path | None
+    omission: str | None
 
 
 def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None = None) -> str:
@@ -981,11 +994,11 @@ def _git_diff_evidence(cfg: dict) -> str | None:
 
     parts = [tracked] if tracked.strip() else []
     root = pathlib.Path(cwd)
-    for relative, path, omission in _git_untracked_files(root):
+    for entry in _git_untracked_files(root):
         parts.append(
-            _untracked_diff_evidence(relative, path)
-            if path is not None
-            else _untracked_omitted_evidence(relative, omission)
+            _untracked_diff_evidence(entry.display, entry.path)
+            if entry.path is not None
+            else _untracked_omitted_evidence(entry.display, entry.omission)
         )
     evidence = "\n".join(part.rstrip("\n") for part in parts if part).strip()
     return _clip_output(evidence) if evidence else None
@@ -993,7 +1006,7 @@ def _git_diff_evidence(cfg: dict) -> str | None:
 
 def _git_untracked_files(
     root: pathlib.Path,
-) -> list[tuple[str, pathlib.Path | None, str | None]]:
+) -> list[_UntrackedGitPath]:
     try:
         result = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
@@ -1010,11 +1023,54 @@ def _git_untracked_files(
     for raw_path in (result.stdout or b"").split(b"\0"):
         if not raw_path:
             continue
-        relative = raw_path.decode("utf-8", errors="replace").replace("\\", "/")
+        relative = raw_path.decode("utf-8", errors="surrogateescape")
+        display = _escape_git_path(raw_path)
         safe_path, omission = _safe_untracked_path(root, relative)
-        if safe_path is not None or omission is not None:
-            files.append((relative, safe_path, omission))
-    return sorted(files, key=lambda item: item[0])
+        files.append(
+            _UntrackedGitPath(
+                raw=raw_path,
+                display=display,
+                path=safe_path,
+                omission=omission,
+            )
+        )
+    return sorted(files, key=lambda item: item.raw)
+
+
+def _escape_git_path(raw_path: bytes) -> str:
+    decoded = raw_path.decode("utf-8", errors="surrogateescape")
+    chunks = []
+    for character in decoded:
+        codepoint = ord(character)
+        if character == "\\":
+            chunks.append("\\\\")
+        elif 0xDC80 <= codepoint <= 0xDCFF:
+            chunks.append(f"\\x{codepoint - 0xDC00:02x}")
+        elif character.isprintable():
+            chunks.append(character)
+        elif codepoint <= 0xFF:
+            chunks.append(f"\\x{codepoint:02x}")
+        elif codepoint <= 0xFFFF:
+            chunks.append(f"\\u{codepoint:04x}")
+        else:
+            chunks.append(f"\\U{codepoint:08x}")
+
+    escaped = "".join(chunks)
+    if len(escaped) <= UNTRACKED_PATH_DISPLAY_CAP_CHARS:
+        return escaped
+    digest = hashlib.sha256(raw_path).hexdigest()[:16]
+    marker = (
+        f"[...path truncated; bytes={len(raw_path)}; sha256={digest}]"
+    )
+    prefix_budget = UNTRACKED_PATH_DISPLAY_CAP_CHARS - len(marker)
+    prefix = []
+    prefix_length = 0
+    for chunk in chunks:
+        if prefix_length + len(chunk) > prefix_budget:
+            break
+        prefix.append(chunk)
+        prefix_length += len(chunk)
+    return "".join(prefix) + marker
 
 
 def _safe_untracked_path(
@@ -1028,9 +1084,8 @@ def _safe_untracked_path(
         or windows_path.is_absolute()
         or any(part in {"", ".", ".."} for part in posix_path.parts)
         or posix_path.parts[0].casefold() == ".git"
-        or any(ord(character) < 32 for character in relative)
     ):
-        return None, None
+        return None, UNTRACKED_UNSAFE_OMISSION
 
     candidate = root.joinpath(*posix_path.parts)
     current = root
@@ -1050,9 +1105,16 @@ def _safe_untracked_path(
                 or is_reparse
             ):
                 return None, UNTRACKED_LINK_OMISSION
-        except OSError:
-            return None, None
-    return (candidate, None) if candidate.is_file() else (None, None)
+        except (OSError, UnicodeError):
+            return None, UNTRACKED_UNAVAILABLE_OMISSION
+    try:
+        return (
+            (candidate, None)
+            if candidate.is_file()
+            else (None, UNTRACKED_UNAVAILABLE_OMISSION)
+        )
+    except (OSError, UnicodeError):
+        return None, UNTRACKED_UNAVAILABLE_OMISSION
 
 
 def _untracked_evidence_header(relative: str) -> str:
@@ -1067,11 +1129,9 @@ def _untracked_evidence_header(relative: str) -> str:
 
 def _untracked_diff_evidence(relative: str, path: pathlib.Path) -> str:
     header = _untracked_evidence_header(relative)
-    try:
-        with path.open("rb") as stream:
-            payload = stream.read(UNTRACKED_EVIDENCE_FILE_CAP_BYTES + 1)
-    except OSError as error:
-        return header + f"[untracked content unavailable: {type(error).__name__}]"
+    payload, omission = _read_untracked_payload(path)
+    if payload is None:
+        return header + (omission or UNTRACKED_UNAVAILABLE_OMISSION)
 
     truncated = len(payload) > UNTRACKED_EVIDENCE_FILE_CAP_BYTES
     payload = payload[:UNTRACKED_EVIDENCE_FILE_CAP_BYTES]
@@ -1088,6 +1148,31 @@ def _untracked_diff_evidence(relative: str, path: pathlib.Path) -> str:
     return header + body
 
 
+def _read_untracked_payload(path: pathlib.Path) -> tuple[bytes | None, str | None]:
+    try:
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode):
+            return None, UNTRACKED_LINK_OMISSION
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            identity_changed = (
+                (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+                or not stat.S_ISREG(opened.st_mode)
+            )
+            if identity_changed:
+                return None, UNTRACKED_LINK_OMISSION
+            return os.read(descriptor, UNTRACKED_EVIDENCE_FILE_CAP_BYTES + 1), None
+        finally:
+            os.close(descriptor)
+    except (OSError, UnicodeError) as error:
+        return (
+            None,
+            f"[untracked content omitted: unavailable ({type(error).__name__})]",
+        )
+
+
 def _untracked_omitted_evidence(relative: str, omission: str | None) -> str:
     return _untracked_evidence_header(relative) + (omission or "[untracked content omitted]")
 
@@ -1097,24 +1182,28 @@ def _git_changed_files(cfg: dict) -> list[str]:
     cwd = (cfg or {}).get("cwd")
     if not cwd:
         return []
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if result.returncode != 0:
-        return []
-    tracked = {path.strip().replace("\\", "/") for path in result.stdout.splitlines() if path.strip()}
-    untracked = {
-        relative for relative, _path, _omission in _git_untracked_files(pathlib.Path(cwd))
-    }
+    tracked = set()
+    for args in (
+        ["git", "diff", "--name-only", "-z", "HEAD"],
+        ["git", "diff", "--name-only", "-z"],
+    ):
+        try:
+            result = subprocess.run(
+                args,
+                cwd=cwd,
+                capture_output=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            break
+        if result.returncode == 0:
+            tracked = {
+                _escape_git_path(raw_path)
+                for raw_path in (result.stdout or b"").split(b"\0")
+                if raw_path
+            }
+            break
+    untracked = {entry.display for entry in _git_untracked_files(pathlib.Path(cwd))}
     return sorted(tracked | untracked)
 
 

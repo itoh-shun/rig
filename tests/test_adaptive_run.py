@@ -87,6 +87,100 @@ def test_untracked_file_content_is_included_in_adaptive_risk_evidence(tmp_path):
     assert any("eval(payload)" in signal.evidence for signal in assessment.signals)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permits newlines in filenames")
+def test_untracked_newline_filename_is_escaped_without_losing_content(tmp_path):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "commit", "--allow-empty", "-q", "-m", "base")
+    relative = "security\nreview.py"
+    (tmp_path / relative).write_text("value = eval(payload)\n", encoding="utf-8")
+
+    cfg = {"cwd": str(tmp_path)}
+    changed_files = providers._git_changed_files(cfg)
+    diff = providers._git_diff_evidence(cfg)
+
+    assert changed_files == [r"security\x0areview.py"]
+    assert diff is not None
+    assert "diff --git a/security\\x0areview.py b/security\\x0areview.py" in diff
+    assert "+value = eval(payload)" in diff
+    assert relative not in diff
+    assert all(character.isprintable() for character in changed_files[0])
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permits non-UTF-8 filename bytes")
+def test_untracked_non_utf8_filename_bytes_are_losslessly_escaped(tmp_path):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "commit", "--allow-empty", "-q", "-m", "base")
+    raw_relative = b"security-\xff.py"
+    descriptor = os.open(
+        os.path.join(os.fsencode(tmp_path), raw_relative),
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        0o600,
+    )
+    try:
+        os.write(descriptor, b"value = eval(payload)\n")
+    finally:
+        os.close(descriptor)
+
+    cfg = {"cwd": str(tmp_path)}
+    changed_files = providers._git_changed_files(cfg)
+    diff = providers._git_diff_evidence(cfg)
+
+    assert changed_files == [r"security-\xff.py"]
+    assert diff is not None
+    assert "diff --git a/security-\\xff.py b/security-\\xff.py" in diff
+    assert "+value = eval(payload)" in diff
+    assert not any(0xDC80 <= ord(character) <= 0xDCFF for character in diff)
+
+
+def test_git_reported_unsafe_bytes_are_retained_as_bounded_omitted_evidence(
+    monkeypatch, tmp_path
+):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "commit", "--allow-empty", "-q", "-m", "base")
+    unsafe = b"missing\n-\xff.py"
+    oversized = b"x" * 4_000 + b"\n-\xfe.py"
+    real_run = providers.subprocess.run
+
+    def git_reported_paths(args, **kwargs):
+        if args[:2] == ["git", "ls-files"]:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout=unsafe + b"\0" + oversized + b"\0",
+                stderr=b"",
+            )
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(providers.subprocess, "run", git_reported_paths)
+    cfg = {"cwd": str(tmp_path)}
+
+    changed_files = providers._git_changed_files(cfg)
+    diff = providers._git_diff_evidence(cfg)
+
+    assert r"missing\x0a-\xff.py" in changed_files
+    truncated = next(path for path in changed_files if path.startswith("x"))
+    assert len(truncated) <= 1_024
+    assert "path truncated" in truncated
+    assert diff is not None
+    assert "diff --git a/missing\\x0a-\\xff.py b/missing\\x0a-\\xff.py" in diff
+    assert diff.count("untracked content omitted") >= 2
+    assert "missing\n-\ufffd.py" not in diff
+    assert all(character.isprintable() for path in changed_files for character in path)
+
+
+def test_untracked_path_is_retained_before_repository_has_head(tmp_path):
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "first.py").write_text("value = 1\n", encoding="utf-8")
+
+    assert providers._git_changed_files({"cwd": str(tmp_path)}) == ["first.py"]
+
+
 def test_untracked_symlink_path_is_retained_without_reading_linked_content(
     monkeypatch, tmp_path
 ):
