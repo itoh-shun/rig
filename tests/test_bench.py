@@ -138,6 +138,61 @@ def test_pair_json_contains_planning_attempts_status_checks_and_timing():
         assert arm["invocation_count"] >= 1
 
 
+def test_run_pair_records_changed_files_outside_task_manifest_as_unrelated(monkeypatch):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    real_git_evidence = bench._git_evidence
+
+    def evidence_with_unrelated_file(workspace):
+        status, changed_files = real_git_evidence(workspace)
+        return status, (*changed_files, "surprise.txt")
+
+    monkeypatch.setattr(bench, "_git_evidence", evidence_with_unrelated_file)
+
+    pair = bench.run_pair(task, 1, "mock", None, {})
+
+    assert pair.arms["bare"].unrelated_files == ("surprise.txt",)
+    assert pair.arms["rig"].unrelated_files == ("surprise.txt",)
+
+
+def test_run_pair_records_workspace_writes_outside_scratch_root(monkeypatch, tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    leak_root = tmp_path / "calling-repo"
+    leak_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=leak_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "bench@rig.local"],
+        cwd=leak_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "rig-bench"],
+        cwd=leak_root,
+        check=True,
+    )
+    marker = leak_root / "tracked.txt"
+    marker.write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=leak_root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "before"], cwd=leak_root, check=True)
+    real_run_bare = bench.run_bare
+
+    def leaking_bare(*args, **kwargs):
+        (leak_root / "leaked.txt").write_text("outside\n", encoding="utf-8")
+        return real_run_bare(*args, **kwargs)
+
+    monkeypatch.setattr(bench, "run_bare", leaking_bare)
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(leak_root)},
+    )
+
+    assert pair.arms["bare"].workspace_leaks == ("?? leaked.txt",)
+    assert pair.arms["rig"].workspace_leaks == ()
+
+
 def test_cmd_bench_mock_uses_external_corpus_and_writes_paired_json(tmp_path):
     output = tmp_path / "bench.json"
 
@@ -188,23 +243,35 @@ def test_run_benchmark_resolves_one_model_for_every_pair(monkeypatch):
     def fake_run_pair(selected_task, run_index, provider, model, options):
         pair_models.append(model)
         return SimpleNamespace(
+            pair_id=f"{selected_task.id}-{run_index:03d}",
+            task_id=selected_task.id,
+            provider=provider,
+            model=model,
+            arms={},
             to_dict=lambda: {
                 "task_id": selected_task.id,
                 "run": run_index,
                 "provider": provider,
                 "model": model,
                 "arms": {},
-            }
+            },
         )
 
     monkeypatch.setattr(bench, "resolve_pair_model", fake_resolve)
     monkeypatch.setattr(bench, "run_pair", fake_run_pair)
 
-    summary = bench.run_benchmark([task], "ollama", None, 3, {"base_url": "local"})
+    summary = bench.run_benchmark(
+        [task],
+        "ollama",
+        None,
+        3,
+        {"base_url": "local", "provider_version": "ollama 1.2.3"},
+    )
 
     assert len(resolve_calls) == 1
     assert pair_models == ["discovered-model"] * 3
     assert summary["model"] == "discovered-model"
+    assert summary["provider_version"] == "ollama 1.2.3"
 
 
 def test_classify_outcome_prioritizes_infrastructure_errors():
@@ -322,6 +389,48 @@ def test_render_html_tolerates_empty_paired_summary():
 
     assert "<html" in html
     assert "WIRING ONLY" in html
+
+
+def test_render_html_preserves_schema_v1_modes_and_outcome_inference():
+    report = bench._render_html(
+        {
+            "generated": "2026-07-20T00:00:00",
+            "rig_wb_version": "1.19.0",
+            "provider": "codex",
+            "model": "legacy-model",
+            "tasks": [
+                {
+                    "task_id": "legacy-task",
+                    "difficulty": "security",
+                    "runs": [
+                        {
+                            "run": 1,
+                            "modes": {
+                                "bare": {
+                                    "calls": 1,
+                                    "spec_check": "FAIL: defect",
+                                    "unrelated_files": [],
+                                    "workspace_leaks": [],
+                                },
+                                "rig": {
+                                    "calls": 2,
+                                    "runner_exit": 1,
+                                    "spec_check": "PASS",
+                                    "unrelated_files": [],
+                                    "workspace_leaks": [],
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert "legacy schema v1" in report
+    assert "legacy-task" in report
+    assert "silent_defect" in report
+    assert "safe_stop" in report
 
 
 def test_cli_check_does_not_mutate_non_adaptive_recipe_steps(monkeypatch, tmp_path):

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
-import html
 import json
 import os
 import pathlib
@@ -18,6 +17,11 @@ from typing import Mapping
 
 from . import __version__
 from .bench_providers import ProviderAttempt, resolve_pair_model, run_bare, run_rig
+from .bench_score import (
+    classify_outcome as _classify_arm_outcome,
+    render_html,
+    score_provider,
+)
 from .bench_tasks import (
     BenchTask,
     _command,
@@ -61,6 +65,8 @@ class ArmResult:
     invocation_count: int
     completed: bool
     runner_state: dict | None
+    unrelated_files: tuple[str, ...] = ()
+    workspace_leaks: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         data = {
@@ -74,6 +80,8 @@ class ArmResult:
             "invocation_count": self.invocation_count,
             "completed": self.completed,
             "runner_state": self.runner_state,
+            "unrelated_files": list(self.unrelated_files),
+            "workspace_leaks": list(self.workspace_leaks),
         }
         data["outcome"] = classify_outcome(data, self.name)
         return data
@@ -309,6 +317,19 @@ def _git_evidence(workspace: pathlib.Path) -> tuple[tuple[str, ...], tuple[str, 
     return status_lines, changed_files
 
 
+def _workspace_status(root: pathlib.Path) -> frozenset[str]:
+    status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if status.returncode != 0:
+        return frozenset()
+    return frozenset(line for line in status.stdout.splitlines() if line.strip())
+
+
 def _failed_attempt(
     provider: str,
     model: str | None,
@@ -355,6 +376,8 @@ def run_pair(
         for name in order:
             arm_started = time.monotonic()
             workspace = workspaces[name]
+            leak_root = pathlib.Path(settings.get("leak_check_root", pathlib.Path.cwd()))
+            leak_status_before = _workspace_status(leak_root)
             try:
                 attempt = (
                     run_bare(task, provider, model, workspace, settings)
@@ -368,6 +391,15 @@ def run_pair(
             if name == "rig" and artifact_dir.exists():
                 _remove_tree(artifact_dir)
             git_status, changed_files = _git_evidence(workspace)
+            workspace_leaks = tuple(sorted(_workspace_status(leak_root) - leak_status_before))
+            expected_files = {path.replace("\\", "/") for path in task.expected_files}
+            unrelated_files = tuple(
+                path
+                for path in changed_files
+                if path.replace("\\", "/") not in expected_files
+                and "__pycache__" not in pathlib.PurePosixPath(path.replace("\\", "/")).parts
+                and not path.casefold().endswith((".pyc", ".pyo"))
+            )
             public, hidden = _evaluate_workspace(task, workspace, settings)
             attempts = (attempt,)
             arms[name] = ArmResult(
@@ -386,6 +418,8 @@ def run_pair(
                     and hidden.infra_error is None
                 ),
                 runner_state=runner_state,
+                unrelated_files=unrelated_files,
+                workspace_leaks=workspace_leaks,
             )
         return PairResult(
             pair_id=f"{task.id}-{run_index:03d}",
@@ -408,36 +442,29 @@ def run_pair(
 
 def classify_outcome(arm: ArmResult | dict, mode: str | None = None) -> str:
     if isinstance(arm, ArmResult):
-        attempts = arm.attempts
-        completed = arm.completed
-        hidden_passed = arm.hidden_check.passed
-        if arm.public_test.infra_error or arm.hidden_check.infra_error:
-            return "infra_error"
-    else:
-        attempts = arm.get("attempts") or ()
-        if any(
-            (
-                attempt.infra_error
-                if isinstance(attempt, ProviderAttempt)
-                else attempt.get("infra_error")
-            )
-            for attempt in attempts
-        ):
-            return "infra_error"
-        if any(
-            isinstance(arm.get(name), dict) and arm[name].get("infra_error")
-            for name in ("public_test", "hidden_check")
-        ):
-            return "infra_error"
-        completed = arm.get("completed")
-        if completed is None:
-            completed = arm.get("runner_exit", 0) == 0 if mode == "rig" else True
-        hidden = arm.get("hidden_check")
-        hidden_passed = (
-            hidden.get("passed") if isinstance(hidden, dict) else arm.get("spec_check") == "PASS"
+        return _classify_arm_outcome(arm)
+    attempts = arm.get("attempts") or ()
+    if any(
+        (
+            attempt.infra_error
+            if isinstance(attempt, ProviderAttempt)
+            else attempt.get("infra_error")
         )
-    if any(attempt.infra_error for attempt in attempts if isinstance(attempt, ProviderAttempt)):
+        for attempt in attempts
+    ):
         return "infra_error"
+    if any(
+        isinstance(arm.get(name), dict) and arm[name].get("infra_error")
+        for name in ("public_test", "hidden_check")
+    ):
+        return "infra_error"
+    completed = arm.get("completed")
+    if completed is None:
+        completed = arm.get("runner_exit", 0) == 0 if mode == "rig" else True
+    hidden = arm.get("hidden_check")
+    hidden_passed = (
+        hidden.get("passed") if isinstance(hidden, dict) else arm.get("spec_check") == "PASS"
+    )
     if completed and hidden_passed:
         return "clean_pass"
     if completed and not hidden_passed:
@@ -456,10 +483,12 @@ def run_benchmark(
 ) -> dict:
     model = resolve_pair_model(provider, model, options)
     task_results = []
+    all_pairs = []
     for task in tasks:
         pairs = [
             run_pair(task, run_index, provider, model, options) for run_index in range(1, runs + 1)
         ]
+        all_pairs.extend(pairs)
         task_results.append(
             {
                 "task_id": task.id,
@@ -469,6 +498,7 @@ def run_benchmark(
                 "runs": [pair.to_dict() for pair in pairs],
             }
         )
+    score = score_provider(all_pairs)
     return {
         "schema_version": 2,
         "generated": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -478,9 +508,39 @@ def run_benchmark(
         "corpus_version": 1,
         "provider": provider,
         "model": model,
+        "provider_version": _capture_provider_version(provider, options),
         "runs_per_task": runs,
+        "score": asdict(score),
         "tasks": task_results,
     }
+
+
+def _capture_provider_version(
+    provider: str,
+    options: Mapping[str, object] | None,
+) -> str:
+    settings = options or {}
+    configured = settings.get("provider_version")
+    if configured:
+        return str(configured)
+    if provider == "mock":
+        return "built-in mock"
+    if provider in {"claude", "codex"}:
+        try:
+            completed = subprocess.run(
+                [provider, "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "unavailable"
+        detail = (completed.stdout or completed.stderr or "").strip().splitlines()
+        return detail[0] if completed.returncode == 0 and detail else "unavailable"
+    base_url = settings.get("base_url")
+    return f"endpoint {base_url}" if base_url else f"{provider} default endpoint"
 
 
 def cmd_bench(argv: list[str]) -> None:
@@ -537,34 +597,9 @@ def cmd_bench(argv: list[str]) -> None:
     else:
         print(output)
     if args.html:
-        args.html.write_text(_render_html(summary), encoding="utf-8")
+        args.html.write_text(render_html(summary), encoding="utf-8")
         print(f"HTML: {args.html}")
 
 
 def _render_html(summary: dict) -> str:
-    provider = str(summary.get("provider", "unknown"))
-    banner = "<strong>WIRING ONLY</strong>" if provider == "mock" else ""
-    rows = []
-    for task in summary.get("tasks", []):
-        for pair in task.get("runs", []):
-            arms = pair.get("arms", pair.get("modes", {}))
-            bare = classify_outcome(arms.get("bare", {}), "bare")
-            rig = classify_outcome(arms.get("rig", {}), "rig")
-            rows.append(
-                "<tr>"
-                f"<td>{html.escape(str(task.get('task_id', '')))}</td>"
-                f"<td>{html.escape(str(pair.get('pair_id', pair.get('run', ''))))}</td>"
-                f"<td>{html.escape(bare)}</td><td>{html.escape(rig)}</td>"
-                "</tr>"
-            )
-    return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>rig-wb paired benchmark</title>"
-        "<style>body{font:16px Georgia,serif;margin:2rem;max-width:70rem}"
-        "table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:.5rem}"
-        "strong{color:#9b2c2c}</style></head><body>"
-        f"<h1>Paired benchmark</h1><p>provider={html.escape(provider)} {banner}</p>"
-        "<table><thead><tr><th>task</th><th>pair</th><th>bare</th><th>rig</th></tr>"
-        f"</thead><tbody>{''.join(rows)}</tbody></table></body></html>"
-    )
+    return render_html(summary)
