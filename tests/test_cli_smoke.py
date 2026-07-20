@@ -54,6 +54,8 @@ def run_cli(args, tmp_path):
         [sys.executable, str(ORCHESTRATE), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=tmp_path,
         env=env,
         timeout=60,
@@ -244,6 +246,31 @@ def test_paid_benchmark_provider_requires_explicit_opt_in_before_validation(tmp_
 
     assert result.returncode == 2
     assert "--allow-paid-provider" in result.stderr
+
+
+def test_bench_help_precedes_paid_provider_validation(tmp_path):
+    result = run_rig_wb(["bench", "--provider", "claude", "--help"], tmp_path)
+
+    assert result.returncode == 0
+    assert "--allow-paid-provider" in result.stdout
+
+
+def test_duplicate_provider_options_are_rejected_before_benchmark(monkeypatch):
+    from rig_workbench import bench
+
+    called = False
+
+    def unexpected_benchmark(_argv):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(bench, "cmd_bench", unexpected_benchmark)
+
+    with pytest.raises(SystemExit) as error:
+        cli._run_bench(["--provider", "mock", "--provider", "claude"])
+
+    assert error.value.code == 2
+    assert called is False
 
 
 def test_benchmark_verdict_maps_to_documented_exit_codes():

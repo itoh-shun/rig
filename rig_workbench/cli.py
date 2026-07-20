@@ -167,13 +167,14 @@ def _print_bench_contract_help() -> None:
     )
 
 
-def _bench_provider(argv: list[str]) -> str:
+def _bench_providers(argv: list[str]) -> list[str]:
+    providers = []
     for index, arg in enumerate(argv):
         if arg == "--provider" and index + 1 < len(argv):
-            return argv[index + 1]
+            providers.append(argv[index + 1])
         if arg.startswith("--provider="):
-            return arg.partition("=")[2]
-    return "mock"
+            providers.append(arg.partition("=")[2])
+    return providers
 
 
 def _benchmark_exit_code(summary: dict[str, object]) -> int:
@@ -193,11 +194,18 @@ def _benchmark_exit_code(summary: dict[str, object]) -> int:
 def _run_bench(argv: list[str]) -> None:
     from . import bench as bench_mod
 
-    if any(arg in {"-h", "--help"} for arg in argv):
-        _print_bench_contract_help()
     allow_paid = "--allow-paid-provider" in argv
     filtered_argv = [arg for arg in argv if arg != "--allow-paid-provider"]
-    provider = _bench_provider(filtered_argv)
+    if any(arg in {"-h", "--help"} for arg in filtered_argv):
+        _print_bench_contract_help()
+        bench_mod.cmd_bench(filtered_argv)
+        return
+
+    providers = _bench_providers(filtered_argv)
+    if len(providers) > 1:
+        print("[ERROR] duplicate --provider options are not allowed.", file=sys.stderr)
+        raise SystemExit(2)
+    provider = providers[0] if providers else "mock"
     if provider in {"claude", "codex"} and not allow_paid:
         print(
             f"[ERROR] --provider {provider} requires explicit --allow-paid-provider opt-in.",
