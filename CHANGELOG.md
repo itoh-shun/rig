@@ -11,10 +11,18 @@ always compared `""` to `""`. Post-fix, Claude passes the recipe's own
 acceptance gate outright: 0% rig silent defects vs 3.3% bare (100% relative
 reduction), 0% safe-stop (was 60% pre-fix), 2.33x call ratio. Codex's
 wrong-default-value silent-defect regression is fully resolved (0% both arms,
-was 6.9% rig vs 0% bare pre-fix), but its safe-stop rate rose to 27.6% (over
-the 20% threshold) now that risk assessment sees real diffs and reviewers are
-more often correctly triggered — tracked as follow-up work, not yet passing
-for Codex.
+was 6.9% rig vs 0% bare pre-fix). Codex's safe-stop rate had also risen to
+27.6% (over the 20% threshold) now that risk assessment sees real diffs;
+tracing showed gpt-5.5, unlike sonnet, reliably wraps an otherwise
+well-formed, repair-eligible `MECHANICAL_CHECK` value in backticks, which
+broke the exact byte-for-byte allowlist match and made repair permanently
+unrepairable. Stripping one symmetric layer of backtick/quote wrapping before
+the allowlist comparison (never enough to make an unrelated string match —
+the stripped result still has to equal an allowlisted command exactly)
+eliminated safe-stop on every Python task re-verified with a real
+`--allow-paid-provider` Codex run (0/3, 0/3, 0/3 across the three previously
+worst-affected tasks). Full re-verification of the TypeScript half is
+follow-up work: the Codex account hit its usage limit mid-verification.
 
 ### Added
 
@@ -61,6 +69,14 @@ for Codex.
   correctness depends on an unstated default/edge-case value, or during the
   one-shot informed-repair pass when the reviewer named the input/behavior
   via an allowlisted mechanical check.
+- `execute_informed_repair`'s `MECHANICAL_CHECK` allowlist match failed
+  whenever a reviewer wrapped an otherwise-correct command in backticks or
+  quotes (`` `/usr/bin/python3 -m pytest -q` ``) — a formatting habit gpt-5.5
+  reliably exhibits in this contract but sonnet does not, which is why the
+  same recipe/prompt safe-stopped far more on Codex. `_unwrap_inline_markup`
+  strips one symmetric layer of such wrapping before the comparison; the
+  result must still match an allowlisted command byte-for-byte, so this can
+  only fix a false-negative match, never let an unrelated string through.
 
 rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応。
 形式は [Keep a Changelog](https://keepachangelog.com/) に準拠（日付は JST）。
