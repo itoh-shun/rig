@@ -430,14 +430,19 @@ python3 -m rig_workbench.cli sensor-bench     # or: rig-wb sensor-bench
 
 Current corpus: 10/10 known-bad lines caught, 0/7 false positives on the safe near-misses. The point isn't the specific number — it's that a bare `claude -p` loop has **no number here at all**: nothing runs these checks unless something is wired to run them, so its guaranteed catch rate on this exact corpus is 0% by construction. This is a floor, not a ceiling — it proves nothing about judgment-requiring defects (design flaws, wrong business logic); that's what `/rig:drill` (§11 above) and Claim B measure.
 
-**Claim B — same model, rig-mediated output is measurably better.** This one needs a real LLM and therefore real billing — it cannot be proven from this environment without your explicit go-ahead. `rig-wb bench` (shipped since v1.9.0) already implements the harness: for each built-in task it runs **bare** (`claude -p` in one shot) and **rig** (the `fast-bugfix`/`bugfix` recipe) in separate scratch worktrees against the same starting code, then measures (1) whether the visible test suite passes, (2) whether a **hidden spec-check** the model never sees also passes (each task ships a deliberately weak visible test plus a stronger held-out assertion — the gap between the two is exactly what a rubber-stamped bare answer misses), (3) unrelated file changes, and (4) workspace leaks outside the scratch dir:
+**Claim B — same model, rig-mediated output is measurably better.** This one needs a real LLM and therefore real billing. `rig-wb bench` now runs at least 10 repository-shaped Python and TypeScript tasks as fair pairs: the **bare** arm gets one writable agent invocation, while the **rig** arm uses the opt-in `adaptive-bugfix` recipe. Both arms use the same provider, concrete model, goal, starting tree, and public checks in separate workspaces created before either arm runs. Hidden checks remain outside both workspaces and are never exposed to the model. Results are scored separately for every provider/model combination; they are never pooled.
+
+`adaptive-bugfix` normally uses two model calls: implementation, then one reviewer selected by deterministic diff-risk analysis. A high-risk diff can add one second targeted review, and failed allowlisted checks can add one bounded repair. The default bugfix routing is unchanged; select this recipe explicitly with `rig-wb plan adaptive-bugfix` or the benchmark.
 
 ```bash
-rig-wb bench --provider mock --out /tmp/bench.json --html /tmp/bench.html   # wiring smoke test only — no billing, no evidence
-rig-wb bench --provider claude --allow-headless-in-cc --html /tmp/bench.html # the real measurement — billing applies
+rig-wb bench --provider mock --runs 3 --out /tmp/bench.json --html /tmp/bench.html
+rig-wb bench --provider claude --allow-paid-provider --runs 3 --html /tmp/bench.html
+rig-wb bench --corpus ./my-corpus --tasks all --provider codex --allow-paid-provider --runs 3
 ```
 
-**Honest scope note:** `--provider mock` (the default) proves the harness plumbing works — MOCK_SRC has the built-in tasks' fixes hardcoded, so both arms trivially "pass." It is **not evidence for Claim B**; only a run with a real provider is. Run it yourself when you want the number for your own model/version — this repo does not run and publish it automatically (same honest-scope stance as dogfooding above, and for the same reason: it costs real money on every run).
+Schema-v2 acceptance is deliberately strict: at least 10 tasks and 3 valid pairs per task; rig's silent-defect rate at least 50% lower than bare; rig safe stops at most 20% of valid rig runs; average rig calls at most 2.5x bare; and infrastructure errors at most 10%. If bare has zero silent defects, the result is `inconclusive`, not a pass. Missing completion, hidden-check, or invocation evidence makes a pair invalid; unrelated diffs and workspace leaks fail. Exit code `0` means pass, `1` means completed but fail/invalid/inconclusive, and `2` means a CLI or schema error. Schema-v1 JSON remains renderable by the HTML reporter.
+
+**Honest scope note:** `--provider mock` is labeled **WIRING ONLY**. It proves the harness plumbing and report path work, not that rig improves quality. Real Claude/Codex execution requires `--allow-paid-provider` because it incurs billing; this repository does not run or publish paid results automatically.
 
 ### MCP server (#263)
 

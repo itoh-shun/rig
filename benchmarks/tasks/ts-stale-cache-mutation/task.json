@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "ts-stale-cache-mutation",
+  "language": "typescript",
+  "difficulty": "state",
+  "risk_domains": ["data-integrity", "test"],
+  "goal": "Ensure reads cannot return stale cached settings after any user's setting is mutated.",
+  "test_command": ["node", "--test", "test_settings.ts"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["settings.ts", "test_settings.ts"]
+}

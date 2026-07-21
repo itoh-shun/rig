@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "ts-auth-sibling-handler",
+  "language": "typescript",
+  "difficulty": "security",
+  "risk_domains": ["security", "test"],
+  "goal": "Apply document ownership authorization to the sibling delete handler for every user pair.",
+  "test_command": ["node", "--test", "test_handlers.ts"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["handlers.ts", "test_handlers.ts"]
+}

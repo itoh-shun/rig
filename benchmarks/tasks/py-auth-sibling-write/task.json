@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "py-auth-sibling-write",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": ["security", "test"],
+  "goal": "Prevent a user from changing another user's profile, not just the reported user pair.",
+  "test_command": ["python", "-m", "pytest", "-q"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["profile_service.py", "test_profile_service.py"]
+}

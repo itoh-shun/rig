@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "py-transaction-rollback",
+  "language": "python",
+  "difficulty": "state",
+  "risk_domains": ["data-integrity", "test"],
+  "goal": "Ensure every rejected transfer leaves all account balances unchanged.",
+  "test_command": ["python", "-m", "pytest", "-q"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["ledger.py", "test_ledger.py"]
+}

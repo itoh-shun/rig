@@ -430,14 +430,19 @@ python3 -m rig_workbench.cli sensor-bench     # または: rig-wb sensor-bench
 
 現在のコーパスでの結果：既知の悪パターン10/10を捕捉、安全な近似パターンでの誤検知0/7。重要なのは具体的な数値そのものではなく、素の`claude -p`ループには**この数値自体が存在しない**という点——何かがそれらのチェックを配線しない限り実行されないため、このコーパスに対する保証捕捉率は構造的に0%になる。これは床であって天井ではない——判断を要する欠陥（設計上の欠陥・誤った業務ロジック）については何も証明しない。それは`/rig:drill`（上記§11）と主張Bの領分。
 
-**主張B——同じモデルでも、rig経由の出力の方が測定可能なレベルで優れている。** これには実LLMが必要で、実際の課金が発生する——この環境からユーザーの明示的な許可なしに証明することはできない。`rig-wb bench`（v1.9.0から同梱済み）は既にそのハーネスを実装している：組み込みの各タスクについて**bare**（`claude -p`を1発）と**rig**（`fast-bugfix`/`bugfixレシピ`）を、同じ開始コードに対して別々の使い捨てworktreeで実行し、(1) 可視のテストスイートが通るか、(2) モデルが一度も見ない**隠しspec-check**も通るか（各タスクには意図的に弱い可視テストと、より強いheld-out assertionの両方が同梱されており、その差分がまさにゴム印判定されたbare回答が見逃すもの）、(3) 無関係なファイル変更、(4) scratchディレクトリ外へのワークスペース汚染、を測定する：
+**主張B——同じモデルでも、rig経由の出力の方が測定可能なレベルで優れている。** これには実LLMと実際の課金が必要になる。`rig-wb bench`は、Python/TypeScriptのリポジトリ型タスク10件以上を公平なペアで実行する。**bare**側は書き込み可能なエージェント呼び出しを1回だけ行い、**rig**側は明示的に選択した`adaptive-bugfix`を使う。両側でprovider、具体的なmodel、goal、開始tree、公開checkを同一にし、どちらかを実行する前に別々のworkspaceを作る。隠しcheckは両workspaceの外に置き、モデルには公開しない。採点はprovider/modelの組み合わせごとに分離し、混ぜて集計しない。
+
+`adaptive-bugfix`の通常経路は、実装と決定論的diff-risk分析が選んだreviewerの2 callである。高risk時だけ2人目のtargeted reviewを追加でき、allowlist済みcheckの失敗時だけ1回のbounded repairを追加できる。既存のdefault bugfix routingは変更していない。`rig-wb plan adaptive-bugfix`またはbenchmarkで明示的に選択する。
 
 ```bash
-rig-wb bench --provider mock --out /tmp/bench.json --html /tmp/bench.html   # 配線のスモークテストのみ——課金なし、証拠にならない
-rig-wb bench --provider claude --allow-headless-in-cc --html /tmp/bench.html # 本番の実測——課金が発生する
+rig-wb bench --provider mock --runs 3 --out /tmp/bench.json --html /tmp/bench.html
+rig-wb bench --provider claude --allow-paid-provider --runs 3 --html /tmp/bench.html
+rig-wb bench --corpus ./my-corpus --tasks all --provider codex --allow-paid-provider --runs 3
 ```
 
-**正直なスコープ注記**：`--provider mock`（既定）はハーネスの配線が動くことを証明するのみ——MOCK_SRCが組み込みタスクの修正をハードコードしているため両腕が自明に「通る」。これは**主張Bの証拠にはならない**。実プロバイダでの実行のみが証拠になる。自分のモデル・バージョンでの数値が欲しければ自分で実行すること——このリポジトリはこれを自動実行・自動公開しない（上記dogfoodingと同じ誠実なスタンス、理由も同じ：実行の度に実際のコストがかかるため）。
+schema v2の合格条件は厳密である。10タスク以上かつ各タスク3組以上のvalid pair、rigのsilent defect率がbareより50%以上低いこと、rigのsafe stop率がvalid rig runの20%以下、rigの平均call数がbareの2.5倍以下、infrastructure error率が10%以下でなければならない。bareのsilent defectが0件ならpassではなく`inconclusive`とする。completion・hidden check・invocationの証跡欠損はpairをinvalidにし、無関係diffやworkspace leakはfailにする。終了コードはpassが`0`、完了したfail/invalid/inconclusiveが`1`、CLI/schema errorが`2`。旧schema v1 JSONもHTML rendererで表示できる。
+
+**正直なスコープ注記**：`--provider mock`はレポート上も**WIRING ONLY**と表示され、配線とレポート経路だけを検証する。品質向上の証拠にはならない。Claude/Codexの実行は課金を伴うため`--allow-paid-provider`が必須で、このリポジトリは有料結果を自動実行・自動公開しない。
 
 ### MCPサーバ（#263）
 

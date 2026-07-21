@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "py-sql-construction",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": ["security", "data-integrity", "test"],
+  "goal": "Replace user-controlled SQL construction with a parameterized query.",
+  "test_command": ["python", "-m", "pytest", "-q"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["users.py", "test_users.py"]
+}

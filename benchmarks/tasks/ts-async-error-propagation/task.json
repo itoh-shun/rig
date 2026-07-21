@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "ts-async-error-propagation",
+  "language": "typescript",
+  "difficulty": "reliability",
+  "risk_domains": ["reliability", "test"],
+  "goal": "Report asynchronous job failures and propagate the original error to every caller.",
+  "test_command": ["node", "--test", "test_jobs.ts"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["jobs.ts", "test_jobs.ts"]
+}

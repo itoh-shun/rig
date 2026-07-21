@@ -21,5 +21,6 @@ description: 変更を test/quality 視点で read-only 評価する。既存テ
 - テストの**量ではなく配置**を見る（リスクの高い分岐に置かれているか。カバレッジ数値だけで判定しない）。
 - 「テストを足せ」と言うときは、**どの入力で何を固定するテストか**を1行で具体化する。
 - 確認できない項目は推測で断じず**情報不足**として明示する。
+- `adaptive-bugfix`のtargeted-review（MECHANICAL_CHECK方式）で評価する場合：diff自体は正しいがカバレッジが無いという blocking finding でも、allowlist済みのcheckコマンドをそのまま`MECHANICAL_CHECK`として引用してよい——informed repairが名指しした入力/挙動を固定するテストを1本追加すれば、同じcheckの再実行がそれを検証する。この場合`REPRODUCTION`は「攻撃シナリオ」ではなく「まだどのテストにも固定されていない具体的な入力/挙動」を1行で書けばよい。
 
 出力形式は `output-contracts/review-verdict` に従ってください。

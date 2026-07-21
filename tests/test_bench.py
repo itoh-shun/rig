@@ -1,236 +1,620 @@
-"""Coverage for rig_workbench/bench.py's `rig-wb bench` (bare vs rig A/B,
-shipped since v1.9.0 but previously untested and undocumented — #330).
-
-`--provider mock` is a wiring smoke test only: MOCK_SRC (the orchestrate
-mock provider) has the built-in tasks' fixes hardcoded so both arms
-"succeed" deterministically with zero LLM calls and zero billing. This
-proves the harness plumbing (task setup, both execution modes, metric
-collection, JSON/HTML rendering) is sound — it is NOT evidence for the
-bare-vs-rig quality claim itself, which needs a real provider
-(`--provider claude`, real billing, run by the user explicitly).
-"""
-
 import json
+import pathlib
 import subprocess
 import sys
-import pathlib
+from types import SimpleNamespace
 
-from rig_workbench import bench
+import pytest
+
+from rig_workbench import bench, bench_tasks
+from rig_workbench.orchestrate import commands
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
-def test_builtin_tasks_are_internally_consistent():
-    # Every task's mock_fix must actually satisfy its own spec_check and
-    # test_cmd — otherwise the "mock proves the harness works" claim is false.
-    for task_id, task in bench.BUILTIN_TASKS.items():
-        assert "mock_fix" in task, task_id
-        assert "spec_check_code" in task, task_id
-        assert "test_cmd" in task, task_id
+def test_planned_arm_order_alternates_without_changing_pair_members():
+    assert bench.planned_arm_order(1) == ("bare", "rig")
+    assert bench.planned_arm_order(2) == ("rig", "bare")
 
 
-def test_extract_code_pulls_fenced_python_block():
-    text = "Here is the fix:\n```python\ndef f():\n    return 1\n```\nDone."
-    assert bench._extract_code(text) == "def f():\n    return 1"
+def test_run_pair_materializes_identical_workspaces_before_either_arm(
+    monkeypatch,
+):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    created = []
+    invoked = []
+    artifact_dirs = []
+    real_materialize = bench.materialize
+    real_run_bare = bench.run_bare
+    real_run_rig = bench.run_rig
+    real_git_evidence = bench._git_evidence
+
+    def tracked_materialize(selected_task):
+        workspace = real_materialize(selected_task)
+        created.append(workspace)
+        return workspace
+
+    def tracked_bare(selected_task, provider, model, workspace, options):
+        assert len(created) == 2
+        assert not (workspace / "hidden_check.py").exists()
+        invoked.append(("bare", workspace, selected_task.goal, provider, model))
+        return real_run_bare(selected_task, provider, model, workspace, options)
+
+    def tracked_rig(selected_task, provider, model, workspace, options):
+        assert len(created) == 2
+        assert not (workspace / "hidden_check.py").exists()
+        artifact_dirs.append(pathlib.Path(options["artifact_dir"]))
+        invoked.append(("rig", workspace, selected_task.goal, provider, model))
+        return real_run_rig(selected_task, provider, model, workspace, options)
+
+    def tracked_git_evidence(workspace):
+        assert not (workspace / ".rig").exists()
+        assert not (workspace / "run-state.json").exists()
+        assert not (workspace / "step-outputs").exists()
+        if any(name == "rig" and path == workspace for name, path, *_ in invoked):
+            assert artifact_dirs
+            assert not artifact_dirs[-1].exists()
+        return real_git_evidence(workspace)
+
+    monkeypatch.setattr(bench, "materialize", tracked_materialize)
+    monkeypatch.setattr(bench, "run_bare", tracked_bare)
+    monkeypatch.setattr(bench, "run_rig", tracked_rig)
+    monkeypatch.setattr(bench, "_git_evidence", tracked_git_evidence)
+
+    bench_options = {}
+    pair = bench.run_pair(task, 1, "mock", "mock-model", bench_options)
+
+    assert pair.pair_id == "py-auth-sibling-write-001"
+    assert pair.provider == "mock"
+    assert pair.model == "mock-model"
+    assert pair.arm_order == ("bare", "rig")
+    assert len(created) == 2
+    assert created[0] != created[1]
+    assert {entry[1] for entry in invoked} == set(created)
+    assert {entry[2] for entry in invoked} == {task.goal}
+    assert {entry[3] for entry in invoked} == {"mock"}
+    assert {entry[4] for entry in invoked} == {"mock-model"}
+    assert len(set(pair.start_trees.values())) == 1
+    assert all(not path.exists() for path in created)
+
+    for arm_name in ("bare", "rig"):
+        arm = pair.arms[arm_name]
+        assert arm.public_test.passed is True
+        assert arm.hidden_check.passed is True
+        assert arm.git_status
+        assert arm.changed_files
+        assert len(arm.attempts) == 1
+        assert arm.invocation_count == sum(attempt.invocations for attempt in arm.attempts)
+    assert pair.arms["rig"].runner_state["recipe"] == "adaptive-bugfix"
+    assert pair.arms["rig"].runner_state["step_state"]["acceptance"]["checks"]
 
 
-def test_extract_code_falls_back_to_raw_text_without_fence():
-    assert bench._extract_code("no fence here") == "no fence here"
+def test_run_pair_retains_every_failed_provider_attempt():
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+
+    pair = bench.run_pair(task, 2, "mock", None, {"mock_scenario": "timeout"})
+
+    assert pair.arm_order == ("rig", "bare")
+    assert pair.model == "mock"
+    for arm in pair.arms.values():
+        assert len(arm.attempts) == 1
+        assert arm.attempts[0].model == "mock"
+        assert arm.attempts[0].invocations == 1
+        assert "timeout" in arm.attempts[0].infra_error
+        assert arm.invocation_count == 1
 
 
-def test_call_provider_mock_returns_the_tasks_mock_fix(tmp_path):
-    resp, elapsed = bench._call_provider("mock", "prompt", None, False, tmp_path, mock_fix="X = 1\n")
-    assert "X = 1" in resp
-    assert elapsed < 1
-
-
-def test_cmd_bench_mock_smoke_one_task(tmp_path):
-    out_path = tmp_path / "bench-out.json"
-    r = subprocess.run(
-        [sys.executable, "-m", "rig_workbench.cli", "bench",
-         "--tasks", "divide-by-zero", "--provider", "mock", "--runs", "1",
-         "--out", str(out_path)],
-        capture_output=True, text=True, timeout=60, cwd=REPO_ROOT,
+def test_run_pair_requires_public_and_hidden_pass_for_both_arms(monkeypatch):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    public_failure = bench.CommandResult(
+        command=("python", "-m", "pytest"),
+        returncode=1,
+        stdout="",
+        stderr="public failure",
+        elapsed_s=0.1,
     )
-    assert r.returncode == 0, r.stdout + r.stderr
-    data = json.loads(out_path.read_text(encoding="utf-8"))
+    hidden_pass = bench.CommandResult(
+        command=("python", "hidden_check.py"),
+        returncode=0,
+        stdout="",
+        stderr="",
+        elapsed_s=0.1,
+    )
+    monkeypatch.setattr(
+        bench,
+        "_evaluate_workspace",
+        lambda *_args: (public_failure, hidden_pass),
+    )
+
+    pair = bench.run_pair(task, 1, "mock", None, {})
+
+    for arm in pair.arms.values():
+        assert arm.completed is False
+        assert bench.classify_outcome(arm) == "safe_stop"
+        assert arm.to_dict()["outcome"] == "safe_stop"
+
+
+def test_unhandled_adapter_failure_does_not_guess_a_provider_call(monkeypatch):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    monkeypatch.setattr(
+        bench,
+        "run_bare",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("before call")),
+    )
+
+    pair = bench.run_pair(task, 1, "mock", "mock", {})
+
+    assert pair.arms["bare"].attempts[0].invocations == 0
+    assert pair.arms["bare"].attempts[0].infra_error.startswith("harness_failure")
+
+
+def test_pair_json_contains_planning_attempts_status_checks_and_timing():
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+
+    data = bench.run_pair(task, 1, "mock", None, {}).to_dict()
+
+    assert data["pair_id"] == "py-auth-sibling-write-001"
+    assert data["planned"]["arm_order"] == ["bare", "rig"]
+    assert data["planned"]["provider"] == "mock"
+    assert data["planned"]["model"] == "mock"
+    assert data["planned"]["start_tree"]
+    for arm in data["arms"].values():
+        assert arm["attempts"]
+        assert arm["git_status"]
+        assert arm["public_test"]["returncode"] == 0
+        assert arm["hidden_check"]["returncode"] == 0
+        assert arm["elapsed_s"] >= 0
+        assert arm["invocation_count"] >= 1
+
+
+def test_run_pair_records_changed_files_outside_task_manifest_as_unrelated(monkeypatch):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    real_git_evidence = bench._git_evidence
+
+    def evidence_with_unrelated_file(workspace):
+        status, changed_files = real_git_evidence(workspace)
+        return status, (*changed_files, "surprise.txt")
+
+    monkeypatch.setattr(bench, "_git_evidence", evidence_with_unrelated_file)
+
+    pair = bench.run_pair(task, 1, "mock", None, {})
+
+    assert pair.arms["bare"].unrelated_files == ("surprise.txt",)
+    assert pair.arms["rig"].unrelated_files == ("surprise.txt",)
+
+
+def test_run_pair_records_workspace_writes_outside_scratch_root(monkeypatch, tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    leak_root = tmp_path / "calling-repo"
+    leak_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=leak_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "bench@rig.local"],
+        cwd=leak_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "rig-bench"],
+        cwd=leak_root,
+        check=True,
+    )
+    marker = leak_root / "tracked.txt"
+    marker.write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=leak_root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "before"], cwd=leak_root, check=True)
+    real_run_bare = bench.run_bare
+
+    def leaking_bare(*args, **kwargs):
+        (leak_root / "leaked.txt").write_text("outside\n", encoding="utf-8")
+        return real_run_bare(*args, **kwargs)
+
+    monkeypatch.setattr(bench, "run_bare", leaking_bare)
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(leak_root)},
+    )
+
+    assert pair.arms["bare"].workspace_leaks == ("leaked.txt",)
+    assert pair.arms["rig"].workspace_leaks == ()
+
+
+def test_run_pair_records_ignored_workspace_writes_outside_scratch_root(monkeypatch, tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    leak_root = tmp_path / "calling-repo"
+    leak_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=leak_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "bench@rig.local"],
+        cwd=leak_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "rig-bench"],
+        cwd=leak_root,
+        check=True,
+    )
+    (leak_root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=leak_root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "before"], cwd=leak_root, check=True)
+    real_run_bare = bench.run_bare
+
+    def leaking_bare(*args, **kwargs):
+        ignored = leak_root / "ignored"
+        ignored.mkdir()
+        (ignored / "leaked.txt").write_text("outside\n", encoding="utf-8")
+        return real_run_bare(*args, **kwargs)
+
+    monkeypatch.setattr(bench, "run_bare", leaking_bare)
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(leak_root)},
+    )
+
+    assert pair.arms["bare"].workspace_leaks == ("ignored/leaked.txt",)
+    assert pair.arms["rig"].workspace_leaks == ()
+
+
+def test_run_pair_records_further_writes_to_pre_dirty_workspace_path(monkeypatch, tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    leak_root = tmp_path / "calling-repo"
+    leak_root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=leak_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "bench@rig.local"],
+        cwd=leak_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "rig-bench"],
+        cwd=leak_root,
+        check=True,
+    )
+    marker = leak_root / "tracked.txt"
+    marker.write_text("committed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=leak_root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "before"], cwd=leak_root, check=True)
+    marker.write_text("dirty before\n", encoding="utf-8")
+    real_run_bare = bench.run_bare
+
+    def leaking_bare(*args, **kwargs):
+        marker.write_text("dirty after\n", encoding="utf-8")
+        return real_run_bare(*args, **kwargs)
+
+    monkeypatch.setattr(bench, "run_bare", leaking_bare)
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(leak_root)},
+    )
+
+    assert pair.arms["bare"].workspace_leaks == ("tracked.txt",)
+    assert pair.arms["rig"].workspace_leaks == ()
+
+
+def test_run_pair_marks_workspace_snapshot_failure_as_infrastructure_error(tmp_path):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    non_git_root = tmp_path / "not-a-repository"
+    non_git_root.mkdir()
+
+    pair = bench.run_pair(
+        task,
+        1,
+        "mock",
+        None,
+        {"leak_check_root": str(non_git_root)},
+    )
+
+    for arm in pair.arms.values():
+        assert bench.classify_outcome(arm) == "infra_error"
+        assert "workspace snapshot failed" in arm.attempts[0].infra_error
+
+
+def test_workspace_snapshot_accepts_valid_empty_repository(tmp_path):
+    empty_repo = tmp_path / "empty-repository"
+    empty_repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=empty_repo, check=True)
+
+    snapshot = bench._workspace_snapshot(empty_repo)
+
+    assert snapshot.error is None
+    assert snapshot.files == {}
+
+
+def test_cmd_bench_mock_uses_external_corpus_and_writes_paired_json(tmp_path):
+    output = tmp_path / "bench.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rig_workbench.cli",
+            "bench",
+            "--tasks",
+            "py-auth-sibling-write",
+            "--provider",
+            "mock",
+            "--runs",
+            "1",
+            "--out",
+            str(output),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    data = json.loads(output.read_text(encoding="utf-8"))
     assert data["provider"] == "mock"
-    run = data["tasks"][0]["runs"][0]
-    # Both arms converge on mock (MOCK_SRC hardcodes the same fixes) — this
-    # asserts the harness wiring works, not that rig beats bare.
-    assert run["modes"]["bare"]["test_pass"] is True
-    assert run["modes"]["bare"]["spec_check"] == "PASS"
-    assert run["modes"]["rig"]["test_pass"] is True
-    assert run["modes"]["rig"]["spec_check"] == "PASS"
+    assert data["model"] == "mock"
+    assert data["recipe"] == "adaptive-bugfix"
+    assert data["tasks"][0]["task_id"] == "py-auth-sibling-write"
+    pair = data["tasks"][0]["runs"][0]
+    assert set(pair["arms"]) == {"bare", "rig"}
+    assert pair["arms"]["bare"]["hidden_check"]["passed"] is True
+    assert pair["arms"]["rig"]["hidden_check"]["passed"] is True
 
 
-def test_render_html_does_not_crash_on_empty_summary():
-    html = bench._render_html({"tasks": [], "generated": "x", "rig_wb_version": "0", "provider": "mock"})
-    assert "<html" in html
+def test_run_benchmark_resolves_one_model_for_every_pair(monkeypatch):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    resolve_calls = []
+    pair_models = []
 
+    def fake_resolve(provider, requested_model, options):
+        resolve_calls.append((provider, requested_model, options))
+        return "discovered-model"
 
-def test_auth_bypass_sibling_narrow_fix_passes_visible_tests_but_fails_spec(tmp_path):
-    # This task's whole point (#330's Claim B): a fix that patches only the
-    # literally-reported get_profile bug passes the (deliberately weak)
-    # visible tests, but fails the hidden spec_check that also exercises the
-    # unreported sibling method update_profile. If this stops being true the
-    # task no longer measures what it claims to.
-    task = bench.BUILTIN_TASKS["auth-bypass-sibling"]
-    d = bench._setup_task_dir(task)
-    narrow_fix = (
-        "class ProfileService:\n"
-        "    def __init__(self):\n"
-        "        self._profiles = {}\n\n"
-        "    def create_profile(self, user_id, data):\n"
-        "        self._profiles[user_id] = dict(data)\n\n"
-        "    def get_profile(self, current_user_id, requested_user_id):\n"
-        "        if current_user_id != requested_user_id:\n"
-        "            return None\n"
-        "        return self._profiles.get(requested_user_id)\n\n"
-        "    def update_profile(self, current_user_id, requested_user_id, data):\n"
-        "        if requested_user_id not in self._profiles:\n"
-        "            return False\n"
-        "        self._profiles[requested_user_id].update(data)\n"
-        "        return True\n"
+    def fake_run_pair(selected_task, run_index, provider, model, options):
+        pair_models.append(model)
+        return SimpleNamespace(
+            pair_id=f"{selected_task.id}-{run_index:03d}",
+            task_id=selected_task.id,
+            provider=provider,
+            model=model,
+            arms={},
+            to_dict=lambda: {
+                "task_id": selected_task.id,
+                "run": run_index,
+                "provider": provider,
+                "model": model,
+                "arms": {},
+            },
+        )
+
+    monkeypatch.setattr(bench, "resolve_pair_model", fake_resolve)
+    monkeypatch.setattr(bench, "run_pair", fake_run_pair)
+
+    summary = bench.run_benchmark(
+        [task],
+        "ollama",
+        None,
+        3,
+        {"base_url": "local", "provider_version": "ollama 1.2.3"},
     )
-    (d / task["target_file"]).write_text(narrow_fix, encoding="utf-8")
-    t = bench._run_tests(task, d)
-    assert t["failed"] == 0 and t["passed"] > 0  # visible tests: pass
-    assert bench._spec_check(task, d) != "PASS"  # hidden spec: catches the sibling gap
+
+    assert len(resolve_calls) == 1
+    assert pair_models == ["discovered-model"] * 3
+    assert summary["model"] == "discovered-model"
+    assert summary["provider_version"] == "ollama 1.2.3"
 
 
-def test_auth_bypass_sibling_original_file_fails_both_checks(tmp_path):
-    task = bench.BUILTIN_TASKS["auth-bypass-sibling"]
-    d = bench._setup_task_dir(task)
-    t = bench._run_tests(task, d)
-    assert t["failed"] > 0
-    assert bench._spec_check(task, d) != "PASS"
-
-
-def test_classify_outcome_bare_clean_pass():
-    m = {"spec_check": "PASS"}
-    assert bench.classify_outcome(m, "bare") == "clean_pass"
-
-
-def test_classify_outcome_bare_silent_defect():
-    # bare mode always "completes" (no escalation mechanism), so a failed
-    # spec_check with no runner_exit at all still counts as a claim of done.
-    m = {"spec_check": "FAIL: spec violation"}
-    assert bench.classify_outcome(m, "bare") == "silent_defect"
-
-
-def test_classify_outcome_bare_never_yields_stop_outcomes():
-    # bare has no escalation mechanism, so "completed" is always True for it —
-    # safe_stop and stopped_wrong are structurally impossible in bare mode,
-    # regardless of what a (nonsensical for bare) runner_exit key would say.
-    for spec_check in ("PASS", "FAIL: x"):
-        m = {"spec_check": spec_check, "runner_exit": 1}
-        assert bench.classify_outcome(m, "bare") in ("clean_pass", "silent_defect")
-
-
-def test_classify_outcome_rig_clean_pass():
-    m = {"spec_check": "PASS", "runner_exit": 0}
-    assert bench.classify_outcome(m, "rig") == "clean_pass"
-
-
-def test_classify_outcome_rig_silent_defect():
-    # completed (runner_exit == 0, i.e. claimed done) but the hidden spec is
-    # broken — the worst outcome: nothing signals a human should look closer.
-    m = {"spec_check": "FAIL: spec violation", "runner_exit": 0}
-    assert bench.classify_outcome(m, "rig") == "silent_defect"
-
-
-def test_classify_outcome_rig_safe_stop():
-    # escalated/stopped (runner_exit != 0) but the code was actually right —
-    # over-conservative but honest.
-    m = {"spec_check": "PASS", "runner_exit": 1}
-    assert bench.classify_outcome(m, "rig") == "safe_stop"
-
-
-def test_classify_outcome_rig_stopped_wrong():
-    m = {"spec_check": "FAIL: spec violation", "runner_exit": 1}
-    assert bench.classify_outcome(m, "rig") == "stopped_wrong"
-
-
-def test_classify_outcome_rig_defaults_runner_exit_to_zero():
-    # missing runner_exit key should be treated as "completed" (0), not crash
-    m = {"spec_check": "PASS"}
-    assert bench.classify_outcome(m, "rig") == "clean_pass"
-
-
-def test_render_html_includes_silent_defect_and_safe_stop_kpi_labels():
-    summary = {
-        "generated": "x", "rig_wb_version": "0", "provider": "mock", "runs_per_task": 1,
-        "tasks": [{
-            "task_id": "divide-by-zero", "difficulty": "simple",
-            "runs": [{"run": 1, "modes": {
-                "bare": {"elapsed_s": 0.1, "calls": 1, "test_pass": True, "spec_check": "FAIL: x",
-                        "unrelated_files": [], "workspace_leaks": [], "outcome": "silent_defect"},
-                "rig": {"elapsed_s": 0.4, "calls": 3, "test_pass": False, "spec_check": "PASS",
-                       "unrelated_files": [], "workspace_leaks": [], "reached_steps": ["s1"],
-                       "runner_exit": 1, "outcome": "safe_stop"},
-            }}],
-        }],
-    }
-    html = bench._render_html(summary)
-    assert "silent defects" in html
-    assert "safe stops" in html
-    assert "silent_defect" in html
-    assert "safe_stop" in html
-
-
-def test_render_html_tolerates_results_missing_outcome_key():
-    # Old JSON written before this change has no "outcome" key in mode dicts.
-    # _render_html must not crash — it should classify on the fly via m.get().
-    summary = {
-        "generated": "x", "rig_wb_version": "0", "provider": "mock", "runs_per_task": 1,
-        "tasks": [{
-            "task_id": "divide-by-zero", "difficulty": "simple",
-            "runs": [{"run": 1, "modes": {
-                "bare": {"elapsed_s": 0.1, "calls": 1, "test_pass": True, "spec_check": "PASS",
-                        "unrelated_files": [], "workspace_leaks": []},
-                "rig": {"elapsed_s": 0.4, "calls": 3, "test_pass": True, "spec_check": "PASS",
-                       "unrelated_files": [], "workspace_leaks": [], "reached_steps": ["s1"],
-                       "runner_exit": 0},
-            }}],
-        }],
-    }
-    html = bench._render_html(summary)
-    assert "<html" in html
-    assert "clean_pass" in html
-
-
-def test_cmd_bench_mock_smoke_prints_outcome_clean_pass_for_both_modes(tmp_path):
-    out_path = tmp_path / "bench-out.json"
-    r = subprocess.run(
-        [sys.executable, "-m", "rig_workbench.cli", "bench",
-         "--tasks", "divide-by-zero", "--provider", "mock", "--runs", "1",
-         "--out", str(out_path)],
-        capture_output=True, text=True, timeout=60, cwd=REPO_ROOT,
+def test_classify_outcome_prioritizes_infrastructure_errors():
+    assert (
+        bench.classify_outcome(
+            {
+                "completed": True,
+                "hidden_check": {"passed": True},
+                "attempts": [{"infra_error": "timeout"}],
+            },
+            "bare",
+        )
+        == "infra_error"
     )
-    assert r.returncode == 0, r.stdout + r.stderr
-    stdout_lines = [ln for ln in r.stdout.splitlines() if ln.strip().startswith("run=")]
-    assert len(stdout_lines) == 2, r.stdout
-    for line in stdout_lines:
-        assert "outcome=clean_pass" in line, line
-    data = json.loads(out_path.read_text(encoding="utf-8"))
-    run = data["tasks"][0]["runs"][0]
-    assert run["modes"]["bare"]["outcome"] == "clean_pass"
-    assert run["modes"]["rig"]["outcome"] == "clean_pass"
 
 
-def test_render_html_includes_task_rows():
-    summary = {
-        "generated": "x", "rig_wb_version": "0", "provider": "mock", "runs_per_task": 1,
-        "tasks": [{
-            "task_id": "divide-by-zero", "difficulty": "simple",
-            "runs": [{"run": 1, "modes": {
-                "bare": {"elapsed_s": 0.1, "calls": 1, "test_pass": True, "spec_check": "PASS",
-                        "unrelated_files": [], "workspace_leaks": []},
-                "rig": {"elapsed_s": 0.4, "calls": 3, "test_pass": True, "spec_check": "PASS",
-                       "unrelated_files": [], "workspace_leaks": [], "reached_steps": ["s1"]},
-            }}],
-        }],
+@pytest.mark.parametrize(
+    ("error", "category", "returncode"),
+    [
+        (FileNotFoundError("python"), "missing_executable", 127),
+        (subprocess.TimeoutExpired(["python"], 1), "timeout", 124),
+        (OSError("launch failed"), "runtime_launch_failure", 126),
+        (UnicodeError("decode failed"), "runtime_launch_failure", 126),
+    ],
+)
+def test_command_result_exposes_infrastructure_failures(
+    monkeypatch, tmp_path, error, category, returncode
+):
+    monkeypatch.setattr(
+        bench.subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(error)
+    )
+
+    result = bench._run_command(
+        ("python", "-V"),
+        cwd=tmp_path,
+        env={},
+        timeout_s=1,
+    )
+
+    assert result.returncode == returncode
+    assert result.infra_error.startswith(category)
+    assert result.to_dict()["infra_error"] == result.infra_error
+
+
+@pytest.mark.parametrize("failed_check", ["public_test", "hidden_check"])
+def test_classify_outcome_prioritizes_public_and_hidden_command_infra(failed_check):
+    arm = {
+        "completed": True,
+        "attempts": [],
+        "public_test": {"passed": True, "infra_error": None},
+        "hidden_check": {"passed": True, "infra_error": None},
     }
-    html = bench._render_html(summary)
-    assert "divide-by-zero" in html
+    arm[failed_check]["infra_error"] = "timeout: check exceeded 1s"
+
+    assert bench.classify_outcome(arm, "bare") == "infra_error"
+
+
+def test_typescript_runtime_preflight_failure_becomes_public_and_hidden_infra(
+    monkeypatch, tmp_path
+):
+    task = bench_tasks.load_tasks()["ts-api-compat-export"]
+    monkeypatch.setattr(
+        bench,
+        "_require_supported_node",
+        lambda: (_ for _ in ()).throw(FileNotFoundError("node")),
+    )
+
+    public, hidden = bench._evaluate_workspace(task, tmp_path, {})
+
+    assert public.infra_error.startswith("missing_executable")
+    assert hidden.infra_error == public.infra_error
+
+
+def test_classify_outcome_distinguishes_completion_and_hidden_result():
+    assert (
+        bench.classify_outcome(
+            {"completed": True, "hidden_check": {"passed": True}, "attempts": []},
+            "bare",
+        )
+        == "clean_pass"
+    )
+    assert (
+        bench.classify_outcome(
+            {"completed": True, "hidden_check": {"passed": False}, "attempts": []},
+            "bare",
+        )
+        == "silent_defect"
+    )
+    assert (
+        bench.classify_outcome(
+            {"completed": False, "hidden_check": {"passed": True}, "attempts": []},
+            "rig",
+        )
+        == "safe_stop"
+    )
+    assert (
+        bench.classify_outcome(
+            {"completed": False, "hidden_check": {"passed": False}, "attempts": []},
+            "rig",
+        )
+        == "stopped_wrong"
+    )
+
+
+def test_render_html_tolerates_empty_paired_summary():
+    html = bench._render_html(
+        {
+            "tasks": [],
+            "generated": "x",
+            "rig_wb_version": "0",
+            "provider": "mock",
+            "model": None,
+        }
+    )
+
+    assert "<html" in html
+    assert "WIRING ONLY" in html
+
+
+def test_render_html_preserves_schema_v1_modes_and_outcome_inference():
+    report = bench._render_html(
+        {
+            "generated": "2026-07-20T00:00:00",
+            "rig_wb_version": "1.19.0",
+            "provider": "codex",
+            "model": "legacy-model",
+            "tasks": [
+                {
+                    "task_id": "legacy-task",
+                    "difficulty": "security",
+                    "runs": [
+                        {
+                            "run": 1,
+                            "modes": {
+                                "bare": {
+                                    "calls": 1,
+                                    "spec_check": "FAIL: defect",
+                                    "unrelated_files": [],
+                                    "workspace_leaks": [],
+                                },
+                                "rig": {
+                                    "calls": 2,
+                                    "runner_exit": 1,
+                                    "spec_check": "PASS",
+                                    "unrelated_files": [],
+                                    "workspace_leaks": [],
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert "legacy schema v1" in report
+    assert "legacy-task" in report
+    assert "silent_defect" in report
+    assert "safe_stop" in report
+
+
+def test_cli_check_does_not_mutate_non_adaptive_recipe_steps(monkeypatch, tmp_path):
+    recipe = tmp_path / "legacy.md"
+    recipe.write_text(
+        """\
+---
+name: legacy
+steps:
+  - id: implement
+    instruction: implement
+  - id: acceptance
+    instruction: acceptance
+    gate: acceptance-gate
+    checks:
+      - "git diff --check"
+---
+""",
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_run_loop(state, _out, _gen, _ver, cfg, _max_steps, **_kwargs):
+        captured["state"] = state
+        captured["cfg"] = cfg
+        return "DONE"
+
+    monkeypatch.setattr(commands, "run_loop", fake_run_loop)
+
+    with pytest.raises(SystemExit) as exc:
+        commands.cmd_run(
+            [
+                str(recipe),
+                "--provider",
+                "mock",
+                "--check",
+                "python -m pytest -q",
+                "--no-session-persistence",
+                "--out",
+                str(tmp_path / "state.json"),
+            ]
+        )
+
+    assert exc.value.code == 0
+    acceptance = captured["state"]["steps"][-1]
+    assert acceptance["checks"] == ["git diff --check"]
+    assert captured["cfg"]["checks"] == ["python -m pytest -q"]
+    assert captured["cfg"]["claude_no_session_persistence"] is True

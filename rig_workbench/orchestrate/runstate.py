@@ -16,6 +16,11 @@ def new_state(recipe: str, steps: list[dict], goal: str | None) -> dict:
         "cursor": 0,
         "step_state": {s["id"]: {"status": "pending", "retries": 0, "checks": [], "verdicts": []}
                        for s in steps},
+        "adaptive": {
+            "assessment": None,
+            "invocation_limit": 3,
+            "invocations": 0,
+        },
         "stopped": None,
         "done": False,
         "history": [],

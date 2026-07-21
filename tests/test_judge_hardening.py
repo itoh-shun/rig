@@ -142,8 +142,28 @@ def test_verify_prompt_uses_diff_as_primary_evidence(tmp_path):
     assert prompt.index("evidence-anchored reasoning") < prompt.index("VERDICT: PASS")
 
 
-def test_verify_prompt_falls_back_without_cwd_or_diff(tmp_path):
-    assert _git_diff_evidence({}) is None                      # no cwd → old behavior
+def test_git_diff_evidence_falls_back_to_invocation_cwd(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "INVOCATION_CWD", tmp_path)
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "t@t")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "f.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    (tmp_path / "f.py").write_text("x = 2\n", encoding="utf-8")
+
+    # No explicit cfg["cwd"] (the real CLI shape for every non-`--isolate` headless run):
+    # must still discover the real diff via config.INVOCATION_CWD, not silently return None.
+    diff = _git_diff_evidence({})
+    assert diff and "-x = 1" in diff and "+x = 2" in diff
+
+
+def test_verify_prompt_falls_back_without_cwd_or_diff(monkeypatch, tmp_path):
+    empty_repo = tmp_path / "empty-repo"
+    empty_repo.mkdir()
+    _git(empty_repo, "init", "-q", "-b", "main")
+    monkeypatch.setattr(config, "INVOCATION_CWD", empty_repo)
+    assert _git_diff_evidence({}) is None                       # invocation cwd has no diff evidence
     assert _git_diff_evidence({"cwd": str(tmp_path)}) is None  # cwd but no git repo
     prompt = _build_verify_prompt({"recipe": "r"}, {"id": "review", "acceptance": []}, "report", None)
     assert "--- product ---" in prompt and "generator's own claims" not in prompt

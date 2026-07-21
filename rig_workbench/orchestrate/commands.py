@@ -288,7 +288,7 @@ def cmd_run(args):
     if not args:
         print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
               "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
-              "[--max-steps N] [--goal G] [--out f] [--isolate] [--auto-route] "
+              "[--max-steps N] [--goal G] [--check command] [--out f] [--isolate] [--auto-route] "
               "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     path = resolve_recipe(args[0])
@@ -303,6 +303,7 @@ def cmd_run(args):
     quorum = "all"
     cfg: dict = {"_token_usage": {}}  # per-run token accumulator (#271/#296); never merged across runs
     step_models: dict[str, str] = {}
+    cli_checks: list[str] = []
     i = 1
     while i < len(args):
         a = args[i]
@@ -342,6 +343,9 @@ def cmd_run(args):
         elif a == "--goal" and i + 1 < len(args):
             goal = args[i + 1]
             i += 2
+        elif a == "--check" and i + 1 < len(args):
+            cli_checks.append(args[i + 1])
+            i += 2
         elif a == "--out" and i + 1 < len(args):
             out = pathlib.Path(args[i + 1])
             i += 2
@@ -360,6 +364,9 @@ def cmd_run(args):
         elif a == "--allow-headless-in-cc":
             cfg["allow_headless_in_cc"] = True
             i += 1
+        elif a == "--no-session-persistence":
+            cfg["claude_no_session_persistence"] = True
+            i += 1
         elif a == "--auto-route":
             cfg["auto_route"] = True
             i += 1
@@ -377,6 +384,11 @@ def cmd_run(args):
             i += 2
         else:
             i += 1
+    if cli_checks:
+        cfg["checks"] = list(cli_checks)
+        for step in steps:
+            if step.get("executor") == "checks-only" and step.get("gate") == "acceptance-gate":
+                step["checks"].extend(cli_checks)
     # Unknown step ids abort the run before anything executes (no silent ignores; #293)
     unknown = unknown_step_model_ids(step_models, steps)
     if unknown:

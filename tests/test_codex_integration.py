@@ -8,7 +8,11 @@ Claude Code hooks.json/SKILL.md this mirrors.
 
 import json
 import pathlib
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python <3.11 (pyproject.toml requires-python >=3.10)
+    import tomli as tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 

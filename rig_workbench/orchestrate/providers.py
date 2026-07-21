@@ -4,18 +4,25 @@ import sys
 import os
 import re
 import json
+import hashlib
 import time
 import shlex
 import threading
 import pathlib
+import stat
 import subprocess
 import concurrent.futures as futures
+from dataclasses import dataclass
 
+from .. import bench_providers as _bench_provider_patches
 from . import config
+from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
 from .runstate import compute_next, gate_outcome, save_state, telemetry_append
+
+_BENCH_COUNTER_LOCK = threading.Lock()
 
 # ── Execution layer (external runners, provider abstraction) ─────────────────
 # Run each step as an "agent in a separate process" = context isolated at the process boundary.
@@ -26,6 +33,7 @@ MOCK_SRC = (
     "import sys\n"
     "import os\n"
     "import re\n"
+    "import shutil\n"
     "from pathlib import Path\n"
     "prompt = sys.stdin.read()\n"
     "role = sys.argv[1] if len(sys.argv) > 1 else 'generator'\n"
@@ -86,13 +94,24 @@ MOCK_SRC = (
     "            '        return True\\n'\n"
     "        )\n"
     "    return ''\n"
+    "def apply_benchmark_canonical():\n"
+    "    canonical = os.environ.get('RIG_BENCH_MOCK_CANONICAL')\n"
+    "    if not canonical:\n"
+    "        return False\n"
+    "    root = Path(canonical)\n"
+    "    for source in root.rglob('*'):\n"
+    "        if source.is_file():\n"
+    "            destination = Path.cwd() / source.relative_to(root)\n"
+    "            destination.parent.mkdir(parents=True, exist_ok=True)\n"
+    "            shutil.copy2(source, destination)\n"
+    "    return True\n"
     "if role == 'verifier':\n"
     "    print('independent verification (mock): ' + persona)\n"
     "    print('evidence: mock inspection of the product - mock.py:1')\n"
     "    print('CRITERION 1: ' + ('FAIL' if 'fail' in persona else 'PASS') + ' - mock.py:1')\n"
     "    print('VERDICT: ' + ('FAIL' if 'fail' in persona else 'PASS'))\n"
     "else:\n"
-    "    if step_id == 'implement' and target_file:\n"
+    "    if step_id == 'implement' and not apply_benchmark_canonical() and target_file:\n"
     "        fix = fix_for(prompt)\n"
     "        if fix:\n"
     "            write(target_file, fix)\n"
@@ -131,19 +150,23 @@ _GENERATOR_EDIT_ENFCE = {
 
 def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
     if provider == "mock":
-        return ["python3", "-c", MOCK_SRC, role, persona]
+        return [sys.executable, "-c", MOCK_SRC, role, persona]
     if provider == "rig":
         # Launch each step as a "rig harness" via headless claude (invokes rig by name).
         pre = RIG_VER_PREFIX if role == "verifier" else RIG_GEN_PREFIX
         argv = ["claude", "-p", pre + prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
+        if cfg.get("claude_no_session_persistence"):
+            argv.append("--no-session-persistence")
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "claude":
         # Headless. In production the user can tune permission modes etc. via --provider-cmd.
         argv = ["claude", "-p", prompt, "--output-format", "text"]
         if cfg.get("model"):
             argv += ["--model", cfg["model"]]              # per-step model support
+        if cfg.get("claude_no_session_persistence"):
+            argv.append("--no-session-persistence")
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "codex":
         # --skip-git-repo-check: keep codex from refusing to start in non-git directories
@@ -257,6 +280,7 @@ def _record_token_usage(cfg: dict, provider: str, usage: dict) -> None:
 
 
 def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
+    import urllib.error
     import urllib.request
     url = f"{_base_url(provider, cfg)}/chat/completions"
     model = resolve_http_model(provider, cfg)
@@ -270,8 +294,19 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
         if isinstance(data.get("usage"), dict):
             _record_token_usage(cfg, provider, data["usage"])
         return 0, data["choices"][0]["message"]["content"]
-    except Exception as e:                      # connection failures, missing models etc. become rc!=0
-        return 1, f"[{provider} error: {e} @ {url}]"
+    except urllib.error.HTTPError as error:
+        category = "authentication failure" if error.code in {401, 403} else "endpoint failure"
+        return 1, f"[provider {category}: HTTP {error.code} @ {url}]"
+    except TimeoutError as error:
+        return 1, f"[provider timeout: {error} @ {url}]"
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            return 1, f"[provider timeout: {error} @ {url}]"
+        return 1, f"[provider endpoint failure: {error} @ {url}]"
+    except OSError as error:
+        return 1, f"[provider endpoint failure: {error} @ {url}]"
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+        return 1, f"[provider malformed output: {error}]"
 
 
 def _record_anthropic_usage(cfg: dict, usage: dict) -> None:
@@ -414,8 +449,64 @@ def cmd_models(args):
         print(f"\nSaved: {_MODELS_CACHE_PATH} ({len(conf)} providers) — used by the next run --auto-model")
 
 
+def _record_benchmark_provider_call(
+    provider: str,
+    role: str,
+    persona: str,
+    step_id: str | None,
+) -> str | None:
+    counter_path = os.environ.get("RIG_BENCH_CALL_COUNTER")
+    if not counter_path:
+        return None
+    path = pathlib.Path(counter_path)
+    record = json.dumps(
+        {
+            "provider": provider,
+            "role": role,
+            "persona": persona,
+            "step_id": step_id,
+            "pid": os.getpid(),
+            "started_ns": time.time_ns(),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    try:
+        with _BENCH_COUNTER_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+            descriptor = os.open(path, flags, 0o600)
+            try:
+                if os.write(descriptor, record) != len(record):
+                    raise OSError("short benchmark call-journal write")
+            finally:
+                os.close(descriptor)
+    except OSError as error:
+        return str(error)
+    return None
+
+
 def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
                  state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
+    journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
+    if journal_error is not None:
+        return 126, f"[benchmark call counter error: {journal_error}]"
+    if provider == "mock":
+        scenario = os.environ.get("RIG_BENCH_MOCK_SCENARIO", "success")
+        if scenario == "timeout":
+            return 124, "[provider timeout]"
+        if scenario == "malformed" and role == "verifier":
+            return 0, "mock verifier omitted its required verdict"
+    if provider in _OPENAI_BASE and role == "generator":
+        # Same config.INVOCATION_CWD fallback as _git_diff_evidence/_git_changed_files
+        # (see their docstrings): without it, a local-provider generator step in any
+        # non-`--isolate` headless run (cfg["cwd"] is never set outside `--isolate`)
+        # silently degraded to a plain chat completion via run_http_provider below,
+        # applying no patch at all, instead of writing to the real workspace the way
+        # claude/codex's subprocess calls already do (their `cwd=cfg.get("cwd") or None`
+        # inherits the parent process's cwd, i.e. config.INVOCATION_CWD, for free).
+        local_cfg = {**cfg, "cwd": cfg.get("cwd") or str(config.INVOCATION_CWD)}
+        return _run_local_patch_generator(provider, prompt, local_cfg)
     if provider in _OPENAI_BASE:
         return run_http_provider(provider, prompt, cfg)
     if provider == "anthropic":
@@ -435,6 +526,41 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
     return r.returncode, out
 
 
+def _run_local_patch_generator(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
+    """Give tool-free local generators writable parity through a validated patch."""
+    workspace = pathlib.Path(cfg["cwd"])
+    try:
+        patch_prompt = _bench_provider_patches._patch_prompt(prompt, workspace)
+    except OSError as error:
+        return 1, f"[provider workspace snapshot failure: {type(error).__name__}: {error}]"
+
+    returncode, patch = run_http_provider(provider, patch_prompt, cfg)
+    if returncode != 0:
+        return returncode, patch
+
+    try:
+        _bench_provider_patches._validate_unified_diff(workspace, patch)
+    except ValueError as error:
+        return 1, f"[provider malformed output: {error}]"
+
+    try:
+        checked = _bench_provider_patches._run_git_apply(workspace, patch, check_only=True)
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return 1, f"[provider patch application failure: {type(error).__name__}: {error}]"
+    if checked.returncode != 0:
+        detail = (checked.stderr or "git apply rejected provider output").strip()
+        return 1, f"[provider malformed output: {detail}]"
+
+    try:
+        applied = _bench_provider_patches._run_git_apply(workspace, patch, check_only=False)
+    except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+        return 1, f"[provider patch application failure: {type(error).__name__}: {error}]"
+    if applied.returncode != 0:
+        detail = (applied.stderr or "git apply rejected provider output").strip()
+        return 1, f"[provider malformed output: {detail}]"
+    return 0, patch
+
+
 def _excerpt(text: str, limit: int = 240) -> str:
     return " ".join((text or "").split())[:limit]
 
@@ -444,6 +570,21 @@ def _excerpt(text: str, limit: int = 240) -> str:
 # evidence embedded in verify prompts. Head+tail clip with an explicit marker;
 # the full text is spooled to the run dir (next to the run-state file) if one exists.
 OUTPUT_CAP_CHARS = 30_000
+UNTRACKED_EVIDENCE_FILE_CAP_BYTES = 16_000
+UNTRACKED_PATH_DISPLAY_CAP_CHARS = 1_024
+UNTRACKED_LINK_OMISSION = (
+    "[untracked linked content omitted: symbolic link, junction, or reparse path]"
+)
+UNTRACKED_UNSAFE_OMISSION = "[untracked content omitted: unsafe Git-reported path]"
+UNTRACKED_UNAVAILABLE_OMISSION = "[untracked content omitted: path unavailable or unreadable]"
+
+
+@dataclass(frozen=True)
+class _UntrackedGitPath:
+    raw: bytes
+    display: str
+    path: pathlib.Path | None
+    omission: str | None
 
 
 def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None = None) -> str:
@@ -461,10 +602,15 @@ def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None =
 def _spool_full_output(text: str, cfg: dict, label: str) -> str | None:
     """Write the full text to <run_dir>/step-outputs/<label>.txt. None if no run dir (best-effort)."""
     run_dir = (cfg or {}).get("run_dir")
-    if not run_dir:
+    configured_output_dir = os.environ.get("RIG_STEP_OUTPUT_DIR")
+    if not run_dir and not configured_output_dir:
         return None
     try:
-        d = pathlib.Path(run_dir) / "step-outputs"
+        d = (
+            pathlib.Path(configured_output_dir)
+            if configured_output_dir
+            else pathlib.Path(run_dir) / "step-outputs"
+        )
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{label}.txt"
         p.write_text(text, encoding="utf-8")
@@ -601,7 +747,26 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
         brief = _load_persona_brief(p)
         persona_prompt = (f"You are the '{p}' reviewer. Judge strictly from this brief:\n\n"
                           f"{brief}\n\n---\n\n{prompt}") if brief else prompt
-        rc, out = run_provider(v, "verifier", persona_prompt, cfg, persona=p, state=state, step_id=step_id)
+        if state is not None and _uses_adaptive_executors(state):
+            rc, out = _run_provider_counted(
+                state,
+                v,
+                "verifier",
+                persona_prompt,
+                cfg,
+                persona=p,
+                step_id=step_id,
+            )
+        else:
+            rc, out = run_provider(
+                v,
+                "verifier",
+                persona_prompt,
+                cfg,
+                persona=p,
+                state=state,
+                step_id=step_id,
+            )
         ok, criteria = _judge_output(out)
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
                 "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
@@ -765,10 +930,32 @@ def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str
             lines.append("recent_history:")
             lines.extend([f"- {h.get('action')}:{h.get('step')}" for h in recent])
     if step["id"] == "implement":
+        # An informed-repair call (execute_informed_repair) stamps a throwaway copy of this
+        # step's state with last_failure before invoking the generator again; the persisted
+        # step state never carries last_failure on its own (see runstate.py / _run_step_checks),
+        # so this is an unambiguous signal that this specific call is the one-shot repair pass
+        # gated by an allowlisted MECHANICAL_CHECK (#1 finding: a blanket "no test changes" rule
+        # made any reviewer FAIL that asked for missing coverage permanently unrepairable).
+        if st and st.get("last_failure"):
+            test_rule = (
+                "must: previous_failure above may identify a missing regression test for a "
+                "specific input/behavior (only a reviewer FAIL with an allowlisted mechanical "
+                "check reaches this repair pass); if so, add exactly one narrowly-scoped test "
+                "that pins that input/behavior. Do not modify, weaken, or delete any existing "
+                "test, and do not add unrelated tests."
+            )
+        else:
+            test_rule = (
+                "must: do not modify, weaken, or delete existing tests. If the fix's "
+                "correctness depends on an unstated default/edge-case value you must infer "
+                "(e.g. restoring legacy behavior), you may add one narrowly-scoped test that "
+                "pins that exact value/behavior and state the reason explicitly; otherwise do "
+                "not add tests."
+            )
         lines += [
             "must: actually edit the code; do not stop at just reading.",
             "must: keep changes minimal; no unrelated formatting or broad refactors.",
-            "must: do not change tests; if a change is needed, state the reason explicitly.",
+            test_rule,
             "must: keep working until a diff exists; do not finish as a no-op.",
             "must: run related tests / lint where possible and confirm the results.",
             "report: output CHANGED_FILES / COMMANDS_RUN / RESULT concisely.",
@@ -808,22 +995,254 @@ def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
 
 
 def _git_diff_evidence(cfg: dict) -> str | None:
-    """Capture `git diff HEAD` (fallback: `git diff`) from the step's cwd/worktree as primary
-    verification evidence, clipped to OUTPUT_CAP_CHARS (head+tail with a truncation marker).
-    Returns None (→ caller falls back to report-only verification) when the step has no cwd,
-    git is unavailable, or the diff is empty."""
-    cwd = (cfg or {}).get("cwd")
-    if not cwd:
-        return None
+    """Capture bounded tracked and untracked workspace changes as review evidence.
+
+    Falls back to config.INVOCATION_CWD when cfg has no explicit cwd (the same
+    fallback _run_step_checks/execute_informed_repair's mechanical-check subprocess
+    already use) so risk assessment, review-prompt diff evidence, and informed
+    repair's diff_changed detection all see the same real changes those checks run
+    against. Without this fallback every non-`--isolate` headless run (the CLI never
+    sets cfg["cwd"] outside `--isolate`) silently analyzed an empty diff, which made
+    risk assessment always fall back and made execute_informed_repair's diff_changed
+    comparison always False regardless of what the repair generator actually wrote.
+
+    Returns None when git is unavailable or no evidence exists.
+    """
+    cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
+    tracked = None
     for args in (["git", "diff", "HEAD"], ["git", "diff"]):
         try:
-            r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(
+                args,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
         except (OSError, subprocess.SubprocessError):
             return None
-        if r.returncode == 0:
-            out = r.stdout or ""
-            return _clip_output(out) if out.strip() else None
-    return None
+        if result.returncode == 0:
+            tracked = result.stdout or ""
+            break
+    if tracked is None:
+        return None
+
+    parts = [tracked] if tracked.strip() else []
+    root = pathlib.Path(cwd)
+    for entry in _git_untracked_files(root):
+        parts.append(
+            _untracked_diff_evidence(entry.display, entry.path)
+            if entry.path is not None
+            else _untracked_omitted_evidence(entry.display, entry.omission)
+        )
+    evidence = "\n".join(part.rstrip("\n") for part in parts if part).strip()
+    return _clip_output(evidence) if evidence else None
+
+
+def _git_untracked_files(
+    root: pathlib.Path,
+) -> list[_UntrackedGitPath]:
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=root,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    files = []
+    for raw_path in (result.stdout or b"").split(b"\0"):
+        if not raw_path:
+            continue
+        relative = raw_path.decode("utf-8", errors="surrogateescape")
+        display = _escape_git_path(raw_path)
+        safe_path, omission = _safe_untracked_path(root, relative)
+        files.append(
+            _UntrackedGitPath(
+                raw=raw_path,
+                display=display,
+                path=safe_path,
+                omission=omission,
+            )
+        )
+    return sorted(files, key=lambda item: item.raw)
+
+
+def _escape_git_path(raw_path: bytes) -> str:
+    decoded = raw_path.decode("utf-8", errors="surrogateescape")
+    chunks = []
+    for character in decoded:
+        codepoint = ord(character)
+        if character == "\\":
+            chunks.append("\\\\")
+        elif 0xDC80 <= codepoint <= 0xDCFF:
+            chunks.append(f"\\x{codepoint - 0xDC00:02x}")
+        elif character.isprintable():
+            chunks.append(character)
+        elif codepoint <= 0xFF:
+            chunks.append(f"\\x{codepoint:02x}")
+        elif codepoint <= 0xFFFF:
+            chunks.append(f"\\u{codepoint:04x}")
+        else:
+            chunks.append(f"\\U{codepoint:08x}")
+
+    escaped = "".join(chunks)
+    if len(escaped) <= UNTRACKED_PATH_DISPLAY_CAP_CHARS:
+        return escaped
+    digest = hashlib.sha256(raw_path).hexdigest()[:16]
+    marker = (
+        f"[...path truncated; bytes={len(raw_path)}; sha256={digest}]"
+    )
+    prefix_budget = UNTRACKED_PATH_DISPLAY_CAP_CHARS - len(marker)
+    prefix = []
+    prefix_length = 0
+    for chunk in chunks:
+        if prefix_length + len(chunk) > prefix_budget:
+            break
+        prefix.append(chunk)
+        prefix_length += len(chunk)
+    return "".join(prefix) + marker
+
+
+def _safe_untracked_path(
+    root: pathlib.Path, relative: str
+) -> tuple[pathlib.Path | None, str | None]:
+    posix_path = pathlib.PurePosixPath(relative)
+    windows_path = pathlib.PureWindowsPath(relative)
+    if (
+        not posix_path.parts
+        or posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or any(part in {"", ".", ".."} for part in posix_path.parts)
+        or posix_path.parts[0].casefold() == ".git"
+    ):
+        return None, UNTRACKED_UNSAFE_OMISSION
+
+    candidate = root.joinpath(*posix_path.parts)
+    current = root
+    for part in posix_path.parts:
+        current /= part
+        try:
+            metadata = current.lstat()
+            is_junction = getattr(current, "is_junction", None)
+            file_attributes = getattr(metadata, "st_file_attributes", 0)
+            is_reparse = bool(
+                file_attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            )
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or current.is_symlink()
+                or bool(is_junction and is_junction())
+                or is_reparse
+            ):
+                return None, UNTRACKED_LINK_OMISSION
+        except (OSError, UnicodeError):
+            return None, UNTRACKED_UNAVAILABLE_OMISSION
+    try:
+        return (
+            (candidate, None)
+            if candidate.is_file()
+            else (None, UNTRACKED_UNAVAILABLE_OMISSION)
+        )
+    except (OSError, UnicodeError):
+        return None, UNTRACKED_UNAVAILABLE_OMISSION
+
+
+def _untracked_evidence_header(relative: str) -> str:
+    return (
+        f"diff --git a/{relative} b/{relative}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{relative}\n"
+        "@@ untracked file @@\n"
+    )
+
+
+def _untracked_diff_evidence(relative: str, path: pathlib.Path) -> str:
+    header = _untracked_evidence_header(relative)
+    payload, omission = _read_untracked_payload(path)
+    if payload is None:
+        return header + (omission or UNTRACKED_UNAVAILABLE_OMISSION)
+
+    truncated = len(payload) > UNTRACKED_EVIDENCE_FILE_CAP_BYTES
+    payload = payload[:UNTRACKED_EVIDENCE_FILE_CAP_BYTES]
+    if b"\0" in payload:
+        return header + "[binary untracked content omitted]"
+
+    text = payload.decode("utf-8", errors="replace")
+    body = "\n".join(f"+{line}" for line in text.splitlines())
+    if truncated:
+        body += (
+            f"\n+[...untracked content truncated at "
+            f"{UNTRACKED_EVIDENCE_FILE_CAP_BYTES} bytes...]"
+        )
+    return header + body
+
+
+def _read_untracked_payload(path: pathlib.Path) -> tuple[bytes | None, str | None]:
+    try:
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode):
+            return None, UNTRACKED_LINK_OMISSION
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            identity_changed = (
+                (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+                or not stat.S_ISREG(opened.st_mode)
+            )
+            if identity_changed:
+                return None, UNTRACKED_LINK_OMISSION
+            return os.read(descriptor, UNTRACKED_EVIDENCE_FILE_CAP_BYTES + 1), None
+        finally:
+            os.close(descriptor)
+    except (OSError, UnicodeError) as error:
+        return (
+            None,
+            f"[untracked content omitted: unavailable ({type(error).__name__})]",
+        )
+
+
+def _untracked_omitted_evidence(relative: str, omission: str | None) -> str:
+    return _untracked_evidence_header(relative) + (omission or "[untracked content omitted]")
+
+
+def _git_changed_files(cfg: dict) -> list[str]:
+    """Return deterministic tracked and safe untracked paths for adaptive risk analysis.
+
+    Falls back to config.INVOCATION_CWD when cfg has no explicit cwd — see
+    _git_diff_evidence's docstring for why this fallback matters."""
+    cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
+    tracked = set()
+    for args in (
+        ["git", "diff", "--name-only", "-z", "HEAD"],
+        ["git", "diff", "--name-only", "-z"],
+    ):
+        try:
+            result = subprocess.run(
+                args,
+                cwd=cwd,
+                capture_output=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            break
+        if result.returncode == 0:
+            tracked = {
+                _escape_git_path(raw_path)
+                for raw_path in (result.stdout or b"").split(b"\0")
+                if raw_path
+            }
+            break
+    untracked = {entry.display for entry in _git_untracked_files(pathlib.Path(cwd))}
+    return sorted(tracked | untracked)
 
 
 def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None = None) -> str:
@@ -872,7 +1291,7 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
     if diff:
         lines += [
             "--- diff (primary evidence: the actual changes) ---",
-            diff,
+            wrap_untrusted(diff, "repository diff evidence"),
             "--- report below is the generator's own claims — verify them against the diff, do not trust them ---",
             (product or "")[:2000],
             "Check each claim in the report against the diff; a claim with no supporting evidence in the diff is unverified.",
@@ -894,6 +1313,40 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
 
 
 _HIST_LOCK = threading.Lock()
+
+
+def _uses_adaptive_executors(state: dict) -> bool:
+    return any(step.get("executor", "generate") != "generate" for step in state["steps"])
+
+
+def _run_provider_counted(
+    state: dict,
+    provider: str,
+    role: str,
+    prompt: str,
+    cfg: dict,
+    persona: str = "",
+    step_id: str | None = None,
+) -> tuple[int, str]:
+    if _uses_adaptive_executors(state):
+        with _HIST_LOCK:
+            if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
+                state["stopped"] = {
+                    "reason": "adaptive invocation budget exhausted",
+                    "kind": "BLOCKED",
+                    "at": step_id or "",
+                }
+                return 125, "[adaptive invocation budget exhausted]"
+            state["adaptive"]["invocations"] += 1
+    return run_provider(
+        provider,
+        role,
+        prompt,
+        cfg,
+        persona=persona,
+        state=state,
+        step_id=step_id,
+    )
 
 
 def _read_runs_jsonl(path: pathlib.Path) -> list[dict]:
@@ -940,26 +1393,44 @@ def effective_step_models(step: dict, cfg: dict) -> tuple[str | None, str | None
 
 
 def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
-              cfg: dict, max_parallel: int) -> tuple[str | None, str, list[dict]]:
+              cfg: dict, max_parallel: int) -> tuple[str | None, str, list[dict], int | None]:
     """Generate solo or via judge-panel. With multiple generators, run them all in parallel and
     have the judge (ver) evaluate EVERY candidate (never stop at the first PASS — position
     bias / order effects, MT-Bench §3). Winner selection stays deterministic and documented:
     among all PASSing candidates, the first in generator-list order wins; the judged[] entries
     record the full pass-set so a multi-PASS (order-sensitive) pick is visible in telemetry.
-    Returns: (winner_provider | None, product, judged[]); the winning judged entry is marked
-    with "winner": True.
+    Returns: (winner_provider | None, product, judged[], solo_exit_status | None); the
+    winning judged entry is marked with "winner": True.
     Per-step models (runtime --step-model > recipe `model:`/`verifier_model:` > global --model)
     are injected into a copy of cfg (parallel-safe)."""
     gen_model, ver_model = effective_step_models(step, cfg)
     gen_cfg = {**cfg, "model": gen_model} if gen_model else cfg
     ver_cfg = {**cfg, "model": ver_model} if ver_model else cfg
     if len(gen_list) == 1:
-        _, out = run_provider(gen_list[0], "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg,
-                              state=state, step_id=step["id"])
-        return gen_list[0], _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"), []
+        rc, out = _run_provider_counted(
+            state,
+            gen_list[0],
+            "generator",
+            _build_prompt(state, step, state["step_state"][step["id"]]),
+            gen_cfg,
+            step_id=step["id"],
+        )
+        return (
+            gen_list[0],
+            _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"),
+            [],
+            rc,
+        )
+
     def _gen(p):
-        rc, out = run_provider(p, "generator", _build_prompt(state, step, state["step_state"][step["id"]]), gen_cfg,
-                               state=state, step_id=step["id"])
+        rc, out = _run_provider_counted(
+            state,
+            p,
+            "generator",
+            _build_prompt(state, step, state["step_state"][step["id"]]),
+            gen_cfg,
+            step_id=step["id"],
+        )
         return {"provider": p, "rc": rc, "out": out}
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
@@ -970,20 +1441,370 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     jver = ver[0] if isinstance(ver, list) else ver            # the judge is the first verifier provider
     diff = _git_diff_evidence(cfg)                             # verify the diff, not the transcript
     for c in cands:                                            # judge ALL candidates (no early stop)
-        _, jout = run_provider(jver, "verifier", _build_verify_prompt(state, step, c["out"], diff),
-                               ver_cfg, persona="judge", state=state, step_id=step["id"])
+        _, jout = _run_provider_counted(
+            state,
+            jver,
+            "verifier",
+            _build_verify_prompt(state, step, c["out"], diff),
+            ver_cfg,
+            persona="judge",
+            step_id=step["id"],
+        )
         ok, criteria = _judge_output(jout)
         judged.append({"provider": c["provider"], "ok": ok, "criteria": criteria,
                        "note": _excerpt(jout)})
         if ok and winner is None:
             winner, product = c["provider"], c["out"]
             judged[-1]["winner"] = True
-    return winner, product, judged
+    return winner, product, judged, None
+
+
+_ADAPTIVE_OUTPUT_CRITERIA = [
+    "Blocking findings include a concrete REPRODUCTION line.",
+    "Blocking findings include one allowlisted MECHANICAL_CHECK line.",
+    "The final line is VERDICT: PASS, VERDICT: PASS_WITH_CONDITIONS, or VERDICT: FAIL.",
+]
+
+
+def _unwrap_inline_markup(text: str) -> str:
+    """Strip one symmetric layer of Markdown inline-code/quote wrapping (`` `x` ``,
+    `"x"`, `'x'`) that a reviewer commonly adds around a literal value.
+
+    Reproduced live (#codex-safe-stop): gpt-5.5/codex reliably echoes an allowlisted
+    MECHANICAL_CHECK command verbatim, but wraps the whole thing in backticks (e.g.
+    `` `/usr/bin/python3 -m pytest -q` ``) — claude/sonnet does not do this in the same
+    contract. That formatting noise broke the exact-string allowlist match in
+    execute_informed_repair, making an otherwise well-formed, repair-eligible FAIL
+    permanently unrepairable and driving Codex's safe-stop rate well above Claude's on
+    an identical recipe/prompt.
+
+    Only ever removes a single matching pair from both ends, so this can only turn a
+    non-match into a match when the interior text is otherwise identical to an
+    allowlisted command — it can never make an unrelated string satisfy the allowlist,
+    since the stripped result must still equal an allowlisted entry byte-for-byte.
+    """
+    stripped = text.strip()
+    for delimiter in ("`", '"', "'"):
+        if len(stripped) >= 2 and stripped.startswith(delimiter) and stripped.endswith(delimiter):
+            return stripped[1:-1].strip()
+    return stripped
+
+
+def _adaptive_finding_fields(output: str) -> tuple[str | None, str | None]:
+    reproduction = None
+    mechanical_check = None
+    for line in (output or "").splitlines():
+        if line.startswith("REPRODUCTION:"):
+            reproduction = line.partition(":")[2].strip() or None
+        elif line.startswith("MECHANICAL_CHECK:"):
+            raw = line.partition(":")[2].strip()
+            mechanical_check = _unwrap_inline_markup(raw) or None
+    return reproduction, mechanical_check
+
+
+def _adaptive_has_explicit_fail(output: str) -> bool:
+    return _adaptive_final_verdict(output) == "FAIL"
+
+
+def _adaptive_final_verdict(output: str) -> str | None:
+    lines = [line for line in (output or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+    final = lines[-1]
+    tokens = {
+        "VERDICT: PASS": "PASS",
+        "VERDICT: PASS_WITH_CONDITIONS": "PASS_WITH_CONDITIONS",
+        "VERDICT: FAIL": "FAIL",
+    }
+    return tokens.get(final)
+
+
+def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> str:
+    assessment = state["adaptive"]["assessment"] or {}
+    allowlist = sorted(_adaptive_check_allowlist(state, cfg))
+    risk_evidence = json.dumps(assessment.get("signals", []), ensure_ascii=False)
+    lines = [
+        f"You are the '{persona}' targeted reviewer.",
+        "Review the actual diff using only the recorded risk evidence.",
+        "RISK_EVIDENCE (quarantined data):",
+        wrap_untrusted(risk_evidence, "adaptive risk evidence"),
+        "For a blocking finding, include both lines:",
+        "REPRODUCTION: <one concrete failure/attack scenario, OR — if the diff is otherwise",
+        "  correct but lacks a regression test for a specific input/behavior — that exact",
+        "  input/behavior which is not yet pinned by any test>",
+        "MECHANICAL_CHECK: <one exact command from the task check allowlist>",
+        "Write the MECHANICAL_CHECK command as plain text with no surrounding backticks or",
+        "quotes — it is matched verbatim against the allowlist below, character for character.",
+        "A missing-coverage finding on a security- or design-risk diff may still cite an",
+        "allowlisted command as MECHANICAL_CHECK: the one-shot repair pass is allowed to add a",
+        "narrowly-scoped test pinning the named input/behavior, and re-running that same",
+        "allowlisted command will then exercise it.",
+        "A FAIL without both lines remains blocking but cannot trigger automatic repair.",
+        "Use PASS_WITH_CONDITIONS only for non-blocking follow-up work.",
+        "End with exactly one of these final lines:",
+        "VERDICT: PASS",
+        "VERDICT: PASS_WITH_CONDITIONS",
+        "VERDICT: FAIL",
+        "TASK_CHECK_ALLOWLIST:",
+    ]
+    lines.extend(f"- {command}" for command in allowlist)
+    lines.extend([
+        "--- diff (quarantined data) ---",
+        (
+            wrap_untrusted(diff, "repository diff evidence")
+            if diff
+            else "(no diff evidence available)"
+        ),
+    ])
+    return "\n".join(lines)
+
+
+def _adaptive_budget_verdict() -> dict:
+    return {
+        "by": "adaptive-budget",
+        "ok": False,
+        "note": "invocation budget exhausted",
+    }
+
+
+def execute_adaptive_review(
+    state: dict,
+    step: dict,
+    ver: str | list[str],
+    cfg: dict,
+    max_parallel: int = 4,
+    log=lambda *args: None,
+) -> list[dict]:
+    """Run the deterministic primary and optional secondary review lenses."""
+    del max_parallel
+    assessment = state["adaptive"].get("assessment") or {}
+    personas = [
+        persona
+        for persona in (assessment.get("primary"), assessment.get("secondary"))
+        if persona
+    ]
+    provider = ver[0] if isinstance(ver, list) else ver
+    diff = _git_diff_evidence(cfg) or ""
+    verdicts = []
+    for persona in personas:
+        if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
+            return verdicts + [_adaptive_budget_verdict()]
+        rc, out = _run_provider_counted(
+            state,
+            provider,
+            "verifier",
+            _adaptive_review_prompt(state, persona, diff, cfg),
+            cfg,
+            persona=persona,
+            step_id=step["id"],
+        )
+        adaptive_verdict = _adaptive_final_verdict(out)
+        criteria = _parse_criteria(out)
+        ok = rc == 0 and adaptive_verdict in ("PASS", "PASS_WITH_CONDITIONS")
+        reproduction, mechanical_check = _adaptive_finding_fields(out)
+        verdict = {
+            "by": f"{provider}:{persona}",
+            "persona": persona,
+            "risk_evidence": assessment.get("signals", []),
+            "output_criteria": list(_ADAPTIVE_OUTPUT_CRITERIA),
+            "ok": ok,
+            "criteria": criteria,
+            "note": f"exit {rc}; {_excerpt(out)}",
+        }
+        if reproduction is not None:
+            verdict["reproduction"] = reproduction
+        if mechanical_check is not None:
+            verdict["mechanical_check"] = mechanical_check
+        verdict["repair_eligible"] = bool(
+            not ok
+            and reproduction is not None
+            and mechanical_check is not None
+            and _adaptive_has_explicit_fail(out)
+        )
+        verdicts.append(verdict)
+        log(f"   竊ｳ targeted review: {persona} {'PASS' if ok else 'FAIL'}")
+    return verdicts
+
+
+def _adaptive_check_allowlist(state: dict, cfg: dict) -> set[str]:
+    del state
+    return {
+        command
+        for command in (cfg.get("checks") or [])
+        if isinstance(command, str) and command
+    }
+
+
+def _bounded_repair_finding(finding: dict) -> str:
+    reproduction = str(finding.get("reproduction") or "")[:2000]
+    mechanical_check = str(finding.get("mechanical_check") or "")[:1000]
+    reviewer = str(finding.get("by") or "")[:200]
+    note = str(finding.get("note") or "")[:500]
+    return "\n".join([
+        f"REVIEWER: {reviewer}",
+        f"REPRODUCTION: {reproduction}",
+        f"MECHANICAL_CHECK: {mechanical_check}",
+        f"REVIEW_NOTE: {note}",
+    ])
+
+
+def execute_informed_repair(
+    state: dict,
+    step: dict,
+    st: dict,
+    finding: dict,
+    gen_list: list[str],
+    cfg: dict,
+    log=lambda *args: None,
+) -> bool:
+    """Attempt one repair only for an exact user/task-allowlisted mechanical check."""
+    check = finding.get("mechanical_check")
+    if not finding.get("repair_eligible"):
+        return False
+    if check not in _adaptive_check_allowlist(state, cfg):
+        return False
+    if state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]:
+        st["verdicts"].append(_adaptive_budget_verdict())
+        return False
+
+    repair_step = next(
+        (
+            candidate
+            for candidate in state["steps"]
+            if candidate.get("executor", "generate") == "generate"
+        ),
+        step,
+    )
+    before_diff = _git_diff_evidence(cfg) or ""
+    repair_state = dict(state["step_state"][repair_step["id"]])
+    repair_state["last_failure"] = _bounded_repair_finding(finding)
+    generator_model, _ = effective_step_models(repair_step, cfg)
+    generator_cfg = {**cfg, "model": generator_model} if generator_model else cfg
+    generator_rc, _ = _run_provider_counted(
+        state,
+        gen_list[0],
+        "generator",
+        _build_prompt(state, repair_step, repair_state),
+        generator_cfg,
+        step_id=repair_step["id"],
+    )
+    after_diff = _git_diff_evidence(cfg) or ""
+    diff_changed = after_diff != before_diff
+
+    history_entry = {
+        "action": "INFORMED_REPAIR",
+        "step": step["id"],
+        "check": check,
+        "generator_exit_status": generator_rc,
+        "diff_changed": diff_changed,
+        "exit_status": None,
+    }
+    if generator_rc != 0 or not diff_changed:
+        state["history"].append(history_entry)
+        return False
+
+    cwd = cfg.get("cwd") or str(config.INVOCATION_CWD)
+    try:
+        result = subprocess.run(
+            check,
+            shell=True,
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        exit_status = result.returncode
+    except (OSError, subprocess.SubprocessError):
+        exit_status = 127
+    history_entry["exit_status"] = exit_status
+    state["history"].append(history_entry)
+    log(f"   竊ｳ informed repair check: {check} (exit {exit_status})")
+    return exit_status == 0
+
+
+def _execute_targeted_review(
+    state: dict,
+    step: dict,
+    st: dict,
+    gen_list: list[str],
+    ver: str | list[str],
+    cfg: dict,
+    max_parallel: int,
+    log,
+) -> None:
+    verdicts = execute_adaptive_review(
+        state,
+        step,
+        ver,
+        cfg,
+        max_parallel=max_parallel,
+        log=log,
+    )
+    st["verdicts"] = verdicts
+    primary_finding = verdicts[0] if verdicts else None
+    if not primary_finding or primary_finding["ok"]:
+        return
+    if execute_informed_repair(
+        state,
+        step,
+        st,
+        primary_finding,
+        gen_list,
+        cfg,
+        log=log,
+    ):
+        verdicts[0] = {
+            "by": "adaptive-repair",
+            "ok": True,
+            "note": f"mechanical check passed: {primary_finding['mechanical_check']}",
+        }
 
 
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
+    executor = step.get("executor", "generate")
+    if executor not in ("generate", "risk-assess", "targeted-review", "checks-only"):
+        state["stopped"] = {
+            "reason": f"unknown executor: {executor}",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
+    if executor == "generate" and _uses_adaptive_executors(state) and len(gen_list) != 1:
+        state["stopped"] = {
+            "reason": "adaptive executor requires exactly one generator",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
+    if (
+        executor == "generate"
+        and _uses_adaptive_executors(state)
+        and state["adaptive"]["invocations"] >= state["adaptive"]["invocation_limit"]
+    ):
+        state["stopped"] = {
+            "reason": "adaptive invocation budget exhausted",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
+    if executor == "risk-assess":
+        assessment = analyze_diff(_git_diff_evidence(cfg) or "", _git_changed_files(cfg))
+        state["adaptive"]["assessment"] = assessment.to_dict()
+        state["adaptive"]["invocation_limit"] = invocation_limit(assessment)
+        state["history"].append({
+            "action": "RISK_ASSESS",
+            "step": step["id"],
+            "assessment": assessment.to_dict(),
+        })
+        return
+    if executor == "targeted-review":
+        _execute_targeted_review(state, step, st, gen_list, ver, cfg, max_parallel, log)
+        return
+    if executor == "checks-only":
+        _run_step_checks(step, st, cfg)
+        return
+
     effective_step = step
     # Cost-tier auto-routing (#264): only a fallback default. Runtime --step-model and the
     # recipe's own `model:` both still win outright — auto_route never overrides an explicit
@@ -1028,7 +1849,33 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     gen_model, ver_model = effective_step_models(effective_step, cfg)
     if gen_model:
         st["model"] = gen_model                     # actually-used generator model (run-state/telemetry attribution)
-    winner, out, judged = _generate(state, effective_step, gen_list, ver, cfg, max_parallel)
+    winner, out, judged, generator_rc = _generate(
+        state,
+        effective_step,
+        gen_list,
+        ver,
+        cfg,
+        max_parallel,
+    )
+    if (
+        _uses_adaptive_executors(state)
+        and generator_rc != 0
+    ):
+        with _HIST_LOCK:
+            state["history"].append({
+                "action": "EXEC_FAILED",
+                "step": step["id"],
+                "provider": winner or gen_list[0],
+                "exit_status": generator_rc,
+                "out": out[:1000],
+            })
+        if not state.get("stopped"):
+            state["stopped"] = {
+                "reason": f"adaptive generator failed (exit {generator_rc})",
+                "kind": "BLOCKED",
+                "at": step["id"],
+            }
+        return
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
                                  "provider": winner or gen_list[0], "out": out[:200],
@@ -1113,7 +1960,11 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
             if sp:
                 save_state(state, sp)
             continue
+        if action == "STOPPED" and state.get("stopped"):
+            last = state["stopped"].get("kind") or action
         break  # DONE / ESCALATE / BLOCKED / STOPPED
+    if state.get("stopped"):
+        last = state["stopped"].get("kind", "ESCALATE")
     if sp:
         save_state(state, sp)
     state["token_usage"] = cfg.get("_token_usage") or {}
