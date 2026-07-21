@@ -1466,6 +1466,30 @@ _ADAPTIVE_OUTPUT_CRITERIA = [
 ]
 
 
+def _unwrap_inline_markup(text: str) -> str:
+    """Strip one symmetric layer of Markdown inline-code/quote wrapping (`` `x` ``,
+    `"x"`, `'x'`) that a reviewer commonly adds around a literal value.
+
+    Reproduced live (#codex-safe-stop): gpt-5.5/codex reliably echoes an allowlisted
+    MECHANICAL_CHECK command verbatim, but wraps the whole thing in backticks (e.g.
+    `` `/usr/bin/python3 -m pytest -q` ``) — claude/sonnet does not do this in the same
+    contract. That formatting noise broke the exact-string allowlist match in
+    execute_informed_repair, making an otherwise well-formed, repair-eligible FAIL
+    permanently unrepairable and driving Codex's safe-stop rate well above Claude's on
+    an identical recipe/prompt.
+
+    Only ever removes a single matching pair from both ends, so this can only turn a
+    non-match into a match when the interior text is otherwise identical to an
+    allowlisted command — it can never make an unrelated string satisfy the allowlist,
+    since the stripped result must still equal an allowlisted entry byte-for-byte.
+    """
+    stripped = text.strip()
+    for delimiter in ("`", '"', "'"):
+        if len(stripped) >= 2 and stripped.startswith(delimiter) and stripped.endswith(delimiter):
+            return stripped[1:-1].strip()
+    return stripped
+
+
 def _adaptive_finding_fields(output: str) -> tuple[str | None, str | None]:
     reproduction = None
     mechanical_check = None
@@ -1473,7 +1497,8 @@ def _adaptive_finding_fields(output: str) -> tuple[str | None, str | None]:
         if line.startswith("REPRODUCTION:"):
             reproduction = line.partition(":")[2].strip() or None
         elif line.startswith("MECHANICAL_CHECK:"):
-            mechanical_check = line.partition(":")[2].strip() or None
+            raw = line.partition(":")[2].strip()
+            mechanical_check = _unwrap_inline_markup(raw) or None
     return reproduction, mechanical_check
 
 
@@ -1508,6 +1533,8 @@ def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> 
         "  correct but lacks a regression test for a specific input/behavior — that exact",
         "  input/behavior which is not yet pinned by any test>",
         "MECHANICAL_CHECK: <one exact command from the task check allowlist>",
+        "Write the MECHANICAL_CHECK command as plain text with no surrounding backticks or",
+        "quotes — it is matched verbatim against the allowlist below, character for character.",
         "A missing-coverage finding on a security- or design-risk diff may still cite an",
         "allowlisted command as MECHANICAL_CHECK: the one-shot repair pass is allowed to add a",
         "narrowly-scoped test pinning the named input/behavior, and re-running that same",

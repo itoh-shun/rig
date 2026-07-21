@@ -974,6 +974,98 @@ def test_nonzero_reviewer_exit_cannot_pass(step_factory, monkeypatch, tmp_path):
     assert verdict["note"].startswith("exit 1;")
 
 
+@pytest.mark.parametrize(
+    ("wrapped", "expected"),
+    [
+        ("`/usr/bin/python3 -m pytest -q`", "/usr/bin/python3 -m pytest -q"),
+        ('"node --test test_settings.ts"', "node --test test_settings.ts"),
+        ("'true'", "true"),
+        ("/usr/bin/python3 -m pytest -q", "/usr/bin/python3 -m pytest -q"),
+    ],
+)
+def test_adaptive_finding_fields_unwraps_markdown_wrapped_mechanical_check(
+    wrapped, expected
+):
+    """Reproduced live: gpt-5.5/codex reliably echoes the allowlisted command verbatim
+    but wraps it in backticks (claude/sonnet does not, in the same contract), which
+    broke the exact-string allowlist match and drove Codex's safe-stop rate over the
+    20% acceptance threshold even though the underlying FAIL was well-formed."""
+    output = f"REPRODUCTION: some scenario\nMECHANICAL_CHECK: {wrapped}\nVERDICT: FAIL"
+    _, mechanical_check = providers._adaptive_finding_fields(output)
+    assert mechanical_check == expected
+
+
+def test_adaptive_finding_fields_does_not_strip_mismatched_delimiters():
+    output = (
+        "REPRODUCTION: some scenario\n"
+        "MECHANICAL_CHECK: `python -m pytest -q\n"
+        "VERDICT: FAIL"
+    )
+    _, mechanical_check = providers._adaptive_finding_fields(output)
+    assert mechanical_check == "`python -m pytest -q"
+
+
+def test_codex_style_backtick_wrapped_mechanical_check_still_gets_repaired(
+    step_factory, monkeypatch, tmp_path
+):
+    """End-to-end reproduction of the actual Codex safe-stop mechanism: a reviewer FAIL
+    with a REPRODUCTION and an allowlisted MECHANICAL_CHECK -- both wrapped in
+    Markdown backticks, exactly as gpt-5.5/codex produced live for py-transaction-
+    rollback and ts-stale-cache-mutation -- must still be treated as repair-eligible
+    and actually trigger the informed repair, not silently fall through to safe_stop."""
+    allowed_check = "/usr/bin/python3 -m pytest -q"
+    calls = []
+    check_calls = []
+    diff = {"value": "+before repair"}
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append({"role": role, "persona": persona, "prompt": prompt})
+        if role == "verifier":
+            return 0, (
+                "Blocking finding: the diff is correct but untested.\n"
+                "REPRODUCTION: `Ledger().transfer(\"alice\", \"bob\", -10)` should raise.\n"
+                f"MECHANICAL_CHECK: `{allowed_check}`\n"
+                "VERDICT: FAIL"
+            )
+        if sum(call["role"] == "generator" for call in calls) == 2:
+            diff["value"] = "+after repair"
+        return 0, "STATUS: done"
+
+    class Result:
+        returncode = 0
+
+    def fake_subprocess_run(command, **kwargs):
+        check_calls.append(command)
+        return Result()
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    monkeypatch.setattr(providers, "_git_diff_evidence", lambda cfg: diff["value"])
+    monkeypatch.setattr(providers, "_git_changed_files", lambda cfg: [])
+    monkeypatch.setattr(providers, "_run_step_checks", _pass_step_checks)
+    monkeypatch.setattr(providers.subprocess, "run", fake_subprocess_run)
+    state = new_state("adaptive-bugfix", _adaptive_steps(step_factory), "fix")
+
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"cwd": str(tmp_path), "checks": [allowed_check]},
+        20,
+        quiet=True,
+    )
+
+    assert final == "DONE"
+    assert check_calls == [allowed_check]
+    assert state["step_state"]["targeted-review"]["verdicts"] == [{
+        "by": "adaptive-repair",
+        "ok": True,
+        "note": f"mechanical check passed: {allowed_check}",
+    }]
+
+
 def test_allowlisted_blocking_finding_gets_one_informed_repair(
     step_factory, monkeypatch, tmp_path
 ):
