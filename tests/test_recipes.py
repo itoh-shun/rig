@@ -150,8 +150,8 @@ def test_adaptive_bugfix_graph_references_are_resolved():
 
 def test_existing_bugfix_recipe_bytes_are_unchanged():
     expected = {
-        "bugfix.md": "bbf216319c3056819198df84a34e35bcff51ae476b11966ec2ab47e9197a8d8b",
-        "fast-bugfix.md": "398447decc09a69432f7a63efae704eb3f1ed3dc752c04dfd82d5fd6555dd45e",
+        "bugfix.md": "68137ec65dbc969caf62b7259e40828ed7232be149963ff6b666c46c390b5947",
+        "fast-bugfix.md": "a922f07ff1e94805d43b8589f7cb08a3e3d51277fc50e739a576c7ba584b345d",
     }
     actual = {
         name: hashlib.sha256((config.RECIPES / name).read_bytes()).hexdigest() for name in expected

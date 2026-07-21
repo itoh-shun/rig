@@ -39,6 +39,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "ruff>=0.5",
+  "setuptools>=68",
+  "wheel",
   "tomli; python_version < \"3.11\"",
 ]
 
