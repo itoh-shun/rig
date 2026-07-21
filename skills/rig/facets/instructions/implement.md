@@ -48,3 +48,10 @@ subagent の実装が完了したら diff をレビューしてから verify へ
 ### ④ observability計装の追加提案（review-diffからの橋渡し・#278）
 
 review-diff step で `observability-reviewer` が計装コード（ログ/メトリクス/トレース）の具体的な追加提案を伴う指摘をした場合、その提案を implement subagent への追加タスクとして渡し、本タスクの差分に直結する範囲でのみ計装コードを追加する。無関係な既存コードへの計装追加は行わない（`no_unrelated_diff`/`no_unrelated_refactor`基準を優先する）。追加した計装コードも通常の diff レビュー対象になる。
+
+### ⑤ テスト追加が許される2つの狭い場面
+
+既存テストの変更・弱体化・削除は常に不可。無関係なテスト追加も不可。以下の2場面**のみ**、狭く scope した1本のテスト追加を許す：
+
+- **初回実装時**：修正の正しさが goal に明記されていない既定値・エッジケース（例：legacy 挙動の復元でデフォルト値を推測する必要がある）に依存する場合、その入力/挙動だけを固定する検証テストを1本追加し、理由を明示してよい（`ts-api-compat-export`型の曖昧なデフォルト値バグを、bare実装同様にその場で検証させ、reviewerの取りこぼしに依存しないための carve-out）。
+- **informed repair 時**（`adaptive-bugfix`の3rd call）：reviewer が「既存テストと整合するがカバレッジが無い」という finding を allowlisted `MECHANICAL_CHECK` 付きで FAIL した場合、その finding が名指しした入力/挙動だけを固定するテストを1本追加してよい。「テストを変更するな」という原則自体は repair 対象の finding を解消するための例外であり、無制限のテスト追加を許すものではない。

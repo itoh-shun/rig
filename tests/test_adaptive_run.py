@@ -1,10 +1,11 @@
+import json
 import os
 import pathlib
 import subprocess
 
 import pytest
 
-from rig_workbench.orchestrate import commands, providers
+from rig_workbench.orchestrate import commands, config, providers
 from rig_workbench.orchestrate.providers import run_loop
 from rig_workbench.orchestrate.runstate import new_state
 
@@ -340,6 +341,83 @@ steps:
     assert providers._adaptive_check_allowlist(
         captured["state"], captured["cfg"]
     ) == set(cli_checks)
+
+
+@pytest.mark.parametrize(
+    ("file_name", "triggering_line", "expected_primary"),
+    [
+        ("auth_service.py", "password = current_user.password\n", "security-reviewer"),
+        ("migrations.py", "ALTER TABLE users ADD COLUMN age INT\n", "design-reviewer"),
+    ],
+)
+def test_real_cli_path_routes_risk_to_the_matching_reviewer_without_cfg_cwd(
+    monkeypatch, tmp_path, file_name, triggering_line, expected_primary
+):
+    """End-to-end through the actual `commands.cmd_run` CLI path (not synthetic
+    state), with cfg["cwd"] deliberately unset (the real shape of every non-
+    `--isolate` headless run — see bench_providers.py). Before the
+    config.INVOCATION_CWD fallback this always fell back to test-reviewer
+    regardless of diff content, since _git_diff_evidence/_git_changed_files
+    silently saw an empty diff."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "base.py").write_text("value = 1\n", encoding="utf-8")
+    _git(repo, "add", "base.py")
+    _git(repo, "commit", "-q", "-m", "base")
+    (repo / file_name).write_text(triggering_line, encoding="utf-8")
+
+    monkeypatch.setattr(config, "INVOCATION_CWD", repo)
+    out_path = tmp_path / "state.json"
+
+    with pytest.raises(SystemExit):
+        commands.cmd_run([
+            "adaptive-bugfix",
+            "--provider",
+            "mock",
+            "--check",
+            "true",
+            "--max-steps",
+            "20",
+            "--out",
+            str(out_path),
+        ])
+
+    saved = json.loads(out_path.read_text(encoding="utf-8"))
+    assert saved["adaptive"]["assessment"]["primary"] == expected_primary
+    assert saved["adaptive"]["assessment"]["fallback_reason"] is None
+
+
+def test_local_provider_generator_falls_back_to_invocation_cwd_without_cfg_cwd(
+    monkeypatch, tmp_path
+):
+    """Same audit as the git-diff-evidence bug: orchestrate.providers.run_provider only
+    routed an ollama/lmstudio "generator" call through _run_local_patch_generator (the
+    code path that actually applies a patch to disk) when cfg["cwd"] was explicitly set.
+    Since the real CLI never sets cfg["cwd"] outside `--isolate`, every non-isolated rig
+    run with a local provider silently fell through to a plain chat completion that wrote
+    nothing at all -- claude/codex don't have this gap because their subprocess calls
+    already inherit the parent process's cwd (config.INVOCATION_CWD) for free."""
+    monkeypatch.setattr(config, "INVOCATION_CWD", tmp_path)
+    seen = {}
+
+    def fake_local_patch_generator(provider, prompt, cfg):
+        seen["provider"] = provider
+        seen["cwd"] = cfg["cwd"]
+        return 0, "ok"
+
+    def fail_http_provider(provider, prompt, cfg):
+        raise AssertionError("should not fall through to a plain chat completion")
+
+    monkeypatch.setattr(providers, "_run_local_patch_generator", fake_local_patch_generator)
+    monkeypatch.setattr(providers, "run_http_provider", fail_http_provider)
+
+    rc, out = providers.run_provider("ollama", "generator", "prompt", {})
+
+    assert rc == 0 and out == "ok"
+    assert seen == {"provider": "ollama", "cwd": str(tmp_path)}
 
 
 def test_normal_path_uses_one_generator_and_one_targeted_reviewer(
@@ -967,6 +1045,62 @@ def test_allowlisted_blocking_finding_gets_one_informed_repair(
     assert repair["exit_status"] == 0
 
 
+def test_informed_repair_detects_diff_via_invocation_cwd_without_explicit_cfg_cwd(
+    step_factory, monkeypatch, tmp_path
+):
+    """cfg["cwd"] is never set outside `--isolate` (see commands.cmd_run) — the real
+    shape of every benchmarked headless run. Before the config.INVOCATION_CWD fallback
+    in _git_diff_evidence/_git_changed_files, this made diff_changed always False,
+    so a repair generator's real file edit was never detected and the mechanical
+    check never even ran."""
+    allowed_check = "true"
+    calls = []
+
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    (tmp_path / "base.py").write_text("value = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "base.py")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    monkeypatch.setattr(config, "INVOCATION_CWD", tmp_path)
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append({"role": role, "persona": persona})
+        if role == "verifier":
+            return 0, (
+                "REPRODUCTION: the sibling-write path has no test pinning it\n"
+                f"MECHANICAL_CHECK: {allowed_check}\n"
+                "VERDICT: FAIL"
+            )
+        if sum(call["role"] == "generator" for call in calls) == 2:
+            (tmp_path / "test_regression.py").write_text(
+                "def test_x():\n    pass\n", encoding="utf-8"
+            )
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("adaptive-bugfix", _adaptive_steps(step_factory), "fix")
+
+    # No cfg["cwd"] at all -- the real headless-run shape (see bench_providers.py /
+    # commands.cmd_run, which only ever sets cfg["cwd"] behind --isolate).
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"checks": [allowed_check]},
+        20,
+        quiet=True,
+    )
+
+    assert final == "DONE"
+    repair = next(item for item in state["history"] if item["action"] == "INFORMED_REPAIR")
+    assert repair["diff_changed"] is True
+    assert repair["exit_status"] == 0
+
+
 def test_failed_post_repair_check_retains_failing_review(
     step_factory, monkeypatch, tmp_path
 ):
@@ -1285,6 +1419,51 @@ def test_budget_exhaustion_stops_before_another_provider_call(
         "ok": False,
         "note": "invocation budget exhausted",
     }]
+
+
+def test_implement_contract_permits_scoped_verification_test_on_first_pass(
+    step_factory,
+):
+    step = step_factory(id="implement")
+    st = {"retries": 0}
+    contract = providers._build_step_contract(
+        {"recipe": "adaptive-bugfix", "goal": "fix"}, step, st
+    )
+
+    assert "unstated default/edge-case value" in contract
+    assert "do not modify, weaken, or delete existing tests" in contract
+    assert "missing regression test" not in contract
+
+
+def test_implement_contract_permits_named_test_during_informed_repair(
+    step_factory,
+):
+    step = step_factory(id="implement")
+    st = {
+        "retries": 0,
+        "last_failure": (
+            "REVIEWER: mock:test-reviewer\n"
+            "REPRODUCTION: the ownership check has no test pinning the sibling-write case\n"
+            "MECHANICAL_CHECK: python -m pytest -q\n"
+        ),
+    }
+    contract = providers._build_step_contract(
+        {"recipe": "adaptive-bugfix", "goal": "fix"}, step, st
+    )
+
+    assert "missing regression test for a" in contract
+    assert "Do not modify, weaken, or delete any existing test" in contract
+    assert "unstated default/edge-case value" not in contract
+
+
+def test_adaptive_review_prompt_permits_allowlisted_check_for_coverage_findings():
+    state = {"adaptive": {"assessment": {"signals": []}}}
+    prompt = providers._adaptive_review_prompt(
+        state, "test-reviewer", "+diff", {"checks": ["python -m pytest -q"]}
+    )
+
+    assert "missing-coverage finding" in prompt
+    assert "narrowly-scoped test pinning the named input/behavior" in prompt
 
 
 def test_repair_budget_exhaustion_preserves_failing_primary_evidence(

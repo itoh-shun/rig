@@ -36,7 +36,11 @@ risk-selected reviewer.
 The three-call repair budget permits one informed repair only when a blocking
 review finding provides both a reproduction and a mechanical command that
 exactly matches a command supplied through the CLI `--check` allowlist. The
-recipe's own acceptance checks cannot authorize semantic repair.
+recipe's own acceptance checks cannot authorize semantic repair. A finding
+that names a missing regression test for a specific input/behavior may still
+cite an allowlisted check as its mechanical command: the repair pass may add
+exactly one narrowly-scoped test pinning that input/behavior (never a broader
+test change), and re-running the same allowlisted command then exercises it.
 
 The four-call multi-domain budget permits a second independent reviewer when
 the deterministic assessment finds two high-risk domains. Risk assessment and

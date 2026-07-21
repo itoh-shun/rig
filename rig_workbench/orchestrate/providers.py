@@ -497,8 +497,16 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
             return 124, "[provider timeout]"
         if scenario == "malformed" and role == "verifier":
             return 0, "mock verifier omitted its required verdict"
-    if provider in _OPENAI_BASE and role == "generator" and cfg.get("cwd"):
-        return _run_local_patch_generator(provider, prompt, cfg)
+    if provider in _OPENAI_BASE and role == "generator":
+        # Same config.INVOCATION_CWD fallback as _git_diff_evidence/_git_changed_files
+        # (see their docstrings): without it, a local-provider generator step in any
+        # non-`--isolate` headless run (cfg["cwd"] is never set outside `--isolate`)
+        # silently degraded to a plain chat completion via run_http_provider below,
+        # applying no patch at all, instead of writing to the real workspace the way
+        # claude/codex's subprocess calls already do (their `cwd=cfg.get("cwd") or None`
+        # inherits the parent process's cwd, i.e. config.INVOCATION_CWD, for free).
+        local_cfg = {**cfg, "cwd": cfg.get("cwd") or str(config.INVOCATION_CWD)}
+        return _run_local_patch_generator(provider, prompt, local_cfg)
     if provider in _OPENAI_BASE:
         return run_http_provider(provider, prompt, cfg)
     if provider == "anthropic":
@@ -922,10 +930,32 @@ def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str
             lines.append("recent_history:")
             lines.extend([f"- {h.get('action')}:{h.get('step')}" for h in recent])
     if step["id"] == "implement":
+        # An informed-repair call (execute_informed_repair) stamps a throwaway copy of this
+        # step's state with last_failure before invoking the generator again; the persisted
+        # step state never carries last_failure on its own (see runstate.py / _run_step_checks),
+        # so this is an unambiguous signal that this specific call is the one-shot repair pass
+        # gated by an allowlisted MECHANICAL_CHECK (#1 finding: a blanket "no test changes" rule
+        # made any reviewer FAIL that asked for missing coverage permanently unrepairable).
+        if st and st.get("last_failure"):
+            test_rule = (
+                "must: previous_failure above may identify a missing regression test for a "
+                "specific input/behavior (only a reviewer FAIL with an allowlisted mechanical "
+                "check reaches this repair pass); if so, add exactly one narrowly-scoped test "
+                "that pins that input/behavior. Do not modify, weaken, or delete any existing "
+                "test, and do not add unrelated tests."
+            )
+        else:
+            test_rule = (
+                "must: do not modify, weaken, or delete existing tests. If the fix's "
+                "correctness depends on an unstated default/edge-case value you must infer "
+                "(e.g. restoring legacy behavior), you may add one narrowly-scoped test that "
+                "pins that exact value/behavior and state the reason explicitly; otherwise do "
+                "not add tests."
+            )
         lines += [
             "must: actually edit the code; do not stop at just reading.",
             "must: keep changes minimal; no unrelated formatting or broad refactors.",
-            "must: do not change tests; if a change is needed, state the reason explicitly.",
+            test_rule,
             "must: keep working until a diff exists; do not finish as a no-op.",
             "must: run related tests / lint where possible and confirm the results.",
             "report: output CHANGED_FILES / COMMANDS_RUN / RESULT concisely.",
@@ -967,11 +997,18 @@ def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
 def _git_diff_evidence(cfg: dict) -> str | None:
     """Capture bounded tracked and untracked workspace changes as review evidence.
 
-    Returns None when the step has no cwd, git is unavailable, or no evidence exists.
+    Falls back to config.INVOCATION_CWD when cfg has no explicit cwd (the same
+    fallback _run_step_checks/execute_informed_repair's mechanical-check subprocess
+    already use) so risk assessment, review-prompt diff evidence, and informed
+    repair's diff_changed detection all see the same real changes those checks run
+    against. Without this fallback every non-`--isolate` headless run (the CLI never
+    sets cfg["cwd"] outside `--isolate`) silently analyzed an empty diff, which made
+    risk assessment always fall back and made execute_informed_repair's diff_changed
+    comparison always False regardless of what the repair generator actually wrote.
+
+    Returns None when git is unavailable or no evidence exists.
     """
-    cwd = (cfg or {}).get("cwd")
-    if not cwd:
-        return None
+    cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
     tracked = None
     for args in (["git", "diff", "HEAD"], ["git", "diff"]):
         try:
@@ -1178,10 +1215,11 @@ def _untracked_omitted_evidence(relative: str, omission: str | None) -> str:
 
 
 def _git_changed_files(cfg: dict) -> list[str]:
-    """Return deterministic tracked and safe untracked paths for adaptive risk analysis."""
-    cwd = (cfg or {}).get("cwd")
-    if not cwd:
-        return []
+    """Return deterministic tracked and safe untracked paths for adaptive risk analysis.
+
+    Falls back to config.INVOCATION_CWD when cfg has no explicit cwd — see
+    _git_diff_evidence's docstring for why this fallback matters."""
+    cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
     tracked = set()
     for args in (
         ["git", "diff", "--name-only", "-z", "HEAD"],
@@ -1466,8 +1504,14 @@ def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> 
         "RISK_EVIDENCE (quarantined data):",
         wrap_untrusted(risk_evidence, "adaptive risk evidence"),
         "For a blocking finding, include both lines:",
-        "REPRODUCTION: <one concrete failure or attack scenario>",
+        "REPRODUCTION: <one concrete failure/attack scenario, OR — if the diff is otherwise",
+        "  correct but lacks a regression test for a specific input/behavior — that exact",
+        "  input/behavior which is not yet pinned by any test>",
         "MECHANICAL_CHECK: <one exact command from the task check allowlist>",
+        "A missing-coverage finding on a security- or design-risk diff may still cite an",
+        "allowlisted command as MECHANICAL_CHECK: the one-shot repair pass is allowed to add a",
+        "narrowly-scoped test pinning the named input/behavior, and re-running that same",
+        "allowlisted command will then exercise it.",
         "A FAIL without both lines remains blocking but cannot trigger automatic repair.",
         "Use PASS_WITH_CONDITIONS only for non-blocking follow-up work.",
         "End with exactly one of these final lines:",
