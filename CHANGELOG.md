@@ -2,6 +2,20 @@
 
 ## [1.20.0] - 2026-07-21
 
+A real paired bare-vs-rig benchmark run (10 tasks x 3 runs x 2 providers,
+`--allow-paid-provider`) on `adaptive-bugfix` surfaced and drove the fix of a
+real bug (see Fixed): `cfg["cwd"]` was never set outside `--isolate`, so risk
+assessment always saw an empty diff (permanent fallback to `test-reviewer`,
+security/design routing never fired) and informed-repair's diff-changed check
+always compared `""` to `""`. Post-fix, Claude passes the recipe's own
+acceptance gate outright: 0% rig silent defects vs 3.3% bare (100% relative
+reduction), 0% safe-stop (was 60% pre-fix), 2.33x call ratio. Codex's
+wrong-default-value silent-defect regression is fully resolved (0% both arms,
+was 6.9% rig vs 0% bare pre-fix), but its safe-stop rate rose to 27.6% (over
+the 20% threshold) now that risk assessment sees real diffs and reviewers are
+more often correctly triggered — tracked as follow-up work, not yet passing
+for Codex.
+
 ### Added
 
 - Added the opt-in `adaptive-bugfix` recipe. Its normal path uses two model
@@ -24,6 +38,29 @@
   `--allow-paid-provider` opt-in. Benchmark CLI exit codes are `0` for a
   passing result, `1` for completed fail/invalid/inconclusive results, and `2`
   for CLI or schema errors.
+
+### Fixed
+
+- `adaptive-bugfix`'s risk assessment and informed-repair diff detection
+  (`_git_diff_evidence` / `_git_changed_files` in
+  `rig_workbench/orchestrate/providers.py`) silently analyzed an empty diff
+  on every real (non-`--isolate`) headless run, because `cfg["cwd"]` is only
+  ever set inside the `--isolate` branch of `cmd_run`. This both defeated
+  security/design risk routing (permanent fallback to `test-reviewer`) and
+  made `execute_informed_repair`'s diff-changed check always `False`
+  regardless of what the repair generator actually wrote to disk. Both now
+  fall back to `config.INVOCATION_CWD`, matching the fallback the mechanical
+  check subprocess already used. The same gap independently no-opped the
+  local-provider (ollama/lmstudio) generator dispatch; claude/codex were
+  accidentally unaffected there since their subprocess `cwd=None` inherits
+  the parent process's cwd.
+- The implement step's blanket "do not change tests" rule made any reviewer
+  FAIL that asked for missing test coverage permanently unrepairable (no
+  mechanical check can ever be "add a test"). It now permits adding exactly
+  one narrowly-scoped verification test: on first pass when the fix's
+  correctness depends on an unstated default/edge-case value, or during the
+  one-shot informed-repair pass when the reviewer named the input/behavior
+  via an allowlisted mechanical check.
 
 rig の変更履歴。バージョンは `.claude-plugin/plugin.json` に対応。
 形式は [Keep a Changelog](https://keepachangelog.com/) に準拠（日付は JST）。
