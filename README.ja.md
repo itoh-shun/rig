@@ -444,6 +444,14 @@ schema v2の合格条件は厳密である。10タスク以上かつ各タスク
 
 **正直なスコープ注記**：`--provider mock`はレポート上も**WIRING ONLY**と表示され、配線とレポート経路だけを検証する。品質向上の証拠にはならない。Claude/Codexの実行は課金を伴うため`--allow-paid-provider`が必須で、このリポジトリは有料結果を自動実行・自動公開しない。
 
+**モデル跨ぎ比較。** `--bare-model`・`--rig-model`はそれぞれのアームだけモデルを上書きできる。上の同一モデル比較では答えられない第三の問い——「rig経由なら安価なモデルでも上位モデルのbare出力に迫れるか」——を検証できる。省略時はどちらも`--model`にフォールバックするため、明示的にopt-inしない限り従来の同一モデル挙動は変わらない：
+
+```bash
+rig-wb bench --provider claude --allow-paid-provider --bare-model fable --rig-model sonnet --runs 3
+```
+
+合格条件は同じschema v2基準を使う。JSONレポートには`model`（rig側のモデルを保持し後方互換を維持）に加えて`bare_model`/`rig_model`が併記されるため、比較対象が曖昧になることはない。
+
 ### MCPサーバ（#263）
 
 Claude Codeセッションの外（別エージェント・CI・別プロセス）からrigを操作したい場合は、`scripts/mcp_server.py`を起動する：

@@ -155,6 +155,9 @@ def _print_bench_contract_help() -> None:
   --corpus <path>             load an external corpus instead of the packaged tasks
   --runs N                    planned pairs per task; validity still requires
                               3 valid pairs for each of at least 10 tasks
+  --bare-model / --rig-model  per-arm model override (e.g. a cheaper model
+                              driven by rig vs. a stronger bare baseline);
+                              both default to --model when omitted
   output                      schema v2; old schema-v1 reports remain renderable
   --provider mock             WIRING ONLY, not quality evidence
   --allow-paid-provider       explicit opt-in required for claude/codex execution

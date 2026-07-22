@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.21.0] - 2026-07-23
+
+Adds `--bare-model`/`--rig-model` to `rig-wb bench`, a per-arm model override
+for a third benchmark question the same-model pairing (1.20.0's Claim B)
+can't answer: can a cheaper model driven by rig approach a stronger model's
+bare output? Both flags default to `--model` when omitted, so the historical
+same-model-both-arms behavior and its `score_provider` single-identity
+invariant are unchanged unless a run explicitly opts in. The JSON report now
+carries `bare_model`/`rig_model` alongside the existing `model` field (which
+stays the rig arm's model for backward compatibility), and the HTML report's
+provider/model card shows both when they differ.
+
+### Added
+
+- `rig-wb bench --bare-model <model> --rig-model <model>`: override the model
+  for a single arm. `run_benchmark`/`run_pair` resolve each arm's model
+  independently only when at least one override is given (otherwise a single
+  resolution is reused, preserving the prior local-provider discovery
+  behavior and call count).
+
 ## [1.20.1] - 2026-07-23
 
 Closes the TypeScript follow-up left open by 1.20.0 (#338): the backtick/quote

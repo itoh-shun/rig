@@ -356,6 +356,8 @@ def test_bench_help_documents_evidence_and_exit_contract(tmp_path):
         "0=pass",
         "1=completed non-pass",
         "2=CLI/schema error",
+        "--bare-model",
+        "--rig-model",
     ):
         assert expected in help_text
 
@@ -422,6 +424,36 @@ def test_completed_nonpassing_benchmark_exits_one(tmp_path):
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert json.loads(output.read_text(encoding="utf-8"))["score"]["verdict"] == "invalid"
+
+
+def test_bench_accepts_distinct_bare_and_rig_models(tmp_path):
+    output = tmp_path / "bench.json"
+    result = run_rig_wb(
+        [
+            "bench",
+            "--tasks",
+            "py-auth-sibling-write",
+            "--provider",
+            "mock",
+            "--bare-model",
+            "weaker-mock",
+            "--rig-model",
+            "stronger-mock",
+            "--runs",
+            "1",
+            "--out",
+            str(output),
+        ],
+        tmp_path,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    summary = json.loads(output.read_text(encoding="utf-8"))
+    assert summary["bare_model"] == "weaker-mock"
+    assert summary["rig_model"] == "stronger-mock"
+    pair = summary["tasks"][0]["runs"][0]
+    assert pair["arms"]["bare"]["attempts"][0]["model"] == "weaker-mock"
+    assert pair["arms"]["rig"]["attempts"][0]["model"] == "stronger-mock"
 
 
 def test_malformed_external_corpus_exits_two(tmp_path):

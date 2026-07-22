@@ -63,7 +63,7 @@ def test_run_pair_materializes_identical_workspaces_before_either_arm(
     monkeypatch.setattr(bench, "_git_evidence", tracked_git_evidence)
 
     bench_options = {}
-    pair = bench.run_pair(task, 1, "mock", "mock-model", bench_options)
+    pair = bench.run_pair(task, 1, "mock", "mock-model", "mock-model", bench_options)
 
     assert pair.pair_id == "py-auth-sibling-write-001"
     assert pair.provider == "mock"
@@ -93,7 +93,7 @@ def test_run_pair_materializes_identical_workspaces_before_either_arm(
 def test_run_pair_retains_every_failed_provider_attempt():
     task = bench_tasks.load_tasks()["py-auth-sibling-write"]
 
-    pair = bench.run_pair(task, 2, "mock", None, {"mock_scenario": "timeout"})
+    pair = bench.run_pair(task, 2, "mock", None, None, {"mock_scenario": "timeout"})
 
     assert pair.arm_order == ("rig", "bare")
     assert pair.model == "mock"
@@ -127,7 +127,7 @@ def test_run_pair_requires_public_and_hidden_pass_for_both_arms(monkeypatch):
         lambda *_args: (public_failure, hidden_pass),
     )
 
-    pair = bench.run_pair(task, 1, "mock", None, {})
+    pair = bench.run_pair(task, 1, "mock", None, None, {})
 
     for arm in pair.arms.values():
         assert arm.completed is False
@@ -143,16 +143,84 @@ def test_unhandled_adapter_failure_does_not_guess_a_provider_call(monkeypatch):
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("before call")),
     )
 
-    pair = bench.run_pair(task, 1, "mock", "mock", {})
+    pair = bench.run_pair(task, 1, "mock", "mock", "mock", {})
 
     assert pair.arms["bare"].attempts[0].invocations == 0
     assert pair.arms["bare"].attempts[0].infra_error.startswith("harness_failure")
 
 
+def test_run_pair_supports_distinct_bare_and_rig_models():
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+
+    pair = bench.run_pair(task, 1, "mock", "bare-model", "rig-model", {})
+    data = pair.to_dict()
+
+    assert pair.bare_model == "bare-model"
+    assert pair.rig_model == "rig-model"
+    # `model` stays a single value (the rig arm) so score_provider's
+    # single-identity check keeps working across a whole run.
+    assert pair.model == "rig-model"
+    assert data["bare_model"] == "bare-model"
+    assert data["rig_model"] == "rig-model"
+    assert data["planned"]["bare_model"] == "bare-model"
+    assert data["planned"]["rig_model"] == "rig-model"
+    assert pair.arms["bare"].attempts[0].model == "bare-model"
+    assert pair.arms["rig"].attempts[0].model == "rig-model"
+
+
+def test_run_benchmark_resolves_bare_and_rig_models_independently(monkeypatch):
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    resolve_calls = []
+    pair_model_pairs = []
+
+    def fake_resolve(provider, requested_model, options, *, arm=None):
+        resolve_calls.append(requested_model)
+        return f"resolved-{requested_model}"
+
+    def fake_run_pair(selected_task, run_index, provider, bare_model, rig_model, options):
+        pair_model_pairs.append((bare_model, rig_model))
+        return SimpleNamespace(
+            pair_id=f"{selected_task.id}-{run_index:03d}",
+            task_id=selected_task.id,
+            provider=provider,
+            model=rig_model,
+            arms={},
+            to_dict=lambda: {
+                "task_id": selected_task.id,
+                "run": run_index,
+                "provider": provider,
+                "model": rig_model,
+                "bare_model": bare_model,
+                "rig_model": rig_model,
+                "arms": {},
+            },
+        )
+
+    monkeypatch.setattr(bench, "resolve_pair_model", fake_resolve)
+    monkeypatch.setattr(bench, "run_pair", fake_run_pair)
+
+    summary = bench.run_benchmark(
+        [task],
+        "mock",
+        None,
+        2,
+        {},
+        bare_model="weaker",
+        rig_model="stronger",
+    )
+
+    assert resolve_calls == ["weaker", "stronger"]
+    assert pair_model_pairs == [("resolved-weaker", "resolved-stronger")] * 2
+    assert summary["bare_model"] == "resolved-weaker"
+    assert summary["rig_model"] == "resolved-stronger"
+    # top-level "model" stays the rig arm's model for backward compatibility.
+    assert summary["model"] == "resolved-stronger"
+
+
 def test_pair_json_contains_planning_attempts_status_checks_and_timing():
     task = bench_tasks.load_tasks()["py-auth-sibling-write"]
 
-    data = bench.run_pair(task, 1, "mock", None, {}).to_dict()
+    data = bench.run_pair(task, 1, "mock", None, None, {}).to_dict()
 
     assert data["pair_id"] == "py-auth-sibling-write-001"
     assert data["planned"]["arm_order"] == ["bare", "rig"]
@@ -178,7 +246,7 @@ def test_run_pair_records_changed_files_outside_task_manifest_as_unrelated(monke
 
     monkeypatch.setattr(bench, "_git_evidence", evidence_with_unrelated_file)
 
-    pair = bench.run_pair(task, 1, "mock", None, {})
+    pair = bench.run_pair(task, 1, "mock", None, None, {})
 
     assert pair.arms["bare"].unrelated_files == ("surprise.txt",)
     assert pair.arms["rig"].unrelated_files == ("surprise.txt",)
@@ -215,6 +283,7 @@ def test_run_pair_records_workspace_writes_outside_scratch_root(monkeypatch, tmp
         task,
         1,
         "mock",
+        None,
         None,
         {"leak_check_root": str(leak_root)},
     )
@@ -256,6 +325,7 @@ def test_run_pair_records_ignored_workspace_writes_outside_scratch_root(monkeypa
         1,
         "mock",
         None,
+        None,
         {"leak_check_root": str(leak_root)},
     )
 
@@ -296,6 +366,7 @@ def test_run_pair_records_further_writes_to_pre_dirty_workspace_path(monkeypatch
         1,
         "mock",
         None,
+        None,
         {"leak_check_root": str(leak_root)},
     )
 
@@ -312,6 +383,7 @@ def test_run_pair_marks_workspace_snapshot_failure_as_infrastructure_error(tmp_p
         task,
         1,
         "mock",
+        None,
         None,
         {"leak_check_root": str(non_git_root)},
     )
@@ -379,19 +451,20 @@ def test_run_benchmark_resolves_one_model_for_every_pair(monkeypatch):
         resolve_calls.append((provider, requested_model, options))
         return "discovered-model"
 
-    def fake_run_pair(selected_task, run_index, provider, model, options):
-        pair_models.append(model)
+    def fake_run_pair(selected_task, run_index, provider, bare_model, rig_model, options):
+        assert bare_model == rig_model
+        pair_models.append(rig_model)
         return SimpleNamespace(
             pair_id=f"{selected_task.id}-{run_index:03d}",
             task_id=selected_task.id,
             provider=provider,
-            model=model,
+            model=rig_model,
             arms={},
             to_dict=lambda: {
                 "task_id": selected_task.id,
                 "run": run_index,
                 "provider": provider,
-                "model": model,
+                "model": rig_model,
                 "arms": {},
             },
         )
