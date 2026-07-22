@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.20.1] - 2026-07-23
+
+Closes the TypeScript follow-up left open by 1.20.0 (#338): the backtick/quote
+`MECHANICAL_CHECK` unwrap fix was re-verified with a real
+`--allow-paid-provider` Codex (gpt-5.5) run across all 5 TypeScript benchmark
+tasks (`ts-api-compat-export`, `ts-async-error-propagation`,
+`ts-auth-sibling-handler`, `ts-generated-file-modification`,
+`ts-stale-cache-mutation`), 3 runs each. Result: 15/15 valid pairs, 0%
+rig safe-stop, 0% rig silent defects (one transient `provider_failure` infra
+error was retried to reach 3 valid runs on `ts-auth-sibling-handler`). The
+Codex safe-stop regression from 1.20.0 is now confirmed resolved on both the
+Python and TypeScript halves of the corpus.
+
+### Fixed
+
+- No code change in this release — this is a re-verification-only entry
+  confirming the 1.20.0 `execute_informed_repair` backtick/quote unwrap fix
+  also holds on the TypeScript half of the benchmark corpus (previously
+  untested because the Codex account hit its usage limit mid-verification).
+
 ## [1.20.0] - 2026-07-21
 
 A real paired bare-vs-rig benchmark run (10 tasks x 3 runs x 2 providers,
