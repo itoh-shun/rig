@@ -444,6 +444,14 @@ Schema-v2 acceptance is deliberately strict: at least 10 tasks and 3 valid pairs
 
 **Honest scope note:** `--provider mock` is labeled **WIRING ONLY**. It proves the harness plumbing and report path work, not that rig improves quality. Real Claude/Codex execution requires `--allow-paid-provider` because it incurs billing; this repository does not run or publish paid results automatically.
 
+**Cross-model comparisons.** `--bare-model` and `--rig-model` override the model for a single arm, letting you ask a third question the same-model pairing above can't: can a cheaper model driven by rig approach a stronger model's bare output? Both default to `--model` when omitted, so the historical same-model-both-arms behavior is unchanged unless you opt in:
+
+```bash
+rig-wb bench --provider claude --allow-paid-provider --bare-model fable --rig-model sonnet --runs 3
+```
+
+The same schema-v2 acceptance criteria apply; `bare_model`/`rig_model` are recorded alongside `model` (which stays the rig arm's model) in the JSON report so the comparison is never ambiguous.
+
 ### MCP server (#263)
 
 To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:

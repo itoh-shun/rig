@@ -98,6 +98,8 @@ class PairResult:
     start_trees: dict[str, str]
     arms: dict[str, ArmResult]
     elapsed_s: float
+    bare_model: str | None = None
+    rig_model: str | None = None
 
     def to_dict(self) -> dict:
         start_tree = next(iter(self.start_trees.values()))
@@ -107,6 +109,8 @@ class PairResult:
             "run": self.run,
             "provider": self.provider,
             "model": self.model,
+            "bare_model": self.bare_model,
+            "rig_model": self.rig_model,
             "arm_order": list(self.arm_order),
             "start_trees": dict(self.start_trees),
             "planned": {
@@ -114,6 +118,8 @@ class PairResult:
                 "arm_order": list(self.arm_order),
                 "provider": self.provider,
                 "model": self.model,
+                "bare_model": self.bare_model,
+                "rig_model": self.rig_model,
                 "start_tree": start_tree,
             },
             "arms": {name: arm.to_dict() for name, arm in self.arms.items()},
@@ -463,11 +469,14 @@ def run_pair(
     task: BenchTask,
     run_index: int,
     provider: str,
-    model: str | None,
+    bare_model: str | None,
+    rig_model: str | None,
     options: Mapping[str, object] | None = None,
 ) -> PairResult:
     settings = dict(options or {})
-    model = resolve_pair_model(provider, model, settings)
+    bare_model = resolve_pair_model(provider, bare_model, settings, arm="bare")
+    rig_model = resolve_pair_model(provider, rig_model, settings, arm="rig")
+    arm_model = {"bare": bare_model, "rig": rig_model}
     order = planned_arm_order(run_index)
     pair_started = time.monotonic()
     workspaces: dict[str, pathlib.Path] = {}
@@ -492,19 +501,19 @@ def run_pair(
             if leak_snapshot_before.error:
                 attempt = _failed_attempt(
                     provider,
-                    model,
+                    arm_model[name],
                     arm_started,
                     RuntimeError(leak_snapshot_before.error),
                 )
             else:
                 try:
                     attempt = (
-                        run_bare(task, provider, model, workspace, settings)
+                        run_bare(task, provider, arm_model[name], workspace, settings)
                         if name == "bare"
-                        else run_rig(task, provider, model, workspace, settings)
+                        else run_rig(task, provider, arm_model[name], workspace, settings)
                     )
                 except Exception as error:
-                    attempt = _failed_attempt(provider, model, arm_started, error)
+                    attempt = _failed_attempt(provider, arm_model[name], arm_started, error)
 
             runner_state = _read_runner_state(artifact_dir) if name == "rig" else None
             if name == "rig" and artifact_dir.exists():
@@ -562,7 +571,9 @@ def run_pair(
             task_id=task.id,
             run=run_index,
             provider=provider,
-            model=model,
+            model=rig_model,
+            bare_model=bare_model,
+            rig_model=rig_model,
             arm_order=order,
             start_trees=start_trees,
             arms=arms,
@@ -623,13 +634,26 @@ def run_benchmark(
     model: str | None,
     runs: int,
     options: Mapping[str, object] | None = None,
+    *,
+    bare_model: str | None = None,
+    rig_model: str | None = None,
 ) -> dict:
-    model = resolve_pair_model(provider, model, options)
+    # `model` is the uniform fallback for either arm; `bare_model`/`rig_model`
+    # override it per arm for cross-model comparisons (e.g. a cheaper model
+    # driven by rig vs. a stronger model bare). When neither override is
+    # given, resolve once (matching prior behavior, and avoiding a second
+    # local-provider discovery call for the identical fallback).
+    if bare_model is None and rig_model is None:
+        resolved_bare_model = resolved_rig_model = resolve_pair_model(provider, model, options)
+    else:
+        resolved_bare_model = resolve_pair_model(provider, bare_model or model, options, arm="bare")
+        resolved_rig_model = resolve_pair_model(provider, rig_model or model, options, arm="rig")
     task_results = []
     all_pairs = []
     for task in tasks:
         pairs = [
-            run_pair(task, run_index, provider, model, options) for run_index in range(1, runs + 1)
+            run_pair(task, run_index, provider, resolved_bare_model, resolved_rig_model, options)
+            for run_index in range(1, runs + 1)
         ]
         all_pairs.extend(pairs)
         task_results.append(
@@ -650,7 +674,9 @@ def run_benchmark(
         "recipe_version": 1,
         "corpus_version": 1,
         "provider": provider,
-        "model": model,
+        "model": resolved_rig_model,
+        "bare_model": resolved_bare_model,
+        "rig_model": resolved_rig_model,
         "provider_version": _capture_provider_version(provider, options),
         "runs_per_task": runs,
         "score": asdict(score),
@@ -699,6 +725,16 @@ def cmd_bench(argv: list[str]) -> None:
         default="mock",
     )
     parser.add_argument("--model")
+    parser.add_argument(
+        "--bare-model",
+        help="model for the bare arm only (overrides --model for that arm; "
+        "e.g. a stronger model to compare against a cheaper --rig-model)",
+    )
+    parser.add_argument(
+        "--rig-model",
+        help="model for the rig arm only (overrides --model for that arm; "
+        "e.g. a cheaper model to compare against a stronger --bare-model)",
+    )
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=14)
     parser.add_argument("--provider-timeout", type=float, default=600)
@@ -732,7 +768,15 @@ def cmd_bench(argv: list[str]) -> None:
         "allow_headless_in_cc": args.allow_headless_in_cc,
         "mock_scenario": args.mock_scenario,
     }
-    summary = run_benchmark(selected, args.provider, args.model, args.runs, options)
+    summary = run_benchmark(
+        selected,
+        args.provider,
+        args.model,
+        args.runs,
+        options,
+        bare_model=args.bare_model,
+        rig_model=args.rig_model,
+    )
     output = json.dumps(summary, ensure_ascii=False, indent=2)
     if args.out:
         args.out.write_text(output, encoding="utf-8")

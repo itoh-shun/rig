@@ -338,6 +338,13 @@ def render_html(summary: dict) -> str:
 
     provider = escape(str(summary.get("provider", "unknown")))
     model = escape(str(summary.get("model", "unknown")))
+    bare_model = summary.get("bare_model")
+    rig_model = summary.get("rig_model")
+    model_label = (
+        f"bare={escape(str(bare_model))} / rig={escape(str(rig_model))}"
+        if bare_model is not None and rig_model is not None and bare_model != rig_model
+        else model
+    )
     provider_version = escape(str(summary.get("provider_version", "unavailable")))
     banner = " <strong>WIRING ONLY</strong>" if summary.get("provider") == "mock" else ""
     reasons = "".join(f"<li>{escape(str(reason))}</li>" for reason in score_data["reasons"])
@@ -395,7 +402,7 @@ def render_html(summary: dict) -> str:
     body = (
         f"<h1>Adaptive bugfix benchmark{banner}</h1>"
         "<div class='identity'>"
-        f"<div class='card'><div class='label'>Provider / model</div><div class='value'>{provider} / {model}</div></div>"
+        f"<div class='card'><div class='label'>Provider / model</div><div class='value'>{provider} / {model_label}</div></div>"
         f"<div class='card'><div class='label'>Provider version</div><div class='value'>{provider_version}</div></div>"
         f"<div class='card'><div class='label'>Validity</div><div class='value'>{escape(str(score_data['verdict']))}</div></div>"
         "</div><div class='metrics'>"

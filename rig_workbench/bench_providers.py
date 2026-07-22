@@ -56,13 +56,16 @@ def resolve_pair_model(
     provider: str,
     requested_model: str | None,
     options: Mapping[str, object] | None,
+    *,
+    arm: str | None = None,
 ) -> str:
     if requested_model:
         return requested_model
     if provider == "mock":
         return "mock"
     if provider not in _OPENAI_ENDPOINTS:
-        raise ValueError(f"provider {provider!r} requires an explicit model")
+        suffix = f" (for the {arm} arm)" if arm else ""
+        raise ValueError(f"provider {provider!r} requires an explicit model{suffix}")
 
     settings = options or {}
     configured_base = settings.get("base_url")
