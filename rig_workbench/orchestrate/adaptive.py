@@ -43,6 +43,14 @@ _REVIEWERS = {
 _RULES = (
     ("security", 3, re.compile(
         r"authentication|authenticate\(|authorization|current_user|requested_user|ownership|"
+        # authorization helpers / ownership / roles / access control (a fix that adds an
+        # is_owner()/permission check is security-relevant even without the word "authorization").
+        r"is_owner|can_access|has_permission|\bpermission|forbidden|is_admin|isadmin|"
+        r"\bowner\b|\brole\b|\bacl\b|access[-_]?control|unauthori[sz]ed|"
+        # multi-tenant isolation
+        r"\btenant\b|tenant_id|multi[- ]?tenant|"
+        # input validation / sanitization (route to security so the shared-sink / multi-site lens fires)
+        r"validat|sanitiz|allowlist|denylist|whitelist|blacklist|"
         r"\bsql\b|select\s+.+\s+from|insert\s+into|update\s+.+\s+set|"
         r"secret|api[_-]?key|password|token|subprocess|os\.(?:system|popen)\(|"
         r"shell\s*=|exec\(|eval\(|"

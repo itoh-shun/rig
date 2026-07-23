@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.24.1] - 2026-07-23
+
+Fixes the *upstream* half of the gate blind spot 1.24.0 addressed. Adding the
+detection lens to `security-reviewer` (1.24.0) does nothing if the reviewer is
+never dispatched — and investigating the panel failure showed exactly that: the
+adaptive risk router (`analyze_diff`) keyed on `authorization`/`ownership`/
+`current_user`, so an authorization fix written as `if not is_owner(user, doc):
+raise Forbidden(...)` produced **zero security signals** and routed to
+`test-reviewer`. security-reviewer never ran on the `trusted-helper-authz` task,
+which is why rig shipped its silent defect. Gate detection needs both routing
+*and* the lens; 1.24.0 shipped the lens, this ships the routing.
+
+- **`analyze_diff` security patterns** now also match authorization helpers and
+  ownership (`is_owner`, `can_access`, `has_permission`, `permission`,
+  `forbidden`, `is_admin`, `owner`, `role`, `acl`, `access-control`,
+  `unauthorized`), multi-tenant isolation (`tenant`, `tenant_id`,
+  `multi-tenant`), and input validation/sanitization (`validate`, `sanitize`,
+  `allowlist`/`denylist`/`whitelist`/`blacklist`). An ownership / tenant /
+  validation fix now routes to `security-reviewer` even when it never says the
+  word "authorization". Verified by `tests/test_adaptive_risk.py`.
+
 ## [1.24.0] - 2026-07-23
 
 Strengthens the gate where the model-invariance panel proved it was blind — the
