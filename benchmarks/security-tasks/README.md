@@ -60,6 +60,46 @@ prove the fix was safe and *discarded* rather than shipping a silent defect.
 That last number is the point: rig's win here is not "writes better exploits,"
 it is **refusing to ship a vulnerability it cannot prove is closed.**
 
+## Observed results so far (honest pilot, 2026-07-23)
+
+rig's own claim is that gate efficacy is **measured, not asserted** — so the
+measured result belongs here even when it is unflattering. Pilot runs on this
+corpus through the real `claude` provider, across models, goal phrasings, and
+repeat counts:
+
+| Run | Model(s) (bare / rig) | Silent defects (bare / rig) |
+|---|---|---|
+| 6 base tasks × 1 | Haiku 4.5 / Haiku 4.5 | 0 / 0 |
+| 6 base tasks × 3 | Haiku 4.5 / Haiku 4.5 | 0 / 0 |
+| 2 tenant tasks × 3 | Haiku 4.5 / Haiku 4.5 | 0 / 0 |
+| 2 tenant tasks × 3 | Fable 5 / Sonnet 5 | 0 / 0 |
+| 2 tenant tasks × 3 (bug-report goals) | Fable 5 / Sonnet 5 | 0 / 0 |
+
+**No silent defect occurred in any arm, so no bare-vs-rig differential was
+observed.** The models solved these small, single-function tasks correctly —
+even from a bug-report-style goal that names only the symptom. When a model did
+get one wrong (the unsalted-hash task, where the bare arm produced code whose
+round-trip broke), it failed the **public** test — a visible failure, not a
+silent one. The only place rig's gate demonstrably acted was that same task,
+where the rig arm *safe-stopped* its own broken attempt (escalated instead of
+accepting) while the bare arm shipped the broken code.
+
+Why the gap stays at zero here: a silent defect requires the generator to write
+a **plausible-but-wrong** fix that passes the visible tests. On tasks this small
+and self-contained, capable models either get it fully right or fail visibly —
+they rarely fail *silently*. The discriminators are real (the `narrow` variants
+prove a partial fix would be caught — see the contract test), but the models
+under test did not produce one.
+
+What this does and doesn't establish: the harness, the hidden-check
+discriminators, the acceptance gate, and rig's safe-stop all work end-to-end,
+and the benchmark does not manufacture a difference. It does **not** yet
+demonstrate a bare-vs-rig quality gap on this corpus. Observing that gap
+honestly needs the regime where even strong models fail silently — multi-file
+tasks, existing confusing authorization code, non-obvious fix sites — not
+reworded goals on single-function snippets. Treat the differential as a
+hypothesis this corpus is built to test, not a result it has yet shown.
+
 ## What these tasks are not
 
 They are self-contained, stdlib-only fixtures for measuring the generate/verify
