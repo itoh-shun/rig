@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.21.3] - 2026-07-23
+
+Closes #341: `scripts/validate.py` (CI) previously had no manifest checks at
+all, despite `facets/instructions/validate.md` §2 specifying them in detail —
+a malformed `.claude/rig.md` (e.g. `default_backend: "manul"`, a typo) was
+silently swallowed at RESOLVE/COMPOSE time and never caught by CI, only by a
+human remembering to run `/rig:dev --validate` by hand.
+
+### Added
+
+- `rig_workbench/validation/manifest.py` (`check_manifest()`): CI-checks the
+  5 manifest value keys that are mechanically type/enum/ordering-determinable
+  — `default_backend` (`manual`/`workflow`), `default_budget` (`low`/`mid`),
+  `default_orchestrate` (boolean), `worktree.enabled` (boolean), and
+  `size_thresholds` (positive-integer subkeys, ascending
+  `S_max < M_max < L_max` with generic defaults substituted for unset
+  subkeys). Silently skips when `.claude/rig.md` doesn't exist (manifest is
+  optional) or has none of these 5 keys set. Wired into `validate.py`'s
+  `main()` alongside the other checks.
+- 11 synthetic positive/negative fixtures in `scripts/validate.py selftest`
+  covering all 5 checks, plus a standalone `tests/test_manifest_check.py`
+  (24 tests) exercising `check_manifest()` directly.
+- `default_recipe`/`default_personas[]` (tier reference resolution) and
+  `knowledge.*` (path existence) remain unimplemented in CI — they need the
+  same project→user→shipped resolver COMPOSE uses, a different scope from
+  this issue's 5 self-contained value checks. `validate.md` §2 now notes the
+  CI-implemented/unimplemented split explicitly.
+
 ## [1.21.2] - 2026-07-23
 
 Documentation-only sync closing two discoverability gaps (#337, #327).

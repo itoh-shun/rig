@@ -18,6 +18,7 @@ from . import state
 from .catalog import check_catalog_drift, check_graph, check_wiki
 from .config import RECIPES
 from .drill import check_corpus_integrity, check_drill_coverage
+from .manifest import check_manifest
 from .mcp_scan import check_mcp_scan
 from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
@@ -113,6 +114,11 @@ def main() -> None:
         check_stale_refs()
     except Exception:
         _emit("FAIL", f"stale-refs check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_manifest()
+    except Exception:
+        _emit("FAIL", f"manifest check — unexpected error:\n{traceback.format_exc()}")
 
     print("## rig --validate report (CI / shipped tier)\n")
     for line in state.results:
