@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "sec-weak-reset-token",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "crypto"
+  ],
+  "goal": "new_reset_token() produces predictable password-reset tokens. Make the tokens unpredictable so an attacker cannot guess or reproduce them.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "reset.py",
+    "test_reset.py"
+  ]
+}

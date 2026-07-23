@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "sec-ssrf-private-ip",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "ssrf"
+  ],
+  "goal": "is_safe_url() is meant to prevent SSRF but currently lets requests reach internal addresses. Make it reject internal and cloud-metadata targets while still allowing legitimate public URLs.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "urls.py",
+    "test_urls.py"
+  ]
+}

@@ -246,6 +246,7 @@ Core commands are the default safety workflow: route task, isolate work, verify,
 | Queue (parallel dispatch) | Beta | safe by construction (isolation), UX still evolving (§5) |
 | Knowledge import/export/persona/catalog/forge | Beta | useful but not on the core safety path (§13) |
 | Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§13) |
+| Security pack (`/rig:sec` audit/fix/monitor) | Beta | attacker-perspective audit, PoC-verified gated fix, scan-only monitor; static + local only, DAST out of scope (§8) |
 | Creative / party commands (MAGI, roast, movie, …) | Experimental | real gates underneath, playful delivery, kept out of the default path (§14) |
 
 Nothing in this table is aspirational — there's no "Planned" row because we don't document unshipped features here; proposals live as GitHub issues. If a command isn't listed, it isn't shipped yet.
@@ -267,6 +268,7 @@ The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time:
 | `goal-loop` | goal-driven loop — converge to a high-level goal by delegating existing flows each round |
 | `de-ai-smell` | strip "AI smell" from prose (READMEs, commit/PR text, posts) |
 | `design` 🎨 / `design-audit` 🎨 | UI/UX + a11y spec creation, and live-screen audit via Playwright |
+| `security-audit` 🛡️ / `pentest-fix` 🛡️ / `security-monitor` 🛡️ | white-hat pack (`/rig:sec`): attacker-perspective audit of existing code → PoC-verified gated fix (accept blocked until the re-exploit fails) → scan-only re-scan loop. Static + local verification only; the differential is quantified by `benchmarks/security-tasks/` |
 | `magi` | 3-sage council (correctness / protection / worth) that decides go/no-go by majority vote |
 | `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | humor packs with real content underneath |
 | `movie` 🎬 / `scenario` 🎬✍️ | a general video-creation harness and its scenario-writing front-stage |

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "sec-path-traversal-absolute",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "input-validation"
+  ],
+  "goal": "read_note has a path traversal vulnerability: a caller can read files outside base_dir. Close it without breaking legitimate reads within base_dir.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "vault.py",
+    "test_vault.py"
+  ]
+}

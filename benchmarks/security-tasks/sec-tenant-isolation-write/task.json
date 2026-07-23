@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "sec-tenant-isolation-write",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "multi-tenancy",
+    "authorization"
+  ],
+  "goal": "A customer reported that a signed-in user at one company was able to change the status of a record owned by a different company. The update goes through update_status(). Fix the leak; existing same-company updates must keep working.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "tenancy.py",
+    "test_tenancy.py"
+  ]
+}

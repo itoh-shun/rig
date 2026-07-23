@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "sec-idor-doc-access",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "authorization"
+  ],
+  "goal": "get_document has an IDOR vulnerability: any user can read any document by id. Fix the access control so a user can only read their own documents.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "documents.py",
+    "test_documents.py"
+  ]
+}

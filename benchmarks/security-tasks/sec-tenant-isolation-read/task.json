@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "sec-tenant-isolation-read",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "multi-tenancy",
+    "authorization"
+  ],
+  "goal": "A customer reported that a signed-in user at one company could open a record belonging to a different company just by entering its id. The lookup goes through find_record(). Fix the leak; existing same-company reads must keep working.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "records.py",
+    "test_records.py"
+  ]
+}
