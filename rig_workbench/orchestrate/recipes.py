@@ -201,7 +201,7 @@ def load_steps(fm: dict) -> list[dict]:
             "needs": list(s.get("needs") or []),             # optional: dependency steps (DAG parallelism)
             "acceptance": list(s.get("acceptance") or []),
             "checks": list(s.get("checks") or []),          # optional: machine-verification commands
-            "max_retries": s.get("max_retries") or config.DEFAULT_K,
+            "max_retries": config.effective_k(s.get("max_retries")),
             "model": s.get("model"),                        # optional: generator model for this step
             "verifier_model": s.get("verifier_model"),      # optional: verifier model for this step (separate assignment)
             "output_contract": s.get("output_contract"),

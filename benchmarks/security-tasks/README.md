@@ -100,6 +100,26 @@ tasks, existing confusing authorization code, non-obvious fix sites — not
 reworded goals on single-function snippets. Treat the differential as a
 hypothesis this corpus is built to test, not a result it has yet shown.
 
+## Model-invariance (`rig-wb bench-invariance`)
+
+A stronger question than "does rig beat a bare agent" is **"is rig's result the
+same no matter which model drives it?"** — rig's aim that the accepted outcome
+is bounded by the gate, not the model. Measure it across a model panel:
+
+```bash
+rig-wb bench-invariance --corpus benchmarks/security-tasks \
+  --provider claude --allow-paid-provider \
+  --models claude-haiku-4-5-20251001,claude-sonnet-5,claude-fable-5 --html invariance.html
+```
+
+It runs the paired benchmark once per model and reports, per arm, the
+**agreement** (fraction of model×run samples that reached the same outcome) and
+the **panel silent-defect rate**. rig is doing its job when its agreement is
+higher than bare's (outcomes converge despite the model) and its silent-defect
+rate is 0. Caveat: on this easy corpus every model already succeeds bare, so
+both arms score ~1.0 — the metric only discriminates once tasks are hard enough
+that bare outcomes diverge by model (the follow-up harder-corpus work).
+
 ## What these tasks are not
 
 They are self-contained, stdlib-only fixtures for measuring the generate/verify
