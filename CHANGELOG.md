@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.24.0] - 2026-07-23
+
+Strengthens the gate where the model-invariance panel proved it was blind — the
+real lever for a stronger, more model-invariant rig.
+
+The first real panel on `benchmarks/hard-tasks` (Haiku + Sonnet + Fable, N=3,
+convergence budget on) established two things: (1) the traps are real and
+model-independent — all three models, including the strongest, shipped the
+`trusted-helper-authz` silent defect on every bare run (9/9); (2) rig barely
+helped there (safe_rate tied bare at 50%), because the `None owner == None id`
+bypass fools rig's `security-reviewer` too — the gate *passed* the defective
+attempt, and a retry budget only fires when the gate *fails* one. Where the
+generator and verifier share a blind spot, rig ships the defect. That is rig's
+own thesis, measured: safety is bounded by the gate's detection ability, so the
+lever is stronger gates, not more iteration.
+
+### Added / Changed
+
+- **`/rig:drill` seed catalog → `corpus_version: 3`** (27 → 29 classes): adds the
+  two blind-spot security classes the panel exposed — `認可ヘルパー誤信`
+  (trusting a flawed auth helper; null-match bypass, CWE-863) and
+  `多サイト検証漏れ` (validation added at one call site, another sink left
+  unguarded, CWE-20) — so the reviewer's detection rate on them is now
+  measurable rather than assumed.
+- **`security-reviewer` detection lenses** (facet persona + `agents/` mirror +
+  `appsec-checklist` knowledge): don't trust an existing auth helper — check it
+  for null-match bypass / type confusion / default-allow; and verify at the
+  shared sink, not one call site (catch the "fixed one entry point" miss).
+- **`benchmarks/hard-tasks/README.md`** records the panel results and the
+  bounded-by-the-gate finding in full (measured, not asserted).
+
+Whether the new lenses actually raise the reviewer's detection rate — and move
+rig's authz safe_rate off 0% — is the next measurement (`/rig:drill` scores it;
+a panel re-run would confirm it end to end). This ships the detector and the
+yardstick; it does not yet claim the number moved.
+
 ## [1.23.1] - 2026-07-23
 
 Fixes the model-invariance metric after the first real panel run on the hard
