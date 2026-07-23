@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "hard-validate-two-sites",
+  "language": "python",
+  "difficulty": "hard",
+  "risk_domains": [
+    "security",
+    "input-validation",
+    "multi-site"
+  ],
+  "goal": "Usernames must never contain a path separator (they become filenames downstream), but malicious names are getting stored. Close the hole so no stored username can contain '/'. Legitimate names must still work.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "users.py",
+    "test_users.py"
+  ]
+}
