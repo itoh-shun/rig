@@ -6,6 +6,7 @@ import traceback
 
 from . import state
 from .drill import check_drill_coverage
+from .manifest import check_manifest
 from .recipes import check_recipe
 from .state import _emit
 
@@ -73,6 +74,29 @@ def run_selftest() -> None:
             "    acceptance: [\"ok\"]\n    personas: [implementer]\n")),
     ]
 
+    # manifest value-key scenarios (#341): a synthetic `.claude/rig.md`-shaped
+    # frontmatter file run through check_manifest(), verifying the 5
+    # mechanically-determinable value checks FAIL/pass as expected.
+    def manifest(extra: str) -> str:
+        return f"---\n{extra}---\n\n# manifest\n"
+
+    manifest_scenarios: list[tuple[str, bool, str]] = [
+        ("manifest-backend-ok", False, manifest("default_backend: workflow\n")),
+        ("manifest-backend-bad", True, manifest("default_backend: manul\n")),
+        ("manifest-budget-ok", False, manifest("default_budget: mid\n")),
+        ("manifest-budget-bad", True, manifest("default_budget: lo\n")),
+        ("manifest-orchestrate-ok", False, manifest("default_orchestrate: true\n")),
+        ("manifest-orchestrate-bad-type", True, manifest('default_orchestrate: "yes"\n')),
+        ("manifest-worktree-ok", False, manifest("worktree:\n  enabled: false\n")),
+        ("manifest-worktree-bad-type", True, manifest('worktree:\n  enabled: "yes"\n')),
+        ("manifest-size-thresholds-ok", False,
+            manifest("size_thresholds:\n  S_max: 50\n  M_max: 150\n")),
+        ("manifest-size-thresholds-bad-order", True,
+            manifest("size_thresholds:\n  S_max: 300\n")),  # 300 >= default M_max(200)
+        ("manifest-size-thresholds-bad-type", True,
+            manifest("size_thresholds:\n  S_max: not-a-number\n")),
+    ]
+
     ok = 0
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = pathlib.Path(tmp)
@@ -107,6 +131,20 @@ def run_selftest() -> None:
             print(f"  [{'OK' if passed else 'NG'}] {stem}"
                   f" (expected: {'WARN' if expect_warn else 'no-WARN'} / actual: {'WARN' if got_warn else 'no-WARN'})")
 
-    total = len(scenarios) + len(drill_scenarios)
+        for stem, expect_fail, content in manifest_scenarios:
+            fixture = tmp_path / f"{stem}.md"
+            fixture.write_text(content, encoding="utf-8")
+            start = len(state.results)
+            try:
+                check_manifest(fixture)
+            except Exception:
+                _emit("FAIL", f"selftest '{stem}' — error while running check_manifest:\n{traceback.format_exc()}")
+            got_fail = any(line.startswith("[FAIL]") for line in state.results[start:])
+            passed = got_fail == expect_fail
+            ok += passed
+            print(f"  [{'OK' if passed else 'NG'}] {stem}"
+                  f" (expected: {'FAIL' if expect_fail else 'no-FAIL'} / actual: {'FAIL' if got_fail else 'no-FAIL'})")
+
+    total = len(scenarios) + len(drill_scenarios) + len(manifest_scenarios)
     print(f"\nselftest: {ok}/{total} scenarios OK")
     sys.exit(0 if ok == total else 1)
