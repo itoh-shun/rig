@@ -30,6 +30,17 @@ on tasks where bare outcomes diverge by model. Building that harder corpus is
 tracked as follow-up; this ships the instrument, verified by unit tests on the
 pure scorer (`tests/test_bench_invariance.py`).
 
+This release also adds the first *mechanism* for raising invariance, not just
+measuring it: an opt-in **convergence budget**. rig already feeds a failed
+step's distilled findings back into the next attempt (#333 `previous_failure`);
+`RIG_CONVERGENCE_K=<n>` raises the per-step retry cap so a run keeps iterating on
+that feedback for more attempts before escalating. A weaker model thus gets more
+feedback-guided chances to converge on a gate-passing result instead of stopping
+— extending the range of models whose *accepted* outcome matches a stronger
+model's. It only ever raises a step's K (never lowers an explicit recipe
+`max_retries`) and is a complete no-op when unset, so all existing behavior is
+unchanged unless a run opts in.
+
 ### Added
 
 - `rig-wb bench-invariance --provider <p> --models m1,m2,m3 [--corpus ...]
@@ -38,6 +49,9 @@ pure scorer (`tests/test_bench_invariance.py`).
   `--allow-paid-provider` opt-in as `rig-wb bench`.
 - `rig_workbench/bench_invariance.py`: pure scorer (`score_invariance`,
   `classify_arm_dict`) plus the panel runner and HTML renderer.
+- `RIG_CONVERGENCE_K` convergence budget: `config.effective_k()` raises a step's
+  retry cap to the budget when set (`> 0`), plumbed through `recipes.load_steps`.
+  Verified by `tests/test_convergence_budget.py`.
 
 ## [1.22.0] - 2026-07-23
 
