@@ -439,6 +439,21 @@ def main() -> None:
 
         sensor_bench_mod.cmd_sensor_bench(rest)
         return
+    if sub == "bench-invariance":
+        from . import bench_invariance as bench_invariance_mod
+
+        allow_paid = "--allow-paid-provider" in rest
+        filtered = [arg for arg in rest if arg != "--allow-paid-provider"]
+        providers = _bench_providers(filtered)
+        provider = providers[0] if providers else "mock"
+        if provider in {"claude", "codex"} and not allow_paid:
+            print(
+                f"[ERROR] --provider {provider} requires explicit --allow-paid-provider opt-in.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        bench_invariance_mod.cmd_invariance(filtered)
+        return
     if sub == "githooks":
         from . import githooks as githooks_mod
 

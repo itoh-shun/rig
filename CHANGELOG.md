@@ -1,5 +1,44 @@
 # Changelog
 
+## [1.23.0] - 2026-07-23
+
+Adds a **model-invariance metric** — the first step toward rig's "strongest =
+results not swayed by the model" goal, and true to rig's own rule that gate
+efficacy is *measured, not asserted*.
+
+The claim behind rig is that the accepted result's quality is bounded by the
+**gate**, not by the **model**. `rig-wb bench-invariance` turns that into a
+number: it runs the existing paired benchmark once per model in a panel (both
+arms driven by that model, reusing `bench.run_benchmark` unchanged), then
+measures — per arm — how much the *terminal outcome* varies across the panel.
+
+- **agreement**: fraction of (model × run) samples that reached the same
+  outcome for a task; 1.0 = the outcome does not depend on the model.
+- **panel silent-defect rate**: did any model, on any run, ship a
+  passes-public-but-fails-hidden result. Must be 0 for a model-invariant *and
+  safe* harness — a nonzero rig rate forces an `unsafe` verdict regardless of
+  agreement.
+
+The headline `model_invariance_score` is the rig arm's mean agreement, reported
+next to the bare arm's so the honest comparison (does rig converge outcomes the
+bare model splits?) is visible. Infra/invalid samples are excluded from
+agreement so CI flakiness cannot masquerade as model sensitivity.
+
+Note on interpretation: on an easy corpus where every model already succeeds
+bare, both arms score ~1.0 (trivially invariant) — the metric only *discriminates*
+on tasks where bare outcomes diverge by model. Building that harder corpus is
+tracked as follow-up; this ships the instrument, verified by unit tests on the
+pure scorer (`tests/test_bench_invariance.py`).
+
+### Added
+
+- `rig-wb bench-invariance --provider <p> --models m1,m2,m3 [--corpus ...]
+  [--runs N] [--agreement-threshold 0.8] [--out ...] [--html ...]`: model-panel
+  invariance report (JSON + HTML). Paid providers require the same
+  `--allow-paid-provider` opt-in as `rig-wb bench`.
+- `rig_workbench/bench_invariance.py`: pure scorer (`score_invariance`,
+  `classify_arm_dict`) plus the panel runner and HTML renderer.
+
 ## [1.22.0] - 2026-07-23
 
 Adds a **security (white-hat) pack**: an attacker-perspective layer that
