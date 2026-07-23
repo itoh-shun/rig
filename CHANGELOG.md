@@ -50,6 +50,77 @@ left behind an authorized-target allowlist.
   `rig-wb bench --corpus benchmarks/security-tasks` — and reports the bare-vs-rig
   silent-defect rate and relative reduction. Guarded by
   `tests/test_security_bench_tasks.py`.
+## [1.21.3] - 2026-07-23
+
+Closes #341: `scripts/validate.py` (CI) previously had no manifest checks at
+all, despite `facets/instructions/validate.md` §2 specifying them in detail —
+a malformed `.claude/rig.md` (e.g. `default_backend: "manul"`, a typo) was
+silently swallowed at RESOLVE/COMPOSE time and never caught by CI, only by a
+human remembering to run `/rig:dev --validate` by hand.
+
+### Added
+
+- `rig_workbench/validation/manifest.py` (`check_manifest()`): CI-checks the
+  5 manifest value keys that are mechanically type/enum/ordering-determinable
+  — `default_backend` (`manual`/`workflow`), `default_budget` (`low`/`mid`),
+  `default_orchestrate` (boolean), `worktree.enabled` (boolean), and
+  `size_thresholds` (positive-integer subkeys, ascending
+  `S_max < M_max < L_max` with generic defaults substituted for unset
+  subkeys). Silently skips when `.claude/rig.md` doesn't exist (manifest is
+  optional) or has none of these 5 keys set. Wired into `validate.py`'s
+  `main()` alongside the other checks.
+- 11 synthetic positive/negative fixtures in `scripts/validate.py selftest`
+  covering all 5 checks, plus a standalone `tests/test_manifest_check.py`
+  (24 tests) exercising `check_manifest()` directly.
+- `default_recipe`/`default_personas[]` (tier reference resolution) and
+  `knowledge.*` (path existence) remain unimplemented in CI — they need the
+  same project→user→shipped resolver COMPOSE uses, a different scope from
+  this issue's 5 self-contained value checks. `validate.md` §2 now notes the
+  CI-implemented/unimplemented split explicitly.
+
+## [1.21.2] - 2026-07-23
+
+Documentation-only sync closing two discoverability gaps (#337, #327).
+
+### Fixed
+
+- README.md / README.ja.md's Positioning section still called the MCP server
+  "proposed but not shipped," contradicting §7's own shipped documentation of
+  `scripts/mcp_server.py` (#263). Updated to point at §7 instead (#337).
+- `stream-checks` / `stale-refs` / `scan-destructive` / `instincts` (all
+  implemented and tested `workbench.py` subcommands) were missing from every
+  summary listing: `workbench-ops.md`'s opening line, `SKILL.md` §2's
+  workbench pack row, `SKILL.md` §10's reference table, and `commands/go.md`
+  (frontmatter `description`/`argument-hint` and the ① subcommand table).
+  Added to all of them (#327).
+
+## [1.21.1] - 2026-07-23
+
+A real `--bare-model fable --rig-model sonnet` cross-model comparison (all 10
+tasks x 3 runs, `--allow-paid-provider`) passed the recipe's own acceptance
+gate: rig(sonnet)'s silent-defect rate is 3.3% vs bare(fable)'s 10.0% (66.7%
+relative reduction), rig safe-stop 10.0%, call ratio 2.37x. Honest caveat: most
+of that delta traces to one task (`ts-api-compat-export`) where fable-bare
+produced a silent defect in all 3 runs while rig(sonnet) recovered to
+clean_pass in 2 of 3 via its review/repair loop — this is evidence that rig's
+review path caught one systematic model blind spot, not a general "cheap
+model + rig beats a stronger model" result.
+
+Investigating the run's 3 safe-stops (with a second opinion from Codex
+gpt-5.6-sol, read-only) surfaced and fixed a real bug (#342):
+`_execute_targeted_review()` only ever inspected `verdicts[0]` (the primary
+reviewer), so when a second high-risk domain adds a secondary reviewer and
+the primary passes, a repairable FAIL from the *secondary* reviewer was never
+attempted — it escalated unconditionally instead. Fixed to attempt repair on
+the single failing verdict regardless of primary/secondary position.
+
+### Fixed
+
+- `_execute_targeted_review` (`rig_workbench/orchestrate/providers.py`) now
+  finds all failing verdicts and attempts `execute_informed_repair` when
+  exactly one verdict failed, instead of only ever checking `verdicts[0]`.
+  All existing safety conditions (allowlist match, diff-changed, generator
+  success, post-repair check, invocation budget) are unchanged (#342).
 
 ## [1.21.0] - 2026-07-23
 

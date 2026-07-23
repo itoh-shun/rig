@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig instincts`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
