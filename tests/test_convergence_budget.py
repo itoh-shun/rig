@@ -9,8 +9,6 @@ K, never lower an explicit recipe value, and must be a no-op when unset.
 
 from __future__ import annotations
 
-import pytest
-
 from rig_workbench.orchestrate import config
 from rig_workbench.orchestrate.recipes import load_steps
 
