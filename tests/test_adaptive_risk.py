@@ -22,6 +22,25 @@ def test_authorization_change_selects_security():
     assert invocation_limit(result) == 3
 
 
+@pytest.mark.parametrize(
+    "diff",
+    [
+        "+    if not is_owner(user, doc):\n+        raise Forbidden('not the owner')\n",
+        "+    if record['tenant_id'] != tenant_id:\n+        return None\n",
+        "+    if not can_access(user, resource):\n+        return 403\n",
+        "+    def _sanitize(value):\n",
+        "+    name = validate_username(name)\n",
+    ],
+)
+def test_authz_tenant_validation_changes_route_to_security(diff):
+    # Regression for the model-invariance panel finding: an ownership/permission,
+    # multi-tenant, or input-validation fix must reach security-reviewer (so its
+    # null-match-bypass / shared-sink lens can fire), even when the diff never
+    # says the word "authorization".
+    result = analyze_diff(diff, ["handlers.py"])
+    assert result.primary == "security-reviewer", (diff, result.signals)
+
+
 def test_api_and_test_change_selects_two_high_risk_lenses():
     result = analyze_diff(
         "+ app.get('/v2/users', handler)\n+"
