@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.21.2] - 2026-07-23
+
+Documentation-only sync closing two discoverability gaps (#337, #327).
+
+### Fixed
+
+- README.md / README.ja.md's Positioning section still called the MCP server
+  "proposed but not shipped," contradicting §7's own shipped documentation of
+  `scripts/mcp_server.py` (#263). Updated to point at §7 instead (#337).
+- `stream-checks` / `stale-refs` / `scan-destructive` / `instincts` (all
+  implemented and tested `workbench.py` subcommands) were missing from every
+  summary listing: `workbench-ops.md`'s opening line, `SKILL.md` §2's
+  workbench pack row, `SKILL.md` §10's reference table, and `commands/go.md`
+  (frontmatter `description`/`argument-hint` and the ① subcommand table).
+  Added to all of them (#327).
+
 ## [1.21.1] - 2026-07-23
 
 A real `--bare-model fable --rig-model sonnet` cross-model comparison (all 10

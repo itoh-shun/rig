@@ -1,6 +1,6 @@
 ---
-description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/review/gc/audit/scan-secrets/scan-injection/digest/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | gh issue <n> | gh pr <n> review|fix | gh ci"
+description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/review/gc/audit/scan-secrets/scan-injection/digest/stream-checks/stale-refs/scan-destructive/instincts/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | stream-checks [id] [--watch --interval N --max-passes M] | stale-refs [paths…] | scan-destructive [paths…|--diff id] | instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -33,6 +33,10 @@ $ARGUMENTS
 | `scan-secrets [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論シークレットスキャン。gate 基準 `no_secret_leak` の機械センサーと同一実装。`--diff` で task worktree の差分のみを走査、抜粋は常にマスク済み） |
 | `scan-injection [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論プロンプトインジェクション・マーカースキャン。gate 基準 `no_injection_markers` の機械センサーと同一実装。不可視/bidi Unicode は fail-grade・指示上書きフレーズは warning-grade。引数なしは repo の prose 面（`.claude/rig.md`・knowledge・personas・`.rig/recipes/*.md`）、`--diff` で task worktree の差分＋prose 面を走査） |
 | `digest [--period week\|month] [--out PATH]` | `facets/instructions/workbench-ops`（`.rig/` テレメトリのローリング集計ダイジェスト（runs・gate 合否・force-accept・ゴム印疑い・drill 検出率）を Markdown で出力。既定 week=直近7日） |
+| `stream-checks [<task_id>] [--watch --interval N --max-passes M]` | `facets/instructions/workbench-ops`（実装中の軽量ストリーミングチェック。secret/injection/destructiveの3センサーをtask worktreeにその場で走らせfindingsをヒント表示。gateをブロックしない・常にexit 0） |
+| `stale-refs [paths…]` | `facets/instructions/workbench-ops`（manifest・知識層の経年劣化検知。バッククォート引用の相対パス参照のうち実在しなくなったものをWARN列挙。exit 0） |
+| `scan-destructive [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の破壊的コマンドスキャン。gate 基準 `no_destructive_operation` の機械センサーと同一実装。fail-grade/warning-gradeの2段階） |
+| `instincts [--add TEXT --evidence E --confidence C] [--mute ID\|--expire ID\|--decay\|--inject-preview]` | `facets/instructions/workbench-ops`（セッション横断の継続的instinct学習層。未検証パターンをconfidence付きで記録・decay・次回セッション注入プレビュー） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |
 | `gh pr <n> fix` | `facets/instructions/gh-flow`（PR 指摘を隔離 worktree で修正） |
