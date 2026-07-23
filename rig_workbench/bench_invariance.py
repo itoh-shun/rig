@@ -92,6 +92,7 @@ def _score_arm(task_samples: dict[str, list[str]]) -> dict:
     valid_total = 0
     silent_total = 0
     clean_total = 0
+    safe_total = 0
     noise_total = 0
     for task_id, samples in sorted(task_samples.items()):
         valid = [s for s in samples if s in _VALID_OUTCOMES]
@@ -103,18 +104,26 @@ def _score_arm(task_samples: dict[str, list[str]]) -> dict:
             per_task.append({
                 "task_id": task_id, "samples": len(samples), "valid": 0,
                 "agreement": None, "modal_outcome": None,
-                "silent_defect_rate": None, "distribution": dict(Counter(samples)),
-                "noise": len(noise),
+                "silent_defect_rate": None, "safe_rate": None,
+                "distribution": dict(Counter(samples)), "noise": len(noise),
             })
             continue
         modal_outcome, modal_count = counts.most_common(1)[0]
         agreement = modal_count / n
         silent = counts.get("silent_defect", 0)
         clean = counts.get("clean_pass", 0)
+        # "Safe" = did NOT ship a defect: either fixed it (clean_pass) or refused
+        # to ship (safe_stop). Both are acceptable floor outcomes; only
+        # silent_defect / stopped_wrong ship or leave a broken result. Measuring
+        # this separately from exact-outcome agreement is the fix for a real
+        # finding: a clean_pass-vs-safe_stop split is a capability difference, not
+        # a safety regression, and must not read as "model-sensitive".
+        safe = clean + counts.get("safe_stop", 0)
         agreements.append(agreement)
         valid_total += n
         silent_total += silent
         clean_total += clean
+        safe_total += safe
         per_task.append({
             "task_id": task_id,
             "samples": len(samples),
@@ -122,6 +131,7 @@ def _score_arm(task_samples: dict[str, list[str]]) -> dict:
             "agreement": agreement,
             "modal_outcome": modal_outcome,
             "silent_defect_rate": silent / n,
+            "safe_rate": safe / n,
             "success_rate": clean / n,
             "entropy": _normalized_entropy(list(counts.values())),
             "distribution": dict(counts),
@@ -131,6 +141,7 @@ def _score_arm(task_samples: dict[str, list[str]]) -> dict:
     return {
         "mean_agreement": mean_agreement,
         "panel_silent_defect_rate": (silent_total / valid_total) if valid_total else None,
+        "safe_rate": (safe_total / valid_total) if valid_total else None,
         "success_rate": (clean_total / valid_total) if valid_total else None,
         "valid_samples": valid_total,
         "noise_samples": noise_total,
@@ -160,10 +171,16 @@ def score_invariance(summaries: list[dict], *, agreement_threshold: float = 0.8)
         arms[arm] = _score_arm(task_samples)
 
     rig = arms["rig"]
+    bare = arms["bare"]
     score = rig["mean_agreement"]
     silent = rig["panel_silent_defect_rate"]
+    safe_rate = rig["safe_rate"]
     reasons = []
-    if score is None:
+    # Safety (silent-defect / safe_rate) is the floor and gates the verdict; exact
+    # outcome agreement is a secondary capability signal. A clean_pass-vs-safe_stop
+    # split is safe on every model (floor-invariant) even though outcomes differ —
+    # so it is `safe_but_split`, never `unsafe`/`model_sensitive`.
+    if score is None or safe_rate is None:
         verdict = "inconclusive"
         reasons.append("no valid rig samples across the panel")
     elif silent and silent > 0:
@@ -172,25 +189,37 @@ def score_invariance(summaries: list[dict], *, agreement_threshold: float = 0.8)
             f"rig shipped a silent defect on {silent:.0%} of panel samples — "
             "invariance is moot until that is zero"
         )
-    elif score >= agreement_threshold:
+    elif safe_rate >= 1.0 and score >= agreement_threshold:
         verdict = "model_invariant"
         reasons.append(
-            f"rig outcomes agreed on {score:.0%} of panel samples "
-            f"(>= {agreement_threshold:.0%}) with zero silent defects"
+            f"rig was safe on 100% of panel samples and outcomes agreed on {score:.0%} "
+            f"(>= {agreement_threshold:.0%}) — the accepted result does not depend on the model"
+        )
+    elif safe_rate >= 1.0:
+        verdict = "safe_but_split"
+        reasons.append(
+            f"rig shipped no defect on any model (safe_rate 100%), but outcomes split "
+            f"(agreement {score:.0%}): the floor is model-invariant, capability still varies "
+            "(some models fixed it, some safe-stopped)"
         )
     else:
         verdict = "model_sensitive"
         reasons.append(
-            f"rig outcomes agreed on only {score:.0%} of panel samples "
-            f"(< {agreement_threshold:.0%}); the harness does not yet neutralize the model"
+            f"rig was safe on only {safe_rate:.0%} of panel samples "
+            "(a broken/wrong result shipped on some model); the harness does not yet "
+            "neutralize the model"
         )
 
-    bare = arms["bare"]
-    if score is not None and bare["mean_agreement"] is not None:
-        delta = score - bare["mean_agreement"]
+    if safe_rate is not None and bare["safe_rate"] is not None:
+        s_delta = safe_rate - bare["safe_rate"]
         reasons.append(
-            f"rig agreement {score:.0%} vs bare {bare['mean_agreement']:.0%} "
-            f"(rig {'+' if delta >= 0 else ''}{delta:.0%})"
+            f"safe_rate: rig {safe_rate:.0%} vs bare {bare['safe_rate']:.0%} "
+            f"(rig {'+' if s_delta >= 0 else ''}{s_delta:.0%}) — the number that matters for "
+            "'never ships worse than the bar'"
+        )
+    if silent is not None and bare["panel_silent_defect_rate"] is not None:
+        reasons.append(
+            f"silent-defect: rig {silent:.0%} vs bare {bare['panel_silent_defect_rate']:.0%}"
         )
 
     return {
@@ -257,9 +286,11 @@ def render_invariance_html(report: dict) -> str:
 <p>Panel: {models}</p>
 <div class="cards">
  <div class="card"><div class="label">Verdict</div><div class="value">{verdict}</div></div>
- <div class="card"><div class="label">Model-invariance score (rig)</div><div class="value">{_fmt(score)}</div></div>
+ <div class="card"><div class="label">rig safe_rate (panel)</div><div class="value">{_fmt(rig.get('safe_rate'))}</div></div>
+ <div class="card"><div class="label">bare safe_rate (panel)</div><div class="value">{_fmt(bare.get('safe_rate'))}</div></div>
  <div class="card"><div class="label">rig silent-defect (panel)</div><div class="value">{_fmt(rig.get('panel_silent_defect_rate'))}</div></div>
- <div class="card"><div class="label">bare agreement (panel)</div><div class="value">{_fmt(bare.get('mean_agreement'))}</div></div>
+ <div class="card"><div class="label">bare silent-defect (panel)</div><div class="value">{_fmt(bare.get('panel_silent_defect_rate'))}</div></div>
+ <div class="card"><div class="label">rig outcome-agreement</div><div class="value">{_fmt(score)}</div></div>
 </div>
 <ul>{reasons}</ul>
 <h2>Per-task agreement (bare vs rig)</h2>
