@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.23.1] - 2026-07-23
+
+Fixes the model-invariance metric after the first real panel run on the hard
+corpus exposed a flaw in it — exactly the measure-then-correct loop rig is built
+on.
+
+The run (Haiku + Fable, `benchmarks/hard-tasks`) showed the hard tasks work:
+both models, run bare, shipped a silent security defect on the
+`trusted-helper-authz` trap (even the stronger model trusted the flawed helper).
+rig halved the silent-defect rate (bare 50% → rig 25%). But the old headline
+read "rig agreement 50% vs bare 100% (rig −50%)", making rig look *worse* —
+because exact-outcome agreement counted a `clean_pass`-vs-`safe_stop` split as
+disagreement, when both outcomes mean "did not ship a defect".
+
+- **New `safe_rate`** per arm (`clean_pass` + `safe_stop` over valid samples) —
+  the floor-invariance number: "regardless of the model, did rig avoid shipping
+  a defect". Reported for both arms; on the pilot it reads rig 75% vs bare 50%.
+- **Verdict now gates on safety, not exact agreement.** `unsafe` when rig's
+  panel silent-defect rate > 0 (unchanged); a new **`safe_but_split`** covers
+  "safe on every model, but outcomes split clean/safe-stop" (floor-invariant,
+  capability still varies) so a safe split is no longer mislabeled
+  `model_sensitive`; `model_sensitive` now means rig actually shipped a
+  broken/wrong result on some model.
+- HTML report leads with rig/bare `safe_rate` and silent-defect, with
+  outcome-agreement demoted to a secondary signal. Verified by
+  `tests/test_bench_invariance.py`.
+
 ## [1.23.0] - 2026-07-23
 
 Adds a **model-invariance metric** — the first step toward rig's "strongest =

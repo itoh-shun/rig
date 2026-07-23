@@ -1,6 +1,6 @@
 {
   "name": "rig",
-  "version": "1.23.0",
+  "version": "1.23.1",
   "description": "rig — a quality-gated AI workbench for Claude Code. Give /rig:go a natural-language task: it classifies the task, runs it in an isolated git worktree, and checks the result against a per-task-type acceptance gate — the diff only lands in your working tree on an explicit accept. Machine sensors back the gate deterministically (secret leak, prompt-injection markers, gate tampering, destructive commands, OpenAPI schema drift), with recorded overrides as the escape hatch. Track parallel tasks with board and the read-only cockpit; measure whether the gate actually works with drill (seeded-bug reviewer detection rates) and stats (rubber-stamp detection). Compose recipes, personas, and knowledge as reusable bricks; a deterministic orchestrator (orchestrate.py) runs recipe state machines with parallel verification, cost-tier auto-routing learned from run history, A/B recipe experiments, and token/cost metering. Reaches beyond a live session via a stdlib-only MCP server, a GitHub Action, Slack/Teams notifications, Codex/Cursor native-layer adapters, and a read-only VS Code sidebar. Feedback loops close the gap between accept-time predictions and reality: production-outcome tracing, signed provenance, cross-session instinct learning with decay, and gap prescriptions that draft /rig:forge improvement requests. Japanese writing quality is first-class: an AI-smell catalog with cognitive-rhythm grounding and a deterministic prose-rhythm sensor.",
   "author": {
     "name": "itoshun"

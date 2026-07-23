@@ -57,22 +57,51 @@ def test_full_agreement_scores_invariant():
 
 
 def test_rig_neutralizes_model_where_bare_diverges():
-    # Bare arm: the weak model ships a silent defect, others clean -> low agreement,
-    # nonzero silent-defect. Rig arm: all safe (weak safe-stops, others clean) ->
-    # zero silent defects, but outcomes split clean/safe_stop so agreement < 1.
+    # Bare arm: the weak model ships a silent defect, others clean -> nonzero
+    # silent-defect. Rig arm: all safe (weak safe-stops, others clean) -> zero
+    # silent defects, but outcomes split clean/safe_stop so agreement < 1. A safe
+    # split is floor-invariant, not a safety regression: `safe_but_split`.
     panel = [
-        _summary("weak", {"t1": (_arm(True, False), _arm(False, False))}),
+        _summary("weak", {"t1": (_arm(True, False), _arm(False, True))}),
         _summary("mid", {"t1": (_arm(True, True), _arm(True, True))}),
         _summary("strong", {"t1": (_arm(True, True), _arm(True, True))}),
     ]
     report = score_invariance(panel)
     bare = report["arms"]["bare"]
     rig = report["arms"]["rig"]
-    # bare shipped a silent defect on 1/3 samples; rig shipped none.
+    # bare shipped a silent defect on 1/3 samples; rig shipped none and was safe on all.
     assert bare["panel_silent_defect_rate"] > 0
     assert rig["panel_silent_defect_rate"] == 0.0
-    # rig is safer, so even with split outcomes it is not "unsafe".
-    assert report["verdict"] in {"model_invariant", "model_sensitive"}
+    assert rig["safe_rate"] == 1.0
+    assert rig["safe_rate"] > bare["safe_rate"]
+    assert report["verdict"] == "safe_but_split"
+
+
+def test_clean_safe_stop_split_is_safe_but_split_not_sensitive():
+    # Outcomes split evenly clean_pass / safe_stop, no defects -> safe on every
+    # model. Agreement is 0.5 (< threshold) but the verdict must not punish a
+    # safe split as model-sensitive.
+    panel = [
+        _summary("a", {"t1": (_arm(True, True), _arm(True, True))}),
+        _summary("b", {"t1": (_arm(True, True), _arm(False, True))}),
+    ]
+    report = score_invariance(panel, agreement_threshold=0.8)
+    assert report["arms"]["rig"]["safe_rate"] == 1.0
+    assert report["arms"]["rig"]["panel_silent_defect_rate"] == 0.0
+    assert report["verdict"] == "safe_but_split"
+
+
+def test_shipped_wrong_result_is_model_sensitive():
+    # rig ships a broken (public-failing, hidden-failing) result on one model:
+    # safe_rate < 1 but no silent defect -> model_sensitive (not unsafe).
+    panel = [
+        _summary("weak", {"t1": (_arm(True, True), _arm(False, False))}),
+        _summary("strong", {"t1": (_arm(True, True), _arm(True, True))}),
+    ]
+    report = score_invariance(panel)
+    assert report["arms"]["rig"]["panel_silent_defect_rate"] == 0.0
+    assert report["arms"]["rig"]["safe_rate"] == 0.5
+    assert report["verdict"] == "model_sensitive"
 
 
 def test_any_rig_silent_defect_makes_verdict_unsafe():
@@ -98,8 +127,9 @@ def test_infra_noise_excluded_from_agreement():
     assert rig_task["agreement"] == 1.0
 
 
-def test_split_outcomes_lower_agreement_below_threshold():
-    # Rig outcomes split evenly clean/safe_stop across 4 models -> agreement 0.5.
+def test_split_outcomes_lower_agreement_is_reported():
+    # Rig outcomes split evenly clean/safe_stop across 4 models -> agreement 0.5,
+    # but all safe -> safe_but_split (agreement is still reported as the score).
     panel = [
         _summary("a", {"t1": (_arm(True, True), _arm(True, True))}),
         _summary("b", {"t1": (_arm(True, True), _arm(True, True))}),
@@ -109,4 +139,5 @@ def test_split_outcomes_lower_agreement_below_threshold():
     report = score_invariance(panel, agreement_threshold=0.8)
     assert report["arms"]["rig"]["per_task"][0]["agreement"] == 0.5
     assert report["model_invariance_score"] == 0.5
-    assert report["verdict"] == "model_sensitive"
+    assert report["arms"]["rig"]["safe_rate"] == 1.0
+    assert report["verdict"] == "safe_but_split"
