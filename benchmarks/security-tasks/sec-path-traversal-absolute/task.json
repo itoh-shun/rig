@@ -7,7 +7,7 @@
     "security",
     "input-validation"
   ],
-  "goal": "Stop read_note from serving files outside base_dir via absolute paths or traversal.",
+  "goal": "read_note has a path traversal vulnerability: a caller can read files outside base_dir. Close it without breaking legitimate reads within base_dir.",
   "test_command": [
     "python",
     "-m",

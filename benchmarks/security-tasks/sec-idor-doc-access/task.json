@@ -7,7 +7,7 @@
     "security",
     "authorization"
   ],
-  "goal": "Enforce document ownership so a non-owner cannot read another user's document.",
+  "goal": "get_document has an IDOR vulnerability: any user can read any document by id. Fix the access control so a user can only read their own documents.",
   "test_command": [
     "python",
     "-m",

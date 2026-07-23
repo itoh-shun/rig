@@ -7,7 +7,7 @@
     "security",
     "crypto"
   ],
-  "goal": "Store passwords with a per-password random salt and a slow KDF.",
+  "goal": "hash_password stores passwords insecurely. Harden password storage so stored hashes are not vulnerable to precomputation or reveal when two users share a password. verify_password must still work.",
   "test_command": [
     "python",
     "-m",

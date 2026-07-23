@@ -7,7 +7,7 @@
     "security",
     "input-validation"
   ],
-  "goal": "Pass the host to the OS as an isolated argument instead of a shell string.",
+  "goal": "ping() is vulnerable to command injection through the host argument. Fix it so a malicious host value cannot run arbitrary commands.",
   "test_command": [
     "python",
     "-m",

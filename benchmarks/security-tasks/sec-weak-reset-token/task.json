@@ -7,7 +7,7 @@
     "security",
     "crypto"
   ],
-  "goal": "Generate reset tokens from a CSPRNG rather than a seedable PRNG.",
+  "goal": "new_reset_token() produces predictable password-reset tokens. Make the tokens unpredictable so an attacker cannot guess or reproduce them.",
   "test_command": [
     "python",
     "-m",
