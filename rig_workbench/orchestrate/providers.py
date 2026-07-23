@@ -1740,22 +1740,27 @@ def _execute_targeted_review(
         log=log,
     )
     st["verdicts"] = verdicts
-    primary_finding = verdicts[0] if verdicts else None
-    if not primary_finding or primary_finding["ok"]:
+    # Repair only fires for a *single* failing verdict — with two reviewers (primary +
+    # secondary), a repairable FAIL from either one must still get its shot at the
+    # one budgeted repair call, not just the primary (a passing primary previously
+    # masked a failing secondary here, silently skipping repair entirely; #342).
+    failing = [(index, verdict) for index, verdict in enumerate(verdicts) if not verdict["ok"]]
+    if len(failing) != 1:
         return
+    finding_index, finding = failing[0]
     if execute_informed_repair(
         state,
         step,
         st,
-        primary_finding,
+        finding,
         gen_list,
         cfg,
         log=log,
     ):
-        verdicts[0] = {
+        verdicts[finding_index] = {
             "by": "adaptive-repair",
             "ok": True,
-            "note": f"mechanical check passed: {primary_finding['mechanical_check']}",
+            "note": f"mechanical check passed: {finding['mechanical_check']}",
         }
 
 

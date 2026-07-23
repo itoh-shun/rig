@@ -504,6 +504,76 @@ def test_two_high_risk_domains_add_a_secondary_reviewer(
     assert state["adaptive"]["invocations"] == 3
 
 
+def test_secondary_reviewer_repairable_fail_still_gets_repaired(
+    step_factory, monkeypatch, tmp_path
+):
+    """A passing primary must not mask a repairable secondary FAIL (#342): before this
+    fix, `_execute_targeted_review` only ever inspected `verdicts[0]`, so a failing
+    secondary reviewer's repairable finding was silently never attempted."""
+    allowed_check = "python -m pytest -q tests/test_regression.py"
+    calls = []
+    check_calls = []
+    diff = {"value": "+authenticate(request)\n+app.get('/v1/users', handler)\n"}
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        calls.append({"role": role, "persona": persona, "prompt": prompt})
+        if role == "verifier" and persona == "design-reviewer":
+            return 0, "No blocking defect found.\nVERDICT: PASS"
+        if role == "verifier" and persona == "security-reviewer":
+            return 0, (
+                "Missing authorization check reproduces on this input.\n"
+                f"REPRODUCTION: unauthenticated request reaches the handler\n"
+                f"MECHANICAL_CHECK: {allowed_check}\n"
+                "VERDICT: FAIL"
+            )
+        if sum(call["role"] == "generator" for call in calls) == 2:
+            diff["value"] = "+authenticate(request)\n+app.get('/v1/users', handler)\n+after repair"
+        return 0, "STATUS: done"
+
+    class Result:
+        returncode = 0
+
+    def fake_subprocess_run(command, **kwargs):
+        check_calls.append(command)
+        return Result()
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    monkeypatch.setattr(providers, "_git_diff_evidence", lambda cfg: diff["value"])
+    monkeypatch.setattr(providers, "_git_changed_files", lambda cfg: [])
+    monkeypatch.setattr(providers, "_run_step_checks", _pass_step_checks)
+    monkeypatch.setattr(providers.subprocess, "run", fake_subprocess_run)
+    state = new_state("adaptive-bugfix", _adaptive_steps(step_factory), "fix")
+
+    final = run_loop(
+        state,
+        None,
+        "mock",
+        "mock",
+        {"cwd": str(tmp_path), "checks": [allowed_check]},
+        20,
+        quiet=True,
+    )
+
+    assert final == "DONE"
+    assert [(call["role"], call["persona"]) for call in calls] == [
+        ("generator", ""),
+        ("verifier", "design-reviewer"),
+        ("verifier", "security-reviewer"),
+        ("generator", ""),
+    ]
+    assert check_calls == [allowed_check]
+    verdicts = state["step_state"]["targeted-review"]["verdicts"]
+    assert verdicts[0]["ok"] is True
+    assert verdicts[0]["by"] != "adaptive-repair"
+    assert verdicts[1] == {
+        "by": "adaptive-repair",
+        "ok": True,
+        "note": f"mechanical check passed: {allowed_check}",
+    }
+
+
 def test_adaptive_multi_generator_panel_stops_before_provider_calls(
     step_factory, monkeypatch, tmp_path
 ):

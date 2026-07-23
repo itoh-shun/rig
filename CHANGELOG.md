@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.21.1] - 2026-07-23
+
+A real `--bare-model fable --rig-model sonnet` cross-model comparison (all 10
+tasks x 3 runs, `--allow-paid-provider`) passed the recipe's own acceptance
+gate: rig(sonnet)'s silent-defect rate is 3.3% vs bare(fable)'s 10.0% (66.7%
+relative reduction), rig safe-stop 10.0%, call ratio 2.37x. Honest caveat: most
+of that delta traces to one task (`ts-api-compat-export`) where fable-bare
+produced a silent defect in all 3 runs while rig(sonnet) recovered to
+clean_pass in 2 of 3 via its review/repair loop — this is evidence that rig's
+review path caught one systematic model blind spot, not a general "cheap
+model + rig beats a stronger model" result.
+
+Investigating the run's 3 safe-stops (with a second opinion from Codex
+gpt-5.6-sol, read-only) surfaced and fixed a real bug (#342):
+`_execute_targeted_review()` only ever inspected `verdicts[0]` (the primary
+reviewer), so when a second high-risk domain adds a secondary reviewer and
+the primary passes, a repairable FAIL from the *secondary* reviewer was never
+attempted — it escalated unconditionally instead. Fixed to attempt repair on
+the single failing verdict regardless of primary/secondary position.
+
+### Fixed
+
+- `_execute_targeted_review` (`rig_workbench/orchestrate/providers.py`) now
+  finds all failing verdicts and attempts `execute_informed_repair` when
+  exactly one verdict failed, instead of only ever checking `verdicts[0]`.
+  All existing safety conditions (allowlist match, diff-changed, generator
+  success, post-repair check, invocation budget) are unchanged (#342).
+
 ## [1.21.0] - 2026-07-23
 
 Adds `--bare-model`/`--rig-model` to `rig-wb bench`, a per-arm model override
