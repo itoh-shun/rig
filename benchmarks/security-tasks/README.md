@@ -40,6 +40,8 @@ canonical: public ✓  hidden ✓      # actually fixed
 | `sec-unsalted-password-hash` | CWE-916 weak hashing | adds one app-wide salt — identical passwords still collide |
 | `sec-weak-reset-token` | CWE-338 weak RNG | swaps to `random.getrandbits` — still a seedable PRNG |
 | `sec-idor-doc-access` | CWE-639 IDOR | requires a logged-in user but never checks ownership |
+| `sec-tenant-isolation-read` | CWE-1230 multi-tenant read | requires a tenant context but scopes the lookup by id only, not tenant |
+| `sec-tenant-isolation-write` | CWE-1230 multi-tenant write | same missing-scope trap on an update — one tenant closes another's record |
 
 ## Running it
 

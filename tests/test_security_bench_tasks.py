@@ -23,6 +23,8 @@ SECURITY_TASK_IDS = (
     "sec-idor-doc-access",
     "sec-path-traversal-absolute",
     "sec-ssrf-private-ip",
+    "sec-tenant-isolation-read",
+    "sec-tenant-isolation-write",
     "sec-unsalted-password-hash",
     "sec-weak-reset-token",
 )

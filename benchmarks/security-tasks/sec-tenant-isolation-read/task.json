@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "sec-tenant-isolation-read",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "multi-tenancy",
+    "authorization"
+  ],
+  "goal": "find_record has a multi-tenant isolation flaw: a caller scoped to one tenant can read another tenant's record by id. Enforce tenant isolation so a tenant can only read its own records.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "records.py",
+    "test_records.py"
+  ]
+}

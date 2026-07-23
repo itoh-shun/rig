@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "sec-tenant-isolation-write",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "multi-tenancy",
+    "authorization"
+  ],
+  "goal": "update_status has a multi-tenant isolation flaw: a caller scoped to one tenant can modify another tenant's record by id. Enforce tenant isolation so a tenant can only update its own records.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "tenancy.py",
+    "test_tenancy.py"
+  ]
+}
