@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.22.0] - 2026-07-23
+
+Adds a **security (white-hat) pack**: an attacker-perspective layer that
+proactively hunts vulnerabilities in existing code, proves them with a PoC,
+drives a gated fix verified to actually close the hole, and can run on a
+scan-only monitoring loop — plus a dedicated benchmark corpus that quantifies
+the with-vs-without-rig difference on security work.
+
+The value framing is the same as the rest of rig, applied to security: a bare
+agent asked to "fix this vulnerability" tends to write a plausible band-aid
+(a denylist, a specific-payload block) that passes the visible tests while the
+hole stays open — a *silent security defect*. The pack refuses to ship that.
+Findings must separate Confirmed (a PoC actually landed) from Suspected
+(insufficient information), fixes must turn the PoC into a red-then-green
+regression test, and `accept` stays blocked until the re-exploit fails.
+
+Ethical boundary is built in and non-negotiable: scope is the user's own
+product or an explicitly authorized local/staging environment, and the pack is
+**static analysis + local verification only** — it never sends attack traffic
+to a live service. Dynamic scanning (DAST) is deliberately out of scope and
+left behind an authorized-target allowlist.
+
+### Added
+
+- **`/rig:sec` command** with three sub-modes: `audit` (recipe
+  `security-audit`, read-only attacker-perspective sweep of existing code),
+  `fix` (recipe `pentest-fix`, PoC→regression-test→canonical-fix→re-exploit,
+  gated by `exploit_reproduced_then_closed`), and `monitor` (recipe
+  `security-monitor`, periodic SAST/SCA/secret re-scan on
+  `patterns/autonomous-loop`, scan-only).
+- **Personas** `security/exploit-researcher`, `security/threat-modeler`,
+  `security/remediation-engineer` (reusing the existing `security-reviewer` as
+  the independent verifier), knowledge wiki `attack-catalog` (extends
+  `appsec-checklist` with exploitation technique lenses and the ethical
+  boundary), and output-contract `security-findings` (Confirmed/Suspected
+  split; attack scenario, PoC, `file:line`, root cause, and a *canonical* fix
+  are all mandatory; low-confidence Critical/High is forbidden).
+- **SCA support in `scripts/sast_adapter.py`**: `pip-audit`, `npm audit`, and
+  `trivy fs` JSON now fold into a `sca_findings_clear` acceptance-gate
+  criterion, alongside the existing semgrep → `sast_findings_clear`. rig still
+  never runs the tool — you pipe its output in (#276 design).
+- **Security benchmark corpus** `benchmarks/security-tasks/` (6 stdlib-only
+  Python tasks: absolute-path traversal, shell command injection, SSRF via
+  private/metadata IPs, unsalted password hashing, seedable-PRNG reset tokens,
+  IDOR). Each ships a `narrow` variant (the plausible fix that passes the
+  public suite but fails the hidden exploit) and a `canonical` variant (the
+  real fix). Runs on the existing paired runner —
+  `rig-wb bench --corpus benchmarks/security-tasks` — and reports the bare-vs-rig
+  silent-defect rate and relative reduction. Guarded by
+  `tests/test_security_bench_tasks.py`.
+
 ## [1.21.0] - 2026-07-23
 
 Adds `--bare-model`/`--rig-model` to `rig-wb bench`, a per-arm model override

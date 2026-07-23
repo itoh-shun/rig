@@ -60,6 +60,48 @@ def test_aggregate_truncates_detail_to_top_5():
     assert "finding-6" not in result["detail"]  # only the first 5 are inlined
 
 
+def test_parse_pip_audit_marks_known_advisory_failed(tmp_path):
+    p = tmp_path / "out.json"
+    p.write_text(json.dumps({"dependencies": [
+        {"name": "requests", "version": "2.19.0",
+         "vulns": [{"id": "CVE-2018-18074", "fix_versions": ["2.20.0"], "description": "creds leak"}]},
+        {"name": "flask", "version": "3.0.0", "vulns": []},
+    ]}), encoding="utf-8")
+    findings = sast_adapter.parse_pip_audit(p)
+    assert findings == [
+        {"status": "failed", "text": "CVE-2018-18074 @ requests 2.19.0: fix=2.20.0"},
+    ]
+
+
+def test_parse_npm_audit_maps_severity_bands(tmp_path):
+    p = tmp_path / "out.json"
+    p.write_text(json.dumps({"vulnerabilities": {
+        "lodash": {"severity": "high", "via": [{"title": "Prototype pollution"}]},
+        "postcss": {"severity": "moderate", "via": ["nested"]},
+    }}), encoding="utf-8")
+    findings = sast_adapter.parse_npm_audit(p)
+    by_status = {f["text"].split(" ")[0]: f["status"] for f in findings}
+    assert by_status["lodash"] == "failed"
+    assert by_status["postcss"] == "warning"
+
+
+def test_parse_trivy_normalizes_vulnerabilities(tmp_path):
+    p = tmp_path / "out.json"
+    p.write_text(json.dumps({"Results": [
+        {"Target": "requirements.txt", "Vulnerabilities": [
+            {"VulnerabilityID": "CVE-2021-1", "PkgName": "urllib3", "Severity": "CRITICAL", "Title": "RCE"},
+        ]},
+    ]}), encoding="utf-8")
+    findings = sast_adapter.parse_trivy(p)
+    assert findings == [{"status": "failed", "text": "CVE-2021-1 @ urllib3: RCE"}]
+
+
+def test_aggregate_sca_criterion_name_is_propagated():
+    result = sast_adapter.aggregate([], sast_adapter.SCA_CRITERION_NAME)
+    assert result["name"] == "sca_findings_clear"
+    assert result["status"] == "passed"
+
+
 def test_main_rejects_unknown_tool(capsys):
     with pytest.raises(SystemExit) as e:
         sys.argv = ["sast_adapter.py", "bogus-tool", "x.json"]

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "sec-weak-reset-token",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "crypto"
+  ],
+  "goal": "Generate reset tokens from a CSPRNG rather than a seedable PRNG.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "reset.py",
+    "test_reset.py"
+  ]
+}

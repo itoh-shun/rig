@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "sec-path-traversal-absolute",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "input-validation"
+  ],
+  "goal": "Stop read_note from serving files outside base_dir via absolute paths or traversal.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "vault.py",
+    "test_vault.py"
+  ]
+}

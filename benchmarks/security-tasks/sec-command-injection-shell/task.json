@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "sec-command-injection-shell",
+  "language": "python",
+  "difficulty": "security",
+  "risk_domains": [
+    "security",
+    "input-validation"
+  ],
+  "goal": "Pass the host to the OS as an isolated argument instead of a shell string.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "hidden_command": [
+    "python",
+    "hidden_check.py"
+  ],
+  "expected_files": [
+    "net.py",
+    "test_net.py"
+  ]
+}
