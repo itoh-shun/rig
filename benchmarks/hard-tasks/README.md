@@ -78,10 +78,38 @@ model-invariant rig is **stronger gates**, not more iteration.
 classes in the `/rig:drill` catalog (`認可ヘルパー誤信` / `多サイト検証漏れ`,
 `corpus_version: 3`), and `security-reviewer` (+ `appsec-checklist`) gained the
 detection lenses (don't trust an auth helper — check it for null-match bypass;
-verify at the shared sink, not one call site). Whether those lenses actually
-raise the reviewer's detection rate is the next measurement — `/rig:drill` scores
-it, and a re-run of this panel would show whether rig's authz safe_rate moves
-off 0%.
+verify at the shared sink, not one call site).
+
+### Verification after strengthening the gate (the negative result that matters)
+
+Chasing "why didn't rig help", the gate blind spot turned out to be **three
+layers deep**, and closing the first two was not enough:
+
+1. **Routing** — the adaptive risk router keyed on `authorization`/`ownership`,
+   so a fix written `if not is_owner(user, doc): raise Forbidden(...)` produced
+   *zero* security signals and never dispatched `security-reviewer` (fixed in
+   1.24.1: route `is_owner`/`permission`/`tenant`/`validate`… to security).
+2. **Lens** — `security-reviewer` had no eye for the `None == None` bypass
+   (fixed in 1.24.0).
+3. **Scope** — *not fixed.* The re-run panel (authz task, Haiku + Sonnet +
+   Fable, N=2, convergence budget on) still read **rig safe_rate 0% (silent 83%
+   vs bare 100%)** — essentially no movement.
+
+The reason is structural and is the real lesson of this whole corpus: **the
+vulnerability lives in code the fix does not touch.** The flawed `is_owner`
+helper is pre-existing and unchanged, so it never appears in the diff. A
+diff-scoped reviewer — routed correctly, lens and all — sees only "added a
+reasonable ownership check" and approves. Routing and a sharper checklist cannot
+help when the reviewer's *effective inspection scope* (the diff) excludes the
+defect. rig's own thesis, a third time: the gate is only as strong as what it
+actually inspects, and here it does not inspect the trusted helper the change
+newly depends on.
+
+The honest standing conclusion: **diff-scoped review has a structural blind spot
+for flaws in trusted, unchanged code.** Closing it needs a reviewer that opens
+and audits the definitions a diff newly relies on (expand review to the trust
+boundary, not just the changed lines) — a deeper capability than a persona lens
+can guarantee, and the honest next lever if this class is pursued further.
 
 ## Honest note
 
