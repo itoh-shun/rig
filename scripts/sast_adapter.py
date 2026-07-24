@@ -7,9 +7,16 @@ single aggregated check on rig's acceptance-gate. rig itself never runs the
 analysis — install and run the tool yourself, then hand its output to this
 adapter (no tool-specific option/ruleset knowledge is assumed here).
 
-Two criteria are produced, one per tool family:
-  - static analysis (SAST)      -> `sast_findings_clear`   (semgrep)
-  - dependency / CVE scan (SCA) -> `sca_findings_clear`    (pip-audit, npm audit, trivy fs)
+Three criteria are produced, one per tool family:
+  - static analysis (SAST)      -> `sast_findings_clear`       (semgrep, sarif)
+  - dependency / CVE scan (SCA) -> `sca_findings_clear`        (pip-audit, npm audit, trivy fs)
+  - AI deep scan                -> `deep_scan_findings_clear`  (claude-security)
+
+The `claude-security` and `sarif` inputs are the answer to a limit of diff-scoped
+review: an LLM reviewing a change sees only the changed lines, so it misses a
+flaw in trusted, *unchanged* code the change relies on. The Claude Security
+plugin (and any whole-repo analyzer emitting SARIF) scans the whole tree, so its
+findings — folded into the gate here — cover exactly that blind spot.
 
 `workbench.py gate` can only record a verdict for a criterion name that's
 already registered in `acceptance.json` (it's not designed to grow an
@@ -28,12 +35,17 @@ and stays behind an explicit authorized-target allowlist.
 Supported formats:
   semgrep --json
     {"results": [{"check_id", "path", "start": {"line"}, "extra": {"severity", "message"}}, ...]}
+  sarif (SARIF 2.1.0: CodeQL, `semgrep --sarif`, Claude Security managed export, …)
+    {"runs": [{"results": [{"ruleId", "level", "message": {"text"}, "locations": [...]}]}]}
   pip-audit --format json
     {"dependencies": [{"name", "version", "vulns": [{"id", "fix_versions", "description"}]}]}
   npm audit --json (npm >= 7)
     {"vulnerabilities": {"<pkg>": {"severity", "via": [...], "name"}}}
   trivy fs --format json
     {"Results": [{"Target", "Vulnerabilities": [{"VulnerabilityID", "PkgName", "Severity", "Title"}]}]}
+  claude-security (CLAUDE-SECURITY-<ts>/CLAUDE-SECURITY-RESULTS.jsonl; one finding per line)
+    {"id": "F1", "severity": "HIGH", "cwe": "CWE-863", "file", "line", "impact", ...}
+    (key names are tolerant aliases — the plugin's schema is not published as fixed)
 
 Usage:
   python3 scripts/sast_adapter.py <tool> <output.json>
@@ -56,6 +68,7 @@ import sys
 
 CRITERION_NAME = "sast_findings_clear"
 SCA_CRITERION_NAME = "sca_findings_clear"
+DEEP_SCAN_CRITERION_NAME = "deep_scan_findings_clear"
 
 # Severity spelling varies by tool; normalize and add to this map as new tools are supported.
 _SEVERITY_TO_STATUS = {
@@ -69,6 +82,14 @@ _STATUS_RANK = {"passed": 0, "warning": 1, "failed": 2}  # worst-case aggregatio
 
 def _clean(text: object) -> str:
     return str(text or "").replace("\n", " ").strip()
+
+
+def _first(obj: dict, keys: tuple[str, ...]) -> str:
+    """First present, non-empty value among candidate keys (schema-tolerant)."""
+    for key in keys:
+        if obj.get(key) not in (None, "", [], {}):
+            return _clean(obj[key])
+    return ""
 
 
 def parse_semgrep(path: pathlib.Path) -> list[dict]:
@@ -137,12 +158,75 @@ def parse_trivy(path: pathlib.Path) -> list[dict]:
     return findings
 
 
+def parse_sarif(path: pathlib.Path) -> list[dict]:
+    """Convert a SARIF 2.1.0 log into a normalized finding list.
+
+    SARIF is the interoperable format many analyzers emit (CodeQL,
+    `semgrep --sarif`, the managed Claude Security product's export, …). Severity
+    comes from each result's `level` (error/warning/note); when a result omits it
+    we default to warning rather than inventing a severity.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    findings = []
+    for run in data.get("runs", []) or []:
+        for result in run.get("results", []) or []:
+            level = _clean(result.get("level")).upper()
+            status = _SEVERITY_TO_STATUS.get(level, "warning") if level else "warning"
+            rule = _clean(result.get("ruleId")) or "?"
+            message = _clean((result.get("message") or {}).get("text"))
+            location = "?"
+            locations = result.get("locations") or []
+            if locations:
+                physical = (locations[0] or {}).get("physicalLocation") or {}
+                uri = _clean((physical.get("artifactLocation") or {}).get("uri")) or "?"
+                line = (physical.get("region") or {}).get("startLine", "?")
+                location = f"{uri}:{line}"
+            findings.append({"status": status, "text": f"{rule} @ {location}: {message}"})
+    return findings
+
+
+def parse_claude_security(path: pathlib.Path) -> list[dict]:
+    """Convert Claude Security's CLAUDE-SECURITY-RESULTS.jsonl into findings.
+
+    One JSON object per line. The plugin's findings carry an id (F1…), severity
+    (HIGH/MEDIUM/LOW), confidence, a CWE, the sink file/line, and impact/
+    recommendation prose; every reported finding was already independently
+    verified by the plugin's own reviewer agents. The exact key names are not
+    published as a fixed schema, so this reads a tolerant set of aliases rather
+    than hard-coding guessed keys — adjust the alias tuples if a field is missed.
+    """
+    findings = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        severity = _first(obj, ("severity", "sev", "risk", "level")).upper()
+        status = _SEVERITY_TO_STATUS.get(severity, "warning")
+        finding_id = _first(obj, ("id", "finding_id", "F"))
+        cwe = _first(obj, ("cwe", "cwe_id", "cweId"))
+        file = _first(obj, ("file", "path", "file_path", "location", "sink_file"))
+        line_no = _first(obj, ("line", "sink_line", "start_line", "lineno", "startLine"))
+        message = _first(obj, ("impact", "message", "title", "description", "summary", "recommendation"))
+        loc = f"{file}:{line_no}" if file else "?"
+        label = " ".join(part for part in (finding_id, cwe) if part) or "finding"
+        findings.append({"status": status, "text": f"{label} @ {loc}: {message}".strip()})
+    return findings
+
+
 # tool -> (parser, criterion it records against)
 ADAPTERS = {
     "semgrep": (parse_semgrep, CRITERION_NAME),
+    "sarif": (parse_sarif, CRITERION_NAME),
     "pip-audit": (parse_pip_audit, SCA_CRITERION_NAME),
     "npm-audit": (parse_npm_audit, SCA_CRITERION_NAME),
     "trivy": (parse_trivy, SCA_CRITERION_NAME),
+    "claude-security": (parse_claude_security, DEEP_SCAN_CRITERION_NAME),
 }
 
 

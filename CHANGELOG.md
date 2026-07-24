@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.25.0] - 2026-07-24
+
+Closes the diff-scope blind spot the model-invariance panel found — with a
+whole-repo detector folded into the gate, not a deeper LLM lens.
+
+The panel established that diff-scoped review structurally cannot catch a flaw in
+trusted, *unchanged* code (the `is_owner` helper never appears in the diff). The
+fix is a detector that scans the *whole tree*. `scripts/sast_adapter.py` now
+ingests two more formats and routes them to the acceptance gate:
+
+- **`claude-security`** → `deep_scan_findings_clear`: the official Claude
+  Security plugin's `CLAUDE-SECURITY-RESULTS.jsonl` (one finding per line;
+  multi-agent, cross-file, targets auth bypass). Key names are read as tolerant
+  aliases since the plugin's schema is not published as fixed.
+- **`sarif`** → `sast_findings_clear`: SARIF 2.1.0, the interoperable format
+  from CodeQL, `semgrep --sarif`, and the managed Claude Security export.
+
+rig still never runs the tool — you run the whole-repo scan and hand its output
+in (#276), and register the optional criterion in `.rig/gates.json`. Because
+those scanners read the entire tree, a finding in unchanged code the change
+trusts now blocks `accept` through the same gate the diff-scoped reviewer
+couldn't. Demonstrated end to end: a `CLAUDE-SECURITY-RESULTS.jsonl` flagging the
+`authz.py` null-owner bypass yields `deep_scan_findings_clear=failed` — the exact
+defect the reviewer had approved. AI judgment for the whole-tree threat model,
+rig's deterministic gate to enforce it. `security-monitor` and `/rig:sec` wire it
+into the scan loop. Verified by `tests/test_sast_adapter.py`.
+
 ## [1.24.1] - 2026-07-23
 
 Fixes the *upstream* half of the gate blind spot 1.24.0 addressed. Adding the

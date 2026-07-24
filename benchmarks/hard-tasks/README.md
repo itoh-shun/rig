@@ -109,7 +109,19 @@ The honest standing conclusion: **diff-scoped review has a structural blind spot
 for flaws in trusted, unchanged code.** Closing it needs a reviewer that opens
 and audits the definitions a diff newly relies on (expand review to the trust
 boundary, not just the changed lines) — a deeper capability than a persona lens
-can guarantee, and the honest next lever if this class is pursued further.
+can guarantee.
+
+**The practical answer is a whole-repo detector, folded into the gate.** A
+tool that scans the *entire tree* — the official Claude Security plugin
+(`/claude-security`, multi-agent, cross-file, targets auth bypass) or any
+analyzer emitting SARIF — sees the flawed `is_owner` helper whether or not it is
+in the diff. `scripts/sast_adapter.py` now ingests both
+(`claude-security` → `deep_scan_findings_clear`, `sarif` → `sast_findings_clear`),
+so a whole-repo finding blocks `accept` through the same gate. Demonstrated:
+feeding a `CLAUDE-SECURITY-RESULTS.jsonl` that flags the `authz.py` null-owner
+bypass yields `deep_scan_findings_clear=failed` — the exact defect the
+diff-scoped reviewer approved. AI judgment for the whole-tree threat model,
+rig's deterministic gate to enforce it.
 
 ## Honest note
 

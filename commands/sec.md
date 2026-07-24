@@ -42,12 +42,15 @@ $ARGUMENTS
 
 ```
 semgrep --json … > out.json ; python3 scripts/sast_adapter.py semgrep out.json --apply <task-id>   # SAST → sast_findings_clear
+python3 scripts/sast_adapter.py sarif out.sarif --apply <id>                                          # SARIF (CodeQL/semgrep --sarif/managed export)
 pip-audit --format json > out.json ; python3 scripts/sast_adapter.py pip-audit out.json --apply <id> # SCA → sca_findings_clear
 npm audit --json > out.json ; python3 scripts/sast_adapter.py npm-audit out.json --apply <id>
 trivy fs --format json . > out.json ; python3 scripts/sast_adapter.py trivy out.json --apply <id>
+# 公式 Claude Security プラグイン（/claude-security フルスキャン）の全体・横断結果を取り込む → deep_scan_findings_clear
+python3 scripts/sast_adapter.py claude-security CLAUDE-SECURITY-<ts>/CLAUDE-SECURITY-RESULTS.jsonl --apply <id>
 ```
 
-`sast_findings_clear`/`sca_findings_clear`/`exploit_reproduced_then_closed` は optional criterion＝`.rig/gates.json` の `extra_criteria` に登録したプロジェクトで gate が要求する。
+`sast_findings_clear`/`sca_findings_clear`/`deep_scan_findings_clear`/`exploit_reproduced_then_closed` は optional criterion＝`.rig/gates.json` の `extra_criteria` に登録したプロジェクトで gate が要求する。**`claude-security` はリポジトリ全体・複数ファイル横断を見る**ので、diff スコープの gated レビューが構造的に見逃す「変更が信頼する未変更コードの欠陥」を補完する（`benchmarks/hard-tasks` の実測で判明した盲点への実効策）。
 
 ## flag
 
