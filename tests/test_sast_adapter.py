@@ -102,6 +102,52 @@ def test_aggregate_sca_criterion_name_is_propagated():
     assert result["status"] == "passed"
 
 
+def test_parse_sarif_normalizes_results(tmp_path):
+    p = tmp_path / "out.sarif"
+    p.write_text(json.dumps({"runs": [{"results": [
+        {"ruleId": "authz.null-owner-bypass", "level": "error",
+         "message": {"text": "None==None auth bypass"},
+         "locations": [{"physicalLocation": {
+             "artifactLocation": {"uri": "authz.py"}, "region": {"startLine": 2}}}]},
+        {"ruleId": "style.x", "level": "note", "message": {"text": "nit"}, "locations": []},
+    ]}]}), encoding="utf-8")
+    findings = sast_adapter.parse_sarif(p)
+    assert findings[0] == {"status": "failed", "text": "authz.null-owner-bypass @ authz.py:2: None==None auth bypass"}
+    assert findings[1]["status"] == "warning"  # note -> warning
+    assert findings[1]["text"] == "style.x @ ?: nit"
+
+
+def test_parse_claude_security_jsonl_maps_severity_and_tolerant_keys(tmp_path):
+    p = tmp_path / "CLAUDE-SECURITY-RESULTS.jsonl"
+    p.write_text(
+        '{"id":"F1","severity":"HIGH","cwe":"CWE-863","file":"authz.py","line":2,'
+        '"impact":"null-owner bypass"}\n'
+        # tolerant aliases: sink_file/sink_line/description, MEDIUM -> warning
+        '{"finding_id":"F2","sev":"MEDIUM","sink_file":"users.py","sink_line":14,'
+        '"description":"bulk path unvalidated"}\n'
+        "\n"  # blank line ignored
+        "not json at all\n",  # non-JSON line skipped, not fatal
+        encoding="utf-8",
+    )
+    findings = sast_adapter.parse_claude_security(p)
+    assert len(findings) == 2
+    assert findings[0] == {"status": "failed", "text": "F1 CWE-863 @ authz.py:2: null-owner bypass"}
+    assert findings[1]["status"] == "warning"
+    assert findings[1]["text"] == "F2 @ users.py:14: bulk path unvalidated"
+
+
+def test_deep_scan_criterion_name_is_propagated():
+    result = sast_adapter.aggregate([], sast_adapter.DEEP_SCAN_CRITERION_NAME)
+    assert result["name"] == "deep_scan_findings_clear"
+
+
+def test_claude_security_tool_records_against_deep_scan_criterion():
+    parser, criterion = sast_adapter.ADAPTERS["claude-security"]
+    assert criterion == "deep_scan_findings_clear"
+    parser2, criterion2 = sast_adapter.ADAPTERS["sarif"]
+    assert criterion2 == "sast_findings_clear"
+
+
 def test_main_rejects_unknown_tool(capsys):
     with pytest.raises(SystemExit) as e:
         sys.argv = ["sast_adapter.py", "bogus-tool", "x.json"]

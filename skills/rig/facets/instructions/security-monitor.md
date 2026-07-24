@@ -7,8 +7,9 @@
 ### 何を回すか（各 tick）
 
 1. **決定論センサーの再実行**（プロジェクトが用意しているもの）：
-   - SAST: `semgrep --json` → `scripts/sast_adapter.py semgrep`
+   - SAST: `semgrep --json` → `scripts/sast_adapter.py semgrep`（SARIF を吐くツールは `sast_adapter.py sarif`）
    - SCA: `pip-audit`/`npm audit`/`trivy fs` → `sast_adapter.py <tool>`（新規 CVE の advisory 更新はここで拾う）
+   - **AI ディープスキャン**: 公式 Claude Security プラグイン（`/claude-security` フルスキャン）の `CLAUDE-SECURITY-RESULTS.jsonl` → `sast_adapter.py claude-security` → `deep_scan_findings_clear`。**リポジトリ全体・複数ファイル横断**を見るので、diff スコープのレビューが見逃す「変更が信頼する未変更コードの欠陥」を拾える（本 pack の gated レビューを補完する層）。
    - 秘密: `workbench.py scan-secrets`
 2. **差分トリアージ** — 前 tick からの新規所見だけを取り出す（既知・抑制済みは `suppression-memory` に従い黙らせる＝毎回同じ指摘で騒がない）。
 3. **新規 Confirmed があれば** — severity 付きで報告し、（opt-in なら）`pentest-fix` を1件キックして gated 修復に繋ぐ。重大でなければ所見を積むだけ。
