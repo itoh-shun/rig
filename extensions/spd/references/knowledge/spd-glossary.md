@@ -1,6 +1,6 @@
-# knowledge: spd-domain / spd-glossary（SPD用語集）
+# knowledge: spd-glossary（SPD用語集）
 
-> **DESCRIPTIVE 層**。SPDドメインのユビキタス言語。persona・レビュー出力・生成物はこの用語に揃える。最終確認: 2026-07-24。
+> **記述的（DESCRIPTIVE）知識**。SPDドメインのユビキタス言語。ペルソナ・レビュー出力・生成物はこの用語に揃える。最終確認: 2026-07-24。
 
 | 用語 | 意味 |
 |---|---|

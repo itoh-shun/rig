@@ -1,6 +1,6 @@
-# knowledge: spd-domain / spd-basics（SPDの基礎知識）
+# knowledge: spd-basics（SPDの基礎知識）
 
-> **DESCRIPTIVE 層**（`facets/knowledge/_layer` 準拠）。SPD（Supply Processing and Distribution）とは何か・どんな業務か・どう運用されるかの「事実・構造」を記述する。規範（「〜せよ」）は persona / policy 側が持つ。
+> **記述的（DESCRIPTIVE）知識**。SPD（Supply Processing and Distribution）とは何か・どんな業務か・どう運用されるかの「事実・構造」を記述する。判断・規範は各ペルソナが持つ。
 >
 > 主な出典: 一般社団法人 日本SPD協議会（https://www.spdjapan.org/ ）および国内SPD関連の公開資料。最終確認: 2026-07-24。
 

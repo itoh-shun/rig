@@ -1,8 +1,8 @@
-# knowledge: spd-domain（自院/自社固有・記入用テンプレ）
+# knowledge: domain-template（自院/自社固有・記入用テンプレ）
 
-> **これは空テンプレです。** ここに自院（病院）または自社（SPD事業者）固有の情報を記入すると、`/rig:spd` の各ステークホルダー・ペルソナが固有文脈で評価・回答する。未記入でも `spd-basics` / `spd-industry` / `spd-glossary` の汎用知識のみで動く。
+> **これは空テンプレです。** ここに自院（病院）または自社（SPD事業者）固有の情報を記入すると、各ステークホルダー・ペルソナが固有文脈で評価・回答する。未記入でも `spd-basics` / `spd-industry` / `spd-glossary` の汎用知識のみで動く。
 >
-> このファイルは **汎用知識から分離された「固有」層**。社外秘を含むためリポジトリで共有しない場合は `<repo>/.claude/rig/knowledge/domain/` 配下に置く運用でもよい（SKILL.md §5 の project 層 knowledge として注入される）。
+> 社外秘を含むためリポジトリで共有しない場合は、rig 利用時はプロジェクト知識層 `<repo>/.claude/rig/knowledge/domain/` 配下に記入済みコピーを置く運用でもよい。
 
 ## 施設 / 事業のプロフィール
 

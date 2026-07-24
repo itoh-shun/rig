@@ -1,6 +1,6 @@
-# knowledge: spd-domain / spd-industry（業界構造・日本SPD協議会・ステークホルダー）
+# knowledge: spd-industry（業界構造・日本SPD協議会・ステークホルダー）
 
-> **DESCRIPTIVE 層**。SPD業界の構造、業界団体（日本SPD協議会）、登場するステークホルダー（ペルソナの原型）、行政動向、業界課題を記述する。
+> **記述的（DESCRIPTIVE）知識**。SPD業界の構造、業界団体（日本SPD協議会）、登場するステークホルダー（ペルソナの原型）、行政動向、業界課題を記述する。
 >
 > 主な出典: 一般社団法人 日本SPD協議会（https://www.spdjapan.org/ ）。最終確認: 2026-07-24。
 
