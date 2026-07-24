@@ -5,7 +5,7 @@ argument-hint: "[\"<ぼんやりした要望>\"] [--plan]"
 
 # rig/brainstorm — 設計の壁打ち 💭
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
 
 起動後、`--recipe brainstorm` を既定として次の引数を PARSE する:
 

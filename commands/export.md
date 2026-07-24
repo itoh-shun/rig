@@ -5,7 +5,7 @@ argument-hint: "[--persona <name> | --recipe <name> | --pack <名前>] [--to <di
 
 # rig/export — ブリックを skill として書き出す 📤
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-export` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-export` にある（重複定義しない）。
 
 起動後、`facets/instructions/skill-export` に従ってブリックを書き出す:
 

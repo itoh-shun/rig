@@ -5,7 +5,7 @@ argument-hint: "<add \"task\" | list | go | done id | retry id> [--backend local
 
 # rig/queue — タスクキュー（積んで GO） 📋
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（context-minimal・計算的オーケストレーション §4.3）に従うこと。** キューの実体は `scripts/orchestrate.py queue`（決定論ランナー＝GO エンジン）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・計算的オーケストレーション §4.3）に従うこと。** キューの実体は `scripts/orchestrate.py queue`（決定論ランナー＝GO エンジン）。
 
 ```
 $ARGUMENTS

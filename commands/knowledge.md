@@ -5,7 +5,7 @@ argument-hint: "[--research \"<トピック>\"] [--graph] [\"<説明>\" | --auto
 
 # rig/knowledge — ドメイン知識ジェネレータ（wiki）
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層注入＝§5・`facets/knowledge/_wiki`）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/knowledge-gen` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層注入＝§5・`facets/knowledge/_wiki`）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/knowledge-gen` にある（重複定義しない）。
 
 起動後、`facets/instructions/knowledge-gen` に従って wiki ページを生成する:
 

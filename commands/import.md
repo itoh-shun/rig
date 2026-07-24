@@ -5,7 +5,7 @@ argument-hint: "[\"<GitHub URL | owner/repo | ローカルパス>\" | --discover
 
 # rig/import — 外部 skill の取り込み 📥
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・§8 Native-first・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-import` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・§8 Native-first・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-import` にある（重複定義しない）。
 
 起動後、`facets/instructions/skill-import` に従って外部 skill を取り込む:
 

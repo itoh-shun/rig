@@ -5,7 +5,7 @@ argument-hint: "[何の動画か（release trailer / before-after / 機能紹介
 
 # rig/scenario — シナリオライターモード 🎬✍️
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
 
 起動後、`--recipe scenario` を既定として次の引数を PARSE する:
 

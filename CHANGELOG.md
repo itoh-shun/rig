@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.26.1] - 2026-07-24
+
+Fixes a name collision that made the engine skill fail to register. The engine
+lived at `skills/rig/SKILL.md` with `name: rig`, which a plugin resolves to
+`/rig:rig` — the exact command id already claimed by `commands/rig.md` (the
+`/rig:go` compatibility alias). Two things fighting over `rig:rig` meant the
+engine skill didn't appear in the skill listing, so `/rig:*` commands that load
+it via the Skill tool fell back to a non-gated "normal" run (no isolated
+worktree, no acceptance gate).
+
+- Renames the engine skill to **`name: engine`** → `/rig:engine` (directory
+  stays `skills/rig/` so all `facets/ patterns/ recipes/` brick paths still
+  resolve). The `/rig:rig` alias command is preserved.
+- Standardizes every command's "load the … skill via the Skill tool" instruction
+  to `rig:engine` (34 command files; previously 30 said `rig`, 4 said `rig:rig`).
+
+If the engine skill still doesn't register after this, the remaining suspect is
+the SKILL.md's size (881 lines / ~151 KB, far beyond a skill body's intended
+footprint); splitting it into a lean core plus on-demand reference files is the
+follow-up.
+
 ## [1.26.0] - 2026-07-24
 
 Removes the "run the tool, then hand its output in" two-step from the sensor

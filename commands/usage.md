@@ -5,7 +5,7 @@ argument-hint: "[--global | -g] [--limit N] [--json]"
 
 # rig/usage — 使用実態の集計
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層・§6 run-continuity）に従うこと。** このコマンドは入口であり、実処理は `rig-wb usage`（`rig_workbench/cli.py`）にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層・§6 run-continuity）に従うこと。** このコマンドは入口であり、実処理は `rig-wb usage`（`rig_workbench/cli.py`）にある（重複定義しない）。
 
 起動後、次の引数を PARSE して `rig-wb usage` に渡す:
 

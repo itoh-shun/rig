@@ -5,7 +5,7 @@ argument-hint: "[\"繰り返す対象（コマンド/タスク）\"] [--every <d
 
 # rig/loop — 繰り返し・監視ループ 🔁
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。スケジューリングは既存の `patterns/autonomous-loop`（`ScheduleWakeup`）を再利用する。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。スケジューリングは既存の `patterns/autonomous-loop`（`ScheduleWakeup`）を再利用する。
 
 起動後、`--recipe loop` を既定として次の引数を PARSE する:
 

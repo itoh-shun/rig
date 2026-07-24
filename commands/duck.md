@@ -5,7 +5,7 @@ argument-hint: "[詰まっている問題（省略可）]"
 
 # rig/duck — ラバーダック・デバッグ 🦆
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは会話の入口であり、エンジン本体は skill 側にある（重複定義しない）。talk / goal / magi と同じ engine を「気づきを引き出す問い」に使う。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは会話の入口であり、エンジン本体は skill 側にある（重複定義しない）。talk / goal / magi と同じ engine を「気づきを引き出す問い」に使う。
 
 起動後、`rubber-duck` 人格と `duck-debug` instruction に従って会話する。問題:
 

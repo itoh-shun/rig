@@ -5,7 +5,7 @@ argument-hint: "[\"<やりたいこと>\"] [--plan] [--tdd] [--orchestrate]"
 
 # rig/tasks — 細粒度プランニング 🧩
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・acceptance-gate）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・acceptance-gate）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
 
 起動後、`--recipe task-plan` を既定として次の引数を PARSE する:
 

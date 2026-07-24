@@ -1,5 +1,5 @@
 ---
-name: rig
+name: engine
 description: Use when you need dev-flow orchestration in Codex or Claude Code — implementing a feature, clearing an issue, reviewing current changes, completing a PR, going design-to-implementation, TDD, quality-gated workbench runs, or composing a flow. 開発フローのオーケストレーション（Codex / Claude Code での実装着手 / Issue 対応 / 変更レビュー / PR 完了 / 設計→実装 / TDD / workbench / フロー組み立て）が要るとき、または `$rig` / `/rig:go`（互換エイリアス `/rig:rig`） / `/rig:dev` が呼ばれたとき。
 ---
 

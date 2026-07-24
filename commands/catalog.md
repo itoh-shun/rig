@@ -5,7 +5,7 @@ argument-hint: "[--domain <tag>] [--json] [--graph [--focus <name>]]"
 
 # rig/catalog — 横断レジストリ（統合管理ハーネス）
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（context-minimal・tier 解決・知識層）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/catalog` にある（重複定義しない）。`--list --global` と同等。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・tier 解決・知識層）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/catalog` にある（重複定義しない）。`--list --global` と同等。
 
 起動後、`facets/instructions/catalog` に従って全 tier を走査し地図を出す:
 

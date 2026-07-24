@@ -5,7 +5,7 @@ argument-hint: "[達成したい目標（自由記述）] [--autonomous] [--plan
 
 # rig/goal — ゴール駆動ループ
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / sales / talk と同じ engine を goal モードで使う。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / sales / talk と同じ engine を goal モードで使う。
 
 起動後、`--recipe goal-loop` を既定として次の引数を PARSE し、ゴールを達成までループで回す:
 

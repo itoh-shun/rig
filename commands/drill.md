@@ -5,7 +5,7 @@ argument-hint: "[--seeds <n>] [--clean] [--personas <a,b,…>] [--verify-finding
 
 # rig/drill — reviewer 検出率の実測 🎯
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/drill` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/drill` にある（重複定義しない）。
 
 起動後、`facets/instructions/drill` に従ってドリルを実行する:
 

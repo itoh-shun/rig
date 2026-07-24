@@ -5,7 +5,7 @@ argument-hint: "[\"<欲しい機能の説明>\"] [--type recipe|persona|knowledg
 
 # rig/forge — スキル自作（writing-skills） 🧱✨
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・§3.5 recipe スキーマ・§5 tier 解決・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-author` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・§3.5 recipe スキーマ・§5 tier 解決・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-author` にある（重複定義しない）。
 
 起動後、`facets/instructions/skill-author` に従って rig のブリック/パックを生成する:
 
