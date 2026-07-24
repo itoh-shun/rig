@@ -522,9 +522,9 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 
 These are useful after you understand the core safety flow (§4–§6) — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog. (`/rig:queue` is covered in §5, `/rig:init` in the FAQ, `/rig:sales` in §8, and Experimental commands have their own section — §14.)
 
-### Optional extension packs (`extensions/`)
+### Optional extension packs (separate repositories)
 
-Domain packs that are **not shipped with the plugin by default** live under [`extensions/`](./extensions/). Each is a self-contained skill you opt into via `/rig:import ./extensions/<name>` (or `/rig:import itoh-shun/rig --path extensions/<name>`), which translates it into rig bricks and records provenance in `skills-lock.json` — or by copying its personas/knowledge into your project/user layers by hand. Current packs: [`extensions/spd`](./extensions/spd/) (SPD — hospital supply/logistics domain: industry knowledge + 6 stakeholder personas).
+Domain packs that are **not shipped with the plugin by default** live in their own repositories. Each is a self-contained skill you opt into via `/rig:import <owner>/<repo>` (or a local clone path), which translates it into rig bricks and records provenance in `skills-lock.json` — or by copying its personas/knowledge into your project/user layers by hand. Current packs: [`itoh-shun/rig-spd`](https://github.com/itoh-shun/rig-spd) (SPD — hospital supply/logistics domain: industry knowledge + 6 stakeholder personas).
 
 ### Install
 
