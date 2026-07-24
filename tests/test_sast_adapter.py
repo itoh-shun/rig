@@ -148,6 +148,43 @@ def test_claude_security_tool_records_against_deep_scan_criterion():
     assert criterion2 == "sast_findings_clear"
 
 
+# ---- one-step `run` subcommand ------------------------------------------------
+
+def test_latest_claude_security_jsonl_picks_newest(tmp_path):
+    for ts in ("20260723-090000", "20260724-001500", "20260722-120000"):
+        d = tmp_path / f"CLAUDE-SECURITY-{ts}"
+        d.mkdir()
+        (d / "CLAUDE-SECURITY-RESULTS.jsonl").write_text("{}\n", encoding="utf-8")
+    latest = sast_adapter._latest_claude_security_jsonl(tmp_path)
+    assert latest.parent.name == "CLAUDE-SECURITY-20260724-001500"
+
+
+def test_latest_claude_security_jsonl_none_when_absent(tmp_path):
+    assert sast_adapter._latest_claude_security_jsonl(tmp_path) is None
+
+
+def test_parse_arg_reads_flag_value():
+    assert sast_adapter._parse_arg(["--apply", "t1", "--path", "src"], "--apply") == "t1"
+    assert sast_adapter._parse_arg(["--apply", "t1"], "--path") is None
+    assert sast_adapter._parse_arg(["--apply"], "--apply") is None  # dangling flag, no value
+
+
+def test_run_scanner_missing_tool_exits_with_guidance(monkeypatch, capsys):
+    monkeypatch.setattr(sast_adapter.shutil, "which", lambda _exe: None)
+    with pytest.raises(SystemExit) as e:
+        sast_adapter._run_scanner("semgrep", ".", [])
+    assert e.value.code == 1
+    err = capsys.readouterr().err
+    assert "not on PATH" in err and "pipe-in form" in err
+
+
+def test_cmd_run_rejects_unknown_tool(capsys):
+    with pytest.raises(SystemExit) as e:
+        sast_adapter.cmd_run(["run", "bogus"])
+    assert e.value.code == 1
+    assert "usage:" in capsys.readouterr().err
+
+
 def test_main_rejects_unknown_tool(capsys):
     with pytest.raises(SystemExit) as e:
         sys.argv = ["sast_adapter.py", "bogus-tool", "x.json"]

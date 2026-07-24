@@ -3,9 +3,11 @@
 rig SAST/SCA/DAST adapter (#276)
 
 A thin adapter that converts JSON output from an external security tool into a
-single aggregated check on rig's acceptance-gate. rig itself never runs the
-analysis — install and run the tool yourself, then hand its output to this
-adapter (no tool-specific option/ruleset knowledge is assumed here).
+single aggregated check on rig's acceptance-gate. By default rig doesn't run the
+analysis — you run the tool and hand its output in (the pipe-in form). For
+convenience there is also an opt-in one-step `run <tool>` form that invokes a
+standard *local static* scanner on your own code and applies the result in one
+step (still static + local, no external traffic); see Usage.
 
 Three criteria are produced, one per tool family:
   - static analysis (SAST)      -> `sast_findings_clear`       (semgrep, sarif)
@@ -48,13 +50,22 @@ Supported formats:
     (key names are tolerant aliases — the plugin's schema is not published as fixed)
 
 Usage:
-  python3 scripts/sast_adapter.py <tool> <output.json>
-      -> prints the aggregated result (status/detail/findings list) as JSON to
-         stdout (no side effects)
-  python3 scripts/sast_adapter.py <tool> <output.json> --apply <task_id>
-      -> actually calls `workbench.py gate <task_id> --set <criterion>=...`
-         (a task that hasn't registered the criterion in `.rig/gates.json`
-         first gets rejected by workbench.py itself as "not part of this task's gate")
+  Pipe-in form (rig never runs the tool — you run it, hand the output in):
+    python3 scripts/sast_adapter.py <tool> <output.json>
+        -> prints the aggregated result (status/detail/findings) as JSON, no side effects
+    python3 scripts/sast_adapter.py <tool> <output.json> --apply <task_id>
+        -> records it on the gate via `workbench.py gate <task_id> --set <criterion>=...`
+           (a task that hasn't registered the criterion in `.rig/gates.json`
+           is rejected by workbench.py as "not part of this task's gate")
+
+  One-step form (opt-in convenience — run the scanner AND apply, no temp files):
+    python3 scripts/sast_adapter.py run <tool> [--path P] [--apply <task_id>] [-- <tool args>]
+        -> runs a local static scanner (semgrep/pip-audit/npm-audit/trivy) on your own
+           code and applies the result; still static + local, no external traffic.
+    python3 scripts/sast_adapter.py run claude-security --apply <task_id>
+        -> finds the newest CLAUDE-SECURITY-<ts>/CLAUDE-SECURITY-RESULTS.jsonl and
+           applies it (the plugin is a Claude Code command, not a CLI, so `run`
+           auto-discovers its latest report instead of invoking it).
 
 Exit code: 0=success (including zero findings) / 1=input error
 """
@@ -62,9 +73,12 @@ Exit code: 0=success (including zero findings) / 1=input error
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
 
 CRITERION_NAME = "sast_findings_clear"
 SCA_CRITERION_NAME = "sca_findings_clear"
@@ -243,10 +257,114 @@ def aggregate(findings: list[dict], criterion: str = CRITERION_NAME) -> dict:
             "findings": findings}
 
 
+# ── one-step runner (opt-in convenience; #276's pipe-in path still works) ──────
+# rig deliberately doesn't *have* to run the tool — but making you run the scanner
+# and then hand its output in is two steps. `run <tool>` does both: it invokes a
+# standard *local static* scanner on your own code (no external traffic, same
+# ethical boundary) and applies the result. Default JSON-producing invocation per
+# tool; append tool-specific flags after `--`.
+_RUN_COMMANDS = {
+    "semgrep": ["semgrep", "--json", "--quiet"],          # + scan path (default ".")
+    "pip-audit": ["pip-audit", "--format", "json"],
+    "npm-audit": ["npm", "audit", "--json"],
+    "trivy": ["trivy", "fs", "--format", "json", "--quiet"],  # + scan path
+}
+_RUN_TAKES_PATH = {"semgrep", "trivy"}
+
+
+def _latest_claude_security_jsonl(root: pathlib.Path) -> pathlib.Path | None:
+    """Newest CLAUDE-SECURITY-<ts>/CLAUDE-SECURITY-RESULTS.jsonl under root (ts sorts lexically)."""
+    reports = sorted(root.glob("CLAUDE-SECURITY-*/CLAUDE-SECURITY-RESULTS.jsonl"))
+    return reports[-1] if reports else None
+
+
+def _run_scanner(tool: str, path: str, extra: list[str]) -> str:
+    """Invoke a local scanner and return its JSON stdout (exits on missing tool)."""
+    exe = _RUN_COMMANDS[tool][0]
+    if shutil.which(exe) is None:
+        print(f"[ERROR] {exe} is not on PATH — install it, or use the pipe-in form "
+              f"`sast_adapter.py {tool} <output.json>`.", file=sys.stderr)
+        sys.exit(1)
+    cmd = list(_RUN_COMMANDS[tool])
+    if tool in _RUN_TAKES_PATH:
+        cmd.append(path)
+    cmd += extra
+    # Scanners exit non-zero when they find something; that's data, not failure —
+    # capture stdout regardless (no check=True).
+    completed = subprocess.run(cmd, capture_output=True, text=True)
+    if not completed.stdout.strip():
+        print(f"[ERROR] {exe} produced no JSON on stdout"
+              + (f" (stderr: {completed.stderr.strip()[:300]})" if completed.stderr.strip() else ""),
+              file=sys.stderr)
+        sys.exit(1)
+    return completed.stdout
+
+
+def _apply_or_print(result: dict, findings: list[dict], criterion: str, task_id: str | None) -> None:
+    if task_id:
+        wb = pathlib.Path(__file__).resolve().parent / "workbench.py"
+        detail = result["detail"].replace('"', "'").replace(":", ";")
+        # `workbench.py gate` exits non-zero when the overall gate ends failed/pending
+        # (recording the criterion itself can succeed even so — the exit code reflects the
+        # gate's overall verdict). Success/failure here is "did the record succeed", not
+        # "did the gate pass", so this isn't run with check=True — output passes through as-is
+        # and only a record failure (stderr) needs separate detection.
+        subprocess.run([sys.executable, str(wb), "gate", task_id,
+                       "--set", f"{criterion}={result['status']}:{detail}"])
+        print(f"applied {criterion}={result['status']} to {task_id} ({len(findings)} findings)")
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _parse_arg(rest: list[str], flag: str) -> str | None:
+    return rest[rest.index(flag) + 1] if flag in rest and rest.index(flag) + 1 < len(rest) else None
+
+
+def cmd_run(args: list[str]) -> None:
+    """`run <tool> [--path P] [--apply <task_id>] [--out F] [-- <tool args>]`."""
+    runnable = sorted(set(_RUN_COMMANDS) | {"claude-security"})
+    if len(args) < 2 or args[1] not in runnable:
+        print(f"[ERROR] usage: sast_adapter.py run <{'|'.join(runnable)}> "
+              "[--path P] [--apply <task_id>] [--out F] [-- <tool args>]", file=sys.stderr)
+        sys.exit(1)
+    tool = args[1]
+    rest = args[2:]
+    task_id = _parse_arg(rest, "--apply")
+    out_file = _parse_arg(rest, "--out")
+    path = _parse_arg(rest, "--path") or "."
+    extra = rest[rest.index("--") + 1:] if "--" in rest else []
+
+    parser, criterion = ADAPTERS[tool]
+    if tool == "claude-security":
+        source = _latest_claude_security_jsonl(pathlib.Path("."))
+        if source is None:
+            print("[ERROR] no CLAUDE-SECURITY-*/CLAUDE-SECURITY-RESULTS.jsonl found — "
+                  "run /claude-security in a Claude Code session first.", file=sys.stderr)
+            sys.exit(1)
+        print(f"[info] using latest report: {source}", file=sys.stderr)
+    else:
+        raw = _run_scanner(tool, path, extra)
+        target = pathlib.Path(out_file) if out_file else pathlib.Path(
+            tempfile.gettempdir()) / f"sast-{tool}-{os.getpid()}.json"
+        target.write_text(raw, encoding="utf-8")
+        source = target
+
+    try:
+        findings = parser(source)
+    except (json.JSONDecodeError, KeyError, AttributeError, TypeError) as exc:
+        print(f"[ERROR] could not parse {tool} output: {exc}", file=sys.stderr)
+        sys.exit(1)
+    _apply_or_print(aggregate(findings, criterion), findings, criterion, task_id)
+
+
 def main() -> None:
     args = sys.argv[1:]
+    if args and args[0] == "run":
+        cmd_run(args)
+        return
     if len(args) < 2 or args[0] not in ADAPTERS:
-        print(f"[ERROR] usage: sast_adapter.py <{'|'.join(ADAPTERS)}> <output.json> [--apply <task_id>]",
+        print(f"[ERROR] usage: sast_adapter.py <{'|'.join(ADAPTERS)}> <output.json> [--apply <task_id>]\n"
+              f"   or: sast_adapter.py run <tool> [--path P] [--apply <task_id>]  (run the scanner too)",
               file=sys.stderr)
         sys.exit(1)
 
@@ -262,22 +380,8 @@ def main() -> None:
         print(f"[ERROR] could not parse as {tool} output: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    result = aggregate(findings, criterion)
-
-    if "--apply" in args:
-        task_id = args[args.index("--apply") + 1]
-        wb = pathlib.Path(__file__).resolve().parent / "workbench.py"
-        detail = result["detail"].replace('"', "'").replace(":", ";")
-        # `workbench.py gate` exits non-zero when the overall gate ends failed/pending
-        # (recording the criterion itself can succeed even so — the exit code reflects the
-        # gate's overall verdict). Success/failure here is "did the record succeed", not
-        # "did the gate pass", so this isn't run with check=True — output passes through as-is
-        # and only a record failure (stderr) needs separate detection.
-        subprocess.run([sys.executable, str(wb), "gate", task_id,
-                       "--set", f"{criterion}={result['status']}:{detail}"])
-        print(f"applied {criterion}={result['status']} to {task_id} ({len(findings)} findings)")
-    else:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+    task_id = args[args.index("--apply") + 1] if "--apply" in args else None
+    _apply_or_print(aggregate(findings, criterion), findings, criterion, task_id)
 
 
 if __name__ == "__main__":
