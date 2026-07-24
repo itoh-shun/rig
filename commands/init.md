@@ -5,7 +5,7 @@ argument-hint: "[--autonomous は無効(init の書き込みは常に確認)]"
 
 # rig/init — リポジトリ初期化（scaffold）
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層・§6 run-continuity）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/init` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層・§6 run-continuity）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/init` にある（重複定義しない）。
 
 起動後、`facets/instructions/init` に従って次を**雛形生成**する:
 

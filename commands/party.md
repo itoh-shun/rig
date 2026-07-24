@@ -5,7 +5,7 @@ argument-hint: ""
 
 # rig/party — パーティ編成画面 🎮
 
-**まず `rig` skill を Skill ツールで起動すること。** このコマンドは入口であり、描画本体は決定論スクリプトにある（計算的センサー一次）:
+**まず `rig:engine` skill を Skill ツールで起動すること。** このコマンドは入口であり、描画本体は決定論スクリプトにある（計算的センサー一次）:
 
 ```
 orchestrate party

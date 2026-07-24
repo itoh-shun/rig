@@ -5,7 +5,7 @@ argument-hint: "[話しかける内容（省略可）] [--autonomous]"
 
 # rig/talk — 会話モード
 
-**まず `rig:rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは会話の入口であり、エンジン本体は skill 側にある（重複定義しない）。talk は engine の前段（自然言語→構造化された rig 起動）と会話の継続だけを担う。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは会話の入口であり、エンジン本体は skill 側にある（重複定義しない）。talk は engine の前段（自然言語→構造化された rig 起動）と会話の継続だけを担う。
 
 起動後、`talk-assistant` 人格と `talk-loop` instruction に従って会話する。発話:
 

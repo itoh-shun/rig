@@ -5,7 +5,7 @@ argument-hint: "[PR 番号 or URL] [--adversarial] [--comment] [--plan]"
 
 # rig/pr — 既存 PR レビュー
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / sales / talk / goal と同じ engine を PR レビューに使う。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / sales / talk / goal と同じ engine を PR レビューに使う。
 
 起動後、`--recipe pr-review` を既定として次の引数を PARSE し、対象 PR を3観点で並列レビューする:
 

@@ -5,7 +5,7 @@ argument-hint: "[\"<問い>\"] [--evolved]"
 
 # rig/sage — 大賢者に正解を問う 🔮
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/sage-oracle` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/sage-oracle` にある（重複定義しない）。
 
 起動後、`facets/instructions/sage-oracle` に従って解析する:
 

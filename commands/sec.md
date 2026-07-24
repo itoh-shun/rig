@@ -5,7 +5,7 @@ argument-hint: "[audit|fix|monitor] [対象パス/機能・所見] [--plan] [--a
 
 # rig/sec — セキュリティ（ホワイトハッカー）モード 🛡️🔍
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / magi / loop と同じ engine を「攻撃者視点の防御」に使う security pack。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / magi / loop と同じ engine を「攻撃者視点の防御」に使う security pack。
 
 ```
 $ARGUMENTS

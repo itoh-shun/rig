@@ -5,7 +5,7 @@ argument-hint: "[レビュー対象（省略可・既定は現在の変更）] [
 
 # rig/roast — 毒舌ロースト・レビュー 🌶️
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / magi と同じ engine をユーモア配送のレビューに使う。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / magi と同じ engine をユーモア配送のレビューに使う。
 
 起動後、`--recipe roast` を既定として次の引数を PARSE し、対象を毒舌レビューする:
 

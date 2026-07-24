@@ -5,7 +5,7 @@ argument-hint: "[\"<どんなレビュアーか説明>\"] [--user] [--name <id>]
 
 # rig/persona — persona ジェネレータ
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（context-minimal・facet 配置順・persona の tier 解決＝§5）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/persona-gen` にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・facet 配置順・persona の tier 解決＝§5）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/persona-gen` にある（重複定義しない）。
 
 起動後、`facets/instructions/persona-gen` に従って persona を生成する:
 

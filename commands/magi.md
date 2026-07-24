@@ -5,7 +5,7 @@ argument-hint: "[裁定にかける提案・選択肢・質問] [--plan] [--auto
 
 # rig/magi — MAGI 合議モード
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / sales / talk / goal / pr と同じ engine を「決定の裁定」に使う。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev / sales / talk / goal / pr と同じ engine を「決定の裁定」に使う。
 
 起動後、`--recipe magi` を既定として次の引数を議題に PARSE し、3 号機の合議にかける:
 

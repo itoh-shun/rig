@@ -5,7 +5,7 @@ argument-hint: "[決めたいこと（2択 or 選択肢）] [--autonomous]"
 
 # rig/coin — コイン投げ即決 🪙
 
-**まず `rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。magi と同じ engine を「軽い決定の即断」に使う（magi の対極）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。magi と同じ engine を「軽い決定の即断」に使う（magi の対極）。
 
 起動後、`--recipe coin` を既定として次の引数を議題に PARSE する:
 

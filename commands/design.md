@@ -5,7 +5,7 @@ argument-hint: "[機能の説明 or 画面URL] [--url <url>] [--a11y-level A|AA|
 
 # rig/design — デザイン作成・監査ハーネス 🎨
 
-**まず `rig:rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev と同じ engine を design ドメインで使う。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev と同じ engine を design ドメインで使う。
 
 ## モード（2 系統・URL 有無で分岐）
 

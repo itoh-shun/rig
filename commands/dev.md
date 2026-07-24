@@ -5,7 +5,7 @@ argument-hint: "[--recipe review-only|release-flow|design-first|hotfix] [--only 
 
 # rig — dev-flow orchestrator
 
-**まず `rig:rig` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN の全規則・context-minimal・facet 配置順・recipe スキーマ・知識層注入）に厳密に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
+**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN の全規則・context-minimal・facet 配置順・recipe スキーマ・知識層注入）に厳密に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
 
 起動後、次の引数を PARSE してハーネスを合成・実行する:
 
