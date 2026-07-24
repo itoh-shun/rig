@@ -40,13 +40,20 @@ $ARGUMENTS
 
 ## 決定論センサー（rig はツールを実行しない＝出力を渡す）
 
+**ワンコマンド（`run`＝回して取り込むまで一発。ローカル静的スキャンのみ・外部通信なし）**：
 ```
-semgrep --json … > out.json ; python3 scripts/sast_adapter.py semgrep out.json --apply <task-id>   # SAST → sast_findings_clear
-python3 scripts/sast_adapter.py sarif out.sarif --apply <id>                                          # SARIF (CodeQL/semgrep --sarif/managed export)
-pip-audit --format json > out.json ; python3 scripts/sast_adapter.py pip-audit out.json --apply <id> # SCA → sca_findings_clear
-npm audit --json > out.json ; python3 scripts/sast_adapter.py npm-audit out.json --apply <id>
-trivy fs --format json . > out.json ; python3 scripts/sast_adapter.py trivy out.json --apply <id>
-# 公式 Claude Security プラグイン（/claude-security フルスキャン）の全体・横断結果を取り込む → deep_scan_findings_clear
+python3 scripts/sast_adapter.py run semgrep --path . --apply <task-id>   # SAST → sast_findings_clear
+python3 scripts/sast_adapter.py run pip-audit --apply <id>               # SCA  → sca_findings_clear
+python3 scripts/sast_adapter.py run npm-audit --apply <id>
+python3 scripts/sast_adapter.py run trivy --path . --apply <id>
+python3 scripts/sast_adapter.py run claude-security --apply <id>         # 最新の CLAUDE-SECURITY-*/…jsonl を自動発見 → deep_scan_findings_clear
+```
+（ツール固有フラグは `-- <args>` で後置。ツール未インストール時は pipe-in 形にフォールバックを案内。）
+
+**pipe-in（rig にツールを実行させたくない／CI で別に回す場合）**：
+```
+semgrep --json … > out.json ; python3 scripts/sast_adapter.py semgrep out.json --apply <id>
+python3 scripts/sast_adapter.py sarif out.sarif --apply <id>            # SARIF (CodeQL/semgrep --sarif/managed export)
 python3 scripts/sast_adapter.py claude-security CLAUDE-SECURITY-<ts>/CLAUDE-SECURITY-RESULTS.jsonl --apply <id>
 ```
 

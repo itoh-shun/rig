@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.26.0] - 2026-07-24
+
+Removes the "run the tool, then hand its output in" two-step from the sensor
+flow. `scripts/sast_adapter.py` gains an opt-in one-step `run` subcommand:
+
+```
+python3 scripts/sast_adapter.py run semgrep --path . --apply <task_id>
+python3 scripts/sast_adapter.py run pip-audit --apply <task_id>
+python3 scripts/sast_adapter.py run claude-security --apply <task_id>
+```
+
+`run <tool>` invokes a standard **local static** scanner
+(semgrep / pip-audit / npm-audit / trivy) on your own code with its default
+JSON-producing flags (append tool-specific flags after `--`), parses the output,
+and records the gate criterion — no temp file, no second command. It stays
+static + local, so the ethical boundary is unchanged; when the tool isn't on
+`PATH` it exits with guidance to the pipe-in form. `run claude-security` is
+special-cased: the plugin is a Claude Code command, not a CLI, so `run`
+**auto-discovers the newest `CLAUDE-SECURITY-<ts>/CLAUDE-SECURITY-RESULTS.jsonl`**
+in the repo and applies it — you no longer hunt for the timestamped path.
+
+The pipe-in form (rig never runs the tool; e.g. CI runs the scan separately) is
+unchanged and still the default contract (#276). `/rig:sec` and
+`security-monitor` now lead with the one-step form. Verified by
+`tests/test_sast_adapter.py`.
+
 ## [1.25.0] - 2026-07-24
 
 Closes the diff-scope blind spot the model-invariance panel found — with a
