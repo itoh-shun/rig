@@ -41,7 +41,19 @@ DEFAULT_GEN_MODEL = "claude-sonnet-5"
 
 MAX_PARALLEL = 2
 
-TOPICS = ["Python", "機械学習", "クラウドコンピューティング", "Web開発"]
+# Run-to-run spread on the v1 gate arm was 11 points at n=4 (57.8 then 46.5), which is
+# wider than the gap between two gate revisions is likely to be. Comparing gate versions
+# needs more samples than comparing gate-vs-no-gate did.
+TOPICS = [
+    "Python",
+    "機械学習",
+    "クラウドコンピューティング",
+    "Web開発",
+    "データベース設計",
+    "リモートワーク",
+    "セキュリティ対策",
+    "チーム開発",
+]
 
 # Judge runs read-only, same enforcement rig pins on its own verifier role
 # (rig_workbench/orchestrate/providers.py::_READONLY_ENFCE).
