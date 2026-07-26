@@ -27,8 +27,10 @@ told which arm produced the text. Lower score = reads more human-written.
 import argparse
 import json
 import re
+import os
 import subprocess
 import statistics
+import tempfile
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -229,16 +231,23 @@ def judge(text: str, model: str) -> dict:
 # ---------------------------------------------------------------------- generation
 
 # Every prompt that emits a draft repeats this. Without it on the revise prompts, the
-# gated arms drifted to ~2x the bare arm's length (bare 141 chars, rig 279, rig2 306),
-# so "the gate helped" was confounded with "the gated arm wrote more". Length is a
-# confound worth removing outright rather than arguing away.
-LENGTH_SPEC = "導入文は 100〜200 字。この字数は書き直しても必ず守ること。"
+# gated arms drifted to ~2x the bare arm's length, so "the gate helped" was confounded
+# with "the gated arm wrote more". Length is a confound worth removing outright.
+#
+# The target is a whole article, not the 100-200 char intro this benchmark started with,
+# because lint.py's document-level detectors have minimum sizes and almost none of them
+# reached quorum on an intro: burstiness needs 6 sentences, sentence variance 5,
+# paragraph metrics 3-4 paragraphs, nominal_ending 2000 chars. At intro length the only
+# live checks were forbidden_phrase and low_specificity. A ~1700-char draft fires the
+# rest (measured: 10 findings, 7 of them critical, on an ungated Sonnet article).
+LENGTH_SPEC = "本文は 1500〜2500 字。見出しと複数段落で構成すること。この分量は書き直しても必ず守ること。"
 
-GEN_PROMPT = """{topic} をテーマにした日本語のブログ記事のタイトルと導入文を書いてください。
+GEN_PROMPT = """{topic} をテーマにした日本語のブログ記事を書いてください。
 {length_spec}
 
-JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと:
-{{"title": "<タイトル>", "description": "<導入文>"}}"""
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
 
 VERIFY_PROMPT = """あなたは独立した検証者です。以下の日本語テキストが受入基準を満たすか判定してください。
 
@@ -361,6 +370,121 @@ def generate_rig_v2(topic: str, model: str) -> dict:
     return generate_rig(topic, model, criteria=GATE_CRITERIA_V2, verify_model=DEFAULT_JUDGE_MODEL)
 
 
+# --------------------------------------------------------- mechanical detector (lint)
+#
+# coji/natural-japanese's lint.py, used as the verifier instead of a model. Its premise
+# is the one this benchmark arrived at the hard way: 「検出は機械、判断は人間（またはAI）」
+# — detect mechanically, leave the fix to the agent, because a model asked to check for
+# a tell will perform the absence of it. Our v2 gate is exactly that failure.
+#
+# It is also calibrated against a corpus (103 human / 81 AI documents) rather than
+# against one model's taste, and that calibration removed checks that punish good human
+# writing (「最後に」: human 48 vs AI 2). Nothing in our LLM gate has that property.
+#
+# Not vendored — MIT-licensed but externally maintained, so it is referenced by path.
+LINT_PATH_ENV = "RIG_JP_LINT_PATH"
+
+
+def resolve_lint_path() -> Path | None:
+    """Locate lint.py, or None when the checkout is not available."""
+    env = os.environ.get(LINT_PATH_ENV)
+    candidates = [Path(env)] if env else []
+    candidates += [
+        HERE / "natural-japanese/skills/natural-japanese/scripts/lint.py",
+        HERE.parents[2] / "natural-japanese/skills/natural-japanese/scripts/lint.py",
+    ]
+    return next((c for c in candidates if c.is_file()), None)
+
+
+def lint_findings(text: str, lint_path: Path) -> list[dict]:
+    """Run lint.py over `text` and return its findings.
+
+    lint.py exits 0 whether or not it finds anything (it is a lint, not a CI gate), so
+    a non-zero exit means the tool itself failed and must not be read as "clean".
+    """
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        fh.write(text)
+        tmp = fh.name
+    try:
+        proc = subprocess.run(
+            ["uv", "run", str(lint_path), tmp, "--json"],
+            capture_output=True, text=True, timeout=300, cwd=lint_path.parent,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"lint.py failed: {proc.stderr.strip()[:300]}")
+        return json.loads(proc.stdout).get("findings", [])
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+LINT_REVISE_PROMPT = """以下の日本語テキストを、静的解析器が検出した指摘にもとづいて直してください。
+
+現在のテキスト:
+\"\"\"
+{text}
+\"\"\"
+
+検出された指摘（形態素解析による機械的検出。何をどう直すかはあなたの判断です）:
+{findings}
+
+{length_spec}
+
+指摘を機械的に潰すのではなく、なぜその表現になったかを考えて書き直してください。
+検出を避けるために要素を均等に配置すると、それ自体が不自然さになります。
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+
+def generate_riglint(topic: str, model: str, max_rounds: int = 3) -> dict:
+    """rig arm whose verifier is lint.py rather than a model.
+
+    Detection is deterministic and corpus-calibrated; the revision is still the model's
+    judgement. That split is the whole point — it is the half of the loop that cannot be
+    talked into passing.
+    """
+    lint_path = resolve_lint_path()
+    if lint_path is None:
+        raise SystemExit(
+            f"riglint needs coji/natural-japanese. Clone it and set {LINT_PATH_ENV} to "
+            "skills/natural-japanese/scripts/lint.py"
+        )
+
+    out = run_claude_json(GEN_PROMPT.format(topic=topic, length_spec=LENGTH_SPEC), model, [])
+    rounds = 1
+    gate_log = []
+
+    for _ in range(max_rounds - 1):
+        text = f"{out['title']}\n\n{out['description']}"
+        findings = lint_findings(text, lint_path)
+        gate_log.append({
+            "round": rounds,
+            "verdict": "PASS" if not findings else "FAIL",
+            "issues": [f"{f.get('category')}: {f.get('detail') or f.get('excerpt', '')[:80]}"
+                       for f in findings],
+        })
+        if not findings:
+            break
+        rendered = "\n".join(
+            f"- [{f.get('severity')}] {f.get('category')}: "
+            f"{f.get('detail') or ''} 該当箇所: {f.get('excerpt', '')[:60]}"
+            for f in findings
+        )
+        out = run_claude_json(
+            LINT_REVISE_PROMPT.format(text=text, findings=rendered, length_spec=LENGTH_SPEC),
+            model, [],
+        )
+        rounds += 1
+
+    return {
+        "title": out["title"],
+        "description": out["description"],
+        "rounds": rounds,
+        "gate_log": gate_log,
+    }
+
+
 def generate_rig_v3(topic: str, model: str) -> dict:
     """Ablation: v3 criteria, self-verified as in v1. Isolates the criteria change."""
     return generate_rig(topic, model, criteria=GATE_CRITERIA_V3)
@@ -405,6 +529,7 @@ LIVE_ARMS = {
     "rig2": ("rig v2 — quota gate, cross-model verifier (regressed)", generate_rig_v2),
     "rig3": ("rig v3 — prohibitions only, self-verified", generate_rig_v3),
     "rig1x": ("rig v1 criteria, cross-model verifier (ablation)", generate_rig_v1_xmodel),
+    "riglint": ("rig + lint.py — mechanical detector as verifier", generate_riglint),
 }
 
 
@@ -418,19 +543,36 @@ def collect_live(arm: str, model: str) -> list[dict]:
 
 
 def score_arm(samples: list[dict], judge_model: str) -> list[dict]:
-    """Judge every sample of an arm concurrently."""
+    """Judge every sample, and count lint findings on it as a second opinion.
+
+    The judge is the independent outcome measure. lint counts are informative for the
+    ungated arms, but for riglint they are teaching-to-the-test — that arm optimises
+    against this exact detector, so its low count is not evidence of anything.
+    """
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         verdicts = list(
             pool.map(lambda s: judge(f"{s['title']}\n{s['description']}", judge_model), samples)
         )
-    return [{**s, **v} for s, v in zip(samples, verdicts)]
+    scored = [{**s, **v} for s, v in zip(samples, verdicts)]
+
+    lint_path = resolve_lint_path()
+    if lint_path is not None:
+        for sample in scored:
+            try:
+                findings = lint_findings(f"{sample['title']}\n\n{sample['description']}", lint_path)
+            except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError):
+                continue
+            sample["lint_total"] = len(findings)
+            sample["lint_critical"] = sum(1 for f in findings if f.get("severity") == "critical")
+    return scored
 
 
 def report(label: str, scored: list[dict]) -> dict:
     print(f"\n[{label}]")
     for s in scored:
         rounds = f"  [{s['rounds']} round(s)]" if s["rounds"] > 1 else ""
-        print(f"  {s['topic']}: {s['score']:.1f}/100{rounds}")
+        lint = f"  lint {s['lint_total']}({s['lint_critical']}c)" if "lint_total" in s else ""
+        print(f"  {s['topic']}: {s['score']:.1f}/100{rounds}{lint}")
         print(f"    {s['title']}")
         print(f"    → {s['reasoning']}")
     scores = [s["score"] for s in scored]
@@ -439,8 +581,13 @@ def report(label: str, scored: list[dict]) -> dict:
     # "wrote more" rather than "wrote better". If arms diverge here again, the score
     # comparison is not clean.
     lengths = [len(s["title"]) + len(s["description"]) for s in scored]
+    linted = [s for s in scored if "lint_total" in s]
     stats = {
         "mean_chars": round(statistics.mean(lengths), 1),
+        "mean_lint": round(statistics.mean([s["lint_total"] for s in linted]), 2) if linted else None,
+        "mean_lint_critical": (
+            round(statistics.mean([s["lint_critical"] for s in linted]), 2) if linted else None
+        ),
         "mean": round(statistics.mean(scores), 2),
         # n is small and one sample can swing the mean hard (a single 15 in an
         # otherwise 68-76 arm moved it 14 points), so the median is reported too.
@@ -486,7 +633,7 @@ def main() -> None:
         arm["samples"] = score_arm(arm["samples"], args.judge_model)
         arm["stats"] = report(arm["label"], arm["samples"])
 
-    gated = [n for n in ("rig3", "rig2", "rig1x", "rig") if n in arms]
+    gated = [n for n in ("riglint", "rig3", "rig2", "rig1x", "rig") if n in arms]
     baseline = arms["bare"]["stats"]["mean"]
     treatment = arms[gated[0]]["stats"]["mean"] if gated else baseline
     improvement = baseline - treatment
@@ -496,8 +643,12 @@ def main() -> None:
     print(f"AI らしさスコア (低いほど自然) — judge: {args.judge_model}")
     print(f"{'=' * 60}")
     for name, arm in arms.items():
-        print(f"  {name:<8} 平均 {arm['stats']['mean']:>5.1f} / 中央値 {arm['stats']['median']:>5.1f}"
-              f" / {arm['stats']['mean_chars']:>5.0f}字")
+        st = arm["stats"]
+        lint = f" / lint {st['mean_lint']:>5.2f}" if st.get("mean_lint") is not None else ""
+        print(f"  {name:<8} 平均 {st['mean']:>5.1f} / 中央値 {st['median']:>5.1f}"
+              f" / {st['mean_chars']:>5.0f}字{lint}")
+    if "riglint" in arms:
+        print("  注: riglint は lint に対して最適化しているため、その lint 値は証拠にならない")
 
     spread = max(a["stats"]["mean_chars"] for a in arms.values()) - min(
         a["stats"]["mean_chars"] for a in arms.values())
