@@ -228,8 +228,14 @@ def judge(text: str, model: str) -> dict:
 
 # ---------------------------------------------------------------------- generation
 
+# Every prompt that emits a draft repeats this. Without it on the revise prompts, the
+# gated arms drifted to ~2x the bare arm's length (bare 141 chars, rig 279, rig2 306),
+# so "the gate helped" was confounded with "the gated arm wrote more". Length is a
+# confound worth removing outright rather than arguing away.
+LENGTH_SPEC = "導入文は 100〜200 字。この字数は書き直しても必ず守ること。"
+
 GEN_PROMPT = """{topic} をテーマにした日本語のブログ記事のタイトルと導入文を書いてください。
-導入文は 100〜200 字程度。
+{length_spec}
 
 JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと:
 {{"title": "<タイトル>", "description": "<導入文>"}}"""
@@ -260,6 +266,8 @@ REVISE_PROMPT = """以下の日本語テキストが受入ゲートで FAIL し�
 受入基準:
 {criteria}
 
+{length_spec}
+
 重要: 推敲して「整える」のではありません。整った文章ほど AI が書いたと判定されます。
 具体を足し、整いすぎた構成をむしろ崩してください。きれいにまとめないこと。
 
@@ -269,11 +277,12 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 
 def generate_bare(topic: str, model: str) -> dict:
     """Bare arm: one shot, no gate."""
-    out = run_claude_json(GEN_PROMPT.format(topic=topic), model, [])
+    out = run_claude_json(GEN_PROMPT.format(topic=topic, length_spec=LENGTH_SPEC), model, [])
     return {"title": out["title"], "description": out["description"], "rounds": 1}
 
 
 SELFREV_PROMPT = """以下の日本語テキストをもっと良くしてください。
+{length_spec}
 
 現在のテキスト:
 \"\"\"
@@ -292,10 +301,10 @@ def generate_selfrev(topic: str, model: str, rounds: int = 3) -> dict:
     holds the round count and isolates the gate: the generator just revises its own
     output, with no independent verifier and no acceptance criteria.
     """
-    out = run_claude_json(GEN_PROMPT.format(topic=topic), model, [])
+    out = run_claude_json(GEN_PROMPT.format(topic=topic, length_spec=LENGTH_SPEC), model, [])
     for _ in range(rounds - 1):
         text = f"{out['title']}\n{out['description']}"
-        out = run_claude_json(SELFREV_PROMPT.format(text=text), model, [])
+        out = run_claude_json(SELFREV_PROMPT.format(text=text, length_spec=LENGTH_SPEC), model, [])
     return {"title": out["title"], "description": out["description"], "rounds": rounds}
 
 
@@ -314,7 +323,7 @@ def generate_rig(
     it; the arm table wires that up for the v2 arm.
     """
     verify_model = verify_model or model
-    out = run_claude_json(GEN_PROMPT.format(topic=topic), model, [])
+    out = run_claude_json(GEN_PROMPT.format(topic=topic, length_spec=LENGTH_SPEC), model, [])
     rounds = 1
     gate_log = []
 
@@ -330,7 +339,7 @@ def generate_rig(
             break
         issues = "\n".join(f"- {i}" for i in verdict.get("issues", []))
         out = run_claude_json(
-            REVISE_PROMPT.format(text=text, issues=issues, criteria=criteria), model, []
+            REVISE_PROMPT.format(text=text, issues=issues, criteria=criteria, length_spec=LENGTH_SPEC), model, []
         )
         rounds += 1
 
@@ -425,7 +434,13 @@ def report(label: str, scored: list[dict]) -> dict:
         print(f"    {s['title']}")
         print(f"    → {s['reasoning']}")
     scores = [s["score"] for s in scored]
+    # Length is reported on every arm because it was a live confound once already: the
+    # gated arms drifted to twice the bare arm's length, so a score gap could have been
+    # "wrote more" rather than "wrote better". If arms diverge here again, the score
+    # comparison is not clean.
+    lengths = [len(s["title"]) + len(s["description"]) for s in scored]
     stats = {
+        "mean_chars": round(statistics.mean(lengths), 1),
         "mean": round(statistics.mean(scores), 2),
         # n is small and one sample can swing the mean hard (a single 15 in an
         # otherwise 68-76 arm moved it 14 points), so the median is reported too.
@@ -434,7 +449,7 @@ def report(label: str, scored: list[dict]) -> dict:
         "max": max(scores),
     }
     print(f"  平均 {stats['mean']:.1f} / 中央値 {stats['median']:.1f} "
-          f"(範囲 {stats['min']:.0f}-{stats['max']:.0f})")
+          f"(範囲 {stats['min']:.0f}-{stats['max']:.0f}, 平均 {stats['mean_chars']:.0f}字)")
     return stats
 
 
@@ -481,7 +496,13 @@ def main() -> None:
     print(f"AI らしさスコア (低いほど自然) — judge: {args.judge_model}")
     print(f"{'=' * 60}")
     for name, arm in arms.items():
-        print(f"  {name:<8} 平均 {arm['stats']['mean']:>5.1f} / 中央値 {arm['stats']['median']:>5.1f}")
+        print(f"  {name:<8} 平均 {arm['stats']['mean']:>5.1f} / 中央値 {arm['stats']['median']:>5.1f}"
+              f" / {arm['stats']['mean_chars']:>5.0f}字")
+
+    spread = max(a["stats"]["mean_chars"] for a in arms.values()) - min(
+        a["stats"]["mean_chars"] for a in arms.values())
+    if spread > 60:
+        print(f"  ⚠ アーム間の平均字数が {spread:.0f}字 開いている — スコア差が長さ由来の可能性")
     best = gated[0] if gated else "bare"
     print(f"\n  bare → {best} 改善: {improvement:.1f} points ({pct:.1f}%)")
 
