@@ -152,15 +152,42 @@ def run_claude(
 
 def extract_json(raw: str) -> dict:
     """Pull the first JSON object out of a model response (tolerates ``` fences)."""
-    raw = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        raise ValueError(f"no JSON object in response: {raw[:300]}")
-    return json.loads(match.group(0))
+    stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip()).strip()
+    candidates = [stripped]
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if match:
+        candidates.append(match.group(0))
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+        # Generated Japanese sometimes carries a raw newline inside a string value,
+        # which is legal prose and illegal JSON. Escaping those is a safe last resort;
+        # a genuinely malformed response still falls through to the caller's retry.
+        try:
+            return json.loads(candidate.replace("\r\n", "\\n").replace("\n", "\\n"))
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"no parseable JSON in response: {raw[:300]}")
+
+
+def run_claude_json(prompt: str, model: str, extra_argv: list[str], attempts: int = 3) -> dict:
+    """run_claude, but the unit being retried is call-and-parse.
+
+    A response that arrives intact but unparseable is as useless as one that never
+    arrived, and it used to abort the whole run and discard every finished arm.
+    """
+    last = ""
+    for _ in range(attempts):
+        raw = run_claude(prompt, model, extra_argv)
+        try:
+            return extract_json(raw)
+        except ValueError as exc:
+            last = str(exc)
+    raise ValueError(f"unparseable JSON after {attempts} attempts: {last}")
 
 
 # --------------------------------------------------------------------------- judge
@@ -192,8 +219,7 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 
 def judge(text: str, model: str) -> dict:
     """Score how AI-generated `text` reads. Judge does not know which arm made it."""
-    raw = run_claude(JUDGE_PROMPT.format(text=text), model, READONLY_TOOLS)
-    result = extract_json(raw)
+    result = run_claude_json(JUDGE_PROMPT.format(text=text), model, READONLY_TOOLS)
     return {
         "score": max(0.0, min(100.0, float(result["score"]))),
         "reasoning": str(result.get("reasoning", "")),
@@ -243,7 +269,7 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 
 def generate_bare(topic: str, model: str) -> dict:
     """Bare arm: one shot, no gate."""
-    out = extract_json(run_claude(GEN_PROMPT.format(topic=topic), model, []))
+    out = run_claude_json(GEN_PROMPT.format(topic=topic), model, [])
     return {"title": out["title"], "description": out["description"], "rounds": 1}
 
 
@@ -266,10 +292,10 @@ def generate_selfrev(topic: str, model: str, rounds: int = 3) -> dict:
     holds the round count and isolates the gate: the generator just revises its own
     output, with no independent verifier and no acceptance criteria.
     """
-    out = extract_json(run_claude(GEN_PROMPT.format(topic=topic), model, []))
+    out = run_claude_json(GEN_PROMPT.format(topic=topic), model, [])
     for _ in range(rounds - 1):
         text = f"{out['title']}\n{out['description']}"
-        out = extract_json(run_claude(SELFREV_PROMPT.format(text=text), model, []))
+        out = run_claude_json(SELFREV_PROMPT.format(text=text), model, [])
     return {"title": out["title"], "description": out["description"], "rounds": rounds}
 
 
@@ -288,16 +314,14 @@ def generate_rig(
     it; the arm table wires that up for the v2 arm.
     """
     verify_model = verify_model or model
-    out = extract_json(run_claude(GEN_PROMPT.format(topic=topic), model, []))
+    out = run_claude_json(GEN_PROMPT.format(topic=topic), model, [])
     rounds = 1
     gate_log = []
 
     for _ in range(max_rounds - 1):
         text = f"{out['title']}\n{out['description']}"
-        verdict = extract_json(
-            run_claude(
-                VERIFY_PROMPT.format(text=text, criteria=criteria), verify_model, READONLY_TOOLS
-            )
+        verdict = run_claude_json(
+            VERIFY_PROMPT.format(text=text, criteria=criteria), verify_model, READONLY_TOOLS
         )
         passed = str(verdict.get("verdict", "")).upper() == "PASS"
         gate_log.append({"round": rounds, "verdict": "PASS" if passed else "FAIL",
@@ -305,8 +329,8 @@ def generate_rig(
         if passed:
             break
         issues = "\n".join(f"- {i}" for i in verdict.get("issues", []))
-        out = extract_json(
-            run_claude(REVISE_PROMPT.format(text=text, issues=issues, criteria=criteria), model, [])
+        out = run_claude_json(
+            REVISE_PROMPT.format(text=text, issues=issues, criteria=criteria), model, []
         )
         rounds += 1
 
