@@ -24,6 +24,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -31,6 +32,8 @@ HERE = Path(__file__).parent
 
 DEFAULT_JUDGE_MODEL = "claude-opus-5"
 DEFAULT_GEN_MODEL = "claude-sonnet-5"
+
+MAX_PARALLEL = 2
 
 TOPICS = ["Python", "機械学習", "クラウドコンピューティング", "Web開発"]
 
@@ -45,13 +48,33 @@ GATE_CRITERIA = """- テンプレート的な言い回しの使い回しがな�
 - 声のトーンが一貫していること"""
 
 
-def run_claude(prompt: str, model: str, extra_argv: list[str], timeout: int = 300) -> str:
-    """Invoke headless claude and return its text output."""
+def run_claude(
+    prompt: str, model: str, extra_argv: list[str], timeout: int = 300, attempts: int = 4
+) -> str:
+    """Invoke headless claude and return its text output.
+
+    Headless claude occasionally exits non-zero with an empty stderr under
+    concurrency, so transient failures are retried with backoff rather than
+    aborting the whole run and losing the other arm's work.
+    """
     argv = ["claude", "-p", prompt, "--output-format", "text", "--model", model] + extra_argv
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=HERE)
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr.strip()[:400]}")
-    return proc.stdout.strip()
+    last = ""
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(2**attempt)
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=HERE)
+        except subprocess.TimeoutExpired:
+            last = f"timeout after {timeout}s"
+            continue
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip()
+        last = (
+            f"exit {proc.returncode}; "
+            f"stderr={proc.stderr.strip()[:200] or '<empty>'}; "
+            f"stdout={proc.stdout.strip()[:200] or '<empty>'}"
+        )
+    raise RuntimeError(f"claude failed after {attempts} attempts: {last}")
 
 
 def extract_json(raw: str) -> dict:
@@ -202,7 +225,7 @@ def collect_fixture(dirname: str) -> list[dict]:
 
 def collect_live(arm: str, model: str) -> list[dict]:
     fn = generate_bare if arm == "bare" else generate_rig
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         results = list(pool.map(lambda t: {"topic": t, **fn(t, model)}, TOPICS))
     return results
 
@@ -212,7 +235,7 @@ def collect_live(arm: str, model: str) -> list[dict]:
 
 def score_arm(samples: list[dict], judge_model: str) -> list[dict]:
     """Judge every sample of an arm concurrently."""
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         verdicts = list(
             pool.map(lambda s: judge(f"{s['title']}\n{s['description']}", judge_model), samples)
         )
