@@ -633,11 +633,14 @@ def main() -> None:
         arm["samples"] = score_arm(arm["samples"], args.judge_model)
         arm["stats"] = report(arm["label"], arm["samples"])
 
+    # --arms may omit either end (an ablation run comparing gate versions has no bare
+    # arm), so the summary must degrade to "no baseline" rather than KeyError after the
+    # expensive part has already succeeded.
     gated = [n for n in ("riglint", "rig3", "rig2", "rig1x", "rig") if n in arms]
-    baseline = arms["bare"]["stats"]["mean"]
-    treatment = arms[gated[0]]["stats"]["mean"] if gated else baseline
-    improvement = baseline - treatment
-    pct = (improvement / baseline * 100) if baseline else 0.0
+    baseline = arms["bare"]["stats"]["mean"] if "bare" in arms else None
+    treatment = arms[gated[0]]["stats"]["mean"] if gated else None
+    improvement = (baseline - treatment) if (baseline is not None and treatment is not None) else None
+    pct = (improvement / baseline * 100) if improvement is not None and baseline else None
 
     print(f"\n{'=' * 60}")
     print(f"AI らしさスコア (低いほど自然) — judge: {args.judge_model}")
@@ -655,9 +658,17 @@ def main() -> None:
     if spread > 60:
         print(f"  ⚠ アーム間の平均字数が {spread:.0f}字 開いている — スコア差が長さ由来の可能性")
     best = gated[0] if gated else "bare"
-    print(f"\n  bare → {best} 改善: {improvement:.1f} points ({pct:.1f}%)")
+    if improvement is None:
+        print("\n  (bare アームなし — 改善幅は算出せず、アーム間の相対比較のみ)")
+    else:
+        print(f"\n  bare → {best} 改善: {improvement:.1f} points ({pct:.1f}%)")
 
-    if "selfrev" in arms:
+    # Same arm, same topics, same models, two runs: v1 measured 30.9 then 56.0. Gate
+    # revisions differ by 10-20 points, i.e. less than one arm's own run-to-run spread,
+    # so a single run cannot rank them. Say so where the ranking is printed.
+    print("  ⚠ 単発実行の分散は同一アームで最大25点。ゲート版同士の優劣は反復実行が必要")
+
+    if "selfrev" in arms and treatment is not None:
         # The number that decides whether the gate earned its keep, rather than the
         # extra rounds it happens to spend.
         gate_effect = arms["selfrev"]["stats"]["mean"] - treatment
@@ -665,20 +676,22 @@ def main() -> None:
         if gate_effect < 5:
             print("  ⚠ ゲートの寄与は計算量の増加と区別できない")
 
-    print(f"  判定: {'PASS' if improvement >= 5 else 'FAIL'}")
+    if improvement is not None:
+        print(f"  判定: {'PASS' if improvement >= 5 else 'FAIL'}")
 
     results = {
         "mode": "live" if args.live else "fixture",
         "judge_model": args.judge_model,
         "gen_model": args.gen_model if args.live else None,
         "arms": arms,
-        "improvement_points": round(improvement, 2),
-        "improvement_percent": round(pct, 1),
+        "improvement_points": round(improvement, 2) if improvement is not None else None,
+        "improvement_percent": round(pct, 1) if pct is not None else None,
         "compared_arm": best,
         "gate_effect_vs_selfrev": (
-            round(arms["selfrev"]["stats"]["mean"] - treatment, 2) if "selfrev" in arms else None
+            round(arms["selfrev"]["stats"]["mean"] - treatment, 2)
+            if "selfrev" in arms and treatment is not None else None
         ),
-        "success": improvement >= 5,
+        "success": bool(improvement is not None and improvement >= 5),
     }
 
     if args.json_out:
