@@ -7,13 +7,18 @@ Two modes:
                      Deterministic and offline-ish, but both sides are hand-written
                      fixtures — it demonstrates the metric, it does not measure rig.
 
-  --live             Generate the Japanese for real, twice, with the *same* generator
-                     model, differing only in harness:
-                       bare arm — one shot, no gate
-                       rig arm  — generate, then an independent verifier process judges
-                                  it against explicit naturalness acceptance criteria,
-                                  and the generator revises until the gate passes
-                     This is the arm comparison that actually says something about rig.
+  --live             Generate the Japanese for real, once per arm, with the *same*
+                     generator model throughout so only the harness differs:
+                       bare    — one shot, no gate
+                       selfrev — same round budget as a gated arm, but no verifier and
+                                 no criteria. Without this control, a gated arm's win
+                                 cannot be told apart from simply spending more compute.
+                       rig     — v1 gate: generic "write it well" criteria, and the
+                                 generator verifies its own output
+                       rig2    — v2 gate: criteria retuned to the tells the judge
+                                 actually penalised, verified by a different model
+                     selfrev → rig2 is the number that says whether the gate earned its
+                     keep. bare → rig2 alone does not.
 
 The judge is a separate `claude -p` process pinned to read-only tools, and it is never
 told which arm produced the text. Lower score = reads more human-written.
@@ -42,11 +47,34 @@ TOPICS = ["Python", "機械学習", "クラウドコンピューティング", "
 # (rig_workbench/orchestrate/providers.py::_READONLY_ENFCE).
 READONLY_TOOLS = ["--allowedTools", "Read,Grep,Glob"]
 
-GATE_CRITERIA = """- テンプレート的な言い回しの使い回しがないこと（「〜について」の連発、「このブログ記事では」などの定型導入）
+# v1: the criteria the first live run used. Kept so gate revisions are measurable
+# against each other, not just against no-gate.
+#
+# It has a known flaw: it asks for a well-made article (varied sentences, consistent
+# voice, a writer's perspective) and the arm duly produced well-made articles that the
+# judge still scored 68-76. 「声のトーンが一貫していること」 actively pushes toward the
+# uniformity the judge penalises.
+GATE_CRITERIA_V1 = """- テンプレート的な言い回しの使い回しがないこと（「〜について」の連発、「このブログ記事では」などの定型導入）
 - 文長と文構造にばらつきがあること（同じ骨格の文が並んでいない）
 - 説明のための説明になっていないこと（中身のない一般論で埋めていない）
 - 書き手の視点や具体が入っていること
 - 声のトーンが一貫していること"""
+
+# v2: derived from what the judge actually wrote when penalising the v1 arm's output.
+# Every line here corresponds to a specific complaint in a recorded verdict, and the
+# 15/100 sample (the only one the judge called human) is the positive model:
+# verifiable proper nouns, colloquial register, and a complaint left unresolved.
+GATE_CRITERIA_V2 = """- 検証可能な固有名詞・数値・バージョン・エラーメッセージが最低3つ入っていること。
+  「知人が経営する中小企業」のような検証不能で一般的な例は不可。
+- 解決していない問題・妥協・未練を最低1つ、解決しないまま書くこと。
+  最後にすべてがきれいに片付く文章は不可。
+- 構成が整いすぎていないこと。「体験談フック→定義→対比→締めの宣言」のような
+  完璧な型に沿わないこと。脱線・言い直し・話の順序の乱れがあってよい。
+- 記事の予告や宣言で締めないこと（「本記事では〜解説します」「〜をお届けします」
+  「〜を整理してみたい」）。
+- 締めに反転レトリックを使わないこと（「Aより先に、Bを書く」「Aではなく、Bだ」型）。
+- 具体例のない羅列をしないこと（「Web開発からデータ分析、AIまで幅広く」型）。
+- 文長を不揃いにすること。短い断片文を混ぜてよい。"""
 
 
 def run_claude(
@@ -162,6 +190,9 @@ REVISE_PROMPT = """以下の日本語テキストが受入ゲートで FAIL し�
 受入基準:
 {criteria}
 
+重要: 推敲して「整える」のではありません。整った文章ほど AI が書いたと判定されます。
+具体を足し、整いすぎた構成をむしろ崩してください。きれいにまとめないこと。
+
 JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと:
 {{"title": "<タイトル>", "description": "<導入文>"}}"""
 
@@ -198,29 +229,54 @@ def generate_selfrev(topic: str, model: str, rounds: int = 3) -> dict:
     return {"title": out["title"], "description": out["description"], "rounds": rounds}
 
 
-def generate_rig(topic: str, model: str, max_rounds: int = 3) -> dict:
-    """rig arm: generate, verify in a separate read-only process, revise until PASS."""
+def generate_rig(
+    topic: str,
+    model: str,
+    criteria: str = GATE_CRITERIA_V1,
+    verify_model: str | None = None,
+    max_rounds: int = 3,
+) -> dict:
+    """rig arm: generate, verify in a separate read-only process, revise until PASS.
+
+    verify_model defaults to `model`, which is the configuration the first live run
+    used — and which quietly violates rig's own stated design ("one class of model
+    does not review its own artifacts", README §1). Pass a different model to honour
+    it; the arm table wires that up for the v2 arm.
+    """
+    verify_model = verify_model or model
     out = extract_json(run_claude(GEN_PROMPT.format(topic=topic), model, []))
     rounds = 1
+    gate_log = []
 
     for _ in range(max_rounds - 1):
         text = f"{out['title']}\n{out['description']}"
         verdict = extract_json(
             run_claude(
-                VERIFY_PROMPT.format(text=text, criteria=GATE_CRITERIA), model, READONLY_TOOLS
+                VERIFY_PROMPT.format(text=text, criteria=criteria), verify_model, READONLY_TOOLS
             )
         )
-        if str(verdict.get("verdict", "")).upper() == "PASS":
+        passed = str(verdict.get("verdict", "")).upper() == "PASS"
+        gate_log.append({"round": rounds, "verdict": "PASS" if passed else "FAIL",
+                         "issues": verdict.get("issues", [])})
+        if passed:
             break
         issues = "\n".join(f"- {i}" for i in verdict.get("issues", []))
         out = extract_json(
-            run_claude(
-                REVISE_PROMPT.format(text=text, issues=issues, criteria=GATE_CRITERIA), model, []
-            )
+            run_claude(REVISE_PROMPT.format(text=text, issues=issues, criteria=criteria), model, [])
         )
         rounds += 1
 
-    return {"title": out["title"], "description": out["description"], "rounds": rounds}
+    return {
+        "title": out["title"],
+        "description": out["description"],
+        "rounds": rounds,
+        "gate_log": gate_log,
+    }
+
+
+def generate_rig_v2(topic: str, model: str) -> dict:
+    """rig arm with the retuned gate: v2 criteria + a verifier that is not the generator."""
+    return generate_rig(topic, model, criteria=GATE_CRITERIA_V2, verify_model=DEFAULT_JUDGE_MODEL)
 
 
 # ------------------------------------------------------------------------- fixtures
@@ -253,7 +309,8 @@ def collect_fixture(dirname: str) -> list[dict]:
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
-    "rig": ("rig — independent verifier + revise until PASS", generate_rig),
+    "rig": ("rig v1 — generic gate, self-verified", generate_rig),
+    "rig2": ("rig v2 — retuned gate, cross-model verifier", generate_rig_v2),
 }
 
 
@@ -303,7 +360,7 @@ def main() -> None:
     ap.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help="live mode only; same for every arm")
     ap.add_argument(
         "--arms",
-        default="bare,selfrev,rig",
+        default="bare,selfrev,rig,rig2",
         help="live mode only; comma-separated subset of " + ",".join(LIVE_ARMS),
     )
     ap.add_argument("--json-out", type=Path, help="write the full result record here")
@@ -329,8 +386,9 @@ def main() -> None:
         arm["samples"] = score_arm(arm["samples"], args.judge_model)
         arm["stats"] = report(arm["label"], arm["samples"])
 
+    gated = [n for n in ("rig2", "rig") if n in arms]
     baseline = arms["bare"]["stats"]["mean"]
-    treatment = arms["rig"]["stats"]["mean"]
+    treatment = arms[gated[0]]["stats"]["mean"] if gated else baseline
     improvement = baseline - treatment
     pct = (improvement / baseline * 100) if baseline else 0.0
 
@@ -339,7 +397,8 @@ def main() -> None:
     print(f"{'=' * 60}")
     for name, arm in arms.items():
         print(f"  {name:<8} 平均 {arm['stats']['mean']:>5.1f} / 中央値 {arm['stats']['median']:>5.1f}")
-    print(f"\n  bare → rig 改善: {improvement:.1f} points ({pct:.1f}%)")
+    best = gated[0] if gated else "bare"
+    print(f"\n  bare → {best} 改善: {improvement:.1f} points ({pct:.1f}%)")
 
     if "selfrev" in arms:
         # The number that decides whether the gate earned its keep, rather than the
@@ -358,6 +417,7 @@ def main() -> None:
         "arms": arms,
         "improvement_points": round(improvement, 2),
         "improvement_percent": round(pct, 1),
+        "compared_arm": best,
         "gate_effect_vs_selfrev": (
             round(arms["selfrev"]["stats"]["mean"] - treatment, 2) if "selfrev" in arms else None
         ),
