@@ -28,6 +28,7 @@ import argparse
 import json
 import re
 import os
+import unicodedata
 import subprocess
 import statistics
 import tempfile
@@ -490,9 +491,430 @@ def generate_rig_v3(topic: str, model: str) -> dict:
     return generate_rig(topic, model, criteria=GATE_CRITERIA_V3)
 
 
+# ------------------------------------------------------------------ writer's ledger
+#
+# Every gate above changes how the generator is *instructed*. This one changes what it
+# has to work with: a fixed inventory of facts it did not invent (writer_ledger.py), from
+# which it may draw and beyond which it may not. The constraint is supply-side, so there
+# is no quota to satisfy uniformly and no unavailable content to fabricate.
+
+WRITER_PROMPT = """あなたは Qiita に技術記事を投稿している一人のエンジニアです。
+以下は、あなたがこの数日に実際に残した作業ログです。
+
+作業ログ:
+{ledger}
+
+これまでに自分が書いた記事:
+{prior}
+
+書き方について:
+- 事実として書けるのは、上の作業ログにあることだけです。ログにないバージョン番号・日付・
+  数値・エラーメッセージ・ファイル名・製品名を書いてはいけません。
+- ログにないことは書かないでください。埋めるために一般論を足す必要はありません。
+  書けることが少なければ、その分だけ短い話になって構いません。
+- この記事につけるタグは「{topic}」です。タグに合わせて話題を広げたり、
+  そのテーマの解説をしたりする必要はありません。ログにある出来事を、起きた順に書いてください。
+- まだ直っていないと書かれているものは、直っていません。まとめないでください。
+
+{length_spec}
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+WRITER_REVISE_PROMPT = """以下はあなたが書いた記事ですが、あなたの作業ログにない事実が含まれています。
+
+現在のテキスト:
+\"\"\"
+{text}
+\"\"\"
+
+作業ログにない記述（あなたはこれらを確認していません）:
+{findings}
+
+作業ログ:
+{ledger}
+
+これらを削るか、ログにある範囲の書き方に直してください。別の具体を足して埋めないこと。
+削った結果ぼんやりした段落が残っても、それで構いません。
+
+{length_spec}
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+
+def generate_writer(topic: str, model: str, max_rounds: int = 3) -> dict:
+    """Writer arm: a persistent authored identity carried as data, not as adjectives.
+
+    The identity is a ledger of real artifacts on this machine — commit subjects, a
+    failing assertion with its real text, versions, this benchmark's own recorded
+    numbers. Three properties do the work, and none of them is an instruction the
+    generator can perform:
+
+      * Closed vocabulary. A verifiable specific may appear only if its string is in the
+        sampled ledger; the check is mechanical and post hoc. There is no minimum, so
+        adding specifics cannot satisfy it — only having a source can.
+      * Scarcity and mismatch. The sample is small and often unrelated to the tag, so
+        detail clusters where the ledger is dense and thins where it is empty. The
+        unevenness is a property of the material, not a style the model is imitating.
+      * Nothing to conclude with. Entries marked 未解決 carry no resolution facts, so the
+        article runs out of material rather than tying itself off.
+
+    State persists across topics: consumed entries are deprioritised and prior titles are
+    offered back, which is where self-reference comes from.
+    """
+    import writer_ledger as wl
+
+    with wl.STATE_LOCK:
+        state = wl.build_ledger()
+        entries = wl.sample_for_topic(state, topic)
+        if not entries:
+            raise SystemExit("writer ledger is empty; run writer_ledger.py --force")
+        ledger = wl.render_ledger(entries)
+        prior = wl.render_prior(state)
+
+    out = run_claude_json(
+        WRITER_PROMPT.format(ledger=ledger, prior=prior, topic=topic, length_spec=LENGTH_SPEC),
+        model, [],
+    )
+    rounds = 1
+    gate_log = []
+
+    for _ in range(max_rounds - 1):
+        text = f"{out['title']}\n{out['description']}"
+        findings = wl.unlisted_specifics(text, entries)
+        gate_log.append({"round": rounds, "verdict": "PASS" if not findings else "FAIL",
+                         "issues": findings})
+        if not findings:
+            break
+        out = run_claude_json(
+            WRITER_REVISE_PROMPT.format(
+                text=text, findings="\n".join(f"- {f}" for f in findings),
+                ledger=ledger, length_spec=LENGTH_SPEC),
+            model, [],
+        )
+        rounds += 1
+
+    with wl.STATE_LOCK:
+        wl.record_article(state, topic, out["title"], entries, when="2026-07-26")
+    return {"title": out["title"], "description": out["description"],
+            "rounds": rounds, "gate_log": gate_log}
+
+
 def generate_rig_v1_xmodel(topic: str, model: str) -> dict:
     """Ablation: v1 criteria, cross-model verifier. Isolates the verifier change."""
     return generate_rig(topic, model, criteria=GATE_CRITERIA_V1, verify_model=DEFAULT_JUDGE_MODEL)
+
+
+# -------------------------------------------------------------- fieldnote (repo-grounded)
+#
+# Every arm above asks the generator to write *about* a topic. That framing is the
+# thing the judge keeps naming: an article whose subject is 「Python」 can only be a
+# survey, a survey can only be 「はじめに→特徴→活用例→まとめ」, and a survey has no
+# author. The known-human corpus does not contain a single survey. Those articles are
+# work logs that happen to carry a topic tag — one narrow thing the writer did, in the
+# order they did it, with the dead ends left in.
+#
+# This arm changes the material rather than the instructions. The generator is given a
+# real, runnable question about this repository, a shell, and one pass to actually
+# answer it; what it saw is written down as a log. A second call — with no repo access
+# and no memory of the task — turns that log into the article. Then a deterministic
+# gate checks the direction of fit: every identifier, path, version and multi-digit
+# number in the article must occur in the log. Anything that does not is deleted.
+#
+# The two failure modes this is built against:
+#
+#   fabrication (v2's quota gate). Nothing here asks for specifics. A source is
+#   supplied and the gate only ever *removes* specifics that have no source, so a
+#   thin investigation yields a thin article rather than an invented one.
+#
+#   uniform compliance (v2 criteria, riglint). The one shape requirement — the section
+#   skeleton — is not chosen by the writer: it is computed from how many bytes of log
+#   each real step produced. The step that emitted 40 lines of stderr gets 600 chars,
+#   the step that just worked gets 90, and the shape is different for every topic
+#   because it is a projection of a different transcript. Unevenness is inherited, not
+#   performed. The containment gate is subtractive, and nothing subtractive can be
+#   satisfied by placing elements at regular intervals.
+
+REPO_ROOT = HERE.parents[2]
+
+# Tools the investigator gets. Read-only in effect: no writes, no network. cwd is HERE
+# (run_claude hardcodes it), which is inside the repo, so --add-dir lifts the sandbox to
+# the repo root.
+INVESTIGATE_TOOLS = [
+    "--allowedTools",
+    "Read,Grep,Glob,"
+    "Bash(git:*),Bash(python:*),Bash(python3:*),Bash(uv:*),Bash(ls:*),Bash(cat:*),"
+    "Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(date:*),"
+    "Bash(sed:*),Bash(node:*),Bash(npm:*)",
+    "--add-dir",
+    str(REPO_ROOT),
+]
+
+# One question per topic. Each names a starting point in this repo and nothing else —
+# no steps, no expected answer. They are chosen to be genuinely uncertain: several of
+# them fail (semgrep is not installed, the action entrypoint wants a CI environment,
+# the vscode extension wants a toolchain), and a failed investigation is better raw
+# material than a clean one.
+TOPIC_ASSIGNMENTS = {
+    "Python": (
+        "この repo の Python パッケージがどう宣言されていて、実際の実行環境と合っているかを確かめる。"
+        "pyproject.toml の requires-python と依存、`python -V`、`python -m rig_workbench.cli --help` "
+        "が通るか。食い違いがあればどこで吸収されているか追う。"
+    ),
+    "機械学習": (
+        "benchmarks/tasks/jp-natural-writing/results/ の JSON に入っている判定スコアを自分で集計し直し、"
+        "hidden_check.py が report() で出している平均・中央値と一致するか確かめる。"
+        "judge-calibration の n=16 の分布も見る。"
+    ),
+    "クラウドコンピューティング": (
+        "action.yml と scripts/rig-action-entrypoint.sh を読んで、この repo が GitHub Actions 上で"
+        "何を前提にしているかを把握し、その entrypoint をローカルで実際に走らせてどこで落ちるか確かめる。"
+    ),
+    "Web開発": (
+        "web/ と vscode-extension/ に何が入っていて、どこまで手元で動かせるか確かめる。"
+        "package.json、ビルドやテストのコマンドを実際に叩く。"
+    ),
+    "データベース設計": (
+        "rig の実行状態がどこにどんな形で保存されているかを追う。rig_workbench/ の runstate と provenance、"
+        "tests/test_runstate.py と tests/test_provenance.py を実際に走らせて、生成される構造を見る。"
+    ),
+    "リモートワーク": (
+        "scripts/notify.py を読み、--dry-run で実際に叩いて Slack/Teams のペイロードがどう組み立てられるか"
+        "確かめる。tests/test_notify.py も走らせる。webhook を持っていない状態で何ができて何ができないか。"
+    ),
+    "セキュリティ対策": (
+        "scripts/sast_adapter.py の run 形式を実際に走らせてみて、何が要求され何が落ちるか確かめる。"
+        "tests/test_injection_scan.py と tests/test_mcp_scan.py も走らせ、何を検出して何を見落とす設計か読む。"
+    ),
+    "チーム開発": (
+        "git log で、この repo に入って直ったバグを 1 件選んで最初から最後まで追う。"
+        "`git log --oneline`、`git show <sha>` で実際の diff を見て、入った経緯と直った経緯を確かめる。"
+    ),
+}
+
+INVESTIGATE_PROMPT = """あなたはこの repo で実際に手を動かして調べます。記事は書きません。
+
+作業指示:
+{assignment}
+
+やり方は指定しません。実際にコマンドを打ち、ファイルを読み、出力を見てください。
+うまくいかなかった手順、途中でやめた脇道も、消さずにそのまま残してください。
+最後に成功した手順だけを並べ直さないこと。
+
+作業しながら、以下の形式のログだけを出力してください。JSON にはしないこと。
+
+## 環境
+date: <`date` の出力そのまま>
+HEAD: <`git -C {repo} rev-parse --short HEAD` の出力>
+python: <`python -V` の出力>
+
+## step 1: <この手順で何をしたか一行>
+$ <実際に打ったコマンド>
+<実際の出力。長ければ関係する行だけを、原文のまま貼る。要約しない>
+所感: <一行。分からなかったこと、意外だったことがあれば書く。なければ書かない>
+結果: 解決 / 未解決 / 脇道
+
+## step 2: ...
+
+規則:
+- 貼る出力は実際に見たものだけ。手で書き直したり整えたりしないこと。
+- step の数は決まっていません。3 でも 9 でもよい。
+- ログ全体で 4000 字以内。
+- ログ以外の文章（前置き・まとめ・提案）は一切出力しないこと。"""
+
+
+STEP_RE = re.compile(r"^## step\s*\d+\s*[:：]\s*(.+)$", re.MULTILINE)
+
+
+def parse_log_steps(log: str) -> list[dict]:
+    """Split an investigation log into steps, with the size of each step's raw output.
+
+    The size is the point. It is the only unfaked signal in the log about where the
+    work actually went, and it is what the section budget is computed from.
+    """
+    matches = list(STEP_RE.finditer(log))
+    steps = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(log)
+        body = log[m.end():end]
+        outcome = ""
+        om = re.search(r"^結果[:：]\s*(\S+)", body, re.MULTILINE)
+        if om:
+            outcome = om.group(1)
+        steps.append({"n": i + 1, "header": m.group(1).strip(), "weight": len(body), "outcome": outcome})
+    return steps
+
+
+# ~250 chars of the target length belong to no step (the opening line, whatever the
+# writer says on the way out). The rest is distributed by log weight.
+SKELETON_TARGET = 1750
+SKELETON_FREE = 250
+SKELETON_MIN = 70
+SKELETON_MAX = 700
+
+
+def build_skeleton(steps: list[dict]) -> str:
+    """Turn the log's real shape into a per-section character budget.
+
+    Proportional to log weight, clipped so that no step vanishes and no step eats the
+    article. Clipping distorts the proportions slightly and that is fine — the property
+    that matters is that the distribution comes from outside the writer.
+    """
+    if not steps:
+        return ""
+    total = sum(s["weight"] for s in steps) or 1
+    budget = SKELETON_TARGET - SKELETON_FREE
+    lines = []
+    for s in steps:
+        chars = int(round(budget * s["weight"] / total))
+        chars = max(SKELETON_MIN, min(SKELETON_MAX, chars))
+        tail = f"（{s['outcome']}のまま）" if s["outcome"] in ("未解決", "脇道") else ""
+        lines.append(f"- step {s['n']}: {s['header']}  … 目安 {chars}字{tail}")
+    return "\n".join(lines)
+
+
+WRITE_PROMPT = """あなたは以下の作業ログを書いた本人です。この作業を記事にしてください。
+
+作業ログ:
+\"\"\"
+{log}
+\"\"\"
+
+節の構成と分量（ログの各手順に対応。順序も分量もこの通りにすること）:
+{skeleton}
+
+規則:
+- ログに出てこない固有名詞・パス・コマンド・バージョン・エラー文字列・数値を書かないこと。
+  書けることだけ書く。足りないと感じても補わない。
+- 上の表にない節を作らないこと。「はじめに」「まとめ」「おわりに」「今後の展望」
+  「参考リンク」は作らない。
+- 未解決のまま終わった手順は、未解決のまま書くこと。解決したように書き直さない。
+- 読者向けの一般論・用語解説・教訓を足さないこと。この記事は報告であって解説ではない。
+- タイトルは調べた対象そのものを短く指すこと。「〜とは」「〜の勘所」「〜する方法」
+  「〜を考える」は使わない。
+- 本文にコマンドや出力を貼るときは、ログにある文字列をそのまま使うこと。
+
+{length_spec}
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+
+# --------------------------------------------------------------- containment gate
+
+# ASCII runs that assert something checkable: identifiers, paths, commands, versions.
+_IDENT_RE = re.compile(r"[A-Za-z][A-Za-z0-9_\-./]{2,}")
+# Multi-digit numbers and dotted versions. Single digits are exempt: 「3つ」 is prose,
+# not a claim, and requiring it to be in the log produced nothing but noise.
+_NUM_RE = re.compile(r"\d+(?:\.\d+)+|\d{2,}")
+
+# ASCII that is vocabulary rather than evidence. Deliberately tiny — every addition
+# here is a hole the writer can put an unsourced claim through.
+_ALLOW = {"ai", "ok", "ng", "url", "pc", "os", "it", "json", "yaml", "cli", "api"}
+
+
+def _norm(s: str) -> str:
+    return unicodedata.normalize("NFKC", s).lower()
+
+
+def containment_violations(article: str, log: str) -> list[str]:
+    """Specifics in `article` with no counterpart in `log`.
+
+    Substring containment, not token equality, and deliberately lenient: an article
+    that writes `test_runstate.py` where the log has `tests/test_runstate.py` is
+    grounded. The gate is here to catch invention, not to police citation style.
+    """
+    hay = _norm(log)
+    body = _norm(article)
+    bad: list[str] = []
+    for m in list(_IDENT_RE.finditer(body)) + list(_NUM_RE.finditer(body)):
+        tok = m.group(0).strip("./-")
+        if len(tok) < 3 or tok in _ALLOW or tok in bad:
+            continue
+        if tok not in hay:
+            bad.append(tok)
+    return bad
+
+
+CONTAINMENT_REVISE_PROMPT = """以下の記事に、作業ログに存在しない語が含まれています。
+
+記事:
+\"\"\"
+{text}
+\"\"\"
+
+ログに存在しない語:
+{tokens}
+
+作業ログ:
+\"\"\"
+{log}
+\"\"\"
+
+これらの語を、ログにある事実に置き換えるか、その部分ごと削除してください。
+別の具体を新しく足さないこと。削って短くなった分を一般論で埋めないこと。
+節の構成と分量は変えないこと:
+{skeleton}
+
+{length_spec}
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+
+def generate_fieldnote(topic: str, model: str, max_rounds: int = 3) -> dict:
+    """Investigate this repo, then report what happened, then delete what was invented."""
+    assignment = TOPIC_ASSIGNMENTS.get(topic)
+    if assignment is None:
+        raise SystemExit(f"fieldnote has no assignment for topic {topic!r}")
+
+    log = run_claude(
+        INVESTIGATE_PROMPT.format(assignment=assignment, repo=REPO_ROOT),
+        model,
+        INVESTIGATE_TOOLS,
+        timeout=600,
+    )
+    steps = parse_log_steps(log)
+    skeleton = build_skeleton(steps)
+
+    out = run_claude_json(
+        WRITE_PROMPT.format(log=log, skeleton=skeleton, length_spec=LENGTH_SPEC), model, []
+    )
+    rounds = 1
+    gate_log = []
+
+    for _ in range(max_rounds - 1):
+        text = f"{out['title']}\n{out['description']}"
+        bad = containment_violations(text, log)
+        gate_log.append({"round": rounds, "verdict": "PASS" if not bad else "FAIL", "issues": bad})
+        if not bad:
+            break
+        out = run_claude_json(
+            CONTAINMENT_REVISE_PROMPT.format(
+                text=text,
+                tokens="\n".join(f"- {t}" for t in bad),
+                log=log,
+                skeleton=skeleton,
+                length_spec=LENGTH_SPEC,
+            ),
+            model,
+            [],
+        )
+        rounds += 1
+
+    return {
+        "title": out["title"],
+        "description": out["description"],
+        "rounds": rounds,
+        "gate_log": gate_log,
+        "log_steps": len(steps),
+        "log_chars": len(log),
+    }
 
 
 # ------------------------------------------------------------------------- fixtures
@@ -530,6 +952,8 @@ LIVE_ARMS = {
     "rig3": ("rig v3 — prohibitions only, self-verified", generate_rig_v3),
     "rig1x": ("rig v1 criteria, cross-model verifier (ablation)", generate_rig_v1_xmodel),
     "riglint": ("rig + lint.py — mechanical detector as verifier", generate_riglint),
+    "fieldnote": ("fieldnote — investigate the repo, report it, gate on containment", generate_fieldnote),
+    "writer": ("writer's ledger — closed inventory of real artifacts", generate_writer),
 }
 
 
@@ -642,7 +1066,7 @@ def main() -> None:
     # --arms may omit either end (an ablation run comparing gate versions has no bare
     # arm), so the summary must degrade to "no baseline" rather than KeyError after the
     # expensive part has already succeeded.
-    gated = [n for n in ("riglint", "rig3", "rig2", "rig1x", "rig") if n in arms]
+    gated = [n for n in ("fieldnote", "riglint", "rig3", "rig2", "rig1x", "rig") if n in arms]
     baseline = arms["bare"]["stats"]["mean"] if "bare" in arms else None
     treatment = arms[gated[0]]["stats"]["mean"] if gated else None
     improvement = (baseline - treatment) if (baseline is not None and treatment is not None) else None
