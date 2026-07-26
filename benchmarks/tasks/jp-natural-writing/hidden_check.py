@@ -610,8 +610,13 @@ def main() -> None:
         default="bare,selfrev,rig,rig2",
         help="live mode only; comma-separated subset of " + ",".join(LIVE_ARMS),
     )
+    ap.add_argument("--topics", type=int, default=len(TOPICS),
+                    help="use only the first N topics (cheaper runs while iterating)")
     ap.add_argument("--json-out", type=Path, help="write the full result record here")
     args = ap.parse_args()
+
+    global TOPICS
+    TOPICS = TOPICS[: max(1, args.topics)]
 
     arms: dict[str, dict] = {}
 
