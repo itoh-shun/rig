@@ -23,6 +23,7 @@ import argparse
 import json
 import re
 import subprocess
+import statistics
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -171,6 +172,32 @@ def generate_bare(topic: str, model: str) -> dict:
     return {"title": out["title"], "description": out["description"], "rounds": 1}
 
 
+SELFREV_PROMPT = """以下の日本語テキストをもっと良くしてください。
+
+現在のテキスト:
+\"\"\"
+{text}
+\"\"\"
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと:
+{{"title": "<タイトル>", "description": "<導入文>"}}"""
+
+
+def generate_selfrev(topic: str, model: str, rounds: int = 3) -> dict:
+    """Control arm: same round budget as the rig arm, but no gate.
+
+    The rig arm spends 2-3 model calls per topic while the bare arm spends 1, so a
+    rig-vs-bare gap confounds "the gate helped" with "more compute helped". This arm
+    holds the round count and isolates the gate: the generator just revises its own
+    output, with no independent verifier and no acceptance criteria.
+    """
+    out = extract_json(run_claude(GEN_PROMPT.format(topic=topic), model, []))
+    for _ in range(rounds - 1):
+        text = f"{out['title']}\n{out['description']}"
+        out = extract_json(run_claude(SELFREV_PROMPT.format(text=text), model, []))
+    return {"title": out["title"], "description": out["description"], "rounds": rounds}
+
+
 def generate_rig(topic: str, model: str, max_rounds: int = 3) -> dict:
     """rig arm: generate, verify in a separate read-only process, revise until PASS."""
     out = extract_json(run_claude(GEN_PROMPT.format(topic=topic), model, []))
@@ -223,11 +250,17 @@ def collect_fixture(dirname: str) -> list[dict]:
     ]
 
 
+LIVE_ARMS = {
+    "bare": ("bare — 1 shot, no gate", generate_bare),
+    "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
+    "rig": ("rig — independent verifier + revise until PASS", generate_rig),
+}
+
+
 def collect_live(arm: str, model: str) -> list[dict]:
-    fn = generate_bare if arm == "bare" else generate_rig
+    fn = LIVE_ARMS[arm][1]
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
-        results = list(pool.map(lambda t: {"topic": t, **fn(t, model)}, TOPICS))
-    return results
+        return list(pool.map(lambda t: {"topic": t, **fn(t, model)}, TOPICS))
 
 
 # ----------------------------------------------------------------------------- main
@@ -242,68 +275,94 @@ def score_arm(samples: list[dict], judge_model: str) -> list[dict]:
     return [{**s, **v} for s, v in zip(samples, verdicts)]
 
 
-def report(name: str, scored: list[dict]) -> float:
-    print(f"\n{name}")
+def report(label: str, scored: list[dict]) -> dict:
+    print(f"\n[{label}]")
     for s in scored:
         rounds = f"  [{s['rounds']} round(s)]" if s["rounds"] > 1 else ""
         print(f"  {s['topic']}: {s['score']:.1f}/100{rounds}")
         print(f"    {s['title']}")
         print(f"    → {s['reasoning']}")
-    avg = sum(s["score"] for s in scored) / len(scored)
-    print(f"  平均: {avg:.1f}/100")
-    return avg
+    scores = [s["score"] for s in scored]
+    stats = {
+        "mean": round(statistics.mean(scores), 2),
+        # n is small and one sample can swing the mean hard (a single 15 in an
+        # otherwise 68-76 arm moved it 14 points), so the median is reported too.
+        "median": round(statistics.median(scores), 2),
+        "min": min(scores),
+        "max": max(scores),
+    }
+    print(f"  平均 {stats['mean']:.1f} / 中央値 {stats['median']:.1f} "
+          f"(範囲 {stats['min']:.0f}-{stats['max']:.0f})")
+    return stats
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="generate for real instead of scoring fixtures")
     ap.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
-    ap.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help="live mode only; same for both arms")
+    ap.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help="live mode only; same for every arm")
+    ap.add_argument(
+        "--arms",
+        default="bare,selfrev,rig",
+        help="live mode only; comma-separated subset of " + ",".join(LIVE_ARMS),
+    )
     ap.add_argument("--json-out", type=Path, help="write the full result record here")
     args = ap.parse_args()
 
+    arms: dict[str, dict] = {}
+
     if args.live:
-        without_label = f"bare ({args.gen_model}, no gate)"
-        with_label = f"rig ({args.gen_model} + verify/revise gate)"
+        names = [a.strip() for a in args.arms.split(",") if a.strip()]
+        unknown = [n for n in names if n not in LIVE_ARMS]
+        if unknown:
+            raise SystemExit(f"unknown arm(s): {unknown}; known: {list(LIVE_ARMS)}")
         print(f"live mode — generator: {args.gen_model}, judge: {args.judge_model}")
-        without = collect_live("bare", args.gen_model)
-        with_ = collect_live("rig", args.gen_model)
+        for name in names:
+            arms[name] = {"label": LIVE_ARMS[name][0], "samples": collect_live(name, args.gen_model)}
     else:
-        without_label = "narrow fixture (no gate)"
-        with_label = "canonical fixture (gated)"
         print(f"fixture mode — judge: {args.judge_model}")
         print("note: both arms are hand-written fixtures; use --live to measure rig itself")
-        without = collect_fixture("narrow")
-        with_ = collect_fixture("canonical")
+        arms["bare"] = {"label": "narrow fixture (no gate)", "samples": collect_fixture("narrow")}
+        arms["rig"] = {"label": "canonical fixture (gated)", "samples": collect_fixture("canonical")}
 
-    without_scored = score_arm(without, args.judge_model)
-    with_scored = score_arm(with_, args.judge_model)
+    for arm in arms.values():
+        arm["samples"] = score_arm(arm["samples"], args.judge_model)
+        arm["stats"] = report(arm["label"], arm["samples"])
 
-    without_avg = report(f"[{without_label}]", without_scored)
-    with_avg = report(f"[{with_label}]", with_scored)
+    baseline = arms["bare"]["stats"]["mean"]
+    treatment = arms["rig"]["stats"]["mean"]
+    improvement = baseline - treatment
+    pct = (improvement / baseline * 100) if baseline else 0.0
 
-    improvement = without_avg - with_avg
-    pct = (improvement / without_avg * 100) if without_avg else 0.0
+    print(f"\n{'=' * 60}")
+    print(f"AI らしさスコア (低いほど自然) — judge: {args.judge_model}")
+    print(f"{'=' * 60}")
+    for name, arm in arms.items():
+        print(f"  {name:<8} 平均 {arm['stats']['mean']:>5.1f} / 中央値 {arm['stats']['median']:>5.1f}")
+    print(f"\n  bare → rig 改善: {improvement:.1f} points ({pct:.1f}%)")
+
+    if "selfrev" in arms:
+        # The number that decides whether the gate earned its keep, rather than the
+        # extra rounds it happens to spend.
+        gate_effect = arms["selfrev"]["stats"]["mean"] - treatment
+        print(f"  selfrev → rig (ゲート単独の効果): {gate_effect:.1f} points")
+        if gate_effect < 5:
+            print("  ⚠ ゲートの寄与は計算量の増加と区別できない")
+
+    print(f"  判定: {'PASS' if improvement >= 5 else 'FAIL'}")
 
     results = {
         "mode": "live" if args.live else "fixture",
         "judge_model": args.judge_model,
         "gen_model": args.gen_model if args.live else None,
-        "without_gate_avg": round(without_avg, 2),
-        "with_gate_avg": round(with_avg, 2),
+        "arms": arms,
         "improvement_points": round(improvement, 2),
         "improvement_percent": round(pct, 1),
+        "gate_effect_vs_selfrev": (
+            round(arms["selfrev"]["stats"]["mean"] - treatment, 2) if "selfrev" in arms else None
+        ),
         "success": improvement >= 5,
-        "samples": {"without_gate": without_scored, "with_gate": with_scored},
     }
-
-    print(f"\n{'=' * 56}")
-    print(f"AI らしさスコア (低いほど自然) — judge: {args.judge_model}")
-    print(f"{'=' * 56}")
-    print(f"  gate なし : {without_avg:.1f}/100")
-    print(f"  gate あり : {with_avg:.1f}/100")
-    print(f"  改善      : {improvement:.1f} points ({pct:.1f}%)")
-    print(f"  判定      : {'PASS' if results['success'] else 'FAIL'}")
 
     if args.json_out:
         args.json_out.write_text(json.dumps(results, ensure_ascii=False, indent=2))
