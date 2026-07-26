@@ -72,10 +72,23 @@ GATE_CRITERIA_V1 = """- テンプレート的な言い回しの使い回しが�
 - 書き手の視点や具体が入っていること
 - 声のトーンが一貫していること"""
 
-# v2: derived from what the judge actually wrote when penalising the v1 arm's output.
-# Every line here corresponds to a specific complaint in a recorded verdict, and the
-# 15/100 sample (the only one the judge called human) is the positive model:
-# verifiable proper nouns, colloquial register, and a complaint left unresolved.
+# v2: REGRESSED. Kept as evidence, not as a candidate.
+#
+# Derived from the judge's complaints about v1, one criterion per complaint. It scored
+# 46.6 against v1's 30.9 on the same topics and judge (results/2026-07-26-v2-regression).
+# The verdicts say why, and it is not that the generator ignored the criteria — it is
+# that the generator satisfied them exactly:
+#
+#   「具体的なバージョン番号や数値が各文に均等に配置され、どの文も『事実＋未解決の締め』
+#     という同じ構造で終わり」
+#   「曖昧化マーカーが一定間隔で配置されている」
+#   「脱線先がすべて…具体名詞に収束しており、話題のばらつき方が不自然に管理されている」
+#
+# A criterion precise enough to check is precise enough to perform, and evenly performed
+# humanity is itself the tell. The quota lines are the worst of it: "最低3つ" made the
+# model manufacture specifics it did not have, and it got them wrong — one sample put
+# PostgreSQL 16 in the title over a MySQL anecdote and misstated MySQL's index limit.
+# Demanding content the generator has no source for buys fabrication, not detail.
 GATE_CRITERIA_V2 = """- 検証可能な固有名詞・数値・バージョン・エラーメッセージが最低3つ入っていること。
   「知人が経営する中小企業」のような検証不能で一般的な例は不可。
 - 解決していない問題・妥協・未練を最低1つ、解決しないまま書くこと。
@@ -87,6 +100,25 @@ GATE_CRITERIA_V2 = """- 検証可能な固有名詞・数値・バージョン�
 - 締めに反転レトリックを使わないこと（「Aより先に、Bを書く」「Aではなく、Bだ」型）。
 - 具体例のない羅列をしないこと（「Web開発からデータ分析、AIまで幅広く」型）。
 - 文長を不揃いにすること。短い断片文を混ぜてよい。"""
+
+# v3: same evidence as v2, opposite construction. v2 mandated the cures and got them
+# administered in even doses; v3 only forbids the symptoms. An absence cannot be
+# distributed evenly, so there is less for the generator to perform — and nothing here
+# asks for specifics it would have to invent.
+GATE_CRITERIA_V3 = """以下は満たすべきノルマではなく、避けるべき禁止事項です。該当があれば FAIL としてください。
+
+- 記事の予告・宣言で締めている（「本記事では〜解説します」「〜をお届けします」
+  「ぜひ参考にしてください」「〜を整理してみたい」）
+- 定型の導入で始まっている（「近年〜増えています」「〜ではないでしょうか」
+  「〜と感じていませんか」「〜も少なくないでしょう」）
+- 具体例のない一般論を羅列している（「Web開発からデータ分析、AIまで幅広く」型）
+- すべての文が同じ骨格・同じ長さ・同じ語尾で並んでいる
+- 起承転結がきれいに閉じており、引っかかりが残っていない
+- 締めに反転レトリック（「Aより先に、Bだ」型）や教訓のまとめを置いている
+
+重要: 上記を避けるために要素を機械的に配置しないこと。固有名詞・数値・口語表現・脱線を
+均等に散りばめた文章は、それ自体が「不自然に管理されている」として検出されます。
+書けることだけを書き、書けないことは無理に足さないこと。"""
 
 
 def run_claude(
@@ -287,8 +319,23 @@ def generate_rig(
 
 
 def generate_rig_v2(topic: str, model: str) -> dict:
-    """rig arm with the retuned gate: v2 criteria + a verifier that is not the generator."""
+    """rig arm with the retuned gate: v2 criteria + a verifier that is not the generator.
+
+    Regressed, and unattributably so: it changed the criteria, the verifier model, and
+    the revise wording in one step. The rig1x arm below splits the verifier change back
+    out so the next comparison is attributable.
+    """
     return generate_rig(topic, model, criteria=GATE_CRITERIA_V2, verify_model=DEFAULT_JUDGE_MODEL)
+
+
+def generate_rig_v3(topic: str, model: str) -> dict:
+    """Ablation: v3 criteria, self-verified as in v1. Isolates the criteria change."""
+    return generate_rig(topic, model, criteria=GATE_CRITERIA_V3)
+
+
+def generate_rig_v1_xmodel(topic: str, model: str) -> dict:
+    """Ablation: v1 criteria, cross-model verifier. Isolates the verifier change."""
+    return generate_rig(topic, model, criteria=GATE_CRITERIA_V1, verify_model=DEFAULT_JUDGE_MODEL)
 
 
 # ------------------------------------------------------------------------- fixtures
@@ -322,7 +369,9 @@ LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
     "rig": ("rig v1 — generic gate, self-verified", generate_rig),
-    "rig2": ("rig v2 — retuned gate, cross-model verifier", generate_rig_v2),
+    "rig2": ("rig v2 — quota gate, cross-model verifier (regressed)", generate_rig_v2),
+    "rig3": ("rig v3 — prohibitions only, self-verified", generate_rig_v3),
+    "rig1x": ("rig v1 criteria, cross-model verifier (ablation)", generate_rig_v1_xmodel),
 }
 
 
@@ -398,7 +447,7 @@ def main() -> None:
         arm["samples"] = score_arm(arm["samples"], args.judge_model)
         arm["stats"] = report(arm["label"], arm["samples"])
 
-    gated = [n for n in ("rig2", "rig") if n in arms]
+    gated = [n for n in ("rig3", "rig2", "rig1x", "rig") if n in arms]
     baseline = arms["bare"]["stats"]["mean"]
     treatment = arms[gated[0]]["stats"]["mean"] if gated else baseline
     improvement = baseline - treatment
