@@ -601,6 +601,8 @@ def report(label: str, scored: list[dict]) -> dict:
 
 
 def main() -> None:
+    global TOPICS
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="generate for real instead of scoring fixtures")
     ap.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
@@ -615,7 +617,6 @@ def main() -> None:
     ap.add_argument("--json-out", type=Path, help="write the full result record here")
     args = ap.parse_args()
 
-    global TOPICS
     TOPICS = TOPICS[: max(1, args.topics)]
 
     arms: dict[str, dict] = {}
