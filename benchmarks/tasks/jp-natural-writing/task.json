@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "jp-natural-writing",
+  "language": "python",
+  "difficulty": "quality-assessment",
+  "risk_domains": ["nlp", "japanese"],
+  "goal": "Generate natural-sounding Japanese blog article titles and descriptions. Quality is measured by AI judgment of naturalness (low AI-detection score = high human-like quality).",
+  "test_command": ["python", "-m", "pytest", "-q"],
+  "hidden_command": ["python", "hidden_check.py"],
+  "expected_files": ["blog_generator.py", "test_blog_generator.py"]
+}
