@@ -1425,6 +1425,76 @@ def generate_mixed(topic: str, model: str) -> dict:
     return {"title": title, "description": body, "rounds": 5, "sections_trimmed": trimmed}
 
 
+# --------------------------------------------------------------- run-on merge (v3)
+#
+# analyze_gap.py flagged sentence length as a dimension no arm had ever varied: humans in
+# the corpus reach 488-char sentences (stdev 126), every arm tops out near 130 (stdev 27).
+# Joining adjacent sentences after generation moves it without asking the model, so it
+# cannot be administered in even doses by the generator.
+#
+# Paired against eight freewrite articles, v1 of this produced the two best samples this
+# benchmark has recorded — 68->12 and 80->22, both at human level — and made four others
+# slightly worse. The failures named two implementation faults, not a fault in the idea:
+#
+#   「逆接の『が』を非逆接の箇所で反復的に誤用」
+#   「句点であるべき箇所を読点でつなぐ癖が全段落で機械的に一様」
+#
+# v1 joined with が、 where nothing was adversative, and fired on nearly every paragraph,
+# so the transformation became its own uniform tell. v2 over-corrected: hashing on block
+# index rather than on eligible paragraphs left five of eight articles untouched.
+#
+# v3 joins with 、 only, picks from paragraphs that actually have enough sentences, and
+# merges at most one run per paragraph in about half of them.
+#
+# What the two winners establish is a dependency rather than two separate requirements.
+# Neither scored well before the merge — チーム開発 was 80, second worst of the eight,
+# against a set mean of 73.6 — so the friction was already in the text and the judge was
+# not reading it. Uniform sentence structure was masking it. Real trouble in the work is
+# the signal; structural irregularity is what makes it legible. Merging prose that has no
+# trouble in it just adds a tic.
+
+MERGE_MIN_SENTENCES = 4     # below this a paragraph has no room for a run
+MERGE_SHARE = 2             # merge 1-in-N eligible paragraphs
+
+
+def merge_runons(text: str, seed: str) -> tuple[str, int]:
+    """Join runs of adjacent sentences into long ones. Returns the text and merge count."""
+    blocks = re.split(r"(\n\s*\n)", text)
+
+    def eligible(block: str) -> bool:
+        stripped = block.strip()
+        return bool(stripped) and not stripped.startswith(("#", "```", ">", "-", "*")) and (
+            len([x for x in re.split(r"(?<=。)", block) if x.strip()]) >= MERGE_MIN_SENTENCES)
+
+    # Selecting among eligible paragraphs, not among all blocks: v2 hashed block indices
+    # and mostly landed on headings and short blocks, so it did nothing.
+    picks = [i for n, i in enumerate(i for i, b in enumerate(blocks) if eligible(b))
+             if int(hashlib.sha1(f"{seed}:{n}".encode()).hexdigest(), 16) % MERGE_SHARE == 0]
+
+    merged = 0
+    for i in picks:
+        sentences = [x for x in re.split(r"(?<=。)", blocks[i]) if x.strip()]
+        h = int(hashlib.sha1(f"{seed}:{i}:run".encode()).hexdigest(), 16)
+        run = 2 + h % 3
+        at = h // 11 % max(1, len(sentences) - run + 1)
+        group = sentences[at:at + run]
+        if len(group) < 2:
+            continue
+        joined = "".join(x.rstrip().rstrip("。") + "、" for x in group[:-1]) + group[-1]
+        blocks[i] = "".join(sentences[:at]) + joined + "".join(sentences[at + run:])
+        merged += 1
+    return "".join(blocks), merged
+
+
+def generate_freewrite_merge(topic: str, model: str) -> dict:
+    """freewrite, with adjacent sentences joined by the harness afterwards."""
+    result = generate_freewrite(topic, model)
+    body, merged = merge_runons(result["description"], topic)
+    result["description"] = body
+    result["runons_merged"] = merged
+    return result
+
+
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
@@ -1441,6 +1511,7 @@ LIVE_ARMS = {
     "fieldpaste": ("fieldnote + harness-pasted real command output", generate_fieldpaste),
     "freewrite": ("grounded log, no section skeleton (skeleton ablation)", generate_freewrite),
     "mixed": ("each section by a different model", generate_mixed),
+    "freewrite_merge": ("freewrite + harness-side run-on merge", generate_freewrite_merge),
 }
 
 
