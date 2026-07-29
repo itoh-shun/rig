@@ -221,12 +221,44 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 {{"score": <0-100 の数値>, "reasoning": "<日本語で一文>"}}"""
 
 
-def judge(text: str, model: str) -> dict:
-    """Score how AI-generated `text` reads. Judge does not know which arm made it."""
+# Repeats per sample. Measured, not chosen for comfort: judging the same text five times
+# gives sd 2.5-5.0 on bare output and 21-30 on the gated arms, and the distribution there is
+# bimodal rather than noisy — mostly 72-76, occasionally 8-22. Two variants of one article
+# with zero transformation applied (byte-identical text) scored 9 and 62.
+#
+# So one judgment cannot support a claim about a sample, and with per-sample sd near 25 an
+# eight-sample arm mean carries roughly +/-9. That is wide enough to swallow every difference
+# between the gated arms (72-79), and most of what I attributed to run-to-run generation
+# variance — rig measuring 30.9 then 56.0 — was this rather than the generator.
+JUDGE_REPEATS = 3
+
+# Counted as read-human below this. The gated arms land here on 1-2 of 5 repeats and bare
+# never does, which the single-judgment mean hid in both directions.
+HUMAN_READ_THRESHOLD = 30.0
+
+
+def judge_once(text: str, model: str) -> dict:
+    """One judgment. Prefer judge(), which repeats."""
     result = run_claude_json(JUDGE_PROMPT.format(text=text), model, READONLY_TOOLS)
     return {
         "score": max(0.0, min(100.0, float(result["score"]))),
         "reasoning": str(result.get("reasoning", "")),
+    }
+
+
+def judge(text: str, model: str, repeats: int = JUDGE_REPEATS) -> dict:
+    """Judge `text` several times and report the spread, not just a number."""
+    verdicts = [judge_once(text, model) for _ in range(max(1, repeats))]
+    scores = [v["score"] for v in verdicts]
+    human_read = sum(1 for x in scores if x < HUMAN_READ_THRESHOLD)
+    return {
+        "score": round(statistics.mean(scores), 2),
+        "scores": scores,
+        "score_sd": round(statistics.pstdev(scores), 2) if len(scores) > 1 else 0.0,
+        "human_read": human_read,
+        "human_read_rate": round(human_read / len(scores), 3),
+        # The verdict for the median score, so printed reasoning matches the number.
+        "reasoning": sorted(verdicts, key=lambda v: v["score"])[len(verdicts) // 2]["reasoning"],
     }
 
 
@@ -1564,8 +1596,15 @@ def report(label: str, scored: list[dict]) -> dict:
     # comparison is not clean.
     lengths = [len(s["title"]) + len(s["description"]) for s in scored]
     linted = [s for s in scored if "lint_total" in s]
+    sds = [x["score_sd"] for x in scored if "score_sd" in x]
+    reads = [x["human_read_rate"] for x in scored if "human_read_rate" in x]
     stats = {
         "mean_chars": round(statistics.mean(lengths), 1),
+        "mean_score_sd": round(statistics.mean(sds), 2) if sds else None,
+        # SEM of the arm mean from per-sample judge spread alone. Gaps smaller than about
+        # twice this are not readable from a single run.
+        "sem": round(statistics.mean(sds) / (len(scored) ** 0.5), 2) if sds else None,
+        "human_read_rate": round(statistics.mean(reads), 3) if reads else None,
         "mean_lint": round(statistics.mean([s["lint_total"] for s in linted]), 2) if linted else None,
         "mean_lint_critical": (
             round(statistics.mean([s["lint_critical"] for s in linted]), 2) if linted else None
@@ -1652,8 +1691,11 @@ def main() -> None:
     for name, arm in arms.items():
         st = arm["stats"]
         lint = f" / lint {st['mean_lint']:>5.2f}" if st.get("mean_lint") is not None else ""
-        print(f"  {name:<8} 平均 {st['mean']:>5.1f} / 中央値 {st['median']:>5.1f}"
-              f" / {st['mean_chars']:>5.0f}字{lint}")
+        sem = f" ±{st['sem']:.1f}" if st.get("sem") is not None else ""
+        hr = (f" / 人間判定 {st['human_read_rate'] * 100:>4.0f}%"
+              if st.get("human_read_rate") is not None else "")
+        print(f"  {name:<8} 平均 {st['mean']:>5.1f}{sem} / 中央値 {st['median']:>5.1f}"
+              f" / {st['mean_chars']:>5.0f}字{lint}{hr}")
     if "riglint" in arms:
         print("  注: riglint は lint に対して最適化しているため、その lint 値は証拠にならない")
 
