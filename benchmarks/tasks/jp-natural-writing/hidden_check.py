@@ -25,6 +25,7 @@ told which arm produced the text. Lower score = reads more human-written.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import os
@@ -946,6 +947,101 @@ def collect_fixture(dirname: str) -> list[dict]:
     ]
 
 
+# ------------------------------------------------------------------------- relay
+#
+# Every gate so far has attacked the revision loop. This attacks the emission.
+#
+# The observation that motivates it: `bare` runs zero revision rounds and still scores
+# 88.5. So the tidying is not something the revision loop adds — it is something a model
+# does on its own whenever it is asked to produce a finished article. The recap, the
+# callback to the intro's promise, the 「まとめ」, the tied-off ending all arrive in the
+# last stretch of any single emission. Revision rounds only re-apply that closure, which
+# is why rig (74.0) and riglint (83.0) land in the same band.
+#
+# So relay never asks for an article. The draft is accumulated by K independent passes,
+# each a fresh process that sees only the last TAIL characters — a raw slice starting
+# mid-word — plus the title and topic. No pass is told K, its index, or the remaining
+# budget, so no pass ever knows it is the last one, and no pass writes a conclusion.
+# The harness cuts each continuation strictly inside a sentence before appending, so the
+# next pass always resumes from a broken fragment.
+#
+# Three things the judge credits in human writing fall out without being requested:
+#   - the unfulfilled promise: pass 1 writes 「本記事では〜3つの観点から」 and pass 5 has
+#     never seen it, so the three observations never arrive
+#   - harvested closure: each pass reaches for its recap, the harness slices it off
+#     mid-sentence and buries it mid-body, where a half-written conclusion reads as a
+#     digression that died
+#   - forgotten redefinition: pass 5 re-introduces a term pass 2 already defined
+#
+# Nothing here is a criterion, which is the point. The lint arm failed because a
+# checkable requirement has a uniform satisfier and the model found it (short sentences
+# at regular intervals). relay asks for nothing, checks nothing, and scores nothing; the
+# artifact is defective because of what each pass was denied, not what it was told. A
+# maximally cooperative model could not tidy this text: no process in the pipeline ever
+# holds it whole. The only component that sees all of it is a string join.
+
+RELAY_TAIL = 260      # chars handed forward; the single tuning knob
+RELAY_PASSES = 6
+RELAY_TARGET = 2000   # ~333 per pass, inside the 1500-2500 band
+
+RELAY_OPEN_PROMPT = """タイトル: {title}
+テーマ: {topic}
+
+この記事の書き出しを{budget}字程度書いてください。出力は本文のみ。"""
+
+RELAY_CONT_PROMPT = """タイトル: {title}
+テーマ: {topic}
+
+下は書きかけの原稿の末尾です。文の途中で切れています。
+
+---
+{tail}
+---
+
+この続きを{budget}字程度書いてください。
+出力は続きの本文のみ。前の部分の要約・言い直し・修正はしないでください。"""
+
+
+def _cut_midsentence(segment: str, budget: int, seed: str) -> str:
+    """Truncate so the segment ends strictly inside a sentence.
+
+    Load-bearing: if a tail arrives sentence-final, the next pass opens a fresh clean
+    paragraph and the seam stops doing any work. The jitter keeps the cut from landing
+    at a fixed offset, which would be its own regular interval.
+    """
+    stops = "。！？!?」）\n"
+    text = segment[: budget + 80]
+    last = max((text.rfind(c, 0, budget) for c in stops), default=-1)
+    jitter = int(hashlib.sha1(seed.encode()).hexdigest(), 16) % 40 + 14
+    cut = min(max((last + 1 if last >= 0 else 0) + jitter, 40), len(text))
+    while cut < len(text) and text[cut - 1] in stops:
+        cut += 1
+    return text[:cut]
+
+
+def generate_relay(topic: str, model: str) -> dict:
+    """Accumulate the article from passes that never see it whole."""
+    title = run_claude(
+        f"次のテーマの技術ブログ記事のタイトルを1行だけ出力してください。他の文字列は不要です。\nテーマ: {topic}",
+        model, [],
+    ).strip().splitlines()[0].strip()
+
+    per = RELAY_TARGET // RELAY_PASSES
+    draft = ""
+
+    for k in range(RELAY_PASSES):
+        tail = draft[-RELAY_TAIL:]
+        prompt = (RELAY_OPEN_PROMPT if k == 0 else RELAY_CONT_PROMPT).format(
+            title=title, topic=topic, tail=tail, budget=per
+        )
+        # run_claude, not run_claude_json: these passes emit prose, and wrapping prose in
+        # JSON would hand the model a container to round off inside.
+        segment = run_claude(prompt, model, []).strip()
+        draft += _cut_midsentence(segment, per, f"{topic}:{k}")
+
+    return {"title": title, "description": draft, "rounds": RELAY_PASSES}
+
+
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
@@ -956,6 +1052,7 @@ LIVE_ARMS = {
     "riglint": ("rig + lint.py — mechanical detector as verifier", generate_riglint),
     "fieldnote": ("fieldnote — investigate the repo, report it, gate on containment", generate_fieldnote),
     "writer": ("writer's ledger — closed inventory of real artifacts", generate_writer),
+    "relay": ("relay — passes that never see the article whole", generate_relay),
 }
 
 
