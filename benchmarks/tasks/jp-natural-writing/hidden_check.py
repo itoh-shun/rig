@@ -1084,6 +1084,74 @@ def generate_relay(topic: str, model: str) -> dict:
     return {"title": title, "description": draft, "rounds": RELAY_PASSES}
 
 
+# --------------------------------------------------------------- closure excision
+#
+# What the writer arm has left, measured rather than inferred. Its four verdicts all
+# objected to the same thing after crediting its specificity — 「各段落が必ず箴言的な一文
+# で締まる均質な構成」 — and counting paragraph-final sentences confirms it:
+#
+#   arm         reflective/reserved paragraph endings    para-final length mean/stdev
+#   human                 0.3%                                  89.7 / 80.0
+#   writer               24.7%                                  47.6 / 22.2
+#   bare                  0.0%                                  65.7 / 17.8
+#
+# Humans essentially never close a paragraph with a reflection. writer does it in a
+# quarter of them, because its ledger carries 未解決 entries and the model converts each
+# one into a closing line. The grounding worked; the habit of rounding off did not go
+# away, it just found new material.
+#
+# Telling the model to stop is the move that has failed four times: a stated criterion
+# gets satisfied uniformly, and uniform is the tell. So this is not told to the model at
+# all. The harness deletes the offending sentence after generation. There is no
+# instruction to comply with, no criterion to perform, and nothing the generator can do
+# differently — it never learns the excision happened.
+#
+# Note the second column too: human paragraph endings vary enormously in length (stdev
+# 80) and every arm is uniform (6-34). Excision moves that as a side effect, since
+# whatever preceded the closer becomes the new ending and those vary on their own.
+
+_CLOSURE_MARKERS = re.compile(
+    r"(のだと思う|のかもしれない|気づいた|確信が持て|わからない|書いておく|残しておく"
+    r"|ということだ|のだろう|に尽きる|ではないか|と考えている|学んだ|教訓"
+    r"|大切だ|重要だ|べきだろう|かもしれません|のだと思います)"
+)
+
+
+def _split_sentences(paragraph: str) -> list[str]:
+    return [x for x in re.split(r"(?<=[。！？])", paragraph) if x.strip()]
+
+
+def excise_closures(text: str) -> tuple[str, int]:
+    """Delete paragraph-final sentences that read as a rounding-off.
+
+    Returns the edited text and the number of sentences removed. A paragraph is left
+    alone when it holds only one sentence — removing that would delete the paragraph
+    rather than its closer.
+    """
+    out, cut = [], 0
+    for para in re.split(r"(\n\s*\n)", text):
+        stripped = para.strip()
+        if not stripped or stripped.startswith("#") or para.isspace():
+            out.append(para)
+            continue
+        sentences = _split_sentences(para)
+        if len(sentences) >= 2 and _CLOSURE_MARKERS.search(sentences[-1]):
+            out.append("".join(sentences[:-1]).rstrip())
+            cut += 1
+        else:
+            out.append(para)
+    return "".join(out), cut
+
+
+def generate_writercut(topic: str, model: str) -> dict:
+    """writer, with its paragraph closers removed by the harness afterwards."""
+    result = generate_writer(topic, model)
+    body, cut = excise_closures(result["description"])
+    result["description"] = body
+    result["closures_cut"] = cut
+    return result
+
+
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
@@ -1095,6 +1163,7 @@ LIVE_ARMS = {
     "fieldnote": ("fieldnote — investigate the repo, report it, gate on containment", generate_fieldnote),
     "writer": ("writer's ledger — closed inventory of real artifacts", generate_writer),
     "relay": ("relay — passes that never see the article whole", generate_relay),
+    "writercut": ("writer + harness-side excision of paragraph closers", generate_writercut),
 }
 
 
