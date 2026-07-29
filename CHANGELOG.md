@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.27.0] - 2026-07-29
+
+Splits SKILL.md into a lean core plus on-demand reference files — the follow-up
+named in 1.26.1. The engine body was **881 lines / 151 KB (~58k tokens)**, which
+is loaded in full every time the skill triggers; that is roughly a third of a
+200k context spent before any work starts, and it contradicts the engine's own
+§6 "context-minimal が絶対条件" rule. Now **670 lines / 85 KB (-42%)**, with no
+rule removed — every detail moved to a file that is read when it is actually
+needed (the same pattern 減量フェーズ1/2 used for `--list` / `--plan`).
+
+- **`facets/instructions/resolve`** (new) — the canonical §4 detail: manifest key
+  meanings and defaults, recipe tier search reporting, `extends` N-level merge
+  and `remove: true` error handling, the flag⇔recipe-key equivalence table,
+  slice error formats, and `--save-recipe` save rules / snapshot semantics.
+  §4 keeps the resolution order, the tier table, size-aware and autonomy.
+- **`facets/instructions/run-report`** (new) — the canonical flow-completion
+  report and `.rig/runs.jsonl` telemetry spec (field definitions, mode
+  modifiers, slice/`--skip` variants, `failure_mode` typing). §6 keeps the
+  discipline and the header skeleton.
+- **`PACKS.md`** (new) — the long-form pack descriptions from §2. The §2 table
+  keeps **every brick name plus a one-line summary**, so `--validate`'s catalog
+  drift check (backticked brick refs → real files) still covers the inventory.
+- **De-duplicated the flag⇔recipe-key boilerplate.** 8 near-identical
+  "`X: true` キーの解釈" blockquotes and 13 near-identical "保存する X 値"
+  bullets collapsed into one general rule (equivalent / saved / visualized) plus
+  a single 14-row table. §3.5's per-key rows collapsed the same way.
+- §2 now lists `facets/instructions/validate` (previously only referenced from
+  §3), and the movie pack's `render-{remotion,davinci,aviutl}` stubs are listed
+  in brace form so catalog drift keeps seeing them.
+
+No behavior change: `--validate` is unchanged at 52 PASS / 5 WARN / 0 FAIL, and
+the §4.1–§4.5 section anchors other bricks cite are preserved.
+
 ## [1.26.1] - 2026-07-24
 
 Fixes a name collision that made the engine skill fail to register. The engine
