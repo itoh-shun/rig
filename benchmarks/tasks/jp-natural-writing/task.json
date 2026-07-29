@@ -4,8 +4,9 @@
   "language": "python",
   "difficulty": "quality-assessment",
   "risk_domains": ["nlp", "japanese"],
-  "goal": "Generate natural-sounding Japanese blog article titles and descriptions. Quality is measured by AI judgment of naturalness (low AI-detection score = high human-like quality).",
+  "goal": "Measure how AI-written generated Japanese reads, judged blind by a separate model, and compare harnesses (gates, material grounding, post-processing) against a known-human calibration point of 11.1/100. See README.md.",
   "test_command": ["python", "-m", "pytest", "-q"],
   "hidden_command": ["python", "hidden_check.py"],
-  "expected_files": ["blog_generator.py", "test_blog_generator.py"]
+  "expected_files": ["blog_generator.py", "test_blog_generator.py"],
+  "notes": "hidden_check.py defaults to fixture mode, which scores the checked-in narrow/ and canonical/ implementations. Both are hand-written, so fixture mode demonstrates the metric and does not measure any harness. --live generates for real and is what every recorded result in results/ comes from; it needs the `claude` CLI and takes 30-90 minutes for a full run."
 }
