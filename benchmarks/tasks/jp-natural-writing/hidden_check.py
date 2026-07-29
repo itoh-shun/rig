@@ -1302,6 +1302,129 @@ def generate_fieldpaste(topic: str, model: str) -> dict:
     return result
 
 
+# ----------------------------------------------- skeleton ablation & mixed provenance
+#
+# Every design so far ends at the same verdict, whatever it grounds itself in:
+# 「各節が…同型のテンプレートで反復」. Two hypotheses about where that comes from, and
+# one arm for each.
+#
+# freewrite tests the claim I made when fieldpaste stalled — that grounding and
+# uniformity come from the same place. fieldnote's skeleton is what makes containment
+# checkable (steps map to sections, so an unsourced token has an owner) and it is also
+# what hands the model N slots of specified size to fill. If the skeleton is the source,
+# removing it while keeping the log and the containment gate should break the template.
+# If the template survives without it, the skeleton was never the cause and every
+# structural fix aimed at it was aimed wrong.
+#
+# mixed tests the other candidate: N units written by one model from one prompt are drawn
+# from one distribution, so they come out alike. Here each section is a separate call, and
+# the model rotates. The heterogeneity is real rather than performed — the arm does not
+# ask any model to vary, it just stops asking one model for everything. The rotation is
+# by section index, which is itself a schedule; if verdicts start naming a rhythm, that is
+# the schedule showing through and the arm has failed the same way the lint gate did.
+
+FREEWRITE_PROMPT = """あなたは以下の作業ログを書いた本人です。この作業のことを書いてください。
+
+作業ログ:
+\"\"\"
+{log}
+\"\"\"
+
+規則:
+- ログに出てこない固有名詞・パス・コマンド・バージョン・エラー文字列・数値を書かないこと。
+  書けることだけ書く。足りないと感じても補わない。
+- 手順を順番になぞる必要はない。書くことがある所だけ書き、無い所は飛ばしてよい。
+- 節に分ける必要はない。分量を揃える必要もない。長い所と短い所があってよい。
+- 未解決のまま終わったことは、未解決のまま書くこと。
+- 読者向けの一般論・用語解説・教訓を足さないこと。
+
+{length_spec}
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+
+def generate_freewrite(topic: str, model: str, max_rounds: int = 3) -> dict:
+    """fieldnote's material and containment gate, with the section skeleton removed."""
+    assignment = TOPIC_ASSIGNMENTS.get(topic)
+    if assignment is None:
+        raise SystemExit(f"freewrite has no assignment for topic {topic!r}")
+
+    log = run_claude(
+        INVESTIGATE_PROMPT.format(assignment=assignment, repo=REPO_ROOT),
+        model, INVESTIGATE_TOOLS, timeout=900, attempts=2,
+    )
+    out = run_claude_json(
+        FREEWRITE_PROMPT.format(log=log, length_spec=LENGTH_SPEC), model, []
+    )
+    rounds = 1
+    gate_log = []
+
+    for _ in range(max_rounds - 1):
+        text = f"{out['title']}\n{out['description']}"
+        bad = containment_violations(text, log)
+        gate_log.append({"round": rounds, "verdict": "PASS" if not bad else "FAIL", "issues": bad})
+        if not bad:
+            break
+        out = run_claude_json(
+            CONTAINMENT_REVISE_PROMPT.format(
+                text=text, tokens="\n".join(f"- {t}" for t in bad),
+                log=log, skeleton="", length_spec=LENGTH_SPEC,
+            ), model, [],
+        )
+        rounds += 1
+
+    body, trimmed = trim_to_ceiling(f"{out['description']}")
+    return {"title": out["title"], "description": body, "rounds": rounds,
+            "gate_log": gate_log, "sections_trimmed": trimmed}
+
+
+MIXED_MODELS = ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001"]
+
+MIXED_OPEN_PROMPT = """{topic} をテーマにした日本語の技術ブログ記事の、最初の部分だけを書いてください。
+400字程度。続きは別の人が書くので、締めくくらないこと。
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "continuation": "<本文>"}}"""
+
+MIXED_CONT_PROMPT = """下は他の人が書いた記事の途中までです。
+
+タイトル: {title}
+
+---
+{sofar}
+---
+
+この続きを400字程度書いてください。出力は続きの本文のみ。
+まだ記事は終わりません。締めくくらないでください。
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"continuation": "<続きの本文>"}}"""
+
+
+def generate_mixed(topic: str, model: str) -> dict:
+    """Each section written by a different model, so the units are not one distribution.
+
+    `model` is ignored: the arm's whole point is that no single model writes the article.
+    """
+    first = run_claude_json(MIXED_OPEN_PROMPT.format(topic=topic), MIXED_MODELS[0], [])
+    title = str(first.get("title", topic)).strip()
+    draft = str(first.get("continuation", "")).strip()
+
+    for i in range(1, 5):
+        part = run_claude_json(
+            MIXED_CONT_PROMPT.format(title=title, sofar=draft[-600:]),
+            MIXED_MODELS[i % len(MIXED_MODELS)], [],
+        )
+        draft += "\n\n" + str(part.get("continuation", "")).strip()
+
+    body, trimmed = trim_to_ceiling(draft)
+    return {"title": title, "description": body, "rounds": 5, "sections_trimmed": trimmed}
+
+
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
@@ -1316,6 +1439,8 @@ LIVE_ARMS = {
     "relay": ("relay — passes that never see the article whole", generate_relay),
     "writercut": ("writer + harness-side excision of paragraph closers", generate_writercut),
     "fieldpaste": ("fieldnote + harness-pasted real command output", generate_fieldpaste),
+    "freewrite": ("grounded log, no section skeleton (skeleton ablation)", generate_freewrite),
+    "mixed": ("each section by a different model", generate_mixed),
 }
 
 
