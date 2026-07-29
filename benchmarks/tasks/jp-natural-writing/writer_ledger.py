@@ -250,11 +250,17 @@ TOPIC_HINTS = {
 
 
 def sample_for_topic(state: dict, topic: str, k: int = 7, seed_extra: str = "") -> list[dict]:
-    """Pick this article's material. Lumpy on purpose.
+    """FLAT SAMPLING — kept as the recorded negative result, not as a candidate.
 
-    Unresolved entries are weighted in, so the same open problem recurs across articles
-    without any instruction to "carry a frustration" — it is simply still in the ledger.
-    Entries already spent are deprioritised so successive articles are not the same story.
+    A flat list of k peer facts is rendered as k peer sections. Measured at 79.0 against
+    bare's 89.2, and every verdict named the same thing:
+    「各節が『事実→内省→日付への接続』という同一テンプレートで反復され」. The generator
+    also quoted each commit subject verbatim and then paraphrased it in Japanese, and it
+    spent a whole section on 「pyproject.toml が 88 行」 because the line was in the
+    inventory. Supply-as-a-list becomes supply-as-an-obligation.
+
+    sample_incident() replaces it: the material is shaped as one incident plus scraps, so
+    there is no list to walk.
     """
     rng = random.Random(f"{state['writer_id']}|{topic}|{seed_extra}")
     hints = TOPIC_HINTS.get(topic, [])
@@ -276,6 +282,59 @@ def sample_for_topic(state: dict, topic: str, k: int = 7, seed_extra: str = "") 
     return picked
 
 
+# Facts that are true but carry no incident. They were the worst of the flat sample: the
+# generator gave 「pyproject.toml は 88 行」 its own heading because it was on the list.
+FILLER_KINDS = {"file", "env"}
+
+# Tokens shared by half the ledger say nothing about which entries belong together.
+_GENERIC_TOKENS = {"benchmark", "rig", "feat", "fix", "test", "docs", "the", "a", "of",
+                   "to", "for", "in", "and", "2026", "07", "26", "json", "py"}
+
+
+def sample_incident(state: dict, topic: str, seed_extra: str = "") -> dict:
+    """Shape the material as ONE incident plus a couple of scraps.
+
+    The spine is the open problem and whatever in the ledger shares rare tokens with it,
+    in time order — a chain of one thing, not a list of many. Scraps are handed over
+    separately and marked as things the writer already knows, so they read as asides
+    rather than as sections owed a paragraph.
+
+    Returns {"goal", "spine", "scraps", "entries"}; `entries` is the union, which is what
+    the whitelist check licenses.
+    """
+    rng = random.Random(f"{state['writer_id']}|{topic}|{seed_extra}|incident")
+    entries = [e for e in state["entries"] if e["kind"] not in FILLER_KINDS]
+    if not entries:
+        entries = list(state["entries"])
+    if not entries:
+        return {"goal": "", "spine": [], "scraps": [], "entries": []}
+
+    def cost(e: dict) -> float:
+        return len(e.get("used_in", []))
+
+    open_items = [e for e in entries if e["status"] == "未解決"]
+    root = min(open_items or entries, key=lambda e: (cost(e), e["id"]))
+
+    root_tokens = {t.lower() for t in root["tokens"]} - _GENERIC_TOKENS
+    hints = {h.lower() for h in TOPIC_HINTS.get(topic, [])}
+
+    def affinity(e: dict) -> int:
+        blob = (e["fact"] + " " + " ".join(e["tokens"])).lower()
+        return sum(1 for t in root_tokens if len(t) > 3 and t in blob) + \
+               sum(1 for h in hints if h in blob)
+
+    others = [e for e in entries if e["id"] != root["id"]]
+    chained = sorted(others, key=lambda e: (-affinity(e), cost(e), e["id"]))[:2]
+    spine = sorted([root] + chained, key=lambda e: (e.get("when") or "9999", e["id"]))
+
+    pool = [e for e in others if e not in chained]
+    rng.shuffle(pool)
+    scraps = sorted(pool[:2], key=lambda e: cost(e))
+
+    goal = f"{root['fact']}。これをなんとかしたかった" if root["status"] == "未解決" else ""
+    return {"goal": goal, "spine": spine, "scraps": scraps, "entries": spine + scraps}
+
+
 def render_ledger(entries: list[dict]) -> str:
     lines = []
     for e in entries:
@@ -283,6 +342,18 @@ def render_ledger(entries: list[dict]) -> str:
         mark = " ←まだ直っていない" if e["status"] == "未解決" else ""
         lines.append(f"- {when}{e['fact']}{mark}")
     return "\n".join(lines)
+
+
+def render_incident(sample: dict) -> str:
+    """Render as an incident, not as an inventory."""
+    out = ["この記事で書くのは、次の一件です。", "", "＜経過（時系列）＞",
+           render_ledger(sample["spine"])]
+    if sample["scraps"]:
+        out += ["", "＜同じ時期に手元にあった、別件のメモ＞",
+                "（あなたはこれを既に知っています。記事の主題ではないので、",
+                "  必要なら一言触れるだけでよく、説明しなくて構いません）",
+                render_ledger(sample["scraps"])]
+    return "\n".join(out)
 
 
 def render_prior(state: dict, limit: int = 3) -> str:
@@ -354,6 +425,28 @@ def unlisted_specifics(text: str, entries: list[dict]) -> list[str]:
     for f in findings:
         seen.setdefault(f, None)
     return list(seen)
+
+
+def verbatim_echoes(text: str, entries: list[dict], span: int = 24, allow: int = 1) -> list[str]:
+    """Long stretches copied straight out of the ledger.
+
+    The flat-sample arm quoted each commit subject in full and then restated it in
+    Japanese, and the judge read exactly that: 「ログ出力を機械的に記事化した」. The
+    whitelist stops the article inventing facts; this stops it transcribing them. Between
+    the two, the only thing left that satisfies both is the writer's own sentences.
+
+    One long quote is allowed — pasting the error message once is what a person does.
+    Everything past the first is a finding.
+    """
+    hits: list[str] = []
+    for entry in entries:
+        fact = entry["fact"]
+        for i in range(0, max(0, len(fact) - span) + 1):
+            chunk = fact[i:i + span]
+            if chunk.strip() and chunk in text:
+                hits.append(chunk)
+                break
+    return hits[allow:]
 
 
 if __name__ == "__main__":
