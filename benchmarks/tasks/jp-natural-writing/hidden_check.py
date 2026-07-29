@@ -767,12 +767,26 @@ def build_skeleton(steps: list[dict]) -> str:
     """
     if not steps:
         return ""
-    total = sum(s["weight"] for s in steps) or 1
     budget = SKELETON_TARGET - SKELETON_FREE
+
+    # Clipping each step independently to [MIN, MAX] does not preserve the sum: with many
+    # steps, sum(max(MIN, share)) runs far past `budget`. Measured, fieldnote articles came
+    # out at 2854-4095 chars against a 1500-2500 band, which made its score incomparable to
+    # every other arm. So keep only as many steps as the budget can actually pay for, then
+    # renormalise after clipping.
+    keep = sorted(steps, key=lambda s: s["weight"], reverse=True)[: max(1, budget // SKELETON_MIN)]
+    keep = sorted(keep, key=lambda s: s["n"])
+
+    total = sum(s["weight"] for s in keep) or 1
+    raw = [max(SKELETON_MIN, min(SKELETON_MAX, int(round(budget * s["weight"] / total))))
+           for s in keep]
+    over = sum(raw)
+    if over > budget:
+        scale = budget / over
+        raw = [max(SKELETON_MIN, int(round(c * scale))) for c in raw]
+
     lines = []
-    for s in steps:
-        chars = int(round(budget * s["weight"] / total))
-        chars = max(SKELETON_MIN, min(SKELETON_MAX, chars))
+    for s, chars in zip(keep, raw):
         tail = f"（{s['outcome']}のまま）" if s["outcome"] in ("未解決", "脇道") else ""
         lines.append(f"- step {s['n']}: {s['header']}  … 目安 {chars}字{tail}")
     return "\n".join(lines)
@@ -987,7 +1001,11 @@ RELAY_TARGET = 2000   # ~333 per pass, inside the 1500-2500 band
 RELAY_OPEN_PROMPT = """タイトル: {title}
 テーマ: {topic}
 
-この記事の書き出しを{budget}字程度書いてください。出力は本文のみ。"""
+この記事の書き出しを{budget}字程度書いてください。
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"continuation": "<本文>"}}"""
 
 RELAY_CONT_PROMPT = """タイトル: {title}
 テーマ: {topic}
@@ -998,8 +1016,27 @@ RELAY_CONT_PROMPT = """タイトル: {title}
 {tail}
 ---
 
-この続きを{budget}字程度書いてください。
-出力は続きの本文のみ。前の部分の要約・言い直し・修正はしないでください。"""
+この続きを{budget}字程度書いてください。前の部分の要約・言い直し・修正はしないこと。
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"continuation": "<続きの本文>"}}"""
+
+
+def _strip_tail_echo(segment: str, tail: str) -> str:
+    """Drop a restatement of the tail from the front of a continuation.
+
+    Handed a fragment ending mid-word and told to continue, the model tends to repeat the
+    fragment before carrying on. Appending that verbatim produced visible seams —
+    'JWTとセッションそJWTとセッションそ' — which read as generation breakage rather than as
+    a human's dropped thread. Longest overlap first so the whole echo goes, not part.
+    """
+    if not tail:
+        return segment
+    for size in range(min(len(tail), len(segment)), 5, -1):
+        if segment.startswith(tail[-size:]):
+            return segment[size:].lstrip()
+    return segment
 
 
 def _cut_midsentence(segment: str, budget: int, seed: str) -> str:
@@ -1034,9 +1071,14 @@ def generate_relay(topic: str, model: str) -> dict:
         prompt = (RELAY_OPEN_PROMPT if k == 0 else RELAY_CONT_PROMPT).format(
             title=title, topic=topic, tail=tail, budget=per
         )
-        # run_claude, not run_claude_json: these passes emit prose, and wrapping prose in
-        # JSON would hand the model a container to round off inside.
-        segment = run_claude(prompt, model, []).strip()
+        # The design argued for raw text here, on the grounds that a JSON container gives
+        # the model something to round off inside. Measured, the cost ran the other way:
+        # raw `claude -p` appends the model's own working to the prose, and ten fragments
+        # like 「309字、目標の333字に近い範囲なので、このまま出力します」 landed in the
+        # articles. The judge quoted them back and the arm scored 96.0, worse than bare.
+        # An envelope the commentary can sit outside of is the cheaper trade.
+        segment = str(run_claude_json(prompt, model, []).get("continuation", "")).strip()
+        segment = _strip_tail_echo(segment, tail)
         draft += _cut_midsentence(segment, per, f"{topic}:{k}")
 
     return {"title": title, "description": draft, "rounds": RELAY_PASSES}
