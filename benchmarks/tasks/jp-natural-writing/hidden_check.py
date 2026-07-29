@@ -502,7 +502,7 @@ def generate_rig_v3(topic: str, model: str) -> dict:
 WRITER_PROMPT = """あなたは Qiita に技術記事を投稿している一人のエンジニアです。
 これはあなた自身の手元の記録で、他人に説明するために書かれたものではありません。
 
-{incident}
+{ledger}
 
 これまでに自分が書いた記事:
 {prior}
@@ -533,7 +533,7 @@ WRITER_REVISE_PROMPT = """以下はあなたが書いた記事ですが、機械
 {findings}
 
 あなたの記録:
-{incident}
+{ledger}
 
 直し方: 記録にない記述は削ってください。記録から丸写しになっている箇所は、引用をやめて
 自分の言葉に置き換えるか、消してください。別の具体を足して埋めないこと。
@@ -1151,7 +1151,18 @@ def main() -> None:
             raise SystemExit(f"unknown arm(s): {unknown}; known: {list(LIVE_ARMS)}")
         print(f"live mode — generator: {args.gen_model}, judge: {args.judge_model}")
         for name in names:
-            arms[name] = {"label": LIVE_ARMS[name][0], "samples": collect_live(name, args.gen_model)}
+            # Generation is the expensive half — the writer arm once died on a KeyError
+            # after bare and fieldnote had already produced their articles, and because
+            # scoring happens only once every arm is collected, all of it was discarded.
+            # A broken arm should cost its own results and nothing else.
+            try:
+                arms[name] = {"label": LIVE_ARMS[name][0],
+                              "samples": collect_live(name, args.gen_model)}
+            except Exception as exc:
+                print(f"  [{name}] FAILED, continuing without it: "
+                      f"{type(exc).__name__}: {exc}")
+        if not arms:
+            raise SystemExit("every arm failed")
     else:
         print(f"fixture mode — judge: {args.judge_model}")
         print("note: both arms are hand-written fixtures; use --live to measure rig itself")
