@@ -746,7 +746,8 @@ def parse_log_steps(log: str) -> list[dict]:
         om = re.search(r"^結果[:：]\s*(\S+)", body, re.MULTILINE)
         if om:
             outcome = om.group(1)
-        steps.append({"n": i + 1, "header": m.group(1).strip(), "weight": len(body), "outcome": outcome})
+        steps.append({"n": i + 1, "header": m.group(1).strip(), "weight": len(body),
+                      "outcome": outcome, "raw": body.strip()})
     return steps
 
 
@@ -931,6 +932,10 @@ def generate_fieldnote(topic: str, model: str, max_rounds: int = 3) -> dict:
         "gate_log": gate_log,
         "log_steps": len(steps),
         "log_chars": len(log),
+        # Carried so fieldpaste can paste this run's own output. Re-investigating would
+        # cost a second 15-minute call and produce a log describing different work than
+        # the article was written from.
+        "_steps": steps,
     }
 
 
@@ -1152,6 +1157,96 @@ def generate_writercut(topic: str, model: str) -> dict:
     return result
 
 
+# ------------------------------------------------------- pasted artifacts (fieldpaste)
+#
+# Measured against the human corpus, per article:
+#
+#            code  list  links  images  headings
+#   human     0.2   4.7   22.5     4.4      9.8
+#   writer    0.0   0.2    0.0     0.0      4.0
+#   bare      0.0   0.0    0.0     0.0      1.5
+#
+# Real Qiita posts average 22.5 links and 4.4 images. Every arm has zero of either. And
+# this is not incidental to the score: judging the human corpus, the reasons given were
+# 「実在URLの膨大な羅列」, 「実データの表・画像URL」, 「自作スクショによる端末比較」,
+# 「Twitterリンク」. A human tech post is a document with artifacts pasted into it. Every
+# arm writes an essay.
+#
+# Asking the model for code blocks would reopen the fabrication problem — it would invent
+# plausible output, which is what the v2 quota bought. But fieldnote already ran the
+# commands: its log holds the real invocation and the real stdout. So the harness pastes
+# them, verbatim, and the model is not asked for anything. Nothing here can be performed
+# or gamed, because the generator is not told it happens.
+
+PASTE_MAX_CHARS = 240      # per block; long stdout is truncated, not summarised
+PASTE_MAX_BLOCKS = 4       # a listing dump would swamp the prose and the length band
+
+
+def _artifact_blocks(steps: list[dict]) -> list[str]:
+    """Fenced blocks of the real command and its real output, per step."""
+    blocks = []
+    for step in steps:
+        lines = [ln for ln in step.get("raw", "").splitlines() if ln.strip()]
+        command = next((ln for ln in lines if ln.lstrip().startswith("$")), "")
+        if not command:
+            continue
+        after = lines[lines.index(command) + 1:]
+        output = [ln for ln in after if not ln.startswith("結果")][:6]
+        body = "\n".join([command.strip()] + output)[:PASTE_MAX_CHARS]
+        blocks.append(f"```\n{body}\n```")
+    return blocks
+
+
+def paste_artifacts(article: str, steps: list[dict]) -> tuple[str, int]:
+    """Insert real command/output blocks after the article's section headings.
+
+    Sections and steps are paired in order, which is the pairing the skeleton already
+    imposed on the writing. When the article has no headings the blocks go after the
+    opening paragraphs instead, so an arm that ignored the structure still gets its
+    artifacts rather than silently getting none.
+    """
+    blocks = _artifact_blocks(steps)[:PASTE_MAX_BLOCKS]
+    if not blocks:
+        return article, 0
+
+    parts = re.split(r"(?m)^(#{2,6} .*)$", article)
+    if len(parts) > 1:
+        rebuilt, used = [parts[0]], 0
+        for i in range(1, len(parts), 2):
+            heading, body = parts[i], parts[i + 1] if i + 1 < len(parts) else ""
+            rebuilt.append(heading)
+            if used < len(blocks):
+                para_end = body.find("\n\n", 1)
+                cut = para_end + 2 if para_end != -1 else len(body)
+                rebuilt.append(body[:cut] + "\n" + blocks[used] + "\n" + body[cut:])
+                used += 1
+            else:
+                rebuilt.append(body)
+        return "".join(rebuilt), used
+
+    paragraphs = article.split("\n\n")
+    for offset, block in enumerate(blocks):
+        at = min(1 + offset * 2, len(paragraphs))
+        paragraphs.insert(at, block)
+    return "\n\n".join(paragraphs), len(blocks)
+
+
+def _fieldnote_public(result: dict) -> dict:
+    result.pop("_steps", None)
+    return result
+
+
+def generate_fieldpaste(topic: str, model: str) -> dict:
+    """fieldnote, with its own real command output pasted back in by the harness."""
+
+    result = generate_fieldnote(topic, model)
+    body, pasted = paste_artifacts(result["description"], result.get("_steps", []))
+    result["description"] = body
+    result["artifacts_pasted"] = pasted
+    result.pop("_steps", None)   # raw log text, too bulky for the result record
+    return result
+
+
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
@@ -1160,10 +1255,12 @@ LIVE_ARMS = {
     "rig3": ("rig v3 — prohibitions only, self-verified", generate_rig_v3),
     "rig1x": ("rig v1 criteria, cross-model verifier (ablation)", generate_rig_v1_xmodel),
     "riglint": ("rig + lint.py — mechanical detector as verifier", generate_riglint),
-    "fieldnote": ("fieldnote — investigate the repo, report it, gate on containment", generate_fieldnote),
+    "fieldnote": ("fieldnote — investigate the repo, report it, gate on containment",
+                  lambda t, m: _fieldnote_public(generate_fieldnote(t, m))),
     "writer": ("writer's ledger — closed inventory of real artifacts", generate_writer),
     "relay": ("relay — passes that never see the article whole", generate_relay),
     "writercut": ("writer + harness-side excision of paragraph closers", generate_writercut),
+    "fieldpaste": ("fieldnote + harness-pasted real command output", generate_fieldpaste),
 }
 
 
