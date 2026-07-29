@@ -659,40 +659,66 @@ INVESTIGATE_TOOLS = [
 # them fail (semgrep is not installed, the action entrypoint wants a CI environment,
 # the vscode extension wants a toolchain), and a failed investigation is better raw
 # material than a clean one.
+# Every assignment states a claim and asks for it to be checked against the source.
+#
+# This shape is not decoration. Of the four fieldpaste articles, one scored 11.0 — human
+# level — and it was the one whose assignment was a reconciliation: recompute the recorded
+# judge scores and see whether they match. They did not, and the log shows the agent
+# chasing a 16.5 discrepancy into a byte offset and finishing with the question still
+# open. The other three assignments were exploratory ("read X and see what is there"),
+# they went smoothly, and all three formatted into 見出し→要約→コードブロック→所感,
+# four times over, scoring 68-80.
+#
+# Difficulty is what reads as human, and an exploration of working code supplies none. A
+# claim can be wrong; a directory cannot. Docs drift from code and recorded numbers drift
+# from the runs that produced them, so a check has a real chance of failing — and a failed
+# check is friction the writer cannot manufacture.
 TOPIC_ASSIGNMENTS = {
     "Python": (
-        "この repo の Python パッケージがどう宣言されていて、実際の実行環境と合っているかを確かめる。"
-        "pyproject.toml の requires-python と依存、`python -V`、`python -m rig_workbench.cli --help` "
-        "が通るか。食い違いがあればどこで吸収されているか追う。"
+        "主張: 「pyproject.toml の requires-python を満たす環境なら "
+        "`python -m rig_workbench.cli --help` が通る」。これが本当か確かめる。"
+        "requires-python の値、実際の `python -V`、依存の入り具合を照合し、"
+        "通らないなら何が足りないのか、通るなら requires-python は実態より緩いか厳しいかまで見る。"
     ),
     "機械学習": (
-        "benchmarks/tasks/jp-natural-writing/results/ の JSON に入っている判定スコアを自分で集計し直し、"
-        "hidden_check.py が report() で出している平均・中央値と一致するか確かめる。"
-        "judge-calibration の n=16 の分布も見る。"
+        "主張: 「benchmarks/tasks/jp-natural-writing/results/ の各 JSON に記録された "
+        "arms[*].stats.mean は、その samples[*].score を平均した値と一致する」。"
+        "全ファイルについて自分で再集計して照合する。judge-calibration の mean と "
+        "misread_rate も同様に検算する。合わないファイルがあればどこで生じた差か追う。"
     ),
     "クラウドコンピューティング": (
-        "action.yml と scripts/rig-action-entrypoint.sh を読んで、この repo が GitHub Actions 上で"
-        "何を前提にしているかを把握し、その entrypoint をローカルで実際に走らせてどこで落ちるか確かめる。"
+        "主張: 「action.yml の inputs で recipe のデフォルトや例に書かれているパスは、"
+        "この repo に実在する」。action.yml と scripts/rig-action-entrypoint.sh を読み、"
+        "書かれているパス・環境変数・前提コマンドを一つずつ実在確認する。"
+        "存在しないものがあれば、それが動作にどう影響するかまで確かめる。"
     ),
     "Web開発": (
-        "web/ と vscode-extension/ に何が入っていて、どこまで手元で動かせるか確かめる。"
-        "package.json、ビルドやテストのコマンドを実際に叩く。"
+        "主張: 「vscode-extension/package.json に書かれた scripts は、この環境でそのまま走る」。"
+        "実際に一つずつ叩いて確かめる。落ちるものがあれば何が足りないのかを特定する。"
+        "package.json の engines や devDependencies と実環境の食い違いも見る。"
     ),
     "データベース設計": (
-        "rig の実行状態がどこにどんな形で保存されているかを追う。rig_workbench/ の runstate と provenance、"
-        "tests/test_runstate.py と tests/test_provenance.py を実際に走らせて、生成される構造を見る。"
+        "主張: 「tests/test_runstate.py と tests/test_provenance.py が全て通る」。"
+        "実際に走らせて確かめ、生成される run-state / provenance の実物の構造を見る。"
+        "落ちるものがあれば原因を追い、通るなら記録される構造が README の説明と一致するか照合する。"
     ),
     "リモートワーク": (
-        "scripts/notify.py を読み、--dry-run で実際に叩いて Slack/Teams のペイロードがどう組み立てられるか"
-        "確かめる。tests/test_notify.py も走らせる。webhook を持っていない状態で何ができて何ができないか。"
+        "主張: 「scripts/notify.py は webhook URL を持たない状態でも --dry-run で "
+        "Slack と Teams 両方のペイロードを出力できる」。実際に叩いて確かめる。"
+        "tests/test_notify.py も走らせ、出力されるペイロードが実際の Slack/Teams の"
+        "スキーマとして妥当かまで見る。"
     ),
     "セキュリティ対策": (
-        "scripts/sast_adapter.py の run 形式を実際に走らせてみて、何が要求され何が落ちるか確かめる。"
-        "tests/test_injection_scan.py と tests/test_mcp_scan.py も走らせ、何を検出して何を見落とす設計か読む。"
+        "主張: 「scripts/sast_adapter.py の run 形式は、スキャナが未インストールでも"
+        "エラーを説明して終わる」。実際に走らせて確かめる。"
+        "tests/test_injection_scan.py と tests/test_mcp_scan.py も走らせ、"
+        "何を検出して何を見落とす設計かを、実際の検出結果から確かめる。"
     ),
     "チーム開発": (
-        "git log で、この repo に入って直ったバグを 1 件選んで最初から最後まで追う。"
-        "`git log --oneline`、`git show <sha>` で実際の diff を見て、入った経緯と直った経緯を確かめる。"
+        "主張: 「git log のコミットメッセージに書かれた変更内容は、その commit の "
+        "diff と一致する」。bugfix 系のコミットを 1 件選び、`git show <sha>` で実際の "
+        "diff を読んで照合する。メッセージが述べていて diff に無いもの、"
+        "diff にあってメッセージが触れていないものを探す。"
     ),
 }
 
@@ -1236,11 +1262,40 @@ def _fieldnote_public(result: dict) -> dict:
     return result
 
 
+# The skeleton asks for a 1500-char body and fieldnote produced 2943-4095, so the budget
+# is advice the model does not take. Length is not cosmetic here: it already confounded
+# one whole run, and an arm outside the band cannot be compared to one inside it.
+#
+# Trimming whole trailing sections rather than truncating mid-text keeps the article a
+# document. It also stops short of the ceiling rather than at it, because landing exactly
+# on a round number every time would be its own regularity.
+LENGTH_CEILING = 2500
+
+
+def trim_to_ceiling(article: str, ceiling: int = LENGTH_CEILING) -> tuple[str, int]:
+    """Drop trailing sections until the article fits. Returns the text and sections cut."""
+    if len(article) <= ceiling:
+        return article, 0
+    parts = re.split(r"(?m)^(#{2,6} .*)$", article)
+    if len(parts) < 3:
+        return article, 0
+    head = parts[0]
+    sections = [parts[i] + (parts[i + 1] if i + 1 < len(parts) else "")
+                for i in range(1, len(parts), 2)]
+    cut = 0
+    while len(sections) > 1 and len(head + "".join(sections)) > ceiling:
+        sections.pop()
+        cut += 1
+    return (head + "".join(sections)).rstrip(), cut
+
+
 def generate_fieldpaste(topic: str, model: str) -> dict:
     """fieldnote, with its own real command output pasted back in by the harness."""
 
     result = generate_fieldnote(topic, model)
     body, pasted = paste_artifacts(result["description"], result.get("_steps", []))
+    body, trimmed = trim_to_ceiling(body)
+    result["sections_trimmed"] = trimmed
     result["description"] = body
     result["artifacts_pasted"] = pasted
     result.pop("_steps", None)   # raw log text, too bulky for the result record
