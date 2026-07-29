@@ -38,48 +38,51 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 
 > ブリック参照は skill ディレクトリ相対（facets/ patterns/ recipes/ manifests/）。agent はファイルパスでなく subagent_type 名で起動。
 >
-> **上表は engine / dev-core 在庫。** ドメイン/モード pack は engine を改変せず**ブリックを上乗せ**する（§8 Native-first）。**新 pack を足したらこの pack 追加分に追記する**（dev-core 行は安定させる）。`--validate` はこの目録と実ファイルの突き合わせを検査する。
+> **上表は engine / dev-core 在庫。** ドメイン/モード pack は engine を改変せず**ブリックを上乗せ**する（§8 Native-first）。**新 pack を足したら下表の1行要旨と `PACKS.md` の詳細行の両方に追記する**（dev-core 行は安定させる）。`--validate` はこの目録と実ファイルの突き合わせを検査するので、下表からブリック名を落とすとドリフト検出が効かなくなる。
 >
-> **pack 追加分（engine 不変で上乗せ）:**
+> **pack 追加分（engine 不変で上乗せ）** — 下表はブリック名と1行要旨のみ。**各 pack の詳細説明は `PACKS.md` が正本**（挙動そのものの正本は各 instruction / recipe）。
 >
-> | pack | 追加ブリック |
-> |---|---|
-> | **sales**（`/rig:sales`） | **商談レビュー**: persona `facets/personas/sales/{hearing,needs,proposal,closing,next-action}-reviewer`＋追加枠 `facets/personas/sales/objection-handler` ／ instruction `facets/instructions/deal-review` ／ output-contract `facets/output-contracts/deal-verdict` ／ recipe `recipes/deal-review` ／ knowledge `facets/knowledge/sales-domain/`。**資材生成（`--material`/`--script`）**: persona `facets/personas/sales/{material-writer,cold-caller}` ／ instruction `facets/instructions/{sales-material,call-script}` ／ output-contract `facets/output-contracts/sales-collateral` ／ recipe `recipes/sales-enablement`（実在機能のみ・誇張禁止。詳細は各 instruction が正本） |
-> | **talk**（`/rig:talk`） | persona `facets/personas/talk-assistant` ／ instruction `facets/instructions/talk-loop`（recipe なし＝既存コマンドへ委譲） |
-> | **goal**（`/rig:goal`） | persona `facets/personas/goal-driver`（`inject: [[loop-engineering]]`） ／ instruction `facets/instructions/goal-loop` ／ wiki `facets/knowledge/wiki/loop-engineering` ／ policy `facets/policies/independent-verification`（採点者≠生成者） ／ recipe `recipes/goal-loop`（高レベル目標→受け入れ基準→達成までループ。loop engineering＝harness の1つ上の層。**詳細は goal-loop.md が正本**） |
-> | **loop**（`/rig:loop`） | instruction `facets/instructions/loop-driver` ／ pattern `patterns/autonomous-loop`（`ScheduleWakeup` 再利用） ／ recipe `recipes/loop`（**繰り返し/監視ループ**＝goal の対極。「いつまた回すか」を担う watch/poll/repeat。停止条件 `--until`/`--times`/明示・安全上限必須・各 tick 報告・時間駆動は 270/1200・300 禁忌。`--every` で `/rig:goal` を定期キックする等、外側スケジューラとして重ねられる） |
-> | **task-plan**（`/rig:tasks`） | persona `facets/personas/planner` ／ instruction `facets/instructions/task-plan` ／ output-contract `facets/output-contracts/task-plan` ／ recipe `recipes/task-plan`（依頼を検証可能な小タスクに割ってから実装＝plan→implement→verify→review。**詳細は task-plan.md が正本**） |
-> | **brainstorm**（`/rig:brainstorm`） | persona `facets/personas/brainstormer` ／ instruction `facets/instructions/brainstorm` ／ output-contract `facets/output-contracts/design-brief` ／ recipe `recipes/brainstorm`（**設計の壁打ち**＝ラフな着想を質問→代替案→セクション合意で固める実装の前段。決め打ちせず問う・代替を必ず見る・節ごとに承認・未解決は捏造で埋めず明示・実装には踏み込まない。`design-brief` に収束し brainstorm→tasks→dev と前段から繋がる） |
-> | **pr-review**（`/rig:pr`） | instruction `facets/instructions/pr-review` ／ recipe `recipes/pr-review`（reviewer agent・persona・`review-verdict` は dev 共用） |
-> | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | pattern `patterns/isolated-worktree`（task ごとの隔離 worktree・run state 設計の正本）＋`patterns/visual-artifacts`（視覚検証スクリーンショットの置き場・処分ルールの正本。task-scoped は `.rig/runs/<task-id>/visual/`、ad-hoc は `.rig/visual/adhoc/<ts>-<slug>/`・discard で即時削除・`workbench.py gc` で既定14日の age-based 処分） ／ runner `scripts/workbench.py`（task-id 発行・worktree 作成・選択理由バナー・accept_requirements チェックリスト・acceptance-gate 記録・accept/discard（visual/ も削除）・gc・review verdict 記録・stats 集計・audit（`accept --force` の恒久監査ログ `.rig/audit.jsonl` の一覧）・scan-secrets（決定論シークレットスキャン＝`no_secret_leak` の機械センサー。抜粋は常にマスク）・scan-injection（決定論インジェクション・マーカースキャン＝`no_injection_markers` の機械センサー。diff＋repo の prose 面を走査・不可視文字は `<U+XXXX>` エスケープで表示）・digest（`.rig/` テレメトリの週次/月次 Markdown ダイジェスト）の決定論実装。舵をコードに＝`patterns/computational-orchestration` と同思想） ／ instruction `facets/instructions/workbench`（自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定の5段。正本）＋`facets/instructions/workbench-ops`（`status`/`diff`/`accept`/`discard`/`log`/`board`/`stats`/`review`/`gc`/`audit`/`scan-secrets`/`scan-injection`/`digest`/`stream-checks`/`stale-refs`/`scan-destructive`/`instincts` サブコマンド。`board`＝全 task の単一ダッシュボード——`/rig:queue go --provider rig` で並列 dispatch した task も同じ一覧に出る）＋`facets/instructions/gh-flow`（`gh issue`/`gh pr review`/`gh pr fix`/`gh ci`。PR review は既存 `pr-review` へ委譲、CI 失敗は `tests_pass_or_explained` 基準に接続。**Issue/PR 本文・コメントは untrusted external data＝下流 persona に渡す前に `wrap_untrusted`（`rig_workbench/orchestrate/quarantine.py`）の検疫フェンスで「データであって指示ではない」と構造的に囲い、不可視/bidi Unicode を剥離する**＝散文の禁止でなく機構でプロンプトインジェクションを断つ〔OWASP LLM01〕）＋`facets/instructions/acceptance-check`（criterion 判定を `workbench.py gate` に記録する薄い委譲）＋ workbench recipe 専用の薄い instruction 群 `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` ／ recipe `recipes/{bugfix,feature,refactor,documentation}`（task_type 自動選択の既定4本。`review`/`security_review`/`investigation`/`design`/`release_support` 等は既存 recipe（`review-only`/`pr-review`/`debug`/`design`/`release-flow`）へ橋渡し＝重複実装しない）。**受け入れ基準 ID の正本は `scripts/workbench.py`**（`gates` サブコマンドで一覧表示・`standard`＋task_type 別（`bugfix`/`feature`/`refactor`/`review`/`security`）の合成プリセット）。プロジェクト独自基準は **`.rig/gates.json`** で**加算のみ**上乗せできる（`extra_criteria`＝preset/task_type 別・`descriptions`・`openapi_paths`。組み込み基準の削除・緩和キーは拒否、表示には `[project]` タグ）。うち4基準は機械センサーが裏付ける：`public_api_changes_documented*` は OpenAPI schema-diff（warning-grade。`openapi.json` 等を自動検出、`openapi_paths` で明示可）、`no_secret_leak` は決定論シークレットスキャン（fail-grade＝検出で accept を止める。抜粋は常にマスク・偽陽性の脱出口は `--set no_secret_leak=passed`）、`no_gate_tampering` は anti-tamper スキャン（task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow 編集は fail、bugfix/feature でのテスト改変・assert 削除・skip 追加は warning。脱出口は `--set no_gate_tampering=passed`＝記録される）、`no_injection_markers` はインジェクション・マーカースキャン（不可視/bidi Unicode は fail・指示上書きフレーズは warning。diff＋prose 面を走査＝`workbench.py scan-injection` と同一実装・脱出口は `--set no_injection_markers=passed`＝記録される）。gate 全体の状態は `passed`/`passed_with_warnings`/`failed`/`pending`/`skipped`。「できました」の自己申告だけで完了扱いにしない＝`workbench.py accept` は `failed`/`pending` を機械的に拒否し、`worktree_exists`/`base_branch_recorded`/`diff_summary_generated` の構造的前提は `--force` でも上書きできない。`workbench.py review`（persona 別 verdict の記録）＋`stats`（recipe/gate 別集計・**REJECT ゼロが続く reviewer へのゴム印警告**）で運用の実測にも接続する。 |
-> | **de-ai-smell**（`/rig:dev --recipe de-ai-smell`） | persona `facets/personas/ai-smell-reviewer` ／ instruction `facets/instructions/de-ai-smell` ／ knowledge `facets/knowledge/ai-writing-smells` ／ recipe `recipes/de-ai-smell`（散文の AI 臭除去。深層 A〜V マーカー＋**5観点スコア定量ゲート**（立場/リズム/主体性/具体性/削減・<35/50で書き直し）＋**名指し語彙ブラックリスト**（偏愛語/横文字メタファー/ジャーゴンを置換例つきで弾く）。`review-verdict` は dev 共用） |
-> | **sns-x**（`/rig:dev --recipe sns-x-post`） | persona `facets/personas/sns-post-reviewer` ／ instruction `facets/instructions/sns-post` ／ knowledge `facets/knowledge/sns-x-conventions` ／ recipe `recipes/sns-x-post`（X 半自動ポスト運用。声 persona は運用者が `/rig:persona`＋`default_personas` で投入。de-ai-smell・`review-verdict` 共用） |
-> | **magi**（`/rig:magi`） | persona `facets/personas/magi/{melchior,balthasar,casper}` ／ instruction `facets/instructions/magi-deliberation` ／ pattern `patterns/magi-consensus`（多数決合議ゲート） ／ output-contract `facets/output-contracts/magi-verdict` ／ recipe `recipes/magi`（エヴァ MAGI 模倣の3賢者 decision モード。正しさ/守り/価値の直交3観点で go/no-go を多数決裁定） |
-> | **roast**（`/rig:roast`・humor） | persona `facets/personas/roast-reviewer` ／ instruction `facets/instructions/roast` ／ recipe `recipes/roast`（毒舌ロースト・レビュー。`review-verdict`/`review-gate` は dev 共用。中身は本物のレビューで配送をユーモアに振る adversarial-review 変種） |
-> | **coin**（`/rig:coin`・humor） | persona `facets/personas/coin-flipper` ／ instruction `facets/instructions/coin-flip` ／ recipe `recipes/coin`（可逆で些末な決定を即断する反-bikeshed ゲート。重い/不可逆はトリアージで弾いて magi へ。magi の対極） |
-> | **duck**（`/rig:duck`・humor） | persona `facets/personas/rubber-duck` ／ instruction `facets/instructions/duck-debug` ／ recipe `recipes/duck`（ラバーダック・デバッグ。アヒルが質問だけで本人に気づかせる会話モード。コードも答えも出さない・実証済み技法） |
-> | **drill**（`/rig:drill`・measurement） | persona `facets/personas/strict-senior-engineer`（correctness/maintainability/security/testability 優先・Blocking/Non-blocking 分離。「厳しめにレビューして」依頼でも使用） ／ output-contract `facets/output-contracts/review-findings`（severity・file:line・Blocking/Non-blocking を強制。drill 実行時は fan-out する reviewer 全員がこの contract に一時上書きされる） ／ instruction `facets/instructions/drill` ／ recipe `recipes/drill`（**reviewer 検出率の実測**＝観点対応のバグの種〔期待 severity・期待 blocking つき〕を一時 worktree の合成 diff に注入→review fan-out→検出/見逃し/誤検出＋severity精度＋blocking精度＋説明品質の6指標スコアボード＋persona 単位の `Drill Result`（Score/Missed Issues/False Positives/固定4カテゴリ`add_checklist_item`・`adjust_severity_rule`・`add_false_positive_guard`・`strengthen_security_focus`の Recommended Persona Updates）。`--verify-findings` で反証者も採点〔正しい種を REFUTED＝失点〕。**`--replay <persona>`**＝アーカイブ済み過去 diff への再実行で新旧 verdict 差分＝ペルソナの snapshot テスト。結果は `.rig/drill-results.jsonl`。本物のコードは触らない・種は実在 class のみ＝測定の公正） |
-> | **party**（`/rig:party`・utility・🎮） | command `commands/party`（**パーティ編成画面**＝`scripts/orchestrate.py party` がテレメトリ・drill 実測・ブリック在庫から RPG 風キャラクターシートを描画：Lv=DONE 数・出撃/REJECT=検証票・⚔検出率=drill・実績🏆=機械判定。ゲーム画面は演出で全行が実データ＝ハーネス健康診断。読み取り専用・selftest V が golden 検証） |
-> | **sage**（`/rig:sage`・oracle） | persona `facets/personas/sage/{great-sage,raphael}` ／ instruction `facets/instructions/sage-oracle` ／ recipe `recipes/sage`（転スラの**大賢者/智慧之王**を模した「正解を問う」オラクル。《告》《解》〜＝解析 dispatch で裏取りした断定＋確度＋証拠アンカー。解析不能は臆さず宣言＝**捏造は機能として存在しない**。`--evolved`＝智慧之王：複数仮説の並列演算→統合・《予測》帰結＋発生確率・《提案》最適解＋次善。実行はせず /rig:dev へ橋渡し。裁定は magi・即断は coin へルーティング。MAGI と同じ「ネタだが中身は本物」流儀） |
-> | **pre-mortem**（`/rig:pre-mortem`・humor） | persona `facets/personas/pre-mortem-analyst` ／ instruction `facets/instructions/pre-mortem` ／ output-contract `facets/output-contracts/premortem-report` ／ recipe `recipes/pre-mortem`（事前検死。「もう本番で壊れた」前提で失敗モードを逆算＋最小ガードレール。magi の補完＝どう壊れるか） |
-> | **movie**（`/rig:movie`） | persona `facets/personas/video-director`（汎用）＋ `facets/personas/release-director`（`--release` 用サブクラス） ／ instruction `facets/instructions/video-direct`（汎用・target 非依存）＋ target 別 `facets/instructions/render-hyperframes`（既定・OSS HTML→MP4）／`render-remotion`（React/TS・Composition + Sequence）／`render-davinci`（**stub**・Fusion comp / Lua / Python script 素材納品）／`render-aviutl`（**stub**・拡張編集 `.exo` + `.anm` Lua）＋ `facets/instructions/release-movie`（CHANGELOG ソース差分手順） ／ knowledge `facets/knowledge/video-grammar`（尺/カット/間/構図/音の普遍ノウハウ） ／ recipe `recipes/movie`（汎用・既定）＋ `recipes/release-movie`（**movie の `--release` サブクラス**・extends: movie） ／ アニメ HTML `web/release-trailer.html`＋HyperFrames 例 `video/launch-film/`・`video/before-after/`（**動画作成の汎用ハーネス**＝既定は実装中のプロジェクトからデモ動画を `hyperframes` で。`--target` でレンダリングパイプライン切替、`--release` で release-movie 経路（CHANGELOG→リリーストレーラー）。**動いている画面ショット必須**・各ビート実出所紐づけ・harness では実動画/MP4 を非生成＝コンポジションまで生成しユーザーが render） |
-> | **scenario**（`/rig:scenario`） | persona `facets/personas/scenario-writer`＋`facets/personas/engagement-reviewer`＋auteur レンズ `facets/personas/auteur/{deconstructionist,humanist}` ／ instruction `facets/instructions/{scenario-write,scenario-vet}` ／ recipe `recipes/scenario`（動画シナリオの脚本→検閲。ai-smell×sns-post×面白さ軸を acceptance-gate で収束。`/rig:movie` の前段。**詳細は scenario-write/vet が正本**） |
-> | **design**（`/rig:design`） | persona `facets/personas/design/{ui-ux-designer,ux-reviewer,a11y-reviewer}` ／ instruction `facets/instructions/{design-draft,design-vet,design-audit}` ／ output-contract `facets/output-contracts/design-verdict` ／ knowledge `facets/knowledge/{a11y-wcag,ui-ux-heuristics}` ／ recipe `recipes/{design,design-audit}`（UI/UX・a11y の作成＋URL 監査。`--ppt`/`--claudedesign`/Playwright は MCP 委譲。**詳細は design-draft/vet/audit が正本**） |
-> | **test-design**（`/rig:qa`） | persona `facets/personas/test-designer` ／ knowledge `facets/knowledge/qa-test-lenses` ／ instruction `facets/instructions/test-design` ／ output-contract `facets/output-contracts/test-cases` ／ recipe `recipes/test-design`（固定7観点のテストケース設計・Test Basis 必須・AI は設計者でありテスター非該当。**詳細は test-design.md が正本**） |
-> | **harness-audit**（`/rig:harness`） | persona `facets/personas/harness-auditor` ／ knowledge `facets/knowledge/harness-taxonomy`（2×2） ／ instruction `facets/instructions/harness-audit` ／ output-contract `facets/output-contracts/harness-map` ／ recipe `recipes/harness-audit`（ハーネスの棚卸し＝空象限と効いていない資産の検出。read-only。**詳細は harness-audit.md が正本**） |
-> | **security**（`/rig:sec`・ホワイトハッカー pack） | persona `facets/personas/security/{exploit-researcher,threat-modeler,remediation-engineer}`（既存 `security-reviewer` を独立検証枠に再利用） ／ knowledge `facets/knowledge/wiki/attack-catalog`（`[[appsec-checklist]]` を能動探索技法へ拡張・**倫理境界＝自プロダクト/許可済み環境・静的+ローカル検証のみ・DAST 既定範囲外**） ／ instruction `facets/instructions/{security-audit,pentest-fix,security-monitor}` ／ output-contract `facets/output-contracts/security-findings`（Confirmed〔PoC 実証〕と Suspected〔情報不足〕を分離・攻撃シナリオ/PoC/`file:line`/root cause/canonical 修正案を強制・低確信の Critical 禁止） ／ recipe `recipes/{security-audit,pentest-fix,security-monitor}`（**audit**＝攻撃者視点で既存コードの刺さる経路を探索〔read-only〕／**pentest-fix**＝Confirmed を PoC 回帰テスト化→canonical 修正→re-exploit 失敗まで accept 不可〔`exploit_reproduced_then_closed` optional criterion〕／**monitor**＝`patterns/autonomous-loop` で SAST/SCA/secret 定期再スキャン・スキャン専用）。決定論センサーは `scripts/sast_adapter.py`（semgrep→`sast_findings_clear`／pip-audit・npm audit・trivy→`sca_findings_clear`。rig はツールを実行せず出力を渡す＝#276）＋`workbench.py scan-secrets`。差の実証は `benchmarks/security-tasks/`（bare は narrow fix を出荷＝silent security defect／rig は canonical 収束 or safe-stop。既存 paired runner の silent-defect 率で定量化）。**詳細は各 recipe/instruction が正本** |
-> | **orchestrate**（`/rig:orchestrate`・`--orchestrate`） | runner `scripts/orchestrate.py` ／ pattern `patterns/computational-orchestration`（**計算的オーケストレーション**＝遷移・ゲート・リトライ・停止・状態保持をコードが強制。半自動 plan/init/next/check/verdict/resume（resume＝verify-first 再開：現 step の checks を再実行しドリフトなら前進拒否）／全自動 run＝マルチプロバイダ・並列検証・DAG・`run-state.json` 永続。opt-in＝engine 不変。**詳細は computational-orchestration.md が正本**） |
-> | **queue**（`/rig:queue`） | runner `scripts/orchestrate.py`（queue サブコマンド＝**積んで GO**。`add`/`list`/`go`/`done`/`retry`（検証 FAIL の item を再び `queued` に戻す）・backend 差し替え式 local/github/gitlab・`go`＝並列実行＋独立検証ゲート。`list` は done を除くアクティブ item のみ表示し、note（失敗理由・完了コメント）も併記する。**`--provider rig`（既定）は各 item を `/rig:go "<task>"` 経由で dispatch し、`patterns/isolated-worktree` で自動隔離する**（headless プロセス同士が並列実行中に同じ作業ディレクトリを取り合う衝突を構造的に防ぐ）。queue の verifier は「gate まで確定したか」＋「isolated worktree 内で完結し本体に書き込んでいないか」を判定するのみ＝**accept はしない**——完了後は `/rig:go board` で全 item を一覧し、個別に `/rig:go accept`/`discard` する。`/rig:brainstorm`→`/rig:tasks` の成果を積む先でもある。**詳細は `commands/queue` が正本**） |
-> | **init**（`/rig:init`・utility） | instruction `facets/instructions/init`（manifest・知識層 dir・CLAUDE.md "Compact Instructions" を scaffold） |
-> | **persona-gen**（`/rig:persona`・generator） | instruction `facets/instructions/persona-gen`（説明文→persona facet を project/user 層に生成。**既定 project**・`--user` で global に opt-in。`--persona <name>` で都度投入、manifest `default_personas` で製品ごと常時自動投入。v2 Phase 1） |
-> | **knowledge-gen**（`/rig:knowledge`・generator） | instruction `facets/instructions/knowledge-gen` ／ knowledge `facets/knowledge/_wiki`（説明文/`--auto` repo 解析/`--research` web 調査→wiki ページを global/project に生成。**既定 global**・`--project` で project overlay に opt-in（**`persona-gen` とは既定 tier が逆＝symmetry を仮定しない・#224**）。**`--graph`**＝repo の型付き知識グラフを `[[codebase-graph]]` に蒸留（relations 固定語彙・entities≤40/relations≤80・既定 project overlay・reviewer への inject を提案＝丸読みせず関係を辿る）。persona は `inject: [[slug]]` で参照。v2 Phase 2） |
-> | **skill-author**（`/rig:forge`・generator） | instruction `facets/instructions/skill-author`（説明文→rig のブリック/パックを自作して検証・保存する自己拡張。persona は `/rig:persona`・knowledge は `/rig:knowledge` へ委譲・engine 不変・生成後 `--validate`・書込確認必須。**詳細は skill-author.md が正本**） |
-> | **skill-import**（`/rig:import`・generator） | instruction `facets/instructions/skill-import`（外部 skill を **⓪発見(--discover)→①取得→②検疫→③判断(委譲>翻訳>知識)→④確認→⑤import-gate→⑥lock 記録(`skills-lock.json`)→⑦検証**のパイプラインで取り込む。モード: `--all` 一括／`--check-updates` 差分検知／`--update` 再取り込み。方言（.cursorrules/AGENTS.md 等）対応。`/rig:forge` の対。**手順・スキーマの正本は skill-import.md**） |
-> | **skill-export**（`/rig:export`・generator） | instruction `facets/instructions/skill-export`（rig で育てたブリック〔persona/recipe/pack〕を**独立した Claude Code skill として書き出す還元機構**。rig 依存を除去して self-contained 化〔契約インライン展開・wiki 同梱・gate の散文翻訳〕・出所とライセンスの連鎖を継承〔再配布不可なら中止〕・書込確認必須。export→GitHub→他者が `/rig:import` で取り込める＝**吸収と還元の輪**。`/rig:import` の対） |
-> | **list**（`--list`・utility） | instruction `facets/instructions/list`（**`--list` の表示仕様の正本**＝tier/pack グルーピング・`[N steps · …]` badge の導出と固定並び順・`steps:` フィールド・`★ default`・shadow 表示。§3 は要約とポインタのみ＝SKILL.md 減量フェーズ1） |
-> | **plan**（`--plan`・utility） | instruction `facets/instructions/plan`（**`--plan` の表示仕様の正本**＝ヘッダ・step テーブル・Gate/Checks/DAG/Knowledge/Reviewer Fan-out/Loop Config 各ブロックの詳細ルール。§5 は要約とポインタのみ＝SKILL.md 減量フェーズ2） |
-> | **catalog**（`/rig:catalog`・`--list --global`・utility） | instruction `facets/instructions/catalog`（全 tier 走査→domain×pack×persona×wiki×recipe の横断レジストリ地図。派生・読み取り専用。v2 Phase 3。**`--graph`**＝型付きブリック・グラフ：`scripts/orchestrate.py graph` が injects/extends/uses-*/gated-by/mirrors 等**固定11種の関係**を frontmatter・steps: から導出（手書きしない＝腐らない）。`--focus <name>` で1ホップ近傍＝影響調査。validate check_graph・selftest W が golden 検証） |
-> | **hooks**（プラグイン同梱） | `hooks/hooks.json` → `hooks/preserve-rig-state.sh`（`PreCompact`：圧縮で run-state を保全。§6 run-continuity ④） |
+> | pack | 要旨 | 追加ブリック |
+> |---|---|---|
+> | **sales**（`/rig:sales`） | 商談レビュー＋資材生成（`--material`/`--script`） | `facets/personas/sales/{hearing,needs,proposal,closing,next-action}-reviewer` `facets/personas/sales/objection-handler` `facets/personas/sales/{material-writer,cold-caller}` `facets/instructions/deal-review` `facets/instructions/{sales-material,call-script}` `facets/output-contracts/deal-verdict` `facets/output-contracts/sales-collateral` `facets/knowledge/sales-domain/` `recipes/deal-review` `recipes/sales-enablement` |
+> | **talk**（`/rig:talk`） | 会話モード（recipe なし＝既存コマンドへ委譲） | `facets/personas/talk-assistant` `facets/instructions/talk-loop` |
+> | **goal**（`/rig:goal`） | 高レベル目標→受け入れ基準→達成までループ（loop engineering） | `facets/personas/goal-driver` `facets/instructions/goal-loop` `facets/knowledge/wiki/loop-engineering` `facets/policies/independent-verification` `recipes/goal-loop` |
+> | **loop**（`/rig:loop`） | 繰り返し/監視ループ＝goal の対極。停止条件・安全上限必須 | `facets/instructions/loop-driver` `patterns/autonomous-loop` `recipes/loop` |
+> | **task-plan**（`/rig:tasks`） | 依頼を検証可能な小タスクへ割ってから実装 | `facets/personas/planner` `facets/instructions/task-plan` `facets/output-contracts/task-plan` `recipes/task-plan` |
+> | **brainstorm**（`/rig:brainstorm`） | 設計の壁打ち。`design-brief` に収束し tasks→dev へ繋ぐ | `facets/personas/brainstormer` `facets/instructions/brainstorm` `facets/output-contracts/design-brief` `recipes/brainstorm` |
+> | **pr-review**（`/rig:pr`） | PR レビュー（reviewer agent・persona・`review-verdict` は dev 共用） | `facets/instructions/pr-review` `recipes/pr-review` |
+> | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | 自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定。**受け入れ基準 ID の正本は `scripts/workbench.py gates`**（project 独自基準は `.rig/gates.json` で**加算のみ**）。うち4基準は機械センサーが裏付ける（OpenAPI schema-diff / secret scan / anti-tamper / injection-marker） | `patterns/isolated-worktree` `patterns/visual-artifacts` `patterns/computational-orchestration` `scripts/workbench.py` `facets/instructions/workbench` `facets/instructions/workbench-ops` `facets/instructions/gh-flow` `facets/instructions/acceptance-check` `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` `recipes/{bugfix,feature,refactor,documentation}` |
+> | **de-ai-smell**（`/rig:dev --recipe de-ai-smell`） | 散文の AI 臭除去（深層マーカー＋5観点スコア定量ゲート＋語彙ブラックリスト） | `facets/personas/ai-smell-reviewer` `facets/instructions/de-ai-smell` `facets/knowledge/ai-writing-smells` `recipes/de-ai-smell` |
+> | **sns-x**（`/rig:dev --recipe sns-x-post`） | X 半自動ポスト運用（声 persona は `/rig:persona` で投入） | `facets/personas/sns-post-reviewer` `facets/instructions/sns-post` `facets/knowledge/sns-x-conventions` `recipes/sns-x-post` |
+> | **magi**（`/rig:magi`） | 3賢者の直交3観点で go/no-go を多数決裁定 | `facets/personas/magi/{melchior,balthasar,casper}` `facets/instructions/magi-deliberation` `patterns/magi-consensus` `facets/output-contracts/magi-verdict` `recipes/magi` |
+> | **roast**（`/rig:roast`・humor） | 毒舌ロースト・レビュー（中身は本物・配送をユーモアに） | `facets/personas/roast-reviewer` `facets/instructions/roast` `recipes/roast` |
+> | **coin**（`/rig:coin`・humor） | 可逆で些末な決定を即断する反-bikeshed ゲート（magi の対極） | `facets/personas/coin-flipper` `facets/instructions/coin-flip` `recipes/coin` |
+> | **duck**（`/rig:duck`・humor） | ラバーダック・デバッグ（質問だけ・コードも答えも出さない） | `facets/personas/rubber-duck` `facets/instructions/duck-debug` `recipes/duck` |
+> | **drill**（`/rig:drill`・measurement） | reviewer 検出率の実測（合成 diff にバグの種を注入→6指標スコアボード）。`--replay` でペルソナの snapshot テスト | `facets/personas/strict-senior-engineer` `facets/output-contracts/review-findings` `facets/instructions/drill` `recipes/drill` |
+> | **party**（`/rig:party`・utility・🎮） | パーティ編成画面＝テレメトリ・drill 実測から RPG 風キャラシート。読み取り専用・全行が実データ | `commands/party` |
+> | **sage**（`/rig:sage`・oracle） | 「正解を問う」オラクル。裏取りした断定＋確度＋証拠アンカー・**捏造は機能として存在しない** | `facets/personas/sage/{great-sage,raphael}` `facets/instructions/sage-oracle` `recipes/sage` |
+> | **pre-mortem**（`/rig:pre-mortem`・humor） | 事前検死。「もう壊れた」前提で失敗モードを逆算（magi の補完） | `facets/personas/pre-mortem-analyst` `facets/instructions/pre-mortem` `facets/output-contracts/premortem-report` `recipes/pre-mortem` |
+> | **movie**（`/rig:movie`） | 動画作成の汎用ハーネス。`--target` でレンダラ切替・`--release` で CHANGELOG→トレーラー。harness は実 MP4 を非生成 | `facets/personas/video-director` `facets/personas/release-director` `facets/instructions/video-direct` `facets/instructions/render-{hyperframes,remotion,davinci,aviutl}` `facets/instructions/release-movie` `facets/knowledge/video-grammar` `recipes/movie` `recipes/release-movie` `web/release-trailer.html` |
+> | **scenario**（`/rig:scenario`） | 動画シナリオの脚本→検閲（`/rig:movie` の前段） | `facets/personas/scenario-writer` `facets/personas/engagement-reviewer` `facets/personas/auteur/{deconstructionist,humanist}` `facets/instructions/{scenario-write,scenario-vet}` `recipes/scenario` |
+> | **design**（`/rig:design`） | UI/UX・a11y の作成＋URL 監査（`--ppt`/`--claudedesign`/Playwright は MCP 委譲） | `facets/personas/design/{ui-ux-designer,ux-reviewer,a11y-reviewer}` `facets/instructions/{design-draft,design-vet,design-audit}` `facets/output-contracts/design-verdict` `facets/knowledge/{a11y-wcag,ui-ux-heuristics}` `recipes/{design,design-audit}` |
+> | **test-design**（`/rig:qa`） | 固定7観点のテストケース設計（Test Basis 必須） | `facets/personas/test-designer` `facets/knowledge/qa-test-lenses` `facets/instructions/test-design` `facets/output-contracts/test-cases` `recipes/test-design` |
+> | **harness-audit**（`/rig:harness`） | ハーネスの棚卸し＝空象限と効いていない資産の検出（read-only） | `facets/personas/harness-auditor` `facets/knowledge/harness-taxonomy` `facets/instructions/harness-audit` `facets/output-contracts/harness-map` `recipes/harness-audit` |
+> | **security**（`/rig:sec`・ホワイトハッカー pack） | audit（攻撃者視点の探索・read-only）／pentest-fix（PoC 回帰テスト化→canonical 修正）／monitor（定期再スキャン）。**倫理境界＝自プロダクト/許可済み環境・静的+ローカル検証のみ**。決定論センサーは `scripts/sast_adapter.py` ＋ `workbench.py scan-secrets` | `facets/personas/security/{exploit-researcher,threat-modeler,remediation-engineer}` `facets/knowledge/wiki/attack-catalog` `facets/instructions/{security-audit,pentest-fix,security-monitor}` `facets/output-contracts/security-findings` `recipes/{security-audit,pentest-fix,security-monitor}` `patterns/autonomous-loop` `scripts/sast_adapter.py` |
+> | **orchestrate**（`/rig:orchestrate`・`--orchestrate`） | 計算的オーケストレーション＝遷移・ゲート・リトライ・停止・状態保持をコードが強制（opt-in・engine 不変） | `scripts/orchestrate.py` `patterns/computational-orchestration` |
+> | **queue**（`/rig:queue`） | 積んで GO。並列実行＋独立検証ゲート・`--provider rig` は各 item を隔離 worktree で dispatch。**verifier は accept しない**（`/rig:go board`→個別 accept） | `scripts/orchestrate.py` `patterns/isolated-worktree` `commands/queue` |
+> | **init**（`/rig:init`・utility） | manifest・知識層 dir・CLAUDE.md "Compact Instructions" を scaffold | `facets/instructions/init` |
+> | **persona-gen**（`/rig:persona`・generator） | 説明文→persona facet 生成（**既定 project**・`--user` で global） | `facets/instructions/persona-gen` |
+> | **knowledge-gen**（`/rig:knowledge`・generator） | 説明文/`--auto`/`--research`→wiki ページ生成（**既定 global**・`--project` で overlay＝persona-gen とは既定 tier が逆）。`--graph` で codebase-graph へ蒸留 | `facets/instructions/knowledge-gen` `facets/knowledge/_wiki` |
+> | **skill-author**（`/rig:forge`・generator） | 説明文→rig のブリック/パックを自作・検証・保存する自己拡張 | `facets/instructions/skill-author` |
+> | **skill-import**（`/rig:import`・generator） | 外部 skill を発見→取得→検疫→判断→import-gate→lock 記録で取り込む | `facets/instructions/skill-import` |
+> | **skill-export**（`/rig:export`・generator） | 育てたブリックを self-contained な Claude Code skill として書き出す還元機構 | `facets/instructions/skill-export` |
+> | **validate**（`--validate`・utility） | **ブリック整合チェック（doctor）の正本**（検査項目・severity・エラーフォーマット） | `facets/instructions/validate` |
+> | **run-report**（§6・utility） | **フロー完了レポート／`.rig/runs.jsonl` テレメトリの出力仕様の正本** | `facets/instructions/run-report` |
+> | **resolve**（§4・utility） | **RESOLVE 詳細規則の正本**（manifest キー・tier 検索・extends・flag⇔キー等価・スライス・save-recipe） | `facets/instructions/resolve` |
+> | **list**（`--list`・utility） | **`--list` 表示仕様の正本**（tier/pack グルーピング・badge 導出・`steps:`） | `facets/instructions/list` |
+> | **plan**（`--plan`・utility） | **`--plan` 表示仕様の正本**（ヘッダ・step テーブル・Gate/Checks/DAG/Knowledge ブロック） | `facets/instructions/plan` |
+> | **catalog**（`/rig:catalog`・`--list --global`・utility） | 全 tier 走査の横断レジストリ地図。`--graph` で固定11種の関係を導出 | `facets/instructions/catalog` |
+> | **hooks**（プラグイン同梱） | `PreCompact` で run-state を保全（§6 run-continuity ④） | `hooks/hooks.json` `hooks/preserve-rig-state.sh` |
 
 ## 3. PARSE — 起動文字列の解釈
 
@@ -90,45 +93,41 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 | flag | 意味 |
 |---|---|
 | `--issue <id>` | 対象 Issue を指定（intake の入力） |
-| `--design` | design step を ON にする |
-| `--visual` | visual 確認（スクリーンショット等）を ON |
-| `--review` | review step を ON にする |
+| `--design` / `--review` | 該当 step を size 非依存で常時 ON にする |
+| `--visual` | verify を `visual-verify`（スクリーンショット等の視覚確認）へ委譲する |
 | `--tdd` | implement を TDD（red-green-refactor）で行う |
-| `--autonomous` | step ゲートを省き自律実行（既定は各 step で確認＝step ゲート ON） |
-| `--plan` | COMPOSE まで実行し、合成ハーネスを人間可読で提示して**停止**（実行しない） |
-| `--save-plan <path>` | `--plan` と組み合わせて使用。合成ハーネスを会話に表示すると同時に `<path>` にも書き出す（Markdown・`--plan` と同一内容）。`--plan` なしで指定した場合は `[WARN] --save-plan は --plan と組み合わせて使用してください（無視します）` を出して無視する。既存ファイルへの上書きは確認あり（`--autonomous` 時は確認なし・自動上書き）（§5） |
-| `--only <step>` | 指定 step だけを実行（例 `--only review`） |
-| `--from <step>` | 指定 step から最後まで実行 |
-| `--to <step>` | 先頭から指定 step まで実行（含む）。`--from` と組み合わせて「A から B まで」の範囲スライス可（例 `--from implement --to verify`）。単独は「ここまで」の意（§4.3.1） |
-| `--recipe <name>` | shipped/user/project いずれかの recipe を名前で指定（§4.2.1 の検索順で解決）（例 `--recipe review-only`） |
-| `--save-recipe <name>` | 今回合成したハーネスを recipe として保存。既定は project 層（`<repo>/.claude/rig/recipes/<name>.md`）。`--user` と組み合わせると user 層（`~/.claude/rig/recipes/<name>.md`）に書き出す |
-| `--description "<text>"` | `--save-recipe` と組み合わせて使用。保存 recipe の `description` フィールドを自動生成の代わりに指定テキストで設定する。`--save-recipe` なしで指定した場合は `[WARN] --description は --save-recipe と組み合わせて使用してください（無視します）` を出して無視する（§4.3.2） |
-| `--workflow` | 実行バックエンドを **workflow**（ultracode Workflow ツール）に切り替える。既定は **manual**（`patterns/workflow-backend` 参照） |
-| `--orchestrate` | **計算的オーケストレーション**を ON。step の遷移・ゲート判定・リトライ・停止条件・状態保持を、散文でなく **`scripts/orchestrate.py`（決定論ランナー）に強制させる**（舵をコードが握る）。半自動＝`init`→`next`/`check`/`verdict`（モデルが各 step の作業。長い中断からは `resume`＝verify-first 再開で世界のドリフトを先に検知）。全自動＝`run`＝**各 step を別プロセスのエージェントで実行**（マルチプロバイダ rig/claude/codex/cmd/mock・プロセス隔離・検証は別プロバイダで構造的に採点者≠生成者）。**recipe に `checks:`/`needs:` があるか manifest `default_orchestrate: true` のとき自動 ON**（§4.3）。`patterns/computational-orchestration` 参照 |
-| `--no-orchestrate` | 自動有効化（recipe の `checks:`/`needs:` または manifest `default_orchestrate`）を**この run だけ打ち消す**＝従来の散文エンジンで回す |
-| （横断 CLI） | `orchestrate install-shim` で `~/.local/bin/rig` を 1 回張れば、任意 cwd から `rig <subcommand>` で起動できる。`$RIG_HOME` 上書き可、`<cwd>/.rig/recipes/<name>.md` が同名 built-in を**プロジェクト overlay**として上書き解決、`checks:` の実行 cwd は呼び出し元（rig リポジトリではない） |
-| `--capture` | capture（学びの知識層への蓄積）を承認ダイアログなしで実行（提案表示と事後報告は省略しない）。既定は capture 提案時に承認を求める |
-| `--no-capture` | RUN 後の capture 提案を完全にスキップ（提案表示・承認ダイアログともに出さない）。`--capture` と同時指定時は `--no-capture` 優先＋WARN（§7.3） |
-| `--skip <step>` | 指定した step を除外してフローを継続する（複数可。例 `--skip design --skip review`）。size-aware 既定・`--design`/`--review` 等フラグより後に適用される（明示スキップが最終的に勝つ）。`--only` との同時指定は `--only` 優先・警告を出す。`--save-recipe` には影響しない（実行時フィルタ＝§4.3.2 snapshot 意味論と同じ） |
-| `--list` | 利用可能なブリック(§2)・**全 tier の recipe**（project / user / shipped）・flag を一覧表示して停止（RESOLVE/COMPOSE/RUN しない） |
-| `--validate` | ブリック整合チェック（doctor）。recipe→facet 参照切れ・frontmatter スキーマ逸脱・§2 目録と実ファイルのドリフトを検査し、レポートして停止（RESOLVE/COMPOSE/RUN しない）。手順は `facets/instructions/validate` |
-| `--adversarial` | 敵対的レビュー step（lazy-senior / cognitive-economist で AI の癖排除・人間可読性・不要コメント除去）を合成に追加 |
-| `--budget <low\|mid>` | **コスト予算による fan-out の間引き**（size-aware の金銭版・§4.4）。`low`＝reviewer は既定 3-way まで（`default_personas`/`--persona` の追加投入を抑止・adversarial/verify-findings/cross-llm の自動追加を提案止まりに・workflow backend 禁止）。`mid`＝3-way＋選択投入2枠まで。未指定＝制限なし。**実行時フィルタ**＝`--skip` と同様 `--save-recipe` に保存されない。manifest `default_budget` で恒久設定可 |
-| `--verify-findings` | **所見の敵対的検証**を review-gate に挿入する。REJECT の根拠とマージ前必須条件を1件ずつ `finding-verifier`（反証者・独立 subagent）に渡し、証拠つきで反証された所見（REFUTED）はゲートに通さない（UPHELD/UNRESOLVED は通す＝疑わしきは所見の利）。reviewer が多い run の false-positive 制御。`patterns/review-gate`「敵対的検証」参照 |
-| `--persona <name>` | review fan-out に名前指定のカスタム reviewer persona を**この run だけ追加**（複数可）。tier 解決（project→user→shipped・§5）で名前解決。manifest `default_personas`（製品ごとに常時自動投入）に**上乗せ**される。`/rig:persona` で生成した persona をそのまま投入できる |
-| `--no-default-personas` | この run に限り manifest `default_personas` の自動投入を**抑止**する（組み込み reviewer＋`--persona` 指定分のみで回す） |
-| `--cross-llm` | **他社 LLM レビュー前提モード**。implement step に `cross-llm-legibility` ポリシーを注入し（Codex/Copilot/GPT が読んでも一発で通る＝慣用的・明示的・文脈非依存なコードを書く規律）、review fan-out に `cross-llm-reviewer` persona を追加する（外部 LLM になりきって「内輪にしか分からない」箇所を指摘）。書く側・見る側の両方に作用する |
-| `--global` | `--list` / `--validate` のスコープを **tier 横断**（shipped＋user(global)＋project）に広げる。`--list --global` は横断レジストリ地図（`/rig:catalog` 相当）、`--validate --global` は tier 横断の衛生点検。手順は `facets/instructions/catalog` |
-| `--ppt` | （design pack）作成したデザインドキュメントを PowerPoint としても出力（`powerpoint-server` MCP）。既定 Markdown に追加・併用可 |
-| `--claudedesign` | （design pack）claude.ai デザイン機能（`claude_design` MCP）でも生成。既定 Markdown に追加・併用可。MCP 未接続時は報告して Markdown のみ続行 |
+| `--autonomous` | step ゲートを省き自律実行（既定は各 step で確認＝step ゲート ON）。acceptance-gate は維持（§4.5） |
+| `--plan` | COMPOSE まで実行し、合成ハーネスを人間可読で提示して**停止**（実行しない）（§5） |
+| `--save-plan <path>` | `--plan` と併用し、同一内容を `<path>` にも Markdown で書き出す。`--plan` なしなら `[WARN] --save-plan は --plan と組み合わせて使用してください（無視します）` を出して無視。既存ファイルは上書き確認あり（`--autonomous` 時は自動上書き） |
+| `--only <step>` / `--from <step>` / `--to <step>` | 実行範囲のスライス（1つだけ / ここから最後まで / 先頭からここまで）。`--from A --to B` で範囲指定（§4.3.1） |
+| `--skip <step>` | 指定 step を除外して継続（複数可）。明示 ON より後に適用＝**明示スキップが勝つ**。`--only` 優先・`--save-recipe` には影響しない（§4.3.1） |
+| `--recipe <name>` | recipe を名前で指定（project → user → shipped の順で解決・§4.2） |
+| `--save-recipe <name>` | 今回合成したハーネスを recipe として保存。既定は project 層、`--user` 併用で user 層（§4.3.2） |
+| `--description "<text>"` | `--save-recipe` と併用し保存 recipe の `description` を指定テキストにする。単独指定は `[WARN] --description は --save-recipe と組み合わせて使用してください（無視します）` |
+| `--workflow` | 実行バックエンドを **workflow**（ultracode Workflow ツール）に切り替える。既定は **manual**（`patterns/workflow-backend`） |
+| `--orchestrate` | **計算的オーケストレーション**を ON＝step 遷移・ゲート判定・リトライ・停止条件・状態保持を散文でなく `scripts/orchestrate.py`（決定論ランナー）に強制させる。半自動＝`init`→`next`/`check`/`verdict`（長い中断からは `resume`＝verify-first 再開）、全自動＝`run`（各 step を別プロセス・マルチプロバイダで実行し検証は別プロバイダ＝構造的に採点者≠生成者）。**自動 ON の条件は §4.3**。`patterns/computational-orchestration` が正本 |
+| `--no-orchestrate` | 自動有効化を**この run だけ打ち消す**＝従来の散文エンジンで回す |
+| （横断 CLI） | `orchestrate install-shim` で `~/.local/bin/rig` を 1 回張れば任意 cwd から `rig <subcommand>` で起動できる。`$RIG_HOME` 上書き可、`<cwd>/.rig/recipes/<name>.md` が同名 built-in を**プロジェクト overlay**として上書き、`checks:` の実行 cwd は呼び出し元（rig リポジトリではない） |
+| `--capture` / `--no-capture` | capture を承認ダイアログなしで実行 / 完全にスキップ。同時指定は `--no-capture` 優先＋WARN（§7.3） |
+| `--list` | 利用可能なブリック(§2)・**全 tier の recipe**・flag を一覧表示して停止（RESOLVE/COMPOSE/RUN しない） |
+| `--validate` | ブリック整合チェック（doctor）。recipe→facet 参照切れ・frontmatter スキーマ逸脱・§2 目録ドリフトを検査してレポートし停止。手順は `facets/instructions/validate` |
+| `--adversarial` | 敵対的レビュー step（`adversarial-review` instruction / lazy-senior・cognitive-economist persona / acceptance-gate）を review・verify の後に追加する。recipe `adversarial-review` は敵対レビューのみを回す |
+| `--budget <low\|mid>` | **コスト予算による fan-out の間引き**（size-aware の金銭版・§4.4）。`low`＝既定 3-way まで・workflow 禁止、`mid`＝3-way＋選択投入2枠まで。未指定＝制限なし。**実行時フィルタ**＝`--save-recipe` に保存されない。manifest `default_budget` で恒久設定可 |
+| `--verify-findings` | **所見の敵対的検証**を review-gate に挿入。REJECT の根拠を1件ずつ `finding-verifier`（反証者・独立 subagent）に渡し、反証された所見（REFUTED）はゲートに通さない（UPHELD/UNRESOLVED は通す＝疑わしきは所見の利）。`patterns/review-gate`「敵対的検証」が正本 |
+| `--persona <name>` | review fan-out にカスタム reviewer persona を**この run だけ追加**（複数可）。tier 解決（§5）で名前解決し manifest `default_personas` に**上乗せ**される |
+| `--no-default-personas` | この run に限り manifest `default_personas` の自動投入を**抑止**する（組み込み reviewer＋`--persona` 指定分のみ） |
+| `--cross-llm` | **他社 LLM レビュー前提モード**。①**書く側**＝implement step に `cross-llm-legibility` ポリシーを注入（慣用的・明示的・文脈非依存に書く規律）②**見る側**＝review fan-out に `cross-llm-reviewer` persona を追加。該当 step が無い recipe では対応する側だけがスキップされる（#71・§4.3） |
+| `--global` | `--list` / `--validate` のスコープを **tier 横断**（shipped＋user(global)＋project）に広げる。手順は `facets/instructions/catalog` |
+| `--ppt` | （design pack）デザインドキュメントを PowerPoint としても出力（`powerpoint-server` MCP）。既定 Markdown に追加・併用可 |
+| `--claudedesign` | （design pack）claude.ai デザイン機能（`claude_design` MCP）でも生成。MCP 未接続時は報告して Markdown のみ続行 |
 | `--url <url>` | （design pack）監査モードを明示。実装画面を Playwright で取得し UI/UX・a11y を採点（bare な URL 引数でも自動検出） |
 | `--a11y-level <A\|AA\|AAA>` | （design pack）目標 WCAG レベル（既定 AA）。未達違反は検閲で重大度を上げる |
 
-**`--list` 指定時** → §2 のブリック目録・flag 一覧に加え、recipe を全 tier 走査（§4.2.1 と同じ project → user → shipped 順）して tier 別・pack 別にグルーピング表示し、**停止**（解決も実行もしない）。各エントリは `name [N steps · badge…]  steps: <id列>  extends: <親 [tier]>  — description` 形式。**表示仕様の正本は `facets/instructions/list`**（tier/pack グルーピング・`[N steps · …]` badge の導出と固定並び順・`steps:` フィールド・`★ default` マーカー・shadow 表示・出力例）— `--list` 実行時は必ずこれを読んで従う。**`--global` 併用時**は recipe 以外の全ブリック（persona・wiki 等）も横断し、レジストリ地図（`facets/instructions/catalog`）を提示。
+> **フラグと recipe キーの等価**：`--tdd` / `--design` / `--review` / `--visual` / `--adversarial` / `--cross-llm` / `--orchestrate` / `--no-orchestrate` / `--capture` / `--no-capture` / `--verify-findings` / `--no-default-personas` / `--workflow` / `--autonomous` は、それぞれ同名の recipe キー（§3.5）と等価であり `--save-recipe` で保存される（§4.3）。**各フラグの効果詳細・競合規則の正本は `facets/instructions/resolve` 3.1**。
 
-**`--validate` 指定時** → ブリック整合チェック（doctor）。結果を提示して**停止**（`--list` と同じく副作用なしの点検モード）。**検査項目・severity・エラーフォーマットの正本は `facets/instructions/validate`**（① recipe→facet 参照切れ／② manifest 参照・値検証／③ frontmatter スキーマ〔YAML parse・列挙値・型・矛盾・無効コンテキスト WARN〕／③-b persona スキーマ／④ §2 目録ドリフト／⑤ wiki 衛生／⑥ ai-quirks 二相ペア〔--global〕／⑦ accumulated スキーマ）— `--validate` 実行時は必ずこれを読んで従う。CI 用サブセットは `scripts/validate.py`（①②③＋③-b を機械実装）。**`--global` 併用時**は tier 横断で点検する（全 tier の orphan・リンク切れ・参照欠落・重複）。
-**`--adversarial` 指定時** → 合成ハーネスの review/verify の後に `adversarial-review` step（instruction: adversarial-review / personas: lazy-senior, cognitive-economist / gate: acceptance-gate）を追加する。recipe `adversarial-review` は敵対レビューのみを回す。
-**`--cross-llm` 指定時** → COMPOSE フェーズで2方向に作用する（#71）：①**書く側** — implement step の `policies[]` に `cross-llm-legibility` を追加し、subagent prompt 末尾（Policy 位置）に注入する（他社 LLM がレビューする前提で慣用的・明示的・文脈非依存に書く規律）。②**見る側** — review fan-out を行う step に `cross-llm-reviewer` persona を追加する（`--persona` と同じ経路で reviewer 集合に和集合・dedup）。implement step が無い recipe では ① をスキップし ② のみ、review step が無い recipe では ② をスキップし ① のみ作用する。`--save-recipe` 併用時は `cross_llm: true` を frontmatter に保存し（§4.3.2 #130）、再利用時に `--cross-llm` フラグなしでも両方向が自動有効になる。② の `cross-llm-reviewer` persona は `cross_llm: true` 再利用時に自動追加されるため `personas[]` への直接書き込み（#57 経路）は redundant になるが後方互換のため維持する。
+**`--list` 指定時** → §2 のブリック目録・flag 一覧に加え、recipe を全 tier 走査（§4.2 と同じ project → user → shipped 順）して tier 別・pack 別にグルーピング表示し、**停止**（解決も実行もしない）。各エントリは `name [N steps · badge…]  steps: <id列>  extends: <親 [tier]>  — description` 形式。**表示仕様の正本は `facets/instructions/list`**（tier/pack グルーピング・badge の導出と固定並び順・`steps:` フィールド・`★ default` マーカー・shadow 表示・出力例）— `--list` 実行時は必ずこれを読んで従う。**`--global` 併用時**は recipe 以外の全ブリック（persona・wiki 等）も横断し、レジストリ地図（`facets/instructions/catalog`）を提示。
+
+**`--validate` 指定時** → ブリック整合チェック（doctor）。結果を提示して**停止**（`--list` と同じく副作用なしの点検モード）。**検査項目・severity・エラーフォーマットの正本は `facets/instructions/validate`**（① recipe→facet 参照切れ／② manifest 参照・値検証／③ frontmatter スキーマ／③-b persona スキーマ／④ §2 目録ドリフト／⑤ wiki 衛生／⑥ ai-quirks 二相ペア〔--global〕／⑦ accumulated スキーマ）— `--validate` 実行時は必ずこれを読んで従う。CI 用サブセットは `scripts/validate.py`。**`--global` 併用時**は tier 横断で点検する（全 tier の orphan・リンク切れ・参照欠落・重複）。
 
 ### 引数なし / 曖昧な場合 → 対話 composition
 
@@ -151,20 +150,9 @@ recipe ファイル（`recipes/*.md`）は YAML frontmatter + 本文 Markdown �
 | `scope` | ✓ | `shipped`（同梱）/ `user`（ユーザー保存）/ `project`（プロジェクト固有） |
 | `steps[]` | ✓ | step オブジェクトの配列（下記） |
 | `autonomy` | ✓ | `interactive`（各 step でゲート確認）/ `autonomous`（**step ゲートなし**。acceptance-gate 品質ループは維持） |
-| `extends` | — | 継承元 recipe の bare 名。指定 recipe の steps をベースに差分だけ上書きする。1段のみ有効（§4.2.2 参照） |
-| `backend` | — | `manual`（既定）/ `workflow`。省略時は `manual`。`--workflow` フラグ指定時の実行バックエンド宣言。`--save-recipe` で保存され、再利用時に `--workflow` フラグなしでも Workflow バックエンドで実行される（§6 実行バックエンド表）（#52） |
-| `tdd` | — | `true` の場合、implement step を常に TDD（red-green-refactor）で実行する。`--tdd` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存され、再利用時に `--tdd` フラグなしでも TDD モードが発動する（#56） |
-| `no_default_personas` | — | `true` の場合、manifest `default_personas` の自動投入を抑止する（組み込み reviewer＋`--persona` 指定分のみで回す）。`--no-default-personas` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存され、再利用時に `--no-default-personas` フラグなしでも抑止が効く（#70） |
-| `orchestrate` | — | `true` の場合、step 遷移・ゲート判定・リトライ・停止条件の制御を散文でなく `scripts/orchestrate.py`（決定論ランナー）に委ねる。`--orchestrate` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存され、再利用時に `--orchestrate` フラグなしでも計算的オーケストレーションモードが有効になる（#129） |
-| `cross_llm` | — | `true` の場合、① implement step に `cross-llm-legibility` ポリシーを注入（他社 LLM がレビューする前提で慣用的・明示的・文脈非依存なコードを書く規律）+ ② review fan-out に `cross-llm-reviewer` persona を追加する。`--cross-llm` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存され、再利用時に `--cross-llm` フラグなしでも2方向の作用が有効になる（#130） |
-| `no_capture` | — | `true` の場合、RUN 後の capture 提案を完全に抑止する（提案表示・承認ダイアログともに出さない）。`--no-capture` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存可（§4.3.2）。`hotfix` / `debug` などの軽量 recipe に推奨（#137） |
-| `adversarial` | — | `true` の場合、合成ハーネスの review/verify の後に `adversarial-review` step（instruction: adversarial-review / personas: lazy-senior, cognitive-economist / gate: acceptance-gate）を自動追加する。`--adversarial` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存可（§4.3.2）（#172） |
-| `visual` | — | `true` の場合、verify step の動作を変え `visual-verify` instruction への委譲を強制する（UI 視覚確認を常時実行）。`--visual` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存可（§4.3.2）（#174） |
-| `no_orchestrate` | — | `true` の場合、orchestrate の自動有効化（recipe `checks:`/`needs:` の宣言または manifest `default_orchestrate: true`）を**この recipe の全 RUN で打ち消す**。`--no-orchestrate` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存可（§4.3.2）。`orchestrate: true` と同時指定時は WARN を出して `no_orchestrate` 優先（`--validate` が矛盾を FAIL 検出）（#178） |
-| `design` | — | `true` の場合、design step の condition（`--design または size L+`）を上書きして常時 ON にする。`--design` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存可（§4.3.2）（#182） |
-| `review` | — | `true` の場合、review step の condition（`--review または size L+`）を上書きして常時 ON にする。`--review` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存可（§4.3.2）（#182） |
-| `verify_findings` | — | `true` の場合、review-gate に所見の敵対的検証（`finding-verifier` による反証段）を挿入する。`--verify-findings` フラグ指定時と等価。省略時 `false`。`--save-recipe` で保存可（`patterns/review-gate`「敵対的検証」参照） |
-| `capture` | — | `true` の場合、RUN 後の capture 提案を**承認ダイアログなしで自動実行**する（`--capture` フラグ指定時と等価。提案表示・事後報告は省略しない）。省略時 `false`。`--save-recipe` で保存可（§4.3.2）。`--capture` と `--no-capture` が同時に有効な場合は `--no-capture` 優先＋WARN（§7.3 整合）（#184） |
+| `extends` | — | 継承元 recipe の bare 名。その steps をベースに差分だけ上書きする（**N 段継承・深さ上限 5**・`remove: true` で継承元 step を静的除外。`facets/instructions/resolve` 2.2 が正本） |
+| `backend` | — | `manual`（既定）/ `workflow`。RUN の実行バックエンド宣言（§6） |
+| **フラグ等価キー** | — | `tdd` / `no_default_personas` / `orchestrate` / `no_orchestrate` / `cross_llm` / `capture` / `no_capture` / `adversarial` / `visual` / `design` / `review` / `verify_findings` — すべて boolean（省略時 `false`）。**対応フラグと等価・`--save-recipe` で保存され再利用時にフラグなしで再現・有効時は `--plan`／完了レポートに修飾子と `--list` に badge が付く**という同一の一般則（§4.3）に従う。**各キーの効果・競合規則（`orchestrate`⇔`no_orchestrate` / `capture`⇔`no_capture`）の正本は `facets/instructions/resolve` 3.1** |
 
 ### step オブジェクトのキー
 
@@ -190,62 +178,23 @@ recipe ファイル（`recipes/*.md`）は YAML frontmatter + 本文 Markdown �
 
 ## 4. RESOLVE — 解決順（manifest＋recipe＋flag＋size-aware 既定）
 
-最終ハーネスを次の順で確定する。**後の段が前の段を override する。**
+最終ハーネスを **manifest → recipe → flag → size-aware 既定** の順で確定する。**後の段が前の段を override する。**
 
-> **named recipe の RESOLVE は `orchestrate plan <recipe> --json --with "<flags>" --diff-git` の出力が一次**（本セクション末尾「RESOLVE の一次実装はコード」参照）。以下の散文規則は、スクリプトを呼べない環境と ad-hoc 対話合成のためのフォールバック定義であり、意味は同一（selftest Q/R/S が同一性を保証）。
+> **一次実装はコード。** named recipe の RESOLVE は `orchestrate plan <recipe> --json --with "<flags>" --diff-git` の出力（`effective_steps` / `active`・`why` / `errors` / `warnings` / `mode` / `badges`）が確定結果。スクリプトを呼べない環境と ad-hoc 対話合成に限り散文規則を自力適用する。**詳細規則の正本は `facets/instructions/resolve`**（manifest キーの意味・recipe tier 検索の報告フォーマット・`extends` N 段合成・flag⇔recipe キー等価表・スライスのエラーフォーマット・`--save-recipe` の保存規則）— RESOLVE を自力で回すときは必ずこれを読んで従う。散文とコードが割れたら `selftest` Q/R/S の golden が正＝**コード側を先に直し、散文を追随させる**。
 
 ### 4.1 manifest ロード
 
-起動時に **`<repo>/.claude/rig.md`** の存在を確認する。
+**`<repo>/.claude/rig.md`** があれば YAML frontmatter を解析してプロジェクト既定として読み込み、無ければ全キーに汎用既定（generic defaults）を適用する。エンジンが読むキー：`build` / `lint` / `test` / `branch.*` / `reviewer` / `production_impact.*` / `skills` / `knowledge.*` / `default_recipe` / `default_personas` / `default_backend` / `default_max_retries` / `org_dir` / `default_budget` / `sage_notifications` / `default_orchestrate` / `worktree.*` / `size_thresholds.*`。**各キーの意味と既定値は `facets/instructions/resolve` 1.**、manifest スキーマの全体定義は `manifests/_template.md` が正本。
 
-> repo 同梱の manifest は project recipe と同じく**初回のみ明示同意**が必要（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`・コンテンツハッシュを trust store に記録。`rig-wb githooks install` はその時点の manifest への同意を兼ねる）。未同意の manifest はハード停止ではなく警告1行で **「manifest 無し」相当へ soft degrade** する。
-
-- **存在する場合**：YAML frontmatter を解析し、以下の値をプロジェクト既定として読み込む。
-  - `build` / `lint` / `test` コマンド（ビルド系 step で使用）
-  - `branch.*`（ブランチ作成・CI 確認ステップで使用）
-  - `reviewer`（review step の委譲先選択に使用）
-  - `production_impact.paths` / `production_impact.keywords`（本番影響検知閾値に使用）
-  - `skills`（instruction facet の委譲先候補として使用）
-  - `knowledge.*`（Knowledge facet の注入ソースとして使用）
-  - `default_recipe`（recipe 解決 §4.2 で使用）
-  - `default_personas`（review fan-out へ**自動投入**する persona 名リスト。§5「manifest default_personas の自動投入」で使用）
-  - `default_backend`（全 RUN のデフォルト実行バックエンド。`manual`/`workflow`。recipe の `backend:` キー・`--workflow` フラグで個別上書き可）（#52）
-  - `default_max_retries`（`acceptance-gate` を持つ step の `max_retries` 省略時フォールバック。step ローカルの `max_retries` キーで個別上書き可。省略時は 2）（#100）
-  - `org_dir`（チーム共有ブリック層＝org tier のパス。env `RIG_ORG_HOME` でも指定可・§5 tier 解決参照）
-  - `default_budget`（コスト予算の恒久設定 `low|mid`。`--budget` フラグで個別上書き可・§4.4）
-  - `sage_notifications`（`true` のとき、能力獲得系の完了報告〔import の lock 記録・persona/knowledge 生成・capture 書き込み〕の先頭に**大賢者スタイルの獲得通知**を1行付す＝`《告》スキル「<name>」を獲得しました`。演出のみ・報告本文は不変。省略時 `false`）
-  - `default_orchestrate`（`true` のとき全 RUN を**計算的オーケストレーション**で回す＝`--orchestrate` 等価。recipe の `checks:`/`needs:` による自動有効化とは独立にプロジェクト全体へ適用。省略時 `false`）
-  - `worktree.*`（worktree 運用フラグとして使用。`worktree.enabled` を実際に読んで分岐するのは `facets/personas/implementer` — #225）
-  - `size_thresholds.*`（存在する場合、size-aware 判定の行数閾値を上書き）
-- **存在しない場合**：全キーに**汎用既定（generic defaults）**を適用する。
-  - `build` / `lint` / `test`：`package.json` / `build.gradle` / `Makefile` を自動検出して推定
-  - `branch.base`：`git remote show origin` からデフォルトブランチを取得
-  - `reviewer`：`human`（人間レビュー。PR を作成して承認を待つ）
-  - `production_impact`：`auth` / `migration` / `security` / `di` / `interface` を含むパス・差分をヒューリスティックで検出
-  - `skills`：Claude Code セッション開始時に利用可能な skill を自動検出
-  - `knowledge`：リポジトリを検索して `CONTEXT.md` / `CLAUDE.md` / `docs/` を探す
-  - `default_recipe`：`interactive`（毎回ユーザーに選択させる）
-  - `default_personas`：`[]`（自動投入なし。review は組み込み reviewer＋`--persona` 指定分のみ）
-  - `default_backend`：`manual`（`Agent` ツールによる手 dispatch）
-  - `default_max_retries`：`2`（acceptance-gate の step ローカル省略時の既定試行上限）
-  - `default_orchestrate`：`false`（明示 opt-in または recipe の `checks:`/`needs:` 検出時のみ orchestrate）
-  - `worktree.enabled`：`false`（worktree なし）
-
-manifest スキーマの全体定義は `manifests/_template.md` を参照。
+> repo 同梱の manifest は project recipe と同じく**初回のみ明示同意**が必要（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`）。未同意の manifest はハード停止ではなく警告1行で **「manifest 無し」相当へ soft degrade** する。
 
 ### 4.2 recipe 解決
 
-manifest ロード後、次の優先順位で使用 recipe を確定する。
-
-1. `--recipe <name>` フラグ（明示指定）
-2. manifest の `default_recipe` 値
-3. 対話（ユーザーにブリックを提案して選択させる）
-
-`--recipe` が指定されれば manifest の `default_recipe` は無視される。
+1. `--recipe <name>` フラグ（明示指定） 2. manifest の `default_recipe` 値 3. 対話（ブリックを提案して選択させる）。`--recipe` があれば `default_recipe` は無視。
 
 #### 4.2.1 recipe ファイル検索順（tier 優先順位）
 
-recipe 名が決まったら、以下の順でファイルを探す。**先に見つかった tier が優先**され、下位 tier の同名 recipe は無視される。
+recipe 名が決まったら **project → user → shipped** の順にファイルを探し、**先に見つかった tier が優先**（下位 tier の同名は無視）。
 
 | tier | パス | 優先度 |
 |---|---|---|
@@ -253,141 +202,47 @@ recipe 名が決まったら、以下の順でファイルを探す。**先に�
 | **user** | `~/.claude/rig/recipes/<name>.md` | 2 |
 | **shipped**（同梱） | `skills/rig/recipes/<name>.md` | 3（最低） |
 
-- `<repo>` は現在の git リポジトリルート（`git rev-parse --show-toplevel` で取得）。
-- 同名 recipe が project 層に存在すれば shipped 層は読まれない。user 層は project 層が無い場合のみ参照される。
-- どの tier にも存在しない場合は下記フォーマットで報告し、対話 composition（§3 引数なし手順）へフォールバックする（§4.3.1 ケース A の step-id not found と同形式）。tier に recipe が1件もない場合はその tier 見出しをサイレントに省略する（`--list` の tier 省略ルールと同じ）。
-- **「もしかして」候補提案（#188）**：recipe が見つからない場合、`[ERROR]` の直後・「利用可能な recipe:」の直前に、編集距離（Levenshtein）≤ 2 の候補を距離昇順で最大 3 件表示する。候補には全 tier（project → user → shipped）を対象とし、各候補に `[tier]`（§4.2.1 / `--list` と同じ語彙）を付記する。同距離の候補は tier 優先順（project > user > shipped）でソートする。候補が 0 件の場合は「もしかして:」行を省略し既存の全一覧のみを出す（ノイズを増やさない）。
+どの tier にも無ければ「もしかして」候補（編集距離 ≤ 2・最大 3 件・`[tier]` 付き）を添えて報告し、対話 composition（§3）へフォールバックする。**報告フォーマットの正本は `facets/instructions/resolve` 2.1**
 
-```
-[ERROR] recipe "hotfixx" が見つかりません。
-  もしかして: hotfix [shipped]
-  利用可能な recipe:
-  ### shipped
-    review-only, release-flow, hotfix, design-first, adversarial-review, ...
-  ### project  （<repo>/.claude/rig/recipes/ に recipe がある場合のみ）
-    my-flow
-  ### user  （~/.claude/rig/recipes/ に recipe がある場合のみ）
-    strict-tdd
-```
+#### 4.2.2 extends — N 段継承（上限 5）
 
-#### 4.2.2 extends — N 段継承（上限 5・#193）
-
-recipe の frontmatter に `extends: <parent-name>` が宣言されている場合、次の手順で合成する。
-
-1. **チェーンの解決**：leaf → parent → grandparent → …の順に `extends` を辿る。各段の `<parent-name>` を §4.2.1 の tier 検索順で探す（bare 名のみ。パス指定・URL 不可）。**深さ上限 5**（`EXTENDS_MAX_DEPTH` in `orchestrate.py`）を超えたら残りを無視し WARN。**循環継承**（A → B → A 等）は検知次第 WARN で切り上げる。
-2. **step マージ**：root ancestor の `steps[]` をベースにし、そこから leaf に向かって順に各段の `steps[]` を適用する：
-   - `remove: true` がある → 継承元から該当 `id` の step を**除外する**（§3.5 `remove` フィールド）
-   - `remove` が無い / `remove: false` → 同 `id` は上書き（`_origin=override`）、新 `id` は末尾追加（`_origin=added`）
-
-   **`remove: true` エラー処理**：① `id` が継承元に存在しない → `[WARN] remove: true — step '<id>' は継承元に存在しません（<layer> 側指定・無視して続行）`（停止なし）。② 他フィールドと同時指定 → `remove: true` 優先・他フィールドを無視＋`[WARN] remove: true と他フィールドの同時指定は無効（他フィールドを無視）`。③ `--orchestrate` 利用時に削除 step が他 step の `needs:` で参照されている → `[WARN] remove: true — step '<id>' を参照する needs 宣言があります（<依存 step 名>）`。`--validate` でも同じ ①③ を WARN・② を FAIL として出力する。`--list` の `extends:` 表記（#53）に削除 step 数を `[N removed]` で補記する（例: `extends: release-flow [shipped] [1 removed]`。N=0 の場合は省略）。`--plan` テーブルと `--list` の `steps:` フィールドには削除済み step を表示しない（`[SKIP]` 表示もなし — 定義上存在しないため）。`--save-recipe` の展開結果（§4.3.2）にも `remove: true` エントリは含まれない（削除済みなので）。
-3. **トップレベルキーのマージ**：`name` / `description` / `scope` / `autonomy` などは root → parent → leaf の順に上書き（leaf の値が最終的に勝つ）。子に記載のないキーは祖先を引き継ぐ。`extends` は合成後の recipe には残さない（出力しない）。
-4. **深さ上限と循環**：`EXTENDS_MAX_DEPTH = 5` を超えた祖先はチェーンから除外され WARN、循環は検知次第 `[WARN] extends: 循環継承を検知しました (X → Y → Z → X)` を出して途中打ち切り。これらは実行を止めないが `--validate` は WARN として集計する。**認知経済的に浅く保つ**（深い継承は追跡できない）。
-
-> **bare 名ルール**：`extends` の値は `release-flow` のようなファイルベース名のみ。`../other/recipe` のようなパス指定は無効。
->
-> **旧仕様との互換性**：以前は「1 段のみ・親の `extends` を無視」だった（§4.2.2 v0.92 以前）。今回 N 段化に伴い、既存の 1 段継承（`release-movie extends movie` 等）は挙動不変で通る。新たに深い継承を書けるようになっただけで、既存 recipe を書き換える必要はない。
+`extends: <parent-name>` は **bare 名のみ**（パス指定・URL 不可）。leaf → root へ辿り、root ancestor の `steps[]` をベースに leaf に向かって各段を適用する（同 `id` は上書き・新 `id` は末尾追加・`remove: true` は継承元 step を静的除外）。トップレベルキーは leaf の値が勝ち、`extends` は合成後の recipe に残さない。**深さ上限 5 超過と循環継承は WARN で切り上げ**（実行は止めない・`--validate` が集計）。**マージ規則・`remove: true` のエラー処理・削除 step の表示規則は `facets/instructions/resolve` 2.2**
 
 ### 4.3 flag override
 
-`--design` `--review` `--tdd` 等で §4.2 で決定した recipe の step ON/OFF を上書き。`--only <step>` / `--from <step>` で実行範囲をスライス、`--skip <step>` で特定 step を除外（後述）。manifest 由来の値も flag で上書き可能。
+`--design` `--review` `--tdd` 等で recipe の step ON/OFF・動作を上書きする。**boolean な recipe キー（§3.5）は対応するフラグと完全に等価**であり、例外はない：
 
-> **`--tdd` の特例**：`--design` / `--review` は step の ON/OFF を制御するが、`--tdd` は implement step の**動作を変える**フラグ。COMPOSE フェーズで implement subagent の prompt に「**`risk-based-testing` のリスク評価をスキップし、常に TDD（red-green-refactor）で実装する＝`tdd` スキルへの委譲を強制する**」を追加注入する（`facets/instructions/implement.md` 本体は不変）。これが無いと `--tdd` を付けても implement が通常のリスク評価で直接実装を選び、強制 TDD が効かない。
+1. **等価** — キーが `true` なら対応フラグ指定と同じ効果が発動する（省略時 `false`）。
+2. **保存** — `--save-recipe` は指定されたフラグを対応キーとして書き出す（再利用時にフラグなしで同じ挙動が再現＝保存した意図が静かに失われない）。
+3. **可視化** — 有効なとき `--plan` ヘッダとフロー完了レポート（§6）に修飾子（`| tdd: on` 等）、`--list` に badge（`· tdd` 等）を付す。
 
-> **`tdd: true` キーの解釈（#56）**：recipe の `tdd: true` キー（§3.5）を RESOLVE 時に `--tdd` フラグと等価として処理し、COMPOSE フェーズで implement subagent への TDD 注入を発動させる。`--save-recipe` で保存した recipe の `tdd: true` を再利用する際も強制 TDD が有効になる。`--plan` ヘッダに `| tdd: on` を付加する（`tdd: true` または `--tdd` フラグが有効な場合のみ。`false`/省略時は付加しない）。
+**フラグ⇔キーの対応表・各キーの効果・競合規則（`orchestrate`⇔`no_orchestrate`、`--capture`⇔`--no-capture`）・`--orchestrate` の自動有効化条件（recipe の `checks:`/`needs:` 宣言 または manifest `default_orchestrate`）は `facets/instructions/resolve` 3.** が正本。
 
-> **`backend: workflow` キーの解釈（#52）**：recipe の `backend: workflow` キー（§3.5）を RESOLVE 時に `--workflow` フラグと等価として処理し、RUN フェーズで Workflow バックエンドを使用する。manifest の `default_backend: workflow` はプロジェクト全体の既定として同様に機能し、recipe `backend:` キー・`--workflow` フラグで上書きできる。
+#### 4.3.1 --only / --from / --to / --skip — step スライス
 
-> **`no_default_personas: true` キーの解釈（#70）**：recipe の `no_default_personas: true` キー（§3.5）を RESOLVE 時に `--no-default-personas` フラグと等価として処理し、COMPOSE フェーズで manifest `default_personas` の自動投入を抑止する（最終 reviewer 集合から `★`＝manifest 由来 persona を除外する。§5「manifest default_personas の自動投入」）。`--save-recipe` で保存した recipe の `no_default_personas: true` を再利用する際も抑止が効く。`--plan` ヘッダに `| no-defaults: on` を付加する（`no_default_personas: true` または `--no-default-personas` フラグが有効な場合のみ。`false`/省略時は付加しない）。
-
-> **`--orchestrate` の自動有効化**：次のいずれかで RESOLVE 時に `--orchestrate` 等価として処理する（明示 `--orchestrate` と同じ＝舵を `scripts/orchestrate.py` に渡す。`patterns/computational-orchestration`）。**engine は不変**で、RUN の駆動だけを決定論ランナーに委譲する。
-> 1. **recipe が `checks:` か `needs:` を宣言**（§3.5）— 「決定論で回す意図のある recipe」＝機械検証や DAG 並列が宣言されていれば自動で orchestrate を通す（`checks` をゲートの一次根拠に・`needs` で step-DAG 並列）。
-> 2. **manifest `default_orchestrate: true`** — プロジェクト全体の既定として全 RUN を orchestrate で回す。
-> 明示 `--no-orchestrate` で個別に無効化できる（自動有効化を打ち消す）。`--plan` ヘッダに `| orchestrate: on`（自動有効化時は `| orchestrate: auto`）を付加する（オフ時は付加しない）。単発生成コマンド（`/rig:persona` 等・ループ無し）には作用しない。
-
-> **`orchestrate: true` キーの解釈（#129）**：recipe の `orchestrate: true` キー（§3.5）を RESOLVE 時に `--orchestrate` フラグと等価として処理し、RUN フェーズで計算的オーケストレーションモード（`scripts/orchestrate.py` 決定論ランナー）を使用する（`patterns/computational-orchestration` 参照）。`--save-recipe` で保存した recipe の `orchestrate: true` を再利用する際も計算的オーケストレーションが自動有効になる。`--plan` ヘッダに `| orchestrate: on` を付加する（`orchestrate: true` または `--orchestrate` フラグが有効な場合のみ。`false`/省略時は付加しない）。
-
-> **`cross_llm: true` キーの解釈（#130）**：recipe の `cross_llm: true` キー（§3.5）を RESOLVE 時に `--cross-llm` フラグと等価として処理し、COMPOSE フェーズで ① implement step への `cross-llm-legibility` ポリシー注入 + ② review fan-out への `cross-llm-reviewer` persona 追加の両方を発動する（`--cross-llm` 指定時と同じ2方向作用）。implement step が無い recipe では ① をスキップし ② のみ、review step が無い recipe では ② をスキップし ① のみ作用する（既存 `--cross-llm` 動作と同じ）。`--save-recipe` で保存した recipe の `cross_llm: true` を再利用する際も両方向が自動有効になる。`--plan` ヘッダに `| cross-llm: on` を付加する（`cross_llm: true` または `--cross-llm` フラグが有効な場合のみ。`false`/省略時は付加しない）。
-
-> **`adversarial: true` キーの解釈（#172）**：recipe の `adversarial: true` キー（§3.5）を RESOLVE 時に `--adversarial` フラグと等価として処理し、COMPOSE フェーズで合成ハーネスの review/verify の後に `adversarial-review` step（instruction: adversarial-review / personas: lazy-senior, cognitive-economist / gate: acceptance-gate）を追加する。`--save-recipe` で保存した recipe の `adversarial: true` を再利用する際も敵対レビューステップが自動追加される。`--plan` ヘッダに `| adversarial: on` を付加する（`adversarial: true` または `--adversarial` フラグが有効な場合のみ。`false`/省略時は付加しない）。
-
-> **`visual: true` キーの解釈（#174）**：recipe の `visual: true` キー（§3.5）を RESOLVE 時に `--visual` フラグと等価として処理し、COMPOSE フェーズで verify step の動作を変え `visual-verify` instruction への委譲を強制する（UI 視覚確認を常時実行）。implement step への TDD 注入と同じ「step 動作変更」パターン。`--save-recipe` で保存した recipe の `visual: true` を再利用する際も `--visual` フラグなしで UI 視覚確認が発動する。`--plan` ヘッダに `| visual: on` を付加する（`visual: true` または `--visual` フラグが有効な場合のみ。`false`/省略時は付加しない）。
-
-> **`no_orchestrate: true` キーの解釈（#178）**：recipe の `no_orchestrate: true` キー（§3.5）を RESOLVE 時に `--no-orchestrate` フラグと等価として処理し、orchestrate の自動有効化（recipe `checks:`/`needs:` 宣言・manifest `default_orchestrate: true`）を**この recipe の全 RUN で打ち消す**。`orchestrate: true` と `no_orchestrate: true` が同時に設定されている場合は WARN を出して `no_orchestrate` 優先とし、`--validate` が矛盾を FAIL として検出する（`facets/instructions/validate` ③ 参照）。`--save-recipe` で保存した recipe の `no_orchestrate: true` を再利用する際も `--no-orchestrate` フラグなしで orchestrate が抑止される。`--plan` ヘッダに `| orchestrate: off` を付加する（`no_orchestrate: true` または `--no-orchestrate` が有効な場合のみ。通常の「orchestrate OFF かつ指定なし」は省略維持）。`--list` に `· no-orchestrate` badge を付記する。`no_capture: true` (#137) / `no_default_personas: true` (#70) と同じ anti-flag 保存パターン。
-
-> **`design: true` キーの解釈（#182）**：recipe の `design: true` キー（§3.5）を RESOLVE 時に `--design` フラグと等価として処理し、design step の condition（`--design または size L+`）を上書きして常時 ON にする（size S/M でもスキップされない）。`--save-recipe` で保存した recipe の `design: true` を再利用する際も `--design` フラグなしで design step が常時有効になる。`--plan` ヘッダに `| design: on` を付加する（`design: true` または `--design` フラグが有効な場合のみ。`false`/省略時は付加しない）。`--list` に `· design` badge を付記する。`tdd: true` (#56) / `visual: true` (#174) と同じフラグ保存パターン。
-
-> **`review: true` キーの解釈（#182）**：recipe の `review: true` キー（§3.5）を RESOLVE 時に `--review` フラグと等価として処理し、review step の condition（`--review または size L+`）を上書きして常時 ON にする（size S/M でもスキップされない）。`--save-recipe` で保存した recipe の `review: true` を再利用する際も `--review` フラグなしで review step が常時有効になる。`--plan` ヘッダに `| review: on` を付加する（`review: true` または `--review` フラグが有効な場合のみ。`false`/省略時は付加しない）。`--list` に `· review` badge を付記する。`design: true` と同じフラグ保存パターン（両フラグは常に対称に扱う）。
-
-#### 4.3.1 --only / --from / --skip — step スライス
-
-step スライスは §4.2 で確定した **最終 step リスト**（extends 適用後・condition 評価後）に対して適用する。
+スライスは §4.2 で確定した**最終 step リスト**（extends 適用後・condition 評価後）に適用する。
 
 | flag | 動作 |
 |---|---|
-| `--only <step-id>` | 指定した step-id **1つだけ**を実行する。他の step はすべてスキップ。 |
-| `--from <step-id>` | 指定した step-id から最後の step まで実行する。それ以前の step はスキップ。 |
-| `--to <step-id>` | 先頭の step から指定した step-id（含む）まで実行する。それ以降の step はスキップ。`--from` との組み合わせで「A から B まで」の範囲スライス可（例 `--from implement --to verify`）。 |
-| `--skip <step-id>` | 指定した step-id を**除外**してフローを継続する。複数指定可（例 `--skip design --skip review`）。size-aware 既定・`--design`/`--review` フラグより後に適用される（明示スキップが最終的に勝つ）。 |
+| `--only <step-id>` | 指定した step-id **1つだけ**を実行する。 |
+| `--from <step-id>` | 指定した step-id から最後まで実行する。 |
+| `--to <step-id>` | 先頭から指定した step-id（含む）まで実行する。`--from` と組み合わせて範囲指定可。 |
+| `--skip <step-id>` | 指定した step-id を**除外**して継続する（複数可）。size-aware 既定・`--design`/`--review` より後に適用＝**明示スキップが最終的に勝つ**。 |
 
-- `--only` と `--from` は同時指定不可。同時に与えられた場合は `--only` を優先し、`--from` を無視して警告を出す。
-- `--only` と `--to` の同時指定は `--only` 優先・`--to` を無視して警告を出す（`--only` が1 step 実行なので `--to` は意味なし）。
-- `--only` と `--skip` の同時指定は `--only` 優先・`--skip` を無視して警告を出す（`--only` が1 step 実行なので `--skip` は意味なし）。
-- `--from A --to B` で A が B より後に来る step の場合はエラー停止：`[ERROR] --from <A> --to <B>: step 順序が逆です（<A> は <B> より後に定義されています）。実行可能な step-id: <一覧>`。
-- `--skip <step-id>` と `--review`（または `--design`）を同時指定した場合、`--skip` が勝ち、その step は実行されない（明示スキップが明示 ON を上書き）。
-- 指定した `<step-id>` が最終 step リストに存在しない場合（`--only`/`--from`/`--to`/`--skip` 共通）は、**原因に応じて2ケースで報告する（#86）**：
-  - **ケース A — step-id が recipe に存在しない（タイポ等）**：`[ERROR]` の直後・「実行可能な step-id:」全一覧の前に、編集距離（Levenshtein）≤ 2 の候補を距離昇順で最大 3 件「もしかして:」行として追加する（#190・#188 の `--recipe` タイポ提案と同形式・同計算ルール）。候補 0 件なら「もしかして:」行を省略する（ノイズを増やさない）。実行可能な step-id 一覧（RESOLVE 後の確定全リスト）は変わらず出す。例：`  もしかして: verify`（`verifi` 指定時）。
-  - **ケース B — step-id は recipe に存在するが condition 評価で OFF**：`condition:` 式と有効化フラグのヒントを追加表示する。
-    ```
-    [ERROR] step `review` が見つかりません。
-      reason: condition ("--review または size L+") が現在 OFF です（size が S/M のため）。
-      hint:   --review フラグを追加すると有効になります：
-              /rig:dev --only review --review
-    実行可能な step-id: intake, implement, verify, pr, merge
-    ```
-  - **`--skip` の特例**：condition-OFF な step を `--skip` で指定した場合は**停止せず WARN のみ**（意図は「除外」であり、すでに OFF な step を skip するのは無害）：`[WARN] --skip review: review step はすでに condition-OFF です（--skip は不要）。`
-  - **acceptance-gate step への `--skip` WARN（#126）**：`gate: acceptance-gate` を持つ step を `--skip` で除外した場合は**停止せず WARN のみ**（rig の品質保証の核 determinism-by-gate がサイレントにスキップされることを明示）：`[WARN] --skip <step-id>: <step-id> step は gate: acceptance-gate を持ちます — 品質収束ループがスキップされます。` `--autonomous` 時も同様に WARN を出す。condition-OFF WARN と同時に該当する場合は両 WARN を出す（condition-OFF → acceptance-gate の順）。
-- スライスは **condition 評価後**のリストに対して行う。`--only design` を指定しても condition により design が OFF の場合はケース B のエラーになる（`--design` フラグを同時指定することで condition をパスできる）。
-- **`--skip` と `--save-recipe` の関係**：`--from`/`--to`/`--only` と同様に実行時フィルタとして扱い、保存 recipe の `steps[]` には影響しない（§4.3.2 snapshot 意味論と同じ）。**`--skip` と `--save-recipe` の同時指定時の WARN（#187）**：`--skip <step-id>` と `--save-recipe <name>` が同時指定された場合、保存完了後に WARN を出す：`[WARN] --skip <id> は --save-recipe に反映されません（実行時フィルタ）。step を永続除外するには extends + remove: true を使用してください。保存した recipe には <id> を含む全ステップが含まれます。` 複数 `--skip` がある場合は step-id をまとめて列挙する（例：`--skip design --skip verify` → `--skip design, verify は...`）。`--autonomous` 時も WARN を省略しない（step ゲートなし実行時こそ情報が重要）。`--only` との同時指定は既存 WARN（`--only` 優先・`--skip` 無視）が先行し、本 WARN は出さない。
-- **`--from`/`--to`/`--only` と `--save-recipe` の関係（#192）**：実行時フィルタとして扱い、保存 recipe の `steps[]` には影響しない（§4.3.2 snapshot 意味論と同じ）。**`--from`/`--to`/`--only` と `--save-recipe` の同時指定時の WARN（#192）**：`--from <step>`/`--to <step>`/`--only <step>` と `--save-recipe <name>` が同時指定された場合、保存完了後に WARN を出す：`[WARN] --from <step> は --save-recipe に反映されません（実行時フィルタ）。保存した recipe には <スライスで除外される step 一覧> を含む全ステップが含まれます（スライス前の全量）。step を恒久除外するには extends + remove: true を使用してください。` `--to`/`--only` 指定時も同形式（除外 step を明示）。`--autonomous` 時も WARN を省略しない（step ゲートなし時こそ情報が重要）。`--only` と `--skip` の同時指定（`--only` 優先・`--skip` 無視 WARN が先行）時は本 WARN を出さない。`--skip` 同時指定時の WARN（#187）と独立して両方を出す（`--from --skip` 等の組み合わせでは両 WARN を出す）。
-- **`--plan` 表示（#204）**：`--skip` で除外される step は**全 step を表に出したまま** condition 列に `[SKIP: --skip flag]` 注記を付す。一方 `--from`/`--to`/`--only` で除外される step は**表から行ごと除外**し（`slice:` ヘッダで範囲を示す）、condition 列への注記は付さない — 両者は「範囲外の行を隠す（`--from`/`--to`/`--only`）」と「全行を見せたまま除外行を明示する（`--skip`）」という異なる表示モデルであり、`--from`/`--to`/`--only` に `[SKIP: ... 範囲外]` 相当の注記を追加する必要はない（詳細は §5 `--plan` ルールを正とする）。
+`--only` は `--from`/`--to`/`--skip` に優先し、競合分を警告つきで無視する。`--from A --to B` の順序逆転はエラー停止。**step-id が見つからない場合の2ケース報告（タイポ候補提案 / condition-OFF ヒント）・`--skip` の WARN（condition-OFF・acceptance-gate 除外）・`--plan` での表示モデルは `facets/instructions/resolve` 4.**
 
 #### 4.3.2 --save-recipe — 合成結果の保存
 
-`--save-recipe <name>` が指定された場合、RESOLVE で確定した step リスト（extends 適用後・flag override 後の最終状態）を YAML frontmatter + Markdown で生成し、ファイルに書き出す。
+RESOLVE で確定した step リスト（extends 適用後・flag override 後）を YAML frontmatter + Markdown で書き出す。既定は project 層（`<repo>/.claude/rig/recipes/<name>.md`）、`--user` 併用で user 層（`~/.claude/rig/recipes/<name>.md`）。
 
-| オプション組み合わせ | 書き出し先 |
-|---|---|
-| `--save-recipe <name>` | `<repo>/.claude/rig/recipes/<name>.md`（project 層） |
-| `--save-recipe <name> --user` | `~/.claude/rig/recipes/<name>.md`（user 層） |
-
-- `scope` キーは保存先 tier に応じて `project` または `user` に自動セットする。
-- **`description` 自動生成規則（#47）**：recipe スキーマ（§3.5）では `description` は必須フィールド。`--save-recipe` はベース recipe 名と有効フラグから自動生成する：`"<ベース recipe 名> のカスタマイズ（<有効フラグ列挙>）"`（例: `"release-flow のカスタマイズ（--review --tdd）"`）。対話合成（ad-hoc）の場合は `"カスタム recipe（<有効フラグ列挙>）"`。`--save-recipe` 実行時に `--autonomous` が付いていてもこの自動生成を適用する（確認ダイアログは出さず自動生成のみ）。`--plan --save-recipe` のドライラン時はヘッダ `save-recipe:` 行に生成される `description` の内容を付記する（書き込み前に確認できるように）。**`--description "<text>"` 指定時の上書き（#163）**：`--description "<text>"` が指定された場合、frontmatter の `description` を自動生成の代わりに指定テキストで設定する（`--description` なしの場合は従来の自動生成を維持・後方互換）。`--save-recipe` なしで `--description` のみ指定した場合は `[WARN] --description は --save-recipe と組み合わせて使用してください（無視します）` を出して無視する。`--plan --save-recipe <name> --description "<text>"` のドライランでは `save-recipe:` ヘッダ行に description を付記して事前確認できるようにする（例: `save-recipe: nightly-review → /.claude/rig/recipes/nightly-review.md [project] — "夜間の CI 確認後に回す 3-way レビュー専用フロー"`）。`--autonomous` 時も自動生成と同様に確認ダイアログは出さず `--description` テキストをそのまま使う。
-- 同名ファイルが既に存在する場合は**上書き前に確認**を取る（`--autonomous` 時は確認なしで上書き）。
-- **lower-tier shadow チェック（#15・上書き確認より先に実行）**：保存先より**下位の tier**（project 保存なら user→shipped、user 保存なら shipped）に同名 recipe があるか §4.2.1 の検索順で確認する。あれば保存前に **WARN**（shadow 元の tier とパスを明示し「shadow 後は元 recipe の更新が自動適用されなくなる」と添える）。`--autonomous` 時はダイアログを省略し WARN のみ表示して続行。下位 tier に同名が無ければ WARN なし（新規名は通常運用）。`extends:` を使った意図的 shadow の場合は「`extends:` で継承するレシピか確認を」と1文付記する（丸ごと差し替えか継承かの気づきを促す）。
-- **保存する `autonomy` 値（#33 / #181）**：起動時に `--autonomous` フラグが指定されていた場合は `autonomy: autonomous`、指定がなければ `autonomy: interactive` を frontmatter に保存する（ベース recipe の値を引き継がず常に明示保存）。これにより `--autonomous --save-recipe my-flow` で保存した recipe は再利用時も step ゲートなしで走り、保存時の意図が再現される（`--plan` ヘッダの `autonomy:` と保存 frontmatter が一致＝同一 RESOLVE 結果を参照するため差異ゼロ）。`--list` の `· autonomous` badge は `autonomy: autonomous` の recipe のみに付記（`interactive` は省略）。`--plan` ヘッダに `| autonomous: on` を付加する（`autonomy: autonomous` または `--autonomous` フラグが有効な場合のみ。`interactive` 時は付加しない）。
-- **保存する `backend` 値（#52）**：起動時に `--workflow` フラグが指定されていた場合は `backend: workflow` を frontmatter に保存する（省略時は `manual`・明示保存せず省略も可）。再利用時に `backend: workflow` の recipe を RESOLVE すると `--workflow` フラグと等価として処理され、Workflow バックエンドで実行される（§4.3 / §6 実行バックエンド表）。`autonomy:` との対称性：実行意図の2軸（step ゲートの有無 / 実行エンジン）がともに frontmatter に揃う。
-- **保存する `tdd` 値（#56）**：起動時に `--tdd` フラグが指定されていた場合は `tdd: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `tdd: true` の recipe を RESOLVE すると `--tdd` フラグと等価として処理され、COMPOSE フェーズで implement subagent への TDD 注入が発動する（§4.3 `--tdd` の特例）。
-- **`--persona` 指定分の保存（#57）**：起動時に `--persona <name>` が指定されていた場合、reviewer fan-out を行う step（`pattern: parallel-fanout` かつ `personas[]` を持つ step）の `personas[]` に各 `<name>` を追加する（名前で dedup）。これにより `--recipe my-flow` での再利用時も `--persona` を省略して同じ reviewer 集合が再現される。`--persona` 指定なしの場合は `personas[]` の変更なし（後方互換）。`--plan --save-recipe` のドライラン表示では保存後の `personas[]`（`--persona` 追加分を含む）が確認できる（§5 `--plan` の personas 列）。
-- **保存する `no_default_personas` 値（#70）**：起動時に `--no-default-personas` フラグが指定されていた場合は `no_default_personas: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `no_default_personas: true` の recipe を RESOLVE すると `--no-default-personas` フラグと等価として処理され、manifest `default_personas` の自動投入が抑止される（§4.3）。これにより、意図的に抑止した reviewer が再利用時に静かに復活しない（`--persona` 保存＝足す側／`no_default_personas` 保存＝manifest 由来を外す側、の両保存で `--plan` の personas 列と実行時 reviewer が一致する）。`--autonomous`/`--workflow`/`--tdd`/`--persona` と同じ保存対称性。
-- **保存する `orchestrate` 値（#129）**：起動時に `--orchestrate` フラグが指定されていた場合は `orchestrate: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `orchestrate: true` の recipe を RESOLVE すると `--orchestrate` フラグと等価として処理され、計算的オーケストレーションモードで実行される（§4.3）。`--plan` ヘッダに `| orchestrate: on`、`--list` に `· orchestrate` badge が付記される。`autonomy:`/`backend:`/`tdd:`/`no_default_personas:` と同じ保存対称性。
-- **保存する `cross_llm` 値（#130）**：起動時に `--cross-llm` フラグが指定されていた場合は `cross_llm: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `cross_llm: true` の recipe を RESOLVE すると `--cross-llm` フラグと等価として処理され、COMPOSE フェーズで ① implement step への `cross-llm-legibility` ポリシー注入 + ② review fan-out への `cross-llm-reviewer` persona 追加の両方が発動する（§4.3）。② の `cross-llm-reviewer` persona は `cross_llm: true` の RESOLVE 時に自動追加されるため、`--save-recipe` 時の `personas[]` への直接書き込み（#57 経路）は redundant になるが、後方互換のため維持する。`autonomy:`/`backend:`/`tdd:`/`no_default_personas:`/`orchestrate:` と同じ保存対称性。
-- **保存する `no_capture` 値（#137）**：起動時に `--no-capture` フラグが指定されていた場合は `no_capture: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `no_capture: true` の recipe を RESOLVE すると `--no-capture` フラグと等価として処理され、RUN 後の capture 提案を完全に抑止する（§7.3）。`hotfix`/`debug` など軽量 recipe を `--no-capture --save-recipe hotfix` で保存する典型ユースケースを想定。`autonomy:`/`backend:`/`tdd:`/`no_default_personas:`/`orchestrate:`/`cross_llm:` と同じ保存対称性。
-- **保存する `adversarial` 値（#172）**：起動時に `--adversarial` フラグが指定されていた場合は `adversarial: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `adversarial: true` の recipe を RESOLVE すると `--adversarial` フラグと等価として処理され、COMPOSE フェーズで敵対レビューステップが自動追加される（§4.3）。`--plan` ヘッダに `| adversarial: on`、`--list` に `· adversarial` badge が付記される。`autonomy:`/`backend:`/`tdd:`/`no_default_personas:`/`orchestrate:`/`cross_llm:`/`no_capture:` と同じ保存対称性。
-- **保存する `visual` 値（#174）**：起動時に `--visual` フラグが指定されていた場合は `visual: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `visual: true` の recipe を RESOLVE すると `--visual` フラグと等価として処理され、COMPOSE フェーズで verify step が UI 視覚確認モードで動作する（§4.3）。`--plan` ヘッダに `| visual: on`、`--list` に `· visual` badge が付記される。`autonomy:`/`backend:`/`tdd:`/`no_default_personas:`/`orchestrate:`/`cross_llm:`/`no_capture:`/`adversarial:` と同じ保存対称性。
-- **保存する `no_orchestrate` 値（#178）**：起動時に `--no-orchestrate` フラグが指定されていた場合は `no_orchestrate: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `no_orchestrate: true` の recipe を RESOLVE すると `--no-orchestrate` フラグと等価として処理され、manifest `default_orchestrate: true` や recipe `checks:`/`needs:` による自動有効化を両方打ち消す（§4.3）。`--plan` ヘッダに `| orchestrate: off`、`--list` に `· no-orchestrate` badge が付記される。`no_capture: true` (#137) / `no_default_personas: true` (#70) と同じ anti-flag 保存パターン。
-- **保存する `design` 値（#182）**：起動時に `--design` フラグが指定されていた場合は `design: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `design: true` の recipe を RESOLVE すると `--design` フラグと等価として処理され、design step の condition を上書きして常時 ON にする（size S/M でもスキップされない）。`--plan` ヘッダに `| design: on`、`--list` に `· design` badge が付記される。`tdd: true` (#56) / `visual: true` (#174) と同じフラグ保存パターン。
-- **保存する `review` 値（#182）**：起動時に `--review` フラグが指定されていた場合は `review: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `review: true` の recipe を RESOLVE すると `--review` フラグと等価として処理され、review step の condition を上書きして常時 ON にする（size S/M でもスキップされない）。`--plan` ヘッダに `| review: on`、`--list` に `· review` badge が付記される。`design: true` と同じ保存パターン（両フラグは常に対称に扱う）。
-- **保存する `capture` 値（#184）**：起動時に `--capture` フラグが指定されていた場合は `capture: true` を frontmatter に保存する（省略時は `false`・明示保存せず省略も可）。再利用時に `capture: true` の recipe を RESOLVE すると `--capture` フラグと等価として処理され、RUN 後の capture 提案を承認ダイアログなしで自動実行する（§7.3）。`--capture` と `--no-capture` が同時に指定された場合は `--no-capture` 優先＋WARN（§7.3 整合）。`--plan` ヘッダに `| capture: on`、`--list` に `· capture` badge が付記される。`no_capture: true` (#137) の対称補完（完全抑止↔自動承認）。`autonomy:`/`backend:`/`tdd:`/`no_default_personas:`/`orchestrate:`/`cross_llm:`/`no_capture:`/`adversarial:`/`visual:`/`no_orchestrate:`/`design:`/`review:` と同じ保存対称性。
-- **保存ファイルに `extends` は含めない（snapshot 意味論・#34）**：§4.2.2「extends は合成後の recipe には残さない」と同じく、`--save-recipe` は **extends 解決済みの完全展開 steps** を保存する。`extends: X` を持つ recipe を base に保存しても、保存ファイルは `extends` なし・全 steps 展開済みになる（将来の親 recipe 変更が静かに波及しない＝再現性を保証）。`extends:` を明示利用した継承 recipe を新規作成したい場合は `--save-recipe` を使わず手動で recipe に `extends:` を記述する。
-- **`--from`/`--to`/`--only` スライスは保存 step リストに影響しない（#37, #141）**：`--from`/`--to`/`--only` は実行時フィルタ（「今回の RUN でどの step を実行するか」の絞り込み）であり、recipe 定義（「このフローが持つ steps の全量」）の一部ではない。`--from implement --to verify --save-recipe my-flow` を実行しても、保存される `my-flow.md` には intake を含む**全 steps** が含まれる（スライス前の完全フロー）。これにより後で `--recipe my-flow` を `--to` なしで実行すれば全工程を再現できる（「保存→一覧→再利用の輪」が断たれない）。`--plan --save-recipe`（下記）の `save-recipe:` ヘッダが表示する step 数もスライス前の全量。
-- `--save-recipe` は実行フローを止めない。保存後そのまま RUN を継続する。ただし `--plan` と同時指定された場合は COMPOSE 完了時点で保存し、ハーネスを提示して停止（RUN なし）。
+**snapshot 意味論**：保存されるのは「このフローが持つ steps の全量」。`extends` は解決済みに展開して落とし（親の変更が静かに波及しない）、`--from`/`--to`/`--only`/`--skip`/`--budget` は**実行時フィルタ**なので保存 step リストに影響しない（同時指定時は保存後に WARN を出す）。**`description` 自動生成規則・`--persona` 指定分の保存・shadow チェック・WARN 文面は `facets/instructions/resolve` 5.**
 
 ### 4.4 size-aware 既定（軽さ優先）
 
-変更規模に応じて重い step を自動 OFF する。行数閾値は manifest の `size_thresholds` キー（サブキー `S_max` / `M_max` / `L_max`）で上書きできる（未設定時は pr-hygiene 基準 `S_max:100` / `M_max:200` / `L_max:400` を使用。テンプレは `manifests/_template.md`）。
+変更規模に応じて重い step を自動 OFF する。行数閾値は manifest の `size_thresholds`（`S_max` / `M_max` / `L_max`）で上書きできる（未設定時は pr-hygiene 基準 `100` / `200` / `400`。テンプレは `manifests/_template.md`）。
 
 - **S / M**（既定：`M_max` 以下＝～200行）: design / review / tdd を**既定 OFF**。明示 flag で ON にした場合のみ実行。
-- **L 以上**（既定：`M_max` 超＝200行超。`L_max` 超は分割必須）: design / review を推奨し、ON を促す。
+- **L 以上**（既定：`M_max` 超。`L_max` 超は分割必須）: design / review を推奨し、ON を促す。
 
 **コスト予算（`--budget`・§3 flag）** — size-aware が「変更の重さ」で間引くのに対し、budget は**支出の上限**で間引く：`low`＝組み込み 3-way のみ（追加 reviewer・自動追加 step を抑止し、必要なら提案だけ出す）・workflow 禁止。`mid`＝3-way＋選択投入2枠まで。予算で抑止した項目は `--plan`／完了レポートに `[BUDGET: 抑止]` と明示する（サイレントに削らない）。manifest `default_budget: low|mid` で恒久設定・`--budget` フラグが優先。
 
@@ -395,14 +250,7 @@ step スライスは §4.2 で確定した **最終 step リスト**（extends �
 
 `--autonomous` で step ゲート OFF。指定が無ければ各 step 後に確認する step ゲート ON。
 
-> **`--autonomous` が外すのは「step ゲート（各 step 後の確認ダイアログ）」だけ。** `acceptance-gate`（受け入れ基準を満たすまで最大 K 回収束し、K 超で user エスカレーションする品質ループ）は `--autonomous` でも変わらず動く。capture ゲートと同様に、品質保証の核は `--autonomous` で解除されない。recipe の `autonomy: autonomous`（§3.5）の「ゲートなし」も step ゲートを指し、acceptance-gate の品質ループは維持される。
-
----
-
-> **動作仕様**：manifest ロード（§4.1）・recipe tier 検索順（§4.2.1）・extends 1段継承（§4.2.2）・--only/--from/--to スライス（§4.3.1）・--save-recipe（§4.3.2）は本セクションの規則どおり動作する。shipped recipe は §2 目録を参照。project / user 層の recipe はリポジトリまたはホームに配置すれば即時有効になる。
->
-> **RESOLVE の一次実装はコード（フェーズ3・舵をコードに）**：named recipe（`--recipe` / manifest `default_recipe` / bare 名で解決した recipe ファイル）の RESOLVE では、エンジンは自力で散文規則を解釈するのではなく、**まず `orchestrate plan <recipe> --json --with "<flags>" --diff-git` を実行し、その出力を RESOLVE の確定結果として使う**：`effective_steps`（実行 step 集合）・各 step の `active`/`why`（condition 列の注記に転記）・`errors`（あれば散文エンジンも ERROR 停止）・`warnings`（そのまま表示）・`mode`（orchestrate on/off/auto・autonomy・backend）・`badges`/`steps_field`（`--list` 表示）。extends マージ（remove/origin）・condition 評価・size 判定（§4.4・`--diff-git` が git diff HEAD から自動測定）・スライスと優先順位（§4.3.1）・recipe キー⇔フラグ等価（§4.3）・manifest `size_thresholds`/`default_orchestrate`（§4.1）はすべてこの出力が正。`selftest` シナリオ Q/R/S が golden 検証。
-> **フォールバック（散文規則）**：スクリプトを実行できないとき（python3 不在・`orchestrate` コマンドが見つからない・Bash 拒否）と **ad-hoc 対話合成**（recipe ファイルが無い）に限り、本セクションの散文規則を自力で適用する。その場合も規則の解釈が割れたら `selftest` の golden が正＝**コード側を先に直し、本セクションを追随させる**。COMPOSE 以降（facet 合成・knowledge 注入・subagent dispatch）は従来どおりエンジンの仕事（スクリプトは RESOLVE までを担う）。
+> **`--autonomous` が外すのは「step ゲート（各 step 後の確認ダイアログ）」だけ。** `acceptance-gate`（受け入れ基準を満たすまで最大 K 回収束し、K 超で user エスカレーションする品質ループ）は `--autonomous` でも変わらず動く。capture ゲートと同様に、品質保証の核は `--autonomous` で解除されない。recipe の `autonomy: autonomous`（§3.5）の「ゲートなし」も step ゲートを指す。
 
 ## 5. COMPOSE — ハーネス合成
 
@@ -614,83 +462,21 @@ step: <id> (<n>/<total>) | gate: acceptance-gate | 試行: <K>/<max_retries> 回
   - エスカレーション後は **capture 提案（§7.1 `stuck-twice`）を自動提示**し、詰まりの学びを次回 RUN に残す（a 選択後の再エスカレーションを含め、**エスカレーションが発生するたびに**提示する＝acceptance-gate K 超を含む。同じ根本原因が繰り返すほど学びの蓄積が重要）。
 - reviewer は agent 優先（subagent_type 名で起動）・persona facet フォールバック。`review-gate` で REJECT があれば停止して user へ。
 
-### フロー完了レポート（#102）
+### フロー完了レポート と 実行テレメトリ
 
-全 step が完了（または escalation/skip で終了）した後、次の正準フォーマットでフロー全体のサマリを出力する。`autonomy: autonomous` では**必須**（step ゲートがなくフローが一気に走るため、完了後に事後確認できる唯一の集約情報）。`autonomy: interactive` では各 step ゲートで結果を都度確認しているが、同じフォーマットで集約サマリとして出力する（`--plan`（事前）との対称構造を保つ）。
+全 step が完了（または escalation/skip で終了）した後、フロー全体のサマリを正準フォーマットで出力し、**同じサマリを1行 JSON として `<cwd>/.rig/runs.jsonl` に追記**する（orchestrate バックエンドは `telemetry_append` が自動追記するため、**manual / workflow バックエンドの RUN のみ**この規則で追記する）。`autonomy: autonomous` では完了レポートが**必須**（step ゲートがなくフローが一気に走るため、事後確認できる唯一の集約情報）。`interactive` でも同じフォーマットで集約サマリを出す。
 
 ```
 ## rig フロー完了
 
-recipe: <name[tier]> | autonomy: <interactive|autonomous> | backend: <manual|workflow>[| tdd: on][| no-defaults: on][| orchestrate: on][| cross-llm: on][| no-capture: on][| adversarial: on][| visual: on][| orchestrate: off][| design: on][| review: on][| capture: on]
+recipe: <name[tier]> | autonomy: <interactive|autonomous> | backend: <manual|workflow>[| <モード修飾子…>]
+[slice: <範囲>] [skip: <step-id(s)>]
 steps: <N> 完了 / <M> スキップ / <K> エスカレーション
 
-| step      | outcome                           | gate                              |
-|-----------|-----------------------------------|-----------------------------------|
-| intake    | ✓ done                            | —                                 |
-| design    | [SKIP] condition-OFF (size S/M)   | —                                 |
-| implement | ✓ done                            | —                                 |
-| verify    | ✓ done                            | acceptance-gate passed (try 2/2)  |
-| review    | ✓ done                            | acceptance-gate passed (try 1/2)  |
-| pr        | ✓ done                            | —                                 |
-| merge     | ✓ done                            | —                                 |
+| step | outcome | gate |
 ```
 
-- `outcome`：`✓ done`（正常完了）/ `[SKIP] <理由>`（condition-OFF または `--skip` 指定。`--plan` の `[SKIP: --skip flag]` と同じ語彙）/ `[ESCALATED]`（stuck-guard または acceptance-gate K 超エスカレーション発動）
-- `gate`：acceptance-gate を通った step は `acceptance-gate passed (try N/K)`（N=実試行回数、K=`max_retries`）。review-gate を通った step は `review-gate passed`。ゲートなしは `—`。
-- ヘッダの `steps: N 完了 / M スキップ / K エスカレーション` でフロー全体の集計を1行で示す。
-- **モード修飾子（#132, #137, #172, #174, #178, #182, #184, #186）**：`| tdd: on` / `| no-defaults: on` / `| orchestrate: on` / `| cross-llm: on` / `| no-capture: on` / `| adversarial: on` / `| visual: on` / `| orchestrate: off` / `| design: on` / `| review: on` / `| capture: on` はそれぞれ対応する recipe キーまたはフラグが有効な場合のみ付加する（`--plan` ヘッダと同じ条件・同じ表記。無効時は省略）。`| orchestrate: off` は `no_orchestrate: true` または `--no-orchestrate` が有効な場合のみ（#178・#186）。`| design: on` は `design: true` または `--design` が有効な場合のみ（#182・#186）。`| review: on` は `review: true` または `--review` が有効な場合のみ（#182・#186）。`| capture: on` は `capture: true` または `--capture` が有効な場合のみ（#184）。`--plan`（予定）と完了レポート（実績）の recipe ヘッダが同一フォーマットになり、ドライランから完了後まで機械的に比較できる。
-- `--plan`（実行前）のテーブルと対称構造：`--plan` が「予定」、このレポートが「実績」として対応する（`--plan` のテーブルを参照することでそのまま比較できる）。
-
-**`--from`/`--to`/`--only` スライス指定時（#108, #141）**：`--plan --from`/`--to`/`--only` と対称的に、テーブルには**スライス後の step のみ**を表示し、ヘッダに `slice:` フィールドを追加する。
-
-```
-## rig フロー完了
-
-recipe: release-flow | autonomy: interactive | backend: manual
-slice: implement → end
-steps: 4 完了 / 0 スキップ / 0 エスカレーション
-
-| step      | outcome | gate                             |
-|-----------|---------|----------------------------------|
-| implement | ✓ done  | —                                |
-| verify    | ✓ done  | acceptance-gate passed (try 1/2) |
-| pr        | ✓ done  | —                                |
-| merge     | ✓ done  | —                                |
-```
-
-- スライス前の step（`--from` 開始前の step・`--to` 終端後の step、または `--only` 対象外の step）は**テーブルに出さない**（`--plan --from`/`--to`/`--only` と同じ）。
-- ヘッダの `steps: N 完了 / M スキップ / K エスカレーション` は**スライス後の step のみ**をカウントする（スライス前の step は含まない）。
-- `slice:` フィールドの書式：`--from <id>` なら `<id> → end`、`--to <id>` なら `start → <id>`、`--from <A> --to <B>` なら `<A> → <B>`、`--only <id>` なら `<id> only`。
-- `--from`/`--to`/`--only` と `--skip` の組み合わせ時は `slice:` と `skip:` を**両方**ヘッダに出す（`--plan` の `#88` と同じ対称規則）。スライス前の step が `--skip` 対象だった場合もテーブル行は表示しない（スライス外のため行が無い）。
-
-**`--skip` 単独指定時（#120）**：`--skip` 単独指定（`--from`/`--only` なし）でフローが完了したとき、完了レポートのヘッダに `skip: <step-id(s)>` 行を追加する（`--plan` の #50 と同一形式・`, ` 区切り）。`slice:` がない場合は `steps:` 集計行の前に配置する。`slice:` がある場合は上記組み合わせルールのとおり `slice:` の後に配置する。`--skip` 指定がない場合は `skip:` 行を省略する（既存の挙動と同じ）。これで `--plan`（予定）と完了レポート（実績）の `skip:` フィールドが対称になり、機械パーサーが同一構造として処理できる。
-
-```
-## rig フロー完了
-
-recipe: release-flow | autonomy: interactive | backend: manual
-skip: design, review
-steps: 5 完了 / 2 スキップ / 0 エスカレーション
-
-| step    | outcome              | gate |
-|---------|----------------------|------|
-| intake  | ✓ done               | —    |
-| design  | [SKIP] --skip flag   | —    |
-| ...
-```
-
-### 実行テレメトリ（`.rig/runs.jsonl` への追記）
-
-フロー完了レポートを出力した後、**同じサマリを1行 JSON として `<cwd>/.rig/runs.jsonl` に追記**する（orchestrate バックエンドは `scripts/orchestrate.py` の `telemetry_append` が自動追記するため、**manual / workflow バックエンドの RUN のみ**この規則で追記する）。回を重ねるごとに「どの recipe が何回・どれだけリトライして・どこでエスカレーションしたか」が集計可能になり、reviewer/gate の効き具合をデータで剪定できる。
-
-```json
-{"ts": "<ISO8601>", "recipe": "<name>", "backend": "manual", "final": "DONE|ESCALATE|STOPPED", "steps_total": N, "steps_passed": N, "retries": N, "escalated_at": "<step-id>|null", "failure_mode": "<taxonomy-code>", "steps": [{"id": "...", "status": "passed|skipped|escalated", "retries": N}]}
-```
-
-- **これは capture（§7）ではない**：run-state.json と同格の**実行ログ**であり knowledge 層への書き込みではないため、**承認不要**（§7.3 のゲート対象外・`--no-capture` の影響も受けない）。`.rig/` は gitignore 済み。
-- フィールドは orchestrate の `telemetry_append` と同形（`backend` だけ `manual`/`workflow`）。review/acceptance ゲートを通った step は `steps[].verdicts[]` に検証者別の票（`{"by": "<reviewer名>", "ok": true|false}`）も記録する（分かる範囲で・省略可）。
-- **失敗の型付け（`failure_mode`）**：ESCALATE/BLOCKED で終わった run には、`classify_failure` が state から決定論的に導く MAST 系の失敗コード（例 `verification:missing`／`verification:self-grading`／`verification:incorrect-implementation`）を **`failure_mode` として加算**記録する（成功 run には出ない・省略）。コード語彙と「本来どのゲート/ブリックが捕まえるべきだったか」の写像は **`patterns/failure-taxonomy`** が正本＝失敗分布を recipe/gate 設計への差し戻し信号にする。集計・一覧は **`orchestrate runs [--limit N] [--recipe R]`**、検証者別の票と**剪定ヒント**（5票以上で REJECT ゼロ＝ゴム印化の疑い）は **`runs --personas`**。
-- 書き込みに失敗する環境（read-only 等）では**サイレントにスキップ**し、フロー完了レポート自体は通常どおり出す（telemetry は best-effort）。
+**フィールド定義・モード修飾子の条件・スライス/`--skip` 時の変形・テレメトリ JSON のスキーマ（`failure_mode` の型付けを含む）の正本は `facets/instructions/run-report`** — RUN を締めるときは必ずこれを読んで従う。テレメトリは capture（§7）ではなく run-state.json と同格の実行ログなので**承認不要**（`--no-capture` の影響も受けない・`.rig/` は gitignore 済み）。集計は `orchestrate runs [--limit N] [--recipe R]`、検証者別の票と剪定ヒントは `runs --personas`。書き込めない環境ではサイレントにスキップし、レポート自体は通常どおり出す（best-effort）。
 
 ## 7. 知識層への蓄積（capture）— RUN 後の学習サイクル
 
@@ -873,6 +659,9 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 | `--list` を実行する（badge・`steps:`・tier グルーピングの表示仕様） | `facets/instructions/list` |
 | `--plan` を実行する（ヘッダ・step テーブル・Gate/Knowledge 等の表示仕様） | `facets/instructions/plan` |
 | `--validate` を実行する（検査項目・severity・エラーフォーマット） | `facets/instructions/validate` |
+| RESOLVE を自力で回す（manifest キー・tier 検索・extends・flag⇔キー等価・スライス・save-recipe） | `facets/instructions/resolve` |
+| RUN を締める（フロー完了レポート・`.rig/runs.jsonl` テレメトリの出力仕様） | `facets/instructions/run-report` |
+| pack が何をするか調べる（追加ブリックの詳細説明） | `PACKS.md` |
 | `/rig:go "<task>"` 統一入口を駆動する（分類・recipe 自動選択・隔離 worktree RUN・gate 判定） | `facets/instructions/workbench` ＋ `patterns/isolated-worktree` |
 | `/rig:go status`\|`diff`\|`accept`\|`discard`\|`log`\|`board`\|`stats`\|`review`\|`gc`\|`audit`\|`scan-secrets`\|`scan-injection`\|`digest`\|`stream-checks`\|`stale-refs`\|`scan-destructive`\|`instincts` を実行する | `facets/instructions/workbench-ops` ＋ `scripts/workbench.py` |
 | 複数タスクを並行で進める（ターミナルを増やさず一括把握） | `/rig:queue add`→`go --provider rig`（`patterns/isolated-worktree` で自動隔離）＋ `/rig:go board`（単一ダッシュボード） |
