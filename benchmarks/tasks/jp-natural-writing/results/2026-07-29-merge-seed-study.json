@@ -1,0 +1,125 @@
+{
+  "Python": {
+    "orig": 72.0,
+    "runs": [
+      {
+        "seed": "s0",
+        "merges": 3,
+        "score": 72.0,
+        "chars": 2040
+      },
+      {
+        "seed": "s1",
+        "merges": 3,
+        "score": 75.0,
+        "chars": 2040
+      },
+      {
+        "seed": "s2",
+        "merges": 1,
+        "score": 72.0,
+        "chars": 2040
+      },
+      {
+        "seed": "s3",
+        "merges": 1,
+        "score": 77.0,
+        "chars": 2040
+      },
+      {
+        "seed": "s4",
+        "merges": 2,
+        "score": 74.0,
+        "chars": 2040
+      },
+      {
+        "seed": "s5",
+        "merges": 1,
+        "score": 70.0,
+        "chars": 2040
+      }
+    ]
+  },
+  "データベース設計": {
+    "orig": 68.0,
+    "runs": [
+      {
+        "seed": "s0",
+        "merges": 0,
+        "score": 9.0,
+        "chars": 2334
+      },
+      {
+        "seed": "s1",
+        "merges": 1,
+        "score": 62.0,
+        "chars": 2334
+      },
+      {
+        "seed": "s2",
+        "merges": 1,
+        "score": 9.0,
+        "chars": 2334
+      },
+      {
+        "seed": "s3",
+        "merges": 2,
+        "score": 12.0,
+        "chars": 2334
+      },
+      {
+        "seed": "s4",
+        "merges": 0,
+        "score": 62.0,
+        "chars": 2334
+      },
+      {
+        "seed": "s5",
+        "merges": 1,
+        "score": 58.0,
+        "chars": 2334
+      }
+    ]
+  },
+  "セキュリティ対策": {
+    "orig": 68.0,
+    "runs": [
+      {
+        "seed": "s0",
+        "merges": 3,
+        "score": 68.0,
+        "chars": 2212
+      },
+      {
+        "seed": "s1",
+        "merges": 5,
+        "score": 72.0,
+        "chars": 2212
+      },
+      {
+        "seed": "s2",
+        "merges": 5,
+        "score": 68.0,
+        "chars": 2212
+      },
+      {
+        "seed": "s3",
+        "merges": 3,
+        "score": 74.0,
+        "chars": 2212
+      },
+      {
+        "seed": "s4",
+        "merges": 4,
+        "score": 74.0,
+        "chars": 2212
+      },
+      {
+        "seed": "s5",
+        "merges": 4,
+        "score": 70.0,
+        "chars": 2212
+      }
+    ]
+  }
+}
