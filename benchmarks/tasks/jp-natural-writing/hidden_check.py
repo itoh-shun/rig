@@ -1384,7 +1384,12 @@ def main() -> None:
     # --arms may omit either end (an ablation run comparing gate versions has no bare
     # arm), so the summary must degrade to "no baseline" rather than KeyError after the
     # expensive part has already succeeded.
-    gated = [n for n in ("fieldnote", "riglint", "rig3", "rig2", "rig1x", "rig") if n in arms]
+    # Derived, not hardcoded: the fixed list predated writer/relay/writercut/fieldpaste,
+    # so a run of bare,writer,writercut,fieldpaste matched nothing and printed
+    # "(bare アームなし — 改善幅は算出せず)" while bare was sitting right there in the
+    # table. Anything that is not a control is a treatment; prefer the last one named.
+    CONTROL_ARMS = {"bare", "selfrev"}
+    gated = [n for n in reversed(list(arms)) if n not in CONTROL_ARMS]
     baseline = arms["bare"]["stats"]["mean"] if "bare" in arms else None
     treatment = arms[gated[0]]["stats"]["mean"] if gated else None
     improvement = (baseline - treatment) if (baseline is not None and treatment is not None) else None
