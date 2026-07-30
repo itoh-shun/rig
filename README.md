@@ -524,16 +524,18 @@ These are useful after you understand the core safety flow (§4–§6) — see [
 
 ### Install
 
-This repo ships a `.claude-plugin/marketplace.json`, so it installs via a marketplace. Plugin name: `rig`; marketplace name: `itoshun-local-plugins`.
+This repo ships a `.claude-plugin/marketplace.json`, so it installs via a marketplace. Plugin name: `rig`; marketplace name: `sito-plugins`.
+
+> The marketplace was previously named `itoshun-local-plugins`. If you installed it under that name, remove and re-add it (`/plugin marketplace remove itoshun-local-plugins`), or keep using the old name — the plugin resolves its data directory under either.
 
 ```bash
 # A) from GitHub (recommended)
 /plugin marketplace add itoh-shun/rig
-/plugin install rig@itoshun-local-plugins
+/plugin install rig@sito-plugins
 
 # B) from a download (ZIP / clone)
 /plugin marketplace add /path/to/rig
-/plugin install rig@itoshun-local-plugins
+/plugin install rig@sito-plugins
 
 # C) --plugin-dir (fast dev iteration)
 cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins

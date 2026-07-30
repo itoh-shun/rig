@@ -4,7 +4,7 @@ description: >-
   (optionally) an auto-opened PR only when the gate passes. Wraps
   `scripts/orchestrate.py run --isolate`; does not implement its own
   execution engine.
-author: 'itoshun'
+author: 'sito-plugins'
 
 inputs:
   task:

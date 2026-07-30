@@ -1,7 +1,7 @@
 {
-  "name": "itoshun-local-plugins",
+  "name": "sito-plugins",
   "owner": {
-    "name": "itoshun"
+    "name": "sito-plugins"
   },
   "plugins": [
     {

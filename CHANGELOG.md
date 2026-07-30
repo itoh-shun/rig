@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.28.0] - 2026-07-30
+
+Renames the marketplace brand **itoshun-local-plugins -> sito-plugins**. The plugin
+itself stays `rig`, so every `/rig:*` command id is unchanged.
+
+- `.claude-plugin/marketplace.json`: `name` and `owner.name` are now `sito-plugins`.
+- `.claude-plugin/plugin.json` `author.name`, `action.yml` `author`, and
+  `pyproject.toml` `authors` carry the brand.
+- Install line becomes `/plugin install rig@sito-plugins` (both READMEs, plus a
+  migration note for anyone who added the marketplace under the old name).
+- **The data directory follows the marketplace name**, so this is not cosmetic: Claude
+  Code derives it as `<plugin>-<marketplace>`. `find_rig_home` now tries
+  `rig-sito-plugins` first and falls back to `rig-itoshun-local-plugins`, so an install
+  made before the rename keeps resolving instead of having its state orphaned.
+- New `tests/test_plugin_branding.py` pins the brand across marketplace/plugin/action/
+  pyproject/README, asserts the plugin name is *not* rebranded (it drives the command
+  ids), and covers the legacy data-directory fallback.
+
+Historical `itoshun` paths in CHANGELOG entries and `docs/superpowers/plans/` are left
+as-is — they record what was run at the time.
+
+**Also ships 1.27.1** (below), which landed in the same merge and therefore has no
+release of its own: the fix for the lost-update race in the local queue backend, where
+`queue go` reported items done while `.rig/queue.json` still had them at running/queued,
+and concurrent writers could drop the whole backlog.
+
+## [1.27.1] - 2026-07-30
+
+Fixes a lost-update race in the **local queue backend**. `queue_set_status` and
+`queue_add` did an unlocked load -> modify -> save on `.rig/queue.json`, while
+`queue go` mutates that store from `--max-parallel` threads — and the default is
+3, so this was on by default. Concurrent writers clobbered each other:
+
+- `queue go` reported `16/16 done` while `queue list` still showed 4 items as
+  `running`/`queued` (reproduced end-to-end; 1 in 3 runs at 16-way parallelism).
+- Transitioning 20 items concurrently lost 16 of the 20 updates.
+- 30 concurrent `queue add` calls left **1** item: a `_local_load` that swallowed
+  every exception returned an empty queue on a torn read, and the next save
+  persisted that — destroying the backlog with no error.
+- An item whose `done` write was clobbered stayed `running` forever; one that
+  fell back to `queued` was **re-executed by the next `queue go`**.
+
+`_run_one` also discarded `queue_set_status`'s return value, so none of this was
+visible, and an exception inside it propagated out of `ex.map`, discarding the
+other results and pinning every remaining item at `running`.
+
+- Serializes the whole read-modify-write behind `threading.Lock` (for `queue go`'s
+  thread pool) **plus** a blocking `fcntl.flock` (for separate processes — a
+  `queue add` in another terminal, or the rig/claude providers' subprocesses).
+  Same defect class already fixed for the trust store in `recipes.py`.
+- Writes the store atomically (tmp + `os.replace`), so a reader can never observe
+  a half-written file.
+- An unreadable `queue.json` now raises `QueueCorrupt` and stops with an explicit
+  message instead of degrading to an empty queue. A store we cannot read is never
+  a reason to reset it.
+- `_local_load` normalizes a hand-edited store: a missing `items` becomes `[]`, and
+  a missing or stale `next_id` is recomputed as max(id)+1 instead of raising
+  KeyError or handing out a duplicate id.
+- A status update that does not land prints `[WARN] #<id>: could not record status
+  ...` with the reconciling command, and one failing item is marked `failed`
+  rather than taking the rest of the batch down.
+
+`github`/`gitlab` backends keep their state in issue labels and were unaffected.
+Regression tests cover concurrent add/status in-process, concurrent add across
+processes (the flock layer), the corrupt-store refusal, and store normalization.
+
 ## [1.27.0] - 2026-07-29
 
 Splits SKILL.md into a lean core plus on-demand reference files — the follow-up

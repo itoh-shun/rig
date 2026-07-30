@@ -9,17 +9,26 @@ def _env_path(name: str, default: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(value).expanduser().resolve() if value else default
 
 
+# Claude Code derives a plugin's data directory as `<plugin>-<marketplace>`. The
+# marketplace was renamed itoshun-local-plugins -> sito-plugins, so the current name is
+# tried first and the old one is kept as a fallback: an install made before the rename
+# still has its state under the old path, and dropping it would orphan that data.
+PLUGIN_DATA_DIRS = ("rig-sito-plugins", "rig-itoshun-local-plugins")
+
+
 def find_rig_home() -> pathlib.Path:
     """Resolve where the rig assets (skills/, .claude-plugin/) live.
-    Priority: $RIG_HOME -> ~/.claude/plugins/data/rig-itoshun-local-plugins -> parent of __file__ (dev fallback).
+    Priority: $RIG_HOME -> ~/.claude/plugins/data/{rig-sito-plugins, rig-itoshun-local-plugins}
+    -> parent of __file__ (dev fallback).
     Cross-project use resolves automatically via the plugin install path, i.e. independent of the caller's cwd."""
     if env := os.environ.get("RIG_HOME"):
         p = pathlib.Path(env).expanduser()
         if (p / "skills" / "rig" / "SKILL.md").exists():
             return p
-    installed = pathlib.Path.home() / ".claude" / "plugins" / "data" / "rig-itoshun-local-plugins"
-    if (installed / "skills" / "rig" / "SKILL.md").exists():
-        return installed
+    for data_dir in PLUGIN_DATA_DIRS:
+        installed = pathlib.Path.home() / ".claude" / "plugins" / "data" / data_dir
+        if (installed / "skills" / "rig" / "SKILL.md").exists():
+            return installed
     return pathlib.Path(__file__).resolve().parent.parent.parent
 
 

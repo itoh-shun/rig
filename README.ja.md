@@ -522,16 +522,18 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 
 ### install
 
-本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、marketplace 経由でインストールできる。プラグイン名は `rig`、marketplace 名は `itoshun-local-plugins`。
+本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、marketplace 経由でインストールできる。プラグイン名は `rig`、marketplace 名は `sito-plugins`。
+
+> marketplace 名は以前 `itoshun-local-plugins` だった。旧名で入れている場合は削除して再追加する（`/plugin marketplace remove itoshun-local-plugins`）か、そのまま使ってよい——データディレクトリは新旧どちらのパスでも解決する。
 
 ```bash
 # A) GitHub から（推奨）
 /plugin marketplace add itoh-shun/rig
-/plugin install rig@itoshun-local-plugins
+/plugin install rig@sito-plugins
 
 # B) ダウンロード（ZIP / clone）から
 /plugin marketplace add /path/to/rig
-/plugin install rig@itoshun-local-plugins
+/plugin install rig@sito-plugins
 
 # C) --plugin-dir（開発・テスト用）
 cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reload-plugins
