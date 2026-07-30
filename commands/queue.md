@@ -52,6 +52,8 @@ orchestrate queue retry <id>              # failed（検証 FAIL）の item を 
 
 `--backend github --repo owner/repo` で Issue 連携。**チームで共有・永続する backlog** になり、rig がそこから引いて実行・結果を Issue に書き戻す。要：`gh`/`glab` CLI が認証済み（未インストールでも crash せず error 表示）。
 
+> **`local` の同時更新（#360）**：`queue.json` の更新は **flock（プロセス間）＋ threading.Lock（`queue go` のスレッド間）で直列化**し、書き込みは tmp＋`os.replace` で atomic に行う。`queue go` は既定 `--max-parallel 3` で並列に status を書くため、これが無いと更新が取りこぼされ「GO は DONE と言うのに `queue list` では `running` のまま残る」「`queued` に巻き戻った item が次の GO で二重実行される」が起きる。status の記録に失敗した場合は `[WARN] #<id>: could not record status ...` を出して**黙って捨てない**。`queue.json` が壊れて読めないときは**空で作り直さずエラー停止**する（空書き戻しは backlog の消失そのもの）。`github`/`gitlab` は状態を Issue label に持つのでこの経路とは無関係。
+
 ## 他フローとの連結
 
 - `/rig:brainstorm` → `/rig:tasks` で割った各タスクを **queue add** で積む → `queue go` で一括実行。

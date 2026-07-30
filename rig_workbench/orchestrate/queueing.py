@@ -1,9 +1,17 @@
 """orchestrate queueing: task queue + cmd_queue (split from scripts/orchestrate.py)."""
 
 import sys
+import os
 import json
+import contextlib
 import subprocess
+import threading
 import concurrent.futures as futures
+
+try:
+    import fcntl  # POSIX: cross-process mutual exclusion for .rig/queue.json
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 from . import config
 from .providers import _build_prompt, run_provider
@@ -34,25 +42,103 @@ def _cli_run(argv: list[str]) -> tuple[int, str, str]:
         return 127, "", f"{argv[0]} not found (CLI not installed)"
 
 
+class QueueCorrupt(RuntimeError):
+    """`.rig/queue.json` exists but cannot be parsed.
+
+    Raised instead of degrading to an empty queue: the old behaviour swallowed every
+    exception and returned `{"items": []}`, so the very next `_local_save` persisted that
+    empty queue and **destroyed the whole backlog** (#360). A queue we cannot read is a
+    stop-and-tell condition, never a silent reset.
+    """
+
+
+# Guards the read-modify-write of .rig/queue.json (#360). `queue go` mutates the store from
+# `--max-parallel` threads (default 3, so this is on by default), and every mutation was an
+# unlocked load -> modify -> save: concurrent threads clobbered each other's writes, leaving
+# items stuck at running/queued after GO reported them done (a stuck `queued` item is then
+# re-executed by the next GO). Same defect class already fixed for the trust store in
+# recipes.py `_record_trust`. Two layers are needed:
+#   - threading.Lock  -> `queue go`'s ThreadPoolExecutor (in-process threads)
+#   - fcntl.flock     -> separate processes (a `queue add`/`queue list` in another terminal
+#                        while GO runs, and the rig/claude providers' own subprocesses)
+_QUEUE_WRITE_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _queue_locked():
+    """Serialize one whole read-modify-write cycle on `.rig/queue.json`.
+
+    The flock is **blocking** (unlike `workbench.state.task_lock`, which dies non-blocking):
+    queue mutations are short, and waiting is always better than dropping a status update.
+    Without fcntl (Windows) only the in-process lock applies — that still covers `queue go`,
+    which is where the parallelism actually comes from.
+    """
+    with _QUEUE_WRITE_LOCK:
+        if fcntl is None:
+            yield
+            return
+        QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = QUEUE_PATH.with_name(QUEUE_PATH.name + ".lock")
+        with lock_file.open("a") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+
+
 def _local_load() -> dict:
-    try:
-        return json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
-    except Exception:
+    """Read the queue store. Missing file = a fresh queue; unparseable file = QueueCorrupt.
+
+    Also normalizes a hand-edited store: a missing `items` becomes `[]`, and a missing or
+    stale `next_id` is recomputed as max(id)+1 so ids stay unique instead of raising KeyError
+    or handing out a duplicate.
+    """
+    if not QUEUE_PATH.exists():
         return {"items": [], "next_id": 1}
+    try:
+        raw = QUEUE_PATH.read_text(encoding="utf-8")
+    except OSError as e:
+        raise QueueCorrupt(f"cannot read {QUEUE_PATH}: {e}") from e
+    try:
+        q = json.loads(raw)
+    except ValueError as e:
+        raise QueueCorrupt(f"{QUEUE_PATH} is not valid JSON: {e}") from e
+    if not isinstance(q, dict):
+        raise QueueCorrupt(f"{QUEUE_PATH} must contain a JSON object, got {type(q).__name__}")
+    items = q.get("items")
+    q["items"] = items if isinstance(items, list) else []
+    numeric = [it["id"] for it in q["items"]
+               if isinstance(it, dict) and isinstance(it.get("id"), int)]
+    least_free = max(numeric) + 1 if numeric else 1
+    next_id = q.get("next_id")
+    q["next_id"] = next_id if isinstance(next_id, int) and next_id >= least_free else least_free
+    return q
 
 
 def _local_save(q: dict) -> None:
+    """Write the queue store atomically (tmp + os.replace).
+
+    A plain `write_text` truncates before writing, so a reader could observe a half-written
+    file — which under the old `except Exception: return empty` load meant "queue vanished".
+    """
     QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    QUEUE_PATH.write_text(json.dumps(q, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = QUEUE_PATH.with_name(QUEUE_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(q, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, QUEUE_PATH)
 
 
 def queue_add(backend: str, task: str, cfg: dict) -> dict:
     if backend == "local":
-        q = _local_load()
-        item = {"id": q["next_id"], "task": task, "status": "queued", "note": ""}
-        q["items"].append(item)
-        q["next_id"] += 1
-        _local_save(q)
+        with _queue_locked():
+            q = _local_load()
+            item = {"id": q["next_id"], "task": task, "status": "queued", "note": ""}
+            q["items"].append(item)
+            q["next_id"] += 1
+            _local_save(q)
         return item
     cli = _gh_cli(backend)
     argv = [cli, "issue", "create", "-t", task, "-l", QUEUE_LABEL, "-b", "rig queue task"]
@@ -141,15 +227,16 @@ def _queue_relabel_args(status: str) -> list[str]:
 def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -> bool:
     """Returns whether the item was found (local) / the update was attempted (gh)."""
     if backend == "local":
-        q = _local_load()
-        matched = False
-        for it in q["items"]:
-            if str(it["id"]) == str(item_id):
-                it["status"] = status
-                it["note"] = note[:300]
-                matched = True
-        if matched:
-            _local_save(q)
+        with _queue_locked():
+            q = _local_load()
+            matched = False
+            for it in q["items"]:
+                if str(it["id"]) == str(item_id):
+                    it["status"] = status
+                    it["note"] = note[:300]
+                    matched = True
+            if matched:
+                _local_save(q)
         return matched
     cli = _gh_cli(backend)
     R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
@@ -239,6 +326,17 @@ def cmd_queue(args):
             i += 1
     ver = ver or gen
 
+    try:
+        return _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel)
+    except QueueCorrupt as e:
+        # Never "recover" by rewriting an empty store — that is how a backlog disappears (#360).
+        print(f"[ERROR] {e}")
+        print("        rig refuses to touch an unreadable queue store (rewriting it empty would "
+              "lose the backlog). Repair or move the file, then retry.")
+        sys.exit(1)
+
+
+def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
     if sub == "add":
         if not free:
             print("[ERROR] queue add \"<task>\"")
@@ -278,14 +376,30 @@ def cmd_queue(args):
         return
     print(f"## rig queue GO [{backend}]  {len(items)} items / provider={gen} / parallel={max_parallel}\n")
 
+    def _set_status(item_id, status: str, note: str = "") -> None:
+        """Record a transition, and say so when it did not land (never fail silently; #360).
+
+        The return value of queue_set_status used to be discarded, so a lost update was
+        invisible: GO printed DONE while the store still said running/queued.
+        """
+        if not queue_set_status(backend, item_id, status, note, cfg):
+            print(f"  [WARN] #{item_id}: could not record status '{status}' "
+                  f"(item not found in the {backend} queue) — reconcile with "
+                  f"`queue done {item_id}` or `queue retry {item_id}`")
+
     def _run_one(it):
         task = it["task"]
-        queue_set_status(backend, it["id"], "running", "", cfg)
-        rc, out = run_provider(gen, "generator", _build_queue_task_prompt(task, gen), cfg)
-        rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, out), cfg, persona="queue")
-        ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
-        note = ("✅ rig: gate settled (needs /rig:rig board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
-        queue_set_status(backend, it["id"], "done" if ok else "failed", note, cfg)
+        _set_status(it["id"], "running")
+        try:
+            rc, out = run_provider(gen, "generator", _build_queue_task_prompt(task, gen), cfg)
+            rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, out), cfg, persona="queue")
+            ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
+            note = ("✅ rig: gate settled (needs /rig:rig board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
+        except Exception as e:  # noqa: BLE001 - one bad item must not abandon the batch
+            # ex.map propagates the first exception and discards the other results, which
+            # left every remaining item pinned at `running` with no way to tell why (#360).
+            ok, note = False, f"❌ rig: {type(e).__name__}: {e}"[:300]
+        _set_status(it["id"], "done" if ok else "failed", note)
         return (it, ok)
 
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
