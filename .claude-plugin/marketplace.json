@@ -12,8 +12,8 @@
     {
       "name": "claude-context-checker",
       "source": {
-        "source": "github",
-        "repo": "itoh-shun/claude-context-checker"
+        "source": "url",
+        "url": "https://github.com/itoh-shun/claude-context-checker.git"
       },
       "description": "Status line and hooks for tracking Claude Code's context window usage: adaptive thresholds that follow the auto-compact point, a subagent status line showing per-agent context %, and pre-compact checkpoints."
     }
