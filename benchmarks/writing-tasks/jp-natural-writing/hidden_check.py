@@ -548,6 +548,7 @@ WRITER_PROMPT = """あなたは Qiita に技術記事を投稿している一人
 - この記事につけるタグは「{topic}」です。タグに合わせて話題を広げたり、
   そのテーマの解説をしたりする必要はありません。
 - まだ直っていないと書かれているものは、直っていません。まとめないでください。
+{extra_rule}
 
 {length_spec}
 
@@ -578,7 +579,7 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 {{"title": "<タイトル>", "description": "<本文>"}}"""
 
 
-def generate_writer(topic: str, model: str, max_rounds: int = 3) -> dict:
+def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str = "") -> dict:
     """Writer arm: a persistent authored identity carried as data, not as adjectives.
 
     The identity is a ledger of real artifacts on this machine — commit subjects, a
@@ -616,7 +617,8 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3) -> dict:
         prior = wl.render_prior(state)
 
     out = run_claude_json(
-        WRITER_PROMPT.format(ledger=ledger, prior=prior, topic=topic, length_spec=LENGTH_SPEC),
+        WRITER_PROMPT.format(ledger=ledger, prior=prior, topic=topic,
+                             length_spec=LENGTH_SPEC, extra_rule=extra_rule),
         model, [],
     )
     rounds = 1
@@ -1534,6 +1536,38 @@ def generate_freewrite_merge(topic: str, model: str) -> dict:
     return result
 
 
+# ------------------------------------------------------------------- writer, no voice
+#
+# One change from the writer arm: subjective commentary is forbidden. Nothing else moves.
+#
+# The evidence is three layers deep and all of it says the voice is already past human
+# levels rather than short of them. The corpus (human n=28 / AI n=127) has every marker
+# overshooting — hedge 0.81 against 0.42, para-final reflection 4.58 against 1.15,
+# first-person 1.32 against 0.61, colloquial 2.16 against 1.30, and type-token ratio 0.84
+# against 0.68, i.e. humans repeat words more. And two generations from identical material
+# with identical section structure split on exactly this:
+#
+#   0 subjective expressions   6/6 judged human, sd 0.0
+#   2 subjective expressions   2/6 judged human, sd 29.6
+#
+# with the judge naming the reason: 「『〜ということだと思う』等の主観表現が要所に一つずつ
+# 配置される規則性」. The even-satisfaction law that beat rig2's criteria and riglint's
+# rhythm, reappearing at the placement of the humanising touches themselves.
+#
+# Written as a prohibition, not a target. v2 established that a quota gets administered in
+# even doses; there is no dose of an absence.
+
+WRITER_NOVOICE_RULE = """- 感想・所感・自己評価・推測の表明を書かないこと。「〜と思う」「〜という自覚はある」
+  「〜かもしれない」「〜ように見える」「〜ということだろう」といった主観表現は使わない。
+  何が起きたかだけを書き、それがどう思われるかは書かない。"""
+
+
+def generate_writer_novoice(topic: str, model: str, max_rounds: int = 3) -> dict:
+    """writer with subjective commentary forbidden. Single-variable change."""
+    return generate_writer(topic, model, max_rounds=max_rounds,
+                           extra_rule=WRITER_NOVOICE_RULE)
+
+
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
@@ -1551,6 +1585,7 @@ LIVE_ARMS = {
     "freewrite": ("grounded log, no section skeleton (skeleton ablation)", generate_freewrite),
     "mixed": ("each section by a different model", generate_mixed),
     "freewrite_merge": ("freewrite + harness-side run-on merge", generate_freewrite_merge),
+    "writer_novoice": ("writer, subjective commentary forbidden", generate_writer_novoice),
 }
 
 
