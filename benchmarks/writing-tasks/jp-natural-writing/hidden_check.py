@@ -1764,13 +1764,6 @@ def main() -> None:
         if gate_effect < 5:
             print("  ⚠ ゲートの寄与は計算量の増加と区別できない")
 
-    if improvement is not None:
-        print(f"  判定: {'PASS' if improvement >= 5 else 'FAIL'}")
-    if ledger_fingerprint and "sha1" in ledger_fingerprint:
-        print(f"  ledger: {ledger_fingerprint['entries']}件 / 未解決 "
-              f"{ledger_fingerprint['open_items']} / sha1 {ledger_fingerprint['sha1']} "
-              f"— 異なる sha1 の実行同士は writer 系アームを比較できない")
-
     # The writer arms draw from a ledger built out of `git log`, so it changes every time
     # the repo does. Runs 1 and 2 of the incident-sampling comparison shared a ledger and
     # run 3 did not — the arm went 12/24, 9/24, then 0/24, and nothing in the recorded
@@ -1790,6 +1783,14 @@ def main() -> None:
             }
     except Exception as exc:
         ledger_fingerprint = {"error": f"{type(exc).__name__}: {exc}"}
+
+
+    if improvement is not None:
+        print(f"  判定: {'PASS' if improvement >= 5 else 'FAIL'}")
+    if ledger_fingerprint and "sha1" in ledger_fingerprint:
+        print(f"  ledger: {ledger_fingerprint['entries']}件 / 未解決 "
+              f"{ledger_fingerprint['open_items']} / sha1 {ledger_fingerprint['sha1']} "
+              f"— 異なる sha1 の実行同士は writer 系アームを比較できない")
 
     results = {
         "mode": "live" if args.live else "fixture",
