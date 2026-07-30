@@ -1766,9 +1766,34 @@ def main() -> None:
 
     if improvement is not None:
         print(f"  判定: {'PASS' if improvement >= 5 else 'FAIL'}")
+    if ledger_fingerprint and "sha1" in ledger_fingerprint:
+        print(f"  ledger: {ledger_fingerprint['entries']}件 / 未解決 "
+              f"{ledger_fingerprint['open_items']} / sha1 {ledger_fingerprint['sha1']} "
+              f"— 異なる sha1 の実行同士は writer 系アームを比較できない")
+
+    # The writer arms draw from a ledger built out of `git log`, so it changes every time
+    # the repo does. Runs 1 and 2 of the incident-sampling comparison shared a ledger and
+    # run 3 did not — the arm went 12/24, 9/24, then 0/24, and nothing in the recorded
+    # output said the material had moved underneath it. Fingerprint what a run actually
+    # used so a later comparison can tell drift from effect.
+    ledger_fingerprint = None
+    try:
+        import writer_ledger as _wl
+        if _wl.STATE_PATH.exists():
+            _state = json.loads(_wl.STATE_PATH.read_text())
+            _facts = "\n".join(sorted(e["fact"] for e in _state.get("entries", [])))
+            ledger_fingerprint = {
+                "entries": len(_state.get("entries", [])),
+                "open_items": sum(1 for e in _state.get("entries", [])
+                                  if e.get("status") == "未解決"),
+                "sha1": hashlib.sha1(_facts.encode()).hexdigest()[:12],
+            }
+    except Exception as exc:
+        ledger_fingerprint = {"error": f"{type(exc).__name__}: {exc}"}
 
     results = {
         "mode": "live" if args.live else "fixture",
+        "ledger": ledger_fingerprint,
         "judge_model": args.judge_model,
         "gen_model": args.gen_model if args.live else None,
         "arms": arms,
