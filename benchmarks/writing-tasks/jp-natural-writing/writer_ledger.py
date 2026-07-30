@@ -94,22 +94,43 @@ def probe_commits(limit: int = 40) -> list[dict]:
 
 
 def probe_test_failures() -> list[dict]:
-    """A real failing test, with its real assertion text.
+    """Every failing test, each with its own assertion text.
 
-    Recorded as 未解決 because it is: nothing in this ledger closes it.
+    Recorded as 未解決 because they are: nothing in this ledger closes them.
+
+    Without -x. With it, pytest stopped at the first failure and the ledger held exactly
+    one open item out of 59 entries (3%), so sample_incident() had almost nothing to build
+    an incident around and reused the same root across topics. The suite actually has four
+    failures; the flag was hiding three. Costs the full suite (~2 min) instead of a partial
+    one, which is worth it — an open bug with its real assertion text is the material the
+    one reproducibly human-judged article was built from.
     """
-    raw = _run([sys.executable, "-m", "pytest", "tests", "-q", "--no-header", "-x"])
+    raw = _run([sys.executable, "-m", "pytest", "tests", "-q", "--no-header"], timeout=900)
     entries = []
-    fail_line = next((l for l in raw.splitlines() if l.startswith("FAILED ")), "")
-    assert_lines = [l.strip() for l in raw.splitlines() if l.strip().startswith("E ")][:3]
-    if fail_line:
-        detail = " / ".join(a[2:].strip() for a in assert_lines)
+
+    # Each failure's traceback sits under a ____ test_name ____ banner; the summary lines at
+    # the end give the node ids. Pair them so every entry carries its own assertion text
+    # rather than the first failure's.
+    sections = re.split(r"^_{5,} (.+?) _{5,}$", raw, flags=re.MULTILINE)
+    per_test = {}
+    for i in range(1, len(sections) - 1, 2):
+        name = sections[i].strip()
+        body = sections[i + 1]
+        errs = [l.strip()[2:].strip() for l in body.splitlines() if l.strip().startswith("E ")]
+        per_test[name] = " / ".join(x for x in errs[:3] if x)
+
+    for line in raw.splitlines():
+        if not line.startswith("FAILED "):
+            continue
+        node = line[7:].split(" - ")[0].strip()
+        short = node.rsplit("::", 1)[-1]
+        detail = per_test.get(short, "")
         entries.append({
             "kind": "failure",
             "when": "",
             "status": "未解決",
-            "fact": f"pytest がまだ落ちている: {fail_line[7:].strip()} — {detail}",
-            "tokens": _tokens(fail_line, detail),
+            "fact": f"pytest がまだ落ちている: {node} — {detail}",
+            "tokens": _tokens(node, detail),
         })
     summary = next((l for l in raw.splitlines() if " passed" in l and "=" not in l[:2]), "")
     if summary:
@@ -150,6 +171,11 @@ def probe_results() -> list[dict]:
         try:
             data = json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
+            continue
+        # Not every record is an arm run: the paired-comparison files are JSON arrays, and
+        # calling .get on one raised AttributeError, which build_ledger's blanket except
+        # turned into "this probe found nothing" — ten measurement entries silently gone.
+        if not isinstance(data, dict):
             continue
         for name, arm in (data.get("arms") or {}).items():
             stats = arm.get("stats") or {}
@@ -216,7 +242,13 @@ def build_ledger(force: bool = False) -> dict:
     for probe in PROBES:
         try:
             entries += probe()
-        except Exception:  # a probe that breaks contributes nothing, never a substitute
+        except Exception as exc:
+            # A broken probe still contributes nothing rather than a substitute — but it
+            # must not be indistinguishable from a probe that had nothing to say. One
+            # AttributeError in probe_results cost the ledger every measurement entry and
+            # nothing anywhere reported it.
+            print(f"[writer_ledger] probe {probe.__name__} failed: "
+                  f"{type(exc).__name__}: {exc}", file=sys.stderr)
             continue
     for i, entry in enumerate(entries):
         entry["id"] = f"L{i:03d}"

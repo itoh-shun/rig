@@ -602,10 +602,17 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3) -> dict:
 
     with wl.STATE_LOCK:
         state = wl.build_ledger()
-        entries = wl.sample_for_topic(state, topic)
+        # sample_incident, not sample_for_topic. The ledger's own author documented the flat
+        # sampler as a recorded negative result — 「Measured at 79.0 against bare's 89.2」,
+        # every verdict naming 「各節が『事実→内省→日付への接続』という同一テンプレートで
+        # 反復され」 — and wrote sample_incident as its replacement, which then sat unwired
+        # while the arm went on calling the sampler it was meant to retire. A list of k peer
+        # facts is rendered as k peer sections; an incident is one chain.
+        incident = wl.sample_incident(state, topic)
+        entries = incident["entries"]
         if not entries:
             raise SystemExit("writer ledger is empty; run writer_ledger.py --force")
-        ledger = wl.render_ledger(entries)
+        ledger = wl.render_incident(incident)
         prior = wl.render_prior(state)
 
     out = run_claude_json(
