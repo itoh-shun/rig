@@ -178,7 +178,8 @@ def extract_json(raw: str) -> dict:
     raise ValueError(f"no parseable JSON in response: {raw[:300]}")
 
 
-def run_claude_json(prompt: str, model: str, extra_argv: list[str], attempts: int = 3) -> dict:
+def run_claude_json(prompt: str, model: str, extra_argv: list[str], attempts: int = 3,
+                    timeout: int = 300) -> dict:
     """run_claude, but the unit being retried is call-and-parse.
 
     A response that arrives intact but unparseable is as useless as one that never
@@ -186,7 +187,7 @@ def run_claude_json(prompt: str, model: str, extra_argv: list[str], attempts: in
     """
     last = ""
     for _ in range(attempts):
-        raw = run_claude(prompt, model, extra_argv)
+        raw = run_claude(prompt, model, extra_argv, timeout=timeout)
         try:
             return extract_json(raw)
         except ValueError as exc:
@@ -1637,8 +1638,11 @@ def generate_skeleton(topic: str, model: str, max_rounds: int = 2) -> dict:
     score = sk.render(target)
     sk.assert_no_leak(donor, score)
 
+    # 300s was measured insufficient: the whole arm died with "timeout after 300s" on its
+    # first full run. Filling a per-sentence structural score is slower than free writing.
     out = run_claude_json(
-        SKELETON_PROMPT.format(topic=topic, score=score, length_spec=LENGTH_SPEC), model, [])
+        SKELETON_PROMPT.format(topic=topic, score=score, length_spec=LENGTH_SPEC),
+        model, [], timeout=600)
     rounds = 1
     gate_log = []
 
@@ -1651,7 +1655,7 @@ def generate_skeleton(topic: str, model: str, max_rounds: int = 2) -> dict:
         out = run_claude_json(
             SKELETON_DIFF_PROMPT.format(
                 text=f"{out['title']}\n{out['description']}",
-                deltas="\n".join(f"- {d}" for d in deltas)), model, [])
+                deltas="\n".join(f"- {d}" for d in deltas)), model, [], timeout=600)
         rounds += 1
 
     body, trimmed = trim_to_ceiling(out["description"])
