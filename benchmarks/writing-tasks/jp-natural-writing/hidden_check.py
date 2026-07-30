@@ -580,7 +580,8 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 {{"title": "<タイトル>", "description": "<本文>"}}"""
 
 
-def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str = "") -> dict:
+def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str = "",
+                    show_urls: bool = False) -> dict:
     """Writer arm: a persistent authored identity carried as data, not as adjectives.
 
     The identity is a ledger of real artifacts on this machine — commit subjects, a
@@ -614,7 +615,7 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str
         entries = incident["entries"]
         if not entries:
             raise SystemExit("writer ledger is empty; run writer_ledger.py --force")
-        ledger = wl.render_incident(incident)
+        ledger = wl.render_incident(incident, show_urls=show_urls)
         prior = wl.render_prior(state)
 
     out = run_claude_json(
@@ -1563,6 +1564,20 @@ WRITER_NOVOICE_RULE = """- 感想・所感・自己評価・推測の表明を�
   何が起きたかだけを書き、それがどう思われるかは書かない。"""
 
 
+def generate_writer_links(topic: str, model: str) -> dict:
+    """writer, with each ledger entry's real GitHub URL shown in the material.
+
+    Single-variable change against writer: same ledger, same prompt, same gate; the only
+    difference is whether the rendered material includes the commit/PR URLs. The head-to-
+    head losses named the gap 16 times in 24 — the human opponent carries 実際のURL・画像
+    and writer carried none — and link density is the corpus's largest never-varied
+    separation (5.56 vs 0.01 per 1k, d=1.73). The URLs are derived from the shas already
+    in the ledger, so they are real and verifiable, and the containment whitelist already
+    licenses them via entry tokens.
+    """
+    return generate_writer(topic, model, show_urls=True)
+
+
 def generate_writer_novoice(topic: str, model: str, max_rounds: int = 3) -> dict:
     """writer with subjective commentary forbidden. Single-variable change."""
     return generate_writer(topic, model, max_rounds=max_rounds,
@@ -1682,6 +1697,7 @@ LIVE_ARMS = {
     "freewrite_merge": ("freewrite + harness-side run-on merge", generate_freewrite_merge),
     "writer_novoice": ("writer, subjective commentary forbidden", generate_writer_novoice),
     "skeleton": ("structural score transplanted from one human donor", generate_skeleton),
+    "writer_links": ("writer + real commit/PR URLs in the material", generate_writer_links),
 }
 
 

@@ -88,7 +88,16 @@ def probe_commits(limit: int = 40) -> list[dict]:
             "when": when,
             "status": "解決",
             "fact": f"{when} のコミット {sha}: {subject}",
-            "tokens": _tokens(sha, when, subject),
+            # Real, verifiable URLs — the largest human/AI gap analyze_gap found
+            # (link_per1k 5.56 vs 0.01, d=1.73) and the only never-varied dimension.
+            # Derived, not fetched, so they exist for every commit and fabricate nothing.
+            "urls": ([f"https://github.com/itoh-shun/rig/commit/{sha}"]
+                     + [f"https://github.com/itoh-shun/rig/pull/{m}"
+                        for m in re.findall(r"#(\d{2,5})", subject)]),
+            "tokens": _tokens(sha, when, subject)
+                      + [f"https://github.com/itoh-shun/rig/commit/{sha}"]
+                      + [f"https://github.com/itoh-shun/rig/pull/{m}"
+                         for m in re.findall(r"#(\d{2,5})", subject)],
         })
     return entries
 
@@ -371,24 +380,27 @@ def sample_incident(state: dict, topic: str, seed_extra: str = "") -> dict:
     return {"goal": goal, "spine": spine, "scraps": scraps, "entries": spine + scraps}
 
 
-def render_ledger(entries: list[dict]) -> str:
+def render_ledger(entries: list[dict], show_urls: bool = False) -> str:
     lines = []
     for e in entries:
         when = f"[{e['when']}] " if e.get("when") else ""
         mark = " ←まだ直っていない" if e["status"] == "未解決" else ""
         lines.append(f"- {when}{e['fact']}{mark}")
+        if show_urls:
+            for url in e.get("urls", []):
+                lines.append(f"  {url}")
     return "\n".join(lines)
 
 
-def render_incident(sample: dict) -> str:
+def render_incident(sample: dict, show_urls: bool = False) -> str:
     """Render as an incident, not as an inventory."""
     out = ["この記事で書くのは、次の一件です。", "", "＜経過（時系列）＞",
-           render_ledger(sample["spine"])]
+           render_ledger(sample["spine"], show_urls)]
     if sample["scraps"]:
         out += ["", "＜同じ時期に手元にあった、別件のメモ＞",
                 "（あなたはこれを既に知っています。記事の主題ではないので、",
                 "  必要なら一言触れるだけでよく、説明しなくて構いません）",
-                render_ledger(sample["scraps"])]
+                render_ledger(sample["scraps"], show_urls)]
     return "\n".join(out)
 
 
