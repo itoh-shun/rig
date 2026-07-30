@@ -528,6 +528,8 @@ This repo ships a `.claude-plugin/marketplace.json`, so it installs via a market
 
 > The marketplace was previously named `itoshun-local-plugins`. If you installed it under that name, remove and re-add it (`/plugin marketplace remove itoshun-local-plugins`), or keep using the old name — the plugin resolves its data directory under either.
 
+The `sito-plugins` marketplace also lists [`claude-context-checker`](https://github.com/itoh-shun/claude-context-checker) (`/plugin install claude-context-checker@sito-plugins`), a separate plugin in its own repo.
+
 ```bash
 # A) from GitHub (recommended)
 /plugin marketplace add itoh-shun/rig
