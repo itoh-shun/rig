@@ -21,6 +21,11 @@ itself stays `rig`, so every `/rig:*` command id is unchanged.
 Historical `itoshun` paths in CHANGELOG entries and `docs/superpowers/plans/` are left
 as-is — they record what was run at the time.
 
+**Also ships 1.27.1** (below), which landed in the same merge and therefore has no
+release of its own: the fix for the lost-update race in the local queue backend, where
+`queue go` reported items done while `.rig/queue.json` still had them at running/queued,
+and concurrent writers could drop the whole backlog.
+
 ## [1.27.1] - 2026-07-30
 
 Fixes a lost-update race in the **local queue backend**. `queue_set_status` and
