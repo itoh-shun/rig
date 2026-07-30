@@ -185,12 +185,16 @@ def probe_results() -> list[dict]:
                 "kind": "measurement",
                 "when": path.stem[:10],
                 "status": "解決",
-                "fact": (
-                    f"{path.name} の計測: アーム {name} の平均スコアは {stats['mean']}、"
-                    f"中央値 {stats.get('median')}、平均 {stats.get('mean_chars')} 字"
+                # Only the fields this record actually has. The older result files predate
+                # mean_chars, and rendering it unconditionally put 「平均 None 字」 into the
+                # ledger as a fact — junk the generator then has to either copy or trip over.
+                "fact": "、".join(
+                    [f"{path.name} の計測: アーム {name} の平均スコアは {stats['mean']}"]
+                    + [f"中央値 {stats['median']}" for _ in (1,) if stats.get("median") is not None]
+                    + [f"平均 {stats['mean_chars']} 字" for _ in (1,) if stats.get("mean_chars")]
                 ),
                 "tokens": _tokens(path.name, name, str(stats["mean"]),
-                                  str(stats.get("median")), str(stats.get("mean_chars"))),
+                                  str(stats.get("median") or ""), str(stats.get("mean_chars") or "")),
             })
         if data.get("n") and data.get("mean") is not None:
             entries.append({
