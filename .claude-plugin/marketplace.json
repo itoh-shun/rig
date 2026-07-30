@@ -6,7 +6,10 @@
   "plugins": [
     {
       "name": "rig",
-      "source": "./",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/itoh-shun/rig.git"
+      },
       "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness for dev-flow orchestration (review, implement, PR, and more). Claude Code native; no heavy DSL engine."
     },
     {
