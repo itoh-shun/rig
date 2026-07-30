@@ -524,7 +524,9 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 
 本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、単体インストール用の marketplace として使える。プラグイン名は `rig`、本リポジトリ自身の marketplace 名は `rig`。[`claude-context-checker`](https://github.com/itoh-shun/claude-context-checker) も同居する共有 marketplace が欲しい場合は、`itoh-shun/sito-plugins` リポジトリを使う（下記A）。
 
-> アップグレードについて: 本リポジトリ自身の marketplace 名は以前 `sito-plugins`（さらにその前は `itoshun-local-plugins`）だった。他のプラグイン（Coworkなど一部クライアント経由）と正しく併記されるよう新設した専用の `sito-plugins` リポジトリと名前が衝突しないため、こちらの名前を明け渡した。既存インストールはどの旧名でも引き続き動作する。新規インストールは下記いずれかのパスを使うこと。
+> アップグレードについて: 本リポジトリ自身の marketplace 名は以前 `sito-plugins`（さらにその前は `itoshun-local-plugins`）だった。CLI上で `known_marketplaces.json` が名前をキーにしているため、2つのリポジトリが同じ名前を名乗ると登録が競合する——それを避けるため専用の `sito-plugins` リポジトリに名前を移した。既存インストールはどの旧名でも引き続き動作する。新規インストールは下記いずれかのパスを使うこと。
+>
+> 別件として、本プラグインは現在Coworkのプラグイン一覧に**どのmarketplace経由でも表示されない**問題がある。原因はトップレベルの `bin/` ディレクトリ（詳細はCHANGELOGの1.28.2）で、上記のmarketplace名変更とは無関係。CLIには影響しない。`bin/`は`orchestrate`をPATHに通す正規機能なので削除はせず、Cowork側のバグとして報告する予定。
 
 ```bash
 # A) 共有 sito-plugins marketplace 経由（推奨・claude-context-checker も同居）

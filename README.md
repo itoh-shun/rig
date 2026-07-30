@@ -531,11 +531,17 @@ shared marketplace that also lists
 use the `itoh-shun/sito-plugins` repo instead (option A below).
 
 > Upgrading: this repo's own marketplace was previously named `sito-plugins`
-> (and before that `itoshun-local-plugins`) — it moved to keep that shared
-> name from colliding with the new dedicated `sito-plugins` repo, which some
-> clients (Cowork) need to list this plugin correctly alongside others.
-> Existing installs keep working under any of the three names; new installs
-> should use one of the two paths below.
+> (and before that `itoshun-local-plugins`) — it moved to a dedicated
+> `sito-plugins` repo, so two repos no longer race to claim the same
+> marketplace name in `known_marketplaces.json` on the CLI. Existing installs
+> keep working under any of the three names; new installs should use one of
+> the two paths below.
+>
+> Separately, this plugin currently fails to appear at all in Cowork's plugin
+> browser, under any marketplace — caused by the top-level `bin/` directory
+> (see CHANGELOG 1.28.2), not by the marketplace rename above. Unaffected on
+> the CLI. `bin/` stays, since it backs a real feature (`orchestrate` on
+> PATH); this looks like a Cowork-side bug worth reporting upstream.
 
 ```bash
 # A) via the shared sito-plugins marketplace (recommended — also hosts claude-context-checker)

@@ -1,17 +1,42 @@
 # Changelog
 
+## [1.28.2] - 2026-07-30
+
+Documents the actual root cause of rig failing to appear in Cowork's plugin browser —
+no code or manifest change in this repo, just the corrected record. See the correction
+note under 1.28.1.
+
+Found by controlled bisection: cloned rig's tracked HEAD content (no git history) into
+a throwaway repo, then repeatedly halved it, force-pushing and re-testing in Cowork
+after each cut. Repo byte size, file count, and commit count were each tested in
+isolation first (a 20MB blob, 700 tiny files, 320 trivial commits) and none reproduced
+the failure on their own — ruling out rig's overall bulk (86MB / 309 commits) as the
+cause before the content bisection even started.
+
+**Root cause: a top-level directory literally named `bin/` makes Cowork's marketplace
+sync fail outright**, independent of the file(s) inside it, their content, or their
+executable permission bit. Renaming `bin/` to anything else, with byte-identical
+contents, fixed it immediately. This repo ships `bin/orchestrate` to use Claude Code's
+documented plugin `bin/`-on-PATH feature (`orchestrate` callable from a shell after
+install) — a legitimate, intentional plugin construct, not something to remove to work
+around a client bug. Left in place; Cowork's `bin/` handling appears to be the actual
+bug and is worth reporting upstream.
+
 ## [1.28.1] - 2026-07-30
 
 Gives up this repo's claim to the `sito-plugins` marketplace name, in favor of a new
 dedicated `itoh-shun/sito-plugins` repo that hosts nothing but a marketplace manifest.
 
-- **Why:** this repo's own `marketplace.json` listed two plugins — `rig` (source `./`,
-  i.e. the marketplace's own repo) and `claude-context-checker` (source: an external git
-  URL). In Cowork's plugin browser, only the externally-sourced plugin rendered; `rig`
-  silently dropped out of the list. Isolated single-plugin marketplaces (this repo alone,
-  or claude-context-checker's own repo alone) rendered fine either way — the failure was
-  specific to a plugin whose source resolves to the *same* repository as the marketplace
-  that lists it, sitting alongside a sibling plugin that doesn't.
+- **Why:** two repos (`rig` and `claude-context-checker`) had independently renamed
+  their own marketplace to `sito-plugins` on the same day. Claude Code keys
+  `known_marketplaces.json` by that name, so whichever was added last silently
+  overwrote the other's registration on the CLI. Splitting the shared name out to its
+  own repo removes the collision regardless of which repo a user adds first.
+- **Correction (see 1.28.2 below):** this entry originally claimed the trigger was
+  Cowork excluding a plugin whose source resolves to the same repo as the marketplace
+  listing it. That was disproven by later, controlled testing — see 1.28.2 for the
+  actual cause. The name-collision fix above is real and stands on its own; the Cowork
+  symptom that prompted it turned out to be something else entirely.
 - `.claude-plugin/marketplace.json`: `name` is now `rig` (owner stays `sito-plugins`),
   and the `claude-context-checker` entry moved out — it lives in the new shared repo
   instead.

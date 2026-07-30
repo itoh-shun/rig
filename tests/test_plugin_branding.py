@@ -12,10 +12,12 @@ Two marketplace names are in play, and they are not the same thing:
   path.
 - OWN_MARKETPLACE (`rig`) is this repo's own single-plugin marketplace, for a direct
   install without the shared one. It used to also be named `sito-plugins`, but that
-  collided with the new dedicated repo (both declared the same marketplace name, and
-  Claude Code keys installs by that name) and, in Cowork specifically, made this plugin
-  drop out of the shared marketplace's listing entirely — so this repo gave the shared
-  name back up.
+  collided with the new dedicated repo — both declared the same marketplace name, and
+  Claude Code keys `known_marketplaces.json` by that name, so whichever was added last
+  on the CLI silently overwrote the other's registration — so this repo gave the shared
+  name back up. (Separately, Cowork also failed to list this plugin at all, in any
+  marketplace — see CHANGELOG 1.28.2. That turned out to be caused by the top-level
+  `bin/` directory, unrelated to the marketplace name or self-reference.)
 """
 
 import json
