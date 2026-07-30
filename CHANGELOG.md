@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.28.0] - 2026-07-30
+
+Renames the marketplace brand **itoshun-local-plugins -> sito-plugins**. The plugin
+itself stays `rig`, so every `/rig:*` command id is unchanged.
+
+- `.claude-plugin/marketplace.json`: `name` and `owner.name` are now `sito-plugins`.
+- `.claude-plugin/plugin.json` `author.name`, `action.yml` `author`, and
+  `pyproject.toml` `authors` carry the brand.
+- Install line becomes `/plugin install rig@sito-plugins` (both READMEs, plus a
+  migration note for anyone who added the marketplace under the old name).
+- **The data directory follows the marketplace name**, so this is not cosmetic: Claude
+  Code derives it as `<plugin>-<marketplace>`. `find_rig_home` now tries
+  `rig-sito-plugins` first and falls back to `rig-itoshun-local-plugins`, so an install
+  made before the rename keeps resolving instead of having its state orphaned.
+- New `tests/test_plugin_branding.py` pins the brand across marketplace/plugin/action/
+  pyproject/README, asserts the plugin name is *not* rebranded (it drives the command
+  ids), and covers the legacy data-directory fallback.
+
+Historical `itoshun` paths in CHANGELOG entries and `docs/superpowers/plans/` are left
+as-is — they record what was run at the time.
+
 ## [1.27.1] - 2026-07-30
 
 Fixes a lost-update race in the **local queue backend**. `queue_set_status` and
