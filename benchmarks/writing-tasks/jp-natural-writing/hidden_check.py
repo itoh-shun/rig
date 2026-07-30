@@ -1568,6 +1568,97 @@ def generate_writer_novoice(topic: str, model: str, max_rounds: int = 3) -> dict
                            extra_rule=WRITER_NOVOICE_RULE)
 
 
+# ---------------------------------------------------------------- skeleton transplant
+#
+# The last unimplemented design from the workflow round (its author's session had no
+# working tools). Premise, confirmed since by the freewrite ablation: the uniformity is
+# the model distributing its own structure, and removing the scaffold just makes it build
+# an equivalent one. So instead of removing structure, transplant a *particular uneven*
+# structure from one real human article — counts, lengths, positions and categories only,
+# nothing semantic, enforced mechanically by skeleton.assert_no_leak().
+#
+# Why this should not be gameable the way every quota was: "paragraph 4 has sentences of
+# 38, 9, 52, 11, 44 chars" has no uniform satisfier. Compliance is a match, not a maximum.
+# Round 2 is a mechanical numeric diff, no style advice — style advice in the feedback is
+# what converged selfrev onto the SEO template.
+#
+# Corpus location comes from RIG_JP_CORPUS (the bodies are third-party content and stay
+# outside the repo). The arm fails loudly without it, like riglint does.
+
+CORPUS_ENV = "RIG_JP_CORPUS"
+
+SKELETON_PROMPT = """{topic} をテーマにした日本語の技術記事を書いてください。
+
+構成は以下の設計図に従ってください。§は節、数値の列は各文のおおよその文字数です。
+文末[丁常体疑他] は各文の文体（丁寧/常体/体言止め/疑問/その他）の並びです。
+
+{score}
+
+守り方について:
+- 文字数は目安です（±3割）。文の数と長短の並びを再現してください。
+- 設計図が求める場所に書ける実物（リンク・画像・コード）が無ければ、省いて構いません。
+  実在しない URL・出力・数値をでっち上げないこと。
+- 内容は自由です。設計図は形だけを指定しています。
+
+{length_spec}
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+SKELETON_DIFF_PROMPT = """以下の記事は、指定された設計図と数値が合っていません。
+
+現在のテキスト:
+\"\"\"
+{text}
+\"\"\"
+
+数値のずれ（大きい順）:
+{deltas}
+
+この数値だけを合わせてください。それ以外は変えないこと。
+
+JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと。
+本文中の改行は \\n とエスケープすること:
+{{"title": "<タイトル>", "description": "<本文>"}}"""
+
+
+def generate_skeleton(topic: str, model: str, max_rounds: int = 2) -> dict:
+    """Fill a structural score extracted from one human donor article."""
+    import skeleton as sk
+
+    corpus = os.environ.get(CORPUS_ENV)
+    if not corpus:
+        raise SystemExit(
+            f"skeleton arm needs the human corpus. Run fetch_human_corpus.py and set "
+            f"{CORPUS_ENV} to the output directory.")
+    donor_file, donor = sk.pick_donor(Path(corpus), topic, seed="v1")
+    target = sk.extract(donor)
+    score = sk.render(target)
+    sk.assert_no_leak(donor, score)
+
+    out = run_claude_json(
+        SKELETON_PROMPT.format(topic=topic, score=score, length_spec=LENGTH_SPEC), model, [])
+    rounds = 1
+    gate_log = []
+
+    for _ in range(max_rounds - 1):
+        deltas = sk.diff(target, sk.extract(out["description"]))
+        gate_log.append({"round": rounds, "verdict": "PASS" if not deltas else "FAIL",
+                         "issues": deltas})
+        if not deltas:
+            break
+        out = run_claude_json(
+            SKELETON_DIFF_PROMPT.format(
+                text=f"{out['title']}\n{out['description']}",
+                deltas="\n".join(f"- {d}" for d in deltas)), model, [])
+        rounds += 1
+
+    body, trimmed = trim_to_ceiling(out["description"])
+    return {"title": out["title"], "description": body, "rounds": rounds,
+            "gate_log": gate_log, "donor": donor_file, "sections_trimmed": trimmed}
+
+
 LIVE_ARMS = {
     "bare": ("bare — 1 shot, no gate", generate_bare),
     "selfrev": ("self-revise — same rounds, no gate (compute control)", generate_selfrev),
@@ -1586,6 +1677,7 @@ LIVE_ARMS = {
     "mixed": ("each section by a different model", generate_mixed),
     "freewrite_merge": ("freewrite + harness-side run-on merge", generate_freewrite_merge),
     "writer_novoice": ("writer, subjective commentary forbidden", generate_writer_novoice),
+    "skeleton": ("structural score transplanted from one human donor", generate_skeleton),
 }
 
 
