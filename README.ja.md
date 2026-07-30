@@ -522,20 +522,24 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 
 ### install
 
-本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、marketplace 経由でインストールできる。プラグイン名は `rig`、marketplace 名は `sito-plugins`。
+本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、単体インストール用の marketplace として使える。プラグイン名は `rig`、本リポジトリ自身の marketplace 名は `rig`。[`claude-context-checker`](https://github.com/itoh-shun/claude-context-checker) も同居する共有 marketplace が欲しい場合は、`itoh-shun/sito-plugins` リポジトリを使う（下記A）。
 
-> marketplace 名は以前 `itoshun-local-plugins` だった。旧名で入れている場合は削除して再追加する（`/plugin marketplace remove itoshun-local-plugins`）か、そのまま使ってよい——データディレクトリは新旧どちらのパスでも解決する。
+> アップグレードについて: 本リポジトリ自身の marketplace 名は以前 `sito-plugins`（さらにその前は `itoshun-local-plugins`）だった。他のプラグイン（Coworkなど一部クライアント経由）と正しく併記されるよう新設した専用の `sito-plugins` リポジトリと名前が衝突しないため、こちらの名前を明け渡した。既存インストールはどの旧名でも引き続き動作する。新規インストールは下記いずれかのパスを使うこと。
 
 ```bash
-# A) GitHub から（推奨）
+# A) 共有 sito-plugins marketplace 経由（推奨・claude-context-checker も同居）
+/plugin marketplace add itoh-shun/sito-plugins
+/plugin install rig@sito-plugins
+
+# B) 本リポジトリを直接（共有 marketplace を使わない）
 /plugin marketplace add itoh-shun/rig
-/plugin install rig@sito-plugins
+/plugin install rig@rig
 
-# B) ダウンロード（ZIP / clone）から
+# C) ダウンロード（ZIP / clone）から
 /plugin marketplace add /path/to/rig
-/plugin install rig@sito-plugins
+/plugin install rig@rig
 
-# C) --plugin-dir（開発・テスト用）
+# D) --plugin-dir（開発・テスト用）
 cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reload-plugins
 ```
 

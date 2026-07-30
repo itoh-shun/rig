@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.28.1] - 2026-07-30
+
+Gives up this repo's claim to the `sito-plugins` marketplace name, in favor of a new
+dedicated `itoh-shun/sito-plugins` repo that hosts nothing but a marketplace manifest.
+
+- **Why:** this repo's own `marketplace.json` listed two plugins — `rig` (source `./`,
+  i.e. the marketplace's own repo) and `claude-context-checker` (source: an external git
+  URL). In Cowork's plugin browser, only the externally-sourced plugin rendered; `rig`
+  silently dropped out of the list. Isolated single-plugin marketplaces (this repo alone,
+  or claude-context-checker's own repo alone) rendered fine either way — the failure was
+  specific to a plugin whose source resolves to the *same* repository as the marketplace
+  that lists it, sitting alongside a sibling plugin that doesn't.
+- `.claude-plugin/marketplace.json`: `name` is now `rig` (owner stays `sito-plugins`),
+  and the `claude-context-checker` entry moved out — it lives in the new shared repo
+  instead.
+- Install line becomes `/plugin install rig@sito-plugins` via `itoh-shun/sito-plugins`
+  (recommended, shared with claude-context-checker) or `/plugin install rig@rig` via
+  this repo directly (both READMEs updated, with a migration note).
+- `find_rig_home` now tries `rig-sito-plugins`, then `rig-rig`, then
+  `rig-itoshun-local-plugins` — every name this plugin's data directory has ever been
+  derived from, so no existing install's state is orphaned by this or the 1.28.0 rename.
+- `tests/test_plugin_branding.py` reworked around two distinct constants
+  (`SHARED_MARKETPLACE` vs `OWN_MARKETPLACE`) instead of one, since they no longer name
+  the same thing.
+
 ## [1.28.0] - 2026-07-30
 
 Renames the marketplace brand **itoshun-local-plugins -> sito-plugins**. The plugin

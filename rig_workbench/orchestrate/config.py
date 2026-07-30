@@ -9,16 +9,19 @@ def _env_path(name: str, default: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(value).expanduser().resolve() if value else default
 
 
-# Claude Code derives a plugin's data directory as `<plugin>-<marketplace>`. The
-# marketplace was renamed itoshun-local-plugins -> sito-plugins, so the current name is
-# tried first and the old one is kept as a fallback: an install made before the rename
-# still has its state under the old path, and dropping it would orphan that data.
-PLUGIN_DATA_DIRS = ("rig-sito-plugins", "rig-itoshun-local-plugins")
+# Claude Code derives a plugin's data directory as `<plugin>-<marketplace>`. Names
+# tried, in order: itoshun-local-plugins -> sito-plugins -> {sito-plugins, rig}.
+# `sito-plugins` now lives in a dedicated marketplace-only repo rather than this one, so
+# it stays first (still the shared, recommended install path); `rig` is this repo's own
+# self-hosted single-plugin marketplace, added as a fallback so a direct install (option
+# B in the README) also resolves. Every prior name stays in the tuple so an install made
+# before either rename still finds its state — dropping one would orphan that data.
+PLUGIN_DATA_DIRS = ("rig-sito-plugins", "rig-rig", "rig-itoshun-local-plugins")
 
 
 def find_rig_home() -> pathlib.Path:
     """Resolve where the rig assets (skills/, .claude-plugin/) live.
-    Priority: $RIG_HOME -> ~/.claude/plugins/data/{rig-sito-plugins, rig-itoshun-local-plugins}
+    Priority: $RIG_HOME -> ~/.claude/plugins/data/{rig-sito-plugins, rig-rig, rig-itoshun-local-plugins}
     -> parent of __file__ (dev fallback).
     Cross-project use resolves automatically via the plugin install path, i.e. independent of the caller's cwd."""
     if env := os.environ.get("RIG_HOME"):

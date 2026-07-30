@@ -1,24 +1,13 @@
 {
-  "name": "sito-plugins",
+  "name": "rig",
   "owner": {
     "name": "sito-plugins"
   },
   "plugins": [
     {
       "name": "rig",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/itoh-shun/rig.git"
-      },
+      "source": "./",
       "description": "rig — a LEGO-style harness composer. Compose bricks (facets/patterns/steps/recipes) at invocation time into a task-specific agent harness for dev-flow orchestration (review, implement, PR, and more). Claude Code native; no heavy DSL engine."
-    },
-    {
-      "name": "claude-context-checker",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/itoh-shun/claude-context-checker.git"
-      },
-      "description": "Status line and hooks for tracking Claude Code's context window usage: adaptive thresholds that follow the auto-compact point, a subagent status line showing per-agent context %, and pre-compact checkpoints."
     }
   ]
 }

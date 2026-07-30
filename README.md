@@ -524,22 +524,33 @@ These are useful after you understand the core safety flow (§4–§6) — see [
 
 ### Install
 
-This repo ships a `.claude-plugin/marketplace.json`, so it installs via a marketplace. Plugin name: `rig`; marketplace name: `sito-plugins`.
+This repo ships a `.claude-plugin/marketplace.json` for a direct, single-plugin
+install. Plugin name: `rig`; this repo's own marketplace name: `rig`. For the
+shared marketplace that also lists
+[`claude-context-checker`](https://github.com/itoh-shun/claude-context-checker),
+use the `itoh-shun/sito-plugins` repo instead (option A below).
 
-> The marketplace was previously named `itoshun-local-plugins`. If you installed it under that name, remove and re-add it (`/plugin marketplace remove itoshun-local-plugins`), or keep using the old name — the plugin resolves its data directory under either.
-
-The `sito-plugins` marketplace also lists [`claude-context-checker`](https://github.com/itoh-shun/claude-context-checker) (`/plugin install claude-context-checker@sito-plugins`), a separate plugin in its own repo.
+> Upgrading: this repo's own marketplace was previously named `sito-plugins`
+> (and before that `itoshun-local-plugins`) — it moved to keep that shared
+> name from colliding with the new dedicated `sito-plugins` repo, which some
+> clients (Cowork) need to list this plugin correctly alongside others.
+> Existing installs keep working under any of the three names; new installs
+> should use one of the two paths below.
 
 ```bash
-# A) from GitHub (recommended)
+# A) via the shared sito-plugins marketplace (recommended — also hosts claude-context-checker)
+/plugin marketplace add itoh-shun/sito-plugins
+/plugin install rig@sito-plugins
+
+# B) directly from this repo, no shared marketplace involved
 /plugin marketplace add itoh-shun/rig
-/plugin install rig@sito-plugins
+/plugin install rig@rig
 
-# B) from a download (ZIP / clone)
+# C) from a download (ZIP / clone)
 /plugin marketplace add /path/to/rig
-/plugin install rig@sito-plugins
+/plugin install rig@rig
 
-# C) --plugin-dir (fast dev iteration)
+# D) --plugin-dir (fast dev iteration)
 cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins
 ```
 
