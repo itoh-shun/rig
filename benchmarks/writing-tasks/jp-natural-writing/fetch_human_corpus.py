@@ -43,10 +43,23 @@ TOPIC_TAGS = {
 }
 
 
-def fetch(tag: str, before: str, min_stocks: int, per_page: int) -> list[dict]:
+# Genre control. The default pool is whatever Qiita ranks for a tag, which is mostly
+# tutorials and introductions — and the arms write work logs. Aggregating the winning
+# verdicts, the single most cited reason a generated article was picked as human was that
+# the OPPONENT looked templated (39/47), well ahead of anything about the candidate. So the
+# measure conflates authorship with genre: part of the 92-95% is "is this a Qiita article",
+# not "did a human write this". These terms pull human articles that are themselves
+# debugging notes, so both sides of the pair are the same kind of document.
+GENRE_TERMS = ["ハマった", "原因", "備忘録"]
+
+
+def fetch(tag: str, before: str, min_stocks: int, per_page: int,
+          genre_term: str = "") -> list[dict]:
     # `stocks:>N`, not `likes:>N` — the likes qualifier silently returns zero results
     # rather than erroring, which reads as "no pre-2023 articles exist" if unchecked.
     query = f"created:<{before} tag:{tag} stocks:>{min_stocks}"
+    if genre_term:
+        query += f" {genre_term}"
     url = f"{API}?{urllib.parse.urlencode({'per_page': per_page, 'page': 1, 'query': query})}"
     req = urllib.request.Request(url, headers={"User-Agent": "rig-benchmark/1.0"})
     with urllib.request.urlopen(req, timeout=60) as resp:
@@ -63,6 +76,8 @@ def main() -> None:
     ap.add_argument("--min-stocks", type=int, default=10,
                     help="quality floor; unstocked posts are noise")
     ap.add_argument("--per-topic", type=int, default=10)
+    ap.add_argument("--genre", action="store_true",
+                    help="restrict to work-log/debugging articles (see GENRE_TERMS)")
     ap.add_argument("--min-chars", type=int, default=1200,
                     help="drop articles too short for document-level detectors")
     ap.add_argument("--max-chars", type=int, default=4000,
@@ -73,10 +88,20 @@ def main() -> None:
     index = []
 
     for topic, tag in TOPIC_TAGS.items():
-        try:
-            items = fetch(tag, args.before, args.min_stocks, args.per_topic * 3)
-        except Exception as exc:
-            print(f"  {tag:<12} FAILED: {exc}")
+        terms = GENRE_TERMS if args.genre else [""]
+        items, seen_ids = [], set()
+        for term in terms:
+            try:
+                got = fetch(tag, args.before, args.min_stocks, args.per_topic * 3, term)
+            except Exception as exc:
+                print(f"  {tag:<12} FAILED: {exc}")
+                continue
+            for item in got:
+                if item["id"] not in seen_ids:
+                    seen_ids.add(item["id"])
+                    items.append(item)
+            time.sleep(1)
+        if not items:
             continue
 
         kept = 0

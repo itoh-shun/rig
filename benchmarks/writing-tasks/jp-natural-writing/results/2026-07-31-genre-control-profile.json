@@ -1,0 +1,29 @@
+{
+  "note": "E3 ジャンル統制の操作検証。Qiita の全文検索語（ハマった/原因/備忘録）では文書の型が変わらなかった",
+  "corpora": {
+    "default": {
+      "n": 48,
+      "intro_heading": 31.2,
+      "unresolved_close": 0.0,
+      "image": 56.2,
+      "table": 12.5
+    },
+    "genre_controlled": {
+      "n": 91,
+      "intro_heading": 44.0,
+      "unresolved_close": 0.0,
+      "image": 51.6,
+      "table": 13.2
+    }
+  },
+  "discrimination": {
+    "writer_agent": {
+      "default": "59/62 (95%)",
+      "genre": "63/64 (98%)"
+    },
+    "writer_p0": {
+      "default": "57/62 (92%)",
+      "genre": "60/64 (94%)"
+    }
+  }
+}
