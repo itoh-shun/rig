@@ -27,6 +27,7 @@ told which arm produced the text. Lower score = reads more human-written.
 import argparse
 import hashlib
 import json
+import threading
 import re
 import os
 import unicodedata
@@ -67,6 +68,10 @@ READONLY_TOOLS = ["--allowedTools", "Read,Grep,Glob"]
 # comparable at all: the ledger is derived from `git log`, so an unpinned run rebuilds it
 # every time the repo moves, and the recorded incident-sampling comparison already lost a
 # run to that (run3 scored 0/24 against run1's 12/24 on a ledger that had changed under it).
+# Set by --checkpoint. Module-level because collect_live is reached through the arm table.
+CHECKPOINT_PATH: Path | None = None
+CHECKPOINT_LOCK = threading.Lock()
+
 LEDGER_PINS = {
     "human": HERE / "ledger-human.json",
     "agent": HERE / "ledger-agent.json",
@@ -1764,8 +1769,29 @@ def collect_live(arm: str, model: str) -> list[dict]:
     fn = LIVE_ARMS[arm][1]
     done = 0
 
+    # Checkpoint. A live run is tens of minutes of paid generation held only in memory, and
+    # this environment reclaims background processes while the session is idle — two runs
+    # died that way, one at 6/8 of the first arm, taking every completed sample with them.
+    # Each finished topic is appended here immediately and reloaded on the next start, so a
+    # kill costs the topic in flight rather than the run.
+    cache: dict[str, dict] = {}
+    if CHECKPOINT_PATH is not None and CHECKPOINT_PATH.exists():
+        for line in CHECKPOINT_PATH.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a kill mid-write leaves one truncated line; the rest is good
+            if row.get("arm") == arm:
+                cache[row["topic"]] = row["sample"]
+        if cache:
+            print(f"  再開: {arm} は {len(cache)}/{len(TOPICS)} 件が checkpoint にある", flush=True)
+
     def one(topic: str) -> dict:
         nonlocal done
+        if topic in cache:
+            done += 1
+            print(f"    [{arm}] {done}/{len(TOPICS)} {topic} (checkpoint から再利用)", flush=True)
+            return cache[topic]
         try:
             out = {"topic": topic, **fn(topic, model)}
         except Exception as exc:
@@ -1774,6 +1800,11 @@ def collect_live(arm: str, model: str) -> list[dict]:
             print(f"    [{arm}] {topic}: FAILED {type(exc).__name__}: {exc}", flush=True)
             raise
         done += 1
+        if CHECKPOINT_PATH is not None:
+            with CHECKPOINT_LOCK, CHECKPOINT_PATH.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"arm": arm, "topic": topic, "sample": out},
+                                    ensure_ascii=False) + "\n")
+                fh.flush()
         print(f"    [{arm}] {done}/{len(TOPICS)} {topic} "
               f"({len(out.get('description', ''))}字, {out.get('rounds', '?')} round)",
               flush=True)
@@ -1857,6 +1888,8 @@ def main() -> None:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="generate for real instead of scoring fixtures")
+    ap.add_argument("--checkpoint", type=Path,
+                    help="append each finished sample here and reuse it on restart")
     ap.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
     ap.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help="live mode only; same for every arm")
     ap.add_argument(
@@ -1868,6 +1901,9 @@ def main() -> None:
                     help="use only the first N topics (cheaper runs while iterating)")
     ap.add_argument("--json-out", type=Path, help="write the full result record here")
     args = ap.parse_args()
+
+    global CHECKPOINT_PATH
+    CHECKPOINT_PATH = args.checkpoint
 
     TOPICS = TOPICS[: max(1, args.topics)]
 
