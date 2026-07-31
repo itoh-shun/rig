@@ -7,6 +7,9 @@ __pycache__/
 *.egg-info/
 .venv/
 .venv-*/
+# underscore variant: the benchmark's fieldnote arm builds throwaway venvs while
+# verifying this repo's requires-python claim, and names them .venv_<something>
+.venv_*/
 build/
 dist/
 
@@ -18,5 +21,8 @@ node_modules/
 .agents/
 video/
 .rig/
+# scripts/rig-action-entrypoint.sh defaults STATE_FILE to the cwd, so a run from the
+# repo root (which is what a CI workspace is) leaves this behind untracked.
+rig-action-state.json
 .worktrees/
 .superpowers/
