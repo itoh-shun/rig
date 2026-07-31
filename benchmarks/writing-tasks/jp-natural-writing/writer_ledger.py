@@ -402,8 +402,13 @@ _GENERIC_TOKENS = {"benchmark", "rig", "feat", "fix", "test", "docs", "the", "a"
                    "to", "for", "in", "and", "2026", "07", "26", "json", "py"}
 
 
-def sample_incident(state: dict, topic: str, seed_extra: str = "") -> dict:
+def sample_incident(state: dict, topic: str, seed_extra: str = "", scrap_k: int = 2) -> dict:
     """Shape the material as ONE incident plus a couple of scraps.
+
+    `scrap_k` is the surplus knob. The redefinition memo argues the mechanism is finiteness
+    rather than realness — a writer discards because they hold more than the piece needs,
+    and the discard is what reads as human. Scraps are the only surplus in this design, so
+    varying their count varies surplus with the spine, the topic and the ledger all fixed.
 
     The spine is the open problem and whatever in the ledger shares rare tokens with it,
     in time order — a chain of one thing, not a list of many. Scraps are handed over
@@ -440,7 +445,7 @@ def sample_incident(state: dict, topic: str, seed_extra: str = "") -> dict:
 
     pool = [e for e in others if e not in chained]
     rng.shuffle(pool)
-    scraps = sorted(pool[:2], key=lambda e: cost(e))
+    scraps = sorted(pool[:scrap_k], key=lambda e: cost(e))
 
     goal = f"{root['fact']}。これをなんとかしたかった" if root["status"] == "未解決" else ""
     return {"goal": goal, "spine": spine, "scraps": scraps, "entries": spine + scraps}
@@ -569,3 +574,78 @@ if __name__ == "__main__":
     for topic in ("Python", "リモートワーク"):
         print(f"\n--- {topic} ---")
         print(render_ledger(sample_for_topic(st, topic)))
+
+
+# --------------------------------------------------------------------------- biography
+#
+# A second ledger, for the writer rather than the work. The artifact ledger bounds what the
+# writer has DONE; nothing bounds what they KNOW, where they came from, or when they are
+# free to sit down. So the current writer has no ignorance — and a human tech article is
+# full of 「詳しくないけど」「昔からよく分かっていない」, which is the finiteness of knowledge
+# leaving a trace the same way an open bug leaves one.
+#
+# Everything here is FICTIONAL fixture data. It is not the maintainer and must not be
+# presented as anyone real; E2 measured that the judge never verifies material anyway, so
+# there is nothing to gain from borrowing a real life and an obvious reason not to.
+#
+# Carried as a ledger, never as adjectives. 「几帳面な性格」 is performed uniformly — that is
+# what `novoice` (75% -> 100%) and the quota gate both demonstrated. A finite list of jobs
+# held, things known, things NOT known and hours available is material: it licenses some
+# sentences and makes others unwritable, which is the only mechanism that has ever worked here.
+BIOGRAPHY = {
+    "一人称": "自分",
+    "経歴": [
+        "2016-2019 受託開発で PHP と jQuery。案件は中小企業の業務システムが多かった",
+        "2019-2023 SaaS 企業で Python と Django。ここで初めてテストを書く習慣がついた",
+        "2023- 同じ会社で社内ツール寄りの担当に移り、CI とビルド周りを見ている",
+    ],
+    "知っていること": [
+        "pytest とその -x / -q あたりのよく使う引数",
+        "git の日常操作と、たまに使う worktree",
+        "subprocess の returncode と、シェルが 126/127 を返す条件",
+    ],
+    "知らないこと": [
+        "Rust と Go は書いたことがない。読むのも自信がない",
+        "Kubernetes は触ったことがなく、名前しか知らない",
+        "型システムの理論的な話は昔から分かっていない",
+    ],
+    "実体験": [
+        "2019年に本番の migration を down なしで流して半日戻せなかった",
+        "2021年に AWS SAA を一度落ちて、翌年に取り直した",
+        "2024年に CI が緑なのに手元だけ落ちる件を3日追って、原因が locale だった",
+    ],
+    "生活習慣": [
+        "平日は退勤後の 22 時以降しか自分の作業に触れない",
+        "土曜の午前にまとめて触ることが多い",
+        "記事は書きかけで放置することが多く、過去に3本下書きのまま残っている",
+    ],
+}
+
+
+def biography_entries(bio: dict | None = None) -> list[dict]:
+    """The biography as ledger entries, so the containment gate covers it too.
+
+    Without this the gate reads PHP, Django, SAA and every year in the career as
+    fabrications and strips them out over three revise rounds — the biography would be
+    supplied and then mechanically deleted. Same rule as the artifact ledger: a
+    biographical specific may appear only because it is in the biographical ledger.
+    """
+    bio = bio or BIOGRAPHY
+    out = []
+    for key in ("経歴", "知っていること", "知らないこと", "実体験", "生活習慣"):
+        for i, fact in enumerate(bio[key]):
+            out.append({
+                "kind": "bio", "when": "", "status": "解決",
+                "fact": f"{key}: {fact}", "urls": [], "tokens": _tokens(fact),
+                "id": f"B{key[:2]}{i}", "used_in": [],
+            })
+    return out
+
+
+def render_biography(bio: dict | None = None) -> str:
+    bio = bio or BIOGRAPHY
+    lines = [f"一人称は「{bio['一人称']}」。"]
+    for key in ("経歴", "知っていること", "知らないこと", "実体験", "生活習慣"):
+        lines.append(f"\n{key}:")
+        lines += [f"- {v}" for v in bio[key]]
+    return "\n".join(lines)

@@ -552,12 +552,12 @@ WRITER_PROMPT = """あなたは Qiita に技術記事を投稿している一人
 書き方について:
 - 事実として書けるのは、上の記録にあることだけです。記録にないバージョン番号・日付・
   数値・エラーメッセージ・ファイル名・製品名を書いてはいけません。
-- 記録にないことは書かないでください。埋めるために一般論を足す必要はありません。
+- 記録にないことは書かないでください。{no_fill}
 - 記録の行を順番になぞって一行ずつ節にしないでください。あなたはこの一件の当事者なので、
   すでに知っていることを自分に向かって説明する必要はありません。長く引用するのも一度だけです。
 - この記事につけるタグは「{topic}」です。タグに合わせて話題を広げたり、
   そのテーマの解説をしたりする必要はありません。
-- まだ直っていないと書かれているものは、直っていません。まとめないでください。
+{close_rule}
 {extra_rule}
 
 {length_spec}
@@ -591,7 +591,8 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 
 def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str = "",
                     show_urls: bool = False, ledger_pin: Path | None = None,
-                    author: str = "all") -> dict:
+                    author: str = "all", scrap_k: int = 2, biography: bool = False,
+                    instruct_close: bool = True) -> dict:
     """Writer arm: a persistent authored identity carried as data, not as adjectives.
 
     The identity is a ledger of real artifacts on this machine — commit subjects, a
@@ -621,16 +622,24 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str
         # 反復され」 — and wrote sample_incident as its replacement, which then sat unwired
         # while the arm went on calling the sampler it was meant to retire. A list of k peer
         # facts is rendered as k peer sections; an incident is one chain.
-        incident = wl.sample_incident(state, topic)
+        incident = wl.sample_incident(state, topic, scrap_k=scrap_k)
         entries = incident["entries"]
         if not entries:
             raise SystemExit("writer ledger is empty; run writer_ledger.py --force")
         ledger = wl.render_incident(incident, show_urls=show_urls)
+        if biography:
+            ledger = f"{wl.render_biography()}\n\n{ledger}"
+            # the gate's whitelist is built from `entries`, so the biography has to be in it
+            entries = entries + wl.biography_entries()
         prior = wl.render_prior(state)
 
     out = run_claude_json(
-        WRITER_PROMPT.format(ledger=ledger, prior=prior, topic=topic,
-                             length_spec=LENGTH_SPEC, extra_rule=extra_rule),
+        WRITER_PROMPT.format(
+            ledger=ledger, prior=prior, topic=topic, length_spec=LENGTH_SPEC,
+            extra_rule=extra_rule,
+            no_fill="埋めるために一般論を足す必要はありません。" if instruct_close else "",
+            close_rule=("- まだ直っていないと書かれているものは、直っていません。まとめないでください。"
+                        if instruct_close else "")),
         model, [],
     )
     rounds = 1
@@ -1707,6 +1716,27 @@ LIVE_ARMS = {
     "writer_human": ("writer, ledger restricted to human-authored commits",
                      lambda topic, model: generate_writer(
                          topic, model, ledger_pin=LEDGER_PINS["human"], author="human")),
+    # P0 — is the arm's signature ending material, or is it simply asked for? The prompt
+    # says 「まとめないでください」 while the docstring credits the ledger's 未解決 entries.
+    # Nobody has separated them. Same pinned ledger, the instruction removed.
+    "writer_p0": ("writer, ledger only — the instructed non-conclusion removed",
+                  lambda topic, model: generate_writer(
+                      topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent",
+                      instruct_close=False)),
+    # E1 — surplus. Same spine, same ledger, only the count of unused scraps varies.
+    "writer_k0": ("writer, zero surplus (spine only)",
+                  lambda topic, model: generate_writer(
+                      topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent", scrap_k=0)),
+    "writer_k12": ("writer, high surplus (12 scraps)",
+                   lambda topic, model: generate_writer(
+                       topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent", scrap_k=12)),
+    # A second ledger for the writer rather than the work: career, what they know, what they
+    # do NOT know, past incidents, when they are free. Finiteness on axes the artifact ledger
+    # never bounded — above all ignorance, which no arm has ever been able to express.
+    "writer_bio": ("writer + biographical ledger (career/knowledge/ignorance/habits)",
+                   lambda topic, model: generate_writer(
+                       topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent",
+                       biography=True)),
     "writer_agent": ("writer, ledger restricted to agent-authored commits",
                      lambda topic, model: generate_writer(
                          topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent")),
