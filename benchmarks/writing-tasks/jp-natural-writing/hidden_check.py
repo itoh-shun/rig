@@ -1902,28 +1902,42 @@ def main() -> None:
     # run 3 did not — the arm went 12/24, 9/24, then 0/24, and nothing in the recorded
     # output said the material had moved underneath it. Fingerprint what a run actually
     # used so a later comparison can tell drift from effect.
+    # Fingerprint every ledger a run could have drawn from, not just the default one.
+    # Reading STATE_PATH alone was wrong once the provenance arms landed: they read
+    # pinned snapshots, so a run whose arms used an 85-entry human ledger and a 93-entry
+    # agent ledger (4 open items each) recorded "89件 / 未解決 1" — the default state file,
+    # which no arm had touched. A fingerprint that describes material the run did not use
+    # is worse than none: it reads as provenance and licenses a comparison that is invalid.
     ledger_fingerprint = None
     try:
         import writer_ledger as _wl
-        if _wl.STATE_PATH.exists():
-            _state = json.loads(_wl.STATE_PATH.read_text())
-            _facts = "\n".join(sorted(e["fact"] for e in _state.get("entries", [])))
-            ledger_fingerprint = {
-                "entries": len(_state.get("entries", [])),
-                "open_items": sum(1 for e in _state.get("entries", [])
-                                  if e.get("status") == "未解決"),
+
+        def _fp(path):
+            _state = json.loads(path.read_text())
+            _entries = _state.get("entries", [])
+            _facts = "\n".join(sorted(e["fact"] for e in _entries))
+            return {
+                "entries": len(_entries),
+                "open_items": sum(1 for e in _entries if e.get("status") == "未解決"),
+                "author_filter": _state.get("author_filter", "all"),
                 "sha1": hashlib.sha1(_facts.encode()).hexdigest()[:12],
             }
+
+        sources = {"default": _wl.STATE_PATH}
+        sources.update({f"pin:{k}": v for k, v in LEDGER_PINS.items()})
+        ledger_fingerprint = {name: _fp(path) for name, path in sources.items()
+                              if path.exists()}
     except Exception as exc:
         ledger_fingerprint = {"error": f"{type(exc).__name__}: {exc}"}
 
 
     if improvement is not None:
         print(f"  判定: {'PASS' if improvement >= 5 else 'FAIL'}")
-    if ledger_fingerprint and "sha1" in ledger_fingerprint:
-        print(f"  ledger: {ledger_fingerprint['entries']}件 / 未解決 "
-              f"{ledger_fingerprint['open_items']} / sha1 {ledger_fingerprint['sha1']} "
-              f"— 異なる sha1 の実行同士は writer 系アームを比較できない")
+    if ledger_fingerprint and "error" not in ledger_fingerprint:
+        for _name, _fpv in ledger_fingerprint.items():
+            print(f"  ledger[{_name}]: {_fpv['entries']}件 / 未解決 {_fpv['open_items']} "
+                  f"/ author={_fpv['author_filter']} / sha1 {_fpv['sha1']}")
+        print("  — 異なる sha1 の実行同士は writer 系アームを比較できない")
 
     results = {
         "mode": "live" if args.live else "fixture",
