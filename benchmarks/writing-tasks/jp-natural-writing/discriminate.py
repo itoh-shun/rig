@@ -58,27 +58,46 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 {{"human": "A" または "B", "reasoning": "<日本語で一文>"}}"""
 
 
-def load_pairs(run_path: Path, corpus: Path, arms: list[str], ceiling: int) -> list[dict]:
-    record = json.loads(run_path.read_text())
+def load_pairs(run_paths: list[Path], corpus: Path, arms: list[str] | None,
+               ceiling: int, opponents: int) -> list[dict]:
+    """Build (generated, human) pairs, several human opponents per topic.
+
+    Opponent count is the binding constraint on this test's resolving power. One article
+    per topic gives 8 pairs = 16 trials per arm, and at a fooled-rate near 2/16 that
+    cannot separate a doubling from noise (~150 trials would be needed). Repeating a
+    judgment on the *same* pair does not help — those trials correlate. Distinct
+    opponents do, and they cost nothing to add: the corpus already holds several articles
+    per topic and no new generation is involved.
+
+    Several run files can be passed. Their arms are merged into one job list so that
+    every condition faces byte-identical opponents inside a single invocation — the
+    paired design the linkified control used.
+    """
     index = json.loads((corpus / "index.json").read_text())
-    by_topic: dict[str, str] = {}
-    for entry in index:
-        # first article per topic, deterministically — same opponent for every arm
-        by_topic.setdefault(entry["topic"], (corpus / entry["file"]).read_text())
+    by_topic: dict[str, list[tuple[str, str]]] = {}
+    for entry in sorted(index, key=lambda e: e["file"]):  # deterministic opponent order
+        by_topic.setdefault(entry["topic"], []).append(
+            (entry["file"], (corpus / entry["file"]).read_text()))
 
     pairs = []
-    for arm in arms:
-        for sample in record["arms"][arm]["samples"]:
-            human = by_topic.get(sample["topic"])
-            if human is None:
+    for run_path in run_paths:
+        record = json.loads(run_path.read_text())
+        for arm in (arms if arms is not None else record["arms"]):
+            if arm not in record["arms"]:
                 continue
-            pairs.append({
-                "arm": arm,
-                "topic": sample["topic"],
-                "generated": f"{sample['title']}\n\n{sample['description']}"[:ceiling],
-                "human": human[:ceiling],
-                "abs_score": sample.get("score"),
-            })
+            for sample in record["arms"][arm]["samples"]:
+                for human_file, human in by_topic.get(sample["topic"], [])[:opponents]:
+                    pairs.append({
+                        "arm": arm,
+                        "topic": sample["topic"],
+                        "opponent": human_file,
+                        # pair identity is arm-independent, so conditions can be compared
+                        # pair-by-pair rather than only in aggregate
+                        "pair_id": f"{sample['topic']}::{human_file}",
+                        "generated": f"{sample['title']}\n\n{sample['description']}"[:ceiling],
+                        "human": human[:ceiling],
+                        "abs_score": sample.get("score"),
+                    })
     return pairs
 
 
@@ -97,20 +116,26 @@ def judge_pair(pair: dict, human_pos: str, model: str) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", type=Path, default=HERE / "results/2026-07-30-novoice.json")
+    ap.add_argument("--run", type=Path, action="append", required=True,
+                    help="run record; repeatable — all runs are judged against the same opponents")
     ap.add_argument("--corpus", type=Path, required=True)
-    ap.add_argument("--arms", default="bare,writer,writer_novoice")
+    ap.add_argument("--arms", default="", help="comma-separated; empty = every arm in every run")
+    ap.add_argument("--opponents", type=int, default=4,
+                    help="human articles per topic (raises resolving power; see load_pairs)")
     ap.add_argument("--ceiling", type=int, default=2500)
     ap.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
+    ap.add_argument("--parallel", type=int, default=MAX_PARALLEL)
     ap.add_argument("--json-out", type=Path)
     args = ap.parse_args()
 
-    arms = [a.strip() for a in args.arms.split(",") if a.strip()]
-    pairs = load_pairs(args.run, args.corpus, arms, args.ceiling)
+    arms = [a.strip() for a in args.arms.split(",") if a.strip()] or None
+    pairs = load_pairs(args.run, args.corpus, arms, args.ceiling, args.opponents)
+    arms = list(dict.fromkeys(p["arm"] for p in pairs))
     jobs = [(p, pos) for p in pairs for pos in ("A", "B")]
-    print(f"{len(pairs)} pairs x 2 orders = {len(jobs)} calls  (judge {args.judge_model})\n")
+    print(f"{len(pairs)} pairs x 2 orders = {len(jobs)} calls  (judge {args.judge_model})")
+    print(f"arms: {', '.join(arms)}   opponents/topic: {args.opponents}\n")
 
-    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
+    with ThreadPoolExecutor(max_workers=args.parallel) as pool:
         verdicts = list(pool.map(lambda j: judge_pair(j[0], j[1], args.judge_model), jobs))
 
     for (pair, _), verdict in zip(jobs, verdicts):
@@ -126,16 +151,43 @@ def main() -> None:
         results[arm] = {"correct": correct, "trials": len(trials), "rate": round(rate, 3)}
         print(f"{arm:<16}{rate * 100:>7.0f}%{f'({correct}/{len(trials)})':>12}")
 
+    # Paired comparison. Aggregate rates hide the thing worth knowing: whether a mutation
+    # moved *the same pairs*. The linkified control looked identical in aggregate (14/16
+    # both sides) and was identical pair-by-pair too — that second fact is what made the
+    # zero conclusive rather than a coincidence of matching totals.
+    paired = {}
+    if len(arms) >= 2:
+        base = arms[0]
+        by_pair = {}
+        for pair in pairs:
+            fooled_n = sum(1 for t in pair["trials"] if not t["correct"])
+            by_pair.setdefault(pair["pair_id"], {})[pair["arm"]] = fooled_n
+        for arm in arms[1:]:
+            both = [(pid, v[base], v[arm]) for pid, v in by_pair.items()
+                    if base in v and arm in v]
+            gained = [p for p in both if p[2] > p[1]]
+            lost = [p for p in both if p[2] < p[1]]
+            paired[arm] = {"vs": base, "pairs": len(both),
+                           "gained": len(gained), "lost": len(lost),
+                           "unchanged": len(both) - len(gained) - len(lost)}
+            print(f"\n対応ありペア比較  {base} → {arm}   ({len(both)} ペア)")
+            print(f"  騙せる方向へ動いた {len(gained)} / 逆方向 {len(lost)} / 不動 "
+                  f"{len(both) - len(gained) - len(lost)}")
+            for pid, b, a in gained + lost:
+                print(f"    {pid:<44} 騙せた試行 {b} → {a}")
+
     fooled = [(p, t) for p in pairs for t in p["trials"] if not t["correct"]]
     print(f"\n見破られなかった試行 {len(fooled)} 件:")
-    for pair, trial in fooled[:8]:
-        print(f"  [{pair['arm']}/{pair['topic']}] 絶対採点では {pair['abs_score']}")
+    for pair, trial in fooled[:10]:
+        print(f"  [{pair['arm']}/{pair['topic']}] vs {pair['opponent']}")
         print(f"    → {trial['reasoning'][:170]}")
 
     if args.json_out:
         args.json_out.write_text(json.dumps(
-            {"run": str(args.run), "ceiling": args.ceiling, "judge_model": args.judge_model,
-             "summary": results,
+            {"runs": [str(r) for r in args.run], "ceiling": args.ceiling,
+             "opponents_per_topic": args.opponents,
+             "judge_model": args.judge_model,
+             "summary": results, "paired": paired,
              "pairs": [{k: v for k, v in p.items() if k not in ("generated", "human")}
                        for p in pairs]},
             ensure_ascii=False, indent=2))

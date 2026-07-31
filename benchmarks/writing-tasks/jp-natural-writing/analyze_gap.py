@@ -44,10 +44,25 @@ COLLOQUIAL = re.compile(r"(んです|んだ|けど|じゃない|ちゃっ|しま
 LATIN_OR_NUM = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,}")
 
 
+# Markdown lines that are not prose. Splitting on 。 alone glues these into the adjacent
+# text, and since none of them contain 。 the result is a single "sentence" hundreds of
+# characters long. The human corpus is full of them (image embeds, bullet lists, tables)
+# and the arms produce almost none, so leaving them in does not add noise symmetrically —
+# it manufactures a human/AI gap on every length-derived feature. Measured on this
+# corpus, dropping them moves the human sentence-length mean from 263.5 to 45.7 and the
+# stdev from 169.4 to 34.7, i.e. from "5x the arms" to "the same as the arms".
+NON_PROSE_LINE = re.compile(
+    r"^\s*(?:!\[.*|\|.*|>.*|[-*+]\s.*|\d+\.\s.*|\[.*\]\(.*\)\s*|https?://\S+\s*)$")
+
+
 def sentences(text: str) -> list[str]:
     body = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     body = re.sub(r"(?m)^#{1,6} .*$", "", body)
-    return [s.strip() for s in re.split(r"(?<=[。！？])", body) if s.strip()]
+    body = "\n".join(ln for ln in body.split("\n") if not NON_PROSE_LINE.match(ln))
+    # Split on terminators *and* line breaks: a prose line with no 。 (a caption, a short
+    # aside) is one unit, not a continuation of the line above it.
+    parts = re.split(r"(?<=[。！？])|\n", body)
+    return [s.strip() for s in parts if s.strip()]
 
 
 def paragraphs(text: str) -> list[str]:
