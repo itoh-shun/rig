@@ -368,6 +368,100 @@ def mutate_M6(text: str, min_sentence: int = 60, min_clause: int = 15) -> str:
     return "\n".join(out_lines)
 
 
+# ------------------------------------------------------------------------- M7 forgery
+#
+# The definitional test. Every winning verdict cites the same things — a real commit sha,
+# a real 16-significant-digit elapsed_s, a real assertion — and the recorded conclusion has
+# been that *real material* is the one lever that works. But the judge runs read-only and
+# never checks any of it. So the question the whole ledger apparatus rests on has never
+# been asked: is it the material being real, or the material having the SHAPE of something
+# transcribed rather than composed?
+#
+# M7 replaces every externally-verifiable value with a same-shaped value that points at
+# nothing. Substitution is CONSISTENT — one real token always maps to one fake token
+# across the whole article — because inconsistent replacement would also destroy internal
+# cross-reference, and then a change could not be attributed to externality rather than
+# to incoherence. Digit counts, hex length and exponent form are preserved exactly.
+#
+#   no movement  -> the ledger and the containment gate are unnecessary; what is needed is
+#                   the form of transcription, which is far cheaper to produce
+#   movement     -> something beyond form rides on real material even though the judge
+#                   cannot verify it, and that becomes the next thing to measure
+# One alternation, one pass. Running the patterns as separate re.sub calls meant the
+# decimal pattern re-entered the mantissa of a value the scientific pattern had already
+# forged, producing `9.935431822939974e.-06` — a malformed number, which is a generation
+# artefact of its own and would have been measured as if it were the forgery.
+SPECIFIC_RE = re.compile(
+    r"(?<![\d.])\d+\.\d{6,}e[-+]?\d+"                                    # 1.23456789e-06
+    r"|(?<![\d.])\d+\.\d{6,}(?![\d.])"                                   # 1.234567890123
+    r"|(?<![0-9a-zA-Z])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9a-zA-Z])"
+)
+
+
+def mutate_M7(text: str) -> str:
+    """Replace verifiable specifics with same-shaped values that point at nothing."""
+    rng = random.Random(int(hashlib.sha1(text.encode("utf-8")).hexdigest()[:8], 16))
+    table: dict[str, str] = {}
+
+    def forge(match: re.Match) -> str:
+        real = match.group(0)
+        if real in table:
+            return table[real]                       # consistent across the article
+        if "." in real:
+            head, _, rest = real.partition(".")
+            mantissa, sep, exponent = rest.partition("e")
+            frac = "".join(rng.choice("0123456789") for _ in range(len(mantissa)))
+            while frac == mantissa:
+                frac = frac[:-1] + rng.choice("0123456789")
+            fake = f"{head}.{frac}{sep}{exponent}"
+        else:
+            fake = "".join(rng.choice("0123456789abcdef") for _ in range(len(real)))
+            while fake == real:
+                fake = fake[:-1] + rng.choice("0123456789abcdef")
+        table[real] = fake
+        return fake
+
+    return SPECIFIC_RE.sub(forge, text)
+
+
+# --------------------------------------------------------------------------- M8 typos
+#
+# The falsification test for "surface never moves it". Typos are a surface feature, but
+# they are also process evidence: the calibration corpus credited `num_trainig_steps` and
+# 「わけでわない」 as human, and what a typo shows is that the writer's attention was on the
+# world rather than on the text. If the surface conclusion (§1 of the redefinition memo) is
+# right, this must come out at the null floor like every other surface mutation. If it
+# moves, that conclusion was wrong and the mutations tested were simply the wrong ones.
+#
+# Deliberately kept away from ledger-derived strings so it cannot be confused with M7:
+# only kana in running prose is touched, never a hash, a number or an error message.
+KANA_TYPOS = [("ではない", "でわない"), ("という", "とゆう"), ("ずつ", "づつ"),
+              ("どおり", "どうり"), ("こんにちは", "こんにちわ"), ("しづらい", "しずらい"),
+              ("いう", "ゆう"), ("できない", "でない")]
+
+
+def mutate_M8(text: str, count: int = 3) -> str:
+    """Inject a few kana typos at lumpy, seeded positions."""
+    rng = random.Random(int(hashlib.sha1(text.encode("utf-8")).hexdigest()[8:16], 16))
+    sites = []
+    for wrong_from, wrong_to in KANA_TYPOS:
+        start = 0
+        while (idx := text.find(wrong_from, start)) >= 0:
+            # never inside a fenced block, a heading or an error string
+            line = text.rfind("\n", 0, idx) + 1
+            if not NON_PROSE.match(text[line:text.find("\n", idx) if text.find("\n", idx) > 0 else len(text)]):
+                sites.append((idx, wrong_from, wrong_to))
+            start = idx + 1
+    if not sites:
+        return text
+    rng.shuffle(sites)
+    chosen = sorted(sites[:count], reverse=True)     # apply right-to-left, indices stay valid
+    out = text
+    for idx, wrong_from, wrong_to in chosen:
+        out = out[:idx] + wrong_to + out[idx + len(wrong_from):]
+    return out
+
+
 MUTATIONS = {
     "M1": ("段落頭の接続詞を削除", mutate_M1),
     "M2": ("隣接文を非一様な間隔で結合", mutate_M2),
@@ -375,6 +469,8 @@ MUTATIONS = {
     "M4": ("末尾を文の途中で切断", mutate_M4),
     "M5": ("文末を丁寧体へ変換", mutate_M5),
     "M6": ("長文を節境界で分割", mutate_M6),
+    "M7": ("実在値を同形の非実在値へ一貫置換", mutate_M7),
+    "M8": ("散文に仮名の誤字を注入", mutate_M8),
 }
 
 
