@@ -63,6 +63,15 @@ TOPICS = [
 # (rig_workbench/orchestrate/providers.py::_READONLY_ENFCE).
 READONLY_TOOLS = ["--allowedTools", "Read,Grep,Glob"]
 
+# Pinned ledger snapshots for the provenance arms. Pinning is what makes two writer runs
+# comparable at all: the ledger is derived from `git log`, so an unpinned run rebuilds it
+# every time the repo moves, and the recorded incident-sampling comparison already lost a
+# run to that (run3 scored 0/24 against run1's 12/24 on a ledger that had changed under it).
+LEDGER_PINS = {
+    "human": HERE / "ledger-human.json",
+    "agent": HERE / "ledger-agent.json",
+}
+
 # v1: the criteria the first live run used. Kept so gate revisions are measurable
 # against each other, not just against no-gate.
 #
@@ -581,7 +590,8 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 
 
 def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str = "",
-                    show_urls: bool = False) -> dict:
+                    show_urls: bool = False, ledger_pin: Path | None = None,
+                    author: str = "all") -> dict:
     """Writer arm: a persistent authored identity carried as data, not as adjectives.
 
     The identity is a ledger of real artifacts on this machine — commit subjects, a
@@ -604,7 +614,7 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str
     import writer_ledger as wl
 
     with wl.STATE_LOCK:
-        state = wl.build_ledger()
+        state = wl.build_ledger(pin=ledger_pin, author=author)
         # sample_incident, not sample_for_topic. The ledger's own author documented the flat
         # sampler as a recorded negative result — 「Measured at 79.0 against bare's 89.2」,
         # every verdict naming 「各節が『事実→内省→日付への接続』という同一テンプレートで
@@ -1689,6 +1699,17 @@ LIVE_ARMS = {
     "fieldnote": ("fieldnote — investigate the repo, report it, gate on containment",
                   lambda t, m: _fieldnote_public(generate_fieldnote(t, m))),
     "writer": ("writer's ledger — closed inventory of real artifacts", generate_writer),
+    # Provenance split. Same prompt, same gate, same sampler; the only difference is whose
+    # commits are in the ledger. Read the confound in the README before quoting a number:
+    # the maintainer's commits and the agent's are also about different subjects here
+    # (releases and packaging vs benchmark and docs), and the ledger's non-commit entries
+    # — the failing assertions, the measurements — are agent-produced in both arms.
+    "writer_human": ("writer, ledger restricted to human-authored commits",
+                     lambda topic, model: generate_writer(
+                         topic, model, ledger_pin=LEDGER_PINS["human"], author="human")),
+    "writer_agent": ("writer, ledger restricted to agent-authored commits",
+                     lambda topic, model: generate_writer(
+                         topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent")),
     "relay": ("relay — passes that never see the article whole", generate_relay),
     "writercut": ("writer + harness-side excision of paragraph closers", generate_writercut),
     "fieldpaste": ("fieldnote + harness-pasted real command output", generate_fieldpaste),

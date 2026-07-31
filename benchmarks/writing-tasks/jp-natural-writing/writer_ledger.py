@@ -26,6 +26,7 @@ material, not because it was told to leave a loose end.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import re
@@ -51,10 +52,33 @@ STATE_PATH = HERE / "writer_state.json"
 
 
 def _run(argv: list[str], cwd: Path = REPO, timeout: int = 400) -> str:
+    """Run a probe command. A command that could not run is reported, not swallowed.
+
+    Silence and emptiness look identical here, and that is expensive: a checkout without
+    pytest makes `python3 -m pytest` exit 1 with an empty stdout and "No module named
+    pytest" on stderr, which probe_test_failures reads as "no tests are failing". Measured
+    on this machine that left the ledger with 1 未解決 entry out of 89 — and 未解決 material
+    is the entire reason the writer arm works. It is the same failure the module already
+    fixed once for probe_results (one AttributeError silently cost every measurement entry).
+
+    Note the discriminating condition is nonzero-exit AND empty stdout, not FileNotFoundError:
+    the probe runs `sys.executable -m pytest`, and sys.executable always exists. pytest
+    exits nonzero with a full report when tests fail, which is the case that must stay quiet.
+    """
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except FileNotFoundError:
+        print(f"[writer_ledger] probe tool missing: {argv[0]} — contributes nothing",
+              file=sys.stderr)
         return ""
+    except subprocess.TimeoutExpired:
+        # The tool exists and simply did not finish. A thin ledger IS correct here.
+        print(f"[writer_ledger] probe timed out after {timeout}s: {' '.join(argv[:3])}",
+              file=sys.stderr)
+        return ""
+    if proc.returncode != 0 and not proc.stdout.strip():
+        print(f"[writer_ledger] probe produced nothing and exited {proc.returncode}: "
+              f"{' '.join(argv[:4])}\n  stderr: {proc.stderr.strip()[:200]}", file=sys.stderr)
     return proc.stdout
 
 
@@ -70,19 +94,40 @@ def _tokens(*parts: str) -> list[str]:
     return [t for t in seen if t]
 
 
-def probe_commits(limit: int = 40) -> list[dict]:
+# Who wrote the material. The judge caught the fieldnote arms on provenance —
+# 「承認プロンプトや cwd 維持といったコーディングエージェント特有の体験記述」— and the
+# conclusion recorded then was that grounding in real material only works if the material
+# is human. This repo has both: of the last 200 commits, 83 are Claude's and 50 are the
+# maintainer's. Splitting the probe by author turns "does provenance leak into the prose"
+# into one controlled comparison instead of a change of task.
+AGENT_AUTHORS = ("Claude",)
+
+
+def probe_commits(limit: int = 40, author: str = "all") -> list[dict]:
     """Real commit subjects. The embarrassing ones are the point.
 
     `fix(benchmark): repair SyntaxError in --topics pushed in the previous commit` is a
     sentence no model writes about itself unprompted, and it is true.
+
+    `author` selects whose commits count: "all", "human" (everything not authored by an
+    agent) or "agent". The window widens for the filtered variants so the entry count
+    stays comparable — a human-only ledger built from the same 40 commits would be a
+    quarter the size, and ledger size is itself a variable (a thin ledger makes the prose
+    vague where it is empty).
     """
     entries = []
-    raw = _run(["git", "log", f"-{limit}", "--date=short", "--format=%h|%ad|%s"])
+    window = limit if author == "all" else limit * 4
+    raw = _run(["git", "log", f"-{window}", "--date=short", "--format=%h|%ad|%an|%s"])
     for line in raw.splitlines():
-        parts = line.split("|", 2)
-        if len(parts) != 3:
+        parts = line.split("|", 3)
+        if len(parts) != 4:
             continue
-        sha, when, subject = parts
+        sha, when, who, subject = parts
+        is_agent = any(who.startswith(a) for a in AGENT_AUTHORS)
+        if (author == "human" and is_agent) or (author == "agent" and not is_agent):
+            continue
+        if len(entries) >= limit:
+            break
         entries.append({
             "kind": "commit",
             "when": when,
@@ -94,6 +139,7 @@ def probe_commits(limit: int = 40) -> list[dict]:
             "urls": ([f"https://github.com/itoh-shun/rig/commit/{sha}"]
                      + [f"https://github.com/itoh-shun/rig/pull/{m}"
                         for m in re.findall(r"#(\d{2,5})", subject)]),
+            "author": who,
             "tokens": _tokens(sha, when, subject)
                       + [f"https://github.com/itoh-shun/rig/commit/{sha}"]
                       + [f"https://github.com/itoh-shun/rig/pull/{m}"
@@ -246,15 +292,32 @@ PROBES = (probe_commits, probe_test_failures, probe_env, probe_results, probe_fi
 # ---------------------------------------------------------------------------- state
 
 
-def build_ledger(force: bool = False) -> dict:
-    """Build (or load) the writer's state. Probes run once; runs are reproducible after."""
-    if STATE_PATH.exists() and not force:
-        return json.loads(STATE_PATH.read_text())
+def ledger_sha1(state: dict) -> str:
+    """Fingerprint of the material, independent of article history."""
+    facts = "\n".join(e["fact"] for e in state["entries"])
+    return hashlib.sha1(facts.encode("utf-8")).hexdigest()[:12]
+
+
+def build_ledger(force: bool = False, pin: Path | None = None,
+                 author: str = "all") -> dict:
+    """Build (or load) the writer's state. Probes run once; runs are reproducible after.
+
+    `pin` names a snapshot file to build into and read back from. Without it the state
+    lives at one fixed path that every run shares, and the ledger is rebuilt from
+    `git log`'s most recent commits — so it changes whenever the repo does. The recorded
+    incident-sampling comparison lost a third run to exactly this: run3 scored 0/24
+    against run1's 12/24 and was found afterwards to have been built on a different
+    ledger, making it uncomparable rather than a refutation. Recording the sha1 detected
+    that after the fact; a pin prevents it.
+    """
+    path = pin or STATE_PATH
+    if path.exists() and not force:
+        return json.loads(path.read_text())
 
     entries: list[dict] = []
     for probe in PROBES:
         try:
-            entries += probe()
+            entries += (probe(author=author) if probe is probe_commits else probe())
         except Exception as exc:
             # A broken probe still contributes nothing rather than a substitute — but it
             # must not be indistinguishable from a probe that had nothing to say. One
@@ -267,13 +330,16 @@ def build_ledger(force: bool = False) -> dict:
         entry["id"] = f"L{i:03d}"
         entry.setdefault("used_in", [])
 
-    state = {"writer_id": "w1", "entries": entries, "articles": []}
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1))
+    state = {"writer_id": "w1", "author_filter": author, "entries": entries, "articles": []}
+    state["sha1"] = ledger_sha1(state)
+    state["path"] = str(path)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=1))
     return state
 
 
 def save_state(state: dict) -> None:
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1))
+    Path(state.get("path") or STATE_PATH).write_text(
+        json.dumps(state, ensure_ascii=False, indent=1))
 
 
 # --------------------------------------------------------------------------- sampling

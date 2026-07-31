@@ -1,6 +1,6 @@
 ---
 description: "rig/drill — reviewer 検出率の実測（ミューテーション・ドリル）。既知のバグの種を worktree に注入して review fan-out を走らせ、どの reviewer が何を検出したかをスコアボード化。--replay でペルソナ編集後の回帰リプレイ（過去 diff への再実行で verdict 差分）。ペルソナ品質を意見でなく数字にする。"
-argument-hint: "[--seeds <n>] [--clean] [--personas <a,b,…>] [--verify-findings] [--replay [<persona>]]"
+argument-hint: "[--seeds <n>] [--clean] [--personas <a,b,…>] [--verify-findings] [--replay [<persona>]] [--ablate]"
 ---
 
 # rig/drill — reviewer 検出率の実測 🎯
@@ -19,6 +19,7 @@ $ARGUMENTS
 - **`--clean`**：クリーン・コントロール専用モード。バグゼロの no-bug diff（リファクタ/リネーム形）だけを fan-out にかけ、そこへの REJECT・finding を全部誤検出として per-persona `clean_fp_rate` を実測。省略時（既定）はミックス＝種入り diff にクリーン diff を1本混ぜる。
 - **`--verify-findings`**：反証者も同時採点（正しい種を REFUTED したら失点）。
 - **`--replay <persona>`**：ペルソナ編集後、アーカイブ済み過去 diff へ再実行して**新旧 verdict の差分表**＝ペルソナ開発の snapshot テスト。
+- **`--ablate`**：**指摘の因果性テスト**。reviewer が名指しした欠陥だけを diff から除去して再判定し、verdict が翻るかを見る。翻らない指摘は判定を動かしていない＝装飾。帰無対照（無改変の再判定）を先に取る。
 - 本物のコードは触らない（worktree・終了時破棄）。結果は `.rig/drill-results.jsonl` に蓄積。
 
 ## 例
@@ -28,6 +29,7 @@ $ARGUMENTS
 /rig:drill --seeds 10 --verify-findings     # 反証者込みの本気の較正
 /rig:drill --clean                          # no-bug diff だけで clean_fp_rate を較正
 /rig:drill --replay security-reviewer       # 観点を尖らせた後の回帰確認
+/rig:drill --ablate                         # 指摘が verdict の原因か装飾かを分ける
 ```
 
 
