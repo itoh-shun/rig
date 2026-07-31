@@ -1753,9 +1753,35 @@ LIVE_ARMS = {
 
 
 def collect_live(arm: str, model: str) -> list[dict]:
+    """Generate one sample per topic, reporting each as it lands.
+
+    Progress is printed because the silent version cost a whole run: four arms at
+    MAX_PARALLEL=2 is over an hour during which the script emitted exactly one line, and
+    when the process died there was no output to say which arm, which topic, or whether
+    it had produced anything at all. A long job that reports nothing is indistinguishable
+    from a hung one and from a dead one.
+    """
     fn = LIVE_ARMS[arm][1]
+    done = 0
+
+    def one(topic: str) -> dict:
+        nonlocal done
+        try:
+            out = {"topic": topic, **fn(topic, model)}
+        except Exception as exc:
+            # One topic failing used to take the whole pool.map down, discarding every
+            # sample the other topics had already paid for.
+            print(f"    [{arm}] {topic}: FAILED {type(exc).__name__}: {exc}", flush=True)
+            raise
+        done += 1
+        print(f"    [{arm}] {done}/{len(TOPICS)} {topic} "
+              f"({len(out.get('description', ''))}字, {out.get('rounds', '?')} round)",
+              flush=True)
+        return out
+
+    print(f"  生成: {arm}", flush=True)
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
-        return list(pool.map(lambda t: {"topic": t, **fn(t, model)}, TOPICS))
+        return list(pool.map(one, TOPICS))
 
 
 # ----------------------------------------------------------------------------- main
