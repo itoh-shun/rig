@@ -713,7 +713,10 @@ def _load_persona_brief(persona: str) -> str | None:
     by a live #330 bench run: reviewers disagreed (1/3, 2/3 PASS) on code that was already
     objectively correct — consistent with sampling noise on an undifferentiated prompt, not
     genuine multi-perspective review."""
-    path = config.PERSONAS / f"{persona}.md"
+    from rig_workbench.packs.resolver import resolve_asset
+    from rig_workbench.packs.trust import ensure_asset_trusted
+    resolved = resolve_asset("persona", persona, project=config.INVOCATION_CWD)
+    path = ensure_asset_trusted(resolved) if resolved is not None else config.PERSONAS / f"{persona}.md"
     if not path.is_file():
         return None
     text = path.read_text(encoding="utf-8")
@@ -2092,4 +2095,3 @@ def cmd_probe(args):
     print(f"  → {sig} detected: " + ("✓ parseable (usable from rig)" if found
                                 else "✗ not found (prompt/flag tuning needed; the cmd provider accepts an explicit command)"))
     sys.exit(0 if (rc == 0 and found) else 1)
-

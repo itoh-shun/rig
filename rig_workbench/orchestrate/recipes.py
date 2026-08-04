@@ -76,8 +76,10 @@ def _record_trust(path: pathlib.Path, digest: str) -> None:
 
 def _is_project_recipe(path: pathlib.Path) -> bool:
     try:
-        overlay = config.PROJECT_RECIPES.resolve()
-        return path.resolve().is_relative_to(overlay)
+        resolved = path.resolve()
+        overlays = (config.PROJECT_RECIPES.resolve(),
+                    (config.INVOCATION_CWD / ".rig" / "packs").resolve())
+        return any(resolved.is_relative_to(overlay) for overlay in overlays)
     except OSError:
         return False
 
@@ -245,11 +247,15 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
             return chain
         parent_path = None
         fname = f"{parent_name}.md"
-        for base in (current_path.parent, config.PROJECT_RECIPES, config.RECIPES):
+        for base in (current_path.parent,):
             cand = base / fname
             if cand.exists():
                 parent_path = cand
                 break
+        if parent_path is None:
+            from rig_workbench.packs.resolver import resolve_asset
+            resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD)
+            parent_path = resolved.path if resolved is not None else None
         if parent_path is None:
             warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
             return chain
@@ -758,6 +764,11 @@ def resolve_recipe(name: str) -> pathlib.Path:
     p = pathlib.Path(name)
     if p.exists():
         return ensure_recipe_trusted(p)
+    from rig_workbench.packs.resolver import resolve_asset
+    from rig_workbench.packs.trust import ensure_asset_trusted
+    resolved = resolve_asset("recipe", name.removesuffix(".md"), project=config.INVOCATION_CWD)
+    if resolved is not None:
+        return ensure_asset_trusted(resolved)
     fname = name if name.endswith(".md") else f"{name}.md"
     bases = [config.PROJECT_RECIPES]
     org = os.environ.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")

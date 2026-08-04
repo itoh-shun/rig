@@ -312,6 +312,42 @@ def test_installed_wheel_runs_stdlib_only_eval_capture_validate_list(tmp_path):
     assert task_id in listing.stdout and case_path.is_file()
 
 
+def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path):
+    wheel_dir = tmp_path / "wheel-pack"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    environment = tmp_path / "venv-pack"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+    outside = tmp_path / "pack-outside"
+    outside.mkdir()
+    pack_root = outside / "packs"
+    initialized = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "init", "wheel-pack",
+         "--root", str(pack_root)], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    validated = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "validate",
+         str(pack_root / "wheel-pack")], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    doctor = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "doctor",
+         str(pack_root / "wheel-pack"), "--json"], cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    assert [initialized.returncode, validated.returncode, doctor.returncode] == [0, 0, 0], (
+        initialized.stderr + validated.stderr + doctor.stderr
+    )
+    assert json.loads(doctor.stdout)["status"] == "ok"
+
+
 def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
     wheel_dir = tmp_path / "wheel-eval-run"
     wheel_dir.mkdir()

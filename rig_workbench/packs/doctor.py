@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+import pathlib
+from .resolver import catalog, pack_roots
+from .validation import validate_pack, validate_tiered_collection
+
+
+def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | str | None = None) -> dict:
+    findings: list[dict] = []
+    roots: list[pathlib.Path]
+    if path is not None:
+        roots = [pathlib.Path(path).resolve()]
+    else:
+        roots = [item for _tier, root in pack_roots(project) if root.is_dir()
+                 for item in sorted(root.iterdir()) if item.is_dir()]
+    manifests: dict[str, dict] = {}
+    entries: list[tuple[str, pathlib.Path]] = []
+    tier_by_path = {item.resolve(): tier for tier, pack_root in pack_roots(project)
+                    if pack_root.is_dir() for item in pack_root.iterdir() if item.is_dir()}
+    for root in sorted(roots):
+        try:
+            manifest = validate_pack(root)
+            manifests[manifest["id"]] = manifest
+            entries.append((tier_by_path.get(root.resolve(), "selected"), root))
+        except Exception as exc:
+            findings.append({"code": "invalid_pack", "path": str(root), "detail": str(exc)})
+    if not findings:
+        try:
+            validate_tiered_collection(entries)
+        except Exception as exc:
+            detail = str(exc)
+            code = next((name for token, name in (
+                ("cycle", "dependency_cycle"), ("missing dependency", "missing_dependency"),
+                ("incompatible dependency", "incompatible_dependency"),
+                ("collision", "collision"), ("duplicate pack", "duplicate_pack"),
+            ) if token in detail), "invalid_collection")
+            findings.append({"code": code, "path": "collection", "detail": detail})
+    grouped: dict[tuple[str, str], list] = {}
+    try:
+        for item in catalog(project=project):
+            grouped.setdefault((item.kind, item.name), []).append(item)
+    except Exception as exc:
+        if not any(item["detail"] == str(exc) for item in findings):
+            findings.append({"code": "invalid_collection", "path": "collection",
+                             "detail": str(exc)})
+    for (kind, name), items in sorted(grouped.items()):
+        if len(items) > 1:
+            findings.append({"code": "shadow", "asset": f"{kind}:{name}",
+                             "detail": [str(item.path) for item in items]})
+    project_root = pathlib.Path(project or pathlib.Path.cwd()).resolve()
+    for legacy in (project_root / ".rig" / "recipes", project_root / ".claude" / "rig"):
+        if legacy.exists() and (project_root / ".rig" / "packs").exists():
+            findings.append({"code": "legacy_conflict", "path": str(legacy),
+                             "detail": "legacy and pack tiers coexist"})
+    return {"pack_doctor_schema_version": 1, "status": "ok" if not findings else "failed",
+            "packs": sorted(manifests), "findings": findings}

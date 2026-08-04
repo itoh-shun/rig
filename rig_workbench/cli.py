@@ -400,6 +400,7 @@ Sub-commands:
   baseline capture|compare|show ...     versioned benchmark baseline and scorecard
   eval validate|list|capture|run|compare|promote ...
                                         versioned regression evaluation cases
+  pack init|validate|doctor ...          self-contained prompt packs
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
   version                               show version
@@ -445,6 +446,10 @@ def main() -> None:
         from .eval import cli as eval_cli
 
         sys.exit(eval_cli.cmd_eval(rest))
+    if sub == "pack":
+        from .packs import cli as pack_cli
+
+        sys.exit(pack_cli.cmd_pack(rest))
     if sub == "sensor-bench":
         from . import sensor_bench as sensor_bench_mod
 
