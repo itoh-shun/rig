@@ -312,6 +312,87 @@ def test_installed_wheel_runs_stdlib_only_eval_capture_validate_list(tmp_path):
     assert task_id in listing.stdout and case_path.is_file()
 
 
+def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
+    wheel_dir = tmp_path / "wheel-eval-run"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    environment = tmp_path / "venv-eval-run"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    repo = tmp_path / "eval-run-repo"
+    outside = tmp_path / "eval-run-outside"
+    outside.mkdir()
+    case_id = "wheel-eval-run"
+    timestamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    case = {
+        "case_schema_version": 1, "id": case_id, "version": 1,
+        "title": "Wheel eval run", "status": "draft", "incident": True,
+        "provenance": {"source_task_id": "rig-wheel-eval-run", "source_commit": "a" * 40,
+                       "source_hashes": {"task.json": "b" * 64}, "captured_at": timestamp},
+        "surfaces": ["cli"], "suite": "wheel", "tags": ["smoke"],
+        "provider_policy": {"mode": "allowlist", "allowed": ["mock"]},
+        "repeat": 3, "red_thresholds": {"max_success_rate": 1 / 3},
+        "green_thresholds": {"min_success_rate": 1.0},
+        "deterministic_checks": ["contains:scenario"],
+        "semantic_rubric": [
+            {"id": "correct", "description": "Output is correct", "weight": 1.0}
+        ],
+        "target_inputs": {"scenario": "target"},
+        "clean_controls": {"scenario": "clean"},
+        "missing_requirements": [],
+        "failure_summary": "Captured incident", "created_at": timestamp, "updated_at": timestamp,
+    }
+    draft = repo / ".rig" / "evals" / "drafts" / case_id / "case.json"
+    draft.parent.mkdir(parents=True)
+    draft.write_text(json.dumps(case, ensure_ascii=False, sort_keys=True,
+                                separators=(",", ":")) + "\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "eval@test.invalid"], cwd=repo,
+                   check=True)
+    subprocess.run(["git", "config", "user.name", "eval-test"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "eval fixture"], cwd=repo, check=True)
+    eval_env = _isolated_env()
+    eval_env["RIG_EVAL_ATTESTATION_KEY"] = "wheel-test-attestation-key-at-least-32-bytes"
+    common = [case_id, "--provider", "mock", "--model", "fixture", "--repeat", "3",
+              "--repo", str(repo)]
+    baseline = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "run", *common,
+         "--phase", "baseline", "--judge-provider", "mock", "--judge-model", "fixture"],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    current = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "run", *common,
+         "--phase", "current", "--judge-provider", "mock", "--judge-model", "fixture"],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    assert baseline.returncode == current.returncode == 0, baseline.stderr + current.stderr
+    compared = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "compare",
+         "--baseline", baseline.stdout.strip().splitlines()[-1],
+         "--current", current.stdout.strip().splitlines()[-1], "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+
+    assert compared.returncode == 0, compared.stdout + compared.stderr
+    assert json.loads(compared.stdout)["status"] == "pass"
+    promoted = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "promote", case_id,
+         "--baseline", baseline.stdout.strip().splitlines()[-1],
+         "--current", current.stdout.strip().splitlines()[-1], "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    assert promoted.returncode == 0, promoted.stdout + promoted.stderr
+    assert (repo / "evals" / "cases" / case_id / "case.json").is_file()
+    assert draft.is_file()
+
+
 def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_path):
     assert not tmp_path.resolve().is_relative_to(REPO_ROOT.resolve())
     wheel_dir = tmp_path / "wheel"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import math
 import re
@@ -26,12 +27,26 @@ _REQUIRED = _TOP_FIELDS - {"failure_summary"}
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 _RUBRIC_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _SHA = re.compile(r"^[0-9a-f]{7,64}$")
+_SPEC_EXCLUDED_FIELDS = frozenset({
+    "status", "title", "failure_summary", "missing_requirements", "created_at", "updated_at",
+})
 
 
 def canonical_json(value: Any) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     ) + "\n"
+
+
+def evaluation_spec_payload(case: dict) -> dict:
+    """Return behavior/provenance fields whose hash survives draft promotion lifecycle edits."""
+    return {key: value for key, value in case.items() if key not in _SPEC_EXCLUDED_FIELDS}
+
+
+def evaluation_spec_hash(case: dict) -> str:
+    return hashlib.sha256(
+        canonical_json(evaluation_spec_payload(case)).encode("utf-8")
+    ).hexdigest()
 
 
 def _exact(obj: Any, fields: set[str], where: str, required: set[str] | None = None) -> dict:

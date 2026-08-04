@@ -398,7 +398,8 @@ Sub-commands:
                                         bare vs rig A/B benchmark
                                         (schema v2; paid providers require explicit opt-in)
   baseline capture|compare|show ...     versioned benchmark baseline and scorecard
-  eval validate|list|capture ...        versioned regression evaluation cases
+  eval validate|list|capture|run|compare|promote ...
+                                        versioned regression evaluation cases
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
   version                               show version

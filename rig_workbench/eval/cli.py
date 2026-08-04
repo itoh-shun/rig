@@ -9,6 +9,9 @@ import sys
 
 from .capture import capture_case
 from .cases import EvalCaseError, canonical_json, validate_case
+from .compare import compare_results, validate_result
+from .promote import promote_case
+from .runner import make_judge_adapter, run_case
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -21,6 +24,29 @@ def _parser() -> argparse.ArgumentParser:
     capture = sub.add_parser("capture", help="capture a workbench task as an unapproved draft")
     capture.add_argument("task_id")
     capture.add_argument("--repo", default=".")
+    run = sub.add_parser("run", help="run one evaluation case or suite")
+    run.add_argument("case_or_suite")
+    run.add_argument("--provider", required=True,
+                     choices=["mock", "claude", "codex", "command"])
+    run.add_argument("--model", required=True)
+    run.add_argument("--repeat", required=True, type=int)
+    run.add_argument("--phase", required=True, choices=["baseline", "current"])
+    run.add_argument("--repo", default=".")
+    run.add_argument("--command", dest="provider_command")
+    run.add_argument("--timeout", type=float, default=30)
+    run.add_argument("--judge-provider", choices=["mock", "claude", "codex", "command"])
+    run.add_argument("--judge-model")
+    run.add_argument("--judge-command")
+    run.add_argument("--judge-timeout", type=float, default=30)
+    compare = sub.add_parser("compare", help="compare baseline and current results")
+    compare.add_argument("--baseline", required=True)
+    compare.add_argument("--current", required=True)
+    compare.add_argument("--repo", default=".")
+    promote = sub.add_parser("promote", help="promote a draft backed by passing evidence")
+    promote.add_argument("draft_id")
+    promote.add_argument("--baseline", required=True)
+    promote.add_argument("--current", required=True)
+    promote.add_argument("--repo", default=".")
     return parser
 
 
@@ -137,6 +163,48 @@ def _list_command(repo_arg: str) -> int:
     return 0
 
 
+def _resolve_repo(repo_arg: str) -> pathlib.Path:
+    try:
+        return pathlib.Path(repo_arg).resolve()
+    except OSError as exc:
+        raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
+
+
+def _resolve_cases(root: pathlib.Path, selector: str) -> list[dict]:
+    candidate = pathlib.Path(selector)
+    if candidate.exists():
+        return [case for _path, case in _load_unique_cases(_case_paths(candidate))]
+    loaded = _load_unique_cases(_repo_case_paths(root))
+    by_id = [case for _path, case in loaded if case["id"] == selector]
+    if by_id:
+        return by_id
+    by_suite = [case for _path, case in loaded if case["suite"] == selector]
+    if not by_suite:
+        raise EvalCaseError(f"evaluation case or suite not found: {selector}")
+    return by_suite
+
+
+def _read_result(path_arg: str) -> dict:
+    path = pathlib.Path(path_arg)
+    try:
+        raw = path.read_text(encoding="utf-8")
+        result = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise EvalCaseError(f"cannot read evaluation result: {exc}") from exc
+    validate_result(result)
+    if raw != canonical_json(result):
+        raise EvalCaseError(f"evaluation result is not canonical JSON: {path}")
+    return result
+
+
+def _case_for_result(root: pathlib.Path, result: dict) -> dict:
+    matches = [case for _path, case in _load_unique_cases(_repo_case_paths(root))
+               if case["id"] == result["case_id"]]
+    if len(matches) != 1:
+        raise EvalCaseError("matching evaluation case was not found")
+    return matches[0]
+
+
 def cmd_eval(argv: list[str]) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -149,6 +217,42 @@ def cmd_eval(argv: list[str]) -> int:
             output, _case = capture_case(args.repo, args.task_id)
             print(f"Captured draft: {output}")
             print("Missing requirements remain; capture does not prove a red reproduction.")
+            return 0
+        if args.command == "run":
+            root = _resolve_repo(args.repo)
+            cases = _resolve_cases(root, args.case_or_suite)
+            if bool(args.judge_provider) != bool(args.judge_model):
+                raise EvalCaseError("judge provider and model must be specified together")
+            judge_adapter = (
+                make_judge_adapter(
+                    provider=args.judge_provider, model=args.judge_model, repo=root,
+                    command=args.judge_command, timeout_s=args.judge_timeout,
+                )
+                if args.judge_provider else None
+            )
+            for case in cases:
+                output, _result = run_case(
+                    case, repo=root, provider=args.provider, model=args.model,
+                    repeat=args.repeat, phase=args.phase, command=args.provider_command,
+                    timeout_s=args.timeout, judge_adapter=judge_adapter,
+                )
+                print(output)
+            return 0
+        if args.command == "compare":
+            root = _resolve_repo(args.repo)
+            baseline = _read_result(args.baseline)
+            current = _read_result(args.current)
+            case = _case_for_result(root, baseline)
+            report = compare_results(baseline, current, case=case)
+            print(canonical_json(report), end="")
+            return 0 if report["status"] == "pass" else 1
+        if args.command == "promote":
+            baseline = _read_result(args.baseline)
+            current = _read_result(args.current)
+            output, _case = promote_case(
+                args.repo, args.draft_id, baseline, current
+            )
+            print(output)
             return 0
     except EvalCaseError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
