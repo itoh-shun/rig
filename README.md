@@ -273,7 +273,7 @@ The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time:
 | `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | humor packs with real content underneath |
 | `movie` 🎬 / `scenario` 🎬✍️ | a general video-creation harness and its scenario-writing front-stage |
 
-`/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. `/rig:sales`, `/rig:talk`, `/rig:goal`, `/rig:magi`, and the humor packs all bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched.
+`/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. Core flows and explicitly installed extensions both bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched. See the Extension Catalog in `skills/rig/SKILL.md` for opt-in domain packs. Review an installed project pack, set `RIG_ALLOW_PROJECT_PACKS=1` on its first run to record asset trust, then invoke it with `$rig --recipe <installed-name>`; installation alone does not register its command asset as a host slash command.
 
 ## 9. Diff / accept / discard
 
@@ -520,7 +520,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
 
-These are useful after you understand the core safety flow (§4–§6) — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog. (`/rig:queue` is covered in §5, `/rig:init` in the FAQ, `/rig:sales` in §8, and Experimental commands have their own section — §14.)
+These are useful after you understand the core safety flow (§4–§6) — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §5, `/rig:init` in the FAQ, and Experimental commands have their own section — §14.)
 
 ### Install
 

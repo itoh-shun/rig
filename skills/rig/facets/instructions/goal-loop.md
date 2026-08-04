@@ -25,7 +25,7 @@
 gap を**最も縮める最小の1手**を決める。「どの `/rig:*` コマンドを、どの flag / recipe / 対象で、1回回すか」に翻訳する。
 
 - 例: 実装が要る → `/rig:dev "<gap を埋める変更>"`。レビューだけ要る → `/rig:dev --only review`。設計から要る → `/rig:dev --design "<…>"`。
-- **新しいフローを発明しない**。既存の `/rig:*`（dev/sales/…）へ委譲する。利用可能なコマンドは動的に確認する（新 pack は自動的に候補に入る）。
+- **新しいフローを発明しない**。既存の `/rig:*` または installed recipe へ委譲する。利用可能なコマンドと resolver catalog を動的に確認する。
 - 1周回で全部やろうとしない。1手 → 照合 → また1手。
 
 ### ④ 委譲実行
@@ -57,6 +57,6 @@ gap を**最も縮める最小の1手**を決める。「どの `/rig:*` コマ�
 ## 原則
 
 - goal 自身は重い処理を抱えない。実装・レビュー・調査・検証は委譲先と subagent が context-minimal で回す。
-- engine（SKILL.md）と dev / sales / talk のフローは変更しない。goal は周回ドライバであって engine の再定義ではない。
+- engine（SKILL.md）と委譲先のフローは変更しない。goal は周回ドライバであって engine の再定義ではない。
 - **基準が羅針盤**。基準を増やすより**基準を明確にする**方が収束は速い（acceptance-gate K の目安に従う）。
 - **検証は独立に**（`policies/independent-verification`）。生成者の自己採点を「達成」の根拠にしない。verification を生成と切り離すのが、自走ループの一番の事故防止。

@@ -18,7 +18,7 @@ autonomy: interactive
 
 # sales-enablement
 
-> **ドメイン pack 注記**: rig engine（`SKILL.md`）を dev と**共用**する sales ドメイン pack の生成 recipe。engine は書き換えず、生成 persona・instruction・output-contract を足すだけで成立する。`deal-review`（商談の事後レビュー）と対をなす「**前段の資材生成**」。`/rig:sales --material` / `--script` から起動。
+> **ドメイン pack 注記**: rig engine（`SKILL.md`）を dev と**共用**する sales ドメイン pack の生成 recipe。engine は書き換えず、生成 persona・instruction・output-contract を足すだけで成立する。`deal-review`（商談の事後レビュー）と対をなす「**前段の資材生成**」。installed recipe として起動する。
 
 ## 使う場面
 
@@ -51,4 +51,4 @@ autonomy: interactive
 
 - **実在機能のみ・捏造禁止・盛った実績を書かない**（資材に根拠が無い訴求は出さない）。
 - **不明は `[要記入: …]`**（価格・実績・社名を埋めた風にしない）。
-- 生成物は `/rig:dev --recipe de-ai-smell` に通すと AI 臭をさらに落とせる（仕上げ・任意）。
+- 生成物は利用環境の文章校正フローへ通して仕上げてもよい（任意）。

@@ -18,7 +18,7 @@ autonomy: interactive
 
 # goal-loop
 
-> **モード pack 注記**: これは rig engine（`SKILL.md`）を dev / sales / talk と**共用**する goal モードの recipe。engine は書き換えず、`goal-driver` persona と `goal-loop` instruction を足すだけで成立する（engine 不変の継続実証）。
+> **モード pack 注記**: これは rig engine（`SKILL.md`）を core flow や installed extension と**共用**する goal モードの recipe。engine は書き換えず、`goal-driver` persona と `goal-loop` instruction を足すだけで成立する（engine 不変の継続実証）。
 
 ## 使う場面
 

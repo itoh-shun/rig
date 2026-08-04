@@ -21,7 +21,7 @@ def test_load_persona_brief_strips_frontmatter_and_returns_body():
 
 
 def test_load_persona_brief_resolves_nested_path():
-    assert providers._load_persona_brief("sales/hearing-reviewer") is not None
+    assert providers._load_persona_brief("design/ux-reviewer") is not None
 
 
 def test_load_persona_brief_unknown_persona_returns_none():

@@ -5,6 +5,12 @@ argument-hint: "[商談記録 or ファイルパス] [--material] [--script] [--
 
 # rig/sales — 営業ハーネス（商談レビュー ＋ 資材生成）
 
+> この command asset は installed pack の catalog / resolver 向けです。pack install
+> だけでホストの slash command として自動登録されるものではありません。通常は
+> `$rig --recipe deal-review` または `$rig --recipe sales-enablement` で起動します。
+> project pack の初回実行では内容を確認し、`RIG_ALLOW_PROJECT_PACKS=1` を設定して
+> asset trust を記録してください。以後、内容が変わらない限り再承認は不要です。
+
 **まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev と同じ engine を sales ドメインで使う。
 
 ## モード（2 系統）
@@ -31,12 +37,12 @@ $ARGUMENTS
 
 ## 入力
 
-- 商談記録テンプレ: `skills/rig/templates/deal-record.md`（埋めて渡すと評価精度が上がる。空欄は「情報不足」として指摘される）。
+- 商談記録テンプレ: `wiki:sales-domain/deal-record-template`（埋めて渡すと評価精度が上がる。空欄は「情報不足」として指摘される）。
 - バラバラなメモ・議事録の貼り付けでも受理する。記入は強制しない。
 
 ## 自社固有の評価
 
-`skills/rig/facets/knowledge/sales-domain/` に自社のプロダクト強み・ICP・価格レンジ・競合・良い商談の型を記入しておくと、各レビュアーが自社文脈で評価する。未記入なら汎用観点のみで動く。
+`wiki:sales-domain/_template` を project の知識層へコピーして自社のプロダクト強み・ICP・価格レンジ・競合・良い商談の型を記入すると、各レビュアーが自社文脈で評価する。installed pack 本体は改変しない。未記入なら汎用観点のみで動く。
 
 ## flag
 
@@ -51,13 +57,13 @@ $ARGUMENTS
 
 ```
 # 商談レビュー
-/rig:sales ./deals/2026-06-acme-initial.md          # 記録ファイルをレビュー
-/rig:sales "ACME社 初回。情シス3名。課題は…"          # メモ貼り付けで即レビュー
+$rig --recipe deal-review ./deals/example.md        # 記録ファイルをレビュー
+$rig --recipe deal-review "初回面談メモ…"           # メモ貼り付けで即レビュー
 
 # 資材生成（開発資材 → 営業資材）
-/rig:sales --material                                # このリポジトリ → 営業1枚資料
-/rig:sales --script                                  # → 荷電スクリプト
-/rig:sales --material --script --from ./             # 両方まとめて生成
+$rig --recipe sales-enablement --only material      # このリポジトリ → 営業1枚資料
+$rig --recipe sales-enablement --only script        # → 荷電スクリプト
+$rig --recipe sales-enablement "current repository" # 両方まとめて生成
 ```
 
 

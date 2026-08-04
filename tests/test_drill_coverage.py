@@ -138,15 +138,14 @@ def test_corpus_integrity_warns_on_bad_severity(tmp_path, emitted):
 
 def test_shipped_catalog_covers_prose_recipe_perspectives():
     """#266: the shipped seed catalog must cover the prose/design reviewers so
-    de-ai-smell / design / scenario / roast / deal-review become drillable."""
+    de-ai-smell / design / scenario / roast become drillable."""
     import pathlib
 
     from rig_workbench.validation.config import FACETS
 
     drill_md = pathlib.Path(FACETS) / "instructions" / "drill.md"
     perspectives = parse_seed_perspectives(drill_md)
-    for expected in ("ai-smell", "ux", "a11y", "content-risk", "engagement", "roast",
-                     "hearing", "needs", "proposal", "closing", "next-action"):
+    for expected in ("ai-smell", "ux", "a11y", "content-risk", "engagement", "roast"):
         assert expected in perspectives, f"missing seed perspective: {expected}"
 
 

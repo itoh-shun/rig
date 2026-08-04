@@ -24,7 +24,7 @@ MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 4096
 MAX_COMPRESSION_RATIO = 200
-BUILTIN_DOMAIN_PACKS = frozenset({"sns-x"})
+BUILTIN_DOMAIN_PACKS = frozenset({"sales", "sns-x"})
 
 
 @dataclass(frozen=True)

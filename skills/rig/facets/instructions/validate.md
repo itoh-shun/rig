@@ -13,7 +13,7 @@
 | キー | 解決先 | 存在チェック |
 |---|---|---|
 | `instruction` | `facets/instructions/<name>.md` | 必須・1つ |
-| `personas[]` | **3 tier 順で解決**（project→user→shipped→agent。`/` 区切りでサブディレクトリ可。例 `sales/hearing-reviewer`） | 各要素 |
+| `personas[]` | **3 tier 順で解決**（project→user→shipped→agent。`/` 区切りでサブディレクトリ可。例 `design/ux-reviewer`） | 各要素 |
 | `policies[]` | `facets/policies/<name>.md` | 各要素 |
 | `output_contract` | `facets/output-contracts/<name>.md` | 任意・あれば |
 | `pattern` / `gate` | `patterns/<name>.md` | 任意・あれば |
@@ -253,12 +253,12 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 | フィールド | 検査内容 | 不正時の判定 |
 |---|---|---|
 | frontmatter 自体 | 存在し YAML として読めること | **FAIL** |
-| `name` | `personas/` からの相対パス（拡張子なし・`/` 区切り。例 `sales/hearing-reviewer`）と一致 | **FAIL**（recipe `personas[]` / `--persona <name>` の名前解決と整合しなくなるため） |
+| `name` | `personas/` からの相対パス（拡張子なし・`/` 区切り。例 `design/ux-reviewer`）と一致 | **FAIL**（recipe `personas[]` / `--persona <name>` の名前解決と整合しなくなるため） |
 | `description` | 存在・非空文字列 | **FAIL**（`/rig:catalog` / `--list --global` の表示に使う） |
 | `inject` | 存在する場合はリスト型（`["[[slug]]", …]`） | **FAIL**（⑤ wiki 衛生の `inject:` 先解決チェックとは独立した型チェック） |
 
 ```
-[FAIL] persona sales/hearing-reviewer — name 'hearing-reviewer' が相対パス 'sales/hearing-reviewer' と不一致
+[FAIL] persona design/ux-reviewer — name 'ux-reviewer' が相対パス 'design/ux-reviewer' と不一致
 [FAIL] persona roast-reviewer — frontmatter がありません（name/description が必須）
 ```
 
@@ -360,7 +360,7 @@ PASS: <件数> / WARN: <件数> / FAIL: <件数>
 
 [FAIL] recipe goal-loop → policies: pr-hygiene 参照切れ（facets/policies/pr-hygiene.md が無い）
 [WARN] §2 目録ドリフト: facets/instructions/talk-loop が目録未記載
-[PASS] recipe deal-review: 参照・スキーマ OK
+[PASS] recipe review-only: 参照・スキーマ OK
 ...
 ```
 

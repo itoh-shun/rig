@@ -19,7 +19,7 @@ autonomy: interactive
 
 # pr-review
 
-> **モード pack 注記**: これは rig engine（`SKILL.md`）を dev / sales / talk / goal と**共用**する PR レビュー pack の recipe。engine は書き換えず、`pr-review` instruction を足すだけで成立する。レビュアー agent・persona・`review-verdict` output-contract は dev と共用する。
+> **モード pack 注記**: これは rig engine（`SKILL.md`）を core flow や installed extension と**共用**する PR レビュー pack の recipe。engine は書き換えず、`pr-review` instruction を足すだけで成立する。レビュアー agent・persona・`review-verdict` output-contract は dev と共用する。
 
 ## dev のレビューとの違い
 

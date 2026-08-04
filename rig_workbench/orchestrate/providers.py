@@ -701,7 +701,7 @@ def _judge_output(out: str) -> tuple[bool, list[dict]]:
 
 
 def _load_persona_brief(persona: str) -> str | None:
-    """Resolve a persona name (e.g. "security-reviewer", "sales/hearing-reviewer") to its
+    """Resolve a persona name (e.g. "security-reviewer", "design/ux-reviewer") to its
     facets/personas/<name>.md body, frontmatter stripped. None when unresolvable — callers
     must fall back to the generic prompt rather than silently injecting nothing.
 

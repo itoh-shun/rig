@@ -23,7 +23,7 @@ autonomy: interactive
 
 ## 展開
 
-1. **記録の受理** — `templates/deal-record` 形式またはバラバラなメモを受け取る（欠落は許容）。
+1. **記録の受理** — `wiki:sales-domain/deal-record-template` 形式またはバラバラなメモを受け取る（欠落は許容）。
 2. **知識注入** — `facets/knowledge/sales-domain/`（自社固有）があれば各レビュアーに注入。無ければ汎用観点のみ。
 3. **5観点 並列評価** — `parallel-fanout` で hearing / needs / proposal / closing / next-action を subagent dispatch（context-minimal: 親は dispatch と集約のみ、記録全文を抱えない）。
 4. **収束** — `acceptance-gate` で「全観点判定済み・改善必須点が実行可能・情報不足明示」へ収束。

@@ -271,7 +271,7 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | 中身は本物のユーモア pack 群 |
 | `movie` 🎬 / `scenario` 🎬✍️ | 動画作成ハーネスとそのシナリオライター前段 |
 
-`/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。`/rig:sales`・`/rig:talk`・`/rig:goal`・`/rig:magi`・humor pack 群は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。
+`/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。core flow と明示的に導入した extension は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。opt-in domain pack は `skills/rig/SKILL.md` の Extension Catalog を参照。project pack は内容を確認し、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定してasset trustを記録してから `$rig --recipe <installed-name>` で起動する。installだけでcommand assetがホストのslash commandへ自動登録されるわけではない。
 
 ## 9. diff / accept / discard
 
@@ -518,7 +518,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 
-いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ、`/rig:sales` は §8 でそれぞれ扱っている。Experimental commands は独立した節——§14。）
+いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ で扱っている。Experimental commands は独立した節——§14。）
 
 ### install
 

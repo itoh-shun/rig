@@ -39,7 +39,7 @@ def _frontmatter_refs(path: pathlib.Path) -> list[tuple[str, str]]:
     parsed = parse_frontmatter_subset(path)
     refs: list[tuple[str, str]] = []
     fields = {
-        "instruction": "instruction", "pattern": "pattern",
+        "instruction": "instruction", "pattern": "pattern", "gate": "pattern",
         "output_contract": "output-contract", "extends": "recipe",
         "personas": "persona", "policies": "policy",
     }

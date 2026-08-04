@@ -125,7 +125,7 @@ def check_corpus_integrity(drill_instruction: pathlib.Path | None = None) -> Non
 
 
 def _base_name(persona: str) -> str:
-    """Last path segment of a persona reference (sales/hearing-reviewer → hearing-reviewer)."""
+    """Last path segment of a persona reference (design/ux-reviewer → ux-reviewer)."""
     return persona.rsplit("/", 1)[-1].strip()
 
 

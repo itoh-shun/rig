@@ -14,7 +14,7 @@ autonomy: interactive
 
 # magi
 
-> **モード pack 注記**: これは rig engine（`SKILL.md`）を dev / sales / talk / goal と**共用**する decision モードの recipe。engine は書き換えず、`magi/*` 3 persona・`magi-deliberation` instruction・`magi-consensus` pattern・`magi-verdict` output-contract を足すだけで成立する（engine 不変の継続実証）。`/rig:magi` の入口から起動する。
+> **モード pack 注記**: これは rig engine（`SKILL.md`）を core flow や installed extension と**共用**する decision モードの recipe。engine は書き換えず、`magi/*` 3 persona・`magi-deliberation` instruction・`magi-consensus` pattern・`magi-verdict` output-contract を足すだけで成立する（engine 不変の継続実証）。`/rig:magi` の入口から起動する。
 
 ## 使う場面
 

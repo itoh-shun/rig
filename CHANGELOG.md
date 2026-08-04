@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved the sales review and enablement workflows out of default core into the
+  opt-in `sales` domain extension. Its recipes and catalog command become
+  resolvable after an explicit project install; pack installation does not claim
+  to register a host slash command automatically.
 - Moved the niche `sns-x` workflow out of the default core catalog into the opt-in
   domain extension at `packs/domain/sns-x`. Install it per project with
   `rig-wb pack install domain:sns-x --scope project --allow-unverified`.

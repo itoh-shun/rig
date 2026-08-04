@@ -8,13 +8,17 @@
 
 | id | 説明 | install command |
 |---|---|---|
+| `sales` | 商談レビューと営業資料・荷電スクリプト生成 | `rig-wb pack install domain:sales --scope project --allow-unverified` |
 | `sns-x` | X向け投稿の起案・レビュー・承認分類 | `rig-wb pack install domain:sns-x --scope project --allow-unverified` |
+
+project pack は内容を確認してから、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定して
+asset trust を記録する。起動は `$rig --recipe <installed-name>` を使う。command asset は
+pack install だけでホストの slash command に自動登録されない。
 
 ## pack 一覧（engine 不変で上乗せ）
 
 | pack | 追加ブリックと詳細 |
 |---|---|
-| **sales**（`/rig:sales`） | **商談レビュー**: persona `facets/personas/sales/{hearing,needs,proposal,closing,next-action}-reviewer`＋追加枠 `facets/personas/sales/objection-handler` ／ instruction `facets/instructions/deal-review` ／ output-contract `facets/output-contracts/deal-verdict` ／ recipe `recipes/deal-review` ／ knowledge `facets/knowledge/sales-domain/`。**資材生成（`--material`/`--script`）**: persona `facets/personas/sales/{material-writer,cold-caller}` ／ instruction `facets/instructions/{sales-material,call-script}` ／ output-contract `facets/output-contracts/sales-collateral` ／ recipe `recipes/sales-enablement`（実在機能のみ・誇張禁止。詳細は各 instruction が正本） |
 | **talk**（`/rig:talk`） | persona `facets/personas/talk-assistant` ／ instruction `facets/instructions/talk-loop`（recipe なし＝既存コマンドへ委譲） |
 | **goal**（`/rig:goal`） | persona `facets/personas/goal-driver`（`inject: [[loop-engineering]]`） ／ instruction `facets/instructions/goal-loop` ／ wiki `facets/knowledge/wiki/loop-engineering` ／ policy `facets/policies/independent-verification`（採点者≠生成者） ／ recipe `recipes/goal-loop`（高レベル目標→受け入れ基準→達成までループ。loop engineering＝harness の1つ上の層。**詳細は goal-loop.md が正本**） |
 | **loop**（`/rig:loop`） | instruction `facets/instructions/loop-driver` ／ pattern `patterns/autonomous-loop`（`ScheduleWakeup` 再利用） ／ recipe `recipes/loop`（**繰り返し/監視ループ**＝goal の対極。「いつまた回すか」を担う watch/poll/repeat。停止条件 `--until`/`--times`/明示・安全上限必須・各 tick 報告・時間駆動は 270/1200・300 禁忌。`--every` で `/rig:goal` を定期キックする等、外側スケジューラとして重ねられる） |

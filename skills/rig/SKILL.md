@@ -44,7 +44,6 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 >
 > | pack | 要旨 | 追加ブリック |
 > |---|---|---|
-> | **sales**（`/rig:sales`） | 商談レビュー＋資材生成（`--material`/`--script`） | `facets/personas/sales/{hearing,needs,proposal,closing,next-action}-reviewer` `facets/personas/sales/objection-handler` `facets/personas/sales/{material-writer,cold-caller}` `facets/instructions/deal-review` `facets/instructions/{sales-material,call-script}` `facets/output-contracts/deal-verdict` `facets/output-contracts/sales-collateral` `facets/knowledge/sales-domain/` `recipes/deal-review` `recipes/sales-enablement` |
 > | **talk**（`/rig:talk`） | 会話モード（recipe なし＝既存コマンドへ委譲） | `facets/personas/talk-assistant` `facets/instructions/talk-loop` |
 > | **goal**（`/rig:goal`） | 高レベル目標→受け入れ基準→達成までループ（loop engineering） | `facets/personas/goal-driver` `facets/instructions/goal-loop` `facets/knowledge/wiki/loop-engineering` `facets/policies/independent-verification` `recipes/goal-loop` |
 > | **loop**（`/rig:loop`） | 繰り返し/監視ループ＝goal の対極。停止条件・安全上限必須 | `facets/instructions/loop-driver` `patterns/autonomous-loop` `recipes/loop` |
@@ -89,7 +88,12 @@ domain extension は core 目録や既定の asset 解決へ混ぜない。必�
 
 | id | 説明 | install command |
 |---|---|---|
+| `sales` | 商談レビューと営業資料・荷電スクリプト生成 | `rig-wb pack install domain:sales --scope project --allow-unverified` |
 | `sns-x` | X向け投稿の起案・レビュー・承認分類 | `rig-wb pack install domain:sns-x --scope project --allow-unverified` |
+
+project pack は実行前に内容を確認し、初回は `RIG_ALLOW_PROJECT_PACKS=1` を設定して
+asset trust を記録する。その後 `$rig --recipe <installed-name>` で起動する。pack の
+command asset は install だけでホストの slash command に自動登録されない。
 
 ## 3. PARSE — 起動文字列の解釈
 
@@ -324,7 +328,7 @@ persona 名（recipe の `personas[]` / `--persona <name>` / フォールバッ�
 
 > **org tier**：チームで育てるブリック層。実体は clone した共有 git リポジトリ（`personas/` `recipes/` `knowledge/wiki/` を持つ）で、manifest の `org_dir:` か環境変数 `RIG_ORG_HOME` で指す。解決順は **project → user → org → shipped**（個人の customize がチーム標準に勝ち、チーム標準が shipped に勝つ）。recipe・wiki も同順で解決する。未設定ならこの tier はサイレントにスキップ（従来どおり3 tier）。`--validate --global` / `/rig:catalog` は org tier も走査する。
 
-- `<name>` は `/` 区切りでサブディレクトリ可（例 `sales/hearing-reviewer`）。
+- `<name>` は `/` 区切りでサブディレクトリ可（例 `design/ux-reviewer`）。
 - **persona facet の frontmatter はメタデータ**（`name`＝`personas/` からの相対パス・`description`・任意の `inject:`）。COMPOSE が subagent System に合成するのは**本文のみ**で、frontmatter は注入しない（`inject:` の wiki 解決と `--list --global`／catalog の表示にのみ使う）。スキーマは `--validate` ③-b が点検する。
 - reviewer は引き続き agent（subagent_type）優先。agent が無いときの persona facet フォールバックはこの tier 検索で解決する。
 - **review fan-out の追加枠（shipped）**：`performance-reviewer`（データ量スケール・ホットパス）と `observability-reviewer`（失敗の可視性・ロールバック）は既定の 3-way には入らず、`--persona` / manifest `default_personas` / recipe `personas[]` で必要な変更にだけ足す（`facets/instructions/parallel-review` 参照）。

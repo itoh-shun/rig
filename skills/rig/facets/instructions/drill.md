@@ -47,13 +47,10 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
 | 根拠なし実績・誇大表現 | 出典のない数値・「業界No.1」等を含む公開文 | ODC-documentation | content-risk | High | Blocking |
 | エンゲージメント構造の欠陥 | 冒頭フックなし・CTA 過多・尻すぼみの投稿構成 | ODC-design | engagement | Low | Non-blocking |
 | 一線越えの攻撃 | ユーモアでなく人格・属性攻撃になっている一節 | ODC-documentation | roast | High | Blocking |
-| ヒアリング欠落 | 予算・決裁者・時期を未確認のまま提案へ進む商談メモ | ODC-checking | hearing / needs | High | Blocking |
-| 提案不一致 | 顧客の課題と無関係な機能を推す提案骨子 | ODC-design | proposal | High | Blocking |
-| クロージング不備 | 次アクション・期日なしで終わる商談ログ | ODC-checking | closing / next-action | Medium | Non-blocking |
 
 `cwe/odc` 列は各種の**出所（provenance）**——CWE Top 25 2024・ODC（Orthogonal Defect Classification）欠陥タイプ・ミューテーション演算子（ROR＝関係演算子置換 / LCR＝論理結合子置換）・WCAG 達成基準へのマッピング。カタログの偏り（どの欠陥領域を測れていないか）を外部基準で監査できるようにするための列であり、種の合成時はこの分類に忠実な形で埋め込む。
 
-**散文/設計系の種（v2 追加分・#266）**：drill の仕組み（欠陥を仕込んだ diff を合成→reviewer fan-out→答案キーで採点）はコード専用ではない。de-ai-smell・design/design-audit・scenario・roast・deal-review のような**散文・設計物をレビューする recipe** では、その recipe が普段レビューする成果物の形（文章・画面仕様・公開文・商談メモ）に種を埋め込む——採点方法（検出率・severity 精度・説明品質・クリーン統制）は同一。
+**散文/設計系の種（v2 追加分・#266）**：drill の仕組み（欠陥を仕込んだ diff を合成→reviewer fan-out→答案キーで採点）はコード専用ではない。de-ai-smell・design/design-audit・scenario・roast のような**散文・設計物をレビューする recipe** では、その recipe が普段レビューする成果物の形（文章・画面仕様・公開文）に種を埋め込む——採点方法（検出率・severity 精度・説明品質・クリーン統制）は同一。
 
 ### ② 注入（本物のコードは触らない）
 

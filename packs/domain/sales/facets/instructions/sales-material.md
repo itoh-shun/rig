@@ -10,7 +10,7 @@
 2. **固有知識の注入** — `facets/knowledge/sales-domain/`（自社固有：ICP・価格・差別化・競合）があれば材料として渡す（§5 COMPOSE の知識注入）。無ければ汎用で書き、ICP・価格は `[要記入]` プレースホルダにする。
 3. **生成の dispatch** — `sales/material-writer` を合成して subagent に渡す。**実在機能のみ・機能→ベネフィット翻訳・課題ドリブン・AI 臭禁止**で1枚資料を書かせる。各訴求は出所（どの機能/リリース）を `出所` 列で示させる（誇張・捏造の防止）。
 4. **構造化** — 出力は `output-contracts/sales-collateral`（A. 営業1枚資料）に従わせる。
-5. **接続（任意）** — 生成後、`/rig:dev --recipe de-ai-smell` に通すと AI 臭をさらに落とせる（営業コピーの仕上げ）。荷電スクリプトも要るなら `call-script`（`/rig:sales --script`）へ。
+5. **接続（任意）** — 生成後に利用環境の文章校正フローへ通して仕上げる。荷電スクリプトも要るなら installed recipe `sales-enablement --only script` へ。
 
 ## ガード
 

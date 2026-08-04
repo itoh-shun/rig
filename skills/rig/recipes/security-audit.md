@@ -22,7 +22,7 @@ autonomy: interactive
 
 # security-audit
 
-> **セキュリティ pack 注記**: rig engine（`SKILL.md`）を dev/sales/magi 等と**共用**する security（ホワイトハッカー）pack の recipe。engine は書き換えず、`security/*` persona・`security-audit` instruction・`security-findings` output-contract・`attack-catalog` knowledge を足すだけで成立する。`/rig:sec audit` から起動。
+> **セキュリティ pack 注記**: rig engine（`SKILL.md`）を core flow や installed extension と**共用**する security（ホワイトハッカー）pack の recipe。engine は書き換えず、`security/*` persona・`security-audit` instruction・`security-findings` output-contract・`attack-catalog` knowledge を足すだけで成立する。`/rig:sec audit` から起動。
 
 ## 使う場面
 
