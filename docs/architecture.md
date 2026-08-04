@@ -97,5 +97,4 @@ python3 scripts/validate.py && python3 scripts/orchestrate.py selftest   # ま�
 python3 scripts/orchestrate.py plan review-only --json                    # 合成の決定論を見る
 python3 scripts/orchestrate.py run review-only --provider mock --verifier-provider mock --isolate
 python3 scripts/orchestrate.py graph                                      # ブリック網の型付きグラフ
-/rig:party                                                                # 判定履歴が実データの RPG シートに
 ```

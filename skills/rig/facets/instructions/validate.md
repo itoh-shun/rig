@@ -155,7 +155,7 @@ manifest の参照キーは RESOLVE/COMPOSE 時に**黙って握りつぶされ�
          例: my-step / verify-e2e / implement-backend
   ```
 
-- **step `pattern` / `gate` 列挙値検証（#198、magi-consensus は #227 で追加）**：step の `pattern` が shipped tier の pattern ブリック名（`serial` / `parallel-fanout` / `review-gate` 等 — `patterns/*.md` のファイル名から導出）以外 → **FAIL**（フィールド自体の未設定は許容）。step の `gate` が `review-gate` / `acceptance-gate` / `magi-consensus` 以外 → **FAIL**（フィールド自体の未設定は許容）。`magi-consensus`（`patterns/magi-consensus`）は `magi` recipe が使う多数決集約ゲート（`review-gate` の MAGI 版）で、engine 本体の2値に mode pack が追加する第3の許容値。`extends` 解決後の確定 step リスト（継承分を含む）で評価する。`--validate --global` 時は全 tier の recipe を対象に同チェックを実施する。
+- **step `pattern` / `gate` 列挙値検証（#198）**：step の `pattern` が解決可能な pattern ブリック名（`serial` / `parallel-fanout` / `review-gate` 等）以外 → **FAIL**（フィールド自体の未設定は許容）。step の `gate` が engine の中央 runtime gate registry（現在は `review-gate` / `acceptance-gate`）に無い場合 → **FAIL**。pattern asset が存在するだけでは runtime gate の実装を意味しない。`extends` 解決後の確定 step リスト（継承分を含む）で評価する。`--validate --global` 時は全 tier の recipe を対象に同チェックを実施する。
 
   ```
   [FAIL] recipe my-flow step "verify": pattern の値 "parallel-fanot" は不正な列挙値です。
@@ -163,7 +163,7 @@ manifest の参照キーは RESOLVE/COMPOSE 時に**黙って握りつぶされ�
          例: pattern: parallel-fanout
 
   [FAIL] recipe my-flow step "review": gate の値 "acceptance_gate" は不正な列挙値です。
-         許容値: review-gate, acceptance-gate, magi-consensus
+         許容値: review-gate, acceptance-gate
          例: gate: acceptance-gate
   ```
 
@@ -259,7 +259,7 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 ```
 [FAIL] persona design/ux-reviewer — name 'ux-reviewer' が相対パス 'design/ux-reviewer' と不一致
-[FAIL] persona roast-reviewer — frontmatter がありません（name/description が必須）
+[FAIL] persona example-reviewer — frontmatter がありません（name/description が必須）
 ```
 
 - `--validate --global` 時は project（`<repo>/.claude/rig/personas/`）・user（`~/.claude/rig/personas/`）tier の persona も同スキーマで点検する（`/rig:persona` 生成物の衛生）。tier ディレクトリが無ければサイレントにスキップ。
@@ -278,7 +278,7 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 `commands/*.md` と `agents/*.md` の frontmatter を検査する（`scripts/validate.py` の `check_commands` / `check_agents`）。根拠は実際に起きた2つのバグ：**frontmatter の YAML 不正で全コマンドが未登録**（v0.77 で修正）と**予約名衝突**（v0.78 `skill`→`forge`）。
 
-- commands: frontmatter が YAML として読める（FAIL）／`description` 非空文字列（FAIL）／`argument-hint` は文字列（FAIL・配列は YAML 崩れの温床）／CC 組み込みと衝突実績のある名前（`skill`・`status`）は **WARN**（skill→forge / status→party の前例）。
+- commands: frontmatter が YAML として読める（FAIL）／`description` 非空文字列（FAIL）／`argument-hint` は文字列（FAIL・配列は YAML 崩れの温床）／CC 組み込みと衝突実績のある名前（`skill`・`status`）は **WARN**。
 - agents: frontmatter が読める（FAIL）／`name` がファイル名と一致（FAIL＝subagent_type 解決が壊れる）／`description` 非空（FAIL）／`tools` 未定義は WARN。
 
 ### ⑤ wiki 衛生（`facets/knowledge/_wiki`）

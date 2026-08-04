@@ -26,7 +26,6 @@
 | `default_max_retries` | `acceptance-gate` step の `max_retries` 省略時フォールバック。step ローカル `max_retries` で上書き（#100） | `2` |
 | `org_dir` | チーム共有ブリック層（org tier）のパス。env `RIG_ORG_HOME` でも指定可（SKILL.md §5 tier 解決） | 未設定＝org tier をスキップ |
 | `default_budget` | コスト予算の恒久設定（`low`/`mid`）。`--budget` が優先（§4.4） | 制限なし |
-| `sage_notifications` | `true` で能力獲得系の完了報告（import の lock 記録・persona/knowledge 生成・capture 書き込み）の先頭に `《告》スキル「<name>」を獲得しました` を1行付す。演出のみ・報告本文は不変 | `false` |
 | `default_orchestrate` | `true` で全 RUN を計算的オーケストレーションで回す（`--orchestrate` 等価）。recipe の `checks:`/`needs:` による自動有効化とは独立にプロジェクト全体へ適用 | `false` |
 | `worktree.*` | worktree 運用フラグ。`worktree.enabled` を実際に読んで分岐するのは `facets/personas/implementer`（#225） | `worktree.enabled: false` |
 | `size_thresholds.*` | size-aware 判定の行数閾値（`S_max`/`M_max`/`L_max`）を上書き | pr-hygiene 基準 `100` / `200` / `400` |

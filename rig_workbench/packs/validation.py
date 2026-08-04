@@ -6,6 +6,7 @@ import re
 from rig_workbench import __version__
 from rig_workbench.eval.cases import validate_case
 from rig_workbench.eval.safety import unsafe_text_reason
+from rig_workbench.orchestrate.gates import is_runtime_gate
 from rig_workbench.workbench.destructive import scan_file as destructive_scan_file
 from rig_workbench.workbench.injection import scan_file as injection_scan_file
 
@@ -152,6 +153,18 @@ def validate_pack(path: pathlib.Path | str) -> dict:
         if kind not in PROMPT_KINDS:
             continue
         for item in paths:
+            if kind == "recipe":
+                parsed = parse_frontmatter_subset(root / item)
+                # The dependency-free frontmatter subset intentionally keeps
+                # YAML scalars as text; accept only the exact YAML boolean
+                # spelling (or a native bool from JSON frontmatter).
+                manual_only = parsed.get("no_orchestrate") in (True, "true")
+                for step in parsed.get("steps", []):
+                    gate = step.get("gate") if isinstance(step, dict) else None
+                    if gate and not is_runtime_gate(gate) and not manual_only:
+                        raise PackError(
+                            f"unsupported executable gate without no_orchestrate: true: {gate}"
+                        )
             for ref in _frontmatter_refs(root / item):
                 if ref not in available:
                     raise PackError(f"broken pack reference: {ref[0]}:{ref[1]}")

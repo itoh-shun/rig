@@ -80,6 +80,10 @@ def _state_path(args, default="run-state.json") -> pathlib.Path:
 def cmd_init(args):
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    if fm.get("no_orchestrate") is True:
+        print(f"[ERROR] recipe {fm.get('name', path.stem)} declares no_orchestrate: true; "
+              "use the manual rig engine")
+        sys.exit(2)
     steps = load_steps(fm)
     goal = None
     out = pathlib.Path("run-state.json")
@@ -293,6 +297,10 @@ def cmd_run(args):
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    if fm.get("no_orchestrate") is True:
+        print(f"[ERROR] recipe {fm.get('name', path.stem)} declares no_orchestrate: true; "
+              "use the manual rig engine")
+        sys.exit(2)
     steps = load_steps(fm)
     gen = ver = None
     generators: list[str] = []
@@ -725,90 +733,6 @@ def cmd_fleet(args):
         print("\nPer-persona detection rate: unmeasured (no /rig:drill runs in the target repos)")
 
 
-def cmd_party(_args):
-    """Party roster screen (/rig:party): render RPG-style stats from telemetry, measured drills, and the brick inventory.
-
-    Looks like a game screen, but every line is real data (runs.jsonl / drill-results.jsonl /
-    shipped bricks) = a health-check dashboard for the harness. Read-only."""
-    runs = _read_jsonl(config.RUNS_PATH)
-    drills = _read_jsonl(config.DRILL_PATH)
-    done = sum(1 for r in runs if r.get("final") == "DONE")
-    esc = sum(1 for r in runs if r.get("escalated_at"))
-    total = len(runs)
-
-    # Tally verifier votes (sortie counts, REJECT counts; by is "provider:persona")
-    votes: dict[str, dict] = {}
-    for r in runs:
-        for st in r.get("steps", []):
-            for v in st.get("verdicts", []):
-                persona = (v.get("by") or "?").split(":", 1)[-1]
-                a = votes.setdefault(persona, {"sorties": 0, "rejects": 0})
-                a["sorties"] += 1
-                a["rejects"] += 0 if v.get("ok") else 1
-
-    # drill detection rate (drill.md schema: {"ts":…, "scores":[{"reviewer","detected","seeded","false_positives"}]})
-    atk: dict[str, dict] = {}
-    for d in drills:
-        for s in d.get("scores", []):
-            a = atk.setdefault(s.get("reviewer", "?"), {"detected": 0, "seeded": 0, "fp": 0})
-            a["detected"] += s.get("detected", 0)
-            a["seeded"] += s.get("seeded", 0)
-            a["fp"] += s.get("false_positives", 0)
-
-    # Longest consecutive no-escalation streak (for achievements)
-    streak = best = 0
-    for r in runs:
-        streak = 0 if r.get("escalated_at") else streak + 1
-        best = max(best, streak)
-
-    def _line(name: str, bench: bool = False) -> str:
-        v = votes.get(name, {"sorties": 0, "rejects": 0})
-        a = atk.get(name)
-        power = (f"⚔ detection {a['detected'] / a['seeded'] * 100:3.0f}% (drill {a['detected']}/{a['seeded']}"
-                 + (f", false-pos {a['fp']}" if a["fp"] else "") + ")") if a and a["seeded"] else "⚔ detection unmeasured (calibrate with /rig:drill)"
-        tag = " (reserve)" if bench and v["sorties"] == 0 else ""
-        return f"│ {name:22s} {power}  sorties {v['sorties']:3d} / REJECT {v['rejects']}{tag}"
-
-    party = ["security-reviewer", "design-reviewer", "test-reviewer"]
-    bench = ["performance-reviewer", "observability-reviewer", "api-compat-reviewer",
-             "migration-reviewer", "docs-reviewer"]
-    for extra in (load_manifest().get("default_personas") or []):
-        if extra not in party:
-            party.append(extra)
-
-    print("━━━ rig party roster (/rig:party) ━━━━━━━━━━━━━━━")
-    rate = f"{esc / total * 100:.0f}%" if total else "—"
-    print(f"Lv.{done}  runs {total} / DONE {done} / escalation rate {rate}")
-    print("┌─ party (review fan-out)" + "─" * 30)
-    for name in party:
-        print(_line(name))
-    if "finding-verifier" in votes:
-        fv = votes["finding-verifier"]
-        print(f"│ {'finding-verifier':22s} 🛡 rebuttals {fv['sorties']} (audit rejection quality with runs --personas)")
-    print("├─ reserves (deploy with --persona)" + "─" * 31)
-    for name in bench:
-        print(_line(name, bench=True))
-    print("└" + "─" * 56)
-
-    badges = []
-    if done >= 1:
-        badges.append("🏆 First DONE")
-    if best >= 10:
-        badges.append("🏆 Ten flawless battles (10 consecutive no-escalation)")
-    if total >= 100:
-        badges.append("🏆 Battle-hardened (100 runs)")
-    if any(a["seeded"] and a["detected"] == a["seeded"] and a["seeded"] >= 2 for a in atk.values()):
-        badges.append("🏆 Perfect marksman (all drill seeds detected)")
-    wiki_n = len(list((config.INVOCATION_CWD / ".claude" / "rig" / "knowledge" / "wiki").glob("*.md"))) \
-        if (config.INVOCATION_CWD / ".claude" / "rig" / "knowledge" / "wiki").is_dir() else 0
-    if wiki_n >= 10:
-        badges.append(f"🏆 Grand library (project wiki {wiki_n} pages)")
-    print("Achievements: " + (" / ".join(badges) if badges else "(none yet — get one run to DONE first)"))
-    if not runs:
-        print("\n(no telemetry: RUNs accumulate in .rig/runs.jsonl and grow this screen)")
-    if not drills:
-        print("(detection unmeasured: /rig:drill calibrates reviewer attack power)")
-
 def cmd_runs(args):
     """Run telemetry listing: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD].
 
@@ -1048,4 +972,3 @@ def cmd_install_shim(args):
         print(f"⚠ {target.parent} does not seem to be on $PATH. Add this:")
         print(f"    export PATH=\"{target.parent}:$PATH\"")
     print(f"Verify: `rig models` or `rig --help` (RIG_HOME={config.RIG_HOME})")
-

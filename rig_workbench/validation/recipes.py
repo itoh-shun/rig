@@ -3,6 +3,8 @@
 import pathlib
 import re
 
+from rig_workbench.orchestrate.gates import RUNTIME_GATES
+
 from .config import AGENTS, FACETS, PATTERNS, RECIPES, ROOT
 from .state import _emit, parse_frontmatter
 
@@ -41,11 +43,8 @@ def _check_pattern_or_gate(val: str | None, ctx: str, field: str) -> None:
     _check_exists(PATTERNS / f"{val}.md", ctx, field)
 
 
-_VALID_GATES = ("review-gate", "acceptance-gate", "magi-consensus")
-
-
 def _check_gate(val: str | None, ctx: str, field: str) -> None:
-    """gate only allows the two values review-gate|acceptance-gate (enum FAIL from #198; #227).
+    """Gate values must have a code-backed runtime handler.
 
     The `pattern` field allows every brick name under patterns/, so reusing
     `_check_pattern_or_gate` (existence check) is fine there, but `gate` is
@@ -54,11 +53,11 @@ def _check_gate(val: str | None, ctx: str, field: str) -> None:
     """
     if not val or val in ("—", "-"):
         return
-    if val not in _VALID_GATES:
+    if val not in RUNTIME_GATES:
         _emit(
             "FAIL",
             f"{ctx} — {field}: value '{val}' is an invalid enum value."
-            f" Allowed values: {', '.join(_VALID_GATES)}",
+            f" Allowed values: {', '.join(sorted(RUNTIME_GATES))}",
         )
 
 

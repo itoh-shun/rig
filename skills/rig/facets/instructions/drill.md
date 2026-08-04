@@ -44,13 +44,11 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
 | AI臭マーカー混入 | 空疎な枕詞・根拠なし誇張・均質リズムを含む文章 diff | ODC-documentation | ai-smell | Medium | Non-blocking |
 | UXヒューリスティック違反 | 破壊的操作の確認ダイアログ削除・現在地表示の欠落 | ODC-design（NN/g heuristics） | ux | High | Blocking |
 | アクセシビリティ違反 | alt 欠落・コントラスト不足・フォーカス順の破壊 | WCAG 2.x（1.1.1 / 1.4.3 / 2.4.3） | a11y | High | Blocking |
-| 根拠なし実績・誇大表現 | 出典のない数値・「業界No.1」等を含む公開文 | ODC-documentation | content-risk | High | Blocking |
 | エンゲージメント構造の欠陥 | 冒頭フックなし・CTA 過多・尻すぼみの投稿構成 | ODC-design | engagement | Low | Non-blocking |
-| 一線越えの攻撃 | ユーモアでなく人格・属性攻撃になっている一節 | ODC-documentation | roast | High | Blocking |
 
 `cwe/odc` 列は各種の**出所（provenance）**——CWE Top 25 2024・ODC（Orthogonal Defect Classification）欠陥タイプ・ミューテーション演算子（ROR＝関係演算子置換 / LCR＝論理結合子置換）・WCAG 達成基準へのマッピング。カタログの偏り（どの欠陥領域を測れていないか）を外部基準で監査できるようにするための列であり、種の合成時はこの分類に忠実な形で埋め込む。
 
-**散文/設計系の種（v2 追加分・#266）**：drill の仕組み（欠陥を仕込んだ diff を合成→reviewer fan-out→答案キーで採点）はコード専用ではない。de-ai-smell・design/design-audit・roast のような**散文・設計物をレビューする recipe** では、その recipe が普段レビューする成果物の形（文章・画面仕様・公開文）に種を埋め込む——採点方法（検出率・severity 精度・説明品質・クリーン統制）は同一。
+**散文/設計系の種（v2 追加分・#266）**：drill の仕組み（欠陥を仕込んだ diff を合成→reviewer fan-out→答案キーで採点）はコード専用ではない。de-ai-smell・design/design-audit のような**散文・設計物をレビューする recipe** では、その recipe が普段レビューする成果物の形（文章・画面仕様・公開文）に種を埋め込む——採点方法（検出率・severity 精度・説明品質・クリーン統制）は同一。
 
 ### ② 注入（本物のコードは触らない）
 
@@ -125,7 +123,7 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
   n=2 で 2/2 でも区間は [34%, 100%]＝「満点」でなく「まだほぼ何も言えない」を明示するのが目的。`clean_fp_rate` や severity 精度など他の割合指標にも同じ規則を適用してよい（検出率には必須）。
 - **検出**＝種の `file:line` を証拠アンカーつきで指摘した。**誤検出**＝種でも実バグでもない指摘。
 - `--verify-findings` 時は反証者も採点：正しい種の指摘を REFUTED にしたら失点、誤検出を REFUTED できたら得点。
-- 結果は `.rig/drill-results.jsonl` に**1 run＝1行 JSON** で追記（テレメトリと同格・承認不要。`/rig:party` が読む正準スキーマ。以下は読みやすさのため改行しているが実体は1行）：
+- 結果は `.rig/drill-results.jsonl` に**1 run＝1行 JSON** で追記（テレメトリと同格・承認不要。以下は読みやすさのため改行しているが実体は1行）：
   ```json
   {"ts": "<ISO8601>", "corpus": "standard", "corpus_version": 2, "seeds": 5, "valid_seeds": 4, "clean_diffs": 1,
    "invalid_seeds": [{"class": "例外の握りつぶし", "file": "src/util.py", "line": 17, "refutation": "この catch は到達不能パス上にあり挙動を変えない（finding-verifier の反証全文）"}],
@@ -136,7 +134,7 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
   - `missed`：見逃した種の class 列挙（履歴通算での `add_checklist_item`／`strengthen_security_focus` 判定に使う）。
   - `clean_findings`・`clean_rejects`・`clean_diffs`・`clean_fp_rate`：クリーン・コントロール（③-a）。`--clean` 単独 run では `seeds: 0` で `scores` の検出系フィールドは 0/0。
   - `corpus`・`corpus_version`（#270）：この run の種の選定元（`standard`/`project`。`--corpus all` の run は選定元ごとに**行を分けて**記録し、標準スコアとプロジェクト固有スコアが1行に混ざらないようにする）。フィールドが無い過去の行は `standard` とみなす（#270 以前の run は標準カタログのみだったため）。
-  - 追加フィールドはすべて additive（既存の読み手＝party/digest/dashboard は `detected`/`seeded` 系のみ参照するため互換）。スコアボードのヘッダにも `corpus: standard` の形で選定元を1項表示する。
+  - 追加フィールドはすべて additive（既存の読み手＝digest/dashboard は `detected`/`seeded` 系のみ参照するため互換）。スコアボードのヘッダにも `corpus: standard` の形で選定元を1項表示する。
 
 #### Drill Result（persona 単位の詳細レポート・#新設）
 

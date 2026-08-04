@@ -25,7 +25,7 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 | 種別 | 役割 | 現在の在庫 |
 |---|---|---|
 | **agent**（native 委譲先・優先） | read-only reviewer。専用 context・tool 制限つきで起動 | `agents/security-reviewer` `agents/design-reviewer` `agents/test-reviewer` `agents/performance-reviewer` `agents/observability-reviewer` `agents/api-compat-reviewer` `agents/migration-reviewer` `agents/docs-reviewer` `agents/finding-verifier` `agents/lazy-senior-reviewer` `agents/cognitive-economist-reviewer` |
-| **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/content-risk-reviewer` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
+| **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
 | **instruction facet**（薄い委譲） | 手順の routing。既存 skill/command/agent に委譲する thin な指示 | `facets/instructions/parallel-review` `facets/instructions/intake` `facets/instructions/design` `facets/instructions/implement` `facets/instructions/verify` `facets/instructions/visual-verify` `facets/instructions/pr` `facets/instructions/merge` `facets/instructions/adversarial-review` |
 | **output-contract facet** | subagent 出力の機械抽出可能フォーマット定義 | `facets/output-contracts/review-verdict`（着手判断の集約用・既定） `facets/output-contracts/review-findings`（severity・file:line・Blocking/Non-blocking を明示する詳細版。`/rig:drill` と厳しめレビュー依頼で使用） |
 | **policy facet** | 末尾注入のガードレール | `facets/policies/pr-hygiene` `facets/policies/pre-push-review` `facets/policies/ci-cost` `facets/policies/branch-strategy` `facets/policies/risk-based-testing` `facets/policies/cross-llm-legibility` `facets/policies/suppression-memory`（レビュー却下学習＝`.rig/review-suppressions.jsonl`。REFUTED/却下所見を記録し再指摘を抑止・UPHELD には負ける） `facets/policies/comment-policy`（`--comment` の投稿統制＝severity マッピング・nit 上限5・Pre-existing note・再レビュー収束） |
@@ -52,14 +52,7 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **pr-review**（`/rig:pr`） | PR レビュー（reviewer agent・persona・`review-verdict` は dev 共用） | `facets/instructions/pr-review` `recipes/pr-review` |
 > | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | 自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定。**受け入れ基準 ID の正本は `scripts/workbench.py gates`**（project 独自基準は `.rig/gates.json` で**加算のみ**）。うち4基準は機械センサーが裏付ける（OpenAPI schema-diff / secret scan / anti-tamper / injection-marker） | `patterns/isolated-worktree` `patterns/visual-artifacts` `patterns/computational-orchestration` `scripts/workbench.py` `facets/instructions/workbench` `facets/instructions/workbench-ops` `facets/instructions/gh-flow` `facets/instructions/acceptance-check` `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` `recipes/{bugfix,feature,refactor,documentation}` |
 > | **de-ai-smell**（`/rig:dev --recipe de-ai-smell`） | 散文の AI 臭除去（深層マーカー＋5観点スコア定量ゲート＋語彙ブラックリスト） | `facets/personas/ai-smell-reviewer` `facets/instructions/de-ai-smell` `facets/knowledge/ai-writing-smells` `recipes/de-ai-smell` |
-> | **magi**（`/rig:magi`） | 3賢者の直交3観点で go/no-go を多数決裁定 | `facets/personas/magi/{melchior,balthasar,casper}` `facets/instructions/magi-deliberation` `patterns/magi-consensus` `facets/output-contracts/magi-verdict` `recipes/magi` |
-> | **roast**（`/rig:roast`・humor） | 毒舌ロースト・レビュー（中身は本物・配送をユーモアに） | `facets/personas/roast-reviewer` `facets/instructions/roast` `recipes/roast` |
-> | **coin**（`/rig:coin`・humor） | 可逆で些末な決定を即断する反-bikeshed ゲート（magi の対極） | `facets/personas/coin-flipper` `facets/instructions/coin-flip` `recipes/coin` |
-> | **duck**（`/rig:duck`・humor） | ラバーダック・デバッグ（質問だけ・コードも答えも出さない） | `facets/personas/rubber-duck` `facets/instructions/duck-debug` `recipes/duck` |
 > | **drill**（`/rig:drill`・measurement） | reviewer 検出率の実測（合成 diff にバグの種を注入→6指標スコアボード）。`--replay` でペルソナの snapshot テスト | `facets/personas/strict-senior-engineer` `facets/output-contracts/review-findings` `facets/instructions/drill` `recipes/drill` |
-> | **party**（`/rig:party`・utility・🎮） | パーティ編成画面＝テレメトリ・drill 実測から RPG 風キャラシート。読み取り専用・全行が実データ | `commands/party` |
-> | **sage**（`/rig:sage`・oracle） | 「正解を問う」オラクル。裏取りした断定＋確度＋証拠アンカー・**捏造は機能として存在しない** | `facets/personas/sage/{great-sage,raphael}` `facets/instructions/sage-oracle` `recipes/sage` |
-> | **pre-mortem**（`/rig:pre-mortem`・humor） | 事前検死。「もう壊れた」前提で失敗モードを逆算（magi の補完） | `facets/personas/pre-mortem-analyst` `facets/instructions/pre-mortem` `facets/output-contracts/premortem-report` `recipes/pre-mortem` |
 > | **design**（`/rig:design`） | UI/UX・a11y の作成＋URL 監査（`--ppt`/`--claudedesign`/Playwright は MCP 委譲） | `facets/personas/design/{ui-ux-designer,ux-reviewer,a11y-reviewer}` `facets/instructions/{design-draft,design-vet,design-audit}` `facets/output-contracts/design-verdict` `facets/knowledge/{a11y-wcag,ui-ux-heuristics}` `recipes/{design,design-audit}` |
 > | **test-design**（`/rig:qa`） | 固定7観点のテストケース設計（Test Basis 必須） | `facets/personas/test-designer` `facets/knowledge/qa-test-lenses` `facets/instructions/test-design` `facets/output-contracts/test-cases` `recipes/test-design` |
 > | **harness-audit**（`/rig:harness`） | ハーネスの棚卸し＝空象限と効いていない資産の検出（read-only） | `facets/personas/harness-auditor` `facets/knowledge/harness-taxonomy` `facets/instructions/harness-audit` `facets/output-contracts/harness-map` `recipes/harness-audit` |
@@ -89,6 +82,7 @@ domain extension は core 目録や既定の asset 解決へ混ぜない。必�
 | `sales` | 商談レビューと営業資料・荷電スクリプト生成 | `rig-wb pack install domain:sales --scope project --allow-unverified` |
 | `sns-x` | X向け投稿の起案・レビュー・承認分類 | `rig-wb pack install domain:sns-x --scope project --allow-unverified` |
 | `video-storytelling` | 根拠に接続した動画脚本・検閲・絵コンテ生成 | `rig-wb pack install domain:video-storytelling --scope project --allow-unverified` |
+| `decision-humor` | 合議・安全な即断・問い・事前検死・根拠付き回答の手動モード集 | `rig-wb pack install domain:decision-humor --scope project --allow-unverified` |
 
 project pack は実行前に内容を確認し、初回は `RIG_ALLOW_PROJECT_PACKS=1` を設定して
 asset trust を記録する。その後 `$rig --recipe <installed-name>` で起動する。pack の
@@ -171,7 +165,7 @@ recipe ファイル（`recipes/*.md`）は YAML frontmatter + 本文 Markdown �
 | `id` | ✓ | step 識別子（例 `review` `design` `implement`） |
 | `instruction` | ✓ | 委譲先 instruction facet 名（例 `parallel-review`） |
 | `pattern` | — | 制御フロー（`serial` / `parallel-fanout` / `review-gate` 等） |
-| `gate` | — | 集約/受け入れパターン。`review-gate`（レビュー集約）/ `acceptance-gate`（受け入れ基準まで品質収束。review 以外の step にも付与可）。mode pack が第3の値を追加できる（例 `magi-consensus`＝`recipes/magi` の多数決集約ゲート、`patterns/magi-consensus` 参照） |
+| `gate` | — | コードで実装された集約/受け入れゲート。現在は `review-gate`（レビュー集約）/ `acceptance-gate`（受け入れ基準まで品質収束）。Markdown pattern の存在だけでは実行可能な gate にならない。 |
 | `acceptance` | — | `gate: acceptance-gate` 時の**受け入れ基準リスト**（合否判定の根拠。例 `["build が成功", "lint 0 件", "3-way review に REJECT が無い"]`）。基準を満たすまで収束させる |
 | `max_retries` | — | `gate: acceptance-gate` 時の**最大収束試行数 K**（≥1 の整数）。K 回で受け入れ基準を満たさなければ user へエスカレーション。**省略時フォールバック順：step 省略 → manifest `default_max_retries` → 2**（#100）。§6 stuck-guard（同一エラー反復で発動する別カウンタ）とは独立した上限。 |
 | `model` | — | この step の **generator LLM モデル名**（例: `claude-sonnet-5` / `claude-opus-4-8` / `gpt-5`）。指定時、`build_argv` が `claude -p ... --model <name>` / `codex exec ... -m <name>` に引き渡す（ollama/lmstudio 系は既存の HTTP model resolve が優先）。**「親 = Sonnet / 深堀り step = Opus」を recipe で書ける**。省略時は run 時 flag の `--model` にフォールバック。run 時の **`--step-model <step-id>=<model>`**（繰り返し可）は特定 step だけを実行時に上書きする——優先順位は `--step-model` > recipe `model:` > `--model`（未知の step-id は実行前に ERROR）。 |
@@ -194,7 +188,7 @@ recipe ファイル（`recipes/*.md`）は YAML frontmatter + 本文 Markdown �
 
 ### 4.1 manifest ロード
 
-**`<repo>/.claude/rig.md`** があれば YAML frontmatter を解析してプロジェクト既定として読み込み、無ければ全キーに汎用既定（generic defaults）を適用する。エンジンが読むキー：`build` / `lint` / `test` / `branch.*` / `reviewer` / `production_impact.*` / `skills` / `knowledge.*` / `default_recipe` / `default_personas` / `default_backend` / `default_max_retries` / `org_dir` / `default_budget` / `sage_notifications` / `default_orchestrate` / `worktree.*` / `size_thresholds.*`。**各キーの意味と既定値は `facets/instructions/resolve` 1.**、manifest スキーマの全体定義は `manifests/_template.md` が正本。
+**`<repo>/.claude/rig.md`** があれば YAML frontmatter を解析してプロジェクト既定として読み込み、無ければ全キーに汎用既定（generic defaults）を適用する。エンジンが読むキー：`build` / `lint` / `test` / `branch.*` / `reviewer` / `production_impact.*` / `skills` / `knowledge.*` / `default_recipe` / `default_personas` / `default_backend` / `default_max_retries` / `org_dir` / `default_budget` / `default_orchestrate` / `worktree.*` / `size_thresholds.*`。**各キーの意味と既定値は `facets/instructions/resolve` 1.**、manifest スキーマの全体定義は `manifests/_template.md` が正本。
 
 > repo 同梱の manifest は project recipe と同じく**初回のみ明示同意**が必要（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`）。未同意の manifest はハード停止ではなく警告1行で **「manifest 無し」相当へ soft degrade** する。
 
@@ -586,8 +580,6 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 ユーザーが個別選択した場合、選ばれた項目だけを書き込む。
 
 ### 7.5 事後レポートフォーマット（書き込み後・#20）
-
-> manifest `sage_notifications: true` の場合、レポートの先頭に `《告》学習「<最初のエントリ名>」ほか N 件を記録しました` を1行付す（演出のみ・フォーマット本文は不変）。
 
 書き込み完了後（`--capture` 時も省略しない・§7.3）、何をどこに書いたかを正準フォーマットで報告する。
 

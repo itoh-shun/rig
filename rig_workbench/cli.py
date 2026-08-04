@@ -256,7 +256,6 @@ _orch_delegates = {
     "list",
     "validate",
     "graph",
-    "party",
     "models",
     "probe",
     "install-shim",

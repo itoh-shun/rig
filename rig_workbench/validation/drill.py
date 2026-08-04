@@ -18,11 +18,10 @@ without a seed class are still surfaced (detection rate unmeasured for them).
 
 import pathlib
 
+from rig_workbench.orchestrate.gates import is_runtime_gate
+
 from .config import FACETS
 from .state import _emit, parse_frontmatter
-
-# Same gate values validation/recipes.py accepts (_VALID_GATES).
-_GATE_VALUES = ("review-gate", "acceptance-gate", "magi-consensus")
 
 # The seed catalog table is anchored by this header cell (perspective column).
 _PERSPECTIVE_HEADER = "検出すべき観点"
@@ -163,7 +162,7 @@ def check_drill_coverage(
         if not isinstance(steps, list):
             continue
         steps = [s for s in steps if isinstance(s, dict)]
-        if not any(s.get("gate") in _GATE_VALUES for s in steps):
+        if not any(is_runtime_gate(s.get("gate")) for s in steps):
             continue  # gate-less recipes are out of drill's scope
         gated_total += 1
 

@@ -68,7 +68,7 @@ def run_selftest() -> None:
             "    personas: [security-reviewer, design-reviewer]\n")),
         ("drill-uncovered-reviewer", True, recipe("drill-uncovered-reviewer", "",
             "  - id: review\n    instruction: parallel-review\n    gate: review-gate\n"
-            "    personas: [roast-reviewer]\n")),
+            "    personas: [prose-reviewer]\n")),
         ("drill-gate-no-reviewer", True, recipe("drill-gate-no-reviewer", "",
             "  - id: verify\n    instruction: verify\n    gate: acceptance-gate\n"
             "    acceptance: [\"ok\"]\n    personas: [implementer]\n")),

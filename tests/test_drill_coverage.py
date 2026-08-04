@@ -60,12 +60,12 @@ def test_covered_review_gate_recipe_passes(write_recipe, catalog, emitted):
 def test_uncovered_reviewer_warns_but_never_fails(write_recipe, catalog, emitted):
     path = write_recipe("uncovered", recipe_md("uncovered", (
         "  - id: review\n    instruction: parallel-review\n    gate: review-gate\n"
-        "    personas: [roast-reviewer]\n"
+        "    personas: [prose-reviewer]\n"
     )))
     check_drill_coverage([path], drill_instruction=catalog)
     lines = emitted()
     warns = [line for line in lines if line.startswith("[WARN]")]
-    assert len(warns) == 1 and "roast-reviewer" in warns[0] and "uncovered" in warns[0]
+    assert len(warns) == 1 and "prose-reviewer" in warns[0] and "uncovered" in warns[0]
     assert not any(line.startswith("[FAIL]") for line in lines)  # guidance, not schema
 
 
@@ -138,14 +138,14 @@ def test_corpus_integrity_warns_on_bad_severity(tmp_path, emitted):
 
 def test_shipped_catalog_covers_prose_recipe_perspectives():
     """#266: the shipped seed catalog must cover the prose/design reviewers so
-    de-ai-smell / design / scenario / roast become drillable."""
+    de-ai-smell / design / scenario become drillable."""
     import pathlib
 
     from rig_workbench.validation.config import FACETS
 
     drill_md = pathlib.Path(FACETS) / "instructions" / "drill.md"
     perspectives = parse_seed_perspectives(drill_md)
-    for expected in ("ai-smell", "ux", "a11y", "content-risk", "engagement", "roast"):
+    for expected in ("ai-smell", "ux", "a11y", "engagement"):
         assert expected in perspectives, f"missing seed perspective: {expected}"
 
 

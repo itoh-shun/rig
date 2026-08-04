@@ -246,7 +246,6 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | queue（並列 dispatch） | Beta | 隔離により構造的には安全。UX は発展中（§5） |
 | knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§13） |
 | planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§13） |
-| creative / party 系（MAGI・roast 等） | Experimental | 中身は本物のゲートだが配送が遊び心。既定パスからは外している（§14） |
 
 この表に "Planned" 行はない——未出荷の機能をここに書く方針は取らない。提案は GitHub issue として存在する。表に載っていないコマンドはまだ出荷されていない。
 
@@ -267,8 +266,6 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | `goal-loop` | ゴール駆動ループ |
 | `de-ai-smell` | 散文の AI 臭除去 |
 | `design` 🎨 / `design-audit` 🎨 | UI/UX・a11y の設計作成と URL 監査 |
-| `magi` | 3賢者合議で go/no-go を多数決裁定 |
-| `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | 中身は本物のユーモア pack 群 |
 
 `/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。core flow と明示的に導入した extension は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。opt-in domain pack は `skills/rig/SKILL.md` の Extension Catalog を参照。project pack は内容を確認し、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定してasset trustを記録してから `$rig --recipe <installed-name>` で起動する。installだけでcommand assetがホストのslash commandへ自動登録されるわけではない。
 
@@ -517,7 +514,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 
-いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ で扱っている。Experimental commands は独立した節——§14。）
+いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ、opt-in extension は §14 で扱っている。）
 
 ### install
 
@@ -678,18 +675,9 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 
 プロジェクト manifest `.claude/rig.md` も同じ trust store の背後にあり、専用の同意スイッチ（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`）を持つ。manifest は既定値を供給するだけなので、未同意でも recipe のようにハード拒否せず **soft degrade** する——警告1行を出して「manifest が無い」場合と同じ挙動に落ちる。同梱の git hook は manifest の lint/build/test コマンドを eval する前に記録済みハッシュを検証し、`rig-wb githooks install` がそのハッシュを記録する：hook のインストール＝その時点の manifest への同意であり、以後ファイルを編集すると再同意が必要になる。
 
-## 14. Experimental commands
+## 14. opt-in extension
 
-Experimental commands は、代替的なコラボレーション・創作・遊び心のあるワークフローを探索する。使っているゲートは他と同じ本物——`magi` の判定も `roast` のレビューも中身は本物のコンテンツで、おもちゃではない——が、初見の README を Core/Quality/Advanced のノイズにしないため、既定の日常パス・上記の tier からは意図的に外している。
-
-| コマンド | 内容 |
-|---|---|
-| `/rig:magi`、`/rig:sage` | 決定/知恵モード——MAGI 3賢者合議の go/no-go 投票、sage 流の助言 |
-| `/rig:roast`、`/rig:coin`、`/rig:duck`、`/rig:pre-mortem` | 中身は本物のユーモア pack 群（§8） |
-| `/rig:party` | 実データの上に乗せた party/status 表示の novelty |
-| opt-in domain extensions | Extension Catalogから明示導入する用途特化ワークフロー |
-
-§4〜§9 で説明した Core の AI ワークベンチ体験には不要。
+用途特化ワークフローは既定カタログの外で配布する。Extension Catalog から内容を確認した pack だけを導入すること。project pack の trust は内容ハッシュに紐づき、asset が変わると再同意が必要になる。command asset は明示登録を扱える host 向けの資料であり、install だけで slash command として登録されることはない。
 
 ## 15. Implementation notes
 

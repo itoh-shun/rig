@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from .. import bench_providers as _bench_provider_patches
 from . import config
+from .gates import is_runtime_gate
 from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
@@ -1771,6 +1772,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
     executor = step.get("executor", "generate")
+    if step.get("gate") and not is_runtime_gate(step["gate"]):
+        state["stopped"] = {
+            "reason": f"unsupported executable gate: {step['gate']}",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
     if executor not in ("generate", "risk-assess", "targeted-review", "checks-only"):
         state["stopped"] = {
             "reason": f"unknown executor: {executor}",
@@ -1896,7 +1904,7 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         _run_step_checks(step, st, cfg)
         log(f"   ↳ checks: {sum(c['ok'] for c in st['checks'])}/{len(st['checks'])} ok")
         return
-    if step["gate"] not in ("acceptance-gate", "review-gate"):
+    if not is_runtime_gate(step["gate"]):
         return
     ver_label = "+".join(ver) if isinstance(ver, list) else ver
     if judged:

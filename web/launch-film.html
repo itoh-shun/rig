@@ -112,26 +112,8 @@ const SCENES = [
   { type:"list", dur:5, title:"開発フロー、まるごと。",
     items:["intake → design → implement → verify","review → pr → merge","recipe で固定 ・ --plan でドライラン ・ --tdd / --adversarial / --cross-llm"] },
 
-  { type:"feature", dur:3.6, emoji:"🟧🟩🟦", accent:"#00e5ff",
-    title:"MAGI 合議", subtitle:"「やるべきか」を、赤木博士の3人格の多数決で裁く。" },
-
-  // ★ screen 2: MAGI コンソール
-  { type:"screen", dur:8, frame:"terminal", title:"MAGI SYSTEM", prompt:"❯",
-    lines:[
-      { cmd:"/rig:magi この破壊的変更を今リリースしていいか" },
-      { out:"## MAGI 合議結果" },
-      { out:"判定: 可決（多数決 2:1）  ｜ 集計: 可決2 / 否決1", cls:"ok" },
-      { out:"  MELCHIOR · 1   [可決]  科学者 — 技術的に正しい" },
-      { out:"  BALTHASAR · 2  [否決]  母     — ロールバック未設計", cls:"ac" },
-      { out:"  CASPER · 3     [可決]  女     — 価値はある" },
-      { out:"次アクション: 保留事項（ロールバック手順）を満たして進行" },
-    ] },
-
   { type:"list", dur:5, title:"engine は不変。pack を足すだけ。",
     items:["必要な domain pack は Extension Catalog から明示導入","talk（会話）/ goal（ゴール駆動）/ pr-review","de-ai-smell（AI 臭除去）/ opt-in extensions"] },
-
-  { type:"list", dur:5, title:"ユーモアも、中身は本物の道具。",
-    items:["🌶️ roast（毒舌レビュー）・ 🪙 coin（反 bikeshed）","🦆 duck（ラバーダック）・ ⚰️ pre-mortem（事前検死）","🎰 slot（6号機風 AT）・ 🎬 動画拡張 — この映像も rig 製"] },
 
   { type:"feature", dur:4.5, emoji:"🧵", accent:"#ffcf33",
     title:"run-continuity", subtitle:"中断も、コンテキスト圧縮も跨いで駆動を切らさない。「▸ rig」が常に見える。" },
@@ -141,7 +123,6 @@ const SCENES = [
     lines:[
       { cmd:"python3 scripts/validate.py" },
       { out:"## rig --validate レポート（CI / shipped tier）" },
-      { out:"[PASS] recipe magi: OK" },
       { out:"[PASS] opt-in extension validation: OK" },
       { out:"[PASS] extension pack validation: OK" },
       { out:"PASS: 18 / WARN: 0 / FAIL: 0", cls:"ok" },

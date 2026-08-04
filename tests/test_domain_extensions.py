@@ -214,7 +214,8 @@ def test_sales_markdown_contract_examples_pass_the_declared_deterministic_checks
 @pytest.mark.parametrize("source", [
     "domain:../sns-x", "domain:sns-x/extra", "domain:../sales",
     "domain:sales/extra", "domain:../video-storytelling",
-    "domain:video-storytelling/extra", "domain:absent",
+    "domain:video-storytelling/extra", "domain:../decision-humor",
+    "domain:decision-humor/extra", "domain:absent",
 ])
 def test_builtin_domain_alias_rejects_traversal_and_unknown_ids(source, tmp_path):
     from rig_workbench.packs.installer import install_pack
@@ -265,7 +266,7 @@ def test_pack_gate_reference_is_validated_as_a_core_pattern(tmp_path, monkeypatc
     manifest["hashes"]["recipes/deal-review.md"] = digest(recipe)
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
-    with pytest.raises(PackError, match="broken pack reference: pattern:absent-gate"):
+    with pytest.raises(PackError, match="unsupported executable gate"):
         validate_pack(copied)
 
 

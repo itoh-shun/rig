@@ -6,6 +6,7 @@ import datetime
 import pathlib
 
 from . import config
+from .gates import is_runtime_gate
 
 # ── run-state ────────────────────────────────────────────────────────────────
 def new_state(recipe: str, steps: list[dict], goal: str | None) -> dict:
@@ -212,7 +213,9 @@ def gate_outcome(step: dict, st: dict) -> str:
     gate = step["gate"]
     if not gate:
         return "pass"  # gate-less steps pass through (when checks are empty)
-    needs_verdict = gate in ("acceptance-gate", "review-gate") and not declared
+    if gate and not is_runtime_gate(gate):
+        return "unsupported"
+    needs_verdict = is_runtime_gate(gate) and not declared
     if needs_verdict and not verdicts:
         return "incomplete"            # awaiting the independent verifier's judgment
 
@@ -260,6 +263,10 @@ def compute_next(state: dict) -> tuple[str, str]:
     if outcome == "self-graded":
         return "BLOCKED", (f"step `{sid}`: a verdict from the generator itself (by=self/generator) is invalid. "
                            f"An independent verifier's `verdict` is required (grader != generator).")
+    if outcome == "unsupported":
+        return "BLOCKED", (f"step `{sid}` uses unsupported executable gate `{step['gate']}`. "
+                           "Use the manual engine for this recipe; custom prompt patterns "
+                           "must not pass through as executable gates.")
     if outcome == "pass":
         st["status"] = "passed"
         state["cursor"] += 1
@@ -290,4 +297,3 @@ def compute_next(state: dict) -> tuple[str, str]:
     if findings is not None:
         st["last_failure"] = findings
     return "RETRY", f"step `{sid}` failed → retrying (try {st['retries']+1}/{K}). Address the findings and rerun."
-

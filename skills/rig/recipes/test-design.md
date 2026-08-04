@@ -13,7 +13,7 @@ autonomy: interactive
 
 # test-design
 
-> **モード pack 注記**: rig engine（`SKILL.md`）を dev / magi / de-ai-smell と**共用**する QA pack の recipe。engine は書き換えず、`test-designer` persona・`qa-test-lenses` knowledge・`test-design` instruction・`test-cases` output-contract を足すだけで成立する。`/rig:qa` から起動。
+> **モード pack 注記**: rig engine（`SKILL.md`）を dev / de-ai-smell と**共用**する QA pack の recipe。engine は書き換えず、`test-designer` persona・`qa-test-lenses` knowledge・`test-design` instruction・`test-cases` output-contract を足すだけで成立する。`/rig:qa` から起動。
 
 ## 使う場面
 
@@ -23,7 +23,7 @@ autonomy: interactive
 - 「この移行、現行どおり動くかのテストを設計して」（`--migration`）
 - 「既存のテストケース表、観点の抜けをレビューして」（`--review`）
 
-de-ai-smell（散文の AI 臭）・magi（やるか）とは目的が違う。test-design は**テスト観点とケースの設計**を担う（実行・合否は人間）。
+de-ai-smell（散文の AI 臭）とは目的が違う。test-design は**テスト観点とケースの設計**を担う（実行・合否は人間）。
 
 ## 7観点（取りこぼさない・各 ≥1）
 
