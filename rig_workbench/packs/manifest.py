@@ -90,6 +90,8 @@ def _frontmatter_scalar(raw: str, path: pathlib.Path, lineno: int) -> Any:
     value = raw.strip()
     if not value:
         raise PackError(f"empty frontmatter scalar: {path.name}:{lineno}")
+    if value in {"true", "false"}:
+        return value == "true"
     if value[0] in "[{":
         try:
             parsed = json.loads(value)

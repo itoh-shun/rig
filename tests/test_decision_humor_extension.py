@@ -1,4 +1,5 @@
 import hashlib
+import json
 import pathlib
 import shutil
 
@@ -117,12 +118,19 @@ def test_unknown_gate_and_no_orchestrate_fail_closed(monkeypatch, tmp_path, caps
     step = {"id": "vote", "instruction": "x", "gate": "custom-vote",
             "checks": [], "max_retries": 1}
     state = new_state("custom", [step], None)
-    assert compute_next(state)[0] == "START"
-    assert gate_outcome(step, state["step_state"]["vote"]) == "unsupported"
     assert compute_next(state)[0] == "BLOCKED"
+    assert state["stopped"]["kind"] == "BLOCKED"
+    assert state["step_state"]["vote"]["retries"] == 0
+    assert gate_outcome(step, state["step_state"]["vote"]) == "unsupported"
+
+    monkeypatch.setattr(commands, "resolve_recipe", lambda _name: PACK / "recipes/magi.md")
+    commands.cmd_plan(["magi", "--json"])
+    manual_plan = json.loads(capsys.readouterr().out)
+    assert manual_plan["execution"]["structurally_valid"] is True
+    assert manual_plan["execution"]["orchestratable"] is False
+    assert manual_plan["execution"]["manual_only"] is True
 
     for entrypoint in (commands.cmd_init, commands.cmd_run):
-        monkeypatch.setattr(commands, "resolve_recipe", lambda _name: PACK / "recipes/magi.md")
         with pytest.raises(SystemExit) as stopped:
             entrypoint(["magi"])
         assert stopped.value.code == 2

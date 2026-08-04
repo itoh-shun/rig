@@ -6,11 +6,92 @@ import datetime
 import pathlib
 
 from . import config
-from .gates import is_runtime_gate
+from .gates import is_runtime_gate, validate_executable_steps
+
+EXECUTION_POLICY_VERSION = 1
+_EXECUTION_FIELDS = (
+    "structurally_valid", "orchestratable", "manual_only",
+    "unsupported_gates", "errors", "reason",
+)
+_EXECUTION_STATE_FIELDS = frozenset({
+    "execution_policy_version", "no_orchestrate", "execution",
+})
+
+
+def _exact_equal(left: object, right: object) -> bool:
+    """Compare JSON-shaped values without bool/int coercion or extra fields."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _exact_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _exact_equal(a, b) for a, b in zip(left, right)
+        )
+    return left == right
+
+
+def _state_no_orchestrate(state: dict) -> tuple[object, str | None]:
+    """Read persisted policy while allowing safe pre-policy run-state files."""
+    present = _EXECUTION_STATE_FIELDS.intersection(state)
+    if not present:
+        return False, None  # legacy state: only code-backed gates remain executable
+    if present != _EXECUTION_STATE_FIELDS:
+        return None, "execution policy schema is incomplete"
+    version = state["execution_policy_version"]
+    if type(version) is not int or version != EXECUTION_POLICY_VERSION:
+        return None, f"unsupported execution policy version: {version!r}"
+    if type(state["no_orchestrate"]) is not bool:
+        return None, "execution policy no_orchestrate must be an exact boolean"
+    return state["no_orchestrate"], None
+
+
+def _invalidate_execution(execution: dict, error: str) -> dict:
+    report = dict(execution)
+    report["structurally_valid"] = False
+    report["orchestratable"] = False
+    report["errors"] = [*execution["errors"], error]
+    report["reason"] = error
+    return report
+
+
+def enforce_executable_state(state: dict) -> dict:
+    """Recompute execution safety from steps plus persisted manual-only provenance."""
+    no_orchestrate, policy_error = _state_no_orchestrate(state)
+    persisted = state.get("execution")
+    execution = validate_executable_steps(
+        state.get("steps"), no_orchestrate=no_orchestrate,
+    )
+    if policy_error:
+        execution = _invalidate_execution(execution, policy_error)
+    elif state.get("execution_policy_version") == EXECUTION_POLICY_VERSION:
+        expected = {field: execution[field] for field in _EXECUTION_FIELDS}
+        if not isinstance(persisted, dict) or not _exact_equal(persisted, expected):
+            execution = _invalidate_execution(
+                execution, "persisted execution provenance is inconsistent with run-state policy",
+            )
+    state["execution"] = execution
+    if execution["orchestratable"]:
+        return execution
+    first = execution["unsupported_gates"][0] if execution["unsupported_gates"] else None
+    at = first["step"] if first else "—"
+    state["stopped"] = {
+        "reason": f"computationally nonexecutable: {execution['reason']}",
+        "kind": "BLOCKED",
+        "at": at,
+    }
+    return execution
 
 # ── run-state ────────────────────────────────────────────────────────────────
-def new_state(recipe: str, steps: list[dict], goal: str | None) -> dict:
-    return {
+def new_state(
+    recipe: str, steps: list[dict], goal: str | None, execution: dict | None = None,
+) -> dict:
+    if execution is None:
+        execution = validate_executable_steps(steps)
+    no_orchestrate = execution.get("manual_only") if isinstance(execution, dict) else None
+    state = {
         "recipe": recipe,
         "goal": goal,
         "steps": steps,
@@ -25,7 +106,12 @@ def new_state(recipe: str, steps: list[dict], goal: str | None) -> dict:
         "stopped": None,
         "done": False,
         "history": [],
+        "execution_policy_version": EXECUTION_POLICY_VERSION,
+        "no_orchestrate": no_orchestrate,
+        "execution": execution,
     }
+    enforce_executable_state(state)
+    return state
 
 
 def save_state(state: dict, path: pathlib.Path) -> None:
@@ -166,7 +252,9 @@ def telemetry_append(state: dict, final: str) -> None:
 
 
 def load_state(path: pathlib.Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    state = json.loads(path.read_text(encoding="utf-8"))
+    enforce_executable_state(state)
+    return state
 
 
 def _distill_failures(st: dict) -> str | None:
@@ -232,7 +320,10 @@ def compute_next(state: dict) -> tuple[str, str]:
     """Deterministically compute and apply the next action from the state (mutates state).
     Returns: (action_code, message)
     """
+    enforce_executable_state(state)
     if state["stopped"]:
+        if state["stopped"].get("kind") == "BLOCKED":
+            return "BLOCKED", f"Blocked: {state['stopped']['reason']}"
         return "STOPPED", f"Stopped: {state['stopped']['reason']}"
     steps = state["steps"]
     if state["cursor"] >= len(steps):

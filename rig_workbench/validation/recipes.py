@@ -3,7 +3,7 @@
 import pathlib
 import re
 
-from rig_workbench.orchestrate.gates import RUNTIME_GATES
+from rig_workbench.orchestrate.gates import validate_executable_recipe
 
 from .config import AGENTS, FACETS, PATTERNS, RECIPES, ROOT
 from .state import _emit, parse_frontmatter
@@ -41,24 +41,6 @@ def _check_pattern_or_gate(val: str | None, ctx: str, field: str) -> None:
     if not val or val in ("—", "-"):
         return
     _check_exists(PATTERNS / f"{val}.md", ctx, field)
-
-
-def _check_gate(val: str | None, ctx: str, field: str) -> None:
-    """Gate values must have a code-backed runtime handler.
-
-    The `pattern` field allows every brick name under patterns/, so reusing
-    `_check_pattern_or_gate` (existence check) is fine there, but `gate` is
-    limited to those two values and needs a separate criterion (do not let the
-    existence of e.g. patterns/serial.md cause a false PASS).
-    """
-    if not val or val in ("—", "-"):
-        return
-    if val not in RUNTIME_GATES:
-        _emit(
-            "FAIL",
-            f"{ctx} — {field}: value '{val}' is an invalid enum value."
-            f" Allowed values: {', '.join(sorted(RUNTIME_GATES))}",
-        )
 
 
 _SIZE_TOKEN_RE = re.compile(r"\b(?:S|M|L|XL)\+")
@@ -155,11 +137,6 @@ def check_recipe(path: pathlib.Path) -> None:
     if visual_val is not None and not isinstance(visual_val, bool):
         _emit("FAIL", f"{ctx} — visual '{visual_val!r}' must be a boolean (true/false)")
 
-    # no_orchestrate value range (#178/#228)
-    no_orch_val = fm.get("no_orchestrate")
-    if no_orch_val is not None and not isinstance(no_orch_val, bool):
-        _emit("FAIL", f"{ctx} — no_orchestrate '{no_orch_val!r}' must be a boolean (true/false)")
-
     # design value range (#182/#228)
     design_val = fm.get("design")
     if design_val is not None and not isinstance(design_val, bool):
@@ -204,6 +181,9 @@ def check_recipe(path: pathlib.Path) -> None:
         _emit("FAIL", f"{ctx} — steps[] is empty or invalid")
         _emit("PASS", f"{ctx}: reference checks skipped (invalid steps)")
         return
+    execution = validate_executable_recipe(fm)
+    for error in execution["errors"]:
+        _emit("FAIL", f"{ctx} — {error}")
 
     seen_ids: set[str] = set()
     for i, step in enumerate(steps):
@@ -253,9 +233,6 @@ def check_recipe(path: pathlib.Path) -> None:
 
         # pattern → existence check under patterns/ (any shipped-tier brick name allowed)
         _check_pattern_or_gate(step.get("pattern"), step_ctx, "pattern")
-        # gate → only the two values review-gate|acceptance-gate allowed (enum FAIL from #198; #227)
-        _check_gate(step.get("gate"), step_ctx, "gate")
-
         # checks: type / empty-entry validation (CI adoption of #200; #218)
         checks_val = step.get("checks")
         if checks_val is not None:

@@ -760,6 +760,19 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     if "--capture" in fset and "--no-capture" in fset:
         warnings.append("--capture and --no-capture both specified: --no-capture wins (§7.3)")
 
+    from .gates import validate_executable_steps
+    declared_no_orchestrate = fm.get("no_orchestrate", False)
+    effective_no_orchestrate = (
+        declared_no_orchestrate
+        if not isinstance(declared_no_orchestrate, bool)
+        else declared_no_orchestrate or "--no-orchestrate" in fset
+    )
+    execution = validate_executable_steps(
+        steps,
+        no_orchestrate=effective_no_orchestrate,
+    )
+    errors.extend(item for item in execution["errors"] if item not in errors)
+
     plan.update({
         "flags": sorted(fset),
         "size": {"diff_lines": diff_lines, "class": size},
@@ -767,6 +780,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
         "effective_steps": [s["id"] for s in steps if s["active"]],
         "slice": {"only": only, "from": frm, "to": to, "skip": skips},
         "mode": mode,
+        "execution": execution,
         "warnings": warnings,
         "errors": errors,
     })
@@ -780,6 +794,8 @@ def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
     resolved_fm, warnings = resolve_extends(fm, recipe_path)
     raw_steps = [s for s in (resolved_fm.get("steps") or []) if isinstance(s, dict)]
     steps = load_steps(resolved_fm)
+    from .gates import validate_executable_recipe
+    execution = validate_executable_recipe(resolved_fm)
     for s, raw in zip(steps, raw_steps):
         s["origin"] = raw.get("_origin")
     return {
@@ -790,7 +806,9 @@ def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
         "steps_field": derive_steps_field(steps),
         "n_steps": len(steps),
         "steps": steps,
+        "execution": execution,
         "warnings": warnings,
+        "errors": list(execution["errors"]),
     }
 
 def resolve_recipe(name: str) -> pathlib.Path:

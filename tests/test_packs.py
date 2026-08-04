@@ -136,7 +136,8 @@ def test_unified_tier_resolver_for_every_prompt_kind(tmp_path, monkeypatch, kind
         directory = pack / ASSET_DIRS[kind]
         suffix = ".yaml" if kind == "agent" else ".md"
         asset = directory / f"shared{suffix}"
-        asset.write_text("prompt body\n", encoding="utf-8")
+        content = "---\nname: shared\nsteps: []\n---\nprompt body\n" if kind == "recipe" else "prompt body\n"
+        asset.write_text(content, encoding="utf-8")
         _raw, manifest = read_json_yaml(pack / "pack.yaml")
         rel = asset.relative_to(pack).as_posix()
         manifest["assets"][kind] = sorted([*manifest["assets"][kind], rel])

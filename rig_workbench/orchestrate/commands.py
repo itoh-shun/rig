@@ -17,9 +17,10 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
 from .runstate import compute_next, load_state, new_state, save_state
 from .providers import parse_step_model_spec, run_loop, unknown_step_model_ids
 from .isolate import setup_isolation, teardown_isolation
+from .gates import validate_executable_recipe
 
 # ── Commands ──────────────────────────────────────────────────────────────────
-def render_plan(recipe: str, steps: list[dict]) -> str:
+def render_plan(recipe: str, steps: list[dict], execution: dict | None = None) -> str:
     auto, why = auto_orchestrate(steps)
     lines = [f"## rig computational plan: {recipe}", "",
              f"Steps: {len(steps)} / transitions enforced by code (deterministic)",
@@ -32,7 +33,26 @@ def render_plan(recipe: str, steps: list[dict]) -> str:
         lines.append(f"  [{i}] {s['id']}  gate={gate}  K={s['max_retries']}  verify={sensor}")
     lines.append("")
     lines.append("Stop condition: each step escalates after K gate failures (no infinite loops).")
+    if execution is not None:
+        status = "executable" if execution["orchestratable"] else "nonexecutable"
+        lines.extend(["", f"Execution: {status}", f"Execution reason: {execution['reason']}"])
+        if execution["unsupported_gates"]:
+            detail = ", ".join(
+                f"{item['step']}={item['gate']}" for item in execution["unsupported_gates"]
+            )
+            lines.append(f"Unsupported gates: {detail}")
     return "\n".join(lines)
+
+
+def _require_executable_recipe(fm: dict, label: str) -> dict:
+    execution = validate_executable_recipe(fm)
+    if execution["orchestratable"]:
+        return execution
+    prefix = "[ERROR]" if execution["errors"] else "[BLOCKED]"
+    print(f"{prefix} recipe {label} is computationally nonexecutable: {execution['reason']}")
+    for error in execution["errors"]:
+        print(f"[ERROR] {error}")
+    raise SystemExit(2)
 
 
 def cmd_plan(args):
@@ -64,7 +84,7 @@ def cmd_plan(args):
         if plan.get("errors"):
             sys.exit(1)  # same exit contract as the non-JSON path
         return
-    print(render_plan(plan["recipe"], plan["steps"]))
+    print(render_plan(plan["recipe"], plan["steps"], plan.get("execution")))
     for w in plan.get("warnings", []):
         print(f"[WARN] {w}")
     for e in plan.get("errors", []):
@@ -80,10 +100,7 @@ def _state_path(args, default="run-state.json") -> pathlib.Path:
 def cmd_init(args):
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
-    if fm.get("no_orchestrate") is True:
-        print(f"[ERROR] recipe {fm.get('name', path.stem)} declares no_orchestrate: true; "
-              "use the manual rig engine")
-        sys.exit(2)
+    execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
     goal = None
     out = pathlib.Path("run-state.json")
@@ -97,9 +114,9 @@ def cmd_init(args):
             i += 2
         else:
             i += 1
-    state = new_state(fm.get("name", path.stem), steps, goal)
+    state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
     save_state(state, out)
-    print(render_plan(state["recipe"], steps))
+    print(render_plan(state["recipe"], steps, execution))
     print(f"\nrun-state: {out}")
     action, msg = compute_next(state)
     save_state(state, out)
@@ -114,6 +131,13 @@ def _current_running(state: dict):
     if st["status"] != "running":
         return None, None
     return step, st
+
+
+def _refuse_blocked_state(state: dict) -> None:
+    stopped = state.get("stopped") or {}
+    if stopped.get("kind") == "BLOCKED":
+        print(f"[BLOCKED] {stopped.get('reason', 'run-state is computationally nonexecutable')}")
+        raise SystemExit(2)
 
 
 def _run_checks(checks: list[str]) -> list[dict]:
@@ -134,6 +158,7 @@ def _run_checks(checks: list[str]) -> list[dict]:
 def cmd_check(args):
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
         print("[ERROR] no running step. START one with `next` first.")
@@ -175,6 +200,7 @@ def cmd_resume(args):
     """
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     steps = state["steps"]
     total = len(steps)
     n_passed = sum(1 for st in state["step_state"].values() if st.get("status") == "passed")
@@ -237,6 +263,7 @@ def cmd_resume(args):
 def cmd_verdict(args):
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
         print("[ERROR] no running step.")
@@ -270,6 +297,7 @@ def cmd_verdict(args):
 def cmd_next(args):
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     action, msg = compute_next(state)
     save_state(state, sp)
     print(f"▶ {action}: {msg}")
@@ -297,10 +325,7 @@ def cmd_run(args):
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
-    if fm.get("no_orchestrate") is True:
-        print(f"[ERROR] recipe {fm.get('name', path.stem)} declares no_orchestrate: true; "
-              "use the manual rig engine")
-        sys.exit(2)
+    execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
     gen = ver = None
     generators: list[str] = []
@@ -438,7 +463,7 @@ def cmd_run(args):
         )
         sys.exit(1)
     ver = ver or gen  # default to the same provider (but a separate process and role)
-    state = new_state(fm.get("name", path.stem), steps, goal)
+    state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
     for sid, model in step_models.items():   # record runtime overrides in run-state (traceable later)
         state["history"].append({"action": "STEP_MODEL_OVERRIDE", "step": sid, "model": model})
     iso = None
@@ -447,7 +472,7 @@ def cmd_run(args):
         cfg["cwd"] = iso["dir"]
         state["isolation"] = iso
         print(f"◈ Isolated run: worktree={iso['dir']} / branch={iso['branch']}")
-    print(render_plan(state["recipe"], steps))
+    print(render_plan(state["recipe"], steps, execution))
     panel = f" / judge-panel={','.join(generators)}" if len(generators) > 1 else ""
     if isinstance(ver, list):
         panel += f" / model-quorum={','.join(ver)}"
@@ -490,8 +515,11 @@ def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: 
     (e.g. --auto-route size classing) still read the invoking repo's manifest —
     manifest A/B exercises what nested providers see."""
     fm, _warns = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    execution = _require_executable_recipe(fm, fm.get("name", recipe_path.stem))
     steps = load_steps(fm)
-    state = new_state(fm.get("name", recipe_path.stem), steps, goal)
+    state = new_state(
+        fm.get("name", recipe_path.stem), steps, goal, execution=execution,
+    )
     iso = setup_isolation(fm.get("name", recipe_path.stem))
     if manifest_src is not None:
         import hashlib
@@ -604,6 +632,9 @@ def cmd_ab(args):
         variants = [(resolve_recipe(r), None, None, None) for r in recipes]
         variants = [(p, m, lbl, pathlib.Path(f"ab-{p.stem}-state.json")) for p, m, lbl, _ in variants]
         title = " vs ".join(recipes)
+    for path, _manifest, _label, _out_path in variants:
+        fm, _warns = resolve_extends(parse_frontmatter(path), path)
+        _require_executable_recipe(fm, fm.get("name", path.stem))
     results: list[dict | None] = [None] * len(variants)
     print(f"◈ A/B experiment: {title} (provider={gen} / {len(variants)} concurrent variants)\n")
     with futures.ThreadPoolExecutor(max_workers=len(variants)) as ex:

@@ -140,10 +140,11 @@ def invoke_pack(spec: str, forwarded: list[str], *, project: pathlib.Path) -> in
         }), end="")
         return 0
     frontmatter = parse_frontmatter_subset(target)
-    if frontmatter.get("no_orchestrate") in (True, "true"):
+    from rig_workbench.orchestrate.gates import validate_executable_recipe
+    execution = validate_executable_recipe(frontmatter)
+    if not execution["orchestratable"]:
         raise PackError(
-            f"entrypoint {spec} is manual-only (no_orchestrate: true); "
-            "the computational pack invoke shim refuses it"
+            f"entrypoint {spec} is computationally nonexecutable: {execution['reason']}"
         )
     from rig_workbench.orchestrate import commands
     original = commands.resolve_recipe

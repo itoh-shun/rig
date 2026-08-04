@@ -21,7 +21,8 @@ from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
-from .runstate import compute_next, gate_outcome, save_state, telemetry_append
+from .runstate import (compute_next, enforce_executable_state, gate_outcome, save_state,
+                       telemetry_append)
 
 _BENCH_COUNTER_LOCK = threading.Lock()
 
@@ -1952,6 +1953,10 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
+    execution = enforce_executable_state(state)
+    if not execution["orchestratable"]:
+        state["token_usage"] = cfg.get("_token_usage") or {}
+        return "BLOCKED"
     if sp is not None:      # run dir = where the run-state lives; full over-budget outputs spool there
         cfg = {**cfg, "run_dir": cfg.get("run_dir") or str(pathlib.Path(sp).resolve().parent)}
     if any(s["needs"] for s in state["steps"]):
@@ -1962,6 +1967,9 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     iters, last = 0, "—"
     while iters < max_steps:
         iters += 1
+        if not enforce_executable_state(state)["orchestratable"]:
+            last = "BLOCKED"
+            break
         action, msg = compute_next(state)
         last = action
         log(f"▶ {action}: {msg}")
@@ -1997,6 +2005,8 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
     waves = 0
     while waves < max_steps:
         waves += 1
+        if not enforce_executable_state(state)["orchestratable"]:
+            break
         if state["stopped"]:
             break
         ss = state["step_state"]
@@ -2022,6 +2032,8 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
             list(ex.map(lambda s: _execute_step(state, s, ss[s["id"]], gen_list, ver,
                                                 cfg, max_parallel, quorum,
                                                 (lambda *a: None)), ready))
+        if (state.get("stopped") or {}).get("kind") == "BLOCKED":
+            break
         for s in ready:                       # apply gate evaluation in id order (deterministic)
             st = ss[s["id"]]
             outcome = gate_outcome(s, st)
