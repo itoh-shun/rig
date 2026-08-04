@@ -98,13 +98,22 @@ def _surface(path: str) -> dict | None:
     return None
 
 
-def _graph(root: pathlib.Path) -> tuple[dict[str, dict], list[dict]]:
-    """Use the shipped typed graph when analyzing its resolved repository."""
+def _graph(
+    root: pathlib.Path, *, mode: str = "source-tree",
+) -> tuple[dict[str, dict], list[dict]]:
+    """Use a hermetic source-tree graph for prompt regression analysis.
+
+    Installed extension tiers are intentionally excluded: affected-case
+    selection must describe the checked-out source tree, not ambient user or
+    project pack state.
+    """
+    if mode != "source-tree":
+        raise ValueError(f"unknown affected graph mode: {mode}")
     try:
         from rig_workbench.orchestrate import config
         from rig_workbench.orchestrate.graph import build_brick_graph
         if config.RIG_HOME.resolve() == root.resolve():
-            graph = build_brick_graph()
+            graph = build_brick_graph(project=root, mode="core")
             return ({node["path"]: node for node in graph["nodes"]}, graph["edges"])
     except (OSError, ValueError):
         pass

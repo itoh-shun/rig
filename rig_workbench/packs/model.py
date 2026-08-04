@@ -42,3 +42,22 @@ class ResolvedAsset:
             "tier": self.tier, "source": self.source, "pack_id": self.pack_id,
             "shadowed": list(self.shadowed),
         }
+
+
+@dataclasses.dataclass(frozen=True)
+class ResolvedPack:
+    """A validated member of the active tiered pack collection.
+
+    ``path`` is intentionally an internal filesystem handle.  User-facing
+    projections (notably the brick graph) must expose a stable ``pack://`` URI
+    instead of serialising it.
+    """
+
+    tier: str
+    path: pathlib.Path
+    manifest: dict
+    verification_status: str
+
+    @property
+    def id(self) -> str:
+        return self.manifest["id"]

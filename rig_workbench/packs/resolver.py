@@ -4,7 +4,7 @@ import os
 import pathlib
 from collections.abc import Iterable
 
-from .model import ASSET_DIRS, PackError, ResolvedAsset
+from .model import ASSET_DIRS, PackError, ResolvedAsset, ResolvedPack
 
 
 def _rig_home() -> pathlib.Path:
@@ -28,20 +28,58 @@ def pack_roots(project: pathlib.Path | str | None = None) -> list[tuple[str, pat
     return result
 
 
-def _pack_entries(project: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+def _pack_entries_with_trust(
+    project: pathlib.Path,
+) -> tuple[list[tuple[str, pathlib.Path]], dict[tuple[str, str], str]]:
     from .lock import validate_lock_root
+    entries: list[tuple[str, pathlib.Path]] = []
+    trust: dict[tuple[str, str], str] = {}
     for tier, root in pack_roots(project):
-        if root.is_dir():
-            validate_lock_root(root, expected_scope=tier if tier in {"project", "user", "org"} else None)
-    return [(tier, item) for tier, root in pack_roots(project) if root.is_dir()
-            for item in sorted(root.iterdir()) if item.is_dir()
-            and not item.name.startswith((".", "_"))]
+        if not root.is_dir():
+            continue
+        expected = tier if tier in {"project", "user", "org"} else None
+        for locked in validate_lock_root(root, expected_scope=expected):
+            trust[(tier, locked["id"])] = locked["verification_status"]
+        entries.extend(
+            (tier, item) for item in sorted(root.iterdir())
+            if item.is_dir() and not item.name.startswith((".", "_"))
+        )
+    return entries, trust
+
+
+def _pack_entries(project: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+    return _pack_entries_with_trust(project)[0]
+
+
+def resolved_collection(
+    *, project: pathlib.Path | str | None = None,
+) -> list[ResolvedPack]:
+    """Return the one validated, dependency-ordered pack collection in effect.
+
+    This is the public collection boundary for consumers that need pack-level
+    provenance.  Lock validation and collection validation are fail-closed;
+    consumers must not rediscover or partially validate tier directories.
+    """
+    from .validation import validate_tiered_collection
+
+    project_root = _project_root(project)
+    entries, trust = _pack_entries_with_trust(project_root)
+    records = validate_tiered_collection(entries)
+    return [
+        ResolvedPack(
+            tier=tier,
+            path=path,
+            manifest=manifest,
+            verification_status=trust.get((tier, manifest["id"]), "unverified"),
+        )
+        for tier, path, manifest in records
+    ]
 
 
 def _validated_pack_assets(project: pathlib.Path) -> list[ResolvedAsset]:
-    from .validation import validate_tiered_collection
     found: list[ResolvedAsset] = []
-    for tier, pack, manifest in validate_tiered_collection(_pack_entries(project)):
+    for record in resolved_collection(project=project):
+        tier, pack, manifest = record.tier, record.path, record.manifest
         for kind, paths in manifest["assets"].items():
             for rel in paths:
                 path = pack / rel
