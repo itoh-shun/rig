@@ -10,15 +10,24 @@ artifacts, never raw logs.
 
 ```console
 rig-wb eval capture <task-id> [--repo <repository>]
+rig-wb eval reproduce <draft-id> --provider <provider> --model <model> \
+  [--repo <repository>]
 rig-wb eval validate [<case.json-or-directory>]
 rig-wb eval list [--repo <repository>]
 rig-wb eval run <case-id-or-suite> --provider mock --model fixture --repeat 3 \
   --phase baseline --judge-provider mock --judge-model fixture \
-  [--repo <repository>]
+  [--execution-base <git-ref>] [--repo <repository>]
 rig-wb eval compare --baseline <result.json> --current <result.json> \
   [--repo <repository>]
 rig-wb eval promote <draft-id> --baseline <result.json> --current <result.json> \
   [--repo <repository>]
+rig-wb eval affected --base <git-ref> [--head <git-ref|working>] \
+  [--require-cases] [--evidence-dir <directory>] [--json]
+rig-wb eval gate --base <git-ref> [--head <git-ref|working>] \
+  --evidence-dir <directory> [--provider <provider>] [--model <model>]
+rig-wb eval affected-run --base <git-ref> --head HEAD \
+  --provider <provider> --model <model> \
+  --judge-provider <provider> --judge-model <model>
 ```
 
 `capture` does not prove the failing (red) state. Every draft explicitly lists its missing
@@ -52,6 +61,14 @@ commit, provider, model, integrity hash, fresh timestamps, and a Git execution c
 identity. Non-Git evidence cannot be compared or promoted. A target improvement never hides
 a clean-control regression.
 
+Use `--execution-base <git-ref>` for PR evidence. Rig resolves it with shell-free Git,
+requires it to be an ancestor of HEAD, and binds the resolved commit into the signed result.
+The signed `execution_diff_sha256` also hashes the base diff, including tracked/staged
+binary diff data and framed untracked path/content. Gates recompute it for committed or
+working heads, so evidence signed before a later uncommitted prompt edit cannot be reused.
+When omitted, the historical repository-root commit remains the compatibility default; such
+evidence will not satisfy a gate whose requested PR base is a different commit.
+
 Every result is signed with HMAC-SHA256. Set `RIG_EVAL_ATTESTATION_KEY` to a secret of at
 least 32 bytes in CI. Without it, Rig atomically creates a private `0600` key at
 `${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`. Verification rejects missing,
@@ -70,3 +87,53 @@ measured passing semantic evidence for every target and clean repetition in both
 and current whenever the case has a rubric. Promotion atomically
 creates `evals/cases/<id>/case.json`, refuses an existing destination, and retains the draft.
 Capture alone never provides promotion evidence.
+
+## Incident reproduction and affected prompts
+
+Capture prioritizes a production incident over gate and reviewer failures, then records a
+bounded failure family, expected fail condition, clean control, and SHA-256 hashes of the
+available task/run artifacts. These are safe draft fixtures, not claims of correctness;
+remaining inferred requirements stay explicit. Explicitly successful tasks are rejected
+unless `--allow-nonincident` is supplied. `reproduce` runs the draft as a baseline and
+returns nonzero when the declared RED threshold is not reproduced.
+Infrastructure failures are never RED evidence: unavailable, timeout, and provider-error
+samples return exit 2. A quality RED additionally requires clean controls to pass and every
+required judge sample to be measured. Mock reproduction requires `--allow-mock`, remains a
+development probe, and deliberately returns nonzero even when it exhibits the fixture.
+The same rule applies to a mock judge paired with a real subject: without the flag it is
+rejected before execution, and with the flag it still cannot produce quality RED success.
+
+The versioned prompt registry covers Rig facets (including output contracts), patterns,
+recipes, shipped/native agents, and commands. `affected` uses a shell-free Git name diff and the existing typed brick graph to
+reverse-map direct changes and instruction/persona/policy/wiki dependencies to recipes and
+approved canonical cases under `evals/cases/`. Drafts never satisfy coverage or quality
+evidence. Cases bind coverage explicitly through unique `prompt_surfaces` registry IDs such
+as `instruction:security-audit` and `recipe:bugfix`. Task prose, suites, tags, target inputs,
+and clean controls are never substring-matched as coverage evidence. Captured drafts start
+with an empty binding and an explicit missing requirement. Unknown prompt surfaces are
+reported as uncovered; ordinary source changes are a
+deterministic no-op. `--require-cases` makes a known prompt without a bound case fail.
+
+`eval gate` accepts only fresh, HMAC-attested, non-mock current evidence with matching case
+hash, Git HEAD/base identity, provider policy, optional provider/model pin, repeat count,
+and green target, clean-control, and semantic-judge samples. Result attestations bind the
+actual judge adapter's provider, model, and executor version; mock judges are never quality
+evidence. Optional `provider_policy.models`, `judge_providers`, and `judge_models` pin these
+identities in the case hash. Exit codes are 0 for pass/no-op,
+1 for quality or coverage failure, and 2 for malformed/configuration/infrastructure evidence.
+The workbench adds `prompt_regression_passed` only when its task diff touches a registered
+prompt surface. That criterion is machine-owned: `workbench.py gate --set
+prompt_regression_passed=passed` is rejected.
+
+CI always runs the free structural affected-case check. Prompt quality runs only with the
+trusted attestation key and pinned provider/model; forks without those credentials fail with
+an instruction to request a maintainer run. Missing evidence and mock-only evidence cannot
+turn a prompt-changing workflow green.
+For trusted same-repository changes, `affected-run` executes approved cases in sorted order
+with real subject and judge providers, writes only to a temporary directory, runs the final
+gate, and atomically renames the complete evidence directory. Failure or provider
+unavailability leaves no partial current-evidence directory.
+Every affected report includes `resolved_head`, the verified 40-character commit SHA for a
+named revision or the working-tree HEAD. Atomic directories use
+`affected-<resolved_head>`, so different commits do not collide. Re-running the same commit
+is rejected before provider or judge execution, avoiding duplicate cost and evidence.

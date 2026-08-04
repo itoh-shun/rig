@@ -50,6 +50,7 @@ def capture_case(
     task_id: str,
     *,
     now: str | None = None,
+    allow_nonincident: bool = False,
 ) -> tuple[pathlib.Path, dict]:
     try:
         root = pathlib.Path(repo).resolve()
@@ -65,6 +66,20 @@ def capture_case(
     acceptance = _load_object(run / "acceptance.json")
     review = _load_object(run / "review.json")
 
+    telemetry: dict = {}
+    runs_path = root / ".rig" / "runs.jsonl"
+    try:
+        if runs_path.is_file():
+            for line in runs_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict) and record.get("task_id") == task_id:
+                    telemetry = record
+    except (OSError, UnicodeError) as exc:
+        raise EvalCaseError("invalid source artifact: runs.jsonl") from exc
+
     commit = task.get("commit_sha") or task.get("base_commit")
     if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{7,64}", commit):
         raise EvalCaseError("task has no valid source commit")
@@ -76,7 +91,6 @@ def capture_case(
                 hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError as exc:
             raise EvalCaseError(f"filesystem error reading {name}: {exc}") from exc
-    runs_path = root / ".rig" / "runs.jsonl"
     try:
         if runs_path.is_file():
             hashes["runs.jsonl"] = hashlib.sha256(runs_path.read_bytes()).hexdigest()
@@ -88,6 +102,27 @@ def capture_case(
                      if isinstance(check, dict) and check.get("status") == "failed"]
     rejected = [str(item.get("persona")) for item in review.get("verdicts", [])
                 if isinstance(item, dict) and item.get("verdict") == "REJECT"]
+    explicitly_successful = (
+        outcome.get("status") == "ok"
+        or task.get("status") in {"accepted", "gate_passed"}
+    ) and not incident and not failed_checks and not rejected
+    if explicitly_successful and not allow_nonincident:
+        raise EvalCaseError(
+            "successful task is not an incident; use --allow-nonincident to capture a draft"
+        )
+    raw_family = telemetry.get("failure_mode")
+    if incident:
+        failure_family = "production:incident"
+    elif isinstance(raw_family, str) and raw_family.strip():
+        failure_family = _safe_summary(raw_family, "unclassified")
+    elif failed_checks:
+        failure_family = "gate:failed"
+    elif rejected:
+        failure_family = "review:rejected"
+    elif telemetry.get("final") in {"BLOCKED", "ESCALATE", "FAIL"}:
+        failure_family = "orchestration:stuck"
+    else:
+        failure_family = "unclassified"
     fallback = (
         "Incident recorded without a safe failure summary"
         if incident else "No production incident recorded"
@@ -120,23 +155,32 @@ def capture_case(
             "captured_at": captured_at,
         },
         "surfaces": ["cli"],
+        "prompt_surfaces": [],
         "suite": "incident" if incident else "candidate",
         "tags": [str(task.get("task_type", "unknown")).lower().replace("_", "-")],
         "provider_policy": {"mode": "any", "allowed": []},
-        "repeat": 1,
-        "red_thresholds": {"max_success_rate": 0.0},
+        "repeat": 3,
+        "red_thresholds": {"max_success_rate": 1 / 3},
         "green_thresholds": {"min_success_rate": 1.0},
-        "deterministic_checks": [],
+        "deterministic_checks": ["contains:task_intent"],
         "semantic_rubric": [],
         "target_inputs": {
             "task_intent": _safe_summary(
                 task.get("input"), "Captured task intent unavailable"
-            )
+            ),
+            "failure_family": failure_family,
+            "expected_fail_conditions": _safe_summary(
+                summary, "Captured failure must reproduce"
+            ),
         },
-        "clean_controls": {},
+        "clean_controls": {
+            "task_intent": "Control input without the recorded failure condition",
+            "expected_pass_conditions": "No recorded failure family is triggered",
+        },
         "missing_requirements": [
-            "red reproduction evidence", "green fix evidence", "deterministic checks",
-            "semantic rubric", "clean controls", "provider review",
+            "red reproduction evidence", "green fix evidence",
+            "semantic rubric", "provider review",
+            "prompt surface binding",
         ],
         "failure_summary": summary,
         "created_at": captured_at,

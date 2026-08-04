@@ -130,6 +130,7 @@ def _run_eval(args, cwd):
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(
         filter(None, [str(repo_root), os.environ.get("PYTHONPATH")])
     ))
+    env["RIG_EVAL_ATTESTATION_KEY"] = "eval-cli-test-attestation-key-at-least-32-bytes"
     return subprocess.run([sys.executable, "-m", "rig_workbench.cli", "eval", *args],
                           cwd=cwd, env=env, capture_output=True, text=True, timeout=30)
 
@@ -291,6 +292,20 @@ def test_case_rejects_duplicate_set_members(field):
         validate_case(case)
 
 
+def test_case_surfaces_accept_versioned_prompt_registry_ids():
+    from rig_workbench.eval import EvalCaseError, validate_case
+
+    case = copy.deepcopy(valid_case())
+    case["surfaces"] = ["cli", "recipe:bugfix", "instruction:security/audit"]
+    validate_case(case)
+
+    case["prompt_surfaces"] = ["instruction:login", "recipe:bugfix"]
+    validate_case(case)
+    case["prompt_surfaces"].append("recipe:bugfix")
+    with pytest.raises(EvalCaseError, match="prompt_surfaces.*duplicate"):
+        validate_case(case)
+
+
 def test_cli_rejects_same_case_id_in_promoted_and_draft_tiers(tmp_path):
     from rig_workbench.eval import canonical_json
 
@@ -373,6 +388,89 @@ def test_capture_incident_outcome_has_priority_over_failed_gate_and_reject(tmp_p
     assert case["failure_summary"] == "Production users saw stale authorization"
     assert "tests_pass" not in case["failure_summary"]
     assert "security-reviewer" not in case["failure_summary"]
+    assert case["target_inputs"]["failure_family"] == "production:incident"
+    assert case["repeat"] == 3 and case["clean_controls"]
+    assert case["deterministic_checks"] == ["contains:task_intent"]
+
+
+def test_capture_uses_failure_taxonomy_and_rejects_success_without_opt_in(tmp_path):
+    from rig_workbench.eval import EvalCaseError, capture_case
+
+    failed_id = "rig-20260805-taxonomy"
+    _write_json(tmp_path / ".rig" / "runs" / failed_id / "task.json", {
+        "task_id": failed_id, "input": "Taxonomy failure", "task_type": "bugfix",
+        "base_commit": "8" * 40,
+    })
+    runs = tmp_path / ".rig" / "runs.jsonl"
+    runs.parent.mkdir(parents=True, exist_ok=True)
+    runs.write_text(json.dumps({
+        "task_id": failed_id, "final": "ESCALATE",
+        "failure_mode": "verification:incorrect-implementation",
+    }) + "\n", encoding="utf-8")
+    _path, failed = capture_case(tmp_path, failed_id,
+                                 now="2026-08-05T01:00:00+00:00")
+    assert failed["target_inputs"]["failure_family"] == (
+        "verification:incorrect-implementation"
+    )
+    assert "runs.jsonl" in failed["provenance"]["source_hashes"]
+
+    success_id = "rig-20260805-success"
+    _write_json(tmp_path / ".rig" / "runs" / success_id / "task.json", {
+        "task_id": success_id, "input": "Successful task", "task_type": "bugfix",
+        "base_commit": "9" * 40, "status": "accepted",
+    })
+    _write_json(tmp_path / ".rig" / "runs" / success_id / "outcome.json", {
+        "status": "ok", "note": "healthy",
+    })
+    with pytest.raises(EvalCaseError, match="successful task"):
+        capture_case(tmp_path, success_id, now="2026-08-05T01:00:00+00:00")
+    _path, opted = capture_case(
+        tmp_path, success_id, now="2026-08-05T01:00:00+00:00",
+        allow_nonincident=True,
+    )
+    assert opted["incident"] is False and opted["status"] == "draft"
+
+
+def test_capture_to_reproduce_is_one_command_red_baseline(tmp_path):
+    task_id = "rig-20260805-reproduce"
+    run = tmp_path / ".rig" / "runs" / task_id
+    _write_json(run / "task.json", {
+        "task_id": task_id, "input": "Reproduce stuck gate", "task_type": "bugfix",
+        "base_commit": "a" * 40, "status": "gate_failed",
+    })
+    _write_json(run / "acceptance.json", {"checks": [
+        {"name": "tests_pass", "status": "failed", "detail": "bounded"},
+    ]})
+    captured = _run_eval(["capture", task_id, "--repo", str(tmp_path)], tmp_path)
+    assert captured.returncode == 0, captured.stderr
+    reproduced = _run_eval([
+        "reproduce", task_id, "--provider", "mock", "--model", "fixture",
+        "--repo", str(tmp_path), "--allow-mock",
+    ], tmp_path)
+    assert reproduced.returncode == 1, reproduced.stderr
+    result_path = Path(reproduced.stdout.strip().splitlines()[-1])
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["phase"] == "baseline"
+    assert result["summary"]["target_success_rate"] <= 1 / 3
+
+    refused = _run_eval([
+        "reproduce", task_id, "--provider", "mock", "--model", "fixture",
+        "--repo", str(tmp_path),
+    ], tmp_path)
+    assert refused.returncode == 2 and "dev probe" in refused.stderr
+
+    mock_judge_refused = _run_eval([
+        "reproduce", task_id, "--provider", "command", "--model", "fixture",
+        "--command", "false", "--judge-provider", "mock", "--judge-model", "fixture",
+        "--repo", str(tmp_path),
+    ], tmp_path)
+    assert mock_judge_refused.returncode == 2 and "mock judge" in mock_judge_refused.stderr
+    mock_judge_probe = _run_eval([
+        "reproduce", task_id, "--provider", "command", "--model", "fixture",
+        "--command", "false", "--judge-provider", "mock", "--judge-model", "fixture",
+        "--repo", str(tmp_path), "--allow-mock",
+    ], tmp_path)
+    assert mock_judge_probe.returncode == 1
 
 
 def test_capture_cli_normalizes_source_filesystem_error_to_exit_two(tmp_path):

@@ -245,13 +245,17 @@ def test_eval_cli_mock_run_compare_and_unmeasured_promote_exit(tmp_path):
     draft.write_text(canonical_json(case), encoding="utf-8")
     common = [case["id"], "--provider", "mock", "--model", "fixture",
               "--repeat", "3", "--repo", str(tmp_path)]
+    judge_command = (
+        'python3 -c "import json; print(json.dumps({\'status\':\'measured\','
+        '\'criteria\':[{\'id\':\'correct\',\'status\':\'pass\',\'score\':1.0}]}))"'
+    )
+    judge_args = ["--judge-provider", "command", "--judge-model", "fixture",
+                  "--judge-command", judge_command]
     baseline_run = run_eval_cli([
-        "run", *common, "--phase", "baseline", "--judge-provider", "mock",
-        "--judge-model", "fixture",
+        "run", *common, "--phase", "baseline", *judge_args,
     ], tmp_path)
     current_run = run_eval_cli([
-        "run", *common, "--phase", "current", "--judge-provider", "mock",
-        "--judge-model", "fixture",
+        "run", *common, "--phase", "current", *judge_args,
     ], tmp_path)
     assert baseline_run.returncode == current_run.returncode == 0
     baseline_path = pathlib.Path(baseline_run.stdout.strip().splitlines()[-1])
@@ -353,6 +357,7 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
     monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
 
     def fake_run(argv, **kwargs):
         seen.append((argv, kwargs))
@@ -596,19 +601,26 @@ def test_run_repeat_must_exactly_match_case(tmp_path):
         run_case(case, repo=tmp_path, provider="mock", model="fixture", repeat=3,
                  phase="current", now=NOW)
 
+    with pytest.raises(EvalCaseError, match="execution base"):
+        run_case(draft_case(), repo=tmp_path, provider="mock", model="fixture",
+                 repeat=3, phase="current", execution_base="missing-ref", now=NOW)
+
 
 def test_compare_requires_passing_semantic_evidence_for_target_and_clean_baseline_and_current(
     tmp_path,
 ):
     from rig_workbench.eval import EvalCaseError
     from rig_workbench.eval.compare import compare_results
-    from rig_workbench.eval.runner import make_judge_adapter, run_case
+    from rig_workbench.eval.runner import run_case
 
     case = draft_case()
     case["semantic_rubric"] = [
         {"id": "correct", "description": "Output is correct", "weight": 1.0}
     ]
-    judge = make_judge_adapter(provider="mock", model="fixture", repo=tmp_path)
+    def judge(_case, _payload, _output):
+        return {"status": "measured", "criteria": [
+            {"id": "correct", "status": "pass", "score": 1.0}
+        ]}
     _p, baseline = run_case(case, repo=tmp_path, provider="mock", model="fixture",
                             repeat=3, phase="baseline", judge_adapter=judge, now=NOW)
     _p, current = run_case(case, repo=tmp_path, provider="mock", model="fixture",
@@ -659,6 +671,7 @@ def test_real_provider_nonzero_is_infrastructure_failure(monkeypatch, tmp_path):
     case = draft_case()
     case["provider_policy"] = {"mode": "any", "allowed": []}
     monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
     monkeypatch.setattr(runner.shutil, "which", lambda _executable: "/bin/codex")
     monkeypatch.setattr(
         runner, "build_bare_attempt",

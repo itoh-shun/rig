@@ -22,6 +22,7 @@ from rig_workbench.bench_providers import build_bare_attempt
 
 from .attestation import sign_result_attestation
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
+from .execution import execution_diff_sha256
 from .safety import unsafe_text_reason
 
 RESULT_SCHEMA_VERSION = 1
@@ -51,7 +52,9 @@ def _iso(now: dt.datetime | None) -> str:
     return value.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
 
 
-def _git_identity(repo: pathlib.Path) -> tuple[str | None, str | None, str]:
+def _git_identity(
+    repo: pathlib.Path, execution_base: str | None = None,
+) -> tuple[str | None, str | None, str]:
     def git(*args: str) -> str | None:
         try:
             completed = subprocess.run(
@@ -64,7 +67,25 @@ def _git_identity(repo: pathlib.Path) -> tuple[str | None, str | None, str]:
         return value if completed.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", value) else None
 
     commit = git("rev-parse", "HEAD")
-    base = git("rev-list", "--max-parents=0", "HEAD")
+    if execution_base is not None:
+        if (not isinstance(execution_base, str) or not execution_base
+                or "\n" in execution_base or "\x00" in execution_base):
+            raise EvalCaseError("execution base revision is invalid")
+        base = git("rev-parse", "--verify", f"{execution_base}^{{commit}}")
+        if base is None or commit is None:
+            raise EvalCaseError("execution base revision cannot be resolved")
+        try:
+            ancestor = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", base, commit], cwd=repo,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=5, shell=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise EvalCaseError("execution base ancestry cannot be verified") from exc
+        if ancestor.returncode != 0:
+            raise EvalCaseError("execution base must be an ancestor of HEAD")
+    else:
+        base = git("rev-list", "--max-parents=0", "HEAD")
     return commit, base, "available" if commit and base else "unavailable"
 
 
@@ -254,6 +275,9 @@ def make_judge_adapter(
             return {"status": "error", "criteria": []}
         return _normalize_judge(parsed, expected_ids)
 
+    judge.judge_provider = provider  # type: ignore[attr-defined]
+    judge.judge_model = model  # type: ignore[attr-defined]
+    judge.judge_executor_version = __version__  # type: ignore[attr-defined]
     return judge
 
 
@@ -316,6 +340,8 @@ def run_case(
     case: dict, *, repo: pathlib.Path | str, provider: str, model: str,
     repeat: int, phase: str, command: str | None = None, timeout_s: float = 30,
     judge_adapter: JudgeAdapter | None = None, now: dt.datetime | None = None,
+    execution_base: str | None = None,
+    result_root: pathlib.Path | str | None = None,
 ) -> tuple[pathlib.Path, dict]:
     validate_case(case)
     if phase not in {"baseline", "current"}:
@@ -335,12 +361,30 @@ def run_case(
     policy = case["provider_policy"]
     if policy["mode"] == "allowlist" and provider not in policy["allowed"]:
         raise EvalCaseError("provider violates case provider policy")
+    if policy.get("models") and model not in policy["models"]:
+        raise EvalCaseError("model violates case provider policy")
+    if judge_adapter is not None:
+        selected_judge_provider = str(getattr(judge_adapter, "judge_provider", "custom"))
+        selected_judge_model = str(getattr(judge_adapter, "judge_model", "custom"))
+        if (policy.get("judge_providers")
+                and selected_judge_provider not in policy["judge_providers"]):
+            raise EvalCaseError("judge provider violates case provider policy")
+        if policy.get("judge_models") and selected_judge_model not in policy["judge_models"]:
+            raise EvalCaseError("judge model violates case provider policy")
     try:
         root = pathlib.Path(repo).resolve()
     except OSError as exc:
         raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
     started_wall = _iso(now)
-    execution_commit, execution_base_commit, execution_status = _git_identity(root)
+    execution_commit, execution_base_commit, execution_status = (
+        _git_identity(root) if execution_base is None
+        else _git_identity(root, execution_base)
+    )
+    execution_diff = (
+        execution_diff_sha256(root, base=execution_base_commit)
+        if execution_status == "available" and execution_base_commit is not None
+        else hashlib.sha256(b"rig-eval-execution-unavailable-v1").hexdigest()
+    )
     started = time.monotonic()
     target = [_sample(case, provider=provider, model=model, phase=phase, kind="target",
                       index=index, repeat=repeat, repo=root, command=command,
@@ -357,6 +401,11 @@ def run_case(
         ("measured" if all(row["judge"].get("status") == "measured"
                            for row in [*target, *clean]) else "unmeasured")
     )
+    judge_provider = str(getattr(judge_adapter, "judge_provider", "custom" if judge_adapter else "none"))
+    judge_model = str(getattr(judge_adapter, "judge_model", "custom" if judge_adapter else "none"))
+    judge_executor_version = str(
+        getattr(judge_adapter, "judge_executor_version", __version__)
+    )
     result = {
         "eval_result_schema_version": RESULT_SCHEMA_VERSION,
         "case_id": case["id"], "case_hash": evaluation_spec_hash(case),
@@ -365,7 +414,10 @@ def run_case(
         "execution_commit": execution_commit,
         "execution_base_commit": execution_base_commit,
         "execution_status": execution_status,
+        "execution_diff_sha256": execution_diff,
         "provider": provider, "model": model, "executor_version": __version__,
+        "judge_provider": judge_provider, "judge_model": judge_model,
+        "judge_executor_version": judge_executor_version,
         "phase": phase, "started_at": started_wall,
         "elapsed_s": round(time.monotonic() - started, 6), "repeat": repeat,
         "target": target, "clean": clean,
@@ -382,9 +434,9 @@ def run_case(
     from .compare import validate_result
     validate_result(result, now=now)
     run_id = started_wall.replace("-", "").replace(":", "").replace("+", "p")
-    destination = (
-        root / ".rig" / "evals" / "results" / case["id"]
-        / f"{run_id}-{phase}-{provider}.json"
+    results = pathlib.Path(result_root) if result_root is not None else (
+        root / ".rig" / "evals" / "results"
     )
+    destination = results / case["id"] / f"{run_id}-{phase}-{provider}.json"
     _atomic_write(destination, result)
     return destination, result

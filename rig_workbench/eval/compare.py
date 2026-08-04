@@ -26,8 +26,10 @@ def validate_result(result: Any, *, now: dt.datetime | None = None) -> dict:
     required = {
         "eval_result_schema_version", "case_id", "case_hash", "source_commit",
         "source_base_commit", "provider", "model", "executor_version", "phase",
+        "judge_provider", "judge_model", "judge_executor_version",
         "started_at", "elapsed_s", "repeat", "target", "clean", "judge", "summary",
         "execution_commit", "execution_base_commit", "execution_status",
+        "execution_diff_sha256",
         "result_sha256", "attestation",
     }
     unknown = set(result) - required
@@ -39,7 +41,10 @@ def validate_result(result: Any, *, now: dt.datetime | None = None) -> dict:
     if (isinstance(result["eval_result_schema_version"], bool)
             or result["eval_result_schema_version"] != 1):
         raise EvalCaseError("unsupported eval_result_schema_version")
-    for field in ("case_id", "provider", "model", "executor_version"):
+    for field in (
+        "case_id", "provider", "model", "executor_version", "judge_provider",
+        "judge_model", "judge_executor_version",
+    ):
         if (not isinstance(result[field], str) or not result[field]
                 or unsafe_text_reason(result[field])):
             raise EvalCaseError(f"evaluation result {field} is invalid")
@@ -63,6 +68,9 @@ def validate_result(result: Any, *, now: dt.datetime | None = None) -> dict:
         result["execution_commit"] is None or result["execution_base_commit"] is None
     ):
         raise EvalCaseError("available execution identity is incomplete")
+    if (not isinstance(result["execution_diff_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", result["execution_diff_sha256"])):
+        raise EvalCaseError("evaluation result execution_diff_sha256 is invalid")
     if not isinstance(result["phase"], str) or result["phase"] not in {"baseline", "current"}:
         raise EvalCaseError("evaluation result phase is invalid")
     if (isinstance(result["elapsed_s"], bool)
@@ -208,6 +216,7 @@ def compare_results(
     for field in (
         "case_id", "case_hash", "source_commit", "source_base_commit", "provider", "model",
         "executor_version",
+        "judge_provider", "judge_model", "judge_executor_version",
     ):
         if baseline[field] != current[field]:
             raise EvalCaseError(f"evaluation result identity mismatch: {field}")
@@ -221,8 +230,17 @@ def compare_results(
     policy = case["provider_policy"]
     if policy["mode"] == "allowlist" and baseline["provider"] not in policy["allowed"]:
         raise EvalCaseError("evaluation result violates provider policy")
+    if policy.get("models") and baseline["model"] not in policy["models"]:
+        raise EvalCaseError("evaluation result violates model policy")
+    if (policy.get("judge_providers")
+            and baseline["judge_provider"] not in policy["judge_providers"]):
+        raise EvalCaseError("evaluation result violates judge provider policy")
+    if policy.get("judge_models") and baseline["judge_model"] not in policy["judge_models"]:
+        raise EvalCaseError("evaluation result violates judge model policy")
     if baseline["repeat"] != case["repeat"] or current["repeat"] != case["repeat"]:
         raise EvalCaseError("evaluation result repeat does not match case repeat")
+    if baseline["judge_provider"] == "mock" or current["judge_provider"] == "mock":
+        raise EvalCaseError("mock judge is not valid quality evidence")
     if case["semantic_rubric"]:
         expected_ids = [item["id"] for item in case["semantic_rubric"]]
         for result in (baseline, current):

@@ -21,11 +21,16 @@ _TOP_FIELDS = {
     "provenance", "surfaces", "suite", "tags", "provider_policy", "repeat",
     "red_thresholds", "green_thresholds", "deterministic_checks", "semantic_rubric",
     "target_inputs", "clean_controls", "missing_requirements", "failure_summary",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "prompt_surfaces",
 }
-_REQUIRED = _TOP_FIELDS - {"failure_summary"}
+_REQUIRED = _TOP_FIELDS - {"failure_summary", "prompt_surfaces"}
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 _RUBRIC_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+_PROMPT_SURFACE_ID = re.compile(
+    r"^(?:recipe|instruction|persona|policy|wiki|pattern|contract|agent|command):"
+    r"[a-z0-9][a-z0-9/_-]{0,127}$"
+)
 _SHA = re.compile(r"^[0-9a-f]{7,64}$")
 _SPEC_EXCLUDED_FIELDS = frozenset({
     "status", "title", "failure_summary", "missing_requirements", "created_at", "updated_at",
@@ -150,18 +155,30 @@ def validate_case(case: Any) -> dict:
     _timestamp(provenance["captured_at"], "provenance.captured_at")
     if (not isinstance(obj["surfaces"], list) or not obj["surfaces"]
             or any(not isinstance(x, str)
-                   or x not in {"cli", "codex", "claude-code", "cursor", "api"}
+                   or (x not in {"cli", "codex", "claude-code", "cursor", "api"}
+                       and not _PROMPT_SURFACE_ID.fullmatch(x))
                    for x in obj["surfaces"])):
         raise EvalCaseError("surfaces contains an invalid value")
     if len(obj["surfaces"]) != len(set(obj["surfaces"])):
         raise EvalCaseError("surfaces contains a duplicate")
+    prompt_surfaces = obj.get("prompt_surfaces", [])
+    if (not isinstance(prompt_surfaces, list)
+            or any(not isinstance(value, str) or not _PROMPT_SURFACE_ID.fullmatch(value)
+                   for value in prompt_surfaces)):
+        raise EvalCaseError("prompt_surfaces contains an invalid registry id")
+    if len(prompt_surfaces) != len(set(prompt_surfaces)):
+        raise EvalCaseError("prompt_surfaces contains a duplicate")
     _text(obj["suite"], "suite")
     if (not isinstance(obj["tags"], list)
             or any(not isinstance(x, str) or not _ID.fullmatch(x) for x in obj["tags"])):
         raise EvalCaseError("tags must contain safe slugs")
     if len(obj["tags"]) != len(set(obj["tags"])):
         raise EvalCaseError("tags contains a duplicate")
-    policy = _exact(obj["provider_policy"], {"mode", "allowed"}, "provider_policy")
+    policy = _exact(
+        obj["provider_policy"],
+        {"mode", "allowed", "models", "judge_providers", "judge_models"},
+        "provider_policy", {"mode", "allowed"},
+    )
     if (not isinstance(policy["mode"], str)
             or policy["mode"] not in {"allowlist", "any"}):
         raise EvalCaseError("provider_policy.mode is invalid")
@@ -171,6 +188,13 @@ def validate_case(case: Any) -> dict:
         raise EvalCaseError("provider_policy.allowed is invalid")
     if policy["mode"] == "allowlist" and not policy["allowed"]:
         raise EvalCaseError("allowlist provider policy must name a provider")
+    for field in ("models", "judge_providers", "judge_models"):
+        values = policy.get(field, [])
+        if (not isinstance(values, list) or len(values) != len(set(values))
+                or any(not isinstance(value, str)
+                       or not (_ID if field == "judge_providers" else _MODEL_ID).fullmatch(value)
+                       for value in values)):
+            raise EvalCaseError(f"provider_policy.{field} is invalid")
     if (isinstance(obj["repeat"], bool) or not isinstance(obj["repeat"], int)
             or not 1 <= obj["repeat"] <= 100):
         raise EvalCaseError("repeat must be an integer from 1 to 100")

@@ -8,8 +8,11 @@ import pathlib
 import sys
 
 from .capture import capture_case
+from .affected import analyze_affected
+from .affected_run import run_affected
 from .cases import EvalCaseError, canonical_json, validate_case
 from .compare import compare_results, validate_result
+from .gate import evaluate_gate
 from .promote import promote_case
 from .runner import make_judge_adapter, run_case
 
@@ -24,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     capture = sub.add_parser("capture", help="capture a workbench task as an unapproved draft")
     capture.add_argument("task_id")
     capture.add_argument("--repo", default=".")
+    capture.add_argument("--allow-nonincident", action="store_true")
     run = sub.add_parser("run", help="run one evaluation case or suite")
     run.add_argument("case_or_suite")
     run.add_argument("--provider", required=True,
@@ -38,6 +42,21 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--judge-model")
     run.add_argument("--judge-command")
     run.add_argument("--judge-timeout", type=float, default=30)
+    run.add_argument("--execution-base")
+    reproduce = sub.add_parser("reproduce", help="run a draft against the pre-fix baseline")
+    reproduce.add_argument("draft_id")
+    reproduce.add_argument("--provider", required=True,
+                           choices=["mock", "claude", "codex", "command"])
+    reproduce.add_argument("--model", required=True)
+    reproduce.add_argument("--repo", default=".")
+    reproduce.add_argument("--command", dest="provider_command")
+    reproduce.add_argument("--timeout", type=float, default=30)
+    reproduce.add_argument("--judge-provider", choices=["mock", "claude", "codex", "command"])
+    reproduce.add_argument("--judge-model")
+    reproduce.add_argument("--judge-command")
+    reproduce.add_argument("--judge-timeout", type=float, default=30)
+    reproduce.add_argument("--execution-base")
+    reproduce.add_argument("--allow-mock", action="store_true")
     compare = sub.add_parser("compare", help="compare baseline and current results")
     compare.add_argument("--baseline", required=True)
     compare.add_argument("--current", required=True)
@@ -47,6 +66,35 @@ def _parser() -> argparse.ArgumentParser:
     promote.add_argument("--baseline", required=True)
     promote.add_argument("--current", required=True)
     promote.add_argument("--repo", default=".")
+    affected = sub.add_parser("affected", help="map a git diff to prompt cases")
+    affected.add_argument("--base", required=True)
+    affected.add_argument("--head", default="working")
+    affected.add_argument("--repo", default=".")
+    affected.add_argument("--require-cases", action="store_true")
+    affected.add_argument("--evidence-dir")
+    affected.add_argument("--json", action="store_true")
+    gate = sub.add_parser("gate", help="enforce affected prompt evaluation evidence")
+    gate.add_argument("--base", required=True)
+    gate.add_argument("--head", default="working")
+    gate.add_argument("--repo", default=".")
+    gate.add_argument("--evidence-dir", required=True)
+    gate.add_argument("--provider")
+    gate.add_argument("--model")
+    gate.add_argument("--judge-provider")
+    gate.add_argument("--judge-model")
+    affected_run = sub.add_parser("affected-run", help="atomically run and gate affected cases")
+    affected_run.add_argument("--base", required=True)
+    affected_run.add_argument("--head", default="HEAD")
+    affected_run.add_argument("--repo", default=".")
+    affected_run.add_argument("--provider", required=True,
+                              choices=["mock", "claude", "codex", "command"])
+    affected_run.add_argument("--model", required=True)
+    affected_run.add_argument("--judge-provider", required=True,
+                              choices=["mock", "claude", "codex", "command"])
+    affected_run.add_argument("--judge-model", required=True)
+    affected_run.add_argument("--command", dest="provider_command")
+    affected_run.add_argument("--judge-command")
+    affected_run.add_argument("--timeout", type=float, default=30)
     return parser
 
 
@@ -214,10 +262,56 @@ def cmd_eval(argv: list[str]) -> int:
         if args.command == "list":
             return _list_command(args.repo)
         if args.command == "capture":
-            output, _case = capture_case(args.repo, args.task_id)
+            output, _case = capture_case(
+                args.repo, args.task_id, allow_nonincident=args.allow_nonincident
+            )
             print(f"Captured draft: {output}")
             print("Missing requirements remain; capture does not prove a red reproduction.")
             return 0
+        if args.command == "reproduce":
+            root = _resolve_repo(args.repo)
+            cases = _resolve_cases(root, args.draft_id)
+            if len(cases) != 1 or cases[0]["status"] != "draft":
+                raise EvalCaseError("reproduce requires exactly one draft case")
+            if args.provider == "mock" and not args.allow_mock:
+                raise EvalCaseError("mock reproduce is only a dev probe; pass --allow-mock")
+            if args.judge_provider == "mock" and not args.allow_mock:
+                raise EvalCaseError("mock judge reproduce is only a dev probe; pass --allow-mock")
+            if bool(args.judge_provider) != bool(args.judge_model):
+                raise EvalCaseError("judge provider and model must be specified together")
+            judge_adapter = (
+                make_judge_adapter(
+                    provider=args.judge_provider, model=args.judge_model, repo=root,
+                    command=args.judge_command, timeout_s=args.judge_timeout,
+                ) if args.judge_provider else None
+            )
+            output, result = run_case(
+                cases[0], repo=root, provider=args.provider, model=args.model,
+                repeat=cases[0]["repeat"], phase="baseline",
+                command=args.provider_command, timeout_s=args.timeout,
+                judge_adapter=judge_adapter, execution_base=args.execution_base,
+            )
+            print(output)
+            dev_probe_only = args.provider == "mock" or args.judge_provider == "mock"
+            samples = [*result["target"], *result["clean"]]
+            if any(row["infra_status"] is not None for row in samples):
+                return 2
+            clean_green = all(row["outcome"] == "pass" for row in result["clean"])
+            target_red = (
+                any(row["outcome"] == "fail" for row in result["target"])
+                and result["summary"]["target_success_rate"]
+                <= cases[0]["red_thresholds"]["max_success_rate"]
+            )
+            judge_valid = True
+            if cases[0]["semantic_rubric"]:
+                expected = [item["id"] for item in cases[0]["semantic_rubric"]]
+                judge_valid = result["judge"] == {"required": True, "status": "measured"}
+                judge_valid = judge_valid and all(
+                    row["judge"]["status"] == "measured"
+                    and [item["id"] for item in row["judge"]["criteria"]] == expected
+                    for row in samples
+                )
+            return 0 if target_red and clean_green and judge_valid and not dev_probe_only else 1
         if args.command == "run":
             root = _resolve_repo(args.repo)
             cases = _resolve_cases(root, args.case_or_suite)
@@ -235,6 +329,7 @@ def cmd_eval(argv: list[str]) -> int:
                     case, repo=root, provider=args.provider, model=args.model,
                     repeat=args.repeat, phase=args.phase, command=args.provider_command,
                     timeout_s=args.timeout, judge_adapter=judge_adapter,
+                    execution_base=args.execution_base,
                 )
                 print(output)
             return 0
@@ -254,6 +349,32 @@ def cmd_eval(argv: list[str]) -> int:
             )
             print(output)
             return 0
+        if args.command == "affected":
+            report = analyze_affected(
+                args.repo, base=args.base, head=args.head,
+                require_cases=args.require_cases, evidence_dir=args.evidence_dir,
+            )
+            print(canonical_json(report), end="")
+            return 1 if report["status"] == "uncovered" else 0
+        if args.command == "gate":
+            report, exit_code = evaluate_gate(
+                args.repo, base=args.base, head=args.head,
+                evidence_dir=args.evidence_dir, provider=args.provider, model=args.model,
+                judge_provider=args.judge_provider, judge_model=args.judge_model,
+            )
+            print(canonical_json(report), end="")
+            return exit_code
+        if args.command == "affected-run":
+            report, exit_code, destination = run_affected(
+                args.repo, base=args.base, head=args.head, provider=args.provider,
+                model=args.model, judge_provider=args.judge_provider,
+                judge_model=args.judge_model, provider_command=args.provider_command,
+                judge_command=args.judge_command, timeout_s=args.timeout,
+            )
+            output = dict(report)
+            output["result_dir"] = str(destination) if destination is not None else None
+            print(canonical_json(output), end="")
+            return exit_code
     except EvalCaseError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 2

@@ -362,14 +362,20 @@ def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
     eval_env["RIG_EVAL_ATTESTATION_KEY"] = "wheel-test-attestation-key-at-least-32-bytes"
     common = [case_id, "--provider", "mock", "--model", "fixture", "--repeat", "3",
               "--repo", str(repo)]
+    judge_command = (
+        'python3 -c "import json; print(json.dumps({\'status\':\'measured\','
+        '\'criteria\':[{\'id\':\'correct\',\'status\':\'pass\',\'score\':1.0}]}))"'
+    )
+    judge_args = ["--judge-provider", "command", "--judge-model", "fixture",
+                  "--judge-command", judge_command]
     baseline = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "eval", "run", *common,
-         "--phase", "baseline", "--judge-provider", "mock", "--judge-model", "fixture"],
+         "--phase", "baseline", *judge_args],
         cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
     )
     current = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "eval", "run", *common,
-         "--phase", "current", "--judge-provider", "mock", "--judge-model", "fixture"],
+         "--phase", "current", *judge_args],
         cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
     )
     assert baseline.returncode == current.returncode == 0, baseline.stderr + current.stderr
@@ -391,6 +397,27 @@ def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
     assert promoted.returncode == 0, promoted.stdout + promoted.stderr
     assert (repo / "evals" / "cases" / case_id / "case.json").is_file()
     assert draft.is_file()
+    (repo / "ordinary.py").write_text("print('non-prompt')\n", encoding="utf-8")
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    affected = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "affected",
+         "--base", base, "--head", "working", "--require-cases", "--json",
+         "--repo", str(repo)], cwd=outside, capture_output=True, text=True,
+        env=eval_env, timeout=60,
+    )
+    assert affected.returncode == 0, affected.stdout + affected.stderr
+    assert json.loads(affected.stdout)["status"] == "noop"
+    gated = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "gate",
+         "--base", base, "--head", "working", "--evidence-dir",
+         str(repo / ".rig" / "evals" / "results"), "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    assert gated.returncode == 0, gated.stdout + gated.stderr
+    assert json.loads(gated.stdout)["status"] == "noop"
 
 
 def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_path):

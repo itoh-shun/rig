@@ -11,6 +11,9 @@ from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
 from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
+from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
+                                apply_prompt_regression_sensor,
+                                ensure_prompt_criterion)
 from .schema_diff import apply_schema_sensor
 from .secrets import apply_secret_sensor, shared_diff_cache
 from .state import (build_acceptance, current_branch, default_worktree_path,
@@ -195,6 +198,8 @@ def cmd_gate(args: argparse.Namespace) -> None:
         d, task = load_task(root, task_id)
         acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
 
+        ensure_prompt_criterion(root, task, acc)
+
         known = {c["name"]: c for c in acc["checks"]}
         explicit_set: set[str] = set()
         for pair in args.set or []:
@@ -208,6 +213,8 @@ def cmd_gate(args: argparse.Namespace) -> None:
                 die(f"criterion status '{status}' is invalid. Valid: {', '.join(VALID_CRITERION_STATUS)}")
             if name not in known:
                 die(f"criterion '{name}' does not exist in this task's gate. Valid: {', '.join(known)}")
+            if name == PROMPT_REGRESSION_CRITERION:
+                die("prompt_regression_passed is machine-controlled and cannot be set manually")
             known[name]["status"] = status
             if detail:
                 known[name]["detail"] = detail
@@ -237,6 +244,7 @@ def cmd_gate(args: argparse.Namespace) -> None:
             # patterns and mass deletions warning-grade; --set
             # no_destructive_operation=passed is the recorded escape hatch.
             sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
+            sensor_notes += apply_prompt_regression_sensor(root, task, acc)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()
