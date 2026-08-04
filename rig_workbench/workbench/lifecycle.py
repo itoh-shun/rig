@@ -6,8 +6,11 @@ import pathlib
 import re
 import sys
 
+from rig_workbench.packs.model import PackError
+
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
+from .capabilities import resolve_task_route
 from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
@@ -98,6 +101,22 @@ def cmd_new(args: argparse.Namespace) -> None:
     root = repo_root()
     if args.type not in TASK_TYPES:
         die(f"task_type '{args.type}' is invalid. Valid: {', '.join(TASK_TYPES)}")
+    context = {
+        "recipe": getattr(args, "recipe", None),
+        "remote_pr": getattr(args, "remote_pr", False),
+        "has_diff": getattr(args, "has_diff", False),
+        "diff": getattr(args, "diff", None),
+        "read_only": getattr(args, "read_only", False),
+        "implementation_type": getattr(args, "implementation_type", None),
+    }
+    try:
+        route = resolve_task_route(args.type, context, root)
+    except PackError as exc:
+        die(str(exc))
+    if route["status"] in {"stopped", "trust_required"}:
+        suffix = f" Hint: {route['hint']}" if route["hint"] else ""
+        die(f"route {route['status']}: {route['reason']}.{suffix}")
+
     slug = args.slug or make_slug(args.input)
     task_id = make_task_id(slug)
     d = runs_dir(root) / task_id
@@ -117,7 +136,8 @@ def cmd_new(args: argparse.Namespace) -> None:
 
     worktree_path: str | None = None
     branch: str | None = None
-    if not args.no_worktree:
+    create_worktree = route["worktree"] and not args.no_worktree
+    if create_worktree:
         wt = default_worktree_path(root, task_id)
         branch = f"rig/{task_id}"
         wt.parent.mkdir(parents=True, exist_ok=True)
@@ -128,8 +148,9 @@ def cmd_new(args: argparse.Namespace) -> None:
         "task_id": task_id,
         "input": args.input,
         "task_type": args.type,
-        "recipe": args.recipe or "",
-        "recipe_reason": args.reason or "",
+        "recipe": route["recipe"] or "",
+        "recipe_reason": args.reason or route["reason"],
+        "route": route,
         "base_branch": base_branch,
         "base_commit": base_commit,
         "branch": branch,
@@ -148,8 +169,17 @@ def cmd_new(args: argparse.Namespace) -> None:
     print("▸ rig")
     print(f"task: {args.input}")
     print(f"detected: {args.type}")
-    print(f"recipe: {args.recipe or '(unspecified)'}" + (f" — {args.reason}" if args.reason else ""))
-    print(f"mode: {'isolated worktree' if worktree_path else 'not isolated (--no-worktree)'}")
+    print(f"recipe: {route['recipe'] or '(stopped)'} — {args.reason or route['reason']}")
+    print(f"routing: {route['status']} / capability={route['capability']} / "
+          f"tier={route['tier'] or '-'} / pack={route['pack'] or '-'}")
+    if route["hint"]:
+        print(f"hint: {route['hint']}")
+    mode = (
+        "isolated worktree" if worktree_path
+        else "not isolated (--no-worktree)" if args.no_worktree
+        else "not isolated (route policy)"
+    )
+    print(f"mode: {mode}")
     print(f"gate: {' + '.join(acc['presets'])}")
     print()
     print(f"task_id: {task_id}")
@@ -157,7 +187,8 @@ def cmd_new(args: argparse.Namespace) -> None:
     if worktree_path:
         print(f"worktree: {worktree_path} (branch: {branch})")
     else:
-        print("worktree: none (--no-worktree specified)")
+        reason = "--no-worktree specified" if args.no_worktree else "route policy"
+        print(f"worktree: none ({reason})")
     print(f"state: {d.relative_to(root)}/")
 
     similar = find_similar_tasks(root, args.input, exclude_task_id=task_id)

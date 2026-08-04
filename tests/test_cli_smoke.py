@@ -572,6 +572,44 @@ def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
     assert json.loads(gated.stdout)["status"] == "noop"
 
 
+def test_installed_wheel_runs_package_native_route_outside_source_tree(tmp_path):
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    install_root = tmp_path / "installed"
+    venv.EnvBuilder(with_pip=True).create(install_root)
+    python = _venv_python(install_root)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        env=_isolated_env(), capture_output=True, text=True, timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=outside, check=True)
+    result = subprocess.run(
+        [str(_venv_rig_wb(install_root)), "wb", "route", "--type", "design", "--json"],
+        cwd=outside, env=_isolated_env(), capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    route = json.loads(result.stdout)
+    assert route["status"] == "degraded"
+    assert route["provenance"]["authority"].endswith("select_task_route")
+    assert not (outside / ".rig").exists()
+
+    probe = subprocess.run(
+        [str(python), "-I", "-c", (
+            "import pathlib, rig_workbench.workbench.route_cli as m; "
+            "print(pathlib.Path(m.__file__).resolve())"
+        )],
+        cwd=outside, env=_isolated_env(), capture_output=True, text=True, timeout=60,
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert "site-packages" in probe.stdout
+    assert "scripts/workbench.py" not in result.stdout + result.stderr
+
+
 def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_path):
     assert not tmp_path.resolve().is_relative_to(REPO_ROOT.resolve())
     wheel_dir = tmp_path / "wheel"

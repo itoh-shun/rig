@@ -36,41 +36,38 @@
 
 ### ② recipe 選択とルーティング
 
-**②-a サイズ・ティア判定（#324）**：task_type の確定後、recipe を選ぶ前に入力からサイズ・ティアを見積もる。**軽量化するのは step 数と verifier 数であって安全機構ではない**——隔離 worktree と acceptance-gate は全ティアで維持する（§9.1「サイズは context-minimal の免除条件ではない」と同じ規律。「小さいから直接実行」はしない）。
+**ルーティングの正本は `rig_workbench/workbench/capabilities.py` の純粋関数
+`select_task_route()`。** `resolve_task_route()` は検証済み asset と canonical catalog の
+事実を集めてこの関数を呼ぶ読み取り専用 adapter である。task_type と対象の性質を確定したら、散文の表から recipe を
+直接選ばず、まず次の読み取り専用コマンドで route を確定する。
 
-| ティア | 判定の手がかり（入力テキストから） | 効果 |
-|---|---|---|
-| **S（軽量）** | 単一ファイル・数行規模が自明（「typo」「一行」「名前だけ」「この関数の」等）、再現手順・対処が入力に含まれている | bugfix は **`recipes/fast-bugfix`** へ誘導（reviewer fan-out なし・最小 gate）。他 task_type は従来 recipe＋size-aware step skipping（§4.3） |
-| **M（標準）** | 複数ファイル・新設ロジックの気配 | 従来どおり（下表） |
-| **L（フル）** | アーキテクチャ変更・外部依存追加・認証/認可・データ移行に触れる語 | 下表＋design/review 系 step を ON（§4.3 の L 側既定） |
+```
+rig-wb wb route --type <task_type> --json
+```
 
-- ティアと判定理由は routing banner の `recipe:` 行の理由に含めて表示する（例: `recipe: fast-bugfix — S判定（単一関数のtypo・対処自明）`）。黙って軽くしない。
-- **ユーザーの明示指定（`--recipe`・`--only` 等）は常にティア自動判定に勝つ**。
-- **S 判定の誤りからのエスカレーション**：`fast-bugfix` で走り始めて stuck-guard（2回詰まり）に達したら、そのまま粘らず「S 判定が誤りだった可能性が高い。`recipes/bugfix`（フル）で仕切り直すか」をユーザーに提案する。判定ミスの記録は log.md に1行残す（ティア判定の較正材料）。
+remote PR、既存 diff の有無、test の read-only / implementation 分岐、または明示 recipe
+がある場合はそれぞれ `--remote-pr`、`--has-diff`（または `--diff <path-or-text>`）、`--read-only`、
+`--implementation-type feature|bugfix`、`--recipe <name>` を渡す。このコマンドは pack を
+自動 install せず、network・trust 承認・状態書き込みも行わない。`stopped` /
+`trust_required` は実行不可、`degraded` は `reason` と canonical catalog 由来の `hint` を
+そのまま表示してから fallback を使う。
 
-| task_type | 選択する recipe | isolate（worktree） | 備考 |
-|---|---|---|---|
-| `bugfix` | `recipes/bugfix`（**S ティアは `recipes/fast-bugfix`**） | ✓ | |
-| `feature` | `recipes/feature` | ✓ | |
-| `refactor` | `recipes/refactor` | ✓ | |
-| `documentation` | `recipes/documentation` | ✓ | |
-| `test` | `recipes/test-design` → 続けて `recipes/bugfix`/`feature`（実装が要る場合） | ✓（実装が伴う場合） | まずテストケース設計、実装が伴うなら bugfix/feature へ橋渡し |
-| `design` | `recipes/design` | ✗ | design pack へ委譲（native-first）。成果物は仕様書であり本体差分ではない |
-| `review` | `recipes/review-only`（ローカル差分）／`recipes/pr-review`（既存 PR） | ✗ | 新規 recipe を作らず既存を再利用（§8 Native-first） |
-| `security_review` | `recipes/review-only` ＋ `--persona security-reviewer` 強制＋ security gate preset | ✗ | reviewer 追加は §5 tier 解決と同じ経路 |
-| `performance` | `recipes/bugfix` または `recipes/refactor` ＋ `--persona performance-reviewer` | ✓ | 変更が主なら bugfix/refactor、未確定なら investigation |
-| `investigation` | `recipes/debug`（実装まで進める場合）／読み取りのみなら recipe なしで調査 | 直すと決まるまで ✗ | 「直すかどうか未確定」の間は worktree を作らず調査に留める |
-| `release_support` | `recipes/release-flow` | ✓ | 既存 recipe を再利用 |
-
-選択理由を1行（`--reason`）で `workbench.py new` に渡す。**recipe 自動選択の理由が言えないまま実行しない**（§9.1 rationalization 表と同じ規律）。
+route JSON の `recipe`、`status`、`degraded`、`reason`、`capability`、`tier`、`pack`、
+`reviewers`、`worktree`、`hint` をそのまま権威ある結果として扱う。サイズや難易度は route
+確定後の step / verifier 構成にだけ使い、recipe を散文で再選択しない。明示 recipe も同じ
+authority で存在・provenance・trust を検証し、見つからない場合や未信頼 shadow が勝つ場合は
+task を作らず停止する。
 
 ### ③ 隔離 worktree での実行
 
 1. **task 登録＋選択理由の表示**：
    ```
-   python3 scripts/workbench.py new "<input>" --type <task_type> --recipe <name> --reason "<選択理由>"
+   python3 scripts/workbench.py new "<input>" --type <task_type>
    ```
-   （isolate ✗ の task_type は `--no-worktree` を付ける。ユーザーが時間の見積もりを口にした場合は `--budget-minutes <N>` を付けてよい——超過時に`status`/`board`が警告表示する。#281）
+   明示 recipe がある場合だけ `--recipe <name>` を付ける。route context の flags は直前の
+   `route` と同じものを渡す。isolate は route が決定する（`--no-worktree` はさらに抑止する
+   明示 override）。ユーザーが時間の見積もりを口にした場合は `--budget-minutes <N>` を
+   付けてよい——超過時に`status`/`board`が警告表示する。#281
    このコマンドの標準出力が**そのまま Phase 1 の選択理由バナー**になる（`▸ rig` / `task:` / `detected:` / `recipe:` / `mode:` / `gate:`）。**バナーを自分で書き直さず、コマンド出力をそのまま提示する**（散文の再現に頼らずコードの確定出力を見せる）。出力された `task_id` と `worktree_path` を以降の全 dispatch で使う。過去の類似タスクが見つかった場合は「Similar tasks」欄が続けて出る（#290・デジャブ検知）——単純な語の重なりによる簡易ヒントであり、当時の対応が今回にそのまま使える保証はない。参考程度に提示し、詳細が要れば `workbench.py status <類似task_id>` を案内する。
 2. **RUN**：選択した recipe を SKILL.md §5〜6（COMPOSE→RUN）どおりに合成・実行する。**subagent の作業ディレクトリを worktree_path に固定する**（context-minimal は維持：親は dispatch と集約のみ）。各 step 完了時に:
    ```

@@ -3,10 +3,11 @@ rig workbench — deterministic runner for a quality-assured AI work environment
 
 Behind the unified `/rig "<task>"` entry point (facets/instructions/workbench.md),
 this code enforces **state management, isolated worktrees, acceptance-gate
-verdicts, and accept/discard safety**. Task classification, recipe selection,
-implementation, and review are the model's job; state and safety are this
-script's job (the workbench version of the "code holds the helm" philosophy
-from patterns/computational-orchestration).
+verdicts, and accept/discard safety**. Task classification remains the model's
+job; recipe/capability routing is resolved by workbench.capabilities, while
+implementation and review stay with the execution harness. State, routing, and
+safety are code-owned (the workbench version of the "code holds the helm"
+philosophy from patterns/computational-orchestration).
 
 State is persisted under `<repo>/.rig/runs/<task-id>/`:
   task.json        canonical task metadata (input, classification, base branch, worktree path, status)
@@ -18,7 +19,7 @@ State is persisted under `<repo>/.rig/runs/<task-id>/`:
                                           `## Unrelated diff` headings, `diff` renders them structured)
 
 Exit codes: 0=success / 1=error (includes accept gate failures and worktree inconsistencies)
-Dependencies: standard library only (no PyYAML needed)
+Dependencies: the installed rig-workbench runtime package
 """
 
 import argparse
@@ -39,6 +40,8 @@ from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
 from .secrets import cmd_scan_secrets
 from .stale_refs import cmd_stale_refs
 from .streaming import cmd_stream_checks
+from .route_cli import add_context_arguments as _add_route_context_arguments
+from .route_cli import cmd_route
 
 
 def main() -> None:
@@ -50,12 +53,18 @@ def main() -> None:
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
     p.add_argument("--slug", help="short English slug for the task-id (derived from input if omitted)")
     p.add_argument("--base", help="explicit base branch name (defaults to the current branch)")
-    p.add_argument("--recipe", help="name of the selected recipe")
+    _add_route_context_arguments(p)
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
     p.add_argument("--budget-minutes", type=float,
                    help="estimated time in minutes; going over is flagged in status/board (#281, advisory only)")
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser("route", help="resolve a task capability without installing or writing")
+    p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
+    _add_route_context_arguments(p)
+    p.add_argument("--json", action="store_true", help="emit the exact route record")
+    p.set_defaults(func=cmd_route)
 
     p = sub.add_parser("step", help="record step progress")
     p.add_argument("task_id", nargs="?")

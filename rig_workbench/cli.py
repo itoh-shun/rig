@@ -1,10 +1,7 @@
 """rig-wb — the standalone CLI entry point exposed by `pip install rig-workbench`.
 
-Dispatches sub-commands to the existing `scripts/*.py` modules by loading them
-via `importlib.util` (they still live at the original path so the Claude Code
-plugin, the `bin/orchestrate` shim, and any project pinning `.claude-plugin/`
-paths keep working). This is the least-invasive first step: same code, new
-entry point.
+Dispatches core commands through package-native modules. A few legacy utility
+commands still load their repository scripts when a source checkout is present.
 
 Usage:
     rig-wb run <recipe> --provider claude ...        # orchestrate.py run
@@ -120,7 +117,13 @@ def _run_orchestrate_subcmd(argv: list[str]) -> None:
 
 
 def _run_workbench(argv: list[str]) -> None:
-    wb = _load_script("workbench")
+    if argv[:1] == ["route"]:
+        from .workbench import route_cli
+
+        route_cli.main(argv[1:])
+        return
+    from .workbench import cli as wb
+
     old = sys.argv
     try:
         sys.argv = ["workbench.py", *argv]
