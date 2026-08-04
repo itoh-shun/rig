@@ -84,7 +84,7 @@
 - 主要テロップ＞補足テロップ＞ロゴ・チャプター表示、の順で**サイズと色のコントラストを 3 段階**つける。
 
 ### F3. 言葉選び
-- 「革命的」「次世代」「シームレス」「最先端」等の**中身ゼロの煽り**は使わない（`knowledge/ai-writing-smells` の規律を継承）。
+- 「革命的」「次世代」「シームレス」「最先端」等の**中身ゼロの煽り**は使わない（`knowledge/video-script-risks` の規律を継承）。
 - 具体の機能名・数字・before→after で熱を作る。
 
 ## G. 動いている画面ショット（screen recording）
@@ -129,4 +129,4 @@
 - `personas/video-director` — 演出の判断（target 非依存）。
 - `instructions/video-direct` — 制作台本の生成手順（汎用）。
 - `instructions/render-hyperframes` ／ `render-remotion` ／ `render-davinci` ／ `render-aviutl` — 各 target の実体化契約。
-- `knowledge/ai-writing-smells` — テロップ・VO の言葉選びで参照（空ワード禁止）。
+- `knowledge/video-script-risks` — テロップ・VO の言葉選びで参照（空ワード禁止）。

@@ -88,7 +88,7 @@ recipe の frontmatter に `extends: <parent-name>` が宣言されている場�
 
 > **bare 名ルール**：`extends` の値は `release-flow` のようなファイルベース名のみ。`../other/recipe` のようなパス指定は無効。
 >
-> **旧仕様との互換性**：以前は「1 段のみ・親の `extends` を無視」だった（v0.92 以前）。N 段化に伴い既存の 1 段継承（`release-movie extends movie` 等）は挙動不変で通る。既存 recipe を書き換える必要はない。
+> **旧仕様との互換性**：以前は「1 段のみ・親の `extends` を無視」だった（v0.92 以前）。N 段化に伴い既存の 1 段継承（`child-flow extends base-flow` 等）は挙動不変で通る。既存 recipe を書き換える必要はない。
 
 ## 3. flag override と flag⇔recipe キー等価（§4.3）
 

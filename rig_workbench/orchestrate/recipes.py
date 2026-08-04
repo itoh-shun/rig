@@ -277,7 +277,20 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         if parent_path is None:
             warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
             return chain
-        ensure_recipe_trusted(parent_path)
+        # An installed pack recipe is governed by the pack-asset trust store,
+        # including when an `extends` parent is found beside the child.  Do not
+        # accidentally send it through the legacy project-recipe consent gate.
+        from rig_workbench.packs.resolver import resolve_asset
+        from rig_workbench.packs.trust import ensure_asset_trusted
+        resolved_parent = resolve_asset(
+            "recipe", parent_name, project=config.INVOCATION_CWD
+        )
+        if (resolved_parent is not None
+                and resolved_parent.path.resolve() == parent_path.resolve()
+                and resolved_parent.pack_id is not None):
+            ensure_asset_trusted(resolved_parent)
+        else:
+            ensure_recipe_trusted(parent_path)
         parent_fm = parse_frontmatter(parent_path)
         chain.append((parent_name, parent_fm))
         visited.add(parent_name)

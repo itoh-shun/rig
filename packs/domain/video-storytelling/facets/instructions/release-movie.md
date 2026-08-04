@@ -8,10 +8,10 @@
 
 ## 手順
 
-1. **素材の収集** — CHANGELOG / リリースノートの対象エントリ（`## [x.y.z]`・引数でバージョン/タグ指定可、省略時は最新）を正準ソースにする（プロジェクト実装からのデモ動画が目的なら `movie` 既定側へ）。大量コード/長文は親 context に引き込まない（context-minimal・subagent へ）。**`/rig:scenario` で検閲済みのシナリオがあれば、それを設計図（ビートシート→シーン表）に使う**（脚本→検閲を前段で済ませておくと、AI 臭・誇張・弱フックが落ちた土台から映像化できる）。
+1. **素材の収集** — CHANGELOG / リリースノートの対象エントリ（`## [x.y.z]`・引数でバージョン/タグ指定可、省略時は最新）を正準ソースにする（プロジェクト実装からのデモ動画が目的なら `movie` 既定側へ）。大量コード/長文は親 context に引き込まない（context-minimal・subagent へ）。**`$rig --recipe scenario` で検閲済みのシナリオがあれば、それを設計図（ビートシート→シーン表）に使う**（脚本→検閲を前段で済ませておくと、AI 臭・誇張・弱フックが落ちた土台から映像化できる）。
 2. **目玉の決定** — **一番見せたい価値**を 1 つ選ぶ（クライマックスに置く・実際に動く画面で見せられるものが最強）。
 3. **生成の dispatch** — `release-director` を合成して subagent に渡し、下記2点を作らせる。
-4. **接続（任意）** — 台本のコピーは `/rig:dev --recipe de-ai-smell` でさらに磨ける。
+4. **接続** — 台本のコピーは pack 内の `video-language-reviewer` で検閲する。
 
 ## 納品物 ①：制作台本（正準フォーマット）
 
@@ -37,13 +37,13 @@
 
 ## 納品物 ②：アニメ HTML トレーラー
 
-`web/release-trailer.html` の **SCENES 配列**を、台本に合わせて埋める（または同梱テンプレを複製して書き換える）。SCENES の各要素は：
+`render-hyperframes` の構造契約に従い、新しい HTML コンポジションを生成する。履歴上の作例を実行時テンプレとして複製しない。シーンデータの各要素は：
 
 ```js
 { type: "title|feature|stat|list|cta|screen", dur: <秒>,
   title: "...", subtitle: "...", items: ["...","..."], accent: "#hex",
   // type:"screen" のとき（実際に動いている画面・モック）:
-  frame: "terminal", title: "~/repo — zsh", prompt: "❯",
+  frame: "terminal", title: "project — zsh", prompt: "❯",
   lines: [ { cmd: "<タイプされるコマンド>" }, { out: "<出力行>", cls: "ok" }, … ] }
 ```
 
@@ -61,7 +61,7 @@
 
 ## MP4 経路（`--hyperframes`・任意）
 
-`--hyperframes` 指定時は、本物の MP4 を出せる **HyperFrames コンポジション**も生成する。手順・認証契約は **`facets/instructions/render-hyperframes`** に委譲（`data-composition-id` / `class="clip"`＋`data-start`/`data-duration` / GSAP タイムラインを `window.__timelines` に登録＝seekable）。`video/<name>/`（index.html＋STORYBOARD.md＋README.md）として出力し、render はユーザー環境（Node22+/FFmpeg/Chrome で `npx hyperframes render`・**harness では実行しない**）。HTML 即プレビュー版（`web/release-trailer.html`）は残す＝「即見る HTML」と「MP4 を出す HyperFrames」の二経路。同梱例: `video/launch-film/`。
+`--hyperframes` 指定時は、本物の MP4 を出せる **HyperFrames コンポジション**も生成する。手順・認証契約は **`facets/instructions/render-hyperframes`** に委譲（`data-composition-id` / `class="clip"`＋`data-start`/`data-duration` / GSAP タイムラインを `window.__timelines` に登録＝seekable）。`video/<name>/`（index.html＋STORYBOARD.md＋README.md）として出力し、render はユーザー環境（Node22+/FFmpeg/Chrome で `npx hyperframes render`・**harness では実行しない**）。
 
 ## 受け入れ（生成物がこれを満たすこと）
 

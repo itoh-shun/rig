@@ -18,7 +18,7 @@ Three properties keep the safety flow real (not just documented):
 - **Cross-provider by design.** The generator and the verifier are separate roles run as separate processes, and each role can pick its own LLM: `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / a nested `rig` harness. The default flow can implement with Claude and verify with Codex (or vice versa) — one class of model does not review its own artifacts. `orchestrate.py probe` proves the read-only sandbox is actually applied per provider, not just wired in the config (§5 & §12).
 - **Runs as a Claude Code plugin, not an outside CLI.** `/rig:go` lives in the same session as your regular work; the isolation, the gate, and the accept step are all a keystroke away rather than a context switch to a separate tool.
 
-**Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. A separate set of playful/creative commands (MAGI council, roast, movie, …) shares the same gates but is explicitly marked experimental. §7 breaks all of this down by name.
+**Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. Optional domain extensions add specialized workflows without entering the default core catalog. §7 breaks all of this down by name.
 
 ### Positioning
 
@@ -247,7 +247,7 @@ Core commands are the default safety workflow: route task, isolate work, verify,
 | Knowledge import/export/persona/catalog/forge | Beta | useful but not on the core safety path (§13) |
 | Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§13) |
 | Security pack (`/rig:sec` audit/fix/monitor) | Beta | attacker-perspective audit, PoC-verified gated fix, scan-only monitor; static + local only, DAST out of scope (§8) |
-| Creative / party commands (MAGI, roast, movie, …) | Experimental | real gates underneath, playful delivery, kept out of the default path (§14) |
+| Creative / party commands (MAGI, roast, …) | Experimental | real gates underneath, playful delivery, kept out of the default path (§14) |
 
 Nothing in this table is aspirational — there's no "Planned" row because we don't document unshipped features here; proposals live as GitHub issues. If a command isn't listed, it isn't shipped yet.
 
@@ -271,7 +271,6 @@ The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time:
 | `security-audit` 🛡️ / `pentest-fix` 🛡️ / `security-monitor` 🛡️ | white-hat pack (`/rig:sec`): attacker-perspective audit of existing code → PoC-verified gated fix (accept blocked until the re-exploit fails) → scan-only re-scan loop. Static + local verification only; the differential is quantified by `benchmarks/security-tasks/` |
 | `magi` | 3-sage council (correctness / protection / worth) that decides go/no-go by majority vote |
 | `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | humor packs with real content underneath |
-| `movie` 🎬 / `scenario` 🎬✍️ | a general video-creation harness and its scenario-writing front-stage |
 
 `/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. Core flows and explicitly installed extensions both bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched. See the Extension Catalog in `skills/rig/SKILL.md` for opt-in domain packs. Review an installed project pack, set `RIG_ALLOW_PROJECT_PACKS=1` on its first run to record asset trust, then invoke it with `$rig --recipe <installed-name>`; installation alone does not register its command asset as a host slash command.
 
@@ -699,7 +698,7 @@ Experimental commands explore alternative collaboration, creativity, and playful
 | `/rig:magi`, `/rig:sage` | decision/wisdom modes — MAGI 3-council go/no-go vote, sage-style guidance |
 | `/rig:roast`, `/rig:coin`, `/rig:duck`, `/rig:pre-mortem` | humor packs with real content underneath (§8) |
 | `/rig:party` | party/status-rendering novelty on top of real run data |
-| `/rig:movie`, `/rig:scenario` | a general video-creation harness and its scenario-writing front-stage |
+| opt-in domain extensions | specialized workflows installed explicitly from the Extension Catalog |
 
 They are not required for the core AI workbench experience described in §4–§9.
 

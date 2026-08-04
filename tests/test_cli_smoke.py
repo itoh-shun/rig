@@ -321,6 +321,9 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
         assert "packs/domain/sns-x/recipes/sns-x-post.md" in archive.namelist()
         assert "packs/domain/sales/pack.yaml" in archive.namelist()
         assert "packs/domain/sales/recipes/deal-review.md" in archive.namelist()
+        assert "packs/domain/video-storytelling/pack.yaml" in archive.namelist()
+        assert "packs/domain/video-storytelling/recipes/release-movie.md" in archive.namelist()
+        assert "packs/domain/video-storytelling/facets/output-contracts/scenario-verdict.md" in archive.namelist()
     environment = tmp_path / "venv-pack"
     venv.EnvBuilder(with_pip=True).create(environment)
     python = _venv_python(environment)
@@ -402,17 +405,45 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
          "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
         env=_isolated_env(), timeout=60,
     )
+    video_installed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "install",
+         "domain:video-storytelling", "--scope", "project", "--allow-unverified"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    video_resolved = subprocess.run(
+        [str(python), "-c",
+         "from rig_workbench.packs.resolver import resolve_asset; "
+         "names=[('recipe','movie'),('recipe','release-movie'),('recipe','scenario'),"
+         "('command','movie'),('persona','video-content-safety-reviewer'),"
+         "('output-contract','scenario-verdict')]; "
+         "print(':'.join(resolve_asset(k,n).pack_id if resolve_asset(k,n) else 'missing' "
+         "for k,n in names))"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    video_tested = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "test",
+         "video-storytelling", "--json"], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    video_removed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove",
+         "video-storytelling", "--scope", "project", "--yes"], cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
     assert [initialized.returncode, validated.returncode, installed.returncode,
             doctor.returncode, tested.returncode, removed.returncode,
             builtin_installed.returncode, builtin_resolved.returncode,
             builtin_tested.returncode, builtin_removed.returncode,
             sales_installed.returncode, sales_resolved.returncode,
-            sales_tested.returncode, sales_removed.returncode] == [0] * 14, (
+            sales_tested.returncode, sales_removed.returncode,
+            video_installed.returncode, video_resolved.returncode,
+            video_tested.returncode, video_removed.returncode] == [0] * 18, (
         initialized.stderr + validated.stderr + installed.stderr + doctor.stderr
         + tested.stderr + removed.stderr + builtin_installed.stderr
         + builtin_resolved.stderr + builtin_tested.stderr + builtin_removed.stderr
         + sales_installed.stderr + sales_resolved.stderr + sales_tested.stderr
-        + sales_removed.stderr
+        + sales_removed.stderr + video_installed.stderr + video_resolved.stderr
+        + video_tested.stderr + video_removed.stderr
     )
     assert json.loads(doctor.stdout)["status"] == "ok"
     assert json.loads(tested.stdout)["status"] == "structural_only"
@@ -420,9 +451,12 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     assert json.loads(builtin_tested.stdout)["status"] == "structural_only"
     assert sales_resolved.stdout.strip() == "sales:sales"
     assert json.loads(sales_tested.stdout)["status"] == "structural_only"
+    assert video_resolved.stdout.strip() == ":".join(["video-storytelling"] * 6)
+    assert json.loads(video_tested.stdout)["status"] == "structural_only"
     assert not (outside / ".rig/packs/wheel-pack").exists()
     assert not (outside / ".rig/packs/sns-x").exists()
     assert not (outside / ".rig/packs/sales").exists()
+    assert not (outside / ".rig/packs/video-storytelling").exists()
 
 
 def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):

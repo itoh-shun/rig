@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- Historical output example only. This file is not an installed pack asset or runtime template. -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -78,12 +79,12 @@
     <button id="btnPlay">⏸</button><button id="btnPrev">⏮</button><button id="btnNext">⏭</button>
     <button id="btnReplay">↺</button><button id="btnMute">🔊</button>
   </div>
-  <div class="credit">made with rig · /rig:movie</div>
+  <div class="credit">historical output example · video-storytelling extension</div>
   <div class="overlay" id="overlay"><div class="play">▶</div><div class="lbl">PLAY TRAILER</div></div>
 </div>
 
 <script>
-/* ===SCENES_START===  /rig:movie が CHANGELOG に合わせてここだけ差し替える（プレイヤーは下に固定）
+/* ===SCENES_START===  historical output captured from the opt-in video extension
    ★必須: 最低1つの { type:"screen" }（実際に動いている画面・実録 or モック）を入れること。 */
 const META = { product:"rig", version:"v0.32.0", music:"low drone → bright synth swell" };
 const SCENES = [
@@ -91,22 +92,22 @@ const SCENES = [
     title:"rig", titleAccent:" v0.32.0", subtitle:"リリースは、語るな。見せろ。" },
 
   { type:"feature", dur:3.4, emoji:"🎬", accent:"#00e5ff",
-    title:"/rig:movie", subtitle:"リリーストレーラーに“実際に動いている画面”が必須に。" },
+    title:"video storytelling", subtitle:"リリーストレーラーに“実際に動いている画面”が必須に。" },
 
   // ★ 実画面ショット（モック・実コマンドと実出力）
   { type:"screen", dur:7.5, frame:"terminal", title:"~/rig — zsh", prompt:"❯",
     lines:[
-      { cmd:"/rig:movie v0.32.0" },
-      { out:"🎬 release-director → storyboard を生成…" },
+      { cmd:"historical video workflow v0.32.0" },
+      { out:"🎬 director → storyboard を生成…" },
       { out:"   ✓ 6 scenes ・ source-map ✓ ・ 実画面ショット ✓", cls:"ok" },
-      { out:"   ✓ web/release-trailer.html （SCENES 充填済み）", cls:"ok" },
+      { out:"   ✓ historical release trailer（SCENES 充填済み）", cls:"ok" },
       { cmd:"python3 scripts/validate.py" },
       { out:"PASS: 18 / WARN: 0 / FAIL: 0  — 合格", cls:"ok" },
     ] },
 
   { type:"stat", dur:2.8, big:"18 / 0", subtitle:"recipes validated · 0 fail", accent:"#39d98a" },
 
-  { type:"cta", dur:4, title:"ship it.", code:"git pull · /rig:movie",
+  { type:"cta", dur:4, title:"ship it.", code:"historical extension demo",
     subtitle:"rig v0.32.0 — engine-untouched, pack-on-top." },
 ];
 /* ===SCENES_END=== */

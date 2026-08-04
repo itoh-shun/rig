@@ -2,7 +2,7 @@
 
 **汎用の動画ディレクション skill（target 非依存）。** 意図 → 素材収集 → 目玉決定 → 絵コンテ（制作台本）まで。レンダリング実体（HTML/Remotion/DaVinci/AviUtl）は `render-<target>（各 target instruction）` に従う。演出の作法は `video-director` persona が持つ。
 
-`/rig:movie` の起点。`--release` 指定時は `release-movie` instruction が CHANGELOG ソースの差分を上書きする（後方互換）。
+`$rig --recipe movie` の起点。`--release` 指定時は `release-movie` instruction が CHANGELOG ソースの差分を上書きする（後方互換）。
 
 ## 入力
 
@@ -38,7 +38,7 @@
 ## ガード
 
 - **動いている画面ショットを最低 1 つ**（target を問わず）。文字・ロゴだけの動画にしない。実録が無ければ**モック**（実機能の実出力に揃える＝捏造画面禁止）。
-- **各ビートを実出所に紐づける**（ソース対応表必須）。空ワード禁止（「革命的」「次世代」等）。コピーは `/rig:dev --recipe de-ai-smell` で仕上げ可（任意）。
+- **各ビートを実出所に紐づける**（ソース対応表必須）。空ワード禁止（「革命的」「次世代」等）。コピーは `video-language-reviewer` で検閲する。
 - **目玉は 1 つ・テロップは 1 行**。
 - **render はユーザー環境**（hyperframes は Node22+/FFmpeg/Chrome、remotion は Node、davinci/aviutl はそれぞれのアプリ）。harness では実 MP4 を出さない target もある（各 render-* の引き渡し節に明記）。
 

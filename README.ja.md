@@ -18,7 +18,7 @@ rig の本当の価値は、AI を動かすこと自体ではない。AI に作�
 - **クロスプロバイダを前提にした設計** — 生成役と検証役は別プロセスで走り、それぞれ LLM を選べる：`claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / さらに `rig` ハーネスをネスト。Claude で実装して Codex で検証する（あるいは逆）が既定の流し方で、同じクラスのモデルが自分の成果物をレビューする状況を構造的に避ける。`orchestrate.py probe` が「read-only サンドボックスは configuration だけでなく実装として発動している」ことを provider ごとに確認する（§5・§12）。
 - **Claude Code plugin として動く** — `/rig:go` は普段の作業と同じ session に住む。別ツールに切り替える文脈スイッチではなく、隔離・ゲート・accept まで一続きのキー操作でできる。
 
-**rig の現在地：** 安全性の核——task 分類・隔離・acceptance-gate・明示的な accept/discard——は実装済みで、このリポジトリ自身のテストスイート（§15）で裏付けが取れている。その上に乗る品質・観測系のツール（drill・board・stats・GitHub 連携）は実用可能だが発展中。さらに別枠で、同じゲートを使いながら配送を遊び心にした一群のコマンド（MAGI 合議・roast・movie 等）があり、これは明示的に experimental と位置づけている。§7 でこれを名指しで区分けする。
+**rig の現在地：** 安全性の核——task 分類・隔離・acceptance-gate・明示的な accept/discard——は実装済みで、このリポジトリ自身のテストスイート（§15）で裏付けが取れている。その上に乗る品質・観測系のツール（drill・board・stats・GitHub 連携）は実用可能だが発展中。用途特化のワークフローは既定core目録に混ぜず、明示installするdomain extensionとして提供する。§7 でこれを名指しで区分けする。
 
 ### ポジショニング
 
@@ -246,7 +246,7 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | queue（並列 dispatch） | Beta | 隔離により構造的には安全。UX は発展中（§5） |
 | knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§13） |
 | planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§13） |
-| creative / party 系（MAGI・roast・movie 等） | Experimental | 中身は本物のゲートだが配送が遊び心。既定パスからは外している（§14） |
+| creative / party 系（MAGI・roast 等） | Experimental | 中身は本物のゲートだが配送が遊び心。既定パスからは外している（§14） |
 
 この表に "Planned" 行はない——未出荷の機能をここに書く方針は取らない。提案は GitHub issue として存在する。表に載っていないコマンドはまだ出荷されていない。
 
@@ -269,7 +269,6 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | `design` 🎨 / `design-audit` 🎨 | UI/UX・a11y の設計作成と URL 監査 |
 | `magi` | 3賢者合議で go/no-go を多数決裁定 |
 | `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | 中身は本物のユーモア pack 群 |
-| `movie` 🎬 / `scenario` 🎬✍️ | 動画作成ハーネスとそのシナリオライター前段 |
 
 `/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。core flow と明示的に導入した extension は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。opt-in domain pack は `skills/rig/SKILL.md` の Extension Catalog を参照。project pack は内容を確認し、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定してasset trustを記録してから `$rig --recipe <installed-name>` で起動する。installだけでcommand assetがホストのslash commandへ自動登録されるわけではない。
 
@@ -688,7 +687,7 @@ Experimental commands は、代替的なコラボレーション・創作・遊�
 | `/rig:magi`、`/rig:sage` | 決定/知恵モード——MAGI 3賢者合議の go/no-go 投票、sage 流の助言 |
 | `/rig:roast`、`/rig:coin`、`/rig:duck`、`/rig:pre-mortem` | 中身は本物のユーモア pack 群（§8） |
 | `/rig:party` | 実データの上に乗せた party/status 表示の novelty |
-| `/rig:movie`、`/rig:scenario` | 動画作成ハーネスとそのシナリオライター前段 |
+| opt-in domain extensions | Extension Catalogから明示導入する用途特化ワークフロー |
 
 §4〜§9 で説明した Core の AI ワークベンチ体験には不要。
 

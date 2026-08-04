@@ -16,7 +16,7 @@ autonomy: interactive
 
 # movie
 
-> **モード pack 注記**: rig engine（`SKILL.md`）を共用する creative pack の汎用 recipe。engine は書き換えず、`video-director` persona と `video-direct` instruction（＋ target 別 `render-<target>` instruction）を足すだけで成立する。`/rig:movie` から起動。
+> **モード pack 注記**: rig engine（`SKILL.md`）を共用する creative pack の汎用 recipe。engine は書き換えず、`video-director` persona と `video-direct` instruction（＋ target 別 `render-<target>` instruction）を足すだけで成立する。`$rig --recipe movie` から起動。
 
 > ⚠️ harness は **render を行わない**（target を問わず）。納品は「制作台本」＋「target に応じた実物（HTML / Remotion プロジェクト / DaVinci 素材 / AviUtl `.exo`）」。MP4 が要るならユーザー環境で render を回す（hyperframes は Node22+/FFmpeg/Chrome、remotion は Node、davinci/aviutl はそれぞれのアプリ）。
 
@@ -57,5 +57,5 @@ target は `--target hyperframes|remotion|davinci|aviutl`（既定 hyperframes�
 - **実際に動いている画面ショットを最低 1 つ必ず入れる（必須・target 問わず）**。文字・ロゴだけにしない。実録が無ければ**モック**（実機能の実出力に揃える＝捏造画面禁止）。
 - **各ビートを実出所に紐づける**（ソース対応表必須・捏造機能を作らない）。
 - **空ワード禁止**（「革命的」「次世代」等）。具体・数字・before→after で熱を作る。
-- **目玉は 1 つ・テロップは 1 行**。コピーは `/rig:dev --recipe de-ai-smell` で仕上げ可（任意）。
+- **目玉は 1 つ・テロップは 1 行**。コピーは `video-language-reviewer` で検閲する。
 - **harness は render しない**（target を問わず）。各 render-<target> の引き渡し節で render 環境とライセンス条件を明示する。

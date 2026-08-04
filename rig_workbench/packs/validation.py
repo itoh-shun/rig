@@ -133,7 +133,8 @@ def validate_pack(path: pathlib.Path | str) -> dict:
                 raise PackError(f"duplicate asset id: {kind}:{name}")
             ids.add((kind, name))
             if kind in PROMPT_KINDS:
-                prompt_ids.add(f"{kind}:{name}")
+                surface_kind = "contract" if kind == "output-contract" else kind
+                prompt_ids.add(f"{surface_kind}:{name}")
             try:
                 asset_text = asset.read_text(encoding="utf-8")
             except (OSError, UnicodeError) as exc:

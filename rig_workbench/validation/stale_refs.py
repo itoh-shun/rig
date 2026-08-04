@@ -20,7 +20,7 @@ from .state import _emit
 _EXAMPLE_PREFIXES = (
     ".claude/",              # user-project manifest/knowledge layout
     ".rig/",                 # runtime state, exists only after runs
-    "video/",                # movie-harness output dirs in user projects
+    "video/",                # generated media output dirs in user projects
     "src/",                  # Remotion user-project examples
     "knowledge/wiki/",       # ~/.claude/rig/-relative namespace
     "rig/knowledge/",        # ~/.claude/-relative namespace

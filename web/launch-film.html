@@ -78,7 +78,7 @@
     <button id="btnPlay">⏸</button><button id="btnPrev">⏮</button><button id="btnNext">⏭</button>
     <button id="btnReplay">↺</button><button id="btnMute">🔊</button>
   </div>
-  <div class="credit">rig launch film · 1.0 concept（未リリース）· made with /rig:movie</div>
+  <div class="credit">rig launch film · 1.0 concept（未リリース）· historical extension demo</div>
   <div class="overlay" id="overlay"><div class="play">▶</div><div class="lbl">PLAY — rig 1.0 コンセプト (約80秒)</div></div>
 </div>
 
@@ -131,7 +131,7 @@ const SCENES = [
     items:["必要な domain pack は Extension Catalog から明示導入","talk（会話）/ goal（ゴール駆動）/ pr-review","de-ai-smell（AI 臭除去）/ opt-in extensions"] },
 
   { type:"list", dur:5, title:"ユーモアも、中身は本物の道具。",
-    items:["🌶️ roast（毒舌レビュー）・ 🪙 coin（反 bikeshed）","🦆 duck（ラバーダック）・ ⚰️ pre-mortem（事前検死）","🎰 slot（6号機風 AT）・ 🎬 movie — この映像も rig 製"] },
+    items:["🌶️ roast（毒舌レビュー）・ 🪙 coin（反 bikeshed）","🦆 duck（ラバーダック）・ ⚰️ pre-mortem（事前検死）","🎰 slot（6号機風 AT）・ 🎬 動画拡張 — この映像も rig 製"] },
 
   { type:"feature", dur:4.5, emoji:"🧵", accent:"#ffcf33",
     title:"run-continuity", subtitle:"中断も、コンテキスト圧縮も跨いで駆動を切らさない。「▸ rig」が常に見える。" },
@@ -142,7 +142,7 @@ const SCENES = [
       { cmd:"python3 scripts/validate.py" },
       { out:"## rig --validate レポート（CI / shipped tier）" },
       { out:"[PASS] recipe magi: OK" },
-      { out:"[PASS] recipe release-movie: OK" },
+      { out:"[PASS] opt-in extension validation: OK" },
       { out:"[PASS] extension pack validation: OK" },
       { out:"PASS: 18 / WARN: 0 / FAIL: 0", cls:"ok" },
       { out:"合格", cls:"ok" },
@@ -153,7 +153,7 @@ const SCENES = [
 
   { type:"stat", dur:3.6, big:"18", subtitle:"shipped recipes · 0 fail · engine 不変・pack 上乗せ", accent:"#39d98a" },
 
-  { type:"cta", dur:5.5, title:"compose your harness.", code:"/rig:dev · /rig:movie",
+  { type:"cta", dur:5.5, title:"compose your harness.", code:"/rig:dev · opt-in extensions",
     subtitle:"rig — Claude Code native, no heavy DSL.（1.0 は開発中・concept）" },
 ];
 /* ===SCENES_END=== */

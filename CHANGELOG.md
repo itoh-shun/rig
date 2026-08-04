@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Moved the movie and scenario workflows into the opt-in `video-storytelling`
+  domain extension. It ships pack-local language and content-risk reviewers,
+  concrete structural evals, and resolves only after explicit installation.
 - Moved the sales review and enablement workflows out of default core into the
   opt-in `sales` domain extension. Its recipes and catalog command become
   resolvable after an explicit project install; pack installation does not claim

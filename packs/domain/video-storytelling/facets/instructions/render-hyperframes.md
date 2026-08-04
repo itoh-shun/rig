@@ -19,7 +19,7 @@
 ## 手順
 
 1. **設計図の確保** — `video-direct` の制作台本（シーン表＝尺/構図/テロップ/VO/BGM/ソース対応表）を起点に。無ければ先に台本を起こす（`--release` 時は `release-movie` の制作台本＝CHANGELOG ソース対応表）。
-2. **コンポジション生成** — 上記契約どおり `video/<name>/index.html` を生成（または同梱例 `video/launch-film/` を複製して中身を差し替え）。各台本シーン → `class="clip"`＋`data-start`/`data-duration`、入りは GSAP タイムラインに配置。**screen ショットは `<video>` 実録枠 or seekable モック端末を最低1つ**（`video-direct` の必須ルールを継承）。
+2. **コンポジション生成** — 上記契約どおり `video/<name>/index.html` を新規生成する。各台本シーン → `class="clip"`＋`data-start`/`data-duration`、入りは GSAP タイムラインに配置。**screen ショットは `<video>` 実録枠 or seekable モック端末を最低1つ**（`video-direct` の必須ルールを継承）。
 3. **同梱物** — `STORYBOARD.md`（台本）と `README.md`（`npx hyperframes init/preview/render` 手順・要件・assets の置き場）を出す。
 4. **引き渡し** — 「この harness では render 不可。手元で `npm i && npx hyperframes preview` で確認 → `npx hyperframes render --output renders/out.mp4`」と明示する。BGM/実録 mp4 は `assets/` に置けば取り込まれる旨を添える。
 
@@ -34,5 +34,4 @@
 
 - `facets/instructions/video-direct` — 制作台本（このスキルの設計図元）。
 - `facets/personas/video-director` — 演出（target 非依存）。
-- `facets/instructions/release-movie` — `--release` 時の差分（CHANGELOG ソース・`release-director` 演出）。`/rig:movie --release` もこの経路（既定 target）を使う。
-- 同梱例：`video/launch-film/`（rig の HyperFrames コンポジション・GSAP seekable・README つき）。
+- `facets/instructions/release-movie` — `--release` 時の差分（CHANGELOG ソース・`release-director` 演出）。`$rig --recipe release-movie` もこの経路（既定 target）を使う。

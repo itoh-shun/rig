@@ -17,13 +17,13 @@ autonomy: interactive
 
 # release-movie
 
-> **movie の `--release` サブクラス**。汎用入口は [`movie`](./movie.md) ／ `/rig:movie`。`/rig:movie --release [version]` でこちらに切り替わる（後方互換）。
+> **movie の `--release` サブクラス**。汎用入口は [`movie`](./movie.md) ／ `$rig --recipe movie`。`$rig --recipe release-movie` でこちらに切り替わる（後方互換）。
 
 > ⚠️ harness は render を行わない。納品は「制作台本」＋「target に応じた実物」。movie と同じ規律。
 
 ## 使う場面
 
-**出荷済みバージョンの告知トレーラー**を作るとき。素材は CHANGELOG / リリースノート（指定バージョン、省略時は最新）。プロジェクト全体のデモが目的なら movie 既定（`/rig:movie` 引数なし）の方が素直。
+**出荷済みバージョンの告知トレーラー**を作るとき。素材は CHANGELOG / リリースノート（指定バージョン、省略時は最新）。プロジェクト全体のデモが目的なら movie 既定（`$rig --recipe movie` 引数なし）の方が素直。
 
 - 「v0.30.0 のリリーストレーラーを作って」
 - 「直近のリリースを 30 秒で告知したい」

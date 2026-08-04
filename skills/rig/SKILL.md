@@ -60,8 +60,6 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **party**（`/rig:party`・utility・🎮） | パーティ編成画面＝テレメトリ・drill 実測から RPG 風キャラシート。読み取り専用・全行が実データ | `commands/party` |
 > | **sage**（`/rig:sage`・oracle） | 「正解を問う」オラクル。裏取りした断定＋確度＋証拠アンカー・**捏造は機能として存在しない** | `facets/personas/sage/{great-sage,raphael}` `facets/instructions/sage-oracle` `recipes/sage` |
 > | **pre-mortem**（`/rig:pre-mortem`・humor） | 事前検死。「もう壊れた」前提で失敗モードを逆算（magi の補完） | `facets/personas/pre-mortem-analyst` `facets/instructions/pre-mortem` `facets/output-contracts/premortem-report` `recipes/pre-mortem` |
-> | **movie**（`/rig:movie`） | 動画作成の汎用ハーネス。`--target` でレンダラ切替・`--release` で CHANGELOG→トレーラー。harness は実 MP4 を非生成 | `facets/personas/video-director` `facets/personas/release-director` `facets/instructions/video-direct` `facets/instructions/render-{hyperframes,remotion,davinci,aviutl}` `facets/instructions/release-movie` `facets/knowledge/video-grammar` `recipes/movie` `recipes/release-movie` `web/release-trailer.html` |
-> | **scenario**（`/rig:scenario`） | 動画シナリオの脚本→検閲（`/rig:movie` の前段） | `facets/personas/scenario-writer` `facets/personas/engagement-reviewer` `facets/personas/auteur/{deconstructionist,humanist}` `facets/instructions/{scenario-write,scenario-vet}` `recipes/scenario` |
 > | **design**（`/rig:design`） | UI/UX・a11y の作成＋URL 監査（`--ppt`/`--claudedesign`/Playwright は MCP 委譲） | `facets/personas/design/{ui-ux-designer,ux-reviewer,a11y-reviewer}` `facets/instructions/{design-draft,design-vet,design-audit}` `facets/output-contracts/design-verdict` `facets/knowledge/{a11y-wcag,ui-ux-heuristics}` `recipes/{design,design-audit}` |
 > | **test-design**（`/rig:qa`） | 固定7観点のテストケース設計（Test Basis 必須） | `facets/personas/test-designer` `facets/knowledge/qa-test-lenses` `facets/instructions/test-design` `facets/output-contracts/test-cases` `recipes/test-design` |
 > | **harness-audit**（`/rig:harness`） | ハーネスの棚卸し＝空象限と効いていない資産の検出（read-only） | `facets/personas/harness-auditor` `facets/knowledge/harness-taxonomy` `facets/instructions/harness-audit` `facets/output-contracts/harness-map` `recipes/harness-audit` |
@@ -90,6 +88,7 @@ domain extension は core 目録や既定の asset 解決へ混ぜない。必�
 |---|---|---|
 | `sales` | 商談レビューと営業資料・荷電スクリプト生成 | `rig-wb pack install domain:sales --scope project --allow-unverified` |
 | `sns-x` | X向け投稿の起案・レビュー・承認分類 | `rig-wb pack install domain:sns-x --scope project --allow-unverified` |
+| `video-storytelling` | 根拠に接続した動画脚本・検閲・絵コンテ生成 | `rig-wb pack install domain:video-storytelling --scope project --allow-unverified` |
 
 project pack は実行前に内容を確認し、初回は `RIG_ALLOW_PROJECT_PACKS=1` を設定して
 asset trust を記録する。その後 `$rig --recipe <installed-name>` で起動する。pack の
