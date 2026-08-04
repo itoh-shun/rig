@@ -24,14 +24,23 @@ def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
     case_path = pack / "evals/cases/hello-case/case.json"
     case = copy.deepcopy(valid_case())
     case.update(id="hello-case", prompt_surfaces=["recipe:hello"],
-                deterministic_checks=["exit:0"])
+                deterministic_checks=["exit:0"], prompt_entrypoint="hello",
+                prompt_composition=["recipe:hello"],
+                target_expectations=["exit:0"],
+                clean_expectations=["not_contains:impossible-clean-output"])
     case["provider_policy"] = {
-        "mode": "allowlist", "allowed": ["command"], "models": ["fixture"],
-        "judge_providers": ["command"], "judge_models": ["fixture"],
+        "mode": "allowlist", "allowed": ["codex"], "models": ["fixture"],
+        "judge_providers": ["codex"], "judge_models": ["fixture"],
     }
     case_path.write_text(canonical(case), encoding="utf-8")
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
     manifest["hashes"]["evals/cases/hello-case/case.json"] = digest(case_path)
+    manifest.update(
+        display_name="Quality pack", description="Publisher quality fixture",
+        capabilities=["evaluation", "recipe"],
+        entrypoints=[{"id": "hello", "kind": "recipe", "target": "hello"}],
+        references=[], resources={},
+    )
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -43,21 +52,25 @@ def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
         return {"status": "measured", "criteria": [
             {"id": "correct", "status": "pass", "score": 1.0},
         ]}
-    judge.judge_provider = "command"
+    judge.judge_provider = "codex"
     judge.judge_model = "fixture"
     judge.judge_executor_version = __version__
     result_root = root / "generated-results"
-    result_path, _result = run_case(
-        case, repo=root, provider="command", model="fixture", repeat=3,
-        phase="current", command="true", result_root=result_root, judge_adapter=judge,
+    monkeypatch.setattr(
+        "rig_workbench.eval.runner._execute",
+        lambda **_kwargs: (0, "ok", "", None),
     )
-    bundled = pack / "evals/results/hello-case/current-command.json"
+    result_path, _result = run_case(
+        case, repo=root, provider="codex", model="fixture", repeat=3,
+        phase="current", result_root=result_root, judge_adapter=judge,
+    )
+    bundled = pack / "evals/results/hello-case/current-codex.json"
     bundled.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(result_path, bundled)
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
-    manifest["assets"]["eval-result"] = ["evals/results/hello-case/current-command.json"]
+    manifest["assets"]["eval-result"] = ["evals/results/hello-case/current-codex.json"]
     manifest["hashes"]["evals/cases/hello-case/case.json"] = digest(case_path)
-    manifest["hashes"]["evals/results/hello-case/current-command.json"] = digest(bundled)
+    manifest["hashes"]["evals/results/hello-case/current-codex.json"] = digest(bundled)
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     return pack
 
@@ -70,9 +83,11 @@ def test_install_local_is_atomic_canonical_and_does_not_modify_source(tmp_path):
     source = _write_pack(tmp_path / "sources", "local-pack", recipe=False)
     before = tree_hash(source)
     root = tmp_path / "installed"
-    result = install_pack(source, scope="project", project=tmp_path, root=root)
+    result = install_pack(
+        source, scope="project", project=tmp_path, root=root, allow_unverified=True,
+    )
 
-    assert result.path == root / "local-pack" and result.verification_status == "verified"
+    assert result.path == root / "local-pack" and result.verification_status == "verified-local"
     assert tree_hash(source) == before
     lock = read_lock(root)
     assert lock["packs"][0]["id"] == "local-pack"
@@ -82,6 +97,136 @@ def test_install_local_is_atomic_canonical_and_does_not_modify_source(tmp_path):
     ) + "\n"
     with pytest.raises(PackError, match="already exists"):
         install_pack(source, scope="project", project=tmp_path, root=root)
+
+
+def test_unsigned_project_escape_hatch_cannot_target_other_or_external_roots(
+    tmp_path, monkeypatch,
+):
+    from rig_workbench.packs.cli import cmd_pack
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.model import PackError
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source = _write_pack(tmp_path / "source", "placement-pack", recipe=False)
+    user_home = tmp_path / "user-home"
+    org_home = tmp_path / "org-home"
+    monkeypatch.setenv("RIG_USER_HOME", str(user_home))
+    monkeypatch.setenv("RIG_ORG_HOME", str(org_home))
+    outside = tmp_path / "external-root"
+    forbidden = [user_home / ".rig/packs", org_home / "packs", outside]
+    for root in forbidden:
+        with pytest.raises(PackError, match="inside the project"):
+            install_pack(
+                source, scope="project", project=project, root=root,
+                allow_unverified=True,
+            )
+        assert not root.exists()
+
+    org_target = org_home / "packs"
+    org_home.mkdir()
+    (project / "linked-packs").symlink_to(org_target, target_is_directory=True)
+    with pytest.raises(PackError, match="symlink"):
+        install_pack(
+            source, scope="project", project=project, root=project / "linked-packs",
+            allow_unverified=True,
+        )
+    assert not org_target.exists()
+
+    monkeypatch.chdir(project)
+    assert cmd_pack([
+        "install", str(source), "--scope", "project", "--root", str(org_target),
+        "--allow-unverified",
+    ]) == 2
+    assert not org_target.exists()
+
+
+def test_lock_scope_mismatch_fails_closed(tmp_path):
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.lock import read_lock, validate_lock_root, write_lock
+    from rig_workbench.packs.model import PackError
+
+    project = tmp_path / "project"
+    source = _write_pack(tmp_path / "source", "scope-lock", recipe=False)
+    install_pack(source, scope="project", project=project, allow_unverified=True)
+    root = project / ".rig/packs"
+    lock = read_lock(root)
+    lock["packs"][0]["scope"] = "org"
+    write_lock(root, lock)
+    with pytest.raises(PackError, match="scope mismatch"):
+        validate_lock_root(root, expected_scope="project")
+
+
+@pytest.mark.parametrize("link_component", [".rig", ".rig/packs", "broken/intermediate"])
+def test_default_and_intermediate_project_root_symlinks_fail_before_write(
+    tmp_path, monkeypatch, link_component,
+):
+    from rig_workbench.packs.cli import cmd_pack
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.model import PackError
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source = _write_pack(tmp_path / "source", "default-link-pack", recipe=False)
+    external = tmp_path / "external"
+    link = project / link_component
+    link.parent.mkdir(parents=True, exist_ok=True)
+    target = external if link_component != "broken/intermediate" else tmp_path / "absent"
+    link.symlink_to(target, target_is_directory=True)
+    root = None if link_component in {".rig", ".rig/packs"} else project / "broken/intermediate/packs"
+    with pytest.raises(PackError, match="symlink"):
+        install_pack(
+            source, scope="project", project=project, root=root,
+            allow_unverified=True,
+        )
+    assert not external.exists() and not target.exists()
+
+    if root is None:
+        monkeypatch.chdir(project)
+        assert cmd_pack([
+            "install", str(source), "--scope", "project", "--allow-unverified",
+        ]) == 2
+        assert not external.exists()
+
+
+@pytest.mark.parametrize("scope", ["user", "org"])
+def test_default_nonproject_tier_symlink_fails_before_write(tmp_path, monkeypatch, scope):
+    from rig_workbench.packs.cli import cmd_pack
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.model import PackError
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source = _write_pack(tmp_path / "source", f"{scope}-link-pack", recipe=False)
+    external = tmp_path / f"{scope}-external"
+    if scope == "user":
+        home = tmp_path / "user-home"
+        home.mkdir()
+        (home / ".rig").symlink_to(external, target_is_directory=True)
+        monkeypatch.setenv("RIG_USER_HOME", str(home))
+    else:
+        home = tmp_path / "org-home"
+        home.mkdir()
+        (home / "packs").symlink_to(external, target_is_directory=True)
+        monkeypatch.setenv("RIG_ORG_HOME", str(home))
+    with pytest.raises(PackError, match="symlink"):
+        install_pack(source, scope=scope, project=project)
+    assert not external.exists()
+    monkeypatch.chdir(project)
+    assert cmd_pack(["install", str(source), "--scope", scope]) == 2
+    assert not external.exists()
+
+
+def test_default_absent_project_pack_root_is_created_normally(tmp_path):
+    from rig_workbench.packs.installer import install_pack
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source = _write_pack(tmp_path / "source", "normal-default", recipe=False)
+    result = install_pack(
+        source, scope="project", project=project, allow_unverified=True,
+    )
+    assert result.path == project / ".rig/packs/normal-default"
 
 
 @pytest.mark.parametrize("kind", ["zip", "tar"])
@@ -96,7 +241,7 @@ def test_install_safe_zip_and_tar(tmp_path, kind):
         archive = pathlib.Path(shutil.make_archive(str(tmp_path / "pack"), "gztar",
                                                    root_dir=source.parent, base_dir=source.name))
     result = install_pack(archive, scope="project", project=tmp_path,
-                          root=tmp_path / f"installed-{kind}")
+                          root=tmp_path / f"installed-{kind}", allow_unverified=True)
     assert result.manifest["id"] == f"archive-{kind}"
 
 
@@ -165,7 +310,7 @@ def test_unverified_prompt_pack_is_project_only_and_quality_fixture_installs(tmp
     from rig_workbench.packs.model import PackError
 
     unverified = _write_pack(tmp_path / "unverified", "unverified-pack", recipe=True)
-    with pytest.raises(PackError, match="attested non-mock"):
+    with pytest.raises(PackError, match="unsigned packs require"):
         install_pack(unverified, scope="project", project=tmp_path,
                      root=tmp_path / "verified-required")
     with pytest.raises(PackError, match="restricted to project"):
@@ -178,8 +323,8 @@ def test_unverified_prompt_pack_is_project_only_and_quality_fixture_installs(tmp
 
     quality = _quality_pack(tmp_path / "quality", monkeypatch)
     verified = install_pack(quality, scope="project", project=tmp_path,
-                            root=tmp_path / "quality-installed")
-    assert verified.verification_status == "verified"
+                            root=tmp_path / "quality-installed", allow_unverified=True)
+    assert verified.verification_status == "verified-local"
 
 
 def test_lock_write_failure_rolls_back_install(tmp_path, monkeypatch):
@@ -192,7 +337,9 @@ def test_lock_write_failure_rolls_back_install(tmp_path, monkeypatch):
         (_ for _ in ()).throw(PackError("lock failure"))
     ))
     with pytest.raises(PackError, match="lock failure"):
-        installer.install_pack(source, scope="project", project=tmp_path, root=root)
+        installer.install_pack(
+            source, scope="project", project=tmp_path, root=root, allow_unverified=True,
+        )
     assert not (root / "rollback-pack").exists()
 
 
@@ -225,12 +372,12 @@ def test_remove_is_dry_run_then_yes_and_refuses_dependents(tmp_path):
 
     project = tmp_path / "project"
     base = _write_pack(tmp_path / "base", "base-pack", recipe=False)
-    install_pack(base, scope="project", project=project)
+    install_pack(base, scope="project", project=project, allow_unverified=True)
     target, removed = remove_pack("base-pack", scope="project", project=project)
     assert not removed and target.exists()
     dependent = _write_pack(tmp_path / "dependent", "dependent-pack", recipe=False,
                             dependency=[{"id": "base-pack", "range": "*"}])
-    install_pack(dependent, scope="project", project=project)
+    install_pack(dependent, scope="project", project=project, allow_unverified=True)
     with pytest.raises(PackError, match="dependents"):
         remove_pack("base-pack", scope="project", project=project, yes=True)
     _target, removed = remove_pack("dependent-pack", scope="project", project=project, yes=True)
@@ -246,7 +393,7 @@ def test_remove_delete_failure_restores_exact_lock_and_target(tmp_path, monkeypa
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source-rollback", "remove-rollback", recipe=False)
-    installed = install_pack(source, scope="project", project=project)
+    installed = install_pack(source, scope="project", project=project, allow_unverified=True)
     lock_path = project / ".rig/packs/pack.lock.json"
     original = lock_path.read_bytes()
     monkeypatch.setattr(remover.shutil, "rmtree", lambda _path: (
@@ -265,7 +412,7 @@ def test_remove_lock_failure_restores_target_without_changing_lock(tmp_path, mon
 
     project = tmp_path / "project-lock-rollback"
     source = _write_pack(tmp_path / "source-lock-rollback", "lock-rollback", recipe=False)
-    installed = install_pack(source, scope="project", project=project)
+    installed = install_pack(source, scope="project", project=project, allow_unverified=True)
     lock_path = project / ".rig/packs/pack.lock.json"
     original = lock_path.read_bytes()
     monkeypatch.setattr(remover, "write_lock", lambda *_args: (
@@ -285,7 +432,7 @@ def test_lock_ownership_is_bidirectional_and_lockless_root_is_diagnosed(tmp_path
     project = tmp_path / "project-owned"
     root = project / ".rig/packs"
     source = _write_pack(tmp_path / "owned-source", "owned-pack", recipe=False)
-    install_pack(source, scope="project", project=project)
+    install_pack(source, scope="project", project=project, allow_unverified=True)
     _write_pack(root, "unowned-pack", recipe=False)
     with pytest.raises(PackError, match="directory ownership mismatch.*unowned-pack"):
         validate_lock_root(root)
@@ -316,7 +463,7 @@ def test_pack_quality_uses_canonical_eval_gate_policy(tmp_path, monkeypatch, mut
 
     pack = _quality_pack(tmp_path / "canonical-quality", monkeypatch)
     _raw, case = read_json_yaml(pack / "evals/cases/hello-case/case.json")
-    _raw, result = read_json_yaml(pack / "evals/results/hello-case/current-command.json")
+    _raw, result = read_json_yaml(pack / "evals/results/hello-case/current-codex.json")
     mutation(result)
     result.pop("attestation")
     result.pop("result_sha256")
@@ -328,24 +475,64 @@ def test_pack_quality_uses_canonical_eval_gate_policy(tmp_path, monkeypatch, mut
 
 
 def test_pack_test_structural_mock_and_provider_unavailable(tmp_path, monkeypatch):
+    from rig_workbench.packs.lock import tree_hash
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
+    from rig_workbench.packs.model import PackError
     from rig_workbench.packs.tester import test_pack
 
     pack = _write_pack(tmp_path / "source", "test-pack", recipe=True)
     case_path = pack / "evals/cases/hello-case/case.json"
     _raw, case = read_json_yaml(case_path)
     case["provider_policy"] = {"mode": "any", "allowed": []}
+    case.update(
+        prompt_entrypoint="hello",
+        prompt_composition=["recipe:hello"],
+        target_expectations=["contains:target"],
+        clean_expectations=["contains:clean"],
+    )
     case_path.write_text(canonical(case), encoding="utf-8")
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
     manifest["hashes"]["evals/cases/hello-case/case.json"] = digest(case_path)
+    manifest.update(
+        display_name="Test pack", description="Evaluation composition fixture",
+        capabilities=["evaluation", "recipe"],
+        entrypoints=[{"id": "hello", "kind": "recipe", "target": "hello"}],
+        references=[], resources={},
+    )
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "pack-test-fixture-key-is-at-least-32-bytes")
+    before = tree_hash(pack)
     structural, code = test_pack(pack, project=tmp_path)
     assert code == 0 and structural["status"] == "structural_only"
+    marker = tmp_path / "COMMAND_MUTATION"
+    rejected_results = tmp_path.parent / f"{tmp_path.name}-rejected-results"
+    with pytest.raises(PackError, match="forbids command"):
+        test_pack(
+            pack, project=tmp_path, provider="command", model="fixture",
+            command=f"python -c 'open({str(marker)!r}, \"w\").write(\"bad\")'",
+            result_dir=rejected_results,
+        )
+    with pytest.raises(PackError, match="forbids command"):
+        test_pack(
+            pack, project=tmp_path, provider="mock", model="fixture",
+            judge_provider="command", judge_model="fixture",
+            judge_command=f"python -c 'open({str(marker)!r}, \"w\").write(\"bad\")'",
+            result_dir=rejected_results,
+        )
+    assert not marker.exists() and not rejected_results.exists()
+    result_dir = tmp_path.parent / f"{tmp_path.name}-durable-results"
     mock, code = test_pack(pack, project=tmp_path, provider="mock", model="fixture",
-                           judge_provider="mock", judge_model="fixture")
+                           judge_provider="mock", judge_model="fixture",
+                           result_dir=result_dir)
     assert code == 0 and mock["status"] == "non_quality_mock"
+    assert mock["result_paths"] and all(pathlib.Path(item).is_file()
+                                        for item in mock["result_paths"])
+    persisted = json.loads(pathlib.Path(mock["result_paths"][0]).read_text(encoding="utf-8"))
+    assert persisted["target"][0]["checks"][0]["spec"] == "contains:target"
+    assert persisted["clean"][0]["checks"][0]["spec"] == "contains:clean"
+    assert tree_hash(pack) == before
     monkeypatch.setattr("rig_workbench.eval.runner.shutil.which", lambda _name: None)
-    unavailable, code = test_pack(pack, project=tmp_path, provider="claude", model="fixture",
-                                  judge_provider="claude", judge_model="fixture")
+    unavailable, code = test_pack(pack, project=tmp_path, provider="codex", model="fixture",
+                                  judge_provider="codex", judge_model="fixture",
+                                  result_dir=result_dir / "unavailable")
     assert code == 2 and unavailable["status"] == "provider_unavailable"

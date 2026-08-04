@@ -21,7 +21,10 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
                                  "detail": "validated legacy packs; migrate with pack install",
                                  "scope": tier, "severity": "warning"})
             try:
-                validate_lock_root(pack_root)
+                validate_lock_root(
+                    pack_root,
+                    expected_scope=tier if tier in {"project", "user", "org"} else None,
+                )
             except Exception as exc:
                 findings.append({"code": "lock_drift", "path": str(pack_root),
                                  "detail": str(exc), "scope": tier})
@@ -40,6 +43,10 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
     for root in sorted(roots):
         try:
             manifest = validate_pack(root)
+            if (root / "pack.sig.json").is_file():
+                from .publisher import verify_publisher_signature
+                if verify_publisher_signature(root, manifest) is None:
+                    raise ValueError("publisher signature disappeared during verification")
             manifests[manifest["id"]] = manifest
             entries.append((tier_by_path.get(root.resolve(), "selected"), root))
         except Exception as exc:

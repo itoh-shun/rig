@@ -30,9 +30,9 @@ def pack_roots(project: pathlib.Path | str | None = None) -> list[tuple[str, pat
 
 def _pack_entries(project: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
     from .lock import validate_lock_root
-    for _tier, root in pack_roots(project):
+    for tier, root in pack_roots(project):
         if root.is_dir():
-            validate_lock_root(root)
+            validate_lock_root(root, expected_scope=tier if tier in {"project", "user", "org"} else None)
     return [(tier, item) for tier, root in pack_roots(project) if root.is_dir()
             for item in sorted(root.iterdir()) if item.is_dir()
             and not item.name.startswith((".", "_"))]

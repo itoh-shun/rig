@@ -340,7 +340,7 @@ def test_command_executor_is_shell_safe_times_out_caps_and_redacts(tmp_path):
     assert "small-value" not in json.dumps(redacted)
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("provider", ["codex"])
 def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_path, provider):
     from rig_workbench.eval import runner
 
@@ -350,10 +350,8 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
                                     "json", "schema:ok", "exit:0"]
     seen = []
     monkeypatch.setattr(
-        runner, "build_bare_attempt",
-        lambda selected, goal, repo, model: types.SimpleNamespace(
-            argv=(selected, "--model", model, goal)
-        ),
+        runner, "_eval_agent_argv",
+        lambda selected, goal, repo, model: [selected, "--model", model, goal],
     )
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
     monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
@@ -372,6 +370,52 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
     assert all(row["outcome"] == "pass" for row in result["target"])
     assert seen and all(kwargs["shell"] is False for _argv, kwargs in seen)
     assert all(argv[0] == provider for argv, _kwargs in seen)
+
+
+def test_claude_eval_fails_closed_without_os_read_only_guarantee(tmp_path):
+    from rig_workbench.eval import EvalCaseError, runner
+
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": []}
+    with pytest.raises(EvalCaseError, match="OS-level read-only"):
+        runner.run_case(
+            case, repo=tmp_path, provider="claude", model="fixture", repeat=3,
+            phase="current", now=NOW,
+        )
+
+
+def test_codex_eval_uses_external_read_only_workspace_and_source_is_never_cwd(
+    monkeypatch, tmp_path,
+):
+    from rig_workbench.eval import runner
+
+    source = tmp_path / "source"
+    source.mkdir()
+    marker = source / "MUTATED"
+    workspace = tmp_path / "external-results" / "workspace"
+    workspace.mkdir(parents=True)
+    workspace.chmod(0o555)
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": []}
+    seen = []
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
+    monkeypatch.setattr(runner.shutil, "which", lambda _name: "/bin/codex")
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv, kwargs["cwd"]))
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    runner.run_case(
+        case, repo=source, provider="codex", model="fixture", repeat=3,
+        phase="current", now=NOW, execution_cwd=workspace,
+        result_root=tmp_path / "external-results",
+    )
+    assert seen and all(cwd == workspace for _argv, cwd in seen)
+    assert all("read-only" in argv and str(workspace) in argv for argv, _cwd in seen)
+    assert workspace.stat().st_mode & 0o222 == 0
+    assert not marker.exists()
 
 
 def test_unavailable_real_provider_fails_closed(monkeypatch, tmp_path):
@@ -674,8 +718,7 @@ def test_real_provider_nonzero_is_infrastructure_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
     monkeypatch.setattr(runner.shutil, "which", lambda _executable: "/bin/codex")
     monkeypatch.setattr(
-        runner, "build_bare_attempt",
-        lambda *_args: types.SimpleNamespace(argv=("codex", "exec")),
+        runner, "_eval_agent_argv", lambda *_args: ["codex", "exec"],
     )
     monkeypatch.setattr(
         runner.subprocess, "run",

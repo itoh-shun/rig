@@ -22,8 +22,13 @@ _TOP_FIELDS = {
     "red_thresholds", "green_thresholds", "deterministic_checks", "semantic_rubric",
     "target_inputs", "clean_controls", "missing_requirements", "failure_summary",
     "created_at", "updated_at", "prompt_surfaces",
+    "prompt_entrypoint", "prompt_composition", "target_expectations",
+    "clean_expectations",
 }
-_REQUIRED = _TOP_FIELDS - {"failure_summary", "prompt_surfaces"}
+_REQUIRED = _TOP_FIELDS - {
+    "failure_summary", "prompt_surfaces", "prompt_entrypoint", "prompt_composition",
+    "target_expectations", "clean_expectations",
+}
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 _RUBRIC_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
@@ -168,6 +173,26 @@ def validate_case(case: Any) -> dict:
         raise EvalCaseError("prompt_surfaces contains an invalid registry id")
     if len(prompt_surfaces) != len(set(prompt_surfaces)):
         raise EvalCaseError("prompt_surfaces contains a duplicate")
+    if "prompt_entrypoint" in obj:
+        if not isinstance(obj["prompt_entrypoint"], str) or not _ID.fullmatch(
+            obj["prompt_entrypoint"]
+        ):
+            raise EvalCaseError("prompt_entrypoint must be a safe entrypoint id")
+    if "prompt_composition" in obj:
+        composition = obj["prompt_composition"]
+        if (not isinstance(composition, list) or not composition
+                or any(not isinstance(value, str) or not _PROMPT_SURFACE_ID.fullmatch(value)
+                       for value in composition)
+                or len(composition) != len(set(composition))):
+            raise EvalCaseError("prompt_composition must contain unique prompt registry ids")
+    for field in ("target_expectations", "clean_expectations"):
+        if field in obj and (not isinstance(obj[field], list) or not obj[field]
+                             or any(not isinstance(value, str) or not value.strip()
+                                    for value in obj[field])):
+            raise EvalCaseError(f"{field} must contain deterministic checks")
+    if ("target_expectations" in obj and "clean_expectations" in obj
+            and obj["target_expectations"] == obj["clean_expectations"]):
+        raise EvalCaseError("target and clean expectations must be distinct")
     _text(obj["suite"], "suite")
     if (not isinstance(obj["tags"], list)
             or any(not isinstance(x, str) or not _ID.fullmatch(x) for x in obj["tags"])):

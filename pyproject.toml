@@ -32,6 +32,7 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
+  "cryptography>=41",                  # Ed25519 publisher pack signatures
   "pyyaml>=6.0",                        # recipe frontmatter parsing (orchestrate.py, validate.py)
   "pytest>=7",                          # packaged Python benchmark task execution
 ]
@@ -63,7 +64,7 @@ include = ["rig_workbench*", "benchmarks*", "skills*", "packs*"]
 exclude = ["tests*", "docs*", "video*", "web*"]
 
 [tool.setuptools.package-data]
-rig_workbench = ["py.typed"]
+rig_workbench = ["py.typed", "packs/trust-roots.json"]
 benchmarks = [
   "tasks/**/*.json",
   "tasks/**/*.py",

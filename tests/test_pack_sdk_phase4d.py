@@ -401,7 +401,7 @@ def test_resource_metadata_runtime_lookup_and_mime_spoof_fail_closed(tmp_path, m
     pack = _resource_pack(tmp_path / "source")
     assert validate_pack(pack)["assets"]["resource"] == ["resources/guide.html"]
     project = tmp_path / "project"
-    install_pack(pack, scope="project", project=project)
+    install_pack(pack, scope="project", project=project, allow_unverified=True)
     resolved = resolve_resource("resource-pack", "guide", project=project)
     assert resolved and resolved["media_type"] == "text/html"
     assert resolved["executable"] is False and resolved["path"].is_file()

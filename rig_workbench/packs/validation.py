@@ -100,7 +100,9 @@ def validate_pack(path: pathlib.Path | str) -> dict:
     declared = {item for paths in manifest["assets"].values() for item in paths}
     actual = {
         asset.relative_to(root).as_posix() for asset in root.rglob("*")
-        if asset.is_file() and asset.name not in {"pack.yaml", "compatibility.yaml"}
+        if asset.is_file() and asset.name not in {
+            "pack.yaml", "compatibility.yaml", "pack.sig.json",
+        }
     }
     if actual != declared:
         missing, extra = sorted(declared - actual), sorted(actual - declared)

@@ -44,15 +44,48 @@ def _resolve_source(source: pathlib.Path | str) -> tuple[pathlib.Path, str]:
     return resolved, str(resolved)
 
 
+def _absolute_lexical(path: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(os.path.abspath(path.expanduser()))
+
+
+def _reject_symlink_components(path: pathlib.Path, *, base: pathlib.Path | None = None) -> None:
+    """Reject existing or broken symlinks before canonicalization or directory creation."""
+    target = _absolute_lexical(path)
+    anchor = _absolute_lexical(base) if base is not None else pathlib.Path(target.anchor)
+    if not target.is_relative_to(anchor):
+        raise PackError("pack root escapes its authoritative base")
+    cursor = anchor
+    if cursor.is_symlink():
+        raise PackError("pack root must not traverse a symlink")
+    for part in target.relative_to(anchor).parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise PackError("pack root must not traverse a symlink")
+
+
 def scope_root(scope: str, *, project: pathlib.Path, root: pathlib.Path | None = None) -> pathlib.Path:
     if scope not in {"project", "user", "org"}:
         raise PackError("pack scope must be project, user, or org")
-    if root is not None:
-        return root.expanduser().resolve()
     roots = dict(pack_roots(project))
     if scope == "org" and "org" not in roots:
-        raise PackError("org pack scope requires RIG_ORG_HOME or --root")
-    return roots[scope].resolve()
+        raise PackError("org pack scope requires configured RIG_ORG_HOME")
+    expected = _absolute_lexical(roots[scope])
+    supplied = _absolute_lexical(root) if root is not None else expected
+    if scope == "project":
+        project_root = project.resolve()
+        if not supplied.is_relative_to(project_root):
+            raise PackError("project pack root must remain inside the project")
+        _reject_symlink_components(supplied, base=project_root)
+        foreign = {
+            _absolute_lexical(path) for tier, path in roots.items() if tier in {"user", "org"}
+        }
+        if supplied in foreign:
+            raise PackError("project pack root must not alias another pack tier")
+    else:
+        if supplied != expected:
+            raise PackError(f"explicit {scope} pack root must match the configured tier root")
+        _reject_symlink_components(supplied)
+    return supplied.resolve(strict=False)
 
 
 def _safe_member(name: str) -> pathlib.PurePosixPath:
@@ -195,9 +228,12 @@ def _pack_root(content: pathlib.Path) -> pathlib.Path:
     raise PackError("archive must contain one pack root")
 
 
-def verification_status(pack: pathlib.Path, manifest: dict) -> str:
+def local_quality_status(
+    pack: pathlib.Path, manifest: dict, *, publisher_verified: bool = False,
+) -> str:
+    """Evaluate local promotion quality; this is not publisher/install trust."""
     if not any(manifest["assets"][kind] for kind in PROMPT_KINDS):
-        return "verified"
+        return "verified-local"
     cases: dict[str, dict] = {}
     for rel in manifest["assets"]["eval-case"]:
         _raw, case = read_json_yaml(pack / rel)
@@ -206,25 +242,46 @@ def verification_status(pack: pathlib.Path, manifest: dict) -> str:
     for rel in manifest["assets"]["eval-result"]:
         _raw, result = read_json_yaml(pack / rel)
         try:
-            validate_result(result)
+            validate_result(result, verify_attestation=not publisher_verified)
         except Exception as exc:
             raise PackError(f"invalid attested pack evaluation result: {rel}: {exc}") from exc
         if result.get("case_id") not in evidence:
             raise PackError(f"evaluation result is not bound to an owned case: {rel}")
+        if result.get("provider") in {"mock", "command"} or result.get(
+            "judge_provider"
+        ) in {"mock", "command"}:
+            return "unverified"
         evidence[result["case_id"]].append(result)
     for case_id, case in cases.items():
         current = [result for result in evidence[case_id] if result["phase"] == "current"]
         if len(current) != 1:
             return "unverified"
         try:
-            failures = quality_result_failures(current[0], case)
+            failures = quality_result_failures(
+                current[0], case, verify_attestation=not publisher_verified,
+            )
         except Exception as exc:
             raise PackError(
                 f"invalid attested pack evaluation result for {case_id}: {exc}"
             ) from exc
         if failures:
             return "unverified"
-    return "verified"
+    return "verified-local"
+
+
+def verification_status(pack: pathlib.Path, manifest: dict) -> tuple[str, dict | None]:
+    """Return publisher trust independently from local structural/quality evidence."""
+    from .publisher import verify_publisher_signature
+
+    publisher = verify_publisher_signature(pack, manifest)
+    quality = local_quality_status(pack, manifest, publisher_verified=publisher is not None)
+    if publisher is not None:
+        if quality != "verified-local":
+            raise PackError(
+                "publisher-signed pack has invalid, mock, mismatched, or non-green evidence"
+            )
+        return "verified-publisher", publisher
+    return quality, None
 
 
 def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
@@ -250,14 +307,14 @@ def install_pack(
 ) -> InstallResult:
     project_path = pathlib.Path(project).resolve()
     source_path, source_label = _resolve_source(source)
+    if allow_unverified and scope != "project":
+        raise PackError("--allow-unverified is restricted to project scope")
     destination_root = scope_root(
         scope, project=project_path,
         root=pathlib.Path(root) if root is not None else None,
     )
-    if allow_unverified and scope != "project":
-        raise PackError("--allow-unverified is restricted to project scope")
     destination_root.mkdir(parents=True, exist_ok=True)
-    validate_lock_root(destination_root)
+    validate_lock_root(destination_root, expected_scope=scope)
     unmanaged = [item.name for item in destination_root.iterdir() if item.is_dir()
                  and not item.name.startswith(".pack-")]
     if unmanaged and not lock_path(destination_root).exists():
@@ -277,11 +334,11 @@ def install_pack(
         validate_tiered_collection(
             _collection_entries(project_path, pack, scope, destination_root)
         )
-        quality = verification_status(pack, manifest)
-        if quality != "verified" and not allow_unverified:
+        status, publisher = verification_status(pack, manifest)
+        if status != "verified-publisher" and not allow_unverified:
             raise PackError(
-                "prompt pack requires promoted cases and attested non-mock current green evidence; "
-                "project installs may explicitly use --allow-unverified"
+                "unsigned packs require project --allow-unverified; local evaluation quality "
+                "does not establish publisher trust"
             )
         lock = read_lock(destination_root)
         if any(item["id"] == manifest["id"] for item in lock["packs"]):
@@ -289,7 +346,9 @@ def install_pack(
         entry = make_entry(
             pack, manifest, scope=scope, source_type=source_type,
             source_path=source_label, source_hash=source_hash,
-            verification_status=quality,
+            verification_status=status,
+            publisher_key_id=publisher["key_id"] if publisher else None,
+            signed_digest=publisher["signed_digest"] if publisher else None,
         )
         os.replace(pack, destination)
         installed = destination
@@ -299,7 +358,7 @@ def install_pack(
             os.replace(destination, pack)
             installed = None
             raise
-        return InstallResult(destination, manifest, quality)
+        return InstallResult(destination, manifest, status)
     except PackError:
         raise
     except OSError as exc:

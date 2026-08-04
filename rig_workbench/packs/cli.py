@@ -34,14 +34,20 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--allow-unverified", action="store_true")
     test = sub.add_parser("test")
     test.add_argument("pack")
-    test.add_argument("--provider", choices=["mock", "claude", "codex", "command"])
+    test.add_argument("--provider", choices=["mock", "codex"])
     test.add_argument("--model")
-    test.add_argument("--judge-provider", choices=["mock", "claude", "codex", "command"])
+    test.add_argument("--judge-provider", choices=["mock", "codex"])
     test.add_argument("--judge-model")
     test.add_argument("--command", dest="provider_command")
     test.add_argument("--judge-command")
     test.add_argument("--timeout", type=float, default=30)
+    test.add_argument("--result-dir")
     test.add_argument("--json", action="store_true")
+    sign = sub.add_parser("sign")
+    sign.add_argument("pack")
+    sign.add_argument("--private-key", required=True)
+    sign.add_argument("--key-id", required=True)
+    sign.add_argument("--signer", required=True)
     remove = sub.add_parser("remove")
     remove.add_argument("id")
     remove.add_argument("--scope", choices=["project", "user", "org"], default="project")
@@ -179,8 +185,12 @@ def cmd_pack(argv: list[str]) -> int:
                 args.source, scope=args.scope, project=pathlib.Path.cwd(), root=args.root,
                 allow_unverified=args.allow_unverified,
             )
-            if result.verification_status == "unverified":
-                print("[WARN] installed unverified project pack", file=sys.stderr)
+            if result.verification_status != "verified-publisher":
+                print(
+                    f"[WARN] installed publisher-unverified project pack "
+                    f"[{result.verification_status}]",
+                    file=sys.stderr,
+                )
             print(f"installed: {result.manifest['id']}@{result.manifest['version']} "
                   f"[{result.verification_status}] -> {result.path}")
             return 0
@@ -191,6 +201,7 @@ def cmd_pack(argv: list[str]) -> int:
                 model=args.model, judge_provider=args.judge_provider,
                 judge_model=args.judge_model, command=args.provider_command,
                 judge_command=args.judge_command, timeout=args.timeout,
+                result_dir=args.result_dir,
             )
             if args.json:
                 print(canonical(report), end="")
@@ -199,6 +210,14 @@ def cmd_pack(argv: list[str]) -> int:
                 for failure in report["failures"]:
                     print(f"- {failure}")
             return code
+        if args.command == "sign":
+            from .publisher import sign_pack
+            document = sign_pack(
+                args.pack, private_key_path=args.private_key,
+                key_id=args.key_id, signer=args.signer,
+            )
+            print(f"signed: {args.pack} [{document['signed']['key_id']}]")
+            return 0
         if args.command == "remove":
             from .remover import remove_pack
             target, removed = remove_pack(

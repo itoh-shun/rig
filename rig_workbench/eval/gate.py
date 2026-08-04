@@ -66,10 +66,11 @@ def quality_result_failures(
     expected_base: str | None = None, expected_diff: str | None = None,
     provider: str | None = None, model: str | None = None,
     judge_provider: str | None = None, judge_model: str | None = None,
+    verify_attestation: bool = True,
 ) -> list[str]:
     """Canonical attested-current quality policy for eval gates and packs."""
     validate_case(case)
-    validate_result(result)
+    validate_result(result, verify_attestation=verify_attestation)
     case_id = case["id"]
     failures: list[str] = []
     policy = case["provider_policy"]

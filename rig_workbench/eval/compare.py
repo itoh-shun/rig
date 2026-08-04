@@ -20,7 +20,9 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def validate_result(result: Any, *, now: dt.datetime | None = None) -> dict:
+def validate_result(
+    result: Any, *, now: dt.datetime | None = None, verify_attestation: bool = True,
+) -> dict:
     if not isinstance(result, dict):
         raise EvalCaseError("evaluation result must be an object")
     required = {
@@ -36,7 +38,7 @@ def validate_result(result: Any, *, now: dt.datetime | None = None) -> dict:
     missing = required - set(result)
     if unknown or missing:
         raise EvalCaseError("evaluation result schema fields are invalid")
-    if not verify_result_attestation(result):
+    if verify_attestation and not verify_result_attestation(result):
         raise EvalCaseError("evaluation result attestation is invalid")
     if (isinstance(result["eval_result_schema_version"], bool)
             or result["eval_result_schema_version"] != 1):

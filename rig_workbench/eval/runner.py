@@ -18,8 +18,6 @@ from collections.abc import Callable
 from typing import Any
 
 from rig_workbench import __version__
-from rig_workbench.bench_providers import build_bare_attempt
-
 from .attestation import sign_result_attestation
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
 from .execution import execution_diff_sha256
@@ -29,6 +27,18 @@ RESULT_SCHEMA_VERSION = 1
 OUTPUT_CAP = 4096
 COMMAND_ALLOWLIST = frozenset({"python", "python3", "node", "printf", "echo", "true", "false"})
 JudgeAdapter = Callable[[dict, str, str], dict]
+
+
+def _eval_agent_argv(provider: str, prompt: str, repo: pathlib.Path, model: str) -> list[str]:
+    """Read-only, ephemeral eval adapter; deliberately independent of benchmark wrappers."""
+    if provider == "claude":
+        raise EvalCaseError("Claude CLI cannot guarantee OS-level read-only evaluation")
+    if provider == "codex":
+        return [
+            "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+            "--cd", str(repo), "--ephemeral", "-m", model, prompt,
+        ]
+    raise EvalCaseError("unsupported read-only evaluation adapter")
 
 
 def _child_environment(**updates: str) -> dict[str, str]:
@@ -147,8 +157,7 @@ def _execute(
         if not argv or pathlib.Path(argv[0]).name != argv[0] or argv[0] not in COMMAND_ALLOWLIST:
             raise EvalCaseError("command executable is not allowlisted")
     elif provider in {"claude", "codex"}:
-        invocation = build_bare_attempt(provider, payload, repo, model)
-        argv = list(invocation.argv)
+        argv = _eval_agent_argv(provider, payload, repo, model)
         if not argv or shutil.which(argv[0]) is None:
             return 127, "", "provider executable unavailable", "unavailable"
     else:
@@ -251,8 +260,7 @@ def make_judge_adapter(
         prompt = _judge_prompt(case, payload, output)
         selected = argv
         if provider in {"claude", "codex"}:
-            invocation = build_bare_attempt(provider, prompt, root, model)
-            selected = list(invocation.argv)
+            selected = _eval_agent_argv(provider, prompt, root, model)
             if not selected or shutil.which(selected[0]) is None:
                 return {"status": "error", "criteria": []}
         assert selected is not None
@@ -284,16 +292,22 @@ def make_judge_adapter(
 def _sample(
     case: dict, *, provider: str, model: str, phase: str, kind: str, index: int,
     repeat: int, repo: pathlib.Path, command: str | None, timeout_s: float,
-    judge_adapter: JudgeAdapter | None,
+    judge_adapter: JudgeAdapter | None, prompt_prefix: str | None,
+    execution_cwd: pathlib.Path,
 ) -> dict:
     inputs = case["target_inputs"] if kind == "target" else case["clean_controls"]
-    payload = canonical_json(inputs).rstrip("\n")
+    input_payload = canonical_json(inputs).rstrip("\n")
+    payload = f"{prompt_prefix}\n\nEvaluation input:\n{input_payload}" if prompt_prefix else input_payload
     started = time.monotonic()
     returncode, stdout, stderr, infra = _execute(
         provider=provider, model=model, payload=payload, phase=phase, kind=kind,
-        index=index, repeat=repeat, repo=repo, command=command, timeout_s=timeout_s,
+        index=index, repeat=repeat, repo=execution_cwd, command=command, timeout_s=timeout_s,
     )
-    checks = [_check(spec, stdout, returncode) for spec in case["deterministic_checks"]]
+    expectations = case.get(
+        "target_expectations" if kind == "target" else "clean_expectations",
+        case["deterministic_checks"],
+    )
+    checks = [_check(spec, stdout, returncode) for spec in expectations]
     checks_pass = all(item["status"] == "pass" for item in checks)
     if case["semantic_rubric"] and judge_adapter is not None:
         judge = judge_adapter(case, payload, stdout)
@@ -342,6 +356,8 @@ def run_case(
     judge_adapter: JudgeAdapter | None = None, now: dt.datetime | None = None,
     execution_base: str | None = None,
     result_root: pathlib.Path | str | None = None,
+    prompt_prefix: str | None = None,
+    execution_cwd: pathlib.Path | str | None = None,
 ) -> tuple[pathlib.Path, dict]:
     validate_case(case)
     if phase not in {"baseline", "current"}:
@@ -376,6 +392,7 @@ def run_case(
     except OSError as exc:
         raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
     started_wall = _iso(now)
+    adapter_cwd = pathlib.Path(execution_cwd).resolve() if execution_cwd is not None else root
     execution_commit, execution_base_commit, execution_status = (
         _git_identity(root) if execution_base is None
         else _git_identity(root, execution_base)
@@ -388,11 +405,13 @@ def run_case(
     started = time.monotonic()
     target = [_sample(case, provider=provider, model=model, phase=phase, kind="target",
                       index=index, repeat=repeat, repo=root, command=command,
-                      timeout_s=timeout_s, judge_adapter=judge_adapter)
+                      timeout_s=timeout_s, judge_adapter=judge_adapter,
+                      prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd)
               for index in range(1, repeat + 1)]
     clean = [_sample(case, provider=provider, model=model, phase=phase, kind="clean",
                      index=index, repeat=repeat, repo=root, command=command,
-                     timeout_s=timeout_s, judge_adapter=judge_adapter)
+                     timeout_s=timeout_s, judge_adapter=judge_adapter,
+                     prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd)
              for index in range(1, repeat + 1)]
     target_pass = sum(row["outcome"] == "pass" for row in target)
     clean_pass = sum(row["outcome"] == "pass" for row in clean)

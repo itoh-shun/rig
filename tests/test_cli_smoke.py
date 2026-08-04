@@ -351,7 +351,8 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     )
     installed = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "pack", "install",
-         str(source_root / "wheel-pack"), "--scope", "project"], cwd=outside,
+         str(source_root / "wheel-pack"), "--scope", "project", "--allow-unverified"],
+        cwd=outside,
         capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
     doctor = subprocess.run(

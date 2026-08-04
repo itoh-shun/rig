@@ -16,7 +16,7 @@ from .model import PackError
 from .validation import validate_pack
 
 LOCK_NAME = "pack.lock.json"
-LOCK_SCHEMA_VERSION = 1
+LOCK_SCHEMA_VERSION = 2
 
 
 def tree_hash(root: pathlib.Path) -> str:
@@ -53,6 +53,7 @@ def read_lock(root: pathlib.Path) -> dict[str, Any]:
         raise PackError("pack lock is not canonical JSON")
     if (not isinstance(value, dict)
             or set(value) != {"pack_lock_schema_version", "packs"}
+            or type(value["pack_lock_schema_version"]) is not int
             or value["pack_lock_schema_version"] != LOCK_SCHEMA_VERSION
             or not isinstance(value["packs"], list)):
         raise PackError("pack lock schema is invalid")
@@ -103,6 +104,7 @@ def write_lock_bytes(root: pathlib.Path, payload: bytes) -> None:
 def make_entry(
     pack: pathlib.Path, manifest: dict, *, scope: str, source_type: str,
     source_path: str, source_hash: str, verification_status: str,
+    publisher_key_id: str | None, signed_digest: str | None,
     installed_at: dt.datetime | None = None,
 ) -> dict[str, Any]:
     timestamp = (installed_at or dt.datetime.now(dt.timezone.utc)).isoformat(timespec="seconds")
@@ -118,6 +120,8 @@ def make_entry(
             item: manifest["hashes"][item] for item in manifest["assets"]["eval-case"]
         },
         "verification_status": verification_status,
+        "publisher_key_id": publisher_key_id,
+        "signed_digest": signed_digest,
     }
 
 
@@ -128,7 +132,9 @@ def replace_entry(lock: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
             "packs": sorted(packs, key=lambda item: item["id"])}
 
 
-def validate_lock_root(root: pathlib.Path) -> list[dict[str, Any]]:
+def validate_lock_root(
+    root: pathlib.Path, *, expected_scope: str | None = None,
+) -> list[dict[str, Any]]:
     if not lock_path(root).exists():
         return []
     lock = read_lock(root)
@@ -148,17 +154,24 @@ def validate_lock_root(root: pathlib.Path) -> list[dict[str, Any]]:
         "id", "version", "kind", "scope", "path", "source", "manifest_sha256",
         "asset_hashes", "engine_version", "installed_at", "dependencies",
         "eval_case_hashes", "verification_status",
+        "publisher_key_id", "signed_digest",
     }
     for entry in lock["packs"]:
         if set(entry) != required or entry["path"] != entry["id"]:
             raise PackError(f"pack lock drift: invalid entry for {entry.get('id', '?')}")
+        if expected_scope is not None and entry.get("scope") != expected_scope:
+            raise PackError(
+                f"pack lock drift: scope mismatch for {entry.get('id', '?')}"
+            )
         if (not isinstance(entry["id"], str) or not PACK_ID.fullmatch(entry["id"])
                 or not isinstance(entry["version"], str)
                 or not VERSION.fullmatch(entry["version"])
                 or entry["kind"] not in {"core", "official", "domain", "project"}
                 or entry["scope"] not in {"project", "user", "org"}
                 or not isinstance(entry["engine_version"], str)
-                or entry["verification_status"] not in {"verified", "unverified"}
+                or entry["verification_status"] not in {
+                    "verified-publisher", "verified-local", "unverified",
+                }
                 or not isinstance(entry["dependencies"], list)
                 or not isinstance(entry["asset_hashes"], dict)
                 or not isinstance(entry["eval_case_hashes"], dict)
@@ -169,6 +182,14 @@ def validate_lock_root(root: pathlib.Path) -> list[dict[str, Any]]:
                        for mapping in (entry["asset_hashes"], entry["eval_case_hashes"])
                        for key, value in mapping.items())):
             raise PackError(f"pack lock drift: invalid metadata for {entry['id']}")
+        publisher_fields = (entry["publisher_key_id"], entry["signed_digest"])
+        if entry["verification_status"] == "verified-publisher":
+            if (not isinstance(publisher_fields[0], str) or not publisher_fields[0]
+                    or not isinstance(publisher_fields[1], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", publisher_fields[1])):
+                raise PackError(f"pack lock drift: invalid publisher trust for {entry['id']}")
+        elif publisher_fields != (None, None):
+            raise PackError(f"pack lock drift: unexpected publisher trust for {entry['id']}")
         try:
             installed = dt.datetime.fromisoformat(
                 str(entry["installed_at"]).replace("Z", "+00:00")
@@ -201,4 +222,10 @@ def validate_lock_root(root: pathlib.Path) -> list[dict[str, Any]]:
         }
         if expected_cases != entry["eval_case_hashes"]:
             raise PackError(f"pack lock drift: eval cases changed for {entry['id']}")
+        if entry["verification_status"] == "verified-publisher":
+            from .publisher import verify_publisher_signature
+            verified = verify_publisher_signature(pack, manifest)
+            if (verified is None or verified["key_id"] != entry["publisher_key_id"]
+                    or verified["signed_digest"] != entry["signed_digest"]):
+                raise PackError(f"pack lock drift: publisher signature changed for {entry['id']}")
     return lock["packs"]
