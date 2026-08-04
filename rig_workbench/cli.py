@@ -398,6 +398,7 @@ Sub-commands:
                                         bare vs rig A/B benchmark
                                         (schema v2; paid providers require explicit opt-in)
   baseline capture|compare|show ...     versioned benchmark baseline and scorecard
+  eval validate|list|capture ...        versioned regression evaluation cases
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
   version                               show version
@@ -439,6 +440,10 @@ def main() -> None:
         from . import baseline as baseline_mod
 
         sys.exit(baseline_mod.cmd_baseline(rest))
+    if sub == "eval":
+        from .eval import cli as eval_cli
+
+        sys.exit(eval_cli.cmd_eval(rest))
     if sub == "sensor-bench":
         from . import sensor_bench as sensor_bench_mod
 

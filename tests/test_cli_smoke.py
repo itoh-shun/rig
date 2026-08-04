@@ -266,6 +266,52 @@ def test_installed_wheel_runs_stdlib_only_baseline_full_flow_without_dependencie
     assert json.loads(results[2].stdout)["status"] == "pass"
 
 
+def test_installed_wheel_runs_stdlib_only_eval_capture_validate_list(tmp_path):
+    wheel_dir = tmp_path / "wheel-eval"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    environment = tmp_path / "venv-eval"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    repo = tmp_path / "eval-repo"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    task_id = "rig-20260805-wheel-eval"
+    run = repo / ".rig" / "runs" / task_id
+    run.mkdir(parents=True)
+    (run / "task.json").write_text(json.dumps({
+        "task_id": task_id, "input": "Wheel evaluation capture", "task_type": "bugfix",
+        "base_commit": "f" * 40,
+    }), encoding="utf-8")
+
+    capture = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "capture", task_id,
+         "--repo", str(repo)], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    case_path = repo / ".rig" / "evals" / "drafts" / task_id / "case.json"
+    validate = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "validate", str(case_path)],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    listing = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "list", "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+
+    assert [capture.returncode, validate.returncode, listing.returncode] == [0, 0, 0], [
+        capture.stdout + capture.stderr, validate.stdout + validate.stderr,
+        listing.stdout + listing.stderr,
+    ]
+    assert task_id in listing.stdout and case_path.is_file()
+
+
 def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_path):
     assert not tmp_path.resolve().is_relative_to(REPO_ROOT.resolve())
     wheel_dir = tmp_path / "wheel"
