@@ -316,6 +316,9 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     wheel_dir = tmp_path / "wheel-pack"
     wheel_dir.mkdir()
     wheel = _build_wheel_offline(wheel_dir)
+    with zipfile.ZipFile(wheel) as archive:
+        assert "packs/domain/sns-x/pack.yaml" in archive.namelist()
+        assert "packs/domain/sns-x/recipes/sns-x-post.md" in archive.namelist()
     environment = tmp_path / "venv-pack"
     venv.EnvBuilder(with_pip=True).create(environment)
     python = _venv_python(environment)
@@ -355,14 +358,42 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
          "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
         env=_isolated_env(), timeout=60,
     )
+    builtin_installed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "install", "domain:sns-x",
+         "--scope", "project", "--allow-unverified"], cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    builtin_resolved = subprocess.run(
+        [str(python), "-c",
+         "from rig_workbench.packs.resolver import resolve_asset; "
+         "item=resolve_asset('recipe','sns-x-post'); "
+         "print(item.pack_id if item else 'missing')"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    builtin_tested = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "test", "sns-x", "--json"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    builtin_removed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove", "sns-x",
+         "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
     assert [initialized.returncode, validated.returncode, installed.returncode,
-            doctor.returncode, tested.returncode, removed.returncode] == [0, 0, 0, 0, 0, 0], (
+            doctor.returncode, tested.returncode, removed.returncode,
+            builtin_installed.returncode, builtin_resolved.returncode,
+            builtin_tested.returncode, builtin_removed.returncode] == [0, 0, 0, 0, 0, 0,
+                                                                      0, 0, 0, 0], (
         initialized.stderr + validated.stderr + installed.stderr + doctor.stderr
-        + tested.stderr + removed.stderr
+        + tested.stderr + removed.stderr + builtin_installed.stderr
+        + builtin_resolved.stderr + builtin_tested.stderr + builtin_removed.stderr
     )
     assert json.loads(doctor.stdout)["status"] == "ok"
     assert json.loads(tested.stdout)["status"] == "structural_only"
+    assert builtin_resolved.stdout.strip() == "sns-x"
+    assert json.loads(builtin_tested.stdout)["status"] == "structural_only"
     assert not (outside / ".rig/packs/wheel-pack").exists()
+    assert not (outside / ".rig/packs/sns-x").exists()
 
 
 def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):

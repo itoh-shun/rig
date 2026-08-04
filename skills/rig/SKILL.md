@@ -25,7 +25,7 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 | 種別 | 役割 | 現在の在庫 |
 |---|---|---|
 | **agent**（native 委譲先・優先） | read-only reviewer。専用 context・tool 制限つきで起動 | `agents/security-reviewer` `agents/design-reviewer` `agents/test-reviewer` `agents/performance-reviewer` `agents/observability-reviewer` `agents/api-compat-reviewer` `agents/migration-reviewer` `agents/docs-reviewer` `agents/finding-verifier` `agents/lazy-senior-reviewer` `agents/cognitive-economist-reviewer` |
-| **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
+| **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/content-risk-reviewer` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
 | **instruction facet**（薄い委譲） | 手順の routing。既存 skill/command/agent に委譲する thin な指示 | `facets/instructions/parallel-review` `facets/instructions/intake` `facets/instructions/design` `facets/instructions/implement` `facets/instructions/verify` `facets/instructions/visual-verify` `facets/instructions/pr` `facets/instructions/merge` `facets/instructions/adversarial-review` |
 | **output-contract facet** | subagent 出力の機械抽出可能フォーマット定義 | `facets/output-contracts/review-verdict`（着手判断の集約用・既定） `facets/output-contracts/review-findings`（severity・file:line・Blocking/Non-blocking を明示する詳細版。`/rig:drill` と厳しめレビュー依頼で使用） |
 | **policy facet** | 末尾注入のガードレール | `facets/policies/pr-hygiene` `facets/policies/pre-push-review` `facets/policies/ci-cost` `facets/policies/branch-strategy` `facets/policies/risk-based-testing` `facets/policies/cross-llm-legibility` `facets/policies/suppression-memory`（レビュー却下学習＝`.rig/review-suppressions.jsonl`。REFUTED/却下所見を記録し再指摘を抑止・UPHELD には負ける） `facets/policies/comment-policy`（`--comment` の投稿統制＝severity マッピング・nit 上限5・Pre-existing note・再レビュー収束） |
@@ -53,7 +53,6 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **pr-review**（`/rig:pr`） | PR レビュー（reviewer agent・persona・`review-verdict` は dev 共用） | `facets/instructions/pr-review` `recipes/pr-review` |
 > | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | 自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定。**受け入れ基準 ID の正本は `scripts/workbench.py gates`**（project 独自基準は `.rig/gates.json` で**加算のみ**）。うち4基準は機械センサーが裏付ける（OpenAPI schema-diff / secret scan / anti-tamper / injection-marker） | `patterns/isolated-worktree` `patterns/visual-artifacts` `patterns/computational-orchestration` `scripts/workbench.py` `facets/instructions/workbench` `facets/instructions/workbench-ops` `facets/instructions/gh-flow` `facets/instructions/acceptance-check` `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` `recipes/{bugfix,feature,refactor,documentation}` |
 > | **de-ai-smell**（`/rig:dev --recipe de-ai-smell`） | 散文の AI 臭除去（深層マーカー＋5観点スコア定量ゲート＋語彙ブラックリスト） | `facets/personas/ai-smell-reviewer` `facets/instructions/de-ai-smell` `facets/knowledge/ai-writing-smells` `recipes/de-ai-smell` |
-> | **sns-x**（`/rig:dev --recipe sns-x-post`） | X 半自動ポスト運用（声 persona は `/rig:persona` で投入） | `facets/personas/sns-post-reviewer` `facets/instructions/sns-post` `facets/knowledge/sns-x-conventions` `recipes/sns-x-post` |
 > | **magi**（`/rig:magi`） | 3賢者の直交3観点で go/no-go を多数決裁定 | `facets/personas/magi/{melchior,balthasar,casper}` `facets/instructions/magi-deliberation` `patterns/magi-consensus` `facets/output-contracts/magi-verdict` `recipes/magi` |
 > | **roast**（`/rig:roast`・humor） | 毒舌ロースト・レビュー（中身は本物・配送をユーモアに） | `facets/personas/roast-reviewer` `facets/instructions/roast` `recipes/roast` |
 > | **coin**（`/rig:coin`・humor） | 可逆で些末な決定を即断する反-bikeshed ゲート（magi の対極） | `facets/personas/coin-flipper` `facets/instructions/coin-flip` `recipes/coin` |
@@ -83,6 +82,14 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **plan**（`--plan`・utility） | **`--plan` 表示仕様の正本**（ヘッダ・step テーブル・Gate/Checks/DAG/Knowledge ブロック） | `facets/instructions/plan` |
 > | **catalog**（`/rig:catalog`・`--list --global`・utility） | 全 tier 走査の横断レジストリ地図。`--graph` で固定11種の関係を導出 | `facets/instructions/catalog` |
 > | **hooks**（プラグイン同梱） | `PreCompact` で run-state を保全（§6 run-continuity ④） | `hooks/hooks.json` `hooks/preserve-rig-state.sh` |
+
+### Extension Catalog（opt-in）
+
+domain extension は core 目録や既定の asset 解決へ混ぜない。必要な project で明示的に導入する。
+
+| id | 説明 | install command |
+|---|---|---|
+| `sns-x` | X向け投稿の起案・レビュー・承認分類 | `rig-wb pack install domain:sns-x --scope project --allow-unverified` |
 
 ## 3. PARSE — 起動文字列の解釈
 

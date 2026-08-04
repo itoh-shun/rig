@@ -74,6 +74,14 @@ def _frontmatter_refs(path: pathlib.Path) -> list[tuple[str, str]]:
     return sorted(set(refs))
 
 
+def _core_reference_ids() -> set[tuple[str, str]]:
+    """Return only shipped core prompt IDs that extension packs may reuse."""
+    from .resolver import _core_assets
+
+    return {(asset.kind, asset.name) for asset in _core_assets()
+            if asset.kind in PROMPT_KINDS}
+
+
 def validate_pack(path: pathlib.Path | str) -> dict:
     supplied = pathlib.Path(path)
     if supplied.is_symlink():
@@ -109,8 +117,9 @@ def validate_pack(path: pathlib.Path | str) -> dict:
         for item in paths:
             rel = safe_relative(item)
             asset = root / rel
-            expected_suffix = ".json" if kind in {"eval-case", "eval-result"} else (
-                (".yaml", ".yml") if kind == "agent" else (".md",)
+            expected_suffix = (
+                ".json" if kind in {"eval-case", "eval-result"}
+                else ((".yaml", ".yml") if kind == "agent" else ".md")
             )
             suffixes = expected_suffix if isinstance(expected_suffix, tuple) else (expected_suffix,)
             if asset.suffix not in suffixes:
@@ -137,7 +146,7 @@ def validate_pack(path: pathlib.Path | str) -> dict:
                 raise PackError(f"destructive content in asset: {item}")
     if prompt_ids and not manifest["assets"]["eval-case"]:
         raise PackError("prompt-bearing pack requires at least one evaluation case")
-    available = ids
+    available = ids | _core_reference_ids()
     for kind, paths in manifest["assets"].items():
         if kind not in PROMPT_KINDS:
             continue

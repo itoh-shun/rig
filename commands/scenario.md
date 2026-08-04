@@ -1,5 +1,5 @@
 ---
-description: "[experimental] rig/scenario — 短尺プロダクト動画のシナリオライターモード。脚本(フック→課題→転換→ペイオフ→CTA・VO 草案・source 対応)を書き、既存ペルソナ×知識(ai-smell-reviewer＋ai-writing-smells × sns-post-reviewer)を掛け合わせて検閲する。/rig:movie の前段。"
+description: "[experimental] rig/scenario — 短尺プロダクト動画のシナリオライターモード。脚本(フック→課題→転換→ペイオフ→CTA・VO 草案・source 対応)を書き、既存ペルソナ×知識(ai-smell-reviewer＋ai-writing-smells × content-risk-reviewer)を掛け合わせて検閲する。/rig:movie の前段。"
 argument-hint: "[何の動画か（release trailer / before-after / 機能紹介・対象・尺）] [--plan]"
 ---
 
@@ -20,7 +20,7 @@ $ARGUMENTS
 動画シナリオを `scenario` recipe に渡す。手順本体（①目的/尺/観客の確定 →②素材収集 →③脚本執筆 →④**検閲**）は `facets/instructions/{scenario-write,scenario-vet}` に従う。
 
 - **書く**（`scenario-writer`）: フック→課題→転換→ペイオフ→CTA のビートシート＋VO 草案＋**各ビートの source（実機能）**。show, don't tell・空ワード禁止・目玉は1つ。
-- **検閲（既存ペルソナ×知識の掛け合わせ）**: `ai-smell-reviewer`（＋`ai-writing-smells` 知識）で AI 臭・空ワードを、`sns-post-reviewer` でフック強度・ブランド/炎上リスクを判定。＋ source 対応チェック（実機能の実在照合）。`acceptance-gate` で収束（未達は書き直し）。**新規 reviewer は作らず既存を掛け合わせる**。
+- **検閲（既存ペルソナ×知識の掛け合わせ）**: `ai-smell-reviewer`（＋`ai-writing-smells` 知識）で AI 臭・空ワードを、`content-risk-reviewer` でフック強度・ブランド/炎上リスクを判定。＋ source 対応チェック（実機能の実在照合）。`acceptance-gate` で収束（未達は書き直し）。
 - 通ったシナリオは **`/rig:movie`** に渡せる（`release-movie` の絵コンテ / `--hyperframes` の SCENES の設計図）。
 
 ## 作家性レンズ（任意・`--persona`）

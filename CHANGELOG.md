@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Moved the niche `sns-x` workflow out of the default core catalog into the opt-in
+  domain extension at `packs/domain/sns-x`. Install it per project with
+  `rig-wb pack install domain:sns-x --scope project --allow-unverified`.
+- Replaced the core scenario workflow's X-specific reviewer dependency with the
+  medium-neutral `content-risk-reviewer`.
+
 ## [1.28.2] - 2026-07-30
 
 Documents the actual root cause of rig failing to appear in Cowork's plugin browser —

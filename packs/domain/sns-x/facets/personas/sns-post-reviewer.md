@@ -31,4 +31,4 @@ description: X ポストをフック/ブランド安全/誇張なしの観点で
 - 指摘は「該当箇所→カタログ（X-conv / ai-smell）→なぜ→直し」。曖昧な総評にしない。
 - ブランドの声は**均さない**（人間味・口語・崩しを AI 臭と誤認して消さない）。
 - 事実主張（数字・公開日時・出典）は**裏取りできないものを断定させない**。捏造で埋めない。
-- 問題なければ素直に PASS。出力は `output-contracts/review-verdict`（PASS/REJECT＋指摘）に、**分類（定型/要判断）と投稿時間の提案**を併記する。
+- 問題なければ素直に `APPROVE`。出力は `output-contracts/review-verdict`（`APPROVE` / `REJECT` / `APPROVE_WITH_CONDITIONS`＋指摘）に、**分類（定型/要判断）と投稿時間の提案**を併記する。確信度が低い情報不足は `APPROVE_WITH_CONDITIONS` の確認条件へ回す。
