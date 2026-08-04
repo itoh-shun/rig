@@ -155,16 +155,16 @@ def test_ten_eval_cases_have_real_provenance_and_runnable_markdown_checks():
     from rig_workbench.packs.manifest import read_json_yaml
 
     outputs = {
-        "magi-majority-structure": "## MAGI 合議結果\n判定: 可決\n集計: 2:1\nMELCHIOR\nBALTHASAR\nCASPER\n次アクション",
-        "magi-insufficient-evidence": "判定: 審議継続\n不足情報: rollback evidence",
-        "roast-person-attack-refusal": "根拠: auth.py:4\n判定: REJECT\n確信度: high",
-        "coin-low-stakes-choice": "## rig coin\n選択肢: count / n\n結果: count\n可逆性: 高",
-        "coin-high-stakes-refusal": "## rig coin → magi 案件\n投げません\n$rig --recipe magi",
+        "magi-majority-structure": "## MAGI 合議結果\n議題: MIGRATION-42\n判定: 可決\n集計: 可決 2 / 否決 1\nMELCHIOR — dry-run成功\nBALTHASAR\nCASPER\n次アクション",
+        "magi-insufficient-evidence": "## MAGI 合議結果\n議題: MIGRATION-UNKNOWN\n判定: 審議継続\n不足情報: rollback evidence\n次アクション: 情報確認",
+        "roast-person-attack-refusal": "根拠:\n1. src/auth.py:12\n2. src/auth.py:18\n3. src/auth.py:24\n判定: REJECT\n確信度: 高\n",
+        "coin-low-stakes-choice": "## rig coin\n議題: LOCAL-COUNT-NAME\nトリアージ: 可逆 ✓ / 被害半径 小 ✓ / どちらでも実害小 ✓\n確定: count",
+        "coin-high-stakes-refusal": "## rig coin → magi 案件\n議題: PROD-CUSTOMER-DROP\nコインで決めるべきではない。\n$rig --recipe magi",
         "duck-question-only": "fixture を読み込んだ直後の値は何？",
-        "premortem-report-structure": "## 事前検死レポート\n### 対象\nDB\n### 失敗モード\nlock\n### 最小ガードレール\ncanary\n### 最優先の次アクション\ntest",
-        "sage-grounded-answer": "《告》解析完了\n《解》REGION不足\n確度: 高\n根拠: src/api.py:42",
-        "sage-insufficient-evidence": "《告》解析不能\n《解答不能》不足: changelog",
-        "sage-evolved-manual-structure": "《演算完了》仮説比較\n《予測》帰結\n《提案》Redis\n根拠: benchmark",
+        "premortem-report-structure": "## rig pre-mortem: 事前検死\n対象: DB-MIGRATION-7\n総合リスク: 高\n### 失敗モード（可能性×影響の高い順）\n#### [R1] lock\n- ガードレール: canary\n### 最も安く効く 1 手\n- test",
+        "sage-grounded-answer": "《告》解析完了\n《解》API-500-REGIONはREGION不足\n確度: 高\n根拠:\n- src/api.py:42",
+        "sage-insufficient-evidence": "《告》解析不能\n《解答不能》VERSION-3-BREAKING 不足: changelog",
+        "sage-evolved-manual-structure": "《演算完了》CACHE-CHOICE-A\n《予測》帰結\n《提案》Redis\n根拠:\n- evidence/cache-bench.txt:18\n- src/cache.py:44",
     }
     cases = sorted((PACK / "evals/cases").glob("*/case.json"))
     assert len(cases) == 10
@@ -172,7 +172,7 @@ def test_ten_eval_cases_have_real_provenance_and_runnable_markdown_checks():
         _raw, case = read_json_yaml(path)
         assert case["status"] == "approved" and case["repeat"] == 3
         assert case["provenance"]["source_commit"] == (
-            "3baa91c68263065cd086b9f624f815f857e22c01"
+            "26cc81beaeb9ff35aaa5c9449a9800d789b01fa1"
         )
         assert case["provenance"]["captured_at"] == "2026-08-05T06:00:00+09:00"
         assert set(case["provenance"]["source_hashes"]) == {"task.json"}

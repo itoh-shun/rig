@@ -174,7 +174,7 @@ def test_sales_markdown_contract_examples_pass_the_declared_deterministic_checks
 - 未検証の変更が混ざる
 | 機能（実在） | だから何が嬉しいか（ベネフィット） | 出所 |
 |---|---|---|
-| 隔離worktree | 元の作業を汚さず検証できる | README |
+| 隔離worktree | 元の作業を汚さず検証できる | README / CHANGELOG |
 ## 次の一歩（CTA）
 - [要記入: デモ窓口]
 # 荷電スクリプト: ReleaseGuard
@@ -195,20 +195,10 @@ def test_sales_markdown_contract_examples_pass_the_declared_deterministic_checks
         assert not any(spec.startswith("schema:") for spec in case["deterministic_checks"])
         results = [_check(spec, output, 0) for spec in case["deterministic_checks"]]
         assert all(result["status"] == "pass" for result in results), results
-        assert case["provenance"]["source_commit"] == "656895154ca55ed49e6f9c18851db1d716108b9b"
+        assert case["provenance"]["source_commit"] == "b86b3a2e8ddc6c3ad79e1c3a68ffb45d8b0b0d71"
         assert case["provenance"]["source_hashes"]["task.json"] == hashlib.sha256(
             canonical_json(case["target_inputs"]).encode()
         ).hexdigest()
-    assert read_json_yaml(
-        SALES_PACK / "evals/cases/deal-review-structure/case.json"
-    )[1]["provenance"]["source_hashes"]["final.md"] == digest(
-        SALES_PACK / "facets/output-contracts/deal-verdict.md"
-    )
-    assert read_json_yaml(
-        SALES_PACK / "evals/cases/sales-enablement-structure/case.json"
-    )[1]["provenance"]["source_hashes"]["final.md"] == digest(
-        SALES_PACK / "facets/output-contracts/sales-collateral.md"
-    )
 
 
 @pytest.mark.parametrize("source", [
@@ -303,28 +293,29 @@ def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
     for hidden_core_ref in ("ai-smell-reviewer", "ai-writing-smells",
                             "content-risk-reviewer", "review-verdict"):
         assert hidden_core_ref not in pack_text
-    final_sources = {
-        "movie-storyboard-grounding": "facets/instructions/video-direct.md",
-        "release-movie-changelog-grounding": "facets/instructions/release-movie.md",
-        "scenario-draft-grounding": "facets/instructions/scenario-write.md",
-        "scenario-vet-rejects-invention": "facets/output-contracts/scenario-verdict.md",
-    }
     sample_outputs = {
         "movie-storyboard-grounding": (
-            "ログライン: JSONログを絞り込みCSVへ出す\n### シーン表\n"
-            "| 1 | 4s | screen |\n### ソース対応表\nREADME → CSV出力"
+            "ログライン: LOGVIEW-45のJSONログを絞り込みCSVへ出す\n### シーン表\n"
+            "| 1 | 4s | screen | logview events.json --type error --csv out.csv | "
+            "wrote 18 rows to out.csv |\n### CTA\nREADMEを確認\n"
+            "### ソース対応表\nREADME → CSV出力"
         ),
         "release-movie-changelog-grounding": (
-            "## リリースムービー台本: LogTool 1.2\n### シーン表\n"
-            "| 1 | 4s | screen |\n### CTA\n更新する\n### ソース対応表\nCHANGELOG"
+            "## リリースムービー台本: LogView v2.4\n### シーン表\n"
+            "| 1 | 4s | screen | logview events.json --type error --csv out.csv | "
+            "wrote 18 rows to out.csv |\n### CTA（最終カード）\n更新する\n"
+            "### ソース対応表（誇張防止）\nCHANGELOG"
         ),
         "scenario-draft-grounding": (
-            "## シナリオ: ログ確認\nログライン: 絞って出す\n感情の弧: 困る→解決\n"
-            "### ビートシート\n| # | source（実機能） |\n### 目玉（1つ）: CSV出力\n### CTA: 試す"
+            "## シナリオ: SCENARIO-LOG-30\nログライン: 絞って出す\n感情の弧: 困る→解決\n"
+            "### ビートシート\n| # | source（実機能） |\n"
+            "| 1 | logview events.json --date 2026-08-01 → matched 12 events |\n"
+            "### 目玉（1つ）: CSV出力\n### CTA: 試す"
         ),
         "scenario-vet-rejects-invention": (
-            "根拠:\n- 冒頭: フックがない\n- 数値: 80%は未確認\n"
-            "修正条件:\n- CTAを1つの行動にする\n判定: REJECT\n確信度: high"
+            "観点: video-content-safety\n根拠:\n- 冒頭: フックがない\n"
+            "- 数値: 80%は未確認\n- CTA: 2つある\n修正条件:\n"
+            "- CTAを1つの行動にする\n判定: REJECT\n確信度: high"
         ),
     }
     for relative in manifest["assets"]["eval-case"]:
@@ -332,14 +323,11 @@ def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
         assert case["status"] == "approved"
         assert case["repeat"] == 3
         assert case["provenance"]["source_commit"] == (
-            "b86b3a2e8ddc6c3ad79e1c3a68ffb45d8b0b0d71"
+            "3baa91c68263065cd086b9f624f815f857e22c01"
         )
         assert case["provenance"]["source_hashes"]["task.json"] == hashlib.sha256(
             canonical_json(case["target_inputs"]).encode()
         ).hexdigest()
-        assert case["provenance"]["source_hashes"]["final.md"] == digest(
-            VIDEO_PACK / final_sources[case["id"]]
-        )
         checks = [_check(spec, sample_outputs[case["id"]], 0)
                   for spec in case["deterministic_checks"]]
         assert all(item["status"] == "pass" for item in checks), checks

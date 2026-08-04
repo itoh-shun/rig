@@ -41,11 +41,15 @@ def compose_case_prompt(
     sections: list[str] = []
     for surface in composition:
         kind, name = surface.split(":", 1)
-        path = local.get((kind, name))
+        manifest_kind = "output-contract" if kind == "contract" else kind
+        path = local.get((manifest_kind, name))
         owner = manifest["id"]
         if path is None:
-            owner = references.get((kind, name), "")
-            resolved = resolve_owned_asset(kind, name, owner, project=project) if owner else None
+            owner = references.get((manifest_kind, name), "")
+            resolved = (
+                resolve_owned_asset(manifest_kind, name, owner, project=project)
+                if owner else None
+            )
             if resolved is None:
                 raise PackError(f"evaluation composition dependency is unavailable: {surface}")
             path = resolved.path
