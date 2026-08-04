@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import os
+import pathlib
+import re
+import tempfile
+from typing import Any
+
+from rig_workbench import __version__
+
+from .manifest import PACK_ID, VERSION, canonical, digest
+from .model import PackError
+from .validation import validate_pack
+
+LOCK_NAME = "pack.lock.json"
+LOCK_SCHEMA_VERSION = 1
+
+
+def tree_hash(root: pathlib.Path) -> str:
+    checksum = hashlib.sha256()
+    try:
+        for path in sorted(item for item in root.rglob("*") if item.is_file()):
+            if path.is_symlink():
+                raise PackError(f"source symlink is forbidden: {path.relative_to(root)}")
+            rel = path.relative_to(root).as_posix().encode("utf-8")
+            checksum.update(len(rel).to_bytes(8, "big"))
+            checksum.update(rel)
+            data = path.read_bytes()
+            checksum.update(len(data).to_bytes(8, "big"))
+            checksum.update(data)
+    except OSError as exc:
+        raise PackError(f"cannot hash pack tree: {exc}") from exc
+    return checksum.hexdigest()
+
+
+def lock_path(root: pathlib.Path) -> pathlib.Path:
+    return root / LOCK_NAME
+
+
+def read_lock(root: pathlib.Path) -> dict[str, Any]:
+    path = lock_path(root)
+    if not path.exists():
+        return {"pack_lock_schema_version": LOCK_SCHEMA_VERSION, "packs": []}
+    try:
+        raw = path.read_text(encoding="utf-8")
+        value = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise PackError(f"pack lock is unreadable: {exc}") from exc
+    if raw != canonical(value):
+        raise PackError("pack lock is not canonical JSON")
+    if (not isinstance(value, dict)
+            or set(value) != {"pack_lock_schema_version", "packs"}
+            or value["pack_lock_schema_version"] != LOCK_SCHEMA_VERSION
+            or not isinstance(value["packs"], list)):
+        raise PackError("pack lock schema is invalid")
+    ids = [item.get("id") for item in value["packs"] if isinstance(item, dict)]
+    if len(ids) != len(value["packs"]) or ids != sorted(ids) or len(ids) != len(set(ids)):
+        raise PackError("pack lock entries must be sorted and unique")
+    return value
+
+
+def write_lock(root: pathlib.Path, value: dict[str, Any]) -> None:
+    write_lock_bytes(root, canonical(value).encode("utf-8"))
+
+
+def write_lock_bytes(root: pathlib.Path, payload: bytes) -> None:
+    """Atomically replace the lock with exact bytes (used by transaction rollback)."""
+    root.mkdir(parents=True, exist_ok=True)
+    temporary: pathlib.Path | None = None
+    descriptor = -1
+    try:
+        descriptor, name = tempfile.mkstemp(prefix=".pack-lock.", dir=root)
+        temporary = pathlib.Path(name)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, lock_path(root))
+        temporary = None
+        try:
+            directory = os.open(root, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError:
+            # The atomic replacement has committed. A directory-fsync failure
+            # must not be reported as a rollback-safe pre-commit failure.
+            pass
+    except OSError as exc:
+        raise PackError(f"cannot update pack lock: {exc}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def make_entry(
+    pack: pathlib.Path, manifest: dict, *, scope: str, source_type: str,
+    source_path: str, source_hash: str, verification_status: str,
+    installed_at: dt.datetime | None = None,
+) -> dict[str, Any]:
+    timestamp = (installed_at or dt.datetime.now(dt.timezone.utc)).isoformat(timespec="seconds")
+    return {
+        "id": manifest["id"], "version": manifest["version"], "kind": manifest["kind"],
+        "scope": scope, "path": manifest["id"],
+        "source": {"type": source_type, "path": source_path, "sha256": source_hash},
+        "manifest_sha256": digest(pack / "pack.yaml"),
+        "asset_hashes": dict(sorted(manifest["hashes"].items())),
+        "engine_version": __version__, "installed_at": timestamp,
+        "dependencies": manifest["dependencies"],
+        "eval_case_hashes": {
+            item: manifest["hashes"][item] for item in manifest["assets"]["eval-case"]
+        },
+        "verification_status": verification_status,
+    }
+
+
+def replace_entry(lock: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    packs = [item for item in lock["packs"] if item["id"] != entry["id"]]
+    packs.append(entry)
+    return {"pack_lock_schema_version": LOCK_SCHEMA_VERSION,
+            "packs": sorted(packs, key=lambda item: item["id"])}
+
+
+def validate_lock_root(root: pathlib.Path) -> list[dict[str, Any]]:
+    if not lock_path(root).exists():
+        return []
+    lock = read_lock(root)
+    actual = {
+        item.name for item in root.iterdir()
+        if item.is_dir() and not item.name.startswith(".pack-")
+    }
+    expected = {item.get("path") for item in lock["packs"] if isinstance(item, dict)}
+    if actual != expected:
+        extra = sorted(actual - expected)
+        missing = sorted(expected - actual)
+        raise PackError(
+            f"pack lock drift: directory ownership mismatch "
+            f"(unowned={extra}, missing={missing})"
+        )
+    required = {
+        "id", "version", "kind", "scope", "path", "source", "manifest_sha256",
+        "asset_hashes", "engine_version", "installed_at", "dependencies",
+        "eval_case_hashes", "verification_status",
+    }
+    for entry in lock["packs"]:
+        if set(entry) != required or entry["path"] != entry["id"]:
+            raise PackError(f"pack lock drift: invalid entry for {entry.get('id', '?')}")
+        if (not isinstance(entry["id"], str) or not PACK_ID.fullmatch(entry["id"])
+                or not isinstance(entry["version"], str)
+                or not VERSION.fullmatch(entry["version"])
+                or entry["kind"] not in {"core", "official", "domain", "project"}
+                or entry["scope"] not in {"project", "user", "org"}
+                or not isinstance(entry["engine_version"], str)
+                or entry["verification_status"] not in {"verified", "unverified"}
+                or not isinstance(entry["dependencies"], list)
+                or not isinstance(entry["asset_hashes"], dict)
+                or not isinstance(entry["eval_case_hashes"], dict)
+                or not isinstance(entry["manifest_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", entry["manifest_sha256"])
+                or any(not isinstance(key, str) or not isinstance(value, str)
+                       or not re.fullmatch(r"[0-9a-f]{64}", value)
+                       for mapping in (entry["asset_hashes"], entry["eval_case_hashes"])
+                       for key, value in mapping.items())):
+            raise PackError(f"pack lock drift: invalid metadata for {entry['id']}")
+        try:
+            installed = dt.datetime.fromisoformat(
+                str(entry["installed_at"]).replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise PackError(f"pack lock drift: invalid timestamp for {entry['id']}") from exc
+        if installed.tzinfo is None:
+            raise PackError(f"pack lock drift: invalid timestamp for {entry['id']}")
+        source = entry["source"]
+        if (not isinstance(source, dict) or set(source) != {"type", "path", "sha256"}
+                or source["type"] not in {"directory", "zip", "tar"}
+                or not isinstance(source["path"], str) or not source["path"]
+                or not isinstance(source["sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])):
+            raise PackError(f"pack lock drift: invalid source for {entry['id']}")
+        pack = root / entry["path"]
+        if not pack.is_dir():
+            raise PackError(f"pack lock drift: missing pack {entry['id']}")
+        manifest = validate_pack(pack)
+        if (manifest["id"] != entry["id"] or manifest["version"] != entry["version"]
+                or manifest["kind"] != entry["kind"]
+                or manifest["dependencies"] != entry["dependencies"]):
+            raise PackError(f"pack lock drift: identity changed for {entry['id']}")
+        if digest(pack / "pack.yaml") != entry["manifest_sha256"]:
+            raise PackError(f"pack lock drift: manifest changed for {entry['id']}")
+        if manifest["hashes"] != entry["asset_hashes"]:
+            raise PackError(f"pack lock drift: asset hashes changed for {entry['id']}")
+        expected_cases = {
+            item: manifest["hashes"][item] for item in manifest["assets"]["eval-case"]
+        }
+        if expected_cases != entry["eval_case_hashes"]:
+            raise PackError(f"pack lock drift: eval cases changed for {entry['id']}")
+    return lock["packs"]

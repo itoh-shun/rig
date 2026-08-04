@@ -27,6 +27,26 @@ def _parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor")
     doctor.add_argument("path", nargs="?")
     doctor.add_argument("--json", action="store_true")
+    install = sub.add_parser("install")
+    install.add_argument("source")
+    install.add_argument("--scope", choices=["project", "user", "org"], default="project")
+    install.add_argument("--root")
+    install.add_argument("--allow-unverified", action="store_true")
+    test = sub.add_parser("test")
+    test.add_argument("pack")
+    test.add_argument("--provider", choices=["mock", "claude", "codex", "command"])
+    test.add_argument("--model")
+    test.add_argument("--judge-provider", choices=["mock", "claude", "codex", "command"])
+    test.add_argument("--judge-model")
+    test.add_argument("--command", dest="provider_command")
+    test.add_argument("--judge-command")
+    test.add_argument("--timeout", type=float, default=30)
+    test.add_argument("--json", action="store_true")
+    remove = sub.add_parser("remove")
+    remove.add_argument("id")
+    remove.add_argument("--scope", choices=["project", "user", "org"], default="project")
+    remove.add_argument("--root")
+    remove.add_argument("--yes", action="store_true")
     return parser
 
 
@@ -78,6 +98,42 @@ def cmd_pack(argv: list[str]) -> int:
                 path = pathlib.Path(args.path or ".")
                 manifest = validate_pack(path)
                 print(f"valid: {manifest['id']}@{manifest['version']}")
+            return 0
+        if args.command == "install":
+            from .installer import install_pack
+            result = install_pack(
+                args.source, scope=args.scope, project=pathlib.Path.cwd(), root=args.root,
+                allow_unverified=args.allow_unverified,
+            )
+            if result.verification_status == "unverified":
+                print("[WARN] installed unverified project pack", file=sys.stderr)
+            print(f"installed: {result.manifest['id']}@{result.manifest['version']} "
+                  f"[{result.verification_status}] -> {result.path}")
+            return 0
+        if args.command == "test":
+            from .tester import test_pack
+            report, code = test_pack(
+                args.pack, project=pathlib.Path.cwd(), provider=args.provider,
+                model=args.model, judge_provider=args.judge_provider,
+                judge_model=args.judge_model, command=args.provider_command,
+                judge_command=args.judge_command, timeout=args.timeout,
+            )
+            if args.json:
+                print(canonical(report), end="")
+            else:
+                print(f"pack test: {report['status']} ({report['pack']})")
+                for failure in report["failures"]:
+                    print(f"- {failure}")
+            return code
+        if args.command == "remove":
+            from .remover import remove_pack
+            target, removed = remove_pack(
+                args.id, scope=args.scope, project=pathlib.Path.cwd(), root=args.root,
+                yes=args.yes,
+            )
+            print(f"{'removed' if removed else 'dry-run remove'}: {target}")
+            if not removed:
+                print("rerun with --yes to remove this lock-owned pack")
             return 0
         report = diagnose(args.path, project=pathlib.Path.cwd())
         if args.json:

@@ -2,21 +2,41 @@ from __future__ import annotations
 
 import pathlib
 from .resolver import catalog, pack_roots
+from .lock import lock_path, validate_lock_root
 from .validation import validate_pack, validate_tiered_collection
 
 
 def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | str | None = None) -> dict:
     findings: list[dict] = []
+    if path is None:
+        for tier, pack_root in pack_roots(project):
+            if not pack_root.is_dir():
+                continue
+            managed_dirs = [item for item in pack_root.iterdir() if item.is_dir()
+                            and not item.name.startswith(".pack-")]
+            if managed_dirs and not lock_path(pack_root).exists() and tier in {
+                "project", "user", "org"
+            }:
+                findings.append({"code": "unmanaged_pack_root", "path": str(pack_root),
+                                 "detail": "validated legacy packs; migrate with pack install",
+                                 "scope": tier, "severity": "warning"})
+            try:
+                validate_lock_root(pack_root)
+            except Exception as exc:
+                findings.append({"code": "lock_drift", "path": str(pack_root),
+                                 "detail": str(exc), "scope": tier})
     roots: list[pathlib.Path]
     if path is not None:
         roots = [pathlib.Path(path).resolve()]
     else:
         roots = [item for _tier, root in pack_roots(project) if root.is_dir()
-                 for item in sorted(root.iterdir()) if item.is_dir()]
+                 for item in sorted(root.iterdir()) if item.is_dir()
+                 and not item.name.startswith(".pack-")]
     manifests: dict[str, dict] = {}
     entries: list[tuple[str, pathlib.Path]] = []
     tier_by_path = {item.resolve(): tier for tier, pack_root in pack_roots(project)
-                    if pack_root.is_dir() for item in pack_root.iterdir() if item.is_dir()}
+                    if pack_root.is_dir() for item in pack_root.iterdir() if item.is_dir()
+                    and not item.name.startswith(".pack-")}
     for root in sorted(roots):
         try:
             manifest = validate_pack(root)
@@ -24,7 +44,7 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
             entries.append((tier_by_path.get(root.resolve(), "selected"), root))
         except Exception as exc:
             findings.append({"code": "invalid_pack", "path": str(root), "detail": str(exc)})
-    if not findings:
+    if not any(item.get("severity", "error") != "warning" for item in findings):
         try:
             validate_tiered_collection(entries)
         except Exception as exc:
@@ -52,5 +72,7 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
         if legacy.exists() and (project_root / ".rig" / "packs").exists():
             findings.append({"code": "legacy_conflict", "path": str(legacy),
                              "detail": "legacy and pack tiers coexist"})
-    return {"pack_doctor_schema_version": 1, "status": "ok" if not findings else "failed",
+    failed = any(item.get("severity", "error") != "warning" for item in findings)
+    status = "failed" if failed else ("warning" if findings else "ok")
+    return {"pack_doctor_schema_version": 1, "status": status,
             "packs": sorted(manifests), "findings": findings}

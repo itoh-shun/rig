@@ -77,8 +77,12 @@ def _record_trust(path: pathlib.Path, digest: str) -> None:
 def _is_project_recipe(path: pathlib.Path) -> bool:
     try:
         resolved = path.resolve()
-        overlays = (config.PROJECT_RECIPES.resolve(),
-                    (config.INVOCATION_CWD / ".rig" / "packs").resolve())
+        overlays = (
+            config.PROJECT_RECIPES.resolve(),
+            (config.INVOCATION_CWD / ".rig" / "recipes").resolve(),
+            (config.INVOCATION_CWD / ".claude" / "rig" / "recipes").resolve(),
+            (config.INVOCATION_CWD / ".rig" / "packs").resolve(),
+        )
         return any(resolved.is_relative_to(overlay) for overlay in overlays)
     except OSError:
         return False
@@ -252,6 +256,20 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
             if cand.exists():
                 parent_path = cand
                 break
+        if parent_path is None:
+            # Preserve legacy project overlays as explicit resolver sources.
+            # A monkeypatched PROJECT_RECIPES is authoritative in tests and in
+            # embedders; the conventional .rig/.claude locations remain
+            # backward compatible. Trust is applied below to every hit.
+            for base in dict.fromkeys((
+                config.PROJECT_RECIPES,
+                config.INVOCATION_CWD / ".rig" / "recipes",
+                config.INVOCATION_CWD / ".claude" / "rig" / "recipes",
+            )):
+                candidate = base / fname
+                if candidate.is_file():
+                    parent_path = candidate
+                    break
         if parent_path is None:
             from rig_workbench.packs.resolver import resolve_asset
             resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD)

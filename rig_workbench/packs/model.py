@@ -19,8 +19,9 @@ ASSET_DIRS = {
     "command": "commands",
     "agent": "agents",
     "eval-case": "evals/cases",
+    "eval-result": "evals/results",
 }
-PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case"})
+PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case", "eval-result"})
 TIERS = ("project", "user", "org", "official", "core")
 
 

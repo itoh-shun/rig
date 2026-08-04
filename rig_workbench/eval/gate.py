@@ -6,6 +6,8 @@ import json
 import pathlib
 import subprocess
 
+from rig_workbench import __version__
+
 from .affected import analyze_affected
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
 from .compare import validate_result
@@ -59,23 +61,69 @@ def _evidence(evidence_root: pathlib.Path, case_id: str) -> list[dict]:
     return found
 
 
-def _green(result: dict, case: dict) -> bool:
+def quality_result_failures(
+    result: dict, case: dict, *, expected_commit: str | None = None,
+    expected_base: str | None = None, expected_diff: str | None = None,
+    provider: str | None = None, model: str | None = None,
+    judge_provider: str | None = None, judge_model: str | None = None,
+) -> list[str]:
+    """Canonical attested-current quality policy for eval gates and packs."""
+    validate_case(case)
+    validate_result(result)
+    case_id = case["id"]
+    failures: list[str] = []
+    policy = case["provider_policy"]
+    if result["provider"] == "mock":
+        failures.append(f"mock_evidence_forbidden:{case_id}")
+    if policy["mode"] == "allowlist" and result["provider"] not in policy["allowed"]:
+        failures.append(f"provider_policy:{case_id}")
+    if policy.get("models") and result["model"] not in policy["models"]:
+        failures.append(f"model_policy:{case_id}")
+    if policy.get("judge_providers") and result["judge_provider"] not in policy["judge_providers"]:
+        failures.append(f"judge_provider_policy:{case_id}")
+    if policy.get("judge_models") and result["judge_model"] not in policy["judge_models"]:
+        failures.append(f"judge_model_policy:{case_id}")
+    if provider is not None and result["provider"] != provider:
+        failures.append(f"provider_mismatch:{case_id}")
+    if model is not None and result["model"] != model:
+        failures.append(f"model_mismatch:{case_id}")
+    if result["judge_provider"] == "mock":
+        failures.append(f"mock_judge_forbidden:{case_id}")
+    if judge_provider is not None and result["judge_provider"] != judge_provider:
+        failures.append(f"judge_provider_mismatch:{case_id}")
+    if judge_model is not None and result["judge_model"] != judge_model:
+        failures.append(f"judge_model_mismatch:{case_id}")
+    if result["executor_version"] != __version__:
+        failures.append(f"executor_version_mismatch:{case_id}")
+    if result["judge_executor_version"] != __version__:
+        failures.append(f"judge_executor_version_mismatch:{case_id}")
+    if result["case_id"] != case_id or result["case_hash"] != evaluation_spec_hash(case):
+        failures.append(f"case_hash_mismatch:{case_id}")
+    if result["execution_status"] != "available":
+        failures.append(f"execution_identity_unavailable:{case_id}")
+    if expected_commit is not None and result["execution_commit"] != expected_commit:
+        failures.append(f"execution_commit_mismatch:{case_id}")
+    if expected_base is not None and result["execution_base_commit"] != expected_base:
+        failures.append(f"execution_base_mismatch:{case_id}")
+    if expected_diff is not None and result["execution_diff_sha256"] != expected_diff:
+        failures.append(f"execution_diff_mismatch:{case_id}")
     if result["phase"] != "current" or result["repeat"] != case["repeat"]:
-        return False
+        failures.append(f"result_phase_or_repeat:{case_id}")
     if any(row["outcome"] != "pass" or row["infra_status"] is not None
            for row in [*result["target"], *result["clean"]]):
-        return False
+        failures.append(f"quality_not_green:{case_id}")
     if case["semantic_rubric"]:
         expected = [item["id"] for item in case["semantic_rubric"]]
         if result["judge"] != {"required": True, "status": "measured"}:
-            return False
+            failures.append(f"judge_unmeasured:{case_id}")
         for row in [*result["target"], *result["clean"]]:
             criteria = row["judge"]["criteria"]
             if (row["judge"]["status"] != "measured"
                     or [item["id"] for item in criteria] != expected
                     or any(item["status"] != "pass" for item in criteria)):
-                return False
-    return True
+                failures.append(f"semantic_criteria_failed:{case_id}")
+                break
+    return sorted(set(failures))
 
 
 def evaluate_gate(
@@ -126,38 +174,15 @@ def evaluate_gate(
             failures.append(f"current_evidence_count:{case_id}")
             continue
         result = matching[0]
-        policy = case["provider_policy"]
-        if result["provider"] == "mock":
-            failures.append(f"mock_evidence_forbidden:{case_id}")
-        if policy["mode"] == "allowlist" and result["provider"] not in policy["allowed"]:
-            failures.append(f"provider_policy:{case_id}")
-        if policy.get("models") and result["model"] not in policy["models"]:
-            failures.append(f"model_policy:{case_id}")
-        if (policy.get("judge_providers")
-                and result["judge_provider"] not in policy["judge_providers"]):
-            failures.append(f"judge_provider_policy:{case_id}")
-        if (policy.get("judge_models")
-                and result["judge_model"] not in policy["judge_models"]):
-            failures.append(f"judge_model_policy:{case_id}")
-        if provider is not None and result["provider"] != provider:
-            failures.append(f"provider_mismatch:{case_id}")
-        if model is not None and result["model"] != model:
-            failures.append(f"model_mismatch:{case_id}")
-        if result["judge_provider"] == "mock":
-            failures.append(f"mock_judge_forbidden:{case_id}")
-        if judge_provider is not None and result["judge_provider"] != judge_provider:
-            failures.append(f"judge_provider_mismatch:{case_id}")
-        if judge_model is not None and result["judge_model"] != judge_model:
-            failures.append(f"judge_model_mismatch:{case_id}")
-        if result["case_hash"] != evaluation_spec_hash(case):
-            failures.append(f"case_hash_mismatch:{case_id}")
-        if (result["execution_status"] != "available"
-                or result["execution_commit"] != resolved_head
-                or result["execution_base_commit"] != resolved_base
-                or result["execution_diff_sha256"] != expected_diff):
+        quality = quality_result_failures(
+            result, case, expected_commit=resolved_head, expected_base=resolved_base,
+            expected_diff=expected_diff, provider=provider, model=model,
+            judge_provider=judge_provider, judge_model=judge_model,
+        )
+        if any(item.startswith(("execution_", "executor_", "judge_executor_"))
+               for item in quality):
             failures.append(f"execution_identity_mismatch:{case_id}")
-        if not _green(result, case):
-            failures.append(f"quality_not_green:{case_id}")
+        failures.extend(quality)
     status = "pass" if not failures and not infra else ("infra_error" if infra else "failed")
     exit_code = 0 if status == "pass" else (2 if infra else 1)
     return ({

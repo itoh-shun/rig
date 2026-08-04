@@ -109,7 +109,7 @@ def validate_pack(path: pathlib.Path | str) -> dict:
         for item in paths:
             rel = safe_relative(item)
             asset = root / rel
-            expected_suffix = ".json" if kind == "eval-case" else (
+            expected_suffix = ".json" if kind in {"eval-case", "eval-result"} else (
                 (".yaml", ".yml") if kind == "agent" else (".md",)
             )
             suffixes = expected_suffix if isinstance(expected_suffix, tuple) else (expected_suffix,)
@@ -148,6 +148,8 @@ def validate_pack(path: pathlib.Path | str) -> dict:
     for item in manifest["assets"]["eval-case"]:
         _raw, case = read_json_yaml(root / item)
         validate_case(case)
+        if case["status"] != "approved":
+            raise PackError(f"pack evaluation case must be promoted/approved: {item}")
         bound = set(case.get("prompt_surfaces", []))
         if not bound or not bound <= prompt_ids:
             raise PackError(f"evaluation case is not bound to owned prompt assets: {item}")

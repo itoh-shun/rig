@@ -326,26 +326,43 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     assert install.returncode == 0, install.stdout + install.stderr
     outside = tmp_path / "pack-outside"
     outside.mkdir()
-    pack_root = outside / "packs"
+    source_root = outside / "sources"
     initialized = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "pack", "init", "wheel-pack",
-         "--root", str(pack_root)], cwd=outside, capture_output=True, text=True,
+         "--root", str(source_root)], cwd=outside, capture_output=True, text=True,
         env=_isolated_env(), timeout=60,
     )
     validated = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "pack", "validate",
-         str(pack_root / "wheel-pack")], cwd=outside, capture_output=True, text=True,
+         str(source_root / "wheel-pack")], cwd=outside, capture_output=True, text=True,
         env=_isolated_env(), timeout=60,
     )
-    doctor = subprocess.run(
-        [str(python), "-m", "rig_workbench.cli", "pack", "doctor",
-         str(pack_root / "wheel-pack"), "--json"], cwd=outside,
+    installed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "install",
+         str(source_root / "wheel-pack"), "--scope", "project"], cwd=outside,
         capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
-    assert [initialized.returncode, validated.returncode, doctor.returncode] == [0, 0, 0], (
-        initialized.stderr + validated.stderr + doctor.stderr
+    doctor = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "doctor", "--json"], cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    tested = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "test", "wheel-pack", "--json"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    removed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove", "wheel-pack",
+         "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    assert [initialized.returncode, validated.returncode, installed.returncode,
+            doctor.returncode, tested.returncode, removed.returncode] == [0, 0, 0, 0, 0, 0], (
+        initialized.stderr + validated.stderr + installed.stderr + doctor.stderr
+        + tested.stderr + removed.stderr
     )
     assert json.loads(doctor.stdout)["status"] == "ok"
+    assert json.loads(tested.stdout)["status"] == "structural_only"
+    assert not (outside / ".rig/packs/wheel-pack").exists()
 
 
 def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
