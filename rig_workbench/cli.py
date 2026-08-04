@@ -397,6 +397,7 @@ Sub-commands:
   bench [--corpus PATH] [--tasks ...] [--provider X] [--runs N] [--out <json>]
                                         bare vs rig A/B benchmark
                                         (schema v2; paid providers require explicit opt-in)
+  baseline capture|compare|show ...     versioned benchmark baseline and scorecard
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
   version                               show version
@@ -434,6 +435,10 @@ def main() -> None:
     if sub == "bench":
         _run_bench(rest)
         return
+    if sub == "baseline":
+        from . import baseline as baseline_mod
+
+        sys.exit(baseline_mod.cmd_baseline(rest))
     if sub == "sensor-bench":
         from . import sensor_bench as sensor_bench_mod
 

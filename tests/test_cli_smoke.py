@@ -6,6 +6,7 @@ while nothing is read from or written to the real repo's .rig/ state.
 
 import base64
 import csv
+import datetime as dt
 import hashlib
 import importlib.metadata
 import io
@@ -199,6 +200,70 @@ def _build_wheel_offline(root):
         writer.writerows([*records, (record_name, "", "")])
         archive.writestr(record_name, record_stream.getvalue().encode())
     return wheel
+
+
+def _baseline_benchmark_document():
+    generated = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    def arm(mode):
+        outcome = "silent_defect" if mode == "bare" else "clean_pass"
+        return {
+            "outcome": outcome, "elapsed_s": 1.0, "invocation_count": 1,
+            "completed": True, "public_test": {"passed": True},
+            "hidden_check": {"passed": mode == "rig"},
+        }
+
+    runs = []
+    for run in range(1, 4):
+        runs.append({
+            "pair_id": f"wheel-task-{run}", "task_id": "wheel-task", "run": run,
+            "provider": "claude", "bare_model": "haiku", "rig_model": "sonnet",
+            "arms": {"bare": arm("bare"), "rig": arm("rig")}, "elapsed_s": 2.0,
+        })
+    return {
+        "schema_version": 2, "generated": generated, "provider": "claude",
+        "provider_version": "fixture", "model": "sonnet", "bare_model": "haiku",
+        "rig_model": "sonnet", "score": {"verdict": "pass"},
+        "tasks": [{"task_id": "wheel-task", "runs": runs}],
+    }
+
+
+def test_installed_wheel_runs_stdlib_only_baseline_full_flow_without_dependencies(tmp_path):
+    """Capture, show, and compare must work in a clean install without PyYAML."""
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    environment = tmp_path / "venv"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    source = tmp_path / "bench.json"
+    baseline = tmp_path / "baseline.json"
+    source.write_text(json.dumps(_baseline_benchmark_document()), encoding="utf-8")
+    commands = (
+        ["capture", "--input", str(source), "--output", str(baseline)],
+        ["show", str(baseline)],
+        ["compare", "--baseline", str(baseline), "--current", str(source), "--json"],
+    )
+    results = [
+        subprocess.run(
+            [str(python), "-m", "rig_workbench.cli", "baseline", *command],
+            cwd=tmp_path, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+        )
+        for command in commands
+    ]
+
+    assert [result.returncode for result in results] == [0, 0, 0], [
+        result.stdout + result.stderr for result in results
+    ]
+    assert baseline.exists()
+    assert "claude / sonnet / rig / wheel-task" in results[1].stdout
+    assert json.loads(results[2].stdout)["status"] == "pass"
 
 
 def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_path):
