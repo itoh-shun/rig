@@ -249,14 +249,19 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
             warnings.append(f"extends: inheritance depth limit {EXTENDS_MAX_DEPTH} exceeded "
                             f"(ignoring '{parent_name}' and beyond). Keep chains shallow for cognitive economy")
             return chain
-        parent_path = None
+        from rig_workbench.packs.resolver import resolve_bound_asset
+        bound_parent = resolve_bound_asset(
+            "recipe", parent_name, current_path, project=config.INVOCATION_CWD
+        )
+        parent_path = bound_parent.path if bound_parent is not None else None
         fname = f"{parent_name}.md"
-        for base in (current_path.parent,):
-            cand = base / fname
-            if cand.exists():
-                parent_path = cand
-                break
-        if parent_path is None:
+        if bound_parent is None:
+            for base in (current_path.parent,):
+                cand = base / fname
+                if cand.exists():
+                    parent_path = cand
+                    break
+        if bound_parent is None and parent_path is None:
             # Preserve legacy project overlays as explicit resolver sources.
             # A monkeypatched PROJECT_RECIPES is authoritative in tests and in
             # embedders; the conventional .rig/.claude locations remain
@@ -270,7 +275,7 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
                 if candidate.is_file():
                     parent_path = candidate
                     break
-        if parent_path is None:
+        if bound_parent is None and parent_path is None:
             from rig_workbench.packs.resolver import resolve_asset
             resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD)
             parent_path = resolved.path if resolved is not None else None
@@ -282,7 +287,7 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         # accidentally send it through the legacy project-recipe consent gate.
         from rig_workbench.packs.resolver import resolve_asset
         from rig_workbench.packs.trust import ensure_asset_trusted
-        resolved_parent = resolve_asset(
+        resolved_parent = bound_parent or resolve_asset(
             "recipe", parent_name, project=config.INVOCATION_CWD
         )
         if (resolved_parent is not None

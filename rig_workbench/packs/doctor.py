@@ -13,7 +13,7 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
             if not pack_root.is_dir():
                 continue
             managed_dirs = [item for item in pack_root.iterdir() if item.is_dir()
-                            and not item.name.startswith(".pack-")]
+                            and not item.name.startswith((".", "_"))]
             if managed_dirs and not lock_path(pack_root).exists() and tier in {
                 "project", "user", "org"
             }:
@@ -31,12 +31,12 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
     else:
         roots = [item for _tier, root in pack_roots(project) if root.is_dir()
                  for item in sorted(root.iterdir()) if item.is_dir()
-                 and not item.name.startswith(".pack-")]
+                 and not item.name.startswith((".", "_"))]
     manifests: dict[str, dict] = {}
     entries: list[tuple[str, pathlib.Path]] = []
     tier_by_path = {item.resolve(): tier for tier, pack_root in pack_roots(project)
                     if pack_root.is_dir() for item in pack_root.iterdir() if item.is_dir()
-                    and not item.name.startswith(".pack-")}
+                    and not item.name.startswith((".", "_"))}
     for root in sorted(roots):
         try:
             manifest = validate_pack(root)

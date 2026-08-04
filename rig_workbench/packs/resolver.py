@@ -35,7 +35,7 @@ def _pack_entries(project: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
             validate_lock_root(root)
     return [(tier, item) for tier, root in pack_roots(project) if root.is_dir()
             for item in sorted(root.iterdir()) if item.is_dir()
-            and not item.name.startswith(".pack-")]
+            and not item.name.startswith((".", "_"))]
 
 
 def _validated_pack_assets(project: pathlib.Path) -> list[ResolvedAsset]:
@@ -113,9 +113,124 @@ def resolve_asset(kind: str, name: str, *, project: pathlib.Path | str | None = 
     )
 
 
+def resolve_owned_asset(
+    kind: str, name: str, pack_id: str, *, project: pathlib.Path | str | None = None,
+) -> ResolvedAsset | None:
+    """Resolve an asset from its declared owner, without cross-pack shadowing.
+
+    This is deliberately separate from ``resolve_asset``: legacy/unqualified
+    callers retain tier precedence, while typed pack references use identity.
+    """
+    if pack_id == "rig-core":
+        matches = [item for item in _core_assets()
+                   if item.kind == kind and item.name == name]
+    else:
+        matches = [item for item in resolve_all(kind, name, project=project)
+                   if item.pack_id == pack_id]
+    if not matches and pack_id != "rig-core":
+        from .catalog import discover_builtin_packs
+        prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])
+        for (namespace, candidate_id), (pack, manifest) in discover_builtin_packs().items():
+            if candidate_id != pack_id:
+                continue
+            for relative in manifest["assets"][kind]:
+                asset_name = str(
+                    pathlib.PurePosixPath(relative).relative_to(prefix).with_suffix("")
+                )
+                if asset_name == name:
+                    matches.append(ResolvedAsset(
+                        kind, name, pack / relative, namespace, str(pack), pack_id
+                    ))
+    if not matches:
+        return None
+    winner = matches[0]
+    return ResolvedAsset(
+        winner.kind, winner.name, winner.path, winner.tier, winner.source, winner.pack_id,
+        tuple(str(item.path) for item in matches[1:]),
+    )
+
+
+def resolve_bound_asset(
+    kind: str, name: str, source: pathlib.Path | str,
+    *, project: pathlib.Path | str | None = None,
+) -> ResolvedAsset | None:
+    """Resolve a typed reference declared by the pack owning ``source``.
+
+    ``None`` means the source is legacy or has no typed binding, so callers may
+    continue their historical unqualified lookup. A declared but unavailable
+    owner fails closed instead of silently selecting another pack.
+    """
+    from .catalog import discover_builtin_packs, distribution_root
+    from .validation import validate_tiered_collection
+
+    project_root = _project_root(project)
+    source_path = pathlib.Path(source).resolve()
+    entries = _pack_entries(project_root)
+    installed_source = any(
+        source_path == path.resolve() or source_path.is_relative_to(path.resolve())
+        for _tier, path in entries
+    )
+    builtin_root = (distribution_root() / "packs").resolve()
+    builtin_source = source_path.is_relative_to(builtin_root)
+    if not installed_source and not builtin_source:
+        return None
+    records = validate_tiered_collection(entries) if installed_source else []
+    if builtin_source:
+        known_paths = {path.resolve() for _tier, path, _manifest in records}
+        records.extend(
+            (namespace, path, manifest)
+            for (namespace, _pack_id), (path, manifest) in discover_builtin_packs().items()
+            if path.resolve() not in known_paths
+        )
+    for _tier, pack, manifest in records:
+        pack_path = pack.resolve()
+        try:
+            relative = source_path.relative_to(pack_path).as_posix()
+        except ValueError:
+            continue
+        if relative not in {item for paths in manifest["assets"].values() for item in paths}:
+            return None
+        owners = [reference["pack"] for reference in manifest.get("references", [])
+                  if reference["kind"] == kind and reference["id"] == name]
+        if not owners:
+            return None
+        if len(owners) != 1:
+            raise PackError(f"ambiguous typed reference owner: {kind}:{name}")
+        resolved = resolve_owned_asset(kind, name, owners[0], project=project_root)
+        if resolved is None:
+            raise PackError(f"typed reference owner is unavailable: {owners[0]}:{kind}:{name}")
+        return resolved
+    return None
+
+
 def catalog(*, project: pathlib.Path | str | None = None) -> list[ResolvedAsset]:
     root = _project_root(project)
     all_items: list[ResolvedAsset] = _validated_pack_assets(root)
     all_items.extend(_legacy_assets(root))
     all_items.extend(_core_assets())
     return sorted(all_items, key=lambda item: (item.kind, item.name, item.tier, str(item.path)))
+
+
+def resolve_resource(pack_id: str, name: str, *, project: pathlib.Path | str | None = None) -> dict | None:
+    """Resolve inert pack data with its validated metadata; never execute it."""
+    from .validation import validate_tiered_collection
+
+    project_root = _project_root(project)
+    for tier, pack, manifest in validate_tiered_collection(_pack_entries(project_root)):
+        if manifest["id"] != pack_id:
+            continue
+        prefix = pathlib.PurePosixPath(ASSET_DIRS["resource"])
+        for relative in manifest["assets"].get("resource", []):
+            resource_name = str(
+                pathlib.PurePosixPath(relative).relative_to(prefix).with_suffix("")
+            )
+            if resource_name == name:
+                metadata = manifest["resources"][relative]
+                return {
+                    "pack_id": pack_id, "name": name, "path": pack / relative,
+                    "tier": tier, "media_type": metadata["media_type"],
+                    "size": metadata["size"], "sha256": metadata["sha256"],
+                    "executable": False,
+                }
+        return None
+    return None

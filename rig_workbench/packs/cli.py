@@ -47,13 +47,18 @@ def _parser() -> argparse.ArgumentParser:
     remove.add_argument("--scope", choices=["project", "user", "org"], default="project")
     remove.add_argument("--root")
     remove.add_argument("--yes", action="store_true")
+    invoke = sub.add_parser("invoke")
+    invoke.add_argument("entrypoint")
+    invoke.add_argument("args", nargs=argparse.REMAINDER)
     return parser
 
 
 def init_pack(pack_id: str, *, kind: str, root: pathlib.Path | str) -> pathlib.Path:
-    from .manifest import PACK_ID
+    from .manifest import PACK_ID, RESERVED_PACK_IDS
     if not PACK_ID.fullmatch(pack_id):
         raise PackError("pack id is invalid")
+    if pack_id in RESERVED_PACK_IDS:
+        raise PackError(f"pack id is reserved: {pack_id}")
     destination = pathlib.Path(root).resolve() / pack_id
     if destination.exists():
         raise PackError(f"pack already exists: {destination}")
@@ -66,6 +71,9 @@ def init_pack(pack_id: str, *, kind: str, root: pathlib.Path | str) -> pathlib.P
             "pack_schema_version": 1, "id": pack_id, "version": "0.1.0", "kind": kind,
             "engine": f">={__version__}", "dependencies": [],
             "assets": {kind_: [] for kind_ in ASSET_DIRS}, "hashes": {},
+            "display_name": pack_id, "description": "New Rig pack",
+            "capabilities": ["resource"], "entrypoints": [], "references": [],
+            "resources": {},
             "provenance": {"source": "rig-wb pack init", "created_at": now},
         }
         compatibility = {
@@ -81,7 +89,72 @@ def init_pack(pack_id: str, *, kind: str, root: pathlib.Path | str) -> pathlib.P
 
 def _global_dirs(project: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
     return [(tier, item) for tier, root in pack_roots(project) if root.is_dir()
-            for item in sorted(root.iterdir()) if item.is_dir()]
+            for item in sorted(root.iterdir()) if item.is_dir()
+            and not item.name.startswith((".", "_"))]
+
+
+def _resolve_invocation(spec: str, project: pathlib.Path) -> tuple[str, pathlib.Path, dict, dict]:
+    pack_id, separator, entry_id = spec.partition(":")
+    if not separator or not pack_id or not entry_id:
+        raise PackError("pack invoke target must be <pack>:<entry>")
+    installed = validate_tiered_collection(_global_dirs(project))
+    matches = [(_tier, path, manifest) for _tier, path, manifest in installed
+               if manifest["id"] == pack_id]
+    if not matches:
+        from .catalog import discover_builtin_packs
+        matches = [("builtin", path, manifest) for (_kind, candidate_id), (path, manifest)
+                   in discover_builtin_packs().items() if candidate_id == pack_id]
+    if len(matches) != 1:
+        raise PackError(f"pack invoke pack is {'ambiguous' if matches else 'unknown'}: {pack_id}")
+    tier, path, manifest = matches[0]
+    entries = [entry for entry in manifest["entrypoints"] if entry["id"] == entry_id]
+    if len(entries) != 1:
+        raise PackError(f"unknown pack entrypoint: {spec}")
+    return tier, path, manifest, entries[0]
+
+
+def invoke_pack(spec: str, forwarded: list[str], *, project: pathlib.Path) -> int:
+    from .manifest import parse_frontmatter_subset
+    tier, pack, manifest, entry = _resolve_invocation(spec, project)
+    kind = entry["kind"]
+    if kind not in {"command", "recipe"}:
+        raise PackError(f"pack entrypoint kind is not invokable: {kind}")
+    prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])
+    relative = next((item for item in manifest["assets"][kind]
+                     if str(pathlib.PurePosixPath(item).relative_to(prefix).with_suffix(""))
+                     == entry["target"]), None)
+    if relative is None:
+        raise PackError(f"pack entrypoint target is missing: {entry['target']}")
+    target = pack / relative
+    if tier in {"project", "user", "org"}:
+        from .model import ResolvedAsset
+        from .trust import ensure_asset_trusted
+        ensure_asset_trusted(ResolvedAsset(
+            kind, entry["target"], target, tier, str(pack), manifest["id"]
+        ))
+    args = forwarded[1:] if forwarded[:1] == ["--"] else forwarded
+    if kind == "command":
+        print(canonical({
+            "args": args, "asset": str(target), "entrypoint": spec,
+            "mode": "manual-command", "status": "ready",
+        }), end="")
+        return 0
+    frontmatter = parse_frontmatter_subset(target)
+    if frontmatter.get("no_orchestrate") in (True, "true"):
+        raise PackError(
+            f"entrypoint {spec} is manual-only (no_orchestrate: true); "
+            "the computational pack invoke shim refuses it"
+        )
+    from rig_workbench.orchestrate import commands
+    original = commands.resolve_recipe
+    commands.resolve_recipe = lambda _name: target
+    try:
+        commands.cmd_run([entry["target"], *args])
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    finally:
+        commands.resolve_recipe = original
+    return 0
 
 
 def cmd_pack(argv: list[str]) -> int:
@@ -135,6 +208,8 @@ def cmd_pack(argv: list[str]) -> int:
             if not removed:
                 print("rerun with --yes to remove this lock-owned pack")
             return 0
+        if args.command == "invoke":
+            return invoke_pack(args.entrypoint, args.args, project=pathlib.Path.cwd())
         report = diagnose(args.path, project=pathlib.Path.cwd())
         if args.json:
             print(canonical(report), end="")

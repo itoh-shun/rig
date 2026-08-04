@@ -38,7 +38,7 @@ def remove_pack(
         if not pack_root.is_dir():
             continue
         for candidate in sorted(item for item in pack_root.iterdir() if item.is_dir()
-                                and not item.name.startswith(".pack-")):
+                                and not item.name.startswith((".", "_"))):
             if candidate.resolve() == target.resolve():
                 continue
             candidate_manifest = validate_pack(candidate)

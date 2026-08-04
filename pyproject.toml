@@ -79,7 +79,7 @@ benchmarks = [
   "recipes/*.md",
   "templates/*.md",
 ]
-packs = ["domain/**/*"]
+packs = ["domain/**/*", "official/**/*"]
 
 [tool.ruff]
 line-length = 100

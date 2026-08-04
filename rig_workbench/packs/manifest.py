@@ -13,12 +13,22 @@ from rig_workbench.workbench.injection import scan_line as injection_scan_line
 
 from .model import ASSET_DIRS, PackError
 
-PACK_FIELDS = {
+PACK_BASE_FIELDS = {
     "pack_schema_version", "id", "version", "kind", "engine", "dependencies",
     "assets", "hashes", "provenance",
 }
+PACK_CATALOG_FIELDS = {
+    "display_name", "description", "capabilities", "entrypoints", "references", "resources",
+}
+PACK_FIELDS = PACK_BASE_FIELDS | PACK_CATALOG_FIELDS
 COMPAT_FIELDS = {"compatibility_schema_version", "pack_id", "pack_version", "engine", "platforms"}
 PACK_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+RESERVED_PACK_IDS = frozenset({"rig-core"})
+REFERENCE_ID = re.compile(r"^[a-z0-9][a-z0-9/_-]{0,127}$")
+PROMPT_REFERENCE_KINDS = frozenset({
+    "agent", "command", "instruction", "output-contract", "pattern", "persona",
+    "policy", "recipe", "wiki",
+})
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?$")
 RANGE = re.compile(r"^(?:\*|(?:>=|<=|>|<|==)?[0-9]+\.[0-9]+\.[0-9]+(?:\s*,\s*(?:>=|<=|>|<|==)[0-9]+\.[0-9]+\.[0-9]+)*)$")
 _BARE_RM_RECURSIVE_FORCE = re.compile(
@@ -251,14 +261,29 @@ def parse_frontmatter_subset(path: pathlib.Path) -> dict:
 
 def validate_manifest_shape(value: dict) -> None:
     _reject_unsafe(value, "pack")
-    if set(value) != PACK_FIELDS or value.get("pack_schema_version") != 1:
+    fields = set(value)
+    if (frozenset(fields) not in {frozenset(PACK_BASE_FIELDS), frozenset(PACK_FIELDS)}
+            or value.get("pack_schema_version") != 1):
         raise PackError("pack manifest schema fields/version are invalid")
     if not isinstance(value.get("id"), str) or not PACK_ID.fullmatch(value["id"]):
         raise PackError("pack id is invalid")
+    if value["id"] in RESERVED_PACK_IDS:
+        raise PackError(f"pack id is reserved: {value['id']}")
     if not isinstance(value.get("version"), str) or not VERSION.fullmatch(value["version"]):
         raise PackError("pack version must be semver")
     if value.get("kind") not in {"core", "official", "domain", "project"}:
         raise PackError("pack kind is invalid")
+    catalog_manifest = PACK_CATALOG_FIELDS <= fields
+    if catalog_manifest:
+        for field in ("display_name", "description"):
+            if not isinstance(value.get(field), str) or not value[field].strip():
+                raise PackError(f"pack {field} is invalid")
+        capabilities = value.get("capabilities")
+        if (not isinstance(capabilities, list) or not capabilities
+                or capabilities != sorted(set(capabilities))
+                or any(not isinstance(item, str) or not PACK_ID.fullmatch(item)
+                       for item in capabilities)):
+            raise PackError("pack capabilities must be a sorted unique slug list")
     if not isinstance(value.get("engine"), str) or not RANGE.fullmatch(value["engine"]):
         raise PackError("pack engine range is invalid")
     deps = value.get("dependencies")
@@ -274,7 +299,13 @@ def validate_manifest_shape(value: dict) -> None:
             raise PackError("pack dependency is duplicate or self-referential")
         seen.add(dep["id"])
     assets = value.get("assets")
-    if not isinstance(assets, dict) or set(assets) != set(ASSET_DIRS):
+    asset_fields = set(assets) if isinstance(assets, dict) else set()
+    legacy_asset_fields = set(ASSET_DIRS) - {"resource"}
+    if (not isinstance(assets, dict)
+            or frozenset(asset_fields) not in {
+                frozenset(legacy_asset_fields), frozenset(ASSET_DIRS)
+            }
+            or (catalog_manifest and asset_fields != set(ASSET_DIRS))):
         raise PackError("pack assets must declare every asset kind")
     declared: set[str] = set()
     for kind, paths in assets.items():
@@ -303,6 +334,51 @@ def validate_manifest_shape(value: dict) -> None:
         raise PackError("pack provenance created_at is invalid") from exc
     if timestamp.tzinfo is None:
         raise PackError("pack provenance created_at requires timezone")
+    if not catalog_manifest:
+        return
+    references = value.get("references")
+    if not isinstance(references, list):
+        raise PackError("pack references must be a list")
+    reference_keys: list[tuple[str, str, str]] = []
+    reference_targets: list[tuple[str, str]] = []
+    for reference in references:
+        if (not isinstance(reference, dict) or set(reference) != {"kind", "id", "pack"}
+                or reference.get("kind") not in PROMPT_REFERENCE_KINDS
+                or not isinstance(reference.get("id"), str)
+                or not REFERENCE_ID.fullmatch(reference["id"])
+                or not isinstance(reference.get("pack"), str)
+                or not PACK_ID.fullmatch(reference["pack"])):
+            raise PackError("pack typed reference is invalid")
+        reference_keys.append((reference["pack"], reference["kind"], reference["id"]))
+        reference_targets.append((reference["kind"], reference["id"]))
+    if reference_keys != sorted(set(reference_keys)):
+        raise PackError("pack references must be sorted and unique")
+    if len(reference_targets) != len(set(reference_targets)):
+        raise PackError("pack typed reference owner is ambiguous")
+    entrypoints = value.get("entrypoints")
+    if not isinstance(entrypoints, list):
+        raise PackError("pack entrypoints must be a list")
+    entry_ids: list[str] = []
+    for entrypoint in entrypoints:
+        if (not isinstance(entrypoint, dict) or set(entrypoint) != {"id", "kind", "target"}
+                or not isinstance(entrypoint.get("id"), str)
+                or not PACK_ID.fullmatch(entrypoint["id"])
+                or entrypoint.get("kind") not in {"command", "recipe"}
+                or not isinstance(entrypoint.get("target"), str)
+                or not REFERENCE_ID.fullmatch(entrypoint["target"])):
+            raise PackError("pack entrypoint is invalid")
+        entry_ids.append(entrypoint["id"])
+    if entry_ids != sorted(set(entry_ids)):
+        raise PackError("pack entrypoints must be sorted and unique")
+    resources = value.get("resources")
+    declared_resources = set(assets.get("resource", []))
+    if not isinstance(resources, dict) or set(resources) != declared_resources:
+        raise PackError("pack resources must exactly cover resource assets")
+    for path, metadata in resources.items():
+        if (not isinstance(metadata, dict)
+                or set(metadata) != {"media_type", "size", "sha256"}
+                or metadata.get("sha256") != hashes.get(path)):
+            raise PackError("pack resource metadata is invalid")
 
 
 def validate_compatibility(value: dict, manifest: dict) -> None:

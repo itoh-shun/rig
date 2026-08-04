@@ -13,6 +13,7 @@ from rig_workbench.workbench.injection import scan_file as injection_scan_file
 from .manifest import (canonical, digest, parse_frontmatter_subset, read_json_yaml, safe_relative,
                        validate_compatibility, validate_manifest_shape)
 from .model import ASSET_DIRS, PROMPT_KINDS, PackError
+from .resources import validate_resource
 
 
 def _version(value: str) -> tuple[int, int, int]:
@@ -65,13 +66,6 @@ def _frontmatter_refs(path: pathlib.Path) -> list[tuple[str, str]]:
             for item in value:
                 walk(item)
     walk(parsed)
-    try:
-        body = path.read_text(encoding="utf-8").split("\n---", 1)[-1]
-    except (OSError, UnicodeError) as exc:
-        raise PackError(f"cannot read prompt asset: {path.name}") from exc
-    refs.extend(("wiki", match.group(1)) for match in re.finditer(
-        r"\[\[([a-z0-9/_-]+)(?:\|[^]]+)?\]\]", body
-    ))
     return sorted(set(refs))
 
 
@@ -120,10 +114,11 @@ def validate_pack(path: pathlib.Path | str) -> dict:
             asset = root / rel
             expected_suffix = (
                 ".json" if kind in {"eval-case", "eval-result"}
-                else ((".yaml", ".yml") if kind == "agent" else ".md")
+                else ((".yaml", ".yml") if kind == "agent"
+                      else (None if kind == "resource" else ".md"))
             )
             suffixes = expected_suffix if isinstance(expected_suffix, tuple) else (expected_suffix,)
-            if asset.suffix not in suffixes:
+            if expected_suffix is not None and asset.suffix not in suffixes:
                 raise PackError(f"asset extension is invalid for {kind}: {item}")
             if digest(asset) != manifest["hashes"][item]:
                 raise PackError(f"asset hash mismatch: {item}")
@@ -136,6 +131,12 @@ def validate_pack(path: pathlib.Path | str) -> dict:
             if kind in PROMPT_KINDS:
                 surface_kind = "contract" if kind == "output-contract" else kind
                 prompt_ids.add(f"{surface_kind}:{name}")
+            if kind == "resource":
+                resources = manifest.get("resources", {})
+                if item not in resources:
+                    raise PackError(f"resource metadata is missing: {item}")
+                validate_resource(root, item, resources[item])
+                continue
             try:
                 asset_text = asset.read_text(encoding="utf-8")
             except (OSError, UnicodeError) as exc:
@@ -148,7 +149,9 @@ def validate_pack(path: pathlib.Path | str) -> dict:
                 raise PackError(f"destructive content in asset: {item}")
     if prompt_ids and not manifest["assets"]["eval-case"]:
         raise PackError("prompt-bearing pack requires at least one evaluation case")
-    available = ids | _core_reference_ids()
+    core_ids = _core_reference_ids()
+    available = ids | core_ids
+    parsed_references: set[tuple[str, str]] = set()
     for kind, paths in manifest["assets"].items():
         if kind not in PROMPT_KINDS:
             continue
@@ -166,8 +169,29 @@ def validate_pack(path: pathlib.Path | str) -> dict:
                             f"unsupported executable gate without no_orchestrate: true: {gate}"
                         )
             for ref in _frontmatter_refs(root / item):
-                if ref not in available:
-                    raise PackError(f"broken pack reference: {ref[0]}:{ref[1]}")
+                parsed_references.add(ref)
+    declared_references = manifest.get("references")
+    manifest_references = {
+        (reference["kind"], reference["id"]) for reference in (declared_references or [])
+    }
+    if declared_references is not None and parsed_references != manifest_references:
+        missing = sorted(parsed_references - manifest_references)
+        stale = sorted(manifest_references - parsed_references)
+        raise PackError(f"typed reference drift (missing={missing}, stale={stale})")
+    if declared_references is None:
+        for key in parsed_references:
+            if key not in available:
+                raise PackError(f"broken pack reference: {key[0]}:{key[1]}")
+    for reference in declared_references or []:
+        key = (reference["kind"], reference["id"])
+        owner = reference["pack"]
+        if owner == manifest["id"] and key not in ids:
+            raise PackError(f"broken self reference: {key[0]}:{key[1]}")
+        if owner == "rig-core" and key not in core_ids:
+            raise PackError(f"broken core reference: {key[0]}:{key[1]}")
+        if key not in available and owner in {manifest["id"], "rig-core"}:
+            raise PackError(f"broken pack reference: {key[0]}:{key[1]}")
+    eval_surfaces: set[str] = set()
     for item in manifest["assets"]["eval-case"]:
         _raw, case = read_json_yaml(root / item)
         validate_case(case)
@@ -176,6 +200,16 @@ def validate_pack(path: pathlib.Path | str) -> dict:
         bound = set(case.get("prompt_surfaces", []))
         if not bound or not bound <= prompt_ids:
             raise PackError(f"evaluation case is not bound to owned prompt assets: {item}")
+        eval_surfaces.update(bound)
+    for entrypoint in manifest.get("entrypoints", []):
+        target = (entrypoint["kind"], entrypoint["target"])
+        if target not in ids:
+            raise PackError(
+                f"entrypoint target is not owned: {entrypoint['id']}->{target[0]}:{target[1]}"
+            )
+        surface_kind = "contract" if target[0] == "output-contract" else target[0]
+        if f"{surface_kind}:{target[1]}" not in eval_surfaces:
+            raise PackError(f"entrypoint lacks evaluation coverage: {entrypoint['id']}")
     return manifest
 
 
@@ -206,19 +240,53 @@ def validate_tiered_collection(entries: list[tuple[str, pathlib.Path]]) -> list[
                 raise PackError(f"incompatible dependency: {pack_id}->{dep_id}")
     visiting: set[str] = set()
     visited: set[str] = set()
+    order: list[str] = []
     def visit(node: str) -> None:
         if node in visiting:
             raise PackError("pack dependency cycle detected")
         if node in visited:
             return
         visiting.add(node)
-        for child in graph[node]:
+        for child in sorted(graph[node]):
             visit(child)
         visiting.remove(node)
         visited.add(node)
+        order.append(node)
     for node in sorted(graph):
         visit(node)
-    return records
+    closure_cache: dict[str, set[str]] = {}
+    def closure(node: str) -> set[str]:
+        if node not in closure_cache:
+            closure_cache[node] = set(graph[node])
+            for dependency in graph[node]:
+                closure_cache[node].update(closure(dependency))
+        return closure_cache[node]
+    asset_ids: dict[str, set[tuple[str, str]]] = {}
+    for pack_id, manifest in by_id.items():
+        values: set[tuple[str, str]] = set()
+        for kind, paths in manifest["assets"].items():
+            prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])
+            for item in paths:
+                name = str(pathlib.PurePosixPath(item).relative_to(prefix).with_suffix(""))
+                if kind == "eval-case" and name.endswith("/case"):
+                    name = name[:-5]
+                values.add((kind, name))
+        asset_ids[pack_id] = values
+    for pack_id, manifest in by_id.items():
+        for reference in manifest.get("references", []):
+            owner = reference["pack"]
+            if owner in {pack_id, "rig-core"}:
+                continue
+            if owner not in closure(pack_id):
+                raise PackError(f"reference escapes dependency closure: {pack_id}->{owner}")
+            key = (reference["kind"], reference["id"])
+            if key not in asset_ids[owner]:
+                raise PackError(
+                    f"broken dependency reference: {pack_id}->{owner}:{key[0]}:{key[1]}"
+                )
+    record_by_id = {manifest["id"]: (tier, path, manifest)
+                    for tier, path, manifest in records}
+    return [record_by_id[pack_id] for pack_id in order]
 
 
 def validate_collection(pack_dirs: list[pathlib.Path]) -> list[dict]:

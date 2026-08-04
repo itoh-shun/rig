@@ -15,7 +15,7 @@ from rig_workbench.eval.compare import validate_result
 
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
                    validate_lock_root, write_lock)
-from .manifest import PACK_ID, read_json_yaml
+from .manifest import read_json_yaml
 from .model import PROMPT_KINDS, PackError
 from .resolver import pack_roots
 from .validation import validate_pack, validate_tiered_collection
@@ -24,11 +24,6 @@ MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 4096
 MAX_COMPRESSION_RATIO = 200
-BUILTIN_DOMAIN_PACKS = frozenset({
-    "decision-humor", "sales", "sns-x", "video-storytelling",
-})
-
-
 @dataclass(frozen=True)
 class InstallResult:
     path: pathlib.Path
@@ -39,19 +34,9 @@ class InstallResult:
 def _resolve_source(source: pathlib.Path | str) -> tuple[pathlib.Path, str]:
     """Resolve a local source or an allowlisted packaged domain alias."""
     source_text = str(source)
-    if source_text.startswith("domain:"):
-        pack_id = source_text.removeprefix("domain:")
-        if not PACK_ID.fullmatch(pack_id):
-            raise PackError("built-in domain pack id is invalid")
-        if pack_id not in BUILTIN_DOMAIN_PACKS:
-            raise PackError(f"unknown built-in domain pack: {pack_id}")
-        distribution_root = pathlib.Path(__file__).resolve().parents[2]
-        built_in_root = distribution_root / "packs" / "domain"
-        resolved = (built_in_root / pack_id).resolve()
-        if resolved.parent != built_in_root.resolve():
-            raise PackError("built-in domain pack path is unsafe")
-        if not resolved.is_dir():
-            raise PackError(f"built-in domain pack is unavailable: {pack_id}")
+    if source_text.startswith(("domain:", "official:")):
+        from .catalog import resolve_builtin_alias
+        resolved, _manifest = resolve_builtin_alias(source_text)
         return resolved, source_text
     if source_text.casefold().startswith(("https://", "http://")):
         raise PackError("URL pack sources are unsupported; use a local directory, zip, or tar")
@@ -251,10 +236,10 @@ def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
         seen_roots.add(resolved)
         if root.is_dir():
             entries.extend((tier, item) for item in sorted(root.iterdir()) if item.is_dir()
-                           and not item.name.startswith(".pack-stage-"))
+                           and not item.name.startswith((".", "_")))
     if destination_root.resolve() not in seen_roots and destination_root.is_dir():
         entries.extend((scope, item) for item in sorted(destination_root.iterdir()) if item.is_dir()
-                       and not item.name.startswith(".pack-stage-"))
+                       and not item.name.startswith((".", "_")))
     entries.append((scope, staging_pack))
     return entries
 

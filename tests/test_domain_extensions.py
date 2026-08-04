@@ -244,7 +244,7 @@ def test_pack_may_reference_real_core_assets_but_not_unknown_assets(tmp_path, mo
     manifest["hashes"]["recipes/sns-x-post.md"] = digest(recipe)
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
-    with pytest.raises(PackError, match="broken pack reference: pattern:absent-pattern"):
+    with pytest.raises(PackError, match="typed reference drift"):
         validate_pack(copied)
 
 

@@ -20,8 +20,9 @@ ASSET_DIRS = {
     "agent": "agents",
     "eval-case": "evals/cases",
     "eval-result": "evals/results",
+    "resource": "resources",
 }
-PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case", "eval-result"})
+PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case", "eval-result", "resource"})
 TIERS = ("project", "user", "org", "official", "core")
 
 

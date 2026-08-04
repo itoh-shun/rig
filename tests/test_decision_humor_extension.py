@@ -94,7 +94,7 @@ def test_all_four_domain_packs_coexist_and_same_tier_collision_fails(monkeypatch
     shutil.copytree(project / ".rig/packs/decision-humor", duplicate)
     manifest = duplicate / "pack.yaml"
     manifest.write_text(manifest.read_text(encoding="utf-8").replace(
-        '"id":"decision-humor"', '"id":"decision-humor-copy"'
+        "decision-humor", "decision-humor-copy"
     ), encoding="utf-8")
     compatibility = duplicate / "compatibility.yaml"
     compatibility.write_text(compatibility.read_text(encoding="utf-8").replace(
