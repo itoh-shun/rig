@@ -18,6 +18,7 @@ def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
     from rig_workbench import __version__
     from rig_workbench.eval.runner import run_case
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
+    from rig_workbench.packs.lock import tree_hash
 
     monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "pack-quality-fixture-key-is-at-least-32-bytes")
     pack = _write_pack(root, "quality-pack", recipe=True)
@@ -60,9 +61,14 @@ def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
         "rig_workbench.eval.runner._execute",
         lambda **_kwargs: (0, "ok", "", None),
     )
+    from rig_workbench.packs.tester import compose_case_prompt, prompt_binding_sha256
+    prompt = compose_case_prompt(pack, manifest, case, project=root)
     result_path, _result = run_case(
         case, repo=root, provider="codex", model="fixture", repeat=3,
         phase="current", result_root=result_root, judge_adapter=judge,
+        prompt_prefix=prompt,
+        prompt_binding_sha256=prompt_binding_sha256(manifest, case, prompt),
+        pack_tree_sha256=tree_hash(pack),
     )
     bundled = pack / "evals/results/hello-case/current-codex.json"
     bundled.parent.mkdir(parents=True, exist_ok=True)
@@ -531,8 +537,155 @@ def test_pack_test_structural_mock_and_provider_unavailable(tmp_path, monkeypatc
     assert persisted["target"][0]["checks"][0]["spec"] == "contains:target"
     assert persisted["clean"][0]["checks"][0]["spec"] == "contains:clean"
     assert tree_hash(pack) == before
+    from rig_workbench.packs.evidence import import_results
+    with pytest.raises(PackError, match="dev-only"):
+        import_results(pack, staged=result_dir, project=tmp_path)
+    assert tree_hash(pack) == before
     monkeypatch.setattr("rig_workbench.eval.runner.shutil.which", lambda _name: None)
+    with pytest.raises(PackError, match="allow-paid-provider"):
+        test_pack(pack, project=tmp_path, provider="codex", model="fixture",
+                  judge_provider="codex", judge_model="fixture",
+                  result_dir=result_dir / "blocked")
     unavailable, code = test_pack(pack, project=tmp_path, provider="codex", model="fixture",
                                   judge_provider="codex", judge_model="fixture",
-                                  result_dir=result_dir / "unavailable")
+                                  result_dir=result_dir / "unavailable",
+                                  allow_paid_provider=True)
     assert code == 2 and unavailable["status"] == "provider_unavailable"
+
+
+def test_import_results_validates_every_staged_file_and_is_atomic(
+    tmp_path, monkeypatch, capsys,
+):
+    from rig_workbench.packs import evidence
+    from rig_workbench.packs.evidence import import_results
+    from rig_workbench.packs.lock import tree_hash
+    from rig_workbench.packs.manifest import canonical, read_json_yaml
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.validation import validate_pack
+
+    repository = tmp_path / "repository"
+    pack = _quality_pack(repository, monkeypatch)
+    bundled = pack / "evals/results/hello-case/current-codex.json"
+    staged = tmp_path / "staged-results"
+    staged.mkdir()
+    shutil.copyfile(bundled, staged / "result.json")
+    shutil.rmtree(repository / "generated-results")
+    bundled.unlink()
+    _raw, manifest = read_json_yaml(pack / "pack.yaml")
+    relative = "evals/results/hello-case/current-codex.json"
+    manifest["assets"]["eval-result"] = []
+    manifest["hashes"].pop(relative)
+    (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
+    before = tree_hash(pack)
+
+    (staged / "malformed.json").write_text("{bad", encoding="utf-8")
+    with pytest.raises(PackError, match="invalid staged"):
+        import_results(pack, staged=staged, project=repository)
+    assert tree_hash(pack) == before
+    (staged / "malformed.json").unlink()
+
+    real_replace = evidence.os.replace
+    calls = 0
+
+    def fail_commit_once(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected evidence commit failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(evidence.os, "replace", fail_commit_once)
+    with pytest.raises(PackError, match="transaction"):
+        import_results(pack, staged=staged, project=repository)
+    assert tree_hash(pack) == before
+    monkeypatch.setattr(evidence.os, "replace", real_replace)
+
+    original_recipe = (pack / "recipes/hello.md").read_text(encoding="utf-8")
+    real_tree_hash = evidence.tree_hash
+
+    def race_at_commit(path):
+        candidate = pathlib.Path(path)
+        if candidate.name.startswith(f".{pack.name}.evidence-backup-"):
+            recipe = candidate / "recipes/hello.md"
+            recipe.write_text(original_recipe + "\nracing writer\n", encoding="utf-8")
+        return real_tree_hash(candidate)
+
+    monkeypatch.setattr(evidence, "tree_hash", race_at_commit)
+    with pytest.raises(PackError, match="changed at.*commit"):
+        import_results(pack, staged=staged, project=repository)
+    assert "racing writer" in (pack / "recipes/hello.md").read_text(encoding="utf-8")
+    (pack / "recipes/hello.md").write_text(original_recipe, encoding="utf-8")
+    assert tree_hash(pack) == before
+    monkeypatch.setattr(evidence, "tree_hash", real_tree_hash)
+
+    from rig_workbench.packs.cli import cmd_pack
+    monkeypatch.chdir(repository)
+    assert cmd_pack([
+        "import-results", str(pack), "--result-dir", str(staged),
+    ]) == 0
+    assert capsys.readouterr().out == f"imported: {relative}\n"
+    validated = validate_pack(pack)
+    assert validated["assets"]["eval-result"] == [relative]
+    assert (pack / relative).is_file()
+
+
+def test_import_results_rejects_stale_prompt_binding_and_unsafe_stage_paths(
+    tmp_path, monkeypatch,
+):
+    from rig_workbench.packs.evidence import import_results
+    from rig_workbench.packs.lock import tree_hash
+    from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
+    from rig_workbench.packs.model import PackError
+
+    repository = tmp_path / "repository"
+    pack = _quality_pack(repository, monkeypatch)
+    bundled = pack / "evals/results/hello-case/current-codex.json"
+    staged = tmp_path / "staged-results"
+    staged.mkdir()
+    shutil.copyfile(bundled, staged / "result.json")
+    result = json.loads((staged / "result.json").read_text(encoding="utf-8"))
+    shutil.rmtree(repository / "generated-results")
+    bundled.unlink()
+    _raw, manifest = read_json_yaml(pack / "pack.yaml")
+    relative = "evals/results/hello-case/current-codex.json"
+    manifest["assets"]["eval-result"] = []
+    manifest["hashes"].pop(relative)
+    recipe = pack / "recipes/hello.md"
+    recipe.write_text(recipe.read_text(encoding="utf-8") + "\nchanged\n", encoding="utf-8")
+    manifest["hashes"]["recipes/hello.md"] = digest(recipe)
+    (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
+    before = tree_hash(pack)
+
+    monkeypatch.setattr(
+        "rig_workbench.packs.evidence._git_identity",
+        lambda _root: (result["execution_commit"], result["execution_base_commit"], "available"),
+    )
+    monkeypatch.setattr(
+        "rig_workbench.packs.evidence.execution_diff_sha256",
+        lambda *_args, **_kwargs: result["execution_diff_sha256"],
+    )
+    with pytest.raises(PackError, match="prompt/asset binding is stale"):
+        import_results(pack, staged=staged, project=repository)
+    assert tree_hash(pack) == before
+
+    inside = repository / "staged"
+    shutil.copytree(staged, inside)
+    with pytest.raises(PackError, match="outside the project"):
+        import_results(pack, staged=inside, project=repository)
+    linked = tmp_path / "linked-stage"
+    linked.symlink_to(staged, target_is_directory=True)
+    with pytest.raises(PackError, match="symlink"):
+        import_results(pack, staged=linked, project=repository)
+
+
+def test_pack_cli_requires_paid_opt_in_before_codex_execution(tmp_path, monkeypatch, capsys):
+    from rig_workbench.packs.cli import cmd_pack
+
+    pack = _write_pack(tmp_path / "source", "paid-opt-in", recipe=True)
+    monkeypatch.chdir(tmp_path)
+    code = cmd_pack([
+        "test", str(pack), "--provider", "codex", "--model", "fixture",
+        "--result-dir", str(tmp_path.parent / f"{tmp_path.name}-results"), "--json",
+    ])
+    assert code == 2
+    assert "--allow-paid-provider" in capsys.readouterr().err

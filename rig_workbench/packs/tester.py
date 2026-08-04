@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import pathlib
 
 from rig_workbench.eval.runner import make_judge_adapter, run_case
 from rig_workbench.eval.gate import quality_result_failures
 
-from .manifest import read_json_yaml
-from .model import PackError
+from .manifest import canonical, read_json_yaml
+from .lock import tree_hash
+from .model import PROMPT_KINDS, PackError
 from .resolver import pack_roots
 from .validation import validate_pack
 
@@ -61,6 +63,20 @@ def compose_case_prompt(
     return "\n\n".join(sections)
 
 
+def prompt_binding_sha256(manifest: dict, case: dict, composed_prompt: str) -> str:
+    """Bind exact composition plus every declared local prompt-bearing asset."""
+    payload = {
+        "case_id": case["id"],
+        "composition": composed_prompt,
+        "prompt_asset_hashes": {
+            relative: manifest["hashes"][relative]
+            for kind in sorted(PROMPT_KINDS)
+            for relative in sorted(manifest["assets"][kind])
+        },
+    }
+    return hashlib.sha256(canonical(payload).encode("utf-8")).hexdigest()
+
+
 def resolve_pack(value: pathlib.Path | str, *, project: pathlib.Path) -> pathlib.Path:
     candidate = pathlib.Path(value).expanduser()
     if candidate.exists():
@@ -80,6 +96,7 @@ def test_pack(
     judge_provider: str | None = None, judge_model: str | None = None,
     command: str | None = None, judge_command: str | None = None,
     timeout: float = 30, result_dir: pathlib.Path | str | None = None,
+    allow_paid_provider: bool = False,
 ) -> tuple[dict, int]:
     project_path = pathlib.Path(project).resolve()
     pack = resolve_pack(value, project=project_path)
@@ -92,6 +109,8 @@ def test_pack(
                  "result_paths": [], "failures": []}, 0)
     if not model:
         raise PackError("pack test --provider requires --model")
+    if (provider == "codex" or judge_provider == "codex") and not allow_paid_provider:
+        raise PackError("codex pack evaluation requires explicit --allow-paid-provider opt-in")
     if provider == "command" or judge_provider == "command":
         raise PackError("pack evaluation forbids command subject and judge adapters")
     if provider == "claude" or judge_provider == "claude":
@@ -116,11 +135,14 @@ def test_pack(
         for rel in case_paths:
             _raw, case = read_json_yaml(pack / rel)
             prompt = compose_case_prompt(pack, manifest, case, project=project_path)
+            binding = prompt_binding_sha256(manifest, case, prompt)
             result_path, result = run_case(
                 case, repo=project_path, provider=provider, model=model,
                 repeat=case["repeat"], phase="current", command=command,
                 timeout_s=timeout, judge_adapter=judge, result_root=result_root,
                 prompt_prefix=prompt, execution_cwd=adapter_cwd,
+                prompt_binding_sha256=binding,
+                pack_tree_sha256=tree_hash(pack),
             )
             results.append(result)
             result_paths.append(str(result_path))

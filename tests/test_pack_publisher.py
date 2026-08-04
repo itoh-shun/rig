@@ -38,6 +38,186 @@ def _key_material(tmp_path):
     }
 
 
+def test_keygen_keeps_private_external_and_registers_only_public_material(
+    tmp_path, monkeypatch, capsys,
+):
+    from rig_workbench.packs.cli import cmd_pack
+    from rig_workbench.packs.manifest import canonical
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.publisher import generate_publisher_key
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    roots = repository / "trust-roots.json"
+    roots.write_text(canonical({
+        "publisher_trust_roots_schema_version": 1, "keys": [],
+    }), encoding="utf-8")
+    roots.chmod(0o644)
+    secure = tmp_path / "secure"
+    secure.mkdir(mode=0o700)
+    private = secure / "publisher.pem"
+
+    monkeypatch.chdir(repository)
+    assert cmd_pack([
+        "keygen", "--private-key", str(private), "--trust-roots", str(roots),
+        "--key-id", "release-2026", "--signer", "Rig Release",
+    ]) == 0
+    assert "publisher key registered: release-2026" in capsys.readouterr().out
+    assert private.is_file() and (private.stat().st_mode & 0o777) == 0o600
+    assert b"PRIVATE KEY" in private.read_bytes()
+    document = json.loads(roots.read_text(encoding="utf-8"))
+    assert [item["key_id"] for item in document["keys"]] == ["release-2026"]
+    assert "PRIVATE" not in roots.read_text(encoding="utf-8")
+    assert not any(path.suffix == ".pem" for path in repository.rglob("*"))
+
+    with pytest.raises(PackError, match="outside"):
+        generate_publisher_key(
+            private_key_path=repository / "forbidden.pem", trust_roots_path=roots,
+            key_id="forbidden", signer="Rig Release", source_repository=repository,
+        )
+    subdirectory = repository / "nested"
+    subdirectory.mkdir()
+    with pytest.raises(PackError, match="outside"):
+        generate_publisher_key(
+            private_key_path=repository / "nested-private.pem", trust_roots_path=roots,
+            key_id="nested", signer="Rig Release", source_repository=subdirectory,
+        )
+    outside_roots = secure / "trust-roots.json"
+    outside_roots.write_text(canonical({
+        "publisher_trust_roots_schema_version": 1, "keys": [],
+    }), encoding="utf-8")
+    with pytest.raises(PackError, match="inside"):
+        generate_publisher_key(
+            private_key_path=secure / "outside-roots.pem", trust_roots_path=outside_roots,
+            key_id="outside-roots", signer="Rig Release", source_repository=repository,
+        )
+    linked = secure / "linked.pem"
+    linked.symlink_to(secure / "target.pem")
+    with pytest.raises(PackError, match="symlink"):
+        generate_publisher_key(
+            private_key_path=linked, trust_roots_path=roots,
+            key_id="linked", signer="Rig Release", source_repository=repository,
+        )
+
+
+def test_keygen_detects_trust_root_replacement_and_rolls_back_private_key(
+    tmp_path, monkeypatch,
+):
+    from rig_workbench.packs.manifest import canonical
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs import publisher
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    roots = repository / "trust-roots.json"
+    roots.write_text(canonical({
+        "publisher_trust_roots_schema_version": 1, "keys": [],
+    }), encoding="utf-8")
+    secure = tmp_path / "secure"
+    secure.mkdir(mode=0o700)
+    private = secure / "publisher.pem"
+    real_stat = publisher.os.stat
+    roots_checks = 0
+
+    def replaced_stat(path, *args, **kwargs):
+        nonlocal roots_checks
+        value = real_stat(path, *args, **kwargs)
+        if path == roots.name and kwargs.get("dir_fd") is not None:
+            roots_checks += 1
+            if roots_checks == 1:
+                changed = list(value)
+                changed[1] += 1
+                return publisher.os.stat_result(changed)
+        return value
+
+    monkeypatch.setattr(publisher.os, "stat", replaced_stat)
+    with pytest.raises(PackError, match="changed during"):
+        publisher.generate_publisher_key(
+            private_key_path=private, trust_roots_path=roots,
+            key_id="raced", signer="Rig Release", source_repository=repository,
+        )
+    assert not private.exists()
+    assert json.loads(roots.read_text(encoding="utf-8"))["keys"] == []
+
+
+def test_keygen_detects_transaction_file_substitution(tmp_path, monkeypatch):
+    from rig_workbench.packs.manifest import canonical
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs import publisher
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    roots = repository / "trust-roots.json"
+    roots.write_text(canonical({
+        "publisher_trust_roots_schema_version": 1, "keys": [],
+    }), encoding="utf-8")
+    secure = tmp_path / "secure"
+    secure.mkdir(mode=0o700)
+    private = secure / "publisher.pem"
+    real_stat = publisher.os.stat
+
+    def substituted_stat(path, *args, **kwargs):
+        value = real_stat(path, *args, **kwargs)
+        if isinstance(path, str) and path.startswith(".trust-roots."):
+            changed = list(value)
+            changed[1] += 1
+            return publisher.os.stat_result(changed)
+        return value
+
+    monkeypatch.setattr(publisher.os, "stat", substituted_stat)
+    with pytest.raises(PackError, match="transaction file changed"):
+        publisher.generate_publisher_key(
+            private_key_path=private, trust_roots_path=roots,
+            key_id="temp-raced", signer="Rig Release", source_repository=repository,
+        )
+    assert not private.exists()
+    assert json.loads(roots.read_text(encoding="utf-8"))["keys"] == []
+
+
+def test_keygen_descriptor_walk_rejects_ancestor_substitution(tmp_path, monkeypatch):
+    from rig_workbench.packs.manifest import canonical
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs import publisher
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    roots = repository / "trust-roots.json"
+    roots.write_text(canonical({
+        "publisher_trust_roots_schema_version": 1, "keys": [],
+    }), encoding="utf-8")
+    secure_ancestor = tmp_path / "secure-ancestor"
+    secure_parent = secure_ancestor / "keys"
+    secure_parent.mkdir(parents=True, mode=0o700)
+    secure_ancestor.chmod(0o700)
+    attacker = tmp_path / "attacker"
+    (attacker / "keys").mkdir(parents=True, mode=0o700)
+    attacker.chmod(0o700)
+    private = secure_parent / "publisher.pem"
+    original_reject = publisher._reject_symlink_path
+    checks = 0
+
+    def substitute_after_lexical_check(path, *, include_target):
+        nonlocal checks
+        original_reject(path, include_target=include_target)
+        checks += 1
+        if checks == 2:
+            secure_ancestor.rename(tmp_path / "secure-original")
+            secure_ancestor.symlink_to(attacker, target_is_directory=True)
+
+    monkeypatch.setattr(publisher, "_reject_symlink_path", substitute_after_lexical_check)
+    with pytest.raises(PackError, match="path changed"):
+        publisher.generate_publisher_key(
+            private_key_path=private, trust_roots_path=roots,
+            key_id="ancestor-raced", signer="Rig Release", source_repository=repository,
+        )
+    assert not (attacker / "keys/publisher.pem").exists()
+    assert json.loads(roots.read_text(encoding="utf-8"))["keys"] == []
+
+
 def _commit_pack(repository: pathlib.Path, pack: pathlib.Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
     subprocess.run(["git", "config", "user.email", "publisher@example.test"],

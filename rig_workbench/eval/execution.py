@@ -24,6 +24,7 @@ def _run(repo: pathlib.Path, argv: list[str]) -> bytes:
 
 def execution_diff_sha256(
     repo: pathlib.Path, *, base: str, head: str = "working",
+    ignored_untracked_prefixes: tuple[str, ...] = (),
 ) -> str:
     """Hash base→head/working tracked diff plus untracked path/content framing."""
     diff_argv = [
@@ -44,6 +45,11 @@ def execution_diff_sha256(
         paths = sorted(
             path for path in raw_paths.split(b"\0") if path
             and not path.startswith(b".rig/evals/results/")
+            and not any(
+                path == prefix.encode("utf-8")
+                or path.startswith(prefix.encode("utf-8") + b"/")
+                for prefix in ignored_untracked_prefixes
+            )
         )
         for encoded in paths:
             try:

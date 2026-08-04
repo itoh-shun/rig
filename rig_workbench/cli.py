@@ -402,8 +402,8 @@ Sub-commands:
   baseline capture|compare|show ...     versioned benchmark baseline and scorecard
   eval validate|list|capture|run|compare|promote ...
                                         versioned regression evaluation cases
-  pack init|validate|install|test|remove|doctor ...
-                                        validated prompt-pack lifecycle
+  pack init|validate|doctor|install|test|import-results|keygen|sign|remove|invoke ...
+                                        validated prompt-pack lifecycle/publishing
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
   version                               show version

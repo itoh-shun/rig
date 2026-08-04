@@ -23,7 +23,7 @@ from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate
 from .execution import execution_diff_sha256
 from .safety import unsafe_text_reason
 
-RESULT_SCHEMA_VERSION = 1
+RESULT_SCHEMA_VERSION = 2
 OUTPUT_CAP = 4096
 COMMAND_ALLOWLIST = frozenset({"python", "python3", "node", "printf", "echo", "true", "false"})
 JudgeAdapter = Callable[[dict, str, str], dict]
@@ -34,9 +34,10 @@ def _eval_agent_argv(provider: str, prompt: str, repo: pathlib.Path, model: str)
     if provider == "claude":
         raise EvalCaseError("Claude CLI cannot guarantee OS-level read-only evaluation")
     if provider == "codex":
+        del prompt  # Prompt is transported confidentially via stdin exactly once.
         return [
             "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
-            "--cd", str(repo), "--ephemeral", "-m", model, prompt,
+            "--cd", str(repo), "--ephemeral", "-m", model, "-",
         ]
     raise EvalCaseError("unsupported read-only evaluation adapter")
 
@@ -162,13 +163,17 @@ def _execute(
             return 127, "", "provider executable unavailable", "unavailable"
     else:
         raise EvalCaseError(f"unsupported evaluation provider: {provider}")
-    environment = _child_environment(
-        RIG_EVAL_INPUT=payload, RIG_EVAL_PHASE=phase,
-        RIG_EVAL_KIND=kind, RIG_EVAL_INDEX=str(index),
-    )
+    environment_values = {
+        "RIG_EVAL_PHASE": phase, "RIG_EVAL_KIND": kind,
+        "RIG_EVAL_INDEX": str(index),
+    }
+    if provider != "codex":
+        environment_values["RIG_EVAL_INPUT"] = payload
+    environment = _child_environment(**environment_values)
     try:
         completed = subprocess.run(
-            argv, cwd=repo, env=environment, input=payload, capture_output=True,
+            argv, cwd=repo, env=environment,
+            input=payload, capture_output=True,
             text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
             shell=False,
         )
@@ -264,10 +269,13 @@ def make_judge_adapter(
             if not selected or shutil.which(selected[0]) is None:
                 return {"status": "error", "criteria": []}
         assert selected is not None
-        environment = _child_environment(RIG_EVAL_JUDGE_INPUT=prompt)
+        environment = _child_environment(**(
+            {} if provider == "codex" else {"RIG_EVAL_JUDGE_INPUT": prompt}
+        ))
         try:
             completed = subprocess.run(
-                selected, cwd=root, env=environment, input=prompt,
+                selected, cwd=root, env=environment,
+                input=prompt,
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=timeout_s, shell=False,
             )
@@ -357,6 +365,8 @@ def run_case(
     execution_base: str | None = None,
     result_root: pathlib.Path | str | None = None,
     prompt_prefix: str | None = None,
+    prompt_binding_sha256: str | None = None,
+    pack_tree_sha256: str | None = None,
     execution_cwd: pathlib.Path | str | None = None,
 ) -> tuple[pathlib.Path, dict]:
     validate_case(case)
@@ -374,6 +384,14 @@ def run_case(
         raise EvalCaseError("model identity is invalid")
     if timeout_s <= 0:
         raise EvalCaseError("timeout must be positive")
+    if prompt_binding_sha256 is None:
+        prompt_binding_sha256 = hashlib.sha256(
+            (prompt_prefix or "").encode("utf-8")
+        ).hexdigest()
+    if not re.fullmatch(r"[0-9a-f]{64}", prompt_binding_sha256):
+        raise EvalCaseError("prompt binding sha256 is invalid")
+    if pack_tree_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", pack_tree_sha256):
+        raise EvalCaseError("pack tree sha256 is invalid")
     policy = case["provider_policy"]
     if policy["mode"] == "allowlist" and provider not in policy["allowed"]:
         raise EvalCaseError("provider violates case provider policy")
@@ -434,6 +452,8 @@ def run_case(
         "execution_base_commit": execution_base_commit,
         "execution_status": execution_status,
         "execution_diff_sha256": execution_diff,
+        "prompt_binding_sha256": prompt_binding_sha256,
+        "pack_tree_sha256": pack_tree_sha256,
         "provider": provider, "model": model, "executor_version": __version__,
         "judge_provider": judge_provider, "judge_model": judge_model,
         "judge_executor_version": judge_executor_version,

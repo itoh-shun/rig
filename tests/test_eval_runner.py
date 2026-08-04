@@ -79,7 +79,7 @@ def test_mock_baseline_runs_target_and_clean_three_times_and_writes_canonical_re
         phase="baseline", now=NOW,
     )
 
-    assert result["eval_result_schema_version"] == 1
+    assert result["eval_result_schema_version"] == 2
     assert [row["outcome"] for row in result["target"]] == ["fail", "fail", "pass"]
     assert [row["outcome"] for row in result["clean"]] == ["pass", "pass", "pass"]
     assert result["summary"]["target_failure_rate"] == pytest.approx(2 / 3)
@@ -351,7 +351,7 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
     seen = []
     monkeypatch.setattr(
         runner, "_eval_agent_argv",
-        lambda selected, goal, repo, model: [selected, "--model", model, goal],
+        lambda selected, goal, repo, model: [selected, "--model", model, "-"],
     )
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
     monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
@@ -370,6 +370,47 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
     assert all(row["outcome"] == "pass" for row in result["target"])
     assert seen and all(kwargs["shell"] is False for _argv, kwargs in seen)
     assert all(argv[0] == provider for argv, _kwargs in seen)
+    assert all(isinstance(kwargs["input"], str) and kwargs["input"]
+               for _argv, kwargs in seen)
+    assert all("RIG_EVAL_INPUT" not in kwargs["env"] for _argv, kwargs in seen)
+    assert all(argv[-1] == "-" for argv, _kwargs in seen)
+    assert all(kwargs["input"] not in argv for argv, kwargs in seen)
+
+
+def test_codex_judge_transports_prompt_only_in_argv(monkeypatch, tmp_path):
+    from rig_workbench.eval import runner
+
+    case = draft_case()
+    case["semantic_rubric"] = [
+        {"id": "correct", "description": "Correct", "weight": 1.0},
+    ]
+    seen = []
+    monkeypatch.setattr(
+        runner, "_eval_agent_argv",
+        lambda provider, prompt, repo, model: [provider, "exec", "-m", model, "-"],
+    )
+    monkeypatch.setattr(runner.shutil, "which", lambda _name: "/bin/codex")
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, json.dumps({
+            "status": "measured", "criteria": [
+                {"id": "correct", "status": "pass", "score": 1},
+            ],
+        }), "")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    judge = runner.make_judge_adapter(
+        provider="codex", model="fixture", repo=tmp_path,
+    )
+    assert judge(case, "subject input", "subject output")["status"] == "measured"
+    argv, kwargs = seen[0]
+    assert argv[-1] == "-"
+    assert "RIG_EVAL_JUDGE_INPUT" not in kwargs["env"]
+    assert kwargs["input"] not in argv
+    transported = json.loads(kwargs["input"])
+    assert transported["input"] == "subject input"
+    assert transported["output"] == "subject output"
 
 
 def test_claude_eval_fails_closed_without_os_read_only_guarantee(tmp_path):

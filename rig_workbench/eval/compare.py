@@ -32,6 +32,8 @@ def validate_result(
         "started_at", "elapsed_s", "repeat", "target", "clean", "judge", "summary",
         "execution_commit", "execution_base_commit", "execution_status",
         "execution_diff_sha256",
+        "prompt_binding_sha256",
+        "pack_tree_sha256",
         "result_sha256", "attestation",
     }
     unknown = set(result) - required
@@ -41,7 +43,7 @@ def validate_result(
     if verify_attestation and not verify_result_attestation(result):
         raise EvalCaseError("evaluation result attestation is invalid")
     if (isinstance(result["eval_result_schema_version"], bool)
-            or result["eval_result_schema_version"] != 1):
+            or result["eval_result_schema_version"] != 2):
         raise EvalCaseError("unsupported eval_result_schema_version")
     for field in (
         "case_id", "provider", "model", "executor_version", "judge_provider",
@@ -73,6 +75,13 @@ def validate_result(
     if (not isinstance(result["execution_diff_sha256"], str)
             or not re.fullmatch(r"[0-9a-f]{64}", result["execution_diff_sha256"])):
         raise EvalCaseError("evaluation result execution_diff_sha256 is invalid")
+    if (not isinstance(result["prompt_binding_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", result["prompt_binding_sha256"])):
+        raise EvalCaseError("evaluation result prompt_binding_sha256 is invalid")
+    if (result["pack_tree_sha256"] is not None
+            and (not isinstance(result["pack_tree_sha256"], str)
+                 or not re.fullmatch(r"[0-9a-f]{64}", result["pack_tree_sha256"]))):
+        raise EvalCaseError("evaluation result pack_tree_sha256 is invalid")
     if not isinstance(result["phase"], str) or result["phase"] not in {"baseline", "current"}:
         raise EvalCaseError("evaluation result phase is invalid")
     if (isinstance(result["elapsed_s"], bool)
