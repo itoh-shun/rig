@@ -109,8 +109,7 @@ def test_builtin_catalog_is_manifest_discovered_and_tamper_fails_closed(tmp_path
 
     records = catalog_records()
     assert {item["alias"] for item in records} == {
-        "domain:decision-humor", "domain:sales", "domain:sns-x",
-        "domain:video-storytelling",
+        "domain:decision-humor", "domain:sales", "domain:video-storytelling",
     }
     assert all(set(item) == {
         "id", "kind", "version", "display_name", "description", "capabilities",
@@ -118,9 +117,9 @@ def test_builtin_catalog_is_manifest_discovered_and_tamper_fails_closed(tmp_path
     } for item in records)
 
     copied = tmp_path / "dist/packs/domain/not-the-id"
-    shutil.copytree(REPO_ROOT / "packs/domain/sns-x", copied)
-    assert ("domain", "sns-x") in discover_builtin_packs(tmp_path / "dist")
-    (copied / "recipes/sns-x-post.md").write_text("tampered", encoding="utf-8")
+    shutil.copytree(REPO_ROOT / "packs/domain/video-storytelling", copied)
+    assert ("domain", "video-storytelling") in discover_builtin_packs(tmp_path / "dist")
+    (copied / "recipes/movie.md").write_text("tampered", encoding="utf-8")
     with pytest.raises(PackError, match="hash mismatch"):
         discover_builtin_packs(tmp_path / "dist")
 
@@ -131,8 +130,8 @@ def test_builtin_catalog_rejects_duplicate_id_and_kind_mismatch(tmp_path):
     from rig_workbench.packs.model import PackError
 
     domain = tmp_path / "dist/packs/domain"
-    shutil.copytree(REPO_ROOT / "packs/domain/sns-x", domain / "one")
-    shutil.copytree(REPO_ROOT / "packs/domain/sns-x", domain / "two")
+    shutil.copytree(REPO_ROOT / "packs/domain/video-storytelling", domain / "one")
+    shutil.copytree(REPO_ROOT / "packs/domain/video-storytelling", domain / "two")
     with pytest.raises(PackError, match="duplicate builtin pack id"):
         discover_builtin_packs(tmp_path / "dist")
     shutil.rmtree(domain / "two")

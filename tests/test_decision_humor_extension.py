@@ -76,7 +76,7 @@ def test_alias_install_resolves_every_owned_asset_records_trust_and_removes(
         assert resolve_asset("recipe", name, project=project) is None
 
 
-def test_all_four_domain_packs_coexist_and_same_tier_collision_fails(monkeypatch, tmp_path):
+def test_all_three_domain_packs_coexist_and_same_tier_collision_fails(monkeypatch, tmp_path):
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.resolver import resolve_asset
@@ -84,11 +84,11 @@ def test_all_four_domain_packs_coexist_and_same_tier_collision_fails(monkeypatch
 
     _isolated(monkeypatch, tmp_path)
     project = tmp_path / "project"
-    for pack_id in ("sales", "sns-x", "video-storytelling", "decision-humor"):
+    for pack_id in ("sales", "video-storytelling", "decision-humor"):
         install_pack(f"domain:{pack_id}", scope="project", project=project,
                      allow_unverified=True)
-    for kind, name in (("recipe", "deal-review"), ("recipe", "sns-x-post"),
-                       ("recipe", "movie"), ("recipe", "magi")):
+    for kind, name in (("recipe", "deal-review"), ("recipe", "movie"),
+                       ("recipe", "magi")):
         assert resolve_asset(kind, name, project=project) is not None
 
     duplicate = project / ".rig/packs/collision"

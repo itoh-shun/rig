@@ -18,7 +18,6 @@ PACKS = ROOT / "packs" / "domain"
 SOURCE_COMMITS = {
     "decision-humor": "26cc81beaeb9ff35aaa5c9449a9800d789b01fa1",
     "sales": "b86b3a2e8ddc6c3ad79e1c3a68ffb45d8b0b0d71",
-    "sns-x": "656895154ca55ed49e6f9c18851db1d716108b9b",
     "video-storytelling": "3baa91c68263065cd086b9f624f815f857e22c01",
 }
 
@@ -71,9 +70,6 @@ def fixture(case_id: str, kind: str) -> str:
         product = "TraceBoard" if clean else "ReleaseGuard"
         source = "README" if clean else "README / CHANGELOG"
         return f"# 営業資料: {product}\n## ヘッドライン\n確認済み機能を紹介\n## こんな課題ありませんか（ターゲットの痛み・3点）\n- 手作業\n| 機能（実在） | だから何が嬉しいか（ベネフィット） | 出所 |\n|---|---|---|\n| 絞り込み | 探しやすい | {source} |\n## 次の一歩（CTA）\n- [要記入: 連絡先]\n# 荷電スクリプト: {product}\n## 1. オープニング（〜15秒）\n確認済み機能をご紹介します。\n## 5. 反論処理（よくある反論 → 切り返し）\n| 反論 | 切り返し |\n|---|---|\n| 不要 | 資料のみ送付 |\n## 6. クロージング（next action）\n[要記入: 候補日]"
-    if case_id == "sns-x-structure":
-        title, date, url = ("雨粒レコード", "2026-08-15", "https://example.com/ame") if clean else ("夜明けの航路", "2026-08-08", "https://example.com/yoake")
-        return f"根拠:\n1. 曲名 — 『{title}』\n2. 公開日 — 『{date}』\n3. URL — 『{url}』\n投稿本文: {title}を{date}に公開します。\n{url}\n投稿時間: 公開時刻の30分前\n分類: 定型\nリスクメモ: 確定情報だけを使用\n判定: APPROVE\n確信度: 高\n"
     if case_id == "movie-storyboard-grounding":
         marker = values[case_id]
         cmd, observed = ("diffview before.json after.json --tsv changes.tsv", "wrote 7 changes to changes.tsv") if clean else ("logview events.json --type error --csv out.csv", "wrote 18 rows to out.csv")
@@ -114,7 +110,7 @@ def test_all_bundled_cases_are_composed_distinct_and_recomputable():
         prompt = compose_case_prompt(pack, manifest, case, project=ROOT)
         assert all(surface in prompt for surface in case["prompt_composition"])
         covered[pack_id].update(case["prompt_composition"])
-    assert count == 17
+    assert count == 16
     for pack_id in SOURCE_COMMITS:
         _raw, manifest = read_json_yaml(PACKS / pack_id / "pack.yaml")
         expected = {f"{entry['kind']}:{entry['target']}" for entry in manifest["entrypoints"]}
@@ -129,64 +125,6 @@ def test_contract_fixtures_pass_their_lane_and_fail_the_inverse_lane():
         assert all(_check(spec, clean, 0)["status"] == "pass" for spec in case["clean_expectations"]), case["id"]
         assert any(_check(spec, clean, 0)["status"] == "fail" for spec in case["target_expectations"]), case["id"]
         assert any(_check(spec, target, 0)["status"] == "fail" for spec in case["clean_expectations"]), case["id"]
-
-
-def test_sns_x_calibration_accepts_contract_formatting_but_rejects_relative_date_invention():
-    case = next(case for _id, _pack, _manifest, case in iter_cases()
-                if case["id"] == "sns-x-structure")
-    instruction = (
-        "聴きどころ・曲調・制作内容は未提供。これらを創作せず、"
-        "「今日」「今夜」など実行日依存の相対日付も使わない。"
-        "権利確認済みとも断定しない。"
-    )
-    assert instruction in case["target_inputs"]["brief"]
-    assert instruction in case["clean_controls"]["brief"]
-    target_brief = case["target_inputs"]["brief"]
-    assert "アカウントvoiceは『短く、率直。煽らない』" in target_brief
-    assert "制作の手触りを一言" not in target_brief
-    grounded_contract = (
-        "投稿本文に含めてよい具体情報は、入力された曲名・"
-        "カレンダー上の公開日時・URLだけとする。"
-        "アカウントvoiceは文体にだけ反映し、"
-        "音楽・制作・聴衆・反応・権利に関する主張を追加しない。"
-    )
-    assert grounded_contract in target_brief
-    assert grounded_contract in case["clean_controls"]["brief"]
-    scenario_contract = (
-        "本件は事前レビュー済みの定型的な事実限定告知である。"
-        "投稿案に権利・許諾の主張は含めず、その記載も要求しない。"
-        "分類は「定型」とし、契約上のレビュー最終判定は「APPROVE」とする。"
-    )
-    assert scenario_contract in case["target_inputs"]["brief"]
-    assert scenario_contract in case["clean_controls"]["brief"]
-    assert [item["id"] for item in case["semantic_rubric"]] == [
-        "grounded", "approval_ready",
-    ]
-
-    classification = next(spec for spec in case["target_expectations"]
-                          if spec.startswith("regex:") and "分類:" in spec)
-    verdict = next(spec for spec in case["target_expectations"]
-                   if spec.startswith("regex:") and "判定:" in spec)
-    for output in (
-        "分類: `定型`\n判定: APPROVE  \n確信度: 高\n",
-        "分類:\n定型\n判定: APPROVE\n確信度: 中  \n",
-        "分類:\n`定型`\n判定: APPROVE\n確信度: 高\n",
-    ):
-        assert _check(classification, output, 0)["status"] == "pass"
-        assert _check(verdict, output, 0)["status"] == "pass"
-    assert _check(classification, "分類: X定型", 0)["status"] == "fail"
-    assert _check(verdict, "判定: APPROVE note\n確信度: 高", 0)["status"] == "fail"
-    assert _check(verdict, "判定: APPROVE\n確信度: 高\n補足", 0)["status"] == "fail"
-
-    for phrase in ("今夜20:00公開です", "今日19:00に公開"):
-        output = fixture(case["id"], "target") + phrase
-        assert any(
-            _check(spec, output, 0)["status"] == "fail"
-            for spec in case["target_expectations"]
-            if spec in {"not_contains:今日", "not_contains:今夜"}
-        )
-    for required in ("夜明けの航路", "2026-08-08", "https://example.com/yoake"):
-        assert f"contains:{required}" in case["target_expectations"]
 
 
 def test_schema_rejects_identical_lane_expectations():
@@ -209,7 +147,8 @@ def test_contract_composition_alias_resolves_owned_and_rejects_unknown():
 
 
 def test_runner_selects_target_and_clean_expectations(monkeypatch, tmp_path):
-    case = next(case for _id, _pack, _manifest, case in iter_cases() if case["id"] == "sns-x-structure")
+    case = next(case for _id, _pack, _manifest, case in iter_cases()
+                if case["id"] == "scenario-vet-rejects-invention")
     monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "bundled-case-test-attestation-key-32-bytes")
 
     def execute(**kwargs):

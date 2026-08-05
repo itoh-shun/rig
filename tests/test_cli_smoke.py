@@ -317,8 +317,6 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     wheel_dir.mkdir()
     wheel = _build_wheel_offline(wheel_dir)
     with zipfile.ZipFile(wheel) as archive:
-        assert "packs/domain/sns-x/pack.yaml" in archive.namelist()
-        assert "packs/domain/sns-x/recipes/sns-x-post.md" in archive.namelist()
         assert "packs/domain/sales/pack.yaml" in archive.namelist()
         assert "packs/domain/sales/recipes/deal-review.md" in archive.namelist()
         assert "packs/domain/video-storytelling/pack.yaml" in archive.namelist()
@@ -369,23 +367,24 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
         env=_isolated_env(), timeout=60,
     )
     builtin_installed = subprocess.run(
-        [str(python), "-m", "rig_workbench.cli", "pack", "install", "domain:sns-x",
-         "--scope", "project", "--allow-unverified"], cwd=outside,
-        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+        [str(python), "-m", "rig_workbench.cli", "pack", "install",
+         "domain:decision-humor", "--scope", "project", "--allow-unverified"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
     builtin_resolved = subprocess.run(
         [str(python), "-c",
          "from rig_workbench.packs.resolver import resolve_asset; "
-         "item=resolve_asset('recipe','sns-x-post'); "
+         "item=resolve_asset('recipe','magi'); "
          "print(item.pack_id if item else 'missing')"],
         cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
     builtin_tested = subprocess.run(
-        [str(python), "-m", "rig_workbench.cli", "pack", "test", "sns-x", "--json"],
+        [str(python), "-m", "rig_workbench.cli", "pack", "test", "decision-humor",
+         "--json"],
         cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
     builtin_removed = subprocess.run(
-        [str(python), "-m", "rig_workbench.cli", "pack", "remove", "sns-x",
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove", "decision-humor",
          "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
         env=_isolated_env(), timeout=60,
     )
@@ -452,14 +451,14 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     )
     assert json.loads(doctor.stdout)["status"] == "ok"
     assert json.loads(tested.stdout)["status"] == "structural_only"
-    assert builtin_resolved.stdout.strip() == "sns-x"
+    assert builtin_resolved.stdout.strip() == "decision-humor"
     assert json.loads(builtin_tested.stdout)["status"] == "structural_only"
     assert sales_resolved.stdout.strip() == "sales:sales"
     assert json.loads(sales_tested.stdout)["status"] == "structural_only"
     assert video_resolved.stdout.strip() == ":".join(["video-storytelling"] * 6)
     assert json.loads(video_tested.stdout)["status"] == "structural_only"
     assert not (outside / ".rig/packs/wheel-pack").exists()
-    assert not (outside / ".rig/packs/sns-x").exists()
+    assert not (outside / ".rig/packs/decision-humor").exists()
     assert not (outside / ".rig/packs/sales").exists()
     assert not (outside / ".rig/packs/video-storytelling").exists()
 

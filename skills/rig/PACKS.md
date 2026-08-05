@@ -9,7 +9,6 @@
 | id | 説明 | install command |
 |---|---|---|
 | `sales` | 商談レビューと営業資料・荷電スクリプト生成 | `rig-wb pack install domain:sales --scope project --allow-unverified` |
-| `sns-x` | X向け投稿の起案・レビュー・承認分類 | `rig-wb pack install domain:sns-x --scope project --allow-unverified` |
 | `video-storytelling` | 根拠に接続した動画脚本・検閲・絵コンテ生成 | `rig-wb pack install domain:video-storytelling --scope project --allow-unverified` |
 | `decision-humor` | 合議・安全な即断・問い・事前検死・根拠付き回答の手動モード集 | `rig-wb pack install domain:decision-humor --scope project --allow-unverified` |
 
