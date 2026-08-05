@@ -73,9 +73,15 @@ MIN_TOKEN_LEN = 32
 
 # Entropy-detector allowlist: lockfile hashes / vendored trees are high-entropy
 # by construction and never secrets. Named patterns are NOT silenced by these.
+#
+# `corpora` covers drill's planted-defect fixtures: a case that measures whether a
+# reviewer spots a leaked credential has to contain something that looks like one.
+# The value is fabricated and the tree is synthetic by construction. Only the
+# entropy heuristic is silenced — a real vendor-formatted key (sk-ant-…, AKIA…)
+# planted there is still reported, so this cannot hide an actual leak.
 ALLOW_SUFFIXES = (".lock", ".sum")
 ALLOW_BASENAMES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml")
-ALLOW_DIR_PARTS = ("node_modules", ".git")
+ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
 
 # Tree-walk skips (never worth scanning at all) and binary/size guards.
 WALK_SKIP_DIRS = ("node_modules", ".git", ".rig", "__pycache__")

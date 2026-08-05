@@ -106,6 +106,32 @@ def test_named_patterns_still_fire_inside_lockfiles():
     assert [f["kind"] for f in findings] == ["aws_access_key"]
 
 
+def test_drill_corpus_fixtures_are_entropy_allowlisted_but_not_leak_proof():
+    """A planted-credential case has to contain something that looks like a credential.
+
+    The entropy heuristic is silenced under `corpora/` so drill's fixtures do not
+    fail `no_secret_leak` by construction. Named patterns must still fire there —
+    otherwise the allowlist would be a place to hide a real leak.
+    """
+    corpus_file = "skills/engine/corpora/fixture/cases/ts-mixed-violations/head/cache.ts"
+    assert entropy_allowlisted(corpus_file)
+
+    # Scan the real fixture rather than a restated copy: the copy would drift, and
+    # the literal would itself trip the scanner from this (non-allowlisted) file.
+    planted = (REPO_ROOT / corpus_file).read_text(encoding="utf-8").splitlines()
+    assert any(len(re.findall(r"[a-f0-9]{32,}", ln)) for ln in planted), \
+        "fixture no longer carries a high-entropy planted credential"
+    for i, ln in enumerate(planted, 1):
+        assert scan_line(ln, corpus_file, i) == []
+
+    # ...but a real vendor-formatted key planted in the same tree is still a leak.
+    # Reuse SAMPLES rather than restating a token literal: a fresh one would show
+    # up as an added line in every future diff scan of this file.
+    kind, sample = SAMPLES[0]
+    findings = scan_line(f"const k = '{sample}'", corpus_file, 8)
+    assert [f["kind"] for f in findings] == [kind]
+
+
 def test_hex_lockfile_hash_vs_source_file():
     hex64 = "a3f1c9e2b8d4470a5e6f1029c3b7d8e4f0a1b2c3d4e5f60718293a4b5c6d7e8f"
     assert scan_line(hex64, "go.sum", 1) == []                       # allowlisted path

@@ -17,7 +17,8 @@ import traceback
 from . import state
 from .catalog import check_catalog_drift, check_graph, check_wiki
 from .config import RECIPES
-from .drill import check_corpus_integrity, check_drill_coverage
+from .drill import (check_corpus_integrity, check_drill_coverage,
+                    check_fixture_corpus_integrity)
 from .manifest import check_manifest
 from .mcp_scan import check_mcp_scan
 from .personas import check_agents, check_commands, check_personas
@@ -94,6 +95,11 @@ def main() -> None:
         check_corpus_integrity()
     except Exception:
         _emit("FAIL", f"drill corpus check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_fixture_corpus_integrity()
+    except Exception:
+        _emit("FAIL", f"drill fixture corpus check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_release_metadata()

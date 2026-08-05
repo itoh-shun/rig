@@ -1,0 +1,63 @@
+{
+  "id": "ts-mixed-violations",
+  "language": "typescript",
+  "clean": false,
+  "description": "Cache utility change carrying five planted defects of different classes.",
+  "violations": [
+    {
+      "id": "hardcoded-secret",
+      "category": "security",
+      "severity": "critical",
+      "perspectives": [
+        "security"
+      ],
+      "summary": "A high-entropy credential is committed as a source constant and transmitted to a third party. The value deliberately carries no vendor prefix: a reviewer has to reason from the name and the outbound send, not pattern-match a known token format.",
+      "location": "(?i)(REPORTING_TOKEN|9f2c41ba)",
+      "concept": "(?i)(secret|credential|hard[- ]?cod|checked in|committed (to|in|into) (source|the )?(repo|vcs|git|control)|rotate|environment variable|env var|exposed|plaintext|機密|認証情報|環境変数|ハードコ)"
+    },
+    {
+      "id": "breaking-api-change",
+      "category": "compatibility",
+      "severity": "high",
+      "perspectives": [
+        "api-compat"
+      ],
+      "summary": "summarize gained a required second parameter, breaking every existing caller.",
+      "location": "(?i)summari[sz]e",
+      "concept": "(?i)(breaking|backward|back[- ]?compat|existing caller|signature change|required (second |new )?(param|arg)|optional|破壊|互換)"
+    },
+    {
+      "id": "caller-array-mutation",
+      "category": "correctness",
+      "severity": "high",
+      "perspectives": [
+        "design"
+      ],
+      "summary": "sortEntries lost its defensive copy and now sorts the caller's array in place.",
+      "location": "(?i)sort_?entries",
+      "concept": "(?i)(mutat|in[- ]?place|side[- ]?effect|caller'?s? array|defensive copy|spread|破壊的|副作用|元の配列)"
+    },
+    {
+      "id": "floating-promise",
+      "category": "correctness",
+      "severity": "high",
+      "perspectives": [
+        "observability"
+      ],
+      "summary": "reportUsage calls an async send without awaiting or catching, so failures vanish.",
+      "location": "(?i)(report_?usage|client\\.send)",
+      "concept": "(?i)(await|floating promise|unhandled (promise )?rejection|not awaited|fire[- ]and[- ]forget|\\.catch|未処理|待機して)"
+    },
+    {
+      "id": "any-on-public-api",
+      "category": "type-safety",
+      "severity": "medium",
+      "perspectives": [
+        "design"
+      ],
+      "summary": "mergeMetadata takes and returns any, erasing type safety across a public export.",
+      "location": "(?i)merge_?metadata",
+      "concept": "(?i)(\\bany\\b|type[- ]?saf|unknown|generic|no-explicit-any|型安全|型)"
+    }
+  ]
+}

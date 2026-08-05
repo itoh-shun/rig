@@ -26,3 +26,5 @@ autonomy: interactive
 ## 仕組み
 
 観点対応の種カタログ（認可漏れ/N+1/破壊的変更/片道 migration/テスト欠落/ドキュメント虚偽化…）から種を選び、一時 worktree に自然なコードとして注入 → review fan-out → 答案キーと突き合わせ。結果は `.rig/drill-results.jsonl` に蓄積。詳細は `facets/instructions/drill`。
+
+`--corpus fixture` では種を合成せず、同梱の作り置きコーパス（`corpora/fixture/`＝base/head ツリー＋答案キー、欠陥ゼロのクリーン・ケース同梱）を使う。diff が run 間で不変なので、検出率が動いたら reviewer が動いたと言い切れる。materialize と採点は `rig-wb wb drill-corpus` が決定論的に行う。

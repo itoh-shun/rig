@@ -18,7 +18,7 @@ without a seed class are still surfaced (detection rate unmeasured for them).
 
 import pathlib
 
-from .config import FACETS
+from .config import FACETS, SKILLS
 from .state import _emit, parse_frontmatter
 
 # Same gate values validation/recipes.py accepts (_VALID_GATES).
@@ -122,6 +122,105 @@ def check_corpus_integrity(drill_instruction: pathlib.Path | None = None) -> Non
         return
     _emit("PASS", f"drill corpus: standard corpus v{version} — {len(rows)} seed classes, "
                   "all rows carry class/provenance/perspective and valid severity/blocking")
+
+
+_FIXTURE_SEVERITIES = ("critical", "high", "medium", "low")
+
+
+def check_fixture_corpus_integrity(corpus_dir: pathlib.Path | None = None) -> None:
+    """WARN on rot in the pre-built fixture corpus (`skills/engine/corpora/fixture/`).
+
+    Same reasoning as the standard-corpus check: the corpus is the drill's answer
+    key, and a malformed case silently corrupts every score computed from it.
+    Here the answer key is regexes over base/ and head/ trees, so the failure
+    modes differ — a case that lost its trees, a violation whose location/concept
+    regex no longer compiles, or the loss of the clean case (with it goes the
+    only false-positive control the corpus has)."""
+    import json
+    import re
+
+    root = corpus_dir or (SKILLS / "corpora" / "fixture")
+    if not root.is_dir():
+        _emit("WARN", f"drill fixture corpus — {root} not found (nothing to check)")
+        return
+
+    problems: list[str] = []
+    meta_path = root / "corpus.json"
+    version: object = None
+    if not meta_path.exists():
+        problems.append("corpus.json is missing (no corpus_version to keep scores comparable)")
+    else:
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            meta = {}
+            problems.append(f"corpus.json is unreadable: {error}")
+        version = meta.get("corpus_version")
+        if not isinstance(version, int):
+            problems.append("corpus.json has no integer `corpus_version` (bump it on every "
+                            "corpus change so scores stay comparable per version)")
+
+    cases_dir = root / "cases"
+    case_dirs = sorted(p for p in cases_dir.iterdir() if p.is_dir()) if cases_dir.is_dir() else []
+    if not case_dirs:
+        problems.append("no cases under cases/")
+    clean_cases = 0
+    planted = 0
+    for case_dir in case_dirs:
+        label = case_dir.name
+        meta_file = case_dir / "case.json"
+        if not meta_file.exists():
+            problems.append(f"{label}: case.json is missing")
+            continue
+        try:
+            case = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            problems.append(f"{label}: case.json is unreadable: {error}")
+            continue
+        for tree in ("base", "head"):
+            if not (case_dir / tree).is_dir():
+                problems.append(f"{label}: {tree}/ tree is missing (no diff to review)")
+        if case.get("id") != label:
+            problems.append(f"{label}: case.json id '{case.get('id')}' "
+                            "does not match its directory")
+        violations = case.get("violations") or []
+        if case.get("clean"):
+            clean_cases += 1
+            if violations:
+                problems.append(f"{label}: marked clean but carries {len(violations)} violation(s)")
+        elif not violations:
+            problems.append(f"{label}: not marked clean but plants no violation")
+        planted += 0 if case.get("clean") else len(violations)
+        for violation in violations:
+            vid = violation.get("id", "?")
+            for field in ("id", "category", "severity", "location", "concept"):
+                if not violation.get(field):
+                    problems.append(f"{label}/{vid}: empty `{field}`")
+            if not violation.get("perspectives"):
+                problems.append(f"{label}/{vid}: no `perspectives` "
+                                "(nothing says which reviewer should have caught it)")
+            severity = str(violation.get("severity", "")).lower()
+            if severity not in _FIXTURE_SEVERITIES:
+                problems.append(f"{label}/{vid}: severity '{violation.get('severity')}' "
+                                f"not in {_FIXTURE_SEVERITIES}")
+            for field in ("location", "concept"):
+                pattern = violation.get(field)
+                if not pattern:
+                    continue
+                try:
+                    re.compile(pattern)
+                except re.error as error:
+                    problems.append(f"{label}/{vid}: `{field}` is not a valid regex: {error}")
+    if case_dirs and not clean_cases:
+        problems.append("no clean case (the corpus can no longer measure false positives)")
+
+    if problems:
+        for problem in problems:
+            _emit("WARN", f"drill fixture corpus — {problem}")
+        return
+    _emit("PASS", f"drill fixture corpus: v{version} — {len(case_dirs)} cases "
+                  f"({planted} planted defects, {clean_cases} clean), "
+                  "all carry base/head trees and a compilable answer key")
 
 
 def _base_name(persona: str) -> str:

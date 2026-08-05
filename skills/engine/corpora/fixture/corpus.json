@@ -1,0 +1,5 @@
+{
+  "corpus": "fixture",
+  "corpus_version": 1,
+  "description": "Pre-built planted-defect corpus for /rig:drill. Each case ships a base/ tree and a head/ tree, so the diff under review is fixed instead of synthesized per run; the answer key travels with the case as location/concept regexes. One case is clean (zero planted defects) and measures the false-positive rate."
+}

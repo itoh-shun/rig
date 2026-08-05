@@ -29,6 +29,7 @@ from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
 from .destructive import cmd_scan_destructive
+from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
@@ -82,6 +83,19 @@ def main() -> None:
     p.add_argument("task_id", nargs="?")
     p.add_argument("--persona", help="(reserved for future single-persona lookup; unused)")
     p.set_defaults(func=cmd_confidence)
+
+    p = sub.add_parser("drill-corpus", help="/rig:drill fixture corpus: list the pre-built cases, "
+                       "materialize one into a throwaway git repo, or score reviews against the answer key")
+    p.add_argument("action", choices=("list", "materialize", "score"))
+    p.add_argument("case", nargs="?", help="with materialize: which case id")
+    p.add_argument("--cases", nargs="+", help="restrict to these case ids (default: all)")
+    p.add_argument("--into", help="with materialize: target directory (default: a fresh temp dir)")
+    p.add_argument("--reviews", metavar="PATH",
+                   help="with score: JSON of {case-id: {persona: review text or @path}}")
+    p.add_argument("--append", metavar="PATH",
+                   help="with score: append the scored row to this jsonl (e.g. .rig/drill-results.jsonl)")
+    p.add_argument("--json", action="store_true", help="with list: machine-readable output")
+    p.set_defaults(func=cmd_drill_corpus)
 
     p = sub.add_parser("record-commit", help="link the final commit SHA of an accepted change to its task (#289, #300)")
     p.add_argument("task_id", nargs="?")
