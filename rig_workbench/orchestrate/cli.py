@@ -62,7 +62,7 @@ Dependencies: Python3 + PyYAML (same as validate.py). Exit code 0=success / 1=er
 
 import sys
 
-from ..gh_requirement import require_gh
+from ..gh_requirement import advise_gh
 from .commands import (cmd_ab, cmd_check, cmd_fleet, cmd_init, cmd_install_shim, cmd_next,
                        cmd_party, cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status, cmd_verdict)
 from .providers import cmd_models, cmd_probe
@@ -83,16 +83,17 @@ COMMANDS = {
 }
 
 
-# Commands that start producing work: they create run-state and drive providers,
-# so they must not run without the GitHub CLI requirement (`gh` + github/gh-stack).
-# `queue` is only gated on its `go` verb — `queue add/list/done` are bookkeeping.
-# plan / status / next / runs / graph / party / probe / selftest stay usable:
-# inspection has to keep working while the environment is being repaired.
-_GH_REQUIRED_COMMANDS = {"run", "init", "ab"}
+# Commands that mention a missing `gh` / github/gh-stack: the ones that start
+# producing work, where someone might still want the stacked-PR helpers. It is
+# one stderr line and never a refusal — the tools are optional (see
+# rig_workbench/gh_requirement.py). `queue` only advises on its `go` verb —
+# `queue add/list/done` are bookkeeping — and plan / status / next / runs /
+# graph / party / probe / selftest stay quiet: a note there would be noise.
+_GH_ADVISORY_COMMANDS = {"run", "init", "ab"}
 
 
-def _requires_gh(cmd: str, rest: list[str]) -> bool:
-    if cmd in _GH_REQUIRED_COMMANDS:
+def _advises_gh(cmd: str, rest: list[str]) -> bool:
+    if cmd in _GH_ADVISORY_COMMANDS:
         return True
     return cmd == "queue" and bool(rest) and rest[0] == "go"
 
@@ -102,8 +103,8 @@ def main():
         print(__doc__)
         sys.exit(0 if len(sys.argv) < 2 else 1)
     cmd, rest = sys.argv[1], sys.argv[2:]
-    if _requires_gh(cmd, rest):
-        require_gh(f"orchestrate {cmd}")
+    if _advises_gh(cmd, rest):
+        advise_gh(f"orchestrate {cmd}")
     COMMANDS[cmd](rest)
 
 

@@ -1,16 +1,30 @@
-"""rig's `gh` + `github/gh-stack` requirement check.
+"""rig's `gh` + `github/gh-stack` probe — advisory, never blocking.
 
-rig's work-producing flows drive stacked branches through the GitHub CLI, so the
-`gh` binary and the `github/gh-stack` extension are **requirements, not extras**.
-This module is the single place that decides whether the requirement is met, so
-the CLI wiring, `/rig:setup`, and the tests all agree on one answer.
+The `gh` binary and the `github/gh-stack` extension are **nice to have, not
+required**. This module is the single place that decides whether they are
+present, so the CLI wiring, `/rig:setup`, and the tests all agree on one answer.
 
-**Authentication is deliberately not part of the requirement.** `gh stack`'s
-local operations (`init`, `add`, `rebase --no-trunk`) work unauthenticated and
-with no remote at all — only `push` / `submit` / `sync` touch GitHub. rig
-supports fully local, offline, no-remote use where work lands in the working
-tree via `accept` and no PR ever exists, so auth is *reported* here and never
-enforced: it becomes a requirement at the point a remote operation is attempted.
+**Why this is advisory and not a requirement.** rig once made both mandatory on
+the theory that it would drive stacked branches through `gh stack`. That was
+measured and does not hold: `gh stack` switches branches by checking them out,
+and git refuses to check out a branch that another worktree already holds —
+which in rig is always, since every task gets its own worktree:
+
+    $ gh stack rebase --no-trunk
+    ✗ could not start rebase of task2 onto task1: failed to run git:
+      fatal: 'task2' is already used by worktree at '.../wt2'
+
+Worktree isolation is rig's core safety property and is not negotiable, so the
+tool cannot perform the operation it was made mandatory for. Plain git does the
+same job from inside the child's own worktree. What `gh stack` still buys is the
+*publishing* side (declaring a stack, `submit` / `push` for review on GitHub),
+which is worth mentioning to someone who does not have it and worth nothing to
+someone who never opens a PR — hence: one advisory line, no gate.
+
+**Authentication is not part of the picture either.** `gh stack`'s local
+operations work unauthenticated and with no remote at all — only `push` /
+`submit` / `sync` touch GitHub. Auth is *reported* by `gh-check` and never
+probed on the advisory path, which has no use for the answer.
 
 Exactly one state is reported:
 
@@ -18,8 +32,9 @@ Exactly one state is reported:
   gh-missing         `gh` is not on PATH (or is on PATH but unusable)
   extension-missing  gh is present, but `github/gh-stack` is not installed
 
-Exit-code contract (0 = fine, anything else = not fine; callers may branch on
-the specific code, but must treat "not 0" as blocking):
+Exit-code contract — `rig-wb gh-check` is its only consumer, and it is a
+question ("is this environment set up?"), not a gate. Nothing in rig exits with
+these codes any more:
 
   0  ok
   2  CLI usage error (matches the rig-wb convention; never produced by check_gh)
@@ -29,8 +44,10 @@ the specific code, but must treat "not 0" as blocking):
      simply never sees it instead of silently getting a different meaning.
   5  extension-missing
 
-Escape hatch: `RIG_SKIP_GH_CHECK=1` turns the block into a warning. It is loud
-every single time (a stderr banner naming the state it bypassed), never silent.
+`RIG_SKIP_GH_CHECK=1` silences the advisory (and skips the probe entirely). It
+gates nothing, because nothing is gated. It has no effect on `gh-check` or on
+`/rig:setup`: those are explicit requests to be told about the environment, and
+silencing an answer someone asked for would be wrong.
 
 Nothing here mutates anything: only `gh --version`, `gh extension list` and
 `gh auth status` are ever run, all read-only.
@@ -68,10 +85,10 @@ AUTH_NOTE = "only needed for push/submit/sync"
 # is reported as the failure it is, never as success.
 PROBE_TIMEOUT_SECONDS = 20.0
 
-# `gh auth status` is the only probe that talks to github.com, and it now runs on
-# every gated command for a field that cannot change the verdict. It gets a much
-# shorter leash than the local probes: an offline machine pays this once per
-# gated command and gets "not authenticated", which is the correct answer anyway.
+# `gh auth status` is the only probe that talks to github.com. It is skipped
+# entirely on the advisory path (which never reports auth, so the answer would
+# have no consumer) and gets a much shorter leash than the local probes where it
+# does run: an offline `gh-check` gets "not authenticated", the correct answer.
 AUTH_PROBE_TIMEOUT_SECONDS = 5.0
 
 _REMEDIES = {
@@ -88,6 +105,19 @@ _REMEDIES = {
         "Install the stacked-branch extension:\n"
         "    gh extension install github/gh-stack"
     ),
+}
+
+# The two halves of the one-line advisory: what an unmet state costs, and the
+# shortest command that ends it. `_REMEDIES` above stays for `gh-check`, which is
+# a report and can afford to spell out every platform on its own lines.
+_ADVISORY_COST = {
+    STATE_GH_MISSING: "the GitHub CLI (`gh`) is not installed",
+    STATE_EXTENSION_MISSING: f"`{EXTENSION}` is not installed",
+}
+_ADVISORY_FIX = {
+    STATE_GH_MISSING: ("install gh (https://github.com/cli/cli#installation), "
+                       "then `gh extension install github/gh-stack`"),
+    STATE_EXTENSION_MISSING: "gh extension install github/gh-stack",
 }
 
 
@@ -207,8 +237,14 @@ def _probe_auth() -> tuple[bool, str | None]:
     return True, _parse_account(out or err)
 
 
-def check_gh() -> GhStatus:
-    """Probe the environment and report exactly one state. Never raises, never mutates."""
+def check_gh(*, probe_auth: bool = True) -> GhStatus:
+    """Probe the environment and report exactly one state. Never raises, never mutates.
+
+    `probe_auth=False` drops `gh auth status` — the only probe that talks to
+    github.com. The advisory path passes it because it never reports auth: the
+    call would have no consumer, and on an offline machine it is a network wait
+    for an answer nobody reads. `authenticated` is then None ("not checked").
+    """
     if shutil.which("gh") is None:
         return GhStatus(STATE_GH_MISSING, detail="`gh` was not found on PATH")
 
@@ -226,7 +262,7 @@ def check_gh() -> GhStatus:
     _rc, out, _err = _run(["gh", "extension", "list"])
     stack_version = _find_stack_extension(out)
 
-    authenticated, account = _probe_auth()
+    authenticated, account = _probe_auth() if probe_auth else (None, None)
     if stack_version is None:
         return GhStatus(STATE_EXTENSION_MISSING, gh_version=gh_version,
                         authenticated=authenticated, account=account,
@@ -235,73 +271,66 @@ def check_gh() -> GhStatus:
                     authenticated=authenticated, account=account)
 
 
-def skip_requested() -> bool:
-    """Whether the escape hatch is set. Any value except an empty string / 0 / false counts."""
+def silence_requested() -> bool:
+    """Whether the advisory is silenced. Any value except an empty string / 0 / false counts."""
     raw = os.environ.get(SKIP_ENV, "").strip().lower()
     return raw not in ("", "0", "false", "no", "off")
 
 
-def format_failure(status: GhStatus, context: str) -> str:
-    """The blocking message: what is wrong, where it blocked, and exactly what to run."""
-    lines = [
-        f"[ERROR] rig requires the GitHub CLI and the `{EXTENSION}` extension: {status.summary()}.",
-        f"        blocked: {context}",
-    ]
+def format_report(status: GhStatus) -> str:
+    """The multi-line `gh-check` report: what is missing, and exactly what to run.
+
+    This is a report, not a refusal: `gh-check` was asked the question, so it
+    answers in full. The one-line version an unasked-for advisory is allowed to
+    print is `format_advisory`.
+    """
+    lines = [f"[INFO] {status.summary()}."]
     if status.detail:
-        lines.append(f"        detail:  {status.detail}")
-    remedy = status.remedy
-    if remedy:
-        lines.append("        fix:")
-        lines.extend(f"          {ln}" if ln.strip() else ln for ln in remedy.splitlines())
-    lines.append(
-        f"        If this environment genuinely cannot have it (air-gapped CI), set "
-        f"{SKIP_ENV}=1 to proceed at your own risk."
-    )
-    return "\n".join(lines)
-
-
-def format_skip_warning(status: GhStatus, context: str) -> str:
-    """The escape-hatch banner. Printed on every single bypass — never once-per-session."""
-    lines = [
-        f"[WARN] {SKIP_ENV} is set: proceeding without the GitHub CLI requirement.",
-        f"       state:   {status.state} — {status.summary()}",
-        f"       context: {context}",
-        "       rig's stacked-branch flow will not work here; anything that stacks,",
-        "       cascades, or pushes will fail later instead of now.",
-    ]
+        lines.append(f"       detail: {status.detail}")
     remedy = status.remedy
     if remedy:
         lines.append("       fix:")
         lines.extend(f"         {ln}" if ln.strip() else ln for ln in remedy.splitlines())
+    lines.append("       Optional: rig runs without it — `gh stack` only adds "
+                 "stacked-PR publishing.")
     return "\n".join(lines)
 
 
-def require_gh(context: str, stream: TextIO | None = None) -> GhStatus:
-    """Enforce the requirement for a work-producing entry point.
+def format_advisory(status: GhStatus, context: str) -> str:
+    """The one line an entry point prints when gh / gh-stack is absent.
 
-    Returns the status when the requirement is met — including when gh is not
-    authenticated, which is reported but never blocks. Otherwise it either exits
-    with the state's code (see the module docstring) or — when
-    `RIG_SKIP_GH_CHECK` is set — prints a loud warning and returns the failing
-    status so the caller can proceed.
-
-    The escape hatch covers both failing states (`gh-missing`,
-    `extension-missing`); there is nothing auth-related for it to bypass, since
-    auth is not part of the requirement.
+    One line, on purpose: it is unsolicited, it names the entry point that
+    produced it (it lands in the middle of a run's output), it says plainly that
+    nothing is broken, and it names its own off switch so nobody has to search
+    for one.
     """
+    return (f"[NOTE] {context}: {_ADVISORY_COST[status.state]} — stacked-PR helpers "
+            f"(`gh stack`) are unavailable; rig does not need them. "
+            f"fix: {_ADVISORY_FIX[status.state]} (silence: {SKIP_ENV}=1)")
+
+
+def advise_gh(context: str, stream: TextIO | None = None) -> GhStatus | None:
+    """Mention the missing GitHub CLI once, for one entry point. Never blocks.
+
+    Returns the status, or None when the advisory is silenced — in which case no
+    probe runs at all, so an air-gapped machine pays nothing. A satisfied
+    environment stays silent: there is nothing to say.
+    """
+    if silence_requested():
+        return None
     out = stream if stream is not None else sys.stderr
-    status = check_gh()
-    if status.ok:
-        return status
-    if skip_requested():
-        print(format_skip_warning(status, context), file=out, flush=True)
-        return status
-    print(format_failure(status, context), file=out, flush=True)
-    raise SystemExit(status.exit_code)
+    status = check_gh(probe_auth=False)
+    if not status.ok:
+        print(format_advisory(status, context), file=out, flush=True)
+    return status
 
 
 def cmd_gh_check(argv: list[str]) -> int:
-    """`rig-wb gh-check [--json]` — report the requirement state and exit with its code."""
+    """`rig-wb gh-check [--json]` — report the gh / gh-stack state and exit with its code.
+
+    The exit codes are unchanged and stay scriptable; they answer "is this
+    environment set up?", and no rig command exits with them.
+    """
     as_json = False
     for arg in argv:
         if arg == "--json":
@@ -309,6 +338,7 @@ def cmd_gh_check(argv: list[str]) -> int:
         elif arg in ("-h", "--help"):
             print("usage: rig-wb gh-check [--json]\n"
                   "  exit 0=ok / 3=gh missing / 5=gh-stack missing / 2=usage error\n"
+                  "  gh + gh-stack are optional: rig runs without them (see --json)\n"
                   f"  authentication is reported, never required ({AUTH_NOTE})")
             return 0
         else:
@@ -325,8 +355,8 @@ def cmd_gh_check(argv: list[str]) -> int:
     if status.ok:
         print(f"✓ {status.summary()}")
         return 0
-    print(format_failure(status, "rig-wb gh-check"), file=sys.stderr)
-    if skip_requested():
-        print(f"[WARN] {SKIP_ENV} is set: rig runs would proceed anyway (loudly).",
+    print(format_report(status), file=sys.stderr)
+    if silence_requested():
+        print(f"[NOTE] {SKIP_ENV} is set: rig runs stay silent about this.",
               file=sys.stderr)
     return status.exit_code

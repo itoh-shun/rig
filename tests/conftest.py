@@ -17,12 +17,13 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Must happen before any rig_workbench import (config reads env at import time).
 os.environ["RIG_HOME"] = str(REPO_ROOT)
 
-# `workbench new` / `orchestrate run` refuse to start without the gh + gh-stack
-# requirement (rig_workbench/gh_requirement.py). Test runs are simulations, not
-# rig runs, and must not pass or fail depending on whether the machine running
-# pytest happens to have `gh` and the gh-stack extension. Set the documented
-# escape hatch for the whole suite; tests/test_gh_requirement.py owns the
-# requirement's behaviour and controls this variable explicitly per test.
+# gh / gh-stack no longer gate anything (rig_workbench/gh_requirement.py), so
+# this is not about letting the suite run — it is about stderr. `workbench new`
+# and `orchestrate run` print a one-line note when gh-stack is absent, and that
+# line would appear or not appear depending on whether the machine running pytest
+# happens to have it, leaking into every test that asserts on a subprocess's
+# stderr. Silencing it pins the suite to one behaviour;
+# tests/test_gh_requirement.py owns the advisory and sets this per test.
 os.environ["RIG_SKIP_GH_CHECK"] = "1"
 
 if str(REPO_ROOT) not in sys.path:

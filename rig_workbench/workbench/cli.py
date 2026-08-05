@@ -23,7 +23,7 @@ Dependencies: standard library only (no PyYAML needed)
 
 import argparse
 
-from ..gh_requirement import require_gh
+from ..gh_requirement import advise_gh
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
 from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
@@ -43,13 +43,13 @@ from .stale_refs import cmd_stale_refs
 from .streaming import cmd_stream_checks
 
 
-# Sub-commands that start producing work, and therefore must not run without the
-# GitHub CLI requirement (`gh` + github/gh-stack) being satisfied. `new` is the
-# front door of every rig task: failing here costs the user nothing, whereas
-# failing at `accept` would strand a finished diff behind an environment problem.
-# Everything else — status / board / log / diff / gate / stats / audit / the
-# scanners — stays usable so a broken setup can still be inspected and repaired.
-_GH_REQUIRED_COMMANDS = {"new"}
+# Sub-commands that mention a missing `gh` / github/gh-stack. It is one stderr
+# line and never a refusal — the tools are optional (see
+# rig_workbench/gh_requirement.py). `new` is the front door of every rig task and
+# the point where someone would still choose a stacked-PR flow, so that is where
+# the note is worth reading; on status / board / log / diff / gate / stats /
+# audit / the scanners it would be noise, so those say nothing.
+_GH_ADVISORY_COMMANDS = {"new"}
 
 
 def main() -> None:
@@ -237,8 +237,8 @@ def main() -> None:
     p.set_defaults(func=cmd_audit)
 
     args = parser.parse_args()
-    if args.cmd in _GH_REQUIRED_COMMANDS:
-        require_gh(f"workbench {args.cmd}")
+    if args.cmd in _GH_ADVISORY_COMMANDS:
+        advise_gh(f"workbench {args.cmd}")
     args.func(args)
 
 

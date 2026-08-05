@@ -53,13 +53,13 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # `orchestrate.py run` refuses to start without the gh + gh-stack requirement
-    # (rig_workbench/gh_requirement.py). GitHub-hosted runners ship `gh` but not
-    # the extension, so install it here rather than bypassing the requirement.
+    # gh-stack is optional for rig (rig_workbench/gh_requirement.py), but a CI
+    # runner is exactly where having it costs nothing: hosted runners ship `gh`
+    # without the extension, so install it and let stacked-PR publishing work.
     # --force is the idempotent form ("ignore if latest already installed").
-    # The token is for fetching the extension release, not for the check: the
-    # requirement is the binary + the extension, never authentication.
-    - name: Ensure the gh + gh-stack requirement
+    # The token is for fetching the extension release only — never for a check,
+    # and deliberately not exposed to the step that runs the model.
+    - name: Install gh-stack (optional; enables stacked-PR publishing)
       id: gh
       shell: bash
       env:

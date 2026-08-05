@@ -13,14 +13,15 @@
 #   2. If pip is available, `pip install --user` (on PEP 668, prompt for explicit --break-system-packages)
 #   3. Error if neither exists
 #
-# Also ensures rig's other hard requirement: the `gh` binary plus the
-# github/gh-stack extension (authentication is NOT required — it is reported
-# only, and matters at push/submit/sync time). `gh` itself is a system package
-# and has to be installed by hand; the extension is installed here.
-# RIG_SKIP_GH_CHECK=1 downgrades that requirement to a loud warning.
+# Also offers rig's optional companion: the `gh` binary plus the github/gh-stack
+# extension, which add stacked-PR publishing. They are NOT required — rig runs
+# without them — and neither is authentication (reported only; it matters at
+# push/submit/sync time). `gh` itself is a system package and has to be installed
+# by hand; the extension is offered here. Nothing in this section can fail the
+# install.
 #
 # Idempotent: skips if `rig-wb version` already succeeds (--force reinstalls).
-# Exit: 0=ready / 1=not ready (no install method, or unmet gh requirement) / 2=bad flag
+# Exit: 0=ready / 1=no install method / 2=bad flag
 set -euo pipefail
 
 REPO_URL="git+https://github.com/itoh-shun/rig.git"
@@ -40,7 +41,7 @@ while [ $# -gt 0 ]; do
     --uninstall) UNINSTALL=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help)
-      sed -n '1,23p' "$0"
+      sed -n '1,24p' "$0"
       exit 0
       ;;
     *)
@@ -50,22 +51,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ── gh + gh-stack requirement ───────────────────────────────────────────
-# rig drives stacked branches through the GitHub CLI, so the `gh` binary plus the
-# github/gh-stack extension are requirements, not extras. Authentication is NOT:
-# `gh stack` works locally with no auth and no remote, so auth is reported here
-# and never enforced (it matters at push/submit/sync time). Detection is inline
-# bash on purpose: this runs *before* rig-wb exists, so it cannot call
-# `rig-wb gh-check`. States and remedies mirror rig_workbench/gh_requirement.py.
+# ── gh + gh-stack (optional) ────────────────────────────────────────────
+# `gh` plus the github/gh-stack extension add stacked-PR publishing. They are
+# optional: rig's own worktree flow does not use them (see
+# rig_workbench/gh_requirement.py for the measurement behind that), so this
+# section only ever reports and offers — it never fails the install. Auth is
+# reported too, and never required. Detection is inline bash on purpose: this
+# runs *before* rig-wb exists, so it cannot call `rig-wb gh-check`. States and
+# remedies mirror rig_workbench/gh_requirement.py.
+#
+# RIG_SKIP_GH_CHECK is deliberately not honoured here: it silences the one-line
+# note inside rig runs, and `/rig:setup` is someone explicitly asking to be told
+# about their environment.
 GH_STATE="ok"       # ok | gh-missing | extension-missing
 GH_VERSION=""
 GH_STACK_VERSION=""
 GH_AUTH="unknown"   # informational only: yes | no | unknown
-GH_SKIP=0
-case "${RIG_SKIP_GH_CHECK:-}" in
-  ""|0|false|no|off) GH_SKIP=0 ;;
-  *) GH_SKIP=1 ;;
-esac
 
 detect_gh() {
   GH_VERSION=""
@@ -75,7 +76,11 @@ detect_gh() {
     GH_STATE="gh-missing"
     return 0
   fi
-  GH_VERSION=$(gh --version 2>/dev/null | head -n 1 | awk '{print $3}')
+  # No `| head` anywhere in this function: `head` exits after the first line,
+  # `gh` takes SIGPIPE writing the second, and `set -o pipefail` turns that into
+  # an exit 141 that kills the whole installer. Capture first, slice in bash.
+  GH_VERSION_OUT=$(gh --version 2>/dev/null || true)
+  GH_VERSION=$(printf '%s' "${GH_VERSION_OUT%%$'\n'*}" | awk '{print $3}')
   if [ -z "$GH_VERSION" ]; then
     GH_STATE="gh-missing"
     return 0
@@ -83,7 +88,9 @@ detect_gh() {
   # Informational: never changes GH_STATE.
   if gh auth status >/dev/null 2>&1; then GH_AUTH="yes"; else GH_AUTH="no"; fi
   # Reads the local extension dir — no auth, no remote.
-  GH_STACK_LINE=$(gh extension list 2>/dev/null | grep -i "gh-stack" | head -n 1 || true)
+  GH_EXT_LIST=$(gh extension list 2>/dev/null || true)
+  GH_STACK_LINE=$(printf '%s' "$GH_EXT_LIST" | grep -i "gh-stack" || true)
+  GH_STACK_LINE=${GH_STACK_LINE%%$'\n'*}
   if [ -z "$GH_STACK_LINE" ]; then
     GH_STATE="extension-missing"
     return 0
@@ -115,7 +122,7 @@ report_gh_auth() {
 }
 
 report_gh() {
-  echo "◇ GitHub CLI requirement"
+  echo "◇ GitHub CLI (optional — adds stacked-PR publishing)"
   case "$GH_STATE" in
     ok)
       echo "  gh:         $GH_VERSION"
@@ -137,16 +144,12 @@ report_gh() {
   fi
 }
 
-# Install the extension when that is the only thing missing. `gh` itself stays
-# manual (system package). Authentication is never prompted for or performed:
-# it is not part of the requirement. --yes skips the prompt, --force reinstalls,
-# --check never reaches here (detection only).
+# Offer the extension when that is the only thing missing. `gh` itself stays
+# manual (system package). Authentication is never prompted for or performed.
+# Every path here returns 0: declining, or having no gh at all, is a legitimate
+# way to run rig. --yes skips the prompt, --force reinstalls, --check never
+# reaches here (detection only).
 ensure_gh_stack() {
-  if [ "$GH_SKIP" -eq 1 ] && [ "$GH_STATE" != "ok" ]; then
-    echo "[WARN] RIG_SKIP_GH_CHECK is set: continuing without the gh requirement (state: $GH_STATE)." >&2
-    echo "       rig's stacked-branch flow will not work in this environment." >&2
-    return 0
-  fi
   if [ "$GH_STATE" = "ok" ]; then
     if [ "$FORCE" -eq 1 ]; then
       echo ""
@@ -157,12 +160,10 @@ ensure_gh_stack() {
     return 0
   fi
   if [ "$GH_STATE" != "extension-missing" ]; then
-    # Only gh-missing reaches here, and installing gh is a system-package step.
-    echo "[ERROR] rig requires the GitHub CLI (state: $GH_STATE). Run:" >&2
-    gh_remedy >&2
-    echo "        Then re-run this installer. (RIG_SKIP_GH_CHECK=1 proceeds anyway —" >&2
-    echo "        air-gapped CI only.)" >&2
-    exit 1
+    # Only gh-missing reaches here. Installing gh is a system-package step and
+    # the whole thing is optional, so say so once and get on with the install.
+    echo "  skipping gh-stack: install gh first if you want it (rig runs without it)."
+    return 0
   fi
   if [ "$YES" -eq 0 ]; then
     echo ""
@@ -172,18 +173,13 @@ ensure_gh_stack() {
     read -r -p "Continue? [y/N] " GH_ANS
     case "$GH_ANS" in
       y|Y|yes|Yes) ;;
-      *) echo "Aborted."; exit 1 ;;
+      *) echo "Skipped gh-stack (optional — rig runs without it)."; return 0 ;;
     esac
   fi
   echo ""
   echo "◇ Installing gh-stack..."
   gh extension install github/gh-stack
   detect_gh
-}
-
-# Whether the gh requirement is satisfied enough to call this environment ready.
-gh_ready() {
-  [ "$GH_STATE" = "ok" ] || [ "$GH_SKIP" -eq 1 ]
 }
 
 if [ "$UNINSTALL" -eq 0 ]; then
@@ -212,9 +208,7 @@ if command -v rig-wb >/dev/null 2>&1; then
   if [ "$FORCE" -eq 0 ]; then
     echo "✓ rig-wb is already installed: $CURRENT"
     echo "  Use --force to reinstall, --uninstall to remove."
-    # The exit code means "rig is ready", not merely "rig-wb is present": an
-    # unmet gh requirement still leaves this environment unable to run rig.
-    if gh_ready; then exit 0; else exit 1; fi
+    exit 0
   fi
 fi
 
@@ -257,8 +251,9 @@ echo "  pip:        $([ "$HAS_PIP" -eq 1 ] && echo yes || echo no)"
 echo "  install method: ${METHOD:-none}"
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
-  # exit 0 = this environment can run rig: an install method AND the gh requirement.
-  if [ -n "$METHOD" ] && gh_ready; then exit 0; else exit 1; fi
+  # exit 0 = an install method exists. The gh section above is reported, never
+  # graded: missing gh / gh-stack does not make an environment un-installable.
+  [ -n "$METHOD" ] && exit 0 || exit 1
 fi
 
 if [ -z "$METHOD" ]; then

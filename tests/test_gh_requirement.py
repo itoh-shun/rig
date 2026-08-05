@@ -1,4 +1,4 @@
-"""Tests for the `gh` + github/gh-stack requirement (rig_workbench/gh_requirement.py).
+"""Tests for the `gh` + github/gh-stack advisory (rig_workbench/gh_requirement.py).
 
 Every `gh` state is *simulated*: a fake `gh` shell script is placed in a sandbox
 bin directory and PATH is pointed at it, so the suite behaves identically on a
@@ -8,9 +8,12 @@ runs the real gh, installs an extension, or touches the developer's config.
 The sandbox PATH also deliberately excludes the real gh, which is what makes the
 "gh is not installed" state reproducible on a developer machine.
 
-The requirement is the binary + the extension only. Authentication is
-informational — `gh stack`'s local operations need neither auth nor a remote —
-so the unauthenticated case is asserted to PASS.
+`gh` and gh-stack are **optional**: they are worth a one-line note and nothing
+more, so the wiring tests assert that every entry point *proceeds* and merely
+advises. The probe itself still reports exactly one state, and `gh-check` still
+answers with its documented exit code. Authentication was never part of it —
+`gh stack`'s local operations need neither auth nor a remote — so the
+unauthenticated case is asserted to be a clean pass.
 """
 
 import json
@@ -205,7 +208,7 @@ def test_each_failure_names_a_command_to_run(use_sandbox, fake_gh):
         status = ghreq.check_gh()
         assert not status.ok
         assert expected in status.remedy
-        assert expected in ghreq.format_failure(status, "ctx")
+        assert expected in ghreq.format_report(status)
 
 
 # ── authentication is informational, never a failure ─────────────────────────
@@ -222,8 +225,8 @@ def test_present_but_unauthenticated_passes(use_sandbox, fake_gh, capsys):
     assert status.account is None
     assert status.remedy == "", "there is nothing to fix — auth is not required"
 
-    # And it must not block, nor emit anything.
-    assert ghreq.require_gh("workbench new").ok
+    # And it must not advise, nor emit anything.
+    assert ghreq.advise_gh("workbench new").ok
     assert capsys.readouterr().err == ""
 
 
@@ -271,82 +274,120 @@ def test_exit_code_contract_is_stable_and_distinct():
     assert 4 not in codes, "4 is retired (it meant 'not authenticated'), never reassigned"
 
 
-def test_require_gh_exits_with_the_state_code(use_sandbox, fake_gh, capsys):
-    for maker, code in (
-        (lambda: None, 3),
-        (lambda: fake_gh(extension=False), 5),
+def test_no_rig_command_exits_with_a_state_code(use_sandbox, fake_gh, capsys):
+    """The codes stay scriptable for `gh-check`, but nothing blocks on them."""
+    for maker, state in (
+        (lambda: None, ghreq.STATE_GH_MISSING),
+        (lambda: fake_gh(extension=False), ghreq.STATE_EXTENSION_MISSING),
     ):
         maker()
-        with pytest.raises(SystemExit) as excinfo:
-            ghreq.require_gh("workbench new")
-        assert excinfo.value.code == code
+        status = ghreq.advise_gh("workbench new")  # must not raise
+        assert status.state == state
+        assert status.exit_code in (3, 5), "the contract still reports a code"
         err = capsys.readouterr().err
-        assert "[ERROR]" in err
-        assert "blocked: workbench new" in err
+        assert "[ERROR]" not in err, "a missing optional tool is not an error"
+        assert "[NOTE] workbench new:" in err
 
 
-def test_require_gh_returns_status_when_satisfied(use_sandbox, fake_gh, capsys):
+def test_advise_gh_is_silent_when_gh_is_present(use_sandbox, fake_gh, capsys):
     fake_gh()
-    status = ghreq.require_gh("workbench new")
+    status = ghreq.advise_gh("workbench new")
     assert status.ok
-    assert capsys.readouterr().err == "", "a satisfied requirement must stay silent"
+    assert capsys.readouterr().err == "", "nothing to say when nothing is missing"
 
 
-# ── escape hatch ─────────────────────────────────────────────────────────────
+# ── the advisory ─────────────────────────────────────────────────────────────
 
-def test_escape_hatch_lets_the_run_proceed(use_sandbox, monkeypatch, capsys):
-    monkeypatch.setenv(ghreq.SKIP_ENV, "1")
-    status = ghreq.require_gh("workbench new")  # must not raise
-    assert status.state == ghreq.STATE_GH_MISSING
-    err = capsys.readouterr().err
-    assert "[WARN]" in err
-    assert ghreq.SKIP_ENV in err
-    assert "gh-missing" in err
-
-
-def test_escape_hatch_warns_on_every_single_use(use_sandbox, monkeypatch, capsys):
-    """Loud means loud: not once per session, every invocation."""
-    monkeypatch.setenv(ghreq.SKIP_ENV, "1")
-    for _ in range(3):
-        ghreq.require_gh("workbench new")
-    assert capsys.readouterr().err.count("[WARN]") == 3
-
-
-def test_escape_hatch_covers_the_extension_and_names_the_state(
-        use_sandbox, fake_gh, monkeypatch, capsys):
-    """Both failing states are bypassable; the warning must name which one."""
+def test_advisory_is_one_line_that_says_what_is_missing_and_how_to_end_it(
+        use_sandbox, fake_gh, capsys):
     fake_gh(extension=False)
-    monkeypatch.setenv(ghreq.SKIP_ENV, "1")
-    status = ghreq.require_gh("orchestrate run")
-    assert status.state == ghreq.STATE_EXTENSION_MISSING
+    ghreq.advise_gh("orchestrate run")
     err = capsys.readouterr().err
-    assert "extension-missing" in err
-    assert "gh extension install github/gh-stack" in err
+    assert err.count("\n") == 1, f"the advisory must be a single line, got:\n{err}"
+    line = err.strip()
+    assert line.startswith("[NOTE] orchestrate run:"), "it must name the entry point"
+    assert "github/gh-stack` is not installed" in line, "what is missing"
+    assert "gh stack" in line, "what it would enable"
+    assert "rig does not need them" in line, "and that nothing is broken"
+    assert "gh extension install github/gh-stack" in line, "how to fix it"
+    assert f"silence: {ghreq.SKIP_ENV}=1" in line, "how to stop hearing it"
 
 
-def test_escape_hatch_is_never_engaged_for_an_unauthenticated_gh(
+def test_advisory_covers_a_missing_gh_too(use_sandbox, capsys):
+    ghreq.advise_gh("workbench new")
+    line = capsys.readouterr().err.strip()
+    assert line.count("\n") == 0
+    assert "the GitHub CLI (`gh`) is not installed" in line
+    assert "install gh" in line and "gh extension install github/gh-stack" in line
+
+
+def test_advisory_repeats_on_every_invocation(use_sandbox, capsys):
+    """No once-per-session state: a suppression that decays invisibly is how a
+    diagnostic silently disappears. Repetition is the price of determinism, and
+    the line names its own off switch."""
+    for _ in range(3):
+        ghreq.advise_gh("workbench new")
+    assert capsys.readouterr().err.count("[NOTE]") == 3
+
+
+def test_advisory_never_probes_authentication(use_sandbox, fake_gh, monkeypatch,
+                                              tmp_path, capsys):
+    """Auth is not in the advisory, so asking github.com for it is a network
+    wait whose answer has no consumer. `gh-check` still asks, because it reports."""
+    fake_gh(extension=False)
+    log = tmp_path / "gh-calls.log"
+    monkeypatch.setenv("GH_FAKE_LOG", str(log))
+
+    ghreq.advise_gh("workbench new")
+    capsys.readouterr()
+    assert "auth status" not in log.read_text(encoding="utf-8")
+    assert log.read_text(encoding="utf-8").count("extension list") == 1
+
+    ghreq.cmd_gh_check([])
+    capsys.readouterr()
+    assert "auth status" in log.read_text(encoding="utf-8")
+
+
+def test_silencer_suppresses_the_advisory_and_skips_the_probe(
+        use_sandbox, monkeypatch, tmp_path, capsys):
+    """Silenced means silent *and* free: an air-gapped machine runs no probe."""
+    monkeypatch.setenv(ghreq.SKIP_ENV, "1")
+    log = tmp_path / "gh-calls.log"
+    monkeypatch.setenv("GH_FAKE_LOG", str(log))
+    assert ghreq.advise_gh("workbench new") is None
+    assert capsys.readouterr().err == ""
+    assert not log.exists(), "the silenced path must not shell out at all"
+
+
+def test_silencer_does_not_change_what_gh_check_reports(
         use_sandbox, fake_gh, monkeypatch, capsys):
-    """There is nothing auth-related to bypass: a working unauthenticated gh
-    passes on its own merits, hatch or no hatch, and stays silent either way."""
-    fake_gh(authed=False)
-    for value in (None, "1"):
-        if value is None:
-            monkeypatch.delenv(ghreq.SKIP_ENV, raising=False)
-        else:
-            monkeypatch.setenv(ghreq.SKIP_ENV, value)
-        assert ghreq.require_gh("workbench new").ok
-        assert capsys.readouterr().err == ""
+    """`gh-check` is someone asking to be told: the silencer must not gag it."""
+    fake_gh(extension=False)
+    monkeypatch.delenv(ghreq.SKIP_ENV, raising=False)
+    assert ghreq.cmd_gh_check([]) == 5
+    loud = capsys.readouterr().err
+
+    monkeypatch.setenv(ghreq.SKIP_ENV, "1")
+    assert ghreq.cmd_gh_check([]) == 5
+    silenced = capsys.readouterr().err
+    assert "gh extension install github/gh-stack" in silenced
+    assert silenced.startswith(loud.splitlines()[0])
+    assert ghreq.SKIP_ENV in silenced, "it should say why runs stay quiet"
 
 
-def test_escape_hatch_is_not_triggered_by_falsey_values(use_sandbox, monkeypatch):
+def test_silencer_is_not_triggered_by_falsey_values(use_sandbox, monkeypatch, capsys):
+    """Only the parsing is under test here — what the advisory *says* belongs to
+    the tests above, so this one does not assert on its text."""
     for value in ("", "0", "false", "no", "off", "FALSE"):
         monkeypatch.setenv(ghreq.SKIP_ENV, value)
-        assert ghreq.skip_requested() is False
-        with pytest.raises(SystemExit):
-            ghreq.require_gh("workbench new")
+        assert ghreq.silence_requested() is False
+        assert ghreq.advise_gh("workbench new") is not None, "the probe must still run"
+        capsys.readouterr()
     for value in ("1", "yes", "true", "air-gapped"):
         monkeypatch.setenv(ghreq.SKIP_ENV, value)
-        assert ghreq.skip_requested() is True
+        assert ghreq.silence_requested() is True
+        assert ghreq.advise_gh("workbench new") is None
+        assert capsys.readouterr().err == ""
 
 
 # ── `rig-wb gh-check` ────────────────────────────────────────────────────────
@@ -384,18 +425,21 @@ def test_gh_check_reports_auth_without_failing_on_it(use_sandbox, fake_gh, capsy
     assert payload["account"] is None
 
 
-# ── wiring: which entry points block, which stay usable ──────────────────────
+# ── wiring: which entry points advise, which stay quiet ──────────────────────
 
-def test_workbench_new_is_blocked_without_gh(sandbox_bin, tmp_path, git_repo):
+def test_workbench_new_proceeds_and_advises_without_gh(sandbox_bin, tmp_path, git_repo):
+    """The task starts. The only trace of a missing gh is one note on stderr."""
     result = subprocess.run(
         [sys.executable, str(WORKBENCH), "new", "add a feature",
          "--type", "feature", "--no-worktree"],
         cwd=git_repo, capture_output=True, text=True,
         env=_child_env(sandbox_bin, tmp_path))
-    assert result.returncode == 3, result.stderr
-    assert "rig requires the GitHub CLI" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert (git_repo / ".rig" / "runs").is_dir(), "the run must actually be created"
+    assert result.stderr.strip().count("\n") == 0, f"one line only:\n{result.stderr}"
+    assert result.stderr.startswith("[NOTE] workbench new:")
     assert "gh extension install github/gh-stack" in result.stderr
-    assert not (git_repo / ".rig" / "runs").exists(), "must block before creating any state"
+    assert "[ERROR]" not in result.stderr
 
 
 def test_workbench_new_runs_with_an_unauthenticated_gh(sandbox_bin, tmp_path, fake_gh, git_repo):
@@ -411,57 +455,74 @@ def test_workbench_new_runs_with_an_unauthenticated_gh(sandbox_bin, tmp_path, fa
     assert (git_repo / ".rig" / "runs").is_dir()
 
 
-def test_workbench_new_proceeds_under_the_escape_hatch(sandbox_bin, tmp_path, git_repo):
+def test_workbench_new_is_completely_silent_when_the_advisory_is_off(
+        sandbox_bin, tmp_path, git_repo):
     result = subprocess.run(
         [sys.executable, str(WORKBENCH), "new", "add a feature",
          "--type", "feature", "--no-worktree"],
         cwd=git_repo, capture_output=True, text=True,
         env=_child_env(sandbox_bin, tmp_path, skip="1"))
     assert result.returncode == 0, result.stderr
-    assert "[WARN]" in result.stderr and ghreq.SKIP_ENV in result.stderr
+    assert result.stderr == "", f"the silencer must leave nothing behind:\n{result.stderr}"
     assert (git_repo / ".rig" / "runs").is_dir()
 
 
-def test_workbench_read_only_commands_stay_usable_without_gh(sandbox_bin, tmp_path, git_repo):
-    """A broken environment must still be inspectable — board/log/gates never block."""
+def test_workbench_read_only_commands_say_nothing_about_gh(sandbox_bin, tmp_path, git_repo):
+    """board/log/gates are not where anyone chooses a PR flow — a note there is noise."""
     env = _child_env(sandbox_bin, tmp_path)
     for argv in (["board"], ["log"], ["gates"]):
         result = subprocess.run([sys.executable, str(WORKBENCH), *argv],
                                 cwd=git_repo, capture_output=True, text=True, env=env)
         assert result.returncode == 0, f"{argv}: {result.stderr}"
-        assert "rig requires the GitHub CLI" not in result.stderr
+        assert "[NOTE]" not in result.stderr
+        assert "gh-stack" not in result.stderr
 
 
-def test_orchestrate_run_is_blocked_without_gh(sandbox_bin, tmp_path, git_repo):
+def test_orchestrate_run_proceeds_and_advises_without_gh(sandbox_bin, tmp_path, git_repo):
+    """The run completes on the mock provider; the missing gh costs one line."""
     result = subprocess.run(
         [sys.executable, str(ORCHESTRATE), "run", "bugfix", "--provider", "mock"],
         cwd=git_repo, capture_output=True, text=True,
         env=_child_env(sandbox_bin, tmp_path))
-    assert result.returncode == 3, result.stderr
-    assert "blocked: orchestrate run" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "=== Finished: DONE ===" in result.stdout, "the run really ran"
+    assert result.stderr.startswith("[NOTE] orchestrate run:")
+    assert "[ERROR]" not in result.stderr
 
 
-def test_orchestrate_queue_go_is_gated_but_queue_list_is_not(sandbox_bin, tmp_path, git_repo):
+def test_orchestrate_queue_go_advises_but_queue_list_stays_quiet(
+        sandbox_bin, tmp_path, git_repo):
     env = _child_env(sandbox_bin, tmp_path)
-    blocked = subprocess.run([sys.executable, str(ORCHESTRATE), "queue", "go"],
-                             cwd=git_repo, capture_output=True, text=True, env=env)
-    assert blocked.returncode == 3, blocked.stderr
-    assert "blocked: orchestrate queue" in blocked.stderr
+    went = subprocess.run([sys.executable, str(ORCHESTRATE), "queue", "go"],
+                          cwd=git_repo, capture_output=True, text=True, env=env)
+    assert went.returncode == 0, went.stderr
+    assert went.stderr.startswith("[NOTE] orchestrate queue:")
+    assert "Queue is empty" in went.stdout, "it got past the old gate and did the work"
 
     listed = subprocess.run([sys.executable, str(ORCHESTRATE), "queue", "list"],
                             cwd=git_repo, capture_output=True, text=True, env=env)
-    assert "rig requires the GitHub CLI" not in listed.stderr
+    assert listed.returncode == 0, listed.stderr
+    assert "[NOTE]" not in listed.stderr, "bookkeeping verbs stay quiet"
 
 
-def test_orchestrate_read_only_commands_stay_usable_without_gh(sandbox_bin, tmp_path, git_repo):
+def test_orchestrate_read_only_commands_say_nothing_about_gh(sandbox_bin, tmp_path, git_repo):
     result = subprocess.run([sys.executable, str(ORCHESTRATE), "runs", "--limit", "1"],
                             cwd=git_repo, capture_output=True, text=True,
                             env=_child_env(sandbox_bin, tmp_path))
     assert result.returncode == 0, result.stderr
-    assert "rig requires the GitHub CLI" not in result.stderr
+    assert "[NOTE]" not in result.stderr
 
 
 # ── /rig:setup (scripts/install.sh) ──────────────────────────────────────────
+
+def _fake_pipx(sandbox_bin):
+    """A stand-in `pipx` so an install method is detected. `--check` only runs
+    `command -v pipx`, so this is never executed."""
+    path = sandbox_bin / "pipx"
+    path.write_text("#!/bin/bash\necho 'pipx 1.0.0-test'\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
 
 def _fake_rig_wb(sandbox_bin):
     """A stand-in `rig-wb` so install.sh takes its 'already installed' path and
@@ -474,16 +535,42 @@ def _fake_rig_wb(sandbox_bin):
 
 def test_install_check_reports_a_missing_extension_and_installs_nothing(
         sandbox_bin, tmp_path, fake_gh):
+    """--check detects only. Its exit code grades the *install method*, not gh:
+    the sandbox has no pip/pipx/uv, and that — not the extension — is the 1."""
     fake_gh(extension=False)
     log = tmp_path / "gh.log"
     result = subprocess.run(["bash", str(INSTALL_SH), "--check"],
                             cwd=tmp_path, capture_output=True, text=True,
                             env=_child_env(sandbox_bin, tmp_path, log=log))
-    assert result.returncode == 1, result.stdout + result.stderr
     assert "gh-stack:   NOT INSTALLED" in result.stdout
     assert "gh extension install github/gh-stack" in result.stdout
     assert "extension install" not in log.read_text(encoding="utf-8"), \
         "--check must detect only, never install"
+    assert "install method: none" in result.stdout
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_install_check_exit_code_ignores_gh_entirely(sandbox_bin, tmp_path, fake_gh):
+    """With an install method available, --check exits 0 whether or not gh is there.
+
+    The install method has to be present for this to discriminate: with none, both
+    cases exit 1 for that reason and the assertion would hold no matter what gh
+    did. gh-missing alone used to make this a 1.
+    """
+    _fake_pipx(sandbox_bin)
+    fake_gh()
+    with_gh = subprocess.run(["bash", str(INSTALL_SH), "--check"],
+                             cwd=tmp_path, capture_output=True, text=True,
+                             env=_child_env(sandbox_bin, tmp_path))
+    assert with_gh.returncode == 0, with_gh.stdout + with_gh.stderr
+
+    (sandbox_bin / "gh").unlink()
+    without_gh = subprocess.run(["bash", str(INSTALL_SH), "--check"],
+                                cwd=tmp_path, capture_output=True, text=True,
+                                env=_child_env(sandbox_bin, tmp_path))
+    assert "install method: pipx" in without_gh.stdout
+    assert "gh:         NOT INSTALLED" in without_gh.stdout
+    assert without_gh.returncode == 0, without_gh.stdout + without_gh.stderr
 
 
 def test_install_check_passes_when_the_requirement_is_met(sandbox_bin, tmp_path, fake_gh):
@@ -510,6 +597,7 @@ def test_install_reports_but_does_not_fail_on_a_missing_login(
     assert "auth:       not authenticated (only needed for push/submit/sync)" in result.stdout
     assert "NOT INSTALLED" not in result.stdout
     assert "fix:" not in result.stdout
+    assert "optional" in result.stdout.lower(), "the section must not read as a requirement"
     assert "auth login" not in log.read_text(encoding="utf-8"), \
         "the installer must never attempt to authenticate"
 
@@ -529,7 +617,9 @@ def test_install_yes_installs_the_extension_without_prompting(
     assert result.returncode == 0, result.stdout + result.stderr + f"\ngh calls:\n{gh_calls}"
 
 
-def test_install_prompts_before_installing_the_extension(sandbox_bin, tmp_path, fake_gh):
+def test_install_prompts_before_installing_the_extension_and_a_no_is_not_fatal(
+        sandbox_bin, tmp_path, fake_gh):
+    """Declining an optional extra must skip it and carry on with the install."""
     fake_gh(extension=False)
     _fake_rig_wb(sandbox_bin)
     log = tmp_path / "gh.log"
@@ -537,8 +627,9 @@ def test_install_prompts_before_installing_the_extension(sandbox_bin, tmp_path, 
                             cwd=tmp_path, capture_output=True, text=True,
                             env=_child_env(sandbox_bin, tmp_path, log=log))
     assert "gh extension install github/gh-stack" in result.stdout
-    assert "Aborted." in result.stdout
-    assert result.returncode == 1
+    assert "Skipped gh-stack" in result.stdout
+    assert "Aborted." not in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "extension install" not in log.read_text(encoding="utf-8")
 
 
@@ -558,21 +649,31 @@ def test_install_force_reinstalls_an_already_present_extension(sandbox_bin, tmp_
     assert "None of pip / pipx / uv found" in result.stderr
 
 
-def test_install_refuses_when_gh_itself_is_missing(sandbox_bin, tmp_path):
+def test_install_reports_a_missing_gh_without_refusing_to_install(sandbox_bin, tmp_path):
+    """No gh at all is a supported way to run rig: report it, install rig anyway."""
     _fake_rig_wb(sandbox_bin)
     result = subprocess.run(["bash", str(INSTALL_SH), "--yes"],
                             cwd=tmp_path, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                             env=_child_env(sandbox_bin, tmp_path))
-    assert result.returncode == 1
-    assert "rig requires the GitHub CLI (state: gh-missing)" in result.stderr
-    assert "brew install gh" in result.stderr
-
-
-def test_install_honours_the_escape_hatch(sandbox_bin, tmp_path):
-    _fake_rig_wb(sandbox_bin)
-    result = subprocess.run(["bash", str(INSTALL_SH), "--yes"],
-                            cwd=tmp_path, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                            env=_child_env(sandbox_bin, tmp_path, skip="1"))
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "RIG_SKIP_GH_CHECK is set" in result.stderr
     assert "gh:         NOT INSTALLED" in result.stdout
+    assert "brew install gh" in result.stdout, "still says how to get it"
+    assert "rig runs without it" in result.stdout
+    assert "[ERROR]" not in result.stderr
+
+
+def test_install_reports_the_same_whether_or_not_the_advisory_is_silenced(
+        sandbox_bin, tmp_path):
+    """RIG_SKIP_GH_CHECK silences the note inside rig runs. `/rig:setup` is a
+    direct question about the environment, so it answers identically either way."""
+    _fake_rig_wb(sandbox_bin)
+    runs = {}
+    for skip in (None, "1"):
+        result = subprocess.run(["bash", str(INSTALL_SH), "--yes"],
+                                cwd=tmp_path, capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL,
+                                env=_child_env(sandbox_bin, tmp_path, skip=skip))
+        runs[skip] = (result.returncode, result.stdout, result.stderr)
+    assert runs[None] == runs["1"], "the silencer must not change the installer"
+    assert runs["1"][0] == 0
+    assert "gh:         NOT INSTALLED" in runs["1"][1]

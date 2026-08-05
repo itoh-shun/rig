@@ -17,10 +17,10 @@ $ARGUMENTS
 
 `scripts/install.sh` を **Bash ツール経由**で実行する。installer は以下を順に行う:
 
-1. **GitHub CLI 要件の確認**: `gh` 本体があるか / `github/gh-stack` 拡張が入っているか。
-   拡張が無ければここで `gh extension install github/gh-stack` を実行する
-   （`--yes` で確認省略、`--force` で再導入、`--check` は検知のみ）。`gh` 本体は system パッケージなので
-   **手順を提示して停止**する（勝手に入れない）。**認証は要件ではない**——状態を表示するだけで、
+1. **GitHub CLI（任意）の確認**: `gh` 本体があるか / `github/gh-stack` 拡張が入っているか。
+   拡張が無ければ導入を**提案**する（`--yes` で確認省略、`--force` で再導入、`--check` は検知のみ）。
+   断っても、`gh` 本体が無くても、install はそのまま続く——**必須ではない**。`gh` 本体は system
+   パッケージなので勝手には入れない。**認証も要件ではない**——状態を表示するだけで、
    `gh auth login` を実行することも要求することもしない。
 2. **環境検知**: `pipx` / `uv` / `pip` のいずれが使えるか（優先順は pipx > uv > pip）。
 3. **既存インストール確認**: `rig-wb version` が通れば skip（`--force` で再インストール）。
@@ -28,27 +28,42 @@ $ARGUMENTS
 5. **インストール**: git+URL 経由で `github.com/itoh-shun/rig.git` から取得。
 6. **検証**: `rig-wb version` が返ればOK、PATH に無ければ `pipx ensurepath` / `~/.local/bin` の追加を案内。
 
-## gh + gh-stack は必須要件（認証は必須ではない）
+## gh + gh-stack は任意（必須ではない）
 
-rig は stacked branch を GitHub CLI で駆動するため、**`gh` 本体と `github/gh-stack` 拡張は必須**。
-作業を生む入口（`workbench new` / `orchestrate run|init|ab` / `queue go`）は要件未達だと起動を拒否する
-（`status` / `board` / `log` / `diff` などの read-only は塞がない＝壊れた環境でも調査はできる）。
+**`gh` 本体も `github/gh-stack` 拡張も rig の必須要件ではない。** 無くても
+`workbench new` / `orchestrate run|init|ab` / `queue go` はそのまま動く。無いときは
+stderr に**一行の案内**が出るだけで、止まらない。
 
-**GitHub 認証と remote は必須ではない。** `gh stack` のローカル操作（`init` / `add` /
-`rebase --no-trunk`）は未認証・remote 無しで動き、GitHub に触るのは `push` / `submit` / `sync` だけ。
-rig は「PR を一度も作らず `accept` で作業ツリーに落とすだけ」の完全ローカル運用を意図的に支えるので、
-認証状態は**表示するだけ**でチェックの合否には一切影響しない。
+かつては必須にしていたが、その根拠（stacked branch の cascade rebase を `gh stack` に委譲する）は
+実測で崩れた。`gh stack` はブランチ切り替えを checkout で行うが、git は**他の worktree が握っている
+ブランチの checkout を拒否する**。rig はタスクごとに worktree を作るため、対象ブランチは常に
+worktree に握られている:
 
-現在の状態はいつでも次で確認できる:
+```
+$ gh stack rebase --no-trunk
+✗ could not start rebase of task2 onto task1: failed to run git:
+  fatal: 'task2' is already used by worktree at '.../wt2'
+```
+
+worktree 隔離は rig の安全性の中核で譲れないので、必須にした当の操作ができない側を降ろした。
+cascade は各 worktree の中で素の git（`git -C <child> rebase --onto ...`）で行う。
+`gh stack` に今も価値があるのは**公開側**（stack の宣言・`submit` / `push`）で、PR を作らない
+運用にはそもそも不要——だから「一行の案内」であって「ゲート」ではない。
+
+**認証と remote も当然必須ではない。** `gh stack` のローカル操作は未認証・remote 無しで動き、
+GitHub に触るのは `push` / `submit` / `sync` だけ。認証状態は `gh-check` が**表示するだけ**。
+
+現在の状態はいつでも次で確認できる（これは明示的な問い合わせなので、答えは常に全部出る）:
 
 ```
 rig-wb gh-check           # exit 0=OK / 3=gh 未導入 / 5=gh-stack 未導入（認証状態は表示のみ）
 rig-wb gh-check --json
 ```
 
-どうしても入れられない環境（air-gapped CI など）向けの逃げ道は `RIG_SKIP_GH_CHECK=1`。
-使うたびに毎回 stderr へ警告が出る（黙って迂回はしない）。実装は
-`rig_workbench/gh_requirement.py`（single source of truth、install.sh は同じ状態名を bash で再現）。
+一行の案内が不要なら `RIG_SKIP_GH_CHECK=1` で黙らせる（黙るだけ——止めるものは元々無い。
+`gh-check` と `/rig:setup` は「環境を教えろ」という明示の要求なので、この変数では黙らない）。
+実装は `rig_workbench/gh_requirement.py`（single source of truth、install.sh は同じ状態名を
+bash で再現）。
 
 ## なぜこれが要るか
 
@@ -58,7 +73,8 @@ rig は **Claude Code 内の skill として動く**（`/rig:go`）だけでな�
 
 - `--yes` — 対話プロンプトを省略して install（skill の中で自動実行するときに使う）。gh-stack の導入確認も省略。
 - `--force` — 既にインストール済でも再インストール（gh-stack も `--force` で入れ直す）。
-- `--check` — 検出だけして終了。exit 0 = install 方法があり **かつ** gh 要件も満たす、exit 1 = どちらかが不足。
+- `--check` — 検出だけして終了。exit 0 = install 方法がある、exit 1 = 無い。gh / gh-stack の状態は
+  **表示するだけで exit code には影響しない**（任意なので）。
 - `--uninstall` — `rig-workbench` を外す（pipx / uv / pip の入れ方に合わせて自動判定）。
 - `--ref <ref>` — 特定 branch / tag / commit を指定（既定 `master`）。
 

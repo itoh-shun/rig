@@ -391,8 +391,9 @@ Sub-commands:
   usage [--limit N] [--global] [--json] History of actual rig-wb usage.
                                         Defaults to .rig/runs.jsonl in cwd (per-project);
                                         --global reads ~/.rig/runs.jsonl (across all projects)
-  gh-check [--json]                     verify the `gh` + github/gh-stack requirement
-                                        (exit 0=ok / 3=gh missing / 5=gh-stack missing;
+  gh-check [--json]                     report the `gh` + github/gh-stack state
+                                        (optional tools: rig runs without them.
+                                        exit 0=ok / 3=gh missing / 5=gh-stack missing;
                                         auth is reported, never required)
   githooks install|uninstall|status [--force]
                                         native git pre-commit/pre-push hooks
@@ -406,8 +407,9 @@ Sub-commands:
 
 Environment:
   RIG_HOME                              set the rig repo root explicitly (auto-detected if omitted)
-  RIG_SKIP_GH_CHECK=1                   escape hatch: run without `gh` / github/gh-stack
-                                        (air-gapped CI only; warns loudly on every use)
+  RIG_SKIP_GH_CHECK=1                   silence the one-line note about a missing
+                                        `gh` / github/gh-stack. Gates nothing: those
+                                        tools are optional and never block a run
 
 Examples:
   rig-wb run bugfix --provider claude --verifier-provider codex
