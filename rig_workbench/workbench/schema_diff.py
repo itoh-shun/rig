@@ -22,7 +22,7 @@ Projects without a schema file are untouched (clean skip).
 import json
 import pathlib
 
-from .state import git, load_project_gates
+from .state import effective_base, git, load_project_gates
 
 # Criteria this sensor backs (feature preset / refactor preset variants).
 SENSOR_CRITERIA = ("public_api_changes_documented", "public_api_changes_documented_if_any")
@@ -188,7 +188,9 @@ def apply_schema_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     if not wt_path:
         return []
     wt = pathlib.Path(wt_path)
-    base = task.get("base_commit")
+    # Live merge base, not the registration-time record (#312): scanning a rebased
+    # branch against a stale base would flag changes the task never made.
+    base, _drift = effective_base(root, task)
     if not wt.is_dir() or not base:
         return []
 

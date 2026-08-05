@@ -35,7 +35,7 @@ import pathlib
 import re
 
 from .secrets import untracked_files, worktree_diff_text
-from .state import git
+from .state import effective_base, git
 
 SENSOR_CRITERION = "no_gate_tampering"
 
@@ -221,7 +221,9 @@ def apply_tamper_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     if check is None:
         return []
     wt_path = task.get("worktree_path")
-    base = task.get("base_commit")
+    # Live merge base, not the registration-time record (#312): scanning a rebased
+    # branch against a stale base would flag changes the task never made.
+    base, _drift = effective_base(root, task)
     if not wt_path or not base:
         return []
     wt = pathlib.Path(wt_path)
