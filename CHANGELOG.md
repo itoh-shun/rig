@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.28.3] - 2026-07-31
+
+Calibrates the Japanese natural-writing discriminator with its first positive control.
+The 31-pair/two-order design responds monotonically, but its observed resolution is much
+coarser than earlier conclusions assumed: 19.4 percentage points when treating pairs as
+the unit and 29.0 points at the correct eight-article cluster level. The recorded
+0--3.3-point changes therefore do not establish zero effect; they establish only that no
+large movement was observed in this sample. A human-vs-human endpoint also lands at
+69.4%, showing that the raw 50% target is not calibrated across the two article pools.
+
+- Adds `mde_calibration.py`, paired/article-cluster analysis, sample-size lower bounds,
+  and the 434-judgment positive-control record.
+- Adds resumable, input-bound checkpoints to `discriminate.py` and makes an empty fetched
+  human corpus fail loudly.
+- Publishes only anonymous pair outcomes and derived numeric results. Fetched article
+  bodies, source item identifiers, body hashes, URLs, and judge commentary remain local
+  and are not committed.
+- Revises the benchmark documentation to distinguish "not detected" from "no effect"
+  and records which earlier conclusions survive the calibration.
+
 ## [1.28.2] - 2026-07-30
 
 Documents the actual root cause of rig failing to appear in Cowork's plugin browser —
