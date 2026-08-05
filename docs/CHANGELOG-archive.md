@@ -137,7 +137,7 @@ Claude Code plugin として rig を使うときと、terminal で `rig-wb` を�
 ### なぜ両方書くか
 
 - **cwd 版**: プロジェクトの gitignore に載る → 他人と共有しないローカル記録。project の CI・stats・dashboard はここを見る。
-- **`~/.rig` 版**: user の home にある → 全プロジェクト横断で「rig-wb 実際に使ったか」を一発集計。takt の "install したけど使ってるかわからない" 対策。
+- **`~/.rig` 版**: user の home にある → 全プロジェクト横断で「rig-wb 実際に使ったか」を一発集計。「install したけど使ってるかわからない」問題への対策。
 
 ### 使用例
 ```
@@ -191,7 +191,7 @@ runs 記録: /home/itoshun/works/rig/.rig/runs.jsonl
 
 ### Rationale — "skill 起動時にインストール" パターン
 
-`codex:setup` / `ppt-master` と同じ「skill 起動時に環境検知して不足を install」パターンを rig 側にも敷いた。これで Claude Code plugin として rig を入れた user が `/rig:setup` を叩くだけで、pipx / uv / pip のいずれかを経由して `rig-wb` が入り、以降は **Claude Code 外の provider（Codex plugin / Cursor rules / plain terminal）** からも同じ workbench を叩ける。takt の "install takt CLI, switch to `takt run` REPL" とは違う、**「今使っている環境に rig を注入する」** DX を最短経路で提供する土台。
+`codex:setup` / `ppt-master` と同じ「skill 起動時に環境検知して不足を install」パターンを rig 側にも敷いた。これで Claude Code plugin として rig を入れた user が `/rig:setup` を叩くだけで、pipx / uv / pip のいずれかを経由して `rig-wb` が入り、以降は **Claude Code 外の provider（Codex plugin / Cursor rules / plain terminal）** からも同じ workbench を叩ける。専用 CLI を入れて専用 REPL に切り替える方式とは違う、**「今使っている環境に rig を注入する」** DX を最短経路で提供する土台。
 
 ### 検証
 - `scripts/install.sh --check` → 環境検知（pipx / uv / pip / python 有無を返す）と exit code が期待どおり。
@@ -222,7 +222,7 @@ runs 記録: /home/itoshun/works/rig/.rig/runs.jsonl
 
 ### Rationale — "runs anywhere" ロードマップの起点
 
-`pip install rig-workbench` で `rig-wb` CLI が入る形にしたことで、以降 **Claude Code plugin / Codex plugin / Cursor rules / Copilot extension** を「同じ engine への薄い skill ラッパー」として並列に置ける状態になった。takt の "install takt, switch to `takt run`" に対し、rig は **各 AI コーディングツールの中に skill として住む** 路線（Task #7 Codex skill / Task #8 Cursor rules は次セッション以降）。
+`pip install rig-workbench` で `rig-wb` CLI が入る形にしたことで、以降 **Claude Code plugin / Codex plugin / Cursor rules / Copilot extension** を「同じ engine への薄い skill ラッパー」として並列に置ける状態になった。専用 CLI を入れて専用 REPL に移る方式に対し、rig は **各 AI コーディングツールの中に skill として住む** 路線（Task #7 Codex skill / Task #8 Cursor rules は次セッション以降）。
 
 ### 検証
 - `python3 -m venv /tmp/rig-venv && /tmp/rig-venv/bin/pip install -e .` → `rig-wb` インストール成功。
@@ -235,9 +235,9 @@ runs 記録: /home/itoshun/works/rig/.rig/runs.jsonl
 
 ## [1.2.0] - 2026-07-06
 
-### Added — 実装強化 5 系統（takt 比較で洗い直した差別化ポイントの補強）
+### Added — 実装強化 5 系統（他ツールとの比較で洗い直した差別化ポイントの補強）
 
-- **HTML metrics dashboard**（新設 `scripts/dashboard.py`・375 行）：`.rig/runs.jsonl` を読み、KPI（total runs / recipes / DONE 比率 / escalated / avg retries）・runs / 日 sparkline・recipe 別バー・verifier 票（5 票以上で REJECT ゼロの「ゴム印疑い」バッジ）・直近 run 表を単一 HTML で出力する。Python 3 標準ライブラリのみで完結（chart.js 不要・インライン CSS/SVG・ダーク/ライトテーマ両対応）。`orchestrate.py runs --html <path> [--since YYYY-MM-DD]` から起動し、`--limit` / `--recipe` を渡せる。takt の "100+ PR" 級の実データ説得力を LT で見せるための足回り。
+- **HTML metrics dashboard**（新設 `scripts/dashboard.py`・375 行）：`.rig/runs.jsonl` を読み、KPI（total runs / recipes / DONE 比率 / escalated / avg retries）・runs / 日 sparkline・recipe 別バー・verifier 票（5 票以上で REJECT ゼロの「ゴム印疑い」バッジ）・直近 run 表を単一 HTML で出力する。Python 3 標準ライブラリのみで完結（chart.js 不要・インライン CSS/SVG・ダーク/ライトテーマ両対応）。`orchestrate.py runs --html <path> [--since YYYY-MM-DD]` から起動し、`--limit` / `--recipe` を渡せる。実運用データの説得力を LT で見せるための足回り。
 - **`accept --force` 監査ログ**（`scripts/workbench.py`）：`.rig/audit.jsonl` に append 型で `accept --force` を記録（`audit_append` helper）。`workbench.py audit [--limit N] [--action ...] [--since ...]` サブコマンドで一覧参照でき、`stats` 出力にも "Force bypass" 節が自動で加わる（bypass 対象別の集計）。**hard な `accept_requirements`（worktree/base_branch/diff_summary）は依然 `--force` でも通らない**——soft ゲート未達を上書きした場合の恒久記録を追加した形。「checkpoint がフラグで外せない場所に置かれている」という差別化を可視化する。
 - **worktree 並列 lock**（`scripts/workbench.py`）：`task_lock(root, task_id)` contextmanager で fcntl.flock 非ブロッキング取得。`cmd_accept` / `cmd_discard` / `cmd_step` / `cmd_gate` / `cmd_review` を全ラップし、同一 task への並列操作を明示エラー（他プロセスが操作中）で防ぐ。lock ファイルは `.rig/locks/<task_id>.lock`（gitignore 済）。POSIX 非対応環境ではロックせず素通り（Windows fallback）。`/rig:queue go --provider rig --max-parallel N` の安全性を強化。
 - **recipe extends を N 段化**（`scripts/orchestrate.py`・SKILL.md §4.2.2 更新）：既存の「1 段のみ・親の extends は無視」制限を撤廃し、深さ上限 `EXTENDS_MAX_DEPTH = 5` の N 段継承をサポート。`_resolve_extends_chain` が leaf → root へチェーンを構築し、`resolve_extends` が root ancestor の steps をベースに祖先 → 親 → 子の順で override / `remove: true` / add を適用する。**循環継承**（A → B → A 等）は検知次第 WARN で切り上げ、trail（実際の継承経路）をメッセージに含める。深さ上限超過も WARN で停止せず切り上げ。**既存の 1 段継承 recipe（`release-movie extends movie` 等）は挙動不変**——挙動の後方互換は保ちつつ表現力を拡張。
