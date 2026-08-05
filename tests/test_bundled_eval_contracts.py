@@ -141,6 +141,17 @@ def test_sns_x_calibration_accepts_contract_formatting_but_rejects_relative_date
     )
     assert instruction in case["target_inputs"]["brief"]
     assert instruction in case["clean_controls"]["brief"]
+    target_brief = case["target_inputs"]["brief"]
+    assert "アカウントvoiceは『短く、率直。煽らない』" in target_brief
+    assert "制作の手触りを一言" not in target_brief
+    grounded_contract = (
+        "投稿本文に含めてよい具体情報は、入力された曲名・"
+        "カレンダー上の公開日時・URLだけとする。"
+        "アカウントvoiceは文体にだけ反映し、"
+        "音楽・制作・聴衆・反応・権利に関する主張を追加しない。"
+    )
+    assert grounded_contract in target_brief
+    assert grounded_contract in case["clean_controls"]["brief"]
     scenario_contract = (
         "本件は事前レビュー済みの定型的な事実限定告知である。"
         "投稿案に権利・許諾の主張は含めず、その記載も要求しない。"
