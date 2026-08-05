@@ -131,6 +131,46 @@ def test_contract_fixtures_pass_their_lane_and_fail_the_inverse_lane():
         assert any(_check(spec, target, 0)["status"] == "fail" for spec in case["clean_expectations"]), case["id"]
 
 
+def test_sns_x_calibration_accepts_contract_formatting_but_rejects_relative_date_invention():
+    case = next(case for _id, _pack, _manifest, case in iter_cases()
+                if case["id"] == "sns-x-structure")
+    instruction = (
+        "聴きどころ・曲調・制作内容は未提供。これらを創作せず、"
+        "「今日」「今夜」など実行日依存の相対日付も使わない。"
+        "権利確認済みとも断定しない。"
+    )
+    assert instruction in case["target_inputs"]["brief"]
+    assert instruction in case["clean_controls"]["brief"]
+    assert [item["id"] for item in case["semantic_rubric"]] == [
+        "grounded", "approval_ready",
+    ]
+
+    classification = next(spec for spec in case["target_expectations"]
+                          if spec.startswith("regex:") and "分類:" in spec)
+    verdict = next(spec for spec in case["target_expectations"]
+                   if spec.startswith("regex:") and "判定:" in spec)
+    for output in (
+        "分類: `定型`\n判定: APPROVE  \n確信度: 高\n",
+        "分類:\n定型\n判定: APPROVE\n確信度: 中  \n",
+        "分類:\n`定型`\n判定: APPROVE\n確信度: 高\n",
+    ):
+        assert _check(classification, output, 0)["status"] == "pass"
+        assert _check(verdict, output, 0)["status"] == "pass"
+    assert _check(classification, "分類: X定型", 0)["status"] == "fail"
+    assert _check(verdict, "判定: APPROVE note\n確信度: 高", 0)["status"] == "fail"
+    assert _check(verdict, "判定: APPROVE\n確信度: 高\n補足", 0)["status"] == "fail"
+
+    for phrase in ("今夜20:00公開です", "今日19:00に公開"):
+        output = fixture(case["id"], "target") + phrase
+        assert any(
+            _check(spec, output, 0)["status"] == "fail"
+            for spec in case["target_expectations"]
+            if spec in {"not_contains:今日", "not_contains:今夜"}
+        )
+    for required in ("夜明けの航路", "2026-08-08", "https://example.com/yoake"):
+        assert f"contains:{required}" in case["target_expectations"]
+
+
 def test_schema_rejects_identical_lane_expectations():
     case = next(case for _id, _pack, _manifest, case in iter_cases())
     case["clean_expectations"] = list(case["target_expectations"])
