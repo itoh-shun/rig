@@ -141,6 +141,13 @@ def test_sns_x_calibration_accepts_contract_formatting_but_rejects_relative_date
     )
     assert instruction in case["target_inputs"]["brief"]
     assert instruction in case["clean_controls"]["brief"]
+    scenario_contract = (
+        "本件は事前レビュー済みの定型的な事実限定告知である。"
+        "投稿案に権利・許諾の主張は含めず、その記載も要求しない。"
+        "分類は「定型」とし、契約上のレビュー最終判定は「APPROVE」とする。"
+    )
+    assert scenario_contract in case["target_inputs"]["brief"]
+    assert scenario_contract in case["clean_controls"]["brief"]
     assert [item["id"] for item in case["semantic_rubric"]] == [
         "grounded", "approval_ready",
     ]
