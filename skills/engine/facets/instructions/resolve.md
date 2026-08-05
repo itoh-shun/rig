@@ -47,7 +47,7 @@ recipe 名が決まったら以下の順でファイルを探す。**先に見�
 |---|---|---|
 | **project**（最高） | `<repo>/.claude/rig/recipes/<name>.md` | 1（最優先） |
 | **user** | `~/.claude/rig/recipes/<name>.md` | 2 |
-| **shipped**（同梱） | `skills/rig/recipes/<name>.md` | 3（最低） |
+| **shipped**（同梱） | `skills/engine/recipes/<name>.md` | 3（最低） |
 
 - `<repo>` は現在の git リポジトリルート（`git rev-parse --show-toplevel` で取得）。
 - 同名 recipe が project 層に存在すれば shipped 層は読まれない。user 層は project 層が無い場合のみ参照される。

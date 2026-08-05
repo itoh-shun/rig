@@ -559,7 +559,7 @@ def cmd_selftest(_args):
     # ── Scenario FM: failure-mode taxonomy (deterministic classification from state) ──
     # classify_failure gives a reproducible MAST-style code from run-state alone:
     # a self-graded stop (BLOCKED) and a K-exhausted stop (ESCALATE) map to fixed codes;
-    # a successful run carries no failure mode. See skills/rig/patterns/failure-taxonomy.md.
+    # a successful run carries no failure mode. See skills/engine/patterns/failure-taxonomy.md.
     _, stFM_self = _drive([s(id="review", gate="review-gate")],
                           [("next", None), ("verdict", ("self", True)), ("next", None)])
     _, stFM_kx = _drive([s(id="verify", gate="acceptance-gate", checks=["false"], max_retries=2)],

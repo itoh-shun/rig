@@ -9,7 +9,7 @@ import pathlib
 
 # ── path constants ───────────────────────────────────────────────────────────
 ROOT     = pathlib.Path(__file__).resolve().parent.parent.parent
-SKILLS   = ROOT / "skills" / "rig"
+SKILLS   = ROOT / "skills" / "engine"
 RECIPES  = SKILLS / "recipes"
 FACETS   = SKILLS / "facets"
 PATTERNS = SKILLS / "patterns"

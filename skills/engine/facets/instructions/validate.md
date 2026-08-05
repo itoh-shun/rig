@@ -8,7 +8,7 @@
 
 ### ① recipe → facet 参照切れ
 
-各 `recipes/*.md`（shipped＝`skills/rig/recipes/`、project＝`<repo>/.claude/rig/recipes/`、user＝`~/.claude/rig/recipes/`）の frontmatter を読み、各 step が参照する名前が**実ファイルとして存在する**かを照合する。
+各 `recipes/*.md`（shipped＝`skills/engine/recipes/`、project＝`<repo>/.claude/rig/recipes/`、user＝`~/.claude/rig/recipes/`）の frontmatter を読み、各 step が参照する名前が**実ファイルとして存在する**かを照合する。
 
 | キー | 解決先 | 存在チェック |
 |---|---|---|
@@ -23,7 +23,7 @@
 
 ```
 [FAIL] recipe my-flow step review: instruction 'paralel-review' が見つかりません。
-  期待パス: skills/rig/facets/instructions/paralel-review.md
+  期待パス: skills/engine/facets/instructions/paralel-review.md
   利用可能な instruction: intake, design, implement, verify, visual-verify, pr, merge, parallel-review, ...
 ```
 
@@ -33,7 +33,7 @@
 
 ```
 [FAIL] my-flow: extends: "release-flow-v2" が解決できません。
-  検索した tier: project (<repo>/.claude/rig/recipes/), user (~/.claude/rig/recipes/), shipped (skills/rig/recipes/)
+  検索した tier: project (<repo>/.claude/rig/recipes/), user (~/.claude/rig/recipes/), shipped (skills/engine/recipes/)
   ヒント: --list で利用可能な recipe 名を確認してください。タイポの場合は --recipe の「もしかして」候補提案（#188）も参照してください。
 ```
 
@@ -98,8 +98,8 @@
 
 > `needs:` が宣言されていれば `orchestrate: true` の有無に関わらず常に両チェックを実施する。`remove: true`（#144）で削除した step を `needs:` で参照している場合の WARN（§4.2.2）とは独立した別チェック。`scripts/validate.py` の `check_needs_refs`（参照切れ）と `check_needs_cycles`（サイクル）関数が CI 用に同ロジックを実装（`check_extends_cycles` と対称）。
 
-> **`personas[]` は COMPOSE（§5「persona facet の tier 解決」）と同じ経路で解決する**（shipped 層だけ見ない）。順に：①project `<repo>/.claude/rig/personas/<name>.md` → ②user `~/.claude/rig/personas/<name>.md` → ③shipped `skills/rig/facets/personas/<name>.md` → ④agent `<repo>/agents/<name>.md`。**いずれにも無い場合のみ参照切れ FAIL**。shipped 層だけ見ると `/rig:persona` で project/user に生成したカスタム persona を参照する recipe が**偽 FAIL** する（同 instruction の `instruction`/`policies[]`/`output_contract` は当面 shipped 基準で可・persona ほど tier 運用が一般的でないため）。
-> **agent のベースパスはリポジトリルート**（`git rev-parse --show-toplevel` で得る `<repo>/agents/<name>.md`）。shipped ブリック（`facets/`・`patterns/` 等が `skills/rig/` 相対）とは非対称なので、`skills/rig/agents/` ではなく `<repo>/agents/` を見る（ここを誤ると reviewer agent を使う recipe が軒並み偽 FAIL になる）。
+> **`personas[]` は COMPOSE（§5「persona facet の tier 解決」）と同じ経路で解決する**（shipped 層だけ見ない）。順に：①project `<repo>/.claude/rig/personas/<name>.md` → ②user `~/.claude/rig/personas/<name>.md` → ③shipped `skills/engine/facets/personas/<name>.md` → ④agent `<repo>/agents/<name>.md`。**いずれにも無い場合のみ参照切れ FAIL**。shipped 層だけ見ると `/rig:persona` で project/user に生成したカスタム persona を参照する recipe が**偽 FAIL** する（同 instruction の `instruction`/`policies[]`/`output_contract` は当面 shipped 基準で可・persona ほど tier 運用が一般的でないため）。
+> **agent のベースパスはリポジトリルート**（`git rev-parse --show-toplevel` で得る `<repo>/agents/<name>.md`）。shipped ブリック（`facets/`・`patterns/` 等が `skills/engine/` 相対）とは非対称なので、`skills/engine/agents/` ではなく `<repo>/agents/` を見る（ここを誤ると reviewer agent を使う recipe が軒並み偽 FAIL になる）。
 
 ### ② manifest 参照（`.claude/rig.md`）
 
@@ -234,7 +234,7 @@ manifest の参照キーは RESOLVE/COMPOSE 時に**黙って握りつぶされ�
 
 | scope 値 | 期待する格納先 | 不一致時 |
 |---|---|---|
-| `shipped` | `skills/rig/recipes/` | **WARN** |
+| `shipped` | `skills/engine/recipes/` | **WARN** |
 | `project` | `<repo>/.claude/rig/recipes/` | **WARN** |
 | `user` | `~/.claude/rig/recipes/` | **WARN** |
 
@@ -283,7 +283,7 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 ### ⑤ wiki 衛生（`facets/knowledge/_wiki`）
 
-wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowledge/wiki/` ＋ shipped `skills/rig/facets/knowledge/wiki/`）を点検する。ディレクトリが無ければスキップ。**shipped persona の `inject:` は shipped wiki tier に解決できなければ FAIL**（user/project tier は新規インストール環境に存在しないため。`scripts/validate.py` ③-b が機械検査）。
+wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowledge/wiki/` ＋ shipped `skills/engine/facets/knowledge/wiki/`）を点検する。ディレクトリが無ければスキップ。**shipped persona の `inject:` は shipped wiki tier に解決できなければ FAIL**（user/project tier は新規インストール環境に存在しないため。`scripts/validate.py` ③-b が機械検査）。
 
 - **リンク切れ** → 本文/`links:`/persona の `inject:` にある `[[slug]]` が、どの tier のページにも解決しない → WARN（wiki が user/global tier のみに存在し project-scope validate で不可視なケースがあるため。`--validate --global` 時は FAIL に格上げ）。
 - **参照欠落** → persona facet の `inject:` 先ページが存在しない → WARN（wiki が user/global tier のみに存在し project-scope validate で不可視なケースがあるため。`--validate --global` 時は FAIL に格上げ）。

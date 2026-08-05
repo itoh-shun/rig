@@ -22,7 +22,7 @@ rig の本当の価値は、AI を動かすこと自体ではない。AI に作�
 
 ### ポジショニング
 
-rig は意図的に、独自 DSL を持つ重量級の外部エンジン**ではない**。Claude Code のセッション内では、Claude Code 自身のプリミティブ——slash command（`commands/`）・skill（`skills/rig`）・subagent（`agents/`）・hook（`hooks/`）——だけで合成された薄い品質・安全レイヤーとして動く。隔離・ゲート・accept は、いま作業しているセッションにそのまま規律として乗るのであって、別ツールへの乗り換えを要求しない。
+rig は意図的に、独自 DSL を持つ重量級の外部エンジン**ではない**。Claude Code のセッション内では、Claude Code 自身のプリミティブ——slash command（`commands/`）・skill（`skills/engine`）・subagent（`agents/`）・hook（`hooks/`）——だけで合成された薄い品質・安全レイヤーとして動く。隔離・ゲート・accept は、いま作業しているセッションにそのまま規律として乗るのであって、別ツールへの乗り換えを要求しない。
 
 同じ設計にはもう一つの顔がある：このレイヤーの背後にある決定論エンジン（`scripts/orchestrate.py`。`rig_workbench/` としてパッケージ化され、pip の `rig-wb` CLI としても導入できる）は、**外部制御プレーン**を兼ねる。CI・別セッション・別ツール（Codex / Cursor 等）から、まったく同じ recipe・ゲート・read-only verifier をセッションの外から駆動できる——§13「横断利用（CLI として）」を参照。同じエンジンを公開する MCP サーバは `scripts/mcp_server.py`（#263）として既に出荷済み——ツール一覧・opt-in の配線は §7「MCPサーバ（#263）」を参照。
 
@@ -126,7 +126,7 @@ gate: standard + bugfix
   plan.md / diff.md / log.md / final.md   モデルが書く散文（計画・差分要約・決定・まとめ）
 ```
 
-読み取り専用のタスク（レビュー・まだ直すと決まっていない調査）は `--no-worktree` で worktree を丸ごと省略できる。設計の詳細は [`patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) を参照。
+読み取り専用のタスク（レビュー・まだ直すと決まっていない調査）は `--no-worktree` で worktree を丸ごと省略できる。設計の詳細は [`patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) を参照。
 
 **複数タスクを並行で進める（ターミナルを増やさず一括把握）。** 隔離が task 単位で完結しているため、**複数タスクを同時に走らせても構造的に安全**（別 worktree・別 branch）。`/rig:go "<task>"` を1つずつ打つ代わりに、実際に並列実行したいなら queue に積んで一括 GO する：
 
@@ -146,7 +146,7 @@ gate: standard + bugfix
 <repo>/.rig/visual/adhoc/<ts>-<slug>/         ← ad-hoc（例: 単独の /rig:design <url> 監査）
 ```
 
-`discard` は task の `visual/` を即時削除する（run log の JSON/MD は残る）。それ以外——accept 済み task の screenshot も含め——は経過日数で処分する（`python3 scripts/workbench.py gc --dry-run` でプレビュー、`gc` で削除。既定14日超が対象）。詳細ルールは [`patterns/visual-artifacts.md`](./skills/rig/patterns/visual-artifacts.md) を参照。
+`discard` は task の `visual/` を即時削除する（run log の JSON/MD は残る）。それ以外——accept 済み task の screenshot も含め——は経過日数で処分する（`python3 scripts/workbench.py gc --dry-run` でプレビュー、`gc` で削除。既定14日超が対象）。詳細ルールは [`patterns/visual-artifacts.md`](./skills/engine/patterns/visual-artifacts.md) を参照。
 
 ### acceptance-gate
 
@@ -252,7 +252,7 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 
 ## 8. task routing と recipes
 
-エンジン（`skills/rig/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティング（§4 の①）は4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
+エンジン（`skills/engine/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティング（§4 の①）は4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
 
 | recipe | 内容 |
 |---|---|
@@ -518,7 +518,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 
-いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ、`/rig:sales` は §8 でそれぞれ扱っている。Experimental commands は独立した節——§14。）
+いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ、`/rig:sales` は §8 でそれぞれ扱っている。Experimental commands は独立した節——§14。）
 
 ### install
 
@@ -574,15 +574,15 @@ cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reloa
 | `--verify-findings` | REJECT 根拠を独立した `finding-verifier` で敵対的検証 |
 | `--global` | `--list`/`--validate` を全 tier 横断に拡大 |
 
-flag・ブリックの完全な一覧は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
+flag・ブリックの完全な一覧は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
 
 ### Codex skill として使う
 
-Codex では、このリポジトリの `skills/rig` を `~/.codex/skills` から見えるようにすれば `$rig` skill として使える：
+Codex では、このリポジトリの `skills/engine` を `~/.codex/skills` から見えるようにすれば `$rig` skill として使える：
 
 ```bash
 mkdir -p ~/.codex/skills
-ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
+ln -sfn /path/to/rig/skills/engine ~/.codex/skills/rig
 ```
 
 Codex を再起動したあと、`$rig "ログインバグを直して"` のように呼ぶ。Codex では `$rig` が Claude Code の `/rig:go` 相当の入口になる。横断 runner は既に `codex exec` provider を持っており、検証ロールでは read-only sandbox を強制する。
@@ -656,7 +656,7 @@ review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorで�
 
 ### manifest・知識層
 
-`<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
+`<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/engine/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
 
 ### 横断利用（CLI として）
 
@@ -706,7 +706,7 @@ Experimental commands は、代替的なコラボレーション・創作・遊�
 | オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q` — `tests/` 配下の54テストスイート。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
-| 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/rig/patterns/failure-taxonomy.md` |
+| 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 
 ## 16. FAQ
 
@@ -728,8 +728,8 @@ Experimental commands は、代替的なコラボレーション・創作・遊�
 
 ## ドキュメント
 
-- [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
-- [`skills/rig/patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) — worktree・run state の設計
+- [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
+- [`skills/engine/patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) — worktree・run state の設計
 - [`docs/architecture.md`](./docs/architecture.md) — アーキテクチャの実証ポイント
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
 - [README.md](./README.md) — English version

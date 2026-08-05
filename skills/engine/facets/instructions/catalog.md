@@ -8,9 +8,9 @@ domain/プロダクトが増えて「誰がどこで何をしているか把握�
 
 | 種別 | shipped | user(global) | project |
 |---|---|---|---|
-| persona | `skills/rig/facets/personas/` | `~/.claude/rig/personas/` | `<repo>/.claude/rig/personas/` |
+| persona | `skills/engine/facets/personas/` | `~/.claude/rig/personas/` | `<repo>/.claude/rig/personas/` |
 | wiki ページ | — | `~/.claude/rig/knowledge/wiki/` | `<repo>/.claude/rig/knowledge/wiki/` |
-| recipe / pack | `skills/rig/recipes/` | `~/.claude/rig/recipes/` | `<repo>/.claude/rig/recipes/` |
+| recipe / pack | `skills/engine/recipes/` | `~/.claude/rig/recipes/` | `<repo>/.claude/rig/recipes/` |
 | knowledge（既存層） | `facets/knowledge/` | `~/.claude/rig/knowledge/{methodology,ai-quirks}/` | `<repo>/.claude/rig/knowledge/{domain,accumulated}/` |
 
 存在しない tier/ディレクトリは**サイレントにスキップ**。走査は subagent に dispatch し、親は地図だけ受ける（context-minimal）。

@@ -70,7 +70,7 @@ benchmarks = [
   "tasks/**/*.ts",
   "tasks/**/*.txt",
 ]
-"skills.rig" = [
+"skills.engine" = [
   "SKILL.md",
   "agents/*.yaml",
   "facets/**/*.md",

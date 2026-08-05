@@ -50,7 +50,7 @@ def classify_failure(state: dict) -> str | None:
 
     Pure and deterministic: derives a taxonomy code purely from signals already present in
     `state` (no model call). The vocabulary and the "which rig gate/brick should have caught
-    it" mapping live in `skills/rig/patterns/failure-taxonomy.md` (adapted from MAST,
+    it" mapping live in `skills/engine/patterns/failure-taxonomy.md` (adapted from MAST,
     arXiv 2503.13657 — 3 categories / 14 modes). Returns a code string, or None when the state
     shows no failure (a successful or still-running run — successful runs carry no failure_mode).
 
@@ -138,7 +138,7 @@ def telemetry_append(state: dict, final: str) -> None:
                       for s in state["steps"]],
         }
         # Failure-mode taxonomy (additive; absent for successful runs). Deterministic best-guess
-        # from state — see classify_failure / skills/rig/patterns/failure-taxonomy.md.
+        # from state — see classify_failure / skills/engine/patterns/failure-taxonomy.md.
         failure_mode = classify_failure(state)
         if failure_mode is not None:
             rec["failure_mode"] = failure_mode

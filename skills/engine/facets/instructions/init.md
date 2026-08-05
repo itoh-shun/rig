@@ -6,7 +6,7 @@
 
 ### ① manifest（`<repo>/.claude/rig.md`）
 
-`skills/rig/manifests/_template.md` のテンプレ本体をコピーし、検出できた値を埋めて作る。
+`skills/engine/manifests/_template.md` のテンプレ本体をコピーし、検出できた値を埋めて作る。
 
 - `build`/`lint`/`test` は `package.json` / `build.gradle` / `Makefile` を自動検出して候補を埋める（不明なら空のままコメントを残す）。
 - `branch.base` は `git remote show origin` の default branch。

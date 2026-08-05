@@ -1,4 +1,4 @@
-"""Tests for the MAST-style failure-mode taxonomy (skills/rig/patterns/failure-taxonomy.md).
+"""Tests for the MAST-style failure-mode taxonomy (skills/engine/patterns/failure-taxonomy.md).
 
 Covers: classify_failure's deterministic from-state classification, telemetry_append
 recording failure_mode into runs.jsonl (present for stopped runs, absent for clean ones),

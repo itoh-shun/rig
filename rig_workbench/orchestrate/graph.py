@@ -35,7 +35,7 @@ def build_brick_graph() -> dict:
     rel vocabulary (fixed 11 kinds): extends / injects / links-to / uses-instruction / uses-pattern /
     gated-by / applies-policy / emits-contract / uses-persona / references / mirrors
     """
-    skills = config.RIG_HOME / "skills" / "rig"
+    skills = config.SKILL_ROOT
     facets = skills / "facets"
     dirs = {
         "persona": facets / "personas",

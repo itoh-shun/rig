@@ -39,7 +39,7 @@ rig のブリックは役割で分かれる。説明をこの型に割り当て�
 |---|---|
 | project（既定） | `<repo>/.claude/rig/{recipes,personas,instructions,output-contracts,knowledge}/<name>.md`・command は `<repo>/.claude/commands/`（または案内） |
 | user（`--user`） | `~/.claude/rig/...` |
-| shipped（`--shipped`・rig 本体作業時のみ） | `skills/rig/{recipes,facets/...}`・`commands/`・**SKILL.md §2 目録に1行追加** |
+| shipped（`--shipped`・rig 本体作業時のみ） | `skills/engine/{recipes,facets/...}`・`commands/`・**SKILL.md §2 目録に1行追加** |
 
 ## ④ 検証（自己拡張は検証込みで完結）
 

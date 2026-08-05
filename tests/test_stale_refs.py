@@ -67,8 +67,8 @@ def test_existing_reference_is_not_a_finding(tmp_path):
 def test_ancestor_walk_resolves_contextual_roots(tmp_path):
     # A doc deep in a tree referencing a path relative to an ancestor dir
     # (the SKILL.md-speaks-skill-dir-relative pattern) must not be flagged.
-    _write(tmp_path, "skills/rig/facets/knowledge/page.md", "content")
-    doc = _write(tmp_path, "skills/rig/facets/instructions/how.md",
+    _write(tmp_path, "skills/engine/facets/knowledge/page.md", "content")
+    doc = _write(tmp_path, "skills/engine/facets/instructions/how.md",
                  "inject `facets/knowledge/page.md`")
     assert scan_stale_refs(tmp_path, [doc]) == []
 

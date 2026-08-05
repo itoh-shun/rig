@@ -31,12 +31,12 @@ $ARGUMENTS
 
 ## 入力
 
-- 商談記録テンプレ: `skills/rig/templates/deal-record.md`（埋めて渡すと評価精度が上がる。空欄は「情報不足」として指摘される）。
+- 商談記録テンプレ: `skills/engine/templates/deal-record.md`（埋めて渡すと評価精度が上がる。空欄は「情報不足」として指摘される）。
 - バラバラなメモ・議事録の貼り付けでも受理する。記入は強制しない。
 
 ## 自社固有の評価
 
-`skills/rig/facets/knowledge/sales-domain/` に自社のプロダクト強み・ICP・価格レンジ・競合・良い商談の型を記入しておくと、各レビュアーが自社文脈で評価する。未記入なら汎用観点のみで動く。
+`skills/engine/facets/knowledge/sales-domain/` に自社のプロダクト強み・ICP・価格レンジ・競合・良い商談の型を記入しておくと、各レビュアーが自社文脈で評価する。未記入なら汎用観点のみで動く。
 
 ## flag
 

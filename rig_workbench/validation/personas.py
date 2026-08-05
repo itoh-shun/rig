@@ -61,7 +61,7 @@ def check_personas() -> None:
                 slug = m.group(1)
                 if not (wiki_dir / f"{slug}.md").exists():
                     _emit("FAIL", f"{ctx} — inject [[{slug}]] does not resolve to the shipped wiki"
-                                  f" (skills/rig/facets/knowledge/wiki/{slug}.md)")
+                                  f" (skills/engine/facets/knowledge/wiki/{slug}.md)")
                     bad = True
         if not bad:
             ok += 1
