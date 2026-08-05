@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [1.29.0] - 2026-08-05
+
 - Moved the movie and scenario workflows into the opt-in `video-storytelling`
   domain extension. It ships pack-local language and content-risk reviewers,
   concrete structural evals, and resolves only after explicit installation.
