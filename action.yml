@@ -53,6 +53,20 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # `orchestrate.py run` refuses to start without the gh + gh-stack requirement
+    # (rig_workbench/gh_requirement.py). GitHub-hosted runners ship `gh` but not
+    # the extension, so install it here rather than bypassing the requirement.
+    # --force is the idempotent form ("ignore if latest already installed").
+    # The token is for fetching the extension release, not for the check: the
+    # requirement is the binary + the extension, never authentication.
+    - name: Ensure the gh + gh-stack requirement
+      id: gh
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        gh extension install github/gh-stack --force
+
     - name: Run rig task (isolated worktree + acceptance-gate)
       id: run
       shell: bash

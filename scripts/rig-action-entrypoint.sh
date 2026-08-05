@@ -39,10 +39,16 @@ cmd_run() {
   # orchestrate.py run exits 1 on ESCALATE/BLOCKED — capture that without
   # aborting this script (the state file is written either way; we derive
   # `final` from it, not from the exit code).
-  python3 "$ORCHESTRATE" "${args[@]}" || true
+  local rc=0
+  python3 "$ORCHESTRATE" "${args[@]}" || rc=$?
 
   if [ ! -f "$STATE_FILE" ]; then
-    echo "[ERROR] ${STATE_FILE} was not created (orchestrate.py may have failed before starting)" >&2
+    # Exit 3/4/5 is the gh + gh-stack requirement refusing to start (see
+    # rig_workbench/gh_requirement.py) — name it instead of blaming the recipe.
+    case "$rc" in
+      3|4|5) echo "[ERROR] the gh + gh-stack requirement is unmet (exit ${rc}); the run never started." >&2 ;;
+      *)     echo "[ERROR] ${STATE_FILE} was not created (orchestrate.py may have failed before starting)" >&2 ;;
+    esac
     exit 1
   fi
 

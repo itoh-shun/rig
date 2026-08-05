@@ -391,6 +391,9 @@ Sub-commands:
   usage [--limit N] [--global] [--json] History of actual rig-wb usage.
                                         Defaults to .rig/runs.jsonl in cwd (per-project);
                                         --global reads ~/.rig/runs.jsonl (across all projects)
+  gh-check [--json]                     verify the `gh` + github/gh-stack requirement
+                                        (exit 0=ok / 3=gh missing / 5=gh-stack missing;
+                                        auth is reported, never required)
   githooks install|uninstall|status [--force]
                                         native git pre-commit/pre-push hooks
                                         (computational sensors only; issue #298)
@@ -403,6 +406,8 @@ Sub-commands:
 
 Environment:
   RIG_HOME                              set the rig repo root explicitly (auto-detected if omitted)
+  RIG_SKIP_GH_CHECK=1                   escape hatch: run without `gh` / github/gh-stack
+                                        (air-gapped CI only; warns loudly on every use)
 
 Examples:
   rig-wb run bugfix --provider claude --verifier-provider codex
@@ -454,6 +459,10 @@ def main() -> None:
             raise SystemExit(2)
         bench_invariance_mod.cmd_invariance(filtered)
         return
+    if sub == "gh-check":
+        from . import gh_requirement
+
+        sys.exit(gh_requirement.cmd_gh_check(rest))
     if sub == "githooks":
         from . import githooks as githooks_mod
 
