@@ -692,6 +692,8 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | recipe/persona/command のスキーマ、ブリック目録ドリフト、バージョン同期 | `scripts/validate.py` ＋ `scripts/validate.py selftest`（全 PR で CI 強制） |
 | オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q` — `tests/` 配下の54テストスイート。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
+| 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
+| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 

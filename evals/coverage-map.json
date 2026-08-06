@@ -1,0 +1,561 @@
+{
+  "coverage_map_version": 1,
+  "description": "Documented requirement -> the evidence behind it. Verified by `rig-wb coverage`.",
+  "items": [
+    {
+      "evidence": [
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "hostcheck",
+            "--json"
+          ],
+          "expect_exit": [
+            0,
+            3
+          ],
+          "kind": "command",
+          "proves": "rig がコンテナ内で動いているかを検出し、未整備なら報告する（exit 3 ＝前提が欠けていることを報告できた状態。検出が働いた証拠であり、ホストが整っている証拠ではない）"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_hostcheck.py",
+          "proves": "検出ロジックの決定論的な回帰"
+        },
+        {
+          "kind": "file",
+          "path": "docs/templates/devcontainer.json",
+          "proves": "コンテナ雛形を同梱し、/rig:init が提案する対象にした"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_templates.py",
+          "proves": "雛形が妥当で、init の手順から参照されていること"
+        }
+      ],
+      "id": "host-isolation",
+      "note": "rig の隔離 worktree はファイル作業の分離であって、コード実行の境界ではない。境界はホスト側に置く。",
+      "requirement": "実行環境の隔離（コンテナ/VM の中で動かす）",
+      "scope": "host",
+      "source": "02a §1-3"
+    },
+    {
+      "evidence": [
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "hostcheck",
+            "--json"
+          ],
+          "expect_exit": [
+            0,
+            3
+          ],
+          "kind": "command",
+          "proves": "permissions.deny が1件でも設定されているかを検出する（exit 3 ＝前提が欠けていることを報告できた状態。検出が働いた証拠であり、ホストが整っている証拠ではない）"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_hostcheck.py"
+        }
+      ],
+      "id": "host-runtime-block",
+      "note": "rig のセンサーは diff に書かれたコマンドを読む。実行そのものの傍受はホストの権限層の責務。",
+      "requirement": "削除・本番反映・秘密出力を実行時にブロックする",
+      "scope": "host",
+      "source": "02a §3-C"
+    },
+    {
+      "evidence": [
+        {
+          "argv": [
+            "python3",
+            "scripts/validate.py"
+          ],
+          "kind": "command",
+          "proves": "ブリック目録と実ファイルのドリフトが無いこと"
+        },
+        {
+          "kind": "file",
+          "path": "hooks/hooks.json",
+          "proves": "フック定義の実体"
+        },
+        {
+          "kind": "file",
+          "path": "skills/engine/facets/policies",
+          "proves": "規範（Rules 相当）の実体"
+        }
+      ],
+      "id": "control-surface-inventory",
+      "requirement": "7つの制御要素に実体を持つ（目録と実ファイルが一致している）",
+      "scope": "rig",
+      "source": "02a §2-1"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_workbench_capabilities.py",
+          "proves": "accept の構造的前提と拒否経路"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_custom_gates.py",
+          "proves": "基準の加算のみ・緩和拒否"
+        },
+        {
+          "argv": [
+            "python3",
+            "scripts/orchestrate.py",
+            "selftest"
+          ],
+          "kind": "command",
+          "proves": "ゲート判定の決定論"
+        }
+      ],
+      "id": "completion-is-gate-pass",
+      "requirement": "完了＝検証コマンドのパス（自己申告では反映できない）",
+      "scope": "rig",
+      "source": "02a §3-A"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_tamper_sensor.py",
+          "proves": "既存テストの改変・assert 削除・skip 追加の検出"
+        },
+        {
+          "kind": "file",
+          "path": "skills/engine/facets/instructions/acceptance-check.md",
+          "proves": "red 証跡を要求する基準の定義"
+        },
+        {
+          "kind": "planned",
+          "spec": "red 証跡そのものを機械確認する。実装 step の前に対象テストが実際に失敗した記録を run-state へ残し、bugfix プリセットの基準から参照する。"
+        }
+      ],
+      "id": "red-evidence",
+      "requirement": "失敗を確認してから実装する（red 証跡）",
+      "scope": "rig",
+      "source": "02a §3-A"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "planned",
+          "spec": "output-contract にラベル語彙を追加し、diff サマリと最終報告の主張行にラベルが無い場合を warning-grade の gate 基準（claims_labeled_or_explained）で検出する。fail-grade にはしない——判断を要するため。"
+        }
+      ],
+      "id": "claim-labels",
+      "requirement": "主張に確からしさのラベルを付ける（VERIFIED / REASONED / ASSUMED）",
+      "scope": "rig",
+      "source": "02a §3-A"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "file",
+          "path": "skills/engine/facets/policies",
+          "proves": "末尾注入される規範の置き場"
+        },
+        {
+          "argv": [
+            "python3",
+            "scripts/validate.py"
+          ],
+          "kind": "command",
+          "proves": "規範ファイルのスキーマと参照整合"
+        }
+      ],
+      "id": "working-method-split",
+      "requirement": "働き方の規範を常時ロードから分離して置く",
+      "scope": "rig",
+      "source": "02a §3-B"
+    },
+    {
+      "evidence": [
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "sensor-bench"
+          ],
+          "kind": "command",
+          "proves": "既知の悪パターンの捕捉率と、紛らわしい安全パターンでの誤検知率"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_secret_scan.py"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_injection_scan.py"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_destructive_scan.py"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_tamper_sensor.py"
+        }
+      ],
+      "id": "machine-sensors",
+      "requirement": "確実な禁止を機械で止める（秘密・インジェクション・破壊的操作・ゲート改ざん）",
+      "scope": "rig",
+      "source": "02a §3-C"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_remind_rig_header_hook.py",
+          "proves": "状態ヘッダ再注入フックの発火条件"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_suggest_instincts_hook.py",
+          "proves": "Stop フックが提案のみで抽出しないこと"
+        },
+        {
+          "kind": "file",
+          "path": "hooks/hooks.json",
+          "proves": "PreCompact / UserPromptSubmit の配線"
+        }
+      ],
+      "id": "compaction-survival",
+      "requirement": "コンテキスト圧縮を跨いで実行状態を失わない",
+      "scope": "rig",
+      "source": "02a §3-C"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_trust.py",
+          "proves": "プロジェクト資産の初回拒否と内容ハッシュ同意"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_pack_lifecycle.py"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_pack_publisher.py",
+          "proves": "発行者署名の検証"
+        }
+      ],
+      "id": "extension-quarantine",
+      "requirement": "外部拡張を無条件に信頼しない（検疫・同意・署名）",
+      "scope": "rig",
+      "source": "02a §3-D"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_digest.py",
+          "proves": "期間ダイジェストの集計"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_instincts.py",
+          "proves": "確度による選別と未使用時の減衰・失効"
+        }
+      ],
+      "id": "weekly-self-tuning",
+      "requirement": "使用実績から設定を育てる（週次の集計と棚卸し）",
+      "scope": "rig",
+      "source": "02a §3-E"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_persona_briefs.py",
+          "proves": "人格・規範の合成内容"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_recipes.py",
+          "proves": "recipe 解決と facet 配置順"
+        },
+        {
+          "argv": [
+            "python3",
+            "scripts/orchestrate.py",
+            "selftest"
+          ],
+          "kind": "command",
+          "proves": "同じ入力から同じ合成結果になること"
+        }
+      ],
+      "id": "discipline-transport",
+      "requirement": "委譲時に規律を逐語で運ぶ（要約で薄めない）",
+      "scope": "rig",
+      "source": "02b §1-2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_cockpit.py",
+          "proves": "未計測を空欄にせず明示すること"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_queueing.py",
+          "proves": "並列 dispatch の状態遷移"
+        }
+      ],
+      "id": "parallel-visibility",
+      "requirement": "並行運用の可視化と作業分離",
+      "scope": "rig",
+      "source": "02b §1-3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "file",
+          "path": "commands/goal.md",
+          "proves": "goal 駆動の入口"
+        },
+        {
+          "kind": "file",
+          "path": "commands/loop.md",
+          "proves": "停止条件か回数が必須の見張りループ"
+        },
+        {
+          "kind": "file",
+          "path": "action.yml",
+          "proves": "CI から起動する経路"
+        },
+        {
+          "kind": "file",
+          "path": "docs/templates/rig-scheduled.yml",
+          "proves": "起動側（定期実行）の雛形を同梱した"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_templates.py",
+          "proves": "雛形が action.yml の入力と整合していること"
+        }
+      ],
+      "id": "loop-classes",
+      "note": "proactive の起動は rig の外（CI・定期実行）に置く。rig は雛形を配って、起動された後のゲートを担う。",
+      "requirement": "ループ4分類（turn / goal / time / proactive）",
+      "scope": "rig",
+      "source": "02b §2-2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "file",
+          "path": "skills/engine/patterns/autonomous-loop.md",
+          "proves": "自走の予約規約と停止条件"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_runstate.py",
+          "proves": "中断・再開を跨ぐ状態の保持"
+        }
+      ],
+      "id": "autonomy-ladder",
+      "requirement": "自律度を段階で上げる（報告のみ → 修正案 → 無人）",
+      "scope": "rig",
+      "source": "02b §2-2"
+    },
+    {
+      "evidence": [
+        {
+          "argv": [
+            "python3",
+            "scripts/orchestrate.py",
+            "selftest"
+          ],
+          "kind": "command",
+          "proves": "read-only 強制がプロバイダ別に実装として発動していること"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_codex_integration.py",
+          "proves": "検証役へのサンドボックス引数の注入"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_host_adapters.py",
+          "proves": "ホストごとの強制の厚みの差を表として保持していること"
+        }
+      ],
+      "id": "unattended-safety",
+      "requirement": "無人ループの安全3本柱（受け入れゲート／別プロバイダ／読み取り専用の検証役）",
+      "scope": "rig",
+      "source": "02b §2-2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "file",
+          "path": "skills/engine/facets/instructions/goal-loop.md",
+          "proves": "受け入れ基準への変換と停止規約"
+        },
+        {
+          "kind": "planned",
+          "spec": "--plan の出力に8要素の充足チェック（どの要素が空欄のまま RUN に入ろうとしているか）を足し、Done が観点検証のみの場合に警告する。"
+        }
+      ],
+      "id": "intent-elements",
+      "requirement": "要件8要素（特に Done ＝停止条件）を決めてから回す",
+      "scope": "rig",
+      "source": "02b §2-3"
+    },
+    {
+      "evidence": [
+        {
+          "argv": [
+            "python3",
+            "scripts/orchestrate.py",
+            "selftest"
+          ],
+          "kind": "command",
+          "proves": "worktree のライフサイクルと隔離"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_queueing.py",
+          "proves": "並列 item がそれぞれ隔離されること"
+        }
+      ],
+      "id": "collision-avoidance",
+      "requirement": "分業の衝突を避ける（特に同一ファイルの同時編集）",
+      "scope": "rig",
+      "source": "02b §3-1"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_drill_coverage.py",
+          "proves": "出題カタログと観点の対応"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_drill_detection_corpus.py",
+          "proves": "出題の妥当性と採点の整合"
+        },
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "sensor-bench"
+          ],
+          "kind": "command",
+          "proves": "誤検知を含む決定論的な実測"
+        }
+      ],
+      "id": "fair-measurement",
+      "requirement": "フェアな計測（検出率だけでなく誤検知率まで測る）",
+      "scope": "rig",
+      "source": "02b §3-4"
+    },
+    {
+      "evidence": [
+        {
+          "argv": [
+            "python3",
+            "scripts/orchestrate.py",
+            "selftest"
+          ],
+          "kind": "command",
+          "proves": "生成役と検証役が別プロセスで走ること"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_codex_integration.py",
+          "proves": "検証役の書き込み不能化"
+        },
+        {
+          "argv_hint": "rig-wb bench --provider claude --allow-paid-provider --runs 3",
+          "kind": "paid",
+          "pass_condition": "schema v2：10タスク以上・各3組以上の有効ペア・rig の静かな欠陥率が素より50%以上低い・rig の安全停止率20%以下・平均呼び出し2.5倍以下・インフラ失敗10%以下。素の欠陥が0件なら inconclusive。",
+          "proves": "同じモデルでも rig 経由の出力が良いという主張（未達成）"
+        }
+      ],
+      "id": "generation-verification-split",
+      "requirement": "生成と検証を分ける（作った本人に合格を出させない）",
+      "scope": "rig",
+      "source": "02b §5-1"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_drill_detection_corpus.py",
+          "proves": "レビュー役の検出率を測る出題側の健全性"
+        },
+        {
+          "kind": "planned",
+          "spec": "scripts/sast_adapter.py と同じ形で mutation_adapter.py を足す。mutmut / Stryker のレポートを取り込み、ミューテーションスコアの劣化を warning-grade の gate 基準として扱う。スコア100%は目標にせず推移だけ見る。"
+        }
+      ],
+      "id": "detection-power",
+      "note": "レビュー役は測れる。テストスイート側（ミューテーション）は未対応。",
+      "requirement": "検知力を測る（レビュー役／テストスイート）",
+      "scope": "rig",
+      "source": "02b §5-2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_githooks.py",
+          "proves": "pre-commit / pre-push の配線"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_prompt_regression_gate.py",
+          "proves": "プロンプト変更に評価ケースを要求する門"
+        },
+        {
+          "kind": "file",
+          "path": ".github/workflows/validate.yml",
+          "proves": "CI 側の2ジョブ構成"
+        }
+      ],
+      "id": "ci-tiers",
+      "requirement": "安い検査で早く落とす（コミット前・反映前・push 前・CI）",
+      "scope": "rig",
+      "source": "02b §5-3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "pytest",
+          "path": "tests/test_quarantine.py",
+          "proves": "外部テキストを指示として読ませない構造"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_sast_adapter.py",
+          "proves": "全体走査の結果をゲートへ取り込む経路"
+        },
+        {
+          "kind": "file",
+          "path": "skills/engine/facets/knowledge/wiki/attack-catalog.md",
+          "proves": "観点カタログの実体"
+        }
+      ],
+      "id": "attack-surface-precompression",
+      "requirement": "検査面を事前に絞る（観点カタログと外部入力の検疫）",
+      "scope": "rig",
+      "source": "02b §5-4"
+    }
+  ]
+}

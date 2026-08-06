@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Adds `rig-wb coverage`: a map from each documented requirement to the evidence
+  behind it (`evals/coverage-map.json`), with status derived rather than stored —
+  `measured` only when deterministic evidence runs here, `partial` when something
+  is still planned or needs a paid run, `declared` when the mechanism exists but
+  its effect is not measured. The default mode verifies the map against the tree
+  (every cited path and allowlisted command must exist) and now runs in CI, so a
+  claim cannot outlive the evidence it names. `--run` executes the deterministic
+  evidence; all of it passes today.
+- Adds `rig-wb hostcheck` for the two prerequisites rig cannot enforce itself:
+  whether the session is actually bounded by a container, whether the host
+  permission layer denies anything, and whether run state is kept out of version
+  control. Detection only — it reports and exits 3, and rig still runs.
+- Ships two operator templates and wires them: `docs/templates/devcontainer.json`
+  (proposed by `/rig:init` when hostcheck reports no isolation) and
+  `docs/templates/rig-scheduled.yml` for the trigger side of a proactive loop,
+  which rig's in-session scheduler cannot provide. The scheduled template defaults
+  to `auto_pr: false` and serialises overlapping runs.
+
 ## [1.29.0] - 2026-08-05
 
 - Moved the movie and scenario workflows into the opt-in `video-storytelling`

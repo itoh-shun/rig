@@ -1,0 +1,58 @@
+# Scheduled rig run — the trigger side of a proactive loop.
+#
+# rig's own scheduler (`ScheduleWakeup`, used by patterns/autonomous-loop) lives inside
+# a session: close the session and it stops. Something outside has to decide *when* work
+# starts. This template is that outside piece; rig owns everything after the start.
+#
+# The safety properties do not change because a cron started the run: the acceptance gate
+# still decides, and `auto_pr` only opens a PR when the gate resolved DONE. A run that
+# escalates or fails the gate fails the job and creates nothing.
+#
+# Copy to .github/workflows/rig-scheduled.yml and edit `task`, the cron, and the model.
+
+name: rig scheduled
+
+on:
+  schedule:
+    # 09:00 JST on weekdays (cron is UTC). Pick a cadence that matches how fast the
+    # thing you are watching actually changes — a nightly job that checks a queue
+    # emptied hourly is mostly wasted runs.
+    - cron: '0 0 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task to run (overrides the scheduled default)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # A scheduled run that overlaps its predecessor competes for the same branch names.
+  group: rig-scheduled
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run rig
+        uses: itoh-shun/rig@master
+        with:
+          task: ${{ inputs.task || 'Fix the flaky tests reported by the last CI run' }}
+          recipe: recipes/bugfix.md
+          provider: claude
+          verifier_provider: codex
+          max_steps: '12'
+          # auto_pr opens a PR only when the acceptance gate resolved DONE.
+          # Leave it false first, read a few run logs, then turn it on.
+          auto_pr: 'false'
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

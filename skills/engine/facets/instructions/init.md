@@ -26,6 +26,16 @@
 
 `/rig:rig`（`patterns/isolated-worktree`）の run state は `<repo>/.rig/runs/` に書かれる。ローカル実行ログであり共有リポジトリにコミットする性質のものではないため、`.gitignore` に `.rig/` が無ければ**追加を提案**する（他の gitignore 提案と同様、勝手に書き換えず確認を取る）。既に `.rig/` または親パターン（`.rig` 等）でカバーされていれば提案しない。
 
+### ②-c コンテナ雛形の提案（rig の外側の前提）
+
+`rig-wb hostcheck` が `process_isolation` を MISS と報告した場合に限り、`docs/templates/devcontainer.json` を
+`<repo>/.devcontainer/devcontainer.json` として置くことを**提案**する（他の生成物と同じく確認必須・既存は上書きしない）。
+
+隔離 worktree はファイル作業を分けるだけで、コード実行の境界ではない。境界はコンテナ側に置き、rig はその中で動かす。
+雛形の `remoteEnv.DEVCONTAINER` は hostcheck が検出するマーカーなので、値を変えない。ホスト側の
+`permissions.deny` は rig が書き換える対象ではない——欠けていれば hostcheck の出力をそのまま提示して、
+利用者に判断を委ねる。
+
 ### ③ CLAUDE.md "Compact Instructions" 節（圧縮で rig 状態を失わない第2経路）
 
 `<repo>/CLAUDE.md` に "Compact Instructions" 節が無ければ、以下を**追記**する（既にあれば重複追記しない）。これは PreCompact フック（§6 run-continuity ④）と**同じ保全文の belt-and-suspenders**で、毎回の圧縮に自動適用される。

@@ -45,6 +45,9 @@ jobs:
       - name: Run rig structural validator selftest (fixture regression)
         run: python3 scripts/validate.py selftest
 
+      - name: Verify the coverage map against the repository
+        run: python3 -m rig_workbench.cli coverage
+
       - name: Run computational orchestrator selftest (determinism)
         run: python3 scripts/orchestrate.py selftest
 

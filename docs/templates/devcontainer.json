@@ -1,0 +1,29 @@
+{
+  "name": "rig",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "remoteEnv": {
+    "DEVCONTAINER": "true"
+  },
+  "postCreateCommand": "pip install --user -e . || true",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ]
+    }
+  },
+  "comment": [
+    "Starting point for running rig inside a container.",
+    "rig's isolated worktree separates file work; it is not a boundary against code execution.",
+    "That boundary is the container, and rig runs inside it.",
+    "`rig-wb hostcheck` reports whether the current session is actually bounded by one —",
+    "DEVCONTAINER=true above is what makes the check see this container.",
+    "Copy to .devcontainer/devcontainer.json and adjust the image to match your stack."
+  ]
+}

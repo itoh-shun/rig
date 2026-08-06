@@ -397,6 +397,13 @@ Sub-commands:
                                         (optional tools: rig runs without them.
                                         exit 0=ok / 3=gh missing / 5=gh-stack missing;
                                         auth is reported, never required)
+  coverage [--run] [--markdown] [--json]
+                                        documented requirement -> evidence map.
+                                        default verifies the map against the repo (free);
+                                        --run executes the deterministic evidence
+  hostcheck [--json] [--strict]         host-side prerequisites rig cannot enforce
+                                        (container isolation, permissions.deny, ignored state).
+                                        exit 0=ok / 3=missing / 1=missing with --strict
   githooks install|uninstall|status [--force]
                                         native git pre-commit/pre-push hooks
                                         (computational sensors only; issue #298)
@@ -460,6 +467,14 @@ def main() -> None:
         from .packs import cli as pack_cli
 
         sys.exit(pack_cli.cmd_pack(rest))
+    if sub == "coverage":
+        from . import coverage as coverage_mod
+
+        sys.exit(coverage_mod.cmd_coverage(rest))
+    if sub == "hostcheck":
+        from . import hostcheck as hostcheck_mod
+
+        sys.exit(hostcheck_mod.cmd_hostcheck(rest))
     if sub == "sensor-bench":
         from . import sensor_bench as sensor_bench_mod
 
