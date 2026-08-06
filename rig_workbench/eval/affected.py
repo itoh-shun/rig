@@ -12,14 +12,14 @@ from .cases import EvalCaseError, canonical_json, validate_case
 
 REGISTRY_VERSION = 1
 _SURFACE_PREFIXES = (
-    ("skills/rig/facets/instructions/", "instruction"),
-    ("skills/rig/facets/personas/", "persona"),
-    ("skills/rig/facets/policies/", "policy"),
-    ("skills/rig/facets/output-contracts/", "contract"),
-    ("skills/rig/facets/knowledge/", "wiki"),
-    ("skills/rig/patterns/", "pattern"),
-    ("skills/rig/recipes/", "recipe"),
-    ("skills/rig/agents/", "agent"),
+    ("skills/engine/facets/instructions/", "instruction"),
+    ("skills/engine/facets/personas/", "persona"),
+    ("skills/engine/facets/policies/", "policy"),
+    ("skills/engine/facets/output-contracts/", "contract"),
+    ("skills/engine/facets/knowledge/", "wiki"),
+    ("skills/engine/patterns/", "pattern"),
+    ("skills/engine/recipes/", "recipe"),
+    ("skills/engine/agents/", "agent"),
     ("agents/", "agent"),
     ("commands/", "command"),
 )
@@ -93,7 +93,7 @@ def _surface(path: str) -> dict | None:
             name = str(pathlib.PurePosixPath(relative).with_suffix(""))
             resolved_kind = kind if suffix in _KNOWN_SUFFIXES and name else "unknown"
             return {"path": path, "kind": resolved_kind, "id": f"{resolved_kind}:{name}"}
-    if path.startswith("skills/rig/facets/"):
+    if path.startswith("skills/engine/facets/"):
         return {"path": path, "kind": "unknown", "id": f"unknown:{path}"}
     return None
 

@@ -128,9 +128,10 @@ def main() -> None:
     (args.out / "index.json").write_text(
         json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n{len(index)} articles -> {args.out}")
-    if index:
-        chars = [r["chars"] for r in index]
-        print(f"chars: min {min(chars)} / median {sorted(chars)[len(chars)//2]} / max {max(chars)}")
+    if not index:
+        raise SystemExit("ERROR: fetched zero usable articles")
+    chars = [r["chars"] for r in index]
+    print(f"chars: min {min(chars)} / median {sorted(chars)[len(chars)//2]} / max {max(chars)}")
 
 
 if __name__ == "__main__":

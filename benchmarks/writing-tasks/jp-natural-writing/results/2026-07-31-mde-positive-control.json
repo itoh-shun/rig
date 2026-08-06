@@ -1,0 +1,4424 @@
+{
+  "schema_version": 2,
+  "question": "minimum detectable effect of the 31-pair, two-order discriminator",
+  "alpha": 0.05,
+  "primary_unit": "topic/generated article (8 clusters)",
+  "secondary_units": [
+    "pair (31)",
+    "trial/order (62; anti-conservative)"
+  ],
+  "manifest": {
+    "schema_version": 1,
+    "design": "whole-article held-out-human mixture",
+    "source_run": "results/2026-07-31-provenance-arms.json",
+    "source_run_sha1": "7e54e86de5e262de15c0f4480eb4d3da5b120c44",
+    "source_arm": "writer_agent",
+    "source_ledger": {
+      "pin:human": {
+        "entries": 85,
+        "open_items": 4,
+        "author_filter": "human",
+        "sha1": "a21a3f6c1747"
+      },
+      "pin:agent": {
+        "entries": 93,
+        "open_items": 4,
+        "author_filter": "agent",
+        "sha1": "bb8fcf935f32"
+      }
+    },
+    "seed": "mde-positive-control-v1",
+    "levels": [
+      0.0,
+      0.125,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "topics": [
+      "Python",
+      "機械学習",
+      "クラウドコンピューティング",
+      "Web開発",
+      "データベース設計",
+      "リモートワーク",
+      "セキュリティ対策",
+      "チーム開発"
+    ],
+    "topic_order": [
+      "Python",
+      "機械学習",
+      "データベース設計",
+      "セキュリティ対策",
+      "チーム開発",
+      "Web開発",
+      "リモートワーク",
+      "クラウドコンピューティング"
+    ],
+    "opponents_per_topic": 4,
+    "expected_pairs_per_arm": 31,
+    "expected_trials_per_arm": 62,
+    "arms": [
+      {
+        "arm": "writer_agent",
+        "target_fraction": 0.0,
+        "actual_fraction": 0.0,
+        "replaced_articles": 0,
+        "replaced_topics": [],
+        "kind": "baseline"
+      },
+      {
+        "arm": "writer_agent_null",
+        "target_fraction": 0.0,
+        "actual_fraction": 0.0,
+        "replaced_articles": 0,
+        "replaced_topics": [],
+        "kind": "byte-identical-null"
+      },
+      {
+        "arm": "pc_human_0125",
+        "target_fraction": 0.125,
+        "actual_fraction": 0.125,
+        "replaced_articles": 1,
+        "replaced_topics": [
+          "Python"
+        ],
+        "kind": "held-out-human-mixture"
+      },
+      {
+        "arm": "pc_human_0250",
+        "target_fraction": 0.25,
+        "actual_fraction": 0.25,
+        "replaced_articles": 2,
+        "replaced_topics": [
+          "Python",
+          "機械学習"
+        ],
+        "kind": "held-out-human-mixture"
+      },
+      {
+        "arm": "pc_human_0500",
+        "target_fraction": 0.5,
+        "actual_fraction": 0.5,
+        "replaced_articles": 4,
+        "replaced_topics": [
+          "Python",
+          "機械学習",
+          "データベース設計",
+          "セキュリティ対策"
+        ],
+        "kind": "held-out-human-mixture"
+      },
+      {
+        "arm": "pc_human_0750",
+        "target_fraction": 0.75,
+        "actual_fraction": 0.75,
+        "replaced_articles": 6,
+        "replaced_topics": [
+          "Python",
+          "機械学習",
+          "データベース設計",
+          "セキュリティ対策",
+          "チーム開発",
+          "Web開発"
+        ],
+        "kind": "held-out-human-mixture"
+      },
+      {
+        "arm": "pc_human_1000",
+        "target_fraction": 1.0,
+        "actual_fraction": 1.0,
+        "replaced_articles": 8,
+        "replaced_topics": [
+          "Python",
+          "機械学習",
+          "データベース設計",
+          "セキュリティ対策",
+          "チーム開発",
+          "Web開発",
+          "リモートワーク",
+          "クラウドコンピューティング"
+        ],
+        "kind": "held-out-human-mixture"
+      }
+    ],
+    "preflight": {
+      "null_byte_identical": true,
+      "endpoint_all_human_donors": true,
+      "donors_disjoint_from_opponents": true,
+      "no_copyrighted_bodies_in_manifest": true
+    },
+    "donor_article_chars": {
+      "Python": 1219,
+      "機械学習": 1321,
+      "クラウドコンピューティング": 6158,
+      "Web開発": 7879,
+      "データベース設計": 7771,
+      "リモートワーク": 1624,
+      "セキュリティ対策": 5376,
+      "チーム開発": 4143
+    },
+    "corpus_identifiers_omitted": true
+  },
+  "discrimination": {
+    "ceiling": 2500,
+    "opponents_per_topic": 4,
+    "judge_model": "claude-opus-5",
+    "summary": {
+      "writer_agent": {
+        "correct": 61,
+        "trials": 62,
+        "rate": 0.984
+      },
+      "writer_agent_null": {
+        "correct": 62,
+        "trials": 62,
+        "rate": 1.0
+      },
+      "pc_human_0125": {
+        "correct": 61,
+        "trials": 62,
+        "rate": 0.984
+      },
+      "pc_human_0250": {
+        "correct": 55,
+        "trials": 62,
+        "rate": 0.887
+      },
+      "pc_human_0500": {
+        "correct": 49,
+        "trials": 62,
+        "rate": 0.79
+      },
+      "pc_human_0750": {
+        "correct": 46,
+        "trials": 62,
+        "rate": 0.742
+      },
+      "pc_human_1000": {
+        "correct": 43,
+        "trials": 62,
+        "rate": 0.694
+      }
+    },
+    "paired": {
+      "writer_agent_null": {
+        "vs": "writer_agent",
+        "pairs": 31,
+        "gained": 0,
+        "lost": 1,
+        "unchanged": 30
+      },
+      "pc_human_0125": {
+        "vs": "writer_agent",
+        "pairs": 31,
+        "gained": 0,
+        "lost": 0,
+        "unchanged": 31
+      },
+      "pc_human_0250": {
+        "vs": "writer_agent",
+        "pairs": 31,
+        "gained": 3,
+        "lost": 0,
+        "unchanged": 28
+      },
+      "pc_human_0500": {
+        "vs": "writer_agent",
+        "pairs": 31,
+        "gained": 8,
+        "lost": 0,
+        "unchanged": 23
+      },
+      "pc_human_0750": {
+        "vs": "writer_agent",
+        "pairs": 31,
+        "gained": 10,
+        "lost": 0,
+        "unchanged": 21
+      },
+      "pc_human_1000": {
+        "vs": "writer_agent",
+        "pairs": 31,
+        "gained": 11,
+        "lost": 0,
+        "unchanged": 20
+      }
+    },
+    "pairs": [
+      {
+        "arm": "writer_agent",
+        "topic": "Python",
+        "pair_id": "Python::pair-01",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "Python",
+        "pair_id": "Python::pair-02",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "Python",
+        "pair_id": "Python::pair-03",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "Python",
+        "pair_id": "Python::pair-04",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-05",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-06",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-07",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-08",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-09",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-10",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-11",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-12",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-13",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-14",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-15",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-16",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-17",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-18",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-19",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-20",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-21",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-22",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-23",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-24",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-25",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-26",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-27",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-28",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-29",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-30",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-31",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Python",
+        "pair_id": "Python::pair-01",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Python",
+        "pair_id": "Python::pair-02",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Python",
+        "pair_id": "Python::pair-03",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Python",
+        "pair_id": "Python::pair-04",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-05",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-06",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-07",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-08",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-09",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-10",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-11",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-12",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-13",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-14",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-15",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-16",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-17",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-18",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-19",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-20",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-21",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-22",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-23",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-24",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-25",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-26",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-27",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-28",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-29",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-30",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "writer_agent_null",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-31",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Python",
+        "pair_id": "Python::pair-01",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Python",
+        "pair_id": "Python::pair-02",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Python",
+        "pair_id": "Python::pair-03",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Python",
+        "pair_id": "Python::pair-04",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-05",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-06",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-07",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-08",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-09",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-10",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-11",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-12",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-13",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-14",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-15",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-16",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-17",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-18",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-19",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-20",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-21",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-22",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-23",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-24",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-25",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-26",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-27",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-28",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-29",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-30",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0125",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-31",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Python",
+        "pair_id": "Python::pair-01",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Python",
+        "pair_id": "Python::pair-02",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Python",
+        "pair_id": "Python::pair-03",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Python",
+        "pair_id": "Python::pair-04",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-05",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-06",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-07",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-08",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-09",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-10",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-11",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-12",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-13",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-14",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-15",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-16",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-17",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-18",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-19",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-20",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-21",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-22",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-23",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-24",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-25",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-26",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-27",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-28",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-29",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-30",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0250",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-31",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Python",
+        "pair_id": "Python::pair-01",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Python",
+        "pair_id": "Python::pair-02",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Python",
+        "pair_id": "Python::pair-03",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Python",
+        "pair_id": "Python::pair-04",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-05",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-06",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-07",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-08",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-09",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-10",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-11",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-12",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-13",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-14",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-15",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-16",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-17",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-18",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-19",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-20",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-21",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-22",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-23",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-24",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-25",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-26",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-27",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-28",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-29",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-30",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0500",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-31",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Python",
+        "pair_id": "Python::pair-01",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Python",
+        "pair_id": "Python::pair-02",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Python",
+        "pair_id": "Python::pair-03",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Python",
+        "pair_id": "Python::pair-04",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-05",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-06",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-07",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-08",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-09",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-10",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-11",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-12",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-13",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-14",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-15",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-16",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-17",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-18",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-19",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-20",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-21",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-22",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-23",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-24",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-25",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-26",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-27",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-28",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-29",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-30",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_0750",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-31",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Python",
+        "pair_id": "Python::pair-01",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Python",
+        "pair_id": "Python::pair-02",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Python",
+        "pair_id": "Python::pair-03",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Python",
+        "pair_id": "Python::pair-04",
+        "abs_score": 78.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-05",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-06",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-07",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "機械学習",
+        "pair_id": "機械学習::pair-08",
+        "abs_score": 73.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-09",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-10",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-11",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "クラウドコンピューティング",
+        "pair_id": "クラウドコンピューティング::pair-12",
+        "abs_score": 78.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-13",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-14",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-15",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "Web開発",
+        "pair_id": "Web開発::pair-16",
+        "abs_score": 74.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-17",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-18",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "データベース設計",
+        "pair_id": "データベース設計::pair-19",
+        "abs_score": 72.67,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-20",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-21",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-22",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "リモートワーク",
+        "pair_id": "リモートワーク::pair-23",
+        "abs_score": 71.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-24",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-25",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-26",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "セキュリティ対策",
+        "pair_id": "セキュリティ対策::pair-27",
+        "abs_score": 79.0,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-28",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-29",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-30",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "A",
+            "correct": true
+          },
+          {
+            "human_pos": "B",
+            "pick": "B",
+            "correct": true
+          }
+        ]
+      },
+      {
+        "arm": "pc_human_1000",
+        "topic": "チーム開発",
+        "pair_id": "チーム開発::pair-31",
+        "abs_score": 75.33,
+        "trials": [
+          {
+            "human_pos": "A",
+            "pick": "B",
+            "correct": false
+          },
+          {
+            "human_pos": "B",
+            "pick": "A",
+            "correct": false
+          }
+        ]
+      }
+    ]
+  },
+  "response_curve_monotonic_nonincreasing": true,
+  "null_control_difference_points": 1.6,
+  "human_human_endpoint": {
+    "discrimination_rate": 0.694,
+    "distance_from_exchangeable_50_points": 19.4,
+    "exchangeable_50_target_supported": false
+  },
+  "comparisons": [
+    {
+      "arm": "writer_agent_null",
+      "target_fraction": 0.0,
+      "actual_fraction": 0.0,
+      "replaced_articles": 0,
+      "replaced_topics": [],
+      "kind": "byte-identical-null",
+      "discrimination_rate": 1.0,
+      "delta_points_vs_baseline": 1.6,
+      "gained_trials": 0,
+      "lost_trials": 1,
+      "trial_mcnemar_exact_p": 1.0,
+      "gained_pairs": 0,
+      "lost_pairs": 1,
+      "pair_sign_exact_p": 1.0,
+      "topic_differences_correct": {
+        "Python": 0,
+        "機械学習": 0,
+        "クラウドコンピューティング": 0,
+        "Web開発": 0,
+        "データベース設計": 0,
+        "リモートワーク": 0,
+        "セキュリティ対策": 1,
+        "チーム開発": 0
+      },
+      "topic_cluster_signflip_p": 1.0
+    },
+    {
+      "arm": "pc_human_0125",
+      "target_fraction": 0.125,
+      "actual_fraction": 0.125,
+      "replaced_articles": 1,
+      "replaced_topics": [
+        "Python"
+      ],
+      "kind": "held-out-human-mixture",
+      "discrimination_rate": 0.984,
+      "delta_points_vs_baseline": 0.0,
+      "gained_trials": 0,
+      "lost_trials": 0,
+      "trial_mcnemar_exact_p": 1.0,
+      "gained_pairs": 0,
+      "lost_pairs": 0,
+      "pair_sign_exact_p": 1.0,
+      "topic_differences_correct": {
+        "Python": 0,
+        "機械学習": 0,
+        "クラウドコンピューティング": 0,
+        "Web開発": 0,
+        "データベース設計": 0,
+        "リモートワーク": 0,
+        "セキュリティ対策": 0,
+        "チーム開発": 0
+      },
+      "topic_cluster_signflip_p": 1.0
+    },
+    {
+      "arm": "pc_human_0250",
+      "target_fraction": 0.25,
+      "actual_fraction": 0.25,
+      "replaced_articles": 2,
+      "replaced_topics": [
+        "Python",
+        "機械学習"
+      ],
+      "kind": "held-out-human-mixture",
+      "discrimination_rate": 0.887,
+      "delta_points_vs_baseline": -9.7,
+      "gained_trials": 7,
+      "lost_trials": 1,
+      "trial_mcnemar_exact_p": 0.070312,
+      "gained_pairs": 3,
+      "lost_pairs": 0,
+      "pair_sign_exact_p": 0.25,
+      "topic_differences_correct": {
+        "Python": 0,
+        "機械学習": -6,
+        "クラウドコンピューティング": 0,
+        "Web開発": 0,
+        "データベース設計": 0,
+        "リモートワーク": 0,
+        "セキュリティ対策": 0,
+        "チーム開発": 0
+      },
+      "topic_cluster_signflip_p": 1.0
+    },
+    {
+      "arm": "pc_human_0500",
+      "target_fraction": 0.5,
+      "actual_fraction": 0.5,
+      "replaced_articles": 4,
+      "replaced_topics": [
+        "Python",
+        "機械学習",
+        "データベース設計",
+        "セキュリティ対策"
+      ],
+      "kind": "held-out-human-mixture",
+      "discrimination_rate": 0.79,
+      "delta_points_vs_baseline": -19.4,
+      "gained_trials": 12,
+      "lost_trials": 0,
+      "trial_mcnemar_exact_p": 0.000488,
+      "gained_pairs": 8,
+      "lost_pairs": 0,
+      "pair_sign_exact_p": 0.007812,
+      "topic_differences_correct": {
+        "Python": 0,
+        "機械学習": -5,
+        "クラウドコンピューティング": 0,
+        "Web開発": 0,
+        "データベース設計": -4,
+        "リモートワーク": 0,
+        "セキュリティ対策": -3,
+        "チーム開発": 0
+      },
+      "topic_cluster_signflip_p": 0.25
+    },
+    {
+      "arm": "pc_human_0750",
+      "target_fraction": 0.75,
+      "actual_fraction": 0.75,
+      "replaced_articles": 6,
+      "replaced_topics": [
+        "Python",
+        "機械学習",
+        "データベース設計",
+        "セキュリティ対策",
+        "チーム開発",
+        "Web開発"
+      ],
+      "kind": "held-out-human-mixture",
+      "discrimination_rate": 0.742,
+      "delta_points_vs_baseline": -24.2,
+      "gained_trials": 15,
+      "lost_trials": 0,
+      "trial_mcnemar_exact_p": 6.1e-05,
+      "gained_pairs": 10,
+      "lost_pairs": 0,
+      "pair_sign_exact_p": 0.001953,
+      "topic_differences_correct": {
+        "Python": 0,
+        "機械学習": -5,
+        "クラウドコンピューティング": 0,
+        "Web開発": 0,
+        "データベース設計": -5,
+        "リモートワーク": 0,
+        "セキュリティ対策": -1,
+        "チーム開発": -4
+      },
+      "topic_cluster_signflip_p": 0.125
+    },
+    {
+      "arm": "pc_human_1000",
+      "target_fraction": 1.0,
+      "actual_fraction": 1.0,
+      "replaced_articles": 8,
+      "replaced_topics": [
+        "Python",
+        "機械学習",
+        "データベース設計",
+        "セキュリティ対策",
+        "チーム開発",
+        "Web開発",
+        "リモートワーク",
+        "クラウドコンピューティング"
+      ],
+      "kind": "held-out-human-mixture",
+      "discrimination_rate": 0.694,
+      "delta_points_vs_baseline": -29.0,
+      "gained_trials": 18,
+      "lost_trials": 0,
+      "trial_mcnemar_exact_p": 8e-06,
+      "gained_pairs": 11,
+      "lost_pairs": 0,
+      "pair_sign_exact_p": 0.000977,
+      "topic_differences_correct": {
+        "Python": 0,
+        "機械学習": -6,
+        "クラウドコンピューティング": -1,
+        "Web開発": 0,
+        "データベース設計": -5,
+        "リモートワーク": -2,
+        "セキュリティ対策": -1,
+        "チーム開発": -3
+      },
+      "topic_cluster_signflip_p": 0.03125
+    }
+  ],
+  "empirical_mde": {
+    "trial_level": {
+      "arm": "pc_human_0500",
+      "actual_fraction": 0.5,
+      "observed_difference_points": 19.4,
+      "p": 0.000488
+    },
+    "pair_level": {
+      "arm": "pc_human_0500",
+      "actual_fraction": 0.5,
+      "observed_difference_points": 19.4,
+      "p": 0.007812
+    },
+    "topic_cluster_level": {
+      "arm": "pc_human_1000",
+      "actual_fraction": 1.0,
+      "observed_difference_points": 29.0,
+      "p": 0.03125
+    }
+  },
+  "largest_undetected_effect_points": {
+    "pair_level": 9.7,
+    "topic_cluster_level": 24.2
+  },
+  "power_planning_lower_bound": {
+    "alpha": 0.05,
+    "power": 0.8,
+    "null_adverse_trial_rate": 0.016129,
+    "warning": "Normal approximation only; ignores correlation among opponents/orders sharing one generated article, so actual required article count is larger.",
+    "estimates": [
+      {
+        "effect_points": 1.6,
+        "matched_trials_lower_bound": 1472,
+        "generated_articles_lower_bound_at_4_opponents_x_2_orders": 184
+      },
+      {
+        "effect_points": 3.2,
+        "matched_trials_lower_bound": 485,
+        "generated_articles_lower_bound_at_4_opponents_x_2_orders": 61
+      },
+      {
+        "effect_points": 5.0,
+        "matched_trials_lower_bound": 251,
+        "generated_articles_lower_bound_at_4_opponents_x_2_orders": 32
+      },
+      {
+        "effect_points": 10.0,
+        "matched_trials_lower_bound": 96,
+        "generated_articles_lower_bound_at_4_opponents_x_2_orders": 12
+      },
+      {
+        "effect_points": 19.4,
+        "matched_trials_lower_bound": 40,
+        "generated_articles_lower_bound_at_4_opponents_x_2_orders": 5
+      },
+      {
+        "effect_points": 29.0,
+        "matched_trials_lower_bound": 23,
+        "generated_articles_lower_bound_at_4_opponents_x_2_orders": 3
+      }
+    ]
+  },
+  "execution": {
+    "date": "2026-07-31",
+    "branch": "claude/harness-japanese-humanity-c6k0ex",
+    "code_revision_before_changes": "01b5fd3",
+    "completed_judgments": 434,
+    "private_input_fingerprints_omitted": true
+  }
+}

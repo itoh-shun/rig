@@ -53,6 +53,20 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # gh-stack is optional for rig (rig_workbench/gh_requirement.py), but a CI
+    # runner is exactly where having it costs nothing: hosted runners ship `gh`
+    # without the extension, so install it and let stacked-PR publishing work.
+    # --force is the idempotent form ("ignore if latest already installed").
+    # The token is for fetching the extension release only — never for a check,
+    # and deliberately not exposed to the step that runs the model.
+    - name: Install gh-stack (optional; enables stacked-PR publishing)
+      id: gh
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        gh extension install github/gh-stack --force
+
     - name: Run rig task (isolated worktree + acceptance-gate)
       id: run
       shell: bash

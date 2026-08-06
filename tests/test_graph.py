@@ -207,7 +207,7 @@ def test_graph_uses_resolved_pack_winner_and_owner_topology(
     assert remaining["instruction:shared"]["path"] == (
         "pack://user/dependency/facets/instructions/shared.md"
     )
-    assert remaining["pattern:serial"]["path"] == "skills/rig/patterns/serial.md"
+    assert remaining["pattern:serial"]["path"] == "skills/engine/patterns/serial.md"
 
 
 def test_graph_invalid_collection_fails_closed(tmp_path, monkeypatch):

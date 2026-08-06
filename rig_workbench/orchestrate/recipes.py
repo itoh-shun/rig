@@ -813,7 +813,7 @@ def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
 
 def resolve_recipe(name: str) -> pathlib.Path:
     """Resolve a recipe.
-    Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/rig/recipes/<name>.md (built-in).
+    Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/engine/recipes/<name>.md (built-in).
     An overlay with the same name as a built-in wins, so project-specific recipes can override."""
     p = pathlib.Path(name)
     if p.exists():

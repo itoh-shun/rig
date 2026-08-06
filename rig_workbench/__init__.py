@@ -3,7 +3,7 @@
 The Python package that hosts the orchestrator, workbench, dashboard, and
 validate CLIs. Same code powers:
 
-- Claude Code plugin (via `commands/*.md` + `skills/rig/SKILL.md`).
+- Claude Code plugin (via `commands/*.md` + `skills/engine/SKILL.md`).
 - Standalone `rig-wb` CLI (`pip install rig-workbench`).
 - Future codex / cursor / copilot skill wrappers (thin delegation to `rig-wb`).
 

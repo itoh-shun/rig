@@ -45,10 +45,10 @@ def test_affected_direct_indirect_wiki_unknown_and_nonprompt_noop(tmp_path):
     from rig_workbench.eval.affected import analyze_affected
 
     repo, base = _repo(tmp_path)
-    recipe = repo / "skills" / "rig" / "recipes" / "auth.md"
-    instruction = repo / "skills" / "rig" / "facets" / "instructions" / "login.md"
-    persona = repo / "skills" / "rig" / "facets" / "personas" / "reviewer.md"
-    wiki = repo / "skills" / "rig" / "facets" / "knowledge" / "wiki" / "auth.md"
+    recipe = repo / "skills" / "engine" / "recipes" / "auth.md"
+    instruction = repo / "skills" / "engine" / "facets" / "instructions" / "login.md"
+    persona = repo / "skills" / "engine" / "facets" / "personas" / "reviewer.md"
+    wiki = repo / "skills" / "engine" / "facets" / "knowledge" / "wiki" / "auth.md"
     for path in (recipe, instruction, persona, wiki):
         path.parent.mkdir(parents=True, exist_ok=True)
     instruction.write_text("---\nname: login\n---\n", encoding="utf-8")
@@ -71,7 +71,7 @@ def test_affected_direct_indirect_wiki_unknown_and_nonprompt_noop(tmp_path):
     assert len(report["resolved_head"]) == 40
 
     _git(repo, "checkout", "--", wiki.relative_to(repo).as_posix())
-    unknown = repo / "skills" / "rig" / "facets" / "new-surface" / "x.md"
+    unknown = repo / "skills" / "engine" / "facets" / "new-surface" / "x.md"
     unknown.parent.mkdir(parents=True)
     unknown.write_text("unknown\n", encoding="utf-8")
     uncovered = analyze_affected(repo, base=base, require_cases=True)
@@ -90,9 +90,9 @@ def test_pattern_and_output_contract_reverse_map_to_recipe_case(tmp_path):
     from rig_workbench.eval.affected import analyze_affected
 
     repo, _base = _repo(tmp_path)
-    pattern = repo / "skills" / "rig" / "patterns" / "guard.md"
-    contract = repo / "skills" / "rig" / "facets" / "output-contracts" / "verdict.md"
-    recipe = repo / "skills" / "rig" / "recipes" / "guarded.md"
+    pattern = repo / "skills" / "engine" / "patterns" / "guard.md"
+    contract = repo / "skills" / "engine" / "facets" / "output-contracts" / "verdict.md"
+    recipe = repo / "skills" / "engine" / "recipes" / "guarded.md"
     for path in (pattern, contract, recipe):
         path.parent.mkdir(parents=True, exist_ok=True)
     pattern.write_text("---\nname: guard\n---\n", encoding="utf-8")
@@ -118,7 +118,7 @@ def test_affected_is_deterministic_and_reports_absent_evidence(tmp_path):
     assert json.loads(registry_path.read_text(encoding="utf-8")) == prompt_surface_registry()
 
     repo, base = _repo(tmp_path)
-    recipe = repo / "skills" / "rig" / "recipes" / "sample.md"
+    recipe = repo / "skills" / "engine" / "recipes" / "sample.md"
     recipe.parent.mkdir(parents=True)
     recipe.write_text("---\nname: sample\nsteps: []\n---\n", encoding="utf-8")
     _case(repo, "recipe:sample")
@@ -144,7 +144,7 @@ def test_affected_draft_only_is_uncovered_and_mixed_surfaces_do_not_cross_cover(
     draft_path = repo / ".rig" / "evals" / "drafts" / draft["id"] / "case.json"
     draft_path.parent.mkdir(parents=True)
     draft_path.write_text(canonical_json(draft), encoding="utf-8")
-    recipe = repo / "skills" / "rig" / "recipes" / "covered.md"
+    recipe = repo / "skills" / "engine" / "recipes" / "covered.md"
     recipe.parent.mkdir(parents=True)
     recipe.write_text("---\nname: covered\nsteps: []\n---\n", encoding="utf-8")
     report = analyze_affected(repo, base=base, require_cases=True)
@@ -174,7 +174,7 @@ def test_eval_gate_rejects_absent_and_mock_then_accepts_signed_real_provider(
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "middle base")
     base = _git(repo, "rev-parse", "HEAD")
-    recipe = repo / "skills" / "rig" / "recipes" / "sample.md"
+    recipe = repo / "skills" / "engine" / "recipes" / "sample.md"
     recipe.parent.mkdir(parents=True)
     recipe.write_text("---\nname: sample\nsteps: []\n---\n", encoding="utf-8")
     case = _case(repo, "recipe:sample")
@@ -257,7 +257,7 @@ def test_affected_run_is_nonmock_and_atomic(tmp_path, monkeypatch):
 
     monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "affected-run-key-at-least-thirty-two-bytes")
     repo, base = _repo(tmp_path)
-    recipe = repo / "skills" / "rig" / "recipes" / "atomic.md"
+    recipe = repo / "skills" / "engine" / "recipes" / "atomic.md"
     recipe.parent.mkdir(parents=True)
     recipe.write_text("---\nname: atomic\nsteps: []\n---\n", encoding="utf-8")
     case = _case(repo, "recipe:atomic")

@@ -10,7 +10,8 @@ from collections import Counter
 from .config import (ACTIVE_STATUSES, CHECK_ICON, GATE_PRESETS, NEXT_ACTIONS,
                      STEP_ICON, TASK_TYPES)
 from .state import (_diff_lines, _load_audit, budget_status, build_acceptance,
-                    die, gate_status, load_json, load_project_gates, load_task,
+                    die, drift_lines, effective_base, gate_status, load_json,
+                    load_project_gates, load_task,
                     maybe_repo_root, repo_root, resolve_task_id, runs_dir)
 
 
@@ -54,6 +55,11 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"status:      {task['status']}" + (" (forced)" if task.get("forced") else ""))
     print(f"mode:        {'isolated worktree' if task.get('worktree_path') else 'not isolated'}")
     print(f"base:        {task['base_branch']} @ {task['base_commit'][:12]}")
+    # The recorded value above stays as recorded; drift (#312) is reported next to it,
+    # and only when there is any.
+    eff_base, drifted_from = effective_base(root, task)
+    for line in drift_lines(task, drifted_from, eff_base, indent="             "):
+        print(line)
     if task.get("worktree_path"):
         print(f"worktree:    {task['worktree_path']} (branch: {task['branch']})")
     if task.get("budget_minutes"):

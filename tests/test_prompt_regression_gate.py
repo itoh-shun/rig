@@ -47,7 +47,7 @@ def test_prompt_criterion_is_diff_conditional_machine_owned_and_manual_pass_is_r
     assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is False
     assert prompt_regression.CRITERION not in [item["name"] for item in acc["checks"]]
 
-    prompt = repo / "skills" / "rig" / "recipes" / "changed.md"
+    prompt = repo / "skills" / "engine" / "recipes" / "changed.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text("---\nname: changed\nsteps: []\n---\n", encoding="utf-8")
     assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is True

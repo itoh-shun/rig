@@ -27,10 +27,11 @@ Runs on recorded samples; no new generation.
 """
 
 import argparse
+import hashlib
 import json
 import statistics
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -56,6 +57,18 @@ DISCRIM_PROMPT = """以下の2つの日本語技術記事のうち、一方は�
 
 JSON オブジェクトのみを出力してください。他の文字列は一切含めないこと:
 {{"human": "A" または "B", "reasoning": "<日本語で一文>"}}"""
+
+
+def sample_text(sample: dict) -> str:
+    """Return the exact candidate text.
+
+    Normal benchmark records keep title and description separately. Calibration controls
+    sometimes need to substitute a complete document byte-for-byte (for example a held-out
+    human article); ``full_text`` is an explicit escape hatch for that case.
+    """
+    if "full_text" in sample:
+        return str(sample["full_text"])
+    return f"{sample['title']}\n\n{sample['description']}"
 
 
 def load_pairs(run_paths: list[Path], corpus: Path, arms: list[str] | None,
@@ -94,7 +107,7 @@ def load_pairs(run_paths: list[Path], corpus: Path, arms: list[str] | None,
                         # pair identity is arm-independent, so conditions can be compared
                         # pair-by-pair rather than only in aggregate
                         "pair_id": f"{sample['topic']}::{human_file}",
-                        "generated": f"{sample['title']}\n\n{sample['description']}"[:ceiling],
+                        "generated": sample_text(sample)[:ceiling],
                         "human": human[:ceiling],
                         "abs_score": sample.get("score"),
                     })
@@ -114,6 +127,86 @@ def judge_pair(pair: dict, human_pos: str, model: str) -> dict:
     }
 
 
+def job_key(pair: dict, human_pos: str) -> str:
+    return f"{pair['arm']}::{pair['pair_id']}::{human_pos}"
+
+
+def jobs_fingerprint(jobs: list[tuple[dict, str]], model: str) -> str:
+    """Bind a checkpoint to exact inputs without storing copyrighted bodies."""
+    rows = []
+    for pair, human_pos in jobs:
+        rows.append({
+            "key": job_key(pair, human_pos),
+            "generated_sha1": hashlib.sha1(pair["generated"].encode()).hexdigest(),
+            "human_sha1": hashlib.sha1(pair["human"].encode()).hexdigest(),
+        })
+    payload = json.dumps(
+        {"model": model, "jobs": rows}, ensure_ascii=False, sort_keys=True
+    ).encode()
+    return hashlib.sha1(payload).hexdigest()
+
+
+def save_checkpoint(path: Path, fingerprint: str, verdicts: dict[str, dict]) -> None:
+    payload = {
+        "schema_version": 1,
+        "fingerprint": fingerprint,
+        "completed": len(verdicts),
+        "verdicts": verdicts,
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    temporary.replace(path)
+
+
+def load_checkpoint(path: Path, fingerprint: str) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text())
+    if payload.get("fingerprint") != fingerprint:
+        raise ValueError(
+            f"checkpoint input mismatch: {path} belongs to a different batch"
+        )
+    return dict(payload.get("verdicts", {}))
+
+
+def run_jobs(
+    jobs: list[tuple[dict, str]],
+    model: str,
+    parallel: int,
+    checkpoint: Path | None,
+) -> list[dict]:
+    fingerprint = jobs_fingerprint(jobs, model)
+    verdicts = load_checkpoint(checkpoint, fingerprint) if checkpoint else {}
+    missing = [job for job in jobs if job_key(*job) not in verdicts]
+    if verdicts:
+        print(f"checkpoint: {len(verdicts)} completed, {len(missing)} remaining")
+    errors = []
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
+        futures = {
+            pool.submit(judge_pair, pair, human_pos, model): (pair, human_pos)
+            for pair, human_pos in missing
+        }
+        for future in as_completed(futures):
+            pair, human_pos = futures[future]
+            key = job_key(pair, human_pos)
+            try:
+                verdicts[key] = future.result()
+            except Exception as exc:
+                errors.append((key, str(exc)))
+                continue
+            if checkpoint:
+                save_checkpoint(checkpoint, fingerprint, verdicts)
+            if len(verdicts) % 25 == 0 or len(verdicts) == len(jobs):
+                print(f"progress: {len(verdicts)}/{len(jobs)} judgments")
+    if errors:
+        preview = "; ".join(f"{key}: {message[:120]}" for key, message in errors[:3])
+        raise RuntimeError(
+            f"{len(errors)} judgment(s) failed; completed verdicts remain in "
+            f"{checkpoint or '<no checkpoint>'}: {preview}"
+        )
+    return [verdicts[job_key(pair, human_pos)] for pair, human_pos in jobs]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", type=Path, action="append", required=True,
@@ -125,6 +218,8 @@ def main() -> None:
     ap.add_argument("--ceiling", type=int, default=2500)
     ap.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
     ap.add_argument("--parallel", type=int, default=MAX_PARALLEL)
+    ap.add_argument("--checkpoint", type=Path,
+                    help="incremental body-free verdict cache; rerun the same command to resume")
     ap.add_argument("--json-out", type=Path)
     args = ap.parse_args()
 
@@ -135,8 +230,7 @@ def main() -> None:
     print(f"{len(pairs)} pairs x 2 orders = {len(jobs)} calls  (judge {args.judge_model})")
     print(f"arms: {', '.join(arms)}   opponents/topic: {args.opponents}\n")
 
-    with ThreadPoolExecutor(max_workers=args.parallel) as pool:
-        verdicts = list(pool.map(lambda j: judge_pair(j[0], j[1], args.judge_model), jobs))
+    verdicts = run_jobs(jobs, args.judge_model, args.parallel, args.checkpoint)
 
     for (pair, _), verdict in zip(jobs, verdicts):
         pair.setdefault("trials", []).append(verdict)

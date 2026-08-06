@@ -29,7 +29,15 @@ def test_action_yml_is_valid_and_has_expected_shape():
     assert spec["inputs"]["provider"]["default"] == "mock"
     assert set(spec["outputs"]) == {"final", "pr_url"}
     step_ids = [s.get("id") for s in spec["runs"]["steps"]]
-    assert step_ids == ["run", "pr"]
+    assert step_ids == ["gh", "run", "pr"]
+    # `orchestrate.py run` refuses to start without gh + gh-stack, and hosted
+    # runners ship gh without the extension, so the gh step must install it.
+    # Authentication is not part of the requirement: the token is only for
+    # fetching the extension release and for the PR step.
+    gh_step, run_step = spec["runs"]["steps"][0], spec["runs"]["steps"][1]
+    assert "gh extension install github/gh-stack" in gh_step["run"]
+    assert "GH_TOKEN" in gh_step["env"]
+    assert "GH_TOKEN" not in run_step["env"]
 
 
 def test_entrypoint_script_is_executable_and_has_valid_syntax():

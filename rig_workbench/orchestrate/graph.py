@@ -57,7 +57,7 @@ def build_brick_graph(
     if mode not in {"resolved", "core"}:
         raise ValueError(f"unknown graph mode: {mode}")
 
-    skills = config.RIG_HOME / "skills" / "rig"
+    skills = config.SKILL_ROOT
     facets = skills / "facets"
     dirs = {
         "persona": facets / "personas",

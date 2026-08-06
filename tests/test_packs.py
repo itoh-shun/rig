@@ -268,7 +268,7 @@ def test_frontmatter_subset_rejects_unsupported_yaml_and_parses_all_shipped_reci
     with pytest.raises(PackError, match="unsupported frontmatter scalar"):
         parse_frontmatter_subset(unsupported)
 
-    recipes = pathlib.Path(__file__).parents[1] / "skills" / "rig" / "recipes"
+    recipes = pathlib.Path(__file__).parents[1] / "skills" / "engine" / "recipes"
     shipped = sorted(recipes.glob("*.md"))
     assert shipped
     for recipe in shipped:

@@ -71,9 +71,14 @@ benchmarks = [
   "tasks/**/*.ts",
   "tasks/**/*.txt",
 ]
-"skills.rig" = [
+"skills.engine" = [
   "SKILL.md",
   "agents/*.yaml",
+  # drill fixture corpus: the answer keys plus the base/head trees they score
+  "corpora/**/*.json",
+  "corpora/**/*.md",
+  "corpora/**/*.py",
+  "corpora/**/*.ts",
   "facets/**/*.md",
   "manifests/*.md",
   "patterns/*.md",

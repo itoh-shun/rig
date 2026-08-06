@@ -8,7 +8,7 @@ from rig_workbench.eval.runner import _check
 # behaviour under test belongs to _check, so it must survive any pack coming or going.
 #
 # Two spec shapes are exercised, both drawn from rig's review-verdict contract
-# (skills/rig/facets/output-contracts/review-verdict.md):
+# (skills/engine/facets/output-contracts/review-verdict.md):
 #   LABELLED_FIELD — a line-anchored `判定:` label whose value may be spaced,
 #                    backtick-wrapped, or pushed onto the following line
 #   VERDICT_TAIL   — the terminal `判定:` / `確信度:` pair, which must end the output

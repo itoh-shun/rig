@@ -36,7 +36,7 @@ from .injection import scan_line as injection_scan_line
 from .secrets import iter_added_lines, untracked_files, worktree_diff_text
 from .secrets import scan_file as secret_scan_file
 from .secrets import scan_line as secret_scan_line
-from .state import die, load_task, repo_root, resolve_task_id
+from .state import die, effective_base, load_task, repo_root, resolve_task_id
 
 
 def _scan_once(wt: pathlib.Path, base: str) -> dict:
@@ -85,7 +85,8 @@ def cmd_stream_checks(args: argparse.Namespace) -> None:
     task_id = resolve_task_id(root, args.task_id)
     _, task = load_task(root, task_id)
     wt_path = task.get("worktree_path")
-    base = task.get("base_commit")
+    # Live merge base (#312): a rebased branch must not be streamed against a stale base.
+    base, _drift = effective_base(root, task)
     if not wt_path or not pathlib.Path(wt_path).is_dir():
         die(f"task '{task_id}' has no worktree (created with --no-worktree, or already discarded)")
     if not base:

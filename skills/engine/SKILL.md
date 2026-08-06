@@ -203,7 +203,7 @@ recipe 名が決まったら **project → user → shipped** の順にファイ
 |---|---|---|
 | **project**（最高） | `<repo>/.claude/rig/recipes/<name>.md` | 1（最優先） |
 | **user** | `~/.claude/rig/recipes/<name>.md` | 2 |
-| **shipped**（同梱） | `skills/rig/recipes/<name>.md` | 3（最低） |
+| **shipped**（同梱） | `skills/engine/recipes/<name>.md` | 3（最低） |
 
 どの tier にも無ければ「もしかして」候補（編集距離 ≤ 2・最大 3 件・`[tier]` 付き）を添えて報告し、対話 composition（§3）へフォールバックする。**報告フォーマットの正本は `facets/instructions/resolve` 2.1**
 
@@ -290,7 +290,7 @@ subagent prompt を組む前に、以下の順で関連する知識ブリック�
 
 **wiki ページの参照と注入（`facets/knowledge/_wiki` 参照）:**
 
-- persona facet が `inject: ["[[slug]]", …]` を宣言している場合、各 `[[slug]]` を **tier 解決**（project overlay > global > shipped `skills/rig/facets/knowledge/wiki/`）してページを取得し、**User 先頭（Knowledge 位置）に注入**する（1ホップ既定・過剰展開しない）。
+- persona facet が `inject: ["[[slug]]", …]` を宣言している場合、各 `[[slug]]` を **tier 解決**（project overlay > global > shipped `skills/engine/facets/knowledge/wiki/`）してページを取得し、**User 先頭（Knowledge 位置）に注入**する（1ホップ既定・過剰展開しない）。
 - 本文中の `[[slug]]` も同様に解決対象。`[[slug|表示名]]` 記法可。解決できない `[[...]]` は**注入せず**、`--validate` がリンク切れとして報告する。
 - wiki は「事実」、persona は「判断・声」。**persona は事実を埋め込まず wiki を参照する**（暗黙知サイロを避ける）。
 
@@ -316,7 +316,7 @@ persona 名（recipe の `personas[]` / `--persona <name>` / フォールバッ�
 | **project**（最高） | `<repo>/.claude/rig/personas/<name>.md` | 1 |
 | **user**（global） | `~/.claude/rig/personas/<name>.md` | 2 |
 | **org**（チーム共有・任意） | `<org_dir>/personas/<name>.md`（manifest `org_dir:` または env `RIG_ORG_HOME` が指す**チームの git リポジトリ**） | 3 |
-| **shipped**（同梱） | `skills/rig/facets/personas/<name>.md` | 4（最低） |
+| **shipped**（同梱） | `skills/engine/facets/personas/<name>.md` | 4（最低） |
 
 > **org tier**：チームで育てるブリック層。実体は clone した共有 git リポジトリ（`personas/` `recipes/` `knowledge/wiki/` を持つ）で、manifest の `org_dir:` か環境変数 `RIG_ORG_HOME` で指す。解決順は **project → user → org → shipped**（個人の customize がチーム標準に勝ち、チーム標準が shipped に勝つ）。recipe・wiki も同順で解決する。未設定ならこの tier はサイレントにスキップ（従来どおり3 tier）。`--validate --global` / `/rig:catalog` は org tier も走査する。
 

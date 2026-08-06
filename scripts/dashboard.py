@@ -147,7 +147,7 @@ def failure_modes(runs: list[dict]) -> list[tuple[str, int]]:
     """Distribution of `failure_mode` taxonomy codes across ESCALATE/BLOCKED runs.
 
     Codes are written by runstate.classify_failure (absent on successful runs); the
-    vocabulary and gate/brick mapping live in skills/rig/patterns/failure-taxonomy.md.
+    vocabulary and gate/brick mapping live in skills/engine/patterns/failure-taxonomy.md.
     """
     counts: collections.Counter[str] = collections.Counter()
     for r in runs:
@@ -420,7 +420,7 @@ def render_gate_criteria(criteria: list[dict]) -> str:
 def render_failure_modes(pairs: list[tuple[str, int]]) -> str:
     if not pairs:
         return ('<p class="sub">no data — failure-mode codes are recorded for ESCALATE/BLOCKED '
-                'runs (see <code>skills/rig/patterns/failure-taxonomy.md</code>); none observed yet</p>')
+                'runs (see <code>skills/engine/patterns/failure-taxonomy.md</code>); none observed yet</p>')
     return render_bars(pairs)
 
 

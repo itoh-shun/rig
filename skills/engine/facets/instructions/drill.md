@@ -5,7 +5,7 @@
 ## 入力
 
 - `--seeds <n>`（任意・既定 5）：注入する種の数。
-- `--corpus standard|project|all`（任意・既定 `standard`・#270）：種の選定元。`standard`＝下記①の**標準コーパス**（plugin 同梱・リポジトリを問わず同じ物差し）のみ。`project`＝プロジェクト固有コーパス `.claude/rig/drill-corpus.md`（①と同じ列構成の表）のみ。`all`＝両方（結果の各 run 行は `corpus` タグで区別されるため混ざらない）。project コーパスが無いのに `project`/`all` を指定したら「無い」と明示して standard に fallback する。
+- `--corpus standard|project|fixture|all`（任意・既定 `standard`・#270）：種の選定元。`standard`＝下記①の**標準コーパス**（plugin 同梱・リポジトリを問わず同じ物差し）のみ。`project`＝プロジェクト固有コーパス `.claude/rig/drill-corpus.md`（①と同じ列構成の表）のみ。`fixture`＝下記①-b の**作り置きコーパス**（plugin 同梱 `skills/engine/corpora/fixture/`。種を合成せず、書き置かれた base/head ツリーをそのまま diff にする）のみ。`all`＝全部（結果の各 run 行は `corpus` タグで区別されるため混ざらない）。指定したコーパスが無ければ「無い」と明示して standard に fallback する。
 - `--clean`（任意）：**クリーン・コントロール専用モード**（下記③-a）。バグの種を一切注入せず、no-bug diff だけで同じ fan-out を走らせて per-persona の `clean_fp_rate` を実測する。**省略時（既定）はミックスモード**＝種入りの合成 diff に加えてクリーン diff を1本混ぜ、検出率と `clean_fp_rate` を同一 run で測る。
 - `--personas <a,b,…>`（任意）：試す reviewer 集合。省略時は 3-way＋manifest `default_personas`。in-session 実行では **`native-code-review`**（ホスト組み込みの `/code-review` skill・`parallel-review` ②のネイティブ・レーン）も集合に含められる——組み込み skill も persona と同じ物差しで検出率を実測する（headless drill では不可・黙って省く）。
 - `--replay [<persona>]`：**回帰リプレイモード**（下記④）。種を注入せず、アーカイブ済みの過去 diff に再実行して verdict の差分を見る。
@@ -49,6 +49,27 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
 `cwe/odc` 列は各種の**出所（provenance）**——CWE Top 25 2024・ODC（Orthogonal Defect Classification）欠陥タイプ・ミューテーション演算子（ROR＝関係演算子置換 / LCR＝論理結合子置換）・WCAG 達成基準へのマッピング。カタログの偏り（どの欠陥領域を測れていないか）を外部基準で監査できるようにするための列であり、種の合成時はこの分類に忠実な形で埋め込む。
 
 **散文/設計系の種（v2 追加分・#266）**：drill の仕組み（欠陥を仕込んだ diff を合成→reviewer fan-out→答案キーで採点）はコード専用ではない。de-ai-smell・design/design-audit のような**散文・設計物をレビューする recipe** では、その recipe が普段レビューする成果物の形（文章・画面仕様・公開文）に種を埋め込む——採点方法（検出率・severity 精度・説明品質・クリーン統制）は同一。
+
+### ①-b 作り置きコーパス（`--corpus fixture`）
+
+①は種の class を**毎回合成**する。①-b は逆で、**diff が既に書かれている**——`skills/engine/corpora/fixture/cases/<case-id>/` が `base/`（コミット済みの状態）と `head/`（未コミットの変更）を持ち、答案キー（location／concept の正規表現・期待 severity・担当観点）が `case.json` に同梱される。標準コーパスと併存させる理由は2つ：
+
+- **再現性**：diff が run 間でバイト単位に不変なので、検出率が動いたら reviewer が動いたということ——「その日の種合成の出来」ではない。
+- **出所の公正**：どの reviewer の自前 fixture でもない題材で書き下ろしてある（自分の fixture で採点される reviewer は不当に有利で、数字の意味が消える）。
+- **クリーン・ケース同梱**：`py-clean-refactor` は欠陥ゼロの本物のリファクタ＝③-a のクリーン・コントロールそのもの。**見つけるべき物が無いときに黙っていられるか**を測る側であり、種入りケースと同格に重要。
+
+手順（採点は手計算しない——全て決定論コマンドに委ねる）：
+
+1. `rig-wb wb drill-corpus list` — ケースと植えた欠陥の一覧（答案キーは親だけが持ち、reviewer には渡さない）。
+2. `rig-wb wb drill-corpus materialize <case-id>` — 使い捨ての git リポジトリに `base/` をコミットし、`head/` を未コミット変更として重ねて、そのパスを返す（本物のコードベース・履歴は触らない＝②の原則そのまま。終了時に破棄）。
+3. そのワークツリーに対して③と同じ review fan-out（`output_contract` は `review-findings` 固定）。
+4. `rig-wb wb drill-corpus score --reviews <path.json> --append .rig/drill-results.jsonl` — `{case-id: {persona: レビュー本文 or @path}}` を渡すと答案キーと突き合わせ、`corpus: "fixture"` の1行を出して追記する。
+
+**検出の判定**（①の「file:line を証拠アンカーつきで指摘」に対応する機械判定）：location（症状のあるシンボル／ファイル）と concept（欠陥の class）の**両方**が、かつ**互いに 600 文字以内**に現れたときだけ検出とみなす。両方を要求するのは「読みました、危なそうです」を得点させないため。近接を要求するのは、長いレビューが別々の段落で `mergeMetadata` と "any" に触れただけで検出扱いになるのを防ぐため。`location_hit`／`concept_hit` は別々にも記録する——「名前は挙げたが何が悪いか言っていない」と「そもそも見ていない」は別の失敗だから。
+
+- 担当観点は `case.json` の `perspectives`（①の「検出すべき観点」と同じ語彙）。その観点がコーパスに存在しない persona は 0/0 になってしまうので、全欠陥を分母に採点して行に `attribution: "all"` の印をつける（perspective 攻めの行と読み手が区別できるようにする）。
+- ②の**合成も妥当性ゲートも走らない**——種は書き置きで固定であり、equivalent-mutant の検分は毎回やり直す性質のものではない（コーパスに入れる時点で一度やる）。行は `valid_seeds == seeds` で記録される。
+- **機械的に出るのは検出率とクリーン誤検出率だけ**。`severity_accuracy`／`blocking_accuracy`／`explanation_quality` は③-b の judge を通さないと出せないので、スコアラは**埋めずに欠落させる**（測っていない数字を出さない）。種入り diff 上の `false_positive` も同じ理由で数えない——クリーン・ケースが同じことを統制下で測る。
 
 ### ② 注入（本物のコードは触らない）
 
@@ -133,6 +154,7 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
   - `valid_seeds`／`invalid_seeds`／`seed_validity`：妥当性ゲート（②）の結果。`invalid_seeds` は反証内容つきで残す＝種合成レシピの改善材料。
   - `missed`：見逃した種の class 列挙（履歴通算での `add_checklist_item`／`strengthen_security_focus` 判定に使う）。
   - `clean_findings`・`clean_rejects`・`clean_diffs`・`clean_fp_rate`：クリーン・コントロール（③-a）。`--clean` 単独 run では `seeds: 0` で `scores` の検出系フィールドは 0/0。
+  - `--corpus fixture`（①-b）の行は `corpus: "fixture"` で、`cases`（採点したケース id）・`attribution`・`missed_detail` を additive に足す。`severity_accuracy` 等は judge を通していなければ**キーごと出さない**（0.0 と書くと「測って 0 点」に読めるため）。
   - `corpus`・`corpus_version`（#270）：この run の種の選定元（`standard`/`project`。`--corpus all` の run は選定元ごとに**行を分けて**記録し、標準スコアとプロジェクト固有スコアが1行に混ざらないようにする）。フィールドが無い過去の行は `standard` とみなす（#270 以前の run は標準カタログのみだったため）。
   - 追加フィールドはすべて additive（既存の読み手＝digest/dashboard は `detected`/`seeded` 系のみ参照するため互換）。スコアボードのヘッダにも `corpus: standard` の形で選定元を1項表示する。
 

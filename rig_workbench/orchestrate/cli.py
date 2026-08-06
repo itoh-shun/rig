@@ -61,6 +61,7 @@ Dependencies: Python3 + PyYAML (same as validate.py). Exit code 0=success / 1=er
 
 import sys
 
+from ..gh_requirement import advise_gh
 from .commands import (cmd_ab, cmd_check, cmd_fleet, cmd_init, cmd_install_shim, cmd_next,
                        cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status, cmd_verdict)
 from .providers import cmd_models, cmd_probe
@@ -81,11 +82,29 @@ COMMANDS = {
 }
 
 
+# Commands that mention a missing `gh` / github/gh-stack: the ones that start
+# producing work, where someone might still want the stacked-PR helpers. It is
+# one stderr line and never a refusal — the tools are optional (see
+# rig_workbench/gh_requirement.py). `queue` only advises on its `go` verb —
+# `queue add/list/done` are bookkeeping — and plan / status / next / runs /
+# graph / party / probe / selftest stay quiet: a note there would be noise.
+_GH_ADVISORY_COMMANDS = {"run", "init", "ab"}
+
+
+def _advises_gh(cmd: str, rest: list[str]) -> bool:
+    if cmd in _GH_ADVISORY_COMMANDS:
+        return True
+    return cmd == "queue" and bool(rest) and rest[0] == "go"
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         print(__doc__)
         sys.exit(0 if len(sys.argv) < 2 else 1)
-    COMMANDS[sys.argv[1]](sys.argv[2:])
+    cmd, rest = sys.argv[1], sys.argv[2:]
+    if _advises_gh(cmd, rest):
+        advise_gh(f"orchestrate {cmd}")
+    COMMANDS[cmd](rest)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ def test_decision_humor_is_opt_in_and_manifest_is_exact(monkeypatch, tmp_path):
 
     _isolated(monkeypatch, tmp_path)
     for name in RECIPES:
-        assert not (REPO_ROOT / "skills/rig/recipes" / f"{name}.md").exists()
+        assert not (REPO_ROOT / "skills/engine/recipes" / f"{name}.md").exists()
         assert not (REPO_ROOT / "commands" / f"{name}.md").exists()
         assert resolve_asset("recipe", name, project=tmp_path) is None
         assert resolve_asset("command", name, project=tmp_path) is None
@@ -185,10 +185,10 @@ def test_ten_eval_cases_have_real_provenance_and_runnable_markdown_checks():
 
 
 def test_active_core_has_no_decision_humor_or_party_assets():
-    assert not (REPO_ROOT / "skills/rig/facets/personas/content-risk-reviewer.md").exists()
+    assert not (REPO_ROOT / "skills/engine/facets/personas/content-risk-reviewer.md").exists()
     assert not (REPO_ROOT / "commands/party.md").exists()
     paths = [REPO_ROOT / "README.md", REPO_ROOT / "README.ja.md"]
-    for directory in (REPO_ROOT / "commands", REPO_ROOT / "skills/rig", REPO_ROOT / "web"):
+    for directory in (REPO_ROOT / "commands", REPO_ROOT / "skills/engine", REPO_ROOT / "web"):
         paths.extend(path for path in directory.rglob("*")
                      if path.suffix in {".md", ".html"}
                      and "history" not in path.parts)

@@ -3,6 +3,8 @@
 - Inserts the repo root into sys.path so `rig_workbench` imports from any cwd.
 - Pins RIG_HOME to the repo checkout *before* rig_workbench.orchestrate.config
   is first imported (config resolves RIG_HOME at import time).
+- Sets RIG_SKIP_GH_CHECK so the suite does not depend on the developer's real
+  `gh` state (see below).
 - Provides tmp fixtures so no test touches the real repo's .rig/ state.
 """
 
@@ -14,6 +16,15 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Must happen before any rig_workbench import (config reads env at import time).
 os.environ["RIG_HOME"] = str(REPO_ROOT)
+
+# gh / gh-stack no longer gate anything (rig_workbench/gh_requirement.py), so
+# this is not about letting the suite run — it is about stderr. `workbench new`
+# and `orchestrate run` print a one-line note when gh-stack is absent, and that
+# line would appear or not appear depending on whether the machine running pytest
+# happens to have it, leaking into every test that asserts on a subprocess's
+# stderr. Silencing it pins the suite to one behaviour;
+# tests/test_gh_requirement.py owns the advisory and sets this per test.
+os.environ["RIG_SKIP_GH_CHECK"] = "1"
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))

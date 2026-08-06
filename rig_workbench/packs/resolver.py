@@ -106,15 +106,21 @@ def _legacy_assets(project: pathlib.Path) -> Iterable[ResolvedAsset]:
 
 
 def _core_assets() -> Iterable[ResolvedAsset]:
+    # The engine skill's directory name is resolved (not hardcoded) so a pre-rename
+    # `skills/rig/` install still resolves — same rule as orchestrate.config.
+    from rig_workbench.orchestrate.config import _skill_root
+
     rig = _rig_home()
+    skills = _skill_root(rig) or rig / "skills" / "engine"
+    facets = skills / "facets"
     mappings = {
-        "recipe": rig / "skills" / "rig" / "recipes",
-        "persona": rig / "skills" / "rig" / "facets" / "personas",
-        "instruction": rig / "skills" / "rig" / "facets" / "instructions",
-        "pattern": rig / "skills" / "rig" / "patterns",
-        "wiki": rig / "skills" / "rig" / "facets" / "knowledge",
-        "policy": rig / "skills" / "rig" / "facets" / "policies",
-        "output-contract": rig / "skills" / "rig" / "facets" / "output-contracts",
+        "recipe": skills / "recipes",
+        "persona": facets / "personas",
+        "instruction": facets / "instructions",
+        "pattern": skills / "patterns",
+        "wiki": facets / "knowledge",
+        "policy": facets / "policies",
+        "output-contract": facets / "output-contracts",
         "command": rig / "commands", "agent": rig / "agents",
     }
     for kind, directory in mappings.items():

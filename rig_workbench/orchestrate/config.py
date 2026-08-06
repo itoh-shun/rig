@@ -19,6 +19,22 @@ def _env_path(name: str, default: pathlib.Path) -> pathlib.Path:
 PLUGIN_DATA_DIRS = ("rig-sito-plugins", "rig-rig", "rig-itoshun-local-plugins")
 
 
+# The engine skill's directory name. Claude Code derives a plugin skill's
+# invocation id from this directory name (not SKILL.md's frontmatter `name:`),
+# so `skills/engine/` is what makes `rig:engine` invocable. `rig` is the
+# pre-rename layout, kept so a plugin dir installed before the rename still
+# resolves (the pip package and the plugin can be at different versions).
+SKILL_DIR_NAMES = ("engine", "rig")
+
+
+def _skill_root(base: pathlib.Path) -> pathlib.Path | None:
+    """The engine skill's directory inside `base`, or None if `base` isn't a rig home."""
+    for name in SKILL_DIR_NAMES:
+        if (base / "skills" / name / "SKILL.md").exists():
+            return base / "skills" / name
+    return None
+
+
 def find_rig_home() -> pathlib.Path:
     """Resolve where the rig assets (skills/, .claude-plugin/) live.
     Priority: $RIG_HOME -> ~/.claude/plugins/data/{rig-sito-plugins, rig-rig, rig-itoshun-local-plugins}
@@ -26,18 +42,19 @@ def find_rig_home() -> pathlib.Path:
     Cross-project use resolves automatically via the plugin install path, i.e. independent of the caller's cwd."""
     if env := os.environ.get("RIG_HOME"):
         p = pathlib.Path(env).expanduser()
-        if (p / "skills" / "rig" / "SKILL.md").exists():
+        if _skill_root(p):
             return p
     for data_dir in PLUGIN_DATA_DIRS:
         installed = pathlib.Path.home() / ".claude" / "plugins" / "data" / data_dir
-        if (installed / "skills" / "rig" / "SKILL.md").exists():
+        if _skill_root(installed):
             return installed
     return pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 RIG_HOME = find_rig_home()
-RECIPES = RIG_HOME / "skills" / "rig" / "recipes"
-PERSONAS = RIG_HOME / "skills" / "rig" / "facets" / "personas"
+SKILL_ROOT = _skill_root(RIG_HOME) or RIG_HOME / "skills" / "engine"
+RECIPES = SKILL_ROOT / "recipes"
+PERSONAS = SKILL_ROOT / "facets" / "personas"
 INVOCATION_CWD = pathlib.Path(os.getcwd()).resolve()
 PROJECT_RECIPES = INVOCATION_CWD / ".rig" / "recipes"  # project overlay
 RUNS_PATH = _env_path("RIG_RUNS_PATH", INVOCATION_CWD / ".rig" / "runs.jsonl")

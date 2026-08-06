@@ -38,7 +38,7 @@ HOSTS: dict[str, dict] = {
             "Stop": "Stop", "UserPromptSubmit": "UserPromptSubmit",
         },
         "hooks_config_path": "hooks/hooks.json",
-        "skill_paths": ["skills/rig/SKILL.md"],
+        "skill_paths": ["skills/engine/SKILL.md"],
         "mcp_config_key": "mcpServers",
         "degrade": {},  # baseline host -> no degrades
         "source": "rig's existing implementation (this repo's hooks/ and skills/)",
@@ -120,7 +120,7 @@ HOSTS: dict[str, dict] = {
             "Stop": "Stop", "UserPromptSubmit": "UserPromptSubmit",
         },
         "hooks_config_path": "hooks/hooks.json",  # the Claude Code file itself — no host-specific copy needed
-        "skill_paths": ["skills/rig/SKILL.md",     # read via the compat layer
+        "skill_paths": ["skills/engine/SKILL.md",     # read via the compat layer
                         ".grok/skills/", "~/.grok/skills/"],  # grok-native locations (not needed for rig)
         "mcp_config_key": "mcpServers",
         "degrade": {

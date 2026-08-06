@@ -24,10 +24,10 @@ def test_sales_is_absent_from_core_and_pack_owns_both_workflows(monkeypatch, tmp
     _isolated_resolution(monkeypatch, tmp_path)
     for relative in (
         "commands/sales.md",
-        "skills/rig/recipes/deal-review.md",
-        "skills/rig/recipes/sales-enablement.md",
-        "skills/rig/facets/personas/sales/hearing-reviewer.md",
-        "skills/rig/templates/deal-record.md",
+        "skills/engine/recipes/deal-review.md",
+        "skills/engine/recipes/sales-enablement.md",
+        "skills/engine/facets/personas/sales/hearing-reviewer.md",
+        "skills/engine/templates/deal-record.md",
     ):
         assert not (REPO_ROOT / relative).exists()
     assert resolve_asset("recipe", "deal-review", project=tmp_path) is None
@@ -51,7 +51,7 @@ def test_sales_is_absent_from_core_and_pack_owns_both_workflows(monkeypatch, tmp
     assert "自動登録されるものではありません" in command
     assert "$rig --recipe deal-review" in command
     assert "RIG_ALLOW_PROJECT_PACKS=1" in command
-    for relative in ("skills/rig/SKILL.md", "skills/rig/PACKS.md", "README.md", "README.ja.md"):
+    for relative in ("skills/engine/SKILL.md", "skills/engine/PACKS.md", "README.md", "README.ja.md"):
         guidance = (REPO_ROOT / relative).read_text(encoding="utf-8")
         assert "RIG_ALLOW_PROJECT_PACKS=1" in guidance
         assert "$rig --recipe <installed-name>" in guidance
@@ -59,7 +59,7 @@ def test_sales_is_absent_from_core_and_pack_owns_both_workflows(monkeypatch, tmp
 
 def test_active_core_has_no_legacy_sales_workflow_references():
     files = [REPO_ROOT / "README.md", REPO_ROOT / "README.ja.md"]
-    for directory in (REPO_ROOT / "commands", REPO_ROOT / "skills/rig", REPO_ROOT / "web"):
+    for directory in (REPO_ROOT / "commands", REPO_ROOT / "skills/engine", REPO_ROOT / "web"):
         files.extend(path for path in directory.rglob("*") if path.suffix in {".md", ".html"})
     text = "\n".join(path.read_text(encoding="utf-8") for path in files)
     for legacy in (
@@ -226,9 +226,9 @@ def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
     _isolated_resolution(monkeypatch, tmp_path)
     for relative in (
         "commands/movie.md", "commands/scenario.md",
-        "skills/rig/recipes/movie.md", "skills/rig/recipes/release-movie.md",
-        "skills/rig/recipes/scenario.md",
-        "skills/rig/facets/personas/engagement-reviewer.md",
+        "skills/engine/recipes/movie.md", "skills/engine/recipes/release-movie.md",
+        "skills/engine/recipes/scenario.md",
+        "skills/engine/facets/personas/engagement-reviewer.md",
     ):
         assert not (REPO_ROOT / relative).exists()
     assert resolve_asset("recipe", "movie", project=tmp_path) is None
@@ -339,7 +339,7 @@ def test_video_storytelling_project_install_resolves_extends_and_removes(
 
 def test_active_core_has_no_legacy_video_workflow_references():
     files = [REPO_ROOT / "README.md", REPO_ROOT / "README.ja.md"]
-    for directory in (REPO_ROOT / "commands", REPO_ROOT / "skills/rig", REPO_ROOT / "web"):
+    for directory in (REPO_ROOT / "commands", REPO_ROOT / "skills/engine", REPO_ROOT / "web"):
         files.extend(path for path in directory.rglob("*")
                      if path.suffix in {".md", ".html"})
     text = "\n".join(path.read_text(encoding="utf-8") for path in files)
