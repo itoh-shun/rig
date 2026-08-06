@@ -694,6 +694,8 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
 | 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
 | ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務） |
+| テストスイート側の検知力（ミューテーション） | `scripts/mutation_adapter.py`（Stryker / mutmut のレポートを取り込み、スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
+| ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 

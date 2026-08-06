@@ -59,15 +59,11 @@ def test_isolation_reports_declared_devcontainer_config(tmp_path):
     assert result["declared_config"] == [".devcontainer/devcontainer.json"]
 
 
-def test_isolation_signal_comes_from_the_environment_not_the_config(tmp_path, monkeypatch):
+def test_isolation_signal_comes_from_the_environment_not_the_config(tmp_path):
     root = _repo(tmp_path)
-    for var in hostcheck.CONTAINER_ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(hostcheck.pathlib.Path, "exists", lambda self: False)
-    assert hostcheck.check_isolation(root)["ok"] is False
+    assert hostcheck.check_isolation(root, env={}, signals=[])["ok"] is False
 
-    monkeypatch.setenv("REMOTE_CONTAINERS", "true")
-    result = hostcheck.check_isolation(root)
+    result = hostcheck.check_isolation(root, env={"REMOTE_CONTAINERS": "true"}, signals=[])
     assert result["ok"] is True
     assert "env:REMOTE_CONTAINERS" in result["signals"]
 
@@ -94,3 +90,42 @@ def test_json_output_is_parseable(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["root"] == str(tmp_path.resolve())
     assert len(payload["checks"]) == len(hostcheck.CHECKS)
+
+
+# ── fixed-corpus measurement (--bench) ──────────────────────────────────
+
+
+def test_bench_detects_every_positive_and_flags_no_negative():
+    """The corpus is the check's own yardstick: recall 100%, false positives 0."""
+    result = hostcheck.run_bench()
+    assert result["ok"] is True
+    assert result["overall"]["detected"] == result["overall"]["positives"]
+    assert result["overall"]["false_positives"] == 0
+
+
+def test_bench_includes_a_declared_but_unused_container_config():
+    """A committed devcontainer.json says the team intended isolation, not that it has it."""
+    labels = {case[0] for case in hostcheck.ISOLATION_CORPUS}
+    assert "declared_but_not_running" in labels
+    case = next(c for c in hostcheck.ISOLATION_CORPUS if c[0] == "declared_but_not_running")
+    assert case[2] is False
+
+
+def test_bench_negatives_outnumber_nothing_and_cover_near_misses():
+    for name, (_check, corpus) in hostcheck.BENCH_CORPORA.items():
+        negatives = [case for case in corpus if not case[2]]
+        assert negatives, f"{name} has no negative cases — recall alone proves little"
+
+
+def test_bench_is_independent_of_the_host_running_it(monkeypatch):
+    """Every isolation case supplies its own signals, so the result cannot drift by machine."""
+    monkeypatch.setattr(hostcheck, "host_signals", lambda: ["/.dockerenv", "cgroup:docker"])
+    assert hostcheck.run_bench()["ok"] is True
+    monkeypatch.setattr(hostcheck, "host_signals", list)
+    assert hostcheck.run_bench()["ok"] is True
+
+
+def test_isolation_accepts_injected_environment_and_signals(tmp_path):
+    assert hostcheck.check_isolation(tmp_path, env={}, signals=[])["ok"] is False
+    assert hostcheck.check_isolation(tmp_path, env={}, signals=["/.dockerenv"])["ok"] is True
+    assert hostcheck.check_isolation(tmp_path, env={"CODESPACES": "1"}, signals=[])["ok"] is True

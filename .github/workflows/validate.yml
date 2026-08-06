@@ -48,6 +48,9 @@ jobs:
       - name: Verify the coverage map against the repository
         run: python3 -m rig_workbench.cli coverage
 
+      - name: Verify the ASVS map against the repository
+        run: python3 -m rig_workbench.cli asvs --check
+
       - name: Run computational orchestrator selftest (determinism)
         run: python3 scripts/orchestrate.py selftest
 

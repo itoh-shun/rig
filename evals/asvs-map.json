@@ -1,0 +1,245 @@
+{
+  "asvs_map_version": 1,
+  "asvs_release": "5.0",
+  "chapters": [
+    {
+      "covered_by": [
+        {
+          "kind": "sensor",
+          "note": "diff と散文へのインジェクション・マーカー走査。エンコーディング全般ではなく、指示混入と不可視文字に限る",
+          "ref": "workbench.py scan-injection"
+        },
+        {
+          "kind": "drill-class",
+          "note": "外部入力を未エスケープで HTML/DOM へ出力する種",
+          "ref": "XSS"
+        }
+      ],
+      "id": "V1",
+      "not_covered": "出力先ごとのエンコーダ選択（HTML属性/JS/CSS/URL の使い分け）は、どの機構も見ていない",
+      "strength": "partial",
+      "title": "Encoding and Sanitization"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "検証を1経路だけに足し、別の書き込み口が未ガードのまま残る種（実測で露呈した見落とし）",
+          "ref": "多サイト検証漏れ"
+        },
+        {
+          "kind": "reviewer",
+          "note": "入力の流れを追う観点",
+          "ref": "agents/security-reviewer"
+        }
+      ],
+      "id": "V2",
+      "not_covered": "業務ロジック固有の順序・回数制約（多段承認、重複実行）は仕様がないと判定できない",
+      "strength": "partial",
+      "title": "Validation and Business Logic"
+    },
+    {
+      "covered_by": [],
+      "id": "V3",
+      "not_covered": "ブラウザ側の防御（CSP・SRI・クリックジャッキング対策・Cookie 属性）を見る機構は無い",
+      "strength": "none",
+      "title": "Web Frontend Security"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "sensor",
+          "note": "OpenAPI schema-diff。API が変わったのに差分要約に記述が無ければ warning",
+          "ref": "workbench.py gate（public_api_changes_documented）"
+        },
+        {
+          "kind": "drill-class",
+          "note": "公開 API の signature 変更",
+          "ref": "破壊的変更"
+        }
+      ],
+      "id": "V4",
+      "not_covered": "認証・レート制限・スキーマ検証といった API 固有の防御そのものは対象外",
+      "strength": "partial",
+      "title": "API and Web Service"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "外部入力を検証せず path 結合する種",
+          "ref": "パストラバーサル"
+        }
+      ],
+      "id": "V5",
+      "not_covered": "アップロードのサイズ上限・MIME 検証・保存先の隔離は見ていない",
+      "strength": "partial",
+      "title": "File Handling"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "認証必須のはずのエンドポイントに認証チェックが無い種",
+          "ref": "認証欠落"
+        }
+      ],
+      "id": "V6",
+      "not_covered": "パスワード保管・多要素・アカウント回復の設計は、差分レビューの射程外",
+      "strength": "partial",
+      "title": "Authentication"
+    },
+    {
+      "covered_by": [],
+      "id": "V7",
+      "not_covered": "セッションの生成・失効・固定化対策を見る機構は無い",
+      "strength": "none",
+      "title": "Session Management"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "ID 直指定で他者リソースに到達する種",
+          "ref": "認可漏れ"
+        },
+        {
+          "kind": "drill-class",
+          "note": "既存の権限判定関数を鵜呑みにする種。ベンチで実測した見落としから追加された",
+          "ref": "認可ヘルパー誤信"
+        },
+        {
+          "kind": "sast",
+          "note": "全体走査の結果を取り込む経路。差分の外にある認可欠陥はここでしか捕まらない",
+          "ref": "scripts/sast_adapter.py"
+        }
+      ],
+      "id": "V8",
+      "not_covered": "テナント境界やロール設計の妥当性そのものは、仕様がないと判定できない",
+      "strength": "measured",
+      "title": "Authorization"
+    },
+    {
+      "covered_by": [],
+      "id": "V9",
+      "not_covered": "自己完結トークン（JWT 等）の署名検証・失効・クレーム検証を見る機構は無い",
+      "strength": "none",
+      "title": "Self-contained Tokens"
+    },
+    {
+      "covered_by": [],
+      "id": "V10",
+      "not_covered": "OAuth / OIDC のフロー選択とパラメータ検証は対象外",
+      "strength": "none",
+      "title": "OAuth and OIDC"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "鍵・パスワードのソース直書き",
+          "ref": "ハードコード秘密"
+        },
+        {
+          "kind": "sensor",
+          "note": "差分への決定論シークレット走査。検出があれば反映を止める",
+          "ref": "workbench.py scan-secrets"
+        }
+      ],
+      "id": "V11",
+      "not_covered": "アルゴリズム選択・鍵長・乱数源の妥当性は見ていない（秘密の混入だけを見る）",
+      "strength": "measured",
+      "title": "Cryptography"
+    },
+    {
+      "covered_by": [],
+      "id": "V12",
+      "not_covered": "TLS 設定・証明書検証を見る機構は無い",
+      "strength": "none",
+      "title": "Secure Communication"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "command",
+          "note": "コンテナ隔離・permissions.deny・実行状態の除外を検出する（開発環境の構成であり、製品の構成ではない）",
+          "ref": "rig-wb hostcheck"
+        },
+        {
+          "kind": "sensor",
+          "note": "CI 設定・ゲート定義の改変を差分から検出",
+          "ref": "workbench.py gate（no_gate_tampering）"
+        }
+      ],
+      "id": "V13",
+      "not_covered": "本番環境のヘッダ・デバッグ機能の無効化・既定値の安全性は対象外",
+      "strength": "partial",
+      "title": "Configuration"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "down の無い破壊的 ALTER",
+          "ref": "片道 migration"
+        }
+      ],
+      "id": "V14",
+      "not_covered": "保管データの分類・最小化・削除要求への対応は見ていない",
+      "strength": "partial",
+      "title": "Data Protection"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "信頼できない入力を pickle・eval 系で復元する種",
+          "ref": "安全でないデシリアライズ"
+        },
+        {
+          "kind": "sensor",
+          "note": "差分に書かれた破壊的コマンドの走査",
+          "ref": "workbench.py scan-destructive"
+        },
+        {
+          "kind": "sensor",
+          "note": "外部テキストを指示として読ませない検疫。取り込み側の攻撃面に対応する",
+          "ref": "rig_workbench/orchestrate/quarantine.py"
+        }
+      ],
+      "id": "V15",
+      "not_covered": "依存の供給経路（署名・固定・監査）は pack の署名検証に限られ、製品側の依存は対象外",
+      "strength": "partial",
+      "title": "Secure Coding and Architecture"
+    },
+    {
+      "covered_by": [
+        {
+          "kind": "drill-class",
+          "note": "空 catch・エラーの黙殺",
+          "ref": "例外の握りつぶし"
+        },
+        {
+          "kind": "reviewer",
+          "note": "観測性の観点",
+          "ref": "agents/observability-reviewer"
+        }
+      ],
+      "id": "V16",
+      "not_covered": "ログへの秘密混入は scan-secrets が差分でしか見ない。実行時のログ出力は対象外",
+      "strength": "partial",
+      "title": "Security Logging and Error Handling"
+    },
+    {
+      "covered_by": [],
+      "id": "V17",
+      "not_covered": "WebRTC 固有の要件を見る機構は無い",
+      "strength": "none",
+      "title": "WebRTC"
+    }
+  ],
+  "description": "ASVS の章と、rig が実際に持っている検査面の対応。検査面を事前に絞るための地図であって、ASVS 要件の実装状況ではない。",
+  "reference": "https://owasp.org/www-project-application-security-verification-standard/",
+  "titles_note": "章番号は ASVS 5.0 の構成に従い、章タイトルは転記である。適用前に公開されている標準の目次と突き合わせること。対応の中身（rig 側の機構）は章番号に紐づいており、タイトルの表記揺れには依存しない。",
+  "titles_transcribed": true
+}
