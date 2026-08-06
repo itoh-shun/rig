@@ -45,6 +45,9 @@ jobs:
       - name: Run rig structural validator selftest (fixture regression)
         run: python3 scripts/validate.py selftest
 
+      - name: Verify the coverage map against the repository
+        run: python3 -m rig_workbench.cli coverage
+
       - name: Run computational orchestrator selftest (determinism)
         run: python3 scripts/orchestrate.py selftest
 
@@ -65,8 +68,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install rig without optional dependencies
-        run: pip install --no-deps -e .
+      # Declared dependencies only, no optional extras. `--no-deps` skips *all* of
+      # them, including pyyaml, which `eval affected` needs to read recipe
+      # frontmatter — under that flag this job fails before it evaluates anything.
+      - name: Install rig with its declared dependencies (no optional extras)
+        run: pip install -e .
 
       - name: Resolve comparison base
         id: comparison

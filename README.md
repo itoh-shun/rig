@@ -703,6 +703,8 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Recipe/persona/command schema, brick-catalog drift, version sync | `scripts/validate.py` + `scripts/validate.py selftest` (CI-enforced on every PR) |
 | Orchestrator unit behavior (recipe resolution & trust gate, queueing, run-state, graph, CLI surface) | `pytest -q` — 54-test suite under `tests/`; CI (`validate.yml`) enforces it alongside `ruff` (0 findings), the validator, and both selftests |
 | Acceptance-gate criteria, accept/discard mechanics | `scripts/workbench.py` — exercised against scratch git repos each release (see `CHANGELOG.md` entries for the verification notes) |
+| Documented requirement vs. the evidence behind it | `rig-wb coverage` (source of truth: `evals/coverage-map.json`; default verifies the map against the tree and runs in CI, `--run` executes the deterministic evidence) |
+| Host-side prerequisites (container isolation, `permissions.deny`, ignored run state) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's) |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
 | Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/engine/patterns/failure-taxonomy.md` |
 
