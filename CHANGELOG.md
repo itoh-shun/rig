@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- `rig-wb hostcheck --bench` measures the host checks against a fixed corpus of 23
+  cases instead of against whatever machine runs them: every case supplies its own
+  environment, so the numbers mean the same thing on a laptop and in CI. The negative
+  cases are the point — a committed `devcontainer.json` with no container around the
+  session, an allow-list with no deny rules, a commented-out `.rig/` ignore. Current
+  corpus: 11/11 detected, 0/12 false positives. `check_isolation` now takes its
+  environment and signals as arguments, which is what made it measurable.
+- `scripts/mutation_adapter.py` brings the other half of detection power into the
+  gate. `/rig:drill` scores a reviewer; this scores the test suite, by ingesting a
+  report from a tool that already does mutation testing — the mutation-testing-elements
+  JSON that Stryker emits, or the JUnit XML from `mutmut junitxml`. Timeouts count as
+  detected, no-coverage counts as undetected, compile and runtime errors are excluded
+  as invalid rather than held against the suite. The criterion is comparative and
+  **warning-grade by design**: equivalent mutants make the absolute number unreachable,
+  so only a drop against the recorded baseline is actionable. Declare
+  `mutation_score_not_regressed` per project via `.rig/gates.json`.
+- `rig-wb asvs` maps the ASVS chapters against the inspection surface rig actually has.
+  Of 17 chapters, 2 are backed by a measured sensor or drill class, 9 partially, and
+  **6 have nothing at all** (web frontend, session management, self-contained tokens,
+  OAuth/OIDC, secure communication, WebRTC) — stated as blind spots rather than
+  omitted. `--check` verifies every cited sensor, reviewer and drill class still exists
+  and runs in CI, so the map cannot outlive its references.
+
 ## [1.30.0] - 2026-08-06
 
 Makes the coverage claim checkable instead of asserted, and gives the two

@@ -397,6 +397,9 @@ Sub-commands:
                                         (optional tools: rig runs without them.
                                         exit 0=ok / 3=gh missing / 5=gh-stack missing;
                                         auth is reported, never required)
+  asvs [--check] [--json]               ASVS chapters vs the inspection surface rig has.
+                                        The empty rows are the point: a chapter with no
+                                        mechanism is one rig cannot notice a defect in
   coverage [--run] [--markdown] [--json]
                                         documented requirement -> evidence map.
                                         default verifies the map against the repo (free);
@@ -467,6 +470,10 @@ def main() -> None:
         from .packs import cli as pack_cli
 
         sys.exit(pack_cli.cmd_pack(rest))
+    if sub == "asvs":
+        from . import asvs as asvs_mod
+
+        sys.exit(asvs_mod.cmd_asvs(rest))
     if sub == "coverage":
         from . import coverage as coverage_mod
 

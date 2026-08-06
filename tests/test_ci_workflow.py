@@ -40,6 +40,12 @@ def test_validate_job_verifies_the_coverage_map():
     assert "rig_workbench.cli coverage" in steps
 
 
+def test_validate_job_verifies_the_asvs_map():
+    """Same reason as the coverage map: a mapping whose references rot is a false claim."""
+    steps = _run_steps(_workflow()["jobs"]["validate"])
+    assert "rig_workbench.cli asvs --check" in steps
+
+
 def test_validate_job_keeps_the_deterministic_checks_wired():
     steps = _run_steps(_workflow()["jobs"]["validate"])
     for expected in ("ruff check", "scripts/validate.py", "orchestrate.py selftest", "pytest -q"):

@@ -20,6 +20,17 @@
           "proves": "rig がコンテナ内で動いているかを検出し、未整備なら報告する（exit 3 ＝前提が欠けていることを報告できた状態。検出が働いた証拠であり、ホストが整っている証拠ではない）"
         },
         {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "hostcheck",
+            "--bench"
+          ],
+          "kind": "command",
+          "proves": "検出そのものの捕捉率と誤検知率を固定コーパスで実測する（宣言だけの devcontainer.json のような紛らわしい負例を含む）"
+        },
+        {
           "kind": "pytest",
           "path": "tests/test_hostcheck.py",
           "proves": "検出ロジックの決定論的な回帰"
@@ -61,6 +72,17 @@
           ],
           "kind": "command",
           "proves": "permissions.deny が1件でも設定されているかを検出する（exit 3 ＝前提が欠けていることを報告できた状態。検出が働いた証拠であり、ホストが整っている証拠ではない）"
+        },
+        {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "hostcheck",
+            "--bench"
+          ],
+          "kind": "command",
+          "proves": "検出そのものの捕捉率と誤検知率を固定コーパスで実測する（宣言だけの devcontainer.json のような紛らわしい負例を含む）"
         },
         {
           "kind": "pytest",
@@ -505,12 +527,18 @@
           "proves": "レビュー役の検出率を測る出題側の健全性"
         },
         {
-          "kind": "planned",
-          "spec": "scripts/sast_adapter.py と同じ形で mutation_adapter.py を足す。mutmut / Stryker のレポートを取り込み、ミューテーションスコアの劣化を warning-grade の gate 基準として扱う。スコア100%は目標にせず推移だけ見る。"
+          "kind": "file",
+          "path": "scripts/mutation_adapter.py",
+          "proves": "外部のミューテーションツールのレポートを取り込み、スコアの劣化を warning-grade の基準として扱う"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_mutation_adapter.py",
+          "proves": "採点の定義（timeout は検出扱い・無効な変異は分母から除外）と、劣化が fail でなく warning になること"
         }
       ],
       "id": "detection-power",
-      "note": "レビュー役は測れる。テストスイート側（ミューテーション）は未対応。",
+      "note": "レビュー役は drill、テストスイート側は外部ツール（Stryker / mutmut）のレポート取り込み。ツール本体は各プロジェクトが選ぶ——rig は採点の解釈とゲートへの接続だけを持つ。",
       "requirement": "検知力を測る（レビュー役／テストスイート）",
       "scope": "rig",
       "source": "02b §5-2"
@@ -541,6 +569,22 @@
     {
       "evidence": [
         {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "asvs",
+            "--check"
+          ],
+          "kind": "command",
+          "proves": "ASVS の章と rig の検査面の対応が、参照先の実在ごと検証される"
+        },
+        {
+          "kind": "pytest",
+          "path": "tests/test_asvs_map.py",
+          "proves": "空の章（rig では気づけない章）が隠されず報告されること"
+        },
+        {
           "kind": "pytest",
           "path": "tests/test_quarantine.py",
           "proves": "外部テキストを指示として読ませない構造"
@@ -557,6 +601,7 @@
         }
       ],
       "id": "attack-surface-precompression",
+      "note": "ASVS 17章のうち rig に対応機構があるのは11章。残る6章（V3/V7/V9/V10/V12/V17）はrig では気づけないと明示している。",
       "requirement": "検査面を事前に絞る（観点カタログと外部入力の検疫）",
       "scope": "rig",
       "source": "02b §5-4"
