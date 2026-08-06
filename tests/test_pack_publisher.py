@@ -1,9 +1,11 @@
 import base64
 import copy
 import datetime as dt
+import importlib
 import json
 import pathlib
 import subprocess
+import sys
 import zipfile
 
 import pytest
@@ -38,9 +40,158 @@ def _key_material(tmp_path):
     }
 
 
+@pytest.fixture
+def without_cryptography(monkeypatch):
+    """Make `cryptography` unimportable, as in an install that omitted it."""
+
+    class _Absent:
+        def find_spec(self, name, path=None, target=None):
+            if name == "cryptography" or name.startswith("cryptography."):
+                raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+            return None
+
+    for name in [item for item in sys.modules
+                 if item == "cryptography" or item.startswith("cryptography.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [_Absent(), *sys.meta_path])
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("cryptography")
+
+
+def _forged_signature(pack, manifest):
+    """Write a signature whose envelope is genuine and whose Ed25519 signature is not.
+
+    Everything a signature check can verify without cryptography already matches
+    the pack, so only the Ed25519 check separates this forgery from real trust.
+    """
+    from rig_workbench.packs.manifest import canonical
+    from rig_workbench.packs.publisher import signed_envelope
+
+    envelope = signed_envelope(
+        pack, manifest, signer="Rig Test Publisher", key_id="test-2026",
+        issued_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+    )
+    (pack / "pack.sig.json").write_text(canonical({
+        "pack_signature_schema_version": 1, "signed": envelope,
+        "signature": base64.b64encode(bytes(64)).decode("ascii"),
+    }), encoding="utf-8")
+    return envelope
+
+
+def test_verification_without_cryptography_never_reports_publisher_trust(
+    tmp_path, without_cryptography,
+):
+    from rig_workbench.packs.installer import verification_status
+    from rig_workbench.packs.manifest import digest, read_json_yaml
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.publisher import verify_publisher_signature
+
+    unsigned = _resource_pack(tmp_path / "unsigned", "unsigned-pack")
+    _raw, manifest = read_json_yaml(unsigned / "pack.yaml")
+    assert verify_publisher_signature(unsigned, manifest) is None
+    assert verification_status(unsigned, manifest) == ("verified-local", None)
+
+    forged = _resource_pack(tmp_path / "forged", "forged-pack")
+    _raw, forged_manifest = read_json_yaml(forged / "pack.yaml")
+    envelope = _forged_signature(forged, forged_manifest)
+    assert envelope["manifest_sha256"] == digest(forged / "pack.yaml")
+    with pytest.raises(PackError, match="requires cryptography"):
+        verify_publisher_signature(forged, forged_manifest)
+    with pytest.raises(PackError, match="requires cryptography"):
+        verification_status(forged, forged_manifest)
+
+
+def test_install_without_cryptography_refuses_publisher_trust(
+    tmp_path, without_cryptography,
+):
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.lock import validate_lock_root
+    from rig_workbench.packs.manifest import read_json_yaml
+    from rig_workbench.packs.model import PackError
+
+    project = tmp_path / "project"
+    root = project / ".rig/packs"
+    forged = _resource_pack(tmp_path / "forged", "forged-pack")
+    _raw, forged_manifest = read_json_yaml(forged / "pack.yaml")
+    _forged_signature(forged, forged_manifest)
+    with pytest.raises(PackError, match="requires cryptography"):
+        install_pack(forged, scope="project", project=project, allow_unverified=True)
+    assert not (root / "forged-pack").exists()
+
+    unsigned = _resource_pack(tmp_path / "unsigned", "unsigned-pack")
+    with pytest.raises(PackError, match="allow-unverified"):
+        install_pack(unsigned, scope="project", project=project)
+
+    result = install_pack(unsigned, scope="project", project=project, allow_unverified=True)
+    assert result.verification_status == "verified-local"
+    assert [(item["id"], item["verification_status"],
+             item["publisher_key_id"], item["signed_digest"])
+            for item in validate_lock_root(root)] == [
+        ("unsigned-pack", "verified-local", None, None)]
+
+
+def test_lock_and_doctor_without_cryptography_reject_a_publisher_claim(
+    tmp_path, without_cryptography,
+):
+    from rig_workbench.packs.doctor import diagnose
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.lock import read_lock, validate_lock_root, write_lock
+    from rig_workbench.packs.manifest import read_json_yaml
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.publisher import signed_digest
+
+    project = tmp_path / "project"
+    root = project / ".rig/packs"
+    result = install_pack(
+        _resource_pack(tmp_path / "source", "claimed-pack"),
+        scope="project", project=project, allow_unverified=True,
+    )
+    assert diagnose(project=project)["status"] == "ok"
+
+    _raw, manifest = read_json_yaml(result.path / "pack.yaml")
+    envelope = _forged_signature(result.path, manifest)
+    lock = read_lock(root)
+    lock["packs"][0].update({
+        "verification_status": "verified-publisher",
+        "publisher_key_id": envelope["key_id"],
+        "signed_digest": signed_digest(envelope),
+    })
+    write_lock(root, lock)
+
+    with pytest.raises(PackError, match="requires cryptography"):
+        validate_lock_root(root)
+    assert diagnose(project=project)["status"] == "failed"
+
+
+def test_signing_and_keygen_without_cryptography_fail_closed(
+    tmp_path, without_cryptography,
+):
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.publisher import generate_publisher_key, sign_pack
+
+    repository = tmp_path / "repository"
+    pack = _resource_pack(repository, "unsignable-pack")
+    _commit_pack(repository, pack)
+    secure = tmp_path / "secure"
+    secure.mkdir(mode=0o700)
+    with pytest.raises(PackError, match="pack signing requires cryptography"):
+        sign_pack(pack, private_key_path=secure / "publisher.pem",
+                  key_id="test-2026", signer="Rig Test Publisher")
+    with pytest.raises(PackError, match="publisher key generation requires cryptography"):
+        generate_publisher_key(
+            private_key_path=secure / "publisher.pem",
+            trust_roots_path=repository / "trust-roots.json",
+            key_id="test-2026", signer="Rig Test Publisher",
+            source_repository=repository,
+        )
+    assert not (secure / "publisher.pem").exists()
+
+
 def test_keygen_keeps_private_external_and_registers_only_public_material(
     tmp_path, monkeypatch, capsys,
 ):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs.cli import cmd_pack
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
@@ -104,6 +255,8 @@ def test_keygen_keeps_private_external_and_registers_only_public_material(
 def test_keygen_detects_trust_root_replacement_and_rolls_back_private_key(
     tmp_path, monkeypatch,
 ):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs import publisher
@@ -143,6 +296,8 @@ def test_keygen_detects_trust_root_replacement_and_rolls_back_private_key(
 
 
 def test_keygen_detects_transaction_file_substitution(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs import publisher
@@ -178,6 +333,8 @@ def test_keygen_detects_transaction_file_substitution(tmp_path, monkeypatch):
 
 
 def test_keygen_descriptor_walk_rejects_ancestor_substitution(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs import publisher
@@ -248,6 +405,8 @@ def _write_signature(pack, manifest, private, *, issued_at, engine_release=None)
 
 
 def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs import publisher
     from rig_workbench.packs.doctor import diagnose
     from rig_workbench.packs.installer import install_pack
@@ -291,6 +450,8 @@ def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
 def test_signature_rejects_unknown_revoked_future_invalid_and_replay(
     tmp_path, monkeypatch,
 ):
+    pytest.importorskip("cryptography")
+
     from rig_workbench import __version__
     from rig_workbench.packs import publisher
     from rig_workbench.packs.manifest import canonical, read_json_yaml
@@ -339,6 +500,8 @@ def test_signature_rejects_unknown_revoked_future_invalid_and_replay(
 
 
 def test_manifest_asset_version_and_compatibility_tamper_are_bound(tmp_path):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import verify_publisher_signature
@@ -371,6 +534,8 @@ def test_manifest_asset_version_and_compatibility_tamper_are_bound(tmp_path):
 
 
 def test_signing_refuses_dirty_source_and_non_green_quality(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs import installer
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import sign_pack
@@ -399,6 +564,8 @@ def test_signing_refuses_dirty_source_and_non_green_quality(tmp_path, monkeypatc
 def test_valid_publisher_signature_cannot_upgrade_mock_or_non_green_quality(
     tmp_path, monkeypatch,
 ):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs import installer, publisher
     from rig_workbench.packs.manifest import read_json_yaml
     from rig_workbench.packs.model import PackError
@@ -419,6 +586,8 @@ def test_valid_publisher_signature_cannot_upgrade_mock_or_non_green_quality(
 
 
 def test_signing_refuses_legacy_prompt_case_without_composition_or_durable_evidence(tmp_path):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import sign_pack
 
@@ -436,6 +605,8 @@ def test_signing_refuses_legacy_prompt_case_without_composition_or_durable_evide
 def test_prompt_pack_with_composition_distinct_expectations_and_green_evidence_signs(
     tmp_path, monkeypatch,
 ):
+    pytest.importorskip("cryptography")
+
     from rig_workbench.packs import installer, publisher
     from rig_workbench.packs.manifest import read_json_yaml
 

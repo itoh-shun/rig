@@ -127,7 +127,12 @@ def _distribution_files(distribution):
 
 
 def _provision_distributions_offline(root, requirements):
-    """Copy the wheel-declared dependency closure from the host's offline environment."""
+    """Copy the wheel-declared dependency closure from the host's offline environment.
+
+    A host may legitimately lack a declared runtime dependency — CI installs only
+    what the suite itself needs, deliberately omitting `cryptography`. Copy what is
+    present; the probe below still fails loudly if the wheel needs what is absent.
+    """
     destination_site = (
         root / "Lib" / "site-packages"
         if os.name == "nt"
@@ -144,7 +149,10 @@ def _provision_distributions_offline(root, requirements):
         if normalized in copied:
             continue
         copied.add(normalized)
-        distribution = importlib.metadata.distribution(name)
+        try:
+            distribution = importlib.metadata.distribution(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
         pending.extend(Requirement(item) for item in distribution.requires or ())
         for relative_path in _distribution_files(distribution):
             if ".." in relative_path.parts:
