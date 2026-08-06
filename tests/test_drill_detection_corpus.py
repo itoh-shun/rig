@@ -197,6 +197,50 @@ def test_clean_case_alarm_is_a_false_positive():
     assert score_review(case, ALARM)["flagged"] is True
 
 
+NEGATED_CONCLUSIONS = [
+    "No bugs found; looks good.",
+    "I found no bug in this refactor.",
+    "No blocking issues found.",
+    "No security issues.",
+    "No critical problems.",
+    "I did not find any defect.",
+    "重大な問題はありません。",
+    "指摘なし、要修正箇所もありません。",
+]
+
+# The same vocabulary, asserted rather than denied — these must still cost the
+# reviewer its precision score.
+ASSERTED_FINDINGS = [
+    "There is a critical bug in `_validate_discount`.",
+    "No security issues, but there is a critical bug in foo().",
+    "セキュリティ上の重大な問題は見当たりませんが、パフォーマンスに要修正箇所があります。",
+]
+
+
+@pytest.mark.parametrize("text", NEGATED_CONCLUSIONS)
+def test_clean_case_negated_conclusion_is_not_a_false_positive(text):
+    """A reviewer that correctly reports nothing must score zero findings —
+    this case exists to measure precision, so miscounting here corrupts exactly
+    the number it is for."""
+    case = next(c for c in load_cases([CLEAN_CASE]))
+    assert score_review(case, text)["flagged"] is False
+
+
+@pytest.mark.parametrize("text", ASSERTED_FINDINGS)
+def test_clean_case_asserted_finding_still_scores(text):
+    """Negation-awareness must not become blanket suppression: a claim in the
+    same sentence as a denial is still a claim."""
+    case = next(c for c in load_cases([CLEAN_CASE]))
+    assert score_review(case, text)["flagged"] is True
+
+
+def test_clean_conclusion_scores_zero_findings_in_the_drill_row():
+    row = build_drill_row({CLEAN_CASE: {"security-reviewer": NEGATED_CONCLUSIONS[0]}})
+    score = row["scores"][0]
+    assert (score["clean_diffs"], score["clean_findings"]) == (1, 0)
+    assert score["clean_fp_rate"] == 0.0
+
+
 def test_proximity_is_required_not_just_co_occurrence():
     violation = {"location": "mergeMetadata", "concept": r"\bany\b"}
     near = "mergeMetadata takes any and returns any."

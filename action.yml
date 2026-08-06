@@ -59,13 +59,25 @@ runs:
     # --force is the idempotent form ("ignore if latest already installed").
     # The token is for fetching the extension release only — never for a check,
     # and deliberately not exposed to the step that runs the model.
+    #
+    # "Optional" has to hold here too. Composite steps run under `bash -eo
+    # pipefail` and cannot use continue-on-error, so both ways this step can die
+    # are handled in the shell: a runner without `gh` at all (self-hosted), and
+    # an install that fails on auth, rate limiting or a flaky network. Neither
+    # may take the rig task down with it — nothing after this needs the extension.
     - name: Install gh-stack (optional; enables stacked-PR publishing)
       id: gh
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
-        gh extension install github/gh-stack --force
+        if ! command -v gh >/dev/null 2>&1; then
+          echo "gh is not installed on this runner; skipping gh-stack (rig runs without it)."
+          exit 0
+        fi
+        if ! gh extension install github/gh-stack --force; then
+          echo "gh-stack install failed; continuing without it (rig runs without it)."
+        fi
 
     - name: Run rig task (isolated worktree + acceptance-gate)
       id: run

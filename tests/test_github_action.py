@@ -10,6 +10,7 @@ exercised here).
 
 import json
 import pathlib
+import shutil
 import subprocess
 
 import pytest
@@ -30,14 +31,77 @@ def test_action_yml_is_valid_and_has_expected_shape():
     assert set(spec["outputs"]) == {"final", "pr_url"}
     step_ids = [s.get("id") for s in spec["runs"]["steps"]]
     assert step_ids == ["gh", "run", "pr"]
-    # `orchestrate.py run` refuses to start without gh + gh-stack, and hosted
-    # runners ship gh without the extension, so the gh step must install it.
+    # gh-stack only advises rig, it never gates it, so hosted runners get the
+    # extension installed for stacked-PR publishing and everyone else carries on.
     # Authentication is not part of the requirement: the token is only for
     # fetching the extension release and for the PR step.
     gh_step, run_step = spec["runs"]["steps"][0], spec["runs"]["steps"][1]
     assert "gh extension install github/gh-stack" in gh_step["run"]
     assert "GH_TOKEN" in gh_step["env"]
     assert "GH_TOKEN" not in run_step["env"]
+
+
+# ── the optional gh-stack step must never fail the action ───────────────────
+# Composite steps have no continue-on-error and run under `bash -eo pipefail`,
+# so the tolerance has to be in the shell. Running the step body for real (with
+# a stub `gh`) is what proves it — grepping the YAML for `||` would not.
+
+
+def _gh_step_script() -> str:
+    spec = yaml.safe_load(ACTION_YML.read_text(encoding="utf-8"))
+    return spec["runs"]["steps"][0]["run"]
+
+
+def _run_gh_step(tmp_path, path_value):
+    script = tmp_path / "step.sh"
+    script.write_text(_gh_step_script(), encoding="utf-8")
+    # bash by absolute path: the no-gh case deliberately hands the step an empty
+    # PATH, which would otherwise make the interpreter itself unfindable.
+    return subprocess.run(
+        [shutil.which("bash") or "/bin/bash", "-eo", "pipefail", str(script)],
+        cwd=tmp_path, capture_output=True, text=True,
+        env={"PATH": path_value, "GH_TOKEN": "x"},
+    )
+
+
+def _stub_gh(tmp_path, exit_code):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\necho "$@" >> "$(dirname "$0")/calls.log"\nexit {exit_code}\n',
+                  encoding="utf-8")
+    gh.chmod(0o755)
+    return bin_dir
+
+
+def test_gh_step_survives_a_failing_extension_install(tmp_path):
+    """Auth failure, rate limiting, a flaky network — the exit code Codex
+    reproduced (23) must not stop the action before the rig task runs."""
+    bin_dir = _stub_gh(tmp_path, 23)
+    result = _run_gh_step(tmp_path, f"{bin_dir}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert "continuing without it" in result.stdout
+    # …and it did genuinely attempt the install rather than skipping it.
+    assert "extension install github/gh-stack" in (bin_dir / "calls.log").read_text(
+        encoding="utf-8")
+
+
+def test_gh_step_survives_a_runner_without_gh(tmp_path):
+    """Self-hosted runners do not ship `gh` at all."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = _run_gh_step(tmp_path, str(empty))
+    assert result.returncode == 0, result.stderr
+    assert "gh is not installed" in result.stdout
+
+
+def test_gh_step_still_installs_when_gh_works(tmp_path):
+    bin_dir = _stub_gh(tmp_path, 0)
+    result = _run_gh_step(tmp_path, f"{bin_dir}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert "continuing without it" not in result.stdout
+    assert "extension install github/gh-stack --force" in (bin_dir / "calls.log").read_text(
+        encoding="utf-8")
 
 
 def test_entrypoint_script_is_executable_and_has_valid_syntax():

@@ -22,10 +22,13 @@ Two jobs, both deterministic so the drill never has to eyeball a score:
                 what was wrong with it" is a different failure from "never
                 looked at it".
 
-On the **clean** case (zero planted defects) the direction inverts: any blocking
-language is a false positive, and plain "looks fine" prose is not. That case is
+On the **clean** case (zero planted defects) the direction inverts: *claiming* a
+finding is a false positive, and plain "looks fine" prose is not. That case is
 what measures precision — a reviewer that cannot stay quiet when there is
-nothing to find is as broken as one that misses defects.
+nothing to find is as broken as one that misses defects. "Claiming" is the load-
+bearing word: a conclusion that names the same vocabulary in the negative ("no
+security issues", "重大な問題はありません") is the reviewer doing exactly what
+this case rewards, so the keyword check is negation-aware per clause.
 
 What this scorer deliberately does NOT compute: `severity_accuracy`,
 `blocking_accuracy`, `explanation_quality` (they need the judge step in
@@ -53,11 +56,43 @@ from typing import Any
 PROXIMITY_WINDOW = 600
 
 # On a clean case, blocking language is the false positive. A suggestion phrased
-# as optional ("might be worth …") deliberately does not match.
+# as optional ("might be worth …") deliberately does not match. The vocabulary
+# alone is not the verdict — `clean_false_positive` decides whether each hit is
+# asserted or denied.
 CLEAN_FP_RE = re.compile(
     r"(?i)(critical|high severity|severity:\s*(critical|high)|must fix|blocking|"
-    r"security (issue|risk|vulnerab)|bug\b|defect|重大|要修正|ブロッ)"
+    r"security (issue|risk|vulnerab)|bugs?\b|defect|重大|要修正|ブロッ)"
 )
+
+# Each keyword hit is judged inside its own clause, so "no security issues, but
+# there is a critical bug" still flags on the second half. The cue is directional
+# because the two languages negate from opposite sides: English puts it before
+# the word ("no bugs", "not blocking"), Japanese after it (重大な問題は*ありません*).
+_CLAUSE_SPLIT_RE = re.compile(
+    r"[.!?;:,\n。、]+|\b(?:but|however|though|although)\b", re.IGNORECASE
+)
+_NEG_BEFORE_RE = re.compile(r"(?i)\b(?:no|not|never|none|nothing|without|nor|free of)\b|n't\b")
+_NEG_AFTER_RE = re.compile(r"ありません|ございません|ません|無い|無し|ない|なし|見当たら|皆無")
+
+
+def clean_false_positive(text: str) -> bool:
+    """True when a review of the clean case actually *claims* a finding.
+
+    A hit that its own clause negates is not a false positive: "No security
+    issues." and "重大な問題はありません" are correct conclusions on a clean diff,
+    and scoring them as findings would penalise the one behaviour this case
+    measures. Limit worth knowing: the cue is clause-local and directional, so a
+    negation that reaches across a clause boundary is not seen.
+    """
+    for clause in _CLAUSE_SPLIT_RE.split(text):
+        for match in CLEAN_FP_RE.finditer(clause):
+            if _NEG_BEFORE_RE.search(clause[: match.start()]):
+                continue
+            if _NEG_AFTER_RE.search(clause[match.end():]):
+                continue
+            return True
+    return False
+
 
 # drill derives expected blocking from expected severity (facets/instructions/drill.md ①).
 _BLOCKING_BY_SEVERITY = {
@@ -170,8 +205,9 @@ def score_review(
         "detected": 0,
     }
     if case.get("clean"):
-        # Every finding here is a false positive by construction.
-        result["flagged"] = bool(CLEAN_FP_RE.search(text))
+        # Every finding here is a false positive by construction — but a denial
+        # ("no bugs found") is not a finding.
+        result["flagged"] = clean_false_positive(text)
         return result
 
     for violation in accountable_violations(case, perspective):

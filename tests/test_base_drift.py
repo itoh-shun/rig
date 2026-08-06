@@ -204,6 +204,67 @@ def test_no_drift_is_silent_and_range_unchanged(git_repo):
     assert run_cli(["diff", task_id], git_repo).stdout.count("base drift") == 0
 
 
+# ── `--base <branch>` from another branch ────────────────────────────────────
+# The drift machinery above assumes the recorded `base_commit` was the real fork
+# point. `new --base master` while `feature` is checked out used to record HEAD
+# (= feature's tip) instead, so every commit unique to `feature` was counted as
+# the task's own work — no rebase required, and the drift warning never fires
+# because nothing drifted. Fixed where it originates: at registration.
+
+
+@pytest.fixture
+def diverged(git_repo):
+    """master@A, then `feature` branches off and moves to F, checked out."""
+    base_sha = sh(["git", "rev-parse", "HEAD"], git_repo).strip()
+    sh(["git", "checkout", "-q", "-b", "feature"], git_repo)
+    (git_repo / "feature_only.txt").write_text("someone else's branch work\n", encoding="utf-8")
+    sh(["git", "add", "-A"], git_repo)
+    sh(["git", "commit", "-q", "-m", "feature work"], git_repo)
+    feature_sha = sh(["git", "rev-parse", "HEAD"], git_repo).strip()
+    return git_repo, base_sha, feature_sha
+
+
+def test_explicit_base_is_recorded_and_forked_from(diverged):
+    git_repo, base_sha, feature_sha = diverged
+    r = run_cli(["new", "based task", "--type", "feature", "--base", "master"], git_repo)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    task_id = sorted(p.name for p in (git_repo / ".rig" / "runs").iterdir())[-1]
+    task = json.loads((git_repo / ".rig" / "runs" / task_id / "task.json")
+                      .read_text(encoding="utf-8"))
+    assert task["base_branch"] == "master"
+    assert task["base_commit"] == base_sha != feature_sha
+    wt = pathlib.Path(task["worktree_path"])
+    assert sh(["git", "rev-parse", "HEAD"], wt).strip() == base_sha
+
+
+def test_explicit_base_keeps_the_other_branch_out_of_the_task_diff(diverged):
+    git_repo, base_sha, _feature_sha = diverged
+    r = run_cli(["new", "based task", "--type", "feature", "--base", "master"], git_repo)
+    assert r.returncode == 0, r.stdout + r.stderr
+    task_id = sorted(p.name for p in (git_repo / ".rig" / "runs").iterdir())[-1]
+    task = json.loads((git_repo / ".rig" / "runs" / task_id / "task.json")
+                      .read_text(encoding="utf-8"))
+    _commit_in_worktree(task)
+
+    names, _stat, _dirty = _diff_lines(git_repo, task)
+    assert _names(names) == ["task_file.txt"]        # not feature_only.txt
+
+    # And the drift machinery still agrees with the record: nothing drifted.
+    eff, drifted_from = effective_base(git_repo, task)
+    assert eff == base_sha
+    assert drifted_from is None
+
+
+def test_unresolvable_base_fails_fast(git_repo):
+    r = run_cli(["new", "based task", "--type", "feature", "--base", "no-such-branch"], git_repo)
+    assert r.returncode != 0
+    assert "does not resolve to a commit" in (r.stdout + r.stderr)
+    # No partial state: it aborts before the run dir and before the .gitignore edit.
+    assert not (git_repo / ".rig" / "runs").exists()
+    assert not (git_repo / ".gitignore").exists()
+
+
 def test_base_branch_moving_ahead_alone_is_not_drift(git_repo):
     """Only a rebase changes the merge base. A base branch that merely moved ahead
     while the task branch stayed put must not be reported."""

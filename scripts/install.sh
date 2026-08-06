@@ -154,8 +154,11 @@ ensure_gh_stack() {
     if [ "$FORCE" -eq 1 ]; then
       echo ""
       echo "◇ Reinstalling gh-stack (--force)"
-      gh extension install --force github/gh-stack
-      detect_gh
+      if gh extension install --force github/gh-stack; then
+        detect_gh
+      else
+        echo "  gh-stack reinstall failed; keeping what is already there (rig runs without it)."
+      fi
     fi
     return 0
   fi
@@ -178,8 +181,14 @@ ensure_gh_stack() {
   fi
   echo ""
   echo "◇ Installing gh-stack..."
-  gh extension install github/gh-stack
-  detect_gh
+  # `set -e` is on: an unguarded failure here (network, auth, a bad extension
+  # release — Codex reproduced exit 23) would abort the whole rig install before
+  # it ever reaches the pip step. Optional means optional in both directions.
+  if gh extension install github/gh-stack; then
+    detect_gh
+  else
+    echo "  gh-stack install failed; continuing without it (rig runs without it)."
+  fi
 }
 
 if [ "$UNINSTALL" -eq 0 ]; then

@@ -127,12 +127,26 @@ def cmd_new(args: argparse.Namespace) -> None:
     # before any run dir / worktree is created (no partial state on error).
     acc = build_acceptance(task_id, args.type, root)
 
+    base_branch = args.base or current_branch(root)
+    # `--base <branch>` has to mean it. Recording HEAD here while naming another
+    # branch as the base made every later range wrong by construction: the diff
+    # and the gate sensors are taken against `base_commit`, so a task started
+    # from `feature` with `--base master` counted `feature`'s own commits as the
+    # task's work. Resolve the requested branch and fork the worktree from that
+    # same commit, so the recorded value and the real fork point cannot diverge —
+    # which is exactly the invariant `effective_base` (base drift, #312) assumes.
+    # Resolved before anything is written, same reason as the gate above.
+    if args.base:
+        proc = git(["rev-parse", "--verify", f"{args.base}^{{commit}}"], cwd=root, check=False)
+        base_commit = proc.stdout.strip()
+        if proc.returncode != 0 or not base_commit:
+            die(f"--base '{args.base}' does not resolve to a commit")
+    else:
+        base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
+
     # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
     if ensure_rig_gitignored(root):
         print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
-
-    base_branch = args.base or current_branch(root)
-    base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
 
     worktree_path: str | None = None
     branch: str | None = None
@@ -141,7 +155,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         wt = default_worktree_path(root, task_id)
         branch = f"rig/{task_id}"
         wt.parent.mkdir(parents=True, exist_ok=True)
-        git(["worktree", "add", "-b", branch, str(wt), "HEAD"], cwd=root)
+        git(["worktree", "add", "-b", branch, str(wt), base_commit], cwd=root)
         worktree_path = str(wt)
 
     task = {
