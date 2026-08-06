@@ -1,0 +1,1463 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STEPUP-CLAUDE-02r 開発特化ステップアップガイド【rig 実装編】ガイドライン対応表</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+/* ============================================================
+   claude-doc-style.css — 配布資料共通スタイル
+   方針: ゴシック完全統一 / ライトトーン / 印刷・配布前提 / 環境非依存
+   使い方: <head> で Google Fonts を読み込み、本CSSを link するだけ。
+     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+     <link href="claude-doc-style.css" rel="stylesheet">
+   詳細ルールは DOCUMENT-STYLE-GUIDE.md を参照。
+   ============================================================ */
+
+:root {
+  /* --- カラートークン（3部作から継承） --- */
+  --paper: #FAF6EE;
+  --paper-tint: #F2EBD9;
+  --ink: #1A1814;
+  --ink-soft: #4A4640;
+  --ink-mute: #8A8278;
+  --rule: #D9D1BF;
+  --accent: #C8341F;   /* テーマ色（§2-E 第2層）。文書ごとに下記「テーマ色の適用」で上書きする */
+
+  /* --- 優先度・分類タグの3色（意味づけ用） --- */
+  --must: #B22F1A;      --must-bg: #FBE6E1;
+  --should: #B57500;    --should-bg: #FBEFD0;
+  --could: #1F4A8C;     --could-bg: #DDE7F4;
+
+  /* --- 分類の識別色（§2-B: マッピング系の図に限定・トーン統一・7色以内） ---
+     二重符号化（番号/ラベル併用）が前提。色単独に意味を載せない。 */
+  --id-1: #4A4380;  /* 藍 */
+  --id-2: #2A5A7C;  /* 青緑 */
+  --id-3: #2B5D4F;  /* 緑 */
+  --id-4: #8A6D2E;  /* 黄土 */
+  --id-5: #6E3A5A;  /* 臙脂 */
+  --id-6: #B8482A;  /* 朱（accent帯） */
+  --id-7: #5A5550;  /* 灰 */
+
+  /* --- 対比の地色（§2-A: 表・マトリクスの行/列対比・淡色2色程度・印刷で白反転） --- */
+  --tint-a: #FBF1EA;  /* 淡ウォーム */
+  --tint-b: #EEF3F0;  /* 淡クール */
+
+  /* --- テーマ色パレット（§2-E 第3層: 選択肢の定義） ---
+     文書の同一性を示す1色の候補群。単巻は内容に応じて1色を選び、多巻は巻ごとに
+     重複なく固定割当する（巻1から順に使う）。いずれも --paper 地でWCAG AA適合。
+     適用箇所は控えめに＝メタバッジ／章番号／フッター罫線／部の区切り(.part)のみ。
+     本文の文字色・背景・面の全面塗りには使わない。
+     重要度(must/should/could)・分類識別色(--id-*)とは役割が別。
+
+     ▼ テーマ色の適用（文書ごと・§2-E 第2層）
+       文書側の <style> で --accent だけを上書き宣言する。色値の一括置換は
+       意味色(--must/--should/--could)を巻き込むため禁止。
+         :root { --accent: #356A86; }   ← 例: 青系（--vol-2 と同値）を主色にする */
+  --vol-1: #A2503C;  /* 巻1（暖赤茶） */
+  --vol-2: #356A86;  /* 巻2（青） */
+  --vol-3: #57803F;  /* 巻3（緑） */
+  --vol-4: #7A5688;  /* 巻4（紫） */
+
+  /* --- フォント（ゴシック統一・フォールバック必須） --- */
+  --font-sans: 'IBM Plex Sans JP', 'Noto Sans JP', "Hiragino Kaku Gothic ProN",
+               "Yu Gothic", "Meiryo", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', "SFMono-Regular", Consolas,
+               "Liberation Mono", monospace;
+
+  /* --- 余白（8px グリッド） --- */
+  --sp-1: 8px;  --sp-2: 16px; --sp-3: 24px;
+  --sp-4: 32px; --sp-6: 48px; --sp-8: 64px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { -webkit-font-smoothing: antialiased; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.65;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+.doc-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--sp-8) var(--sp-6) 96px;
+}
+
+/* ---------- 見出し（ゴシックのまま太さ・大きさで階層） ---------- */
+h1, h2, h3, h4, h5 { font-family: var(--font-sans); }
+
+h1 {
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--sp-2);
+}
+h2 {
+  font-weight: 700;
+  font-size: 26px;
+  line-height: 1.2;
+  margin: var(--sp-6) 0 var(--sp-2);
+  padding-bottom: var(--sp-1);
+  border-bottom: 1px solid var(--rule);
+}
+h3 {
+  font-weight: 600;
+  font-size: 19px;
+  line-height: 1.3;
+  margin: var(--sp-4) 0 var(--sp-1);
+}
+h4 {
+  font-weight: 600;
+  font-size: 16px;
+  margin: var(--sp-3) 0 var(--sp-1);
+}
+
+p { margin-bottom: var(--sp-2); }
+a { color: var(--could); text-decoration: none; border-bottom: 1px solid var(--rule); }
+
+/* ---------- メタ/ラベル（Mono・控えめ） ---------- */
+.meta, .label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.meta { margin-bottom: var(--sp-3); }
+
+/* ---------- 章番号（任意・3部作と揃える場合） ---------- */
+.sec-num {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 40px;
+  color: var(--accent);
+  line-height: 1;
+  font-feature-settings: "tnum";
+}
+
+/* ---------- コード・値（等幅はここだけ） ---------- */
+code, kbd, .mono {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--paper-tint);
+  padding: 1px 5px;
+}
+pre {
+  font-family: var(--font-mono);
+  background: var(--paper-tint);
+  border: 1px solid var(--rule);
+  padding: var(--sp-2);
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: var(--sp-2);
+}
+pre code { background: none; padding: 0; }
+
+/* ---------- リスト ---------- */
+ul, ol { margin: 0 0 var(--sp-2) 1.4em; }
+li { margin-bottom: 4px; line-height: 1.6; }
+
+/* ---------- 表 ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-bottom: var(--sp-3); }
+th {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 10px 12px;
+}
+td { padding: 11px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:first-child td { } /* placeholder */
+table tbody tr td:first-child { background: var(--paper-tint); font-weight: 500; }
+
+/* ---------- カード ---------- */
+.card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.card-tint { background: var(--paper-tint); }
+
+/* ---------- 優先度タグ（意味づけ用） ---------- */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  color: #fff;
+}
+.tag.must   { background: var(--must); }
+.tag.should { background: var(--should); }
+.tag.could  { background: var(--could); }
+
+/* ---------- 強調ブロック（左罫線・淡背景） ---------- */
+.callout {
+  border-left: 4px solid var(--accent);
+  background: var(--paper-tint);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.callout.must   { border-left-color: var(--must);   background: var(--must-bg); }
+.callout.should { border-left-color: var(--should); background: var(--should-bg); }
+.callout.could  { border-left-color: var(--could);  background: var(--could-bg); }
+
+/* ---------- 対比の地色（§2-A: 表・マトリクス限定） ----------
+   行/列の所属対比を示す読み取り補助。印刷では白に反転（下部 @media print）。 */
+.tint-a { background: var(--tint-a); }
+.tint-b { background: var(--tint-b); }
+
+/* ---------- 区切り ---------- */
+hr { border: none; border-top: 1px solid var(--rule); margin: var(--sp-4) 0; }
+
+/* ---------- 標準フッター（単一列・左寄せ。§4.4 対応） ---------- */
+.doc-footer {
+  margin-top: var(--sp-8);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-align: left;          /* 複数列・右寄せにしない */
+  line-height: 1.7;
+}
+.doc-footer .meta { display: block; margin-bottom: 4px; }
+
+/* ---------- 主張ラベル（VERIFIED / REASONED / ASSUMED。§5-C 対応）
+   確からしさの区分であり重要度ではないため、意味3色は使わずインク系で統一。 ---------- */
+.claim {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 3px 9px;
+  border: 1px solid var(--ink-soft);
+  color: var(--ink-soft);
+  background: none;
+  vertical-align: 1px;
+}
+
+/* ---------- リード文（h1直下の説明。§4.1 B-1対応） ----------
+   h1内改行でサブタイトルを表現しない。説明はここに置く。 */
+.lead { font-size: 16px; color: var(--ink-soft); margin-bottom: var(--sp-3); }
+
+/* ---------- 図枠・キャプション（§4.7 A-5/A-6対応。.diagram-frameの図版用エイリアス） ----------
+   FIG.NN 短ラベル：説明／出典 をキャプションに一本化。枠内にタイトルを重ねない。 */
+.fig-wrap { border: 1px solid var(--rule); background: #fff; padding: var(--sp-2); margin-bottom: var(--sp-1); overflow-x: auto; }
+.fig-cap { font-size: 12px; color: var(--ink-mute); margin-bottom: var(--sp-3); }
+
+/* ---------- 表現グレード（§4.1 B-3対応。読者の熟練度差を同一ページで扱う） ---------- */
+.facet { margin-bottom: 6px; }
+.facet > b:first-child { color: var(--ink); font-weight: 700; }
+.aside { font-size: 14px; color: var(--ink-soft); line-height: 1.6; margin: 2px 0 10px 0; padding-left: 10px; border-left: 2px solid var(--rule); }
+.aside b { color: var(--ink); }
+.keep { border-left: 4px solid var(--accent); background: var(--paper-tint); padding: var(--sp-2) var(--sp-3); margin: var(--sp-3) 0 var(--sp-2); font-size: 15px; line-height: 1.65; color: var(--ink); }
+.keep::before { content: "この章で残すこと"; display: block; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 4px; }
+.fillin { border: 1px solid var(--ink); padding: var(--sp-2); margin-bottom: var(--sp-2); background: #fff; }
+.fillin .blank { display: inline-block; min-width: 120px; border-bottom: 1px solid var(--ink-soft); }
+
+/* ---------- 従属コラム（原典比較・道具の限界などの注記化。.aside より重く .callout より中立） ---------- */
+.column { background: var(--paper-tint); border: 1px solid var(--rule); padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-2); font-size: 14px; line-height: 1.65; color: var(--ink-soft); }
+.column > b:first-child { display: block; color: var(--ink); font-weight: 700; margin-bottom: 4px; }
+
+/* ---------- 付録コンパクト（付録の行間・パディング圧縮） ---------- */
+.appendix-compact { font-size: 14px; line-height: 1.5; }
+.appendix-compact p, .appendix-compact li { margin-bottom: 4px; }
+.appendix-compact h3, .appendix-compact h4 { margin-top: var(--sp-2); }
+.appendix-compact table { font-size: 12.5px; }
+
+/* ---------- 部の区切り（§4.1: 章が多い／前後半に分かれる文書。色はテーマ色に追従） ---------- */
+.part {
+  margin: var(--sp-6) 0 var(--sp-4);
+  padding: var(--sp-3) 0 var(--sp-2);
+  border-top: 3px solid var(--accent);
+  border-bottom: 1px solid var(--rule);
+}
+.part__num {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 2px 9px;
+  color: #fff;
+  background: var(--accent);
+  margin-bottom: 8px;
+}
+.part__title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--ink);
+  margin: 0;
+}
+.part__lead {
+  font-size: 14px;
+  color: var(--ink-soft);
+  line-height: 1.7;
+  margin: 6px 0 0;
+}
+
+/* ---------- 分冊識別バッジ（§2-E。控えめ運用：メタ行にのみ使用） ---------- */
+.vol-tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 2px 9px;
+  color: #fff;
+  margin-right: 6px;
+}
+.vol-tag.vol-1 { background: var(--vol-1); }
+.vol-tag.vol-2 { background: var(--vol-2); }
+.vol-tag.vol-3 { background: var(--vol-3); }
+.vol-tag.vol-4 { background: var(--vol-4); }
+/* 章番号・フッター罫線への適用（任意・§4.4/§4.8参照時に個別付与） */
+.sec-num.vol-1 { color: var(--vol-1); }
+.sec-num.vol-2 { color: var(--vol-2); }
+.sec-num.vol-3 { color: var(--vol-3); }
+.sec-num.vol-4 { color: var(--vol-4); }
+.doc-footer.vol-1 { border-top-color: var(--vol-1); }
+.doc-footer.vol-2 { border-top-color: var(--vol-2); }
+.doc-footer.vol-3 { border-top-color: var(--vol-3); }
+.doc-footer.vol-4 { border-top-color: var(--vol-4); }
+
+/* ---------- 正規ファイル名の無変換表示（§4.4: ヘッダー.metaの大文字化を経ない） ---------- */
+.fname { font-family: var(--font-mono); text-transform: none; letter-spacing: 0; }
+
+/* ---------- 役割タグチップ（§4.7: 図解・カード内の内容の分節。重要度ではない＝意味3色と混用しない） ---------- */
+.tag-role { display: inline-block; font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 4px 10px; border: 1px solid var(--rule); color: var(--ink-soft); background: var(--paper-tint); }
+
+/* ---------- ライト端末モック（§4.7: 濃色端末風の代替。白地枠＋mono＋行頭プロンプト記号） ---------- */
+.term-mock { border: 1px solid var(--ink); background: #fff; padding: var(--sp-2); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; color: var(--ink); overflow-x: auto; }
+.term-mock > .term-cap { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-mute); border-bottom: 1px solid var(--rule); padding-bottom: 6px; margin-bottom: 8px; }
+.term-mock .cmd { display: block; }
+.term-mock .cmd::before { content: "$ "; color: var(--ink-mute); }
+.term-mock .out { display: block; color: var(--ink-soft); }
+
+/* ---------- 実務部品（STEPUP制作のdoc-localから昇格。§4.1/§4.7） ---------- */
+/* 前提レベルチップ（L1 基礎／L2 運用／L3 発展。インク系・色に意味を載せない） */
+.lv { display: inline-block; font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; padding: 3px 9px; border: 1px solid var(--ink-soft); color: var(--ink-soft); background: #fff; vertical-align: 1px; }
+
+/* 強制力チップ（インク単色の濃淡3段：文脈=破線枠／構造=淡地／強制=インク地白抜き） */
+.en { display: inline-block; font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; padding: 3px 9px; vertical-align: 1px; }
+.en.weak { border: 1px dashed var(--ink-soft); color: var(--ink-soft); background: #fff; }
+.en.mid { border: 1px solid var(--rule); color: var(--ink); background: var(--paper-tint); }
+.en.strong { border: 1px solid var(--ink); color: var(--paper); background: var(--ink); }
+
+/* 現在地ストリップ（全体マップの再掲。各節冒頭に置く） */
+.ctlnav { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 var(--sp-2); padding: 8px 10px; border: 1px solid var(--rule); background: #fff; }
+.ctlnav > .ctlnav-cap { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-mute); margin-right: 4px; }
+.ctlnav > .ci { font-family: var(--font-sans); font-size: 11.5px; padding: 4px 10px; border: 1px solid var(--rule); color: var(--ink-soft); background: var(--paper); }
+.ctlnav > .ci.on { border-color: var(--ink); color: var(--paper); background: var(--ink); font-weight: 600; }
+
+/* 手順カード（横並びフロー。読み順は左→右の1方向＝§3-A） */
+.flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.flow > .fstep { border: 1px solid var(--rule); background: #fff; padding: var(--sp-2); break-inside: avoid; }
+.flow > .fstep > .fnum { font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--accent); display: block; margin-bottom: 4px; }
+.flow > .fstep > .ftitle { font-weight: 700; font-size: 14px; color: var(--ink); display: block; margin-bottom: 4px; }
+.flow > .fstep > .fbody { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; display: block; }
+
+/* ---------- ダッシュボード部品（表現テイスト Lv.3 VISUAL。§4.8 対応）
+   KPIカード・チャートパネル・ダイアグラムフレーム。§3-Aのグリッド整列規則に従う。 ---------- */
+
+/* KPIカード：1画面4〜6枚目安（§4.8）。強調色は同時3色までに留める。 */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.kpi-card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: var(--sp-2) var(--sp-3);
+}
+.kpi-card.must   { border-left: 4px solid var(--must); }
+.kpi-card.should { border-left: 4px solid var(--should); }
+.kpi-card.could  { border-left: 4px solid var(--could); }
+.kpi-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 4px;
+  display: block;
+}
+.kpi-value {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 1.1;
+  color: var(--ink);
+  font-feature-settings: "tnum";
+}
+.kpi-value .unit { font-size: 15px; font-weight: 500; margin-left: 2px; color: var(--ink-soft); }
+.kpi-delta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin-top: 4px;
+  display: block;
+  color: var(--ink-soft);
+}
+.kpi-delta.up   { color: var(--must); }
+.kpi-delta.down { color: var(--could); }
+
+/* チャートパネル：1パネル1チャート。出典/期間はパネル内に内包（自立性§0-7）。 */
+.chart-panel {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.chart-panel__title {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: var(--sp-2);
+}
+.chart-panel__note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+  margin-top: var(--sp-1);
+}
+
+/* ダイアグラムフレーム：Mermaid/SVG図の格納枠。はみ出しはスクロール許容、縮小しない。 */
+.diagram-frame {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  overflow-x: auto;
+}
+.diagram-frame svg, .diagram-frame .mermaid { max-width: 100%; }
+
+/* ============================================================
+   印刷対応（必須）: 背景演出オフ・濃色はライト反転・分断防止
+   ============================================================ */
+@media print {
+  body { background: #fff; }
+  .doc-wrap { max-width: none; padding: 16mm; }
+  h2, section, .card, table, .callout { break-inside: avoid; }
+  /* 濃色バンドはライト反転（インク節約・可読性）。 */
+  th { background: #fff; color: var(--ink); border-bottom: 2px solid var(--ink); }
+  table tbody tr td:first-child { background: #fff; }
+  .tint-a, .tint-b { background: #fff; }
+  a { color: var(--ink); border: none; }
+  .tag { color: var(--ink); background: none; border: 1px solid var(--ink); }
+  .doc-footer { color: var(--ink); }
+  .claim { color: var(--ink); border-color: var(--ink); }
+  .kpi-card.must, .kpi-card.should, .kpi-card.could { border-left-color: var(--ink); }
+  .kpi-delta.up, .kpi-delta.down { color: var(--ink); }
+  .vol-tag { background: #fff !important; color: var(--ink) !important; border: 1px solid var(--ink); }
+  .sec-num.vol-1, .sec-num.vol-2, .sec-num.vol-3, .sec-num.vol-4 { color: var(--accent); }
+  .doc-footer.vol-1, .doc-footer.vol-2, .doc-footer.vol-3, .doc-footer.vol-4 { border-top-color: var(--ink); }
+  /* 部の区切りは改ページを起こす（§4.1）。テーマ色はインク系に反転。 */
+  .part { break-before: page; border-top-color: var(--ink); }
+  .part__num { background: #fff !important; color: var(--ink) !important; border: 1px solid var(--ink); }
+  .part:first-of-type { break-before: auto; }
+  .fig-wrap { border-color: var(--ink); }
+  /* チップ系部品の印刷反転（インク地白抜き→白地インク枠） */
+  .tag-role { background: #fff; border-color: var(--ink-soft); }
+  .en.strong { background: #fff !important; color: var(--ink) !important; border: 1px solid var(--ink); }
+  .ctlnav > .ci.on { background: #fff !important; color: var(--ink) !important; border: 1.5px solid var(--ink); }
+  .lv { border-color: var(--ink); color: var(--ink); }
+}
+
+/* ============================================================
+   レスポンシブ（モバイル閲覧担保）
+   ============================================================= */
+@media (max-width: 960px) {
+  .doc-wrap { padding: var(--sp-4) var(--sp-2); }
+  h1 { font-size: 30px; }
+  h2 { font-size: 22px; }
+  table { font-size: 12.5px; }
+  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .kpi-value { font-size: 24px; }
+}
+
+/* ========== doc-local（本書スコープ限定の追加定義。汎用要素セレクタ不使用） ========== */
+/* テーマ色：前編＝VOL.1（--accent の上書き宣言のみ。意味色 --must/--should/--could には触れない） */
+:root { --accent: var(--vol-3); }
+</style>
+</head>
+<body>
+<div class="doc-wrap">
+
+<!-- ============ 文書ヘッダー ============ -->
+<div class="meta"><span class="vol-tag vol-3">VOL.3 実装編</span> STEPUP-CLAUDE-02r ・ 開発特化ステップアップガイド【rig 実装編】</div>
+<h1>開発特化ステップアップガイド【rig 実装編】</h1>
+<p class="lead">前編（02a）で定めた整備と、後編（02b）で定めた回し方を、<b>rig</b>（Claude Code 用の品質保証つき AI ワークベンチ）で実装するとどうなるかを、部品名レベルで対応づける一冊。二冊が「何を、どの強制力で載せるか」を決める座標だとすれば、本書は「その座標の各マスに、rig のどのファイル・どのコマンドが入るか」の対応表である。ガイドラインの読者（個人〜10名程度のプロダクト開発チーム）をそのまま引き継ぐ。</p>
+
+<!-- FIG.00 三冊の関係と現在地 -->
+<div class="fig-wrap">
+<svg viewBox="0 0 1120 400" width="100%" role="img" aria-label="三冊の関係。左が前編で何をどの順に整備するか、中央が後編でどう回し続けるか、右が本書でそれを rig で実装するとどうなるか。下段は三冊に共通する座標である制御要素マップと、本書だけが持つ第4の軸である実装の裏づけ。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <rect x="0" y="24" width="330" height="186" fill="#FBF1EA" stroke="#D9D1BF"/>
+    <text x="20" y="52" fill="#A2503C" font-size="11.5" font-weight="700" font-family="'IBM Plex Mono',monospace">VOL.1</text>
+    <text x="20" y="76" fill="#1A1814" font-size="14" font-weight="700">前編（02a）</text>
+    <text x="20" y="98" fill="#4A4640" font-size="11.5">問い：何をどの順に整備するのか</text>
+    <line x1="20" y1="110" x2="310" y2="110" stroke="#D9D1BF"/>
+    <text x="20" y="132" fill="#4A4640" font-size="11.5">01 環境構築と初期診断</text>
+    <text x="20" y="152" fill="#4A4640" font-size="11.5">02 制御要素マップ（7要素×3段）</text>
+    <text x="20" y="172" fill="#4A4640" font-size="11.5">03 必須整備キット A〜E</text>
+    <text x="20" y="192" fill="#4A4640" font-size="11.5">04 最初の運用立ち上げ</text>
+
+    <rect x="360" y="24" width="330" height="186" fill="#FBF1EA" stroke="#D9D1BF"/>
+    <text x="380" y="52" fill="#356A86" font-size="11.5" font-weight="700" font-family="'IBM Plex Mono',monospace">VOL.2</text>
+    <text x="380" y="76" fill="#1A1814" font-size="14" font-weight="700">後編（02b）</text>
+    <text x="380" y="98" fill="#4A4640" font-size="11.5">問い：どう回し続けるのか</text>
+    <line x1="380" y1="110" x2="670" y2="110" stroke="#D9D1BF"/>
+    <text x="380" y="132" fill="#4A4640" font-size="11.5">第1部 マルチエージェント／ループ</text>
+    <text x="380" y="152" fill="#4A4640" font-size="11.5">第2部 分業とチーム</text>
+    <text x="380" y="172" fill="#4A4640" font-size="11.5">第3部 品質と観測</text>
+    <text x="380" y="192" fill="#4A4640" font-size="11.5">06 作り手側の観測</text>
+
+    <rect x="720" y="24" width="400" height="186" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="742" y="52" fill="#57803F" font-size="11.5" font-weight="700" font-family="'IBM Plex Mono',monospace">VOL.3（現在地）</text>
+    <text x="742" y="76" fill="#1A1814" font-size="14" font-weight="700">rig 実装編（本書）</text>
+    <text x="742" y="98" fill="#4A4640" font-size="11.5">問い：それを rig で実装するとどうなるか</text>
+    <line x1="742" y1="110" x2="1098" y2="110" stroke="#D9D1BF"/>
+    <text x="742" y="132" fill="#4A4640" font-size="11.5">02 前編の整備 → rig の既定配線</text>
+    <text x="742" y="152" fill="#4A4640" font-size="11.5">03 ループ設計 → goal / loop / autonomous</text>
+    <text x="742" y="172" fill="#4A4640" font-size="11.5">04 分業 → provider 分離・cost 制御</text>
+    <text x="742" y="192" fill="#4A4640" font-size="11.5">05 品質 → gate・センサー・drill・board</text>
+
+    <path d="M336,112 L354,112" stroke="#8A8278" stroke-width="1.6" marker-end="url(#r0)"/>
+    <path d="M696,112 L714,112" stroke="#57803F" stroke-width="2" marker-end="url(#r1)"/>
+    <defs>
+      <marker id="r0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8A8278" stroke-width="1.6"/></marker>
+      <marker id="r1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#57803F" stroke-width="1.6"/></marker>
+    </defs>
+
+    <rect x="0" y="238" width="1120" height="70" fill="#fff" stroke="#D9D1BF"/>
+    <text x="20" y="264" fill="#1A1814" font-size="13.5" font-weight="700">三冊に共通する座標：制御要素マップ（7要素 × 強制力3段）</text>
+    <text x="20" y="288" fill="#4A4640" font-size="11.5">本書も新しい座標を作らない。前編02章の同じマップの上で「このマスに rig の何が入るか／入らないか」だけを書く。</text>
+
+    <rect x="0" y="326" width="1120" height="70" fill="#F2EBD9" stroke="#57803F"/>
+    <text x="20" y="352" fill="#1A1814" font-size="13.5" font-weight="700">本書だけが持つ第4の軸：実装の裏づけ（実装済み／実装済みだが未検証／rig では埋まらない）</text>
+    <text x="20" y="376" fill="#4A4640" font-size="11.5">道具の紹介ではなく対応表なので、埋まらないマス・未検証のマスを空欄のまま示す。これが本書の主目的である。</text>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.00 三冊の関係と現在地：前編＝整備、後編＝回し方、本書＝実装。座標は三冊で共通し、本書は各マスに入る rig の部品と、埋まらないマスを示す。</p>
+
+<!-- ============ 00 序章 ============ -->
+<h2><span class="sec-num vol-3">00</span> 序章：本書の使い方</h2>
+
+<h3>0-1 本書の位置づけ</h3>
+<p>本書は rig の取扱説明書ではない（それは rig の README が本籍である）。本書が扱うのは <b>ガイドライン二冊の主張と、rig の実装との対応関係</b>だけである。読み方は2通りある。</p>
+<div class="flow">
+  <div class="fstep"><span class="fnum">READ A</span><span class="ftitle">ガイドラインから引く</span><span class="fbody">「後編2-2のL1→L3の段階導入は、rig だとどのフラグか」——各章の対応表と巻末の一覧から逆引きする。</span></div>
+  <div class="fstep"><span class="fnum">READ B</span><span class="ftitle">rig から引く</span><span class="fbody">「<span class="mono">/rig:goal</span> は何を実装しているのか」——各節の見出しに rig 側の部品名を併記してあるので、そこから該当章の理屈へ戻る。</span></div>
+</div>
+
+<h3>0-2 確からしさの扱い（本書の独自区分）</h3>
+<p>ガイドライン二冊の確からしさチップ（<span class="claim">確認済み</span>／<span class="claim">推定</span>／<span class="claim">仮定</span>）は本書でもそのまま使う。ただし rig 側の主張については、道具の宣伝と実装の実在を混ぜないため、次の3区分を追加で用いる。区分は rig リポジトリ（v1.28.2 時点）のファイルを直接読んで判定した。</p>
+<table>
+<thead><tr><th>区分</th><th>意味</th><th>本書での書き方</th></tr></thead>
+<tbody>
+<tr><td>実装済み</td><td>リポジトリに実体（コマンド・スクリプト・フック定義・ブリック）があり、参照先ファイルを提示できる</td><td><span class="claim">確認済み</span>＋ファイルパスを併記</td></tr>
+<tr><td>未ライブ検証</td><td>実装はあるが、rig 自身が README で「実環境での動作は未検証」と明示している領域</td><td><span class="claim">仮定</span>＋「rig 側の自己申告どおり未検証」と明記</td></tr>
+<tr><td>埋まらない</td><td>ガイドラインの要求に対し、rig に対応物が無い（別の道具・別の層で埋める必要がある）</td><td>「rig では埋まらない」と明示し、代替の置き場所を書く</td></tr>
+</tbody>
+</table>
+<div class="callout">
+<b>本書がいちばん気をつけたこと。</b> 対応表は、埋まっているマスより<b>埋まっていないマスの方が有用</b>である。rig を入れれば後編の設計が全部手に入る、という読み方だけは避けたい——特に「隔離」（前編1-3）と「proactive ループ」（後編2-2）と「コードのミューテーションテスト」（後編5-2）は、rig では埋まらないか、部分的にしか埋まらない。該当箇所で名指しで注記する。
+</div>
+
+<h3>0-3 時点の留保</h3>
+<p><b>時点の留保</b>：rig の記述は本書執筆時点で参照したリポジトリ（バージョン 1.28.2）のスナップショットである。rig は活発に改訂されており、コマンド名・フラグ・ゲート基準 ID は変わりうる。適用時は <span class="mono">/rig:dev --list</span>・<span class="mono">python3 scripts/workbench.py gates</span> で現行の目録を確認すること（この2つが rig 内での正本であり、README ですらない）。ガイドライン側の仕様記述の時点留保は二冊の巻末に従う。</p>
+
+<h3>0-4 本書の背骨（二冊の4命題を1行に畳む）</h3>
+<p>本書は新しい命題を立てない。二冊の4つの命題が、rig ではどこに実装されているかだけを示す。この4行が本書の骨格であり、以降の全章はこの表の詳細化である。</p>
+<table>
+<thead><tr><th>出典</th><th>命題</th><th>rig での実装</th></tr></thead>
+<tbody>
+<tr><td>前編 命題1</td><td>文脈と強制を両輪で、初日に仕込む</td><td>強制側（隔離 worktree・acceptance-gate・read-only verifier・機械センサー5種）が<b>既定で乗る</b>。文脈側は依然として人間の仕事——rig は基準を作らず、基準を守らせる</td></tr>
+<tr><td>前編 命題2</td><td>完了＝検証コマンドのパス</td><td><span class="mono">accept</span> が gate 状態から機械的に拒否される（<span class="mono">failed</span>/<span class="mono">pending</span> が1件でもあれば exit 1）。自己申告は完了の根拠にならない</td></tr>
+<tr><td>後編 命題1</td><td>自分の宿題を自分で採点させない</td><td><span class="mono">policies/independent-verification</span>＋read-only verifier のプロセス強制＋別プロバイダでの検証（<span class="mono">--verifier-provider</span>）</td></tr>
+<tr><td>後編 命題2</td><td>品質差は知能でなく、規律・順序・検証の差</td><td>規律をブリック（facet／pattern／recipe）としてファイル化し、委譲時に逐語で注入する。モデルを替えても同じ規律が乗る</td></tr>
+</tbody>
+</table>
+
+<!-- ============ 01 rig と制御要素マップ ============ -->
+<h2><span class="sec-num vol-3">01</span> rig を制御要素マップに置く　<span class="lv">L1 基礎</span></h2>
+
+<h3>1-1 rig とは何か（1枚で）</h3>
+<p>rig は Claude Code のプラグインとして動く、品質保証つきの AI ワークベンチである。自然文のタスクを渡すと、①タスク種別を分類し、②対応する recipe（step の束）を選び、③<b>作業ツリーとは隔離された git worktree</b> で実行し、④acceptance-gate で機械的に検証し、⑤<b>明示的な accept があるまで手元のファイルに一切触れない</b>。</p>
+<p>重要なのは、rig が「品質を自動的に生む道具」ではないことである。rig 自身がそう書いている——<b>rig は、あなたが定義した品質基準を AI に無視させないための強制と測定の層</b>であり、基準を作るのは人間の仕事のまま。この位置づけは、前編02章の「文脈は①〜③、強制は⑥⑦」という分担と正確に一致する。rig が引き受けるのは⑥⑦の側である。</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 1120 300" width="100%" role="img" aria-label="rig の基本フロー。自然文タスクから、分類、recipe選択、隔離worktreeでの実行、acceptance-gate判定、構造化された差分サマリを経て、ユーザーが accept か discard を選ぶ。accept は gate 未達だと機械的に拒否され、discard しても run log は残る。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <rect x="0" y="20" width="150" height="64" fill="#fff" stroke="#D9D1BF"/>
+    <text x="75" y="46" fill="#1A1814" font-size="12.5" font-weight="700" text-anchor="middle">自然文のタスク</text>
+    <text x="75" y="66" fill="#4A4640" font-size="11" text-anchor="middle" font-family="'IBM Plex Mono',monospace">/rig:go "…"</text>
+
+    <rect x="180" y="20" width="140" height="64" fill="#fff" stroke="#D9D1BF"/>
+    <text x="250" y="42" fill="#1A1814" font-size="12.5" font-weight="700" text-anchor="middle">① 分類</text>
+    <text x="250" y="62" fill="#4A4640" font-size="10.5" text-anchor="middle">bugfix / feature /</text>
+    <text x="250" y="76" fill="#4A4640" font-size="10.5" text-anchor="middle">review / security…</text>
+
+    <rect x="350" y="20" width="140" height="64" fill="#fff" stroke="#D9D1BF"/>
+    <text x="420" y="42" fill="#1A1814" font-size="12.5" font-weight="700" text-anchor="middle">② recipe 選択</text>
+    <text x="420" y="62" fill="#4A4640" font-size="10.5" text-anchor="middle">選択理由バナーを</text>
+    <text x="420" y="76" fill="#4A4640" font-size="10.5" text-anchor="middle">必ず1行表示</text>
+
+    <rect x="520" y="20" width="180" height="64" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="610" y="42" fill="#1A1814" font-size="12.5" font-weight="700" text-anchor="middle">③ 隔離 worktree で実行</text>
+    <text x="610" y="62" fill="#4A4640" font-size="10.5" text-anchor="middle">使い捨て branch ＋ 別ディレクトリ</text>
+    <text x="610" y="76" fill="#4A4640" font-size="10.5" text-anchor="middle">手元の作業ツリーは無傷</text>
+
+    <rect x="730" y="20" width="180" height="64" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="820" y="42" fill="#1A1814" font-size="12.5" font-weight="700" text-anchor="middle">④ acceptance-gate</text>
+    <text x="820" y="62" fill="#4A4640" font-size="10.5" text-anchor="middle">standard ＋ task_type 別プリセット</text>
+    <text x="820" y="76" fill="#4A4640" font-size="10.5" text-anchor="middle">うち5基準は機械センサーが裏づけ</text>
+
+    <rect x="940" y="20" width="180" height="64" fill="#fff" stroke="#D9D1BF"/>
+    <text x="1030" y="42" fill="#1A1814" font-size="12.5" font-weight="700" text-anchor="middle">⑤ 差分サマリ</text>
+    <text x="1030" y="62" fill="#4A4640" font-size="10.5" text-anchor="middle">Summary / Risk / Tests /</text>
+    <text x="1030" y="76" fill="#4A4640" font-size="10.5" text-anchor="middle">Unrelated diff ＋ 次アクション</text>
+
+    <path d="M152,52 L178,52" stroke="#8A8278" stroke-width="1.5" marker-end="url(#f1)"/>
+    <path d="M322,52 L348,52" stroke="#8A8278" stroke-width="1.5" marker-end="url(#f1)"/>
+    <path d="M492,52 L518,52" stroke="#8A8278" stroke-width="1.5" marker-end="url(#f1)"/>
+    <path d="M702,52 L728,52" stroke="#8A8278" stroke-width="1.5" marker-end="url(#f1)"/>
+    <path d="M912,52 L938,52" stroke="#8A8278" stroke-width="1.5" marker-end="url(#f1)"/>
+    <defs><marker id="f1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8A8278" stroke-width="1.5"/></marker></defs>
+
+    <path d="M1030,88 L1030,120 L560,120 L560,150" stroke="#8A8278" stroke-width="1.5" fill="none" marker-end="url(#f1)"/>
+    <rect x="420" y="150" width="280" height="46" fill="#fff" stroke="#1A1814" stroke-width="1.5"/>
+    <text x="560" y="178" fill="#1A1814" font-size="13" font-weight="700" text-anchor="middle">ユーザーの判断（ここは自動化しない）</text>
+
+    <rect x="150" y="228" width="420" height="56" fill="#fff" stroke="#D9D1BF"/>
+    <text x="170" y="252" fill="#1A1814" font-size="12.5" font-weight="700">accept</text>
+    <text x="240" y="252" fill="#4A4640" font-size="11.5">staged diff として作業ツリーへ反映（commit は常に人間）</text>
+    <text x="170" y="272" fill="#B22F1A" font-size="11.5" font-weight="700">gate 未達なら機械的に拒否（exit 1）</text>
+
+    <rect x="600" y="228" width="420" height="56" fill="#fff" stroke="#D9D1BF"/>
+    <text x="620" y="252" fill="#1A1814" font-size="12.5" font-weight="700">discard</text>
+    <text x="700" y="252" fill="#4A4640" font-size="11.5">worktree / branch を削除（task-id 明示＋確認が必須）</text>
+    <text x="620" y="272" fill="#4A4640" font-size="11.5">run log は残る——何を試み、なぜ捨てたかは追える</text>
+
+    <path d="M520,198 L400,198 L400,226" stroke="#8A8278" stroke-width="1.5" fill="none" marker-end="url(#f1)"/>
+    <path d="M600,198 L780,198 L780,226" stroke="#8A8278" stroke-width="1.5" fill="none" marker-end="url(#f1)"/>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.01 rig の基本フロー：①分類→②recipe→③隔離→④gate→⑤サマリ→accept/discard。前編命題2「完了＝検証コマンドのパス」が、accept の前提条件としてコードに埋まっている。</p>
+
+<h3>1-2 7要素マップ上での rig の実体</h3>
+<div class="ctlnav"><span class="ctlnav-cap">MAP</span><span class="ci on">① CLAUDE.md</span><span class="ci">② サブdir CLAUDE.md</span><span class="ci on">③ Rules</span><span class="ci on">④ Skills</span><span class="ci on">⑤ Subagents</span><span class="ci on">⑥ Hooks</span><span class="ci on">⑦ permissions</span></div>
+<p>前編02章のマップに rig を重ねると、次のようになる。rig は7要素のうち<b>②以外の6つに実体を持つ</b>が、載せ方には偏りがある——①はほとんど使わず、④⑤⑥⑦に厚い。これは前編3-Aの「①は薄く、詳細は③④へ、確実な禁止は⑥⑦へ」という切り分けを、道具の側が最初から実装しているためである。</p>
+<table>
+<thead><tr><th>制御要素</th><th>強制力</th><th>rig での実体</th><th>備考</th></tr></thead>
+<tbody>
+<tr><td>① CLAUDE.md</td><td><span class="en weak">文脈</span></td><td><span class="mono">/rig:init</span> が "Compact Instructions" 節だけを追記（<span class="mono">facets/instructions/init</span>）</td><td>rig は CLAUDE.md をほぼ太らせない。前編3-Aの200行原則と衝突しない設計</td></tr>
+<tr><td>② サブdir CLAUDE.md</td><td><span class="en weak">文脈</span></td><td>—</td><td>rig に対応物は無い。パス限定の文脈は Claude Code 側の機能をそのまま使う</td></tr>
+<tr><td>③ Rules</td><td><span class="en weak">文脈</span></td><td><span class="mono">facets/policies/*</span>（9本）＋ プロジェクト manifest <span class="mono">.claude/rig.md</span> ＋ 知識層 <span class="mono">facets/knowledge/</span></td><td>policy は「末尾注入のガードレール」として subagent プロンプトの決まった位置に入る</td></tr>
+<tr><td>④ Skills</td><td><span class="en mid">構造</span></td><td><span class="mono">skills/rig/SKILL.md</span>（エンジン本体）＋ recipes 38本＋ instruction facet 60本超</td><td>前編4-1の Progressive Disclosure をそのまま使う。常時ロードは frontmatter のみ</td></tr>
+<tr><td>⑤ Subagents</td><td><span class="en mid">構造</span></td><td><span class="mono">agents/*.md</span> 11本（security / design / test / performance / observability / api-compat / migration / docs / finding-verifier ほか）</td><td>reviewer はすべて read-only。後編1-1の「委ねる単位」の既製品</td></tr>
+<tr><td>⑥ Hooks</td><td><span class="en strong">強制</span></td><td><span class="mono">hooks/hooks.json</span>：PreCompact / SessionStart / UserPromptSubmit / Stop ＋ git hooks（<span class="mono">rig-wb githooks install</span>）</td><td>前編3-Cのcompact対策が実装として存在する（後述1-3）</td></tr>
+<tr><td>⑦ permissions</td><td><span class="en strong">強制</span></td><td>verifier の tool 制限（<span class="mono">claude --allowedTools Read,Grep,Glob</span> / <span class="mono">codex --sandbox read-only</span>）＋ trust store（project recipe の初回同意）</td><td>Claude Code の <span class="mono">settings.json</span> の permissions とは別レイヤー。両方使う</td></tr>
+</tbody>
+</table>
+
+<div class="column">
+<b>rig は permissions を置き換えない。</b> 前編3-Cが求める「削除系・本番反映・秘密出力を PreToolUse＋deny で機械ブロックする」は、<b>rig を入れても引き続き必要</b>である。rig の <span class="mono">no_destructive_operation</span> センサーが見るのは<b>diff に書き込まれたコマンド</b>であって、セッション中に実行されるコマンドの傍受ではない（rig 自身がそう明記している——「実行時コマンドの傍受はホストのパーミッション機構の責務」）。<b>settings.json の deny が一次、rig のセンサーが二次</b>。この順序を逆にしない。
+</div>
+
+<h3>1-3 前編3-Cの「未確認だったフック」が、実装として存在する</h3>
+<p>前編3-Cは、compact 対策のフックについて「①<span class="mono">PostCompact</span> で判断根拠を状態ファイルへ書き出し、②<span class="mono">UserPromptSubmit</span> で再注入する」という2段構えを示したうえで、<b>イベント名は未確認</b>（<span class="claim">仮定</span>）と留保していた。rig の <span class="mono">hooks/hooks.json</span> は、この構成の実装例として読める <span class="claim">確認済み</span>（リポジトリ実装）。</p>
+<table>
+<thead><tr><th>イベント</th><th>rig のフック</th><th>何をするか</th><th>前編での該当</th></tr></thead>
+<tbody>
+<tr><td><span class="mono">PreCompact</span></td><td><span class="mono">hooks/preserve-rig-state.sh</span></td><td>圧縮の<b>直前</b>に run-state 保全指示を出力し、圧縮指示そのものに載せる</td><td>3-C ①（rig は Post ではなく Pre で行う）</td></tr>
+<tr><td><span class="mono">UserPromptSubmit</span></td><td><span class="mono">hooks/remind-rig-header.sh</span></td><td>実行中の RUN を検出したら、状態ヘッダ再掲の指示を再注入する</td><td>3-C ②（圧縮直後に限らず毎ターン）</td></tr>
+<tr><td><span class="mono">SessionStart</span></td><td><span class="mono">inject-instincts.sh</span> / <span class="mono">inject-talk-mode.sh</span></td><td>confidence 0.7 以上の学習済みパターンを 500 字上限で注入</td><td>3-E（自己最適化を毎セッション自動化）</td></tr>
+<tr><td><span class="mono">Stop</span></td><td><span class="mono">hooks/suggest-instincts.sh</span></td><td>「今回の学びを提案するか検討せよ」と促す（抽出自体はしない）</td><td>3-E ①（摩擦の把握を毎回に分割）</td></tr>
+</tbody>
+</table>
+<p>設計の要点は「フックは<b>促すだけ</b>で、何が有用かの判断はモデルに残す」ことである。<span class="mono">Stop</span> フックは抽出を行わない——判断を機械側に持たせると、無価値なパターンが自動で溜まる。強制すべきは<b>再注入の確実さ</b>であって、内容の良し悪しではない。</p>
+
+<div class="keep">
+rig は制御要素マップの<b>⑥⑦（強制）と④⑤（構造）に厚い道具</b>である。①③（文脈）は薄いまま——つまり「何を良しとするか」は依然として人間が書く。前編命題1の両輪でいえば、rig が持ってくるのは<b>強制の輪だけ</b>だと理解して導入する。文脈の輪（CLAUDE.md の要点5行・working-method.md）は、rig を入れても自分で書く。
+</div>
+
+
+<!-- ============ 第1部 ============ -->
+<div class="part">
+  <span class="part__num">第1部</span>
+  <h2 class="part__title" style="border:none;margin:0;padding:0;">前編の整備を rig でやる</h2>
+  <p class="part__lead">前編03章「必須整備キット A〜E」と04章「最初の運用立ち上げ」に対応する。ここでの結論は一貫している——<b>A（文脈）は自分で書き、C（強制）は rig が既定で持ってくる</b>。</p>
+</div>
+
+<h2><span class="sec-num vol-3">02</span> 必須整備キット A〜E の rig 実装　<span class="lv">L1 基礎</span> 〜 <span class="lv">L2 運用</span></h2>
+<div class="ctlnav"><span class="ctlnav-cap">MAP</span><span class="ci on">① CLAUDE.md</span><span class="ci">② サブdir CLAUDE.md</span><span class="ci on">③ Rules</span><span class="ci on">④ Skills</span><span class="ci">⑤ Subagents</span><span class="ci on">⑥ Hooks</span><span class="ci on">⑦ permissions</span></div>
+
+<h3>2-1 A：働き方要点5行が、どこに機械化されるか</h3>
+<p>前編3-Aの「働き方の要点5行」は、rig ではほぼ全行が<b>機械側へ移せる</b>。これが rig を入れる実利のうち最も分かりやすい部分である——CLAUDE.md に書いた「お願い」を、gate と別プロセスの verifier に置き換えられる。</p>
+<table>
+<thead><tr><th>要点5行（前編3-A）</th><th>rig での機械化</th><th>強制力の移動</th></tr></thead>
+<tbody>
+<tr><td>主張には VERIFIED / REASONED / ASSUMED のラベルを付ける</td><td>直接の対応物は無い。<b>近い</b>のは <span class="mono">output-contracts/review-findings</span>（severity・file:line・Blocking/Non-blocking を必須にする出力契約）と、verifier の <span class="mono">CRITERION n: PASS|FAIL|UNKNOWN</span> 行——UNKNOWN を明示的に許すことで「確認できていない」を潰さない</td><td><span class="en weak">文脈</span> → <span class="en mid">構造</span>（部分的）</td></tr>
+<tr><td>完了＝検証コマンドのパス。実行結果なしに完了と報告しない</td><td><span class="mono">acceptance-gate</span>。<span class="mono">failed</span>/<span class="mono">pending</span> が1件でもあれば <span class="mono">accept</span> が exit 1 で拒否される</td><td><span class="en weak">文脈</span> → <span class="en strong">強制</span></td></tr>
+<tr><td>テストは red を確認してから実装に入る（red証跡）</td><td>bugfix プリセットの <span class="mono">regression_test_added_or_explained</span>／feature プリセットの <span class="mono">tests_added_or_explained</span>。加えて <span class="mono">no_gate_tampering</span> が「既存テストの改変・assert 削除・skip マーカー追加」を warning として検出する</td><td><span class="en weak">文脈</span> → <span class="en strong">強制</span></td></tr>
+<tr><td>同じ修正に2回失敗したら、コンテキストをリセットする</td><td><b>stuck-guard</b>（同一エラー反復で発動・固定上限2）と <b><span class="mono">max_retries</span> K</b>（gate 収束ループの上限・既定2）の<b>独立した2カウンタ</b>。どちらも上限で user へエスカレーションし、状態ヘッダに <span class="mono">stuck: N/2</span>・<span class="mono">(try N/K)</span> として常時可視化される</td><td><span class="en weak">文脈</span> → <span class="en mid">構造</span></td></tr>
+<tr><td>委譲時はこの要点を逐語コピーで運び、再委任はしない</td><td>ブリック合成（PARSE→RESOLVE→COMPOSE→RUN）。policy facet はプロンプト<b>末尾</b>、persona は System、という配置順が決まっており、要約されずファイルの内容がそのまま入る</td><td><span class="en weak">文脈</span> → <span class="en mid">構造</span></td></tr>
+</tbody>
+</table>
+<p>2行目・3行目が<span class="en strong">強制</span>まで上がるのが要点である。前編が「言われれば当然だが、書かれていないと守られない」と評した5行のうち、<b>破られると最も痛い2行が、お願いから機械の拒否になる</b>。残り3行は構造どまり——つまり、発動条件を満たせば安定して効くが、条件の外では効かない。</p>
+
+<div class="callout should">
+<b>ラベル行だけは、rig を入れても自分で書く。</b> 主張ラベル（VERIFIED / REASONED / ASSUMED）に相当する仕組みは rig に無い。verifier 側の <span class="mono">UNKNOWN</span> 判定と <span class="mono">/rig:sage</span> の確度表示が近いが、日常の報告文に確からしさを付けさせるのは<b>CLAUDE.md の1行に残す</b>のが正しい。rig で埋まらないマスの1つ目である。
+</div>
+
+<h3>2-2 B：working-method.md は、どこへ分解されるか</h3>
+<p>前編3-Bの working-method.md（4部構成）は、rig では<b>3つの置き場所に分かれる</b>。1ファイルに集めないのは、それぞれ読み込まれるタイミングが違うためである（前編3-Bの「常時払うコストと、必要時に払うコストの仕分け」をさらに細かくしたもの）。</p>
+<table>
+<thead><tr><th>working-method.md の部</th><th>rig での置き場所</th><th>読み込まれるとき</th></tr></thead>
+<tbody>
+<tr><td>PART 1 書く前の行動</td><td><span class="mono">recipes/*.md</span> の step 列（intake→design→implement→verify→review→pr→merge）</td><td>recipe 解決時。番号でなく step 名で欠番が見える</td></tr>
+<tr><td>PART 2 検証レシピ</td><td>manifest <span class="mono">.claude/rig.md</span> の build/lint/test ＋ recipe の <span class="mono">checks:</span> 行</td><td>該当 step 実行時。<b>コマンドとして実行される</b>ので散文ではない</td></tr>
+<tr><td>PART 3 意思決定の分岐</td><td><span class="mono">facets/policies/*</span>（risk-based-testing・branch-strategy・ci-cost・pr-hygiene ほか）</td><td>subagent プロンプト末尾に注入</td></tr>
+<tr><td>PART 4 学習ループ</td><td>知識層 <span class="mono">facets/knowledge/</span>（検証済み）＋ <span class="mono">.rig/instincts.jsonl</span>（未検証・confidence つき）</td><td>知識層は全 RUN、instinct は SessionStart で 0.7 以上のみ</td></tr>
+</tbody>
+</table>
+<p>PART 4 の二層構造は、前編3-Bには無い rig 独自の分割である。<b>検証済みの知識と、まだ検証していない勘を混ぜない</b>——さらに instinct には減衰が入る（30日未使用で confidence 低下、0.2 未満で失効）。「暗黙知は放置すれば腐る」という前提を設計に埋めた形で、前編3-Eの週次 pruning を知識側にも適用したものと読める <span class="claim">確認済み</span>（<span class="mono">workbench.py instincts</span>）。</p>
+
+<h3>2-3 C：強制境界——rig が持ってくる5つの機械センサー</h3>
+<p>前編3-Cは「破られては困る禁止を CLAUDE.md に書かない」と述べた。rig の acceptance-gate のうち<b>5基準は、モデルの自己申告ではなく決定論的なスキャナが裏づける</b> <span class="claim">確認済み</span>（<span class="mono">scripts/workbench.py</span>）。ここが rig の強制境界の中核である。</p>
+<table>
+<thead><tr><th>基準</th><th>センサー</th><th>等級</th><th>脱出口</th></tr></thead>
+<tbody>
+<tr><td><span class="mono">no_secret_leak</span></td><td>task diff へのシークレットスキャン（<span class="mono">scan-secrets</span>）</td><td><b>fail</b></td><td><span class="mono">--set no_secret_leak=passed</span>（抜粋は常にマスク済み）</td></tr>
+<tr><td><span class="mono">no_injection_markers</span></td><td>diff＋repo の散文へのインジェクション・マーカースキャン</td><td>不可視/bidi Unicode は <b>fail</b>／指示上書き語は warning</td><td><span class="mono">--set …=passed</span>（記録される）</td></tr>
+<tr><td><span class="mono">no_gate_tampering</span></td><td>anti-tamper スキャン（<span class="mono">.rig/gates.json</span>・recipe・CI workflow の編集）</td><td>ゲート定義の編集は <b>fail</b>／既存テスト改変は warning</td><td><span class="mono">--set …=passed</span>（記録される）</td></tr>
+<tr><td><span class="mono">no_destructive_operation</span></td><td>破壊的コマンドスキャン（<span class="mono">rm -rf /</span>・<span class="mono">mkfs</span>・<span class="mono">DROP DATABASE</span> ほか）</td><td>上記は <b>fail</b>／<span class="mono">git clean -f</span>・force push 等は warning</td><td><span class="mono">--set …=passed</span>（記録される）</td></tr>
+<tr><td><span class="mono">public_api_changes_documented</span></td><td>OpenAPI schema-diff（<span class="mono">openapi.json</span> 等を自動検出）</td><td>warning（単独では gate を落とさない）</td><td>—</td></tr>
+</tbody>
+</table>
+<p>設計上の要点は3つある。第一に、<b>脱出口はあるが必ず記録される</b>（<span class="mono">.rig/audit.jsonl</span>／<span class="mono">workbench.py audit</span>）。第二に、<b>ゲート定義そのものの改変を検出する基準（<span class="mono">no_gate_tampering</span>）が入っている</b>——これは前編3-Cのコラムが警告した「<span class="mono">/update-config</span> が permissions.allow をついでに広げる」問題の、ゲート側での対処にあたる。第三に、<b>プロジェクト側の <span class="mono">.rig/gates.json</span> は加算のみ</b>で、組み込み基準の削除・緩和キーは即座に拒否される——リポジトリ内のファイルがゲートを弱められない。</p>
+
+<div class="column">
+<b>「境界を守る仕組みが、無審査で緩む経路を残さない」の実装。</b> 前編3-Cはこれを原則として述べ、rig は3つの層で実装している：①<span class="mono">gates.json</span> は加算のみ、②<span class="mono">no_gate_tampering</span> がゲート定義の編集を fail 扱いにする、③<span class="mono">accept</span> の構造的前提（<span class="mono">worktree_exists</span>・<span class="mono">base_branch_recorded</span>・<span class="mono">diff_summary_generated</span>）は <span class="mono">--force</span> でも上書きできない。<span class="mono">--force</span> が越えられるのは soft な gate 未達だけで、そのときは監査証跡が残る。
+</div>
+
+<h3>2-4 前編1-3「隔離」との関係——ここは rig では埋まらない</h3>
+<div class="callout must">
+<b>rig の isolated worktree は、前編1-3の隔離5分類の代替ではない。</b> worktree 隔離は<b>同一ホスト・同一ユーザー権限の中でのファイル作業の隔離</b>であり、「失敗した変更が手元に残らない」ことは保証するが、プロンプトインジェクション経由の任意コード実行に対する境界は<b>一切提供しない</b>。前編1-3の推奨ベースライン（③コンテナ／DevContainer 以上、自律実行なら⑤MicroVM の検討）は、rig を入れても<b>そのまま必要</b>である。正しい構成は二層——<b>DevContainer の中で rig を走らせる</b>。
+</div>
+<p>逆に言えば、この2つは目的が違うので競合しない。隔離レベル（①〜⑤）が「ホストを守る」ものであるのに対し、worktree は「あなたの作業ツリーと、まだ承認していない変更を分ける」ものである。後編2-2の acceptance-gate 3本柱でいえば、worktree は①受け入れゲート（基準を通過しない限りメイン作業ツリーへ反映しない）の実装手段にあたる。</p>
+
+<h3>2-5 D・E：拡張の導入と自己最適化</h3>
+<p>前編3-D（拡張は組み込み優先・3層ゲートで検証）と3-E（週次の自己最適化）に対応する rig の機能は次のとおり。</p>
+<table>
+<thead><tr><th>前編の整備</th><th>rig のコマンド</th><th>やること</th></tr></thead>
+<tbody>
+<tr><td>3-D 外部スキルの導入</td><td><span class="mono">/rig:import</span></td><td>発見→取得→<b>検疫</b>→判断→import-gate→lock 記録（<span class="mono">skills-lock.json</span>）。前編3-Dの「クローンした設定を無条件に信頼しない」の実装</td></tr>
+<tr><td>3-D スキル品質の3層ゲート</td><td><span class="mono">--validate</span> ／ reviewer agent ／ git hooks</td><td>①構造 doctor（ブリック目録と実ファイルの突き合わせ・CI で強制）、②read-only reviewer によるレビュー、③<span class="mono">rig-wb githooks install</span> の pre-commit / pre-push。前編3-Dが挙げた3層とほぼ同型</td></tr>
+<tr><td>3-E ①摩擦の把握</td><td><span class="mono">workbench.py digest --period week</span></td><td>週次ダイジェスト：落ちがちな gate・force-accept・ゴム印警告・drill 検出率</td></tr>
+<tr><td>3-E ④スキル pruning</td><td><span class="mono">workbench.py instincts --decay</span> ／ <span class="mono">/rig:catalog</span></td><td>instinct の減衰・失効。ブリック在庫の棚卸し</td></tr>
+<tr><td>3-E ⑤月次の健全性診断</td><td><span class="mono">/rig:harness</span></td><td>次節。<span class="mono">/checkup</span> が Claude Code の健全性を見るのに対し、<span class="mono">/rig:harness</span> は<b>プロジェクトのハーネス</b>の健全性を見る</td></tr>
+</tbody>
+</table>
+
+<h3>2-6 <span class="mono">/rig:harness</span>：ハーネスそのものを監査する</h3>
+<p>前編・後編のどちらにも直接の対応節が無いが、二冊の思想を最もよく体現しているのが <span class="mono">/rig:harness</span> である。プロジェクトの AI 開発ハーネスを <b>2×2</b> で棚卸しし、<b>空の象限</b>と<b>「あるのに効いていない資産」</b>を炙り出す（read-only）。</p>
+<div class="fig-wrap">
+<svg viewBox="0 0 1000 330" width="100%" role="img" aria-label="ハーネス監査の2×2。縦軸が計算的と推論的、横軸がガイドとセンサー。計算的ガイドは型やscaffoldやCLI、計算的センサーはlint・型・テスト・build・CI、推論的ガイドはCLAUDE.mdやSkillsやpersona、推論的センサーはAIレビューやreview-gate。空の象限と、存在するが実行ループに繋がっていない資産を検出する。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <text x="500" y="22" fill="#4A4640" font-size="12" text-anchor="middle">横軸：行動を導くか（ガイド）／逸脱を検出するか（センサー）　　縦軸：機械が判定するか（計算的）／モデルが判定するか（推論的）</text>
+
+    <rect x="120" y="44" width="400" height="110" fill="#EEF3F0" stroke="#D9D1BF"/>
+    <text x="140" y="70" fill="#1A1814" font-size="13" font-weight="700">計算的ガイド</text>
+    <text x="140" y="94" fill="#4A4640" font-size="11.5">型・scaffold・CLI・テンプレート</text>
+    <text x="140" y="116" fill="#4A4640" font-size="11.5">rig: recipe の step 列・<tspan font-family="'IBM Plex Mono',monospace">/rig:init</tspan> の scaffold</text>
+    <text x="140" y="138" fill="#4A4640" font-size="11.5">・<tspan font-family="'IBM Plex Mono',monospace">/rig:tasks</tspan> の検証可能な小タスク分割</text>
+
+    <rect x="540" y="44" width="400" height="110" fill="#EEF3F0" stroke="#57803F" stroke-width="2"/>
+    <text x="560" y="70" fill="#1A1814" font-size="13" font-weight="700">計算的センサー　＝一次</text>
+    <text x="560" y="94" fill="#4A4640" font-size="11.5">lint・型・テスト・build・CI</text>
+    <text x="560" y="116" fill="#4A4640" font-size="11.5">rig: recipe の <tspan font-family="'IBM Plex Mono',monospace">checks:</tspan>・機械センサー5種</text>
+    <text x="560" y="138" fill="#4A4640" font-size="11.5">・git hooks・<tspan font-family="'IBM Plex Mono',monospace">sast_adapter.py</tspan></text>
+
+    <rect x="120" y="172" width="400" height="110" fill="#FBF1EA" stroke="#D9D1BF"/>
+    <text x="140" y="198" fill="#1A1814" font-size="13" font-weight="700">推論的ガイド</text>
+    <text x="140" y="222" fill="#4A4640" font-size="11.5">CLAUDE.md・Skills・persona・規約</text>
+    <text x="140" y="244" fill="#4A4640" font-size="11.5">rig: persona facet・policy facet・知識層</text>
+    <text x="140" y="266" fill="#4A4640" font-size="11.5">・instincts（confidence つき）</text>
+
+    <rect x="540" y="172" width="400" height="110" fill="#FBF1EA" stroke="#D9D1BF"/>
+    <text x="560" y="198" fill="#1A1814" font-size="13" font-weight="700">推論的センサー　＝二次</text>
+    <text x="560" y="222" fill="#4A4640" font-size="11.5">AI レビュー・review-gate</text>
+    <text x="560" y="244" fill="#4A4640" font-size="11.5">rig: reviewer agent 11本・<tspan font-family="'IBM Plex Mono',monospace">review-gate</tspan></text>
+    <text x="560" y="266" fill="#4A4640" font-size="11.5">・<tspan font-family="'IBM Plex Mono',monospace">--verify-findings</tspan> の反証段</text>
+
+    <rect x="0" y="298" width="1000" height="32" fill="#fff" stroke="#D9D1BF"/>
+    <text x="20" y="319" fill="#B22F1A" font-size="12" font-weight="700">最優先で拾う穴：</text>
+    <text x="150" y="319" fill="#1A1814" font-size="12">テストや lint が「ある」だけで、hook にも acceptance-gate にも繋がっていない＝実行ループのバックプレッシャーになっていない状態。散文どまりのルールは未強制として扱う。</text>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.02 ハーネス監査の2×2（<span class="mono">/rig:harness</span>）：計算的センサーを一次・推論的レビューを二次に置く。手は「足す」より先に<b>繋ぐ・強制する・薄くする</b>。</p>
+<p>この監査の順序——<b>足すより繋ぐ・強制する・薄くする</b>（新ルールの追加は最後）——は、前編3-Aの「追加より削除」と4-3の context rot への警戒をそのまま運用手順にしたものである。ハーネスの不調時に真っ先にやりたくなるのはルールの追加だが、たいていの穴は「既にある資産が実行ループに繋がっていない」ことにある。</p>
+
+<div class="keep">
+前編の整備キットのうち、<b>C（強制境界）は rig が既定で持ってくる</b>——5つの機械センサー・accept の構造的前提・ゲート改変の検出。<b>A（要点5行）は自分で書く</b>——ただし5行のうち「完了＝検証パス」と「red証跡」は rig 側の gate へ移せるので、CLAUDE.md に残す分は減る。<b>隔離（1-3）は rig では埋まらない</b>——DevContainer の中で rig を走らせる。
+</div>
+
+<!-- ============ 第2部 ============ -->
+<div class="part">
+  <span class="part__num">第2部</span>
+  <h2 class="part__title" style="border:none;margin:0;padding:0;">ループエンジニアリングを rig でやる</h2>
+  <p class="part__lead">後編01章（委ねる単位）・02章（ループ設計）に対応する、本書の中心。後編2-1の4層モデルのどこに rig の部品が入るか、ループ1周回がどう分解されるか、自律度をどのフラグで上げるかを図で示す。</p>
+</div>
+
+<h2><span class="sec-num vol-3">03</span> ループエンジニアリング：rig ではこう回る　<span class="lv">L3 発展</span></h2>
+<div class="ctlnav"><span class="ctlnav-cap">MAP</span><span class="ci on">① CLAUDE.md</span><span class="ci">② サブdir CLAUDE.md</span><span class="ci on">③ Rules</span><span class="ci on">④ Skills</span><span class="ci on">⑤ Subagents</span><span class="ci on">⑥ Hooks</span><span class="ci on">⑦ permissions</span><span class="ci">本章＝7要素の総合</span></div>
+
+<h3>3-1 4層の入れ子に rig を重ねる</h3>
+<p>後編2-1は Prompt ⊂ Context ⊂ Harness ⊂ Loop の4層を示し、「上位層ほどレバレッジが大きいが、下位層を疎かにしたまま上位層を導入しても効かない」と述べた。rig の部品はこの4層にきれいに分かれる——というより、rig 自身が <span class="mono">facets/knowledge/wiki/loop-engineering</span> で「loop engineering＝harness の1つ上の層」と明示的に位置づけている <span class="claim">確認済み</span>。</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 1080 420" width="100%" role="img" aria-label="4層の入れ子に rig の部品を重ねた図。最も外側が Loop Engineering で goal-loop・loop・autonomous-loop・queue・GitHub Action。その内側が Harness Engineering で recipe・acceptance-gate・isolated worktree・read-only verifier。その内側が Context Engineering で context-minimal・知識層・instincts・quarantine。最も内側が Prompt Engineering で persona facet・policy facet・output contract。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <rect x="20" y="20" width="700" height="380" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="44" y="48" fill="#57803F" font-size="14" font-weight="700">Loop Engineering</text>
+    <text x="44" y="70" fill="#4A4640" font-size="11.5">いつ・どれだけ回すか＋停止条件を設計する</text>
+    <text x="44" y="92" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">/rig:goal ・ /rig:loop ・ patterns/autonomous-loop</text>
+    <text x="44" y="112" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">/rig:queue ・ action.yml ・ scripts/mcp_server.py</text>
+
+    <rect x="44" y="130" width="652" height="250" fill="#FBF1EA" stroke="#8A8278"/>
+    <text x="68" y="158" fill="#1A1814" font-size="14" font-weight="700">Harness Engineering</text>
+    <text x="68" y="180" fill="#4A4640" font-size="11.5">タスク単位で実行環境を設計する（型・規約・自動化）</text>
+    <text x="68" y="202" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">recipes/ ・ patterns/acceptance-gate ・ patterns/isolated-worktree</text>
+    <text x="68" y="222" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">read-only verifier ・ scripts/workbench.py ・ scripts/orchestrate.py</text>
+
+    <rect x="68" y="240" width="604" height="120" fill="#fff" stroke="#D9D1BF"/>
+    <text x="92" y="268" fill="#1A1814" font-size="14" font-weight="700">Context Engineering</text>
+    <text x="92" y="290" fill="#4A4640" font-size="11.5">会話単位で何を見せるかを設計する</text>
+    <text x="92" y="312" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">context-minimal ・ facets/knowledge/ ・ .rig/instincts.jsonl ・ quarantine.py</text>
+
+    <rect x="92" y="322" width="556" height="30" fill="#EEF3F0" stroke="#D9D1BF"/>
+    <text x="108" y="342" fill="#1A1814" font-size="12.5" font-weight="700">Prompt Engineering</text>
+    <text x="232" y="342" fill="#1A1814" font-size="11" font-family="'IBM Plex Mono',monospace">facets/personas ・ facets/policies ・ output-contracts</text>
+
+    <line x1="760" y1="30" x2="760" y2="390" stroke="#8A8278" stroke-width="1.5"/>
+    <path d="M760,390 L760,34" stroke="#8A8278" stroke-width="1.5" marker-end="url(#lv)"/>
+    <defs><marker id="lv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8A8278" stroke-width="1.6"/></marker></defs>
+    <text x="782" y="60" fill="#1A1814" font-size="12.5" font-weight="700">レバレッジ 大</text>
+    <text x="782" y="82" fill="#4A4640" font-size="11">1回の設計変更が</text>
+    <text x="782" y="100" fill="#4A4640" font-size="11">広く長く効く</text>
+    <text x="782" y="360" fill="#1A1814" font-size="12.5" font-weight="700">レバレッジ 小</text>
+
+    <rect x="782" y="140" width="278" height="196" fill="#fff" stroke="#57803F"/>
+    <text x="800" y="166" fill="#57803F" font-size="12" font-weight="700">rig を入れる順序</text>
+    <text x="800" y="192" fill="#4A4640" font-size="11.5">rig の既定（<tspan font-family="'IBM Plex Mono',monospace">/rig:go</tspan>）は</text>
+    <text x="800" y="210" fill="#4A4640" font-size="11.5">Harness 層から入る。</text>
+    <text x="800" y="236" fill="#4A4640" font-size="11.5">Loop 層（<tspan font-family="'IBM Plex Mono',monospace">goal</tspan>/<tspan font-family="'IBM Plex Mono',monospace">loop</tspan>/</text>
+    <text x="800" y="254" fill="#4A4640" font-size="11.5"><tspan font-family="'IBM Plex Mono',monospace">--autonomous</tspan>）は、</text>
+    <text x="800" y="272" fill="#4A4640" font-size="11.5">gate が実際に落ちるのを</text>
+    <text x="800" y="290" fill="#4A4640" font-size="11.5">見てから開ける。</text>
+    <text x="800" y="316" fill="#B22F1A" font-size="11.5" font-weight="700">下位層を飛ばした Loop は</text>
+    <text x="800" y="332" fill="#B22F1A" font-size="11.5" font-weight="700">速く間違い続ける。</text>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.03 4層の入れ子と rig の部品（後編 FIG.02 の rig 版）：rig は Harness 層の既製品として入り、Loop 層は opt-in で開ける。</p>
+
+<h3>3-2 ループ1周回の5つの動き——rig の担い手</h3>
+<p>ここが本章の核心である。rig は<b>ループのために新しい制御機構を発明していない</b>。既存の部品に、ループ1周回の5つの動きを割り当てているだけである。この分解は rig の wiki ページ <span class="mono">loop-engineering</span> に明示されている <span class="claim">確認済み</span>。</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 1120 470" width="100%" role="img" aria-label="ループ1周回の5つの動きを環状に示した図。discovery（現状把握と次手決定）、handoff（既存フローへ委譲）、verification（独立検証）、persistence（圧縮を跨いで状態保持）、scheduling（次の周回を予約）の順に回る。中央には受け入れ基準が置かれ、全周回がそれを参照する。verification が最も壊れやすい箇所として強調されている。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <rect x="370" y="180" width="380" height="110" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="560" y="208" fill="#1A1814" font-size="14" font-weight="700" text-anchor="middle">受け入れ基準（Done）</text>
+    <text x="560" y="232" fill="#4A4640" font-size="11.5" text-anchor="middle">① 基準化で1回だけ確定させ、全周回が参照する</text>
+    <text x="560" y="252" fill="#4A4640" font-size="11.5" text-anchor="middle">機械検証（build/lint/test/grep/CI status）を優先し、</text>
+    <text x="560" y="272" fill="#4A4640" font-size="11.5" text-anchor="middle">無理なものだけ観点検証（review-gate で REJECT 無し）</text>
+
+    <rect x="380" y="24" width="360" height="106" fill="#fff" stroke="#D9D1BF"/>
+    <text x="400" y="50" fill="#57803F" font-size="11" font-weight="700" font-family="'IBM Plex Mono',monospace">① DISCOVERY</text>
+    <text x="400" y="74" fill="#1A1814" font-size="12.5" font-weight="700">現状把握 → 次手決定</text>
+    <text x="400" y="96" fill="#4A4640" font-size="11">gap を最も縮める「最小の1手」を決める。</text>
+    <text x="400" y="116" fill="#4A4640" font-size="11">親は要約だけ受け取る（長い diff を引き込まない）</text>
+
+    <rect x="800" y="120" width="320" height="106" fill="#fff" stroke="#D9D1BF"/>
+    <text x="820" y="146" fill="#57803F" font-size="11" font-weight="700" font-family="'IBM Plex Mono',monospace">② HANDOFF</text>
+    <text x="820" y="170" fill="#1A1814" font-size="12.5" font-weight="700">既存フローへ委譲</text>
+    <text x="820" y="192" fill="#4A4640" font-size="11">新しいフローを発明しない。</text>
+    <text x="820" y="212" fill="#4A4640" font-size="11" font-family="'IBM Plex Mono',monospace">/rig:dev ・ /rig:go ・ subagent</text>
+
+    <rect x="760" y="264" width="360" height="126" fill="#FBE6E1" stroke="#B22F1A" stroke-width="2"/>
+    <text x="780" y="290" fill="#B22F1A" font-size="11" font-weight="700" font-family="'IBM Plex Mono',monospace">③ VERIFICATION　＝最も壊れやすい</text>
+    <text x="780" y="314" fill="#1A1814" font-size="12.5" font-weight="700">独立検証（採点者 ≠ 生成者）</text>
+    <text x="780" y="336" fill="#4A4640" font-size="11">生成した subagent に合否を出させない。</text>
+    <text x="780" y="356" fill="#4A4640" font-size="11" font-family="'IBM Plex Mono',monospace">acceptance-gate ＋ independent-verification</text>
+    <text x="780" y="376" fill="#4A4640" font-size="11">疑わしきは未達側に倒す</text>
+
+    <rect x="380" y="340" width="340" height="106" fill="#fff" stroke="#D9D1BF"/>
+    <text x="400" y="366" fill="#57803F" font-size="11" font-weight="700" font-family="'IBM Plex Mono',monospace">④ PERSISTENCE</text>
+    <text x="400" y="390" fill="#1A1814" font-size="12.5" font-weight="700">圧縮を跨いで状態を保つ</text>
+    <text x="400" y="412" fill="#4A4640" font-size="11">PreCompact フック＋run-status ヘッダ再掲</text>
+    <text x="400" y="432" fill="#4A4640" font-size="11" font-family="'IBM Plex Mono',monospace">&lt;&lt;autonomous-loop-dynamic&gt;&gt; の5要素</text>
+
+    <rect x="0" y="264" width="340" height="126" fill="#fff" stroke="#D9D1BF"/>
+    <text x="20" y="290" fill="#57803F" font-size="11" font-weight="700" font-family="'IBM Plex Mono',monospace">⑤ SCHEDULING</text>
+    <text x="20" y="314" fill="#1A1814" font-size="12.5" font-weight="700">次の周回を予約する</text>
+    <text x="20" y="336" fill="#4A4640" font-size="11" font-family="'IBM Plex Mono',monospace">patterns/autonomous-loop（ScheduleWakeup）</text>
+    <text x="20" y="356" fill="#4A4640" font-size="11">キャッシュ温＝270秒／冷＝1200秒以上</text>
+    <text x="20" y="376" fill="#B22F1A" font-size="11" font-weight="700">300秒は禁忌（キャッシュ切れ＋短待機）</text>
+
+    <rect x="0" y="120" width="340" height="106" fill="#fff" stroke="#D9D1BF"/>
+    <text x="20" y="146" fill="#1A1814" font-size="11" font-weight="700" font-family="'IBM Plex Mono',monospace">停止の3条件</text>
+    <text x="20" y="170" fill="#4A4640" font-size="11">全基準を充足 → 完了（過剰実装しない）</text>
+    <text x="20" y="190" fill="#4A4640" font-size="11">未達＆進捗あり → 次周回へ</text>
+    <text x="20" y="210" fill="#B22F1A" font-size="11" font-weight="700">進捗ゼロ2回 → 停止して人間へ</text>
+
+    <path d="M744,72 C800,80 810,100 812,118" stroke="#57803F" stroke-width="2" fill="none" marker-end="url(#lp)"/>
+    <path d="M950,230 L945,260" stroke="#57803F" stroke-width="2" fill="none" marker-end="url(#lp)"/>
+    <path d="M756,340 C730,368 720,378 724,392" stroke="#57803F" stroke-width="2" fill="none" marker-end="url(#lp)"/>
+    <path d="M376,392 C340,392 336,380 338,368" stroke="#57803F" stroke-width="2" fill="none" marker-end="url(#lp)"/>
+    <path d="M170,260 L170,230" stroke="#57803F" stroke-width="2" fill="none" marker-end="url(#lp)"/>
+    <path d="M300,116 C340,70 360,60 376,58" stroke="#57803F" stroke-width="2" fill="none" marker-end="url(#lp)"/>
+    <defs><marker id="lp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#57803F" stroke-width="1.8"/></marker></defs>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.04 ループ1周回の5つの動きと rig の担い手：discovery→handoff→verification→persistence→scheduling。5つのどれが欠けても事故る——discovery が無ければ空回り、handoff が無ければ親が肥大、<b>verification が甘ければ間違ったまま収束</b>、persistence が無ければ圧縮後に再出発、scheduling が雑ならコスト悪化。</p>
+
+<table>
+<thead><tr><th>動き</th><th>欠けたときの症状</th><th>rig の担い手</th></tr></thead>
+<tbody>
+<tr><td>discovery</td><td>空回り（同じ場所を回り続ける）</td><td><span class="mono">goal-loop</span> ②現状把握 / ③次手決定</td></tr>
+<tr><td>handoff</td><td>親コンテキストの肥大（長い diff・ログを引き込む）</td><td><span class="mono">goal-loop</span> ④委譲（context-minimal・既存 <span class="mono">/rig:*</span> へ）</td></tr>
+<tr><td><b>verification</b></td><td><b>間違ったまま収束する</b>（自己採点バイアス）</td><td><span class="mono">patterns/acceptance-gate</span> ＋ <span class="mono">policies/independent-verification</span></td></tr>
+<tr><td>persistence</td><td>圧縮後に goal・基準・現 gap を失って再出発</td><td>PreCompact フック ／ <span class="mono">&lt;&lt;autonomous-loop-dynamic&gt;&gt;</span> の5要素</td></tr>
+<tr><td>scheduling</td><td>コスト悪化（キャッシュミス＋短待機）</td><td><span class="mono">patterns/autonomous-loop</span>（270／1200＋・300禁忌）</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<b>自己採点バイアスの実測例。</b> rig の <span class="mono">policies/independent-verification</span> は、自己採点が甘くなる実例を1件記録している——散文の AI 臭除去（<span class="mono">de-ai-smell</span>）で、書いた本人が自己採点したら 41/50「合格」だったが、別の目に見せたら 23/50 相当の「AI 臭い」判定だった。<b>18点の過大評価</b>。後編命題1「自分の宿題を自分で採点させない」が抽象論でないことの、道具側からの裏づけである <span class="claim">確認済み</span>（rig リポジトリ内の記録。単一事例）。
+</div>
+
+<h3>3-3 ループ4分類 → rig のどの入口か</h3>
+<p>後編2-2の公式4分類に、rig の入口を対応させる。<b>①②③は rig 内で完結するが、④proactive は rig 単独では完結しない</b>——ここは正直に区別する必要がある。</p>
+<table>
+<thead><tr><th>分類</th><th>rig の入口</th><th>停止条件の置き方</th><th>実装の状態</th></tr></thead>
+<tbody>
+<tr><td>① turn-based</td><td><span class="mono">/rig:go "&lt;タスク&gt;"</span>／<span class="mono">/rig:talk</span></td><td>accept / discard がユーザーの停止点</td><td>実装済み・Stable</td></tr>
+<tr><td>② goal-based</td><td><span class="mono">/rig:goal "&lt;目標&gt;"</span></td><td>受け入れ基準の充足＝検証可能な完了条件。<b>進捗ゼロ2回で強制停止</b></td><td>実装済み・Beta</td></tr>
+<tr><td>③ time-based</td><td><span class="mono">/rig:loop --every 10m --until "…"</span>／<span class="mono">--times N</span></td><td><b>停止条件か回数のどちらかが必須</b>。両方無いまま無限監視に入らない設計</td><td>実装済み・Beta</td></tr>
+<tr><td>④ proactive</td><td><span class="mono">action.yml</span>（GitHub Action）／<span class="mono">scripts/mcp_server.py</span>／<span class="mono">/rig:queue</span></td><td>起動条件は<b>外側</b>（CI トリガ・キュー投入）、停止条件は gate</td><td><b>部分的</b>——下の注記を参照</td></tr>
+</tbody>
+</table>
+<div class="callout should">
+<b>④proactive は rig では半分しか埋まらない。</b> rig の <span class="mono">patterns/autonomous-loop</span> が使う <span class="mono">ScheduleWakeup</span> は<b>セッション内のスケジューラ</b>であり、セッションが終われば止まる。後編2-2が実例に挙げた Routines のような「PR イベントを起点に、人が居ないところで起動する」常駐トリガは rig 自身は持たない。rig 側で埋まるのは<b>起動された後の中身</b>（recipe・gate・worktree 隔離）であり、<b>起動する仕組み</b>は GitHub Actions・cron・Routines など外側で用意する。rig の <span class="mono">action.yml</span> はまさにその接続点である——ただし PR 作成部分（<span class="mono">open-pr</span> ステップ）は rig 自身が「実際の GitHub Actions ランナーでは未検証」と明示している <span class="claim">仮定</span>。
+</div>
+
+<h3>3-4 自律度 L1→L2→L3 は、どのフラグに対応するか</h3>
+<p>後編2-2の成熟度モデル（report-only → assisted → unattended）は、rig ではフラグとコマンドの組み合わせで表現される。<b>受け入れゲートは L3 でも外れない</b>のが要点である。</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 1120 300" width="100%" role="img" aria-label="自律度L1からL3への段階導入とrigのフラグ対応。L1はreport-onlyでplanフラグやharness監査。L2はassistedで既定のgatedフロー、accept判断は人間。L3はunattendedでautonomousフラグやqueueやGitHub Action。L2からL3への昇格には隔離強化と受け入れゲートの常設が必要で、acceptance-gate と capture ゲートは autonomous でも解除されない。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <rect x="0" y="30" width="330" height="150" fill="#fff" stroke="#D9D1BF"/>
+    <text x="24" y="60" fill="#1A1814" font-size="16" font-weight="700">L1</text>
+    <text x="64" y="60" fill="#1A1814" font-size="13" font-weight="700">report-only</text>
+    <text x="24" y="86" fill="#4A4640" font-size="11.5">報告だけさせる。変更は一切させない</text>
+    <line x1="24" y1="98" x2="306" y2="98" stroke="#D9D1BF"/>
+    <text x="24" y="122" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">--plan（構成を出して停止）</text>
+    <text x="24" y="144" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">/rig:harness ・ /rig:go board</text>
+    <text x="24" y="166" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">--no-worktree のレビュー系</text>
+
+    <rect x="360" y="30" width="330" height="150" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="384" y="60" fill="#1A1814" font-size="16" font-weight="700">L2</text>
+    <text x="424" y="60" fill="#1A1814" font-size="13" font-weight="700">assisted　＝rig の既定</text>
+    <text x="384" y="86" fill="#4A4640" font-size="11.5">修正案まで作らせ、適用は人間が判断</text>
+    <line x1="384" y1="98" x2="666" y2="98" stroke="#D9D1BF"/>
+    <text x="384" y="122" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">/rig:go "…" → diff → accept</text>
+    <text x="384" y="144" fill="#4A4640" font-size="11.5">隔離 worktree で作業し、gate 判定後に</text>
+    <text x="384" y="164" fill="#4A4640" font-size="11.5">人間が accept / discard を選ぶ</text>
+
+    <rect x="720" y="30" width="400" height="150" fill="#fff" stroke="#D9D1BF"/>
+    <text x="744" y="60" fill="#1A1814" font-size="16" font-weight="700">L3</text>
+    <text x="784" y="60" fill="#1A1814" font-size="13" font-weight="700">unattended</text>
+    <text x="744" y="86" fill="#4A4640" font-size="11.5">無人で完走させる（前提＝隔離強化＋ゲート常設）</text>
+    <line x1="744" y1="98" x2="1096" y2="98" stroke="#D9D1BF"/>
+    <text x="744" y="122" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">--autonomous ・ /rig:queue go</text>
+    <text x="744" y="144" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">action.yml（CI から headless 実行）</text>
+    <text x="744" y="166" fill="#4A4640" font-size="11.5">queue の verifier は<tspan font-weight="700">ユーザーの代わりに accept しない</tspan></text>
+
+    <path d="M334,105 L356,105" stroke="#8A8278" stroke-width="1.6" marker-end="url(#a3)"/>
+    <path d="M694,105 L716,105" stroke="#B22F1A" stroke-width="2" marker-end="url(#a4)"/>
+    <defs>
+      <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8A8278" stroke-width="1.6"/></marker>
+      <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#B22F1A" stroke-width="1.8"/></marker>
+    </defs>
+
+    <rect x="0" y="206" width="1120" height="80" fill="#FBE6E1" stroke="#B22F1A"/>
+    <text x="24" y="232" fill="#B22F1A" font-size="12.5" font-weight="700">昇格しても外れないもの（rig が構造として持っている受け入れゲート）</text>
+    <text x="24" y="256" fill="#1A1814" font-size="11.5">・acceptance-gate は <tspan font-family="'IBM Plex Mono',monospace">--autonomous</tspan> でも解除されない　　・capture ゲート（学びの知識層への書き込み）は常に承認が要る</text>
+    <text x="24" y="276" fill="#1A1814" font-size="11.5">・accept の構造的前提（worktree 存在・base branch 記録・diff サマリ生成）は <tspan font-family="'IBM Plex Mono',monospace">--force</tspan> でも越えられない　　・<tspan font-family="'IBM Plex Mono',monospace">/rig:init</tspan> の書き込みも確認必須</text>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.05 L1→L3 と rig のフラグ対応（後編 FIG.03 の rig 版）：<span class="mono">--autonomous</span> が省くのは<b>周回ごとの確認</b>であって、受け入れゲートではない。「ゲートなしのL3＝採点者のいない自動運転」を、フラグ設計の側で起こしにくくしてある。</p>
+
+<h3>3-5 Intent 8要素を、rig のどこに置くか</h3>
+<p>後編2-3の Intent Engineering（要件8要素）は、rig では<b>1か所にまとまらない</b>。8要素はそれぞれ違うファイル・違うフラグに散る。散らばること自体は悪くない——重要なのは、8要素の<b>どれが空欄のまま RUN に入っていないか</b>を <span class="mono">--plan</span> で確認できることである。</p>
+<table>
+<thead><tr><th>Intent 8要素</th><th>rig での置き場所</th></tr></thead>
+<tbody>
+<tr><td>① Goal（目的）</td><td><span class="mono">/rig:goal "&lt;目標&gt;"</span> の引数そのもの</td></tr>
+<tr><td>② Priority（優先順位）</td><td>manifest <span class="mono">.claude/rig.md</span>／<span class="mono">policies/risk-based-testing</span>／<span class="mono">--budget low|mid</span></td></tr>
+<tr><td>③ Constraints（制約・禁止）</td><td><span class="mono">facets/policies/*</span>（末尾注入）＋ ホスト側の <span class="mono">permissions.deny</span></td></tr>
+<tr><td><b>④ Done（＝停止条件）</b></td><td><b><span class="mono">goal-loop</span> ①基準化で作る受け入れ基準リスト</b>＋ <span class="mono">acceptance-gate</span> の基準 ID。<span class="mono">/rig:loop</span> では <span class="mono">--until</span>／<span class="mono">--times</span></td></tr>
+<tr><td>⑤ Missing Info（未確定事項）</td><td><span class="mono">goal-loop</span> ①の「曖昧なら1問だけ確認して確定。<b>捏造で基準を埋めない</b>」規約</td></tr>
+<tr><td>⑥ Tool rules（ツール利用の可否）</td><td>verifier の <span class="mono">--allowedTools</span>／<span class="mono">--sandbox read-only</span>、agent 定義の tool 制限</td></tr>
+<tr><td>⑦ Approval Gate（介在点）</td><td>step ゲート（既定 gated）・capture ゲート・accept/discard・GitHub への書き込み確認</td></tr>
+<tr><td>⑧ Output Contract（出力形式）</td><td><span class="mono">facets/output-contracts/*</span>（12本）＋ <span class="mono">patterns/structured-report</span></td></tr>
+</tbody>
+</table>
+<p>後編2-3の切り分け——<b>不調時は Intent → Context → Loop の順に疑う</b>——を rig で実行するなら、順序はこうなる。①<span class="mono">--plan</span> で受け入れ基準と合成ハーネスを出させ、④Done が観点検証だらけになっていないかを見る（機械検証に落とせる基準が多いほど収束が速い）。②それでも的を外すなら <span class="mono">### Knowledge:</span> の注入予定ソースを見る（見せている情報の過不足）。③両方揃って収束しないなら <span class="mono">max_retries</span> と stuck-guard のカウンタを見る。</p>
+
+<h3>3-6 実際の手順：見張るループと、収束するループ</h3>
+<p>rig は「終わりのある仕事」と「終わりのない仕事」を別コマンドに分けている。後編2-2の4分類でいえば ②goal-based と ③time-based の分離である。</p>
+<div class="term-mock">
+<span class="term-cap">収束するループ（goal-based）——終端＝受け入れ基準</span>
+<span class="cmd">/rig:goal --plan "ログイン不具合を回帰込みで直して review 通過まで"</span>
+<span class="out">→ 受け入れ基準＋想定ループ構成を提示して停止（RUN しない＝L1 report-only 相当）</span>
+<span class="cmd">/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"</span>
+<span class="out">→ 基準化 → 現状把握 → 次手 → /rig:dev へ委譲 → 独立照合 → 未達なら次周回</span>
+<span class="out">→ 全基準充足で停止（過剰実装しない）／進捗ゼロ2回で停止して人間へ</span>
+</div>
+<div class="term-mock">
+<span class="term-cap">見張るループ（time-based）——終端＝停止条件または回数</span>
+<span class="cmd">/rig:loop --every 10m --until "CI が green" /rig:pr 1234</span>
+<span class="out">→ 10分ごとに1 tick。各 tick を報告し、停止条件の充足で終了</span>
+<span class="cmd">/rig:loop --every 1h /rig:goal "Issue を review 通過まで"</span>
+<span class="out">→ 外側が loop（スケジューラ）、内側が goal（収束）。重ねて使える</span>
+<span class="cmd">/rig:loop --times 3 /rig:dev --only review</span>
+<span class="out">→ 回数で止める。停止条件も上限も無いまま無限監視には入らない</span>
+</div>
+<p>この2つを分けておくことの実利は、<b>停止条件の書き忘れが構造的に起きにくくなる</b>ことである。<span class="mono">/rig:loop</span> は <span class="mono">--until</span> か <span class="mono">--times</span> のどちらかを要求し、両方省いた場合は安全上限の確認に落ちる。後編2-2が「どの分類でも設計の中心は停止条件」と述べた点が、引数仕様のレベルで強制されている。</p>
+
+<div class="keep">
+ループエンジニアリングを rig でやる、とは<b>「5つの動き（discovery / handoff / verification / persistence / scheduling）を、既にある部品へ割り当てる」</b>ことである。新しいループ機構は作らない。自律度は <span class="mono">--plan</span>（L1）→ 既定の gated フロー（L2）→ <span class="mono">--autonomous</span>・<span class="mono">queue</span>・Action（L3）の順に上げ、<b>どのレベルでも acceptance-gate は外さない</b>。④proactive の起動側だけは rig の外（CI・cron・Routines）で用意する。
+</div>
+
+
+<!-- ============ 第3部 ============ -->
+<div class="part">
+  <span class="part__num">第3部</span>
+  <h2 class="part__title" style="border:none;margin:0;padding:0;">分業とチームを rig でやる</h2>
+  <p class="part__lead">後編01章（委ねる単位）・03章（マルチモデル分業）・04章（チーム開発ナレッジ）に対応する。ここでの主題は「混ぜ方を誤ると工数が増える」を、道具の側でどこまで防げるか。</p>
+</div>
+
+<h2><span class="sec-num vol-3">04</span> 分業とチーム：生成と検証を別プロセスに割る　<span class="lv">L3 発展</span></h2>
+<div class="ctlnav"><span class="ctlnav-cap">MAP</span><span class="ci">① CLAUDE.md</span><span class="ci">② サブdir CLAUDE.md</span><span class="ci on">③ Rules</span><span class="ci">④ Skills</span><span class="ci on">⑤ Subagents</span><span class="ci on">⑥ Hooks</span><span class="ci on">⑦ permissions</span></div>
+
+<h3>4-1 maker-checker 分離は、プロセス構成として実装されている</h3>
+<p>後編2-2の無人ループ安全3本柱（①受け入れゲート ②クロスプロバイダ ③読み取り専用の検証役）は、rig ではそれぞれ実体を持つ <span class="claim">確認済み</span>。特に③は「お願い」ではなく<b>起動時の引数</b>として強制される。</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 1120 320" width="100%" role="img" aria-label="生成役と検証役の分離。生成役は書き込み可能で隔離worktree内で実装する。検証役は別プロセスで起動され、読み取り専用ツールに制限され、生成役の自己申告レポートではなく実際のgit diffを一次証拠として判定する。判定は基準ごとのPASS/FAIL/UNKNOWN行として出力され、最後に総合判定を置く。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <rect x="0" y="24" width="480" height="150" fill="#fff" stroke="#D9D1BF"/>
+    <text x="24" y="52" fill="#1A1814" font-size="13.5" font-weight="700">生成役（maker）</text>
+    <text x="24" y="76" fill="#4A4640" font-size="11.5">隔離 worktree 内で実装・テスト・散文を書く</text>
+    <text x="24" y="98" fill="#4A4640" font-size="11.5">書き込み可能（ただし作業ツリー本体には触れない）</text>
+    <line x1="24" y1="112" x2="456" y2="112" stroke="#D9D1BF"/>
+    <text x="24" y="136" fill="#1A1814" font-size="11" font-family="'IBM Plex Mono',monospace">--provider claude | codex | ollama | lmstudio | cmd | rig</text>
+    <text x="24" y="158" fill="#4A4640" font-size="11.5">出力する完了報告は「<tspan font-weight="700">未検証の主張</tspan>」とラベルされる</text>
+
+    <rect x="560" y="24" width="560" height="150" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="584" y="52" fill="#1A1814" font-size="13.5" font-weight="700">検証役（checker）　＝別プロセス</text>
+    <text x="584" y="76" fill="#4A4640" font-size="11.5">ファイル確認・grep・diff 確認・所見の作成はできる</text>
+    <text x="584" y="98" fill="#B22F1A" font-size="11.5" font-weight="700">編集・破壊的 shell・formatter・commit・worktree 変更はできない</text>
+    <line x1="584" y1="112" x2="1096" y2="112" stroke="#D9D1BF"/>
+    <text x="584" y="136" fill="#1A1814" font-size="11" font-family="'IBM Plex Mono',monospace">claude --allowedTools Read,Grep,Glob ／ codex --sandbox read-only</text>
+    <text x="584" y="158" fill="#4A4640" font-size="11.5">一次証拠＝<tspan font-weight="700">worktree の実際の git diff</tspan>（生成役のレポートではない）</text>
+
+    <path d="M484,100 L556,100" stroke="#8A8278" stroke-width="1.6" marker-end="url(#m1)"/>
+    <defs><marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8A8278" stroke-width="1.6"/></marker></defs>
+    <text x="490" y="90" fill="#4A4640" font-size="10.5">diff を渡す</text>
+
+    <rect x="240" y="204" width="640" height="96" fill="#fff" stroke="#1A1814"/>
+    <text x="264" y="230" fill="#1A1814" font-size="12.5" font-weight="700">検証役の出力形式（機械抽出できる形に固定）</text>
+    <text x="264" y="256" fill="#1A1814" font-size="11.5" font-family="'IBM Plex Mono',monospace">CRITERION 1: PASS ／ CRITERION 2: FAIL ／ CRITERION 3: UNKNOWN</text>
+    <text x="264" y="280" fill="#4A4640" font-size="11.5">判定は<tspan font-weight="700">最後に置く</tspan>（結論を先に書かせない）。UNKNOWN を許すことで「確認できていない」を潰さない。</text>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.06 生成と検証の分離（後編2-2・5-1 の rig 実装）：read-only はプロンプトの依頼ではなく、起動引数によるツール制限として効く。<span class="mono">orchestrate.py probe</span>／<span class="mono">selftest</span> が、この制限がプロバイダごとに実際に適用されていることを確認する。</p>
+
+<p>プロバイダごとに<b>強制の厚みが違う</b>点は、rig 自身が正直に表にしている。ここは導入判断に直結するので転記する <span class="claim">確認済み</span>（<span class="mono">scripts/host_adapters.py</span>・README）。</p>
+<table>
+<thead><tr><th>プロバイダ</th><th>read-only の強制手段</th><th>層の厚み</th></tr></thead>
+<tbody>
+<tr><td><span class="mono">claude</span></td><td><span class="mono">--allowedTools Read,Grep,Glob</span></td><td>ツール ACL による強制</td></tr>
+<tr><td><span class="mono">codex</span></td><td><span class="mono">--sandbox read-only</span>＋ subagent TOML の <span class="mono">sandbox_mode</span></td><td>サンドボックスによる強制（多層）</td></tr>
+<tr><td><span class="mono">grok</span></td><td>—</td><td><b>プロンプト契約のみ</b>（read-only フラグが文書化されていない）</td></tr>
+</tbody>
+</table>
+<div class="callout should">
+<b>検証役に <span class="mono">grok</span> を割り当てるときだけ、後編命題1の強度が1段落ちる。</b> rig はこれを隠さず「1層薄い」と明記している。逆に言えば、<b>検証役のプロバイダ選択は、モデルの賢さではなく強制手段の有無で決める</b>のが正しい——後編命題2（品質差は規律・順序・検証の差）の、プロバイダ選択版である。
+</div>
+
+<h3>4-2 クロスプロバイダ・レビューの実際</h3>
+<p>後編3-4が「最も効いた」と紹介したクロスモデルレビュー（実装モデルと別系統のモデルに全 PR をレビューさせる）は、rig では引数1つで組める。</p>
+<div class="term-mock">
+<span class="term-cap">生成＝Claude／検証＝Codex（既定の流し方）</span>
+<span class="cmd">rig run bugfix --provider rig --verifier-provider codex</span>
+<span class="out">→ 生成役と検証役が別プロセス・別モデル系統で走る</span>
+<span class="cmd">rig probe --provider codex</span>
+<span class="out">→ 「read-only サンドボックスが configuration でなく実装として発動しているか」をプロバイダごとに確認</span>
+<span class="cmd">rig run bugfix --provider rig --step-model implement=claude-opus-4-8</span>
+<span class="out">→ step 単位のモデル上書き（--step-model &gt; recipe の model: &gt; --model の優先順）</span>
+</div>
+<p>後編3-3の3層体制（判断＝最上位／実装＝中位／様式仕事＝軽量）は、rig では <span class="mono">--step-model</span> による step 単位の割り当てとして表現される。加えて rig は run 履歴から学習するコスト階層の自動ルーティングを持つが、これは実運用のデータ量に依存するため、まず <span class="mono">--step-model</span> で明示的に割るところから始めるのが安全である。</p>
+
+<h3>4-3 衝突4型を、道具の側でどこまで防げるか</h3>
+<p>後編3-1の「避けるべき衝突4型」に対し、rig が構造的に防げるものと、依然として指示で防ぐものを区別する。</p>
+<table>
+<thead><tr><th>衝突4型（後編3-1）</th><th>rig での防ぎ方</th><th>強制力</th></tr></thead>
+<tbody>
+<tr><td>① 完璧主義×実用主義（未依頼リファクタ⇄書き戻し）</td><td>gate 基準 <span class="mono">no_unrelated_diff</span>・<span class="mono">no_unrelated_refactor</span>（refactor / bugfix プリセット）が依頼外変更を落とす</td><td><span class="en strong">強制</span></td></tr>
+<tr><td>② 深い思考モデルの並列（コンテキスト肥大）</td><td>context-minimal 規約＋<span class="mono">--budget low|mid</span>（reviewer の追加・自動追加 step を抑止し、抑止分は <span class="mono">[BUDGET: 抑止]</span> と明示）</td><td><span class="en mid">構造</span></td></tr>
+<tr><td>③ 同一ファイル同時編集（壊滅的コンフリクト）</td><td><b>task ごとの worktree ＋使い捨て branch</b>。<span class="mono">/rig:queue go --max-parallel N</span> でも各 item が独立に隔離される</td><td><span class="en strong">強制</span></td></tr>
+<tr><td>④ 超長文の丸投げリレー</td><td>structured-report＋output-contract（親は判定行だけ読む）。GitHub の第三者テキストは検疫フェンスで包む</td><td><span class="en mid">構造</span></td></tr>
+</tbody>
+</table>
+<p>③が<span class="en strong">強制</span>まで上がるのが rig を並列運用で使う最大の理由である。後編1-3が「作業ツリーは git worktree で分離し、同一ファイルの同時編集を構造的に起こさなくする」と述べた設計が、<b>並列の入口（<span class="mono">/rig:queue</span>）の既定挙動</b>になっている——並列にするために追加で気をつけることが無い。</p>
+
+<h3>4-4 並行運用の可視化：5状態と board / cockpit</h3>
+<p>後編1-3の「エージェントの状態を5分類で捉える」に対応するのが <span class="mono">/rig:go board</span> である。どの端末・どのプロセスが起動した task でも、<span class="mono">.rig/runs/</span> を読むので1つの表に出る。</p>
+<table>
+<thead><tr><th>後編1-3 の5状態</th><th>board での見え方</th><th>放置すると起きること</th></tr></thead>
+<tbody>
+<tr><td>作業中</td><td><span class="mono">[running]</span>＋現在 step</td><td>—</td></tr>
+<tr><td><b>承認待ち</b></td><td><span class="mono">[gate_passed]</span>（diff 確認待ち）</td><td><b>並列の利得を食いつぶす</b>——通ったのに反映されない差分が溜まる</td></tr>
+<tr><td><b>完了未確認</b></td><td><span class="mono">[gate_failed]</span>／落ちた step</td><td>同上。落ちた理由を見ないまま次を積む</td></tr>
+<tr><td>アイドル</td><td><span class="mono">board --all</span> で記録済み全 task へ拡大</td><td>—</td></tr>
+<tr><td>不明</td><td><span class="mono">cockpit</span> が「Unmeasured」と明示表示する</td><td>空欄を健全と誤読する</td></tr>
+</tbody>
+</table>
+<p><span class="mono">/rig:go cockpit</span> は board・stats・audit・drill 結果を1画面に集約した read-only ビューである（v1 は完全に読み取り専用で、accept/discard は既存コマンドのまま）。設計上の注目点は<b>未計測データを空欄にせず「Unmeasured」と明示する</b>こと——測っていないことを、良好と読み違えさせない。</p>
+
+<h3>4-5 チーム正本：manifest・知識層・信頼の同意</h3>
+<p>後編04章（正本の一元化・許可の線引き・横断管理）に対応する rig の構成は次のとおり。</p>
+<table>
+<thead><tr><th>後編04章の要求</th><th>rig での実装</th></tr></thead>
+<tbody>
+<tr><td>4-1 正本を1か所に、ただし太らせない</td><td>manifest <span class="mono">.claude/rig.md</span>（build/lint/test・branch/CI 戦略・既定 recipe・既定 persona）。CLAUDE.md 側は薄いまま</td></tr>
+<tr><td>4-2 役割分担の2軸（何のため／誰に効く）</td><td>ブリック種別（persona / instruction / policy / pattern / recipe / knowledge）× tier（shipped / user / project）の2軸。<span class="mono">/rig:catalog</span> が全 tier 横断で地図化する</td></tr>
+<tr><td>4-3 許可の線引き表＋機械的強制の二段</td><td>宣言＝policy facet／強制＝tool ACL・gate センサー・確認必須の書き込み操作（<span class="mono">/rig:init</span>・GitHub への post・push）</td></tr>
+<tr><td>4-1 ①「読まないツール」問題</td><td>ホストアダプタ表（<span class="mono">scripts/host_adapters.py</span>）に hook イベント名・skill 配置規約・機能対応度をホストごとに1エントリで集約。表は再生成できる</td></tr>
+</tbody>
+</table>
+<div class="column">
+<b>クローンしたリポジトリの設定を無条件に信頼しない（前編2-2）の実装。</b> rig のプロジェクトローカル recipe は <span class="mono">checks:</span> 行を shell コマンドとして実行するため、<b>clone しただけで動いてはいけない</b>。rig は初回ロードを<b>拒否</b>し、<span class="mono">--allow-project-recipes</span>／環境変数での明示同意を求める。同意はコンテンツハッシュとして記録され、<b>ファイルを編集すると再同意が必要</b>になる。manifest は既定値を供給するだけなので、未同意なら soft degrade（警告1行を出して「manifest が無い」場合と同じ挙動）——<b>危険度に応じて拒否と degrade を使い分ける</b>設計である <span class="claim">確認済み</span>。
+</div>
+
+<h3>4-6 分業の経済性——計測の足場</h3>
+<p>後編3-4は「分業はトークンで2〜7倍・時間で2〜10倍」「導入順序は①1モデル完結→②計測の足場を先に固定→③段階導入」と述べた。rig で②に相当するのは次の3つである。</p>
+<table>
+<thead><tr><th>計測</th><th>コマンド</th><th>見えるもの</th></tr></thead>
+<tbody>
+<tr><td>実行テレメトリ</td><td><span class="mono">rig runs --cost</span></td><td>トークン計測（キャッシュ読み込み分を含む）・フォールバック／拒否の発生件数</td></tr>
+<tr><td>task ライフサイクル</td><td><span class="mono">workbench.py stats</span></td><td>accept / discard / gate 結果の比率、落ちがちな recipe、<b>まったく reject しない reviewer</b></td></tr>
+<tr><td>期間ダイジェスト</td><td><span class="mono">workbench.py digest --period week</span></td><td>上記を週次で1枚に。force-accept の件数もここに出る</td></tr>
+</tbody>
+</table>
+<p>後編3-4の「フェアな計測」（役割を振る層と採点する層を分離し、検出率だけでなく誤検知率まで測る）は、次章の <span class="mono">/rig:drill</span> が担う。</p>
+
+<div class="keep">
+分業で rig が<b>構造的に</b>効くのは2点——<b>検証役の read-only 強制</b>（プロバイダ別に厚みが違う点は正直に把握する）と、<b>worktree による同時編集の構造的回避</b>。残りは依然として設計判断であり、道具は肩代わりしない。並列を増やす前に board で「承認待ち」と「完了未確認」が溜まっていないかを見る。
+</div>
+
+<!-- ============ 第4部 ============ -->
+<div class="part">
+  <span class="part__num">第4部</span>
+  <h2 class="part__title" style="border:none;margin:0;padding:0;">品質と観測を rig でやる</h2>
+  <p class="part__lead">後編05章（生成と検証の分離・検知力の計測・CI ゲート・検査面の圧縮）に対応する。「ゲートがあります」と「ゲートが効いています」を分ける章。</p>
+</div>
+
+<h2><span class="sec-num vol-3">05</span> 品質担保：ゲートを測る　<span class="lv">L2 運用</span> 〜 <span class="lv">L3 発展</span></h2>
+<div class="ctlnav"><span class="ctlnav-cap">MAP</span><span class="ci on">① CLAUDE.md</span><span class="ci">② サブdir CLAUDE.md</span><span class="ci on">③ Rules</span><span class="ci on">④ Skills</span><span class="ci on">⑤ Subagents</span><span class="ci on">⑥ Hooks</span><span class="ci on">⑦ permissions</span></div>
+
+<h3>5-1 受け入れ条件は仕様由来か——gate プリセットの中身</h3>
+<p>後編5-1は「判定基準は『実装がどうなっているか』でなく『何を満たすべきか』＝仕様から抽出した受け入れ条件に固定する」と述べた。rig の gate は <span class="mono">standard</span>（全 task 共通）＋ task_type 別プリセットの合成である。基準 ID の正本は <span class="mono">scripts/workbench.py gates</span>（README ですらない）。</p>
+<table>
+<thead><tr><th>preset</th><th>基準の例</th></tr></thead>
+<tbody>
+<tr><td><span class="mono">standard</span></td><td><span class="mono">task_intent_satisfied</span>・<span class="mono">no_unrelated_diff</span>・<span class="mono">diff_summary_written</span>・<span class="mono">risk_summary_written</span>・<span class="mono">tests_pass_or_explained</span>・<span class="mono">no_type_errors_or_explained</span>・<span class="mono">no_secret_leak</span>・<span class="mono">no_gate_tampering</span>・<span class="mono">no_injection_markers</span>・<span class="mono">no_destructive_operation</span></td></tr>
+<tr><td><span class="mono">bugfix</span></td><td><span class="mono">bug_cause_identified</span>・<span class="mono">fix_is_minimal</span>・<span class="mono">regression_test_added_or_explained</span>・<span class="mono">existing_behavior_preserved</span>・<span class="mono">no_unrelated_refactor</span></td></tr>
+<tr><td><span class="mono">feature</span></td><td><span class="mono">requirement_summary_written</span>・<span class="mono">implementation_matches_requirement</span>・<span class="mono">tests_added_or_explained</span>・<span class="mono">public_api_changes_documented</span>・<span class="mono">migration_or_backward_compatibility_considered</span></td></tr>
+<tr><td><span class="mono">refactor</span></td><td><span class="mono">behavior_boundaries_identified</span>・<span class="mono">no_unintended_behavior_change</span>・<span class="mono">tests_confirm_behavior_preserved</span></td></tr>
+<tr><td><span class="mono">review</span></td><td><span class="mono">findings_are_concrete</span>・<span class="mono">severity_labeled</span>・<span class="mono">file_references_included</span>・<span class="mono">blocking_and_non_blocking_separated</span>・<span class="mono">false_positive_risk_considered</span></td></tr>
+<tr><td><span class="mono">security</span></td><td>review に上乗せ：<span class="mono">authn_authz_impact_checked</span>・<span class="mono">user_input_flow_checked</span>・<span class="mono">secret_exposure_checked</span>・<span class="mono">unsafe_eval_or_shell_checked</span>・<span class="mono">dependency_risk_checked</span></td></tr>
+</tbody>
+</table>
+<p>各基準は <span class="mono">passed</span> / <span class="mono">failed</span> / <span class="mono">warning</span> / <span class="mono">skipped</span> のいずれかで根拠つきに記録され、全体は <span class="mono">passed</span> / <span class="mono">passed_with_warnings</span> / <span class="mono">failed</span> / <span class="mono">pending</span> / <span class="mono">skipped</span> に集約される。<b><span class="mono">warning</span> は accept を止めないが、常に提示され黙って握りつぶされない</b>——後編06章②の Bad vs Sad でいえば、Sad を可視のまま積み残す設計である。</p>
+
+<h3>5-2 <span class="mono">/rig:drill</span>＝レビュアー版のミューテーションテスト</h3>
+<p>後編5-2のミューテーションテストは「テストが通ること」と「テストが守っていること」を分ける手法だった。rig の <span class="mono">/rig:drill</span> は<b>同じ発想をレビュアーに適用する</b>——既知のバグ class（認可漏れ・インジェクション・N+1・破壊的変更・片道 migration・テスト欠落）を使い捨て diff に注入し、reviewer に見せない答案キーと突き合わせて採点する。</p>
+<div class="fig-wrap">
+<svg viewBox="0 0 1080 250" width="100%" role="img" aria-label="ミューテーションテストとrig drillの対応。ミューテーションテストはコードにバグを仕込みテストの検知力を測る。rig drillは使い捨てdiffにバグの種を注入しレビュアーの検出率を測る。どちらも偽陰性の可視化が目的で、スコア100%は目標にしない。">
+  <g font-family="'IBM Plex Sans JP',sans-serif">
+    <rect x="0" y="24" width="510" height="130" fill="#fff" stroke="#D9D1BF"/>
+    <text x="24" y="52" fill="#1A1814" font-size="13.5" font-weight="700">ミューテーションテスト（後編5-2）</text>
+    <text x="24" y="78" fill="#4A4640" font-size="11.5">① コードへ機械的に小さなバグを仕込む</text>
+    <text x="24" y="100" fill="#4A4640" font-size="11.5">② 既存テストを走らせる</text>
+    <text x="24" y="122" fill="#4A4640" font-size="11.5">③ バグ入りでも通るテスト＝偽陰性を特定する</text>
+    <text x="24" y="144" fill="#B22F1A" font-size="11.5" font-weight="700">測る対象：テストの検知力</text>
+
+    <rect x="570" y="24" width="510" height="130" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="594" y="52" fill="#1A1814" font-size="13.5" font-weight="700">/rig:drill（rig）</text>
+    <text x="594" y="78" fill="#4A4640" font-size="11.5">① 使い捨て diff へ既知のバグ class を注入する</text>
+    <text x="594" y="100" fill="#4A4640" font-size="11.5">② review fan-out を実行する</text>
+    <text x="594" y="122" fill="#4A4640" font-size="11.5">③ 答案キーと突き合わせ、見逃しを特定する</text>
+    <text x="594" y="144" fill="#B22F1A" font-size="11.5" font-weight="700">測る対象：レビュアーの検出率</text>
+
+    <rect x="0" y="180" width="1080" height="62" fill="#fff" stroke="#D9D1BF"/>
+    <text x="24" y="206" fill="#1A1814" font-size="12.5" font-weight="700">共通する考え方：ゲートは「ある」と主張するだけでは意味がなく、偽陰性を定点計測してはじめて実効性を語れる。</text>
+    <text x="24" y="230" fill="#4A4640" font-size="11.5">どちらもスコア100%は目標にしない（等価ミュータント／誤検知の増加）。<tspan font-weight="700">推移の劣化検知</tspan>に使う。本物のコードには一切触れない（全て使い捨て）。</text>
+  </g>
+</svg>
+</div>
+<p class="fig-cap">FIG.07 ミューテーションテストと <span class="mono">/rig:drill</span> の対応：測る対象がテストからレビュアーへ移っているだけで、狙い（偽陰性の可視化）は同じ。</p>
+<p>drill が出す指標は6つ——<span class="mono">true_positive</span> / <span class="mono">false_positive</span> / <span class="mono">false_negative</span> / severity accuracy / blocking accuracy / explanation quality。後編3-4が求めた<b>「検出率だけでなく誤検知率まで測る（Score＝検出率−誤検知率）」</b>が指標セットに入っている点が要点である。さらに改善提案は固定4カテゴリ（<span class="mono">add_checklist_item</span> / <span class="mono">adjust_severity_rule</span> / <span class="mono">add_false_positive_guard</span> / <span class="mono">strengthen_security_focus</span>）からのみ選ばれる——曖昧な感想ではなく、run をまたいで集計できる形にするため。<span class="mono">--replay</span> でペルソナ編集後の回帰確認（スナップショットテスト）ができる。</p>
+<div class="callout should">
+<b>コードのミューテーションテストそのものは rig には無い。</b> drill が測るのは<b>レビュアー</b>であって、テストスイートの検知力ではない。後編5-2をそのまま実行したいなら、言語ごとのミューテーションテストツールを recipe の <span class="mono">checks:</span> に繋ぐ（対象を絞って小さく回し、スコアの推移を見る）。rig で埋まらないマスの2つ目である。
+</div>
+
+<h3>5-3 ゴム印レビュアーの検出</h3>
+<p>後編5-1の「AI レビューを一次に置く」構成で最も静かに壊れるのが、<b>何でも通すレビュアー</b>である。rig の <span class="mono">stats</span> はこれを名指しで警告する。</p>
+<div class="term-mock">
+<span class="term-cap">workbench.py stats（抜粋）</span>
+<span class="out">Verifier behavior:</span>
+<span class="out">- strict_senior_engineer: 14 runs, 6 rejects</span>
+<span class="out">- product_reviewer: 6 runs, 0 rejects</span>
+<span class="out"></span>
+<span class="out">Warning:</span>
+<span class="out">product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.</span>
+</div>
+<p>この検出が成立するには、review タスクの verdict を記録する運用（<span class="mono">/rig:go review &lt;task_id&gt; --set &lt;persona&gt;=&lt;APPROVE|REJECT|…&gt;</span>）が要る。<b>記録しないと測れない</b>——後編が繰り返す「測れないゲートは願望にすぎない」の、運用側の対価である。</p>
+
+<h3>5-4 所見の側も疑う：<span class="mono">--verify-findings</span></h3>
+<p>reviewer を増やすほど false-positive も増える。rig は<b>集約判断表を適用する前に反証段を挟む</b> opt-in を持つ——REJECT の根拠とマージ前必須条件を1件ずつ <span class="mono">finding-verifier</span>（所見を出した reviewer とは別 subagent）へ渡し、反証を試みさせる。</p>
+<table>
+<thead><tr><th>反証結果</th><th>扱い</th><th>設計意図</th></tr></thead>
+<tbody>
+<tr><td><span class="mono">REFUTED</span>（証拠つきで反証された）</td><td>ゲートに通さない。ただし棄却理由と反例アンカーを1行ログとして残す</td><td><b>サイレントに消さない</b></td></tr>
+<tr><td><span class="mono">UPHELD</span> / <span class="mono">UNRESOLVED</span></td><td>通す</td><td><b>疑わしきは所見の利</b>——棄却は確証がある時だけ</td></tr>
+</tbody>
+</table>
+<p>後編2-2の「疑わしきは不合格側に倒す」と、この「疑わしきは所見の利」は同じ原理の表と裏である（どちらも<b>不確実なときは安全側＝止まる側に倒す</b>）。verifier 自身の票もテレメトリに記録され、棄却の質を後から監査できる。</p>
+
+<h3>5-5 CI ゲートの4段と、rig の置き場所</h3>
+<p>後編5-3の「Lint → Audit → Test → Build」の4段に対し、rig が持ち込むのは<b>段の追加ではなく、段の前倒し</b>である。</p>
+<table>
+<thead><tr><th>段</th><th>rig での置き場所</th><th>いつ落ちるか</th></tr></thead>
+<tbody>
+<tr><td>① Lint</td><td>git hooks pre-commit（manifest lint＋staged シークレットスキャン）</td><td>commit 前</td></tr>
+<tr><td>② Audit</td><td>gate の機械センサー5種＋<span class="mono">scripts/sast_adapter.py</span>（<span class="mono">/rig:sec</span>）</td><td><b>accept 前</b>（CI より手前）</td></tr>
+<tr><td>③ Test</td><td>recipe の <span class="mono">checks:</span>＋git hooks pre-push（build＋test）</td><td>push 前</td></tr>
+<tr><td>④ Build</td><td>通常の CI／<span class="mono">action.yml</span>（gate が <span class="mono">DONE</span> のときだけ push＋PR 作成）</td><td>CI 上</td></tr>
+</tbody>
+</table>
+<p>後編5-3のもう1つの要点——<b>ループ自体の CI/CD と、ループ生成物の CI/CD を混ぜない</b>——は、rig では <span class="mono">no_gate_tampering</span> が部分的に守る（CI workflow・<span class="mono">gates.json</span>・recipe の編集が task diff に混ざっていたら fail 扱い）。「仕組みを直したら検査が緩んだ」を、diff の混在という形で検出する。</p>
+
+<h3>5-6 検査面を事前に絞る（ASVS）と、外部入力の扱い</h3>
+<p>後編5-4の「後で見つけるから、最初から満たすへ」に対応するのが <span class="mono">/rig:sec</span> パックである（audit ＝攻撃者視点の read-only 探索／pentest-fix ＝PoC の回帰テスト化→修正／monitor ＝定期再スキャン）。観点カタログは <span class="mono">facets/knowledge/wiki/attack-catalog</span> にあり、決定論センサーは <span class="mono">sast_adapter.py</span> と <span class="mono">scan-secrets</span> が担う。倫理境界（自プロダクト／許可済み環境・静的＋ローカル検証のみ）がパックの定義に書き込まれている。</p>
+<p>外部入力の扱いは、後編5-4の話題より一段構造的である。GitHub の Issue/PR 本文・コメントは<b>信頼できない外部入力</b>として、下流の persona に届く前に<b>検疫フェンス</b>で囲われる——推測不能な per-call デリミタでデータであることを明示し、不可視/bidi Unicode を先に剥離する（改竄シグナル）。散文で「従わないで」と書くのではなく、<b>埋め込まれた指示がフェンスを抜け出せない構造</b>にする <span class="claim">確認済み</span>（<span class="mono">rig_workbench/orchestrate/quarantine.py</span>）。前編02章の「文脈は破られる／強制は破られない」を、外部入力に適用した実装である。</p>
+
+<div class="keep">
+品質担保で rig が加えるのは<b>「ゲートを測る層」</b>である——<span class="mono">drill</span> が reviewer の検出率と誤検知率を、<span class="mono">stats</span> がゴム印を、<span class="mono">digest</span> が期間推移を出す。後編が繰り返した「測れないゲートは願望にすぎない」に対する道具側の回答であり、逆に言えば<b>記録しなければ測れない</b>——verdict の記録と drill の定期実行は運用の仕事として残る。
+</div>
+
+
+<!-- ============ 06 導入 ============ -->
+<h2><span class="sec-num vol-3">06</span> 導入：どの順で入れるか　<span class="lv">L1 基礎</span> 〜 <span class="lv">L2 運用</span></h2>
+<p>前編04章の導入順序（①1モデル完結 →②スキル1〜3個 →③週次ルーチン定着 →④マルチ化）を、rig の入れ方に翻訳する。<b>最初から Loop 層を開けない</b>——後編2-1の「下位層を疎かにしたまま上位層を導入しても効かない」がそのまま適用される。</p>
+
+<div class="flow">
+  <div class="fstep"><span class="fnum">STEP 1</span><span class="ftitle">土台を先に置く</span><span class="fbody">DevContainer 等でホストを隔離する（前編1-3）。CLAUDE.md に働き方要点を書き、<span class="mono">permissions.deny</span> で削除系・本番反映・秘密出力を塞ぐ。<b>rig の前にやる</b>——rig はこの層を代替しない。</span></div>
+  <div class="fstep"><span class="fnum">STEP 2</span><span class="ftitle">Harness 層から入れる</span><span class="fbody"><span class="mono">/plugin install</span> → <span class="mono">/rig:init</span>（manifest・知識層・Compact Instructions を確認のうえ生成）→ <span class="mono">/rig:go "&lt;タスク&gt;"</span> を普段の作業で使う。設定ゼロで安全フローは動く。</span></div>
+  <div class="fstep"><span class="fnum">STEP 3</span><span class="ftitle">gate が落ちるのを見る</span><span class="fbody">2週間ほど回して <span class="mono">workbench.py digest --period week</span> を見る。<b>一度も落ちない gate は、効いていないか、緩い</b>。<span class="mono">/rig:harness</span> で空象限と「繋がっていない資産」を洗う。</span></div>
+  <div class="fstep"><span class="fnum">STEP 4</span><span class="ftitle">測ってから広げる</span><span class="fbody"><span class="mono">/rig:drill</span> で reviewer の検出率を実測 → <span class="mono">--verifier-provider</span> でクロスプロバイダ → <span class="mono">/rig:queue</span> で並列 → 最後に <span class="mono">/rig:goal</span>・<span class="mono">--autonomous</span> で Loop 層を開ける。</span></div>
+</div>
+
+<div class="term-mock">
+<span class="term-cap">STEP 2 の最短経路</span>
+<span class="cmd">/plugin marketplace add itoh-shun/sito-plugins</span>
+<span class="cmd">/plugin install rig@sito-plugins</span>
+<span class="cmd">/rig:init</span>
+<span class="out">→ manifest（.claude/rig.md）・知識層ディレクトリ・CLAUDE.md の Compact Instructions 節を提案 → 確認 → 生成</span>
+<span class="cmd">/rig:go "ログインバグを直して"</span>
+<span class="out">→ 分類 → recipe 選択（理由バナー1行）→ 隔離 worktree → gate → サマリ</span>
+<span class="cmd">/rig:go diff</span><span class="cmd">/rig:go accept</span>
+<span class="out">→ gate 未達なら accept は拒否される。commit は常に人間が行う</span>
+</div>
+
+<p>STEP 3 の「一度も落ちない gate は効いていない」という見方は、後編5-2のミューテーションテストの発想を運用に持ち込んだものである。前編3-Eの週次ルーチン（<span class="mono">/insights</span>→<span class="mono">/fewer-permission-prompts</span>→<span class="mono">/update-config</span>→pruning→<span class="mono">/checkup</span>）と rig 側の週次（<span class="mono">digest</span>→<span class="mono">stats</span>→<span class="mono">instincts --decay</span>→<span class="mono">/rig:harness</span>）は<b>別々に回す</b>——前者は Claude Code 環境の健全性、後者はプロジェクトのハーネスの健全性で、見ているものが違う。</p>
+
+<!-- ============ 07 限界 ============ -->
+<h2><span class="sec-num vol-3">07</span> rig で埋まらないもの・未検証のもの　<span class="lv">L2 運用</span></h2>
+<p>本書の目的の半分はここにある。対応表は、埋まっているマスより<b>空いているマス</b>の方が導入判断に効く。3種類に分けて挙げる。</p>
+
+<h3>7-1 rig では埋まらない（別の層で用意する）</h3>
+<table>
+<thead><tr><th>ガイドラインの要求</th><th>なぜ埋まらないか</th><th>どこで埋めるか</th></tr></thead>
+<tbody>
+<tr><td>前編1-3 実行環境の隔離（コンテナ／VM／MicroVM）</td><td>worktree 隔離は同一ホスト内のファイル作業の隔離であり、任意コード実行に対する境界ではない</td><td>DevContainer 以上。自律実行なら MicroVM の検討。<b>rig はその中で走らせる</b></td></tr>
+<tr><td>前編3-C 実行時コマンドのブロック</td><td>rig の <span class="mono">no_destructive_operation</span> は<b>diff に書き込まれたコマンド</b>を見る。実行の傍受はしない</td><td>ホストの <span class="mono">permissions.deny</span>／PreToolUse フック（一次）。rig のセンサーは二次</td></tr>
+<tr><td>前編3-A 主張ラベル（VERIFIED / REASONED / ASSUMED）</td><td>対応する仕組みが無い</td><td>CLAUDE.md の1行として残す</td></tr>
+<tr><td>後編2-2 ④proactive の<b>起動側</b></td><td><span class="mono">ScheduleWakeup</span> はセッション内スケジューラ。セッションが終われば止まる</td><td>GitHub Actions（<span class="mono">action.yml</span>）・cron・Routines。rig は起動された後を担う</td></tr>
+<tr><td>後編5-2 コードのミューテーションテスト</td><td><span class="mono">/rig:drill</span> が測るのは<b>レビュアー</b>であってテストスイートではない</td><td>言語ごとのツールを recipe の <span class="mono">checks:</span> へ繋ぐ</td></tr>
+<tr><td>前編0-4／命題1の<b>文脈側</b>（何を良しとするか）</td><td>rig は基準を作らない。基準を守らせる道具である</td><td>人間が書く。<span class="mono">.rig/gates.json</span> の <span class="mono">extra_criteria</span> で加算できる</td></tr>
+</tbody>
+</table>
+
+<h3>7-2 実装はあるが未検証（rig 自身の申告）</h3>
+<p>rig は README で未検証領域を名指ししている。この誠実さ自体が本書の推奨理由の一部だが、導入時は<b>未検証の機能を安全性の前提に置かない</b>こと <span class="claim">仮定</span>。</p>
+<table>
+<thead><tr><th>領域</th><th>rig 側の申告</th></tr></thead>
+<tbody>
+<tr><td>GitHub Action の <span class="mono">open-pr</span> ステップ</td><td>実行部（<span class="mono">run</span>）はモックで end-to-end 確認済み。branch push＋PR 作成は実ランナー未検証（「レビュー済み・未ライブ検証」）</td></tr>
+<tr><td>Codex ネイティブ層・Cursor 対応</td><td>設定ファイルの妥当性は検証済み。実機での hook 発火・skill 読み込み・<span class="mono">sandbox_mode</span> 強制は未検証</td></tr>
+<tr><td>Anthropic API 直叩き（<span class="mono">--provider anthropic</span>）</td><td>モック HTTP サーバで3パターン確認済み。実 API には未接続</td></tr>
+<tr><td>Managed Agents API 委譲</td><td>実験的 opt-in。REST パスは SDK メソッド名からの推測・実 API 未接続</td></tr>
+<tr><td>VS Code 拡張（read-only board）</td><td>状態パースはユニットテスト済み。実 Extension Host での動作は未検証</td></tr>
+<tr><td><span class="mono">--provider grok</span> の検証役</td><td>read-only 強制が<b>プロンプト契約のみ</b>（claude / codex より1層薄い）</td></tr>
+<tr><td>dogfooding の数値公開</td><td>マージ毎に数値を再生成する CI は未実装。現状はメンテナーがローカルで実行して貼る運用</td></tr>
+</tbody>
+</table>
+
+<h3>7-3 道具では決まらないこと（後編2-4の反証を引き継ぐ）</h3>
+<p>後編2-4は「ループの価値には上限がある」という反証を、両論のまま置いた。rig を入れてもこの論点は動かない。むしろ、rig を入れると<b>回す速度が上がる分だけ、この問いが早く来る</b>。</p>
+<div class="column">
+<b>閉じた問題か、開いた問題か。</b> 自走時間ではなく<b>フィードバックの情報量</b>が成果物の独自性の上限を決める、という批判である。ルール既知・自己完結採点の「閉じた問題」は無限に自走できるが、競合・規制・利用者期待が動く「開いた問題」は外から情報を入れ続けない限り前へ進めない。rig の gate は<b>閉じた問題の採点を機械化する</b>道具であり、開いた問題の情報供給は代替しない。<span class="mono">/rig:goal</span> を回す前に、そのゴールが機械検証可能な基準へ落ちるかを見ること——落ちないなら、それは<b>まだ人間が決めていない</b>という信号である。
+</div>
+<p>もう1つ、後編2-2の長期実測が挙げた残課題——<b>属人化</b>（本人が休むと仕組みが止まる）——も rig では埋まらない。むしろ recipe・persona・manifest という形で設定が増える分、引き継ぎの対象が増える。<span class="mono">/rig:catalog</span>（全 tier 横断の地図）と <span class="mono">--plan</span>（合成ハーネスの提示）は、その引き継ぎコストを下げるための機能だと理解しておくとよい。</p>
+
+<div class="keep">
+rig は<b>強制と測定の層</b>であって、隔離の代替でも、基準の代わりでもない。「rig を入れたから後編の設計が済んだ」と読まないこと。埋まらない5つ（ホスト隔離・実行時ブロック・主張ラベル・proactive の起動側・コードのミューテーション）は、rig を入れた後も自分で用意する。
+</div>
+
+<!-- ============ 08 巻末 ============ -->
+<h2><span class="sec-num vol-3">08</span> 巻末資料</h2>
+<div class="appendix-compact">
+
+<h3>対応表一覧（ガイドライン → rig）</h3>
+<table>
+<thead><tr><th>出典</th><th>主題</th><th>rig の部品</th><th>状態</th></tr></thead>
+<tbody>
+<tr><td>前編 1-3</td><td>実行環境の隔離</td><td>—（<span class="mono">isolated-worktree</span> は別軸）</td><td>埋まらない</td></tr>
+<tr><td>前編 2-1</td><td>7要素×強制力3段</td><td>②以外の6要素に実体（①は薄い／⑥⑦に厚い）</td><td>実装済み</td></tr>
+<tr><td>前編 3-A</td><td>完了＝検証パス</td><td><span class="mono">acceptance-gate</span>＋<span class="mono">accept</span> の機械的拒否</td><td>実装済み</td></tr>
+<tr><td>前編 3-A</td><td>red 証跡</td><td><span class="mono">regression_test_added_or_explained</span>＋<span class="mono">no_gate_tampering</span></td><td>実装済み</td></tr>
+<tr><td>前編 3-A</td><td>2回失敗でリセット</td><td>stuck-guard（固定上限2）＋<span class="mono">max_retries</span> K</td><td>実装済み</td></tr>
+<tr><td>前編 3-A</td><td>主張ラベル</td><td>—（近いのは verifier の <span class="mono">UNKNOWN</span>）</td><td>埋まらない</td></tr>
+<tr><td>前編 3-B</td><td>working-method.md 4部</td><td>recipe step ／ manifest・<span class="mono">checks:</span> ／ policy facet ／ 知識層＋instincts</td><td>実装済み</td></tr>
+<tr><td>前編 3-C</td><td>確実な禁止</td><td>機械センサー5種（secret / injection / tamper / destructive / OpenAPI）</td><td>実装済み（二次）</td></tr>
+<tr><td>前編 3-C</td><td>compact 対策フック</td><td><span class="mono">PreCompact</span>＋<span class="mono">UserPromptSubmit</span> の2経路</td><td>実装済み</td></tr>
+<tr><td>前編 3-D</td><td>拡張の検疫・3層ゲート</td><td><span class="mono">/rig:import</span>＋<span class="mono">--validate</span>＋git hooks</td><td>実装済み</td></tr>
+<tr><td>前編 3-E</td><td>週次の自己最適化</td><td><span class="mono">digest</span> / <span class="mono">stats</span> / <span class="mono">instincts --decay</span> / <span class="mono">/rig:harness</span></td><td>実装済み</td></tr>
+<tr><td>後編 1-1</td><td>委ねる単位の3観点</td><td>reviewer agent 11本＋<span class="mono">parallel-fanout</span>＋<span class="mono">--budget</span></td><td>実装済み</td></tr>
+<tr><td>後編 1-2</td><td>規律の三重の到達保証</td><td>ブリック合成（配置順固定）＋<span class="mono">output-contracts</span>＋<span class="mono">review-gate</span> の差し戻し</td><td>実装済み</td></tr>
+<tr><td>後編 1-3</td><td>5状態の可視化・worktree 分離</td><td><span class="mono">board</span> / <span class="mono">cockpit</span> ＋ task ごとの worktree</td><td>実装済み</td></tr>
+<tr><td>後編 2-1</td><td>4層の入れ子</td><td>facet ⊂ context-minimal・知識層 ⊂ recipe・gate ⊂ goal / loop / autonomous</td><td>実装済み</td></tr>
+<tr><td>後編 2-2</td><td>ループ4分類</td><td><span class="mono">/rig:go</span> / <span class="mono">/rig:goal</span> / <span class="mono">/rig:loop</span> / Action・MCP・queue</td><td>④は部分的</td></tr>
+<tr><td>後編 2-2</td><td>L1→L2→L3</td><td><span class="mono">--plan</span> ／ 既定 gated ／ <span class="mono">--autonomous</span>・queue・Action</td><td>実装済み</td></tr>
+<tr><td>後編 2-2</td><td>安全3本柱</td><td>acceptance-gate ／ <span class="mono">--verifier-provider</span> ／ tool ACL・sandbox</td><td>実装済み</td></tr>
+<tr><td>後編 2-3</td><td>Intent 8要素</td><td>goal 引数 / policy / <span class="mono">--budget</span> / 受け入れ基準 / step ゲート / output-contract に分散</td><td>実装済み（分散）</td></tr>
+<tr><td>後編 3-1</td><td>衝突4型</td><td><span class="mono">no_unrelated_diff</span> / <span class="mono">--budget</span> / worktree / structured-report</td><td>実装済み</td></tr>
+<tr><td>後編 3-3</td><td>3層体制</td><td><span class="mono">--step-model</span>＋コスト階層の自動ルーティング</td><td>実装済み</td></tr>
+<tr><td>後編 3-4</td><td>フェアな計測</td><td><span class="mono">runs --cost</span> / <span class="mono">stats</span> / <span class="mono">digest</span> / <span class="mono">drill</span> の6指標</td><td>実装済み</td></tr>
+<tr><td>後編 4-1</td><td>正本の一元化</td><td>manifest <span class="mono">.claude/rig.md</span>＋tier 構造＋<span class="mono">/rig:catalog</span></td><td>実装済み</td></tr>
+<tr><td>後編 4-3</td><td>許可の線引きと二段構え</td><td>policy facet（宣言）＋tool ACL・trust store（強制）</td><td>実装済み</td></tr>
+<tr><td>後編 5-1</td><td>生成と検証の分離</td><td><span class="mono">independent-verification</span>＋read-only verifier＋別プロバイダ</td><td>実装済み</td></tr>
+<tr><td>後編 5-2</td><td>検知力の計測</td><td><span class="mono">/rig:drill</span>（レビュアー版）／コードのミューテーションは無し</td><td>部分的</td></tr>
+<tr><td>後編 5-3</td><td>CI 4段</td><td>git hooks ／ センサー ／ <span class="mono">checks:</span> ／ <span class="mono">action.yml</span></td><td>実装済み（Action は未ライブ検証）</td></tr>
+<tr><td>後編 5-4</td><td>検査面の事前圧縮・外部入力</td><td><span class="mono">/rig:sec</span>＋<span class="mono">sast_adapter.py</span>＋検疫フェンス</td><td>実装済み</td></tr>
+</tbody>
+</table>
+
+<h3>導入チェックリスト</h3>
+<ul>
+<li>rig を入れる<b>前に</b>、DevContainer 等でホスト隔離を済ませた（7-1）</li>
+<li>rig を入れる<b>前に</b>、<span class="mono">permissions.deny</span> で削除系・本番反映・秘密出力を塞いだ（1-2／7-1）</li>
+<li>CLAUDE.md の働き方要点のうち、gate へ移せる行（完了＝検証パス・red 証跡）を移し、残り（主張ラベル）を明示した（2-1）</li>
+<li><span class="mono">/rig:init</span> で manifest・知識層・Compact Instructions を生成した（2-5／06章）</li>
+<li>2週間 <span class="mono">/rig:go</span> を回し、<span class="mono">digest</span> で「一度も落ちない gate」を確認した（06章 STEP 3）</li>
+<li><span class="mono">/rig:harness</span> で空象限と「繋がっていない資産」を洗い、<b>足す前に繋いだ</b>（2-6）</li>
+<li>検証役のプロバイダを、モデルの賢さでなく<b>read-only 強制手段の有無</b>で選んだ（4-1）</li>
+<li>review の verdict を記録し、<span class="mono">stats</span> のゴム印警告が機能する状態にした（5-3）</li>
+<li><span class="mono">/rig:drill</span> を1度は回し、reviewer の検出率と誤検知率の基準値を取った（5-2）</li>
+<li>Loop 層（<span class="mono">/rig:goal</span>・<span class="mono">--autonomous</span>）を開ける前に、受け入れ基準が機械検証に落ちることを確認した（3-5／7-3）</li>
+<li>プロジェクト recipe の trust 同意（<span class="mono">--allow-project-recipes</span>）の意味をチームで共有した（4-5）</li>
+<li>未検証領域（7-2）を、安全性の前提に置いていない</li>
+</ul>
+
+<h3>出典と確からしさ</h3>
+<table>
+<thead><tr><th>主題</th><th>一次発行元</th><th>確からしさ</th></tr></thead>
+<tbody>
+<tr><td>ガイドライン二冊の主張（制御要素マップ・命題・4分類・成熟度モデル・Intent 8要素ほか）</td><td>STEPUP-CLAUDE-02a／02b v3（2026-08-05）</td><td>各書の巻末「出典と確からしさ」に従う</td></tr>
+<tr><td>rig のコマンド・フラグ・gate 基準・フック定義・ブリック構成</td><td>rig リポジトリ（v1.28.2）の実ファイル</td><td>確認済み</td></tr>
+<tr><td>ループ1周回の5つの動きと担い手の対応</td><td><span class="mono">skills/rig/facets/knowledge/wiki/loop-engineering.md</span></td><td>確認済み</td></tr>
+<tr><td>自己採点バイアスの実測（41/50 → 23/50 相当）</td><td><span class="mono">skills/rig/facets/policies/independent-verification.md</span></td><td>確認済み（単一事例・環境依存）</td></tr>
+<tr><td><span class="mono">ScheduleWakeup</span> の 270／1200／300禁忌</td><td><span class="mono">skills/rig/patterns/autonomous-loop.md</span></td><td>確認済み（rig 側の記述。キャッシュ挙動の一次検証は本書では行っていない）</td></tr>
+<tr><td>read-only 強制のプロバイダ別の厚み</td><td><span class="mono">scripts/host_adapters.py</span>・README §13</td><td>確認済み（実機検証は rig 側で未実施の項目を含む）</td></tr>
+<tr><td>GitHub Action の <span class="mono">open-pr</span>・Codex／Cursor 実機・Anthropic API 直叩き・Managed Agents・VS Code 拡張</td><td>rig README の「正直な検証範囲」注記</td><td>仮定（rig 自身が未検証と明示）</td></tr>
+<tr><td>「rig で埋まらない」の判定（隔離・実行時ブロック・主張ラベル・proactive 起動側・コードのミューテーション）</td><td>本書による対応づけ（リポジトリ全文検索と README の記述から）</td><td>推定</td></tr>
+</tbody>
+</table>
+
+<p><b>留保</b>：本書の rig 記述は v1.28.2 時点のスナップショットである。コマンド名・フラグ・gate 基準 ID は改定されうるため、適用時は <span class="mono">/rig:dev --list</span>・<span class="mono">python3 scripts/workbench.py gates</span>・<span class="mono">skills/rig/SKILL.md</span> §2〜§3 で現行の目録を確認すること（rig 内でもこの3つが正本であり、README は複製に過ぎない）。ガイドライン側の仕様記述の時点留保は二冊の巻末に従う。特定の製品・ベンダーは推奨しない——本書は、既にガイドライン二冊を採用したチームが rig を評価するための対応表である。</p>
+
+<h3>用語ミニ辞典（rig 側）</h3>
+<p><b>ブリック</b>：facet（persona / instruction / policy / output-contract / knowledge）・pattern・recipe の総称。起動時に合成してタスク専用のハーネスを作る。／<b>acceptance-gate</b>：受け入れ基準の判定機構。<span class="mono">failed</span>/<span class="mono">pending</span> があれば accept を機械的に拒否する。／<b>isolated worktree</b>：task ごとの使い捨て git worktree ＋ branch。ホスト隔離ではない。／<b>read-only verifier</b>：起動引数でツールを読み取り専用に固定した検証役。／<b>機械センサー</b>：gate 基準を自己申告でなく決定論的スキャンで裏づける仕組み（5種）。／<b>stuck-guard</b>：同一エラー反復のカウンタ（固定上限2）。<span class="mono">max_retries</span> K とは独立。／<b>run-continuity</b>：圧縮・中断を跨いで RUN 状態を保つ仕組み（状態ヘッダ再掲＋PreCompact フック）。／<b>drill</b>：バグの種を注入して reviewer の検出率を実測する仕組み。／<b>instinct</b>：未検証の学習パターン。confidence と減衰を持ち、検証済み知識層とは別枠。／<b>検疫フェンス</b>：外部テキストを推測不能なデリミタで包み、埋め込まれた指示を無効化する構造。／<b>tier</b>：ブリックの階層（shipped / user / project）。project 層は初回に明示同意が要る。</p>
+
+</div>
+
+<!-- ============ フッター ============ -->
+<div class="doc-footer vol-3">
+<span class="meta fname">STEPUP-CLAUDE-02r_開発特化ガイドrig実装編-ガイドライン対応表_doc_v1_20260806.html</span>
+ ｜ v1（2026-08-06）｜ 様式：STYLE-02 v2_5 適用（テイスト ILLUSTRATED）
+<br>初版：v1（2026-08-06）。STEPUP-CLAUDE-02a／02b v3（2026-08-05）への対応編として作成。
+<br>分冊：VOL.3（前編 02a・後編 02b と対で読む。二冊の改訂に追随して更新する）　／　記載の断定・推定・仮定の別は巻末「出典と確からしさ」に集約
+<br>rig の仕様は v1.28.2 時点のスナップショット（適用時は <span class="mono">/rig:dev --list</span>・<span class="mono">workbench.py gates</span> で現行仕様を確認）　／　出典：STEPUP-CLAUDE-02a／02b、rig リポジトリの実ファイル
+</div>
+
+</div>
+
+</body>
+</html>
