@@ -464,12 +464,29 @@ def test_prompt_pack_with_composition_distinct_expectations_and_green_evidence_s
 
 
 def test_packaged_trust_roots_are_immutable_resource_without_private_material():
+    """The shipped roots carry publisher *public* keys and nothing else.
+
+    This asserted `keys == []` until `dca3e17` added the 1.29.0 release key —
+    verification has to bootstrap from a key that ships with the package, so an
+    empty list stopped being the right shape. What must not change is that only
+    public material ships: every entry is a bare Ed25519 public key (32 bytes),
+    and no field carries private material.
+    """
     from rig_workbench.packs.publisher import load_trust_roots
 
     roots = load_trust_roots()
-    assert roots == {"publisher_trust_roots_schema_version": 1, "keys": []}
+    assert roots["publisher_trust_roots_schema_version"] == 1
+    assert roots["keys"], "at least one publisher key must ship, or nothing verifies"
+
+    for key in roots["keys"]:
+        assert set(key) == {"key_id", "public_key", "signer",
+                            "valid_from", "valid_until", "revoked_at"}, \
+            f"unexpected field in a shipped trust root: {sorted(key)}"
+        assert len(base64.b64decode(key["public_key"], validate=True)) == 32
+
     text = json.dumps(roots).lower()
     assert "private" not in text and "secret" not in text
+    assert "-----begin" not in text
 
 
 def test_wheel_contains_trust_roots_and_declares_crypto_runtime(tmp_path):
