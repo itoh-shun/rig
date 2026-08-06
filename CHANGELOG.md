@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [1.31.0] - 2026-08-06
+
+Measures two things rig previously asserted, and states plainly where its security
+inspection surface ends.
+
 - `rig-wb hostcheck --bench` measures the host checks against a fixed corpus of 23
   cases instead of against whatever machine runs them: every case supplies its own
   environment, so the numbers mean the same thing on a laptop and in CI. The negative
