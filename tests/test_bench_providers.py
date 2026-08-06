@@ -1,6 +1,9 @@
 import json
 import pathlib
+import site
+import socketserver
 import subprocess
+import threading
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -31,6 +34,19 @@ def corpus_workspace(corpus_task):
         yield workspace
     finally:
         bench_tasks._remove_tree(workspace)
+
+
+@pytest.fixture
+def outside_claude_code(monkeypatch):
+    """Run the bare `claude` adapter as if no Claude Code session were active.
+
+    The spend guard reads the ambient session markers, so a suite run from
+    inside Claude Code would otherwise short-circuit every `claude` attempt
+    before the simulated failure under test. Requested explicitly, never
+    autouse: the guard's own test sets the marker back on.
+    """
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex", "ollama", "lmstudio", "mock"])
@@ -250,7 +266,9 @@ def test_missing_cli_executable_is_an_explicit_counted_infra_error(
     assert "missing_executable" in attempt.infra_error
 
 
-def test_cli_timeout_is_an_explicit_counted_infra_error(monkeypatch, corpus_task, corpus_workspace):
+def test_cli_timeout_is_an_explicit_counted_infra_error(
+    monkeypatch, corpus_task, corpus_workspace, outside_claude_code
+):
     def timeout(argv, **_kwargs):
         raise subprocess.TimeoutExpired(argv, 10, output="partial", stderr="slow")
 
@@ -282,7 +300,7 @@ def test_cli_runtime_launch_failure_is_an_explicit_counted_infra_error(
 
 
 def test_cli_authentication_failure_is_an_explicit_counted_infra_error(
-    monkeypatch, corpus_task, corpus_workspace
+    monkeypatch, corpus_task, corpus_workspace, outside_claude_code
 ):
     monkeypatch.setattr(
         bench_providers.subprocess,
@@ -500,8 +518,35 @@ def test_local_http_failures_have_same_infra_category_for_bare_and_rig(
     assert bench_providers._rig_infra_error("", rig_output, {}).startswith(category)
 
 
+class _ConnectionResetHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.close()
+
+
+@pytest.fixture
+def broken_local_endpoint():
+    """A reachable local endpoint that drops every connection.
+
+    Pointing at a port nobody listens on is not portable: on some hosts
+    (WSL2 among them) the connect blackholes until the socket timeout instead
+    of being refused, which reports the run as a timeout rather than as the
+    endpoint failure under test. A listener that resets is refused instantly
+    everywhere.
+    """
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _ConnectionResetHandler)
+    server.daemon_threads = True
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+    finally:
+        server.shutdown()
+        server.server_close()
+        serving.join(timeout=10)
+
+
 def test_rig_local_http_endpoint_failure_survives_full_orchestration(
-    corpus_task, corpus_workspace, tmp_path
+    corpus_task, corpus_workspace, tmp_path, broken_local_endpoint
 ):
     artifacts = tmp_path / "artifacts"
 
@@ -512,7 +557,7 @@ def test_rig_local_http_endpoint_failure_survives_full_orchestration(
         corpus_workspace,
         {
             "artifact_dir": artifacts,
-            "base_url": "http://127.0.0.1:1/v1",
+            "base_url": broken_local_endpoint,
             "rig_timeout_s": 30,
         },
     )
@@ -787,6 +832,11 @@ def test_mock_rig_success_applies_canonical_fix_and_records_two_calls(
     artifacts = tmp_path / "artifacts"
     isolated_home = tmp_path / "home"
     isolated_home.mkdir()
+    # The acceptance check runs `python3 -m pytest` in the workspace, and on a
+    # distro interpreter pytest lives in the per-user site directory under the
+    # real HOME. Pin the user base before moving HOME so the isolation proves
+    # rig writes nothing there without also hiding the test runner.
+    monkeypatch.setenv("PYTHONUSERBASE", site.getuserbase())
     monkeypatch.setenv("HOME", str(isolated_home))
     monkeypatch.setenv("USERPROFILE", str(isolated_home))
 
