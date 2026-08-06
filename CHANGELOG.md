@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [1.30.0] - 2026-08-06
+
+Makes the coverage claim checkable instead of asserted, and gives the two
+requirements that had no home in rig one.
+
 - Adds `rig-wb coverage`: a map from each documented requirement to the evidence
   behind it (`evals/coverage-map.json`), with status derived rather than stored —
   `measured` only when deterministic evidence runs here, `partial` when something
