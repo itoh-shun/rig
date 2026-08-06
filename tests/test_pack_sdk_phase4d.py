@@ -438,7 +438,6 @@ def test_resource_archive_traversal_and_executable_extension_are_rejected(tmp_pa
     target = pack / "resources/guide.sh"
     source.rename(target)
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
-    old = "resources/guide.html"
     new = "resources/guide.sh"
     checksum = digest(target)
     manifest["assets"]["resource"] = [new]

@@ -488,7 +488,8 @@ def cmd_baseline(argv: list[str]) -> int:
     capture.add_argument("--input", required=True, type=pathlib.Path)
     capture.add_argument("--output", required=True, type=pathlib.Path)
     show = sub.add_parser("show", help="show a versioned baseline")
-    show.add_argument("baseline", type=pathlib.Path); show.add_argument("--json", action="store_true")
+    show.add_argument("baseline", type=pathlib.Path)
+    show.add_argument("--json", action="store_true")
     compare = sub.add_parser("compare", help="compare benchmark schema v2 evidence to a baseline")
     compare.add_argument("--baseline", required=True, type=pathlib.Path)
     compare.add_argument("--current", required=True, type=pathlib.Path)
@@ -508,7 +509,8 @@ def cmd_baseline(argv: list[str]) -> int:
         if args.action == "show":
             _baseline_rows(baseline)
             output = canonical_json(baseline) if args.json else render_baseline(baseline)
-            print(output, end=""); return 0
+            print(output, end="")
+            return 0
         current = _read_json(args.current, "current benchmark")
         report = compare_baseline(baseline, current)
         if args.json:

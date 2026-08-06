@@ -6,7 +6,6 @@ import hashlib
 import os
 import subprocess
 import sys
-import types
 
 import pytest
 

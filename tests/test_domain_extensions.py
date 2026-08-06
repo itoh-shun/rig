@@ -104,7 +104,6 @@ def test_sales_project_install_resolves_every_owned_prompt_and_removes(monkeypat
 def test_sales_markdown_contract_examples_pass_the_declared_deterministic_checks():
     from rig_workbench.eval.cases import canonical_json
     from rig_workbench.eval.runner import _check
-    from rig_workbench.packs.manifest import digest
     from rig_workbench.packs.manifest import read_json_yaml
 
     outputs = {
@@ -218,7 +217,6 @@ def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
         monkeypatch, tmp_path):
     from rig_workbench.eval.cases import canonical_json
     from rig_workbench.eval.runner import _check
-    from rig_workbench.packs.manifest import digest
     from rig_workbench.packs.manifest import read_json_yaml
     from rig_workbench.packs.resolver import resolve_asset
     from rig_workbench.packs.validation import validate_pack

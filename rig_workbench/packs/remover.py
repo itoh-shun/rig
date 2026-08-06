@@ -54,16 +54,13 @@ def remove_pack(
                "packs": [item for item in lock["packs"] if item["id"] != pack_id]}
     trash = pathlib.Path(tempfile.mkdtemp(prefix=f".pack-trash-{pack_id}-", dir=destination_root))
     trash.rmdir()
-    moved = False
     try:
         os.replace(target, trash)
-        moved = True
         try:
             write_lock(destination_root, updated)
         except Exception as lock_exc:
             try:
                 os.replace(trash, target)
-                moved = False
             except OSError as restore_exc:
                 raise PackError(
                     f"pack remove lock update failed ({lock_exc}); "
@@ -76,7 +73,6 @@ def remove_pack(
             rollback_errors: list[str] = []
             try:
                 os.replace(trash, target)
-                moved = False
             except OSError as restore_exc:
                 rollback_errors.append(f"target restore failed: {restore_exc}")
             try:
@@ -85,7 +81,6 @@ def remove_pack(
                 rollback_errors.append(f"lock restore failed: {restore_lock_exc}")
             detail = "; ".join(rollback_errors) if rollback_errors else "rollback completed"
             raise PackError(f"pack trash delete failed ({delete_exc}); {detail}") from delete_exc
-        moved = False
         return target, True
     except PackError:
         raise

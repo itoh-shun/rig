@@ -1,6 +1,5 @@
 import copy
 import hashlib
-import io
 import json
 import pathlib
 import shutil

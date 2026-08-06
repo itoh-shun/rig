@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-import sys
 
 from . import config
 from .recipes import parse_frontmatter
