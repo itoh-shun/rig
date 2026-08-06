@@ -19,8 +19,8 @@ requirements that had no home in rig one.
   whether the session is actually bounded by a container, whether the host
   permission layer denies anything, and whether run state is kept out of version
   control. Detection only — it reports and exits 3, and rig still runs.
-- Ships two operator templates and wires them: `docs/templates/devcontainer.json`
-  (proposed by `/rig:init` when hostcheck reports no isolation) and
+- Ships two operator templates: `docs/templates/devcontainer.json`, whose
+  `remoteEnv` marker is the one hostcheck looks for, and
   `docs/templates/rig-scheduled.yml` for the trigger side of a proactive loop,
   which rig's in-session scheduler cannot provide. The scheduled template defaults
   to `auto_pr: false` and serialises overlapping runs.

@@ -27,12 +27,16 @@
         {
           "kind": "file",
           "path": "docs/templates/devcontainer.json",
-          "proves": "コンテナ雛形を同梱し、/rig:init が提案する対象にした"
+          "proves": "コンテナ雛形を同梱し、hostcheck が検出するマーカーと揃えた"
         },
         {
           "kind": "pytest",
           "path": "tests/test_templates.py",
           "proves": "雛形が妥当で、init の手順から参照されていること"
+        },
+        {
+          "kind": "planned",
+          "spec": "/rig:init から雛形を提案する導線を足す。init はプロンプト面なので、変更には評価ケースの証拠（red/green・クリーン統制）が要る——それを揃えてから配線する。"
         }
       ],
       "id": "host-isolation",

@@ -1,8 +1,8 @@
-"""The shipped operator templates must stay valid and stay wired.
+"""The shipped operator templates must stay valid and stay consistent with what reads them.
 
-A template nobody references is a template nobody applies. These tests check both
-halves: the file parses and carries the fields it exists for, and the instruction
-or action it belongs to still points at it.
+A template that drifts from the thing consuming it is worse than no template: it looks
+applied. These tests check that each one parses, carries the fields it exists for, and
+agrees with its consumer — hostcheck's env marker, and the inputs action.yml declares.
 """
 import json
 import pathlib
@@ -31,11 +31,6 @@ def test_devcontainer_template_declares_the_marker_hostcheck_looks_for():
     data = json.loads(DEVCONTAINER.read_text(encoding="utf-8"))
     assert data["remoteEnv"]["DEVCONTAINER"] == "true"
     assert "DEVCONTAINER" in hostcheck.CONTAINER_ENV_VARS
-
-
-def test_init_instruction_points_at_the_devcontainer_template():
-    init = (ROOT / "skills/engine/facets/instructions/init.md").read_text(encoding="utf-8")
-    assert "docs/templates/devcontainer.json" in init
 
 
 def test_scheduled_workflow_is_valid_yaml_with_a_schedule_and_manual_trigger():
