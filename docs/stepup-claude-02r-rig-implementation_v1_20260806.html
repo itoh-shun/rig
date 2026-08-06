@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>STEPUP-CLAUDE-02r ガイドラインを rig でやると、こうなる</title>
+<title>STEPUP-CLAUDE-02r 4つのエンジニアリングを、rig で試す</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 
@@ -506,51 +506,139 @@ hr { border: none; border-top: 1px solid var(--rule); margin: var(--sp-4) 0; }
 
 <!-- ============ 文書ヘッダー ============ -->
 <div class="meta"><span class="vol-tag vol-3">VOL.3 実装編</span> STEPUP-CLAUDE-02r ・ 開発特化ステップアップガイド【rig 実装編】</div>
-<h1>ガイドラインを rig でやると、こうなる</h1>
-<p class="lead">前編（02a）と後編（02b）が「何を、どの強制力で載せるか」を決める本だとすれば、この資料は「では rig を使うと、それが実際どう回るか」を図で示す1枚ものである。細かい設定名は追わない。<b>何が自動で守られ、何は自分でやるのか</b>——判断に必要なところだけを書く。</p>
+<h1>4つのエンジニアリングを、rig で試す</h1>
+<p class="lead">前編（02a）・後編（02b）が扱う設計を、<b>プロンプト／コンテキスト／ハーネス／ループ</b>の4つの層ごとに整理し、それぞれ「何のエンジニアリングか」「rig ではどう実装されているか」「実際に試す手順」の3点セットで示す。あわせて、rig 自身が rig で開発され、<b>決定論的なベンチマークで自分を測りながら改善している</b>ことと、その結果として<b>二冊の要求にどこまで届き、どこは届いていないか</b>を数字で示す。</p>
 
-<!-- FIG.01 1枚まとめ -->
+<!-- FIG.01 4層 -->
 <div class="fig-wrap">
-<svg viewBox="0 0 1120 330" width="100%" role="img" aria-label="1枚まとめ。ガイドラインが求める3つのこと、隔離・検証・記録に対して、rig が自動でやることと、自分でやることを対比した図。rig は作業の隔離、合否の判定、履歴の記録を自動でやる。何を良しとするかの基準づくり、ホストの隔離、危険なコマンドの実行ブロックは自分でやる。">
+<svg viewBox="0 0 1120 430" width="100%" role="img" aria-label="4つのエンジニアリングの入れ子構造。最も内側がプロンプト、その外がコンテキスト、その外がハーネス、最も外がループ。外側ほど1回の設計変更が広く長く効くが、内側を疎かにしたまま外側を導入しても効かない。各層に rig の担当部品が対応する。">
   <g font-family="'IBM Plex Sans JP',sans-serif">
-    <rect x="0" y="16" width="1120" height="40" fill="#1A1814"/>
-    <text x="24" y="42" fill="#FAF6EE" font-size="14" font-weight="700">ガイドライン二冊の要求を、誰が引き受けるか</text>
+    <rect x="20" y="20" width="700" height="390" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="44" y="50" fill="#57803F" font-size="15" font-weight="700">④ ループ・エンジニアリング</text>
+    <text x="44" y="72" fill="#4A4640" font-size="12">いつ・どれだけ回すか＋<tspan font-weight="700">どこで止めるか</tspan>を設計する</text>
+    <text x="44" y="94" fill="#1A1814" font-size="12" font-family="'IBM Plex Mono',monospace">rig：/rig:goal ・ /rig:loop ・ 自動実行 ・ 並列キュー</text>
 
-    <rect x="0" y="72" width="550" height="240" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
-    <text x="24" y="102" fill="#57803F" font-size="13" font-weight="700" font-family="'IBM Plex Mono',monospace">RIG が自動でやる</text>
-    <text x="24" y="136" fill="#1A1814" font-size="14" font-weight="700">① 作業を隔離する</text>
-    <text x="24" y="158" fill="#4A4640" font-size="12">失敗しても手元のファイルは汚れない。捨てれば元通り</text>
-    <text x="24" y="192" fill="#1A1814" font-size="14" font-weight="700">② 合否を機械で判定する</text>
-    <text x="24" y="214" fill="#4A4640" font-size="12">「できました」では通らない。基準を満たすまで反映できない</text>
-    <text x="24" y="248" fill="#1A1814" font-size="14" font-weight="700">③ 確かめる係を分ける</text>
-    <text x="24" y="270" fill="#4A4640" font-size="12">作った本人に合格を出させない。検証役は書き込み禁止</text>
-    <text x="24" y="296" fill="#4A4640" font-size="12">＋ 何を試して何を捨てたかの履歴が残る</text>
+    <rect x="44" y="112" width="652" height="284" fill="#FBF1EA" stroke="#8A8278"/>
+    <text x="68" y="142" fill="#1A1814" font-size="15" font-weight="700">③ ハーネス・エンジニアリング</text>
+    <text x="68" y="164" fill="#4A4640" font-size="12">タスク1件ごとの<tspan font-weight="700">作業環境と合否判定</tspan>を設計する</text>
+    <text x="68" y="186" fill="#1A1814" font-size="12" font-family="'IBM Plex Mono',monospace">rig：別室での作業 ・ 合否ゲート ・ 確かめる側の分離　←rig の本体</text>
 
-    <rect x="570" y="72" width="550" height="240" fill="#fff" stroke="#D9D1BF"/>
-    <text x="594" y="102" fill="#8A8278" font-size="13" font-weight="700" font-family="'IBM Plex Mono',monospace">自分でやる（rig は肩代わりしない）</text>
-    <text x="594" y="136" fill="#1A1814" font-size="14" font-weight="700">① 何を良しとするかを決める</text>
-    <text x="594" y="158" fill="#4A4640" font-size="12">rig は基準を作らない。守らせるだけ</text>
-    <text x="594" y="192" fill="#1A1814" font-size="14" font-weight="700">② パソコン側の隔離</text>
-    <text x="594" y="214" fill="#4A4640" font-size="12">コンテナ（DevContainer）は別途必要。<tspan font-weight="700">rig はその中で動かす</tspan></text>
-    <text x="594" y="248" fill="#1A1814" font-size="14" font-weight="700">③ 危険なコマンドの実行禁止</text>
-    <text x="594" y="270" fill="#4A4640" font-size="12">削除・本番反映の禁止は Claude Code 側の設定で塞ぐ</text>
-    <text x="594" y="296" fill="#4A4640" font-size="12">＋ 定期的に「ゲートが効いているか」を見る</text>
+    <rect x="68" y="204" width="604" height="176" fill="#fff" stroke="#D9D1BF"/>
+    <text x="92" y="234" fill="#1A1814" font-size="15" font-weight="700">② コンテキスト・エンジニアリング</text>
+    <text x="92" y="256" fill="#4A4640" font-size="12">その会話で<tspan font-weight="700">何を見せるか</tspan>を設計する</text>
+    <text x="92" y="278" fill="#1A1814" font-size="12" font-family="'IBM Plex Mono',monospace">rig：要約だけ渡す ・ 知識の置き場 ・ 外部文章の検疫</text>
+
+    <rect x="92" y="296" width="556" height="68" fill="#EEF3F0" stroke="#D9D1BF"/>
+    <text x="116" y="322" fill="#1A1814" font-size="14" font-weight="700">① プロンプト・エンジニアリング</text>
+    <text x="116" y="344" fill="#4A4640" font-size="12">1回の指示の質を上げる</text>
+    <text x="360" y="344" fill="#1A1814" font-size="12" font-family="'IBM Plex Mono',monospace">rig：観点（persona）・規範・出力形式</text>
+
+    <path d="M770,392 L770,36" stroke="#8A8278" stroke-width="1.5" marker-end="url(#lv)"/>
+    <defs><marker id="lv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8A8278" stroke-width="1.6"/></marker></defs>
+    <text x="792" y="60" fill="#1A1814" font-size="13" font-weight="700">効きが大きい</text>
+    <text x="792" y="82" fill="#4A4640" font-size="11.5">1回の設計変更が</text>
+    <text x="792" y="100" fill="#4A4640" font-size="11.5">広く長く効く</text>
+    <text x="792" y="380" fill="#1A1814" font-size="13" font-weight="700">効きが小さい</text>
+
+    <rect x="792" y="130" width="308" height="216" fill="#fff" stroke="#57803F"/>
+    <text x="812" y="158" fill="#57803F" font-size="12.5" font-weight="700">ただし順番がある</text>
+    <text x="812" y="186" fill="#4A4640" font-size="12">外側ほど効きは大きいが、</text>
+    <text x="812" y="206" fill="#4A4640" font-size="12">内側を疎かにしたまま外側を</text>
+    <text x="812" y="226" fill="#4A4640" font-size="12">導入しても効かない。</text>
+    <text x="812" y="256" fill="#4A4640" font-size="12">rig は③から入る道具で、</text>
+    <text x="812" y="276" fill="#4A4640" font-size="12">④は後から opt-in で開ける。</text>
+    <text x="812" y="308" fill="#B22F1A" font-size="12" font-weight="700">③を飛ばした④は、</text>
+    <text x="812" y="328" fill="#B22F1A" font-size="12" font-weight="700">速く間違い続ける仕組み。</text>
   </g>
 </svg>
 </div>
-<p class="fig-cap">FIG.01 1枚まとめ：rig が引き受けるのは<b>強制と記録</b>。基準づくりと土台の隔離は、rig を入れても自分の仕事として残る。</p>
+<p class="fig-cap">FIG.01 4つのエンジニアリングの入れ子と rig の担当（後編2-1の4層モデル）：①⊂②⊂③⊂④。rig は③を既製品として持ち込み、④は設定で開ける。</p>
 
-<div class="callout">
-<b>この資料でいちばん伝えたいこと。</b> rig は「AI に良い仕事をさせる道具」ではなく、<b>「あなたが決めた基準を、AI に無視させない道具」</b>である。前編の命題1でいえば、rig が持ってくるのは<b>強制の輪だけ</b>。文脈の輪（CLAUDE.md に書く働き方の要点）は、rig を入れても自分で書く。
+<h3>この資料の読み方</h3>
+<p>01〜04章は、4つの層をそれぞれ<b>「何のエンジニアリングか → rig ではどうなるか → 試す流れ → できること／残ること」</b>の順で扱う。05章では rig 自身がどう作られているか（自分で自分を開発し、ベンチマークで測っている）を、06章では<b>二冊の要求に対する到達度</b>を数字で示す。</p>
+<table>
+<thead><tr><th>層</th><th>設計するもの</th><th>rig で試す入口</th></tr></thead>
+<tbody>
+<tr><td>① プロンプト</td><td>1回の指示の質——誰に、どの観点で見させるか</td><td><span class="mono">/rig:persona</span>・<span class="mono">/rig:drill</span></td></tr>
+<tr><td>② コンテキスト</td><td>その会話で何を見せるか／見せないか</td><td><span class="mono">--plan</span> の注入一覧・<span class="mono">/rig:knowledge</span></td></tr>
+<tr><td><b>③ ハーネス</b></td><td>タスク1件の作業環境と合否判定　<b>＝rig の本体</b></td><td><span class="mono">/rig:go</span>・<span class="mono">/rig:harness</span></td></tr>
+<tr><td>④ ループ</td><td>いつ・どれだけ回すか、どこで止めるか</td><td><span class="mono">/rig:goal</span>・<span class="mono">/rig:loop</span></td></tr>
+</tbody>
+</table>
+
+<!-- ============ 01 Prompt ============ -->
+<h2><span class="sec-num vol-3">01</span> プロンプト・エンジニアリング　<span class="lv">L1 基礎</span></h2>
+
+<h3>何のエンジニアリングか</h3>
+<p>1回の指示の質を上げる層である。4層のいちばん内側で、効きは<b>その1回きり</b>——だから「良い書き方」を覚えるだけでは資産にならない。この層で本当に価値があるのは、うまくいった指示を<b>次も同じ形で出せるようにすること</b>である。</p>
+
+<h3>rig ではどうなるか</h3>
+<p>rig は指示を3つに分けてファイルにしている。<b>観点</b>（誰として見るか。セキュリティ／設計／テストなど11種類の read-only レビュー役）、<b>規範</b>（守らせたい方針。プロンプトの決まった位置に必ず入る）、<b>出力形式</b>（返し方の型。判定行を機械が拾えるようにする）。毎回その場で書くのではなく、<b>合成して組み立てる</b>。</p>
+<p>いちばんの違いは、<b>プロンプトの良し悪しを測れる</b>ことである。rig は「レビュー役が本当にバグを見つけられるか」を採点する仕組みを持っている——使い捨ての差分にわざとバグを仕込み、検出率・誤検知率・重大度の精度など6指標で採点する。プロンプトが<b>感想でなく数字で評価できる</b>状態になる。</p>
+
+<div class="term-mock">
+<span class="term-cap">試す流れ：自分の観点をプロンプト資産にして、測る</span>
+<span class="cmd">/rig:dev --plan --only review "現在の変更"</span>
+<span class="out">→ 誰にどの観点で見させるつもりか（合成結果）を、実行せずに確認する</span>
+<span class="cmd">/rig:persona "リリース前に必ず移行手順を疑うレビュー役"</span>
+<span class="out">→ 説明文から観点ファイルを生成。以後 --persona で呼べる</span>
+<span class="cmd">/rig:drill</span>
+<span class="out">→ わざとバグを仕込んだ差分で採点。検出率・誤検知率・重大度精度…6指標</span>
+<span class="cmd">/rig:drill --replay</span>
+<span class="out">→ 観点を書き直したあと、同じ差分で再採点して前後を比べる</span>
 </div>
 
-<!-- ============ 01 ============ -->
-<h2><span class="sec-num vol-3">01</span> rig は何をする道具か　<span class="lv">L1 基礎</span></h2>
+<div class="callout">
+<b>ここが「試す流れ」の要。</b> 観点を書き直したら <span class="mono">--replay</span> で前後を比べる。<b>直したつもりが下がっていた</b>ことは普通に起きる。プロンプトを勘で育てるのをやめられるのが、この層で rig を使う理由である。
+</div>
 
-<p>やることは1行で言える。<b>自然文でタスクを頼むと、別室で作業して、合格したものだけを見せてくる。</b></p>
+<div class="keep">
+<b>できること：</b>指示が使い捨てでなく資産になり、良し悪しを数字で測れる。<b>残ること：</b>どんな観点が要るかを考えるのは人間の仕事。rig は「その観点が効いているか」しか答えない。
+</div>
+
+<!-- ============ 02 Context ============ -->
+<h2><span class="sec-num vol-3">02</span> コンテキスト・エンジニアリング　<span class="lv">L2 運用</span></h2>
+
+<h3>何のエンジニアリングか</h3>
+<p>その会話で<b>何を見せ、何を見せないか</b>を設計する層である。コンテキストは大きいほど良いのではなく、注ぎ込むほど1つ1つへの注意が薄まる（後編でいう context rot）。<b>有限の注意予算</b>として扱う。</p>
+
+<h3>rig ではどうなるか</h3>
+<p>rig の既定は<b>「親は要約だけ受け取る」</b>である。調査や実装は別の担当（subagent）に渡し、長い差分やログは親の会話に入れない。そのうえで、見せるものを3つに分けている。</p>
+<table>
+<thead><tr><th>置き場所</th><th>入るもの</th><th>いつ読まれるか</th></tr></thead>
+<tbody>
+<tr><td>知識の層</td><td>検証済みの観点・手順（チームで共有する正本）</td><td>関係する作業のたび</td></tr>
+<tr><td>勘の層</td><td><b>まだ検証していない</b>「このプロジェクトではこう書く」</td><td>確度が高いものだけ、字数上限つきで</td></tr>
+<tr><td>検疫</td><td>Issue や PR など<b>外から来た文章</b></td><td>「データである」と囲ってから渡す</td></tr>
+</tbody>
+</table>
+<p>2つ目の「勘の層」には<b>賞味期限がある</b>——しばらく使われない項目は確度が下がり、下限を割ると自動で外れる。暗黙知は放っておくと腐る、という前提が設計に入っている。3つ目の検疫は、外部の文章に「これまでの指示を無視しろ」と書かれていても、それが指示として読まれない形に囲う仕組みである（散文で「従わないで」と書くのではなく、構造で無効化する）。</p>
+
+<div class="term-mock">
+<span class="term-cap">試す流れ：何を見せているかを、実行前に一覧する</span>
+<span class="cmd">/rig:dev --plan "この変更をレビューして"</span>
+<span class="out">→ 実行せず、注入予定の知識ソース一覧・担当する観点・ゲート条件を表示</span>
+<span class="cmd">/rig:knowledge "この API の呼び出し規約"</span>
+<span class="out">→ 検証済みの知識ページを作る（全 RUN で参照される）</span>
+<span class="cmd">/rig:go gh issue 123</span>
+<span class="out">→ Issue 本文は「外部入力」として検疫されたうえで分類される</span>
+</div>
+
+<div class="keep">
+<b>できること：</b>「いま何を見せているか」が実行前に一覧できる。外部の文章が指示として効くことを構造的に防げる。<b>残ること：</b>見せすぎの判断は人間。増やすより<b>減らす</b>ほうが効く層である。
+</div>
+
+<!-- ============ 03 Harness ============ -->
+<h2><span class="sec-num vol-3">03</span> ハーネス・エンジニアリング　<span class="lv">L2 運用</span>　<span class="tag-role">rig の本体</span></h2>
+
+<h3>何のエンジニアリングか</h3>
+<p>タスク1件ごとに、<b>どこで作業させ、何をもって完了とするか</b>を設計する層である。前編の命題2「完了＝検証コマンドのパス」がそのままこの層の主題になる。rig が既製品として持ち込むのは、ほぼこの層である。</p>
+
+<h3>rig ではどうなるか</h3>
+<p>1行で言うと、<b>自然文で頼むと、別室で作業して、合格したものだけを見せてくる。</b></p>
 
 <div class="fig-wrap">
-<svg viewBox="0 0 1120 290" width="100%" role="img" aria-label="rig の基本フロー。タスクを頼むと、種類を判定し、別の作業場所（隔離worktree）で作業し、合否を判定し、差分の要約を出す。最後に人間が反映するか捨てるかを選ぶ。合格していないものは反映できない。捨ててもログは残る。">
+<svg viewBox="0 0 1120 290" width="100%" role="img" aria-label="rig の基本フロー。タスクを頼むと、種類を判定し、別の作業場所で作業し、合否を判定し、差分の要約を出す。最後に人間が反映するか捨てるかを選ぶ。合格していないものは反映できない。捨ててもログは残る。">
   <g font-family="'IBM Plex Sans JP',sans-serif">
     <rect x="0" y="24" width="200" height="70" fill="#fff" stroke="#D9D1BF"/>
     <text x="100" y="52" fill="#1A1814" font-size="13" font-weight="700" text-anchor="middle">① 頼む</text>
@@ -595,32 +683,39 @@ hr { border: none; border-top: 1px solid var(--rule); margin: var(--sp-4) 0; }
   </g>
 </svg>
 </div>
-<p class="fig-cap">FIG.02 rig の基本フロー：④で落ちたものは⑥へ進めない。前編の命題2「完了＝検証コマンドのパス」が、道具の動作としてそのまま入っている。</p>
+<p class="fig-cap">FIG.02 rig の基本フロー：④で落ちたものは⑥へ進めない。「できました」という自己申告は完了の根拠にならない。</p>
 
-<h3>CLAUDE.md に書いていた「お願い」が、どこまで機械の拒否になるか</h3>
-<p>前編3-Aの働き方要点5行のうち、<b>2行は自動で守られるようになる</b>。残りは引き続き書いておく必要がある。ここが導入の実利のいちばん分かりやすい部分である。</p>
-<table>
-<thead><tr><th>前編3-A の要点</th><th>rig を入れると</th></tr></thead>
-<tbody>
-<tr><td>完了＝検証コマンドのパス</td><td><b>機械の拒否になる</b>。合格していないものは反映できない</td></tr>
-<tr><td>テストは失敗を確認してから実装する</td><td><b>チェック項目になる</b>。テストを勝手に緩めた形跡も検出する</td></tr>
-<tr><td>同じ修正に2回失敗したらリセットする</td><td>回数カウンタが自動で数え、上限で人間に相談してくる</td></tr>
-<tr><td>委譲するときは要点を逐語で運ぶ</td><td>決まった位置に決まった文面が入る（要約されない）</td></tr>
-<tr><td>主張には確からしさのラベルを付ける</td><td><b>対応する仕組みは無い</b>。CLAUDE.md に書いたまま残す</td></tr>
-</tbody>
-</table>
+<p>合否判定には2種類ある。<b>機械のチェック</b>（秘密情報の混入・危険なコマンド・ゲート定義の改ざん・外部からの指示混入など、決まったパターンを決定論的に走査する）と、<b>別の AI による検証</b>（書き換えできない状態で起動され、作った側の報告ではなく<b>実際の差分</b>を見て判定する）。前者は<b>確実だが浅く</b>、後者は<b>深いが当たり外れがある</b>——この性質の差が、05章の測定結果に効いてくる。</p>
+
+<div class="term-mock">
+<span class="term-cap">試す流れ：普段の作業をそのまま通す</span>
+<span class="cmd">/rig:go "ログインバグを直して"</span>
+<span class="out">→ 種類を判定 → 別室で作業 → 合否判定 → 要約</span>
+<span class="cmd">/rig:go diff</span>
+<span class="out">→ 何を変えたか／危ないところ／依頼と関係ない差分が無いか</span>
+<span class="cmd">/rig:go accept</span>
+<span class="out">→ 合格していなければ断られる。コミットは常に人間が行う</span>
+<span class="cmd">/rig:harness</span>
+<span class="out">→ 自分のプロジェクトのハーネス自体を監査（read-only）</span>
+</div>
+<p><span class="mono">/rig:harness</span> は「テストや lint はあるのに、どこにも繋がっていない（落ちても止まらない）」という穴を探す監査である。手の打ち方の順序は<b>足すより、繋ぐ・強制する・薄くする</b>——新しいルールの追加は最後に置く。</p>
 
 <div class="keep">
-rig は「別室で作業して、合格したものだけを見せる」道具である。CLAUDE.md に書いた<b>「完了と言う前に検証しろ」だけは、お願いから機械の拒否に変わる</b>。それ以外は今までどおり書いておく。
+<b>できること：</b>失敗しても手元が汚れない。自己申告では通らない。確かめる側が書き換えられない。<b>残ること：</b><b>パソコン側の隔離は別途必要</b>（rig の「別室」はファイル作業を分けるだけで、危険なコードの実行を止める壁ではない）。
 </div>
 
-<!-- ============ 02 ループ ============ -->
-<h2><span class="sec-num vol-3">02</span> ループエンジニアリングは、rig だとこう回る　<span class="lv">L2 運用</span></h2>
 
-<p>後編02章の主題（人が起点でなくても回る形）を rig でやる場合、覚えることは1つだけである。<b>rig はループのために新しい仕組みを作っていない。</b>ループの1周回を5つの動きに分解して、既にある部品に割り当てているだけである。</p>
+<!-- ============ 04 Loop ============ -->
+<h2><span class="sec-num vol-3">04</span> ループ・エンジニアリング　<span class="lv">L3 発展</span></h2>
+
+<h3>何のエンジニアリングか</h3>
+<p>人が毎回起点にならなくても回る形を作る層である。ここでの設計対象は「どう作業させるか」ではなく<b>「いつ回し、どこで止めるか」</b>——つまり<b>停止条件の設計</b>がこの層のほぼ全てである。</p>
+
+<h3>rig ではどうなるか</h3>
+<p>rig はループのために新しい仕組みを作っていない。ループの1周回を<b>5つの動き</b>に分解し、既にある部品に割り当てているだけである。覚えるのはこの5つだけでよい。</p>
 
 <div class="fig-wrap">
-<svg viewBox="0 0 1120 470" width="100%" role="img" aria-label="ループ1周回の5つの動き。真ん中に受け入れ基準（ゴール）があり、その周りを、①次にやることを見つける、②誰かに任せる、③別の目で確かめる、④覚えておく、⑤次をいつ回すか決める、の順に回る。③が最も壊れやすく、作った本人に合格を出させないことが要点。基準を全部満たしたら止まり、2回続けて進まなければ人間に相談して止まる。">
+<svg viewBox="0 0 1120 470" width="100%" role="img" aria-label="ループ1周回の5つの動き。真ん中に受け入れ基準があり、その周りを、①次にやることを見つける、②誰かに任せる、③別の目で確かめる、④覚えておく、⑤次をいつ回すか決める、の順に回る。③が最も壊れやすい。基準を全部満たしたら止まり、2回続けて進まなければ人間に相談して止まる。">
   <g font-family="'IBM Plex Sans JP',sans-serif">
     <rect x="350" y="176" width="420" height="120" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
     <text x="560" y="208" fill="#1A1814" font-size="15" font-weight="700" text-anchor="middle">受け入れ基準（＝ゴール）</text>
@@ -670,32 +765,29 @@ rig は「別室で作業して、合格したものだけを見せる」道具�
   </g>
 </svg>
 </div>
-<p class="fig-cap">FIG.03 ループ1周回の5つの動き：<b>①見つける →②任せる →③確かめる →④覚える →⑤次を予約する</b>。5つのうち1つでも欠けると事故る——特に③が甘いと、間違ったまま「できた」で止まる。</p>
+<p class="fig-cap">FIG.03 ループ1周回の5つの動き：<b>①見つける →②任せる →③確かめる →④覚える →⑤次を予約する</b>。1つでも欠けると事故る——特に③が甘いと、間違ったまま「できた」で止まる。</p>
 
-<table>
-<thead><tr><th>動き</th><th>欠けるとどうなるか</th></tr></thead>
-<tbody>
-<tr><td>① 見つける</td><td>同じ場所をぐるぐる回る（空回り）</td></tr>
-<tr><td>② 任せる</td><td>親の会話が長い差分やログで膨れて遅くなる</td></tr>
-<tr><td><b>③ 確かめる</b></td><td><b>間違ったまま「達成」で止まる</b>（自分の成果を甘く採点するため）</td></tr>
-<tr><td>④ 覚える</td><td>会話が圧縮された瞬間にゴールを忘れ、最初からやり直す</td></tr>
-<tr><td>⑤ 次を予約する</td><td>無駄に高くつく／止まらなくなる</td></tr>
-</tbody>
-</table>
-
-<h3>2つのループを使い分ける</h3>
-<p>rig は「終わりのある仕事」と「終わりのない仕事」を別コマンドに分けている。この2つを混ぜないのが、止まらないループを作らないコツである。</p>
-<div class="flow">
-  <div class="fstep"><span class="fnum">終わりがある</span><span class="ftitle">ゴールまで回す</span><span class="fbody"><span class="mono">/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"</span><br><br>基準を全部満たしたら止まる。進まなくなったら人間に相談して止まる。</span></div>
-  <div class="fstep"><span class="fnum">終わりがない</span><span class="ftitle">見張る・定期実行</span><span class="fbody"><span class="mono">/rig:loop --every 10m --until "CI が green"</span><br><br>止め方（条件か回数）を必ず指定する。指定しないまま無限監視には入れない。</span></div>
+<h3>ゴールは「機械で確かめられる形」に落とす</h3>
+<p>ループの採点基準は、後編でいう Intent（要件定義）から来る。8要素のうち、<b>ループにとって決定的なのは④Done（受け入れ基準＝停止条件）</b>である。rig の <span class="mono">/rig:goal</span> は最初の1回で目標を基準リストに変換し、以後の毎周それと照らす。</p>
+<div class="callout should">
+<b>ゴールが基準に落ちないなら、それはまだ人間が決めていない。</b> 「使いやすくして」は基準にならないが、「操作が3クリック以内」「既存テストが緑」なら基準になる。ループを開ける前のいちばん確実なチェックは、<span class="mono">/rig:goal --plan</span> で<b>基準リストだけ出させて眺めること</b>である。曖昧な基準のまま回すと、ループは「なんとなく達成」で止まる。
 </div>
-<p>重ねることもできる。<span class="mono">/rig:loop --every 1h /rig:goal "…"</span> なら、外側が「1時間ごとに起こす人」、内側が「達成まで詰める人」になる。</p>
 
-<h3>自動化の度合いは、3段階で上げる</h3>
-<p>後編2-2の成熟度モデル（報告だけ → 修正案まで → 無人）は、rig ではフラグの違いとして現れる。<b>どの段でも、合格判定は外れない</b>のが要点である。</p>
+<div class="term-mock">
+<span class="term-cap">試す流れ：まず基準だけ見る → 収束させる → 見張らせる</span>
+<span class="cmd">/rig:goal --plan "ログイン不具合を回帰込みで直して review 通過まで"</span>
+<span class="out">→ 受け入れ基準と想定ループ構成を出して停止（実行しない）</span>
+<span class="cmd">/rig:goal "ログイン不具合を回帰込みで直して review 通過まで"</span>
+<span class="out">→ 基準を全部満たすまで回す。進捗ゼロが2回続いたら止めて相談</span>
+<span class="cmd">/rig:loop --every 10m --until "CI が green" /rig:pr 1234</span>
+<span class="out">→ 終わりのない仕事（見張り）。止め方（条件か回数）の指定は必須</span>
+<span class="cmd">/rig:loop --every 1h /rig:goal "…"</span>
+<span class="out">→ 外側が「1時間ごとに起こす人」、内側が「達成まで詰める人」</span>
+</div>
 
+<h3>自動化は3段階で上げる</h3>
 <div class="fig-wrap">
-<svg viewBox="0 0 1120 270" width="100%" role="img" aria-label="自動化の3段階。第1段は報告だけで変更させない。第2段はrigの既定で、作らせて人間が反映を判断する。第3段は無人で走らせる。どの段でも合格判定と、反映の前提条件は外れない。">
+<svg viewBox="0 0 1120 270" width="100%" role="img" aria-label="自動化の3段階。第1段は報告だけで変更させない。第2段はrigの既定で、作らせて人間が反映を判断する。第3段は無人で走らせる。どの段でも合格判定と反映の前提条件は外れない。">
   <g font-family="'IBM Plex Sans JP',sans-serif">
     <rect x="0" y="20" width="340" height="140" fill="#fff" stroke="#D9D1BF"/>
     <text x="24" y="52" fill="#1A1814" font-size="15" font-weight="700">第1段　報告だけ</text>
@@ -729,101 +821,186 @@ rig は「別室で作業して、合格したものだけを見せる」道具�
   </g>
 </svg>
 </div>
-<p class="fig-cap">FIG.04 自動化の3段階：<span class="mono">--autonomous</span> が省くのは<b>毎周の確認</b>であって、合格判定ではない。「採点者のいない自動運転」になりにくくしてある。</p>
+<p class="fig-cap">FIG.04 自動化の3段階：<span class="mono">--autonomous</span> が省くのは<b>毎周の確認</b>であって、合格判定ではない。</p>
 
 <div class="keep">
-ループを回すとは、<b>5つの動きを毎周ちゃんと踏ませること</b>。rig は5つを既存の部品に割り当ててあるので、自分で組む必要はない。ただし<b>③（別の目で確かめる）だけは設定で外せてしまう</b>ので、そこは外さない。自動化は第1段→第2段→第3段の順に、gate が実際に落ちるのを見てから上げる。
+<b>できること：</b>5つの動きが最初から割り当てられている。停止条件の指定が引数として必須になっている。<b>残ること：</b><b>人がいない時間に「始める」仕組みは rig の外</b>（rig の予約はセッション内なので、CI や定期実行と組み合わせる）。そして<b>③を外さないこと</b>——ここは設定で外せてしまう。
 </div>
 
-<!-- ============ 03 分業と品質 ============ -->
-<h2><span class="sec-num vol-3">03</span> 分業と品質は、こう分かれる　<span class="lv">L2 運用</span></h2>
+<!-- ============ 05 自己開発 ============ -->
+<div class="part">
+  <span class="part__num">実例</span>
+  <h2 class="part__title" style="border:none;margin:0;padding:0;">rig 自身が、rig で作られている</h2>
+  <p class="part__lead">ここまでの4層を実際に回すとどうなるか。いちばん具体的な実例が rig 自身の開発である——rig は rig を使って開発され、<b>決定論的なベンチマークで自分の効きを測りながら</b>改善している。良い数字だけでなく、<b>効かなかったという測定結果</b>も含めて記録されている。</p>
+</div>
 
-<h3>作る側と確かめる側を、プロセスごと分ける</h3>
-<p>後編の命題1「自分の宿題を自分で採点させない」を、rig は<b>お願いではなく起動時の設定</b>で実現している。検証役は<b>そもそもファイルを書き換えられない状態で起動される</b>。</p>
+<h2><span class="sec-num vol-3">05</span> 自分で自分を測りながら改善する　<span class="lv">L2 運用</span></h2>
+
+<h3>5-1 開発そのものが、同じゲートを通っている</h3>
+<p>rig のリポジトリは、rig が課すのと同じ規律の下で開発されている。数字で言うと次のとおり <span class="claim">確認済み</span>（リポジトリの git 履歴・CI 定義を直接確認）。</p>
+
+<div class="kpi-grid">
+  <div class="kpi-card"><span class="kpi-label">開発期間</span><span class="kpi-value">1<span class="unit">ヶ月</span></span><span class="kpi-delta">2026-07-06 → 08-06</span></div>
+  <div class="kpi-card"><span class="kpi-label">マージ済み PR</span><span class="kpi-value">60<span class="unit">本</span></span><span class="kpi-delta">全 135 コミット</span></div>
+  <div class="kpi-card"><span class="kpi-label">リリース</span><span class="kpi-value">35<span class="unit">回</span></span><span class="kpi-delta">CHANGELOG の記録</span></div>
+  <div class="kpi-card"><span class="kpi-label">テストファイル</span><span class="kpi-value">61<span class="unit">本</span></span><span class="kpi-delta">CI で全 PR に強制</span></div>
+</div>
+
+<p>CI（<span class="mono">validate.yml</span>）は全 PR に対して4つを強制する——<b>lint</b>／<b>構造チェック</b>（ブリック目録と実ファイルのずれ検出）／<b>決定論チェック</b>（同じ入力で同じ合成結果になるか）／<b>テスト一式</b>。1つでも落ちれば PR は通らない。前編の命題2「完了＝検証コマンドのパス」を、道具の作り手自身が自分に適用している形である。</p>
+
+<h3>5-2 効きを測る2つのベンチマーク——片方は課金ゼロで回る</h3>
+<p>「rig を使う意味があるか」は、性質の違う2つの主張に分かれる。rig はこれを分けて測っている。</p>
+
+<table>
+<thead><tr><th></th><th>主張A：機械の床</th><th>主張B：出力の質</th></tr></thead>
+<tbody>
+<tr><td>何を言いたいか</td><td>素のループには<b>存在しない</b>チェックが必ず走る</td><td>同じモデルでも rig 経由の方が<b>出力が良い</b></td></tr>
+<tr><td>測り方</td><td>固定コーパスに機械センサーを直接ぶつける</td><td>同一条件で「素で1回」対「rig 経由」を対戦させる</td></tr>
+<tr><td>コスト</td><td><b>LLM 呼び出しゼロ・課金ゼロ・完全決定論</b></td><td>実モデルと実課金が要る（明示フラグが必須）</td></tr>
+<tr><td>結果</td><td><b>既知の悪パターン 10/10 を捕捉、紛らわしい安全パターンでの誤検知 0/7</b></td><td>合格条件は厳格（下記）。現時点では<b>まだ合格を主張していない</b></td></tr>
+</tbody>
+</table>
+
+<p>主張Aの要点は数値そのものではない。<b>素の <span class="mono">claude -p</span> ループには、この数値自体が存在しない</b>ことである——誰かが配線しない限りチェックは走らないので、同じコーパスに対する保証捕捉率は構造的に 0% になる。これは<b>床であって天井ではない</b>：判断を要する欠陥（設計の誤り・業務ロジックの取り違え）については何も証明しない <span class="claim">確認済み</span>。</p>
+
+<p>主張Bの合格条件は自分に厳しく設定されている——10タスク以上、各タスク3組以上の有効ペア、<b>rig 側の「静かな欠陥」率が素の側より50%以上低い</b>こと、rig の安全停止率が20%以下、平均呼び出し回数が素の2.5倍以下、など。そして<b>素の側に欠陥が1件も出なければ「合格」ではなく「判定不能」とする</b>——差が出なかったことを勝ちに数えない設計である。</p>
+
+<h3>5-3 実際に測ったら、rig が効かなかった——その負の結果と、その後</h3>
+<p>ここが、この章でいちばん伝える価値のある部分である。rig は「効かなかった」測定結果を隠さず、それを起点に改善している <span class="claim">確認済み</span>（<span class="mono">benchmarks/hard-tasks/README.md</span>・CHANGELOG 1.24.0／1.24.1）。</p>
+
+<div class="callout must">
+<b>実測（2026-07-23／3モデル・各9サンプル）。</b> 「認可ヘルパーを信じてしまう」タイプの罠に対し、素のモデルは<b>3モデルとも全9回で静かな欠陥を出した</b>（最上位モデルを含む）。そして<b>rig を通しても安全率は同じ 50% で並んだ</b>——rig は助けにならなかった。理由は明快で、<b>ゲートが見抜けない欠陥には、何回やり直させても意味がない</b>から。作る側と確かめる側が<b>同じ盲点</b>を持っていると、ゲートは欠陥を通してしまう。
+</div>
+
+<p>rig 自身の主張——「rig は品質を自動的に生むのではなく、<b>あなたが定義した品質基準を無視させない</b>道具である」——が、そのまま測定で裏づけられた形である。裏を返せば、強くすべきは<b>繰り返し回数ではなくゲートの検知力</b>だということになる。原因を追ったところ、盲点は<b>3層</b>あった。</p>
 
 <div class="fig-wrap">
-<svg viewBox="0 0 1120 250" width="100%" role="img" aria-label="作る側と確かめる側の分離。作る側は別室の中で書き込みができる。確かめる側は別プロセスで起動され、読むこと・探すこと・指摘を書くことはできるが、ファイル編集・コミット・整形はできない。確かめる側は作る側の報告ではなく実際の差分を見て判定する。">
+<svg viewBox="0 0 1120 300" width="100%" role="img" aria-label="ゲートの盲点は3層あった。第1層は振り分けで、セキュリティ担当が呼ばれていなかった。第2層は観点で、その手口を見る目を持っていなかった。第3層は範囲で、欠陥が差分の外にあるため差分だけを見るレビューでは構造的に見えない。第1層と第2層は修正済み、第3層は構造的な限界で、リポジトリ全体を走査する検査をゲートに畳み込むことで対処した。">
   <g font-family="'IBM Plex Sans JP',sans-serif">
-    <rect x="0" y="20" width="500" height="140" fill="#fff" stroke="#D9D1BF"/>
-    <text x="24" y="52" fill="#1A1814" font-size="15" font-weight="700">作る側</text>
-    <text x="24" y="84" fill="#4A4640" font-size="12.5">別室の中で実装・テスト・説明文を書く</text>
-    <text x="24" y="110" fill="#4A4640" font-size="12.5">書き込みができる（ただし手元のファイルには届かない）</text>
-    <text x="24" y="140" fill="#4A4640" font-size="12.5">出す完了報告は「<tspan font-weight="700">まだ確かめていない主張</tspan>」として扱われる</text>
+    <rect x="0" y="20" width="350" height="120" fill="#fff" stroke="#D9D1BF"/>
+    <text x="22" y="48" fill="#1A1814" font-size="13.5" font-weight="700">第1層　振り分け</text>
+    <text x="22" y="74" fill="#4A4640" font-size="11.5">そもそもセキュリティ担当が</text>
+    <text x="22" y="94" fill="#4A4640" font-size="11.5">呼ばれていなかった</text>
+    <text x="22" y="124" fill="#57803F" font-size="12" font-weight="700">→ 修正済み（1.24.1）</text>
 
-    <rect x="620" y="20" width="500" height="140" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
-    <text x="644" y="52" fill="#1A1814" font-size="15" font-weight="700">確かめる側　＝別プロセス</text>
-    <text x="644" y="84" fill="#4A4640" font-size="12.5">読む・探す・差分を見る・指摘を書く　→ できる</text>
-    <text x="644" y="110" fill="#B22F1A" font-size="12.5" font-weight="700">編集・整形・コミット・危険なコマンド　→ できない</text>
-    <text x="644" y="140" fill="#4A4640" font-size="12.5">判定の材料は<tspan font-weight="700">実際の差分</tspan>（作る側の報告ではない）</text>
+    <rect x="385" y="20" width="350" height="120" fill="#fff" stroke="#D9D1BF"/>
+    <text x="407" y="48" fill="#1A1814" font-size="13.5" font-weight="700">第2層　観点</text>
+    <text x="407" y="74" fill="#4A4640" font-size="11.5">呼ばれても、その手口を見る</text>
+    <text x="407" y="94" fill="#4A4640" font-size="11.5">目を持っていなかった</text>
+    <text x="407" y="124" fill="#57803F" font-size="12" font-weight="700">→ 修正済み（1.24.0）</text>
 
-    <path d="M506,88 L614,88" stroke="#8A8278" stroke-width="1.6" marker-end="url(#v1)"/>
-    <defs><marker id="v1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="#8A8278" stroke-width="1.6"/></marker></defs>
-    <text x="516" y="78" fill="#4A4640" font-size="11">差分を渡す</text>
+    <rect x="770" y="20" width="350" height="120" fill="#FBE6E1" stroke="#B22F1A" stroke-width="2"/>
+    <text x="792" y="48" fill="#1A1814" font-size="13.5" font-weight="700">第3層　範囲</text>
+    <text x="792" y="74" fill="#4A4640" font-size="11.5">欠陥は<tspan font-weight="700">差分の外</tspan>（変更していない</text>
+    <text x="792" y="94" fill="#4A4640" font-size="11.5">既存コード）にあった</text>
+    <text x="792" y="124" fill="#B22F1A" font-size="12" font-weight="700">→ 構造的な限界。観点では埋まらない</text>
 
-    <rect x="60" y="190" width="1000" height="46" fill="#fff" stroke="#1A1814"/>
-    <text x="84" y="219" fill="#1A1814" font-size="12.5">さらに強くするなら、<tspan font-weight="700">確かめる側を別の会社のモデルにする</tspan>（Claude で作って Codex で確認する、など）。設定1つで切り替わる。</text>
+    <rect x="0" y="168" width="1120" height="56" fill="#F2EBD9" stroke="#57803F" stroke-width="2"/>
+    <text x="24" y="194" fill="#1A1814" font-size="13" font-weight="700">第3層への回答：リポジトリ全体を走査する検査を、同じゲートに畳み込む</text>
+    <text x="24" y="216" fill="#4A4640" font-size="11.5">差分だけを見るレビューには、変更していない「信頼済みコード」の欠陥は原理的に見えない。全体走査ツールの結果をゲートの1条件として取り込み、全体走査で見つかった欠陥は反映を止める。</text>
+
+    <rect x="0" y="244" width="1120" height="48" fill="#fff" stroke="#D9D1BF"/>
+    <text x="24" y="272" fill="#4A4640" font-size="11.5">あわせて、露呈した2つの盲点は<tspan font-weight="700">レビュー役の採点コーパスに新しい出題として追加</tspan>された（27→29種）——「見抜けるかどうか」が以後は測定対象になる。</text>
   </g>
 </svg>
 </div>
-<p class="fig-cap">FIG.05 作る側と確かめる側の分離：「レビュー担当が、レビュー対象を勝手に直してしまう」が構造的に起きない。</p>
+<p class="fig-cap">FIG.05 測定 →原因の分解 →改善の実例：3層のうち2層は修正、残る1層は「観点では埋まらない構造的な限界」と認めたうえで、別の手段（全体走査）をゲートに繋いだ。</p>
 
-<h3>並列で走らせても、ぶつからない</h3>
-<p>後編3-1が挙げた衝突のうち、いちばん被害が大きい<b>「同じファイルを同時に編集してしまう」</b>は rig では起きない。タスクごとに別室が作られるためで、並列にするために追加で気をつけることが無い。<span class="mono">/rig:queue</span> に積んでまとめて走らせても同じである。</p>
-
-<h3>「ゲートがある」と「ゲートが効いている」を分ける</h3>
-<p>後編05章のいちばん大事な指摘は、<b>測っていないゲートは願望にすぎない</b>ということだった。rig はここに道具を用意している。</p>
-<table>
-<thead><tr><th>知りたいこと</th><th>やること</th></tr></thead>
-<tbody>
-<tr><td>レビュー役は、本当にバグを見つけられるのか</td><td><b>わざとバグを仕込んだ差分</b>を見せて、検出率と誤検知率を採点する（<span class="mono">/rig:drill</span>）</td></tr>
-<tr><td>何でも通すレビュー役がいないか</td><td>実績を集計すると「N回中0件しか却下していない」と警告が出る</td></tr>
-<tr><td>そもそもゲートは効いているのか</td><td>週次の集計を見る。<b>一度も落ちないゲートは、効いていないか緩い</b></td></tr>
-</tbody>
-</table>
-<p>最初のうちは「落ちるのが煩わしい」と感じるが、<b>落ちないゲートには意味が無い</b>。2週間ほど回して、一度も落ちていない項目があれば、基準の方を見直す。</p>
+<p>この一連の流れが、そのまま<b>4層のエンジニアリングを一周した実例</b>になっている——プロンプト層（観点を追加）、ハーネス層（振り分けとゲート条件を修正）、そして測定（ベンチマークとレビュー採点）で確かめる。CHANGELOG には「<b>検出器と物差しは出荷したが、数字が動いたとはまだ主張しない</b>」と明記されている。効いたことにしない、という規律である。</p>
 
 <div class="keep">
-分業で効くのは2つだけ覚えればよい。<b>確かめる側は書き込めない状態で起動する</b>ことと、<b>タスクごとに別室なので並列でぶつからない</b>こと。そのうえで、ゲートが本当に効いているかを<b>ときどき測る</b>。
+rig の開発は<b>「作る → 測る → 効かなかった所を特定する → 直す → また測る」</b>で回っている。特筆すべきは、<b>効かなかったという測定結果が製品ドキュメントに残っている</b>こと。ゲートの実効性を主張ではなくデータとして扱う、という設計方針が、自分自身にも適用されている。
 </div>
 
-<!-- ============ 04 やらないこと ============ -->
-<h2><span class="sec-num vol-3">04</span> rig がやらないこと　<span class="lv">L1 基礎</span></h2>
-<p>ここが導入判断でいちばん効く。<b>rig を入れてもガイドラインの要求が全部埋まるわけではない。</b>埋まらないのは次の5つで、いずれも別の場所で用意する。</p>
+
+<!-- ============ 06 到達度 ============ -->
+<h2><span class="sec-num vol-3">06</span> 二冊の要求に、どこまで届いているか　<span class="lv">L1 基礎</span></h2>
+
+<p>前編・後編が挙げる主要な要求を22項目に整理し、rig の到達度を4段階で判定した。判定の基準は<b>「実装があるか」と「効いていることを数字で示せるか」を分ける</b>ことである——実装しただけの項目を、成果が出ている項目と同じ列に並べない。</p>
+
+<div class="kpi-grid">
+  <div class="kpi-card must"><span class="kpi-label">実装＋実測あり</span><span class="kpi-value">5<span class="unit">/22</span></span><span class="kpi-delta">数字で効きを示せる</span></div>
+  <div class="kpi-card should"><span class="kpi-label">実装のみ</span><span class="kpi-value">13<span class="unit">/22</span></span><span class="kpi-delta">動くが未測定</span></div>
+  <div class="kpi-card could"><span class="kpi-label">部分的</span><span class="kpi-value">2<span class="unit">/22</span></span><span class="kpi-delta">半分は rig の外</span></div>
+  <div class="kpi-card"><span class="kpi-label">rig の外</span><span class="kpi-value">2<span class="unit">/22</span></span><span class="kpi-delta">別の層で用意する</span></div>
+</div>
+
+<p><b>実装は 18/22 まで届いている。ただし「効いている」と数字で言えるのは 5 項目である。</b>この差こそが、この資料でいちばん正確に伝えたいところである。</p>
+
+<h3>6-1 項目別の到達度</h3>
+<p>判定の凡例：<b>●</b>＝実装があり、効きを数字か検証で示せる／<b>○</b>＝実装はあるが、効きは未測定／<b>△</b>＝一部だけ／<b>—</b>＝rig の外。</p>
 
 <table>
-<thead><tr><th>埋まらないこと</th><th>どこで埋めるか</th></tr></thead>
+<thead><tr><th>出典</th><th>二冊の要求</th><th>判定</th><th>根拠・注記</th></tr></thead>
 <tbody>
-<tr><td><b>パソコン側の隔離</b>（前編1-3）<br>rig の「別室」はファイル作業を分けるだけで、危険なコードの実行を止める壁ではない</td><td>DevContainer などのコンテナ。<b>rig はその中で動かす</b></td></tr>
-<tr><td><b>危険なコマンドの実行禁止</b>（前編3-C）<br>rig が見るのは「差分に書かれたコマンド」で、実行そのものは止めない</td><td>Claude Code 側の権限設定（deny）。rig のチェックは二重目の網</td></tr>
-<tr><td><b>何を良しとするかの基準</b><br>rig は基準を作らない。守らせるだけ</td><td>人間が決める。決めた基準は rig に追加できる</td></tr>
-<tr><td><b>人がいない時間に勝手に始める仕組み</b><br>rig の予約はセッションの中だけ。閉じれば止まる</td><td>GitHub Actions・cron・Routines。rig は<b>始まった後</b>を担当する</td></tr>
-<tr><td><b>テストの検知力の測定</b>（後編5-2）<br>rig が測るのは「レビュー役」であって、テストの品質ではない</td><td>言語ごとのミューテーションテストのツールを、検証コマンドに繋ぐ</td></tr>
+<tr class="tint-a"><td>前編 1-3</td><td>実行環境の隔離（コンテナ／VM）</td><td><b>—</b></td><td>rig の「別室」はファイル作業の分離。危険なコード実行の壁ではない</td></tr>
+<tr><td>前編 2-1</td><td>7つの制御要素に実体を持つ</td><td>○</td><td>サブディレクトリ用の文脈以外の6要素に対応物がある</td></tr>
+<tr class="tint-b"><td>前編 3-A</td><td><b>完了＝検証コマンドのパス</b></td><td><b>●</b></td><td>合格していなければ反映が機械的に拒否される。<b>この規律の下で1ヶ月・60 PR・35リリースが回っている</b></td></tr>
+<tr><td>前編 3-A</td><td>失敗を確認してから実装（red 証跡）</td><td>○</td><td>チェック項目として存在。テストを緩めた形跡も検出する</td></tr>
+<tr class="tint-a"><td>前編 3-A</td><td>主張の確からしさラベル</td><td><b>—</b></td><td>対応する仕組みが無い。CLAUDE.md に書いたまま残す</td></tr>
+<tr><td>前編 3-B</td><td>働き方の規範を分離して置く</td><td>○</td><td>手順・検証コマンド・方針・学びの4つに分けて配置</td></tr>
+<tr class="tint-b"><td>前編 3-C</td><td><b>確実な禁止を機械で止める</b></td><td><b>●</b></td><td><b>既知の悪パターン 10/10 捕捉・誤検知 0/7</b>（決定論・課金ゼロで再現可能）</td></tr>
+<tr><td>前編 3-C</td><td>コンテキスト圧縮への対策</td><td>○</td><td>圧縮直前に状態を書き出すフック＋毎ターンの再注入</td></tr>
+<tr><td>前編 3-D</td><td>外部拡張の検疫と3層ゲート</td><td>○</td><td>取り込み時の検疫・構造チェック・git フック</td></tr>
+<tr><td>前編 3-E</td><td>週次の自己最適化</td><td>○</td><td>集計・棚卸し・ハーネス監査の各コマンドはある</td></tr>
+<tr><td>後編 1-2</td><td>委譲時に規律を逐語で運ぶ</td><td>○</td><td>決まった位置に決まった文面が入る（要約されない）</td></tr>
+<tr><td>後編 1-3</td><td>並行運用の可視化・作業分離</td><td>○</td><td>タスクごとに別室なので同時編集が起きない。状態は一覧に出る</td></tr>
+<tr class="tint-a"><td>後編 2-2</td><td>ループの4分類</td><td><b>△</b></td><td>3つは rig 内で完結。<b>人がいない時に「始める」仕組みだけ外</b>（CI・定期実行と組む）</td></tr>
+<tr><td>後編 2-2</td><td>自律度を3段階で上げる</td><td>○</td><td>フラグの違いとして表現。合格判定はどの段でも外れない</td></tr>
+<tr class="tint-b"><td>後編 2-2</td><td><b>無人ループの安全3本柱</b></td><td><b>●</b></td><td>受け入れゲート／別プロバイダ／読み取り専用の検証役。<b>強制が実際に効いているかを確認するコマンドがあり、プロバイダ別の「厚みの差」も公開されている</b></td></tr>
+<tr><td>後編 2-3</td><td>要件8要素（Intent）</td><td>○</td><td>各要素の置き場所はあるが1か所にまとまらない</td></tr>
+<tr><td>後編 3-1</td><td>分業の衝突4型を避ける</td><td>○</td><td>同一ファイル同時編集は構造的に起きない</td></tr>
+<tr class="tint-b"><td>後編 3-4</td><td><b>フェアな計測（検出率−誤検知率）</b></td><td><b>●</b></td><td>レビュー役を6指標で採点。<b>何でも通す役には警告が出る</b></td></tr>
+<tr class="tint-b"><td>後編 5-1</td><td><b>生成と検証の分離</b></td><td><b>●</b></td><td>プロセス構成として実装。<b>ただし実測の結論は「ゲートが見抜けない欠陥には効かない」</b>（05章）——効果の上限まで測れている</td></tr>
+<tr class="tint-a"><td>後編 5-2</td><td>検知力の計測</td><td><b>△</b></td><td>レビュー役は測れる。<b>テストスイートの検知力（ミューテーション）は対象外</b></td></tr>
+<tr><td>後編 5-3</td><td>CI を4段で組む</td><td>○</td><td>コミット前・反映前・push 前・CI に前倒しで配置</td></tr>
+<tr><td>後編 5-4</td><td>検査面を事前に絞る</td><td>○</td><td>セキュリティ観点のカタログ＋外部入力の検疫</td></tr>
 </tbody>
 </table>
 
-<div class="callout should">
-<b>未検証の機能を、安全の前提にしない。</b> rig は自分の README で「実装はあるが実環境では未検証」の領域を正直に名指ししている（GitHub Actions からの PR 作成、Codex・Cursor の実機動作、一部のプロバイダなど）<span class="claim">仮定</span>。この誠実さは道具として信頼できる材料だが、導入時は<b>安全性の土台をそこに置かない</b>こと。土台は前編1-3の隔離と、Claude Code 側の権限設定に置く。
+<h3>6-2 成果として言えること／言えないこと</h3>
+<p>数字の扱いは慎重にする必要がある。<b>測れているものと、まだ測れていないものは別である。</b></p>
+<table>
+<thead><tr><th>言えること</th><th>言えないこと</th></tr></thead>
+<tbody>
+<tr><td><b>機械の床は数字で示せる。</b>既知の悪パターン 10/10 捕捉・誤検知 0/7。素のループにはこの数値自体が存在しない</td><td><b>「rig を通すと出力が良くなる」はまだ証明されていない。</b>セキュリティ課題群では素との差が出ず<b>判定不能</b>、難課題では<b>同率</b>だった</td></tr>
+<tr><td><b>確かめる側が書き換えられないことは検証できる。</b>プロバイダごとに強制の厚みが違うことまで公開されている</td><td><b>ゲートが見抜けない欠陥には効かない。</b>作る側と確かめる側が同じ盲点を持つと、rig は素のモデルと同じように欠陥を通す</td></tr>
+<tr><td><b>レビュー役の質は測れる。</b>検出率・誤検知率・重大度精度を採点し、露呈した盲点は出題として追加される</td><td><b>差分の外にある欠陥は、差分レビューでは原理的に見えない。</b>全体走査ツールをゲートに繋いで補うという構造的な回答が要る</td></tr>
+<tr><td><b>開発そのものが同じゲートの下で1ヶ月回っている。</b>60 PR・35リリース・61本のテストを CI が全 PR に強制</td><td><b>その数値は自動公開されていない。</b>メンテナーが手元で実行して貼る運用で、継続更新される公開スコアではない</td></tr>
+</tbody>
+</table>
+
+<div class="callout">
+<b>この表の読み方。</b> 左列は「土台の保証」、右列は「賢さの証明」である。rig が今のところ確実に提供しているのは<b>左列だけ</b>——決まったパターンは必ず止める、確かめる側は書き換えられない、測る物差しがある。右列（同じモデルでも rig 経由なら質が上がる）は、<b>厳しい合格条件を自分に課したうえで、まだ合格を主張していない</b>。道具の評価としてはむしろこの正直さを見るべきところである。
 </div>
 
-<!-- ============ 05 はじめかた ============ -->
-<h2><span class="sec-num vol-3">05</span> はじめかた　<span class="lv">L1 基礎</span></h2>
-<p>順番を守ることが大事である。<b>最初からループ（自動で回す）を開けない。</b>下の層を飛ばすと、速く間違い続ける仕組みになる。</p>
+<h3>6-3 rig の外で用意するもの（5つ）</h3>
+<ul>
+<li><b>パソコン側の隔離</b>——コンテナ（DevContainer）以上。<b>rig はその中で動かす</b></li>
+<li><b>危険なコマンドの実行禁止</b>——Claude Code 側の権限設定。rig のチェックは二重目の網</li>
+<li><b>何を良しとするかの基準</b>——人間が決める。決めた基準は rig に追加できる（緩めることはできない）</li>
+<li><b>人がいない時間に「始める」仕組み</b>——CI や定期実行。rig は始まった後を担当する</li>
+<li><b>テストスイートの検知力の測定</b>——言語ごとのミューテーションテストを検証コマンドに繋ぐ</li>
+</ul>
+
+<!-- ============ 07 はじめかた ============ -->
+<h2><span class="sec-num vol-3">07</span> はじめかた——層の順に開ける　<span class="lv">L1 基礎</span></h2>
+<p>4層は内側から積む。<b>③から入り、④は最後</b>。これを逆にすると、速く間違い続ける仕組みになる。</p>
 
 <div class="flow">
-  <div class="fstep"><span class="fnum">STEP 1</span><span class="ftitle">土台を先に置く</span><span class="fbody">コンテナで隔離し、削除・本番反映・秘密の出力を権限設定で塞ぐ。<b>rig より先にやる</b>。</span></div>
-  <div class="fstep"><span class="fnum">STEP 2</span><span class="ftitle">普段の作業で使う</span><span class="fbody">インストールして <span class="mono">/rig:init</span>、あとは <span class="mono">/rig:go "…"</span> を普段どおり使うだけ。設定ゼロで動く。</span></div>
-  <div class="fstep"><span class="fnum">STEP 3</span><span class="ftitle">2週間、落ちるのを見る</span><span class="fbody">週次の集計を見て、一度も落ちないゲートが無いかを確認する。落ちないなら基準を見直す。</span></div>
-  <div class="fstep"><span class="fnum">STEP 4</span><span class="ftitle">測ってから広げる</span><span class="fbody">レビュー役の検出率を測る → 検証役を別モデルにする → 並列にする → 最後にループを開ける。</span></div>
+  <div class="fstep"><span class="fnum">STEP 0</span><span class="ftitle">土台（rig の外）</span><span class="fbody">コンテナで隔離し、削除・本番反映・秘密の出力を権限設定で塞ぐ。<b>rig より先にやる</b>。</span></div>
+  <div class="fstep"><span class="fnum">STEP 1</span><span class="ftitle">③ ハーネス層で普段使い</span><span class="fbody">インストールして <span class="mono">/rig:init</span>、あとは <span class="mono">/rig:go "…"</span>。設定ゼロで安全フローが動く。2週間続ける。</span></div>
+  <div class="fstep"><span class="fnum">STEP 2</span><span class="ftitle">①② を測って整える</span><span class="fbody"><span class="mono">/rig:drill</span> でレビュー役の検出率を測り、<span class="mono">--plan</span> で何を見せているかを一覧する。<span class="mono">/rig:harness</span> で穴を洗う。</span></div>
+  <div class="fstep"><span class="fnum">STEP 3</span><span class="ftitle">④ ループ層を開ける</span><span class="fbody"><span class="mono">/rig:goal --plan</span> でゴールが基準に落ちることを確認してから回す。無人化はさらにその後。</span></div>
 </div>
 
 <div class="term-mock">
-<span class="term-cap">STEP 2 の最短経路</span>
+<span class="term-cap">STEP 1 の最短経路</span>
 <span class="cmd">/plugin marketplace add itoh-shun/sito-plugins</span>
 <span class="cmd">/plugin install rig@sito-plugins</span>
 <span class="cmd">/rig:init</span>
 <span class="out">→ プロジェクト設定などを提案 → 確認 → 生成</span>
 <span class="cmd">/rig:go "ログインバグを直して"</span>
-<span class="out">→ 種類を判定 → 別室で作業 → 合否判定 → 要約</span>
 <span class="cmd">/rig:go diff</span>
 <span class="cmd">/rig:go accept</span>
 <span class="out">→ 合格していなければ断られる。コミットは常に人間が行う</span>
@@ -831,26 +1008,26 @@ rig は「別室で作業して、合格したものだけを見せる」道具�
 
 <h3>導入チェックリスト</h3>
 <ul>
-<li>rig を入れる<b>前に</b>、コンテナでの隔離と、危険な操作の権限設定を済ませた</li>
-<li>CLAUDE.md の「完了と言う前に検証しろ」系の記述を、rig のゲート側に任せた</li>
-<li>2週間 <span class="mono">/rig:go</span> で普段の作業を回した</li>
-<li>週次の集計を見て、一度も落ちないゲートが無いか確認した</li>
-<li>レビュー役の検出率を一度は測った</li>
-<li>ループ（<span class="mono">/rig:goal</span>・自動実行）を開ける前に、ゴールが<b>機械で確かめられる形</b>になっているか確認した</li>
-<li>「確かめる側を分ける」設定を、速さのために外していない</li>
+<li>rig を入れる<b>前に</b>、コンテナ隔離と危険操作の権限設定を済ませた（06-3）</li>
+<li>CLAUDE.md の「完了と言う前に検証しろ」系の記述を、rig のゲート側に任せた（01・06-1）</li>
+<li>2週間 <span class="mono">/rig:go</span> で普段の作業を回し、<b>一度も落ちないゲート</b>が無いか確認した（03）</li>
+<li>レビュー役の検出率を一度は測り、書き直したら <span class="mono">--replay</span> で前後を比べた（01）</li>
+<li>ループを開ける前に、ゴールが<b>機械で確かめられる形</b>に落ちることを確認した（04）</li>
+<li>「確かめる側を分ける」設定を、速さのために外していない（04・05）</li>
+<li>rig の測定が<b>まだ証明していないこと</b>（出力の質の向上）を、社内説明で誇張していない（06-2）</li>
 </ul>
 
 <div class="keep">
-順番は<b>土台 → 普段使い → 測る → 広げる</b>。rig は入れた初日から安全側に効くが、<b>ループを開けるのは最後</b>。ゴールを機械で確かめられる形に落とせないうちは、それはまだ人間が決めていないということである。
+順番は<b>土台 →③ハーネス →①②を測る →④ループ</b>。rig は入れた初日から「機械の床」として効くが、<b>「出力が良くなる」はまだ測定中の主張</b>である。床を買う道具として導入し、質の向上は自分のプロジェクトで測って判断する——それが、この道具自身の作り方と一致した使い方である。
 </div>
 
 <!-- ============ フッター ============ -->
 <div class="doc-footer vol-3">
-<span class="meta fname">STEPUP-CLAUDE-02r_開発特化ガイドrig実装編_doc_v2_20260806.html</span>
- ｜ v2（2026-08-06）｜ 様式：STYLE-02 v2_5 適用（テイスト ILLUSTRATED）
-<br>改訂：v2（2026-08-06）。読みやすさ優先で全面簡素化——設定名・ファイルパス・基準ID の詳細を落とし、図と結論に絞った。詳細版は v1 を参照。
+<span class="meta fname">STEPUP-CLAUDE-02r_開発特化ガイドrig実装編_doc_v3_20260806.html</span>
+ ｜ v3（2026-08-06）｜ 様式：STYLE-02 v2_5 適用（テイスト ILLUSTRATED）
+<br>改訂：v3（2026-08-06）。4つのエンジニアリング層ごとの解説＋各層の「試す流れ」に再構成。rig 自身の開発と決定論ベンチマーク（負の結果を含む）を追加し、二冊の要求への到達度を22項目で判定。
 <br>分冊：VOL.3（前編 STEPUP-CLAUDE-02a・後編 STEPUP-CLAUDE-02b と対で読む）
-<br>rig の仕様は v1.28.2 時点のスナップショット（コマンド名・フラグは改定されうるため、適用時は現行仕様を確認）　／　出典：STEPUP-CLAUDE-02a／02b、rig リポジトリの実ファイル
+<br>rig の記述はリポジトリ v1.28.2 時点のスナップショット。数値は git 履歴・CI 定義・<span class="mono">benchmarks/</span> の記録を直接確認したもので、ベンチマークの実測値は各コーパスの README に記録された条件（モデル・サンプル数・日付）に依存する。適用時は現行仕様と最新の測定結果を確認すること。
 </div>
 
 </div>
