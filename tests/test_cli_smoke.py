@@ -89,6 +89,43 @@ def _venv_rig_wb(root):
     return root / ("Scripts/rig-wb.exe" if os.name == "nt" else "bin/rig-wb")
 
 
+def _distribution_files(distribution):
+    """List a distribution's installed files relative to its site directory.
+
+    `distribution.files` is None whenever the install ships no RECORD, which is
+    how distro-packaged dependencies land (Debian's PyYAML in dist-packages).
+    Fall back to the top-level names the metadata declares, plus the metadata
+    directory itself, so the copy stays as faithful as the RECORD-driven path.
+    """
+    recorded = distribution.files
+    if recorded is not None:
+        return [pathlib.Path(str(item)) for item in recorded]
+    site_dir = pathlib.Path(distribution.locate_file(""))
+    project = distribution.metadata["Name"].casefold().replace("-", "_")
+    declared = (distribution.read_text("top_level.txt") or "").split()
+    roots = []
+    for name in declared or [project]:
+        roots.append(site_dir / name)
+        roots.extend(site_dir.glob(f"{name}.*"))
+    roots.extend(
+        path
+        for path in site_dir.iterdir()
+        if path.suffix in {".dist-info", ".egg-info"}
+        and path.name.casefold().replace("-", "_").startswith(f"{project}_")
+    )
+    discovered = []
+    for candidate in roots:
+        if candidate.is_dir():
+            discovered.extend(
+                path.relative_to(site_dir)
+                for path in candidate.rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            )
+        elif candidate.is_file():
+            discovered.append(candidate.relative_to(site_dir))
+    return discovered
+
+
 def _provision_distributions_offline(root, requirements):
     """Copy the wheel-declared dependency closure from the host's offline environment."""
     destination_site = (
@@ -109,11 +146,10 @@ def _provision_distributions_offline(root, requirements):
         copied.add(normalized)
         distribution = importlib.metadata.distribution(name)
         pending.extend(Requirement(item) for item in distribution.requires or ())
-        for relative in distribution.files or ():
-            relative_path = pathlib.Path(str(relative))
+        for relative_path in _distribution_files(distribution):
             if ".." in relative_path.parts:
                 continue
-            source = pathlib.Path(distribution.locate_file(relative))
+            source = pathlib.Path(distribution.locate_file(relative_path))
             if not source.is_file():
                 continue
             destination = destination_site / relative_path
