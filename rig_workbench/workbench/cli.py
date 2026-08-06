@@ -26,6 +26,7 @@ import argparse
 
 from ..gh_requirement import advise_gh
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
+from .cascade import cmd_cascade
 from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
@@ -34,9 +35,12 @@ from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
+from .flows import DEFAULT_LIMIT as _FLOW_LIMIT
+from .flows import cmd_suggest_flows
 from .injection import cmd_scan_injection
 from .instincts import _INSTINCT_DECAY_DAYS, cmd_instincts
 from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
+from .mutation import DEFAULT_MAX_MUTANTS, DEFAULT_TIMEOUT, cmd_mutate
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
 from .secrets import cmd_scan_secrets
@@ -64,6 +68,10 @@ def main() -> None:
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
     p.add_argument("--slug", help="short English slug for the task-id (derived from input if omitted)")
     p.add_argument("--base", help="explicit base branch name (defaults to the current branch)")
+    p.add_argument("--parent", metavar="TASK_ID",
+                   help="stack this task on another task's branch (patterns/stacked-tasks): "
+                        "records parent_task/stack_base so `wb cascade` can rebase it when the "
+                        "parent moves. Mutually exclusive with --base")
     _add_route_context_arguments(p)
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
@@ -209,6 +217,40 @@ def main() -> None:
     p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")
     p.add_argument("--diff", metavar="TASK_ID", help="scan only the task worktree's diff vs its base commit")
     p.set_defaults(func=cmd_scan_destructive)
+
+    p = sub.add_parser("suggest-flows", help="propose this project's 1-3 flows from what it has "
+                       "actually run (.rig telemetry) — the evidence behind /rig:init's manifest "
+                       "defaults; read-only, writes nothing")
+    p.add_argument("--limit", type=int, metavar="N",
+                   help=f"maximum flows to propose (default {_FLOW_LIMIT}); anything dropped by "
+                        f"the cap is listed, never silently omitted")
+    p.add_argument("--json", action="store_true", help="machine-readable proposal")
+    p.set_defaults(func=cmd_suggest_flows)
+
+    p = sub.add_parser("cascade", help="rebase stacked tasks onto their parents' current tips "
+                       "(plain `git rebase --onto` inside each child's own worktree — no checkout, "
+                       "so worktree isolation holds)")
+    p.add_argument("task_id", nargs="?",
+                   help="cascade the subtree under this task (default: every stack root)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the plan without rebasing anything")
+    p.set_defaults(func=cmd_cascade)
+
+    p = sub.add_parser("mutate", help="diff-scoped mutation testing — mutate the lines this task "
+                       "changed and check the tests kill them (machine backing for "
+                       "changed_code_mutants_are_killed; opt-in via manifest `mutate:`)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--max-mutants", type=int, metavar="N",
+                   help=f"cap on mutants evaluated in one run (default: manifest "
+                        f"`mutate_max_mutants:` or {DEFAULT_MAX_MUTANTS}); anything beyond the cap "
+                        f"is reported, never silently dropped")
+    p.add_argument("--timeout", type=int, metavar="S",
+                   help=f"per-mutant test-command timeout in seconds (default {DEFAULT_TIMEOUT}); "
+                        f"a timeout counts as killed")
+    p.add_argument("--show", action="store_true",
+                   help="print the recorded report without re-running the measurement")
+    p.add_argument("--json", action="store_true", help="machine-readable report")
+    p.set_defaults(func=cmd_mutate)
 
     p = sub.add_parser("digest", help="periodic telemetry digest in Markdown (runs / gates / force-accepts / rubber-stamps / drills)")
     p.add_argument("--period", choices=("week", "month"), default="week",

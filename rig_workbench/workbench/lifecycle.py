@@ -11,9 +11,11 @@ from rig_workbench.packs.model import PackError
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
 from .capabilities import resolve_task_route
+from .cascade import ancestry, read_all, resolve_parent
 from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
+from .mutation import apply_mutation_sensor, ensure_mutation_criterion
 from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
                                 apply_prompt_regression_sensor,
                                 ensure_prompt_criterion)
@@ -127,7 +129,18 @@ def cmd_new(args: argparse.Namespace) -> None:
     # before any run dir / worktree is created (no partial state on error).
     acc = build_acceptance(task_id, args.type, root)
 
-    base_branch = args.base or current_branch(root)
+    # `--parent` stacks this task on another task's branch (patterns/stacked-tasks).
+    # It resolves to the same two values `--base` would produce, so everything
+    # downstream — effective_base, the diff, every sensor — is unchanged: a
+    # stacked task is an ordinary task whose base happens to be another task.
+    parent_task: dict | None = None
+    if getattr(args, "parent", None):
+        if args.base:
+            die("--parent and --base are mutually exclusive: --parent IS the base "
+                "(the parent task's branch)")
+        parent_task = resolve_parent(root, read_all(root), args.parent)
+
+    base_branch = args.base or (parent_task["branch"] if parent_task else current_branch(root))
     # `--base <branch>` has to mean it. Recording HEAD here while naming another
     # branch as the base made every later range wrong by construction: the diff
     # and the gate sensors are taken against `base_commit`, so a task started
@@ -136,11 +149,12 @@ def cmd_new(args: argparse.Namespace) -> None:
     # same commit, so the recorded value and the real fork point cannot diverge —
     # which is exactly the invariant `effective_base` (base drift, #312) assumes.
     # Resolved before anything is written, same reason as the gate above.
-    if args.base:
-        proc = git(["rev-parse", "--verify", f"{args.base}^{{commit}}"], cwd=root, check=False)
+    if args.base or parent_task:
+        ref = args.base or parent_task["branch"]
+        proc = git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=root, check=False)
         base_commit = proc.stdout.strip()
         if proc.returncode != 0 or not base_commit:
-            die(f"--base '{args.base}' does not resolve to a commit")
+            die(f"--base '{ref}' does not resolve to a commit")
     else:
         base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
 
@@ -174,6 +188,11 @@ def cmd_new(args: argparse.Namespace) -> None:
         "updated_at": now_iso(),
         "budget_minutes": args.budget_minutes,   # optional (#281); None = no warning
     }
+    if parent_task:
+        task["parent_task"] = parent_task["task_id"]
+        # The `--onto` upstream for a later cascade. Recomputing it after the
+        # parent's history moves is impossible, so it is recorded now.
+        task["stack_base"] = base_commit
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
     save_json(d / "steps.json", {"steps": []})
@@ -198,6 +217,11 @@ def cmd_new(args: argparse.Namespace) -> None:
     print()
     print(f"task_id: {task_id}")
     print(f"base_branch: {base_branch} @ {base_commit[:12]}")
+    if parent_task:
+        chain = [parent_task["task_id"], *ancestry(read_all(root), parent_task["task_id"])]
+        print(f"stacked on: {' ← '.join(chain)} (depth {len(chain)})")
+        print("  after the parent moves: `rig-wb wb cascade` "
+              "(each layer keeps its own gate — patterns/stacked-tasks)")
     if worktree_path:
         print(f"worktree: {worktree_path} (branch: {branch})")
     else:
@@ -244,6 +268,9 @@ def cmd_gate(args: argparse.Namespace) -> None:
         acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
 
         ensure_prompt_criterion(root, task, acc)
+        # Added before `known` is built so an explicit --set on it validates
+        # (the escape hatch has to exist the moment the criterion does).
+        ensure_mutation_criterion(root, task, acc)
 
         known = {c["name"]: c for c in acc["checks"]}
         explicit_set: set[str] = set()
@@ -289,6 +316,11 @@ def cmd_gate(args: argparse.Namespace) -> None:
             # patterns and mass deletions warning-grade; --set
             # no_destructive_operation=passed is the recorded escape hatch.
             sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # Mutation sensor: reads the report `rig-wb wb mutate` recorded and
+            # fails the gate on surviving mutants in the changed code. Opt-in
+            # (manifest `mutate:`); never runs mutants itself, so the gate stays
+            # a fast file read.
+            sensor_notes += apply_mutation_sensor(root, d, task, acc, explicit_set=explicit_set)
             sensor_notes += apply_prompt_regression_sensor(root, task, acc)
 
         acc["status"] = gate_status(acc)

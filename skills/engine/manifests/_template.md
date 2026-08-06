@@ -17,6 +17,21 @@ build: ""           # 例: "./gradlew assembleDebug" / "npm run build"
 lint:  ""           # 例: "./gradlew ktlintCheck"   / "npm run lint"
 test:  ""           # 例: "./gradlew test"           / "npm test"
 
+# ── ミューテーションテスト （任意・opt-in） ────────────────
+# 設定すると acceptance-gate に `changed_code_mutants_are_killed` が加わる
+# （変更した行だけを変異させ、今書いたテストが殺せるかを機械が判定する）。
+# 未設定（空文字列）＝この基準は一切現れない。
+# 値: "builtin"（rig 同梱の stdlib Python エンジン）または道具のコマンド。
+#     コマンドには {files} / {base} が置換される（環境変数 RIG_MUTATION_FILES /
+#     RIG_MUTATION_BASE / RIG_MUTATION_TOOL_REPORT でも渡る）。exit 0 = 全滅。
+mutate: ""              # 例: "builtin" / "mutmut run --paths-to-mutate {files}"
+                        #     / "npx stryker run --mutate {files}" / PIT の gradle task
+mutate_test: ""         # builtin エンジンがミュータント1体ごとに走らせるコマンド。
+                        # 未設定なら `test:` を使う。**全件テストは遅すぎるので、
+                        # 絞った高速コマンドをここに書く**（例: "pytest -q tests/unit"）
+mutate_max_mutants: 20  # 1回で評価するミュータント数の上限（既定 20）。
+                        # 上限で落ちた分は必ず報告される（黙って切らない）
+
 # ── ブランチ & CI 戦略 ────────────────────────────────────
 # 汎用既定: デフォルトブランチ（main/master）から feature ブランチを切るシンプルフロー
 branch:
@@ -97,6 +112,25 @@ worktree:
 ### build / lint / test
 ビルド・静的解析・テスト実行コマンドを文字列で記す。
 未設定（空文字列）の場合、エンジンはリポジトリ構造（`package.json` / `build.gradle` / `Makefile` 等）を自動検出して推定コマンドを使う。
+
+### mutate / mutate_test / mutate_max_mutants
+ミューテーションテストの設定。**プロジェクトごとの opt-in で、未設定なら基準そのものが現れない。**
+
+`mutate` を設定すると、そのタスクが**変更した行だけ**を変異させ、そのタスクが書いたテストが
+変異を殺せるかを見る acceptance-gate 基準 `changed_code_mutants_are_killed` が加わる。
+`tests_added_or_explained`（モデルが散文で判定）を、機械が判定する形へ格上げしたもの。
+測定は `rig-wb wb mutate <task-id>` が行い、**ゲートはその記録を読むだけ**（ゲートは速いまま保つ）。
+
+- `"builtin"` — rig 同梱の stdlib エンジン（Python のみ）。比較演算子・論理演算子・算術演算子の入替、
+  `not` の除去、真偽定数の反転を変更行に適用する。道具のインストールが要らないので手元で回せる。
+- コマンド文字列 — mutmut / PIT / Stryker 等へ委譲する（native-first：rig は道具を持たず規律を持つ）。
+  `{files}` `{base}` が置換され、`$RIG_MUTATION_TOOL_REPORT` に
+  `{"survivors": [{"path","line","operator"}], ...}` を書けば生存ミュータントを名指しできる。
+  書かなければ rig は exit code しか持たないので、その旨を出力する。
+- `mutate_test` は builtin エンジンがミュータント1体ごとに走らせるコマンド。**全件テストは遅すぎる**ので、
+  変更範囲に効く絞ったコマンドを指定する。未設定なら `test:` にフォールバック。
+- 測定前に**変異なしの陽性対照**を1回走らせる。既に赤ければ全ミュータントが「殺された」ように見えるため、
+  満点を報告せず測定自体を拒否する。
 
 ### branch
 `base` が空の場合はリポジトリのデフォルトブランチ（`git remote show origin` から取得）を使う。

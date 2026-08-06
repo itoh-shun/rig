@@ -26,12 +26,12 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 |---|---|---|
 | **agent**（native 委譲先・優先） | read-only reviewer。専用 context・tool 制限つきで起動 | `agents/security-reviewer` `agents/design-reviewer` `agents/test-reviewer` `agents/performance-reviewer` `agents/observability-reviewer` `agents/api-compat-reviewer` `agents/migration-reviewer` `agents/docs-reviewer` `agents/finding-verifier` `agents/lazy-senior-reviewer` `agents/cognitive-economist-reviewer` |
 | **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
-| **instruction facet**（薄い委譲） | 手順の routing。既存 skill/command/agent に委譲する thin な指示 | `facets/instructions/parallel-review` `facets/instructions/intake` `facets/instructions/design` `facets/instructions/implement` `facets/instructions/verify` `facets/instructions/visual-verify` `facets/instructions/pr` `facets/instructions/merge` `facets/instructions/adversarial-review` |
+| **instruction facet**（薄い委譲） | 手順の routing。既存 skill/command/agent に委譲する thin な指示 | `facets/instructions/parallel-review` `facets/instructions/intake` `facets/instructions/design` `facets/instructions/implement` `facets/instructions/verify` `facets/instructions/visual-verify` `facets/instructions/pr` `facets/instructions/merge` `facets/instructions/adversarial-review` `facets/instructions/capture`（§7 の正本） `facets/instructions/run-continuity`（§6 の詳細仕様の正本） |
 | **output-contract facet** | subagent 出力の機械抽出可能フォーマット定義 | `facets/output-contracts/review-verdict`（着手判断の集約用・既定） `facets/output-contracts/review-findings`（severity・file:line・Blocking/Non-blocking を明示する詳細版。`/rig:drill` と厳しめレビュー依頼で使用） |
 | **policy facet** | 末尾注入のガードレール | `facets/policies/pr-hygiene` `facets/policies/pre-push-review` `facets/policies/ci-cost` `facets/policies/branch-strategy` `facets/policies/risk-based-testing` `facets/policies/cross-llm-legibility` `facets/policies/suppression-memory`（レビュー却下学習＝`.rig/review-suppressions.jsonl`。REFUTED/却下所見を記録し再指摘を抑止・UPHELD には負ける） `facets/policies/comment-policy`（`--comment` の投稿統制＝severity マッピング・nit 上限5・Pre-existing note・再レビュー収束） |
 | **knowledge facet** | subagent prompt に注入する知識層ブリック | `facets/knowledge/orchestration-patterns` `facets/knowledge/harness-engineering` `facets/knowledge/_layer` |
 | **wiki**（shipped tier・persona が `inject:` で参照） | 観点カタログの正準ページ（`_wiki` スキーマ・`sources`/`reviewed_at` 必須） | `facets/knowledge/wiki/{loop-engineering,appsec-checklist,injection-patterns,migration-expand-contract,performance-pitfalls,observability-golden-signals,api-compat-semver,license-compat-basics}` |
-| **pattern**（制御フロー） | step の実行制御テンプレ | `patterns/parallel-fanout` `patterns/review-gate` `patterns/structured-report` `patterns/serial` `patterns/autonomous-loop` `patterns/monitor` `patterns/workflow-backend` `patterns/acceptance-gate` |
+| **pattern**（制御フロー） | step の実行制御テンプレ | `patterns/parallel-fanout` `patterns/review-gate` `patterns/structured-report` `patterns/serial` `patterns/autonomous-loop` `patterns/monitor` `patterns/workflow-backend` `patterns/acceptance-gate` `patterns/stacked-tasks`（1タスク=1ゲート=1PR・親子タスクと cascade・**積まないほうがいい場合**） |
 | **recipe**（step の束） | step＋pattern＋facet を固定したテンプレ workflow | `recipes/review-only` `recipes/release-flow` `recipes/design-first` `recipes/hotfix` `recipes/debug` `recipes/fast-bugfix` `recipes/max-bugfix` `recipes/adaptive-bugfix` `recipes/adversarial-review`（dev-core。pack 追加分は下記） |
 | **manifest** | プロジェクト設定・既定値テンプレ | `manifests/_template` |
 | **step** | フローの単位。instruction facet として library 化済み | intake / design / implement / verify / visual-verify / pr / merge（parallel-review を含む全 8 件） |
@@ -50,7 +50,7 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **task-plan**（`/rig:tasks`） | 依頼を検証可能な小タスクへ割ってから実装 | `facets/personas/planner` `facets/instructions/task-plan` `facets/output-contracts/task-plan` `recipes/task-plan` |
 > | **brainstorm**（`/rig:brainstorm`） | 設計の壁打ち。`design-brief` に収束し tasks→dev へ繋ぐ | `facets/personas/brainstormer` `facets/instructions/brainstorm` `facets/output-contracts/design-brief` `recipes/brainstorm` |
 > | **pr-review**（`/rig:pr`） | PR レビュー（reviewer agent・persona・`review-verdict` は dev 共用） | `facets/instructions/pr-review` `recipes/pr-review` |
-> | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | 自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定。**受け入れ基準 ID の正本は `scripts/workbench.py gates`**（project 独自基準は `.rig/gates.json` で**加算のみ**）。うち4基準は機械センサーが裏付ける（OpenAPI schema-diff / secret scan / anti-tamper / injection-marker） | `patterns/isolated-worktree` `patterns/visual-artifacts` `patterns/computational-orchestration` `scripts/workbench.py` `facets/instructions/workbench` `facets/instructions/workbench-ops` `facets/instructions/gh-flow` `facets/instructions/acceptance-check` `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` `recipes/{bugfix,feature,refactor,documentation}` |
+> | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | 自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定。**受け入れ基準 ID の正本は `scripts/workbench.py gates`**（project 独自基準は `.rig/gates.json` で**加算のみ**）。うち6基準は機械センサーが裏付ける（OpenAPI schema-diff / secret scan / anti-tamper / injection-marker / destructive-command / **mutation**＝`changed_code_mutants_are_killed`。mutation は manifest `mutate:` を書いた project でのみ現れる opt-in で、測定は `wb mutate`・ゲートはその記録を読む） | `patterns/isolated-worktree` `patterns/stacked-tasks` `patterns/visual-artifacts` `patterns/computational-orchestration` `scripts/workbench.py` `facets/instructions/workbench` `facets/instructions/workbench-ops` `facets/instructions/gh-flow` `facets/instructions/acceptance-check` `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` `recipes/{bugfix,feature,refactor,documentation}` |
 > | **de-ai-smell**（`/rig:dev --recipe de-ai-smell`） | 散文の AI 臭除去（深層マーカー＋5観点スコア定量ゲート＋語彙ブラックリスト） | `facets/personas/ai-smell-reviewer` `facets/instructions/de-ai-smell` `facets/knowledge/ai-writing-smells` `recipes/de-ai-smell` |
 > | **drill**（`/rig:drill`・measurement） | reviewer 検出率の実測（合成 diff にバグの種を注入→6指標スコアボード）。`--replay` でペルソナの snapshot テスト | `facets/personas/strict-senior-engineer` `facets/output-contracts/review-findings` `facets/instructions/drill` `recipes/drill` |
 > | **design**（`/rig:design`） | UI/UX・a11y の作成＋URL 監査（`--ppt`/`--claudedesign`/Playwright は MCP 委譲） | `facets/personas/design/{ui-ux-designer,ux-reviewer,a11y-reviewer}` `facets/instructions/{design-draft,design-vet,design-audit}` `facets/output-contracts/design-verdict` `facets/knowledge/{a11y-wcag,ui-ux-heuristics}` `recipes/{design,design-audit}` |
@@ -273,35 +273,13 @@ subagent prompt を組むときの facet 配置は**必ず**この順：
 
 ### 知識層の注入
 
-subagent prompt を組む前に、以下の順で関連する知識ブリックを選択し、facet 配置順に沿って注入する。
+**選択対象・注入位置・wiki の tier 解決の正本は `facets/knowledge/_layer`「COMPOSE の注入規則」** — 6つの選択対象 tier（user: methodology / ai-quirks、project: domain / accumulated、wiki: global 一次 / project overlay）、persona の `inject: [[slug]]` の tier 解決、**ai-quirks の二相注入**（記述形→Knowledge 位置 / 導出規範形→Policy 位置）。**知識を注入するときは必ずこれを読んで従う。**
 
-**選択対象（tier 順）:**
+ここに残す不変条件:
 
-| tier | パス | カテゴリ |
-|---|---|---|
-| **user 層** | `~/.claude/rig/knowledge/methodology/` | 設計・開発手法（DDD / クリーンアーキテクチャ / SOLID 等） |
-| **user 層** | `~/.claude/rig/knowledge/ai-quirks/` | AI の既知失敗パターン（二相管理、下記参照） |
-| **project 層** | `<repo>/.claude/rig/knowledge/domain/` | ドメイン設計・ユビキタス言語・認証モデル・ADR |
-| **project 層** | `<repo>/.claude/rig/knowledge/accumulated/` | 蓄積知識（実行履歴から抽出されたパターン・学び）→ User 先頭（Knowledge 位置）に注入 |
-| **wiki（user＝global 一次）** | `~/.claude/rig/knowledge/wiki/` | 正準な概念ページ（相互リンク `[[slug]]`）。persona の `inject:` / `[[link]]` で参照 |
-| **wiki（project＝overlay）** | `<repo>/.claude/rig/knowledge/wiki/` | 同 slug を上書き/追補（ページ単位で project 優先） |
-
-いずれかの tier ディレクトリが存在しない場合は**サイレントにスキップ**する（エラーにしない）。
-
-**wiki ページの参照と注入（`facets/knowledge/_wiki` 参照）:**
-
-- persona facet が `inject: ["[[slug]]", …]` を宣言している場合、各 `[[slug]]` を **tier 解決**（project overlay > global > shipped `skills/engine/facets/knowledge/wiki/`）してページを取得し、**User 先頭（Knowledge 位置）に注入**する（1ホップ既定・過剰展開しない）。
-- 本文中の `[[slug]]` も同様に解決対象。`[[slug|表示名]]` 記法可。解決できない `[[...]]` は**注入せず**、`--validate` がリンク切れとして報告する。
-- wiki は「事実」、persona は「判断・声」。**persona は事実を埋め込まず wiki を参照する**（暗黙知サイロを避ける）。
-
-**注入位置:**
-
-- **methodology / domain** の知識ブリック → subagent prompt の **User 先頭**（Knowledge 位置）に注入する。
-- **ai-quirks** は**二相注入**する：
-  1. **記述形（知識）** → User 先頭の Knowledge 位置（他の知識ブリックと同列）に注入。
-  2. **導出規範形（derived Policy）** → User 末尾の Policy 位置（recency が効く末尾）に注入。Policy facet（`facets/policies/`）と同じ位置に配置する。
-
-知識層の構造・ディレクトリ規約・ai-quirks 二相の詳細は `facets/knowledge/_layer.md` を参照。
+- **tier ディレクトリが存在しなければサイレントにスキップ**する（エラーにしない）。
+- **methodology / domain / accumulated → User 先頭（Knowledge 位置）**。**ai-quirks だけは二相**（記述形＝Knowledge 位置、導出規範形＝Policy 位置）。
+- **wiki は「事実」、persona は「判断・声」。persona は事実を埋め込まず wiki を参照する**（暗黙知サイロを避ける）。解決できない `[[...]]` は注入せず `--validate` がリンク切れとして報告する。
 
 ### native 委譲
 
@@ -377,13 +355,8 @@ RUN 規律は SKILL.md 指示の recency に依存するため、**途中で質�
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending [(try N/K)]|passed|REJECT> [| stuck: N/2] | backend: <manual|workflow> [| orch: <on|auto>] | mode: <gated|autonomous> [| iter: X/N]
 ```
-
-- `recipe`：`--recipe`/manifest 由来名。対話合成なら `ad-hoc`。**tier 表示ルールは `--plan`（#25）と統一する（#125）**：`project`/`user` tier の recipe は `recipe: <name> [project]` / `recipe: <name> [user]` と明示、`shipped` のみは省略可（`recipe: <name>` のまま——新規ユーザーへの静かな既定）、対話合成は tier なし（`recipe: ad-hoc`）。これにより `--plan`（事前）→ run-status（実行中）の全フェーズで tier 情報が追跡可能になる。`step`：現 step の id と位置（`--only`/`--from` スライス時はスライス後の N）。`gate`：現 step のゲート状態。
-- **`gate: pending` の acceptance-gate 試行位置（#32）**：`gate: acceptance-gate` の step が収束ループ中（基準未達で retry に入った）は `pending (try N/K)` と試行回数を付す（`K` は当該 step の `max_retries`・RESOLVE 確定値で `--plan` の `（max_retries: N）` と同じ出所）。`step: (n/N)` が「全フロー中の位置」を示すのと対称に、`(try N/K)` は「この step 内の収束ループの位置」を示す。**初回実行（まだ retry に入っていない 0 回目）は `(try …)` を付けない**（素の `pending`。retry 1 回目から `(try 1/K)`）。`K 超`で `## rig acceptance-gate: K 超エスカレーション`（§6）へ。`gate: none|passed|REJECT` は確定状態のため `(try …)` を付けない（既存表記を維持）。
-- **`orch:` フィールド（計算的オーケストレーション）**：この RUN が orchestrate を通るときだけ `backend:` の直後に付す＝**明示時 `orch: on` / 自動有効化時 `orch: auto`**（§4.3：recipe の `checks:`/`needs:` か manifest `default_orchestrate`）。オフ（従来の散文エンジン）なら**省略**（ヘッダ長を増やさない）。これで「今このフローは舵をコードが握っているか」が毎ターン一目で分かる。
-- **自動有効化の一言通知**：orchestrate が**自動で**ON になった最初のターンに、run-status の直後へ1行で理由と戻し方を示す＝`🧭 計算的オーケストレーションで回します（理由: <recipe に needs 宣言 | recipe に checks 宣言 | manifest default_orchestrate>）。対話的な散文エンジンに戻すには --no-orchestrate。` 明示 `--orchestrate` 時は既に意図的なので通知しない。
-- **`stuck: N/2` フィールド（#117）**：stuck-guard カウンタ（§6「step ゲートと詰まりガード」）が **1 以上**になったとき、`mode:` フィールドの直前に `| stuck: N/2` を追加する（`2` は stuck-guard の固定上限）。カウンタ = 0 のとき（通常時）は**省略する**（ヘッダ長を増やさない）。カウンタが #36 規則でリセットされたら `stuck:` フィールドも消える。`acceptance-gate` の `(try N/K)` が「収束ループの深さ」を示すのと対称に、`stuck: N/2` は「同一エラー反復の深さ」を示す（2つの独立カウンタが両方可視化される）。例：`gate: pending (try 1/2) | stuck: 1/2` は「acceptance-gate も stuck-guard も次でエスカレーション直前」を一目で示す。
-- **`iter:` フィールド（`loop` レシピ専用・#176）**：`loop` レシピ（`facets/instructions/loop-driver` 経由）の RUN 中のみ、`mode:` フィールドの後に付す（他のレシピでは**省略**）。各 tick 開始時に更新する。フォーマットはループ設定によって変わる：`--times N` 指定時は `iter: X/N`（X = 現在の実行回数。例: `iter: 3/5`）、`--until <condition>` 単独時（回数上限なし）は `iter: X`（分母なし。例: `iter: 3`）、`--times N` + `--until` 併用時は `iter: X/N (監視中)`（例: `iter: 3/5 (監視中)`）。`--plan` の `### Loop Config:` ブロック（§5）が「予定」を示すのと対称に、`iter:` は「実行中の現在 tick」を示す。コンテキスト圧縮後の再開時（② 再アンカー）も `iter:` フィールドを含めて run-status ヘッダを再掲する（`loop-driver.md` ④「次 tick 予約の正準状態に経過 tick を含める」と対応し、圧縮をまたいでも tick 数が失われない）。
+- **各フィールドの意味・出現条件の正本は `facets/instructions/run-continuity` 1.**（`recipe` の tier 表示規則／`gate: pending (try N/K)` の試行位置／orchestrate の `orch: on|auto` と自動有効化の一言通知／stuck-guard の `stuck: N/2`／loop レシピ専用の `iter:`）。**ヘッダを組み立てるときは必ずこれを読んで従う。**
+- 省略可能なフィールド（`orch:` `stuck:` `iter:`）は**該当しないとき出さない**（ヘッダ長を増やさない）。
 - これにより「**rig が今ここを駆動中**」と「次でエスカレーションが来るか」が常に可視化される。
 
 **② 再アンカー規則** — 質疑・脱線で**1ターン抜けた直後の作業ターン**は、作業に入る前に必ず：(1) ① のヘッダを再掲、(2) アクティブなハーネス状態を1行で再宣言（どの recipe のどの step を、どの委譲先で再開するか）、(3) **現 step から再開**する。**素の直接作業・ゲート省略へ静かに切り替えない**（下記 red flag に明示適用）。
@@ -396,16 +369,7 @@ RUN 規律は SKILL.md 指示の recency に依存するため、**途中で質�
 ── step <id> ▸ done
 ```
 
-**acceptance-gate criterion 単位の合否表示（#159）**：`gate: acceptance-gate` を持つ step で基準が未達（`pending`）のとき、step 境界バナーの直下に各 criterion の合否（`✓`/`✗`）と未達の簡潔な根拠（1行以内、サブエージェントの structured-report から抽出したサマリ）を追記する。合格（`passed`）時は1行バナーのみ維持する（全件 ✓ のため列挙を省略し冗長を避ける）。`acceptance[]` が空配列の step では `（基準未設定 — WARN: ゲートが常時通過）` のみ表示する（`--validate ③` WARN と同義）。`--autonomous` 時も同様に表示する（オーケストレーターが状態を把握できるように）。
-
-```
-── step verify ▸ gate: acceptance-gate pending (try 1/2)
-   ✓ build が成功
-   ✗ lint 0 件 （3 errors found）
-   ✓ 全テストが green
-   → lint エラーを修正して再試行
-── step verify ▸ done
-```
+**acceptance-gate の criterion 単位表示（#159）**：基準が未達（`pending`）の step では、バナー直下に各 criterion の合否（`✓`/`✗`）と未達の1行根拠を追記する。**表示規則の正本は `facets/instructions/run-continuity` 2.**
 
 > **会話モード（talk）の例外**：talk 自身の地の会話ターンにはヘッダを出さない（短い話し言葉を保つ）。talk が委譲した先のフローが RUN に入ったら、その RUN に①〜③が適用される。
 
@@ -428,41 +392,8 @@ RUN 規律は SKILL.md 指示の recency に依存するため、**途中で質�
 ### step ゲートと詰まりガード
 
 - `--autonomous` でない限り、各 step 後に結果を提示し**次へ進む確認**を取る（step ゲート）。
-- **同じ所で2回詰まったら**（同じエラー・同じレビュー REJECT を2巡）勝手に試行を続けず、**正準フォーマットで user に判断を仰ぐ（#12）**：
-
-```
-## rig stuck-guard: エスカレーション
-
-step: <id> (<n>/<total>) | gate: <none|acceptance-gate|review-gate> | 同一エラー繰り返し: 2回
-エラー要約: <1行。テスト失敗なら「テスト N 件失敗」、REJECT なら「reviewer REJECT: <観点>」>
-
-判断してください：
-  a) 別のアプローチで再試行する（新しい指示を入力）
-  b) この step をスキップして次の step へ進む
-  c) このフローを終了する
-
-入力: [a / b / c]
-```
-
-  - **エスカレーション後の stuck カウンタ規則（#36）**：user が a)「別のアプローチで再試行」を選んだら stuck カウンタを **0 にリセット**する（新しい指示による再試行は実質的に新しい試みなので、再び同一エラーが**2 回**続いた時にのみ次のエスカレーションを発動する＝「2 回」は a 選択をまたいで累算しない）。何度でも a→retry を繰り返せるが、2 回同一失敗が無ければエスカレーションしない品質フィルタは維持される。b)「スキップ」・c)「終了」選択時は step／flow が終了するためカウンタは irrelevant（リセット規則は適用しない）。なお acceptance-gate K 超の d)「max_retries を増やす」は acceptance-gate 側の K カウンタに作用し、stuck カウンタとは独立（本 §の「独立カウンタ」定義のとおり）。
-  - **acceptance-gate の K 超エスカレーション**（独立カウンタ）は**別ヘッダの専用フォーマット**で出す（#28・どちらが発動したか一目で判別できるように）：
-
-```
-## rig acceptance-gate: K 超エスカレーション
-
-step: <id> (<n>/<total>) | gate: acceptance-gate | 試行: <K>/<max_retries> 回超過
-未達基準: <最後の試行で満たされなかった受け入れ基準>
-
-判断してください：
-  a) 別のアプローチで再試行する（新しい指示を入力）
-  b) この step をスキップして次の step へ進む
-  c) このフローを終了する
-  d) max_retries を増やす / 受け入れ基準を見直す
-```
-
-   stuck-guard（同一エラー反復）と acceptance-gate K 超（毎回違う理由でも K 回未達）は**発動条件が違う独立カウンタ**なので、`同一エラー繰り返し:` フィールドは前者専用・後者では使わない（意味の誤用を避ける）。
-  - **acceptance-gate K 超エスカレーション後も capture 提案（§7.1 `stuck-twice`）を自動提示する（#46）**：K 超は「受け入れ基準を K 回試みたが一度も満たせなかった」最も根の深い詰まりケースであり、stuck-guard と同様に `stuck-twice` capture を提案する。§7.3 の承認ゲートは維持される（`--capture` フラグで省略可）。
-  - エスカレーション後は **capture 提案（§7.1 `stuck-twice`）を自動提示**し、詰まりの学びを次回 RUN に残す（a 選択後の再エスカレーションを含め、**エスカレーションが発生するたびに**提示する＝acceptance-gate K 超を含む。同じ根本原因が繰り返すほど学びの蓄積が重要）。
+- **同じ所で2回詰まったら**（同じエラー・同じレビュー REJECT を2巡）勝手に試行を続けず、**user に判断を仰ぐ（#12）**。**acceptance-gate の K 超**（毎回違う理由でも K 回未達）は**発動条件が違う独立カウンタ**なので、別ヘッダの専用フォーマットで出す（#28・どちらが発動したか一目で判別できるように）。
+- **2つのエスカレーションの正準フォーマット・a 選択後の stuck カウンタのリセット規則（#36）・K 超時の d) 選択肢・エスカレーションのたびに `stuck-twice` capture を提案する規則（#46）の正本は `facets/instructions/run-continuity` 3.** — エスカレーションを出すときは必ずこれを読んで従う。
 - reviewer は agent 優先（subagent_type 名で起動）・persona facet フォールバック。`review-gate` で REJECT があれば停止して user へ。
 
 ### フロー完了レポート と 実行テレメトリ
@@ -483,127 +414,15 @@ steps: <N> 完了 / <M> スキップ / <K> エスカレーション
 
 ## 7. 知識層への蓄積（capture）— RUN 後の学習サイクル
 
-RUN が完了した後（またはユーザーが `--capture` フラグを明示した場合）、親は実行から得た**学び**を蒸留して既存のメモリ・知識層に書き戻す。これにより次回 RUN の知識注入（§5 COMPOSE の知識層注入）が充実し、システムが回を重ねるごとに賢くなる。
+RUN が完了した後（または `--capture` 明示時）、親は実行から得た**学び**を蒸留して既存のメモリ・知識層に書き戻す。次回 RUN の知識注入（§5）が充実し、システムが回を重ねるごとに賢くなる。
 
-### 7.1 捕捉対象（WHAT）
+**手順の正本は `facets/instructions/capture`** — 捕捉対象5カテゴリ（pitfall / decision / convention / stuck-twice / ai-quirk）・書き込み先の振り分け（memory store ⇄ knowledge layer）・`MEMORY.md` 1行ポインタと `accumulated/` ファイルの正準フォーマット・提案フォーマット・事後レポートフォーマット。**capture を行うときは必ずこれを読んで従う。**
 
-以下を「学び」として蒸留する。
+ここに残す不変条件は3つだけ（これらは委譲先を読まずとも常に効く）:
 
-| カテゴリ | 例 |
-|---|---|
-| **落とし穴（pitfall）** | 同じエラーで2回詰まった原因、試みが失敗した理由 |
-| **決定記録（decision）** | 設計・実装上の判断とその根拠 |
-| **新規約（convention）** | RUN 中に確立した新しいコーディング規約・命名規則 |
-| **「2回詰まり」の原因（stuck-twice）** | 詰まりガード（§6）が発動した際の根本原因 |
-| **AI 失敗パターン（ai-quirk）** | hallucination、ツール誤用、出力フォーマット崩れ等の再現性のある失敗 |
-
-### 7.2 書き込み先（WHERE）
-
-捕捉した学びは**既存のメモリ・知識層に統合**する。並列に別ストアを作ってはならない。
-
-| 学びの種類 | 書き込み先 | メモ |
-|---|---|---|
-| **ai-quirk** | `~/.claude/rig/knowledge/ai-quirks/`（user 層） | **記述形＋導出規範形のペアとして保存**（二相。§5 の ai-quirks 二相注入と対応）。記述ファイル（`<name>-descriptive.md`）と規範ファイル（`<name>-policy.md`）を1セットで作成 |
-| **プロジェクト・ドメイン学び（pitfall / decision / convention / stuck-twice）** | `<repo>/.claude/rig/knowledge/accumulated/` **および/または** `~/.claude/projects/<proj>/memory/`（`type=project` または `type=knowledge`） | **書き分けルール**：クロスプロジェクトで再利用価値のある学び → memory store（`~/.claude/projects/<proj>/memory/`）に `[[クロスリンク]]` 付きで記録（必要なら ai-quirks にも）。プロジェクト固有のドメイン学び → `<repo>/.claude/rig/knowledge/accumulated/` のみ。**両方に該当する場合のみ両方へ書き込む**（既定は片方への書き込み）。 |
-| **MEMORY.md インデックス** | `~/.claude/projects/<proj>/memory/MEMORY.md` | memory store に追記した各ファイルへの**1行ポインタ**を追加する（正準フォーマットは下記・#26） |
-
-> **MEMORY.md 1行ポインタの正準フォーマット（#26）**：`- [<category>] <filename> — <1行サマリ> (<YYYY-MM-DD>)`
-> - `<category>`：§7.1 の5値のうち memory store に書くもの（`pitfall` / `decision` / `convention` / `stuck-twice`）。`ai-quirk` は user 層へ書き memory store に記録しないのでポインタ対象外。
-> - `<filename>`：memory store 内の相対パス。`<1行サマリ>`：蒸留した学びの1文（§7.4 提案の内容草案から抽出）。`<日付>`：書き込み日（ISO 8601）。
-> - 例：`- [pitfall] pitfall-jwt-refresh.md — リフレッシュ後に旧トークンが1秒残る (2026-06-23)`
-> - MEMORY.md が無ければ見出し（`## captured learnings`）を作って初期化、あれば末尾に追記。run をまたいで**同一フォーマット**で積む（書式が揺れるとインデックスとして読めなくなる）。
-
-> **accumulated/ ファイルの正準フォーマット（#101）**：`<repo>/.claude/rig/knowledge/accumulated/` に書くファイルは YAML frontmatter + Markdown 本文で構成する。
-> ```
-> ---
-> category: pitfall|decision|convention|stuck-twice
-> title: <MEMORY.md ポインタの <1行サマリ> と同一の文字列>
-> date: <YYYY-MM-DD>
-> ---
-> ## 何が起きたか
-> （具体的な状況・エラー・決定の経緯）
->
-> ## 次回への示唆
-> （次回 RUN で同じ状況に陥らないための学び）
-> ```
-> - `category`：§7.1 の capture カテゴリ（`ai-quirk` は user 層 `ai-quirks/` に書くため対象外）
-> - `title`：MEMORY.md ポインタの `<1行サマリ>` と同一文字列にする（インデックスとの一貫性を保つ）
-> - `date`：書き込み日（ISO 8601）。MEMORY.md ポインタの `<YYYY-MM-DD>` と同一
-> - 本文の「何が起きたか」「次回への示唆」の2セクションは必須。追加セクションは任意。
-> - §5 COMPOSE 時に `accumulated/` の各ファイルは frontmatter を除いた Markdown 本文が Knowledge 位置に注入される。
-
-> **役割の区別**（混同しないこと）:
-> - **memory store**（`~/.claude/projects/<proj>/memory/`）= 横断的な個人・フィードバック・プロジェクト事実のレコード。永続的なプロジェクト記憶。
-> - **knowledge layer**（`rig/knowledge/`）= 次回 RUN の subagent prompt に注入するドメイン記述知識。
-> 両者は `[[ファイル名]]` 形式のクロスリンクで参照し合う。一方が他方の代替にはならない。
-
-### 7.3 ゲート（承認必須・サイレント書き込み禁止）
-
-**捕捉は自動的にはファイルを書き込まない。** 以下の手順を厳守する。
-
-1. RUN 完了後、親は蒸留した学びを**提案としてユーザーへ提示**する（書き込み先・ファイル名・内容草案を含む）。
-2. ユーザーが**承認する**か、または起動時に `--capture` フラグを明示した場合にのみ、ファイルに書き込む。
-3. 承認なしには memory store にも knowledge layer にもいかなるファイルも作成・変更しない。
-
-`--autonomous` が指定された場合でも capture のゲートは解除されない。capture だけは**常に承認が必要**（`--capture` フラグが明示された場合を除く）。
-
-`--capture` 指定時も、書き込む内容と書き込み先（提案）を必ず表示してから書き込み、書き込み後に何を書いたかを必ず報告する。`--capture` は確認ダイアログ（y/n）を省略するだけで、提案表示と事後報告は省略しない。
-
-**`--no-capture` フラグ / `no_capture: true` 設定時（#137）**：RUN 後の capture 提案を**完全にスキップ**する（提案表示・承認ダイアログともに出さない）。`--capture` と `--no-capture` を同時に指定した場合は `--no-capture` 優先とし `[WARN] --capture と --no-capture が同時指定されています（--no-capture 優先）` を出す。`no_capture: true` は recipe の静的設定（毎回抑止）、`--no-capture` はフラグによる実行時抑止と等価であり、どちらが有効でも同じ挙動になる。`hotfix`/`debug` など「学びより速度が優先される軽量 recipe」への利用を想定する。**capture の抑止は学習サイクルを止める**ため、抑止が常態化しないよう軽量 recipe 以外への `no_capture: true` 設定は推奨しない。
-
-### 7.4 提案フォーマット（承認前に提示する内容）
-
-提案は次の形式でユーザーに見せる。
-
-**書き込み先ファイルの実在確認（#45）**：各書き込み先のファイルが既存か否かを実在確認し、結果を提案に反映する。既存の場合は `（既存・上書き <YYYY-MM-DD>）` を付し、既存ファイルの冒頭 1〜2 行（または `title:` frontmatter があればその値）を付記する。新規の場合は `（新規）` またはパスのみ（従来フォーマット互換）。`--capture` フラグ指定時（確認ダイアログ省略）も既存・上書きの旨と既存概要を表示してから書き込む（§7.3「提案表示は省略しない」と同じ考え方）。
-
-```
-## capture 提案（承認してください）
-
-### [1] ai-quirk — <quirk の短い名前>
-- 書き込み先: ~/.claude/rig/knowledge/ai-quirks/<name>-descriptive.md（既存・上書き 2026-06-20）
-               既存の先頭: "# ai-quirk: <name>\n何が起きたか..."
-               ~/.claude/rig/knowledge/ai-quirks/<name>-policy.md（新規）
-- 内容草案: ...（記述形：何が起きたか / 規範形：次回 prompt に注入するルール）
-
-### [2] pitfall — <落とし穴の短い名前>
-- 書き込み先: <repo>/.claude/rig/knowledge/accumulated/<name>.md（新規）
-               ~/.claude/projects/<proj>/memory/<name>.md（既存・上書き 2026-06-18）
-               既存の先頭: "# pitfall: <name>\n前回の学び..."
-               MEMORY.md に1行ポインタ追加
-- 内容草案: ...
-
-承認しますか？ [y / 個別に選ぶ / skip]
-```
-
-ユーザーが個別選択した場合、選ばれた項目だけを書き込む。
-
-### 7.5 事後レポートフォーマット（書き込み後・#20）
-
-書き込み完了後（`--capture` 時も省略しない・§7.3）、何をどこに書いたかを正準フォーマットで報告する。
-
-```
-## capture 完了レポート
-
-書き込み済: <N>件 / スキップ: <M>件
-
-### [1] ai-quirk — <名前> ✓
-- ~/.claude/rig/knowledge/ai-quirks/<name>-descriptive.md（新規作成）
-- ~/.claude/rig/knowledge/ai-quirks/<name>-policy.md（新規作成）
-
-### [2] pitfall — <名前> ✓
-- <repo>/.claude/rig/knowledge/accumulated/<name>.md（新規作成）
-- ~/.claude/projects/<proj>/memory/<name>.md（更新）
-- MEMORY.md に1行ポインタ追加 ✓
-
-### [3] decision — <名前> — スキップ（ユーザー指示）
-```
-
-- 先頭に `書き込み済: N件 / スキップ: M件` のサマリ行。
-- 各書き込み項目は カテゴリ・名前・実ファイルパス（新規作成 or 更新）を列挙し末尾に `✓`。ai-quirk は記述形・規範形の2行。
-- MEMORY.md ポインタは成否を明示（成功 `✓` / 失敗 `WARN: MEMORY.md 未更新`）。
-- スキップ項目（「個別に選ぶ」で除外）は `— スキップ（ユーザー指示）` の1行のみ（草案は再掲しない）。
-- 全件スキップなら `書き込み済: 0件 / スキップ: N件` ＋「capture は実施されませんでした」。
+1. **承認必須・サイレント書き込み禁止。** 蒸留した学びは書き込み先・ファイル名・内容草案を**提案として提示**し、ユーザーの承認か `--capture` の明示があってはじめて書く。`--autonomous` でも capture のゲートは解除されない（§9.1）。
+2. **`--capture` が省くのは確認ダイアログだけ。** 提案表示と事後報告は省略しない。`--no-capture` / `no_capture: true` は提案ごと完全にスキップする（同時指定は `--no-capture` 優先＋WARN）。
+3. **並列に別ストアを作らない。** 書き先は既存の memory store（`~/.claude/projects/<proj>/memory/`）と knowledge layer（`rig/knowledge/`）のみ。両者は役割が違い、一方が他方の代替にはならない。
 
 ## 8. Native-first 非対称ルール
 
@@ -656,16 +475,21 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 | 品質を毎回一定にする（非決定→決定品質） | `patterns/acceptance-gate` |
 | AI の癖排除・可読性を厳しく見る（敵対レビュー） | `facets/instructions/adversarial-review` ＋ `recipes/adversarial-review` |
 | 親の越権（直接実装・無断 Workflow・サイレント書込）を止める | §6 red flags ＋ §9 アンチパターン表／§9.1 rationalization 表 |
-| 中断・質疑の後も rig 駆動を切らさない（可視化・再アンカー） | §6 run-continuity（run-status ヘッダ／再アンカー規則／step 境界バナー） |
+| 中断・質疑の後も rig 駆動を切らさない（可視化・再アンカー） | §6 run-continuity（不変条件）＋ `facets/instructions/run-continuity`（ヘッダ各フィールド・criterion 単位表示・2つのエスカレーション書式の正本） |
 | `--list` を実行する（badge・`steps:`・tier グルーピングの表示仕様） | `facets/instructions/list` |
 | `--plan` を実行する（ヘッダ・step テーブル・Gate/Knowledge 等の表示仕様） | `facets/instructions/plan` |
 | `--validate` を実行する（検査項目・severity・エラーフォーマット） | `facets/instructions/validate` |
 | RESOLVE を自力で回す（manifest キー・tier 検索・extends・flag⇔キー等価・スライス・save-recipe） | `facets/instructions/resolve` |
 | RUN を締める（フロー完了レポート・`.rig/runs.jsonl` テレメトリの出力仕様） | `facets/instructions/run-report` |
+| RUN 後に学びを知識層へ書き戻す（承認ゲート・書き分け・正準フォーマット） | `facets/instructions/capture` |
+| 知識ブリックを注入する（選択対象 tier・注入位置・ai-quirks 二相・wiki 解決） | `facets/knowledge/_layer`「COMPOSE の注入規則」 ＋ `facets/knowledge/_wiki` |
 | pack が何をするか調べる（追加ブリックの詳細説明） | `PACKS.md` |
 | `/rig:go "<task>"` 統一入口を駆動する（分類・recipe 自動選択・隔離 worktree RUN・gate 判定） | `facets/instructions/workbench` ＋ `patterns/isolated-worktree` |
-| `/rig:go status`\|`diff`\|`accept`\|`discard`\|`log`\|`board`\|`stats`\|`review`\|`gc`\|`audit`\|`scan-secrets`\|`scan-injection`\|`digest`\|`stream-checks`\|`stale-refs`\|`scan-destructive`\|`instincts` を実行する | `facets/instructions/workbench-ops` ＋ `scripts/workbench.py` |
+| `/rig:go status`\|`diff`\|`accept`\|`discard`\|`log`\|`board`\|`stats`\|`review`\|`gc`\|`audit`\|`scan-secrets`\|`scan-injection`\|`digest`\|`stream-checks`\|`stale-refs`\|`scan-destructive`\|`instincts`\|`mutate`\|`cascade`\|`suggest-flows` を実行する | `facets/instructions/workbench-ops` ＋ `scripts/workbench.py` |
 | 複数タスクを並行で進める（ターミナルを増やさず一括把握） | `/rig:queue add`→`go --provider rig`（`patterns/isolated-worktree` で自動隔離）＋ `/rig:go board`（単一ダッシュボード） |
+| 依存のあるタスクを積む（1タスク=1ゲート=1PR・親子モデル・cascade・**積まないほうがいい場合**） | `patterns/stacked-tasks` ＋ `workbench.py new --parent` / `cascade` |
+| 変更した行のミュータントをテストが殺せるか測る（`tests_added_or_explained` の機械版） | `scripts/workbench.py mutate`（manifest `mutate:` で opt-in・`manifests/_template` 参照） |
+| このプロジェクトのフローを実績から決める（`default_recipe` / `default_personas`） | `scripts/workbench.py suggest-flows` ＋ `facets/instructions/init` ④ |
 | 視覚検証（スクリーンショット等）の置き場・処分ルールを確認する | `patterns/visual-artifacts` ＋ `scripts/workbench.py gc` |
 | `/rig:go gh issue`\|`pr review`\|`pr fix`\|`ci` を実行する | `facets/instructions/gh-flow` |
 | acceptance-gate の基準 ID・プリセット定義の正本を確認する | `scripts/workbench.py gates`（`standard`/`implementation`/`review`/`security`。project 独自基準は `.rig/gates.json`＝加算のみ） |

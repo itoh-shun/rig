@@ -139,6 +139,10 @@ gate: standard + bugfix
 
 `--provider rig` は各 queue item を `/rig:go "<task>"` 経由で dispatch するため、直接 `/rig:go` を打ったときと同じように各タスクが自動的に隔離される——並列実行中のプロセス同士がファイルを取り合う心配がない。queue 自身の verifier は「gate が確定したか」「isolated worktree 内で完結し本体に書き込んでいないか」を確認するだけで、**ユーザーの代わりに accept はしない**。完了後は `/rig:go board`（§10）が唯一の確認場所になる——どの端末・プロセスが実行したかに関わらず。
 
+**依存のあるタスクを積む。** 上の並列キューは互いに依存しないタスク向け。層2が層1のコードを必要とする場合は**積む**——`workbench.py new "<task>" --type <t> --parent <task-id>` が親のブランチから分岐させ、親子関係を記録する。層ごとに独立した worktree と独立した acceptance-gate を持つことが要点で、**3層のスタックならゲートも3回**かかり、層2の受け入れ基準は層1と違ってよい。1本にまとめれば、測られる基準は結局1組だけになる。
+
+親が動いたら `python3 scripts/workbench.py cascade` が子を新しい先端へ再生する。各子の worktree の**中で**素の `git rebase --onto` を回す——checkout を一切しないので、`gh stack` が動かなかった場所で動く（git は他の worktree が握っているブランチの checkout を拒否し、rig ではタスクのブランチは常に worktree に握られている）。未コミットの子は stash せず**拒否**し、衝突した rebase は abort して子を無傷で残しサブツリーをスキップし、**飛ばしたものは必ず出す**（黙って半分だけ進んだスタックは、拒否より悪い）。`--dry-run` で計画だけ表示できる。**積まないほうがいい場合**も含めた規約は [`patterns/stacked-tasks.md`](./skills/engine/patterns/stacked-tasks.md)——目安は「その層に他の層とは違う受け入れ基準を書けないなら、その層は要らない」。
+
 **視覚検証のスクリーンショット。** `visual-verify`（UI diff 確認）と `design-audit`（Playwright での画面取得）はいずれもスクリーンショットを生成する。これらは判断のための使い捨て証拠であって成果物ではない——結論は常に散文（`diff.md`）に残る：
 
 ```
@@ -164,6 +168,8 @@ acceptance-gate は、run を反映候補として渡してよいかを判定す
 | `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |
 
 この基準リストはプロジェクト側で **`.rig/gates.json`** から拡張できる——`extra_criteria` で preset / task_type 別に独自基準を追加（表示には `[project]` タグ）、`descriptions` で説明を付ける。設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。また5つの基準は自己申告でなく機械センサーが裏付ける：`public_api_changes_documented` は OpenAPI schema-diff（`openapi.json`/`swagger.json` 等を自動検出、`openapi_paths` で明示可）で、API が変わったのに diff サマリに記述が無ければ `warning` に落とす——warning-grade であり単独で gate を fail にはしない。`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）で、検出があれば **failed** にする——抜粋は常にマスク済みで、人が確認した偽陽性は `--set no_secret_leak=passed` で明示的に解除する。`no_gate_tampering` は task diff への anti-tamper スキャン——`.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（人がレビューした上での上書きは `--set no_gate_tampering=passed` で行い、check に記録される）。`no_injection_markers` は diff＋repo の prose 面へのプロンプトインジェクション・マーカースキャン（`workbench.py scan-injection`）——不可視/bidi Unicode は fail-grade・指示上書きフレーズは warning-grade で、抜粋中の不可視文字は `<U+XXXX>` エスケープで描画され、脱出口は `--set no_injection_markers=passed`（記録される）。`no_destructive_operation` は task diff への破壊的コマンドスキャン（`workbench.py scan-destructive`）——`rm -rf /`・`mkfs`・`dd of=/dev/…`・`DROP DATABASE` は fail-grade、絶対パス/変数展開への `rm -rf`・`git clean -f`・`--force-with-lease` なしの force push・`DROP TABLE`/`TRUNCATE`・大量削除は warning-grade で、脱出口は `--set no_destructive_operation=passed`（記録される）。検出対象は diff に書き込まれたコマンドであり、実行時コマンドの傍受ではない（それはホストのパーミッション機構の責務）。
+
+もう1つ、**常設ではなく opt-in** の基準がある。`changed_code_mutants_are_killed` は project manifest に `mutate:` を書いたときだけ現れる——値は `builtin`（rig 同梱の stdlib Python エンジン）または mutmut / PIT / Stryker のコマンド（rig は規律を持ち、道具は各プロジェクトのものを使う）。**そのタスクが変更した行だけ**を変異させ、そのタスクが追加したテストがそれを殺せるかを問う＝モデルが散文で判定していた `tests_added_or_explained` を、機械が決める形へ格上げしたもの。測定は別コマンド `python3 scripts/workbench.py mutate <task_id>` が行い、生存したミュータントを `path:line:col` と適用した変異で**名指し**する。gate はその記録を読むだけなので評価は高速なファイル読みのままで、現在の diff より古い記録は根拠にせず **stale（`pending`）**として扱う。テストが既に赤い状態では満点が出てしまうため、測定自体を拒否する。脱出口は `--set changed_code_mutants_are_killed=passed`（記録される）。
 
 各基準は根拠つきで `passed` / `failed` / `warning` / `skipped` として記録する：
 
@@ -653,6 +659,8 @@ review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorで�
 ### manifest・知識層
 
 `<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/engine/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
+
+manifest の雛形は `/rig:init` が作るが、**中身を何にするかは `python3 scripts/workbench.py suggest-flows` が実績から出す**——`.rig/` のテレメトリ（どの recipe が実際に走ったか・gate はどうだったか・どの reviewer persona が一度でも REJECT を出したか）を読んで `default_recipe` / `default_personas` を提案する。上限は3本（それを超えると既定ではなくカタログになる）。**使われないフローを生やすのは、生やさないより悪い**——未使用の recipe は「検討して決めた結果」に見えるので、次に来た人が一度も走らせたことのない経路に仕事を流す。上限で落ちた分は必ず列挙し、実績のないリポジトリの提案は `[unevidenced]` と明示し、長く一度も否と言っていない persona は既定に昇格させずゴム印の疑いとして表示する。このコマンドは何も書き込まない。
 
 ### 横断利用（CLI として）
 

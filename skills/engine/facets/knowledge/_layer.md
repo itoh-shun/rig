@@ -78,3 +78,39 @@ shipped の知識 facet は `facets/knowledge/` 以下に配置され、オー�
 ## ディレクトリが存在しない場合
 
 user 層・project 層のいずれかまたは両方のディレクトリが存在しない場合は、**サイレントにスキップ**する。知識注入なしで通常通り COMPOSE を継続する。
+
+---
+
+## COMPOSE の注入規則（SKILL.md §5 の正本）
+
+subagent prompt を組む前に、以下の順で関連する知識ブリックを選択し、facet 配置順（Persona=System /
+Knowledge=User 先頭 / Instruction=User 中部 / Output Contract=User 構造部 / Policy=User 末尾）に沿って
+注入する。
+
+**選択対象（tier 順）:**
+
+| tier | パス | カテゴリ |
+|---|---|---|
+| **user 層** | `~/.claude/rig/knowledge/methodology/` | 設計・開発手法（DDD / クリーンアーキテクチャ / SOLID 等） |
+| **user 層** | `~/.claude/rig/knowledge/ai-quirks/` | AI の既知失敗パターン（二相管理、下記参照） |
+| **project 層** | `<repo>/.claude/rig/knowledge/domain/` | ドメイン設計・ユビキタス言語・認証モデル・ADR |
+| **project 層** | `<repo>/.claude/rig/knowledge/accumulated/` | 蓄積知識（実行履歴から抽出されたパターン・学び）→ User 先頭（Knowledge 位置）に注入 |
+| **wiki（user＝global 一次）** | `~/.claude/rig/knowledge/wiki/` | 正準な概念ページ（相互リンク `[[slug]]`）。persona の `inject:` / `[[link]]` で参照 |
+| **wiki（project＝overlay）** | `<repo>/.claude/rig/knowledge/wiki/` | 同 slug を上書き/追補（ページ単位で project 優先） |
+
+いずれかの tier ディレクトリが存在しない場合は**サイレントにスキップ**する（エラーにしない）。
+
+**wiki ページの参照と注入（`facets/knowledge/_wiki` 参照）:**
+
+- persona facet が `inject: ["[[slug]]", …]` を宣言している場合、各 `[[slug]]` を **tier 解決**（project overlay > global > shipped `skills/engine/facets/knowledge/wiki/`）してページを取得し、**User 先頭（Knowledge 位置）に注入**する（1ホップ既定・過剰展開しない）。
+- 本文中の `[[slug]]` も同様に解決対象。`[[slug|表示名]]` 記法可。解決できない `[[...]]` は**注入せず**、`--validate` がリンク切れとして報告する。
+- wiki は「事実」、persona は「判断・声」。**persona は事実を埋め込まず wiki を参照する**（暗黙知サイロを避ける）。
+
+**注入位置:**
+
+- **methodology / domain** の知識ブリック → subagent prompt の **User 先頭**（Knowledge 位置）に注入する。
+- **ai-quirks** は**二相注入**する：
+  1. **記述形（知識）** → User 先頭の Knowledge 位置（他の知識ブリックと同列）に注入。
+  2. **導出規範形（derived Policy）** → User 末尾の Policy 位置（recency が効く末尾）に注入。Policy facet（`facets/policies/`）と同じ位置に配置する。
+
+

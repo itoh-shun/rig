@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- Adds `changed_code_mutants_are_killed`, a diff-scoped mutation-testing criterion that
+  puts a machine behind what `tests_added_or_explained` only asked a model to judge. Only
+  the lines a task changed are mutated, so the question is "do the tests written just now
+  protect the code written just now". The tool is resolved from the manifest's new
+  `mutate:` key (`builtin` for the shipped stdlib Python engine, or a mutmut/PIT/Stryker
+  command) — rig holds the discipline, not the tool. Opt-in per project: no `mutate:`
+  means the criterion never appears. Measurement is `rig-wb wb mutate`, which names each
+  surviving mutant by `path:line:col` and the exact edit that lived; the gate reads that
+  record rather than running mutants itself, and treats a report older than the current
+  diff as stale rather than as evidence. A red baseline is refused instead of scored,
+  because an already-failing suite makes every mutant look killed.
+- Adds a parent/child model for tasks (`workbench new --parent`) and `rig-wb wb cascade`,
+  which rebases stacked tasks with plain `git rebase --onto` inside each child's own
+  worktree. This replaces the `gh stack` dependency dropped in 1.28: `gh stack` switches
+  branches by checkout, and git refuses to check out a branch another worktree holds, so
+  it could never work in rig's layout. A dirty child is refused rather than stashed, a
+  conflicted rebase is aborted and its subtree skipped, and every skip is printed.
+- Adds `patterns/stacked-tasks` — the stack convention rewritten now that `gh stack` is no
+  longer the substrate: one task = one gate = one PR, each layer carrying its own
+  acceptance criteria, plus an explicit table of when *not* to stack.
+- Adds `rig-wb wb suggest-flows` and wires `/rig:init` to it, so a repository's
+  `default_recipe` / `default_personas` come from what it has actually run rather than
+  staying on `interactive` forever. Capped at three proposals, layout guesses are labelled
+  `[unevidenced]`, anything dropped by the cap is listed, and a reviewer persona that has
+  never rejected anything is reported as a possible rubber stamp instead of promoted.
+- Splits SKILL.md from 671 to 495 lines, under the 500-line Agent Skills guideline it had
+  outgrown. The capture cycle moves to `facets/instructions/capture`, the run-status field
+  semantics and escalation formats to `facets/instructions/run-continuity`, and the
+  knowledge-injection rules to `facets/knowledge/_layer`. What stays in SKILL.md is the
+  set of invariants that must hold without reading anything else.
+
 ## [1.29.0] - 2026-08-05
 
 - Moved the movie and scenario workflows into the opt-in `video-storytelling`

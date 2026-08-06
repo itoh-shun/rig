@@ -271,6 +271,50 @@ python3 scripts/workbench.py scan-destructive --diff <task_id>
 2. 人がレビューして問題なしと確認した場合の脱出口は `gate <task_id> --set no_destructive_operation=passed`（`destructive_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
 3. **スコープの正直な明示**：これは**差分に書き込まれた**破壊的コマンド（スクリプト・CI設定・マイグレーション）の検出であり、エージェントが実行時に打つコマンドの傍受ではない（それはホストのパーミッション機構の責務）。rig が完全に管理できる成果物＝diff の中の時限爆弾を人に見せるのがこのセンサーの仕事。
 
+## `/rig mutate [<task_id>] [--max-mutants N] [--timeout S] [--show] [--json]`
+
+```
+python3 scripts/workbench.py mutate [<task_id>]
+python3 scripts/workbench.py mutate --show          # 記録済みレポートを再実行せず表示
+```
+
+**差分に絞ったミューテーションテスト**（gate 基準 `changed_code_mutants_are_killed` の機械センサー）。そのタスクが**変更した行だけ**を変異させ、そのタスクが書いたテストが変異を殺せるかを見る＝「今書いたテストは、今書いたコードを守っているか」。`tests_added_or_explained`（モデルが散文で判定する弱い基準）を機械が判定する形へ格上げしたもの。
+
+- **プロジェクトごとの opt-in。** manifest `.claude/rig.md` に `mutate:` が無ければ**基準そのものが現れない**（`mutate: builtin` ＝ rig 同梱の stdlib Python エンジン／コマンド文字列 ＝ mutmut / PIT / Stryker へ委譲。`manifests/_template` 参照）。**設定していない project で勝手に基準が増えることはない。**
+- **測定はこのコマンド、判定はゲート。** `gate` はミュータントを走らせず、このコマンドが `.rig/runs/<task-id>/mutation.json` に残した記録を読むだけ（ゲートは高速なファイル読みのまま保つ）。記録が無ければ `pending`＋「`rig-wb wb mutate <id>` を実行せよ」、diff が測定後に変わっていれば **stale として `pending`**（古い測定を最新の根拠として通さない）。
+- **陽性対照が先。** 変異なしでテストコマンドを1回走らせ、既に赤ければ**測定を拒否**する（全ミュータントが「殺された」に見えて満点が出てしまうため）。
+- **生存ミュータントは名指しする。** `path:line:col` と適用した変異（`` `and` → `or` `` 等）を出す。件数だけでは対処できない。
+- **上限は必ず報告する。** `mutate_max_mutants`（既定20）で評価を打ち切った分は「not evaluated: N」として出す（黙って切ると全数検査に見える）。
+- 人がレビューして許容と判断した場合の脱出口は `gate <task_id> --set changed_code_mutants_are_killed=passed`（`mutation_override` として記録・以降も維持）。必ず生存ミュータントを見せてから提案する。
+- テストファイル（`tests/`・`test_*.py`・`*_test.py`・`conftest.py`）は**変異対象にしない**（テストを壊せばテストは落ちるので「殺された」ことになり、測定が自分を甘く採点する）。
+
+## `/rig cascade [<task_id>] [--dry-run]`
+
+```
+python3 scripts/workbench.py new "<task>" --type <t> --parent <task_id>   # 積む
+python3 scripts/workbench.py cascade [--dry-run]                          # 追従させる
+```
+
+**積んだタスク（stacked tasks）を親の現在の先端へ追従させる。** 規約の正本は `patterns/stacked-tasks`（1タスク=1ゲート=1PR・層ごとに違う受け入れ基準・**積まないほうがいい場合**）。
+
+- `new --parent <task_id>` が親子関係（`parent_task` / `stack_base`）を記録する。`--base` とは排他（`--parent` が base そのもの）。
+- `cascade` は各子の worktree の**中で** `git rebase --onto <親の新しい先端> <記録した stack_base>` を回す。**checkout を一切しない**ので worktree 隔離と両立する（`gh stack` はここで動かず advisory へ降格した——`commands/setup` 参照）。
+- 引数なしで全スタックルート、task_id 指定でそのサブツリー。`--dry-run` は計画だけ表示する。
+- **安全規則**：上から順に／未コミットの子は**拒否**（stash しない）／衝突は `git rebase --abort` して子を無傷で残しサブツリーをスキップ／**飛ばしたものは必ず出す**。飛ばされた行（`!` 印）は必ずユーザーに見せる。
+
+## `/rig suggest-flows [--limit N] [--json]`
+
+```
+python3 scripts/workbench.py suggest-flows
+```
+
+**このプロジェクトを何で回すかを、実績から出す**（`/rig:init` ④ が使う根拠。読み取り専用・**何も書かない**）。`.rig/runs.jsonl` と `.rig/runs/*/` から recipe の使用回数・gate 通過率・エスカレーション回数・persona 別の REJECT 実績を集計し、`default_recipe` / `default_personas` の manifest フラグメントを提案する。
+
+- **上限3本**（それ以上は既定ではなくカタログ）。上限で落ちた分・実績が薄い分は**必ず列挙**する。
+- **根拠と当て推量を混ぜない**：実績のないリポジトリの提案は `[unevidenced]` と明示する。
+- **一度も REJECT を出していない persona は提案しない**（5回以上走って0 REJECT はゴム印の疑いとして表示）。
+- 提案をそのまま書き込まず、`/rig:init` の確認ゲートに載せる。
+
 ## `/rig digest [--period week|month] [--out PATH]`
 
 ```

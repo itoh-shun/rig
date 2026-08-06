@@ -62,6 +62,17 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(line)
     if task.get("worktree_path"):
         print(f"worktree:    {task['worktree_path']} (branch: {task['branch']})")
+    # Stack position, when there is one. A stacked task's base is another task,
+    # so "what am I sitting on / who is sitting on me" belongs next to `base:`.
+    from .cascade import children_of, read_all
+    if task.get("parent_task") or task.get("worktree_path"):
+        all_tasks = read_all(root)
+        kids = [c["task_id"] for c in children_of(all_tasks, task_id)]
+        if task.get("parent_task"):
+            print(f"stacked on:  {task['parent_task']}" +
+                  (f" (stack_base {task['stack_base'][:12]})" if task.get("stack_base") else ""))
+        if kids:
+            print(f"children:    {', '.join(kids)}  — `rig-wb wb cascade {task_id}` after this moves")
     if task.get("budget_minutes"):
         elapsed, budget, over = budget_status(task)
         print(f"budget:      {elapsed:.0f}min / {budget:.0f}min" + ("  ⚠ over budget" if over else ""))

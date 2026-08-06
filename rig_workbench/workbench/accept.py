@@ -336,6 +336,17 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
     else:
         print("  (no changes)")
 
+    # Discarding a parent deletes the branch its children are stacked on, which
+    # leaves them rebasing onto a ref that no longer exists. Say so before the
+    # confirmation, not after.
+    from .cascade import children_of, read_all
+    orphans = [c["task_id"] for c in children_of(read_all(root), task_id)]
+    if orphans:
+        print(f"\n[WARN] {len(orphans)} task(s) are stacked on this one and will be orphaned: "
+              f"{', '.join(orphans)}")
+        print("  Cascade them onto a surviving base first, or discard them too "
+              "(patterns/stacked-tasks).")
+
     if not args.yes:
         die("Re-run with --yes to confirm (the changes listed above will be lost)")
 

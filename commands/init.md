@@ -18,6 +18,10 @@ $ARGUMENTS
 1. **manifest** `<repo>/.claude/rig.md` — `manifests/_template` を基に build/lint/test・default branch を検出して埋める。
 2. **知識層ディレクトリ** `<repo>/.claude/rig/knowledge/{domain,accumulated}/` — ドメイン知識と capture 蓄積の置き場。
 3. **CLAUDE.md "Compact Instructions" 節** — 圧縮時に rig の run-state を要約へ残す保全文（§6 run-continuity ④ の PreCompact フックと同じ内容の第2経路。毎回の圧縮に自動適用）。
+4. **このプロジェクトのフロー（1〜3本）** — `rig-wb wb suggest-flows` で `.rig/` の実績から
+   `default_recipe` / `default_personas` を導き、確認の上で manifest に書く。実績が無いリポジトリでは
+   project stack から提案し `[unevidenced]` と明示する。**使われないフローを生やすのは、生やさないより悪い**
+   ため上限は3本、根拠と当て推量は必ず区別する。
 
 ## 規則
 
@@ -28,7 +32,9 @@ $ARGUMENTS
 ## 例
 
 ```
-/rig:init            # manifest・知識層・Compact Instructions を提案→確認→生成
+/rig:init            # manifest・知識層・Compact Instructions・フロー既定を提案→確認→生成
 ```
+
+実績が溜まってから `rig-wb wb suggest-flows` を再実行すると、既定を実績で見直せる（読むだけ・何も書かない）。
 
 初期化後は `/rig:dev` で着手、`/rig:dev --validate` でブリック整合を点検できる。
