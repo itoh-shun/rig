@@ -44,7 +44,12 @@ $ARGUMENTS
 
 ### ② 自然文タスク（上記のいずれにも一致しない場合）
 
-`facets/instructions/workbench` に従い、①タスク分類（task_type）→②recipe 自動選択（`recipes/bugfix`\|`feature`\|`refactor`\|`documentation`\|既存 recipe への橋渡し）→③`patterns/isolated-worktree` に従った隔離 worktree での RUN →④`scripts/workbench.py gate` による acceptance-gate 判定→⑤結果サマリの5段を駆動する。ユーザーが recipe や step を明示しなくてもよい（明示したい場合は `/rig:dev --recipe <name> ...` を使う）。
+`facets/instructions/workbench` に従い、①タスク分類（task_type）→②
+`rig-wb wb route --type <type> --json` の capability authority による recipe 解決
+→③`patterns/isolated-worktree` に従った隔離 worktree での RUN →④
+`scripts/workbench.py gate` による acceptance-gate 判定→⑤結果サマリの5段を駆動する。
+route は読み取り専用で、自動 install・network・trust 承認を行わない。ユーザーが recipe や
+step を明示しなくてもよい（明示したい場合は `/rig:dev --recipe <name> ...` を使う）。
 
 ## `/rig:dev` との使い分け
 

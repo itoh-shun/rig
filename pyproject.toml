@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rig-workbench"
-version = "1.28.2"
+version = "1.29.0"
 description = "rig — a quality-gated AI workbench that runs anywhere. Install as a pip package; drop into Claude Code / Codex / Cursor as a skill; recipe-driven workflow with force-proof accept, cross-LLM verifier, and isolated worktrees."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,6 +32,7 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
+  "cryptography>=41",                  # Ed25519 publisher pack signatures
   "pyyaml>=6.0",                        # recipe frontmatter parsing (orchestrate.py, validate.py)
   "pytest>=7",                          # packaged Python benchmark task execution
 ]
@@ -59,26 +60,32 @@ rig-wb = "rig_workbench.cli:main"       # pip installer 経由の CLI entrypoint
 # main() を importlib で薄く呼び出す。
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["rig_workbench*", "benchmarks*", "skills*"]
+include = ["rig_workbench*", "benchmarks*", "skills*", "packs*"]
 exclude = ["tests*", "docs*", "video*", "web*"]
 
 [tool.setuptools.package-data]
-rig_workbench = ["py.typed"]
+rig_workbench = ["py.typed", "packs/trust-roots.json"]
 benchmarks = [
   "tasks/**/*.json",
   "tasks/**/*.py",
   "tasks/**/*.ts",
   "tasks/**/*.txt",
 ]
-"skills.rig" = [
+"skills.engine" = [
   "SKILL.md",
   "agents/*.yaml",
+  # drill fixture corpus: the answer keys plus the base/head trees they score
+  "corpora/**/*.json",
+  "corpora/**/*.md",
+  "corpora/**/*.py",
+  "corpora/**/*.ts",
   "facets/**/*.md",
   "manifests/*.md",
   "patterns/*.md",
   "recipes/*.md",
   "templates/*.md",
 ]
+packs = ["domain/**/*", "official/**/*"]
 
 [tool.ruff]
 line-length = 100

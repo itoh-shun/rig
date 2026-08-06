@@ -47,7 +47,7 @@ import pathlib
 import re
 import sys
 
-from .state import die, git, load_task, repo_root
+from .state import die, effective_base, git, load_task, repo_root
 
 SENSOR_CRITERION = "no_secret_leak"
 
@@ -73,9 +73,15 @@ MIN_TOKEN_LEN = 32
 
 # Entropy-detector allowlist: lockfile hashes / vendored trees are high-entropy
 # by construction and never secrets. Named patterns are NOT silenced by these.
+#
+# `corpora` covers drill's planted-defect fixtures: a case that measures whether a
+# reviewer spots a leaked credential has to contain something that looks like one.
+# The value is fabricated and the tree is synthetic by construction. Only the
+# entropy heuristic is silenced — a real vendor-formatted key (sk-ant-…, AKIA…)
+# planted there is still reported, so this cannot hide an actual leak.
 ALLOW_SUFFIXES = (".lock", ".sum")
 ALLOW_BASENAMES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml")
-ALLOW_DIR_PARTS = ("node_modules", ".git")
+ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
 
 # Tree-walk skips (never worth scanning at all) and binary/size guards.
 WALK_SKIP_DIRS = ("node_modules", ".git", ".rig", "__pycache__")
@@ -302,7 +308,9 @@ def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     if check is None:
         return []
     wt_path = task.get("worktree_path")
-    base = task.get("base_commit")
+    # Live merge base, not the registration-time record (#312): scanning a rebased
+    # branch against a stale base would flag changes the task never made.
+    base, _drift = effective_base(root, task)
     if not wt_path or not base:
         return []
     wt = pathlib.Path(wt_path)
@@ -354,7 +362,8 @@ def cmd_scan_secrets(args: argparse.Namespace) -> None:
         root = repo_root()
         _, task = load_task(root, args.diff)
         wt_path = task.get("worktree_path")
-        base = task.get("base_commit")
+        # Live merge base (#312) — the printed scope must name the sha actually scanned.
+        base, _drift = effective_base(root, task)
         if not wt_path or not pathlib.Path(wt_path).is_dir():
             die(f"task '{args.diff}' has no worktree (created with --no-worktree, or already discarded)")
         if not base:

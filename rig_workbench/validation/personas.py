@@ -61,7 +61,7 @@ def check_personas() -> None:
                 slug = m.group(1)
                 if not (wiki_dir / f"{slug}.md").exists():
                     _emit("FAIL", f"{ctx} — inject [[{slug}]] does not resolve to the shipped wiki"
-                                  f" (skills/rig/facets/knowledge/wiki/{slug}.md)")
+                                  f" (skills/engine/facets/knowledge/wiki/{slug}.md)")
                     bad = True
         if not bad:
             ok += 1
@@ -73,7 +73,7 @@ def check_personas() -> None:
 # Prevent regressions in CI of the real bug classes from v0.77 (invalid
 # frontmatter YAML left all commands unregistered) and v0.78 (reserved-name
 # collision with `skill`).
-_RESERVED_COMMAND_NAMES = {"skill", "status"}  # collided in practice (skill) / renamed to avoid collision (status→party)
+_RESERVED_COMMAND_NAMES = {"skill", "status"}  # names with observed or likely host-command collisions
 
 
 def check_commands() -> None:
@@ -98,7 +98,7 @@ def check_commands() -> None:
             _emit("FAIL", f"{ctx} — argument-hint '{ah!r}' must be a string (writing it as an array invites broken YAML)")
             bad = True
         if path.stem in _RESERVED_COMMAND_NAMES:
-            _emit("WARN", f"{ctx} — '{path.stem}' is a name with a track record of colliding with CC built-ins (precedents: skill→forge / status→party)")
+            _emit("WARN", f"{ctx} — '{path.stem}' has a track record of colliding with host built-ins")
         if not bad:
             ok += 1
     _emit("PASS", f"commands: {ok}/{len(files)} frontmatter OK")

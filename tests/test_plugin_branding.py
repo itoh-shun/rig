@@ -33,6 +33,11 @@ OWN_MARKETPLACE = "rig"
 LEGACY_MARKETPLACE = "itoshun-local-plugins"
 AUTHOR_BRAND = "sito-plugins"
 PLUGIN = "rig"
+# Claude Code derives a plugin skill's invocation id from its directory name under
+# `skills/` (not SKILL.md's frontmatter `name:`), so this directory is what makes
+# `rig:engine` invocable. LEGACY_SKILL_DIR is the pre-rename name.
+ENGINE_SKILL_DIR = "engine"
+LEGACY_SKILL_DIR = "rig"
 
 
 def _load(relative: str) -> dict:
@@ -58,15 +63,35 @@ def test_plugin_data_dir_prefers_the_shared_name_but_still_finds_older_ones():
                                        f"{PLUGIN}-{LEGACY_MARKETPLACE}")
 
 
+def _fake_install(root: pathlib.Path, marketplace: str, skill_dir: str) -> pathlib.Path:
+    installed = root / ".claude" / "plugins" / "data" / f"{PLUGIN}-{marketplace}"
+    (installed / "skills" / skill_dir).mkdir(parents=True)
+    (installed / "skills" / skill_dir / "SKILL.md").write_text(
+        "---\nname: engine\n---\n", encoding="utf-8")
+    return installed
+
+
 @pytest.mark.parametrize("marketplace", [OWN_MARKETPLACE, LEGACY_MARKETPLACE])
 def test_find_rig_home_resolves_an_older_install(tmp_path, monkeypatch, marketplace):
     """An install made under a name this repo no longer leads with still works."""
-    older = tmp_path / ".claude" / "plugins" / "data" / f"{PLUGIN}-{marketplace}"
-    (older / "skills" / "rig").mkdir(parents=True)
-    (older / "skills" / "rig" / "SKILL.md").write_text("---\nname: engine\n---\n", encoding="utf-8")
+    older = _fake_install(tmp_path, marketplace, ENGINE_SKILL_DIR)
     monkeypatch.delenv("RIG_HOME", raising=False)
     monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path))
     assert config.find_rig_home() == older
+
+
+def test_find_rig_home_resolves_a_pre_rename_skill_dir(tmp_path, monkeypatch):
+    """`skills/rig/` predates the `skills/engine/` rename; such an install still resolves.
+
+    The pip package and the plugin directory can sit at different versions, so a newer
+    rig-wb must not lose track of an older plugin install and silently fall back to the
+    dev path.
+    """
+    older = _fake_install(tmp_path, SHARED_MARKETPLACE, LEGACY_SKILL_DIR)
+    monkeypatch.delenv("RIG_HOME", raising=False)
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    assert config.find_rig_home() == older
+    assert config._skill_root(older) == older / "skills" / LEGACY_SKILL_DIR
 
 
 @pytest.mark.parametrize("readme", ["README.md", "README.ja.md"])

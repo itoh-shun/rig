@@ -3,10 +3,11 @@ rig workbench — deterministic runner for a quality-assured AI work environment
 
 Behind the unified `/rig "<task>"` entry point (facets/instructions/workbench.md),
 this code enforces **state management, isolated worktrees, acceptance-gate
-verdicts, and accept/discard safety**. Task classification, recipe selection,
-implementation, and review are the model's job; state and safety are this
-script's job (the workbench version of the "code holds the helm" philosophy
-from patterns/computational-orchestration).
+verdicts, and accept/discard safety**. Task classification remains the model's
+job; recipe/capability routing is resolved by workbench.capabilities, while
+implementation and review stay with the execution harness. State, routing, and
+safety are code-owned (the workbench version of the "code holds the helm"
+philosophy from patterns/computational-orchestration).
 
 State is persisted under `<repo>/.rig/runs/<task-id>/`:
   task.json        canonical task metadata (input, classification, base branch, worktree path, status)
@@ -18,17 +19,19 @@ State is persisted under `<repo>/.rig/runs/<task-id>/`:
                                           `## Unrelated diff` headings, `diff` renders them structured)
 
 Exit codes: 0=success / 1=error (includes accept gate failures and worktree inconsistencies)
-Dependencies: standard library only (no PyYAML needed)
+Dependencies: the installed rig-workbench runtime package
 """
 
 import argparse
 
+from ..gh_requirement import advise_gh
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
 from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
 from .destructive import cmd_scan_destructive
+from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
@@ -39,6 +42,17 @@ from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
 from .secrets import cmd_scan_secrets
 from .stale_refs import cmd_stale_refs
 from .streaming import cmd_stream_checks
+from .route_cli import add_context_arguments as _add_route_context_arguments
+from .route_cli import cmd_route
+
+
+# Sub-commands that mention a missing `gh` / github/gh-stack. It is one stderr
+# line and never a refusal — the tools are optional (see
+# rig_workbench/gh_requirement.py). `new` is the front door of every rig task and
+# the point where someone would still choose a stacked-PR flow, so that is where
+# the note is worth reading; on status / board / log / diff / gate / stats /
+# audit / the scanners it would be noise, so those say nothing.
+_GH_ADVISORY_COMMANDS = {"new"}
 
 
 def main() -> None:
@@ -50,12 +64,18 @@ def main() -> None:
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
     p.add_argument("--slug", help="short English slug for the task-id (derived from input if omitted)")
     p.add_argument("--base", help="explicit base branch name (defaults to the current branch)")
-    p.add_argument("--recipe", help="name of the selected recipe")
+    _add_route_context_arguments(p)
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
     p.add_argument("--budget-minutes", type=float,
                    help="estimated time in minutes; going over is flagged in status/board (#281, advisory only)")
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser("route", help="resolve a task capability without installing or writing")
+    p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
+    _add_route_context_arguments(p)
+    p.add_argument("--json", action="store_true", help="emit the exact route record")
+    p.set_defaults(func=cmd_route)
 
     p = sub.add_parser("step", help="record step progress")
     p.add_argument("task_id", nargs="?")
@@ -82,6 +102,19 @@ def main() -> None:
     p.add_argument("task_id", nargs="?")
     p.add_argument("--persona", help="(reserved for future single-persona lookup; unused)")
     p.set_defaults(func=cmd_confidence)
+
+    p = sub.add_parser("drill-corpus", help="/rig:drill fixture corpus: list the pre-built cases, "
+                       "materialize one into a throwaway git repo, or score reviews against the answer key")
+    p.add_argument("action", choices=("list", "materialize", "score"))
+    p.add_argument("case", nargs="?", help="with materialize: which case id")
+    p.add_argument("--cases", nargs="+", help="restrict to these case ids (default: all)")
+    p.add_argument("--into", help="with materialize: target directory (default: a fresh temp dir)")
+    p.add_argument("--reviews", metavar="PATH",
+                   help="with score: JSON of {case-id: {persona: review text or @path}}")
+    p.add_argument("--append", metavar="PATH",
+                   help="with score: append the scored row to this jsonl (e.g. .rig/drill-results.jsonl)")
+    p.add_argument("--json", action="store_true", help="with list: machine-readable output")
+    p.set_defaults(func=cmd_drill_corpus)
 
     p = sub.add_parser("record-commit", help="link the final commit SHA of an accepted change to its task (#289, #300)")
     p.add_argument("task_id", nargs="?")
@@ -213,6 +246,8 @@ def main() -> None:
     p.set_defaults(func=cmd_audit)
 
     args = parser.parse_args()
+    if args.cmd in _GH_ADVISORY_COMMANDS:
+        advise_gh(f"workbench {args.cmd}")
     args.func(args)
 
 

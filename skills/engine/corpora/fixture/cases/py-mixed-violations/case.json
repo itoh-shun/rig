@@ -1,0 +1,63 @@
+{
+  "id": "py-mixed-violations",
+  "language": "python",
+  "clean": false,
+  "description": "Account service change carrying five planted defects of different classes.",
+  "violations": [
+    {
+      "id": "missing-authz-on-sibling",
+      "category": "security",
+      "severity": "critical",
+      "perspectives": [
+        "security"
+      ],
+      "summary": "close_account never calls _require_owner, unlike its sibling get_account, so any actor can close any account.",
+      "location": "(?i)close_?account",
+      "concept": "(?i)(authoriz|authz|permission|ownership|owner check|access control|_require_owner|権限|認可|所有者)"
+    },
+    {
+      "id": "sql-injection",
+      "category": "security",
+      "severity": "critical",
+      "perspectives": [
+        "security"
+      ],
+      "summary": "search_accounts interpolates owner_name straight into the SQL string.",
+      "location": "(?i)(search_?accounts|owner_?name)",
+      "concept": "(?i)(inject|sanitiz|parameteri|bind var|placeholder|prepared statement|エスケープ|インジェクション|プレースホルダ)"
+    },
+    {
+      "id": "n-plus-one-query",
+      "category": "performance",
+      "severity": "high",
+      "perspectives": [
+        "performance"
+      ],
+      "summary": "list_transactions now issues one query per transaction id instead of a single query.",
+      "location": "(?i)list_?transactions",
+      "concept": "(?i)(n\\+1|n \\+ 1|one query per|per[- ]row quer|quer\\w* in (a )?loop|loop.{0,40}quer|batch|round[- ]?trip|ループ)"
+    },
+    {
+      "id": "swallowed-exception",
+      "category": "correctness",
+      "severity": "high",
+      "perspectives": [
+        "observability"
+      ],
+      "summary": "record_audit wraps the write in a bare except that silently discards every failure.",
+      "location": "(?i)(record_?audit|except)",
+      "concept": "(?i)(swallow|silently|silent(ly)? (ignor|discard)|suppress|bare except|except\\s*\\w*\\s*:\\s*pass|catch.{0,20}pass|握りつぶ|黙殺|無視)"
+    },
+    {
+      "id": "test-disabled",
+      "category": "test",
+      "severity": "medium",
+      "perspectives": [
+        "test"
+      ],
+      "summary": "test_audit_records_event was disabled with a skip marker rather than fixed.",
+      "location": "(?i)(test_?audit_?records_?event|mark\\.skip|skip)",
+      "concept": "(?i)(skip|disabled|no longer runs|coverage (loss|gap)|flaky|スキップ|無効化)"
+    }
+  ]
+}

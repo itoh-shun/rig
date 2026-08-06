@@ -1,0 +1,7 @@
+{
+  "id": "py-clean-refactor",
+  "language": "python",
+  "clean": true,
+  "description": "A genuine refactor with no defect planted: validation extracted to a helper, an accumulator loop replaced by sum() over the existing line_total_cents helper, and validation moved ahead of the arithmetic. Behavior is unchanged except that an invalid discount now raises before the subtotal is computed, which is not observable to callers. Used to measure precision -- any blocking finding here is a false positive.",
+  "violations": []
+}

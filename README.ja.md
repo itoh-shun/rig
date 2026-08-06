@@ -18,11 +18,11 @@ rig の本当の価値は、AI を動かすこと自体ではない。AI に作�
 - **クロスプロバイダを前提にした設計** — 生成役と検証役は別プロセスで走り、それぞれ LLM を選べる：`claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / さらに `rig` ハーネスをネスト。Claude で実装して Codex で検証する（あるいは逆）が既定の流し方で、同じクラスのモデルが自分の成果物をレビューする状況を構造的に避ける。`orchestrate.py probe` が「read-only サンドボックスは configuration だけでなく実装として発動している」ことを provider ごとに確認する（§5・§12）。
 - **Claude Code plugin として動く** — `/rig:go` は普段の作業と同じ session に住む。別ツールに切り替える文脈スイッチではなく、隔離・ゲート・accept まで一続きのキー操作でできる。
 
-**rig の現在地：** 安全性の核——task 分類・隔離・acceptance-gate・明示的な accept/discard——は実装済みで、このリポジトリ自身のテストスイート（§15）で裏付けが取れている。その上に乗る品質・観測系のツール（drill・board・stats・GitHub 連携）は実用可能だが発展中。さらに別枠で、同じゲートを使いながら配送を遊び心にした一群のコマンド（MAGI 合議・roast・movie 等）があり、これは明示的に experimental と位置づけている。§7 でこれを名指しで区分けする。
+**rig の現在地：** 安全性の核——task 分類・隔離・acceptance-gate・明示的な accept/discard——は実装済みで、このリポジトリ自身のテストスイート（§15）で裏付けが取れている。その上に乗る品質・観測系のツール（drill・board・stats・GitHub 連携）は実用可能だが発展中。用途特化のワークフローは既定core目録に混ぜず、明示installするdomain extensionとして提供する。§7 でこれを名指しで区分けする。
 
 ### ポジショニング
 
-rig は意図的に、独自 DSL を持つ重量級の外部エンジン**ではない**。Claude Code のセッション内では、Claude Code 自身のプリミティブ——slash command（`commands/`）・skill（`skills/rig`）・subagent（`agents/`）・hook（`hooks/`）——だけで合成された薄い品質・安全レイヤーとして動く。隔離・ゲート・accept は、いま作業しているセッションにそのまま規律として乗るのであって、別ツールへの乗り換えを要求しない。
+rig は意図的に、独自 DSL を持つ重量級の外部エンジン**ではない**。Claude Code のセッション内では、Claude Code 自身のプリミティブ——slash command（`commands/`）・skill（`skills/engine`）・subagent（`agents/`）・hook（`hooks/`）——だけで合成された薄い品質・安全レイヤーとして動く。隔離・ゲート・accept は、いま作業しているセッションにそのまま規律として乗るのであって、別ツールへの乗り換えを要求しない。
 
 同じ設計にはもう一つの顔がある：このレイヤーの背後にある決定論エンジン（`scripts/orchestrate.py`。`rig_workbench/` としてパッケージ化され、pip の `rig-wb` CLI としても導入できる）は、**外部制御プレーン**を兼ねる。CI・別セッション・別ツール（Codex / Cursor 等）から、まったく同じ recipe・ゲート・read-only verifier をセッションの外から駆動できる——§13「横断利用（CLI として）」を参照。同じエンジンを公開する MCP サーバは `scripts/mcp_server.py`（#263）として既に出荷済み——ツール一覧・opt-in の配線は §7「MCPサーバ（#263）」を参照。
 
@@ -126,7 +126,7 @@ gate: standard + bugfix
   plan.md / diff.md / log.md / final.md   モデルが書く散文（計画・差分要約・決定・まとめ）
 ```
 
-読み取り専用のタスク（レビュー・まだ直すと決まっていない調査）は `--no-worktree` で worktree を丸ごと省略できる。設計の詳細は [`patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) を参照。
+読み取り専用のタスク（レビュー・まだ直すと決まっていない調査）は `--no-worktree` で worktree を丸ごと省略できる。設計の詳細は [`patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) を参照。
 
 **複数タスクを並行で進める（ターミナルを増やさず一括把握）。** 隔離が task 単位で完結しているため、**複数タスクを同時に走らせても構造的に安全**（別 worktree・別 branch）。`/rig:go "<task>"` を1つずつ打つ代わりに、実際に並列実行したいなら queue に積んで一括 GO する：
 
@@ -146,7 +146,7 @@ gate: standard + bugfix
 <repo>/.rig/visual/adhoc/<ts>-<slug>/         ← ad-hoc（例: 単独の /rig:design <url> 監査）
 ```
 
-`discard` は task の `visual/` を即時削除する（run log の JSON/MD は残る）。それ以外——accept 済み task の screenshot も含め——は経過日数で処分する（`python3 scripts/workbench.py gc --dry-run` でプレビュー、`gc` で削除。既定14日超が対象）。詳細ルールは [`patterns/visual-artifacts.md`](./skills/rig/patterns/visual-artifacts.md) を参照。
+`discard` は task の `visual/` を即時削除する（run log の JSON/MD は残る）。それ以外——accept 済み task の screenshot も含め——は経過日数で処分する（`python3 scripts/workbench.py gc --dry-run` でプレビュー、`gc` で削除。既定14日超が対象）。詳細ルールは [`patterns/visual-artifacts.md`](./skills/engine/patterns/visual-artifacts.md) を参照。
 
 ### acceptance-gate
 
@@ -246,13 +246,12 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | queue（並列 dispatch） | Beta | 隔離により構造的には安全。UX は発展中（§5） |
 | knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§13） |
 | planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§13） |
-| creative / party 系（MAGI・roast・movie 等） | Experimental | 中身は本物のゲートだが配送が遊び心。既定パスからは外している（§14） |
 
 この表に "Planned" 行はない——未出荷の機能をここに書く方針は取らない。提案は GitHub issue として存在する。表に載っていないコマンドはまだ出荷されていない。
 
 ## 8. task routing と recipes
 
-エンジン（`skills/rig/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティング（§4 の①）は4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
+エンジン（`skills/engine/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティング（§4 の①）は4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
 
 | recipe | 内容 |
 |---|---|
@@ -267,11 +266,8 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | `goal-loop` | ゴール駆動ループ |
 | `de-ai-smell` | 散文の AI 臭除去 |
 | `design` 🎨 / `design-audit` 🎨 | UI/UX・a11y の設計作成と URL 監査 |
-| `magi` | 3賢者合議で go/no-go を多数決裁定 |
-| `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | 中身は本物のユーモア pack 群 |
-| `movie` 🎬 / `scenario` 🎬✍️ | 動画作成ハーネスとそのシナリオライター前段 |
 
-`/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。`/rig:sales`・`/rig:talk`・`/rig:goal`・`/rig:magi`・humor pack 群は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。
+`/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。core flow と明示的に導入した extension は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。opt-in domain pack は `skills/engine/SKILL.md` の Extension Catalog を参照。project pack は内容を確認し、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定してasset trustを記録してから `$rig --recipe <installed-name>` で起動する。installだけでcommand assetがホストのslash commandへ自動登録されるわけではない。
 
 ## 9. diff / accept / discard
 
@@ -518,7 +514,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 
-いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ、`/rig:sales` は §8 でそれぞれ扱っている。Experimental commands は独立した節——§14。）
+いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ、opt-in extension は §14 で扱っている。）
 
 ### install
 
@@ -574,15 +570,15 @@ cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reloa
 | `--verify-findings` | REJECT 根拠を独立した `finding-verifier` で敵対的検証 |
 | `--global` | `--list`/`--validate` を全 tier 横断に拡大 |
 
-flag・ブリックの完全な一覧は [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
+flag・ブリックの完全な一覧は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
 
 ### Codex skill として使う
 
-Codex では、このリポジトリの `skills/rig` を `~/.codex/skills` から見えるようにすれば `$rig` skill として使える：
+Codex では、このリポジトリの `skills/engine` を `~/.codex/skills` から見えるようにすれば `$rig` skill として使える：
 
 ```bash
 mkdir -p ~/.codex/skills
-ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
+ln -sfn /path/to/rig/skills/engine ~/.codex/skills/rig
 ```
 
 Codex を再起動したあと、`$rig "ログインバグを直して"` のように呼ぶ。Codex では `$rig` が Claude Code の `/rig:go` 相当の入口になる。横断 runner は既に `codex exec` provider を持っており、検証ロールでは read-only sandbox を強制する。
@@ -593,7 +589,7 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 
 | 機構 | 追加したファイル | 内容 |
 |---|---|---|
-| Skills | `codex/skills/rig/SKILL.md` | Codexの`.agents/skills/<name>/SKILL.md`規約（`name`/`description` frontmatter）に沿った薄いskill。新しいエンジンは作らず、既存の`workbench.py`/`orchestrate.py`への手続き的ポインタに留める |
+| Skills | `codex/skills/engine/SKILL.md` | Codexの`.agents/skills/<name>/SKILL.md`規約（`name`/`description` frontmatter）に沿った薄いskill。新しいエンジンは作らず、既存の`workbench.py`/`orchestrate.py`への手続き的ポインタに留める |
 | Hooks | `codex/hooks.json` | `PreCompact`イベントで既存の`hooks/preserve-rig-state.sh`をそのまま再利用（Claude Code専用の記述は含まれていないスクリプトなので複製不要）。run-continuityをCodexの圧縮イベントにも配線 |
 | Subagents | `.codex/agents/security-reviewer.toml` | `agents/security-reviewer.md`と同じ評価軸・出力契約を持つCodexネイティブsubagent定義。`sandbox_mode = "read-only"`でCodex自身のサンドボックスにもread-only強制を効かせる——rig側の`orchestrate.py`argv注入（`--sandbox read-only`）による既存の強制は変更せず残す（多層防御） |
 | MCP | （手順のみ） | `scripts/mcp_server.py`（#263）を`~/.codex/config.toml`または`.codex/config.toml`の`[mcp_servers.rig]`に`command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]`として登録する |
@@ -624,7 +620,7 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 
 Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
 - **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。
-- **skillは`.agents/skills/`もlegacy互換で読む**——`codex/skills/rig/SKILL.md`をそこに置けばCursorでもそのまま使える（新規ファイル不要）。
+- **skillは`.agents/skills/`もlegacy互換で読む**——`codex/skills/engine/SKILL.md`をそこに置けばCursorでもそのまま使える（新規ファイル不要）。
 - **`preCompact`はobservational-onlyで、run-continuityの状態注入はできない**（公式ドキュメントに明記）。ここは黙って「動いたふり」をせず`degrade`として明示し（`cursor/hooks.json`は状態保全を諦め、短い通知メッセージのみを返す設計にした）、READMEの表上もunsupportedと表示する。
 
 **正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`tests/test_host_adapters.py`）はコードとして検証済み。実際のCursor/Codex実機でのhook発火・skill読み込みは未検証（Codexは上記と同じ理由、Cursorはこの環境にCursor自体が無いため）。Claude Code向けの既存動作は本バッチで一切変更していない。
@@ -656,7 +652,7 @@ review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorで�
 
 ### manifest・知識層
 
-`<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/rig/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
+`<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/engine/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
 
 ### 横断利用（CLI として）
 
@@ -679,18 +675,9 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 
 プロジェクト manifest `.claude/rig.md` も同じ trust store の背後にあり、専用の同意スイッチ（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`）を持つ。manifest は既定値を供給するだけなので、未同意でも recipe のようにハード拒否せず **soft degrade** する——警告1行を出して「manifest が無い」場合と同じ挙動に落ちる。同梱の git hook は manifest の lint/build/test コマンドを eval する前に記録済みハッシュを検証し、`rig-wb githooks install` がそのハッシュを記録する：hook のインストール＝その時点の manifest への同意であり、以後ファイルを編集すると再同意が必要になる。
 
-## 14. Experimental commands
+## 14. opt-in extension
 
-Experimental commands は、代替的なコラボレーション・創作・遊び心のあるワークフローを探索する。使っているゲートは他と同じ本物——`magi` の判定も `roast` のレビューも中身は本物のコンテンツで、おもちゃではない——が、初見の README を Core/Quality/Advanced のノイズにしないため、既定の日常パス・上記の tier からは意図的に外している。
-
-| コマンド | 内容 |
-|---|---|
-| `/rig:magi`、`/rig:sage` | 決定/知恵モード——MAGI 3賢者合議の go/no-go 投票、sage 流の助言 |
-| `/rig:roast`、`/rig:coin`、`/rig:duck`、`/rig:pre-mortem` | 中身は本物のユーモア pack 群（§8） |
-| `/rig:party` | 実データの上に乗せた party/status 表示の novelty |
-| `/rig:movie`、`/rig:scenario` | 動画作成ハーネスとそのシナリオライター前段 |
-
-§4〜§9 で説明した Core の AI ワークベンチ体験には不要。
+用途特化ワークフローは既定カタログの外で配布する。Extension Catalog から内容を確認した pack だけを導入すること。project pack の trust は内容ハッシュに紐づき、asset が変わると再同意が必要になる。command asset は明示登録を扱える host 向けの資料であり、install だけで slash command として登録されることはない。
 
 ## 15. Implementation notes
 
@@ -706,7 +693,7 @@ Experimental commands は、代替的なコラボレーション・創作・遊�
 | オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q` — `tests/` 配下の54テストスイート。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
-| 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/rig/patterns/failure-taxonomy.md` |
+| 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 
 ## 16. FAQ
 
@@ -728,8 +715,8 @@ Experimental commands は、代替的なコラボレーション・創作・遊�
 
 ## ドキュメント
 
-- [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
-- [`skills/rig/patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) — worktree・run state の設計
+- [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
+- [`skills/engine/patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) — worktree・run state の設計
 - [`docs/architecture.md`](./docs/architecture.md) — アーキテクチャの実証ポイント
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
 - [README.md](./README.md) — English version

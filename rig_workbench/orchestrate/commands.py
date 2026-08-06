@@ -17,9 +17,10 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
 from .runstate import compute_next, load_state, new_state, save_state
 from .providers import parse_step_model_spec, run_loop, unknown_step_model_ids
 from .isolate import setup_isolation, teardown_isolation
+from .gates import validate_executable_recipe
 
 # ── Commands ──────────────────────────────────────────────────────────────────
-def render_plan(recipe: str, steps: list[dict]) -> str:
+def render_plan(recipe: str, steps: list[dict], execution: dict | None = None) -> str:
     auto, why = auto_orchestrate(steps)
     lines = [f"## rig computational plan: {recipe}", "",
              f"Steps: {len(steps)} / transitions enforced by code (deterministic)",
@@ -32,7 +33,26 @@ def render_plan(recipe: str, steps: list[dict]) -> str:
         lines.append(f"  [{i}] {s['id']}  gate={gate}  K={s['max_retries']}  verify={sensor}")
     lines.append("")
     lines.append("Stop condition: each step escalates after K gate failures (no infinite loops).")
+    if execution is not None:
+        status = "executable" if execution["orchestratable"] else "nonexecutable"
+        lines.extend(["", f"Execution: {status}", f"Execution reason: {execution['reason']}"])
+        if execution["unsupported_gates"]:
+            detail = ", ".join(
+                f"{item['step']}={item['gate']}" for item in execution["unsupported_gates"]
+            )
+            lines.append(f"Unsupported gates: {detail}")
     return "\n".join(lines)
+
+
+def _require_executable_recipe(fm: dict, label: str) -> dict:
+    execution = validate_executable_recipe(fm)
+    if execution["orchestratable"]:
+        return execution
+    prefix = "[ERROR]" if execution["errors"] else "[BLOCKED]"
+    print(f"{prefix} recipe {label} is computationally nonexecutable: {execution['reason']}")
+    for error in execution["errors"]:
+        print(f"[ERROR] {error}")
+    raise SystemExit(2)
 
 
 def cmd_plan(args):
@@ -64,7 +84,7 @@ def cmd_plan(args):
         if plan.get("errors"):
             sys.exit(1)  # same exit contract as the non-JSON path
         return
-    print(render_plan(plan["recipe"], plan["steps"]))
+    print(render_plan(plan["recipe"], plan["steps"], plan.get("execution")))
     for w in plan.get("warnings", []):
         print(f"[WARN] {w}")
     for e in plan.get("errors", []):
@@ -80,6 +100,7 @@ def _state_path(args, default="run-state.json") -> pathlib.Path:
 def cmd_init(args):
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
     goal = None
     out = pathlib.Path("run-state.json")
@@ -93,9 +114,9 @@ def cmd_init(args):
             i += 2
         else:
             i += 1
-    state = new_state(fm.get("name", path.stem), steps, goal)
+    state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
     save_state(state, out)
-    print(render_plan(state["recipe"], steps))
+    print(render_plan(state["recipe"], steps, execution))
     print(f"\nrun-state: {out}")
     action, msg = compute_next(state)
     save_state(state, out)
@@ -110,6 +131,13 @@ def _current_running(state: dict):
     if st["status"] != "running":
         return None, None
     return step, st
+
+
+def _refuse_blocked_state(state: dict) -> None:
+    stopped = state.get("stopped") or {}
+    if stopped.get("kind") == "BLOCKED":
+        print(f"[BLOCKED] {stopped.get('reason', 'run-state is computationally nonexecutable')}")
+        raise SystemExit(2)
 
 
 def _run_checks(checks: list[str]) -> list[dict]:
@@ -130,6 +158,7 @@ def _run_checks(checks: list[str]) -> list[dict]:
 def cmd_check(args):
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
         print("[ERROR] no running step. START one with `next` first.")
@@ -171,6 +200,7 @@ def cmd_resume(args):
     """
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     steps = state["steps"]
     total = len(steps)
     n_passed = sum(1 for st in state["step_state"].values() if st.get("status") == "passed")
@@ -233,6 +263,7 @@ def cmd_resume(args):
 def cmd_verdict(args):
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
         print("[ERROR] no running step.")
@@ -266,6 +297,7 @@ def cmd_verdict(args):
 def cmd_next(args):
     sp = _state_path(args)
     state = load_state(sp)
+    _refuse_blocked_state(state)
     action, msg = compute_next(state)
     save_state(state, sp)
     print(f"▶ {action}: {msg}")
@@ -293,6 +325,7 @@ def cmd_run(args):
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
     gen = ver = None
     generators: list[str] = []
@@ -430,7 +463,7 @@ def cmd_run(args):
         )
         sys.exit(1)
     ver = ver or gen  # default to the same provider (but a separate process and role)
-    state = new_state(fm.get("name", path.stem), steps, goal)
+    state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
     for sid, model in step_models.items():   # record runtime overrides in run-state (traceable later)
         state["history"].append({"action": "STEP_MODEL_OVERRIDE", "step": sid, "model": model})
     iso = None
@@ -439,7 +472,7 @@ def cmd_run(args):
         cfg["cwd"] = iso["dir"]
         state["isolation"] = iso
         print(f"◈ Isolated run: worktree={iso['dir']} / branch={iso['branch']}")
-    print(render_plan(state["recipe"], steps))
+    print(render_plan(state["recipe"], steps, execution))
     panel = f" / judge-panel={','.join(generators)}" if len(generators) > 1 else ""
     if isinstance(ver, list):
         panel += f" / model-quorum={','.join(ver)}"
@@ -482,8 +515,11 @@ def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: 
     (e.g. --auto-route size classing) still read the invoking repo's manifest —
     manifest A/B exercises what nested providers see."""
     fm, _warns = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    execution = _require_executable_recipe(fm, fm.get("name", recipe_path.stem))
     steps = load_steps(fm)
-    state = new_state(fm.get("name", recipe_path.stem), steps, goal)
+    state = new_state(
+        fm.get("name", recipe_path.stem), steps, goal, execution=execution,
+    )
     iso = setup_isolation(fm.get("name", recipe_path.stem))
     if manifest_src is not None:
         import hashlib
@@ -596,6 +632,9 @@ def cmd_ab(args):
         variants = [(resolve_recipe(r), None, None, None) for r in recipes]
         variants = [(p, m, lbl, pathlib.Path(f"ab-{p.stem}-state.json")) for p, m, lbl, _ in variants]
         title = " vs ".join(recipes)
+    for path, _manifest, _label, _out_path in variants:
+        fm, _warns = resolve_extends(parse_frontmatter(path), path)
+        _require_executable_recipe(fm, fm.get("name", path.stem))
     results: list[dict | None] = [None] * len(variants)
     print(f"◈ A/B experiment: {title} (provider={gen} / {len(variants)} concurrent variants)\n")
     with futures.ThreadPoolExecutor(max_workers=len(variants)) as ex:
@@ -724,90 +763,6 @@ def cmd_fleet(args):
     else:
         print("\nPer-persona detection rate: unmeasured (no /rig:drill runs in the target repos)")
 
-
-def cmd_party(_args):
-    """Party roster screen (/rig:party): render RPG-style stats from telemetry, measured drills, and the brick inventory.
-
-    Looks like a game screen, but every line is real data (runs.jsonl / drill-results.jsonl /
-    shipped bricks) = a health-check dashboard for the harness. Read-only."""
-    runs = _read_jsonl(config.RUNS_PATH)
-    drills = _read_jsonl(config.DRILL_PATH)
-    done = sum(1 for r in runs if r.get("final") == "DONE")
-    esc = sum(1 for r in runs if r.get("escalated_at"))
-    total = len(runs)
-
-    # Tally verifier votes (sortie counts, REJECT counts; by is "provider:persona")
-    votes: dict[str, dict] = {}
-    for r in runs:
-        for st in r.get("steps", []):
-            for v in st.get("verdicts", []):
-                persona = (v.get("by") or "?").split(":", 1)[-1]
-                a = votes.setdefault(persona, {"sorties": 0, "rejects": 0})
-                a["sorties"] += 1
-                a["rejects"] += 0 if v.get("ok") else 1
-
-    # drill detection rate (drill.md schema: {"ts":…, "scores":[{"reviewer","detected","seeded","false_positives"}]})
-    atk: dict[str, dict] = {}
-    for d in drills:
-        for s in d.get("scores", []):
-            a = atk.setdefault(s.get("reviewer", "?"), {"detected": 0, "seeded": 0, "fp": 0})
-            a["detected"] += s.get("detected", 0)
-            a["seeded"] += s.get("seeded", 0)
-            a["fp"] += s.get("false_positives", 0)
-
-    # Longest consecutive no-escalation streak (for achievements)
-    streak = best = 0
-    for r in runs:
-        streak = 0 if r.get("escalated_at") else streak + 1
-        best = max(best, streak)
-
-    def _line(name: str, bench: bool = False) -> str:
-        v = votes.get(name, {"sorties": 0, "rejects": 0})
-        a = atk.get(name)
-        power = (f"⚔ detection {a['detected'] / a['seeded'] * 100:3.0f}% (drill {a['detected']}/{a['seeded']}"
-                 + (f", false-pos {a['fp']}" if a["fp"] else "") + ")") if a and a["seeded"] else "⚔ detection unmeasured (calibrate with /rig:drill)"
-        tag = " (reserve)" if bench and v["sorties"] == 0 else ""
-        return f"│ {name:22s} {power}  sorties {v['sorties']:3d} / REJECT {v['rejects']}{tag}"
-
-    party = ["security-reviewer", "design-reviewer", "test-reviewer"]
-    bench = ["performance-reviewer", "observability-reviewer", "api-compat-reviewer",
-             "migration-reviewer", "docs-reviewer"]
-    for extra in (load_manifest().get("default_personas") or []):
-        if extra not in party:
-            party.append(extra)
-
-    print("━━━ rig party roster (/rig:party) ━━━━━━━━━━━━━━━")
-    rate = f"{esc / total * 100:.0f}%" if total else "—"
-    print(f"Lv.{done}  runs {total} / DONE {done} / escalation rate {rate}")
-    print("┌─ party (review fan-out)" + "─" * 30)
-    for name in party:
-        print(_line(name))
-    if "finding-verifier" in votes:
-        fv = votes["finding-verifier"]
-        print(f"│ {'finding-verifier':22s} 🛡 rebuttals {fv['sorties']} (audit rejection quality with runs --personas)")
-    print("├─ reserves (deploy with --persona)" + "─" * 31)
-    for name in bench:
-        print(_line(name, bench=True))
-    print("└" + "─" * 56)
-
-    badges = []
-    if done >= 1:
-        badges.append("🏆 First DONE")
-    if best >= 10:
-        badges.append("🏆 Ten flawless battles (10 consecutive no-escalation)")
-    if total >= 100:
-        badges.append("🏆 Battle-hardened (100 runs)")
-    if any(a["seeded"] and a["detected"] == a["seeded"] and a["seeded"] >= 2 for a in atk.values()):
-        badges.append("🏆 Perfect marksman (all drill seeds detected)")
-    wiki_n = len(list((config.INVOCATION_CWD / ".claude" / "rig" / "knowledge" / "wiki").glob("*.md"))) \
-        if (config.INVOCATION_CWD / ".claude" / "rig" / "knowledge" / "wiki").is_dir() else 0
-    if wiki_n >= 10:
-        badges.append(f"🏆 Grand library (project wiki {wiki_n} pages)")
-    print("Achievements: " + (" / ".join(badges) if badges else "(none yet — get one run to DONE first)"))
-    if not runs:
-        print("\n(no telemetry: RUNs accumulate in .rig/runs.jsonl and grow this screen)")
-    if not drills:
-        print("(detection unmeasured: /rig:drill calibrates reviewer attack power)")
 
 def cmd_runs(args):
     """Run telemetry listing: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD].
@@ -1048,4 +1003,3 @@ def cmd_install_shim(args):
         print(f"⚠ {target.parent} does not seem to be on $PATH. Add this:")
         print(f"    export PATH=\"{target.parent}:$PATH\"")
     print(f"Verify: `rig models` or `rig --help` (RIG_HOME={config.RIG_HOME})")
-

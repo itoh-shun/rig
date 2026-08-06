@@ -786,7 +786,7 @@ Expected: `pack row ok` と `flags ok`
 
 - [ ] **Step 4: README.ja.md にコマンド・recipe を追加**
 
-`README.ja.md` のコマンド一覧（`- **コマンド**: \`/rig:coin\`` 等の並び・`/rig:catalog` の前あたり）に追加:
+`README.ja.md` のコマンド一覧（既存 recipe の並び・`/rig:catalog` の前あたり）に追加:
 ```markdown
 - **コマンド**: `/rig:design` 🎨 — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から**デザイン仕様書／コンポーネント仕様／ワイヤー／a11y 計画**を生成し、`ux-reviewer`（ユーザビリティ）・`a11y-reviewer`（WCAG 2.2）で並列検閲して acceptance-gate で収束。引数に**画面 URL** を渡すと Playwright で実装画面を取得し UI/UX・a11y を**監査**する。`--ppt`(PowerPoint)・`--claudedesign`(claude.ai デザイン) で追加出力（併用可）。例: `/rig:design ログイン画面 --ppt` ・ `/rig:design https://example.com/login`
 ```
@@ -799,7 +799,7 @@ recipes テーブル（`| \`scenario\` 🎬✍️ |` 行の後）に2行追加:
 
 - [ ] **Step 5: README.md（英語）にコマンド・recipe を追加**
 
-`README.md` のコマンド一覧（`/rig:coin` 等の並び・`/rig:init` の前あたり）に追加:
+`README.md` のコマンド一覧（既存 recipe の並び・`/rig:init` の前あたり）に追加:
 ```markdown
 - **Command**: `/rig:design` 🎨 — a UI/UX + a11y design harness. From a description it generates a **design spec / component spec / wireframe / a11y plan**, vetted in parallel by `ux-reviewer` (usability) and `a11y-reviewer` (WCAG 2.2), converged via acceptance-gate. Pass a **screen URL** and it switches to audit mode: Playwright captures the live screen (screenshot/DOM/axe-core) and scores UI/UX + a11y. `--ppt` (PowerPoint) / `--claudedesign` (claude.ai design) add extra outputs (combinable). e.g. `/rig:design login screen --ppt` · `/rig:design https://example.com/login`
 ```

@@ -428,13 +428,74 @@ def worktree_dirty(wt: pathlib.Path) -> list[str]:
     return [line for line in proc.stdout.splitlines() if line.strip()]
 
 
+# ── base drift (#312) ────────────────────────────────────────────────────────
+# `task.json`'s `base_commit` is a snapshot taken at registration and is never
+# updated. Rebasing a task branch onto a newer base — legitimate and common —
+# makes it stale, and `git diff <stale>...HEAD` then *silently widens*: three-dot
+# resolves to merge-base(stale, HEAD), which after a rebase onto a descendant is
+# still the stale commit, so everything that landed on the base in between gets
+# counted as the task's own work. No conflict, no error, just a bigger diff that
+# `accept` would re-apply on top of itself. Every range therefore has to be
+# recomputed live from the refs as they are *now*.
+def effective_base(root: pathlib.Path, task: dict) -> tuple[str, str | None]:
+    """Return (base commit the task diff must be computed against, drifted-from).
+
+    The live value is merge-base(base_branch, task branch) as they stand now.
+    `drifted_from` is the recorded `base_commit` when it differs from that live
+    value, else None — callers use it to surface the drift.
+
+    Falls back to the recorded value (and no drift) whenever the live value
+    cannot be established: no worktree, no recorded base_branch/base_commit, a
+    base_branch that no longer resolves, or unrelated histories. Never edits
+    task.json; the record stays as the historical fact it is.
+    """
+    recorded = task.get("base_commit") or ""
+    base_branch = task.get("base_branch") or ""
+    wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else None
+    # Worktree-less runs have no branch to rebase: their diff is taken against the
+    # main working tree's HEAD, never against base_commit.
+    if not recorded or not base_branch or base_branch == "HEAD" or not (wt and wt.is_dir()):
+        return recorded, None
+    # Resolve the task tip to a sha first: a *symbolic* ref like "HEAD" resolves
+    # per worktree, so passing one to a merge-base run elsewhere would silently
+    # compare the wrong commits.
+    if task.get("branch"):
+        tip_proc = git(["rev-parse", "--verify", f"{task['branch']}^{{commit}}"], cwd=root, check=False)
+    else:
+        tip_proc = git(["rev-parse", "--verify", "HEAD^{commit}"], cwd=wt, check=False)
+    base_proc = git(["rev-parse", "--verify", f"{base_branch}^{{commit}}"], cwd=root, check=False)
+    if tip_proc.returncode != 0 or base_proc.returncode != 0:
+        return recorded, None
+    proc = git(["merge-base", base_proc.stdout.strip(), tip_proc.stdout.strip()], cwd=root, check=False)
+    live = proc.stdout.strip()
+    if proc.returncode != 0 or not live:
+        return recorded, None
+    return live, (recorded if live != recorded else None)
+
+
+def drift_lines(task: dict, drifted_from: str | None, effective: str, indent: str = "") -> list[str]:
+    """Printable drift notice. Empty list when there is no drift (the normal case) —
+    this must not become a wall of text on every run."""
+    if not drifted_from:
+        return []
+    return [
+        f"{indent}[WARN] base drift: this branch was rebased since it was registered.",
+        f"{indent}  recorded base_commit {drifted_from[:12]} → current merge base with "
+        f"{task.get('base_branch')} {effective[:12]}",
+        f"{indent}  The diff is computed against the current merge base; the recorded value is "
+        f"kept as-is (nothing to edit).",
+    ]
+
+
 def _diff_lines(root: pathlib.Path, task: dict) -> tuple[list[str], str, list[str]]:
     """Return (name-status lines, shortstat, uncommitted worktree lines)."""
     wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else None
     if wt and wt.is_dir():
-        base = task["base_commit"]
-        names = git(["diff", "--name-status", f"{base}...HEAD"], cwd=wt).stdout.splitlines()
-        stat = git(["diff", "--shortstat", f"{base}...HEAD"], cwd=wt).stdout.strip()
+        base, _drift = effective_base(root, task)
+        # Two-dot against the live merge base: three-dot here would re-open the
+        # widening hole the moment `base` were stale again.
+        names = git(["diff", "--name-status", base, "HEAD"], cwd=wt).stdout.splitlines()
+        stat = git(["diff", "--shortstat", base, "HEAD"], cwd=wt).stdout.strip()
         dirty = worktree_dirty(wt)
         return names, stat, dirty
     # Worktree-less runs (reviews etc.) diff against the current state of the main working tree

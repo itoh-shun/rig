@@ -1,10 +1,7 @@
 """rig-wb — the standalone CLI entry point exposed by `pip install rig-workbench`.
 
-Dispatches sub-commands to the existing `scripts/*.py` modules by loading them
-via `importlib.util` (they still live at the original path so the Claude Code
-plugin, the `bin/orchestrate` shim, and any project pinning `.claude-plugin/`
-paths keep working). This is the least-invasive first step: same code, new
-entry point.
+Dispatches core commands through package-native modules. A few legacy utility
+commands still load their repository scripts when a source checkout is present.
 
 Usage:
     rig-wb run <recipe> --provider claude ...        # orchestrate.py run
@@ -120,7 +117,13 @@ def _run_orchestrate_subcmd(argv: list[str]) -> None:
 
 
 def _run_workbench(argv: list[str]) -> None:
-    wb = _load_script("workbench")
+    if argv[:1] == ["route"]:
+        from .workbench import route_cli
+
+        route_cli.main(argv[1:])
+        return
+    from .workbench import cli as wb
+
     old = sys.argv
     try:
         sys.argv = ["workbench.py", *argv]
@@ -256,7 +259,6 @@ _orch_delegates = {
     "list",
     "validate",
     "graph",
-    "party",
     "models",
     "probe",
     "install-shim",
@@ -391,18 +393,30 @@ Sub-commands:
   usage [--limit N] [--global] [--json] History of actual rig-wb usage.
                                         Defaults to .rig/runs.jsonl in cwd (per-project);
                                         --global reads ~/.rig/runs.jsonl (across all projects)
+  gh-check [--json]                     report the `gh` + github/gh-stack state
+                                        (optional tools: rig runs without them.
+                                        exit 0=ok / 3=gh missing / 5=gh-stack missing;
+                                        auth is reported, never required)
   githooks install|uninstall|status [--force]
                                         native git pre-commit/pre-push hooks
                                         (computational sensors only; issue #298)
   bench [--corpus PATH] [--tasks ...] [--provider X] [--runs N] [--out <json>]
                                         bare vs rig A/B benchmark
                                         (schema v2; paid providers require explicit opt-in)
+  baseline capture|compare|show ...     versioned benchmark baseline and scorecard
+  eval validate|list|capture|run|compare|promote ...
+                                        versioned regression evaluation cases
+  pack init|validate|doctor|install|test|import-results|keygen|sign|remove|invoke ...
+                                        validated prompt-pack lifecycle/publishing
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
   version                               show version
 
 Environment:
   RIG_HOME                              set the rig repo root explicitly (auto-detected if omitted)
+  RIG_SKIP_GH_CHECK=1                   silence the one-line note about a missing
+                                        `gh` / github/gh-stack. Gates nothing: those
+                                        tools are optional and never block a run
 
 Examples:
   rig-wb run bugfix --provider claude --verifier-provider codex
@@ -434,6 +448,18 @@ def main() -> None:
     if sub == "bench":
         _run_bench(rest)
         return
+    if sub == "baseline":
+        from . import baseline as baseline_mod
+
+        sys.exit(baseline_mod.cmd_baseline(rest))
+    if sub == "eval":
+        from .eval import cli as eval_cli
+
+        sys.exit(eval_cli.cmd_eval(rest))
+    if sub == "pack":
+        from .packs import cli as pack_cli
+
+        sys.exit(pack_cli.cmd_pack(rest))
     if sub == "sensor-bench":
         from . import sensor_bench as sensor_bench_mod
 
@@ -454,6 +480,10 @@ def main() -> None:
             raise SystemExit(2)
         bench_invariance_mod.cmd_invariance(filtered)
         return
+    if sub == "gh-check":
+        from . import gh_requirement
+
+        sys.exit(gh_requirement.cmd_gh_check(rest))
     if sub == "githooks":
         from . import githooks as githooks_mod
 

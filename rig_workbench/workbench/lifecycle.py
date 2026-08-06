@@ -6,11 +6,17 @@ import pathlib
 import re
 import sys
 
+from rig_workbench.packs.model import PackError
+
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
+from .capabilities import resolve_task_route
 from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
+from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
+                                apply_prompt_regression_sensor,
+                                ensure_prompt_criterion)
 from .schema_diff import apply_schema_sensor
 from .secrets import apply_secret_sensor, shared_diff_cache
 from .state import (build_acceptance, current_branch, default_worktree_path,
@@ -95,6 +101,22 @@ def cmd_new(args: argparse.Namespace) -> None:
     root = repo_root()
     if args.type not in TASK_TYPES:
         die(f"task_type '{args.type}' is invalid. Valid: {', '.join(TASK_TYPES)}")
+    context = {
+        "recipe": getattr(args, "recipe", None),
+        "remote_pr": getattr(args, "remote_pr", False),
+        "has_diff": getattr(args, "has_diff", False),
+        "diff": getattr(args, "diff", None),
+        "read_only": getattr(args, "read_only", False),
+        "implementation_type": getattr(args, "implementation_type", None),
+    }
+    try:
+        route = resolve_task_route(args.type, context, root)
+    except PackError as exc:
+        die(str(exc))
+    if route["status"] in {"stopped", "trust_required"}:
+        suffix = f" Hint: {route['hint']}" if route["hint"] else ""
+        die(f"route {route['status']}: {route['reason']}.{suffix}")
+
     slug = args.slug or make_slug(args.input)
     task_id = make_task_id(slug)
     d = runs_dir(root) / task_id
@@ -105,28 +127,44 @@ def cmd_new(args: argparse.Namespace) -> None:
     # before any run dir / worktree is created (no partial state on error).
     acc = build_acceptance(task_id, args.type, root)
 
+    base_branch = args.base or current_branch(root)
+    # `--base <branch>` has to mean it. Recording HEAD here while naming another
+    # branch as the base made every later range wrong by construction: the diff
+    # and the gate sensors are taken against `base_commit`, so a task started
+    # from `feature` with `--base master` counted `feature`'s own commits as the
+    # task's work. Resolve the requested branch and fork the worktree from that
+    # same commit, so the recorded value and the real fork point cannot diverge —
+    # which is exactly the invariant `effective_base` (base drift, #312) assumes.
+    # Resolved before anything is written, same reason as the gate above.
+    if args.base:
+        proc = git(["rev-parse", "--verify", f"{args.base}^{{commit}}"], cwd=root, check=False)
+        base_commit = proc.stdout.strip()
+        if proc.returncode != 0 or not base_commit:
+            die(f"--base '{args.base}' does not resolve to a commit")
+    else:
+        base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
+
     # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
     if ensure_rig_gitignored(root):
         print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
 
-    base_branch = args.base or current_branch(root)
-    base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
-
     worktree_path: str | None = None
     branch: str | None = None
-    if not args.no_worktree:
+    create_worktree = route["worktree"] and not args.no_worktree
+    if create_worktree:
         wt = default_worktree_path(root, task_id)
         branch = f"rig/{task_id}"
         wt.parent.mkdir(parents=True, exist_ok=True)
-        git(["worktree", "add", "-b", branch, str(wt), "HEAD"], cwd=root)
+        git(["worktree", "add", "-b", branch, str(wt), base_commit], cwd=root)
         worktree_path = str(wt)
 
     task = {
         "task_id": task_id,
         "input": args.input,
         "task_type": args.type,
-        "recipe": args.recipe or "",
-        "recipe_reason": args.reason or "",
+        "recipe": route["recipe"] or "",
+        "recipe_reason": args.reason or route["reason"],
+        "route": route,
         "base_branch": base_branch,
         "base_commit": base_commit,
         "branch": branch,
@@ -145,8 +183,17 @@ def cmd_new(args: argparse.Namespace) -> None:
     print("▸ rig")
     print(f"task: {args.input}")
     print(f"detected: {args.type}")
-    print(f"recipe: {args.recipe or '(unspecified)'}" + (f" — {args.reason}" if args.reason else ""))
-    print(f"mode: {'isolated worktree' if worktree_path else 'not isolated (--no-worktree)'}")
+    print(f"recipe: {route['recipe'] or '(stopped)'} — {args.reason or route['reason']}")
+    print(f"routing: {route['status']} / capability={route['capability']} / "
+          f"tier={route['tier'] or '-'} / pack={route['pack'] or '-'}")
+    if route["hint"]:
+        print(f"hint: {route['hint']}")
+    mode = (
+        "isolated worktree" if worktree_path
+        else "not isolated (--no-worktree)" if args.no_worktree
+        else "not isolated (route policy)"
+    )
+    print(f"mode: {mode}")
     print(f"gate: {' + '.join(acc['presets'])}")
     print()
     print(f"task_id: {task_id}")
@@ -154,7 +201,8 @@ def cmd_new(args: argparse.Namespace) -> None:
     if worktree_path:
         print(f"worktree: {worktree_path} (branch: {branch})")
     else:
-        print("worktree: none (--no-worktree specified)")
+        reason = "--no-worktree specified" if args.no_worktree else "route policy"
+        print(f"worktree: none ({reason})")
     print(f"state: {d.relative_to(root)}/")
 
     similar = find_similar_tasks(root, args.input, exclude_task_id=task_id)
@@ -195,6 +243,8 @@ def cmd_gate(args: argparse.Namespace) -> None:
         d, task = load_task(root, task_id)
         acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
 
+        ensure_prompt_criterion(root, task, acc)
+
         known = {c["name"]: c for c in acc["checks"]}
         explicit_set: set[str] = set()
         for pair in args.set or []:
@@ -208,6 +258,8 @@ def cmd_gate(args: argparse.Namespace) -> None:
                 die(f"criterion status '{status}' is invalid. Valid: {', '.join(VALID_CRITERION_STATUS)}")
             if name not in known:
                 die(f"criterion '{name}' does not exist in this task's gate. Valid: {', '.join(known)}")
+            if name == PROMPT_REGRESSION_CRITERION:
+                die("prompt_regression_passed is machine-controlled and cannot be set manually")
             known[name]["status"] = status
             if detail:
                 known[name]["detail"] = detail
@@ -237,6 +289,7 @@ def cmd_gate(args: argparse.Namespace) -> None:
             # patterns and mass deletions warning-grade; --set
             # no_destructive_operation=passed is the recorded escape hatch.
             sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
+            sensor_notes += apply_prompt_regression_sensor(root, task, acc)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()

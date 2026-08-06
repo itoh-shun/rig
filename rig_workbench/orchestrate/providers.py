@@ -16,11 +16,13 @@ from dataclasses import dataclass
 
 from .. import bench_providers as _bench_provider_patches
 from . import config
+from .gates import is_runtime_gate
 from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
-from .runstate import compute_next, gate_outcome, save_state, telemetry_append
+from .runstate import (compute_next, enforce_executable_state, gate_outcome, save_state,
+                       telemetry_append)
 
 _BENCH_COUNTER_LOCK = threading.Lock()
 
@@ -701,7 +703,7 @@ def _judge_output(out: str) -> tuple[bool, list[dict]]:
 
 
 def _load_persona_brief(persona: str) -> str | None:
-    """Resolve a persona name (e.g. "security-reviewer", "sales/hearing-reviewer") to its
+    """Resolve a persona name (e.g. "security-reviewer", "design/ux-reviewer") to its
     facets/personas/<name>.md body, frontmatter stripped. None when unresolvable — callers
     must fall back to the generic prompt rather than silently injecting nothing.
 
@@ -713,7 +715,10 @@ def _load_persona_brief(persona: str) -> str | None:
     by a live #330 bench run: reviewers disagreed (1/3, 2/3 PASS) on code that was already
     objectively correct — consistent with sampling noise on an undifferentiated prompt, not
     genuine multi-perspective review."""
-    path = config.PERSONAS / f"{persona}.md"
+    from rig_workbench.packs.resolver import resolve_asset
+    from rig_workbench.packs.trust import ensure_asset_trusted
+    resolved = resolve_asset("persona", persona, project=config.INVOCATION_CWD)
+    path = ensure_asset_trusted(resolved) if resolved is not None else config.PERSONAS / f"{persona}.md"
     if not path.is_file():
         return None
     text = path.read_text(encoding="utf-8")
@@ -1768,6 +1773,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
     executor = step.get("executor", "generate")
+    if step.get("gate") and not is_runtime_gate(step["gate"]):
+        state["stopped"] = {
+            "reason": f"unsupported executable gate: {step['gate']}",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
     if executor not in ("generate", "risk-assess", "targeted-review", "checks-only"):
         state["stopped"] = {
             "reason": f"unknown executor: {executor}",
@@ -1893,7 +1905,7 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         _run_step_checks(step, st, cfg)
         log(f"   ↳ checks: {sum(c['ok'] for c in st['checks'])}/{len(st['checks'])} ok")
         return
-    if step["gate"] not in ("acceptance-gate", "review-gate"):
+    if not is_runtime_gate(step["gate"]):
         return
     ver_label = "+".join(ver) if isinstance(ver, list) else ver
     if judged:
@@ -1941,6 +1953,10 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
+    execution = enforce_executable_state(state)
+    if not execution["orchestratable"]:
+        state["token_usage"] = cfg.get("_token_usage") or {}
+        return "BLOCKED"
     if sp is not None:      # run dir = where the run-state lives; full over-budget outputs spool there
         cfg = {**cfg, "run_dir": cfg.get("run_dir") or str(pathlib.Path(sp).resolve().parent)}
     if any(s["needs"] for s in state["steps"]):
@@ -1951,6 +1967,9 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     iters, last = 0, "—"
     while iters < max_steps:
         iters += 1
+        if not enforce_executable_state(state)["orchestratable"]:
+            last = "BLOCKED"
+            break
         action, msg = compute_next(state)
         last = action
         log(f"▶ {action}: {msg}")
@@ -1986,6 +2005,8 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
     waves = 0
     while waves < max_steps:
         waves += 1
+        if not enforce_executable_state(state)["orchestratable"]:
+            break
         if state["stopped"]:
             break
         ss = state["step_state"]
@@ -2011,6 +2032,8 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
             list(ex.map(lambda s: _execute_step(state, s, ss[s["id"]], gen_list, ver,
                                                 cfg, max_parallel, quorum,
                                                 (lambda *a: None)), ready))
+        if (state.get("stopped") or {}).get("kind") == "BLOCKED":
+            break
         for s in ready:                       # apply gate evaluation in id order (deterministic)
             st = ss[s["id"]]
             outcome = gate_outcome(s, st)
@@ -2092,4 +2115,3 @@ def cmd_probe(args):
     print(f"  → {sig} detected: " + ("✓ parseable (usable from rig)" if found
                                 else "✗ not found (prompt/flag tuning needed; the cmd provider accepts an explicit command)"))
     sys.exit(0 if (rc == 0 and found) else 1)
-

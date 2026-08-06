@@ -28,5 +28,5 @@ $ARGUMENTS
 /rig:export --persona house-authenticity --dry-run   # 構成プレビューのみ
 /rig:export --persona house-authenticity             # 1ペルソナを skill 化
 /rig:export --recipe strict-tdd --to ~/skills-out    # 育てた recipe を書き出す
-/rig:export --pack sales                             # pack 一式を skill 化
+/rig:export --pack my-domain                         # pack 一式を skill 化
 ```

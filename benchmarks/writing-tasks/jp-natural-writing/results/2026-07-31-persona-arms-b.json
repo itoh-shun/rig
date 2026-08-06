@@ -1,0 +1,322 @@
+{
+  "mode": "live",
+  "ledger": {
+    "default": {
+      "entries": 89,
+      "open_items": 1,
+      "author_filter": "all",
+      "sha1": "6a9b14eddea9"
+    },
+    "pin:human": {
+      "entries": 85,
+      "open_items": 4,
+      "author_filter": "human",
+      "sha1": "a21a3f6c1747"
+    },
+    "pin:agent": {
+      "entries": 93,
+      "open_items": 4,
+      "author_filter": "agent",
+      "sha1": "bb8fcf935f32"
+    }
+  },
+  "judge_model": "claude-opus-5",
+  "gen_model": "claude-sonnet-5",
+  "arms": {
+    "writer_k0": {
+      "label": "writer, zero surplus (spine only)",
+      "samples": [
+        {
+          "topic": "Python",
+          "title": "generation_variance.py を積んだ日、blocked_headless_provider でテストは相変わらず赤い",
+          "description": "## 今日入れたコミット\n\nc083fd7 で generation_variance.py を追加した。「hold the material fixed, vary only the writing」というコンセプトで、お題やコンテキストといった素材の方は固定しておいて、生成される文章の書き方・スタイルだけを揺らして比較できるようにするベンチマークスクリプトを書いた。ここ自体は今日のうちにやりたかったところまでは書けたと思う。\n\n## でも pytest はまだ赤い\n\nただ、この変更を入れたあとに念のため tests/test_bench_providers.py を流してみたら、前から落ちていた二本がやっぱりまだ落ちていた。generation_variance.py 側の変更で直るような話ではなかったし、実際直っていない。\n\n一本目は test_cli_timeout_is_an_explicit_counted_infra_error。タイムアウトを起こしたときに returncode が 124 になっていることを期待しているテストだけど、実際に返ってきているのは 126。ProviderAttempt の中身を見ると provider='claude', model=None, returncode=126, invocations=0 で、stdout の末尾にはセッション絡みの文字列が入っていて、infra_error には blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run というメッセージが乗っている。つまりこのテストはタイムアウトの分岐を通ることを前提にしているのに、実際にはその手前で headless 実行そのものがガードに引っかかって弾かれている、という状態になっている。\n\n二本目は test_cli_authentication_failure_is_an_explicit_counted_infra_error。こちらは認証失敗を想定して returncode=1 を期待しているテストだけど、これも同じように 126 が返ってきていて、infra_error にはやはり blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run が入っている。挙動としては一本目とほぼ同じ形の失敗に見える。ただこちらではもう一つ、[ERROR] PyYAML not found. `pip install pyyaml`. という、それとは別系統に見えるエラーも出ていて、今日の時点ではこの二つのエラーメッセージがどう繋がっているのか、あるいは繋がっていないのか、まだ自分の中で整理できていない。\n\n## 今の理解と、まだ整理できていないところ\n\n二本とも returncode=126 で、同じ blocked_headless_provider の infra_error を抱えているところを見ると、テストが前提にしている実行経路と、allow_headless_in_cc まわりのガードが実際に刺さる経路が、どこかでずれているんだろうと思う。ただそれで説明できるのは一本目とほぼ同じ形の二本目の 126 の部分までで、そこに乗っている PyYAML not found の方は、素直に読むと別の原因の話に見える。一つの原因ですべてを説明しようとすると、たぶん無理が出る。\n\n今日は generation_variance.py の方に時間を使い切ってしまって、この二本にはまだ手をつけられていない。直したと思って忘れるとまた同じところで躓きそうなので、今日時点でわかっていることと、わかっていないことの境目をここに書いておく。次に見るときは、まず二本のテストがそれぞれ何を前提にしているかを読み直すところからになりそうだ。",
+          "rounds": 1,
+          "score": 72.67,
+          "scores": [
+            72.0,
+            74.0,
+            72.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやエラーメッセージなど具体性は高いものの、一本目・二本目の対比構造が過度に整い、同一のエラー文字列や「まだ整理できていない」「〜に見える」といった慎重な留保表現が反復され、最後に不確実性の境界を明示して締めるという、いかにも「正直な作業ログ風」に整形された文章のため、AI 生成の可能性がやや高いと判断した。"
+        },
+        {
+          "topic": "機械学習",
+          "title": "7/29、41f4f72を積んだ日の記録",
+          "description": "## 7/29、41f4f72を積んだ日の記録\n\n7/29にコミット41f4f72を入れた。メッセージは「test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong」。run-onのマージが12と22というカウントに届くケースのうち、「うまくいっていない側」だけをテストとして先に固定した、という位置づけの一件だった。\n\nこのコミット自体は前に進んだつもりでいる。ただ、これを積んだからといって、以前から赤かったテストが直ったわけではない。tests/test_bench_providers.pyの中の2本、test_cli_timeout_is_an_explicit_counted_infra_errorとtest_cli_authentication_failure_is_an_explicit_counted_infra_errorは、今日もそのまま落ちている。\n\n### タイムアウト側\n\ntest_cli_timeout_is_an_explicit_counted_infra_errorは`assert 126 == 124`で止まる。タイムアウトをinfra_errorとして明示的に124でカウントしたいテストのはずが、返ってきたreturncodeは126。中身のProviderAttemptを見るとprovider='claude', model=None, invocations=0で、elapsed_sは8.360999800061109e-06とほぼ即時。infra_errorには'blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run'という文字列が入っている。待った末にタイムアウトして124になったのではなく、待つ前にヘッドレス呼び出し自体がガードで弾かれて126になっている、というのがこの数字から読み取れることだ。\n\n### 認証失敗側\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_errorも同じ構図で、`assert 126 == 1`。期待の1に対して126、invocations=0、infra_errorは同じく'blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run'、elapsed_sは5.514999884326244e-06。これに加えてこちらのテストにはもう一つ、AssertionError: [ERROR] PyYAML not found. `pip install pyyaml`.というのも出ていて、returncodeの不一致とは別の赤がもう一枚重なっている。\n\n### まだ直っていない\n\n2本とも、狙っていたはずの経路(タイムアウトなら124、認証失敗なら1)に入る前に、allow_headless_in_ccを渡していない呼び出しとしてガードに弾かれている。だとすれば直すべきはガード自体ではなく、テストの呼び出し方か、この呼び出しをpaid runとして扱えるようにする側なのだと思う。ただそこまでの切り分けは今日は終わっていないし、PyYAMLの方の赤が何に起因するのかも見えていない。\n\n41f4f72で一つ前に進んだのは事実だけれど、この2本については今日の時点で何も変わっていない。直っていないものは直っていないと、そのまま書いておく。",
+          "rounds": 1,
+          "score": 76.0,
+          "scores": [
+            78.0,
+            74.0,
+            76.0
+          ],
+          "score_sd": 1.63,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "エラー値やコミットハッシュ等の具体性は高いものの、冒頭タイトルの重複、「〜側」で対を成す整った見出し構成、「同じ構図で」という反復的な接続、そして「直っていないものは直っていないと、そのまま書いておく」という綺麗にまとまりすぎた締めの一文など、実際の作業ログ特有の乱れや脱線を欠いた統制的な文体であり、実データを基にAIが整形して書いた可能性が高い。"
+        },
+        {
+          "topic": "クラウドコンピューティング",
+          "title": "returncode 126 に阻まれたベンチマークテストの記録",
+          "description": "## 7月29日のコミットを見返している\n\n7/29 に 41f4f72 というコミットを積んだ。メッセージは「test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong」というもので、書いた本人のはずの自分が読み返しても、一読して意味が取れない。「12 と 22 に達する run-on merge」が具体的に何を指していたのか、もう思い出せない。それでも「went wrong」の部分だけは妙にはっきり残っている。ベンチマークのテストに関するコミットにこの言い回しを選んだのは、たぶんその時点でまだ pytest が通っていなかったことへの苛立ちが滲み出たのだと思う。実際、通っていない。\n\n## タイムアウトのテストの話\n\ntests/test_bench_providers.py の test_cli_timeout_is_an_explicit_counted_infra_error は、このコミットを積んだ後もまだ落ちている。このテストが期待しているのは returncode が 124 になることで、これはタイムアウトを「明示的にカウント済みのインフラエラー」として扱うためのはずだった。ところが実際に返ってくる ProviderAttempt は returncode=126、provider='claude'、invocations=0 で、infra_error には次の文字列が入っている。\n\n「blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run」\n\nつまりタイムアウトのロジックにたどり着く前に、ヘッドレスなプロバイダ呼び出しをブロックするガードに引っかかっている。allow_headless_in_cc は明示的に許可された有償実行でしか渡してはいけない、という制約に、自分の書いたテストの方が引っかかってしまっている格好になる。124 を期待しているアサーション自体は何も間違っていないのに、その手前で止められている。\n\n## 認証失敗のテストはもう一段面倒\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error も同様に落ちている。こちらが期待する returncode は 1 で、実際に返るのはやはり returncode=126、infra_error も上と同じ blocked_headless_provider のメッセージだった。ここまでならタイムアウトのテストと原因は共通していると片付けられる。ただ、このテストのアサーションにはもう一つ別のエラーが混ざっていて、\n\n「[ERROR] PyYAML not found. `pip install pyyaml`.」\n\nというメッセージも出てきている。ガードで弾かれていることと、PyYAML が見つからないこと、性質の違う二つの理由が同じテストの失敗の中に同居していて、どちらを先に見るべきか自分の中でまだ整理がついていない。片方だけ潰しても、もう片方が残って赤いままになりそうな気がしている。\n\n## 今のところ\n\n二つのテストとも直っていない。blocked_headless_provider のガードそのものは、有償の実行を無許可のヘッドレス経路から動かさないための意図した挙動に見える。ただ、テスト側の実行コンテキストがその制約を踏まえていないので、124 や 1 を期待するアサーションまで処理がたどり着かない。allow_headless_in_cc をテスト実行時にどう扱うかを決めない限り、この二つは同じ壁の前で止まり続ける。PyYAML が見つからないという方はまったく別の話で、こちらはまだ手をつけていない。今日の時点でわかっているのはここまでで、直したという事実はまだない。",
+          "rounds": 1,
+          "score": 74.0,
+          "scores": [
+            72.0,
+            74.0,
+            76.0
+          ],
+          "score_sd": 1.63,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやテスト名、returncode 126 などの具体性は高いものの、各節が同じ長さ・同じ構成（事実提示→「〜のに」「〜という気がしている」といった内省的な締め）で整然と並び、脱線も口語的な崩れも誤字もなく、最終節で全体をきれいに要約し直す構成が定型的で、書き手の苛立ちの描写すら計算された演出に見えるため、おそらく AI 生成と判断した。"
+        },
+        {
+          "topic": "Web開発",
+          "title": "126が返ってくる理由を、まだ直せていない",
+          "description": "## 41f4f72を積んだ日\n\n2026-07-29に41f4f72というコミットを積んだ。コミットメッセージは `test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong`。\n\n自分で書いたメッセージなのに、書いた本人がいちばん信用していない。「12と22に到達する」という部分は良い報告のはずなのに、わざわざ「but only where the work went wrong」と付け足している。要するに、件数が合っているのは壊れている経路の話でしかなくて、そこから先はまだ何も保証していない、という釘を自分に刺すために書いた一文だと思う。\n\n## まだ落ちている2つ\n\n積んだ後にpytestを回しても、tests/test_bench_providers.py の中の2つがまだ落ちている。\n\nひとつは test_cli_timeout_is_an_explicit_counted_infra_error。落ち方は `assert 126 == 124`。中身のProviderAttemptを見ると provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0。elapsed_sがほぼゼロで、invocationsも0。つまりプロバイダを実際に一度も呼び出していない。stdoutは末尾が「...ession」で切れていて、infra_errorには `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` という文字列が入っている。\n\nもうひとつは test_cli_authentication_failure_is_an_explicit_counted_infra_error。こちらは `assert 126 == 1` で落ちる。返ってくるProviderAttemptの形はさっきとほぼ同じで、returncode=126、invocations=0、infra_errorも同じblocked_headless_providerの文言。加えてこの記録には `AssertionError: [ERROR] PyYAML not found.  `pip install pyyaml`.` というもうひとつのAssertionErrorも一緒に残っている。\n\n## 期待している数字と、実際に返ってくる数字\n\nタイムアウトのテストは124を、認証失敗のテストは1を期待している。どちらも「実際に子プロセスを一度動かして、その結果として返ってきたreturncode」を前提にしている数字のはずだ。\n\nでも実際に返ってくるのは両方とも126で、invocationsは0のまま。infra_errorの文言を見る限り、子プロセスがタイムアウトしたり認証に失敗したりする前に、`blocked_headless_provider` というガードの方が先に発火して、そこで止まっている。allow_headless_in_ccを明示的に許可された有償実行以外では渡すな、という趣旨のメッセージなので、テストが用意しているシナリオに辿り着く前に、安全側のチェックに引っかかっているということだと思う。\n\n## PyYAMLの方は別の話として残っている\n\n認証失敗のテストの記録にだけ、PyYAML not foundというもう一つのAssertionErrorが出ている。こちらはガードのロジックとは関係のなさそうな、依存パッケージが足りていないという話に見える。ただ、今の失敗がガードの発火だけによるものなのか、それとも環境側の不足も絡んでいるのか、この記録の時点ではまだ切り分けられていない。両方とも126という同じ数字で落ちているのを見ると、少なくとも表に出ている症状は共通しているように見える。\n\n## 今の状態\n\n41f4f72を積んだ時点で、この2つのテストはどちらもまだ直っていない。件数が「12と22に到達する」ところまでは進んだらしいが、それは自分で書いた通り「work went wrong」の経路の話であって、124や1を返すべきところで126が返ってくる状態は変わっていない。今日はここまでの記録として残しておく。",
+          "rounds": 1,
+          "score": 75.33,
+          "scores": [
+            76.0,
+            74.0,
+            76.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやreturncode、elapsed_sの値など具体的な事実は本物のログ由来に見えるものの、見出しごとに同じ事実（126・invocations=0・blocked_headless_provider）を言い換えて反復し、各段落を「〜だと思う」「〜ように見える」で均質に締め、最後に要約節まで置く構成が説明的で整いすぎており、人間の作業メモ特有の脱線・省略・感情の粗さが欠けているため、データを与えられたAIによる再構成の可能性が高い。"
+        },
+        {
+          "topic": "データベース設計",
+          "title": "41f4f72で潰したはずが、まだ赤いテストが2本残っている",
+          "description": "## 今日のところ\n\n7/29に41f4f72を積んだ。コミットメッセージは「test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong」。自分で書いたはずなのに、後から読み返すと一瞬意味を取り違えそうになる書き方をしている。run-on mergeの結果が12と22というところまでは辿り着いている、ただしそれは「うまくいった方」の話であって、同じ作業の中で壊れたままの部分もある、というつもりで書いた。実際、pytestは今も2件落ちている。マージ自体は進んだが、その足元で数字が合っていないテストが残っている状態。\n\n## test_cli_timeout_is_an_explicit_counted_infra_error\n\nこのテストは、CLI呼び出しがタイムアウトした場合にreturncodeが124として明示的にカウントされることを確認するためのものだった。今回出ているアサーションは assert 126 == 124。中身のProviderAttemptを見ると、provider='claude'、model=None、elapsed_sは8.360999800061109e-06秒でほぼ一瞬、invocationsは0になっている。つまりCLIは実際には一度も動いていない。\n\ninfra_errorの文言は 'blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run'。タイムアウトのシミュレーションに入る前段階で、ヘッドレスprovider呼び出しそのものがガードに弾かれている。124を確認したいテストの手前で、まったく別の理由による126が先に返ってきている形で、ガードの発火条件がこのテストのケースまで拾ってしまっているように見える。\n\n## test_cli_authentication_failure_is_an_explicit_counted_infra_error\n\nこちらは認証失敗時にreturncode 1が明示的にカウントされることを確認するテスト。アサーションは assert 126 == 1で、infra_errorの中身は先ほどとまったく同じ blocked_headless_provider の文言。elapsed_sは5.514999884326244e-06秒で、こちらもほぼ一瞬で終わっている。2つのテストが同じガードに同じ形で引っかかっている。\n\nそれだけでなく、このテストではもう一つ別のエラーも出ている。AssertionError: [ERROR] PyYAML not found. `pip install pyyaml`。認証失敗を確認するテストのはずが、認証とは無関係な場所でPyYAMLが無いと言われている。ガード側の問題と依存関係側の問題が同じ失敗の中に同居していて、どちらを先に潰すべきかまだ整理できていない。\n\n## まだ直っていない\n\n2件とも直っていない。ヘッドレスprovider向けのガードが意図した範囲より広く発火していそうなことと、PyYAML周りの依存が足りていないらしいこと、この2つが絡んだままになっている。今日のコミットで手を入れたのはrun-on mergeの方で、この2件の失敗そのものにはまだ触れていない。次に見るときは、infra_errorが出ている箇所から、どの条件でallow_headless_in_ccが要求されているのかを追うところから始めることになりそうだ。",
+          "rounds": 1,
+          "score": 52.0,
+          "scores": [
+            72.0,
+            72.0,
+            12.0
+          ],
+          "score_sd": 28.28,
+          "human_read": 1,
+          "human_read_rate": 0.333,
+          "reasoning": "個別のコミットハッシュやelapsed_sの浮動小数点値など具体性は高いものの、失敗テストごとに「アサーション→ProviderAttemptの中身→所見」という同型の段落を並べる構成の整然さ、口語的な崩れや脱線・誤記の皆無さ、最後に既出内容を要約し「次はここから追うことになりそうだ」と締める型は、作業ログを素材に生成された文章の特徴が強い。"
+        },
+        {
+          "topic": "リモートワーク",
+          "title": "41f4f72を積んだ日、まだ直っていない2つのテスト",
+          "description": "## 41f4f72を積んだ日\n\n2026-07-29に41f4f72というコミットを積んだ。コミットメッセージは `test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong`。\n\n自分で書いたメッセージなのに、書いた本人がいちばん信用していない。「12と22に到達する」という部分は良い報告のはずなのに、わざわざ「but only where the work went wrong」と付け足している。要するに、件数が合っているのは壊れている経路の話でしかなくて、そこから先はまだ何も保証していない、という釘を自分に刺すために書いた一文だと思う。\n\n## まだ落ちている2つ\n\n積んだ後にpytestを回しても、tests/test_bench_providers.py の中の2つがまだ落ちている。\n\nひとつは test_cli_timeout_is_an_explicit_counted_infra_error。落ち方は `assert 126 == 124`。中身のProviderAttemptを見ると provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0。elapsed_sがほぼゼロで、invocationsも0。つまりプロバイダを実際に一度も呼び出していない。stdoutは末尾が「...ession」で切れていて、infra_errorには `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` という文字列が入っている。\n\nもうひとつは test_cli_authentication_failure_is_an_explicit_counted_infra_error。こちらは `assert 126 == 1` で落ちる。返ってくるProviderAttemptの形はさっきとほぼ同じで、returncode=126、invocations=0、infra_errorも同じblocked_headless_providerの文言。加えてこの記録には `AssertionError: [ERROR] PyYAML not found.  `pip install pyyaml`.` というもうひとつのAssertionErrorも一緒に残っている。\n\n## 期待している数字と、実際に返ってくる数字\n\nタイムアウトのテストは124を、認証失敗のテストは1を期待している。どちらも「実際に子プロセスを一度動かして、その結果として返ってきたreturncode」を前提にしている数字のはずだ。\n\nでも実際に返ってくるのは両方とも126で、invocationsは0のまま。infra_errorの文言を見る限り、子プロセスがタイムアウトしたり認証に失敗したりする前に、`blocked_headless_provider` というガードの方が先に発火して、そこで止まっている。allow_headless_in_ccを明示的に許可された有償実行以外では渡すな、という趣旨のメッセージなので、テストが用意しているシナリオに辿り着く前に、安全側のチェックに引っかかっているということだと思う。\n\n## PyYAMLの方は別の話として残っている\n\n認証失敗のテストの記録にだけ、PyYAML not foundというもう一つのAssertionErrorが出ている。こちらはガードのロジックとは関係のなさそうな、依存パッケージが足りていないという話に見える。ただ、今の失敗がガードの発火だけによるものなのか、それとも環境側の不足も絡んでいるのか、この記録の時点ではまだ切り分けられていない。両方とも126という同じ数字で落ちているのを見ると、少なくとも表に出ている症状は共通しているように見える。\n\n## 今の状態\n\n41f4f72を積んだ時点で、この2つのテストはどちらもまだ直っていない。件数が「12と22に到達する」ところまでは進んだらしいが、それは自分で書いた通り「work went wrong」の経路の話であって、124や1を返すべきところで126が返ってくる状態は変わっていない。今日はここまでの記録として残しておく。",
+          "rounds": 1,
+          "score": 78.0,
+          "scores": [
+            76.0,
+            80.0,
+            78.0
+          ],
+          "score_sd": 1.63,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的な数値やログ断片は豊富だが、見出しごとに同じ事実（126、invocations=0、blocked_headless_provider）を言い換えて反復し、「〜だと思う」「〜ように見える」という同型の推量で各段落を締め、冒頭の一文を結びで再説する構成が定型的で、次に何を試すかという当事者性の欠けた記録要約に見えるため AI 生成の可能性が高い。"
+        },
+        {
+          "topic": "セキュリティ対策",
+          "title": "return code 126 に阻まれて test_cli_timeout / test_cli_authentication_failure が直らない件（2026-07-29時点）",
+          "description": "## 経緯\n\n2026-07-29、コミット 41f4f72 を積んだ。メッセージは \"test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong\" とつけた。\n\n自分で書いたコミットメッセージなのに、いま読み返すと少し嫌な言い方をしている。「12 と 22 に到達する」だけならただの経過報告なのに、わざわざ「but only where the work went wrong」と付け加えている。あの時点ですでに、結合がうまくいっていない部分が残っていると分かっていたということだと思う。\n\n## 直っていない二つ\n\npytest はこのコミットの後も落ちたままになっている。落ちているのは次の二つ。\n\n`tests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_error` は `assert 126 == 124` で止まる。ProviderAttempt の中身を見ると `provider='claude'`、`model=None`、`returncode=126`、`invocations=0`。`infra_error` には `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` が入っていて、`elapsed_s` はほぼ 0（8.360999800061109e-06 秒）。\n\nもう一方の `test_cli_authentication_failure_is_an_explicit_counted_infra_error` も形は同じで、期待値だけが `1` に変わり `assert 126 == 1` になる。ProviderAttempt の中身もほとんど同じで、`elapsed_s` は 5.514999884326244e-06 秒、`infra_error` も一言一句同じ `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` という文字列。ただしこちらにはもう一つ別のアサーションエラーがぶら下がっていて、`[ERROR] PyYAML not found. \\`pip install pyyaml\\`.` という行が出ている。\n\n## 見えていること\n\nこの二つのテストが本来検証したいのは、タイムアウト（124）と認証失敗（1）という、それぞれ別の returncode のはずだった。それなのに両方とも 126 で止まっていて、しかも infra_error の文字列が一言一句同じ `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` になっている。invocations が 0 で elapsed_s がマイクロ秒オーダーというのも共通している。\n\nつまりこの二つは、それぞれが検証したかったはずのシナリオ（タイムアウトが起きる、認証が失敗する）にたどり着く前に、同じ一段手前のガードで弾かれている、という状態を示す値のまま止まっている。124 や 1 を返すはずの経路そのものを、まだ一度も通せていないということになる。\n\nPyYAML が見つからないというエラーが、この 126 の話の原因の一部なのか、それとも別の要因として並んで出ているだけなのかは、この記録からは判断がつかない。少なくとも認証失敗側のテストの出力には、その行がもう一つのアサーションエラーとして残っている。\n\n## 今の状態\n\n41f4f72 の時点で、この二つのテストは直っていない。コミットメッセージにわざわざ書いた「うまくいっていないところ」が、まさにこの二本のテストのことで、書いた時のままの形で残っている。",
+          "rounds": 1,
+          "score": 77.67,
+          "scores": [
+            78.0,
+            80.0,
+            75.0
+          ],
+          "score_sd": 2.05,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的な数値やエラー文字列は豊富だが、同じ infra_error 文字列や「一言一句同じ」という指摘を節をまたいで反復し、既出事実を「見えていること」で言い換えるだけの冗長な再述、均質で抑制された文長・語調、コミットメッセージへの取ってつけたような内省など、与えられたログを整形して膨らませた AI 生成の特徴が強い。"
+        },
+        {
+          "topic": "チーム開発",
+          "title": "41f4f72を積んだ日、pytestの2件はまだ126のまま",
+          "description": "## 41f4f72を積んだ日\n\n2026-07-29に41f4f72というコミットを積んだ。コミットメッセージは `test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong`。\n\n自分で書いたメッセージなのに、書いた本人がいちばん信用していない。「12と22に到達する」という部分は良い報告のはずなのに、わざわざ「but only where the work went wrong」と付け足している。要するに、件数が合っているのは壊れている経路の話でしかなくて、そこから先はまだ何も保証していない、という釘を自分に刺すために書いた一文だと思う。\n\n## まだ落ちている2つ\n\n積んだ後にpytestを回しても、tests/test_bench_providers.py の中の2つがまだ落ちている。\n\nひとつは test_cli_timeout_is_an_explicit_counted_infra_error。落ち方は `assert 126 == 124`。中身のProviderAttemptを見ると provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0。elapsed_sがほぼゼロで、invocationsも0。つまりプロバイダを実際に一度も呼び出していない。stdoutは末尾が「...ession」で切れていて、infra_errorには `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` という文字列が入っている。\n\nもうひとつは test_cli_authentication_failure_is_an_explicit_counted_infra_error。こちらは `assert 126 == 1` で落ちる。返ってくるProviderAttemptの形はさっきとほぼ同じで、returncode=126、invocations=0、infra_errorも同じblocked_headless_providerの文言。加えてこの記録には `AssertionError: [ERROR] PyYAML not found.  `pip install pyyaml`.` というもうひとつのAssertionErrorも一緒に残っている。\n\n## 期待している数字と、実際に返ってくる数字\n\nタイムアウトのテストは124を、認証失敗のテストは1を期待している。どちらも「実際に子プロセスを一度動かして、その結果として返ってきたreturncode」を前提にしている数字のはずだ。\n\nでも実際に返ってくるのは両方とも126で、invocationsは0のまま。infra_errorの文言を見る限り、子プロセスがタイムアウトしたり認証に失敗したりする前に、`blocked_headless_provider` というガードの方が先に発火して、そこで止まっている。allow_headless_in_ccを明示的に許可された有償実行以外では渡すな、という趣旨のメッセージなので、テストが用意しているシナリオに辿り着く前に、安全側のチェックに引っかかっているということだと思う。\n\n## PyYAMLの方は別の話として残っている\n\n認証失敗のテストの記録にだけ、PyYAML not foundというもう一つのAssertionErrorが出ている。こちらはガードのロジックとは関係のなさそうな、依存パッケージが足りていないという話に見える。ただ、今の失敗がガードの発火だけによるものなのか、それとも環境側の不足も絡んでいるのか、この記録の時点ではまだ切り分けられていない。両方とも126という同じ数字で落ちているのを見ると、少なくとも表に出ている症状は共通しているように見える。\n\n## 今の状態\n\n41f4f72を積んだ時点で、この2つのテストはどちらもまだ直っていない。件数が「12と22に到達する」ところまでは進んだらしいが、それは自分で書いた通り「work went wrong」の経路の話であって、124や1を返すべきところで126が返ってくる状態は変わっていない。今日はここまでの記録として残しておく。",
+          "rounds": 1,
+          "score": 79.0,
+          "scores": [
+            74.0,
+            78.0,
+            85.0
+          ],
+          "score_sd": 4.55,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "ログ由来の固有値は極めて具体的だが、各節が「〜と思う」「〜ように見える」で整然と締められ、最終節が既出内容を要約し直すだけで次の手が無いなど、構成の均質さと自省的な言い回しの反復が生成物らしく、おそらく AI 生成と判断した。"
+        }
+      ],
+      "stats": {
+        "mean_chars": 1812.2,
+        "mean_score_sd": 5.21,
+        "sem": 1.84,
+        "human_read_rate": 0.042,
+        "mean_lint": null,
+        "mean_lint_critical": null,
+        "mean": 73.08,
+        "median": 75.66,
+        "min": 52.0,
+        "max": 79.0
+      }
+    },
+    "writer_k12": {
+      "label": "writer, high surplus (12 scraps)",
+      "samples": [
+        {
+          "topic": "Python",
+          "title": "generation_variance.py を積んだ日に、pytestの2件はまだ赤いままだった",
+          "description": "## generation_variance.py を追加\n\nc083fd7 で generation_variance.py を足した。素材(material)は固定したまま、書き方だけを振る、というやつ。同じ入力に対して生成側の書きぶりだけを変えて出力のばらつきを見る、という発想自体は前からあったが、ようやくコードとして残した形。\n\n同じ頃、手元には別件のメモも転がっていた。jp-natural-writing を書き上げた件(a6af6b2)、freewrite と mixed という二つの候補を足した件(afef85c)、skeleton-transplant がヌル結果に終わった件(726b0e2, e5eae8d)、writer_novoice で主観的なコメントを禁止した件(7e7ad87)。どれも「均一さがどこから来るのか」を別の角度から突く話で、今日の本題ではないのでここでは触れるだけにしておく。\n\n## pytest、まだ落ちている\n\n一方で pytest はまだ直っていない。\n\ntest_cli_timeout_is_an_explicit_counted_infra_error は assert 126 == 124 で落ちる。中身の ProviderAttempt を見ると provider='claude', model=None, returncode=126, elapsed_s は 8.360999800061109e-06 秒程度、invocations=0。infra_error は 'blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run' になっている。\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error のほうは assert 126 == 1 で落ちる。infra_error は同じく blocked_headless_provider 系で、returncode もやはり 126。こちらにはもう一つ、[ERROR] PyYAML not found. `pip install pyyaml` という AssertionError も出ている。\n\n二つとも、テストが期待している returncode(124 や 1)ではなく 126 に揃ってしまっている。headless 実行がブロックされて、「明示的に許可された有償実行でない限り通さない」という理由がそのまま returncode に出てきている格好で、タイムアウトや認証失敗として想定していたコードとは別物になっている。invocations=0 ということは、呼び出しそのものの手前で止まっているということでもある。\n\n今日の時点でこの二件は直していない。generation_variance.py の方は「素材を固定して書き方だけ振る」という発想でコードを積んだ日だったのに、pytest の方は逆に「何を固定しても、returncode という一点だけが期待からずれている」状態のまま止まっている。同じ日に片方は前に進み、片方はまったく動かなかった、というだけのことだが、並べて見るとちょっと据わりが悪い。\n\nblocked_headless_provider というガードの文言自体は、意図としては分かる。allow_headless_in_cc を勝手に通すな、有償実行として明示的に許可された場合以外は弾け、という話なのだろう。ただそのガードがテストの想定より先に発火してしまっていて、タイムアウトや認証失敗のシナリオにたどり着く前に止まっている。invocations=0 がそれを裏付けている。PyYAML の方は、もしかすると環境側の話が混ざっているだけかもしれないが、記録の時点ではそこまで切り分けられていない。\n\n## 今の状態\n\n- generation_variance.py: 追加した\n- pytest の2件: まだ赤い\n- 別件のメモ(素材アーム系の計測など): 手元にあるが今回の本題ではない",
+          "rounds": 1,
+          "score": 74.33,
+          "scores": [
+            75.0,
+            76.0,
+            72.0
+          ],
+          "score_sd": 1.7,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやエラー文言など具体性は高いものの、「〜という話/〜という発想/〜という格好で」といった説明的定型の反復、文長・文構造の均質さ、generation_variance と pytest を対比させて締める作為的な対称構造、末尾の「今の状態」箇条書きによるまとめ方が、実務メモの自然な乱れよりも生成物の整形感を強く感じさせる。"
+        },
+        {
+          "topic": "機械学習",
+          "title": "41f4f72を積んだ日、returncodeは126のまま動かなかった",
+          "description": "## 41f4f72を積んだ日\n\n2026-07-29に41f4f72というコミットを積んだ。コミットメッセージは `test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong`。\n\n自分で書いたメッセージなのに、書いた本人がいちばん信用していない。「12と22に到達する」という部分は良い報告のはずなのに、わざわざ「but only where the work went wrong」と付け足している。件数が合っているのは壊れている経路の話でしかなくて、そこから先はまだ何も保証していない、という釘を自分に刺すために書いた一文だと思う。\n\n## まだ落ちている2つ\n\n積んだ後にpytestを回しても、tests/test_bench_providers.py の中の2つがまだ落ちている。\n\nひとつは test_cli_timeout_is_an_explicit_counted_infra_error。落ち方は `assert 126 == 124`。中身のProviderAttemptを見ると provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0。elapsed_sがほぼゼロで、invocationsも0。つまりプロバイダを実際に一度も呼び出していない。stdoutは末尾が「...ession」で切れていて、infra_errorには `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` という文字列が入っている。\n\nもうひとつは test_cli_authentication_failure_is_an_explicit_counted_infra_error。こちらは `assert 126 == 1` で落ちる。返ってくるProviderAttemptの形はさっきとほぼ同じで、returncode=126、invocations=0、infra_errorも同じblocked_headless_providerの文言。加えてこの記録には `AssertionError: [ERROR] PyYAML not found.  \\`pip install pyyaml\\`.` というもうひとつのAssertionErrorも一緒に残っている。\n\n## 期待している数字と、実際に返ってくる数字\n\nタイムアウトのテストは124を、認証失敗のテストは1を期待している。どちらも「実際に子プロセスを一度動かして、その結果として返ってきたreturncode」を前提にしている数字のはずだ。\n\nでも実際に返ってくるのは両方とも126で、invocationsは0のまま。infra_errorの文言を見る限り、子プロセスがタイムアウトしたり認証に失敗したりする前に、`blocked_headless_provider` というガードの方が先に発火して、そこで止まっている。allow_headless_in_ccを明示的に許可された有償実行以外では渡すな、という趣旨のメッセージなので、テストが用意しているシナリオに辿り着く前に、安全側のチェックに引っかかっているということだと思う。\n\n## PyYAMLの方は別の話として残っている\n\n認証失敗のテストの記録にだけ、PyYAML not foundというもう一つのAssertionErrorが出ている。こちらはガードのロジックとは関係のなさそうな、依存パッケージが足りていないという話に見える。ただ、今の失敗がガードの発火だけによるものなのか、それとも環境側の不足も絡んでいるのか、この記録の時点ではまだ切り分けられていない。両方とも126という同じ数字で落ちているのを見ると、少なくとも表に出ている症状は共通しているように見える。\n\n## 今の状態\n\n41f4f72を積んだ時点で、この2つのテストはどちらもまだ直っていない。件数が「12と22に到達する」ところまでは進んだらしいが、それは自分で書いた通り「work went wrong」の経路の話であって、124や1を返すべきところで126が返ってくる状態は変わっていない。今日はここまでの記録として残しておく。",
+          "rounds": 1,
+          "score": 76.0,
+          "scores": [
+            80.0,
+            76.0,
+            72.0
+          ],
+          "score_sd": 3.27,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやreturncode、elapsed_sの生値など具体性は高いものの、各節が同じ「事実の提示→控えめな推測→自己言及的な内省」という型で均質に反復され、自分の作業を「らしい」と伝聞的に語る違和感や、新情報のない「今の状態」の要約節、感情や脱線・崩れのない整いすぎた文体から、記録データを元にAIが再構成した文章の可能性が高いと判断した。"
+        },
+        {
+          "topic": "クラウドコンピューティング",
+          "title": "returncode 126 に阻まれた二つのテスト",
+          "description": "## 12 と 22 まで進んで、そこで止まった\n\n41f4f72 のコミットメッセージに \"run-on merge reaches 12 and 22 — but only where the work went wrong\" と書いた。マージを重ねた回数が12や22まで積み上がったこと自体は別にどうでもよくて、大事なのは後半の \"but only where the work went wrong\" の方だ。要するに、そこまで進めてようやく、どこが壊れているのかが特定できた、というだけのコミットだった。直せた報告ではない。\n\n## 124 のはずが 126 で返ってくる\n\ntest_cli_timeout_is_an_explicit_counted_infra_error が落ちている。このテストが見たいのは、CLI がタイムアウトしたときにそれを infra_error として正しく数えられるか、という一点で、期待している returncode は 124 のはずだった。ところが実際に返ってきているのは 126。ProviderAttempt の中身を見ると provider='claude', model=None, invocations=0 で、肝心の infra_error には blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run と入っている。\n\nつまりタイムアウトのシナリオまで辿り着く前に、ヘッドレスでプロバイダを叩くのを止めるガードの方が先に反応して、そこで即座に落とされている。タイムアウトを infra_error として数えるロジックを検証したいのに、検証対象に到達する手前で別の壁に当たって別の returncode を返してしまっている状態で、これでは何をテストしているのか分からない。allow_headless_in_cc を明示的に渡していないから弾かれている、というところまでは returncode と infra_error の文字列から追えた。\n\n## 認証失敗の方も、同じ壁プラスもう一つ\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error も似たような壊れ方をしていて、こちらは returncode 1 を期待しているのに、やはり 126 が返ってくる。infra_error の文字列も同じ blocked_headless_provider のもので、invocations=0 という数字も同じだった。同じガードに同じように引っかかっている。\n\n厄介なのは、この一件にはもう一段落ちる原因が重なっていることで、[ERROR] PyYAML not found. `pip install pyyaml` という AssertionError も別に出てきている。ガードの問題を仮に解いたとしても、こちらの環境側の欠落がもう一つ残っている、というのが今の理解。二つの原因が同じテストの中で重なっているせいで、片方を直しても緑にならない可能性がある。\n\n## まだ直っていない\n\n29日の時点で、この二つはどちらもまだ直っていない。ガードを迂回する形でテスト側から allow_headless_in_cc を渡すのか、そもそもテストの立て方自体を変えてこのガードに触れないようにするのか、まだ決めていない。PyYAML の欠落についても、依存関係の追加で済む話なのか、テスト環境の作り方に起因する話なのか、まだ切り分けられていない。\n\n同じ日に別件で f3de018 のようなベンチマーク側の作業も動かしていたが、それはこの二つの pytest の話とは別の筋で、ここでは深追いしない。今回残しておきたいのは、merge を重ねて 12 と 22 まで進めた末に見えたのが「直った」ではなく「ここで壊れている」だったこと、そしてその壊れ方が returncode の値と infra_error の文字列という形で具体的に残っている、ということだけだ。",
+          "rounds": 1,
+          "score": 53.0,
+          "scores": [
+            12.0,
+            75.0,
+            72.0
+          ],
+          "score_sd": 29.02,
+          "human_read": 1,
+          "human_read_rate": 0.333,
+          "reasoning": "returncode やコミットハッシュなど具体は豊富だが、各節が「事実→解釈→『〜というだけだ／まだ決めていない』で締める」という同型の型で並び、体言止め的な「〜という形で残っている」「深追いしない」といった整いすぎた総括や均質な長文リズムが目立ち、実作業者特有の脱線・口語的な崩れが乏しいため、AI が作業ログから自然文を再構成したものと推定する。"
+        },
+        {
+          "topic": "Web開発",
+          "title": "126 は 124 にならなかった ― ヘッドレス許可ガードに阻まれた2本の記録",
+          "description": "## 41f4f72 を積んだ日\n\n2026-07-29、コミット 41f4f72 で run-on merge を 12 と 22 まで到達させる変更を入れた。コミットメッセージには but only where the work went wrong と書いた通り、これは成功パスの話ではなく、失敗した箇所を捕まえるためのマージ処理だった。狙いは単純で、CLI 呼び出しが途中で壊れたときに、どこまで merge が進んでその失敗が起きたのかを再現できるようにすることだった。\n\nただ、この変更を入れた後も pytest はまだ赤いままだった。積んだのはテスト側の観測範囲を広げる変更であって、落ちている本体を直す変更ではなかったので、当然と言えば当然なのだが、記録として残しておく。\n\n## 落ちているのは同じ2本\n\ntests/test_bench_providers.py の中の、以下の2つが引き続き落ちている。\n\ntest_cli_timeout_is_an_explicit_counted_infra_error は、タイムアウトを起こしたときに returncode が 124 になることを前提に書いてある。ところが実際に返ってきたのは 126 だった。中身を見ると ProviderAttempt の returncode が 126 で、invocations は 0、infra_error には blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run という文字列が入っている。つまりタイムアウトが発生する段階に到達する前に、ヘッドレスプロバイダのガードに引っかかって止まっている。テストが観測しようとしている「タイムアウトという失敗」そのものではなく、その手前にある別の失敗で止められている格好になる。\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error も同じ形で落ちている。期待している returncode は 1、つまり認証失敗のコードだが、これも返ってきたのは 126 で、infra_error の中身は timeout のケースとまったく同じ blocked_headless_provider の文言だった。しかも同じテストのもう一方のアサーションでは [ERROR] PyYAML not found. `pip install pyyaml`. という、まったく別種のエラーが出ている。1本のテストの下で、落ち方が一つに定まっていない。\n\n## まだ直っていない\n\n2本とも、41f4f72 を積んだ時点でまだ直っていない。timeout 側は returncode 124 を期待して 126 を、authentication failure 側は returncode 1 を期待して 126 を返してきていて、どちらも中身は allow_headless_in_cc を明示的に渡していないことを理由にしたブロックになっている。つまり両方のテストが、本来観測したかった状況、タイムアウトや認証失敗、に到達する前に、同じガードで止められているということだ。\n\nauthentication failure のテストについては、そのガード由来のエラーとは別に PyYAML が見つからないというエラーも記録が残っている。同じテスト名の下で2種類の失敗が出ているということは、実行環境の状態によって落ち方そのものが変わっているということで、まだ切り分けが済んでいない。ガードを緩めれば直るのか、テスト側の前提を allow_headless_in_cc を渡す形に書き換えるべきなのか、それとも PyYAML 側の環境差を先に潰すべきなのか、ここまでの記録だけではどれが正解か決めきれていない。\n\n今のところ、これが7/29時点での状態としてわかっていることの全部で、2本とも赤いままになっている。",
+          "rounds": 1,
+          "score": 79.33,
+          "scores": [
+            78.0,
+            80.0,
+            80.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的なコミットハッシュやエラー文字列は実データ由来に見えるものの、第2節と第3節で「126 が返り allow_headless_in_cc 未指定のガードで止まっている」という同一内容をほぼ言い換えで反復し、末尾を三択の均整のとれた仮説列挙と総括文で締めるなど、実際の作業ログというより素材を再構成した説明文の型が濃く、感情や省略を伴う書き手固有のリズムが乏しいため。"
+        },
+        {
+          "topic": "データベース設計",
+          "title": "41f4f72 を積んでもまだ赤い",
+          "description": "## 41f4f72 を積んでもまだ赤い\n\n7/29 に 41f4f72 を入れた。コミットメッセージは「run-on merge reaches 12 and 22 — but only where the work went wrong」。タイトルの時点で景気のいい話ではないと自分でも分かっていたが、実際に pytest を回すと tests/test_bench_providers.py の2本がまだ落ちている。直った、と書きたかったが今回は書けない。\n\n## test_cli_timeout_is_an_explicit_counted_infra_error\n\n期待しているのは returncode が 124 になることだった。CLI がタイムアウトを起こしたとき、ベンチマークのハーネスがそれを「明示的にカウントされたインフラエラー」として拾えるか、という確認のテストのはず。実際に返ってきたのは 126。\n\nassert 126 == 124\n  where 126 = ProviderAttempt(provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0, stdout=...ession', infra_error='blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run').returncode\n\nelapsed_s が 8.36e-06 秒。これはタイムアウトを起こすほど待っていない時間だ。つまりタイムアウト待ちに入る前に、別の場所で止められている。infra_error の中身がそのまま答えを言っている。blocked_headless_provider。ヘッドレスで claude を叩こうとしたところをガードに先に捕まえられている。\n\n## test_cli_authentication_failure_is_an_explicit_counted_infra_error\n\nもう一本も形は同じ。期待は 1（認証エラーの終了コード）、実際はやはり 126。ProviderAttempt の中身もほぼ同じで、infra_error は同じく blocked_headless_provider、elapsed_s は 5.514999884326244e-06 秒。こちらも即座に弾かれていて、認証を試みる前の段階で止まっている。\n\nさらにこちらでは AssertionError: [ERROR] PyYAML not found. `pip install pyyaml`. という行までログに混ざって出てきた。これが何を指しているのか、正直まだ自分の中で切り分けられていない。テスト対象のアサーションより手前で別の初期化が転んでいるのか、単に表示が入れ子になって流れてきているだけなのか。今の時点では判断材料が足りない。\n\n## 見えてきたこと\n\n二本とも症状は同じだった。allow_headless_in_cc を明示的に渡さない限りヘッドレスでの claude 実行を止めるガードが、テストの想定より先に発火して returncode を 126 に固定してしまっている。テストは本来、そのガードの外側で「タイムアウトなら124」「認証失敗なら1」という分岐が正しく分類されるかを見ようとしているのに、ガードが手前で全部を同じ 126 に潰している。テスト側の書き方が古いのか、ガード側の判定順序が早すぎるのか、まだどちらとも言い切れない。\n\n同じ週には他の作業――アームの計測やドキュメント化――も並行して動いていたが、それは今回の本題ではないのでここには書かない。\n\n## まだ直っていない\n\n41f4f72 を積んだ状態でこれなので、今回のコミットでは直っていない。test_cli_timeout_is_an_explicit_counted_infra_error も test_cli_authentication_failure_is_an_explicit_counted_infra_error も、赤いまま残っている。次に見るときのために、ここに現在地だけ置いておく。",
+          "rounds": 1,
+          "score": 74.33,
+          "scores": [
+            72.0,
+            77.0,
+            74.0
+          ],
+          "score_sd": 2.05,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやログの数値など具体性は高いものの、各節が同じ長さ・同じ「まだ分からない/ここに置いておく」型の内省で締められる均質なリズム、冒頭のタイトル重複、そして「他の作業も動いていたが本題ではないので書かない」という素材を与えられた生成物に典型的な言及回避が見られ、AI が人間的な開発日誌を装って書いた可能性が高い。"
+        },
+        {
+          "topic": "リモートワーク",
+          "title": "マージしても直っていない：headless プロバイダのガードが 126 を返してくる",
+          "description": "## 経緯\n\n7/29 に 41f4f72 をマージした。コミットメッセージには「run-on merge reaches 12 and 22 — but only where the work went wrong」と書いた。取り込んだことで走らせられる範囲は数として広がったのは事実だが、それはもともと壊れていた箇所に限られる、というのを自分への注意書きとして残したつもりだった。実際、マージした直後に手元で pytest を回し直してみると、以前から気になっていた二つのテストがまだ落ちたままだった。マージしたからといって、そのテスト自体の中身に手を入れたわけではないので、当然と言えば当然ではある。ただ、落ちたままの状態を放置して次に進む前に、一度どこで止まっているのかを書き出しておきたかった。\n\n## 落ちているテスト\n\ntests/test_bench_providers.py の test_cli_timeout_is_an_explicit_counted_infra_error は、タイムアウトを模した実行が returncode 124 を返すことを期待している。だが実際に返ってきたのは 126 だった。ProviderAttempt の中身を見ると provider='claude', model=None, invocations=0 で、infra_error に \"blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run\" という文字列が入っている。つまりタイムアウトを起こすはずの分岐にたどり着く前の段階で、ヘッドレスプロバイダをブロックするガードの方が先に発火してしまっている。invocations=0 という数字がそれを裏付けていて、実際にはプロバイダ呼び出しそのものが一度も行われていない。\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error も同じ形で落ちている。期待している returncode は 1 だが、これも 126 が返ってくる。ProviderAttempt の中身はタイムアウト側とほぼ同じで、infra_error の文言も同じ blocked_headless_provider。もう一つ別の AssertionError として \"[ERROR] PyYAML not found. `pip install pyyaml`.\" というものも記録に残っていて、同じテストのはずなのに実行のたびに違う理由で落ちている。ガードの手前で止まる場合と、依存関係が足りずに止まる場合があるということで、原因が一つに絞りきれていない。二つのテストは名前も検証したい内容も別物なのに、失敗の形だけがそろって同じになっているのが、逆に落ち着かない。\n\n## 今の状態\n\nつまりこの二つのテストに関しては、41f4f72 のマージで何かが変わったわけではない。ガードが先回りして 126 を返してしまう以上、124 や 1 を期待しているアサーションにはそもそも届かない。allow_headless_in_cc をどこで明示的に渡すべきなのか、それともテスト側の呼び出し方自体を見直すべきなのか、まだ手をつけられていない。他の作業を進めている間もこの二つだけは同じ場所で止まったままで、直したことにして先に進むのは違うと思ったので、ここに現状だけを書いておく。\n\nマージのコミットメッセージに「but only where the work went wrong」とわざわざ書いたのは、この二つを念頭に置いていたからだった。数が伸びたことと、この二つが直っていないことは、別の話として分けておかないといけない。落ちたままのものは、落ちたままだと記録しておく。",
+          "rounds": 1,
+          "score": 71.33,
+          "scores": [
+            72.0,
+            72.0,
+            70.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやリターンコードなど具体性は高いものの、生ログを貼らず全て整った散文に均し、各段落を内省的な一文で締め、冒頭のコミットメッセージに綺麗に回収する構成や「落ちたままのものは、落ちたままだと記録しておく」といった作り込まれた結語が、実際の作業メモの雑然さより「人間らしさ」を演出した生成文の型に近い。"
+        },
+        {
+          "topic": "セキュリティ対策",
+          "title": "12 と 22 まで進んで見えたのは「壊れている場所」だった",
+          "description": "## マージ後のテスト崩れ\n\n7/29 に 41f4f72 というコミットを切った。マージした結果、テストの通過数自体は 12 とか 22 とか、そのあたりまでは伸びる。ただし、それは壊れている場所に限っての話だ。全体が良くなったわけではなく、悪かった部分がそのまま可視化されただけ、というのが実情に近い。数字だけ見ると前進しているように見えるので、ここは自分でも誤読しないように気をつけたい。通過数が伸びたことと、壊れている箇所が減ったことは、必ずしも同じ意味ではないというのを、このタイミングであらためて確認しておきたかった。\n\n## 直っていない2つ\n\npytest はまだ落ちている。\n\n- tests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_error\n- tests/test_bench_providers.py::test_cli_authentication_failure_is_an_explicit_counted_infra_error\n\n前者は returncode の期待値が 124 なのに、実際には 126 が返ってくる。後者は期待値 1 に対してやはり 126 。どちらも ProviderAttempt の中身を見ると、invocations は 0 で、elapsed_s もほぼゼロに近い値しか記録されていない。つまりプロバイダの処理自体は何も走っていない。infra_error の欄には、許可されていないヘッドレス実行を止めるためのガードに引っかかったことがわかる内容が入っていた。タイムアウトや認証失敗のシナリオを再現しようとした時点で、その手前にあるガードで止まっている、ということらしい。\n\nテストが確かめたかったのは、タイムアウトを infra_error として正しく数えられるか、認証失敗を infra_error として正しく数えられるか、そのはずだった。ところが実際に起きているのは別の話で、手前のガードに止められて 126 が返っているだけだ。期待値と実測値がずれているというより、テストが想定していた経路にそもそも入れていない、という方が正確だと思う。落ちている理由を一言で説明できそうで、実際には説明しきれない類の失敗だった。returncode の数字だけを追いかけていても、ここには辿り着けなかった。invocations が 0 のまま、elapsed_s もほとんど時間が経っていないという事実の方が、returncode の数字よりも手がかりになった。\n\n後者のテストではもうひとつ、PyYAML が見つからないというエラーによる失敗も重なっている。ガードの話とは別系統の失敗で、こちらもまだ直せていない。ふたつの失敗が同じテストの中で並んでいると、どちらから手をつけるべきか一瞬迷うが、少なくとも別々の原因だということだけは分かっている。一つのテストが一つの理由で落ちているとは限らない、というのも今回あらためて思い知らされた点だ。\n\n## 今の状態\n\nというわけで、この時点でもこの2つはまだ直っていないまま残っている。数字の上では前に進んだように見えても、壊れている箇所は壊れているままだ。マージという作業は、進んだ部分と止まっている部分を同時に抱え込むものなのだと、あらためて感じた。全体を眺めているだけでは、この2つのように取り残された場所には気づけない。個別に見に行って初めて、まだ壊れたままだと分かる類のものだった。通過数の伸びだけを見て安心してしまうと、こういう箇所はいつまでも見つからないままになる。直したつもりで直っていないことを、次に触るときのために自分に対して記録しておく。",
+          "rounds": 3,
+          "score": 84.67,
+          "scores": [
+            85.0,
+            82.0,
+            87.0
+          ],
+          "score_sd": 2.05,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやテスト名などの具体的事実は含むものの、各節末が「あらためて〜」型の内省で機械的に締められ、「通過数が伸びた≠壊れた箇所が減った」という同一の主張が言い換えを変えて何度も反復され、文長・構文が均質で結語も中身のない一般論に流れており、ログデータから生成した振り返り文の特徴が濃い。"
+        },
+        {
+          "topic": "チーム開発",
+          "title": "まだ直っていない: ヘッドレスガードに阻まれる2本のinfra_errorテスト",
+          "description": "## マージ後のテスト崩れ\n\n7/29に41f4f72でマージした。コミットメッセージには、通過数自体は12や22あたりまで伸びたが、それは壊れている部分に限っての話だ、という趣旨のことを書いた。数字だけ見れば伸びているように見えるが、実態としては全体が良くなったわけではなく、もともと悪かった部分がそのまま表に出ただけ、という方が近い。マージという作業は往々にして「通ったテストの数」で語られがちだが、今回はその数字の裏側にあるものの方が重要だった。数字が伸びたこと自体を否定するつもりはないが、それをもって「良くなった」と読んでしまうと、残っているものを見落とす。同じ日には他にもベンチ周りの修正コミットがいくつか並んでいて、その中でこの2件だけがずっと赤のまま取り残された形になっている。マージという区切りをつけたことで、逆に何が残っているかがはっきりした、という言い方もできる。区切りをつけなければ、赤のままの2件も他の修正作業に紛れて見えにくかったはずだ。\n\n## 直っていない2つ\n\npytestはまだ落ちている。\n\n- tests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_error\n- tests/test_bench_providers.py::test_cli_authentication_failure_is_an_explicit_counted_infra_error\n\n前者はreturncodeの期待値が124なのに、実際には126が返ってくる。後者は期待値1に対してやはり126だった。数字がずれているというだけなら単純な話だが、ProviderAttemptの中身を見るともう少し根が深いことがわかる。invocationsは0、elapsed_sも数マイクロ秒程度しかなく、プロバイダ側の処理そのものがほとんど走っていない。何かしらの実行が始まって時間切れになった、という筋ではない。infra_errorの欄には、ヘッドレス実行が許可されていない場合に止めるためのガードに引っかかったことを示す内容が入っていた。つまりタイムアウトや認証失敗のシナリオを再現しようとする、その手前の段階で、別のガードに止められている。\n\nこのテストで確かめたかったのは、タイムアウトを、あるいは認証失敗を、infra_errorとして正しく数えられるかという点だったはずだ。ところが実際に起きているのは全然別の話で、ガードに止められて126が返っているだけになっている。期待値と実際の値がずれているというより、テストが想定している経路にそもそも入れていない、と言った方が近い。数字を追いかけて直そうとしても、たぶん的外れになる。returncodeを合わせにいくような修正をしても、根本のガードはそのまま残ってしまう。テストの側を書き換えて数字だけ合わせても、確かめたかったはずの挙動は依然として確かめられていないことになる。\n\n後者のテストにはもう一つ、PyYAMLが見つからない旨のAssertionErrorも出ている。ヘッドレスガードの話とは別系統の失敗らしい。原因が一つでないという時点で、片方だけ直して終わりにはできない。両方をそれぞれ別に潰していく必要があって、そのどちらもまだ手をつけられていない。\n\n## 今の状態\n\nというわけで、この2つはこの時点でもredのまま残っている。直したつもりで直っていないことを、自分に対して記録しておきたかっただけだ。数字の上では前進しているように見える回だからこそ、こういう取り残しはあとで見落としやすい。マージ直後は通過数の方に目が向きがちで、赤のまま残った2件は放っておくとそのまま忘れられかねない。次に触るときのために、どこで何につまずいたのかだけでも、ここに書いておく。",
+          "rounds": 3,
+          "score": 76.67,
+          "scores": [
+            78.0,
+            76.0,
+            76.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやreturncode 126、ProviderAttemptの中身など具体性は高いものの、「〜という方が近い」「〜という言い方もできる」といった同種の言い換えで同じ内容を何度も反復し、マージと数字をめぐる一般論的な省察で段落を埋めている点、全体が均質に整い過ぎて話し言葉の飛躍や省略がない点から、AI生成の可能性が高いと判断した。"
+        }
+      ],
+      "stats": {
+        "mean_chars": 1781,
+        "mean_score_sd": 5.11,
+        "sem": 1.81,
+        "human_read_rate": 0.042,
+        "mean_lint": null,
+        "mean_lint_critical": null,
+        "mean": 73.71,
+        "median": 75.16,
+        "min": 53.0,
+        "max": 84.67
+      }
+    }
+  },
+  "improvement_points": null,
+  "improvement_percent": null,
+  "compared_arm": "writer_k12",
+  "gate_effect_vs_selfrev": null,
+  "success": false
+}

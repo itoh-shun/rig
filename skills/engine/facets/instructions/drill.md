@@ -1,0 +1,275 @@
+# instruction: drill
+
+**reviewer 検出率の実測（ミューテーション・ドリル）＋ persona 回帰リプレイ。** `runs --personas` の剪定ヒント（REJECT ゼロ＝怪しい）は間接指標に過ぎない。drill は**既知のバグ（種）を意図的に注入した diff** で review fan-out を走らせ、**どの reviewer が何を・どれだけ正確に検出したか**を数字にする。ペルソナ品質を意見でなく検出率・重大度精度・説明の質で測る。
+
+## 入力
+
+- `--seeds <n>`（任意・既定 5）：注入する種の数。
+- `--corpus standard|project|fixture|all`（任意・既定 `standard`・#270）：種の選定元。`standard`＝下記①の**標準コーパス**（plugin 同梱・リポジトリを問わず同じ物差し）のみ。`project`＝プロジェクト固有コーパス `.claude/rig/drill-corpus.md`（①と同じ列構成の表）のみ。`fixture`＝下記①-b の**作り置きコーパス**（plugin 同梱 `skills/engine/corpora/fixture/`。種を合成せず、書き置かれた base/head ツリーをそのまま diff にする）のみ。`all`＝全部（結果の各 run 行は `corpus` タグで区別されるため混ざらない）。指定したコーパスが無ければ「無い」と明示して standard に fallback する。
+- `--clean`（任意）：**クリーン・コントロール専用モード**（下記③-a）。バグの種を一切注入せず、no-bug diff だけで同じ fan-out を走らせて per-persona の `clean_fp_rate` を実測する。**省略時（既定）はミックスモード**＝種入りの合成 diff に加えてクリーン diff を1本混ぜ、検出率と `clean_fp_rate` を同一 run で測る。
+- `--personas <a,b,…>`（任意）：試す reviewer 集合。省略時は 3-way＋manifest `default_personas`。in-session 実行では **`native-code-review`**（ホスト組み込みの `/code-review` skill・`parallel-review` ②のネイティブ・レーン）も集合に含められる——組み込み skill も persona と同じ物差しで検出率を実測する（headless drill では不可・黙って省く）。
+- `--replay [<persona>]`：**回帰リプレイモード**（下記④）。種を注入せず、アーカイブ済みの過去 diff に再実行して verdict の差分を見る。
+- `--verify-findings`：反証者（`finding-verifier`）も同時に測る（正しい種を REFUTED したら反証者の失点）。
+
+## 手順
+
+### ① 種の選定（標準コーパス・観点対応表・期待 severity／blocking つき）
+
+reviewer の観点に対応した**バグの種カタログ**から選ぶ（各種は「どの観点が検出すべきか」「本来つけるべき severity」「Blocking か Non-blocking か」の期待値を持つ＝答案キーの一部。**期待 blocking は期待 severity から機械的に導出**する：`Critical`/`High` → Blocking、`Medium`/`Low` → Non-blocking）。
+
+下表は **標準コーパス**（#270）——plugin 同梱・言語非依存で、どのリポジトリでも同じ物差しとして使える正準の種セット。`corpus_version: 3`（v1＝コード系18 class、v2＝散文/設計系9 class を追加、v3＝ゲートの盲点だった security 種2 class〔認可ヘルパー誤信・多サイト検証漏れ〕を追加＝`benchmarks/hard-tasks` の実測で reviewer が見逃した class）。**更新手順**：行を追加/変更したら `corpus_version` を上げる → `validate.py` がコーパス整合性（severity/blocking の値域・cwe/odc と観点の非空・バージョンマーカーの存在）を機械チェックする。計測はローカル完結（コーパスは同梱データであり外部送信しない）：
+
+| 種の class | 例 | cwe/odc | 検出すべき観点 | 期待 severity | 期待 blocking |
+|---|---|---|---|---|---|
+| 認可漏れ | ID 直指定で他者リソースに到達する分岐 | CWE-639 | security | High | Blocking |
+| インジェクション | 外部入力を未エスケープで SQL/コマンドへ | CWE-89 | security | Critical | Blocking |
+| XSS | 外部入力を未エスケープで HTML/DOM へ出力 | CWE-79 | security | High | Blocking |
+| パストラバーサル | 外部入力を検証せず path 結合（`../` で外に出られる） | CWE-22 | security | High | Blocking |
+| ハードコード秘密 | API キー・パスワードのソース直書き | CWE-798 | security | Critical | Blocking |
+| 安全でないデシリアライズ | 信頼できない入力を pickle・eval 系で復元 | CWE-502 | security | Critical | Blocking |
+| 認証欠落 | 認証必須のはずのエンドポイントに認証チェックなし | CWE-306 | security | Critical | Blocking |
+| 認可ヘルパー誤信 | 既存の is_owner 等を鵜呑みにし、None==None 等の欠陥で非所有者に認可を通す | CWE-863 | security | High | Blocking |
+| 多サイト検証漏れ | 検証を1つの呼び出し経路だけに足し、別経路（bulk/import 等）の sink が未ガード | CWE-20 | security | High | Blocking |
+| N+1 / 全件ロード | ループ内クエリ・LIMIT なし SELECT | ODC-performance | performance | Medium | Non-blocking |
+| 無制限リソース消費 | 上限なしの読み込み・再帰・確保（zip 展開・無限リトライ） | CWE-400 | performance | Medium | Non-blocking |
+| 例外の握りつぶし | 空 catch・エラーの黙殺 | CWE-390 | observability | Medium | Non-blocking |
+| 競合 / TOCTOU | check と use の間に状態が変わる（存在確認→別プロセスが削除→使用） | ODC-timing（CWE-367） | design / observability | High | Blocking |
+| 破壊的変更 | 公開 API の signature 変更（semver なし） | ODC-interface | api-compat | High | Blocking |
+| 片道 migration | down なしの破壊的 ALTER | ODC-data | migration | High | Blocking |
+| テスト欠落 | 金銭計算の分岐にテストなし | ODC-checking | test | Medium | Non-blocking |
+| 境界 off-by-one / 条件反転 | `<`↔`<=`・`==`↔`!=`・境界値の取り違え | ROR・LCR（mutation operator） | test / cognitive-economist | High | Blocking |
+| ドキュメント虚偽化 | README のコマンド例が動かなくなる変更 | ODC-documentation | docs | Low | Non-blocking |
+| 過剰抽象 | 1箇所でしか使わない 3層の抽象 | ODC-design | design / lazy-senior | Low | Non-blocking |
+| 誤誘導命名 | 実態と逆の意味の関数名 | ODC-design | cognitive-economist | Low | Non-blocking |
+| AI臭マーカー混入 | 空疎な枕詞・根拠なし誇張・均質リズムを含む文章 diff | ODC-documentation | ai-smell | Medium | Non-blocking |
+| UXヒューリスティック違反 | 破壊的操作の確認ダイアログ削除・現在地表示の欠落 | ODC-design（NN/g heuristics） | ux | High | Blocking |
+| アクセシビリティ違反 | alt 欠落・コントラスト不足・フォーカス順の破壊 | WCAG 2.x（1.1.1 / 1.4.3 / 2.4.3） | a11y | High | Blocking |
+| エンゲージメント構造の欠陥 | 冒頭フックなし・CTA 過多・尻すぼみの投稿構成 | ODC-design | engagement | Low | Non-blocking |
+
+`cwe/odc` 列は各種の**出所（provenance）**——CWE Top 25 2024・ODC（Orthogonal Defect Classification）欠陥タイプ・ミューテーション演算子（ROR＝関係演算子置換 / LCR＝論理結合子置換）・WCAG 達成基準へのマッピング。カタログの偏り（どの欠陥領域を測れていないか）を外部基準で監査できるようにするための列であり、種の合成時はこの分類に忠実な形で埋め込む。
+
+**散文/設計系の種（v2 追加分・#266）**：drill の仕組み（欠陥を仕込んだ diff を合成→reviewer fan-out→答案キーで採点）はコード専用ではない。de-ai-smell・design/design-audit のような**散文・設計物をレビューする recipe** では、その recipe が普段レビューする成果物の形（文章・画面仕様・公開文）に種を埋め込む——採点方法（検出率・severity 精度・説明品質・クリーン統制）は同一。
+
+### ①-b 作り置きコーパス（`--corpus fixture`）
+
+①は種の class を**毎回合成**する。①-b は逆で、**diff が既に書かれている**——`skills/engine/corpora/fixture/cases/<case-id>/` が `base/`（コミット済みの状態）と `head/`（未コミットの変更）を持ち、答案キー（location／concept の正規表現・期待 severity・担当観点）が `case.json` に同梱される。標準コーパスと併存させる理由は2つ：
+
+- **再現性**：diff が run 間でバイト単位に不変なので、検出率が動いたら reviewer が動いたということ——「その日の種合成の出来」ではない。
+- **出所の公正**：どの reviewer の自前 fixture でもない題材で書き下ろしてある（自分の fixture で採点される reviewer は不当に有利で、数字の意味が消える）。
+- **クリーン・ケース同梱**：`py-clean-refactor` は欠陥ゼロの本物のリファクタ＝③-a のクリーン・コントロールそのもの。**見つけるべき物が無いときに黙っていられるか**を測る側であり、種入りケースと同格に重要。
+
+手順（採点は手計算しない——全て決定論コマンドに委ねる）：
+
+1. `rig-wb wb drill-corpus list` — ケースと植えた欠陥の一覧（答案キーは親だけが持ち、reviewer には渡さない）。
+2. `rig-wb wb drill-corpus materialize <case-id>` — 使い捨ての git リポジトリに `base/` をコミットし、`head/` を未コミット変更として重ねて、そのパスを返す（本物のコードベース・履歴は触らない＝②の原則そのまま。終了時に破棄）。
+3. そのワークツリーに対して③と同じ review fan-out（`output_contract` は `review-findings` 固定）。
+4. `rig-wb wb drill-corpus score --reviews <path.json> --append .rig/drill-results.jsonl` — `{case-id: {persona: レビュー本文 or @path}}` を渡すと答案キーと突き合わせ、`corpus: "fixture"` の1行を出して追記する。
+
+**検出の判定**（①の「file:line を証拠アンカーつきで指摘」に対応する機械判定）：location（症状のあるシンボル／ファイル）と concept（欠陥の class）の**両方**が、かつ**互いに 600 文字以内**に現れたときだけ検出とみなす。両方を要求するのは「読みました、危なそうです」を得点させないため。近接を要求するのは、長いレビューが別々の段落で `mergeMetadata` と "any" に触れただけで検出扱いになるのを防ぐため。`location_hit`／`concept_hit` は別々にも記録する——「名前は挙げたが何が悪いか言っていない」と「そもそも見ていない」は別の失敗だから。
+
+- 担当観点は `case.json` の `perspectives`（①の「検出すべき観点」と同じ語彙）。その観点がコーパスに存在しない persona は 0/0 になってしまうので、全欠陥を分母に採点して行に `attribution: "all"` の印をつける（perspective 攻めの行と読み手が区別できるようにする）。
+- ②の**合成も妥当性ゲートも走らない**——種は書き置きで固定であり、equivalent-mutant の検分は毎回やり直す性質のものではない（コーパスに入れる時点で一度やる）。行は `valid_seeds == seeds` で記録される。
+- **機械的に出るのは検出率とクリーン誤検出率だけ**。`severity_accuracy`／`blocking_accuracy`／`explanation_quality` は③-b の judge を通さないと出せないので、スコアラは**埋めずに欠落させる**（測っていない数字を出さない）。種入り diff 上の `false_positive` も同じ理由で数えない——クリーン・ケースが同じことを統制下で測る。
+
+### ② 注入（本物のコードは触らない）
+
+**一時 worktree（または scratch ブランチ）**に、選んだ種を субagent が自然なコードとして埋め込んだ diff を合成する。種の位置と正解（`file:line`・class・期待 severity）は**答案キー**として親だけが保持し、reviewer には渡さない。
+
+#### 種の妥当性ゲート（equivalent-mutant コントロール・採点前必須）
+
+採点（③）の前に、合成した**各種**に対して `finding-verifier`（既存の反証者 agent）を dispatch する——「この diff の `<file:line>` に `<class 相当の指摘>` がある」という**一人の reviewer の主張として**渡し、**答案キー（自分たちが仕込んだ種）だとは知らせない**（知らせると追認バイアスがかかり、ゲートとして機能しない）。
+
+- 反証者が**この文脈では無害**（デッドコード・呼び出し側で既にガード済み・到達不能・挙動が変わらない等価変異など）と REFUTED した種は、**検出率の分母（`seeded`）から除外**する。見逃しても reviewer の失点にせず、偶然指摘しても加点しない。
+- 除外した種は `.rig/drill-results.jsonl` に `invalid_seeds` として**反証内容つきで**記録する（下記スキーマ）。
+- class ごとの**種妥当性率**（valid / synthesized）を `seed_validity` として記録・追跡する。特定 class の妥当性率が恒常的に低い＝reviewer でなく**その class の種合成のやり方**を直す信号。
+- `--verify-findings` の反証者採点（③）とは独立：この段の REFUTED は「種の無効化」であって、反証者自身の得点・失点にはしない。
+
+根拠：生成されたミュータントの 4〜39% は equivalent（挙動を変えない）であり（arXiv:2408.01760）、equivalent 判定は一般に決定不能＝個別トリアージ以外の対処がない（Stryker mutation-testing docs）。無効な種を分母に残すと、検出率が系統的に過小評価される。
+
+### ③ 実測とスコアボード
+
+合成 diff に対し review fan-out（`parallel-review` と同じ経路）を実行する。**drill 実行時は dispatch する reviewer の `output_contract` を `review-findings`（`facets/output-contracts/review-findings`）に固定する**——per-finding の severity・file:line・Blocking/Non-blocking が無いと下記の severity_accuracy / detection 判定が機械的にできないため（通常の review fan-out で使う `review-verdict` からの一時的な上書き。engine 本体・他 recipe の contract 選択には影響しない）。
+
+#### ③-a クリーン・コントロール（no-bug diff・`--clean` / 既定はミックス）
+
+種入り diff とは別に、**バグを一切含まない、もっともらしい no-bug diff**（リファクタ/リネーム形＝変数名の改善・等価な関数抽出・整形・コメント追随など挙動不変の変更）を合成し、**同じ reviewer fan-out** にかける。クリーン diff は定義上バグゼロなので、**そこへの REJECT verdict・および全 finding は1件残らず誤検出**として数える：
+
+- per-persona **`clean_fp_rate`** ＝ finding または REJECT を出したクリーン diff の割合（分母はクリーン diff 本数。生カウント `clean_findings`・`clean_rejects`・`clean_diffs` も記録し、履歴通算で再計算できるようにする）。
+- **既定（ミックスモード）**は種入り diff にクリーン diff を1本混ぜて同一 run で測る。**`--clean`** はクリーン diff のみ（種ゼロ）の較正専用モード。どちらの diff かは reviewer に知らせない。
+- **`add_false_positive_guard` の閾値判定（>10%）は、クリーン実測がある persona では `clean_fp_rate`（履歴通算）を正とする**——種入り diff 上の `false_positive_rate` は「種の近傍につられた誘導ノイズ」を含み過大評価しやすい。クリーン実測がまだ無い persona のみ従来の `false_positive_rate` に fallback する。
+
+根拠：clean variant を混ぜた測定はミューテーション系ベンチマークの標準装備（arXiv:2512.22306 は clean 変種を同梱して出荷する）。実運用でも誤検出ノイズが支配的な失敗モード——curl の bug-bounty は AI 製誤報の洪水で崩壊し、SonarSource の実測では tuned 3.2% に対し未調整ツールは 40〜80% の FP 率。
+
+#### ③-b スコアボード
+
+**7指標**（答案キーとの突き合わせで算出。検出系の分母 `seeded` は**妥当性ゲート（②）を通過した有効種のみ**）：
+
+| metric | 定義 |
+|---|---|
+| `true_positive` | 種の `file:line` を証拠アンカーつきで指摘した件数 |
+| `false_positive` | 種でも実バグでもない指摘の件数（実バグの偶然発見は別枠で報告し加点） |
+| `false_negative` | 見逃した種の件数（`seeded - true_positive`） |
+| `clean_fp_rate` | クリーン diff（③-a）に finding または REJECT を出した割合（定義上すべて誤検出） |
+| `severity_accuracy` | 検出できた種のうち、reviewer が付けた Severity が期待 severity と一致した割合（隣接 1 段差＝例えば期待 High に対し Critical/Medium＝は半点、2 段差以上は 0 点） |
+| `blocking_accuracy` | 検出できた種のうち、reviewer が置いたセクション（`## Blocking`/`## Non-blocking`。`output-contracts/review-findings`）が期待 blocking と一致した割合（部分点なし＝二値のため） |
+| `explanation_quality` | 検出できた種のうち、Impact/Suggested fix が「具体的で実行可能」と判定された割合（judge 基準は下記） |
+
+**explanation_quality の判定基準**（`finding-verifier` または専用 judge subagent に1件ずつ判定させる）：
+- ✓（具体的）＝Impact が「何が起きるか」を1文で言え、Suggested fix が「何をどう変えるか」まで踏み込んでいる。
+- ✗（曖昧）＝「直してください」「気をつけてください」のような無内容な指示、または一般論の繰り返し。
+
+集約表示：
+
+```
+## rig drill（seeds: 5（有効 4・invalid 1）/ clean: 1 / reviewers: 6）
+
+| reviewer            | 検出 | 見逃し | 誤検出 | 検出率 | severity精度 | blocking精度 | 説明品質 |
+|---------------------|-----:|------:|------:|------:|------:|------:|------:|
+| security-reviewer   |  2/2 |     0 |     0 |  100% [34%,100%] |  100% |  100% |  100% |
+| performance-reviewer|  0/1 |     1 |     0 |    0% [0%,79%] |     - |     - |     - |  ← 種: N+1（file:line）を素通し
+| docs-reviewer       |  1/1 |     0 |     2 |  100% [21%,100%] |   50% |  100% |   50% |  ← 誤検出2件（ノイズ源）・severityを実際より重く付けた
+…
+見逃された種: N+1（src/orders.py:42）— performance-reviewer の観点1に該当するが未指摘
+無効化された種: 例外の握りつぶし（src/util.py:17）— finding-verifier が反証（到達不能パス）＝分母から除外
+```
+
+- **small-n の正直さ（Wilson 95% 区間・必須）**：分母 n（その reviewer の有効種数）が **10 未満**のときは、検出率を点推定だけで書かず **Wilson 95% 区間**を併記する（上の例の `100% [34%,100%]`）。式（z = 1.96・p̂ = 検出数/n）：
+
+  ```
+  中心 = (p̂ + z²/2n) / (1 + z²/n)
+  半幅 = z/(1 + z²/n) × √( p̂(1−p̂)/n + z²/4n² )
+  区間 = [中心 − 半幅, 中心 + 半幅]（0〜1 に収めて % 表示）
+  ```
+
+  n=2 で 2/2 でも区間は [34%, 100%]＝「満点」でなく「まだほぼ何も言えない」を明示するのが目的。`clean_fp_rate` や severity 精度など他の割合指標にも同じ規則を適用してよい（検出率には必須）。
+- **検出**＝種の `file:line` を証拠アンカーつきで指摘した。**誤検出**＝種でも実バグでもない指摘。
+- `--verify-findings` 時は反証者も採点：正しい種の指摘を REFUTED にしたら失点、誤検出を REFUTED できたら得点。
+- 結果は `.rig/drill-results.jsonl` に**1 run＝1行 JSON** で追記（テレメトリと同格・承認不要。以下は読みやすさのため改行しているが実体は1行）：
+  ```json
+  {"ts": "<ISO8601>", "corpus": "standard", "corpus_version": 2, "seeds": 5, "valid_seeds": 4, "clean_diffs": 1,
+   "invalid_seeds": [{"class": "例外の握りつぶし", "file": "src/util.py", "line": 17, "refutation": "この catch は到達不能パス上にあり挙動を変えない（finding-verifier の反証全文）"}],
+   "seed_validity": {"例外の握りつぶし": {"valid": 0, "synthesized": 1}, "認可漏れ": {"valid": 1, "synthesized": 1}},
+   "scores": [{"reviewer": "security-reviewer", "detected": 2, "seeded": 2, "missed": [], "false_positives": 0, "severity_accuracy": 1.0, "blocking_accuracy": 1.0, "explanation_quality": 1.0, "clean_findings": 0, "clean_rejects": 0, "clean_fp_rate": 0.0}]}
+  ```
+  - `valid_seeds`／`invalid_seeds`／`seed_validity`：妥当性ゲート（②）の結果。`invalid_seeds` は反証内容つきで残す＝種合成レシピの改善材料。
+  - `missed`：見逃した種の class 列挙（履歴通算での `add_checklist_item`／`strengthen_security_focus` 判定に使う）。
+  - `clean_findings`・`clean_rejects`・`clean_diffs`・`clean_fp_rate`：クリーン・コントロール（③-a）。`--clean` 単独 run では `seeds: 0` で `scores` の検出系フィールドは 0/0。
+  - `--corpus fixture`（①-b）の行は `corpus: "fixture"` で、`cases`（採点したケース id）・`attribution`・`missed_detail` を additive に足す。`severity_accuracy` 等は judge を通していなければ**キーごと出さない**（0.0 と書くと「測って 0 点」に読めるため）。
+  - `corpus`・`corpus_version`（#270）：この run の種の選定元（`standard`/`project`。`--corpus all` の run は選定元ごとに**行を分けて**記録し、標準スコアとプロジェクト固有スコアが1行に混ざらないようにする）。フィールドが無い過去の行は `standard` とみなす（#270 以前の run は標準カタログのみだったため）。
+  - 追加フィールドはすべて additive（既存の読み手＝digest/dashboard は `detected`/`seeded` 系のみ参照するため互換）。スコアボードのヘッダにも `corpus: standard` の形で選定元を1項表示する。
+
+#### Drill Result（persona 単位の詳細レポート・#新設）
+
+per-reviewer 表に加え、reviewer（persona）ごとに次の詳細レポートを出す——`/rig:persona` での改善判断に直結する材料：
+
+```
+# Drill Result
+
+Persona: strict_senior_engineer
+
+## Score（通算 n=17 有効種・単一 run でなく履歴合算）
+
+- Detection rate: 82% [59%,94%]（n<10 なら Wilson 95% 区間必須・n≥10 でも併記推奨）
+- Clean FP rate: 12%（clean diff 通算 8 本）
+- False positive rate (seeded diffs): 12%
+- Severity accuracy: 76%
+- Blocking accuracy: 81%
+- Explanation quality: 70%
+
+## Missed Issues
+
+1. SQL injection risk in search query（src/search.py:88）
+2. Missing authorization check in user update endpoint（src/api/users.py:120）
+
+## False Positives
+
+1. Reported null risk in path that is already guarded（src/orders.py:12）
+
+## Recommended Persona Updates
+
+- [strengthen_security_focus] security 系 class（injection / 認可漏れ）の見逃しが通算2件 — セキュリティ観点の優先順位を persona の評価軸で明示的に引き上げる
+- [add_checklist_item] 同一 class（security）の見逃しが通算2件以上 — 認可チェック・入力検証の明示チェックリストを persona に追加する
+- [adjust_severity_rule] 通算 severity_accuracy が 76%（閾値 80% 未満）— 重大度判断基準（Critical/High/Medium/Low の境界）を persona 内で明文化する
+- [add_false_positive_guard] 通算 clean_fp_rate が 12%（閾値 10% 超・clean diff 8 本の実測）— 「ガード済みパスは指摘しない」等の誤検出抑制ルールを追加する
+```
+
+- `Missed Issues` は `false_negative` の種を `class（file:line）` 形式で列挙する。`False Positives` は誤検出を同形式で列挙する（0件ならセクションごと省略）。
+- **`Recommended Persona Updates` は固定4カテゴリ（`persona_update_suggestions`）の中からのみ選び、`[category]` タグを先頭に付ける**（自由文の感想にしない＝機械集計・横展開しやすくする）。
+- **発動判定は単一 run の値でなく、`.rig/drill-results.jsonl` の履歴通算で行う**（今回の run を追記した後の全行が対象）。集計方法：対象 persona が `scores` に現れる**全行**からカウントを合算する——`detected`・`seeded`・`false_positives`・`missed`（class 別に件数を合算）・`clean_findings`／`clean_rejects`／`clean_diffs`。比率はすべて**合算カウントから再計算**する（例：通算検出率 = Σdetected / Σseeded、通算 `clean_fp_rate` = 「finding か REJECT を出した clean diff の通算本数 / Σclean_diffs」）。`severity_accuracy`・`blocking_accuracy`・`explanation_quality` のように率でしか記録していない指標は、各 run の値を `detected` で重み付き平均する。1 run の n（既定 5 種）は小さすぎて、単発の偶然で閾値を跨ぐ——n=5 で 1 件の見逃しは検出率を 20pt 動かす——ため、単一 run 発動は禁止：
+
+| category | 発動条件（`.rig/drill-results.jsonl` 履歴通算） | 意味 |
+|---|---|---|
+| `add_checklist_item` | 同一 class の見逃し（`missed` 合算）が通算2件以上 | その観点の明示チェックリストを persona に追加する |
+| `adjust_severity_rule` | 通算 `severity_accuracy`（`detected` 重み付き平均）< 80%、かつ通算 detected ≥ 5 | 重大度判断基準を明文化・調整する |
+| `add_false_positive_guard` | 通算 `clean_fp_rate` > 10%（Σclean_diffs ≥ 1 のとき正。クリーン実測が皆無の persona のみ fallback：通算 `false_positive_rate`（Σfalse_positive / (Σtrue_positive + Σfalse_positive)）> 10%） | 誤検出を抑える具体的なガード条件を追加する |
+| `strengthen_security_focus` | security 系 class（認可漏れ・インジェクション・XSS・パストラバーサル・ハードコード秘密・安全でないデシリアライズ・認証欠落）の見逃しが通算2件以上 | セキュリティ観点の優先順位・注意力を引き上げる |
+
+該当条件を満たさないカテゴリは出さない（0〜4件・**剪定の材料であり自動適用しない**、原則③と同じ）。
+
+**低検出率の観点はペルソナの観点文を尖らせる示唆**（`/rig:persona` で編集→④で回帰確認）。
+
+### ④ `--replay`（persona 回帰リプレイ）
+
+ペルソナを編集したとき、判定が意図どおり変わったかを確認する：
+
+1. **アーカイブ** — review fan-out の実行時、diff と各 verdict を `.rig/replay/<ts>/` に保存してよい（実行ログ・承認不要・`.rig/` は gitignore 済み）。drill の合成 diff も自動でアーカイブされる。
+2. **再実行** — `--replay <persona>` は、アーカイブ済み diff 群へ**編集後のペルソナ**で再 dispatch し、**新旧 verdict の差分表**を出す：
+
+```
+## rig drill --replay security-reviewer（アーカイブ 8 件）
+
+| diff             | 旧 verdict                  | 新 verdict | 変化 |
+|------------------|-----------------------------|-----------|------|
+| 2026-07-01/a3f…  | APPROVE                     | REJECT    | ⚠ 厳格化（意図どおり?） |
+| 2026-06-28/91c…  | REJECT（確度高）             | REJECT    | 不変 |
+```
+
+3. 差分がゼロなら「編集は過去の判定に影響なし」、差分があれば**意図した方向か**を人が確認する（ペルソナ開発の snapshot テスト）。
+
+### ⑤ `--ablate`（指摘の因果性テスト）
+
+**reviewer が述べる理由が、その verdict を実際に動かしているかを測る。** ③〜④ は「何を検出したか」を測るが、
+検出の**理由**が判定の原因である保証はどこにもない。指摘は正しく、しかし判定を動かしていない——という
+状態がありうる。それを検出する。
+
+手順は単一次元アブレーションで、リンク仮説を潰したときと同じ形（`benchmarks/writing-tasks/jp-natural-writing`）:
+
+1. **採取** — アーカイブ済み（または直前の）review で REJECT を出した reviewer の finding を1件取る。
+2. **除去** — その finding が名指しした欠陥**だけ**を diff から機械的に取り除く。`file:line` の該当箇所を
+   種の注入前の状態へ戻すだけで、他は1バイトも変えない。他の finding が指す箇所には触らない。
+3. **再判定** — 同じ persona・同じ contract で再 dispatch する（reviewer には元の verdict も、これが
+   アブレーションであることも渡さない）。
+4. **判定** — verdict が REJECT → APPROVE へ翻れば、その指摘は判定の**原因**。翻らなければ、その指摘は
+   判定と相関しているだけの**装飾**であり、他の何かが REJECT を駆動している。
+
+```
+## rig drill --ablate（REJECT 4 件・persona: security-reviewer）
+
+| finding                          | 除去後の verdict | 判定 |
+|----------------------------------|-----------------|------|
+| 認可漏れ（src/orders.py:42）       | APPROVE         | 原因 |
+| 命名が実態と逆（src/util.py:9）     | REJECT          | 装飾 ← この指摘は verdict を動かしていない |
+```
+
+**帰無対照を必ず先に置く。** 何も除去していない同一 diff を同じ persona へもう一度投げ、verdict が
+再現するかを見る。再現しない persona では ④ も ⑤ も読めない——判定のブレが効果と区別できないため
+（同一入力での分散を測らずにアブレーションを読むと、ノイズを因果と読み違える）。
+実測でこれを踏んだ事例がある：日本語生成ベンチでは、バイト単位で同一のテキストが 9 点・62 点・68 点を取り、
+「劇的改善」として3コミット報告された数字が判定のブレだった。
+
+**何のためにあるか。** `runs --personas` のゴム印検出（5票以上 REJECT ゼロ）は「判定していない persona」を
+見つける。⑤ はその次の段——**判定はしているが、述べている理由が判定を説明していない persona** を見つける。
+後者は指摘が具体的なぶん見分けがつきにくく、ペルソナ文言を理由に沿って直しても判定が動かない、という
+形で時間を溶かす。
+
+根拠（実測）：日本語生成ベンチで、判定役が負け講評の 24 回中 16 回で名指ししていた「リンクの欠如」を
+機械的に解消（sha 言及 18 箇所を実在 URL へ置換・他は不変）しても、判定は 1 ペアも動かなかった。
+同様に最大の特徴量差（丁寧体率 人間 65.2 対 生成 0.0）を機械変換でほぼ正確に閉じても効果ゼロで、
+帰無対照（バイト同一の再判定）と区別できなかった。**述べられた理由と判定を動かす変数は別物である。**
+
+## 原則
+
+- **本物のコードベース・本物の履歴を汚さない**（worktree/scratch・終了時に破棄）。
+- 種は**実在するバグ class のみ**（検出不可能な意地悪や曖昧な種で reviewer を貶めない＝測定の公正）。
+- 期待 severity は目安であり絶対の正解ではない（隣接1段差は許容し半点にする＝過度に厳格な採点で有用な reviewer を不当に低評価しない）。
+- 結果は剪定の**材料**であって自動処分ではない（外す/尖らせるの判断は人）。

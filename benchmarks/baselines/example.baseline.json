@@ -1,0 +1,115 @@
+{
+  "baseline_schema_version": 1,
+  "integrity_sha256": "f20a76e91bbd10032b2da1fe908c19810435bc6e5ece8aad187b87786c8474ec",
+  "provenance": {
+    "format": "rig-wb-benchmark-v2",
+    "normalized_evidence": [
+      {
+        "cost_usd": null,
+        "elapsed_s": 1.0,
+        "invocation_count": 2,
+        "mode": "rig",
+        "model": "mock",
+        "outcome": "clean_pass",
+        "pair_id": "fixture-task-1",
+        "provider": "mock",
+        "task_id": "fixture-task",
+        "token_usage": null
+      },
+      {
+        "cost_usd": null,
+        "elapsed_s": 1.0,
+        "invocation_count": 2,
+        "mode": "rig",
+        "model": "mock",
+        "outcome": "clean_pass",
+        "pair_id": "fixture-task-2",
+        "provider": "mock",
+        "task_id": "fixture-task",
+        "token_usage": null
+      },
+      {
+        "cost_usd": null,
+        "elapsed_s": 1.0,
+        "invocation_count": 2,
+        "mode": "rig",
+        "model": "mock",
+        "outcome": "clean_pass",
+        "pair_id": "fixture-task-3",
+        "provider": "mock",
+        "task_id": "fixture-task",
+        "token_usage": null
+      }
+    ],
+    "source_score": {
+      "reasons": [
+        "mock fixture: wiring only"
+      ],
+      "verdict": "inconclusive"
+    }
+  },
+  "scorecard": [
+    {
+      "calls": {
+        "mean_per_valid_sample": 2.0,
+        "status": "measured"
+      },
+      "cost": {
+        "reason": "no complete provider pricing or billed cost in valid source evidence",
+        "status": "unmeasured"
+      },
+      "elapsed_s": {
+        "p50": 1.0,
+        "p95": 1.0,
+        "status": "measured"
+      },
+      "invalid_sample_rate": 0.0,
+      "invalid_samples": 0,
+      "mode": "rig",
+      "model": "mock",
+      "provider": "mock",
+      "safe_stop_rate": 0.0,
+      "sample_status": "sufficient",
+      "samples": 3,
+      "silent_defect_rate": 0.0,
+      "task_id": "fixture-task",
+      "task_success_rate": 1.0,
+      "tokens": {
+        "reason": "valid arms do not consistently record token usage",
+        "status": "unmeasured"
+      },
+      "valid_samples": 3
+    }
+  ],
+  "source": {
+    "bare_model": "mock",
+    "bench_schema_version": 2,
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "corpus_version": 1,
+    "fresh_until": "2026-10-30T00:00:00+00:00",
+    "generated": "2026-08-01T00:00:00+00:00",
+    "model": "mock",
+    "path": "benchmarks/baselines/example-bench.json",
+    "provider": "mock",
+    "provider_version": "built-in mock",
+    "quality_evidence": false,
+    "quality_evidence_reason": "mock provider is wiring-only evidence",
+    "recipe": "adaptive-bugfix",
+    "recipe_version": 1,
+    "rig_model": "mock",
+    "rig_wb_version": "example",
+    "score_verdict": "inconclusive"
+  },
+  "thresholds": {
+    "freshness_days": 90,
+    "max_calls_mean_ratio": 1.25,
+    "max_cost_total_ratio": 1.25,
+    "max_elapsed_p95_ratio": 1.25,
+    "max_invalid_sample_rate_increase": 0.0,
+    "max_safe_stop_rate_increase": 0.05,
+    "max_silent_defect_rate_increase": 0.0,
+    "max_task_success_rate_drop": 0.05,
+    "max_tokens_total_ratio": 1.25,
+    "min_samples_per_identity": 3
+  }
+}

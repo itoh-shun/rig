@@ -76,8 +76,14 @@ def _record_trust(path: pathlib.Path, digest: str) -> None:
 
 def _is_project_recipe(path: pathlib.Path) -> bool:
     try:
-        overlay = config.PROJECT_RECIPES.resolve()
-        return path.resolve().is_relative_to(overlay)
+        resolved = path.resolve()
+        overlays = (
+            config.PROJECT_RECIPES.resolve(),
+            (config.INVOCATION_CWD / ".rig" / "recipes").resolve(),
+            (config.INVOCATION_CWD / ".claude" / "rig" / "recipes").resolve(),
+            (config.INVOCATION_CWD / ".rig" / "packs").resolve(),
+        )
+        return any(resolved.is_relative_to(overlay) for overlay in overlays)
     except OSError:
         return False
 
@@ -243,17 +249,53 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
             warnings.append(f"extends: inheritance depth limit {EXTENDS_MAX_DEPTH} exceeded "
                             f"(ignoring '{parent_name}' and beyond). Keep chains shallow for cognitive economy")
             return chain
-        parent_path = None
+        from rig_workbench.packs.resolver import resolve_bound_asset
+        bound_parent = resolve_bound_asset(
+            "recipe", parent_name, current_path, project=config.INVOCATION_CWD
+        )
+        parent_path = bound_parent.path if bound_parent is not None else None
         fname = f"{parent_name}.md"
-        for base in (current_path.parent, config.PROJECT_RECIPES, config.RECIPES):
-            cand = base / fname
-            if cand.exists():
-                parent_path = cand
-                break
+        if bound_parent is None:
+            for base in (current_path.parent,):
+                cand = base / fname
+                if cand.exists():
+                    parent_path = cand
+                    break
+        if bound_parent is None and parent_path is None:
+            # Preserve legacy project overlays as explicit resolver sources.
+            # A monkeypatched PROJECT_RECIPES is authoritative in tests and in
+            # embedders; the conventional .rig/.claude locations remain
+            # backward compatible. Trust is applied below to every hit.
+            for base in dict.fromkeys((
+                config.PROJECT_RECIPES,
+                config.INVOCATION_CWD / ".rig" / "recipes",
+                config.INVOCATION_CWD / ".claude" / "rig" / "recipes",
+            )):
+                candidate = base / fname
+                if candidate.is_file():
+                    parent_path = candidate
+                    break
+        if bound_parent is None and parent_path is None:
+            from rig_workbench.packs.resolver import resolve_asset
+            resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD)
+            parent_path = resolved.path if resolved is not None else None
         if parent_path is None:
             warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
             return chain
-        ensure_recipe_trusted(parent_path)
+        # An installed pack recipe is governed by the pack-asset trust store,
+        # including when an `extends` parent is found beside the child.  Do not
+        # accidentally send it through the legacy project-recipe consent gate.
+        from rig_workbench.packs.resolver import resolve_asset
+        from rig_workbench.packs.trust import ensure_asset_trusted
+        resolved_parent = bound_parent or resolve_asset(
+            "recipe", parent_name, project=config.INVOCATION_CWD
+        )
+        if (resolved_parent is not None
+                and resolved_parent.path.resolve() == parent_path.resolve()
+                and resolved_parent.pack_id is not None):
+            ensure_asset_trusted(resolved_parent)
+        else:
+            ensure_recipe_trusted(parent_path)
         parent_fm = parse_frontmatter(parent_path)
         chain.append((parent_name, parent_fm))
         visited.add(parent_name)
@@ -718,6 +760,19 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     if "--capture" in fset and "--no-capture" in fset:
         warnings.append("--capture and --no-capture both specified: --no-capture wins (§7.3)")
 
+    from .gates import validate_executable_steps
+    declared_no_orchestrate = fm.get("no_orchestrate", False)
+    effective_no_orchestrate = (
+        declared_no_orchestrate
+        if not isinstance(declared_no_orchestrate, bool)
+        else declared_no_orchestrate or "--no-orchestrate" in fset
+    )
+    execution = validate_executable_steps(
+        steps,
+        no_orchestrate=effective_no_orchestrate,
+    )
+    errors.extend(item for item in execution["errors"] if item not in errors)
+
     plan.update({
         "flags": sorted(fset),
         "size": {"diff_lines": diff_lines, "class": size},
@@ -725,6 +780,7 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
         "effective_steps": [s["id"] for s in steps if s["active"]],
         "slice": {"only": only, "from": frm, "to": to, "skip": skips},
         "mode": mode,
+        "execution": execution,
         "warnings": warnings,
         "errors": errors,
     })
@@ -738,6 +794,8 @@ def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
     resolved_fm, warnings = resolve_extends(fm, recipe_path)
     raw_steps = [s for s in (resolved_fm.get("steps") or []) if isinstance(s, dict)]
     steps = load_steps(resolved_fm)
+    from .gates import validate_executable_recipe
+    execution = validate_executable_recipe(resolved_fm)
     for s, raw in zip(steps, raw_steps):
         s["origin"] = raw.get("_origin")
     return {
@@ -748,16 +806,23 @@ def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
         "steps_field": derive_steps_field(steps),
         "n_steps": len(steps),
         "steps": steps,
+        "execution": execution,
         "warnings": warnings,
+        "errors": list(execution["errors"]),
     }
 
 def resolve_recipe(name: str) -> pathlib.Path:
     """Resolve a recipe.
-    Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/rig/recipes/<name>.md (built-in).
+    Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/engine/recipes/<name>.md (built-in).
     An overlay with the same name as a built-in wins, so project-specific recipes can override."""
     p = pathlib.Path(name)
     if p.exists():
         return ensure_recipe_trusted(p)
+    from rig_workbench.packs.resolver import resolve_asset
+    from rig_workbench.packs.trust import ensure_asset_trusted
+    resolved = resolve_asset("recipe", name.removesuffix(".md"), project=config.INVOCATION_CWD)
+    if resolved is not None:
+        return ensure_asset_trusted(resolved)
     fname = name if name.endswith(".md") else f"{name}.md"
     bases = [config.PROJECT_RECIPES]
     org = os.environ.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")

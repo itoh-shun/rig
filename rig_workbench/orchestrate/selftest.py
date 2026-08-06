@@ -19,7 +19,7 @@ from .queueing import (_local_load, _queue_relabel_args, queue_add, queue_list,
                        queue_set_status)
 from .isolate import setup_isolation, teardown_isolation
 from .graph import build_brick_graph
-from .commands import _current_running, cmd_party, cmd_resume, cmd_runs
+from .commands import _current_running, cmd_resume, cmd_runs
 
 # ── Determinism selftest ──────────────────────────────────────────────────────
 def _drive(steps, script):
@@ -337,30 +337,6 @@ def cmd_selftest(_args):
            r_s_orch["mode"]["orchestrate"].startswith("auto"), True)
     report("S git_diff_lines never crashes; returns int|None", isinstance(git_diff_lines(), (int, type(None))), True)
     report("S load_manifest always returns a dict", isinstance(load_manifest(), dict), True)
-    # V: party roster screen (party) renders the RPG sheet from runs/drill
-    _orig_drill = config.DRILL_PATH
-    config.RUNS_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_party_runs.jsonl"
-    config.DRILL_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_party_drill.jsonl"
-    config.RUNS_PATH.write_text(json.dumps({
-        "ts": "t", "recipe": "review-only", "backend": "orchestrate", "final": "DONE",
-        "steps_total": 1, "steps_passed": 1, "retries": 0, "escalated_at": None,
-        "steps": [{"id": "review", "status": "passed", "retries": 0,
-                   "verdicts": [{"by": "mock:security-reviewer", "ok": False}]}]}) + "\n",
-        encoding="utf-8")
-    config.DRILL_PATH.write_text(json.dumps({
-        "ts": "t", "scores": [{"reviewer": "security-reviewer", "detected": 2,
-                               "seeded": 2, "false_positives": 0}]}) + "\n", encoding="utf-8")
-    buf_v = io.StringIO()
-    with contextlib.redirect_stdout(buf_v):
-        cmd_party([])
-    v_out = buf_v.getvalue()
-    config.RUNS_PATH.unlink(missing_ok=True)
-    config.DRILL_PATH.unlink(missing_ok=True)
-    config.RUNS_PATH = _orig_runs
-    config.DRILL_PATH = _orig_drill
-    report("V party: renders Lv and achievements", "Lv.1" in v_out and "🏆 First DONE" in v_out, True)
-    report("V party: reflects drill detection rate and sorties/REJECT",
-           "detection 100% (drill 2/2)" in v_out and "sorties   1 / REJECT 1" in v_out, True)
     # U: mixed-model quorum (same persona across multiple providers; votes are provider:persona)
     stepsU = [s(id="review", gate="review-gate", personas=["x"])]
     stateU1 = new_state("mq", stepsU, None)
@@ -559,7 +535,7 @@ def cmd_selftest(_args):
     # ── Scenario FM: failure-mode taxonomy (deterministic classification from state) ──
     # classify_failure gives a reproducible MAST-style code from run-state alone:
     # a self-graded stop (BLOCKED) and a K-exhausted stop (ESCALATE) map to fixed codes;
-    # a successful run carries no failure mode. See skills/rig/patterns/failure-taxonomy.md.
+    # a successful run carries no failure mode. See skills/engine/patterns/failure-taxonomy.md.
     _, stFM_self = _drive([s(id="review", gate="review-gate")],
                           [("next", None), ("verdict", ("self", True)), ("next", None)])
     _, stFM_kx = _drive([s(id="verify", gate="acceptance-gate", checks=["false"], max_retries=2)],

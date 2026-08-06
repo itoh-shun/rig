@@ -6,6 +6,7 @@ while nothing is read from or written to the real repo's .rig/ state.
 
 import base64
 import csv
+import datetime as dt
 import hashlib
 import importlib.metadata
 import io
@@ -88,8 +89,50 @@ def _venv_rig_wb(root):
     return root / ("Scripts/rig-wb.exe" if os.name == "nt" else "bin/rig-wb")
 
 
+def _distribution_files(distribution):
+    """List a distribution's installed files relative to its site directory.
+
+    `distribution.files` is None whenever the install ships no RECORD, which is
+    how distro-packaged dependencies land (Debian's PyYAML in dist-packages).
+    Fall back to the top-level names the metadata declares, plus the metadata
+    directory itself, so the copy stays as faithful as the RECORD-driven path.
+    """
+    recorded = distribution.files
+    if recorded is not None:
+        return [pathlib.Path(str(item)) for item in recorded]
+    site_dir = pathlib.Path(distribution.locate_file(""))
+    project = distribution.metadata["Name"].casefold().replace("-", "_")
+    declared = (distribution.read_text("top_level.txt") or "").split()
+    roots = []
+    for name in declared or [project]:
+        roots.append(site_dir / name)
+        roots.extend(site_dir.glob(f"{name}.*"))
+    roots.extend(
+        path
+        for path in site_dir.iterdir()
+        if path.suffix in {".dist-info", ".egg-info"}
+        and path.name.casefold().replace("-", "_").startswith(f"{project}_")
+    )
+    discovered = []
+    for candidate in roots:
+        if candidate.is_dir():
+            discovered.extend(
+                path.relative_to(site_dir)
+                for path in candidate.rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            )
+        elif candidate.is_file():
+            discovered.append(candidate.relative_to(site_dir))
+    return discovered
+
+
 def _provision_distributions_offline(root, requirements):
-    """Copy the wheel-declared dependency closure from the host's offline environment."""
+    """Copy the wheel-declared dependency closure from the host's offline environment.
+
+    A host may legitimately lack a declared runtime dependency — CI installs only
+    what the suite itself needs, deliberately omitting `cryptography`. Copy what is
+    present; the probe below still fails loudly if the wheel needs what is absent.
+    """
     destination_site = (
         root / "Lib" / "site-packages"
         if os.name == "nt"
@@ -106,13 +149,15 @@ def _provision_distributions_offline(root, requirements):
         if normalized in copied:
             continue
         copied.add(normalized)
-        distribution = importlib.metadata.distribution(name)
+        try:
+            distribution = importlib.metadata.distribution(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
         pending.extend(Requirement(item) for item in distribution.requires or ())
-        for relative in distribution.files or ():
-            relative_path = pathlib.Path(str(relative))
+        for relative_path in _distribution_files(distribution):
             if ".." in relative_path.parts:
                 continue
-            source = pathlib.Path(distribution.locate_file(relative))
+            source = pathlib.Path(distribution.locate_file(relative_path))
             if not source.is_file():
                 continue
             destination = destination_site / relative_path
@@ -199,6 +244,460 @@ def _build_wheel_offline(root):
         writer.writerows([*records, (record_name, "", "")])
         archive.writestr(record_name, record_stream.getvalue().encode())
     return wheel
+
+
+def _baseline_benchmark_document():
+    generated = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    def arm(mode):
+        outcome = "silent_defect" if mode == "bare" else "clean_pass"
+        return {
+            "outcome": outcome, "elapsed_s": 1.0, "invocation_count": 1,
+            "completed": True, "public_test": {"passed": True},
+            "hidden_check": {"passed": mode == "rig"},
+        }
+
+    runs = []
+    for run in range(1, 4):
+        runs.append({
+            "pair_id": f"wheel-task-{run}", "task_id": "wheel-task", "run": run,
+            "provider": "claude", "bare_model": "haiku", "rig_model": "sonnet",
+            "arms": {"bare": arm("bare"), "rig": arm("rig")}, "elapsed_s": 2.0,
+        })
+    return {
+        "schema_version": 2, "generated": generated, "provider": "claude",
+        "provider_version": "fixture", "model": "sonnet", "bare_model": "haiku",
+        "rig_model": "sonnet", "score": {"verdict": "pass"},
+        "tasks": [{"task_id": "wheel-task", "runs": runs}],
+    }
+
+
+def test_installed_wheel_runs_stdlib_only_baseline_full_flow_without_dependencies(tmp_path):
+    """Capture, show, and compare must work in a clean install without PyYAML."""
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    environment = tmp_path / "venv"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    source = tmp_path / "bench.json"
+    baseline = tmp_path / "baseline.json"
+    source.write_text(json.dumps(_baseline_benchmark_document()), encoding="utf-8")
+    commands = (
+        ["capture", "--input", str(source), "--output", str(baseline)],
+        ["show", str(baseline)],
+        ["compare", "--baseline", str(baseline), "--current", str(source), "--json"],
+    )
+    results = [
+        subprocess.run(
+            [str(python), "-m", "rig_workbench.cli", "baseline", *command],
+            cwd=tmp_path, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+        )
+        for command in commands
+    ]
+
+    assert [result.returncode for result in results] == [0, 0, 0], [
+        result.stdout + result.stderr for result in results
+    ]
+    assert baseline.exists()
+    assert "claude / sonnet / rig / wheel-task" in results[1].stdout
+    assert json.loads(results[2].stdout)["status"] == "pass"
+
+
+def test_installed_wheel_runs_stdlib_only_eval_capture_validate_list(tmp_path):
+    wheel_dir = tmp_path / "wheel-eval"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    environment = tmp_path / "venv-eval"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    repo = tmp_path / "eval-repo"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    task_id = "rig-20260805-wheel-eval"
+    run = repo / ".rig" / "runs" / task_id
+    run.mkdir(parents=True)
+    (run / "task.json").write_text(json.dumps({
+        "task_id": task_id, "input": "Wheel evaluation capture", "task_type": "bugfix",
+        "base_commit": "f" * 40,
+    }), encoding="utf-8")
+
+    capture = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "capture", task_id,
+         "--repo", str(repo)], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    case_path = repo / ".rig" / "evals" / "drafts" / task_id / "case.json"
+    validate = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "validate", str(case_path)],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    listing = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "list", "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+
+    assert [capture.returncode, validate.returncode, listing.returncode] == [0, 0, 0], [
+        capture.stdout + capture.stderr, validate.stdout + validate.stderr,
+        listing.stdout + listing.stderr,
+    ]
+    assert task_id in listing.stdout and case_path.is_file()
+
+
+def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path):
+    wheel_dir = tmp_path / "wheel-pack"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    with zipfile.ZipFile(wheel) as archive:
+        assert "packs/domain/sales/pack.yaml" in archive.namelist()
+        assert "packs/domain/sales/recipes/deal-review.md" in archive.namelist()
+        assert "packs/domain/video-storytelling/pack.yaml" in archive.namelist()
+        assert "packs/domain/video-storytelling/recipes/release-movie.md" in archive.namelist()
+        assert "packs/domain/video-storytelling/facets/output-contracts/scenario-verdict.md" in archive.namelist()
+        assert "packs/domain/video-storytelling/resources/launch-film.html" in archive.namelist()
+        assert "packs/domain/decision-humor/pack.yaml" in archive.namelist()
+        assert "packs/domain/decision-humor/recipes/magi.md" in archive.namelist()
+        assert "packs/domain/decision-humor/evals/cases/coin-high-stakes-refusal/case.json" in archive.namelist()
+    environment = tmp_path / "venv-pack"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+    outside = tmp_path / "pack-outside"
+    outside.mkdir()
+    source_root = outside / "sources"
+    initialized = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "init", "wheel-pack",
+         "--root", str(source_root)], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    validated = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "validate",
+         str(source_root / "wheel-pack")], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    installed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "install",
+         str(source_root / "wheel-pack"), "--scope", "project", "--allow-unverified"],
+        cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    doctor = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "doctor", "--json"], cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    tested = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "test", "wheel-pack", "--json"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    removed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove", "wheel-pack",
+         "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    builtin_installed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "install",
+         "domain:decision-humor", "--scope", "project", "--allow-unverified"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    builtin_resolved = subprocess.run(
+        [str(python), "-c",
+         "from rig_workbench.packs.resolver import resolve_asset; "
+         "item=resolve_asset('recipe','magi'); "
+         "print(item.pack_id if item else 'missing')"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    builtin_tested = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "test", "decision-humor",
+         "--json"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    builtin_removed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove", "decision-humor",
+         "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    sales_installed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "install", "domain:sales",
+         "--scope", "project", "--allow-unverified"], cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    sales_resolved = subprocess.run(
+        [str(python), "-c",
+         "from rig_workbench.packs.resolver import resolve_asset; "
+         "r=resolve_asset('recipe','deal-review'); c=resolve_asset('command','sales'); "
+         "print(f'{r.pack_id if r else \"missing\"}:{c.pack_id if c else \"missing\"}')"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    sales_tested = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "test", "sales", "--json"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    sales_removed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove", "sales",
+         "--scope", "project", "--yes"], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    video_installed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "install",
+         "domain:video-storytelling", "--scope", "project", "--allow-unverified"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    video_resolved = subprocess.run(
+        [str(python), "-c",
+         "from rig_workbench.packs.resolver import resolve_asset; "
+         "names=[('recipe','movie'),('recipe','release-movie'),('recipe','scenario'),"
+         "('command','movie'),('persona','video-content-safety-reviewer'),"
+         "('output-contract','scenario-verdict')]; "
+         "print(':'.join(resolve_asset(k,n).pack_id if resolve_asset(k,n) else 'missing' "
+         "for k,n in names))"],
+        cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    video_tested = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "test",
+         "video-storytelling", "--json"], cwd=outside, capture_output=True, text=True,
+        env=_isolated_env(), timeout=60,
+    )
+    video_removed = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "pack", "remove",
+         "video-storytelling", "--scope", "project", "--yes"], cwd=outside,
+        capture_output=True, text=True, env=_isolated_env(), timeout=60,
+    )
+    assert [initialized.returncode, validated.returncode, installed.returncode,
+            doctor.returncode, tested.returncode, removed.returncode,
+            builtin_installed.returncode, builtin_resolved.returncode,
+            builtin_tested.returncode, builtin_removed.returncode,
+            sales_installed.returncode, sales_resolved.returncode,
+            sales_tested.returncode, sales_removed.returncode,
+            video_installed.returncode, video_resolved.returncode,
+            video_tested.returncode, video_removed.returncode] == [0] * 18, (
+        initialized.stderr + validated.stderr + installed.stderr + doctor.stderr
+        + tested.stderr + removed.stderr + builtin_installed.stderr
+        + builtin_resolved.stderr + builtin_tested.stderr + builtin_removed.stderr
+        + sales_installed.stderr + sales_resolved.stderr + sales_tested.stderr
+        + sales_removed.stderr + video_installed.stderr + video_resolved.stderr
+        + video_tested.stderr + video_removed.stderr
+    )
+    assert json.loads(doctor.stdout)["status"] == "ok"
+    assert json.loads(tested.stdout)["status"] == "structural_only"
+    assert builtin_resolved.stdout.strip() == "decision-humor"
+    assert json.loads(builtin_tested.stdout)["status"] == "structural_only"
+    assert sales_resolved.stdout.strip() == "sales:sales"
+    assert json.loads(sales_tested.stdout)["status"] == "structural_only"
+    assert video_resolved.stdout.strip() == ":".join(["video-storytelling"] * 6)
+    assert json.loads(video_tested.stdout)["status"] == "structural_only"
+    assert not (outside / ".rig/packs/wheel-pack").exists()
+    assert not (outside / ".rig/packs/decision-humor").exists()
+    assert not (outside / ".rig/packs/sales").exists()
+    assert not (outside / ".rig/packs/video-storytelling").exists()
+
+
+def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
+    wheel_dir = tmp_path / "wheel-eval-run"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    environment = tmp_path / "venv-eval-run"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = _venv_python(environment)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        capture_output=True, text=True, env=_isolated_env(), timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    repo = tmp_path / "eval-run-repo"
+    outside = tmp_path / "eval-run-outside"
+    outside.mkdir()
+    case_id = "wheel-eval-run"
+    timestamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    case = {
+        "case_schema_version": 1, "id": case_id, "version": 1,
+        "title": "Wheel eval run", "status": "draft", "incident": True,
+        "provenance": {"source_task_id": "rig-wheel-eval-run", "source_commit": "a" * 40,
+                       "source_hashes": {"task.json": "b" * 64}, "captured_at": timestamp},
+        "surfaces": ["cli"], "suite": "wheel", "tags": ["smoke"],
+        "provider_policy": {"mode": "allowlist", "allowed": ["mock"]},
+        "repeat": 3, "red_thresholds": {"max_success_rate": 1 / 3},
+        "green_thresholds": {"min_success_rate": 1.0},
+        "deterministic_checks": ["contains:scenario"],
+        "semantic_rubric": [
+            {"id": "correct", "description": "Output is correct", "weight": 1.0}
+        ],
+        "target_inputs": {"scenario": "target"},
+        "clean_controls": {"scenario": "clean"},
+        "missing_requirements": [],
+        "failure_summary": "Captured incident", "created_at": timestamp, "updated_at": timestamp,
+    }
+    draft = repo / ".rig" / "evals" / "drafts" / case_id / "case.json"
+    draft.parent.mkdir(parents=True)
+    draft.write_text(json.dumps(case, ensure_ascii=False, sort_keys=True,
+                                separators=(",", ":")) + "\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "eval@test.invalid"], cwd=repo,
+                   check=True)
+    subprocess.run(["git", "config", "user.name", "eval-test"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "eval fixture"], cwd=repo, check=True)
+    eval_env = _isolated_env()
+    eval_env["RIG_EVAL_ATTESTATION_KEY"] = "wheel-test-attestation-key-at-least-32-bytes"
+    common = [case_id, "--provider", "mock", "--model", "fixture", "--repeat", "3",
+              "--repo", str(repo)]
+    judge_command = (
+        'python3 -c "import json; print(json.dumps({\'status\':\'measured\','
+        '\'criteria\':[{\'id\':\'correct\',\'status\':\'pass\',\'score\':1.0}]}))"'
+    )
+    judge_args = ["--judge-provider", "command", "--judge-model", "fixture",
+                  "--judge-command", judge_command]
+    baseline = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "run", *common,
+         "--phase", "baseline", *judge_args],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    current = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "run", *common,
+         "--phase", "current", *judge_args],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    assert baseline.returncode == current.returncode == 0, baseline.stderr + current.stderr
+    compared = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "compare",
+         "--baseline", baseline.stdout.strip().splitlines()[-1],
+         "--current", current.stdout.strip().splitlines()[-1], "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+
+    assert compared.returncode == 0, compared.stdout + compared.stderr
+    assert json.loads(compared.stdout)["status"] == "pass"
+    promoted = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "promote", case_id,
+         "--baseline", baseline.stdout.strip().splitlines()[-1],
+         "--current", current.stdout.strip().splitlines()[-1], "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    assert promoted.returncode == 0, promoted.stdout + promoted.stderr
+    assert (repo / "evals" / "cases" / case_id / "case.json").is_file()
+    assert draft.is_file()
+    (repo / "ordinary.py").write_text("print('non-prompt')\n", encoding="utf-8")
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    affected = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "affected",
+         "--base", base, "--head", "working", "--require-cases", "--json",
+         "--repo", str(repo)], cwd=outside, capture_output=True, text=True,
+        env=eval_env, timeout=60,
+    )
+    assert affected.returncode == 0, affected.stdout + affected.stderr
+    assert json.loads(affected.stdout)["status"] == "noop"
+    gated = subprocess.run(
+        [str(python), "-m", "rig_workbench.cli", "eval", "gate",
+         "--base", base, "--head", "working", "--evidence-dir",
+         str(repo / ".rig" / "evals" / "results"), "--repo", str(repo)],
+        cwd=outside, capture_output=True, text=True, env=eval_env, timeout=60,
+    )
+    assert gated.returncode == 0, gated.stdout + gated.stderr
+    assert json.loads(gated.stdout)["status"] == "noop"
+
+
+def test_installed_wheel_runs_package_native_route_outside_source_tree(tmp_path):
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    install_root = tmp_path / "installed"
+    venv.EnvBuilder(with_pip=True).create(install_root)
+    python = _venv_python(install_root)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        env=_isolated_env(), capture_output=True, text=True, timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=outside, check=True)
+    result = subprocess.run(
+        [str(_venv_rig_wb(install_root)), "wb", "route", "--type", "design", "--json"],
+        cwd=outside, env=_isolated_env(), capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    route = json.loads(result.stdout)
+    assert route["status"] == "degraded"
+    assert route["provenance"]["authority"].endswith("select_task_route")
+    assert not (outside / ".rig").exists()
+
+    probe = subprocess.run(
+        [str(python), "-I", "-c", (
+            "import pathlib, rig_workbench.workbench.route_cli as m; "
+            "print(pathlib.Path(m.__file__).resolve())"
+        )],
+        cwd=outside, env=_isolated_env(), capture_output=True, text=True, timeout=60,
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert "site-packages" in probe.stdout
+    assert "scripts/workbench.py" not in result.stdout + result.stderr
+
+
+def test_installed_console_script_routes_pack_help_and_read_only_doctor(tmp_path):
+    wheel_dir = tmp_path / "wheel-pack-dispatch"
+    wheel_dir.mkdir()
+    wheel = _build_wheel_offline(wheel_dir)
+    install_root = tmp_path / "installed-pack-dispatch"
+    venv.EnvBuilder(with_pip=True).create(install_root)
+    python = _venv_python(install_root)
+    install = subprocess.run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        env=_isolated_env(), capture_output=True, text=True, timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+
+    outside = tmp_path / "pack-dispatch-outside"
+    outside.mkdir()
+    executable = _venv_rig_wb(install_root)
+    public_help = subprocess.run(
+        [str(executable), "--help"], cwd=outside, env=_isolated_env(),
+        capture_output=True, text=True, timeout=60,
+    )
+    pack_help = subprocess.run(
+        [str(executable), "pack", "--help"], cwd=outside, env=_isolated_env(),
+        capture_output=True, text=True, timeout=60,
+    )
+    doctor = subprocess.run(
+        [str(executable), "pack", "doctor", "--json"], cwd=outside,
+        env=_isolated_env(), capture_output=True, text=True, timeout=60,
+    )
+    invalid = subprocess.run(
+        [str(executable), "pack", "validate", str(outside / "missing-pack")],
+        cwd=outside, env=_isolated_env(), capture_output=True, text=True, timeout=60,
+    )
+
+    assert public_help.returncode == 0, public_help.stdout + public_help.stderr
+    assert "pack init|validate|doctor|install|test|import-results|keygen|sign|remove|invoke" in public_help.stdout
+    assert pack_help.returncode == 0, pack_help.stdout + pack_help.stderr
+    assert "import-results" in pack_help.stdout and "keygen" in pack_help.stdout
+    assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+    assert json.loads(doctor.stdout) == {
+        "findings": [], "pack_doctor_schema_version": 1, "packs": [], "status": "ok",
+    }
+    assert invalid.returncode == 2
+    assert invalid.stdout == ""
+    assert invalid.stderr.startswith("[ERROR] ")
+    assert not (outside / ".rig").exists()
 
 
 def test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree(tmp_path):

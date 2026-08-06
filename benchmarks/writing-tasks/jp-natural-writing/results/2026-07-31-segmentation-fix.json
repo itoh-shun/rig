@@ -1,0 +1,37 @@
+{
+  "note": "analyze_gap.sentences() が markdown 行を1文として数えていた件の前後比較",
+  "corpus": {
+    "human_n": 48,
+    "source": "Qiita pre-2023, min-stocks 3"
+  },
+  "groups": {
+    "human": {
+      "legacy_mean": 118.0,
+      "legacy_sd": 143.9,
+      "fixed_mean": 44.5,
+      "fixed_sd": 24.3,
+      "n": 48
+    },
+    "bare": {
+      "legacy_mean": 51.7,
+      "legacy_sd": 18.9,
+      "fixed_mean": 50.3,
+      "fixed_sd": 18.9,
+      "n": 8
+    },
+    "writer": {
+      "legacy_mean": 57.7,
+      "legacy_sd": 36.0,
+      "fixed_mean": 53.8,
+      "fixed_sd": 29.3,
+      "n": 8
+    },
+    "writer_novoice": {
+      "legacy_mean": 63.5,
+      "legacy_sd": 41.1,
+      "fixed_mean": 56.3,
+      "fixed_sd": 29.8,
+      "n": 8
+    }
+  }
+}

@@ -29,7 +29,7 @@ rig が**自分自身を拡張する**。説明文を受け取り、必要なブ
 |---|---|
 | project（既定・product 単位） | `<repo>/.claude/rig/...` |
 | user（`--user`・global） | `~/.claude/rig/...` |
-| shipped（rig 本体作業時・`--shipped`） | `skills/rig/...`＋SKILL.md §2 目録 |
+| shipped（rig 本体作業時・`--shipped`） | `skills/engine/...`＋SKILL.md §2 目録 |
 
 ## 例
 

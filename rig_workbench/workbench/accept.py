@@ -11,7 +11,8 @@ import sys
 
 from .config import CHECK_ICON, RECOMMENDATION
 from .state import (_diff_lines, audit_append, build_acceptance,
-                    current_identity, die, gate_status, git, load_access_control,
+                    current_identity, die, drift_lines, effective_base,
+                    gate_status, git, load_access_control,
                     load_json, load_task, now_iso, parse_diff_md, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
                     task_lock, verify_provenance, warn, worktree_dirty)
@@ -33,7 +34,7 @@ def _semantic_diff_section(root: pathlib.Path, task: dict, names: list) -> list:
     holds no judgment logic of its own.
     """
     wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else root
-    base = task["base_commit"]
+    base, _drift = effective_base(root, task)
     py_modified = []
     for line in names:
         parts = line.split("\t")
@@ -60,8 +61,11 @@ def cmd_diff(args: argparse.Namespace) -> None:
     acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     names, stat, dirty = _diff_lines(root, task)
 
+    eff_base, drifted_from = effective_base(root, task)
     print(f"## rig diff: {task_id}")
     print(f"base: {task['base_branch']} @ {task['base_commit'][:12]}")
+    for line in drift_lines(task, drifted_from, eff_base):
+        print(line)
     if task.get("branch"):
         print(f"branch: {task['branch']}")
     print()
@@ -159,6 +163,25 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         die("Cannot accept (structural preconditions unmet; not overridable even with --force):\n"
             + "\n".join(f"  - {n}: {hints[n]}" for n in hard_fail))
 
+    # ── base drift (#312): rebasing a task branch is legitimate, so drift never blocks —
+    # but it must never be silent either, because the range it changes is the range this
+    # command applies. Quiet when the recorded base still is the merge base.
+    eff_base, drifted_from = effective_base(root, task)
+    for line in drift_lines(task, drifted_from, eff_base):
+        print(line)
+    if drifted_from is None and git(["rev-parse", "--verify", f"{task['base_branch']}^{{commit}}"],
+                                    cwd=root, check=False).returncode != 0:
+        warn(f"base branch '{task['base_branch']}' no longer resolves; the diff range falls back to "
+             f"the recorded base_commit {task['base_commit'][:12]}, which may be stale")
+    # What `accept` actually applies is decided by `git merge --squash` against the main
+    # working tree's HEAD, not by base_branch. They coincide unless the main tree is on
+    # some other branch — in which case the preview above and the applied range differ,
+    # which is precisely the silent wrongness this is here to prevent.
+    if git(["merge-base", "--is-ancestor", eff_base, "HEAD"], cwd=root, check=False).returncode != 0:
+        warn(f"the diff range base {eff_base[:12]} is not an ancestor of the main working tree's HEAD "
+             f"(HEAD is not on '{task['base_branch']}', or it diverged) — the squash merge below applies "
+             f"a different range than the preview. Check out {task['base_branch']} before accepting")
+
     soft_fail = [name for name, ok in soft if not ok]
     if soft_fail:
         if not args.force:
@@ -200,7 +223,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             f"Commit them in the worktree before accepting (git -C {wt} add -A && git -C {wt} commit)"
         )
     branch = task["branch"]
-    ahead = git(["rev-list", "--count", f"{task['base_commit']}..{branch}"], cwd=root).stdout.strip()
+    ahead = git(["rev-list", "--count", f"{eff_base}..{branch}"], cwd=root).stdout.strip()
     if ahead == "0":
         die(f"branch {branch} has no commits on top of base (no diff to accept)")
 
@@ -241,6 +264,11 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         "recipe": task.get("recipe") or None,
         "base_branch": task["base_branch"],
         "base_commit": task["base_commit"],
+        # The range this accept was actually computed and applied against (#312). Equal to
+        # base_commit unless the branch was rebased after registration; `base_rebased` makes
+        # that fact part of the tamper-evident record rather than a line of scrollback.
+        "base_commit_effective": eff_base,
+        "base_rebased": drifted_from is not None,
         "branch": branch,
         "accepted_at": task["accepted_at"],
         "gate_status": status,

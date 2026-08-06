@@ -18,11 +18,11 @@ Three properties keep the safety flow real (not just documented):
 - **Cross-provider by design.** The generator and the verifier are separate roles run as separate processes, and each role can pick its own LLM: `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / a nested `rig` harness. The default flow can implement with Claude and verify with Codex (or vice versa) — one class of model does not review its own artifacts. `orchestrate.py probe` proves the read-only sandbox is actually applied per provider, not just wired in the config (§5 & §12).
 - **Runs as a Claude Code plugin, not an outside CLI.** `/rig:go` lives in the same session as your regular work; the isolation, the gate, and the accept step are all a keystroke away rather than a context switch to a separate tool.
 
-**Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. A separate set of playful/creative commands (MAGI council, roast, movie, …) shares the same gates but is explicitly marked experimental. §7 breaks all of this down by name.
+**Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. Optional domain extensions add specialized workflows without entering the default core catalog. §7 breaks all of this down by name.
 
 ### Positioning
 
-rig is deliberately **not** a heavyweight external engine with its own DSL. Inside a Claude Code session it is a thin quality/safety layer composed from Claude Code's own primitives — slash commands (`commands/`), the skill (`skills/rig`), subagents (`agents/`), and hooks (`hooks/`). The isolation, the gate, and the accept step add discipline to the session you already work in; they don't replace it with another tool.
+rig is deliberately **not** a heavyweight external engine with its own DSL. Inside a Claude Code session it is a thin quality/safety layer composed from Claude Code's own primitives — slash commands (`commands/`), the skill (`skills/engine`), subagents (`agents/`), and hooks (`hooks/`). The isolation, the gate, and the accept step add discipline to the session you already work in; they don't replace it with another tool.
 
 The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §13 "Standalone CLI". An MCP server exposing this same engine ships as `scripts/mcp_server.py` (#263) — see §7 "MCP server (#263)" for the tool list and opt-in wiring.
 
@@ -126,7 +126,7 @@ Every task gets its own git worktree (`patterns/isolated-worktree`) and its own 
   plan.md / diff.md / log.md / final.md   the model's prose (plan, diff summary, decisions, wrap-up)
 ```
 
-Read-only tasks (a review, an investigation that hasn't decided to change anything) skip the worktree entirely with `--no-worktree`. See [`patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) for the full design.
+Read-only tasks (a review, an investigation that hasn't decided to change anything) skip the worktree entirely with `--no-worktree`. See [`patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) for the full design.
 
 **Running several tasks at once, without losing track.** Because isolation is per-task, running multiple tasks concurrently is safe by construction — each gets its own worktree and branch, so they can't step on each other. To actually run them in parallel (instead of typing `/rig:go "<task>"` one at a time), queue them and go:
 
@@ -146,7 +146,7 @@ Read-only tasks (a review, an investigation that hasn't decided to change anythi
 <repo>/.rig/visual/adhoc/<ts>-<slug>/         ← ad-hoc (e.g. a standalone /rig:design <url> audit)
 ```
 
-`discard` deletes a task's `visual/` immediately (the run log's JSON/MD stays). Everything else — including screenshots from accepted tasks — is pruned by age (`python3 scripts/workbench.py gc --dry-run` to preview, `gc` to delete what's 14+ days old). See [`patterns/visual-artifacts.md`](./skills/rig/patterns/visual-artifacts.md) for the full rules.
+`discard` deletes a task's `visual/` immediately (the run log's JSON/MD stays). Everything else — including screenshots from accepted tasks — is pruned by age (`python3 scripts/workbench.py gc --dry-run` to preview, `gc` to delete what's 14+ days old). See [`patterns/visual-artifacts.md`](./skills/engine/patterns/visual-artifacts.md) for the full rules.
 
 ### Acceptance gate
 
@@ -247,13 +247,12 @@ Core commands are the default safety workflow: route task, isolate work, verify,
 | Knowledge import/export/persona/catalog/forge | Beta | useful but not on the core safety path (§13) |
 | Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§13) |
 | Security pack (`/rig:sec` audit/fix/monitor) | Beta | attacker-perspective audit, PoC-verified gated fix, scan-only monitor; static + local only, DAST out of scope (§8) |
-| Creative / party commands (MAGI, roast, movie, …) | Experimental | real gates underneath, playful delivery, kept out of the default path (§14) |
 
 Nothing in this table is aspirational — there's no "Planned" row because we don't document unshipped features here; proposals live as GitHub issues. If a command isn't listed, it isn't shipped yet.
 
 ## 8. Task routing and recipes
 
-The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing (step ① in §4) uses four shipped recipes plus native delegation to the rest. This table is illustrative, not exhaustive — see `/rig:dev --list` or `/rig:catalog` for the full current set:
+The engine (`skills/engine/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing (step ① in §4) uses four shipped recipes plus native delegation to the rest. This table is illustrative, not exhaustive — see `/rig:dev --list` or `/rig:catalog` for the full current set:
 
 | recipe | what |
 |---|---|
@@ -269,11 +268,8 @@ The engine (`skills/rig/SKILL.md`) composes four brick kinds at invocation time:
 | `de-ai-smell` | strip "AI smell" from prose (READMEs, commit/PR text, posts) |
 | `design` 🎨 / `design-audit` 🎨 | UI/UX + a11y spec creation, and live-screen audit via Playwright |
 | `security-audit` 🛡️ / `pentest-fix` 🛡️ / `security-monitor` 🛡️ | white-hat pack (`/rig:sec`): attacker-perspective audit of existing code → PoC-verified gated fix (accept blocked until the re-exploit fails) → scan-only re-scan loop. Static + local verification only; the differential is quantified by `benchmarks/security-tasks/` |
-| `magi` | 3-sage council (correctness / protection / worth) that decides go/no-go by majority vote |
-| `roast` 🌶️ / `coin` 🪙 / `duck` 🦆 / `pre-mortem` ⚰️ | humor packs with real content underneath |
-| `movie` 🎬 / `scenario` 🎬✍️ | a general video-creation harness and its scenario-writing front-stage |
 
-`/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. `/rig:sales`, `/rig:talk`, `/rig:goal`, `/rig:magi`, and the humor packs all bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched.
+`/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. Core flows and explicitly installed extensions both bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched. See the Extension Catalog in `skills/engine/SKILL.md` for opt-in domain packs. Review an installed project pack, set `RIG_ALLOW_PROJECT_PACKS=1` on its first run to record asset trust, then invoke it with `$rig --recipe <installed-name>`; installation alone does not register its command asset as a host slash command.
 
 ## 9. Diff / accept / discard
 
@@ -520,7 +516,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
 
-These are useful after you understand the core safety flow (§4–§6) — see [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2 for the full brick catalog. (`/rig:queue` is covered in §5, `/rig:init` in the FAQ, `/rig:sales` in §8, and Experimental commands have their own section — §14.)
+These are useful after you understand the core safety flow (§4–§6) — see [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §5, `/rig:init` in the FAQ, and opt-in extensions in §14.)
 
 ### Install
 
@@ -589,15 +585,15 @@ cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins
 | `--verify-findings` | adversarially verify REJECT rationale via an independent `finding-verifier` |
 | `--global` | widen `--list` / `--validate` across tiers (shipped + global + project) |
 
-Full flag/brick reference lives in [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) §2–§3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
+Full flag/brick reference lives in [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2–§3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
 
 ### Codex skill install
 
-Codex can use rig directly as a skill by exposing this repo's `skills/rig` folder under `~/.codex/skills`:
+Codex can use rig directly as a skill by exposing this repo's `skills/engine` folder under `~/.codex/skills`:
 
 ```bash
 mkdir -p ~/.codex/skills
-ln -sfn /path/to/rig/skills/rig ~/.codex/skills/rig
+ln -sfn /path/to/rig/skills/engine ~/.codex/skills/rig
 ```
 
 After restarting Codex, invoke it as `$rig`. In Codex, `$rig "fix the login bug"` is the equivalent of the Claude Code `/rig:go "fix the login bug"` entrypoint. For cross-provider orchestration, `scripts/orchestrate.py` already knows how to call `codex exec` and enforces read-only mode for verifier roles.
@@ -608,7 +604,7 @@ As of 2026, the Codex CLI has extension mechanisms (Skills, Hooks, Subagent TOML
 
 | Mechanism | File added | What it does |
 |---|---|---|
-| Skills | `codex/skills/rig/SKILL.md` | A thin skill following Codex's `.agents/skills/<name>/SKILL.md` convention (`name`/`description` frontmatter). No new engine — it's a procedural pointer to the existing `workbench.py`/`orchestrate.py` |
+| Skills | `codex/skills/engine/SKILL.md` | A thin skill following Codex's `.agents/skills/<name>/SKILL.md` convention (`name`/`description` frontmatter). No new engine — it's a procedural pointer to the existing `workbench.py`/`orchestrate.py` |
 | Hooks | `codex/hooks.json` | Wires run-continuity into Codex's `PreCompact` event by reusing the exact same `hooks/preserve-rig-state.sh` (it contains nothing Claude-Code-specific, so there's nothing to duplicate) |
 | Subagents | `.codex/agents/security-reviewer.toml` | A Codex-native subagent definition with the same review axes and output contract as `agents/security-reviewer.md`. `sandbox_mode = "read-only"` asks Codex's own sandbox to enforce read-only, layered on top of — not replacing — rig's existing argv-level enforcement (`--sandbox read-only` in `orchestrate.py`'s `build_argv`); defense in depth |
 | MCP | (docs only) | Register `scripts/mcp_server.py` (#263) under `[mcp_servers.rig]` in `~/.codex/config.toml` or `.codex/config.toml`: `command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]` |
@@ -635,7 +631,7 @@ Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or
 
 What building the Cursor entry actually surfaced (confirmed against `cursor.com/docs/hooks` and `/docs/skills`):
 - **Hook event names are camelCase** (`PreCompact` → `preCompact`, `UserPromptSubmit` → `beforeSubmitPrompt`) — exactly the cross-host divergence #304 anticipated.
-- **Cursor also reads `.agents/skills/`** for legacy Claude/Codex compatibility, so `codex/skills/rig/SKILL.md` installed there works for Cursor too — no new skill file needed.
+- **Cursor also reads `.agents/skills/`** for legacy Claude/Codex compatibility, so `codex/skills/engine/SKILL.md` installed there works for Cursor too — no new skill file needed.
 - **`preCompact` is documented as observational-only** — it cannot inject preserved run-state the way Claude Code's `PreCompact` does. Rather than pretend this works, that's declared as an explicit `degrade` (`cursor/hooks.json` gives up on state preservation and only returns a short notification), and the capability table marks it `unsupported`.
 
 **Honest verification note:** `scripts/host_adapters.py`'s mapping and its golden-fixture test (`tests/test_host_adapters.py`) are verified as code. Actual hook firing / skill loading on a live Cursor or Codex install is unverified (Codex for the same reason as above; there's no Cursor install in this environment either). Claude Code's existing behavior is completely unchanged by this batch.
@@ -667,7 +663,7 @@ Honest scope: automatic semantic contradiction *detection* isn't implemented —
 
 ### Project manifest & knowledge layer
 
-Drop `<repo>/.claude/rig.md` to set build/lint/test commands, branch & CI strategy, reviewer, production-impact patterns, default recipe, default reviewer personas, etc. — see [`skills/rig/manifests/_template.md`](./skills/rig/manifests/_template.md). The knowledge layer (`~/.claude/rig/knowledge/{methodology,ai-quirks}/`, `<repo>/.claude/rig/knowledge/domain/`) is injected into every run and accumulates learnings over time.
+Drop `<repo>/.claude/rig.md` to set build/lint/test commands, branch & CI strategy, reviewer, production-impact patterns, default recipe, default reviewer personas, etc. — see [`skills/engine/manifests/_template.md`](./skills/engine/manifests/_template.md). The knowledge layer (`~/.claude/rig/knowledge/{methodology,ai-quirks}/`, `<repo>/.claude/rig/knowledge/domain/`) is injected into every run and accumulates learnings over time.
 
 ### Standalone CLI (cross-project)
 
@@ -690,18 +686,9 @@ rig-wb wb digest --period week                       # Markdown telemetry digest
 
 The project manifest `.claude/rig.md` sits behind the same trust store with its own consent switch (`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`). Because the manifest only supplies defaults, an untrusted one degrades **soft** — a one-line warning, then rig behaves as if no manifest existed — instead of refusing hard the way recipes do. The shipped git hooks verify the manifest's recorded hash before eval'ing its lint/build/test commands, and `rig-wb githooks install` records that hash: installing the hooks is consent for the manifest as it exists right then, and any later edit to the file re-requires consent.
 
-## 14. Experimental commands
+## 14. Opt-in extensions
 
-Experimental commands explore alternative collaboration, creativity, and playful workflows. They run on the same gates as everything else — a `magi` verdict or a `roast` review is real content, not a toy — but they're kept out of the default day-to-day path and out of the Core/Quality/Advanced tiers above so they don't crowd a first-time read of this README.
-
-| commands | what |
-|---|---|
-| `/rig:magi`, `/rig:sage` | decision/wisdom modes — MAGI 3-council go/no-go vote, sage-style guidance |
-| `/rig:roast`, `/rig:coin`, `/rig:duck`, `/rig:pre-mortem` | humor packs with real content underneath (§8) |
-| `/rig:party` | party/status-rendering novelty on top of real run data |
-| `/rig:movie`, `/rig:scenario` | a general video-creation harness and its scenario-writing front-stage |
-
-They are not required for the core AI workbench experience described in §4–§9.
+Specialized workflows are distributed outside the default catalog. Install only the packs you have reviewed from the Extension Catalog; project-pack trust is content-addressed and must be renewed after an asset changes. Command assets are documentation for hosts that support explicit command registration and are never registered as slash commands by installation alone.
 
 ## 15. Implementation notes
 
@@ -717,7 +704,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Orchestrator unit behavior (recipe resolution & trust gate, queueing, run-state, graph, CLI surface) | `pytest -q` — 54-test suite under `tests/`; CI (`validate.yml`) enforces it alongside `ruff` (0 findings), the validator, and both selftests |
 | Acceptance-gate criteria, accept/discard mechanics | `scripts/workbench.py` — exercised against scratch git repos each release (see `CHANGELOG.md` entries for the verification notes) |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
-| Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/rig/patterns/failure-taxonomy.md` |
+| Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/engine/patterns/failure-taxonomy.md` |
 
 ## 16. FAQ
 
@@ -739,8 +726,8 @@ What backs the claims above, concretely — this table exists so "documented" an
 
 ## Docs
 
-- [`skills/rig/SKILL.md`](./skills/rig/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
-- [`skills/rig/patterns/isolated-worktree.md`](./skills/rig/patterns/isolated-worktree.md) — worktree/run-state design
+- [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
+- [`skills/engine/patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) — worktree/run-state design
 - [`docs/architecture.md`](./docs/architecture.md) — architecture proof points (determinism, gate enforcement, judge measurement)
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
 - [README.ja.md](./README.ja.md) — Japanese version

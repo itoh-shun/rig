@@ -19,6 +19,9 @@ jobs:
         python-version: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,3 +50,92 @@ jobs:
 
       - name: Run pytest suite
         run: pytest -q
+
+  prompt-evaluation:
+    name: prompt evaluation gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install rig without optional dependencies
+        run: pip install --no-deps -e .
+
+      - name: Resolve comparison base
+        id: comparison
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-$PUSH_BASE}"
+          if [ -z "$base" ]; then
+            echo "Cannot resolve prompt evaluation base." >&2
+            exit 2
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Structural affected-case coverage (free)
+        run: |
+          rig-wb eval affected --base "${{ steps.comparison.outputs.base }}" \
+            --head HEAD --require-cases --json > /tmp/rig-affected.json
+          cat /tmp/rig-affected.json
+
+      - name: Untrusted or fork prompt quality handoff
+        if: >-
+          github.event_name == 'pull_request' &&
+          (github.event.pull_request.head.repo.full_name != github.repository ||
+          (github.event.pull_request.author_association != 'OWNER' &&
+          github.event.pull_request.author_association != 'MEMBER' &&
+          github.event.pull_request.author_association != 'COLLABORATOR'))
+        run: |
+          status="$(python3 -c 'import json; print(json.load(open("/tmp/rig-affected.json"))["status"])')"
+          if [ "$status" = "noop" ]; then
+            echo "No prompt surface changed; structural-only fork check is complete."
+            exit 0
+          fi
+          echo "Prompt quality remains intentionally unmet for an untrusted/fork PR." >&2
+          echo "Maintainer: check out the PR head on an origin branch, then run: rig-wb eval affected-run --base ${{ steps.comparison.outputs.base }} --head HEAD --provider <trusted-provider> --model <model> --judge-provider <trusted-judge> --judge-model <judge-model>" >&2
+          exit 1
+
+      - name: Trusted prompt quality evidence
+        if: >-
+          github.event_name == 'push' ||
+          (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          (github.event.pull_request.author_association == 'OWNER' ||
+          github.event.pull_request.author_association == 'MEMBER' ||
+          github.event.pull_request.author_association == 'COLLABORATOR'))
+        env:
+          RIG_EVAL_ATTESTATION_KEY: ${{ secrets.RIG_EVAL_ATTESTATION_KEY }}
+          RIG_EVAL_PROVIDER: ${{ secrets.RIG_EVAL_PROVIDER }}
+          RIG_EVAL_MODEL: ${{ secrets.RIG_EVAL_MODEL }}
+          RIG_EVAL_JUDGE_PROVIDER: ${{ secrets.RIG_EVAL_JUDGE_PROVIDER }}
+          RIG_EVAL_JUDGE_MODEL: ${{ secrets.RIG_EVAL_JUDGE_MODEL }}
+        run: |
+          status="$(python3 -c 'import json; print(json.load(open("/tmp/rig-affected.json"))["status"])')"
+          if [ "$status" = "noop" ]; then
+            echo "No prompt surface changed; quality gate is a no-op."
+            exit 0
+          fi
+          if [ -z "$RIG_EVAL_ATTESTATION_KEY" ] || [ -z "$RIG_EVAL_PROVIDER" ] || [ -z "$RIG_EVAL_MODEL" ] || [ -z "$RIG_EVAL_JUDGE_PROVIDER" ] || [ -z "$RIG_EVAL_JUDGE_MODEL" ]; then
+            echo "Prompt quality evidence requires a trusted maintainer run. Fork authors: ask a maintainer to rerun this same-repo PR command with trusted provider and judge credentials; missing evidence cannot pass." >&2
+            exit 1
+          fi
+          state_dir="$(mktemp -d)"
+          mkdir -p "$state_dir/rig"
+          chmod 700 "$state_dir/rig"
+          printf '%s' "$RIG_EVAL_ATTESTATION_KEY" > "$state_dir/rig/eval-attestation.key"
+          chmod 600 "$state_dir/rig/eval-attestation.key"
+          unset RIG_EVAL_ATTESTATION_KEY
+          export XDG_STATE_HOME="$state_dir"
+          rig-wb eval affected-run --base "${{ steps.comparison.outputs.base }}" \
+            --head HEAD --provider "$RIG_EVAL_PROVIDER" --model "$RIG_EVAL_MODEL" \
+            --judge-provider "$RIG_EVAL_JUDGE_PROVIDER" \
+            --judge-model "$RIG_EVAL_JUDGE_MODEL"

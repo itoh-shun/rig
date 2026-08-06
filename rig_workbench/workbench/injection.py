@@ -37,7 +37,7 @@ import sys
 
 from .secrets import (MAX_FILE_BYTES, WALK_SKIP_DIRS, iter_added_lines,
                       untracked_files, worktree_diff_text)
-from .state import die, load_task, repo_root
+from .state import die, effective_base, load_task, repo_root
 
 SENSOR_CRITERION = "no_injection_markers"
 
@@ -235,7 +235,9 @@ def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, 
     if check is None:
         return []
     wt_path = task.get("worktree_path")
-    base = task.get("base_commit")
+    # Live merge base, not the registration-time record (#312): scanning a rebased
+    # branch against a stale base would flag changes the task never made.
+    base, _drift = effective_base(root, task)
     if not wt_path or not base:
         return []
     wt = pathlib.Path(wt_path)
@@ -321,7 +323,8 @@ def cmd_scan_injection(args: argparse.Namespace) -> None:
         root = repo_root()
         _, task = load_task(root, args.diff)
         wt_path = task.get("worktree_path")
-        base = task.get("base_commit")
+        # Live merge base (#312) — the printed scope must name the sha actually scanned.
+        base, _drift = effective_base(root, task)
         if not wt_path or not pathlib.Path(wt_path).is_dir():
             die(f"task '{args.diff}' has no worktree (created with --no-worktree, or already discarded)")
         if not base:
