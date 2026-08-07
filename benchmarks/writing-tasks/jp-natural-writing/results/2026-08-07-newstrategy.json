@@ -1,0 +1,789 @@
+{
+  "mode": "live",
+  "ledger": {
+    "pin:human": {
+      "entries": 85,
+      "open_items": 4,
+      "author_filter": "human",
+      "sha1": "a21a3f6c1747"
+    },
+    "pin:agent": {
+      "entries": 93,
+      "open_items": 4,
+      "author_filter": "agent",
+      "sha1": "bb8fcf935f32"
+    }
+  },
+  "seed": "20260807",
+  "judge_model": "claude-opus-5",
+  "gen_model": "claude-sonnet-5",
+  "arms": {
+    "writer_agent": {
+      "label": "writer, ledger restricted to agent-authored commits",
+      "samples": [
+        {
+          "topic": "Python",
+          "title": "blocked_headless_provider の壁と、まだ落ちている2本",
+          "description": "## generation_variance.py を足した\n\n7/30、generation_variance.py をコミットした（c083fd7）。狙いは単純で、素材を固定して、変わるのは文章の書き方だけ、という状態を作ること。ベンチマークの中で「同じお題・同じ入力に対して、書き方だけを振ったときに出力がどれくらいばらつくか」を見たかった。素材側に揺れが混じると、書き方の違いによる揺れなのか素材の違いによる揺れなのか切り分けられなくなるので、そこを固定するのが目的そのものだった。\n\n前日にはこのベンチマークの書き味そのもののまとめや、freewrite と mixed という二つの候補を足していて、今回の generation_variance.py はその流れの上にある。ただ今日書きたいのはその話ではなく、同じ手元で並行して赤いままのテストの話。\n\n## その裏で、テストは相変わらず赤い\n\nコミットとは別に、pytest はまだ落ちている。\n\ntests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_error は assert 126 == 124 で落ちる。ProviderAttempt を見ると returncode=126、infra_error は 'blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run'。\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error も同様で、こちらは assert 126 == 1。加えて [ERROR] PyYAML not found. `pip install pyyaml`. というエラーも出ている。\n\n## 126 が何を意味しているか\n\n期待している returncode は 124（タイムアウト）と 1（認証エラー）で、どちらも CLI が実際にその状況で返すはずの値のつもりで書いたテストだった。だが実際に返ってきているのは両方とも 126 で、infra_error の中身も同じ blocked_headless_provider。つまりテストが確かめたいはずのシナリオ、タイムアウトした、認証に失敗した、というところまで到達する前に、allow_headless_in_cc のガードで弾かれている、ということだと思う。\n\n二つの異なるテストが同じ 126 と同じメッセージで落ちているのがその傍証で、片方はタイムアウトを、もう片方は認証失敗を再現しようとしているのに、結果の側では区別がついていない。区別がつかないということは、少なくともこの2本に関しては、今の書き方だとタイムアウトのテストなのか認証失敗のテストなのか、returncode だけ見ても分からないということでもある。\n\nPyYAML が見つからないというエラーは別の話で、認証失敗のテストの方にだけ出ている。これがガードの手前で起きているのか後で起きているのかは、まだ切り分けていない。テスト環境に PyYAML が入っていないだけかもしれないし、そもそもここまで来る前に落ちているのかもしれない。どちらにしても、今のところは blocked_headless_provider と PyYAML not found が別々に出ている、という事実だけがある。\n\n## 今日の時点\n\ngeneration_variance.py は入った。素材を固定して書き方だけを振る、というやりたかったことはできている。一方でテストの赤は2本ともそのまま。allow_headless_in_cc まわりのガードが本来のテスト対象より先に効いていそうだ、という当たりはついた気でいるが、当たりがついたことと直したことは別なので、直っていないと書いておく。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 72.0,
+          "scores": [
+            72.0,
+            70.0,
+            74.0
+          ],
+          "score_sd": 1.63,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "エラーメッセージやコミットハッシュなど具体は豊富だが、各節が「〜ということだと思う／〜ということでもある／〜という事実だけがある」と同型の反芻的な言い換えで締められ、見出し構成と誠実さの表明（当たりはついたが直っていない）まで整い過ぎており、ログを素材に自然な日誌風を狙って生成された文章の可能性が高い。"
+        },
+        {
+          "topic": "機械学習",
+          "title": "returncode 126で止まる — allow_headless_in_ccとPyYAML、直っていない2件",
+          "description": "## 7/29、41f4f72\n\nコミットメッセージには「run-on mergeで12と22に到達」と書いた。ただし中身は、うまくいった話ではない。作業がうまくいかなかった部分だけを記録したコミットで、pytestは今もこの2件で赤いままになっている。\n\ntests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_error\nAssertionError: assert 126 == 124\n\nProviderAttempt(provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0, ... infra_error='blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run')\n\nタイムアウトを検知できているかを見るテストなので、期待しているreturncodeは124のはず。ところが実際に返ってきたのは126で、infra_errorの中身がblocked_headless_provider。つまりタイムアウトが起きる前の段階で、ヘッドレス実行そのものが弾かれている。allow_headless_in_ccは明示的に許可された有償実行のときだけ渡せ、というメッセージがそのまま出ているので、このテストの呼び出し側がそのフラグを立てずにCLIを叩いていることになる。\n\n## もう一件も同じ壁\n\ntests/test_bench_providers.py::test_cli_authentication_failure_is_an_explicit_counted_infra_error\nAssertionError: assert 126 == 1\n\nこちらも同じくreturncode=126、同じくinfra_error='blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run'。認証失敗を検知したいテストなのに、その手前でヘッドレス実行がブロックされていて、期待していたreturncode=1にたどり着けていない。\n\nそれだけでなく、同じテストでもう一つ別のAssertionErrorも出ている。\n\nAssertionError: [ERROR] PyYAML not found. `pip install pyyaml`.\n\n認証エラーを再現しようとしているテストの中で、PyYAMLが見つからないという、本来の検証対象とは無関係に見えるエラーまで混ざっている。これが環境側の問題なのか、テストのセットアップ手順に抜けがあるのかは、まだ切り分けられていない。\n\n## 整理すると\n\n2つのテストで起きていることを並べると、共通点と別の問題が両方見える。\n\n- タイムアウトのテストも認証失敗のテストも、期待するreturncode(124と1)ではなく126が返ってきている\n- どちらもinfra_errorの文言が同じ\"blocked_headless_provider\"で、allow_headless_in_ccを明示的な有償実行以外で渡すなというガードに引っかかっている\n- 認証失敗のテストではさらにPyYAML未検出のエラーが別途出ていて、これは上のブロックとは別の話に見える\n\nつまり、この2件のテストは「タイムアウトや認証失敗をちゃんと検知できるか」を確かめる前の段階で、そもそもプロバイダ呼び出しの手前で止められている。テストの側でallow_headless_in_ccをどう扱うかを直さない限り、本来見たいはずのreturncode 124や1には辿り着けない。PyYAMLの方は完全に別件として残っている。\n\n## 今日はここまで\n\n両方とも赤いままなのを確認しただけで、直せてはいない。allow_headless_in_ccをテストコード側でどう渡すか、PyYAMLの依存をどこで解決するかは持ち越し。\n\n同じ時期に別件でスケルトン移植まわりの検証も動かしていたが、そちらは構造仮説が否定される形でnull resultになった話と、discriminationの再現実験がタイムアウトで落ちた話があって、これはこの記録の主題ではないので触れるだけにしておく。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 75.33,
+          "scores": [
+            76.0,
+            76.0,
+            74.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "ログや識別子は実物由来で具体性が高いものの、各節→箇条書き→総括と同じ内容を三度言い換える冗長な構成、均質で破綻のない文長、接続詞で丁寧に読者を誘導する説明口調、感情や独り言の欠落が目立ち、実データを素材にAIが整形した記録である可能性が高い。"
+        },
+        {
+          "topic": "クラウドコンピューティング",
+          "title": "blocked_headless_provider、まだ直らず。落ちているテストが3本に",
+          "description": "## 前回の続き\n\n7/26 に「blocked_headless_provider の壁と、まだ落ちている2本」を書いた。あれから特に進展はない。今日 pytest を回してもまだ同じ2本が同じ場所で落ちていて、しかも落ちているテストが1本増えた。同じタイトルの記事をもう一度書くことになるとは思っていなかったが、状況が変わっていない以上、変わっていないと書くしかない。\n\n## test_cli_timeout_is_an_explicit_counted_infra_error\n\n相変わらず落ちている。\n\nassert 126 == 124 で失敗する。ProviderAttempt の returncode が 126 になっていて、期待している 124 と合わない。infra_error の中身を見ると `blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run` と入っている。つまりタイムアウトが起きる前に、ヘッドレス実行の方がブロックされて 126 で返ってきている。テストが想定しているタイムアウト由来の 124 とは別の理由で落ちているので、テスト側の期待値を直すのか、実装側でブロックの扱いを変えるのか、まだ決めていない。\n\n## test_cli_authentication_failure_is_an_explicit_counted_infra_error\n\nこちらも同様に落ちている。assert 126 == 1 で失敗していて、returncode は同じく 126、infra_error も同じ `blocked_headless_provider` の文言が入っている。それに加えて `[ERROR] PyYAML not found. pip install pyyaml` という AssertionError も一緒に出ている。認証失敗を想定して書いたテストのはずが、その手前でヘッドレス実行の方がブロックされて止まっている点は上のテストと同じ構造で、PyYAML が無いという方はまだ切り分けられていない。\n\n2本とも returncode が 126 で揃っていて、infra_error の文言も一致しているので、原因は共通している可能性が高い。ただし今日の時点ではまだ手を付けられていない。\n\n## test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree も落ちている\n\nこれは今回はじめて気づいた。tests/test_cli_smoke.py 側のテストで、上の2本とはファイルが違う。中身はまだ追えていない。上の2本を直そうとしている間に増えていたのか、前からあったのを見落としていたのかも今のところ判断がつかない。\n\n## 別件のメモ\n\n同じ時期に、ベンチマークの評価まわりでも作業をしていた。f3de018 で judge を1サンプルあたり3回に増やした件と、writer アームのスコアを計測した件だが、今回の3本の失敗とは直接の関係はなさそうなので、ここでは深掘りしない。\n\n## 現状\n\n3本とも直っていない。前回書いた時点では2本だったのが、今は3本になっている。減るどころか増えているので、正直あまり良い流れではない。次に触るときは、returncode 126 と blocked_headless_provider の関連を先に潰すか、それとも test_installed_wheel の方を先に見るか、まだ決めていない。とりあえず今日の時点の状態として、ここに残しておく。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 73.0,
+          "scores": [
+            72.0,
+            75.0,
+            72.0
+          ],
+          "score_sd": 1.41,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的なテスト名・エラー値・コミットハッシュなど細部は実データに基づくが、各節が「まだ落ちている→assert値→infra_errorの中身→まだ決めていない/切り分けられていない」という同型の型で反復され、保留表現（まだ〜ていない、判断がつかない）が機械的に均質配置されている点、文長と語りのトーンが終始一定で締めも「ここに残しておく」と定型的な点から、実ログを素材にAIが整形した文章の可能性が高い。"
+        },
+        {
+          "topic": "Web開発",
+          "title": "gitignoreの1行と変異アブレーション、そしてまだ落ちているpytest",
+          "description": "## gitignoreに1行足しただけの日\n\n7/29、rig-action-state.json を .gitignore に足すコミット(0153db0)を切った。chore一行だけのコミットで、内容としてはそれ以上のものはない。\n\nこういうコミットは記録に残す価値がないように見えて、実は一番忘れやすい。数十行の実装コミットならメッセージだけでだいたい何をしたか思い出せるが、chore一行のコミットは後から見返しても意図が読み取りにくい。ファイルを1個gitignoreに足すだけの作業は数秒で終わるし、その場では迷いなく判断できているぶん、なぜそう判断したのかという理由の方はどこにも残らない。だからこそ、あえてここにも書き残しておく。\n\n## 表層1次元の因果をゼロと確定させた日\n\n2日後の7/31、変異アブレーションを実装した(c77849e)。表層1次元の因果がゼロであることを、このコミットで確定させた。仮説を立てて、それを潰すために実装をひとつ書き、実際にゼロだったと確認する。前進とは呼びにくいが、後退でもない。少なくとも、この仮説についてはもう検証済みという扱いにできる。\n\nゼロという結果は地味だ。何かがプラスに効くという結果に比べて、成果として語りにくいし、誰かに説明するときにも「何もなかった」としか言いようがない。それでも、表層1次元が因果を持たないと言い切れるようになったことで、次に別の仮説を検討するときに候補をひとつ減らせる。潰した仮説の数だけ、探索の範囲は狭くなっていく。\n\nこのタイミングで手元には他のベンチの数字も転がっていた。gate-vs-compute の bare アームの平均・中央値や、fieldpaste の writer アームのスコアと文字数など。今回の本題ではないので詳細は置いておく。\n\n## pytestはまだ落ちている\n\n一方で、tests/test_cli_smoke.py::test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree はこの間ずっと落ちたままだ。gitignoreの整理をしても、変異アブレーションを実装して仮説をひとつ潰しても、このテストの赤は動かなかった。\n\n直っていないものを直っていないと書くのは気が進まないが、直したふりをして次に進むよりはましだと思っている。テスト名から察するに、ソースツリーの外でインストール済みwheelからplanとmockベンチマークを走らせるという性質上、環境依存の何かが絡んでいる可能性はあるが、まだ切り分けられていない。今回の2件のコミットのどちらとも直接は関係がなさそうに見えるので、優先度を上げるかどうかも決めきれていない。放っておいても消えてくれるわけではないので、いずれは向き合う必要があるとはわかっているが、今はまだその番が回ってきていないというのが正直なところだ。\n\n## この3件を並べて\n\ngitignoreの1行、変異アブレーションの実装、そしてまだ落ちているpytest。並べてみると、進んだところと止まっているところがはっきり分かれている記録になった。表層1次元の因果をゼロと確定できたのは収穫だが、それとテストの赤字は別の話で、片方が進んでももう片方は勝手には直らない。作業ログとしては地味な3件だが、地味だからこそ後で見返す価値がある。派手な進捗だけを書き残していると、途中で止まっているものの存在を自分自身が忘れてしまう。次に手をつけるときのために、このテストの名前だけはここに書き残しておく。",
+          "rounds": 2,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "FAIL",
+              "issues": [
+                "diff"
+              ]
+            },
+            {
+              "round": 2,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 79.0,
+          "scores": [
+            85.0,
+            80.0,
+            72.0
+          ],
+          "score_sd": 5.35,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやテスト名など具体的な事実は含むものの、各節が「だからこそ書き残しておく」「地味だからこそ後で見返す価値がある」といった同型の内省的まとめで締められ、文長・構造が均質で、実際の作業の泥臭い細部より一般論的な省察で埋められている点から、ログデータを基にAIが生成した可能性が高い。"
+        },
+        {
+          "topic": "データベース設計",
+          "title": "jp-natural-writing がデフォルトコーパスを壊していた話と、11.06のまま止まっている数字",
+          "description": "## 11.06、まだそこにいる\n\n7/26 に、人間が書いた記事 16 本を同じ判定にかけてみた。結果は平均 11.06。手元で読んで「これは自然な文章だ」と感じている感覚と、この数字の間にはまだ開きがある。この開きがどこから来ているのかは、今回もまだ確かめられていない。数字自体は7/26のままで、それ以降動いていない。この記事を書いている時点でも、状況はあの日から変わっていない。\n\nこの数字をどう縮めるかは、また別の機会に手をつけるしかなさそうだ。今日書きたいのはこの数字の続きではなく、その前後の時期に並行して手を動かしていた、別の作業についての記録になる。数字が動かない週でも、手元では細かい作業がいくつか並行して進んでいる。そういうものをまとめて書き残しておかないと、後から振り返ったときに何をしていたか思い出せなくなる。\n\n## rig-action-state.json を無視リストに\n\n7/29、コミット 0153db0 で rig-action-state.json を gitignore に追加した。実行のたびに中身が変わる状態ファイルを、追跡対象から外しただけの一行になる。大きな話ではないが、後から見返したときのために残しておく。こういう小さな片付けは、それ単体では記事にするほどの内容ではないが、後に続く作業とセットで見ると位置づけが分かりやすくなる。単独のコミットとして見るより、翌日の作業と並べて振り返るほうが、この一行が何のためにあったのかが伝わりやすい。\n\n## デフォルトのベンチコーパスを巻き込んでいた\n\n翌7/30、コミット 8148796 で本題の方を直した。jp-natural-writing のタスクが、デフォルトのベンチマークコーパスを壊していた。対処としては、writing-tasks/ 以下にタスクを移すことにした。gitignore の一行に比べれば影響範囲は大きく、本題と呼ぶにふさわしい内容だったと思う。\n\ngitignore の片付けをした翌日にこちらを直しているので、順番としては小さい片付けの後に本丸を片付けた形になる。意図してそう並べたわけではなく、結果的にそうなっただけだが、書き出してみるとその流れが見える。小さいものを先に片付けてから大きいものに手をつける、というのは意識してやったわけではないのに、コミットの並びを見返すとそう見えてしまう。\n\n同じ時期にはもう一件、別の作業も手元にあった。主観的なコメントを禁止しても効果はなく、台帳を固定する方が効くという話と、アーム bare のスコアまわりの計測が絡んでいる。これはこの記事の主題ではないので、ここで深追いはしない。ただ、同じ時期にこの二つを並行して触っていたことだけ、後から見返す用に書き残しておく。作業の記録としては、本題と関係のない話を無理にひとつの記事にまとめる必要はないので、ここでは触れる程度にとどめる。\n\n## 残っているもの\n\nデフォルトコーパスを壊していた問題は直ったが、11.06 の方はまだ手つかずのままになっている。判定の数字と手元の感覚のズレがどこから来ているのか、まだ切り分けられていない。直った一件と、直っていない一件が、同じ週にただ並んでいるだけの記録になった。片方が進んだからといって、もう片方が自動的に進むわけではない。無理にひとつの結論にまとめようとすると、実際にはつながっていないものを無理につなげてしまう気がするので、まとめるほど進んだわけではないという事実だけを残して、今回はここで区切る。次に書くときも、この11.06がまだ動いていなければ、また同じことを書くことになるかもしれない。",
+          "rounds": 2,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "FAIL",
+              "issues": [
+                "diff",
+                "blocked_headless_provider"
+              ]
+            },
+            {
+              "round": 2,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 83.33,
+          "scores": [
+            85.0,
+            80.0,
+            85.0
+          ],
+          "score_sd": 2.36,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットIDや日付などの具体は入っているものの、「後から見返したときのために書き残しておく」「無理にひとつにまとめる必要はない」といった同義の自己言及的な補足が各節で反復され、文末が「〜になる/〜ておく」に偏った均質なリズムで中身のない一般論が埋め合わせに使われているため、ログから自動生成された AI の文章と判断した。"
+        },
+        {
+          "topic": "リモートワーク",
+          "title": "11.06との差はまだ埋まっていない — ブランチ合流と設計メモ",
+          "description": "## 人間が書いた16本を通してみた\n\n7/26、自分の生成物ばかりを判定にかけていたのを一旦やめて、人間が書いたQiitaの記事を16本集めて同じ判定器にかけてみた。結果は平均11.06。手元で追っている自分の側の数値と並べると、まだ開きがある。判定器が「人間らしさ」をどう見ているのか、その基準点をようやく一つ取れたという段階で、差を埋める作業はここからだった。\n\n正直、もう少し近い数字が出るだろうと踏んでいた。だが16本という限られたサンプルとはいえ、はっきり開きが見える数字が出てしまうと、これまでのやり方のどこかに見落としがあるという方が自然に思えてくる。都合よく近い数字を期待していた分だけ、実際に開きを突きつけられると受け止め方も変わってくる。\n\n平均が11.06と出たこと自体は、悪い知らせというより、ようやく比較対象ができたという意味で必要な一歩だった。今まで自分の生成物だけを見て一喜一憂していたのが、実は的外れな基準で動いていたのかもしれない。人間の側の数字を一つ持ってきたことで、自分がどこを目指しているのかがようやく具体的になった。ただしそれは同時に、目指す場所までの距離がはっきり数字で見えてしまったということでもある。\n\n## ブランチを合流させ、設計メモに落とす\n\n7/31、facet benchmark側で別に走らせていたブランチ(origin/claude/japanese-generation-facet-benchmark-5r3776)を、人間性の判定を扱っているブランチ(claude/harness-japanese-humanity-c6k0ex)にマージした。片方はfacetの切り口、片方は人間性そのものの切り口で進めていたので、これまで別々に転がしていた。合流させたのは、11.06という数字を前にして、片方だけを見ていても差の正体がつかめないだろうと感じたからだ。\n\n同じ7/31に、次に何を試すかを設計メモとして書き出した。頭の中で覚えているつもりでも、別の作業に気を取られているうちに忘れる。特に複数のブランチを行き来しているときほど、判断の根拠を残しておかないと、あとで自分が何を考えていたのか追えなくなる。メモに落としたのは次の一手の整理であって、11.06との差そのものを説明する答えを書いたわけではない。まだそこまでは辿り着いていない。書いている最中も、これで差が縮まる保証があるわけではないと分かってはいたが、手を動かす前に一度整理しておく価値はあると思えた。\n\n## 隣で走っていた別件\n\n同じ時期、ベンチのもう一つの項目でURLが貼られていない状態が検出されて落ちていた件と、設計メモの見出しの本数表記が古いままだった件も直した。どちらも今回の主題である11.06の差とは別の話で、同じタイミングで手元にあっただけなので、ここで深追いはしない。\n\n## まだ直っていない\n\n結局のところ、今回やったのはブランチを一本化したことと、次にやることを文書として残したことの二つで、11.06との差そのものは動いていない。数字自体を動かす作業はまだこれからで、今回はその手前の整理に費やした回だったということになる。次に手を動かすべき場所ははっきりしている。\n\n作業ログとしては地味な回になった。マージしただけ、メモを書いただけ、と言えばそれまでだが、別々に転がしていた二本のブランチを一本にまとめておかないと、次に11.06との差を詰めにいくときにどちらの変更を前提にすればいいのか分からなくなっていたはずだ。地味でも土台を整える作業として、これは要ったものだと思っている。設計メモに書いた次の一手を、実際に試すところから続きになる。",
+          "rounds": 2,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "FAIL",
+              "issues": [
+                "returncode",
+                "126"
+              ]
+            },
+            {
+              "round": 2,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 78.67,
+          "scores": [
+            80.0,
+            76.0,
+            80.0
+          ],
+          "score_sd": 1.89,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的な日付・ブランチ名・数値は入っているものの、同じ「11.06との差」という主題を段落ごとに言い換えて反復するだけで新情報が増えず、内省的な締め文（〜ということでもある／〜と思っている）の型と文長が不自然に均質で、各節がきれいに整いすぎているため AI 生成の可能性が高い。"
+        },
+        {
+          "topic": "セキュリティ対策",
+          "title": "変異アブレーションで表層1次元の因果をゼロと確定、テストは相変わらず1本落ちたまま",
+          "description": "## 変異アブレーションを実装した\n\n7/31、変異アブレーションをベンチに実装した。コミットは c77849e。狙いは一つで、表層1次元の要素が評価スコアを動かしている「原因」になっているのかどうかを、相関ではなく因果として確かめることだった。\n\n結果ははっきりしていた。表層1次元の因果はゼロ、動かない。これまで漠然と疑ってはいたが、数字を見比べて「たぶんそうだろう」と言うのと、アブレーションを通して「ゼロだった」と言い切れるのとでは扱いがまるで違う。疑いを一つ、確定した事実に変えられたという意味で、今回の作業はそれなりに大きい。\n\n裏を返せば、これで一つ選択肢が消えたということでもある。表層をいじる方向はもう追わなくていい。次にどこを見るかを考え直す材料が、ようやく一つ増えた形になる。\n\nゼロという結果を見たとき、少し拍子抜けした自分もいた。何かしら効いていてくれた方が、次に何をすればいいか分かりやすかったからだ。だが期待通りの数字が出ることと、実際の因果関係とは別の話で、アブレーションを組んだ以上はゼロという答えもちゃんと受け取る必要がある。むしろ、ここで無理に効いていることにしないで済んだのは良かったと思っている。\n\n## ブランチを合流させた\n\n同じ7/31に、facet benchmark側で別に走らせていたブランチ(origin/claude/japanese-generation-facet-benchmark-5r3776)を、人間性の判定を扱っている側のブランチ(claude/harness-japanese-humanity-c6k0ex)にマージした(2626353)。片方はfacetの切り口、片方は人間性そのものの切り口で、別々に転がしていたものを一本にまとめた形になる。\n\nマージ自体は地味な作業だが、これをやっておかないと、次に何を試すにしても前提がどちらのブランチのものか分からなくなる。それだけの理由でも、二本を合流させておく価値はあった。\n\nなお、この少し前の時期に手元で見ていた別件のアーム間のスコア計測は、今回の表層アブレーションの話とは別の記録として残っているだけで、ここでは深追いしない。\n\n## まだ落ちているテスト\n\n一方で、tests/test_cli_smoke.py::test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree は、今回の作業の間もずっと落ちたままだった。アブレーションの実装にもマージにも直接は関係しない箇所だが、pytest を回すたびに赤く出るのを横目に見ながら作業を進めることになった。\n\n正直なところ、今回は表層1次元の因果をゼロと確定できたことと、ブランチを合流できたことの二つで手一杯だった。落ちているテストにまで手が回らなかった、というのが実際のところに近い。優先度を落としたつもりはないが、結果として後回しになった。\n\nこういう赤は、放っておくと存在すら忘れてしまいがちだ。今回のように別の作業に集中している間も、pytest を回すたびに同じ場所で落ちているのを見ているので、忘れてはいない。ただ、忘れていないことと、着手する時間を取れることは別の話で、その差が今のところ埋まっていない。\n\n## まとめ\n\n今回の一件は、疑いをアブレーションという形で検証し、表層1次元の因果はゼロだと確定させたことに尽きる。そのうえで、facet側と人間性側の二本のブランチを合流させ、次に手を動かすための土台を一本化した。\n\ntests/test_cli_smoke.py::test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree は、依然として落ちたままである。次に何を見るにせよ、この赤は消えないまま持ち越すことになる。",
+          "rounds": 2,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "FAIL",
+              "issues": [
+                "mutation",
+                "ablation"
+              ]
+            },
+            {
+              "round": 2,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 83.67,
+          "scores": [
+            84.0,
+            85.0,
+            82.0
+          ],
+          "score_sd": 1.25,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的なコミットIDやブランチ名で具体性を装ってはいるが、「AとBとは別の話で」という対比構文の反復、各節が「事実→感想→一般化」で均質に閉じる構成、同じ結論（表層1次元の因果はゼロ／テストが落ちたまま）の言い換え反復、破綻や脱線のない整いすぎた文長とリズムから、AI生成の可能性が高い。"
+        },
+        {
+          "topic": "チーム開発",
+          "title": "12と22には届いた、でも126はまだ126のまま",
+          "description": "## 41f4f72を積んだ\n\n7/29、test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong というコミットを積んだ。run-onの合流先を数え直すテストで、狙った通りに壊れている経路でだけ12と22に届くことを確認する内容だ。数字が狙った通りに出た時点では、それなりに手応えがあった。\n\nだがコミットを積んだ直後にpytestを流し直したのは、いつも通りの確認のつもりだった。ここまでは書けた、という感触と、まだ残っている赤とは別の話だ。\n\n## pytestはまだ落ちている\n\n問題はこの後で、tests/test_bench_providers.pyの2件が相変わらず赤いままだった。\n\ntest_cli_timeout_is_an_explicit_counted_infra_errorはassert 126 == 124で落ちる。中身を見るとProviderAttempt(provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0, ..., infra_error='blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run')のreturncodeが124になっていない、というだけの話だ。\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_errorの方も同じ形で、assert 126 == 1に加えて[ERROR] PyYAML not found. `pip install pyyaml`.というAssertionErrorも出ている。returncodeはどちらも126で、infra_errorの文言も一言一句同じblocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid runになっている。\n\n41f4f72はこの2件を直すためのコミットではなかったので、落ちたままなのは想定の範囲ではある。ただ、想定していたことと、実際に赤いログを見てまだ直っていないと確認することの間には、やっぱり距離がある。\n\n## 同じ日にあったこと\n\n同じ7/29には4abef2cでmaterial-armのrunを無効にしていた配線上の欠陥を2件直していて、翌7/30には40cae83でmechanical linkificationが4/32から4/32という、きれいに制御されたヌルになることを確認するテストを積んでいる。どちらも今回の2件とは別の話で、こっちは前に進んでいる。\n\n## まだ、ということ\n\n126のままの2件は、allow_headless_in_ccの扱いとPyYAMLが入っていない環境の両方が絡んでいて、原因は前から分かっている。分かっているのに直っていない、という状態が7/29の時点でも続いている。41f4f72は数え方のテストを1つ増やしただけで、この2件には触れていない。\n\n12と22には届いた。でもtest_cli_timeout_is_an_explicit_counted_infra_errorとtest_cli_authentication_failure_is_an_explicit_counted_infra_errorの126は、届いていない。次にどのコミットでこの2件に手を入れるかは、まだ決めていない。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 78.67,
+          "scores": [
+            76.0,
+            80.0,
+            80.0
+          ],
+          "score_sd": 1.89,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやテスト名などの具体性は高いものの、冒頭の「12と22には届いた、でも126はまだ126のまま」という主題を末尾で回収する整った構成、「〜という状態」「〜との間には、やっぱり距離がある」といった内省的定型句の反復、本筋と無関係な「同じ日にあったこと」節での埋め合わせ、詩的な見出し付けなどが、ログデータを元にAIが叙情的に再構成した文章の特徴を強く示している。"
+        }
+      ],
+      "stats": {
+        "mean_chars": 1684.9,
+        "mean_score_sd": 2.09,
+        "sem": 0.74,
+        "human_read_rate": 0.0,
+        "mean_lint": null,
+        "mean_lint_critical": null,
+        "mean": 77.96,
+        "median": 78.67,
+        "min": 72.0,
+        "max": 83.67
+      }
+    },
+    "writer_nostate": {
+      "label": "writer, state never persisted (reproduces the pre-fix behaviour)",
+      "samples": [
+        {
+          "topic": "Python",
+          "title": "generation_variance.py を足した日、pytest は変わらず赤かった",
+          "description": "## 今日やったこと\n\n7/30 に generation_variance.py を追加した（c083fd7）。狙いは単純で、素材、つまりお題やインプット側は固定したまま、生成される文章のほうだけを揺らして見るベンチマークを作りたかった。書き方の分散を見たいなら、まず素材側の分散を消しておかないと、文章が変わった原因が素材なのか書き方なのか区別がつかない。言われてみれば当たり前のことなんだけど、いざスクリプトに落とし込むと地味に手間だった。同じ素材から何度か生成させて、出てきたものを並べて見比べる、というだけの作業のはずが、揺れをどう定義するかの部分で何度か書き直すことになった。\n\n## 直っていないテスト\n\nその前後でずっと気になっているのが、pytest がまだ赤いままだということ。\n\ntests/test_bench_providers.py の test_cli_timeout_is_an_explicit_counted_infra_error が落ちている。期待しているのは returncode が 124、つまりタイムアウトを表すコードになることなのに、実際には 126 が返ってくる。ProviderAttempt の中身を見ると provider='claude'、model=None、invocations=0 で、infra_error に \"blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run\" というメッセージが入っている。タイムアウトを検証したいテストのはずが、その手前でヘッドレス実行そのものがブロックされていて、そもそもタイムアウトの状況を再現できていない。\n\nもう一つ、test_cli_authentication_failure_is_an_explicit_counted_infra_error も同じ形で落ちている。こちらは returncode に 1 を期待しているところに、やはり 126 が返ってくる。中身は先ほどと同じ blocked_headless_provider のエラーで、加えてこちらのテストでは \"[ERROR] PyYAML not found. `pip install pyyaml`.\" というエラーも出ている。認証失敗を検知するはずのテストなのに、認証の処理にたどり着く前の層で止まっている。\n\n## どちらも同じところで止まっている\n\n2つとも、テストが本来見たかった失敗、タイムアウトや認証エラーよりも手前で、allow_headless_in_cc を明示的に渡していないヘッドレス実行がブロックされて 126 で返ってきている。テスト側で allow_headless_in_cc を渡すべきなのか、それともプロバイダ呼び出し側の分岐そのものを見直すべきなのか、まだ決めていない。原因の当たりはついているのに、直す場所を決めかねている状態が続いている。\n\n## 触れておくだけ\n\n同じ時期に、jp-natural-writing のまとめを書いたり（a6af6b2）、freewrite と mixed という2つの候補を足したり（afef85c）していたけど、それは別件なのでここには書かない。\n\n## 今の状態\n\ngeneration_variance.py は動くところまでは持っていけたけど、テストスイート自体は赤いまま持ち越しになった。新しいスクリプトを一つ足すたびに、赤いテストを横目に見ながら作業することになるのは正直あまり気分の良いものではないが、今回はそこまで手が回らなかった。次に触るときは、この2つの失敗が同じ原因で止まっているという前提から潰していくつもり。allow_headless_in_cc まわりをどちらの側で吸収するかを決めれば、少なくとも returncode の食い違いは解消するはずだと踏んでいる。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 74.0,
+          "scores": [
+            76.0,
+            74.0,
+            72.0
+          ],
+          "score_sd": 1.63,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやテスト名、returncode などの具体性は高いものの、見出しごとに整然と要約され「手前で止まっている」「126 が返ってくる」といった同趣旨の言い換えが反復し、各段落が均質な長さで綺麗に締めくくられるなど、ログから再構成した AI 的な整いすぎた叙述の特徴が目立つ。"
+        },
+        {
+          "topic": "機械学習",
+          "title": "126は124でも1でもない",
+          "description": "7/29 に 41f4f72（\"run-on merge reaches 12 and 22 — but only where the work went wrong\"）を切った。コミットメッセージ自体がすでに「うまくいっていない場所の話をしている」と書いてあるとおり、この時点でまだ pytest は赤い。test_bench_providers.py の中の2本、test_cli_timeout_is_an_explicit_counted_infra_error と test_cli_authentication_failure_is_an_explicit_counted_infra_error が揃って落ちている。\n\n## 症状はどちらも同じ形をしている\n\nタイムアウトを検証するテストは returncode が 124 になることを期待している。認証失敗を検証するテストは 1 を期待している。想定としては別々のシナリオで、別々の理由でプロセスが終わるはずだった。ところが実際に返ってきているのは両方とも 126 で、ProviderAttempt の中身を見ると provider='claude', model=None, invocations=0 のまま止まっていて、infra_error には \"blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run\" という文字列が入っている。\n\nつまりテストが本来検証したかった分岐、タイムアウトなのか認証失敗なのかという分岐にすら到達していない。その手前に headless provider の呼び出しを弾くガードがあって、そこで先に止められている。allow_headless_in_cc を明示的に渡さない限り、課金の発生する本番呼び出しは通さないという判断自体は理にかなっているように見えるが、その判断がテストの実行系にもそのままかかってしまっていて、2つの異なるはずのテストが今はどちらも同じ 126、同じ infra_error 文字列という、区別のつかない失敗の仕方をしている。片方だけ直しても、もう片方も同じ場所で止まっているので、実質1つの原因を2回見ている状態に近い。\n\nauthentication_failure のほうはさらにもう一段状態が悪い。126 の話とは別に、[ERROR] PyYAML not found. `pip install pyyaml`. というエラーも同じテストの中に出てきている。こちらはロジックの話ではなく、テストを走らせている環境に入っているべき依存が入っていないという、まったく別レイヤーの話で、126 の原因と一緒くたにして考えると余計に混乱する。同じ pytest の出力の中に「設計判断がテストの前提を壊している」問題と「環境が整っていないだけ」の問題が並んで出てくると、どちらから手をつけるべきか一瞬迷う。\n\n## 今日の時点でわかっていること\n\n2本とも、まだ直っていない。ガードの文言を読む限り、意図せず課金の走る呼び出しをheadlessで通してしまわないようにする、という設計の意図そのものは間違っていなさそうに見える。だとすれば直すべきはガードを外すことではなく、テストがこのガードの外側からシナリオを組み立て直すか、あるいはガードの判定条件のほうを疑うか、そのどちらかだろうという当たりはついている。ただし今日の時点ではそこまで手をつけられていない。当たりがついているのと、実際に直っているのは別の話で、今のところは前者までしか進んでいない。\n\nPyYAML の欠落についても同様で、原因は特定できているが対処はまだしていない。2本のテストが赤いまま、というのが今日の終わりの状態で、それ以上でも以下でもない。\n\n同じタイミングで、別の作業として骨格移植の仮説を検証していた分もあったが、そちらは今回の話とは別件なのでここには書かない。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 49.67,
+          "scores": [
+            8.0,
+            75.0,
+            66.0
+          ],
+          "score_sd": 29.69,
+          "human_read": 1,
+          "human_read_rate": 0.333,
+          "reasoning": "コミットハッシュやテスト名など具体は非常に濃いものの、同じ論点を言い換えて丁寧に念押しする説明の型（「〜ではなく〜だ」「当たりがついているのと直っているのは別の話」「それ以上でも以下でもない」）が繰り返され、段落ごとに小さく総括して締める整いすぎた構成と、末尾の「別件なのでここには書かない」というスコープ宣言が、実作業ログ特有の省略や乱れよりも生成テキスト的な均質さを感じさせる。"
+        },
+        {
+          "topic": "クラウドコンピューティング",
+          "title": "7/29、まだ直っていない",
+          "description": "## 7/29 のコミットから\n\n7/29 に 41f4f72 で「test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong」というコミットを積んだ。タイトルの通り、うまくいったケースではなく、うまくいかなかったケースだけを対象にしたつもりの変更だった。だが pytest はまだ通っていない。\n\n## test_cli_timeout_is_an_explicit_counted_infra_error\n\ntests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_error は assert 126 == 124 で落ちる。タイムアウトしたときに returncode が 124 になることを期待しているテストなのに、実際に返ってくるのは 126 だ。\n\nProviderAttempt の中身を見ると、elapsed_s は 8.360999800061109e-06 秒。マイクロ秒オーダーで即座に返ってきていて、タイムアウトするまで待ってすらいない。invocations は 0、infra_error には blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run と書かれている。CLI がタイムアウトするより前に、ヘッドレス実行そのものがブロックされている。\n\n## test_cli_authentication_failure_is_an_explicit_counted_infra_error\n\nもう一方の test_cli_authentication_failure_is_an_explicit_counted_infra_error も同じ壁に当たっていて、assert 126 == 1 で落ちる。認証失敗を模したはずのケースなのに、こちらも elapsed_s は 5.514999884326244e-06 秒、invocations は 0、infra_error は同じ blocked_headless_provider の文言だった。returncode 1 を検証するどころか、その手前でヘッドレス実行が止められている。\n\nこのテストにはさらに AssertionError: [ERROR] PyYAML not found. `pip install pyyaml`. も出ていた。環境に PyYAML が入っていないらしい。\n\n## メモ\n\n2 件とも、テストが検証したいはずの「タイムアウト」や「認証失敗」という状況そのものに到達できていない。blocked_headless_provider のガードが先に発火して、returncode を 126 に固定してしまっている。allow_headless_in_cc を明示的に許可された有償実行でだけ渡す、というガード自体の意図はわかるが、テスト側の想定がそれに追いついていない。\n\n41f4f72 で触ったのはテストの側のはずで、CLI 呼び出しをブロックしているガードそのものには手を入れていない。だから returncode がまだ 126 のまま、というのは筋としては合っている。ただそれで pytest が通るようになったわけではないので、直った扱いにはできない。timeout の方も authentication_failure の方も、期待値との差分は変わらず残っている。PyYAML が入っていない件も、今のところそのままにしてある。\n\n同じ日に f3de018 でジャッジを 3 回にする変更も入れているし、翌日には writer アームのスコアも見ている。ただ今日ここに残しておきたいのはこの 2 件の pytest の方で、どちらもまだ直っていない。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 72.33,
+          "scores": [
+            72.0,
+            70.0,
+            75.0
+          ],
+          "score_sd": 2.05,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュや浮動小数点の実測値など具体性は高いものの、2 つのテストを同一の情報順（elapsed_s→invocations→infra_error）で並列に記述する均質な構成、全角半角の隙のない整形、他の作業に触れてから冒頭のタイトルに回収する締めくくりなど、実データを与えられた LLM が整形して書いた痕跡が強く、私的な作業メモにありがちな断片性や言い淀みが乏しい。"
+        },
+        {
+          "topic": "Web開発",
+          "title": "126 は 124 でも 1 でもない",
+          "description": "7/29 に 41f4f72（\"run-on merge reaches 12 and 22 — but only where the work went wrong\"）というコミットを切った。コミットメッセージの後半がすでに白状しているとおり、これはうまくいっていない箇所だけを捉えるためのテストで、この時点で全体が直ったわけではない。実際、test_bench_providers.py の中の2本、test_cli_timeout_is_an_explicit_counted_infra_error と test_cli_authentication_failure_is_an_explicit_counted_infra_error が揃って赤いままだった。\n\n## 症状が同じ形をしている\n\nタイムアウトを検証するテストは returncode が 124 になることを期待している。認証失敗を検証するテストは 1 を期待している。別々のシナリオで別々の理由でプロセスが終わるはずだった。ところが返ってきているのは両方とも 126 で、片方のテストの出力はこうなっている。\n\nAssertionError: assert 126 == 124\n +  where 126 = ProviderAttempt(provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0, stdout=...ession', infra_error='blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run').returncode\n\nもう片方の期待値は 124 ではなく 1 になるだけで、returncode も infra_error の文字列も同じ blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run だった。つまりどちらのテストも、本来検証したかった分岐（タイムアウトなのか認証失敗なのか）にすら到達していない。その手前で、ヘッドレス実行そのものを弾くガードに引っかかって止まっている。\n\n期待値だけ見ると2本は無関係なテストに見えるが、実際に落ちている場所は完全に同じ一箇所だった。片方の returncode 判定だけをいじって直そうとしても、もう片方も同じガードに引っかかっている以上、そこだけ直しても意味がない。2本まとめて同じ根っこの問題として扱うべきなのは、この時点でほぼ確信している。\n\nauthentication_failure のほうはもう一段面倒で、126 の話とは別に [ERROR] PyYAML not found. `pip install pyyaml`. という AssertionError も同じテストの中に出てきている。こちらはロジックの話ではなく環境側の話のはずで、なぜこの行までここに出てくるのかは今の時点では追えていない。\n\n## 今日の時点\n\nallow_headless_in_cc を明示的に渡さない限り課金の発生する呼び出しを通さない、というガードの意図そのものは間違っていなさそうに見える。だとすると直すべきはガードを外すことではなく、テスト側の組み立てを疑うべきなんだろうという当たりはついているが、当たりがついているのと直っているのは別の話で、2本ともまだ赤いままにしてある。PyYAMLの行についても原因はまだ追えていない。\n\n2本とも直っていないまま今日を終える、というのが正直なところで、無理にまとめずにそのまま記録しておく。\n\n同じ時期に bare アームと writer アームの計測ログも見ていたが、それは今回の話とは別件なのでここには書かない。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 66.0,
+          "scores": [
+            68.0,
+            68.0,
+            62.0
+          ],
+          "score_sd": 2.83,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的なコミットハッシュやエラー出力、未解決のまま終える結び方など人間らしい要素は多いが、見出し構成が整いすぎており「当たりがついているのと直っているのは別の話」「無理にまとめずにそのまま記録しておく」「別件なのでここには書かない」といった“未整理さの演出”が段落ごとに配置されている点が作為的で、全体として自然さを狙って構成されたAI生成の可能性がやや高い。"
+        },
+        {
+          "topic": "データベース設計",
+          "title": "run-on merge はケリをつけたつもりだったが、2本まだ落ちている",
+          "description": "## 7/29 のコミットについて\n\n41f4f72 で、run-on merge の話にはケリをつけたつもりだった。コミットメッセージは「run-on merge reaches 12 and 22 — but only where the work went wrong」。マージ後に到達する数字が 12 と 22 になるのは、正常系ではなく壊れている側だけだ、という意味でこの言い回しを選んだ。ただしこの時点では pytest をフルで通していない。通した気になっていただけだった。\n\n## まだ落ちている2つ\n\n案の定、あらためて回してみると tests/test_bench_providers.py の2件が引き続き落ちていた。\n\n1件目は test_cli_timeout_is_an_explicit_counted_infra_error。\n\n```\nAssertionError: assert 126 == 124\n +  where 126 = ProviderAttempt(provider='claude', model=None, returncode=126,\n    elapsed_s=8.360999800061109e-06, invocations=0, stdout=...ession',\n    infra_error='blocked_headless_provider: pass allow_headless_in_cc only\n    for an explicitly authorized paid run').returncode\n```\n\nタイムアウトのケースなので returncode は 124 を期待しているのに、実際には 126 が返ってくる。infra_error の中身を見ると blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run とある。つまりタイムアウトを踏む前に、headless provider の方で弾かれている。このテストが本来検証したいシナリオまで到達できていない。\n\n2件目は test_cli_authentication_failure_is_an_explicit_counted_infra_error。同じパターンで、\n\n```\nAssertionError: assert 126 == 1\n +  where 126 = ProviderAttempt(provider='claude', model=None, returncode=126,\n    elapsed_s=5.514999884326244e-06, invocations=0, stdout=...ession',\n    infra_error='blocked_headless_provider: pass allow_headless_in_cc only\n    for an explicitly authorized paid run').returncode\n```\n\n認証失敗で returncode=1 を期待している箇所が、こちらも 126 になっている。原因は1件目と同じ blocked_headless_provider。さらにこのテストではもう一つ\n\n```\nAssertionError: [ERROR] PyYAML not found. `pip install pyyaml`.\n```\n\nというアサーション失敗も出ている。認証失敗のシナリオを再現する手前、環境に PyYAML が無い状態で止まっている疑いがある。\n\n## 現状メモ\n\n2件とも、狙っていた「タイムアウト」「認証失敗」の分岐そのものより手前で止まっている。片方は headless provider のブロック、もう片方はそれに加えて PyYAML 不在。41f4f72 で触ったつもりの run-on merge の分岐とは別の層の話で、今日の時点では両方とも直っていない。\n\n同じ日の周辺には別件の作業や、アームの計測ログも手元にあるが、それは今回の話とは別件なのでここには書かない。今日の本題はこの2件が依然として落ちている、という事実だけ。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 71.67,
+          "scores": [
+            73.0,
+            72.0,
+            70.0
+          ],
+          "score_sd": 1.25,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "ログの引用や commit hash など具体性は高いものの、見出し構成と「1件目/2件目」の対称的な段落展開、各段落を必ず説明文で締める均質さ、末尾で「別件なのでここには書かない」と唐突に範囲を宣言する定型的な締め方、「〜つもり」「〜の話」の反復から、実データを与えられた AI による再構成の可能性が高いと判断した。"
+        },
+        {
+          "topic": "リモートワーク",
+          "title": "2026-07-29 コミット41f4f72、テストはまだ落ちている",
+          "description": "## 41f4f72について\n\n7/29に41f4f72をコミットした。メッセージは「test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong」。run-onマージのカウントが12と22に達する、ただしそれは処理がおかしくなった箇所でだけ発生する、という趣旨で、ベンチマークの集計が想定していた失敗パスとずれていることを確認するために書いたコミットだった。\n\n## 落ちているテスト\n\nこのコミットのあとも、pytestは2つ落ちたままになっている。\n\nひとつは tests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_error。assert 126 == 124 で落ちる。返ってきているのは ProviderAttempt(provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0, ...)で、infra_error は「blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run」。タイムアウトとして returncode 124 を受け取ることを期待しているテストなのに、その手前で別の理由の126が返ってきている。\n\nもうひとつは tests/test_bench_providers.py::test_cli_authentication_failure_is_an_explicit_counted_infra_error。こちらは assert 126 == 1 で、returncode も infra_error の文言も上と同じ blocked_headless_provider のもの。認証失敗を想定して returncode 1 を期待しているテストが、同じガードに引っかかって126で止まっている。あわせて [ERROR] PyYAML not found. `pip install pyyaml`. というAssertionErrorも出ている。\n\n## メモ\n\n2件とも、テストが本来検証したかったエラーコード(124や1)にたどり着く前に、blocked_headless_provider のガードが先に発火して126を返している。allow_headless_in_cc を明示的に許可された有償実行でだけ渡すようにしているガードのはずだが、テスト実行の経路でも同じチェックが先に走ってしまっている。timeoutのテストと authentication_failureのテストで、returncodeもinfra_errorの文言も完全に一致しているということは、両方とも同じ箇所で止まっていると考えていい。\n\nPyYAMLのエラーは authentication_failure のテストの側にだけ出ている。ガードの問題より手前で、環境の依存関係が足りていないのか、それともテストの前提条件自体が崩れているのか、そこはまだ切り分けられていない。\n\n126という数字だけを見ていると、一見どちらのテストも同じ理由で落ちているように見える。実際、returncodeもinfra_errorの文言も揃っているので、原因は共通していると考えるのが自然だ。ただ、片方にはPyYAML絡みのAssertionErrorも重なって出ている以上、直す順番を間違えると、ガードの方を直したつもりでPyYAMLの方だけが残る、ということも起こりうる。どちらから手を付けるにしても、126という値の出どころを先に押さえないと、直したかどうかの判定自体が怪しくなる。\n\nこの2日ほどは他の作業と並行していたので、41f4f72のあとに手を止めてこの2件だけに向き合う時間は取れていない。とはいえ、放置していい理由にはならない。\n\nいまのところ、この2件はどちらも直っていない。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 78.67,
+          "scores": [
+            80.0,
+            80.0,
+            76.0
+          ],
+          "score_sd": 1.89,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやreturncode等の具体情報は豊富だが、メモ節で同一の結論（126で共通のガードに引っかかっている）を言い換えて三度反復する冗長さ、見出し付きの整った構成、均質で推敲されすぎた文長、最後の「放置していい理由にはならない」「いまのところ直っていない」といった実質的情報のない締めの定型性から、与えられたログ断片をもとにAIが体裁を整えて書いた文章である可能性が高い。"
+        },
+        {
+          "topic": "セキュリティ対策",
+          "title": "returncode 126の壁 ― 41f4f72で直したはずのpytestがまだ落ちている",
+          "description": "今日のところの状況をそのまま残しておく。まだ終わっていない話なので、きれいな結論はない。\n\n## 41f4f72で直したつもりだった\n\n7/29に41f4f72というコミットを積んだ。コミットメッセージは「test(benchmark): run-on merge reaches 12 and 22」。run-onのマージ処理が12と22のケースまで届くようにする、というテスト側の修正のつもりだった。マージした直後にpytestを流したが、想定していた範囲の外で壊れているテストがまだ残っていた。\n\n## 126という数字\n\ntests/test_bench_providers.py::test_cli_timeout_is_an_explicit_counted_infra_errorが赤いままだ。\n\nassert 126 == 124\n\nで落ちている。124が来てほしいところに、ProviderAttemptのreturncodeが126で入ってくる。中身を見ると\n\nprovider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0\n\nで、infra_errorには\n\nblocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run\n\nという文字列が入っている。elapsed_sが一桁マイクロ秒台なので、実際にタイムアウトするところまで処理が進んですらいない。想定していたタイムアウト検知のパスに入る前に、ヘッドレスプロバイダをブロックする側のガードに先に引っかかって126で即終了している格好だ。allow_headless_in_ccを明示的に許可した有料実行でだけ通す、という制御が、このテストの想定より先に効いてしまっている。\n\n## もう一方はさらに面倒\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_errorのほうも同じ理屈で、期待値の1に対して126が返ってきて\n\nassert 126 == 1\n\nで落ちている。ProviderAttemptの中身もタイムアウト側のケースとほぼ同じ顔つきで、infra_errorはやはりblocked_headless_provider経由のメッセージだ。\n\nただこちらはそれだけで終わらない。同じテストの失敗ログの中に\n\n[ERROR] PyYAML not found. `pip install pyyaml`.\n\nというAssertionErrorも一緒に出ている。認証失敗を装って叩いているはずのパスの手前で、PyYAML周りの依存が足りていないことによる別のエラーも重なって出てきている状態で、126の話とこのPyYAMLの話が同じテストの下に並んでしまっている。どちらが先に直るべき問題なのか、ログを見ただけではまだ切り分けきれていない。\n\n## 現状\n\n41f4f72をマージしたことでrun-on自体は12と22のケースに到達するようにはなったはずだが、上の2本のpytestはどちらもまだ落ちたままになっている。blocked_headless_providerのガードがタイムアウト検知よりも先に発火してしまっている問題も、PyYAMLが足りていない問題も、今のところ手をつけられていない。テストの意図と実際に返ってくるreturncodeがずれているという事実だけが、今わかっていることだ。次に手を動かすときは、この126をどこで飲み込むかを先に決めてから直しにかかりたい。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "score": 75.67,
+          "scores": [
+            76.0,
+            75.0,
+            76.0
+          ],
+          "score_sd": 0.47,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやログ値など具体は豊富だが、各節が必ず整った要約文で締められ、既出情報を丁寧に言い換えて反復する均質な説明調が続き、冒頭の「きれいな結論はない」から末尾の決意表明までの構成が作為的で、実際の作業メモにありがちな断片性や省略が乏しいため、AI生成の可能性が高い。"
+        },
+        {
+          "topic": "チーム開発",
+          "title": "run-onマージは追加できたが、CLIのtimeout/authentication_failureはまだ落ちている",
+          "description": "## 41f4f72: run-onマージのテストを追加\n\n7/29に41f4f72（test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong）を積んだ。run-onマージが12件・22件に達するケースを、作業が壊れたときの状態で再現するテストになっている。同じ日には別件の修正4abef2cも入れていて、翌30日にはlinkification関連のテスト40cae83も足しているが、それはここでは触れない。今回書きたいのは、そのあとも赤いままの2件についてだ。\n\n## 同じファイルの中で、2件がまだ落ちている\n\npytestを流すと、tests/test_bench_providers.py の以下2つが相変わらず赤い。\n\n- test_cli_timeout_is_an_explicit_counted_infra_error\n- test_cli_authentication_failure_is_an_explicit_counted_infra_error\n\n前者はreturncodeが124になることを期待しているが、実際には126が返ってくる。ProviderAttemptの中身を見るとelapsed_sはほぼ0（8.36×10⁻⁶秒程度）、invocationsは0のまま。CLIのプロセス自体はほとんど何もしないまま終わっている格好で、タイムアウトを待って124を返すという本来のフローには一度も入っていないように見える。infra_errorにはallow_headless_in_ccまわりのガードに引っかかったことを示す文言が入っていて、そこが126の出どころらしい。\n\n後者は1を期待しているところに同じく126が返ってきて落ちる。elapsed_sは5.51×10⁻⁶秒程度で、こちらもinvocationsは0。infra_errorの中身も前者と同じガードを指すものになっている。値が違うだけで、起きていることの形はtimeout側とほぼ同じに見える。加えてこちらのテストではPyYAMLが見つからないという趣旨のアサーションも別に出ていて、原因が一つに絞れていない。\n\n## メモ\n\n期待している124や1という値と、実際に返ってきている126がずれている。elapsed_sがほぼ0でinvocationsも0という点から見ると、CLIはタイムアウトや認証失敗という本来のシナリオまで到達する前に、どこかで止められているのではないかと思う。infra_errorの文言を見る限りallow_headless_in_ccまわりのガードが関係していそうだが、そのガードがなぜテストの実行パスに入ってきているのか、そこから先はまだ追えていない。PyYAMLのエラーが片方のテストにだけ出ている理由も、今のところわかっていない。timeout側とauthentication_failure側でinfra_errorの文言がほぼ同じであることを考えると、両方とも同じ箇所で弾かれている可能性が高そうだが、それを確かめるにはガード周りをもう少し追いかける必要がある。\n\n## 現状\n\n12・22のrun-onマージのテストは追加できたが、timeoutとauthentication_failureの2つは、まだ直っていない。両方とも期待していた124や1ではなく126が返ってきていて、infra_errorの文言はallow_headless_in_ccまわりのガードを指している。原因の切り分けはこれからで、今日時点で言えるのはここまでになる。",
+          "rounds": 3,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "FAIL",
+              "issues": [
+                "timeout/authentication_failure"
+              ]
+            },
+            {
+              "round": 2,
+              "verdict": "FAIL",
+              "issues": [
+                "timeout/authentication_failure"
+              ]
+            }
+          ],
+          "score": 12.0,
+          "scores": [
+            12.0,
+            12.0,
+            12.0
+          ],
+          "score_sd": 0.0,
+          "human_read": 3,
+          "human_read_rate": 1.0,
+          "reasoning": "コミットハッシュ・関数名・126という実測値・8.36×10⁻⁶秒といった検証可能で不揃いな具体値が並び、「原因が一つに絞れていない」「そこから先はまだ追えていない」といった未解決のまま報告する姿勢や、脱線を自分で打ち切る言い回しが、AI特有の均質な要約構造ではなく実作業者の作業ログらしさを示しているため。"
+        }
+      ],
+      "stats": {
+        "mean_chars": 1735,
+        "mean_score_sd": 4.98,
+        "sem": 1.76,
+        "human_read_rate": 0.167,
+        "mean_lint": null,
+        "mean_lint_critical": null,
+        "mean": 62.5,
+        "median": 72.0,
+        "min": 12.0,
+        "max": 78.67
+      }
+    },
+    "writer_sense": {
+      "label": "writer + seeded sensory/喜怒哀楽 state, sparse and drifting",
+      "samples": [
+        {
+          "topic": "Python",
+          "title": "126のまま、11.06のまま",
+          "description": "## またこの数字を書く\n\n7月26日、人間が書いた記事16本を同じ判定にかけた。平均は11.06。手元でこれまで見てきた数字とはまだ開きがある。あれから何日か経って、このメモを書いている今も、そこは動いていない。数字を書き直すたびに同じ結論に戻ってくるのは、正直なところ気分のいいものではないが、開いていると分かっているものを開いていないことにして先に進むよりはましだと思って、ここに残しておく。\n\n## タイムアウトのテストがまだ124を待っている\n\ntest_cli_timeout_is_an_explicit_counted_infra_error が相変わらず落ちている。assert 126 == 124。返ってくる ProviderAttempt を見ると、provider='claude'、returncode=126、invocations=0。infra_error の中身は blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run。124を期待しているところに126が返ってくる、その一点だけがずっと変わらない。何度読み直しても、テストが見たいのはタイムアウトそのものの挙動で、その手前でブロックされた結果を受け取っているという構図は変わっていない。\n\n## 認証失敗のテストも同じ顔をしている\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error も落ちたままだ。assert 126 == 1。ここにも同じ blocked_headless_provider の文言が乗っている。おまけにもう一つ、AssertionError: PyYAML not found. `pip install pyyaml`. というメッセージも一緒に出てくる。1本のテストの中に、原因の違う指摘が2つ重なっている状態を、そのままにしている。どちらから手をつけても、もう片方が残るのは分かっているのに、今日はまだどちらにも触れていない。\n\n## その横で動いていたもの\n\n同じ時期には analyze_gap.py の話や、骨組みだけ残す変異での確認作業もあったが、それはここでは脇に置く。今回書きたいのはこの2本のテストと11.06のことだけだ。\n\n## 画面の向こうで\n\nさっき、赤い FAILED が画面3つ分流れた。この書き方をしたのは自分なのに、他人事のように文句を言いたくなる瞬間がある。ログを追っていくうちに行番号が4桁に入って、ああやっぱりここまで来たか、と思った。読みは当たっていたが、当たったところで直るわけではない。\n\n上の階で椅子を引く音がした。作業の区切りにはちょうどよかったが、区切りがついたのは自分の集中だけで、テストの結果は何も変わっていない。椅子の音が消えたあとも、画面の中の126と124はそのままだった。\n\n## 今のところ\n\n11.06 は変わらず、126 も変わらない。どちらも「まだ直っていない」という同じ状態を指しているだけで、今日はそれ以上のことを書けない。数字とテストの間に何か関係があるのかどうかも、いまはまだ確かめようがない。ただ両方とも、確認するたびに同じ場所で止まっているのだけは確かだ。\n\n次に手をつけるのがどちらになるかも、まだ決めていない。決めていないまま、この記録だけは残しておく。あとで読み返したときに、今日の自分が何を見てここで止まったのか、それだけは分かるようにしておきたい。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "affect": {
+            "seed": "20260807|Python",
+            "drift": true,
+            "moments": 3,
+            "senses": [
+              "聴覚",
+              "視覚"
+            ],
+            "affects": [
+              "哀",
+              "喜",
+              "怒"
+            ],
+            "sha1": "37265504438c"
+          },
+          "score": 76.0,
+          "scores": [
+            74.0,
+            76.0,
+            78.0
+          ],
+          "score_sd": 1.63,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "個別具体的なテスト名やエラー文字列で具体性は高いものの、各節が「まだ変わっていない/直っていない」という同じ余韻の一文で締められる均質な構成、「椅子を引く音」など人間味を演出するために挿入されたような環境描写、「〜のは分かっているのに」「〜だけは確かだ」といった内省的言い回しの反復から、自然さを狙って生成されたAIテキストの可能性が高いと判断した。"
+        },
+        {
+          "topic": "機械学習",
+          "title": "判定のばらつきが62点動いた日、骨格仮説も一緒に死んだ",
+          "description": "## まだ11.06のまま止まっている\n\n7/26に、人間が書いた記事16本を同じ判定ラインに通した。平均は11.06。手元で追いかけている数字とはまだ開きがあって、そこは直せていない。この差分がどこから来ているのか、しばらく切り分けられずにいた。原因は本文側にあるはずだと決めてかかっていて、判定ラインの方は疑わずにいた。文章を直す、コーパスを疑う、パラメータをいじる、といった手をひととおり回してもこの開きが動かなかった時点で、本当は判定の側を見るべきだったのだと思う。\n\n## 同じ文章を3回通してみた\n\n差分の原因を探る前に、そもそも判定自体がどれくらい安定しているのかを一度も確認していなかったことに気づいた。7/29、同じテキストを判定に何度か通し直してみた。結果は9、62、68。\n\n同一の入力に対してこの振れ幅が出るという事実は、今まで見てきた数字の意味を一段階疑わせる。追いかけている差分が数点から十数点のオーダーだとすると、判定側のノイズがすでにそれと同じか、それ以上のオーダーにいる。これでは、ある記事が別の記事より「良い」と判定が言ったとしても、それが本当にテキストの性質を反映しているのか、その日の判定がたまたまそう転んだだけなのか、区別がつかない。11.06という数字自体、固定した特性値として扱っていいのか怪しくなった。\n\n## 骨格を抜いたら、モデルが勝手に建て直した\n\n同じ日、別の角度からも仮説を検証していた。文章の骨格、つまり構成そのものが判定スコアに効いているという仮説を立てていて、それを確かめるために骨格だけを削ったテキストで判定にかけるアブレーションを組んだ。\n\n出てきた結果は、骨格を抜いた状態が維持されない、というものだった。モデルが生成の過程で骨格を自分で再構築してしまう。つまりこのテストは「骨格を抜いたときにスコアがどう動くか」を観測する実験として成立しておらず、仮説を支持する材料にも綺麗な反証にもならない。それどころか、骨格が主要因だと自分が置いていた前提そのものを、テストの設計段階で崩す結果になった。骨格を操作したつもりが、操作できていなかった。\n\nアブレーションを組むときは、たいてい「これで狙った要因だけが消える」という前提を疑わずに走らせてしまう。今回はその前提自体が崩れた。骨格を消したつもりの入力から、骨格を持った出力が出てくるなら、骨格というものをそもそも入力側の属性として扱っていいのかも怪しくなる。\n\n## 積み重ねると\n\nこの週は、進捗を測るための道具である判定と、進捗を説明するために自分で立てていた骨格の仮説が、両方同時に怪しくなった週だった。判定は同一入力に対して9から68まで動き、骨格の仮説はそれを検証するはずのテストの内側で足をすくわれた。どちらも、直そうとしていた11.06の差分そのものには手を触れていない。むしろ、その差分を測っている物差しの方を先に疑わなければならなくなった。\n\n同じ時期には、骨格を別のテキストへ移植する別件も走らせていて、そちらは差が出ずに終わり、判別性能自体は再現する一方で一部がタイムアウトで落ちるということもあった。これは今回の話とは別の筋なので、ここでは触れるだけにしておく。\n\n11.06はまだそのままで、今回書いたことはそれを埋める話ではない。ただ、埋める前にまずやることが一つ増えた。差分を語る前に、その差分を測っている判定自体がどれだけ信用できるものかを、先に確かめる必要がある。\n\n正直、判定のばらつきを測る前は、骨格アブレーションの結果さえ出れば11.06の差の説明がつくと思っていた。両方とも空振りに終わって、手元に残ったのは「まだわかっていない」という一段階手前の事実だけだ。次に何を測るかを決める前に、まずこの二つの結果を並べて置いておく。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "affect": {
+            "seed": "20260807|機械学習",
+            "drift": true,
+            "moments": 0,
+            "senses": [],
+            "affects": [],
+            "sha1": "da39a3ee5e6b"
+          },
+          "score": 10.67,
+          "scores": [
+            12.0,
+            12.0,
+            8.0
+          ],
+          "score_sd": 1.89,
+          "human_read": 3,
+          "human_read_rate": 1.0,
+          "reasoning": "実験ログ特有の生々しい失敗の記録（同一入力で9・62・68、骨格アブレーションが操作自体に失敗したという苦い発見）が具体的な日付や数値とともに語られ、言い訳や自己批判を含む書き手の思考の揺れ、文長のばらつき、脇道を「ここでは触れるだけ」と切り捨てる判断など、AIの均質な構成にはない実務者の視点が一貫している。"
+        },
+        {
+          "topic": "クラウドコンピューティング",
+          "title": "126のまま、3本とも赤い",
+          "description": "## また同じ3本\n\n今日もpytestを流した。tests/test_bench_providers.py の test_cli_timeout_is_an_explicit_counted_infra_error、同じファイルの test_cli_authentication_failure_is_an_explicit_counted_infra_error、そして tests/test_cli_smoke.py の test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree。三本とも赤いままだった。\n\n赤いFAILEDが画面3つ分流れた。でも中身を追っていくと、原因になっている行は結局1行だった。量と重さは比例しない。これは前にも似たようなことを書いた気がするが、また同じことを書くことになる。\n\n## timeoutの方\n\ntest_cli_timeout_is_an_explicit_counted_infra_error は AssertionError: assert 126 == 124 で止まる。中身を見ると ProviderAttempt(provider='claude', model=None, returncode=126, elapsed_s=8.360999800061109e-06, invocations=0, ...)で、infra_error は 'blocked_headless_provider: pass allow_headless_in_cc only for an explicitly authorized paid run'。\n\n期待している returncode は 124、実際に返ってきているのは 126。timeoutを想定したテストのはずなのに、実際に起きているのはheadless providerがブロックされたことによる126で、しかもinvocationsは0のまま、elapsed_sは10マイクロ秒にも満たない。つまりタイムアウトが発生するより前の段階で止まっている。テストが検証したかった経路にすら、まだ入れていない。\n\n## authenticationの方\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_error も同じ形をしている。assert 126 == 1 で、returncodeはやはり126、infra_error のメッセージも同じ blocked_headless_provider のもの。加えて AssertionError: [ERROR] PyYAML not found. `pip install pyyaml`. というのも別に出ている。\n\n名前も検証したい内容も違う二本のテストなのに、実際に返ってくる値はどちらも126で、ぶつかっている壁も同じ文言。違う入口から入ったつもりが、同じ場所で止められている。\n\n## smokeの方\n\ntests/test_cli_smoke.py::test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree もまだ落ちている。こちらは詳しい中身までは今日は追えていない。落ちているという事実だけが今の手元にある。\n\n## 今日のところ\n\n三本とも直っていない。前の二本は少なくとも returncode=126 という同じ値で揃っていて、原因の見当はついている気がする。ただ「気がする」のと実際に直すのは別の話で、今日はそこまでは届かなかった。\n\n余談だが、同じ時期に judge every sample 3x のコミットを入れた話や、writer アームのスコアを眺めていた話もあった。でもそれはこの3本の赤とは別の作業で、ここに書くことではない。\n\n明日もこの3本から始まる。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "affect": {
+            "seed": "20260807|クラウドコンピューティング",
+            "drift": true,
+            "moments": 1,
+            "senses": [
+              "視覚"
+            ],
+            "affects": [
+              "喜"
+            ],
+            "sha1": "096c74752d00"
+          },
+          "score": 74.0,
+          "scores": [
+            74.0,
+            74.0,
+            74.0
+          ],
+          "score_sd": 0.0,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "エラー値やテスト名などの具体性は本物らしいが、「〜の方」で揃えた並列的な節構成と各節を必ず抽象的な一文（「量と重さは比例しない」「違う入口から入ったつもりが、同じ場所で止められている」）で締める均質なリズム、さらに「ここに書くことではない」といった素材の取捨を自己言及する書き方が、ログを与えられて日記調に整形させた AI 生成の型に近い。"
+        },
+        {
+          "topic": "Web開発",
+          "title": "41f4f72でも、returncode 126は124にも1にもならなかった",
+          "description": "## 41f4f72\n\n7/29に41f4f72をコミットした。メッセージは「test(benchmark): run-on merge reaches 12 and 22 — but only where the work went wrong」。12と22という数字も、work went wrongという言葉も残っているが、それが具体的に何を指していたのかは、この記事の範囲では立ち入らない。\n\n## まだ落ちている\n\nしばらくしてpytestを回すと、tests/test_bench_providers.pyの2本が変わらず赤いままだった。41f4f72で直したつもりの範囲には、この2本は入っていなかったということになる。\n\ntest_cli_timeout_is_an_explicit_counted_infra_errorは、期待するreturncode 124に対して実際は126でassertが落ちた。ProviderAttemptの中身を見ると、provider='claude'、model=None、elapsed_sは8.36e-06秒、invocationsは0。プロバイダに一度も投げないまま終わっている。infra_errorの欄には、allow_headless_in_ccは明示的に許可された有償実行でのみ渡すべきだ、という趣旨のブロック理由が記録されていた。timeoutを検証したいテストのはずが、timeoutに達する前の段階で止められている。\n\ntest_cli_authentication_failure_is_an_explicit_counted_infra_errorの方は、期待する1に対してこちらもreturncode 126。elapsed_sは5.51e-06秒、invocationsは0で、止められた理由も同じ趣旨のものが記録されている。加えて、PyYAMLが見つからないというエラーも同じ流れの中に残っていた。認証失敗を検証する前の段階で、テストがつまずいている痕跡が二重に残っている形になる。\n\n## 中身を眺めて\n\n二つのテストがそれぞれ124と1という別のreturncodeを期待しているのに、実際に返ってくるのはどちらも126で揃っている。invocationsが0のまま、elapsed_sがマイクロ秒台のまま、止められている理由もほぼ同じ。126という数字は、124でも1でもなく、テストの外側で止められたことを示す印になっている。timeout用のテストも認証失敗用のテストも、本来検証したかった分岐にすら到達せず、手前のガードで止められている、という点だけは共通している。リストにすればこの三行で終わる話だが、画面の中で見ている分には、赤い行が二つ増えただけの地味な変化だった。41f4f72の作業がどこに効いてどこに効いていないのか、今の時点ではまだ切り分けられていない。この2本だけは、次に見てもまだ動かないままかもしれない。\n\n## 手元の感触\n\n歯磨き粉の味がまだ口に残っている。三日分が無駄になった気がする。キーの音しかしない部屋で、手が勝手に動いていた。キーボードの左端がべたついてきたあたりから、逆に手が速くなる。diffが400行を超えて折り返しが崩れていた。赤いFAILEDが画面3つ分流れたのを見て、さっき直したはずだと思った。\n\n同じ時期に、別の計測ファイルの数字も手元に残っている。bareアームの平均86.0や、writerアームの平均76.5といった値だが、それはこの2本のテストとは別の記録なので、ここでは名前を出すだけにしておく。\n\n月曜にまた同じことをする気がする、とだけメモに残しておく。同じ画面を、また同じ順番で開く気がする。",
+          "rounds": 3,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "FAIL",
+              "issues": [
+                "push"
+              ]
+            },
+            {
+              "round": 2,
+              "verdict": "FAIL",
+              "issues": [
+                "push"
+              ]
+            }
+          ],
+          "affect": {
+            "seed": "20260807|Web開発",
+            "drift": true,
+            "moments": 5,
+            "senses": [
+              "味覚",
+              "聴覚",
+              "視覚",
+              "触覚"
+            ],
+            "affects": [
+              "哀",
+              "怒",
+              "楽"
+            ],
+            "sha1": "ca46eb002506"
+          },
+          "score": 78.0,
+          "scores": [
+            80.0,
+            76.0,
+            78.0
+          ],
+          "score_sd": 1.63,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "具体的なコミットハッシュやreturncode等の細部は本物らしいが、各段落が一様に内省的な締めの一文で終わる構成の反復、二つのテストの記述がinvocations・elapsed_s・理由と機械的に並行している点、「中身を眺めて」での既述内容の言い換え反復、「この記事の範囲では立ち入らない」「名前を出すだけにしておく」といった同型のメタ的留保、そして最後に取ってつけたように列挙される感覚描写（歯磨き粉・べたつき・赤いFAILED）が人間味の意図的な注入に見え、AI生成の可能性が高い。"
+        },
+        {
+          "topic": "データベース設計",
+          "title": "rig-action-state.jsonをgitignoreした日も、86.0と11.06の差は動かなかった",
+          "description": "## 86.0という数字\n\n2026-07-26、gate-vs-compute.jsonの計測結果を見た。アームbareの平均スコアは86.0、中央値も86.0。平均と中央値がぴったり揃うのは珍しく、一瞬「これは安定してきたのでは」と思った。だが安心するにはまだ早いということは、次の数字を見ればすぐにわかった。\n\n## 人間が書いた16本\n\n同じ日、比較対象として人間が書いた記事16本を同じ判定にかけた。結果は平均11.06。86.0と11.06。並べて見ると開きがあまりに大きくて、最初は判定側のバグを疑った。ロジックのどこかで係数を取り違えているのではないか、集計スクリプトが桁を落としているのではないか、と一通り疑ってから見直した。だが何度見直しても数字は変わらない。\n\nこのギャップは今回が初出ではない。以前の記事でも同じ11.06という数字に触れたが、あのときから縮まっていない。むしろ、縮んでいないという事実そのものが積み上がっている感覚がある。アームbare側の86.0が本当に「良いスコア」なのか、それとも判定基準がそもそも人間の書いたものを正しく評価できていないだけなのか、まだ切り分けられていない。切り分けられていないまま、また86.0という数字だけが手元に積み上がった。\n\n## 足先の冷えと、通った音\n\n数字を眺めていたら、足先が冷えていることに気づいた。集中していると身体の感覚が後回しになるのはいつものことだが、椅子から立たずにターミナルとJSONの数字を往復していた時間の長さが、そのまま足の冷たさになって返ってきたのだと思う。\n\nその合間に走らせていた別のチェックは、思いのほかあっさり通った。通った瞬間、思わず声が出た。安堵というより、拍子抜けに近い声だった。11.06との差が埋まっていない事実の重さに比べると、通ったこと自体はあまりに小さい出来事に感じられて、声を出した数秒後にはもう画面はまたgate-vs-compute.jsonに戻っていた。\n\n## gitignoreにrig-action-state.jsonを追加した\n\n2026-07-29、コミット0153db0を作った。内容はchore: gitignore rig-action-state.json。中身の判定ロジックには一切触れていない、リポジトリの掃除のようなコミットだ。\n\nこういう地味なコミットを積む日がある。86.0と11.06の差という本丸には手が届かないまま、周辺の整理だけが進む。rig-action-state.jsonがバージョン管理に載っていたこと自体、これまで気にしていなかった。gitignoreに追加したことで見た目上の差分は静かになったが、判定側の数字には何の影響もない。当然そうなるようにしたコミットだから、当然の結果ではある。差分が減って画面がすっきりしたことと、11.06との差が縮んだこととは、まったく別の話だと自分に言い聞かせながらコミットした。\n\n## まだ直っていない\n\n同じ時期に別件でも動きはあった。判定に主観的なコメントを禁止しても効果がないこと、そしてledgerを固定する方向は効くらしいこと。こちらは別の記録に譲るが、頭の片隅にはずっと置いてある。今この記事に書くべきことではないので、名前だけ置いておく。\n\n今回書き残しておきたいのはひとつだけだ。86.0と11.06、このギャップはまだ直っていない。0153db0はその周りを片付けただけで、本体には触れていない。次に同じjsonを開いたときに、この数字がどちらに動いているか、それだけを見ればいい。動いていなければ、また同じことを書くことになる。\n\n書きながら思うのは、86.0という数字を疑う前に、11.06という数字の方を先に疑うべきなのかもしれないということだ。人間が書いた16本という母数が十分なのか、判定基準が人間の書き方に対してそもそもフェアなのか、そのあたりはまだ何も検証していない。検証していないことをここに書いておかないと、後で自分が忘れる。gate-vs-compute.jsonというファイル名だけは覚えているが、次に開くのがいつになるかは今の時点ではわからない。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "affect": {
+            "seed": "20260807|データベース設計",
+            "drift": true,
+            "moments": 1,
+            "senses": [
+              "触覚"
+            ],
+            "affects": [
+              "喜"
+            ],
+            "sha1": "651288fd8d82"
+          },
+          "score": 79.33,
+          "scores": [
+            78.0,
+            80.0,
+            80.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "文章自体は具体的な日付・コミットハッシュ・ファイル名を伴い巧みだが、「86.0と11.06」の同一モチーフを各節で言い換え反復する構成の均質さ、足先の冷えや思わず出た声といった感覚描写が「人間らしさ」の記号として計画的に配置されている印象、各段落が必ず整った箴言めいた一文で締まる予定調和のリズムから、AI生成の可能性が高いと判断した。"
+        },
+        {
+          "topic": "リモートワーク",
+          "title": "12が16になった日も、pytestは赤いままだった",
+          "description": "## 見出しの数字を直した\n\n7/30、設計メモの見出しに古い数字が残っているのに気づいた。「12」のままだったところを、実際にはとっくに16件になっている中身に合わせて「16」に直し、4db71baとしてコミットした。中身の設計はずいぶん前から16件で回っていたのに、見出しのタイトルだけがそれを追いかけていなかった。中身をどれだけ更新しても、見出しの数字は誰かが目視で気づいて直さない限りずっと古いままなんだと、今さらながら思い知らされた。\n\n地味な修正だし、正直これだけを取り出して人に説明するほどのことでもない。それでも、こういう小さなズレを放置しておくと、あとで自分がそのメモを読み返したときに一番混乱するのは自分自身だ。誰かに見せるための記録ではなく、自分が数週間後の自分に向けて残しておく記録だからこそ、数字くらいは合わせておきたい。そう思って直した。\n\n同じ日、別件でベンチマークの検証にも手を触れていた。writer_linksの改ざんチェックに引っかかって、貼られているはずのURLがゼロ件になっていたのを見つけている。こちらは今回書きたいことの本題ではないので、あったことだけ書いておく。\n\n## 次の一手を設計メモに書いた\n\n翌7/31、日本語の「人間性」をどう扱うかということと、ハーネスの次の一手について、設計メモに書き下ろした。065269cというコミットで残している。頭の中で考えていることは、放っておくと数日でかなりの部分が抜け落ちる。思いついたことをそのまま書き殴るのではなく、次に自分が何をやればいいかが読めばわかる形に整えてから残すようにした。時間はかかったけれど、それだけの価値はあったと思う。\n\n同じ日に、別ブランチのマージも済ませている。そちらも今回の本題ではないので、詳しくは書かない。\n\n在宅で作業している週だったので、こういう細かい記録を残す作業は、出社や通勤の切れ目がない分、気づいたときにすぐ手を動かせるのがありがたかった。オフィスにいたら、他の作業に気を取られてそのまま忘れていたかもしれない。逆に言えば、自分で区切りをつけないと、ずっと設計メモとテストの間を行ったり来たりしてしまう。そのけじめのなさは、在宅作業のいいところでもあり、少し危ういところでもある。\n\n## まだ直っていないもの\n\npytestは相変わらず赤い。tests/test_cli_smoke.py::test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_treeが、ここ最近ずっと通っていない。見出しの数字を直した7/30も、設計メモに次の一手を書いた7/31も、このテストは直らないまま横にあった。\n\n見出しの数字を直したときも、設計メモに次の一手を書いたときも、頭のどこかでこのテストのことは気にかかっていた。でも、メモを書くことと、そのメモが指し示している問題を実際に解決することは、まったく別の作業だ。今回はそこまで手が回らなかった、というよりは、手を回さなかったというほうが正確かもしれない。書きやすいところから書いて、直しやすいところから直して、一番厄介なものを後回しにした結果が、この赤いままのテストなんだと思う。\n\n次に手をつけるべきものがどれかは、もう記録の中にはっきり書いてある。あとはそれをやるだけなんだけど、それが一番難しい。\n\nこうして時系列で並べてみると、直したものと直っていないものが同じ二日間の中に混ざっているのがよくわかる。見出しの数字は直った。設計メモには次の一手も書いた。それでもpytestは赤いままで、この赤は、今回の記録を書き終えた時点でもまだ横にある。まとめてきれいに終わらせたい気持ちはあるけれど、直っていないものを直ったことにして書くわけにはいかない。今日のところは、ここまでにしておく。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "affect": {
+            "seed": "20260807|リモートワーク",
+            "drift": true,
+            "moments": 0,
+            "senses": [],
+            "affects": [],
+            "sha1": "da39a3ee5e6b"
+          },
+          "score": 84.33,
+          "scores": [
+            87.0,
+            82.0,
+            84.0
+          ],
+          "score_sd": 2.05,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやテスト名など具体情報は豊富だが、それらを深掘りせず「今回の本題ではないので書かない」という同型の逃げ口上を反復し、在宅勤務の一般論的省察や各段落末の整いすぎた箴言調の締め、同じ二つの事実の繰り返し要約が目立つため、作業ログを素材に生成された文章の可能性が高い。"
+        },
+        {
+          "topic": "セキュリティ対策",
+          "title": "11.06との差は開いたまま、4/32は4/32のまま",
+          "description": "## 16本になっても、開きは開いたまま\n\n7/26、人間が書いたQiitaの記事を16本集めて、同じ判定にかけた。平均は11.06だった。人間側のサンプルが一つ増えたことにはなるが、増えたのはサンプル数であって、手元の数字との開きではない。サンプルを増やせば平均が動くこともあるかもしれないと少し期待していたが、そこまでの動きはなかった。差はそのまま残っている。以前の記事でも同じ差について書いたが、あのときから今日までの間に、この数字を動かす作業はまだできていない。直っていない、とだけ書いておく。\n\n## 自分の発見を使って、自分について書く\n\n7/30、jp-natural-writingの研究そのものを記事にした。コミット5a23951。ログには「using its own findings」と書いた。この研究がこれまでに見つけてきたことを材料にして、この研究について書く記事を書いた、ということになる。今まで書いてきたのは研究の途中経過だったが、今回は研究そのものが主題になった。\n\n書いていて落ち着かなかったのは、この構造そのものだった。判定される側の文章を、判定の仕組みを知っている自分が書いている。普段は結果を記録する側のつもりでいたが、この回だけは記録される側に回っていた。研究の中身をどこまで書けば説明になり、どこから先は書きすぎになるのか、その線引きも書きながら決めるしかなかった。この記事自体がまた判定にかけられることになるはずだが、それがどう出るかは今の時点では分からない。分からないまま出すことになった。\n\n## 4/32は4/32のまま\n\n同じ7/30、もう一件コミットを積んだ。40cae83。機械的なリンク化は完全に統制された帰無仮説になる、という内容で、結果は4/32から4/32。数字は動かなかった。\n\n動かなかったこと自体が欲しかった結果だった。機械的に何かを変えただけで判定の通過数が動いてしまうなら、判定は文章の中身ではなく表面的な処理の痕跡を見ていることになる。揃ったままだったということは、この一点については判定が変な反応をしていない、という確認になる。地味な結果だが、崩れていたらもっと大きな見直しが必要になっていた。何も変わらなかったことを、何も分からなかったことと取り違えないように、こうして数字だけでも残しておく。\n\n## まだ直っていない\n\n同じ時期、別の計測もいくつか並行して動いていたが、今日書くのはその話ではない。数字は出ているし、いずれ触れることになるとは思うが、今回はまとめて書くほど整理できていない。11.06との差と、7/30に積んだ二件のコミットのことだけで、今日のところは十分だった。\n\n夜、換気していない部屋の匂いに気づいた。作業を始めてからどれくらい経ったのか、匂いに気づくまで考えてもいなかった。ログの行番号がいつの間にか4桁に入っていて、それを見て初めて、この作業がどれくらいの量になっていたかを実感した。誰かに説明できる形にはまだなっていない。何をどれだけ書いたのか、行番号を見るまで自分でも把握できていなかった。外で車が2台、続けて出ていく音がした。手だけは止まらずに動いていた。\n\n今日の分を並べると、記事を一本書いたことと、帰無仮説がきれいに揃ったこと、その二つだけだ。どちらも11.06との差を直接埋める作業ではない。判定の仕組みを疑うための材料が一つと、判定される側に立って書いてみた記録が一つ、それぞれ増えただけだ。差はまだ開いたままで、次にやることもまだ決まっていない。決まっていないまま、今日はここで区切る。",
+          "rounds": 2,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "FAIL",
+              "issues": [
+                "126",
+                "86.0"
+              ]
+            },
+            {
+              "round": 2,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "affect": {
+            "seed": "20260807|セキュリティ対策",
+            "drift": true,
+            "moments": 3,
+            "senses": [
+              "嗅覚",
+              "聴覚",
+              "視覚"
+            ],
+            "affects": [
+              "哀",
+              "喜",
+              "楽"
+            ],
+            "sha1": "15a602cb2a57"
+          },
+          "score": 79.33,
+          "scores": [
+            80.0,
+            80.0,
+            78.0
+          ],
+          "score_sd": 0.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュや数値などの具体性はあるものの、「〜のまま」「直っていない」といった同一モチーフの反復、ほぼ均質な短文終止のリズム、内容を言い換えるだけの抽象的な補填、そして終盤に唐突に差し込まれる生活音・匂いといった「人間らしさ」の演出が定型的で、自然な文章を模倣するよう設計されたAI生成の可能性が高い。"
+        },
+        {
+          "topic": "チーム開発",
+          "title": "writer_links で実URLを入れたら、台帳が自分で44%を撤回した",
+          "description": "## 2964122、writer_links\n\n昨日の続きで、まず 2964122 を書いた。writer_links というやつを入れた。ベンチマークの素材の中で参照になっていた部分を、実際のコミットURLとPR URLに差し替える作業だ。中身自体は難しくない。差し替える箇所を一箇所の変数にまとめて、そこだけ触れば全体に反映されるようにした。それだけの変更だが、素材が指しているものが「それらしいダミー」から「実際に存在するもの」に変わったのは、地味だけれど後に効いてくる種類の変更だと思っている。\n\n## c9db9f6、台帳がずれる\n\nwriter_links を入れてすぐ、writer の台帳の値が実行のたびに微妙に違うことに気づいた。同じ入力を渡しているはずなのに、出てくる集計が毎回少しずつ動く。追っていくと、台帳側のレコードに一意性を保証する仕組みがなかった。同じはずのものが別のものとして重複したり、逆に潰れて消えたりしていたらしい。\n\nc9db9f6 で、レコードごとに fingerprint を持たせることにした。指紋が一致しないものは同一視しない。指紋を入れた瞬間に、これまで積み上げてきた台帳のどこがずれていたかが可視化されて、結果として台帳から 44% を撤回することになった。半分近くが、ずれの影響を受けていた分だったということになる。数字を消す作業は、直している最中は妥当だと分かっていても、消したあとに残る量を見るとやはり重い。\n\n前日の 1d13dae で writer arm の KeyError を直して、一つの腕が壊れて他の腕まで巻き込む状態は止めていた。40cae83 では、機械的にリンク化しただけでは何も変わらないことを 4/32 対 4/32 という完全に制御された無変化として確認していた。今回の fingerprint は、その延長線上で、壊れていた場所ではなく見えていなかった場所を見つけた作業になる。\n\n順番としては、まず writer_links で素材を本物のURLに差し替え、その直後に台帳のずれに気づいた形になる。本物のURLに差し替えたから見えるようになったのか、それとも見ようとして初めて見えたのか、今の時点では自分でもどちらとも言い切れない。ただ、fingerprint を入れる前の台帳を信じて先に進んでいたら、44% 分をそのまま積み上げ続けていたことになる。それを考えると、今日のうちに気づけたこと自体は良かったのだと思う。\n\n## まだ落ちているテスト\n\ntests/test_cli_smoke.py::test_installed_wheel_runs_plan_and_mock_benchmark_outside_source_tree は、まだ落ちている。writer_links も fingerprint も、このテストには触れていない。直せていないものは直せていないまま、そのまま残っている。\n\n## 今の手元\n\nタブが17個開いたままになっている。どれも今の状態を誰かに説明できる形にはなっていない。自分で見返しても、どこまでが確定でどこからが仮の話なのか、すぐには線を引けない箇所がある。\n\n今はキーボードの音だけがしていて、手が勝手に動いている感じがする。何かを考えて打っているというより、打った結果を後から確認しているような順番になっている。台帳を44%撤回したのも、狙って減らしたというより、指紋を入れたら勝手に減った、という順番だった。\n\n開いたタブのどれかを閉じれば区切りがつくというものでもない気がしていて、結局全部開いたまま今日を終える。次に何を触るかはまだ決めていない。落ちているテストはそのままにして、今日はここまでにする。",
+          "rounds": 1,
+          "gate_log": [
+            {
+              "round": 1,
+              "verdict": "PASS",
+              "issues": []
+            }
+          ],
+          "affect": {
+            "seed": "20260807|チーム開発",
+            "drift": true,
+            "moments": 2,
+            "senses": [
+              "聴覚",
+              "視覚"
+            ],
+            "affects": [
+              "哀",
+              "楽"
+            ],
+            "sha1": "8c78f55e5338"
+          },
+          "score": 79.0,
+          "scores": [
+            75.0,
+            80.0,
+            82.0
+          ],
+          "score_sd": 2.94,
+          "human_read": 0,
+          "human_read_rate": 0.0,
+          "reasoning": "コミットハッシュやテスト名など具体性は高いものの、「〜という順番だった」「壊れていた場所ではなく見えていなかった場所」「直せていないものは直せていないまま」といった対句・反復レトリックが規則的に繰り返され、44%撤回という主題を何度も言い換えて回収し、最後に「タブが17個」「キーボードの音だけ」といった情感的余韻で締める構成が過度に整っており、技術的記述自体は fingerprint の実装細部を欠いて空疎なため、人間らしさを演出したAI生成の可能性が高い。"
+        }
+      ],
+      "stats": {
+        "mean_chars": 1638.9,
+        "mean_score_sd": 1.5,
+        "sem": 0.53,
+        "human_read_rate": 0.125,
+        "mean_lint": null,
+        "mean_lint_critical": null,
+        "mean": 70.08,
+        "median": 78.5,
+        "min": 10.67,
+        "max": 84.33
+      }
+    }
+  },
+  "improvement_points": null,
+  "improvement_percent": null,
+  "compared_arm": "writer_sense",
+  "gate_effect_vs_selfrev": null,
+  "success": false
+}

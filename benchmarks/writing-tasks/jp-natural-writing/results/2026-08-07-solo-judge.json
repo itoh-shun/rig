@@ -1,0 +1,161 @@
+{
+  "reference": {
+    "source": "/home/user/rig/benchmarks/writing-tasks/jp-natural-writing/results/2026-07-26-judge-calibration.json",
+    "n": 16,
+    "scores": [
+      3.0,
+      4.0,
+      4.0,
+      4.0,
+      4.0,
+      5.0,
+      6.0,
+      6.0,
+      6.0,
+      7.0,
+      8.0,
+      8.0,
+      8.0,
+      8.0,
+      8.0,
+      88.0
+    ],
+    "median": 6.0,
+    "mean": 11.06,
+    "p05": 3.0,
+    "p95": 88.0,
+    "corpus_note": ""
+  },
+  "results": {
+    "/tmp/news/nikki.md": {
+      "verdict": "INSIDE_HUMAN",
+      "scores": [
+        5.0,
+        6.0,
+        6.0,
+        5.0,
+        6.0,
+        6.0,
+        6.0
+      ],
+      "median": 6.0,
+      "mean": 5.71,
+      "sd": 0.45,
+      "min": 5.0,
+      "max": 6.0,
+      "low_mode": 7,
+      "high_mode": 0,
+      "bimodal": false,
+      "human_band": [
+        3.0,
+        88.0
+      ],
+      "human_median": 6.0,
+      "reference_n": 16
+    },
+    "/tmp/news/jiyukenkyu.md": {
+      "verdict": "UNSTABLE",
+      "scores": [
+        4.0,
+        55.0,
+        35.0,
+        5.0,
+        20.0,
+        6.0,
+        62.0
+      ],
+      "median": 20.0,
+      "mean": 26.71,
+      "sd": 22.6,
+      "min": 4.0,
+      "max": 62.0,
+      "low_mode": 4,
+      "high_mode": 2,
+      "bimodal": true,
+      "human_band": [
+        3.0,
+        88.0
+      ],
+      "human_median": 6.0,
+      "reference_n": 16
+    },
+    "/tmp/news/article.md": {
+      "verdict": "INSIDE_HUMAN",
+      "scores": [
+        75.0,
+        72.0,
+        74.0,
+        74.0,
+        78.0,
+        72.0,
+        80.0
+      ],
+      "median": 74.0,
+      "mean": 75.0,
+      "sd": 2.78,
+      "min": 72.0,
+      "max": 80.0,
+      "low_mode": 0,
+      "high_mode": 7,
+      "bimodal": false,
+      "human_band": [
+        3.0,
+        88.0
+      ],
+      "human_median": 6.0,
+      "reference_n": 16
+    },
+    "/tmp/news/writer_agent.md": {
+      "verdict": "UNSTABLE",
+      "scores": [
+        76.0,
+        80.0,
+        82.0,
+        12.0,
+        80.0,
+        76.0,
+        78.0
+      ],
+      "median": 78.0,
+      "mean": 69.14,
+      "sd": 23.42,
+      "min": 12.0,
+      "max": 82.0,
+      "low_mode": 1,
+      "high_mode": 6,
+      "bimodal": true,
+      "human_band": [
+        3.0,
+        88.0
+      ],
+      "human_median": 6.0,
+      "reference_n": 16
+    },
+    "/tmp/news/bare.md": {
+      "verdict": "INSIDE_HUMAN",
+      "scores": [
+        88.0,
+        88.0,
+        88.0,
+        88.0,
+        88.0,
+        88.0,
+        88.0
+      ],
+      "median": 88.0,
+      "mean": 88.0,
+      "sd": 0.0,
+      "min": 88.0,
+      "max": 88.0,
+      "low_mode": 0,
+      "high_mode": 7,
+      "bimodal": false,
+      "human_band": [
+        3.0,
+        88.0
+      ],
+      "human_median": 6.0,
+      "reference_n": 16
+    }
+  }
+}

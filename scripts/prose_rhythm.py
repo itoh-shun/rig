@@ -31,12 +31,42 @@ Japanese uses taigendome at near-zero rates while human prose mixes it in,
 so a long document at exactly 0% is itself a weak AI signal — but "add
 taigendome" is a style call, not a defect, hence informational only.
 
-Honest scope on the thresholds: they are uncalibrated heuristics, chosen by
-eyeball against a handful of documents — NOT calibrated against a human-
-prose corpus (that is the proper method, and what the field measurement
-above did with 137 human / 406 AI documents). Mora-based length measurement
-would beat character counts but needs morphological analysis, which a
-stdlib-only script cannot do; character counts are the honest approximation.
+Threshold calibration (2026-08-07). The run-length thresholds were eyeballed at
+3 and have now been measured against known-human prose: 27 pre-2023 human
+documents (15 Qiita, 12 personal blogs fetched with fetch_prose_corpus.py).
+At the old value of 3, the "AI markers" fired on the majority of human text:
+
+    閾値   ending-run   long-run     <- share of HUMAN documents flagged
+      3        56%         44%       (old)
+      4        19%         15%
+      5         4%          7%       (current)
+      7         0%          0%
+
+A threshold of 3 sat on the human MEDIAN, so roughly half of all human writing
+tripped it by construction. Both are now 5, holding false positives near 5%.
+
+The ending-run case was independently predicted and measured elsewhere: Nagai
+(Open Data Lab, 2026-07-09), "日本語文書における生成 AI 由来の構成的特徴の検出と
+その改善支援", tested the same folk rule against a contrast corpus (50 AI / 15
+human — 青空文庫, 2019 国会会議録, business documents) and rejected it, on the
+grounds that 丁寧体 Japanese fixes sentence endings, so 議事録・答弁・講演録
+repeat them naturally. Two corpora with no overlap reached the same conclusion.
+That report rejected three further folk rules (「これにより」 as an AI tell —
+humans used it MORE; rhetorical same-shape repetition — fires higher on human
+essays; ordinal enumeration — no discriminative power), which is why nothing
+here counts them.
+
+Still uncalibrated: UNIFORM_CV_MAX and BURSTINESS_MIN. Neither fired on any of
+the 27 human documents, so there is no evidence they are misplaced — but "did
+not fire" is not calibration, and the same report warns that variance criteria
+imported from English are structurally confounded in Japanese for the reason
+above. n=27 is also small. Mora-based length measurement would beat character
+counts but needs morphological analysis, which a stdlib-only script cannot do;
+character counts are the honest approximation.
+
+Calibrating does NOT make this gateable. That remains explicitly rejected: the
+lint-gated arm improved its findings 5.5 -> 1.0 while its blind judgment got
+worse (docs/jp-naturalness-engineering.ja.md §6-3).
 
 Usage:
   python3 scripts/prose_rhythm.py <file.md> [file2...]
@@ -58,11 +88,11 @@ import sys
 # Uncalibrated heuristics (see module docstring): the proper method is
 # calibration against a human-prose corpus, which has not been done here.
 LONG_SENTENCE_CHARS = 55      # a sentence this long or longer counts as "long"
-LONG_RUN_MIN = 3              # this many consecutive long sentences = a flagged run
+LONG_RUN_MIN = 5              # this many consecutive long sentences = a flagged run
 UNIFORM_CV_MAX = 0.30         # coefficient of variation below this = monotone beat
 UNIFORM_MIN_SENTENCES = 8     # need at least this many sentences to judge uniformity
 BURSTINESS_MIN = 0.35         # mean adjacent length-delta / mean length below this = flat beat
-ENDING_RUN_MIN = 3            # this many identical consecutive endings = flagged
+ENDING_RUN_MIN = 5            # this many identical consecutive endings = flagged
 CONNECTIVE_RATIO_MAX = 0.40   # more than this share of connective-led sentences = flagged
 UNIFORM_PARA_MIN = 4          # need at least this many paragraphs to judge shape
 UNIFORM_PARA_CV_MAX = 0.25    # paragraph sentence-count CV below this = template shape
