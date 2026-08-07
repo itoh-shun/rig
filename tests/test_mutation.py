@@ -1,13 +1,8 @@
-import importlib.util
 import json
-import pathlib
 
 import pytest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("mutation_adapter", ROOT / "scripts/mutation_adapter.py")
-adapter = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(adapter)
+from rig_workbench import mutation as adapter
 
 
 def _elements(statuses: list[str]) -> str:
@@ -239,3 +234,160 @@ def test_elements_ignores_the_extra_fields_a_real_stryker_report_carries(tmp_pat
     counts = adapter.parse_elements(path)
     assert (counts["detected"], counts["undetected"], counts["invalid"]) == (1, 1, 0)
     assert adapter.score_of(counts) == 0.5
+
+
+# ── finding the report and the tool without being told ──────────────────
+# What makes this a rig command rather than a script: the operator names neither
+# the format nor the path, so a wrong guess here is a wrong answer, not a usage error.
+
+
+def _write(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8")
+
+
+def test_sniff_reads_the_shape_from_the_file_not_the_name(tmp_path):
+    """A stryker report saved under a mutmut-ish name must still parse as elements."""
+    path = tmp_path / "mutmut-cicd-stats.json"
+    _write(path, _elements(["Killed"]))
+    assert adapter.sniff_format(path) == "elements"
+
+    xml = tmp_path / "r.json"
+    _write(xml, _junit(["killed"]))
+    assert adapter.sniff_format(xml) == "junit"
+
+
+def test_sniff_returns_none_for_something_that_is_not_a_report(tmp_path):
+    path = tmp_path / "r.json"
+    _write(path, {"coverage": 91})
+    assert adapter.sniff_format(path) is None
+
+
+def test_detect_report_finds_the_stryker_default_location(tmp_path):
+    _write(tmp_path / "reports/mutation/mutation.json", _elements(["Killed", "Survived"]))
+    found = adapter.detect_report(tmp_path)
+    assert found is not None
+    path, fmt = found
+    assert path.name == "mutation.json"
+    assert fmt == "elements"
+
+
+def test_detect_report_finds_the_mutmut_default_location(tmp_path):
+    _write(tmp_path / "mutants/mutmut-cicd-stats.json", _mutmut())
+    path, fmt = adapter.detect_report(tmp_path)
+    assert fmt == "mutmut"
+    assert path.parent.name == "mutants"
+
+
+def test_detect_report_skips_a_candidate_that_is_not_a_report(tmp_path):
+    """An unrelated mutation.json must not be scored as if it were one."""
+    _write(tmp_path / "mutation.json", {"unrelated": True})
+    _write(tmp_path / "mutants/mutmut-cicd-stats.json", _mutmut())
+    path, fmt = adapter.detect_report(tmp_path)
+    assert fmt == "mutmut"
+
+
+def test_detect_report_returns_none_on_a_project_with_no_report(tmp_path):
+    assert adapter.detect_report(tmp_path) is None
+
+
+def test_detect_runner_requires_evidence_not_a_guess(tmp_path):
+    """A bare pyproject.toml is not consent to run a long mutation job."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+    assert adapter.detect_runner(tmp_path) is None
+
+
+def test_detect_runner_recognises_stryker_from_its_config(tmp_path):
+    (tmp_path / "stryker.conf.json").write_text("{}", encoding="utf-8")
+    runner = adapter.detect_runner(tmp_path)
+    assert runner["tool"] == "stryker"
+    assert runner["commands"] == (["npx", "stryker", "run"],)
+    assert "stryker.conf.json" in runner["why"]
+
+
+def test_detect_runner_recognises_stryker_from_the_dependency(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"devDependencies": {"@stryker-mutator/core": "^9.0.0"}}), encoding="utf-8"
+    )
+    assert adapter.detect_runner(tmp_path)["tool"] == "stryker"
+
+
+def test_detect_runner_recognises_mutmut_and_exports_stats_after_running(tmp_path):
+    (tmp_path / "setup.cfg").write_text("[mutmut]\npaths_to_mutate=src/\n", encoding="utf-8")
+    runner = adapter.detect_runner(tmp_path)
+    assert runner["tool"] == "mutmut"
+    assert runner["commands"][-1] == ["mutmut", "export-cicd-stats"]
+
+
+def test_run_tool_says_which_binary_is_missing(tmp_path):
+    runner = {"tool": "stryker", "commands": (["definitely-not-a-real-binary"],)}
+    with pytest.raises(adapter.ReportError, match="not on PATH"):
+        adapter.run_tool(runner, tmp_path, echo=lambda _: None)
+
+
+# ── the command itself ──────────────────────────────────────────────────
+
+
+def test_cli_scores_a_report_it_found_by_itself(tmp_path, capsys):
+    _write(tmp_path / "reports/mutation/mutation.json", _elements(["Killed", "Killed", "Survived"]))
+    assert adapter.cmd_mutation(["--repo", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "66.7%" in out
+    assert "elements" in out
+
+
+def test_cli_explains_where_it_looked_when_there_is_no_report(tmp_path, capsys):
+    assert adapter.cmd_mutation(["--repo", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "reports/mutation/mutation.json" in err
+    assert "mutants/mutmut-cicd-stats.json" in err
+
+
+def test_cli_still_accepts_the_1_31_x_positional_form(tmp_path, capsys):
+    path = tmp_path / "r.json"
+    _write(path, _elements(["Killed", "Survived"]))
+    assert adapter.cmd_mutation(["elements", str(path), "--repo", str(tmp_path)]) == 0
+    assert "50.0%" in capsys.readouterr().out
+
+
+def test_cli_records_and_then_compares_against_the_baseline(tmp_path, capsys):
+    strong = tmp_path / "strong.json"
+    _write(strong, _elements(["Killed", "Killed", "Killed", "Survived"]))
+    assert adapter.cmd_mutation(["--repo", str(tmp_path), "--report", str(strong),
+                                 "--record-baseline"]) == 0
+    capsys.readouterr()
+
+    weak = tmp_path / "weak.json"
+    _write(weak, _elements(["Killed", "Survived", "Survived", "Survived"]))
+    assert adapter.cmd_mutation(["--repo", str(tmp_path), "--report", str(weak), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "warning"
+    assert "fell to" in payload["detail"]
+
+
+def test_cli_refuses_to_guess_the_format_of_an_unreadable_report(tmp_path, capsys):
+    path = tmp_path / "r.json"
+    _write(path, {"nothing": "recognisable"})
+    assert adapter.cmd_mutation(["--repo", str(tmp_path), "--report", str(path)]) == 2
+    assert "--format" in capsys.readouterr().err
+
+
+def test_cli_run_without_a_detected_tool_does_not_invent_one(tmp_path, capsys):
+    assert adapter.cmd_mutation(["--repo", str(tmp_path), "--run"]) == 2
+    err = capsys.readouterr().err
+    assert "does not run mutation" in err
+
+
+def test_apply_does_not_claim_success_when_the_workbench_failed(tmp_path, monkeypatch, capsys):
+    """1.31.0 matched one failure string and reported success for every other one."""
+    class _Failed:
+        returncode = 1
+        stdout = ""
+        stderr = "[ERROR] task 'RIG-NOPE' not found\n"
+
+    monkeypatch.setattr(adapter, "_workbench_script", lambda: tmp_path / "workbench.py")
+    monkeypatch.setattr(adapter.subprocess, "run", lambda *a, **k: _Failed())
+    counts = {"detected": 1, "undetected": 1, "invalid": 0, "format": "elements"}
+    result = {"status": "warning", "score": 0.5, "detail": "d"}
+    assert adapter.apply_to_gate(result, counts, "RIG-NOPE") == 1
+    assert "applied" not in capsys.readouterr().out

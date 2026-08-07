@@ -407,6 +407,13 @@ Sub-commands:
   hostcheck [--json] [--strict]         host-side prerequisites rig cannot enforce
                                         (container isolation, permissions.deny, ignored state).
                                         exit 0=ok / 3=missing / 1=missing with --strict
+  mutation [--run] [--record-baseline] [--apply TASK] [--report P] [--json]
+                                        score an external mutation-testing report
+                                        (Stryker / mutmut) and hand it to the gate.
+                                        finds the report and reads its format itself;
+                                        --run also runs the project's own tool first.
+                                        comparative and warning-grade: only a drop
+                                        against the baseline is actionable
   githooks install|uninstall|status [--force]
                                         native git pre-commit/pre-push hooks
                                         (computational sensors only; issue #298)
@@ -482,6 +489,10 @@ def main() -> None:
         from . import hostcheck as hostcheck_mod
 
         sys.exit(hostcheck_mod.cmd_hostcheck(rest))
+    if sub == "mutation":
+        from . import mutation as mutation_mod
+
+        sys.exit(mutation_mod.cmd_mutation(rest))
     if sub == "sensor-bench":
         from . import sensor_bench as sensor_bench_mod
 

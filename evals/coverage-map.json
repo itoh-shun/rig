@@ -527,14 +527,25 @@
           "proves": "レビュー役の検出率を測る出題側の健全性"
         },
         {
+          "argv": [
+            "python3",
+            "-m",
+            "rig_workbench.cli",
+            "mutation",
+            "--help"
+          ],
+          "kind": "command",
+          "proves": "取り込みが rig-wb のサブコマンドとして存在する（hostcheck / coverage / asvs と同じ面）"
+        },
+        {
           "kind": "file",
-          "path": "scripts/mutation_adapter.py",
+          "path": "rig_workbench/mutation.py",
           "proves": "外部のミューテーションツールのレポートを取り込み、スコアの劣化を warning-grade の基準として扱う"
         },
         {
           "kind": "pytest",
-          "path": "tests/test_mutation_adapter.py",
-          "proves": "採点の定義（timeout は検出扱い・無効な変異は分母から除外）と、劣化が fail でなく warning になること"
+          "path": "tests/test_mutation.py",
+          "proves": "採点の定義（timeout は検出扱い・無効な変異は分母から除外）、劣化が fail でなく warning になること、レポートと実行ツールの自動検出が名前ではなく中身に基づくこと"
         }
       ],
       "id": "detection-power",
