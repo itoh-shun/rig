@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [1.36.0] - 2026-08-07
+
+Two things that had the same shape: a prompt that fired when it had nothing to say, and
+a pack that had judgment with nothing to judge.
+
 - **The instinct-suggestion Stop hook now fires once per session instead of every
   turn.** The reminder blocks the stop, so repeating it costs a full round-trip each
   time — and the hook's own comment says most sessions have nothing worth recording,
