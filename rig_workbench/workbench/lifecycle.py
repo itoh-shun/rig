@@ -6,6 +6,7 @@ import pathlib
 import re
 import sys
 
+from rig_workbench.govern import identity as govern_identity
 from rig_workbench.packs.model import PackError
 
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
@@ -174,6 +175,15 @@ def cmd_new(args: argparse.Namespace) -> None:
         "updated_at": now_iso(),
         "budget_minutes": args.budget_minutes,   # optional (#281); None = no warning
     }
+    # Attribution (v2). `actor` is what separation of duties compares against at
+    # approval time — without it recorded here, "the author's own approval does
+    # not count" has nothing to compare. org/team make a run attributable to a
+    # team rather than to a directory; all three are absent for unbound repos.
+    task["actor"] = govern_identity.current_actor(root)
+    _binding = govern_identity.load_org_binding(root)
+    if _binding.bound:
+        task["org"] = _binding.org
+        task["team"] = _binding.team
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
     save_json(d / "steps.json", {"steps": []})

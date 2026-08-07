@@ -427,10 +427,19 @@ Sub-commands:
                                         validated prompt-pack lifecycle/publishing
   sensor-bench [--json]                 deterministic machine-sensor catch-rate benchmark
                                         (no LLM, no billing; secrets/injection/destructive)
+  govern init|migrate|policy|whoami|can|approve|waiver|audit|conformance|rollup ...
+                                        org/team layer: common policy, permissions,
+                                        approvals, waivers, tamper-evident audit.
+                                        inert until a repo is bound with `govern init`
   version                               show version
 
 Environment:
   RIG_HOME                              set the rig repo root explicitly (auto-detected if omitted)
+  RIG_POLICY_HOME                       shared org-policy checkout that relative
+                                        `policy_layers` entries resolve against, so every
+                                        team repository points at the same document
+  RIG_ACTOR                             identity for governance decisions
+                                        (falls back to RIG_USER, then git config user.name)
   RIG_SKIP_GH_CHECK=1                   silence the one-line note about a missing
                                         `gh` / github/gh-stack. Gates nothing: those
                                         tools are optional and never block a run
@@ -477,6 +486,10 @@ def main() -> None:
         from .packs import cli as pack_cli
 
         sys.exit(pack_cli.cmd_pack(rest))
+    if sub == "govern":
+        from .govern import cli as govern_cli
+
+        sys.exit(govern_cli.cmd_govern(rest))
     if sub == "asvs":
         from . import asvs as asvs_mod
 

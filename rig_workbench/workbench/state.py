@@ -111,12 +111,27 @@ def audit_append(root: pathlib.Path, event: dict) -> None:
     force-proof of accept_requirements. Evidence log that makes the physical
     strength of the differentiator visible. Read via `workbench.py audit`.
     Write failures are swallowed silently (best-effort, like telemetry).
+
+    The file keeps its v1 shape — `workbench audit`, `digest` and every existing
+    reader depend on it. Under a policy the same event is *also* chained into
+    `.rig/ledger.jsonl`, where deleting it is detectable (govern.ledger).
     """
     try:
         p = audit_path(root)
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    except Exception:
+        pass
+    try:
+        from ..govern import ledger
+        from ..govern.identity import current_actor, load_org_binding
+
+        binding = load_org_binding(root)
+        if binding.bound:
+            ledger.append(root, f"audit.{event.get('action', 'event')}",
+                          actor=current_actor(root), subject=str(event.get("task_id") or ""),
+                          org=binding.org, team=binding.team, data=event)
     except Exception:
         pass
 
@@ -365,15 +380,47 @@ def verify_provenance(root: pathlib.Path, record: dict, signature: str) -> bool:
 
 
 # ── gate construction / evaluation ───────────────────────────────────────────
+def load_policy_criteria(root: pathlib.Path | None, task_type: str,
+                         presets: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Criteria the org/team policy layers require for this task_type (v2).
+
+    This is how a common policy reaches a gate: the org states that every
+    `feature` must carry `threat_model_reviewed`, and every project under that
+    policy gets the criterion whether or not its own `.rig/gates.json` mentions
+    it. Same additive-only semantics as the project file — a policy can add
+    criteria to the gate, never take built-ins away.
+
+    A malformed or unreachable policy is swallowed here and reported loudly by
+    `accept` instead: gate *construction* runs on `new`, and failing there would
+    strand a task before it starts, while `accept` is the point where refusing is
+    both safe and meaningful.
+    """
+    if root is None:
+        return [], {}
+    try:
+        from ..govern.policy import effective_policy
+
+        eff = effective_policy(root)
+    except Exception:
+        return [], {}
+    if not eff.active:
+        return [], {}
+    return eff.required_criteria_for(task_type, presets), dict(eff.descriptions)
+
+
 def build_acceptance(task_id: str, task_type: str, root: pathlib.Path | None = None) -> dict:
     """Compose the acceptance gate for a task_type from GATE_PRESETS, plus any
-    project-level extra criteria from `.rig/gates.json` when `root` is given.
-    Custom criteria start pending like built-ins and carry origin="project" so
+    project-level extra criteria from `.rig/gates.json` and any criteria the
+    org/team policy requires (v2) when `root` is given. Custom criteria start
+    pending like built-ins and carry origin="project" / origin="policy" so
     displays can tell them apart."""
     presets = TASK_TYPES[task_type]
     project = load_project_gates(root) if root is not None else {}
     extra = project.get("extra_criteria", {})
-    descriptions = project.get("descriptions", {})
+    descriptions = dict(project.get("descriptions", {}))
+    policy_criteria, policy_descriptions = load_policy_criteria(root, task_type, presets)
+    for name, text in policy_descriptions.items():
+        descriptions.setdefault(name, text)
     checks: list[dict] = []
     seen: set[str] = set()
 
@@ -395,6 +442,8 @@ def build_acceptance(task_id: str, task_type: str, root: pathlib.Path | None = N
             add(name, origin="project")
     for name in extra.get(task_type, []):
         add(name, origin="project")
+    for name in policy_criteria:
+        add(name, origin="policy")
     return {"task_id": task_id, "task_type": task_type, "presets": presets,
             "status": "pending", "checks": checks, "checked_at": None}
 

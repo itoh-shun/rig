@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+## [2.0.0] - 2026-08-07
+
+**rig becomes an AI Quality Operating System.** Everything v1 does — the
+acceptance gate, isolated worktrees, independent verification, force-proof
+accept — was built for one person and one repository, and in that shape it is
+finished. Nothing about it changes here. What v2 adds is the layer above it:
+
+```
+team A ─┐
+team B ─┼─→ common policy ─→ permissions → approvals → waivers → audit
+team C ─┘
+```
+
+Four things break the moment the same setup is handed to three teams, and each
+one becomes a first-class concept rather than a convention:
+
+- **Policy** (`.rig/policy/*.json`, stacked org → team → project). `.rig/gates.json`
+  is per-repository, so a criterion team A added never reaches team B — "we run a
+  common policy" stays a claim. A policy document is versioned, shared (one
+  checkout via `$RIG_POLICY_HOME`, referenced by the same relative path from every
+  repository), and stacks under one rule: **monotonic tightening**. A downstream
+  layer may add criteria, raise a quorum, shorten a waiver, narrow a role. It can
+  never drop a criterion the org requires, lower a quorum, extend an expiry, or
+  hand a role a permission the org never delegated — each attempt fails naming the
+  layer and the field. Omission does not lose a criterion either: layers union
+  rather than replace, so both ways of quietly dropping the org's rules are closed.
+  `rig-wb govern policy lint` is the check; it exits 3 when a layer loosens.
+- **Permissions** (roles → a fixed 11-permission vocabulary → actors). v1's
+  `.rig/access.json` is an allowlist for exactly one permission, so in practice a
+  team either gives everyone `--force` or gives it to one person who then becomes
+  the bottleneck. `accept`, `accept.force`, `approve`, `waiver.grant`,
+  `policy.publish`, `audit.export` and the rest are now separable. Denials always
+  say who *does* hold the permission — a permission system nobody can read is one
+  people route around.
+- **Approvals** (`.rig/runs/<id>/approvals.json`). "Someone reviewed it" cannot be
+  checked afterwards. An approval is now a stored decision with a quorum,
+  qualifying roles, **separation of duties** (the author's own approval never
+  counts) and **freshness**: it is bound to the commit it approved and to a
+  wall-clock expiry, so an approval that survives a force-push stops counting. That
+  binding, not the quorum number, is what separates an approval flow from a rubber
+  stamp.
+- **Waivers** (`.rig/waivers.json`). v1 recorded a `--force` but could not tell
+  "the quality owner signed off on shipping this until Friday" from "somebody was
+  tired at 19:00". A waiver names the criteria, the reason, the owner and the
+  expiry; under a policy that sets `required_for_force`, `--force` without a live
+  one is refused. Criteria listed as `non_waivable` (the scaffolded default:
+  `no_secret_leak`, `no_gate_tampering`, `no_destructive_operation`) cannot be
+  covered by any waiver at all.
+- **Audit ledger** (`.rig/ledger.jsonl`). `.rig/audit.jsonl` is append-only and
+  trivially editable — delete last Friday's override and the record says it never
+  happened. The ledger hash-chains every entry to its predecessor and HMAC-signs it
+  with the repository's existing `.rig/provenance.key`, so editing, deleting,
+  reordering and key-less forged appends are all detected by
+  `rig-wb govern audit verify`. `.rig/audit.jsonl` keeps its v1 shape, so
+  `workbench audit`, `digest` and every existing reader are untouched.
+- **Conformance** (`rig-wb govern conformance`, `rollup`). Nine checks measure a
+  repository against its effective policy — is an org layer actually reaching it,
+  do policy-required criteria appear in the gates of accepted runs, were the
+  approvals real, is the ledger intact, and the single most informative number in
+  the whole layer, the **force rate**. `rollup --scan` aggregates several
+  repositories into the per-team table the picture above describes. Both exit 3 on
+  a failing check, so CI can gate on them without parsing output.
+
+Enforcement adds no new choke point. `accept` was already the only way into the
+working tree; it now asks four more questions before the squash merge — may this
+actor accept, is the approval requirement met, may they force, and is every
+bypassed criterion covered by a live waiver — and a refusal leaves the tree
+untouched. Two choke points would have meant one of them has a way around it.
+
+**Nothing changes for solo use.** With no `.rig/org.json` the governance layer is
+inert: no output, no checks, no new files. `.rig/access.json` and `.rig/gates.json`
+keep working exactly as before and are honoured *alongside* a policy, never
+replaced by it; `rig-wb govern migrate` folds them into a policy layer when a team
+is ready, leaving the originals in place. The one deliberate behavioural difference
+is fail-closed: where a malformed `.rig/access.json` falls back to unrestricted
+(the safe side for one person), a policy layer that does not parse blocks `accept`.
+A misplaced comma silently costing an org its rules is the one failure this layer
+cannot have.
+
+The major version is for the concepts, not for a break — no v1 command, file or
+flag changed meaning.
+
+New: `rig-wb govern init|migrate|policy|whoami|can|approve|waiver|audit|conformance|rollup`,
+the `/rig:govern` pack (`governance-auditor` persona, `quality-operating-system`
+knowledge, `govern` instruction, `conformance-report` output-contract, `org-policy`
+policy facet, `govern-audit` recipe), `RIG_POLICY_HOME` and `RIG_ACTOR`.
+Gates built under a policy carry the required criteria with `origin: "policy"`,
+alongside the existing `origin: "project"` from `.rig/gates.json`. Tasks record
+`actor` (and `org`/`team` when bound) so separation of duties has an author to
+compare against.
+
 ## [1.34.0] - 2026-08-07
 
 Fixes a gate that was blaming pull requests for work they had not done, and

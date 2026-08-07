@@ -1,6 +1,6 @@
 # rig
 
-**A quality-gated AI workbench for Claude Code.** It composes the right harness for each task, runs changes in an isolated worktree, checks the result with acceptance gates, and lets you accept or discard the diff safely.
+**An AI Quality Operating System for Claude Code.** It composes the right harness for each task, runs changes in an isolated worktree, checks the result with acceptance gates, and lets you accept or discard the diff safely — and, for teams, carries one common policy across repositories with permissions, approvals, expiring waivers and a tamper-evident audit trail (§17).
 
 > 🇯🇵 日本語版は [README.ja.md](./README.ja.md) を参照。
 
@@ -247,6 +247,7 @@ Core commands are the default safety workflow: route task, isolate work, verify,
 | Knowledge import/export/persona/catalog/forge | Beta | useful but not on the core safety path (§13) |
 | Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§13) |
 | Security pack (`/rig:sec` audit/fix/monitor) | Beta | attacker-perspective audit, PoC-verified gated fix, scan-only monitor; static + local only, DAST out of scope (§8) |
+| Team governance (`rig-wb govern`, `/rig:govern`) | Beta | common policy (org→team→project, tightening-only), permissions, approvals, waivers, tamper-evident ledger, conformance rollup; inert until a repo is bound (§17) |
 
 Nothing in this table is aspirational — there's no "Planned" row because we don't document unshipped features here; proposals live as GitHub issues. If a command isn't listed, it isn't shipped yet.
 
@@ -737,6 +738,48 @@ What backs the claims above, concretely — this table exists so "documented" an
 **What if two tasks run at once?** Each gets its own worktree and branch (`rig/<task-id>`) — they don't collide. `accept` operates on your main working tree, so accept one task's diff, commit it, and only then accept the next (accept refuses if your working tree isn't clean, precisely to keep this safe).
 
 **Can I work on several tasks in one session instead of juggling terminals?** Yes — see §5 "Isolated worktree → Running several tasks at once." Queue them with `/rig:queue add` + `/rig:queue go --provider rig --max-parallel N` (each dispatched task is isolated automatically), then check `/rig:go board` (§10) for a single combined view instead of tracking N terminal windows in your head.
+
+**We're several teams. How do we share one quality bar?** §17.
+
+## 17. Team governance (v2)
+
+Everything above is built for one person and one repository, and in that shape it works. Four things break the moment the same setup is handed to teams A, B and C — and each is now a first-class concept rather than a convention.
+
+```
+team A ─┐
+team B ─┼─→ common policy ─→ permissions → approvals → waivers → audit
+team C ─┘        (a downstream layer can only tighten it)
+```
+
+| Breaks | Concept | The property that makes it real |
+|---|---|---|
+| `.rig/gates.json` is per-repo, so a criterion team A adds never reaches team B | **policy** (`.rig/policy/*.json`) | **monotonic tightening** — a team/project layer may add criteria, raise a quorum, shorten a waiver, narrow a role; it can never drop, lower, extend or widen one |
+| `.rig/access.json` is an allowlist for exactly one permission | **permissions** | roles over a fixed 11-permission vocabulary; a denial always names who *does* hold it |
+| "someone reviewed it" cannot be checked afterwards | **approvals** | quorum + qualifying roles + **separation of duties** (the author's own approval never counts) + **freshness** (bound to the approved commit; a force-push invalidates it) |
+| a `--force` record cannot tell a sign-off from a bad evening | **waivers** | a named, reasoned, **expiring** exception; `non_waivable` criteria are beyond any waiver |
+| an append-only JSONL log can be edited with a text editor | **ledger** (`.rig/ledger.jsonl`) | hash-chained and HMAC-signed; edits, deletions, reordering and forged appends are all detected |
+| "we run a common policy" stays a claim | **conformance** | nine checks per repo, rolled up per team — including the **force rate**, the one number that separates a gate being met from a gate being routed around |
+
+```bash
+rig-wb govern init --org acme --team team-a   # bind the repo, scaffold a starter policy
+rig-wb govern policy show                     # which layers reach here
+rig-wb govern policy lint                     # exit 3 if a layer loosens an upstream one
+rig-wb govern whoami                          # your roles and permissions
+rig-wb govern approve grant <task-id>         # cast an approval (yours doesn't count on your own task)
+rig-wb govern waiver grant w-ci --criterion tests_pass_or_explained \
+    --reason "CI runner down, OPS-12" --expires 2026-08-20
+rig-wb govern audit verify                    # exit 3 if the ledger was touched
+rig-wb govern conformance                     # this repo against its policy (exit 3 on a failure)
+rig-wb govern rollup --scan ~/work/acme       # the team A / B / C table
+```
+
+Share one policy rather than copies: put the org document in one checkout, point `$RIG_POLICY_HOME` at it, and let every repository's `.rig/org.json` list the same relative path. Copies drift; a shared reference cannot.
+
+Enforcement adds **no new choke point**. `accept` was already the only way into your working tree, so it now asks four more questions before the squash merge — may this actor accept, is the approval requirement met, may they force, is every bypassed criterion covered by a live waiver — and a refusal leaves the tree untouched. Approvals sit *on top of* the acceptance gate, never in place of it: replacing machine verification with human sign-off would give up the thing §5 is about.
+
+**Solo use is unchanged.** With no `.rig/org.json` the whole layer is inert — no output, no checks, no new files. `.rig/access.json` and `.rig/gates.json` keep working and are honoured *alongside* a policy; `rig-wb govern migrate` folds them into one when you're ready, leaving the originals in place. One deliberate difference: a malformed `.rig/access.json` falls back to unrestricted (the safe side for one person), while a policy layer that doesn't parse **blocks accept** — a stray comma silently costing an org its rules is the one failure this layer can't have.
+
+`/rig:govern` is the conversational side: it reads those same commands' output and returns a conformance report with the gaps ranked, rather than asserting compliance in prose.
 
 ## Docs
 
