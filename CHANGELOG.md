@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+## [1.34.0] - 2026-08-07
+
+Fixes a gate that was blaming pull requests for work they had not done, and
+gives two measured things a way to be seen.
+
+- **The prompt evaluation gate charged a branch for the base branch's changes**
+  (#367). `eval affected` diffed against the base *tip*, which on a branch that
+  forked a hundred commits ago includes everything the base branch did since —
+  in reverse. Those files read as changed by the branch, so the gate demanded
+  evaluation cases for prompt surfaces the author never opened, and no amount of
+  work on the branch could clear them. It now compares against the merge base,
+  which is what "this branch changed" means. Proved on a fixture first: a branch
+  touching one command, with the trunk moving on a recipe meanwhile, reported
+  both files before and reports one now.
+  The fork point used is reported as `merge_base` so a surprising result can be
+  checked rather than guessed at, and each blocking path now names the commits
+  that touched it — a large PR gets a triage list instead of a wall of paths.
+  A branch that genuinely rewrites the prompt layer still cannot pass, and
+  should not; what is fixed is the inflation, not the requirement.
+- **`rig-wb runs --auto-route-regret`** (#357). `learned_auto_route` has always
+  aggregated per-model pass rates to decide the *next* route, and never shown
+  that aggregate to anyone. Choosing a cheaper tier is a bet, and with no way to
+  see it settled there was no telling a saving from a false economy. This prints
+  each candidate's attempts and pass rate per routed step and flags a **possible
+  regret** when the chosen model is below the quality bar and a pricier
+  candidate with enough observations passes more often. A regret needs both
+  sides to have earned an opinion: a lucky single expensive run does not convict
+  the cheap tier, and a cheaper model doing *better* is not a regret. Read-only
+  over `.rig/runs.jsonl` — no writes, no model calls, no change to routing.
+- **README: `rig-wb bench-invariance` was undiscoverable** (#353). The feature
+  that produced the most consequential finding in this repository — that rig's
+  safe_rate tied bare's on `trusted-helper-authz`, because a verifier that
+  cannot see a defect does not start seeing it when the loop retries — appeared
+  nowhere in either README. Added as Claim C alongside the two existing claims,
+  with `agreement` and `safe_rate` defined and the panel's actual result stated
+  rather than the capability alone.
+
+Suite 1489 → 1510 passed.
+
+Not attempted: CLI provider session reuse (#326). Its own acceptance criteria
+require verification against the real CLIs, and this change set had no way to
+run them; shipping it on mock evidence is the thing that issue asks not to do.
+
 ## [1.33.0] - 2026-08-07
 
 Closes the gap between what `validate.md` says the validator checks and what it

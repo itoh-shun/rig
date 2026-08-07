@@ -317,3 +317,109 @@ def test_affected_run_is_nonmock_and_atomic(tmp_path, monkeypatch):
             judge_provider="command", judge_model="fixture", provider_command=command,
             judge_command=judge_command,
         )
+
+
+# ── divergence: what the branch changed, not what the base branch did (#367) ──
+
+
+def _diverged(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str]:
+    """A branch that forked, then watched the base branch move on without it."""
+    repo, _fork = _repo(tmp_path)
+    (repo / "commands").mkdir()
+    (repo / "skills" / "engine" / "recipes").mkdir(parents=True)
+    (repo / "commands" / "alpha.md").write_text("a\n", encoding="utf-8")
+    (repo / "skills" / "engine" / "recipes" / "bugfix.md").write_text("r\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "surfaces")
+    trunk = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "commands" / "alpha.md").write_text("a\nbranch\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "branch touches alpha")
+
+    _git(repo, "checkout", "-q", trunk)
+    for index in range(3):
+        (repo / "skills" / "engine" / "recipes" / "bugfix.md").write_text(
+            f"r\ntrunk {index}\n", encoding="utf-8"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "-m", f"trunk moves {index}")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def test_a_surface_the_base_branch_changed_is_not_charged_to_the_branch(tmp_path):
+    """Diffing against the base tip counts the base branch's own work as the
+    branch's, which is what makes a long-diverged PR unpassable."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base_tip = _diverged(tmp_path)
+    result = analyze_affected(repo, base=base_tip, head="feature", require_cases=True)
+
+    assert result["changed_files"] == ["commands/alpha.md"]
+    assert result["uncovered"] == ["commands/alpha.md"]
+    assert "skills/engine/recipes/bugfix.md" not in result["changed_files"]
+
+
+def test_the_fork_point_used_for_the_comparison_is_reported(tmp_path):
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base_tip = _diverged(tmp_path)
+    result = analyze_affected(repo, base=base_tip, head="feature")
+    assert result["merge_base"] != base_tip
+    assert result["merge_base"] == _git(repo, "merge-base", base_tip, "feature")
+
+
+def test_each_blocking_path_names_the_commit_that_changed_it(tmp_path):
+    """A wall of paths is unactionable; the commit behind each one is a triage
+    list."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base_tip = _diverged(tmp_path)
+    result = analyze_affected(repo, base=base_tip, head="feature", require_cases=True)
+    commits = result["surface_commits"]
+    assert list(commits) == ["commands/alpha.md"]
+    assert commits["commands/alpha.md"] == [_git(repo, "log", "--format=%h", "-1", "feature")]
+
+
+def test_a_covered_run_reports_no_commit_attribution(tmp_path):
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base_tip = _diverged(tmp_path)
+    result = analyze_affected(repo, base=base_tip, head="feature")
+    assert result["surface_commits"] == {}
+
+
+def test_an_up_to_date_branch_behaves_exactly_as_before(tmp_path):
+    """With no divergence the fork point is the base, so nothing changes."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, _base = _repo(tmp_path)
+    (repo / "commands").mkdir()
+    (repo / "commands" / "alpha.md").write_text("a\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "surfaces")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "commands" / "alpha.md").write_text("a\nb\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "touch")
+
+    result = analyze_affected(repo, base=base, head="feature", require_cases=True)
+    assert result["merge_base"] == base
+    assert result["changed_files"] == ["commands/alpha.md"]
+
+
+def test_unrelated_histories_fall_back_to_the_base_instead_of_erroring(tmp_path):
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base = _repo(tmp_path)
+    _git(repo, "checkout", "-q", "--orphan", "detached")
+    (repo / "commands").mkdir()
+    (repo / "commands" / "alpha.md").write_text("a\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "unrelated")
+
+    result = analyze_affected(repo, base=base, head="detached")
+    assert result["merge_base"] == base
+    assert "commands/alpha.md" in result["changed_files"]

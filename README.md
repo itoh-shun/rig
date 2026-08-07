@@ -442,6 +442,16 @@ Schema-v2 acceptance is deliberately strict: at least 10 tasks and 3 valid pairs
 
 **Honest scope note:** `--provider mock` is labeled **WIRING ONLY**. It proves the harness plumbing and report path work, not that rig improves quality. Real Claude/Codex execution requires `--allow-paid-provider` because it incurs billing; this repository does not run or publish paid results automatically.
 
+**Claim C — the result does not depend on which model ran it.** A gate that only holds for the strongest model is not a gate. `rig-wb bench-invariance` runs the same corpus across a panel of models and reports two numbers: **`agreement`**, how often the arms reach the same outcome across models, and **`safe_rate`**, the share of runs ending in `clean_pass` or `safe_stop` — stopping short counts as safe, shipping a defect quietly does not.
+
+```bash
+rig-wb bench-invariance --corpus benchmarks/hard-tasks \
+  --provider claude --allow-paid-provider \
+  --models claude-haiku-4-5-20251001,claude-sonnet-5,claude-fable-5 --html invariance.html
+```
+
+The first real panel found against rig, not for it: on `trusted-helper-authz` all three models shipped the silent defect on every bare run, and **rig's safe_rate tied bare's** — a verifier that cannot see a defect does not start seeing it because the loop retried. Full conditions and results are in [`benchmarks/hard-tasks/README.md`](benchmarks/hard-tasks/README.md); nothing beyond the panels actually run is claimed here.
+
 **Cross-model comparisons.** `--bare-model` and `--rig-model` override the model for a single arm, letting you ask a third question the same-model pairing above can't: can a cheaper model driven by rig approach a stronger model's bare output? Both default to `--model` when omitted, so the historical same-model-both-arms behavior is unchanged unless you opt in:
 
 ```bash
@@ -475,7 +485,7 @@ Opt-in: nothing changes unless you start this server; existing CLI/skill usage i
 
 Recipe steps can declare `auto_route.candidates` (a list of `{model, cost_tier, max_size}`, cheapest first). `orchestrate.py run --auto-route` deterministically picks the cheapest candidate whose `max_size` covers the measured diff size — a fallback only: runtime `--step-model` and the recipe's own `model:` both still win outright. The decision is recorded in `runs.jsonl`'s `steps[].auto_route`.
 
-`--auto-route-learn` builds on that with a frequency-based (no ML model) read of `.rig/runs.jsonl`'s own track record — which model actually got used for a given recipe/step, and did the step pass. **Defaults to shadow mode**: predictions are always recorded (`steps[].learned_route`) but don't change what runs until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static `--auto-route` choice when there aren't enough reference runs or the pass rate is too low, always recording the rejected candidates and why (counterfactuals, so it stays auditable rather than a black box). `--exploration-pct N` lets a deterministic fraction of runs try the next-cheapest candidate instead (hashed from `--exploration-date` + recipe/step — never randomness, so results stay reproducible). Regret logging (auto-calibrating "too cheap"/"too expensive" picks after the fact) isn't implemented — comparing `steps[].status` against `learned_route` by hand via `runs`/`stats` is the fallback.
+`--auto-route-learn` builds on that with a frequency-based (no ML model) read of `.rig/runs.jsonl`'s own track record — which model actually got used for a given recipe/step, and did the step pass. **Defaults to shadow mode**: predictions are always recorded (`steps[].learned_route`) but don't change what runs until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static `--auto-route` choice when there aren't enough reference runs or the pass rate is too low, always recording the rejected candidates and why (counterfactuals, so it stays auditable rather than a black box). `--exploration-pct N` lets a deterministic fraction of runs try the next-cheapest candidate instead (hashed from `--exploration-date` + recipe/step — never randomness, so results stay reproducible). Whether a cheap pick was a saving or a false economy is answered after the fact by `rig-wb runs --auto-route-regret`: per routed step it prints each candidate model's attempts and pass rate, and flags a **possible regret** when the chosen model is below the quality bar and a pricier candidate with enough observations passes more often. Read-only over `.rig/runs.jsonl` — it reports, it does not re-route.
 
 ## 12. GitHub integration
 

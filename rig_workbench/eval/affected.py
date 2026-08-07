@@ -36,11 +36,36 @@ def prompt_surface_registry() -> dict:
     }
 
 
+def _merge_base(root: pathlib.Path, base: str, head: str) -> str:
+    """The commit this branch actually forked from.
+
+    Diffing against the base *tip* attributes everything the base branch did
+    since the fork to this branch as well. On a branch that diverged a hundred
+    commits ago that is most of the prompt layer, so the gate demands cases for
+    surfaces the author never opened — which is what makes a release-scale PR
+    structurally unpassable (#367). The fork point is what "this branch changed"
+    means. Falls back to the base when there is no common ancestor.
+    """
+    revision = "HEAD" if head == "working" else head
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", base, revision], cwd=root,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return base
+    value = completed.stdout.strip()
+    if completed.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", value):
+        return base
+    return value
+
+
 def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     for value, label in ((base, "base"), (head, "head")):
         if not isinstance(value, str) or not value or "\n" in value or "\x00" in value:
             raise EvalCaseError(f"affected {label} revision is invalid")
-    args = ["git", "diff", "--name-only", "--relative", base]
+    args = ["git", "diff", "--name-only", "--relative", _merge_base(root, base, head)]
     if head != "working":
         args.append(head)
     args.append("--")
@@ -194,6 +219,37 @@ def _recipes_by_surface(root: pathlib.Path, surfaces: list[dict]) -> dict[str, l
     return result
 
 
+def _surface_commits(
+    root: pathlib.Path, merge_base: str, head: str, paths: list[str],
+) -> dict[str, list[str]]:
+    """Which commits touched each uncovered path, newest first.
+
+    A large PR that fails this gate otherwise reports a wall of paths with no
+    way in. Naming the commit behind each one turns it into a triage list —
+    the author can see which change owes a case, rather than the whole branch.
+    Only computed for the paths that are actually blocking.
+    """
+    if not paths:
+        return {}
+    revision = "HEAD" if head == "working" else head
+    result: dict[str, list[str]] = {}
+    for path in sorted(set(paths)):
+        try:
+            completed = subprocess.run(
+                ["git", "log", "--format=%h", "--max-count=5",
+                 f"{merge_base}..{revision}", "--", path],
+                cwd=root, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=15, shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode == 0:
+            commits = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+            if commits:
+                result[path] = commits
+    return result
+
+
 def _load_cases(root: pathlib.Path) -> list[dict]:
     cases: list[dict] = []
     tier = root / "evals" / "cases"
@@ -222,6 +278,7 @@ def analyze_affected(
         raise EvalCaseError("cannot resolve affected repository") from exc
     changed = _changed_files(root, base, head)
     resolved_head = _resolved_head(root, head)
+    merge_base = _merge_base(root, base, head)
     surfaces = [surface for path in changed if (surface := _surface(path)) is not None]
     recipes_by_surface = _recipes_by_surface(root, surfaces)
     recipes = sorted({recipe for values in recipes_by_surface.values() for recipe in values})
@@ -275,9 +332,13 @@ def analyze_affected(
         "eval_affected_schema_version": 1,
         "registry_version": REGISTRY_VERSION,
         "base": base, "head": head, "resolved_head": resolved_head,
+        # The fork point the comparison actually used. Printed so a surprising
+        # result can be checked against it instead of guessed at.
+        "merge_base": merge_base,
         "changed_files": changed,
         "affected_surfaces": sorted(surfaces, key=lambda item: item["path"]),
         "affected_recipes": recipes, "affected_cases": selected,
         "uncovered": sorted(set(uncovered)), "evidence_status": evidence,
+        "surface_commits": _surface_commits(root, merge_base, head, uncovered),
         "status": status,
     }
