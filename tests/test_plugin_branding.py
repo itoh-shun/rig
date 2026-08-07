@@ -17,7 +17,8 @@ Two marketplace names are in play, and they are not the same thing:
   on the CLI silently overwrote the other's registration — so this repo gave the shared
   name back up. (Separately, Cowork also failed to list this plugin at all, in any
   marketplace — see CHANGELOG 1.28.2. That turned out to be caused by the top-level
-  `bin/` directory, unrelated to the marketplace name or self-reference.)
+  `bin/` directory, unrelated to the marketplace name or self-reference; the directory
+  was removed in 1.35.0 once Claude Desktop showed the same symptom.)
 """
 
 import json
@@ -109,3 +110,19 @@ def test_readme_install_lines_match_the_shipped_marketplaces(readme):
 ])
 def test_packaging_metadata_carries_the_brand(path, needle):
     assert needle in (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def test_no_top_level_bin_directory():
+    """A top-level `bin/` makes Cowork and Claude Desktop drop this plugin entirely.
+
+    The directory name alone is the trigger — contents, file count, and the executable
+    bit make no difference (CHANGELOG 1.28.2 proved it by renaming a byte-identical
+    copy). It was kept until 1.35.0 because it backed Claude Code's plugin `bin/`-on-PATH
+    feature, but two dead surfaces outweighed one convenience: `.claude-plugin/bin/rig`
+    plus `orchestrate install-shim` already cover the same ground. Re-adding `bin/` would
+    silently un-list the plugin again, which no other check would notice.
+    """
+    assert not (REPO_ROOT / "bin").exists(), (
+        "a top-level bin/ directory makes Cowork and Claude Desktop fail to list this "
+        "plugin — put executables under .claude-plugin/bin/ instead (see CHANGELOG 1.35.0)"
+    )

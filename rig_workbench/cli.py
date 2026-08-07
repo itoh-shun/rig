@@ -35,7 +35,7 @@ def _rig_home() -> pathlib.Path:
 
     Priority:
       1. The `RIG_HOME` env var (the canonical way when used from another repo;
-         same as bin/orchestrate)
+         same as .claude-plugin/bin/rig)
       2. The install source (when installed from inside the repo via `pip install -e .`)
       3. The current directory / its parents (the `cd path/to/rig` then `rig-wb` case)
 
