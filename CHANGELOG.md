@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **The instinct-suggestion Stop hook now fires once per session instead of every
+  turn.** The reminder blocks the stop, so repeating it costs a full round-trip each
+  time — and the hook's own comment says most sessions have nothing worth recording,
+  which makes almost all of those round-trips a turn spent saying "nothing this time".
+  Observed in a live session: 16 firings, 6 of which produced an instinct; the other 10
+  were pure overhead crowding out the work. A marker keyed by `session_id` under
+  `$TMPDIR` enforces the limit; clients that send no `session_id` still get the
+  reminder every time, since losing it entirely is the worse failure. The id is folded
+  to `[A-Za-z0-9_-]` before use, so it cannot escape the marker directory — dots
+  included, because an id of `..` would resolve to a directory that always exists and
+  would silence the hook permanently.
+
 ## [1.35.0] - 2026-08-07
 
 Removes the top-level `bin/` directory. It cost this plugin two entire surfaces to
