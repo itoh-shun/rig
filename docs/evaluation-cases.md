@@ -22,7 +22,7 @@ rig-wb eval compare --baseline <result.json> --current <result.json> \
 rig-wb eval promote <draft-id> --baseline <result.json> --current <result.json> \
   [--repo <repository>]
 rig-wb eval affected --base <git-ref> [--head <git-ref|working>] \
-  [--require-cases] [--evidence-dir <directory>] [--json]
+  [--require-cases | --ratchet] [--evidence-dir <directory>] [--json]
 rig-wb eval gate --base <git-ref> [--head <git-ref|working>] \
   --evidence-dir <directory> [--provider <provider>] [--model <model>]
 rig-wb eval affected-run --base <git-ref> --head HEAD \
@@ -38,6 +38,42 @@ fields, unsupported versions and enum values, non-finite numbers, duplicate iden
 path traversal, file URIs or absolute paths, Unicode format controls, and secret-like fields
 or values. HTTP(S) references remain valid. Files must use canonical JSON (sorted keys,
 compact separators, UTF-8, and one trailing newline).
+
+## Affected-surface coverage: threshold or ratchet
+
+`affected` maps a git diff to the prompt surfaces it touches and to the cases covering
+them. Two modes express the same requirement differently.
+
+`--require-cases` is the threshold: every affected surface must already have a case, or
+the change is `uncovered` (exit 1). It is the right destination and the wrong starting
+point. With an empty `evals/cases/` it fails every change that touches a prompt surface —
+including the change that would add the first case — and a check that fires on everything
+distinguishes nothing. What it actually teaches is that this job is merged past, and that
+habit does not stay confined to this job.
+
+`--ratchet` states the requirement as a direction:
+
+| affected surface | `--require-cases` | `--ratchet` |
+|---|---|---|
+| has a case | pass | pass |
+| has no case yet | `uncovered`, exit 1 | **`coverage_debt`**, exit 0 |
+| its coverage was removed by this change | not detected | **`coverage_regressions`**, exit 1 |
+| kind not in the registry | `uncovered`, exit 1 | `uncovered`, exit 1 |
+
+Debt is reported, never swallowed: the report lists each uncovered path and the commits
+that touched it, and CI raises a GitHub warning annotation with the count. What cannot
+happen is coverage going *down* — deleting a promoted case, or narrowing the
+`prompt_surfaces` of one, fails the job. Coverage is therefore monotonic, the same rule
+the governance layer applies to policy layers, and the debt count is a number that moves
+from the first day rather than a wall that never opens.
+
+`coverage_regressions` is only claimed when it can be demonstrated. If the base tree
+cannot be read — a shallow clone, an unborn ref — the comparison reports no regression
+rather than accusing the change of deleting everything.
+
+The paid quality steps key off `affected_cases`, not off the status: with no case covering
+the change there is nothing to measure, and demanding a provider run anyway is what made
+the gate unpassable.
 
 ## Execution and promotion
 

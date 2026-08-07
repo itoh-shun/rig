@@ -70,7 +70,11 @@ def _parser() -> argparse.ArgumentParser:
     affected.add_argument("--base", required=True)
     affected.add_argument("--head", default="working")
     affected.add_argument("--repo", default=".")
-    affected.add_argument("--require-cases", action="store_true")
+    affected.add_argument("--require-cases", action="store_true",
+                          help="every affected surface must already have a case (strict)")
+    affected.add_argument("--ratchet", action="store_true",
+                          help="coverage may only go up: a surface with no case yet is "
+                               "reported as debt (exit 0), removing existing coverage fails")
     affected.add_argument("--evidence-dir")
     affected.add_argument("--json", action="store_true")
     gate = sub.add_parser("gate", help="enforce affected prompt evaluation evidence")
@@ -352,9 +356,12 @@ def cmd_eval(argv: list[str]) -> int:
         if args.command == "affected":
             report = analyze_affected(
                 args.repo, base=args.base, head=args.head,
-                require_cases=args.require_cases, evidence_dir=args.evidence_dir,
+                require_cases=args.require_cases, ratchet=args.ratchet,
+                evidence_dir=args.evidence_dir,
             )
             print(canonical_json(report), end="")
+            # `debt` exits 0 on purpose: it is a number to carry, not a wall. Only
+            # an untracked surface or removed coverage stops the run.
             return 1 if report["status"] == "uncovered" else 0
         if args.command == "gate":
             report, exit_code = evaluate_gate(

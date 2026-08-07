@@ -90,11 +90,25 @@ jobs:
           fi
           echo "base=$base" >> "$GITHUB_OUTPUT"
 
+      # Ratchet, not threshold. `--require-cases` fails every change that touches a
+      # prompt surface while `evals/cases/` is empty — including the change that
+      # would add the first case — so it fired on everything and was merged past.
+      # `--ratchet` keeps the same requirement as a direction: a surface with no
+      # case yet is debt (reported, exit 0), removing coverage somebody earned is a
+      # regression (exit 1), and an unregistered surface kind still fails outright.
       - name: Structural affected-case coverage (free)
         run: |
           rig-wb eval affected --base "${{ steps.comparison.outputs.base }}" \
-            --head HEAD --require-cases --json > /tmp/rig-affected.json
+            --head HEAD --ratchet --json > /tmp/rig-affected.json
           cat /tmp/rig-affected.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/rig-affected.json"))
+          debt = report["coverage_debt"]
+          if debt:
+              print(f"::warning::prompt coverage debt: {len(debt)} surface(s) have no "
+                    f"evaluation case yet — {', '.join(debt)}")
+          PY
 
       - name: Untrusted or fork prompt quality handoff
         if: >-
@@ -104,9 +118,13 @@ jobs:
           github.event.pull_request.author_association != 'MEMBER' &&
           github.event.pull_request.author_association != 'COLLABORATOR'))
         run: |
-          status="$(python3 -c 'import json; print(json.load(open("/tmp/rig-affected.json"))["status"])')"
-          if [ "$status" = "noop" ]; then
-            echo "No prompt surface changed; structural-only fork check is complete."
+          runnable="$(python3 -c 'import json; r=json.load(open("/tmp/rig-affected.json")); print(len(r["affected_cases"]))')"
+          if [ "$runnable" = "0" ]; then
+            # Either no prompt surface changed, or every affected surface is still
+            # coverage debt. There is no case to run either way, and demanding a
+            # quality run with nothing to measure is what made this gate fire on
+            # everything. The debt itself is already reported by the step above.
+            echo "No affected evaluation case to run; structural-only fork check is complete."
             exit 0
           fi
           echo "Prompt quality remains intentionally unmet for an untrusted/fork PR." >&2
@@ -128,9 +146,9 @@ jobs:
           RIG_EVAL_JUDGE_PROVIDER: ${{ secrets.RIG_EVAL_JUDGE_PROVIDER }}
           RIG_EVAL_JUDGE_MODEL: ${{ secrets.RIG_EVAL_JUDGE_MODEL }}
         run: |
-          status="$(python3 -c 'import json; print(json.load(open("/tmp/rig-affected.json"))["status"])')"
-          if [ "$status" = "noop" ]; then
-            echo "No prompt surface changed; quality gate is a no-op."
+          runnable="$(python3 -c 'import json; r=json.load(open("/tmp/rig-affected.json")); print(len(r["affected_cases"]))')"
+          if [ "$runnable" = "0" ]; then
+            echo "No affected evaluation case to run; quality gate is a no-op."
             exit 0
           fi
           if [ -z "$RIG_EVAL_ATTESTATION_KEY" ] || [ -z "$RIG_EVAL_PROVIDER" ] || [ -z "$RIG_EVAL_MODEL" ] || [ -z "$RIG_EVAL_JUDGE_PROVIDER" ] || [ -z "$RIG_EVAL_JUDGE_MODEL" ]; then

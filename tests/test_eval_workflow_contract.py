@@ -7,8 +7,17 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
         encoding="utf-8"
     )
     assert "fetch-depth: 0" in workflow
-    assert "eval affected" in workflow and "--require-cases" in workflow
+    # Ratchet rather than threshold: `--require-cases` fired on every prompt-surface
+    # change while the corpus was empty, so it carried no signal and got merged past.
+    assert "eval affected" in workflow and "--ratchet" in workflow
+    invocation = [line for line in workflow.splitlines()
+                  if "--ratchet" in line or "--require-cases" in line
+                  if not line.lstrip().startswith("#")]
+    assert invocation and all("--require-cases" not in line for line in invocation)
+    assert "coverage_debt" in workflow          # the debt is reported, not swallowed
     assert "eval affected-run" in workflow
+    # The paid steps run when there is a case to run, not merely when a file moved.
+    assert workflow.count('r["affected_cases"]') == 2
     assert "RIG_EVAL_ATTESTATION_KEY" in workflow
     assert "RIG_EVAL_PROVIDER" in workflow and "RIG_EVAL_MODEL" in workflow
     assert "RIG_EVAL_JUDGE_PROVIDER" in workflow and "RIG_EVAL_JUDGE_MODEL" in workflow

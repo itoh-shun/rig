@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## [2.1.1] - 2026-08-07
+
+**The prompt evaluation gate was red on every change that touched a prompt
+surface, so it was merged past.** `--require-cases` demands that every affected
+surface already have an approved evaluation case. `evals/cases/` is empty, and an
+approved case can only be created by `eval promote` from a measured red→green run
+pair — so the requirement failed every prompt-surface change, *including the one
+that would add the first case*. #383 merged over it. #381 merged over it. A check
+that fires on everything distinguishes nothing, and what it actually teaches is
+that this job gets merged past — a habit that does not stay confined to one job.
+
+The requirement was right; expressing it as a threshold was not. `eval affected
+--ratchet` states it as a direction instead:
+
+| affected surface | `--require-cases` | `--ratchet` |
+|---|---|---|
+| has a case | pass | pass |
+| has no case yet | `uncovered`, exit 1 | **`coverage_debt`**, exit 0 |
+| its coverage was removed here | not detected | **`coverage_regressions`**, exit 1 |
+| kind not in the registry | `uncovered`, exit 1 | `uncovered`, exit 1 |
+
+Debt is reported, never swallowed — each path, the commits that touched it, and a
+GitHub warning annotation with the count. What cannot happen is coverage going
+*down*: deleting a promoted case, or narrowing one's `prompt_surfaces`, fails the
+job. Coverage is monotonic, which is the same rule the governance layer applies to
+policy layers, and the debt count is a number that moves from the first day rather
+than a wall that never opens.
+
+Two details that keep the new check honest:
+
+- **A regression is only claimed when it can be demonstrated.** If the base tree
+  cannot be read — shallow clone, unborn ref — the comparison reports no
+  regression rather than accusing the change of having deleted everything.
+- **The paid quality steps now key off `affected_cases`, not off the status.**
+  With no case covering the change there is nothing to measure, and demanding a
+  provider run anyway was part of what made the gate unpassable.
+
+`--require-cases` keeps its exact previous meaning and is still available; it is
+what this repository should switch back to once the corpus covers the surfaces
+that matter. Nothing about how cases are captured, promoted or run changes.
+
 ## [2.1.0] - 2026-08-07
 
 **Governance reaches any stage, not only accept.** v2.0.0 governed the one place
