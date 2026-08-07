@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## [1.32.0] - 2026-08-07
+
+Makes the mutation adapter a rig command. 1.31.x shipped it as a loose script, so
+the one detection surface an operator had to reach into `scripts/` for — naming the
+format and the path by hand — was the same surface `hostcheck`, `coverage` and
+`asvs` already exposed as `rig-wb` subcommands.
+
+- `rig-wb mutation` replaces `python3 scripts/mutation_adapter.py <format> <report>`.
+  With no arguments it finds the report in the places Stryker and mutmut write one
+  and reads the format out of the file rather than off the filename, so a report
+  saved under an unexpected name still parses and one whose name lies about its
+  shape does not fool the parser. A candidate that turns out not to be a mutation
+  report is skipped rather than scored. Verified against both throwaway projects
+  from 1.31.1: 80.8% (Stryker) and 40.9% (mutmut), the numbers those runs already had.
+- `--run` runs the project's own mutation tool first, detected from its configuration
+  — `stryker.conf.*` or a `@stryker-mutator` dependency, `[mutmut]` in setup.cfg or
+  mutmut named in pyproject.toml. Detection demands that a marker actually name the
+  tool: guessing wrong means running a long job the project never asked for, so a
+  bare `pyproject.toml` is not consent. rig still does not do mutation testing itself.
+- Fixes `--apply`: it recognised one workbench failure string and printed
+  `applied ...` with exit 0 for every other one, so a task id that did not exist
+  looked like a criterion that had reached a gate. It now follows the exit code.
+- `scripts/mutation_adapter.py` remains as a deprecating shim that forwards to the
+  new command, and the old positional form is still accepted, so 1.31.x instructions
+  keep working.
+- Not done: a `/rig:` entry point. `commands/` is a registered prompt surface, so
+  adding one requires evaluation-case evidence (red/green plus a clean control)
+  before it can land. Stated here rather than half-wired. The coverage map is
+  unchanged: `detection-power` asks that the suite's detection be measurable, which
+  it is — where the entry point sits is ergonomics, not evidence.
+
 - Verified the `elements` path against a real Stryker report (9.6.1, command runner,
   26 mutants on a throwaway project). No fix was needed: the adapter's score matched
   Stryker's own in all three states — 53.85% with a weak suite, 88.46% after adding
