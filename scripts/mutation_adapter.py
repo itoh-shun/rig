@@ -8,10 +8,16 @@ Python — so rig does not reimplement it. This adapter does what
 `scripts/sast_adapter.py` does for security scanners: read the tool's report,
 reduce it to one number with a stated meaning, and hand it to the acceptance gate.
 
-Two report shapes are accepted, both produced by tools people already run:
+Three report shapes are accepted, all produced by tools people already run:
 
     elements   the mutation-testing-elements JSON schema (Stryker and friends)
-    junit      JUnit XML, which `mutmut junitxml` emits
+    mutmut     mutants/mutmut-cicd-stats.json, written by `mutmut export-cicd-stats`
+    junit      JUnit XML — mutmut 2.x's `junitxml`, or any other JUnit producer
+
+The mutmut split is a version boundary, not a preference: 3.x dropped `junitxml`
+and replaced it with `export-cicd-stats`, which writes a counts summary instead of
+one test case per mutant. Both are supported so the adapter does not force a
+version upgrade on the project using it.
 
 Scoring follows the usual convention: a timeout counts as detected (the mutant
 changed behaviour enough to hang), no-coverage counts as undetected (nothing even
@@ -33,9 +39,15 @@ project, which is additive and cannot weaken anything:
     {"extra_criteria": {"standard": ["mutation_score_not_regressed"]}}
 
 Usage:
-    mutation_adapter.py elements report.json [--baseline F] [--tolerance 0.02]
-                                            [--record-baseline] [--apply <task_id>]
-    mutation_adapter.py junit report.xml    [same flags]
+    mutation_adapter.py elements report.json           [--baseline F] [--tolerance 0.02]
+                                                       [--record-baseline] [--apply <task_id>]
+    mutation_adapter.py mutmut mutants/mutmut-cicd-stats.json   [same flags]
+    mutation_adapter.py junit report.xml                        [same flags]
+
+    # Stryker      npx stryker run          → reports/mutation/mutation.json  (elements)
+    # mutmut 3.x   mutmut run && mutmut export-cicd-stats
+    #                                       → mutants/mutmut-cicd-stats.json (mutmut)
+    # mutmut 2.x   mutmut run && mutmut junitxml > mutation.xml               (junit)
 """
 from __future__ import annotations
 
@@ -95,6 +107,47 @@ def parse_elements(path: pathlib.Path) -> dict:
     return {"format": "elements", "by_status": by_status, **counts}
 
 
+# mutmut 3.x status names, grouped the same way as the elements statuses.
+# `suspicious` is neither: the mutant made the suite behave oddly (usually timing)
+# without a verdict either way, so it is excluded rather than counted as a hole.
+MUTMUT_DETECTED = ("killed", "timeout")
+MUTMUT_UNDETECTED = ("survived", "no_tests")
+MUTMUT_INVALID = ("skipped", "suspicious", "segfault", "check_was_interrupted_by_user")
+
+
+def parse_mutmut(path: pathlib.Path) -> dict:
+    """mutmut 3.x: `mutmut export-cicd-stats` → mutants/mutmut-cicd-stats.json."""
+    try:
+        data = json.loads(_read_text(path))
+    except ValueError as exc:
+        raise ReportError(f"not valid JSON: {exc}") from exc
+    if not isinstance(data, dict) or "killed" not in data or "survived" not in data:
+        raise ReportError("no 'killed'/'survived' counts — is this a mutmut export-cicd-stats report?")
+    counts = {"detected": 0, "undetected": 0, "invalid": 0}
+    by_status: dict[str, int] = {}
+    for key, value in data.items():
+        if key == "total":
+            continue
+        if not isinstance(value, int) or value < 0:
+            raise ReportError(f"count for {key!r} is not a non-negative integer: {value!r}")
+        by_status[key] = value
+        if key in MUTMUT_DETECTED:
+            counts["detected"] += value
+        elif key in MUTMUT_UNDETECTED:
+            counts["undetected"] += value
+        elif key in MUTMUT_INVALID:
+            counts["invalid"] += value
+        else:
+            raise ReportError(f"unknown mutmut status: {key!r}")
+    total = data.get("total")
+    tallied = counts["detected"] + counts["undetected"] + counts["invalid"]
+    if isinstance(total, int) and total != tallied:
+        # A mismatch means a status this adapter does not know about was dropped;
+        # scoring on a short denominator would silently inflate the result.
+        raise ReportError(f"counts sum to {tallied} but the report says total={total}")
+    return {"format": "mutmut", "by_status": by_status, **counts}
+
+
 def parse_junit(path: pathlib.Path) -> dict:
     """JUnit XML (`mutmut junitxml`): a survived mutant is a failing test case."""
     text = _read_text(path)
@@ -135,7 +188,7 @@ def parse_junit(path: pathlib.Path) -> dict:
     return {"format": "junit", "by_status": by_status, **counts}
 
 
-PARSERS = {"elements": parse_elements, "junit": parse_junit}
+PARSERS = {"elements": parse_elements, "mutmut": parse_mutmut, "junit": parse_junit}
 
 
 def score_of(counts: dict) -> float | None:
