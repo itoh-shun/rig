@@ -1139,17 +1139,21 @@ hr { border: none; border-top: 1px solid var(--rule); margin: var(--sp-4) 0; }
 <p class="fig-cap">FIG.06 ミューテーションテストの仕組みと、rig が担当する範囲：測るのは外部ツール、rig は<b>結果を受け入れ基準の1条件に変える</b>ところを持つ。</p>
 
 <div class="term-mock">
-<span class="term-cap">試す流れ：外部ツールで測って、結果をゲートに繋ぐ</span>
-<span class="cmd">npx stryker run</span>
-<span class="out">→ JavaScript 側。reports/mutation/mutation.json が出る</span>
-<span class="cmd">mutmut run &amp;&amp; mutmut export-cicd-stats</span>
-<span class="out">→ Python 側。mutants/mutmut-cicd-stats.json が出る</span>
-<span class="cmd">python3 scripts/mutation_adapter.py elements reports/mutation/mutation.json --record-baseline</span>
+<span class="term-cap">試す流れ：測って、結果をゲートに繋ぐ</span>
+<span class="cmd">rig-wb mutation --run</span>
+<span class="out">→ プロジェクトの設定からツール（Stryker か mutmut）を見つけて実行し、そのまま採点する</span>
+<span class="cmd">rig-wb mutation</span>
+<span class="out">→ 測り終えたレポートを自分で探して採点する（場所も形式も指定しない）</span>
+<span class="cmd">rig-wb mutation --record-baseline</span>
 <span class="out">→ 初回。基準値として記録する（比べる相手が無いので必ず通る）</span>
-<span class="cmd">python3 scripts/mutation_adapter.py mutmut mutants/mutmut-cicd-stats.json --apply RUN-ID</span>
+<span class="cmd">rig-wb mutation --apply RUN-ID</span>
 <span class="out">→ 2回目以降。前回と比べ、下がっていれば受け入れ基準に警告として記録する</span>
 </div>
 <p>ゲートに出すには、プロジェクト側の <span class="mono">.rig/gates.json</span> に <span class="mono">mutation_score_not_regressed</span> を1行足しておく。以後、<span class="mono">/rig:go diff</span> の合否一覧にこの条件が並ぶ。</p>
+
+<div class="callout">
+<b>ここで「レポートの場所も形式も聞かない」ようにしたのには理由がある。</b> 1.31 系ではこの取り込みだけが <span class="mono">scripts/</span> の中の生スクリプトで、<b>利用者が形式名とファイルパスを覚えて打つ</b>形だった——同じ時期に入れた他の道具（<span class="mono">hostcheck</span>・<span class="mono">coverage</span>・<span class="mono">asvs</span>）は全部 <span class="mono">rig-wb</span> のサブコマンドなのに、である。1.32 で中に入れ、<b>形式はファイル名ではなく中身を読んで判定する</b>ようにした。名前が実体と食い違っていても正しく読み、<b>ミューテーションのレポートでないファイルは採点せず飛ばす</b>。<span class="mono">--run</span> のツール検出も同じ考えで、<b>設定ファイルがそのツールを名指ししていること</b>を条件にしている——推測で当てにいくと、頼んでいない長い実行が始まるためである。<b>rig がミューテーションテストそのものを実装しているわけではない</b>点は変わらない。測るのは外部ツール、rig が持つのは<b>採点の解釈とゲートへの接続</b>である。
+</div>
 
 <h4>％の読み方——4つだけ覚えればいい</h4>
 <div class="column">
@@ -1247,7 +1251,7 @@ rig の開発は<b>「作る → 測る → 効かなかった所を特定する
 <tr><td>02b 3-1</td><td>分業の衝突を避ける</td><td><b>●</b></td><td>worktree のライフサイクル、並列 item がそれぞれ隔離されること</td></tr>
 <tr><td>02b 3-4</td><td>フェアな計測（検出率−誤検知率）</td><td><b>●</b></td><td>出題カタログと採点の整合、誤検知を含む決定論的な実測</td></tr>
 <tr><td>02b 5-1</td><td><b>生成と検証を分ける</b></td><td><b>△</b></td><td>別プロセス化と書き込み不能化は確認済み。<b>出力の質の証明は未達成</b>——有料ベンチの合格条件を記録して残してある</td></tr>
-<tr><td>02b 5-2</td><td><b>検知力を測る</b></td><td><b>●</b></td><td>レビュー役側は <span class='mono'>/rig:drill</span>、<b>テストスイート側はミューテーションの取り込み</b>（Stryker・mutmut の両形式）。実物のツール2種で前後比較まで実施（05-5）</td></tr>
+<tr><td>02b 5-2</td><td><b>検知力を測る</b></td><td><b>●</b></td><td>レビュー役側は <span class='mono'>/rig:drill</span>、<b>テストスイート側は <span class='mono'>rig-wb mutation</span></b>（Stryker・mutmut の両形式を自動判定）。実物のツール2種で前後比較まで実施（05-5）</td></tr>
 <tr><td>02b 5-3</td><td>安い検査で早く落とす</td><td><b>●</b></td><td>git フックの配線、プロンプト変更への回帰ゲート、CI 定義</td></tr>
 <tr><td>02b 5-4</td><td>検査面を事前に絞る</td><td><b>●</b></td><td>外から来た文章を「指示」として読ませない囲い、全体走査の取り込み経路、観点カタログ、<b>ASVS 章との対応表</b>（06-4）</td></tr>
 </tbody>
@@ -1355,7 +1359,7 @@ rig の開発は<b>「作る → 測る → 効かなかった所を特定する
 <li>「確かめる側を分ける」設定を、速さのために外していない（04・05）</li>
 <li>rig の測定が<b>まだ証明していないこと</b>（出力の質の向上）を、社内説明で誇張していない（06-2）</li>
 <li><span class="mono">rig-wb hostcheck</span> を一度は走らせ、コンテナ隔離と <span class="mono">permissions.deny</span> の欠けを潰した（06-3）</li>
-<li>テストが緑であることを「確かめられている」の証拠にしていない——<b>一度はミューテーションスコアを取った</b>（05-5）</li>
+<li>テストが緑であることを「確かめられている」の証拠にしていない——<b>一度は <span class="mono">rig-wb mutation --run</span> でスコアを取った</b>（05-5）</li>
 <li><span class="mono">rig-wb asvs</span> を一度は見て、<b>自分の仕事が「まったく見えない6章」に当たっていないか</b>を確認した（06-4）</li>
 </ul>
 
@@ -1365,11 +1369,11 @@ rig の開発は<b>「作る → 測る → 効かなかった所を特定する
 
 <!-- ============ フッター ============ -->
 <div class="doc-footer vol-3">
-<span class="meta fname">STEPUP-CLAUDE-02r_開発特化ガイドrig実装編_doc_v8_20260807.html</span>
- ｜ v8（2026-08-07）｜ 様式：STYLE-02 v2_5 適用（テイスト ILLUSTRATED）
-<br>改訂：v8（2026-08-07）。原典との対応表を追加し、各章に該当項目を明示（04章は後編2章の項目立て 2-2／2-3／2-4 をそのまま採用し、2-4「他ツール圏への移植と、次の展望」を新設）。開発手法を手順書として差し替える節を03章に追加（TDD・設計先行・タスク分割ほか27本、<span class="mono">--tdd</span> の効果と、red 証跡が未実装であるという限界）。到達度表の地色に凡例を付け、意味の無い地色を1つ外した。／v7（2026-08-07）。リポジトリ v1.31.1 に追随——ホスト前提の検出を固定問題集で実測（05-2）、ミューテーションテストの取り込みと実測（05-5・FIG.06）、実物のツールで初めて出たバグの記録（05-6）、ASVS 17章に対する検査面の地図（06-4）。％の読み方を追加し、到達度の表を根拠の現状に合わせ直した。／v6（2026-08-06）。全体を平易な言い回しに書き直し（専門語はその場で言い換え、冒頭に30秒要約、各章に「つまり」の1行を追加）。／v5（2026-08-06）。到達度の23項目を <span class="mono">evals/coverage-map.json</span> へ移し、根拠の実在を CI が検査する形にした（<span class="mono">rig-wb coverage</span>）。ホスト側の前提を検出する <span class="mono">rig-wb hostcheck</span> と、コンテナ・定期実行の雛形を追加。／v4（2026-08-06）。リポジトリ v1.29.0 に追随——プロンプト変更の回帰ゲート（評価ケース・CI 2ジョブ）、用途特化ワークフローの opt-in 拡張パック化、日本語文章ベンチマークの否定結果（05-4）を追加。v3 で4つのエンジニアリング層ごとの解説＋「試す流れ」に再構成し、到達度22項目の判定を導入。
+<span class="meta fname">STEPUP-CLAUDE-02r_開発特化ガイドrig実装編_doc_v9_20260807.html</span>
+ ｜ v9（2026-08-07）｜ 様式：STYLE-02 v2_5 適用（テイスト ILLUSTRATED）
+<br>改訂：v9（2026-08-07）。リポジトリ v1.32.0 に追随——ミューテーションの取り込みを <span class="mono">scripts/</span> の生スクリプトから <span class="mono">rig-wb mutation</span> へ移し、レポートと実行ツールの自動検出を追加（05-5 の「試す流れ」を書き換え）。／v8（2026-08-07）。原典との対応表を追加し、各章に該当項目を明示（04章は後編2章の項目立て 2-2／2-3／2-4 をそのまま採用し、2-4「他ツール圏への移植と、次の展望」を新設）。開発手法を手順書として差し替える節を03章に追加（TDD・設計先行・タスク分割ほか27本、<span class="mono">--tdd</span> の効果と、red 証跡が未実装であるという限界）。到達度表の地色に凡例を付け、意味の無い地色を1つ外した。／v7（2026-08-07）。リポジトリ v1.31.1 に追随——ホスト前提の検出を固定問題集で実測（05-2）、ミューテーションテストの取り込みと実測（05-5・FIG.06）、実物のツールで初めて出たバグの記録（05-6）、ASVS 17章に対する検査面の地図（06-4）。％の読み方を追加し、到達度の表を根拠の現状に合わせ直した。／v6（2026-08-06）。全体を平易な言い回しに書き直し（専門語はその場で言い換え、冒頭に30秒要約、各章に「つまり」の1行を追加）。／v5（2026-08-06）。到達度の23項目を <span class="mono">evals/coverage-map.json</span> へ移し、根拠の実在を CI が検査する形にした（<span class="mono">rig-wb coverage</span>）。ホスト側の前提を検出する <span class="mono">rig-wb hostcheck</span> と、コンテナ・定期実行の雛形を追加。／v4（2026-08-06）。リポジトリ v1.29.0 に追随——プロンプト変更の回帰ゲート（評価ケース・CI 2ジョブ）、用途特化ワークフローの opt-in 拡張パック化、日本語文章ベンチマークの否定結果（05-4）を追加。v3 で4つのエンジニアリング層ごとの解説＋「試す流れ」に再構成し、到達度22項目の判定を導入。
 <br>分冊：VOL.3（前編 STEPUP-CLAUDE-02a・後編 STEPUP-CLAUDE-02b と対で読む）
-<br>rig の記述はリポジトリ v1.31.1 時点のスナップショット。数値は git 履歴・CI 定義・<span class="mono">benchmarks/</span> の記録・<span class="mono">rig-wb coverage</span> / <span class="mono">hostcheck --bench</span> / <span class="mono">asvs</span> の実行結果を直接確認したもので、ベンチマークの実測値は各コーパスの README に記録された条件（モデル・サンプル数・日付）に依存する。05-5 のミューテーション実測は使い捨てプロジェクト2件（Python 22変異体／JavaScript 26変異体）での結果であり、<b>プロジェクトをまたいで比較できる数値ではない</b>。適用時は現行仕様と最新の測定結果を確認すること。
+<br>rig の記述はリポジトリ v1.32.0 時点のスナップショット。数値は git 履歴・CI 定義・<span class="mono">benchmarks/</span> の記録・<span class="mono">rig-wb coverage</span> / <span class="mono">hostcheck --bench</span> / <span class="mono">asvs</span> の実行結果を直接確認したもので、ベンチマークの実測値は各コーパスの README に記録された条件（モデル・サンプル数・日付）に依存する。05-5 のミューテーション実測は使い捨てプロジェクト2件（Python 22変異体／JavaScript 26変異体）での結果であり、<b>プロジェクトをまたいで比較できる数値ではない</b>。適用時は現行仕様と最新の測定結果を確認すること。
 </div>
 
 </div>
