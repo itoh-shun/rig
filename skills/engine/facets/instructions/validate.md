@@ -283,7 +283,7 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 ### ⑤ wiki 衛生（`facets/knowledge/_wiki`）
 
-wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowledge/wiki/` ＋ shipped `skills/engine/facets/knowledge/wiki/`）を点検する。ディレクトリが無ければスキップ。**shipped persona の `inject:` は shipped wiki tier に解決できなければ FAIL**（user/project tier は新規インストール環境に存在しないため。`scripts/validate.py` ③-b が機械検査）。
+wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowledge/wiki/` ＋ **インストール済み pack の `<pack root>/<pack id>/facets/knowledge/*.md`** ＋ shipped `skills/engine/facets/knowledge/wiki/`）を点検する。ディレクトリが無ければスキップ。**shipped persona の `inject:` は shipped wiki tier に解決できなければ FAIL**（user/project tier は新規インストール環境に存在しないため。`scripts/validate.py` ③-b が機械検査）。**pack persona の `inject:` は自分の pack 内 `facets/knowledge/<slug>.md` に解決すれば PASS**（pack は自分が参照するページを同梱する＝§5 の pack tier。ここを見落とすと pack 同梱の persona が軒並み偽 FAIL する。`rig-wb pack validate` が pack 単位で同じ照合を機械検査する）。
 
 - **リンク切れ** → 本文/`links:`/persona の `inject:` にある `[[slug]]` が、どの tier のページにも解決しない → WARN（wiki が user/global tier のみに存在し project-scope validate で不可視なケースがあるため。`--validate --global` 時は FAIL に格上げ）。
 - **参照欠落** → persona facet の `inject:` 先ページが存在しない → WARN（wiki が user/global tier のみに存在し project-scope validate で不可視なケースがあるため。`--validate --global` 時は FAIL に格上げ）。

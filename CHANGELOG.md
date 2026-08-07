@@ -13,6 +13,31 @@
   to `[A-Za-z0-9_-]` before use, so it cannot escape the marker directory — dots
   included, because an id of `..` would resolve to a directory that always exists and
   would silence the hook permanently.
+- **The sales domain pack now ships a knowledge layer, and its personas reference it.**
+  All seven reviewers carried their evaluation axes and nothing to apply them to:
+  `facets/knowledge/sales-domain/` held two blank templates, and not one persona in
+  `packs/` declared `inject:`. Eleven canonical wiki pages now sit at
+  `packs/domain/sales/facets/knowledge/` — prospecting, first impression, discovery,
+  closing, price negotiation, follow-up, referrals, scripts and practice, mindset and
+  pipeline hygiene, goal management, and team coaching — and six personas inject the
+  ones that match their axis. Nine of the eleven are wired that way; `sales-goal-management`
+  and `sales-management-coaching` are addressed to a team lead, and the pack's reviewers
+  all judge a single deal, so nothing injects them — they ship as reference pages a user
+  can `inject:` into their own persona, reachable from `sales-mindset-antipatterns`'s
+  `links:`. Adding a coach persona would have dragged a second output contract in with
+  it, since `deal-verdict` is bound to the five deal-review 観点.
+  The axes stay in the persona (that is the judgment half);
+  the material moves to the wiki. Each persona's existing 自社固有
+  `knowledge/sales-domain/` sentence is kept distinct from the new generic pages: two
+  different knowledge sources, deliberately not merged.
+- **`inject: [[slug]]` now resolves against installed packs, and SKILL.md says so.**
+  §5's tier table listed project overlay, global, org, and shipped — a pack had no way
+  to ship a page its own persona could reference, which is why `packs/` had zero
+  `inject:` up to now. The pack tier sits between org and shipped, and a pack's pages
+  live at `facets/knowledge/<slug>.md` so the slug stays bare and `[[slug]]` reads the
+  same everywhere. `facets/knowledge/_wiki.md` and `facets/instructions/validate.md` carry
+  the same row — the latter matters because ⑤ wiki 衛生 enumerates the tiers it searches,
+  and leaving packs out of that list would have reported every pack persona as 参照欠落.
 
 ## [1.35.0] - 2026-08-07
 

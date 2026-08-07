@@ -13,9 +13,11 @@
 | **user（global・一次）** | `~/.claude/rig/knowledge/wiki/` | 全プロジェクト共有の正準ページ |
 | **project（overlay）** | `<repo>/.claude/rig/knowledge/wiki/` | 同 slug を上書き/追補（プロジェクト固有の差分） |
 | **org（チーム共有・任意）** | `<org_dir>/knowledge/wiki/`（manifest `org_dir:`/env `RIG_ORG_HOME`） | チームで育てる正準ページ。未設定ならスキップ |
+| **pack（インストール済み pack が同梱）** | `<pack root>/<pack id>/facets/knowledge/<slug>.md` | pack が自分の persona の `inject:` 先として持ち込むページ。pack root は project(`<repo>/.rig/packs/`) > user(`~/.rig/packs/`) > org > official > core の順 |
 | **shipped（同梱・最低優先）** | `skills/engine/facets/knowledge/wiki/` | plugin 同梱の正準ページ。shipped persona の `inject:` 先＝**rig 自身が wiki 分離を dogfooding する層**。user/project の同 slug で上書き可 |
 
-- 解決は **project overlay > global > org > shipped**（ページ単位＝同 slug があれば上位 tier 優先）。
+- 解決は **project overlay > global > org > pack > shipped**（ページ単位＝同 slug があれば上位 tier 優先）。
+- pack 層は**その pack の persona が参照するために持ち込む**もの。ファイル名がそのまま slug になるので（`facets/knowledge/<slug>.md`）、pack 側の `inject:` も他と同じ `[[slug]]` で書く。同 slug を global/project に置けば従来どおり上書きできる。
 - 既存の `knowledge/{methodology,domain,accumulated,ai-quirks}/` は維持（後方互換）。`wiki/` は正準な概念ページ層。
 - ディレクトリが無ければ**サイレントにスキップ**。
 
