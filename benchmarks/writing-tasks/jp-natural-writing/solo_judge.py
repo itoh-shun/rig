@@ -46,11 +46,17 @@ Three things follow, and they are the whole protocol:
 
 The reference distribution
 --------------------------
-Default: results/2026-08-07-human-reference.json — 50 pre-2023 human articles (two Qiita
-slices plus personal blogs), each judged 5 times and reduced to its median, so the
-reference is built on the same protocol as the candidate.
+Default: results/2026-08-07-human-reference.json — 62 pre-2023 human articles, each judged
+5 times and reduced to its median, so the reference is built on the same protocol as the
+candidate.
 
-    n=50, judge opus-5   median 4.0   band [3, 8]   2 misread at 88 (4%)
+    n=62, judge opus-5   median 4.0   band [3, 6]   2 misread at 88 (3%)
+    Qiita tech articles  n=48  median 4.0
+    personal blogs       n=12  median 3.5
+
+An earlier version of this reference claimed two genres and contained one: --limit 50 cut
+the pool in index order and every blog fell off the end. Check what a reference actually
+holds before quoting its composition.
 
 **The band is not stable below about n=50, and neither is any verdict resting on it.**
 The same diary came out INSIDE at n=16, OUTSIDE at n=24, and INSIDE again at n=50, purely
@@ -60,9 +66,22 @@ which moved far less across those three references than the binary answer did.
 
 Two things fall out of measuring it this way.
 
-**The judge is not genre-bound.** Human personal blogs score 3-5 and human tech articles
-3-8. That was worth checking rather than assuming: had the diaries scored badly, the whole
-metric would have been measuring "is this a Qiita article" instead of authorship.
+**The judge is not genre-bound, and barely format-bound.** Personal blogs median 3.5,
+tech articles 4.0. Across the 48 non-misread tech articles, no document-form metric moves
+the score much: headings/1k correlates +0.32, intro-heading +0.12, bullets +0.11, first
+person -0.03, and splitting on whether an article has an 「はじめに」 heading gives medians
+of 4.0 against 4.0.
+
+That last point corrects a claim made earlier in this work. At n=12 the high-scoring human
+articles all had intro headings against 25% of the low-scoring ones, which read as
+"template pushes even human writing toward the AI end". At n=48 the effect is gone. It was
+sample size, and it was stated twice before being checked.
+
+The practical consequence is the useful part: since format moves human scores by about a
+point, a large spread across formats in ONE author's writing is not the instrument
+splitting by format. Three texts written for this session scored 74 (news), 20 (school
+report) and 6 (diary) — that 68-point range is variation in the writing, not in the ruler.
+Caveat: the reference contains no news-register text, so that end is untested.
 
 **Repeats matter as much as n.** The originally shipped calibration judged each article
 once, so the judge's own within-article variance was being read as human variety. Both
