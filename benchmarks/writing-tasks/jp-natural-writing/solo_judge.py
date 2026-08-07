@@ -46,13 +46,17 @@ Three things follow, and they are the whole protocol:
 
 The reference distribution
 --------------------------
-Default: results/2026-08-07-human-reference.json — 12 personal blogs plus 12 Qiita tech
-articles, all pre-2023, each judged 5 times and reduced to its median, so the reference is
-built on the same protocol as the candidate.
+Default: results/2026-08-07-human-reference.json — 50 pre-2023 human articles (two Qiita
+slices plus personal blogs), each judged 5 times and reduced to its median, so the
+reference is built on the same protocol as the candidate.
 
-    blog   3 3 3 3 3 3 4 4 4 4 4 5          band [3, 4]
-    qiita  3 3 4 4 4 4 4 4 4 5 5 8          band [3, 5]
-    pooled                                  band [3, 5], n=24
+    n=50, judge opus-5   median 4.0   band [3, 8]   2 misread at 88 (4%)
+
+**The band is not stable below about n=50, and neither is any verdict resting on it.**
+The same diary came out INSIDE at n=16, OUTSIDE at n=24, and INSIDE again at n=50, purely
+because the reference gained articles in the 5-8 range. Report `human_at_or_above`
+alongside the verdict and prefer it: the diary is at or below 42 of 50 human articles,
+which moved far less across those three references than the binary answer did.
 
 Two things fall out of measuring it this way.
 
@@ -60,18 +64,16 @@ Two things fall out of measuring it this way.
 3-8. That was worth checking rather than assuming: had the diaries scored badly, the whole
 metric would have been measuring "is this a Qiita article" instead of authorship.
 
-**Repeats tighten the band a long way, and that changes verdicts.** The shipped
-calibration judged each article once and spread 3-88; the same kind of corpora re-measured
-with repeats give 3-5. A diary written this session has median 6.0 — INSIDE the old band,
-OUTSIDE the new one, and above 23 of the 24 human articles. The old width was the judge's
-own variance being read as human variety.
+**Repeats matter as much as n.** The originally shipped calibration judged each article
+once, so the judge's own within-article variance was being read as human variety. Both
+effects — repeats and sample size — move the band, and they move it in opposite
+directions, which is why the diary's verdict oscillated. Neither is a reason to trust the
+band more than the rank.
 
-So `human_at_or_above` is reported alongside the verdict. At n=24 a percentile band moves
-a whole step when one article does, and "above 23 of 24 human articles" survives that
-where "outside the band" does not.
-
-Remaining limits: n=24, two genres, one judge model, and no spoken-language reference yet.
-Use --calibrate to rebuild on the corpus you actually care about.
+Remaining limits: two written genres, no spoken-language reference, and the misread floor
+is real — 2 of 50 human articles score 88, so roughly 4% of genuinely human text is
+unreachable by any candidate. Use --calibrate to rebuild on the corpus you care about, and
+never reuse a reference across judge models.
 
 Switching metrics is not free: nothing measured here is comparable to the paired
 discrimination numbers, and re-baselining the arms is the price of the change.
