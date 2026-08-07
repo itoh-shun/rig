@@ -285,12 +285,13 @@ subagent prompt を組む前に、以下の順で関連する知識ブリック�
 | **project 層** | `<repo>/.claude/rig/knowledge/accumulated/` | 蓄積知識（実行履歴から抽出されたパターン・学び）→ User 先頭（Knowledge 位置）に注入 |
 | **wiki（user＝global 一次）** | `~/.claude/rig/knowledge/wiki/` | 正準な概念ページ（相互リンク `[[slug]]`）。persona の `inject:` / `[[link]]` で参照 |
 | **wiki（project＝overlay）** | `<repo>/.claude/rig/knowledge/wiki/` | 同 slug を上書き/追補（ページ単位で project 優先） |
+| **wiki（pack 同梱）** | `<pack root>/<pack id>/facets/knowledge/<slug>.md` | インストール済み pack が自分の persona のために持ち込む正準ページ。pack root は project(`<repo>/.rig/packs/`) > user(`~/.rig/packs/`) > org > official > core |
 
 いずれかの tier ディレクトリが存在しない場合は**サイレントにスキップ**する（エラーにしない）。
 
 **wiki ページの参照と注入（`facets/knowledge/_wiki` 参照）:**
 
-- persona facet が `inject: ["[[slug]]", …]` を宣言している場合、各 `[[slug]]` を **tier 解決**（project overlay > global > shipped `skills/engine/facets/knowledge/wiki/`）してページを取得し、**User 先頭（Knowledge 位置）に注入**する（1ホップ既定・過剰展開しない）。
+- persona facet が `inject: ["[[slug]]", …]` を宣言している場合、各 `[[slug]]` を **tier 解決**（project overlay > global > org > **pack 同梱** > shipped `skills/engine/facets/knowledge/wiki/`）してページを取得し、**User 先頭（Knowledge 位置）に注入**する（1ホップ既定・過剰展開しない）。**pack の persona が `inject:` を持つ場合、その解決先はまず自分の pack の `facets/knowledge/<slug>.md`**（pack はそこにページを同梱する）。同 slug を global/project に置けば従来どおり上書きできる。
 - 本文中の `[[slug]]` も同様に解決対象。`[[slug|表示名]]` 記法可。解決できない `[[...]]` は**注入せず**、`--validate` がリンク切れとして報告する。
 - wiki は「事実」、persona は「判断・声」。**persona は事実を埋め込まず wiki を参照する**（暗黙知サイロを避ける）。
 
