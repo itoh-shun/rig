@@ -56,15 +56,13 @@ def save_approvals(root: pathlib.Path, task_id: str, data: dict) -> None:
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def record_decision(root: pathlib.Path, task_id: str, *, actor: str, decision: str,
-                    roles: list[str], head: str | None = None, note: str = "") -> dict:
-    """Append one decision. A second decision by the same actor replaces the first —
-    people change their minds, and two contradictory records from one person would
-    make the quorum arithmetic meaningless."""
+def make_decision(*, actor: str, decision: str, roles: list[str],
+                  head: str | None = None, note: str = "") -> dict:
+    """One decision record. Pure — the caller decides where it is stored, which is
+    what lets a workbench task and an orchestrator stage share this arithmetic."""
     if decision not in VALID_DECISIONS:
         raise ValueError(f"decision must be one of {', '.join(VALID_DECISIONS)}")
-    data = load_approvals(root, task_id)
-    entry = {
+    return {
         "actor": actor,
         "decision": decision,
         "roles": list(roles),
@@ -72,7 +70,21 @@ def record_decision(root: pathlib.Path, task_id: str, *, actor: str, decision: s
         "note": note,
         "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    data["decisions"] = [d for d in data["decisions"] if d.get("actor") != actor] + [entry]
+
+
+def upsert(decisions: list[dict], entry: dict) -> list[dict]:
+    """Add a decision, replacing any earlier one by the same actor. People change
+    their minds, and two contradictory records from one person would make the
+    quorum arithmetic meaningless."""
+    return [d for d in decisions if d.get("actor") != entry.get("actor")] + [entry]
+
+
+def record_decision(root: pathlib.Path, task_id: str, *, actor: str, decision: str,
+                    roles: list[str], head: str | None = None, note: str = "") -> dict:
+    """Append one decision to a workbench task's approval file."""
+    entry = make_decision(actor=actor, decision=decision, roles=roles, head=head, note=note)
+    data = load_approvals(root, task_id)
+    data["decisions"] = upsert(data["decisions"], entry)
     save_approvals(root, task_id, data)
     return entry
 
@@ -118,17 +130,25 @@ def _age_hours(ts: str) -> float | None:
 
 
 def evaluate(eff: EffectivePolicy, task: dict, approvals: dict,
-             *, head: str | None = None) -> ApprovalStatus:
-    """Decide whether this task's approval requirement is met right now.
+             *, head: str | None = None, rule: dict | None = None,
+             author: str | None = None) -> ApprovalStatus:
+    """Decide whether this approval requirement is met right now.
 
-    `head` is the task branch tip as it stands at evaluation time. When a
-    decision recorded a different head, the branch moved after the approval and
-    that approval no longer applies to the code being accepted.
+    `head` is the tip as it stands at evaluation time. When a decision recorded a
+    different head, the branch moved after the approval and that approval no
+    longer applies to the code being accepted.
+
+    `rule` / `author` override what would be read from the task, so an
+    orchestrator stage gate can reuse the same arithmetic with the rule that
+    governs that stage and the identity that ran it.
     """
-    rule = eff.approval_rule(task.get("task_type") or "")
+    rule = rule if rule is not None else eff.approval_rule(task.get("task_type") or "")
     required = int(rule.get("quorum") or 0)
-    author = task.get("actor") or task.get("created_by") or ""
-    needed_roles = set(rule.get("roles") or [])
+    author = author if author is not None else (task.get("actor") or task.get("created_by") or "")
+    # Role qualification needs a role system to check against. A recipe's own
+    # `human_gate` runs in repositories with no policy at all, and holding its
+    # approvals to roles nobody can hold would deadlock the stage forever.
+    needed_roles = set(rule.get("roles") or []) if eff.active else set()
     sod = bool(rule.get("separation_of_duties", True))
     expires = rule.get("expires_hours")
 

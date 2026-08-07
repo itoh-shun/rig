@@ -248,6 +248,7 @@ Core commands are the default safety workflow: route task, isolate work, verify,
 | Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§13) |
 | Security pack (`/rig:sec` audit/fix/monitor) | Beta | attacker-perspective audit, PoC-verified gated fix, scan-only monitor; static + local only, DAST out of scope (§8) |
 | Team governance (`rig-wb govern`, `/rig:govern`) | Beta | common policy (org→team→project, tightening-only), permissions, approvals, waivers, tamper-evident ledger, conformance rollup; inert until a repo is bound (§17) |
+| Stage governance (`actor` / `human_gate`) | Beta | a recipe step can halt until a qualified person signs off; the org can require it via `stage:<id>`; parked runs persist and resume (§17) |
 
 Nothing in this table is aspirational — there's no "Planned" row because we don't document unshipped features here; proposals live as GitHub issues. If a command isn't listed, it isn't shipped yet.
 
@@ -780,6 +781,43 @@ Enforcement adds **no new choke point**. `accept` was already the only way into 
 **Solo use is unchanged.** With no `.rig/org.json` the whole layer is inert — no output, no checks, no new files. `.rig/access.json` and `.rig/gates.json` keep working and are honoured *alongside* a policy; `rig-wb govern migrate` folds them into one when you're ready, leaving the originals in place. One deliberate difference: a malformed `.rig/access.json` falls back to unrestricted (the safe side for one person), while a policy layer that doesn't parse **blocks accept** — a stray comma silently costing an org its rules is the one failure this layer can't have.
 
 `/rig:govern` is the conversational side: it reads those same commands' output and returns a conformance report with the gaps ranked, rather than asserting compliance in prose.
+
+### Governing a stage, not just the accept (v2.1)
+
+The recipe schema was already a workflow DSL — `steps[]` carry per-stage `gate` and `acceptance`, retry limits, `needs` for DAG parallelism, `condition`, and `checks` (deterministic shell sensors) — and `orchestrate` runs them as a state machine. What it could not do was *park* a run: halt at a named stage until a person signs off. Two step fields add that.
+
+```yaml
+steps:
+  - id: architecture_review
+    instruction: design-vet
+    actor: architect            # the org ROLE that owns this stage
+    human_gate: true            # halt here until a qualified person signs off
+    gate: acceptance-gate
+    acceptance: ["ADR updated", "no breaking public API change"]
+```
+
+```console
+$ rig-wb orchestrate next
+▶ AWAIT_APPROVAL: step `architecture_review` passed its gate and awaits human
+  sign-off (0/1, from architect). Approve with `orchestrate approve architecture_review`.
+$ echo $?
+3                                    # parked on a person — not a failure, not a success
+
+$ RIG_ACTOR=olivia rig-wb orchestrate approve architecture_review --note "boundaries ok"
+▶ DONE: step `architecture_review` passed. All steps complete.
+```
+
+The parked state persists in the run-state, so the run survives the process, the session and the day. The approval arithmetic is the same one `accept` uses — quorum, qualifying roles, **separation of duties** (whoever ran the stage cannot sign it off) and **freshness** (bound to the commit that was approved) — and every decision lands in the ledger as `stage.approve` / `stage.deny`.
+
+The org gets the other half. A policy can require a stage the recipe never asked about:
+
+```json
+{ "approvals": { "stage:architecture_review": { "quorum": 1, "roles": ["architect"] } } }
+```
+
+Recipe and policy merge to the **stricter** rule (higher quorum, union of roles, shorter expiry), so a recipe can never talk the org down.
+
+One deliberate non-feature: `actor` does **not** block execution. rig cannot verify that a human architect typed anything — only that one signed — and refusing to run would break every CI-driven pipeline for no safety gain. Running a stage outside its owning role warns and is recorded; the enforcement lives at the gate.
 
 ## Docs
 

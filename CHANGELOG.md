@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+## [2.1.0] - 2026-08-07
+
+**Governance reaches any stage, not only accept.** v2.0.0 governed the one place
+changes enter the working tree, which is the right first place and not the only
+one a team needs a person in the loop. An architecture decision, a release
+sign-off or a data-migration review has to happen *at that stage* — approving it
+retroactively at the end is not the same review.
+
+The recipe schema was already a workflow DSL: `steps[]` carry `gate`,
+per-stage `acceptance`, `max_retries`, `needs` (DAG), `condition` and `checks`,
+and `orchestrate` runs them as a deterministic state machine. What it could not
+do was *park* a run — halt at a named stage, stay halted across processes, and
+resume when a qualified person signs off. Two step fields and one state add that,
+and neither invents a mechanism: both reuse v2's approval arithmetic unchanged.
+
+- **`steps[].human_gate`** — `true`, or `{quorum, roles, separation_of_duties,
+  expires_hours}`. After the machine gate passes, the step moves to
+  `awaiting_approval` instead of advancing. Quorum, qualifying roles,
+  **separation of duties** (whoever ran the stage cannot sign it off — `ran_as`
+  is stamped at START for exactly this) and **freshness** (bound to the approved
+  commit) are govern.approval's, not a second implementation.
+- **`steps[].actor`** — the org **role** that owns the stage, as distinct from
+  `personas`, which are the LLM personas that do the work. It seeds the human
+  gate's approving role. It deliberately does **not** block execution: rig cannot
+  verify that a human architect typed anything, only that one signed, and
+  refusing to run would break every CI-driven pipeline for no safety gain. An
+  execution outside the owning role warns at START and lands in the run history.
+- **`approvals: {"stage:<step-id>": …}`** in a policy — the org's half. A stage
+  becomes gated because the policy names it, not because the recipe author
+  remembered to. Recipe and policy merge to the **stricter** rule (higher quorum,
+  union of roles, shorter expiry, separation of duties if either asks), so a
+  recipe can never talk the org down. Stage keys tighten downstream between
+  policy layers like every other field.
+- **`orchestrate approve <step-id> [state.json] [--deny] [--note …]`** releases a
+  parked run, or records an objection. Decisions land in the run-state beside
+  that step's checks and verdicts, and in the tamper-evident ledger as
+  `stage.approve` / `stage.deny`. A later approval supersedes an earlier denial
+  from the same person — people change their minds, and two contradictory records
+  would make the quorum arithmetic meaningless.
+
+`next`, `resume` and `approve` exit **3** when a run is parked, and `run` exits 3
+when it finishes parked: waiting for a person is not a failure, and reporting it
+as one (or as success) is wrong in both directions.
+
+Also fixed: `next` and `resume` exited **0** on the transition that BLOCKED a run,
+and only exited 2 the *next* time that state was loaded — so a blocked run
+reported itself successful for exactly one invocation. Both now exit 2 at the
+transition.
+
+**Nothing changes for a recipe that declares neither field**, and the identity
+lookup is skipped entirely in repositories with no `.rig/org.json` and no step
+that declares an owner — no policy load, no `git config` subprocess per step.
+
 ## [2.0.0] - 2026-08-07
 
 **rig becomes an AI Quality Operating System.** Everything v1 does — the

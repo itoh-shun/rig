@@ -66,6 +66,29 @@ _WAIVER_KEYS = ("max_days", "grant_roles", "non_waivable", "required_for_force")
 _AUDIT_KEYS = ("chain_required",)
 
 
+STAGE_PREFIX = "stage:"
+_STEP_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+def stage_key(step_id: str) -> str:
+    """The `approvals` key that governs one recipe step (v2.1 human gate)."""
+    return f"{STAGE_PREFIX}{step_id}"
+
+
+def _is_approval_target(target: str) -> bool:
+    """`default`, a task_type slug, or `stage:<step-id>`.
+
+    Stage keys are what let an org say "the architecture_review step of any recipe
+    needs an architect's sign-off" — a requirement that belongs to the process,
+    not to the kind of task being run.
+    """
+    if target == "default":
+        return True
+    if target.startswith(STAGE_PREFIX):
+        return bool(_STEP_ID_RE.match(target[len(STAGE_PREFIX):]))
+    return bool(_SLUG_RE.match(target))
+
+
 class PolicyError(Exception):
     """A policy document is malformed, or a child layer tried to loosen a parent."""
 
@@ -214,8 +237,10 @@ def load_policy_document(path: pathlib.Path) -> dict:
 
     approvals = _need_dict(doc.get("approvals", {}), f"{rel}.approvals")
     for target, rule in approvals.items():
-        if target != "default" and not _SLUG_RE.match(target):
-            raise PolicyError(f"{rel}.approvals: target '{target}' must be 'default' or a task_type slug")
+        if not _is_approval_target(target):
+            raise PolicyError(
+                f"{rel}.approvals: target '{target}' must be 'default', a task_type slug, "
+                "or 'stage:<step-id>'")
         _validate_approval_rule(rule, f"{rel}.approvals['{target}']")
 
     _validate_waiver_rule(doc.get("waivers", {}), f"{rel}.waivers")
@@ -269,6 +294,15 @@ class EffectivePolicy:
         """The approval rule for a task_type, falling back to `default`."""
         rule = self.approvals.get(task_type) or self.approvals.get("default")
         return rule or {"quorum": 0, "roles": [], "separation_of_duties": True, "expires_hours": None}
+
+    def stage_approval_rule(self, step_id: str) -> dict | None:
+        """The rule the org attaches to a named recipe step, or None if it names none.
+
+        Deliberately *not* falling back to `default`: `default` exists so that every
+        accept is covered, and applying it to every step of every recipe would turn
+        one approval into a dozen. A stage is governed only when the policy says so
+        by name, or when the recipe itself asks for a human gate."""
+        return self.approvals.get(stage_key(step_id))
 
     def required_criteria_for(self, task_type: str, presets: list[str]) -> list[str]:
         """Criteria the policy adds for a task_type, given the gate presets it applies."""

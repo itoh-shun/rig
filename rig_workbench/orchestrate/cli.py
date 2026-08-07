@@ -19,6 +19,10 @@ The model does each step's "work", but this runner decides "what happens next":
   init   <recipe.md> [--goal G]      Create the run-state and print the first action
   check  <state.json>                Run the current step's checks: (shell) and record pass/fail (machine sensor)
   verdict<state.json> --by N --pass  Record an independent verifier's judgment (enforces grader != generator)
+  approve <step-id> [state.json]     Cast a human-gate decision on a step declaring `human_gate:` (or covered by the
+    [--deny] [--note "..."]           org policy's `stage:<id>` rule). Quorum, qualifying roles, separation of duties
+                                     and freshness come from the governance layer; the record lands in the run-state
+                                     beside that step's checks/verdicts and in the tamper-evident ledger
   next   <state.json>                Deterministically compute, apply, and print the next transition
   resume <state.json>                Verify-first resume: print a digest, RE-RUN the current step's checks
                                      (refuse to advance if the world drifted), then continue via `next`
@@ -56,14 +60,16 @@ The model does each step's "work", but this runner decides "what happens next":
   install-shim [--to PATH] [--force] Symlink the shim into ~/.local/bin/rig (cross-project entry point; run once)
   selftest                           Self-verification of determinism (proves same input -> same transitions)
 
-Dependencies: Python3 + PyYAML (same as validate.py). Exit code 0=success / 1=error or ESCALATE.
+Dependencies: Python3 + PyYAML (same as validate.py).
+Exit code 0=success / 1=error or ESCALATE / 3=run parked at a human gate (`run` only; not a failure).
 """
 
 import sys
 
 from ..gh_requirement import advise_gh
-from .commands import (cmd_ab, cmd_check, cmd_fleet, cmd_init, cmd_install_shim, cmd_next,
-                       cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status, cmd_verdict)
+from .commands import (cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
+                       cmd_next, cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status,
+                       cmd_verdict)
 from .providers import cmd_models, cmd_probe
 from .queueing import cmd_queue
 from .graph import cmd_graph
@@ -73,7 +79,7 @@ from .selftest import cmd_selftest
 # ── Entry point ───────────────────────────────────────────────────────────────
 COMMANDS = {
     "plan": cmd_plan, "init": cmd_init, "check": cmd_check,
-    "verdict": cmd_verdict, "next": cmd_next, "status": cmd_status,
+    "verdict": cmd_verdict, "approve": cmd_approve, "next": cmd_next, "status": cmd_status,
     "run": cmd_run, "models": cmd_models, "probe": cmd_probe, "queue": cmd_queue,
     "resume": cmd_resume,
     "runs": cmd_runs, "graph": cmd_graph,

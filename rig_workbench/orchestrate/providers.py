@@ -22,7 +22,7 @@ from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
 from .runstate import (compute_next, enforce_executable_state, gate_outcome, save_state,
-                       telemetry_append)
+                       stage_gate_status, telemetry_append)
 
 _BENCH_COUNTER_LOCK = threading.Lock()
 
@@ -1986,7 +1986,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
             continue
         if action == "STOPPED" and state.get("stopped"):
             last = state["stopped"].get("kind") or action
-        break  # DONE / ESCALATE / BLOCKED / STOPPED
+        break  # DONE / ESCALATE / BLOCKED / STOPPED / AWAIT_APPROVAL
     if state.get("stopped"):
         last = state["stopped"].get("kind", "ESCALATE")
     if sp:
@@ -2020,6 +2020,16 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
                         and all(d in passed for d in s["needs"])),
                        key=lambda s: s["id"])
         if not ready:
+            parked = sorted(sid for sid, st in ss.items() if st["status"] == "awaiting_approval")
+            if parked:
+                # Not a dependency failure: the DAG is waiting on people. Saying
+                # "unmet dependencies" here would send someone hunting a bug that
+                # is really an unread approval request.
+                log(f"▶ AWAIT_APPROVAL: {', '.join(parked)} await human sign-off "
+                    f"(`orchestrate approve <step-id>`)")
+                if sp:
+                    save_state(state, sp)
+                return "AWAIT_APPROVAL"
             state["stopped"] = {"reason": "DAG: no runnable steps (unmet dependencies / failures)",
                                 "kind": "ESCALATE", "at": "—"}
             break
@@ -2034,10 +2044,25 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
                                                 (lambda *a: None)), ready))
         if (state.get("stopped") or {}).get("kind") == "BLOCKED":
             break
+        awaiting: list[str] = []
         for s in ready:                       # apply gate evaluation in id order (deterministic)
             st = ss[s["id"]]
             outcome = gate_outcome(s, st)
             if outcome == "pass":
+                # A human gate parks the step without failing it: the machine is
+                # satisfied, a person is not yet. Other branches of the DAG keep going.
+                try:
+                    approval = stage_gate_status(s, st)
+                except Exception as e:
+                    state["stopped"] = {"reason": f"{s['id']}: human gate cannot be evaluated: {e}",
+                                        "kind": "BLOCKED", "at": s["id"]}
+                    continue
+                if approval is not None and not approval.satisfied:
+                    st["status"] = "awaiting_approval"
+                    awaiting.append(s["id"])
+                    log(f"   ⏸ {s['id']} awaits human sign-off "
+                        f"({approval.counted}/{approval.required})")
+                    continue
                 st["status"] = "passed"
                 log(f"   ✓ {s['id']}")
             elif outcome == "self-graded":

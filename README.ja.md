@@ -247,6 +247,7 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§13） |
 | planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§13） |
 | 組織ガバナンス（`rig-wb govern`・`/rig:govern`） | Beta | 共通ポリシー（org→team→project・締める方向のみ）・権限管理・承認フロー・waiver・改竄検知つき台帳・適合性ロールアップ。リポジトリを束ねるまで完全に不活性（§17） |
+| ステージ・ガバナンス（`actor` / `human_gate`） | Beta | recipe の step を人間の承認で止められる。org は `stage:<id>` で強制でき、駐機した run は永続して再開する（§17） |
 
 この表に "Planned" 行はない——未出荷の機能をここに書く方針は取らない。提案は GitHub issue として存在する。表に載っていないコマンドはまだ出荷されていない。
 
@@ -769,6 +770,43 @@ rig-wb govern rollup --scan ~/work/acme       # チーム A/B/C の表
 **個人開発は何も変わらない。** `.rig/org.json` が無ければこの層は完全に不活性——出力も検査もファイル生成も無い。`.rig/access.json` と `.rig/gates.json` はそのまま動き、ポリシーと**併存**する（置き換えではない）。準備ができたら `rig-wb govern migrate` がポリシー層へ畳む（原本は残る）。意図的に違うのは1点だけ：壊れた `.rig/access.json` は「無制限」に落ちる（1人なら安全側）が、**パースできないポリシー層は accept を止める**。カンマ1個で組織の規則が静かに消えるのが、この層で唯一許されない失敗だから。
 
 `/rig:govern` は対話側の入口。上記コマンドの出力を読んで、散文で適合を宣言する代わりに**乖離を重い順に並べた適合性レポート**を返す。
+
+### accept だけでなく、任意のステージを統治する（v2.1）
+
+recipe スキーマは元から workflow DSL だった——`steps[]` はステージ別の `gate` と `acceptance`、リトライ上限、`needs`（DAG 並列）、`condition`、`checks`（決定論 shell センサー）を持ち、`orchestrate` がそれを状態機械として回す。できなかったのは run を**駐機**させること＝人が署名するまで名前つきのステージで止まることだけ。step の2フィールドがそれを足す。
+
+```yaml
+steps:
+  - id: architecture_review
+    instruction: design-vet
+    actor: architect            # このステージを所有する組織ロール
+    human_gate: true            # 資格ある人が署名するまでここで止まる
+    gate: acceptance-gate
+    acceptance: ["ADR が更新されている", "公開APIの破壊的変更が無い"]
+```
+
+```console
+$ rig-wb orchestrate next
+▶ AWAIT_APPROVAL: step `architecture_review` passed its gate and awaits human
+  sign-off (0/1, from architect). Approve with `orchestrate approve architecture_review`.
+$ echo $?
+3                                    # 人待ち＝失敗でも成功でもない
+
+$ RIG_ACTOR=olivia rig-wb orchestrate approve architecture_review --note "境界は妥当"
+▶ DONE: step `architecture_review` passed. All steps complete.
+```
+
+駐機状態は run-state に永続するので、run はプロセスもセッションもその日も跨いで生き残る。承認の算術は accept と同一実装——quorum・資格ロール・**職務分離**（そのステージを実行した本人は署名できない）・**鮮度**（承認したコミットに束縛）——で、決定は ledger に `stage.approve` / `stage.deny` として残る。
+
+組織側の半分はこちら。recipe が要求していないステージにも、ポリシーが承認を課せる：
+
+```json
+{ "approvals": { "stage:architecture_review": { "quorum": 1, "roles": ["architect"] } } }
+```
+
+recipe と policy は**厳しい方**に合成される（quorum は高い方・ロールは和集合・期限は短い方）ので、recipe が org を値切ることはできない。
+
+意図的に**実装しなかった**ことが1つある：`actor` は実行をブロックしない。rig が保証できるのは「アーキテクトが署名した」ことであって「アーキテクトが打鍵した」ことではないし、実行を拒めば安全性は上がらないまま CI のパイプラインだけが壊れる。所有ロール外の実行は WARN と履歴に残し、強制はゲート側に置いた。
 
 ## ドキュメント
 

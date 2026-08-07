@@ -15,8 +15,10 @@ def test_new_state_shape(step_factory):
     assert state["done"] is False
     assert state["stopped"] is None
     assert set(state["step_state"]) == {"a", "b"}
+    # `approvals` (v2.1) sits beside `checks` (a machine's judgment) and `verdicts`
+    # (a model's) as the third kind of evidence a step can carry — a person's.
     assert state["step_state"]["a"] == {"status": "pending", "retries": 0,
-                                        "checks": [], "verdicts": []}
+                                        "checks": [], "verdicts": [], "approvals": []}
 
 
 def test_save_load_roundtrip(tmp_path, step_factory):

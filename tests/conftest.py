@@ -49,6 +49,8 @@ def step_factory():
             "checks": k.get("checks", []),
             "max_retries": k.get("max_retries", DEFAULT_K),
             "output_contract": k.get("output_contract"),
+            "actor": k.get("actor"),
+            "human_gate": k.get("human_gate"),
         }
 
     return make

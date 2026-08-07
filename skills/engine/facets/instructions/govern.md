@@ -47,6 +47,24 @@
 - **根拠は具体箇所と数値**。未確認は「未確認」、計測できない指標は「未計測」と書く（0% と書かない・捏造しない）。
 - 監査は read-only。ポリシー・権限・台帳を勝手に書き換えない。変更は `rig-wb govern` の各コマンドを**人間に提示**して実行させる。
 
+## ステージ・ガバナンス（v2.1）
+
+承認は accept だけの話ではない。recipe の step が `actor`（所有する組織ロール）と `human_gate`（人間の承認で止まる）を宣言でき、org policy は `approvals` の `stage:<step-id>` で **recipe が要求していない step にも承認を課せる**。両者は**厳しい方に合成**される（recipe は policy を緩められない＝単調強化の同じ規律）。
+
+```yaml
+steps:
+  - id: architecture_review
+    actor: architect          # このステージの所有ロール
+    human_gate: true          # 資格者が署名するまで駐機
+```
+
+- 機械ゲートが pass した後も承認が揃うまで `awaiting_approval` で**駐機**する（run-state に永続＝プロセス・セッションを跨ぐ）。`next`/`resume`/`approve` は **exit 3**、`run` も駐機終了なら 3（**失敗ではなく人待ち**）。
+- 解放は `rig-wb orchestrate approve <step-id> [--deny] [--note "..."]`。決定は run-state の `step_state[].approvals` と ledger の `stage.approve`/`stage.deny` の両方に残る。
+- **職務分離はここでも効く**＝そのステージを実行した本人（`ran_as`）の承認は数えない。行き詰まったら「実行者以外の資格者」を探す。
+- `actor` は**実行をブロックしない**（所有ロール外の実行は START 時 WARN と history に記録されるだけ）。これは仕様＝rig が保証できるのは「所有ロールが署名した」ことであって「所有ロールが打鍵した」ことではなく、実行を拒めば CI が壊れるだけで安全性は上がらない。**この点を「未強制の穴」として指摘しない**。
+
+**設計相談で勧める型**：まず org policy の `stage:<id>` で「どの工程に人が要るか」を1〜2個だけ決める（多すぎる human gate は必ず素通し承認になる）。quorum は上げず、**職務分離と鮮度**に効かせる。`actor` だけ宣言して `human_gate` を付けない step は**強制されていない所有**であり、`--validate` が WARN を出す（「ある」と「効いている」の区別をここでも守る）。
+
 ## dev フローとの接続
 
 ガバナンスは開発フローの外側ではなく、**accept の内側**にある。`/rig:go` の accept は、ポリシーがあれば①accept 権限 ②承認 quorum（職務分離・鮮度つき）③force 権限 ④例外の有効性 を通ってから squash merge に入る。したがって：

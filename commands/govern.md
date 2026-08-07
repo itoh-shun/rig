@@ -73,6 +73,29 @@ org → team → project の順に重なり、**下位層は上位層を締め�
 
 **壊れたポリシーは fail-closed**：v1 の `.rig/access.json` は壊れていたら「無制限」に落ちたが（1人なら安全側）、ポリシー層は accept を**止める**。カンマ1個で組織の規則が静かに消えるのが、この層で唯一許されない失敗。
 
+## ステージ・ガバナンス（v2.1）
+
+承認は accept だけの話ではない。recipe の step が所有ロールと人間承認を宣言できる：
+
+```yaml
+steps:
+  - id: architecture_review
+    actor: architect          # このステージを所有する組織ロール（LLM ペルソナとは別物）
+    human_gate: true          # 資格者が署名するまで駐機。{quorum, roles, separation_of_duties, expires_hours} でも書ける
+```
+
+```
+rig-wb orchestrate next                                  # → AWAIT_APPROVAL / exit 3（失敗でなく人待ち）
+rig-wb orchestrate approve architecture_review --note "境界は妥当"
+rig-wb orchestrate approve architecture_review --deny --note "ADR が無い"
+```
+
+- 機械ゲートが pass した後も承認が揃うまで **`awaiting_approval` で駐機**（run-state に永続＝プロセス・セッション・日を跨ぐ）。
+- 承認の算術は accept と**同一実装**：quorum・資格ロール・**職務分離**（そのステージを実行した本人は署名できない）・**鮮度**（承認したコミットに束縛）。
+- org policy は `approvals` の **`stage:<step-id>`** で、recipe が要求していない step にも承認を課せる。recipe と policy は**厳しい方に合成**（quorum は高い方・ロールは和集合・期限は短い方）＝recipe は org を値切れない。
+- 決定は run-state の `step_state[].approvals` と ledger の `stage.approve`/`stage.deny` の両方に残る。
+- **`actor` は実行をブロックしない。** rig が保証できるのは「所有ロールが**署名した**」ことであって「所有ロールが**打鍵した**」ことではない。実行を拒んでも安全性は上がらず CI が壊れるだけなので、所有ロール外の実行は WARN と history に記録し、強制はゲート側に置いた。
+
 ## accept との関係（チョークポイントは増やさない）
 
 承認は acceptance-gate の**上乗せであって代替ではない**。ポリシーがあるとき `accept` は①accept 権限 ②承認 quorum（**職務分離**＝著者の承認は数えない／**鮮度**＝ブランチが動いたら失効）③`--force` 権限 ④例外の有効性 を通ってから squash merge に入る。関門は accept ただ1つのまま（2つ作れば片方だけ通る抜け道が生まれる）。
