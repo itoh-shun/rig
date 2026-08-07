@@ -2,7 +2,7 @@
 """Compatibility shim — the implementation moved to the rig_workbench/orchestrate/ package.
 
 Keeps both existing entry paths working: `python3 scripts/orchestrate.py <cmd>` (including
-via bin/orchestrate and .claude-plugin/bin/rig), and rig_workbench/cli.py loading this file
+via .claude-plugin/bin/rig), and rig_workbench/cli.py loading this file
 with importlib and calling `.main()`. The usage text (`print(__doc__)`) lives in the cli module.
 """
 

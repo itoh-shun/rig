@@ -543,11 +543,13 @@ use the `itoh-shun/sito-plugins` repo instead (option A below).
 > keep working under any of the three names; new installs should use one of
 > the two paths below.
 >
-> Separately, this plugin currently fails to appear at all in Cowork's plugin
+> Separately, this plugin used to fail to appear at all in Cowork's plugin
 > browser, under any marketplace — caused by the top-level `bin/` directory
-> (see CHANGELOG 1.28.2), not by the marketplace rename above. Unaffected on
-> the CLI. `bin/` stays, since it backs a real feature (`orchestrate` on
-> PATH); this looks like a Cowork-side bug worth reporting upstream.
+> (see CHANGELOG 1.28.2), not by the marketplace rename above. That directory
+> was removed in 1.35.0 after the same symptom showed up in Claude Desktop, so
+> a client-side quirk was costing two whole surfaces. `orchestrate` is no
+> longer put on `PATH` automatically; run `python3 scripts/orchestrate.py
+> install-shim` once to get `~/.local/bin/rig` instead.
 
 ```bash
 # A) via the shared sito-plugins marketplace (recommended — also hosts claude-context-checker)
