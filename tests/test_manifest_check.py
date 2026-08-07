@@ -36,7 +36,9 @@ def test_missing_manifest_is_silently_skipped(tmp_path):
 
 
 def test_manifest_without_checkable_keys_is_silently_skipped(tmp_path):
-    manifest = _write_manifest(tmp_path, "default_recipe: bugfix\n")
+    # `default_recipe` used to be the example of an unchecked key; #372 made it
+    # one of the checked ones, so this needs a key that genuinely is not.
+    manifest = _write_manifest(tmp_path, 'org_dir: "/srv/shared"\n')
     check_manifest(manifest)
     assert validation_state.results == []
 
@@ -170,4 +172,147 @@ def test_default_manifest_path_is_dotclaude_rig_md_under_root(monkeypatch, tmp_p
     (tmp_path / ".claude").mkdir()
     _write_manifest(tmp_path / ".claude", "default_backend: manul\n")
     check_manifest()
+    assert validation_state._fail == 1
+
+
+# ── default_max_retries (#360) ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", ["1", "3", "10"])
+def test_default_max_retries_valid_integers_pass(tmp_path, value):
+    manifest = _write_manifest(tmp_path, f"default_max_retries: {value}\n")
+    check_manifest(manifest)
+    assert validation_state._fail == 0
+    assert validation_state._pass == 1
+
+
+@pytest.mark.parametrize("value", ["0", "-1", '"3"', "2.5", "true"])
+def test_default_max_retries_rejects_anything_that_is_not_a_positive_int(tmp_path, value):
+    """`true` matters on its own: bool is an int subclass, so it would pass a
+    naive isinstance check and silently mean 1 retry."""
+    manifest = _write_manifest(tmp_path, f"default_max_retries: {value}\n")
+    check_manifest(manifest)
+    assert validation_state._fail == 1
+    assert "default_max_retries" in validation_state.results[0]
+
+
+def test_default_max_retries_omitted_is_not_checked(tmp_path):
+    manifest = _write_manifest(tmp_path, "default_backend: manual\n")
+    check_manifest(manifest)
+    assert validation_state._pass == 1
+    assert "1 value key(s)" in validation_state.results[0]
+
+
+# ── default_recipe / default_personas[] tier resolution (#372) ──────────
+
+
+def test_unresolvable_default_recipe_fails(tmp_path):
+    manifest = _write_manifest(tmp_path, "default_recipe: bugifx\n")
+    check_manifest(manifest)
+    assert validation_state._fail == 1
+    assert "bugifx" in validation_state.results[0]
+    assert "interactive" in validation_state.results[0]
+
+
+def test_resolvable_default_recipe_passes(tmp_path):
+    manifest = _write_manifest(tmp_path, "default_recipe: bugfix\n")
+    check_manifest(manifest)
+    assert validation_state._fail == 0
+    assert validation_state._pass == 1
+
+
+@pytest.mark.parametrize("value", ["interactive", '""'])
+def test_reserved_and_empty_default_recipe_are_not_resolved(tmp_path, value):
+    """`interactive` is the reserved word for "ask me", not a recipe name."""
+    manifest = _write_manifest(tmp_path, f"default_recipe: {value}\n")
+    check_manifest(manifest)
+    assert validation_state.results == []
+
+
+def test_unresolvable_default_persona_fails_naming_the_element(tmp_path):
+    manifest = _write_manifest(
+        tmp_path, "default_personas:\n  - security-reviewer\n  - scurity-reviewer\n"
+    )
+    check_manifest(manifest)
+    assert validation_state._fail == 1
+    assert "scurity-reviewer" in validation_state.results[0]
+
+
+def test_resolvable_default_personas_pass(tmp_path):
+    manifest = _write_manifest(
+        tmp_path, "default_personas:\n  - security-reviewer\n  - test-reviewer\n"
+    )
+    check_manifest(manifest)
+    assert validation_state._fail == 0
+    assert validation_state._pass == 1
+
+
+# ── knowledge.* path existence (#363) ───────────────────────────────────
+# WARN, not FAIL: the run completes with less context than asked for, which is
+# exactly why a typo here survives.
+
+
+def _project_manifest(tmp_path: pathlib.Path, frontmatter: str) -> pathlib.Path:
+    """A manifest at its real location, so paths resolve against the repo root."""
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    path = claude / "rig.md"
+    path.write_text(f"---\n{frontmatter}---\n\n# manifest\n", encoding="utf-8")
+    return path
+
+
+def test_missing_knowledge_paths_warn_but_do_not_fail(tmp_path):
+    manifest = _project_manifest(tmp_path, (
+        "default_backend: manual\n"
+        "knowledge:\n"
+        '  context_file: "docs/CONTEXTT.md"\n'
+        '  adr_dir: "docs/decisions/"\n'
+        "  design_docs:\n"
+        '    - "docs/architecture.mdd"\n'
+    ))
+    check_manifest(manifest)
+    assert validation_state._fail == 0
+    assert validation_state._warn == 3
+    assert validation_state._pass == 1
+
+
+def test_existing_knowledge_paths_pass(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "CONTEXT.md").write_text("x", encoding="utf-8")
+    (tmp_path / "docs" / "decisions").mkdir()
+    (tmp_path / "docs" / "architecture.md").write_text("x", encoding="utf-8")
+    manifest = _project_manifest(tmp_path, (
+        "knowledge:\n"
+        '  context_file: "docs/CONTEXT.md"\n'
+        '  adr_dir: "docs/decisions"\n'
+        "  design_docs:\n"
+        '    - "docs/architecture.md"\n'
+    ))
+    check_manifest(manifest)
+    assert validation_state._warn == 0
+    assert validation_state._pass == 1
+    assert "3 value key(s)" in validation_state.results[0]
+
+
+def test_empty_knowledge_keys_are_skipped(tmp_path):
+    manifest = _project_manifest(tmp_path, (
+        "default_backend: manual\n"
+        "knowledge:\n"
+        '  context_file: ""\n'
+        "  design_docs: []\n"
+    ))
+    check_manifest(manifest)
+    assert validation_state._warn == 0
+    assert "1 value key(s)" in validation_state.results[0]
+
+
+def test_a_knowledge_warning_does_not_suppress_a_value_key_failure(tmp_path):
+    """WARN and FAIL are collected separately; one must not hide the other."""
+    manifest = _project_manifest(tmp_path, (
+        "default_backend: manul\n"
+        "knowledge:\n"
+        '  context_file: "docs/nope.md"\n'
+    ))
+    check_manifest(manifest)
+    assert validation_state._warn == 1
     assert validation_state._fail == 1

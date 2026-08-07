@@ -15,6 +15,7 @@ import sys
 import traceback
 
 from . import state
+from .accumulated import check_accumulated
 from .catalog import check_catalog_drift, check_graph, check_wiki
 from .config import RECIPES
 from .drill import (check_corpus_integrity, check_drill_coverage,
@@ -120,6 +121,11 @@ def main() -> None:
         check_stale_refs()
     except Exception:
         _emit("FAIL", f"stale-refs check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_accumulated()
+    except Exception:
+        _emit("FAIL", f"accumulated/ schema check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_manifest()

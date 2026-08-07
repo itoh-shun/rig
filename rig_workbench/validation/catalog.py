@@ -56,7 +56,9 @@ def check_catalog_drift() -> None:
     # bricks registered via brace notation ({a,b}-reviewer etc.) are also matched against expanded tokens
     expanded_stems = {pathlib.Path(tok).stem for tok, _ in tokens}
     missing = 0
-    for sub in ("recipes", "facets/instructions", "facets/personas"):
+    # patterns/ was missing from this loop until #364, so a wired-in pattern
+    # could stay off the §2 catalog with nothing to detect it.
+    for sub in ("recipes", "facets/instructions", "facets/personas", "patterns"):
         for f in sorted((SKILLS / sub).rglob("*.md")):
             if f.stem.startswith("_"):
                 continue

@@ -63,6 +63,86 @@ def _check_condition(val: str | None, ctx: str, field: str) -> None:
         )
 
 
+def _check_model_field(step: dict, ctx: str) -> None:
+    """model / verifier_model must be strings (§3.5; #362).
+
+    Both reach the provider as `argv += ["--model", value]`, so a non-string
+    fails at subprocess time rather than here. An empty string is worse than
+    wrong: it is falsy, so the provider quietly uses its default and the
+    recipe's explicit choice disappears without a word.
+    """
+    for field in ("model", "verifier_model"):
+        value = step.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            _emit(
+                "FAIL",
+                f"{ctx} — {field} must be a string (value: {value!r})."
+                f" e.g. {field}: claude-opus-5",
+            )
+        elif not value.strip():
+            _emit(
+                "WARN",
+                f"{ctx} — {field} is empty; the provider silently falls back to its"
+                f" default model. Remove the key or name a model.",
+            )
+
+
+_AUTO_ROUTE_SIZES = ("S", "M", "L", "XL")
+
+
+def _check_auto_route(value: object, ctx: str) -> None:
+    """auto_route.candidates schema + cheapest-first ordering (#358).
+
+    resolve_auto_route() scans candidates in declared order and takes the first
+    whose max_size covers the current size. That makes the declared order part
+    of the behaviour: list an expensive tier first and it wins every time a
+    cheaper one would have done, with nothing to show for it at run time.
+    """
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        _emit("FAIL", f"{ctx} — auto_route must be a mapping with a candidates list (value: {value!r})")
+        return
+
+    candidates = value.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        _emit("FAIL", f"{ctx} — auto_route.candidates must be a non-empty list (value: {candidates!r})")
+        return
+
+    ranks: list[int] = []
+    for index, candidate in enumerate(candidates):
+        entry_ctx = f"{ctx} — auto_route.candidates[{index}]"
+        if not isinstance(candidate, dict):
+            _emit("FAIL", f"{entry_ctx} is not a mapping (value: {candidate!r})")
+            return
+        for field in ("model", "cost_tier"):
+            field_value = candidate.get(field)
+            if not isinstance(field_value, str) or not field_value.strip():
+                _emit("FAIL", f"{entry_ctx} — {field} must be a non-empty string (value: {field_value!r})")
+                return
+        max_size = candidate.get("max_size")
+        if max_size not in _AUTO_ROUTE_SIZES:
+            _emit(
+                "FAIL",
+                f"{entry_ctx} — max_size must be one of {'/'.join(_AUTO_ROUTE_SIZES)}"
+                f" (value: {max_size!r}). An unrecognised value defaults to XL, so this"
+                f" candidate would win every route.",
+            )
+            return
+        ranks.append(_AUTO_ROUTE_SIZES.index(max_size))
+
+    if ranks != sorted(ranks):
+        order = ", ".join(str(candidate.get("max_size")) for candidate in candidates)
+        _emit(
+            "FAIL",
+            f"{ctx} — auto_route.candidates must be ordered cheapest-first by max_size"
+            f" (declared: {order}). Selection takes the first candidate large enough,"
+            f" so an out-of-order list routes to a costlier model than declared.",
+        )
+
+
 # ── per-recipe check ─────────────────────────────────────────────────────────
 def check_recipe(path: pathlib.Path) -> None:
     ctx = f"recipe {path.stem}"
@@ -249,6 +329,12 @@ def check_recipe(path: pathlib.Path) -> None:
                             "FAIL",
                             f"{step_ctx} — checks contains an empty-string entry (index {idx})",
                         )
+
+        # model / verifier_model type validation (§3.5; #362)
+        _check_model_field(step, step_ctx)
+
+        # auto_route.candidates schema + cheapest-first ordering (#358)
+        _check_auto_route(step.get("auto_route"), step_ctx)
 
         # condition value validation (#109/#229/#230)
         _check_condition(step.get("condition"), step_ctx, "condition")

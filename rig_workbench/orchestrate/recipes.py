@@ -811,6 +811,75 @@ def resolve_plan_json(recipe_path: pathlib.Path) -> dict:
         "errors": list(execution["errors"]),
     }
 
+_SUGGEST_MAX_DISTANCE = 2
+_SUGGEST_LIMIT = 3
+
+
+def _tier_labels(bases: list[pathlib.Path]) -> list[str]:
+    """Label each searched directory by tier, matching how `bases` is built.
+
+    First is always the project overlay, last is always shipped, and anything
+    between them is the optional org tier. Search order is precedence order, so
+    this list also breaks ties between equally-close candidates.
+    """
+    if len(bases) == 1:
+        return ["shipped"]
+    return ["project"] + ["org"] * (len(bases) - 2) + ["shipped"]
+
+
+def _edit_distance(left: str, right: str) -> int:
+    """Levenshtein distance, iterative single-row."""
+    if left == right:
+        return 0
+    previous = list(range(len(right) + 1))
+    for i, lchar in enumerate(left, start=1):
+        current = [i]
+        for j, rchar in enumerate(right, start=1):
+            current.append(min(
+                previous[j] + 1,            # deletion
+                current[j - 1] + 1,         # insertion
+                previous[j - 1] + (lchar != rchar),  # substitution
+            ))
+        previous = current
+    return previous[-1]
+
+
+def suggest_recipe_names(name: str, bases: list[pathlib.Path]) -> list[tuple[str, str]]:
+    """Recipe names close to `name`, nearest first (#188).
+
+    A one-character typo should not cost a scan of two dozen recipe names. Two
+    kinds of near miss are worth catching, because both are what people actually
+    type: a misspelling (`hotfixx`, `release_flow`), caught by edit distance, and
+    an abbreviation (`review` for `review-only`), which is far in edit distance
+    but is exactly the name the caller had in mind — caught by substring.
+    Misspellings rank first; within each kind, closer and higher-tier first.
+
+    Candidates come from the same directories the lookup just searched, so a
+    suggestion is always something the caller could run, and the tier is shown
+    because two tiers may hold the same name.
+    """
+    seen: dict[str, str] = {}
+    for base, tier in zip(bases, _tier_labels(bases)):
+        if not base.is_dir():
+            continue
+        for candidate in sorted(base.glob("*.md")):
+            if not candidate.stem.startswith("_"):
+                seen.setdefault(candidate.stem, tier)
+
+    typed = name.lower()
+    scored = []
+    for index, (stem, tier) in enumerate(seen.items()):
+        distance = _edit_distance(typed, stem.lower())
+        if distance <= _SUGGEST_MAX_DISTANCE:
+            scored.append((0, distance, index, stem, tier))
+        elif typed and typed in stem.lower():
+            # Rank abbreviations by how much they overshoot what was typed, so
+            # `review` offers review-only before pr-review-and-something-longer.
+            scored.append((1, len(stem) - len(typed), index, stem, tier))
+    scored.sort()
+    return [(stem, tier) for _kind, _rank, _index, stem, tier in scored[:_SUGGEST_LIMIT]]
+
+
 def resolve_recipe(name: str) -> pathlib.Path:
     """Resolve a recipe.
     Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/engine/recipes/<name>.md (built-in).
@@ -833,8 +902,12 @@ def resolve_recipe(name: str) -> pathlib.Path:
         cand = base / fname
         if cand.exists():
             return ensure_recipe_trusted(cand)
-    print(f"[ERROR] recipe not found: {name}\n"
-          f"  searched: " + ", ".join(str(b / fname) for b in bases))
+    lines = [f"[ERROR] recipe not found: {name}"]
+    suggestions = suggest_recipe_names(name.removesuffix(".md"), bases)
+    if suggestions:
+        lines.append("  もしかして: " + ", ".join(f"{stem} [{tier}]" for stem, tier in suggestions))
+    lines.append("  searched: " + ", ".join(str(b / fname) for b in bases))
+    print("\n".join(lines))
     sys.exit(1)
 
 
