@@ -298,21 +298,72 @@ def ledger_sha1(state: dict) -> str:
     return hashlib.sha1(facts.encode("utf-8")).hexdigest()[:12]
 
 
+def working_path(pin: Path | None) -> Path:
+    """Where the MUTABLE state for a pin lives.
+
+    A pin is an immutable snapshot; the state that accumulates during a run (which entries
+    have been consumed, which articles have been published) is derived from it and must
+    not be written back into it. Keeping them in one file is what broke persistence — see
+    build_ledger.
+    """
+    if pin is None:
+        return STATE_PATH
+    return pin.with_name(f"{pin.stem}.state.json")
+
+
 def build_ledger(force: bool = False, pin: Path | None = None,
-                 author: str = "all") -> dict:
+                 author: str = "all", persist: bool = True) -> dict:
     """Build (or load) the writer's state. Probes run once; runs are reproducible after.
 
-    `pin` names a snapshot file to build into and read back from. Without it the state
-    lives at one fixed path that every run shares, and the ledger is rebuilt from
-    `git log`'s most recent commits — so it changes whenever the repo does. The recorded
-    incident-sampling comparison lost a third run to exactly this: run3 scored 0/24
-    against run1's 12/24 and was found afterwards to have been built on a different
-    ledger, making it uncomparable rather than a refutation. Recording the sha1 detected
-    that after the fact; a pin prevents it.
+    `pin` names an immutable snapshot to seed from. Without it the state lives at one
+    fixed path that every run shares, and the ledger is rebuilt from `git log`'s most
+    recent commits — so it changes whenever the repo does. The recorded incident-sampling
+    comparison lost a third run to exactly this: run3 scored 0/24 against run1's 12/24 and
+    was found afterwards to have been built on a different ledger, making it uncomparable
+    rather than a refutation. Recording the sha1 detected that after the fact; a pin
+    prevents it.
+
+    PERSISTENCE BUG, fixed 2026-08-07. The pin files carry a `path` key that was baked in
+    when they were first created, pointing at an absolute scratchpad path on the machine
+    that made them — and not even at the same filename (`ledger-agent.json` was read while
+    `.../scratchpad/ledger_agent.json` was written). build_ledger read the pin and
+    save_state wrote to that stale path, so the two never met. Consequence: for every
+    pinned arm — which is every writer_* arm ever measured — `used_in` and `articles`
+    never came back. `render_prior` always answered 「まだ何も書いていない」, so the
+    self-reference the arm's docstring credits could not occur, and since `cost()` was
+    always 0 the incident sampler picked the same root every time: 7 of 8 topics shared
+    the spine L025/L040/L041, one commit and two failing tests. Those runs were 8 articles
+    about one incident. It is a live candidate explanation for the judge's most cited
+    complaint, 「文体の均質さ」 in 19 of 24 losing verdicts.
+
+    The fix separates the two roles: the pin stays untouched, and the mutable state lives
+    at `working_path(pin)`, which is both written and read. The stored `path` key is never
+    trusted again — it is recomputed from the file actually in use.
+
+    `persist=False` reproduces the old behaviour exactly (seed from the pin every call,
+    accumulate nothing), so the fix itself can be measured as a single-dimension change
+    rather than silently folded into every later comparison. It also makes the old
+    behaviour side-effect-free instead of writing to a stray path.
     """
-    path = pin or STATE_PATH
-    if path.exists() and not force:
-        return json.loads(path.read_text())
+    path = working_path(pin) if persist else None
+
+    if persist and path.exists() and not force:
+        state = json.loads(path.read_text())
+        state["path"] = str(path)          # never trust the stored value
+        return state
+
+    if pin is not None and pin.exists() and not force:
+        state = json.loads(pin.read_text())
+        state["path"] = str(path) if path else None
+        state["ephemeral"] = not persist
+        if persist:
+            path.write_text(json.dumps(state, ensure_ascii=False, indent=1))
+        return state
+
+    if pin is None and STATE_PATH.exists() and not force:
+        state = json.loads(STATE_PATH.read_text())
+        state["path"] = str(STATE_PATH)
+        return state
 
     entries: list[dict] = []
     for probe in PROBES:
@@ -332,12 +383,24 @@ def build_ledger(force: bool = False, pin: Path | None = None,
 
     state = {"writer_id": "w1", "author_filter": author, "entries": entries, "articles": []}
     state["sha1"] = ledger_sha1(state)
-    state["path"] = str(path)
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=1))
+    target = path or working_path(pin)
+    state["path"] = str(target)
+    state["ephemeral"] = not persist
+    if persist:
+        target.write_text(json.dumps(state, ensure_ascii=False, indent=1))
     return state
 
 
 def save_state(state: dict) -> None:
+    """Write the mutable state back. A no-op for an ephemeral (persist=False) state.
+
+    Writing was previously unconditional and went to whatever `path` the loaded file
+    happened to carry — a stale absolute scratchpad path from another machine. That both
+    broke persistence and left a stray file nobody read. An ephemeral state now declines
+    to write at all, which is what "accumulate nothing" should mean.
+    """
+    if state.get("ephemeral"):
+        return
     Path(state.get("path") or STATE_PATH).write_text(
         json.dumps(state, ensure_ascii=False, indent=1))
 

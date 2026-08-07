@@ -604,7 +604,8 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str
                     show_urls: bool = False, ledger_pin: Path | None = None,
                     author: str = "all", scrap_k: int = 2, biography: bool = False,
                     instruct_close: bool = True, affect: bool = False,
-                    affect_style: str = "note", affect_drift: bool = True) -> dict:
+                    affect_style: str = "note", affect_drift: bool = True,
+                    persist: bool = True) -> dict:
     """Writer arm: a persistent authored identity carried as data, not as adjectives.
 
     The identity is a ledger of real artifacts on this machine — commit subjects, a
@@ -627,7 +628,7 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str
     import writer_ledger as wl
 
     with wl.STATE_LOCK:
-        state = wl.build_ledger(pin=ledger_pin, author=author)
+        state = wl.build_ledger(pin=ledger_pin, author=author, persist=persist)
         # sample_incident, not sample_for_topic. The ledger's own author documented the flat
         # sampler as a recorded negative result — 「Measured at 79.0 against bare's 89.2」,
         # every verdict naming 「各節が『事実→内省→日付への接続』という同一テンプレートで
@@ -1782,6 +1783,16 @@ LIVE_ARMS = {
     # — but which of the three things this changes at once is load-bearing. Compare each
     # against writer_agent (identical ledger, prompt, gate and sampler) and against the
     # null control, never against each other alone.
+    # The persistence fix as a measurable single-dimension change, not a silent one.
+    # Every writer_* number ever recorded came from a run where the mutable state was
+    # written to a stale path and never read back: `used_in` stayed empty, so the incident
+    # sampler picked the same root every time and 7 of 8 topics shared the spine
+    # L025/L040/L041 — one commit and two failing tests. Eight articles about one incident.
+    # This arm reproduces that exactly (persist=False) so the fix can be attributed.
+    "writer_nostate": ("writer, state never persisted (reproduces the pre-fix behaviour)",
+                       lambda topic, model: generate_writer(
+                           topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent",
+                           persist=False)),
     "writer_sense": ("writer + seeded sensory/喜怒哀楽 state, sparse and drifting",
                      lambda topic, model: generate_writer(
                          topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent",
