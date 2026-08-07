@@ -250,6 +250,74 @@ def _surface_commits(
     return result
 
 
+def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | None:
+    """case id → the prompt surfaces it covered at `revision`, or None if unreadable.
+
+    Read from the git tree rather than the working copy: the ratchet needs to know
+    what coverage existed *before* the change in order to tell a surface that was
+    never covered (debt) from one whose coverage this change removed (a
+    regression). None means the question could not be answered — a shallow clone,
+    an unborn ref — and the caller then declines to accuse anyone of a regression
+    it cannot demonstrate.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", revision, "--", "evals/cases/"],
+            cwd=root, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+    coverage: dict[str, set[str]] = {}
+    for path in listing.stdout.splitlines():
+        if not path.endswith("/case.json"):
+            continue
+        try:
+            blob = subprocess.run(
+                ["git", "show", f"{revision}:{path}"], cwd=root, capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=15, shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if blob.returncode != 0:
+            return None
+        try:
+            value = json.loads(blob.stdout)
+        except json.JSONDecodeError:
+            continue        # a malformed case at the base is not this change's fault
+        if not isinstance(value, dict) or value.get("status") != "approved":
+            continue
+        case_id = value.get("id")
+        surfaces = value.get("prompt_surfaces")
+        if isinstance(case_id, str) and isinstance(surfaces, list):
+            coverage[case_id] = {s for s in surfaces if isinstance(s, str)}
+    return coverage
+
+
+def _regressions(before: dict[str, set[str]] | None,
+                 after: dict[str, set[str]]) -> list[str]:
+    """Coverage the change took away: a case deleted, or one that dropped a surface.
+
+    This is the half of the ratchet that stays a hard failure. Not having written
+    a case yet is a starting position; deleting one somebody already earned with a
+    measured red→green run is a step backwards, and a coverage gate that permits
+    steps backwards is not a ratchet.
+    """
+    if before is None:
+        return []
+    lost: list[str] = []
+    for case_id, surfaces in sorted(before.items()):
+        if case_id not in after:
+            lost.append(f"case:{case_id} (deleted; covered {', '.join(sorted(surfaces)) or 'nothing'})")
+            continue
+        dropped = surfaces - after[case_id]
+        if dropped:
+            lost.append(f"case:{case_id} (no longer covers {', '.join(sorted(dropped))})")
+    return lost
+
+
 def _load_cases(root: pathlib.Path) -> list[dict]:
     cases: list[dict] = []
     tier = root / "evals" / "cases"
@@ -270,8 +338,24 @@ def _load_cases(root: pathlib.Path) -> list[dict]:
 
 def analyze_affected(
     repo: pathlib.Path | str, *, base: str, head: str = "working",
-    require_cases: bool = False, evidence_dir: pathlib.Path | str | None = None,
+    require_cases: bool = False, ratchet: bool = False,
+    evidence_dir: pathlib.Path | str | None = None,
 ) -> dict:
+    """Which prompt surfaces a change touches, and whether cases cover them.
+
+    `require_cases` is the strict form: every affected surface must already have a
+    case, or the change is `uncovered`. Correct as a destination and unreachable as
+    a starting point — with an empty `evals/cases/` it fails every change that
+    touches a prompt surface, including the ones that add the first case. A sensor
+    that fires on everything reports nothing, and teaches people to merge past it.
+
+    `ratchet` is the same requirement expressed as a direction rather than a
+    threshold. A surface nobody has written a case for yet is **debt**: counted,
+    named, not fatal. Coverage that this change *removes* is a **regression**, and
+    still fatal. Debt can only be paid down and coverage can only go up, which is
+    the same monotonic rule the policy layer uses — and unlike a threshold, it
+    produces a number that moves from the first day.
+    """
     try:
         root = pathlib.Path(repo).resolve()
     except OSError as exc:
@@ -285,6 +369,8 @@ def analyze_affected(
     cases = _load_cases(root)
     selected: list[str] = []
     uncovered: list[str] = []
+    debt: list[str] = []
+    demand = require_cases or ratchet
     recipe_matches = {
         recipe: [
             case["id"] for case in cases
@@ -301,17 +387,26 @@ def analyze_affected(
         indirectly_covered = any(
             recipe_matches[recipe] for recipe in recipes_by_surface[surface["path"]]
         )
-        if (surface["kind"] == "unknown"
-                or (require_cases and not matched and not indirectly_covered)):
+        missing = demand and not matched and not indirectly_covered
+        if surface["kind"] == "unknown":
+            # Not a coverage question: a file under a registered root whose kind the
+            # registry does not recognise is a surface nobody is even tracking. That
+            # stays fatal in both modes — a ratchet on an unmeasured thing is nothing.
             uncovered.append(surface["path"])
+        elif missing:
+            (debt if ratchet else uncovered).append(surface["path"])
         selected.extend(matched)
     for recipe in recipes:
         matched = recipe_matches[recipe]
-        if require_cases and not matched:
+        if demand and not matched:
             recipe_paths = [item["path"] for item in surfaces]
-            uncovered.extend(recipe_paths or [f"recipe:{recipe}"])
+            (debt if ratchet else uncovered).extend(recipe_paths or [f"recipe:{recipe}"])
         selected.extend(matched)
     selected = sorted(set(selected))
+    debt = sorted(set(debt) - set(uncovered))
+    regressions = _regressions(_coverage_at(root, merge_base),
+                               {case["id"]: set(case.get("prompt_surfaces", []))
+                                for case in cases}) if ratchet else []
     evidence: dict[str, str] = {}
     if evidence_dir is not None:
         evidence_root = pathlib.Path(evidence_dir)
@@ -327,7 +422,17 @@ def analyze_affected(
                         found = True
                         break
             evidence[case_id] = "present" if found else "absent"
-    status = "noop" if not surfaces else ("uncovered" if uncovered else "pass")
+    if not surfaces:
+        status = "noop"
+    elif uncovered or regressions:
+        status = "uncovered"
+    elif debt:
+        # Deliberately its own status rather than folded into `pass`: the run is
+        # allowed to proceed, and the number is still reported so paying it down is
+        # visible progress instead of a silence that looks like coverage.
+        status = "debt"
+    else:
+        status = "pass"
     return {
         "eval_affected_schema_version": 1,
         "registry_version": REGISTRY_VERSION,
@@ -338,7 +443,11 @@ def analyze_affected(
         "changed_files": changed,
         "affected_surfaces": sorted(surfaces, key=lambda item: item["path"]),
         "affected_recipes": recipes, "affected_cases": selected,
-        "uncovered": sorted(set(uncovered)), "evidence_status": evidence,
-        "surface_commits": _surface_commits(root, merge_base, head, uncovered),
+        "uncovered": sorted(set(uncovered)),
+        "coverage_debt": debt,
+        "coverage_regressions": regressions,
+        "evidence_status": evidence,
+        "surface_commits": _surface_commits(root, merge_base, head,
+                                            [*uncovered, *debt]),
         "status": status,
     }
