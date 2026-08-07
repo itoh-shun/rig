@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## [1.31.1] - 2026-08-07
+
+Fixes the mutmut integration 1.31.0 shipped, which was written against a command that
+no longer exists. Found by running it on a real project instead of a synthetic report —
+the one check 1.31.0 recorded as unverified.
+
+- `mutmut junitxml` is mutmut **2.x**. Version 3.x dropped it and writes
+  `mutants/mutmut-cicd-stats.json` via `mutmut export-cicd-stats` instead: a counts
+  summary, not one test case per mutant. `mutation_adapter.py` gains a `mutmut` format
+  for it and keeps `junit` for 2.x and other JUnit producers, so the adapter does not
+  force a version upgrade on the project using it.
+- The new format maps `timeout` to detected and `no_tests` to undetected, and excludes
+  `suspicious` / `segfault` / `skipped` / `check_was_interrupted_by_user` as invalid — a
+  mutant that confused the run is not a hole in the suite. If the counts do not add up to
+  the report's own `total` it refuses to score, rather than working from a short
+  denominator that would inflate the result.
+- Verified end to end on a throwaway project: 22 mutants, weak suite 22.7%, strengthened
+  suite 68.2% (passed), boundary assertions deleted 40.9% (warning) — with `pytest` green
+  in all three states, which is the case mutation testing exists to catch. The criterion
+  reached the acceptance gate through `.rig/gates.json` `extra_criteria` and was recorded
+  as a warning by `--apply`.
+
 ## [1.31.0] - 2026-08-06
 
 Measures two things rig previously asserted, and states plainly where its security

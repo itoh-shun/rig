@@ -145,3 +145,71 @@ def test_malformed_baseline_is_treated_as_absent(tmp_path):
     assert adapter.load_baseline(path) is None
     path.write_text(json.dumps({"score": "high"}), encoding="utf-8")
     assert adapter.load_baseline(path) is None
+
+
+# ── mutmut 3.x (`mutmut export-cicd-stats`) ─────────────────────────────
+# Shape captured from a real run: mutmut 3.7.0 on a 22-mutant corpus.
+
+
+def _mutmut(**overrides) -> str:
+    counts = {"killed": 5, "survived": 17, "total": 22, "no_tests": 0, "skipped": 0,
+              "suspicious": 0, "timeout": 0, "check_was_interrupted_by_user": 0, "segfault": 0}
+    counts.update(overrides)
+    return json.dumps(counts)
+
+
+def test_mutmut_reads_the_real_cicd_stats_shape(tmp_path):
+    path = tmp_path / "mutmut-cicd-stats.json"
+    path.write_text(_mutmut(), encoding="utf-8")
+    counts = adapter.parse_mutmut(path)
+    assert (counts["detected"], counts["undetected"], counts["invalid"]) == (5, 17, 0)
+    assert adapter.score_of(counts) == 0.2273
+
+
+def test_mutmut_counts_timeout_as_detected_and_no_tests_as_undetected(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(_mutmut(killed=4, survived=2, timeout=1, no_tests=3, total=10), encoding="utf-8")
+    counts = adapter.parse_mutmut(path)
+    assert (counts["detected"], counts["undetected"]) == (5, 5)
+
+
+def test_mutmut_excludes_suspicious_and_segfault_from_the_denominator(tmp_path):
+    """Neither verdict: the mutant confused the run rather than escaping the suite."""
+    path = tmp_path / "s.json"
+    path.write_text(_mutmut(killed=5, survived=5, suspicious=2, segfault=1, total=13), encoding="utf-8")
+    counts = adapter.parse_mutmut(path)
+    assert counts["invalid"] == 3
+    assert adapter.score_of(counts) == 0.5
+
+
+def test_mutmut_refuses_a_report_whose_counts_do_not_add_up(tmp_path):
+    """A status this adapter does not know about would shorten the denominator silently."""
+    path = tmp_path / "s.json"
+    path.write_text(_mutmut(killed=5, survived=5, total=99), encoding="utf-8")
+    with pytest.raises(adapter.ReportError, match="counts sum to"):
+        adapter.parse_mutmut(path)
+
+
+def test_mutmut_rejects_an_unknown_status(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"killed": 1, "survived": 1, "vibed": 1}), encoding="utf-8")
+    with pytest.raises(adapter.ReportError, match="unknown mutmut status"):
+        adapter.parse_mutmut(path)
+
+
+def test_mutmut_rejects_a_negative_or_non_integer_count(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"killed": 1, "survived": -2}), encoding="utf-8")
+    with pytest.raises(adapter.ReportError, match="non-negative integer"):
+        adapter.parse_mutmut(path)
+
+
+def test_mutmut_rejects_a_report_that_is_not_cicd_stats(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"schemaVersion": "1.0", "files": {}}), encoding="utf-8")
+    with pytest.raises(adapter.ReportError, match="export-cicd-stats"):
+        adapter.parse_mutmut(path)
+
+
+def test_all_three_formats_are_selectable_from_the_cli():
+    assert set(adapter.PARSERS) == {"elements", "mutmut", "junit"}
