@@ -462,6 +462,63 @@ def mutate_M8(text: str, count: int = 3) -> str:
     return out
 
 
+# M9 — strip Markdown notation, keep every word.
+#
+# The one external finding this benchmark had no answer to. Nagai (Open Data Lab,
+# 2026-07-09) reports that removing Markdown-residue detection from their rule-based
+# detector dropped the AI-group median from 71.8 to 7.2 and all but erased the separation
+# from human documents: the measured power of the conventional method was, in their words,
+# essentially symbol-hunting. Symbols survive because chat UIs render them, so a user
+# copies them out without seeing them — which makes them a strong cue and a fragile one.
+#
+# That was a rule detector; the judge here is an LLM, so it does not transfer
+# automatically. It transfers as a question: how much of this benchmark's 92-98% is
+# layout? The corpus profiling already shows form markers are where genres separate most
+# (docs/jp-corpus-genre-control.ja.md), and the human opponents are Qiita markdown while
+# the arms emit markdown too.
+#
+# Prose is untouched — headings keep their text, list items keep their text, emphasis
+# keeps its words. Only the notation goes. That makes this a single-dimension mutation in
+# the same shape as the linkify control, which is the only form that has produced a clean
+# reading here.
+_MD_FENCE = re.compile(r"^\s*(?:```|~~~).*$", re.M)
+_MD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+", re.M)
+_MD_BULLET = re.compile(r"^(\s{0,4})(?:[-*+]|\d{1,2}[.)])\s+", re.M)
+_MD_QUOTE = re.compile(r"^\s{0,3}>\s?", re.M)
+_MD_EMPHASIS = re.compile(r"(\*\*|__|\*|_|`)(.+?)\1", re.S)
+_MD_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_HRULE = re.compile(r"^\s*(?:[-*_]\s*){3,}$", re.M)
+_MD_TABLE_SEP = re.compile(r"^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$", re.M)
+
+
+def mutate_M9(text: str) -> str:
+    """Remove Markdown notation, preserving the words it wrapped."""
+    out = _MD_FENCE.sub("", text)
+    out = _MD_HRULE.sub("", out)
+    out = _MD_TABLE_SEP.sub("", out)
+    out = _MD_IMAGE.sub(r"\1", out)
+    out = _MD_LINK.sub(r"\1", out)
+    # Emphasis can nest (**`x`**), so run to a fixed point rather than once.
+    for _ in range(3):
+        stripped = _MD_EMPHASIS.sub(r"\2", out)
+        if stripped == out:
+            break
+        out = stripped
+    out = _MD_HEADING.sub("", out)
+    out = _MD_BULLET.sub(r"\1", out)
+    out = _MD_QUOTE.sub("", out)
+    # Table rows become plain clauses rather than vanishing: deleting them would remove
+    # content, not notation, and this mutation must change exactly one dimension.
+    # [ \t]* rather than \s* on both ends — \s matches newlines, so under re.M the
+    # trailing \s*$ swallowed the blank line between two rows and merged them into one
+    # line. That is content restructuring, which is precisely what this must not do.
+    out = re.sub(r"^[ \t]*\|(.+)\|[ \t]*$",
+                 lambda m: "、".join(c.strip() for c in m.group(1).split("|") if c.strip()),
+                 out, flags=re.M)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", out).strip()
+
+
 MUTATIONS = {
     "M1": ("段落頭の接続詞を削除", mutate_M1),
     "M2": ("隣接文を非一様な間隔で結合", mutate_M2),
@@ -471,6 +528,7 @@ MUTATIONS = {
     "M6": ("長文を節境界で分割", mutate_M6),
     "M7": ("実在値を同形の非実在値へ一貫置換", mutate_M7),
     "M8": ("散文に仮名の誤字を注入", mutate_M8),
+    "M9": ("Markdown 記法を除去（語は保持）", mutate_M9),
 }
 
 
