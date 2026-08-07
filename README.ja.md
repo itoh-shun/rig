@@ -440,6 +440,16 @@ schema v2の合格条件は厳密である。10タスク以上かつ各タスク
 
 **正直なスコープ注記**：`--provider mock`はレポート上も**WIRING ONLY**と表示され、配線とレポート経路だけを検証する。品質向上の証拠にはならない。Claude/Codexの実行は課金を伴うため`--allow-paid-provider`が必須で、このリポジトリは有料結果を自動実行・自動公開しない。
 
+**主張C — 結果がどのモデルで走らせたかに左右されない。** 最強のモデルでしか成立しないゲートはゲートではない。`rig-wb bench-invariance`は同一コーパスをモデルのパネル横断で走らせ、2つの指標を出す。**`agreement`**＝アーム同士がモデルを跨いで同じ終着点に至る一致率、**`safe_rate`**＝`clean_pass`＋`safe_stop`の割合（途中で安全に止まるのは安全側に数え、黙って欠陥を出すのは数えない）。
+
+```bash
+rig-wb bench-invariance --corpus benchmarks/hard-tasks \
+  --provider claude --allow-paid-provider \
+  --models claude-haiku-4-5-20251001,claude-sonnet-5,claude-fable-5 --html invariance.html
+```
+
+最初の実パネルはrigに有利な結果ではなかった。`trusted-helper-authz`では3モデルすべてがbareの全runでsilent defectを出し、**rigのsafe_rateはbareと同率**だった——検証役が見抜けない欠陥は、ループが再試行しても見抜けるようにはならない。条件と全結果は[`benchmarks/hard-tasks/README.md`](benchmarks/hard-tasks/README.md)にある。実際に走らせたパネルを超える主張はしない。
+
 **モデル跨ぎ比較。** `--bare-model`・`--rig-model`はそれぞれのアームだけモデルを上書きできる。上の同一モデル比較では答えられない第三の問い——「rig経由なら安価なモデルでも上位モデルのbare出力に迫れるか」——を検証できる。省略時はどちらも`--model`にフォールバックするため、明示的にopt-inしない限り従来の同一モデル挙動は変わらない：
 
 ```bash
@@ -473,7 +483,7 @@ opt-in：このサーバを起動しない限り何も変わらず、既存のCL
 
 recipeのstepは`auto_route.candidates`（`{model, cost_tier, max_size}`の列、安い順に宣言）を持てる。`orchestrate.py run --auto-route`は、現在の diff size を測定し、その`max_size`をカバーする最も安い候補を決定論的に選ぶ——あくまでフォールバックで、実行時の`--step-model`とrecipe自身の`model:`はどちらも優先されたまま。選択結果は`runs.jsonl`の`steps[].auto_route`に記録される。
 
-`--auto-route-learn`はこれをさらに発展させ、`.rig/runs.jsonl`自身の実績（どのrecipe/stepでどのmodelが実際に使われ、gateを通過したか）から頻度ベース（MLモデル不要）で学習する。**既定はshadow mode**：予測は常に記録される（`steps[].learned_route`）が、`--auto-route-mode active`を指定するまでは実際の選択に影響しない（段階導入）。参照run数が不足しているか、pass_rateが低い場合は静的な`--auto-route`の選択にフォールバックし、棄却した候補とその理由（counterfactual）を必ず記録する——ブラックボックス化しない。`--exploration-pct N`を指定すると、一定割合のrunだけ次点候補を試す（乱数ではなく`--exploration-date`＋recipe/stepのハッシュで決定論的に判定するため、結果は再現可能）。regret logging（安すぎ/高すぎの選択を事後に自動較正する仕組み）は未実装——`runs`/`stats`で`steps[].status`と`learned_route`を手動比較するのが現状のフォールバック。
+`--auto-route-learn`はこれをさらに発展させ、`.rig/runs.jsonl`自身の実績（どのrecipe/stepでどのmodelが実際に使われ、gateを通過したか）から頻度ベース（MLモデル不要）で学習する。**既定はshadow mode**：予測は常に記録される（`steps[].learned_route`）が、`--auto-route-mode active`を指定するまでは実際の選択に影響しない（段階導入）。参照run数が不足しているか、pass_rateが低い場合は静的な`--auto-route`の選択にフォールバックし、棄却した候補とその理由（counterfactual）を必ず記録する——ブラックボックス化しない。`--exploration-pct N`を指定すると、一定割合のrunだけ次点候補を試す（乱数ではなく`--exploration-date`＋recipe/stepのハッシュで決定論的に判定するため、結果は再現可能）。安く選んだことが節約だったのか偽の経済だったのかは、`rig-wb runs --auto-route-regret`が事後に答える。ルーティングされたstepごとに候補モデル別の試行数とpass rateを表示し、選ばれたモデルが品質基準を下回っていて、かつ十分なサンプルを持つより高価な候補の方が通過率が高い場合に**possible regret**として明示する。`.rig/runs.jsonl`を読むだけの読み取り専用で、ルーティング自体は変更しない。
 
 ## 12. GitHub 連携
 

@@ -764,6 +764,97 @@ def cmd_fleet(args):
         print("\nPer-persona detection rate: unmeasured (no /rig:drill runs in the target repos)")
 
 
+def collect_auto_route_regret(rows: list) -> list[dict]:
+    """Per routed step, how each candidate model actually fared (pure; #357).
+
+    `learned_auto_route` already aggregates this to decide the *next* route, but
+    the aggregate was never shown to anyone. Choosing a cheaper tier is a bet,
+    and without seeing it settled there is no way to tell a saving from a false
+    economy — which is what the README called the missing regret log.
+
+    A regret is claimed only when the comparison is worth acting on: both models
+    have enough observations to have earned an opinion, and the pricier one is
+    clearly ahead. Reads recorded runs and nothing else.
+    """
+    from .recipes import _LEARNED_MIN_PASS_RATE, _LEARNED_MIN_SAMPLES, _learned_route_stats
+
+    routed: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        recipe = row.get("recipe")
+        if not recipe:
+            continue
+        for step in row.get("steps", []):
+            step_id = step.get("id")
+            if not step_id:
+                continue
+            route = step.get("auto_route") or step.get("learned_route") or {}
+            if not isinstance(route, dict) or not route.get("model"):
+                continue
+            chosen = routed.setdefault((recipe, step_id), [])
+            if route["model"] not in chosen:
+                chosen.append(route["model"])
+
+    report = []
+    for (recipe, step_id), chosen_models in sorted(routed.items()):
+        stats = _learned_route_stats(rows, recipe, step_id)
+        models = [
+            {
+                "model": model,
+                "n": values["n"],
+                "passed": values["passed"],
+                "pass_rate": round(values["passed"] / values["n"], 4) if values["n"] else None,
+                "chosen": model in chosen_models,
+                # Declared order is cheapest-first, and stats preserve first-seen
+                # order, so a later entry is the pricier bet.
+                "rank": index,
+            }
+            for index, (model, values) in enumerate(stats.items())
+        ]
+        regrets = []
+        for candidate in models:
+            if not candidate["chosen"] or candidate["n"] < _LEARNED_MIN_SAMPLES:
+                continue
+            if candidate["pass_rate"] is None or candidate["pass_rate"] >= _LEARNED_MIN_PASS_RATE:
+                continue
+            for other in models:
+                if (other["rank"] > candidate["rank"]
+                        and other["n"] >= _LEARNED_MIN_SAMPLES
+                        and other["pass_rate"] is not None
+                        and other["pass_rate"] > candidate["pass_rate"]):
+                    regrets.append({"chosen": candidate["model"], "better": other["model"]})
+                    break
+        report.append({
+            "recipe": recipe, "step": step_id,
+            "models": models, "regrets": regrets,
+            "insufficient": all(item["n"] < _LEARNED_MIN_SAMPLES for item in models),
+        })
+    return report
+
+
+def _print_auto_route_regret(rows: list) -> None:
+    report = collect_auto_route_regret(rows)
+    if not report:
+        print("No auto-routed steps recorded yet. This report reads `auto_route` / `learned_route`\n"
+              "entries appended by runs that used cost-tier routing; until one runs there is\n"
+              "nothing to second-guess.")
+        return
+    print(f"## rig runs --auto-route-regret ({len(report)} routed step(s) across {len(rows)} runs)\n")
+    for entry in report:
+        print(f"  {entry['recipe']}.{entry['step']}")
+        print(f"    {'model':28s} {'n':>4s} {'PASS':>5s} {'PASS%':>7s}")
+        for item in entry["models"]:
+            mark = "*" if item["chosen"] else " "
+            rate = "—" if item["pass_rate"] is None else f"{item['pass_rate'] * 100:6.0f}%"
+            print(f"  {mark} {item['model']:28s} {item['n']:4d} {item['passed']:5d} {rate:>7s}")
+        if entry["insufficient"]:
+            print("    (too few observations to compare — routing is still guessing)")
+        for regret in entry["regrets"]:
+            print(f"    possible regret: {regret['chosen']} was chosen but {regret['better']} "
+                  f"passes more often on this step — the cheaper tier may be costing rework")
+        print()
+    print("  * = routed to at least once. Read-only: this reports recorded runs and changes no routing.")
+
+
 def cmd_runs(args):
     """Run telemetry listing: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD].
 
@@ -771,11 +862,14 @@ def cmd_runs(args):
     format per SKILL.md §6) and prints the latest N runs plus per-recipe aggregates (count,
     DONE rate, average retries, escalation count).
     --personas tallies votes per verifier (the verdict's by), providing input for pruning decisions.
+    --auto-route-regret reports, per routed step, how each candidate model actually fared, so a
+    cost tier that was chosen but underperformed a pricier one is visible after the fact.
     --html <path> delegates to scripts/dashboard.py to write an HTML dashboard (KPIs, sparkline,
     per-recipe bars, verifier votes, recent-run table in a single-file HTML with no external deps).
     Read-only (the same inspection mode as --list / --validate).
     """
     limit, recipe, personas_mode, html_out, since, cost_mode = 10, None, False, None, None, False
+    regret_mode = False
     i = 0
     while i < len(args):
         if args[i] == "--limit" and i + 1 < len(args):
@@ -789,6 +883,9 @@ def cmd_runs(args):
             i += 1
         elif args[i] == "--cost":
             cost_mode = True
+            i += 1
+        elif args[i] == "--auto-route-regret":
+            regret_mode = True
             i += 1
         elif args[i] == "--html" and i + 1 < len(args):
             html_out = args[i + 1]
@@ -853,6 +950,10 @@ def cmd_runs(args):
             print("\n  Pruning hint: " + ", ".join(sorted(rubber))
                   + " cast 5+ votes without a single REJECT (possible rubber-stamping, or the lens"
                     " has no bite; consider dropping them or sharpening the lens)")
+        return
+
+    if regret_mode:
+        _print_auto_route_regret(rows)
         return
 
     if cost_mode:
