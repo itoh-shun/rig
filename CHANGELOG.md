@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+## [1.33.0] - 2026-08-07
+
+Closes the gap between what `validate.md` says the validator checks and what it
+actually checked. Every item here was already specified — some since #14 and
+#104 — and had no executable counterpart, so a manifest or recipe could violate
+the written rule and pass in silence. The backlog had been accumulating one
+auto-filed issue per gap; this clears eight of them.
+
+- **manifest** (`default_max_retries`, #360) integer ≥1, with `true` rejected
+  rather than read as 1 through bool's int inheritance.
+- **manifest** (`default_recipe` / `default_personas[]`, #372) now resolve
+  through the same project→user→shipped resolver COMPOSE uses. Both failed
+  silently before: an unresolvable recipe dropped RESOLVE into interactive mode,
+  and an unresolvable persona was dropped from the review fan-out, so a typo
+  cost you a reviewer with nothing printed. `interactive` stays reserved.
+- **manifest** (`knowledge.context_file` / `adr_dir` / `design_docs[]`, #363)
+  are checked for existence and **WARN**, not FAIL, per the #14 spec — a missing
+  knowledge path costs the run context, not correctness, which is exactly why it
+  goes unnoticed. WARN and FAIL are collected separately so neither hides the other.
+- **recipe step** (`model` / `verifier_model`, #362) must be strings. A
+  non-string reached the provider as argv and failed at subprocess time; an
+  empty string is falsy, so the provider quietly used its default and the
+  recipe's explicit choice vanished. Empty warns, non-string fails.
+- **recipe step** (`auto_route.candidates`, #358) schema plus cheapest-first
+  ordering. Selection takes the first candidate whose `max_size` covers the
+  current size, which makes declared order part of the behaviour: an
+  out-of-order list routes to a costlier model than the recipe reads as, and an
+  unrecognised `max_size` defaults to XL and wins every route.
+- **catalog drift** (#364) now scans `patterns/`. It never did, so
+  `patterns/failure-taxonomy` — referenced by another pattern, wired into
+  run-report, used by three modules and covered by its own tests — stayed off
+  the §2 catalog with nothing able to notice. Both it and
+  `facets/instructions/adaptive-assess`, which the widened scan then surfaced,
+  are now listed; catalog drift reports zero missing entries.
+- **accumulated/** (#365) frontmatter (`category` / `title` / `date`) and the
+  two required body sections, spec'd in #104 and #203 and never implemented.
+  WARN only, and silent when the directory is absent. A date left unquoted in
+  YAML arrives as a date object, which is the format the spec asks for, so it is
+  accepted rather than reported as the wrong type.
+- **did-you-mean for recipe names** (#188). An unresolvable `--recipe` printed
+  the search paths and nothing else. It now offers the near misses, by edit
+  distance for a misspelling (`hotfixx`, `release_flow`) and by substring for an
+  abbreviation (`review` → `review-only`) — the issue's own example, which edit
+  distance alone does not reach. Suggestions carry their tier and come from the
+  directories just searched, so one can always be run as printed.
+
+The validator's selftest gains 8 scenarios (36 total) and `tests/` gains 63
+checks. `scripts/validate.py` on this repo: PASS 41 / WARN 4 / FAIL 0, one WARN
+fewer than before because catalog drift is now clean.
+
+Not done: the "CI 実装状況" note in `validate.md` still lists four of these as
+unimplemented. Correcting it edits a registered prompt surface, which the
+prompt evaluation gate blocks without evaluation-case evidence from a paid run
+(#367). The prose specifying each check is unchanged and was already right —
+only the status note is stale.
+
 ## [1.32.0] - 2026-08-07
 
 Makes the mutation adapter a rig command. 1.31.x shipped it as a loose script, so

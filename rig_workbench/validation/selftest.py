@@ -50,6 +50,28 @@ def run_selftest() -> None:
             '  - id: verify\n    instruction: verify\n    checks: "npm test"\n')),
         ("checks-bad-empty", True, recipe("checks-bad-empty", "",
             '  - id: verify\n    instruction: verify\n    checks: ["npm test", ""]\n')),
+        # #362 model / verifier_model type
+        ("model-ok", False, recipe("model-ok", "",
+            "  - id: implement\n    instruction: implement\n    model: claude-opus-5\n")),
+        ("model-bad-type", True, recipe("model-bad-type", "",
+            "  - id: implement\n    instruction: implement\n    model: 123\n")),
+        ("verifier-model-bad-type", True, recipe("verifier-model-bad-type", "",
+            "  - id: verify\n    instruction: verify\n    verifier_model: [a]\n")),
+        # #358 auto_route.candidates schema + cheapest-first order
+        ("auto-route-ok", False, recipe("auto-route-ok", "",
+            "  - id: implement\n    instruction: implement\n    auto_route:\n"
+            "      candidates:\n"
+            "        - {model: cheap, cost_tier: cheap, max_size: S}\n"
+            "        - {model: big, cost_tier: expensive, max_size: XL}\n")),
+        ("auto-route-bad-order", True, recipe("auto-route-bad-order", "",
+            "  - id: implement\n    instruction: implement\n    auto_route:\n"
+            "      candidates:\n"
+            "        - {model: big, cost_tier: expensive, max_size: XL}\n"
+            "        - {model: cheap, cost_tier: cheap, max_size: S}\n")),
+        ("auto-route-bad-size", True, recipe("auto-route-bad-size", "",
+            "  - id: implement\n    instruction: implement\n    auto_route:\n"
+            "      candidates:\n"
+            "        - {model: a, cost_tier: cheap, max_size: medium}\n")),
     ]
 
     # drill-coverage scenarios (#266): run through check_drill_coverage() against a
@@ -87,6 +109,13 @@ def run_selftest() -> None:
         ("manifest-budget-bad", True, manifest("default_budget: lo\n")),
         ("manifest-orchestrate-ok", False, manifest("default_orchestrate: true\n")),
         ("manifest-orchestrate-bad-type", True, manifest('default_orchestrate: "yes"\n')),
+        ("manifest-max-retries-ok", False, manifest("default_max_retries: 3\n")),
+        ("manifest-max-retries-zero", True, manifest("default_max_retries: 0\n")),
+        ("manifest-max-retries-bool", True, manifest("default_max_retries: true\n")),
+        ("manifest-default-recipe-ok", False, manifest("default_recipe: bugfix\n")),
+        ("manifest-default-recipe-typo", True, manifest("default_recipe: bugifx\n")),
+        ("manifest-default-recipe-reserved", False, manifest("default_recipe: interactive\ndefault_backend: manual\n")),
+        ("manifest-default-persona-typo", True, manifest("default_personas:\n  - scurity-reviewer\n")),
         ("manifest-worktree-ok", False, manifest("worktree:\n  enabled: false\n")),
         ("manifest-worktree-bad-type", True, manifest('worktree:\n  enabled: "yes"\n')),
         ("manifest-size-thresholds-ok", False,
