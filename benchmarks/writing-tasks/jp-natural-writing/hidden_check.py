@@ -77,6 +77,12 @@ LEDGER_PINS = {
     "agent": HERE / "ledger-agent.json",
 }
 
+# Seed for the affect arms. Set by --seed; the per-article draw is RUN_SEED|topic, so one
+# run varies its state across topics while staying reproducible from a single recorded
+# value. It is recorded in the result file for the same reason the ledger sha1 is: a run
+# whose material moved underneath it cannot be compared to anything (C-1).
+RUN_SEED: str = "0"
+
 # v1: the criteria the first live run used. Kept so gate revisions are measurable
 # against each other, not just against no-gate.
 #
@@ -597,7 +603,8 @@ JSON オブジェクトのみを出力してください。他の文字列は一
 def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str = "",
                     show_urls: bool = False, ledger_pin: Path | None = None,
                     author: str = "all", scrap_k: int = 2, biography: bool = False,
-                    instruct_close: bool = True) -> dict:
+                    instruct_close: bool = True, affect: bool = False,
+                    affect_style: str = "note", affect_drift: bool = True) -> dict:
     """Writer arm: a persistent authored identity carried as data, not as adjectives.
 
     The identity is a ledger of real artifacts on this machine — commit subjects, a
@@ -636,6 +643,28 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str
             ledger = f"{wl.render_biography()}\n\n{ledger}"
             # the gate's whitelist is built from `entries`, so the biography has to be in it
             entries = entries + wl.biography_entries()
+
+        affect_fp = None
+        if affect:
+            import affect_state as af
+
+            # One draw per (run seed, topic), attached to the incident's own entries in
+            # time order, so the state moves along the incident rather than sitting on the
+            # article as a mood. Most entries come back empty and some articles come back
+            # with nothing at all — that is the mechanism (see affect_state's docstring on
+            # writer_bio), so there is no retry here and must not be one.
+            moments = af.draw(f"{RUN_SEED}|{topic}",
+                              [e["id"] for e in incident["entries"]],
+                              drift=affect_drift)
+            affect_fp = af.state_fingerprint(f"{RUN_SEED}|{topic}", moments,
+                                             drift=affect_drift)
+            block = af.render(moments, style=affect_style)
+            if block:
+                ledger = f"{ledger}\n\n{block}"
+                # Same reason as the biography: without this the containment gate reads
+                # 03:40 and 400 as fabrications and deletes the state over three rounds.
+                entries = entries + af.entries(moments, tokens_fn=wl._tokens)
+
         prior = wl.render_prior(state)
 
     out = run_claude_json(
@@ -667,8 +696,11 @@ def generate_writer(topic: str, model: str, max_rounds: int = 3, extra_rule: str
 
     with wl.STATE_LOCK:
         wl.record_article(state, topic, out["title"], entries, when="2026-07-26")
-    return {"title": out["title"], "description": out["description"],
-            "rounds": rounds, "gate_log": gate_log}
+    result = {"title": out["title"], "description": out["description"],
+              "rounds": rounds, "gate_log": gate_log}
+    if affect_fp is not None:
+        result["affect"] = affect_fp
+    return result
 
 
 def generate_rig_v1_xmodel(topic: str, model: str) -> dict:
@@ -1745,6 +1777,30 @@ LIVE_ARMS = {
     "writer_agent": ("writer, ledger restricted to agent-authored commits",
                      lambda topic, model: generate_writer(
                          topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent")),
+    # Seeded 五感 / 喜怒哀楽 state. Three arms because the interesting question is not
+    # "does embodiment help" — writer_bio already answered a version of that at the floor
+    # — but which of the three things this changes at once is load-bearing. Compare each
+    # against writer_agent (identical ledger, prompt, gate and sampler) and against the
+    # null control, never against each other alone.
+    "writer_sense": ("writer + seeded sensory/喜怒哀楽 state, sparse and drifting",
+                     lambda topic, model: generate_writer(
+                         topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent",
+                         affect=True)),
+    # Scarcity ablation. Same notes, same seed, emitted at every entry instead of above a
+    # threshold — writer_bio's 8/8 uniformity, rebuilt deliberately. If this matches
+    # writer_sense then the threshold walk is decoration; if writer_sense moves and this
+    # does not, scarcity is the mechanism and that is a result worth having on its own.
+    "writer_sense_flat": ("writer + the same state, emitted uniformly (scarcity ablation)",
+                          lambda topic, model: generate_writer(
+                              topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent",
+                              affect=True, affect_drift=False)),
+    # Supply/demand ablation. The same draw, rendered as named and scored axes
+    # (「怒 4/5」) rather than as jottings. 則1 and 則2 predict this is worse, because a
+    # named axis is a target and targets get satisfied uniformly. Prediction on record.
+    "writer_sense_label": ("writer + the same state, rendered as named 喜怒哀楽 scores",
+                           lambda topic, model: generate_writer(
+                               topic, model, ledger_pin=LEDGER_PINS["agent"], author="agent",
+                               affect=True, affect_style="label")),
     "relay": ("relay — passes that never see the article whole", generate_relay),
     "writercut": ("writer + harness-side excision of paragraph closers", generate_writercut),
     "fieldpaste": ("fieldnote + harness-pasted real command output", generate_fieldpaste),
@@ -1900,10 +1956,19 @@ def main() -> None:
     ap.add_argument("--topics", type=int, default=len(TOPICS),
                     help="use only the first N topics (cheaper runs while iterating)")
     ap.add_argument("--json-out", type=Path, help="write the full result record here")
+    ap.add_argument("--seed", default=None,
+                    help="seed for the writer_sense arms; omitted means a fresh random "
+                         "one, which is printed and recorded so the run can be repeated")
     args = ap.parse_args()
 
-    global CHECKPOINT_PATH
+    global CHECKPOINT_PATH, RUN_SEED
     CHECKPOINT_PATH = args.checkpoint
+    # A default of "0" would make every run draw the same state and quietly turn a
+    # per-run variable into a constant. Draw one instead, and print it — an unreproducible
+    # run is the failure mode C-1 is about, and the fix is cheap when the seed is one value.
+    RUN_SEED = args.seed if args.seed is not None else hashlib.sha1(
+        os.urandom(16)).hexdigest()[:12]
+    print(f"seed: {RUN_SEED}" + ("" if args.seed is not None else "  (--seed で再現可能)"))
 
     TOPICS = TOPICS[: max(1, args.topics)]
 
@@ -2034,6 +2099,10 @@ def main() -> None:
     results = {
         "mode": "live" if args.live else "fixture",
         "ledger": ledger_fingerprint,
+        # Only meaningful for the writer_sense arms, but recorded unconditionally: a
+        # result file that omits the seed cannot be replicated, and which arms were seeded
+        # is answerable from the arm list while the seed is not answerable from anything.
+        "seed": RUN_SEED,
         "judge_model": args.judge_model,
         "gen_model": args.gen_model if args.live else None,
         "arms": arms,
