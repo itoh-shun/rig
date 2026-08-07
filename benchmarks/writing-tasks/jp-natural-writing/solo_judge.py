@@ -46,20 +46,32 @@ Three things follow, and they are the whole protocol:
 
 The reference distribution
 --------------------------
-Judged human articles (results/2026-07-26-judge-calibration.json, n=16, pre-2023 Qiita):
+Default: results/2026-08-07-human-reference.json — 12 personal blogs plus 12 Qiita tech
+articles, all pre-2023, each judged 5 times and reduced to its median, so the reference is
+built on the same protocol as the candidate.
 
-    3 4 4 4 4 5 6 6 6 7 8 8 8 8 8 88
-                                  ^^ one misread
+    blog   3 3 3 3 3 3 4 4 4 4 4 5          band [3, 4]
+    qiita  3 3 4 4 4 4 4 4 4 5 5 8          band [3, 5]
+    pooled                                  band [3, 5], n=24
 
-Fifteen of sixteen sit in 3-8. That band is far tighter than the "under 30" threshold used
-elsewhere, and it makes the acceptance criterion concrete without any opponent:
-**does the candidate's median fall inside the human range?**
+Two things fall out of measuring it this way.
 
-Known limits of that reference: n=16, one platform (Qiita), one genre (tech articles), one
-judge model, and single judgments per article rather than repeats — so the band describes
-between-article spread with within-article variance folded in. Use --calibrate to rebuild
-it on the corpus you actually care about; a diary should not be scored against a reference
-built from tutorials, and this script will say so rather than pretend otherwise.
+**The judge is not genre-bound.** Human personal blogs score 3-5 and human tech articles
+3-8. That was worth checking rather than assuming: had the diaries scored badly, the whole
+metric would have been measuring "is this a Qiita article" instead of authorship.
+
+**Repeats tighten the band a long way, and that changes verdicts.** The shipped
+calibration judged each article once and spread 3-88; the same kind of corpora re-measured
+with repeats give 3-5. A diary written this session has median 6.0 — INSIDE the old band,
+OUTSIDE the new one, and above 23 of the 24 human articles. The old width was the judge's
+own variance being read as human variety.
+
+So `human_at_or_above` is reported alongside the verdict. At n=24 a percentile band moves
+a whole step when one article does, and "above 23 of 24 human articles" survives that
+where "outside the band" does not.
+
+Remaining limits: n=24, two genres, one judge model, and no spoken-language reference yet.
+Use --calibrate to rebuild on the corpus you actually care about.
 
 Switching metrics is not free: nothing measured here is comparable to the paired
 discrimination numbers, and re-baselining the arms is the price of the change.
@@ -86,7 +98,7 @@ from hidden_check import (  # noqa: E402
     DEFAULT_JUDGE_MODEL, MAX_PARALLEL, judge_once,
 )
 
-DEFAULT_REFERENCE = HERE / "results" / "2026-07-26-judge-calibration.json"
+DEFAULT_REFERENCE = HERE / "results" / "2026-08-07-human-reference.json"
 DEFAULT_REPEATS = 7
 
 # Mode boundaries, read off the recorded variance study rather than chosen: judgments
@@ -140,6 +152,14 @@ def assess(scores: list[float], reference: dict) -> dict:
     median = statistics.median(scores)
     inside = reference["p10"] <= median <= reference["p90"]
 
+    # How many reference articles scored at least as AI-like as this one. At n=24 a
+    # percentile band is a blunt instrument — p90 moves a whole step when one article
+    # does — and a rank says what the band cannot: the session's diary sits at median
+    # 6.0, above 23 of 24 human articles, which is a far more useful sentence than
+    # "outside the band" and stays meaningful as n grows.
+    at_or_above = sum(1 for s in reference["scores"] if s >= median)
+    rank_share = at_or_above / reference["n"] if reference["n"] else 0.0
+
     if bimodal:
         verdict = "UNSTABLE"
     elif inside:
@@ -158,6 +178,8 @@ def assess(scores: list[float], reference: dict) -> dict:
         "low_mode": len(low),
         "high_mode": len(high),
         "bimodal": bimodal,
+        "human_at_or_above": at_or_above,
+        "human_rank_share": round(rank_share, 3),
         "human_band": [reference["p10"], reference["p90"]],
         "human_median": reference["median"],
         "reference_n": reference["n"],
@@ -226,6 +248,14 @@ def main() -> None:
           f"band [{reference['p10']}, {reference['p90']}]  ({reference['source']})")
     if reference["corpus_note"]:
         print(f"  {reference['corpus_note']}")
+    else:
+        # The shipped calibration judged each article ONCE, so its spread carries the
+        # judge's within-article variance as if it were between-article spread. That
+        # made the band [3, 8] where the same corpora re-measured with repeats give
+        # [3, 5] — wide enough to pass a text that 23 of 24 human articles beat.
+        print("  ⚠ この参照は1記事1回判定で作られている可能性がある（反復の記録なし）。"
+              "候補側は中央値なので、帯が判定役のばらつきぶん広く出る。"
+              "--calibrate で作り直した参照を使うこと。")
     print()
 
     results = {}
@@ -241,6 +271,8 @@ def main() -> None:
               f"範囲 {r['min']:.0f}-{r['max']:.0f}")
         print(f"  判定 {r['scores']}")
         print(f"  → {r['verdict']}  ({mark})")
+        print(f"     人間 {reference['n']} 本のうち {r['human_at_or_above']} 本が"
+              f"この中央値以上（{r['human_rank_share'] * 100:.0f}%）")
         if r["bimodal"]:
             print(f"     低モード {r['low_mode']}回 / 高モード {r['high_mode']}回 — "
                   f"平均は2つの答えの中間で、そこに判定は1つも無い")

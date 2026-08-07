@@ -131,3 +131,35 @@ def test_mode_boundaries_leave_a_real_gap():
 def test_default_repeats_can_show_a_second_mode():
     """Three judgments cannot distinguish a rare second mode from noise."""
     assert solo.DEFAULT_REPEATS >= 5
+
+
+# ---- rank against the reference ----------------------------------------------
+
+def test_rank_counts_human_articles_at_or_above_the_candidate(reference):
+    """At n=24 the band moves a whole step when one article does, so the rank is the
+    statistic that survives. The session's diary at 6.0 was beaten by 23 of 24."""
+    r = solo.assess([6, 6, 6, 6, 6, 6, 6], reference)
+    assert r["human_at_or_above"] == sum(1 for s in HUMAN if s >= 6)
+    assert r["human_rank_share"] == pytest.approx(10 / 16)
+
+
+def test_rank_is_zero_when_no_human_article_scored_that_badly(reference):
+    r = solo.assess([95, 95, 95, 95, 95, 95, 95], reference)
+    assert r["human_at_or_above"] == 0
+    # the fixture's lone misread at 88 is still counted when the candidate reaches it
+    assert solo.assess([88] * 7, reference)["human_at_or_above"] == 1
+
+
+def test_rank_is_high_for_a_text_at_the_human_median(reference):
+    r = solo.assess([4, 4, 4, 4, 4, 4, 4], reference)
+    assert r["human_rank_share"] > 0.5
+    assert r["verdict"] == "INSIDE_HUMAN"
+
+
+def test_shipped_reference_ships_with_repeats_recorded():
+    """The default reference must be built on the same protocol as the candidate.
+    Comparing a median-of-7 against single judgments is what produced the [3, 88] band."""
+    ref = solo.load_reference(solo.DEFAULT_REFERENCE)
+    assert ref["corpus_note"], "reference must record how it was built"
+    assert ref["p90"] <= 8
+    assert ref["n"] >= 20
