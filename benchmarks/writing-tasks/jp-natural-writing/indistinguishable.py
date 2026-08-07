@@ -65,10 +65,24 @@ import random
 import statistics
 from pathlib import Path
 
-# The measured human endpoint: level-1.00 of the positive control, where the candidate is
-# entirely human prose. Kept as a named constant so a run that has no positive control of
-# its own can still be scored against a real measurement rather than against 0.5.
-MEASURED_HUMAN_FLOOR = 43 / 62  # 0.694
+# A measured human endpoint: level-1.00 of the 2026-07-31 positive control, where the
+# candidate is entirely human prose. Kept so a run with no positive control of its own can
+# be scored against a real measurement rather than against 0.5.
+#
+# It is NOT a constant of the instrument. Rebuilding the same level-1.00 endpoint on a
+# different opponent pool (2026-08-07, donors fetched pre-2022 against opponents fetched
+# pre-2023) measured 30.2% — human-versus-human landing 20 points BELOW chance where it had
+# been 19 points above. Inspection showed why: the donor articles were systematically
+# longer and denser than the opponents (median 3425 vs 2949 chars, and the opponent pool
+# reached down to 937), so that comparison measures the asymmetry between two human
+# sub-populations rather than any ceiling on human-likeness.
+#
+# Practical consequence: prefer --floor-arm, which measures the endpoint on the pool
+# actually in use, and treat --floor-rate as a fallback whose value has to be justified.
+# Report the verdict against more than one candidate floor when it is close; the
+# 2026-08-07 arms came out DIFFERENT at 0.302, 0.500 and 0.694 alike, which is what makes
+# that conclusion safe to state.
+MEASURED_HUMAN_FLOOR = 43 / 62  # 0.694 — one pool's measurement, not the instrument's
 
 # Bootstrap replicates. Fixed, and the seed is an argument, because a gate whose verdict
 # moves between invocations is not a gate.
@@ -262,8 +276,14 @@ def main() -> None:
                 print(f"        同等を示すには topic クラスタが約 "
                       f"{result['required_clusters']} 必要（現在 {result['clusters']}）。")
         print()
-        print(f"  参考: 全文が人間の実測は {MEASURED_HUMAN_FLOOR * 100:.1f}% "
-              f"({MEASURED_HUMAN_FLOOR * 62:.0f}/62)。この装置で 50% は人間でも出ない。")
+        if result["paired"]:
+            print("  注: 床はこの run の対戦相手で実測した値。人間同士の比較は 50% に載らず、"
+                  "プールによって 30.2%〜69.4% まで動く（両方とも実測）。")
+            print("     結論が床の取り方に依存しないかは --floor-rate を変えて確認すること。")
+        else:
+            print(f"  注: 定数の床 {floor_rate * 100:.1f}% を使用。これは装置の定数ではない — "
+                  f"別プールでの実測は 30.2% と {MEASURED_HUMAN_FLOOR * 100:.1f}% に割れている。")
+            print("     可能なら --floor-arm で当該プールの床を測ること。")
 
     # Exit code is the gate: 0 only for a demonstrated equivalence. UNDERPOWERED is not a
     # pass — that conflation is the whole reason this script exists.
