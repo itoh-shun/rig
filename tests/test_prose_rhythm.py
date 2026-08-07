@@ -30,8 +30,10 @@ def _metrics(text):
 
 # ---- long-run ----------------------------------------------------------------
 
-def test_three_consecutive_long_sentences_flagged():
-    assert "long-run" in _metrics(LONG * 3)
+def test_a_run_of_long_sentences_at_the_threshold_is_flagged():
+    # Five, not three: the threshold was calibrated against 27 known-human documents
+    # where a run of 3 fired on 44% of them (see prose_rhythm's module docstring).
+    assert "long-run" in _metrics(LONG * prose_rhythm.LONG_RUN_MIN)
 
 
 def test_long_sentences_broken_by_a_short_beat_not_flagged():
@@ -59,8 +61,16 @@ def test_too_few_sentences_never_flag_uniformity():
 # ---- ending-run ---------------------------------------------------------------
 
 def test_repeated_endings_flagged():
-    text = "実装を進めています。テストを書いています。結果を確認しています。"
+    text = "実装を進めています。" * prose_rhythm.ENDING_RUN_MIN
     assert "ending-run" in _metrics(text)
+
+
+def test_a_run_just_under_the_threshold_is_not_flagged():
+    """丁寧体 Japanese fixes sentence endings, so short です・ます runs are normal human
+    writing — independently measured here (56% of human docs at the old threshold of 3)
+    and by Nagai (Open Data Lab, 2026-07) against a separate corpus."""
+    text = "実装を進めています。" * (prose_rhythm.ENDING_RUN_MIN - 1)
+    assert "ending-run" not in _metrics(text)
 
 
 def test_alternating_endings_not_flagged():
@@ -124,7 +134,8 @@ def _run_cli(args, stdin=None):
 
 def test_cli_file_and_json(tmp_path):
     f = tmp_path / "draft.md"
-    f.write_text("本章では全体像を説明します。" + LONG * 3, encoding="utf-8")
+    f.write_text("本章では全体像を説明します。" + LONG * prose_rhythm.LONG_RUN_MIN,
+                 encoding="utf-8")
     r = _run_cli([str(f)])
     assert r.returncode == 0  # advisory: findings never change the exit code
     assert "prose-rhythm" in r.stdout and "progress" in r.stdout

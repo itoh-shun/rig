@@ -146,6 +146,77 @@ alongside the existing `origin: "project"` from `.rig/gates.json`. Tasks record
 `actor` (and `org`/`team` when bound) so separation of duties has an author to
 compare against.
 
+## [1.36.0] - 2026-08-07
+
+Two things that had the same shape: a prompt that fired when it had nothing to say, and
+a pack that had judgment with nothing to judge.
+
+- **The instinct-suggestion Stop hook now fires once per session instead of every
+  turn.** The reminder blocks the stop, so repeating it costs a full round-trip each
+  time — and the hook's own comment says most sessions have nothing worth recording,
+  which makes almost all of those round-trips a turn spent saying "nothing this time".
+  Observed in a live session: 16 firings, 6 of which produced an instinct; the other 10
+  were pure overhead crowding out the work. A marker keyed by `session_id` under
+  `$TMPDIR` enforces the limit; clients that send no `session_id` still get the
+  reminder every time, since losing it entirely is the worse failure. The id is folded
+  to `[A-Za-z0-9_-]` before use, so it cannot escape the marker directory — dots
+  included, because an id of `..` would resolve to a directory that always exists and
+  would silence the hook permanently.
+- **The sales domain pack now ships a knowledge layer, and its personas reference it.**
+  All seven reviewers carried their evaluation axes and nothing to apply them to:
+  `facets/knowledge/sales-domain/` held two blank templates, and not one persona in
+  `packs/` declared `inject:`. Eleven canonical wiki pages now sit at
+  `packs/domain/sales/facets/knowledge/` — prospecting, first impression, discovery,
+  closing, price negotiation, follow-up, referrals, scripts and practice, mindset and
+  pipeline hygiene, goal management, and team coaching — and six personas inject the
+  ones that match their axis. Nine of the eleven are wired that way; `sales-goal-management`
+  and `sales-management-coaching` are addressed to a team lead, and the pack's reviewers
+  all judge a single deal, so nothing injects them — they ship as reference pages a user
+  can `inject:` into their own persona, reachable from `sales-mindset-antipatterns`'s
+  `links:`. Adding a coach persona would have dragged a second output contract in with
+  it, since `deal-verdict` is bound to the five deal-review 観点.
+  The axes stay in the persona (that is the judgment half);
+  the material moves to the wiki. Each persona's existing 自社固有
+  `knowledge/sales-domain/` sentence is kept distinct from the new generic pages: two
+  different knowledge sources, deliberately not merged.
+- **`inject: [[slug]]` now resolves against installed packs, and SKILL.md says so.**
+  §5's tier table listed project overlay, global, org, and shipped — a pack had no way
+  to ship a page its own persona could reference, which is why `packs/` had zero
+  `inject:` up to now. The pack tier sits between org and shipped, and a pack's pages
+  live at `facets/knowledge/<slug>.md` so the slug stays bare and `[[slug]]` reads the
+  same everywhere. `facets/knowledge/_wiki.md` and `facets/instructions/validate.md` carry
+  the same row — the latter matters because ⑤ wiki 衛生 enumerates the tiers it searches,
+  and leaving packs out of that list would have reported every pack persona as 参照欠落.
+
+## [1.35.0] - 2026-08-07
+
+Removes the top-level `bin/` directory. It cost this plugin two entire surfaces to
+buy one shell convenience that three other entry points already provide.
+
+- **`bin/orchestrate` is gone, and with it the `bin/` directory.** 1.28.2 found that a
+  top-level directory *named* `bin/` makes Cowork's marketplace sync fail outright —
+  independent of the file inside it, its contents, or its executable bit; renaming a
+  byte-identical copy fixed it immediately. That entry chose to keep `bin/`, on the
+  grounds that it backed a documented Claude Code feature (plugin `bin/` added to
+  `PATH`) and the fault looked like a client bug worth reporting rather than
+  designing around. The same symptom has since shown up in Claude Desktop, which
+  changes the arithmetic: one convenience is not worth two surfaces where the plugin
+  cannot be installed at all.
+  What is actually lost is `orchestrate` appearing on `PATH` by itself after a plugin
+  install. Everything that used it keeps working — `python3 scripts/orchestrate.py`
+  is the path SKILL.md already calls, `rig-wb` covers the pip install, and
+  `.claude-plugin/bin/rig` (via `orchestrate install-shim` → `~/.local/bin/rig`) is
+  the same wrapper by a different route. SKILL.md's fallback for "the `orchestrate`
+  command is not found" has been in place since the shim was introduced, so the
+  degraded path was already exercised.
+- **`test_no_top_level_bin_directory` keeps it from coming back.** Nothing else in the
+  repo would notice a re-added `bin/`: the plugin still builds, installs on the CLI,
+  and passes every other check — it just quietly stops being listed. Proven
+  non-vacuous by creating the directory and watching the check fail, then removing it
+  and watching it pass.
+- Docs in both languages now describe the removal and point at `install-shim` instead
+  of promising `orchestrate` on `PATH`.
+
 ## [1.34.0] - 2026-08-07
 
 Fixes a gate that was blaming pull requests for work they had not done, and

@@ -534,7 +534,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 
 > アップグレードについて: 本リポジトリ自身の marketplace 名は以前 `sito-plugins`（さらにその前は `itoshun-local-plugins`）だった。CLI上で `known_marketplaces.json` が名前をキーにしているため、2つのリポジトリが同じ名前を名乗ると登録が競合する——それを避けるため専用の `sito-plugins` リポジトリに名前を移した。既存インストールはどの旧名でも引き続き動作する。新規インストールは下記いずれかのパスを使うこと。
 >
-> 別件として、本プラグインは現在Coworkのプラグイン一覧に**どのmarketplace経由でも表示されない**問題がある。原因はトップレベルの `bin/` ディレクトリ（詳細はCHANGELOGの1.28.2）で、上記のmarketplace名変更とは無関係。CLIには影響しない。`bin/`は`orchestrate`をPATHに通す正規機能なので削除はせず、Cowork側のバグとして報告する予定。
+> 別件として、本プラグインはCoworkのプラグイン一覧に**どのmarketplace経由でも表示されない**問題があった。原因はトップレベルの `bin/` ディレクトリ（詳細はCHANGELOGの1.28.2）で、上記のmarketplace名変更とは無関係。同じ症状がClaude Desktopでも出たため、1.35.0で `bin/` を削除した。`orchestrate` は自動でPATHに載らなくなるので、`python3 scripts/orchestrate.py install-shim` を一度実行して `~/.local/bin/rig` を張る。
 
 ```bash
 # A) 共有 sito-plugins marketplace 経由（推奨・claude-context-checker も同居）
