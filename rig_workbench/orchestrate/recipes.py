@@ -213,6 +213,8 @@ def load_steps(fm: dict) -> list[dict]:
             "output_contract": s.get("output_contract"),
             "condition": s.get("condition"),                 # optional: conditional step (size/flag)
             "auto_route": s.get("auto_route"),               # optional: --auto-route candidates (#264)
+            "actor": s.get("actor"),                         # optional: org ROLE owning this stage (v2.1)
+            "human_gate": s.get("human_gate"),               # optional: halt for a person's sign-off (v2.1)
         })
     return out
 

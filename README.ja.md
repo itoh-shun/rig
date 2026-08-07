@@ -1,6 +1,6 @@
 # rig
 
-**Claude Code のための、品質保証つき AI ワークベンチ。** タスクに応じて必要なハーネスを自動構成し、隔離された worktree で変更を行い、acceptance-gate で検証し、最後にユーザーが差分を accept / discard できる。
+**Claude Code のための AI Quality Operating System。** タスクに応じて必要なハーネスを自動構成し、隔離された worktree で変更を行い、acceptance-gate で検証し、最後にユーザーが差分を accept / discard できる。さらにチーム利用では、**共通ポリシー**を複数リポジトリへ効かせ、権限管理・承認フロー・期限つき例外・改竄検知つき監査台帳でそれを担保する（§17）。
 
 > 🇬🇧 English version: [README.md](./README.md)
 
@@ -246,6 +246,8 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 | queue（並列 dispatch） | Beta | 隔離により構造的には安全。UX は発展中（§5） |
 | knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§13） |
 | planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§13） |
+| 組織ガバナンス（`rig-wb govern`・`/rig:govern`） | Beta | 共通ポリシー（org→team→project・締める方向のみ）・権限管理・承認フロー・waiver・改竄検知つき台帳・適合性ロールアップ。リポジトリを束ねるまで完全に不活性（§17） |
+| ステージ・ガバナンス（`actor` / `human_gate`） | Beta | recipe の step を人間の承認で止められる。org は `stage:<id>` で強制でき、駐機した run は永続して再開する（§17） |
 
 この表に "Planned" 行はない——未出荷の機能をここに書く方針は取らない。提案は GitHub issue として存在する。表に載っていないコマンドはまだ出荷されていない。
 
@@ -726,6 +728,85 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 **複数タスクを同時に走らせたら？** それぞれ専用の worktree と branch（`rig/<task-id>`）を持つので衝突しない。`accept` はメイン作業ツリーに対して行うため、1つ accept してコミットしてから次を accept する（作業ツリーがクリーンでないと accept 自体が拒否されるので、この順序は安全側に強制される）。
 
 **ターミナルをいくつも開かずに、1セッションで複数タスクを並行開発できる？** できる——§5「isolated worktree → 複数タスクを並行で進める」を参照。`/rig:queue add` で積んで `/rig:queue go --provider rig --max-parallel N` で並列実行（各タスクは自動的に隔離される）、そのうえで `/rig:go board`（§10）を見れば、N個のターミナルの状態を頭の中で追う代わりに一箇所で全体を確認できる。
+
+**チームが複数ある。同じ品質基準をどう共有する？** §17。
+
+## 17. 組織ガバナンス（v2）
+
+ここまでの全ては1人1リポジトリ向けに作られていて、その形では完成している。壊れるのは、同じものをチーム A・B・C に配った瞬間だけ。その4つが、運用の慣習ではなく**一級概念**になった。
+
+```
+チーム A ─┐
+チーム B ─┼─→ 共通ポリシー ─→ 権限管理 → 承認フロー → 例外 → 監査
+チーム C ─┘        （下位層は締めることしかできない）
+```
+
+| 壊れること | 概念 | それを本物にしている性質 |
+|---|---|---|
+| `.rig/gates.json` はリポジトリ単位なので、A が足した基準は B に届かない | **policy**（`.rig/policy/*.json`） | **単調強化**——team/project 層は基準の追加・quorum の引き上げ・期限の短縮・role の絞り込みだけができ、削除・引き下げ・延長・権限追加はできない |
+| `.rig/access.json` は権限1個の名簿でしかない | **permission** | 固定11種の権限語彙を role 単位で配る。拒否は必ず「**誰が持っているか**」まで出す |
+| 「誰かがレビューした」は事後に検証できない | **approval** | quorum＋資格ロール＋**職務分離**（著者本人の承認は数えない）＋**鮮度**（承認したコミットに束縛。force push で失効） |
+| `--force` の記録だけでは、承認された判断と疲れた夜の区別がつかない | **waiver** | 名前・理由・**期限**つきの例外。`non_waivable` の基準はどんな例外でも覆せない |
+| 追記型 JSONL はエディタで書き換えられる | **ledger**（`.rig/ledger.jsonl`） | ハッシュ連鎖＋HMAC 署名。編集・削除・並べ替え・偽造追記のすべてを検出 |
+| 「共通ポリシーでやっています」が主張のまま | **conformance** | リポジトリごとに9検査、チーム単位でロールアップ。中でも **force 率**が、ゲートが満たされているのか回避されているのかを分ける |
+
+```bash
+rig-wb govern init --org acme --team team-a   # リポジトリを束ね、雛形ポリシーを作る
+rig-wb govern policy show                     # 何層が届いているか
+rig-wb govern policy lint                     # 上位を緩めている層があれば exit 3
+rig-wb govern whoami                          # 自分のロールと権限
+rig-wb govern approve grant <task-id>         # 承認（自分の task への自分の承認は数えない）
+rig-wb govern waiver grant w-ci --criterion tests_pass_or_explained \
+    --reason "CI ランナー障害・OPS-12" --expires 2026-08-20
+rig-wb govern audit verify                    # 台帳が触られていれば exit 3
+rig-wb govern conformance                     # このリポジトリの適合性（FAIL があれば exit 3）
+rig-wb govern rollup --scan ~/work/acme       # チーム A/B/C の表
+```
+
+ポリシーは**コピーを配らず、1つを共有する**。共有チェックアウトを `$RIG_POLICY_HOME` に置き、各リポジトリの `.rig/org.json` には同じ相対パスを書く。コピーは必ずドリフトするが、参照はドリフトしない。
+
+強制点は**増えない**。作業ツリーへの唯一の入口は元から `accept` だったので、squash merge の前に問いが4つ増えるだけ——accept 権限があるか、承認 quorum は満たされたか、force 権限はあるか、回避する各基準は生きた waiver に覆われているか。拒否されたとき作業ツリーは無傷のまま。承認は acceptance-gate の**上乗せであって代替ではない**（人間の承認で機械の検証を置き換えたら §5 の意味が消える）。
+
+**個人開発は何も変わらない。** `.rig/org.json` が無ければこの層は完全に不活性——出力も検査もファイル生成も無い。`.rig/access.json` と `.rig/gates.json` はそのまま動き、ポリシーと**併存**する（置き換えではない）。準備ができたら `rig-wb govern migrate` がポリシー層へ畳む（原本は残る）。意図的に違うのは1点だけ：壊れた `.rig/access.json` は「無制限」に落ちる（1人なら安全側）が、**パースできないポリシー層は accept を止める**。カンマ1個で組織の規則が静かに消えるのが、この層で唯一許されない失敗だから。
+
+`/rig:govern` は対話側の入口。上記コマンドの出力を読んで、散文で適合を宣言する代わりに**乖離を重い順に並べた適合性レポート**を返す。
+
+### accept だけでなく、任意のステージを統治する（v2.1）
+
+recipe スキーマは元から workflow DSL だった——`steps[]` はステージ別の `gate` と `acceptance`、リトライ上限、`needs`（DAG 並列）、`condition`、`checks`（決定論 shell センサー）を持ち、`orchestrate` がそれを状態機械として回す。できなかったのは run を**駐機**させること＝人が署名するまで名前つきのステージで止まることだけ。step の2フィールドがそれを足す。
+
+```yaml
+steps:
+  - id: architecture_review
+    instruction: design-vet
+    actor: architect            # このステージを所有する組織ロール
+    human_gate: true            # 資格ある人が署名するまでここで止まる
+    gate: acceptance-gate
+    acceptance: ["ADR が更新されている", "公開APIの破壊的変更が無い"]
+```
+
+```console
+$ rig-wb orchestrate next
+▶ AWAIT_APPROVAL: step `architecture_review` passed its gate and awaits human
+  sign-off (0/1, from architect). Approve with `orchestrate approve architecture_review`.
+$ echo $?
+3                                    # 人待ち＝失敗でも成功でもない
+
+$ RIG_ACTOR=olivia rig-wb orchestrate approve architecture_review --note "境界は妥当"
+▶ DONE: step `architecture_review` passed. All steps complete.
+```
+
+駐機状態は run-state に永続するので、run はプロセスもセッションもその日も跨いで生き残る。承認の算術は accept と同一実装——quorum・資格ロール・**職務分離**（そのステージを実行した本人は署名できない）・**鮮度**（承認したコミットに束縛）——で、決定は ledger に `stage.approve` / `stage.deny` として残る。
+
+組織側の半分はこちら。recipe が要求していないステージにも、ポリシーが承認を課せる：
+
+```json
+{ "approvals": { "stage:architecture_review": { "quorum": 1, "roles": ["architect"] } } }
+```
+
+recipe と policy は**厳しい方**に合成される（quorum は高い方・ロールは和集合・期限は短い方）ので、recipe が org を値切ることはできない。
+
+意図的に**実装しなかった**ことが1つある：`actor` は実行をブロックしない。rig が保証できるのは「アーキテクトが署名した」ことであって「アーキテクトが打鍵した」ことではないし、実行を拒めば安全性は上がらないまま CI のパイプラインだけが壊れる。所有ロール外の実行は WARN と履歴に残し、強制はゲート側に置いた。
 
 ## ドキュメント
 

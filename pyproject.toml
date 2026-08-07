@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rig-workbench"
-version = "1.36.0"
-description = "rig — a quality-gated AI workbench that runs anywhere. Install as a pip package; drop into Claude Code / Codex / Cursor as a skill; recipe-driven workflow with force-proof accept, cross-LLM verifier, and isolated worktrees."
+version = "2.1.0"
+description = "rig — an AI Quality Operating System that runs anywhere. Install as a pip package; drop into Claude Code / Codex / Cursor as a skill; recipe-driven workflow with force-proof accept, cross-LLM verifier, and isolated worktrees — now with an org layer: a common policy that only tightens downstream, role-based permissions, approvals with separation of duties, expiring waivers, and a tamper-evident audit ledger."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -15,6 +15,7 @@ authors = [
 keywords = [
   "ai", "coding-agent", "orchestration", "harness",
   "claude-code", "codex", "workbench", "cross-llm",
+  "governance", "policy", "rbac", "audit", "compliance",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",

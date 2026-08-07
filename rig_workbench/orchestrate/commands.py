@@ -14,7 +14,7 @@ from . import config
 from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_manifest,
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
-from .runstate import compute_next, load_state, new_state, save_state
+from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
 from .providers import parse_step_model_spec, run_loop, unknown_step_model_ids
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe
@@ -31,6 +31,16 @@ def render_plan(recipe: str, steps: list[dict], execution: dict | None = None) -
                   if s["checks"] else
                   ("independent verdict required" if s["gate"] in ("acceptance-gate", "review-gate") else "—"))
         lines.append(f"  [{i}] {s['id']}  gate={gate}  K={s['max_retries']}  verify={sensor}")
+        owned = s.get("actor")
+        human = s.get("human_gate")
+        if owned or human:
+            detail = []
+            if owned:
+                detail.append(f"actor={owned}")
+            if human:
+                quorum = human.get("quorum", 1) if isinstance(human, dict) else 1
+                detail.append(f"human gate (quorum {quorum})")
+            lines.append("        " + "  ".join(detail))
     lines.append("")
     lines.append("Stop condition: each step escalates after K gate failures (no infinite loops).")
     if execution is not None:
@@ -213,9 +223,12 @@ def cmd_resume(args):
         rejects = [v for v in st["verdicts"] if not v.get("ok")]
         tail = (f"  ⚠ {len(rejects)} REJECT (by {', '.join(str(v.get('by')) for v in rejects)})"
                 if rejects else "")
-        print(f"  {s['id']:<14} {st['status']:<9} "
+        print(f"  {s['id']:<14} {st['status']:<18} "
               f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
               f"verdicts={len(st['verdicts'])}{tail}")
+        if st["status"] == "awaiting_approval":
+            for line in _stage_gate_lines(s, st):
+                print(f"      {line}")
     if state["stopped"]:
         print(f"  ⚠ ESCALATED: {state['stopped']['reason']} (at {state['stopped'].get('at')})")
 
@@ -258,6 +271,10 @@ def cmd_resume(args):
     print(f"▶ {action}: {msg}")
     if action == "ESCALATE":
         sys.exit(1)
+    if action == "BLOCKED":
+        sys.exit(2)
+    if action == "AWAIT_APPROVAL":
+        sys.exit(3)
 
 
 def cmd_verdict(args):
@@ -303,6 +320,13 @@ def cmd_next(args):
     print(f"▶ {action}: {msg}")
     if action == "ESCALATE":
         sys.exit(1)
+    if action == "BLOCKED":
+        # `_refuse_blocked_state` already exits 2 the *next* time this state is
+        # loaded; exiting 0 on the transition that caused it reported a blocked run
+        # as a successful one for exactly one invocation.
+        sys.exit(2)
+    if action == "AWAIT_APPROVAL":
+        sys.exit(3)     # parked on a person, not failed
 
 
 def cmd_status(args):
@@ -312,9 +336,127 @@ def cmd_status(args):
           f"done={state['done']}  stopped={bool(state['stopped'])}")
     for s in state["steps"]:
         st = state["step_state"][s["id"]]
-        print(f"  {s['id']:<14} {st['status']:<9} retries={st['retries']} "
+        print(f"  {s['id']:<14} {st['status']:<18} retries={st['retries']} "
               f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
-              f"verdicts={len(st['verdicts'])}")
+              f"verdicts={len(st['verdicts'])}"
+              + (f" approvals={len(st.get('approvals') or [])}" if st.get("approvals") else ""))
+        for line in _stage_gate_lines(s, st):
+            print(f"      {line}")
+
+
+def _stage_gate_lines(step: dict, st: dict) -> list[str]:
+    """Human-gate detail for `status` / `approve`. Silent for ungoverned steps, and
+    never raises — a status view that dies on a broken policy is useless exactly when
+    it is needed (the run's own transitions still refuse to guess; see compute_next)."""
+    try:
+        status = stage_gate_status(step, st)
+    except Exception as e:
+        return [f"human gate: cannot be evaluated ({e})"]
+    if status is None:
+        return []
+    lines = list(status.lines())
+    if step.get("actor"):
+        lines.insert(0, f"actor: {step['actor']}"
+                        + (f"  (ran as {st['ran_as']})" if st.get("ran_as") else ""))
+    return lines
+
+
+def cmd_approve(args):
+    """Cast a human-gate decision on a step of a run (v2.1).
+
+    `orchestrate approve <step-id> [state.json] [--deny] [--note "..."] [--actor NAME]`
+
+    The decision arithmetic is govern.approval's, unchanged: quorum, qualifying
+    roles, separation of duties, freshness. This command only decides *where* the
+    record is stored (the run-state, beside that step's checks and verdicts) and
+    mirrors it into the tamper-evident ledger.
+    """
+    if not args:
+        print("[ERROR] usage: approve <step-id> [state.json] [--deny] [--note \"...\"] [--actor NAME]")
+        sys.exit(1)
+    sid = args[0]
+    rest = args[1:]
+    decision, note, actor_override = "approve", "", None
+    positional = []
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--deny":
+            decision = "deny"
+            i += 1
+        elif a == "--note" and i + 1 < len(rest):
+            note = rest[i + 1]
+            i += 2
+        elif a == "--actor" and i + 1 < len(rest):
+            actor_override = rest[i + 1]
+            i += 2
+        elif not a.startswith("-"):
+            positional.append(a)
+            i += 1
+        else:
+            i += 1
+    sp = _state_path(positional)
+    state = load_state(sp)
+    step = next((s for s in state["steps"] if s["id"] == sid), None)
+    if step is None:
+        print(f"[ERROR] no step `{sid}` in this run (steps: "
+              f"{', '.join(s['id'] for s in state['steps'])})")
+        sys.exit(1)
+    st = state["step_state"][sid]
+
+    from ..govern import ledger
+    from ..govern.approval import make_decision, upsert
+    from ..govern.identity import current_actor, load_org_binding
+    from ..govern.policy import PolicyError, effective_policy
+    from ..govern.rbac import can, roles_of
+    from ..govern.stage import stage_rule
+    from .runstate import govern_root
+
+    root = govern_root()
+    try:
+        eff = effective_policy(root)
+    except PolicyError as e:
+        print(f"[ERROR] policy layer does not load: {e}")
+        sys.exit(1)
+    if stage_rule(eff, step) is None:
+        print(f"[ERROR] step `{sid}` declares no human gate, and no policy `stage:{sid}` rule "
+              "applies — there is nothing to approve here")
+        sys.exit(1)
+    actor = actor_override or current_actor(root)
+    if eff.active:
+        allowed = can(eff, actor, "approve")
+        if not allowed.allowed:
+            print(f"[ERROR] not permitted to approve: {allowed.reason}")
+            sys.exit(1)
+    if st.get("ran_as") and st["ran_as"] == actor:
+        print(f"[WARN] {actor} ran this step; separation of duties means this decision "
+              "will not count toward the quorum")
+
+    entry = make_decision(actor=actor, decision=decision, roles=roles_of(eff, actor),
+                          head=_git_head(), note=note)
+    st["approvals"] = upsert(st.get("approvals") or [], entry)
+    binding = load_org_binding(root)
+    ledger.append(root, f"stage.{decision}", actor=actor, subject=f"{state['recipe']}:{sid}",
+                  org=binding.org, team=binding.team,
+                  data={"recipe": state["recipe"], "step": sid, "note": note,
+                        "state": str(sp)})
+
+    action, msg = compute_next(state)
+    save_state(state, sp)
+    print(f"## approve: {state['recipe']}:{sid} — {decision} by {actor}")
+    for line in _stage_gate_lines(step, st):
+        print(f"  {line}")
+    print(f"\n▶ {action}: {msg}")
+    if action in ("ESCALATE", "BLOCKED"):
+        sys.exit(1)
+    sys.exit(3 if action == "AWAIT_APPROVAL" else 0)   # 3 = still parked (quorum unmet / denied)
+
+
+def _git_head() -> str | None:
+    """The current commit, so an approval is bound to what it approved."""
+    proc = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                          cwd=str(config.INVOCATION_CWD))
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
 
 def cmd_run(args):
     if not args:
@@ -493,6 +635,12 @@ def cmd_run(args):
                  "kept": f"worktree and branch preserved (please inspect): {iso['dir']}"}[outcome]
         print(f"◈ Isolated run outcome: {label}")
     print(f"\n=== Finished: {final} ===  run-state: {out}")
+    if final == "AWAIT_APPROVAL":
+        # Parked on a person, not failed. A distinct code so CI can tell "waiting for
+        # sign-off" from "the run broke" — reporting either as the other is wrong.
+        print("The run is parked at a human gate. Approve with "
+              f"`rig-wb orchestrate approve <step-id> {out}`, then `resume`.")
+        sys.exit(3)
     sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
 
 

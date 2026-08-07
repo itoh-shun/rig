@@ -96,7 +96,11 @@ def new_state(
         "goal": goal,
         "steps": steps,
         "cursor": 0,
-        "step_state": {s["id"]: {"status": "pending", "retries": 0, "checks": [], "verdicts": []}
+        # `approvals` holds the human-gate decisions for a step (v2.1), symmetric with
+        # `verdicts` (a model's judgment) and `checks` (a machine's). Empty for every
+        # step that declares no human gate, which is all of them by default.
+        "step_state": {s["id"]: {"status": "pending", "retries": 0, "checks": [],
+                                 "verdicts": [], "approvals": []}
                        for s in steps},
         "adaptive": {
             "assessment": None,
@@ -316,6 +320,68 @@ def gate_outcome(step: dict, st: dict) -> str:
     return "pass"
 
 
+def govern_root() -> pathlib.Path:
+    """Where `.rig/` lives for governance lookups — the nearest ancestor holding one,
+    falling back to the invocation cwd. Same walk-up rule the rig-wb CLI uses, so a
+    run started from a subdirectory still sees its org policy."""
+    cwd = config.INVOCATION_CWD
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / ".rig").is_dir():
+            return candidate
+    return cwd
+
+
+def stage_gate_status(step: dict, st: dict):
+    """This step's human-gate status, or None when it has no human gate (v2.1).
+
+    Resolved live against the effective policy rather than baked into the
+    run-state: an org that tightens `stage:<id>` while a run is parked has
+    tightened it for that run too, which is the whole point of the policy layer.
+
+    A policy that fails to load is *not* treated as "no gate" — that would let a
+    broken document silently open a stage. It raises, and the caller surfaces it.
+    """
+    try:
+        from ..govern.policy import effective_policy
+        from ..govern.stage import evaluate_stage
+    except ImportError:                                    # pragma: no cover - packaging guard
+        return None
+    eff = effective_policy(govern_root())
+    return evaluate_stage(eff, step, st.get("approvals") or [],
+                          author=st.get("ran_as") or "")
+
+
+def _record_actor(step: dict, st: dict) -> tuple[str | None, str | None]:
+    """Stamp the running identity onto the step. Returns (blocking reason, advisory note).
+
+    `ran_as` is what separation of duties compares an approver against, so it has
+    to be recorded when the work happens, not when the approval arrives. A broken
+    policy blocks (the same fail-closed rule as accept); an execution that does not
+    hold the step's owning role only warns — see govern.stage.actor_mismatch.
+    """
+    try:
+        from ..govern.identity import current_actor, org_binding_path
+        from ..govern.policy import effective_policy
+        from ..govern.stage import actor_mismatch
+    except ImportError:                                    # pragma: no cover - packaging guard
+        return None, None
+    root = govern_root()
+    # Cheap exit for the overwhelmingly common case. Resolving an identity shells
+    # out to `git config`, and doing that at every step START of every run — in
+    # repositories with no policy and no step that declares an owner — would be a
+    # subprocess per step to record a value nothing reads.
+    if not (step.get("actor") or step.get("human_gate") or org_binding_path(root).is_file()):
+        return None, None
+    try:
+        actor = current_actor(root)
+        eff = effective_policy(root)
+        note = actor_mismatch(eff, step, actor)
+    except Exception as e:
+        return f"step `{step.get('id')}`: governance cannot be evaluated: {e}", None
+    st["ran_as"] = actor
+    return None, note
+
+
 def compute_next(state: dict) -> tuple[str, str]:
     """Deterministically compute and apply the next action from the state (mutates state).
     Returns: (action_code, message)
@@ -336,18 +402,31 @@ def compute_next(state: dict) -> tuple[str, str]:
 
     if st["status"] == "pending":
         st["status"] = "running"
-        state["history"].append({"action": "START", "step": sid})
+        # Who this attempt runs as. Recorded here, not at approval time, because it is
+        # what separation of duties compares an approver against (v2.1).
+        blocked, note = _record_actor(step, st)
+        if blocked:
+            state["stopped"] = {"reason": blocked, "kind": "BLOCKED", "at": sid}
+            return "BLOCKED", blocked
+        start_entry = {"action": "START", "step": sid}
+        if note:
+            start_entry["actor_note"] = note
+        state["history"].append(start_entry)
         gate = step["gate"] or "none"
         need = []
         if step["checks"]:
             need.append(f"check ({len(step['checks'])} machine checks)")
         if step["gate"] in ("acceptance-gate", "review-gate") and not step["checks"]:
             need.append("verdict (independent verifier judgment; grader != generator)")
+        if step.get("human_gate"):
+            need.append("human sign-off (`orchestrate approve`)")
         need_s = " → ".join(need) if need else "(no gate: just run next after the work)"
-        return "START", (f"Run step `{sid}` (instruction: {step['instruction']} / gate: {gate}). "
-                         f"Delegate the work, finish {need_s}, then `next`.")
+        owner = f" / actor: {step['actor']}" if step.get("actor") else ""
+        warning = f"\n  [WARN] {note}" if note else ""
+        return "START", (f"Run step `{sid}` (instruction: {step['instruction']} / gate: {gate}{owner}). "
+                         f"Delegate the work, finish {need_s}, then `next`.{warning}")
 
-    # status == "running"
+    # status == "running" or "awaiting_approval"
     outcome = gate_outcome(step, st)
     if outcome == "incomplete":
         return "AWAIT", f"step `{sid}` awaits gate evaluation. Run `check` / `verdict`, then `next`."
@@ -359,6 +438,29 @@ def compute_next(state: dict) -> tuple[str, str]:
                            "Use the manual engine for this recipe; custom prompt patterns "
                            "must not pass through as executable gates.")
     if outcome == "pass":
+        # The machine is satisfied; a human gate, if declared, still is not.
+        try:
+            approval = stage_gate_status(step, st)
+        except Exception as e:                    # policy/human_gate is unusable → refuse to guess
+            state["stopped"] = {"reason": f"step `{sid}`: human gate cannot be evaluated: {e}",
+                                "kind": "BLOCKED", "at": sid}
+            return "BLOCKED", state["stopped"]["reason"]
+        if approval is not None and not approval.satisfied:
+            if st["status"] != "awaiting_approval":
+                st["status"] = "awaiting_approval"
+                state["history"].append({"action": "AWAIT_APPROVAL", "step": sid})
+            if approval.denials:
+                who = ", ".join(d.get("actor", "?") for d in approval.denials)
+                note = next((d.get("note") for d in approval.denials if d.get("note")), "")
+                return "AWAIT_APPROVAL", (
+                    f"step `{sid}` was rejected by {who}"
+                    + (f": {note}" if note else "")
+                    + ". Address it, then ask for a fresh approval (`orchestrate approve`).")
+            return "AWAIT_APPROVAL", (
+                f"step `{sid}` passed its gate and awaits human sign-off "
+                f"({approval.counted}/{approval.required}"
+                + (f", from {', '.join(approval.rule['roles'])}" if approval.rule.get("roles") else "")
+                + "). Approve with `orchestrate approve " + sid + "`.")
         st["status"] = "passed"
         state["cursor"] += 1
         state["history"].append({"action": "PASS", "step": sid})

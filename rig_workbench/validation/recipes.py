@@ -144,6 +144,40 @@ def _check_auto_route(value: object, ctx: str) -> None:
 
 
 # ── per-recipe check ─────────────────────────────────────────────────────────
+_ROLE_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+
+
+def _check_stage_governance(step: dict, ctx: str) -> None:
+    """`actor` (an org role owning the stage) and `human_gate` (halt for a person).
+
+    Shape only — whether the named role exists is a property of whichever org
+    policy the recipe runs under, and a shipped recipe has none. Enforcing that
+    here would make a portable recipe unvalidatable; `orchestrate` checks it at
+    run time, against the policy actually in effect.
+    """
+    from rig_workbench.govern.stage import StageConfigError, parse_human_gate
+
+    actor = step.get("actor")
+    if actor is not None:
+        if not isinstance(actor, str) or not _ROLE_RE.match(actor):
+            _emit("FAIL", f"{ctx} — actor must be a role name (^[a-z][a-z0-9-]*$), got {actor!r}")
+    try:
+        rule = parse_human_gate(step.get("human_gate"), where=ctx)
+    except StageConfigError as e:
+        _emit("FAIL", str(e))
+        return
+    if rule is not None and not rule["roles"] and not actor:
+        _emit("WARN",
+              f"{ctx} — human_gate names no roles and the step declares no actor: "
+              "anyone holding `approve` can clear it. Name the role that should sign off")
+    if actor and rule is None:
+        # rig's own doctrine, applied to itself: declaring an owner is not the same as
+        # requiring one. Without a human_gate nothing ever asks that role for anything.
+        _emit("WARN",
+              f"{ctx} — actor `{actor}` is declared but the step has no human_gate, so the "
+              "ownership is documentation only (nothing asks that role to sign off)")
+
+
 def check_recipe(path: pathlib.Path) -> None:
     ctx = f"recipe {path.stem}"
     fm, raw = parse_frontmatter(path)
@@ -338,6 +372,9 @@ def check_recipe(path: pathlib.Path) -> None:
 
         # condition value validation (#109/#229/#230)
         _check_condition(step.get("condition"), step_ctx, "condition")
+
+        # actor / human_gate — the v2.1 stage-governance fields (§3.5)
+        _check_stage_governance(step, step_ctx)
 
         # max_retries type / value range (§3.5)
         max_retries = step.get("max_retries")

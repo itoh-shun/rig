@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 
+from ..govern import enforce as govern_enforce
 from .config import CHECK_ICON, RECOMMENDATION
 from .state import (_diff_lines, audit_append, build_acceptance,
                     current_identity, die, drift_lines, effective_base,
@@ -24,6 +25,15 @@ _SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 import ast_diff  # noqa: E402
+
+
+def _task_head(root: pathlib.Path, task: dict) -> str | None:
+    """The task branch tip. Approvals are bound to it, so a branch that moves after
+    an approval stops counting as approved (see govern.approval)."""
+    wt = task.get("worktree_path")
+    cwd = pathlib.Path(wt) if wt and pathlib.Path(wt).is_dir() else root
+    proc = git(["rev-parse", "HEAD"], cwd=cwd, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
 
 
 def _semantic_diff_section(root: pathlib.Path, task: dict, names: list) -> list:
@@ -122,6 +132,10 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         die(f"task '{task_id}' has already been discarded")
 
     # ── RBAC (only takes effect if .rig/access.json exists; #282. Solo use stays unrestricted) ──
+    # v1's allowlist. Still honoured verbatim: a team that tuned this file keeps
+    # working after upgrading to v2, and `govern migrate` folds it into a policy
+    # layer when they are ready. The policy layer below is checked in addition,
+    # never instead — two restrictions both apply, which is the safe composition.
     access = load_access_control(root)
     if access:
         allowed = access.get(task["task_type"]) or access.get("default") or []
@@ -183,14 +197,32 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
              f"a different range than the preview. Check out {task['base_branch']} before accepting")
 
     soft_fail = [name for name, ok in soft if not ok]
+
+    # The gate speaks first. Someone whose gate is simply unmet needs to hear that,
+    # not a governance message about an approval they do not yet need.
+    if soft_fail and not args.force:
+        failed_checks = [c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")]
+        die(
+            f"Cannot accept because the acceptance-gate is {status} (unmet: {', '.join(failed_checks) or 'no_unrelated_diff'}).\n"
+            f"  Satisfy the criteria and update via `workbench.py gate {task_id} --set <criterion>=passed`, or\n"
+            f"  pass --force if you understand the risk (it will be recorded)"
+        )
+
+    # ── governance (v2; inert unless .rig/org.json + a policy layer exist) ──
+    # Permission to accept, the approval quorum, and — when forcing — the right to
+    # force plus a live waiver for every criterion being bypassed. Evaluated before
+    # anything is written or merged, so a refusal leaves the tree and the run-state
+    # exactly as they were.
+    unmet_criteria = sorted({c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")}
+                            | ({"no_unrelated_diff"} if "no_unrelated_diff" in soft_fail else set()))
+    gov = govern_enforce.check_accept(root, task, bypassed=unmet_criteria,
+                                      force=bool(soft_fail), head=_task_head(root, task))
+    for line in gov.lines:
+        print(line)
+    if gov.blocked:
+        die(f"governance: {gov.blocked}")
+
     if soft_fail:
-        if not args.force:
-            failed_checks = [c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")]
-            die(
-                f"Cannot accept because the acceptance-gate is {status} (unmet: {', '.join(failed_checks) or 'no_unrelated_diff'}).\n"
-                f"  Satisfy the criteria and update via `workbench.py gate {task_id} --set <criterion>=passed`, or\n"
-                f"  pass --force if you understand the risk (it will be recorded)"
-            )
         warn(f"Accepting with unmet requirements overridden by --force ({', '.join(soft_fail)}). Recording forced: true in task.json")
         task["forced"] = True
         audit_append(root, {
@@ -254,6 +286,13 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     task["status"] = "accepted"
     task["accepted_at"] = now_iso()
     save_task(d, task)
+
+    # The governed record of the decision. Written for every accept under a
+    # policy, not only the forced ones: "who applied what, when, under which
+    # policy, with whose approval" is what an audit asks, and a ledger holding
+    # only the exceptions cannot answer it.
+    govern_enforce.record_accept(root, task, gov, forced=bool(task.get("forced")),
+                                 bypassed=unmet_criteria, gate_status=status)
 
     # ── signed provenance (#299) — a tamper-evident record of the accept decision and the
     # gate result it was based on. HMAC-SHA256 with a locally-held key: same-machine
