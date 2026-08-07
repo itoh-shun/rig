@@ -213,3 +213,29 @@ def test_mutmut_rejects_a_report_that_is_not_cicd_stats(tmp_path):
 
 def test_all_three_formats_are_selectable_from_the_cli():
     assert set(adapter.PARSERS) == {"elements", "mutmut", "junit"}
+
+
+def test_elements_ignores_the_extra_fields_a_real_stryker_report_carries(tmp_path):
+    """Shape captured from Stryker 9.6.1: mutants carry more than status, and top-level
+    keys (config, framework, testFiles, thresholds, projectRoot) sit beside `files`."""
+    path = tmp_path / "mutation.json"
+    path.write_text(json.dumps({
+        "schemaVersion": "1.0",
+        "config": {"testRunner": "command"},
+        "framework": {"name": "Stryker", "version": "9.6.1"},
+        "projectRoot": "/tmp/demo",
+        "testFiles": {},
+        "thresholds": {"high": 80, "low": 60, "break": None},
+        "files": {"src/pricing.js": {"language": "javascript", "source": "x", "mutants": [
+            {"id": "0", "location": {"start": {"line": 2, "column": 3}},
+             "mutatorName": "EqualityOperator", "replacement": "quantity < 0",
+             "status": "Killed", "killedBy": ["1"], "statusReason": "expected",
+             "testsCompleted": 1},
+            {"id": "1", "location": {"start": {"line": 12, "column": 10}},
+             "mutatorName": "ConditionalExpression", "replacement": "true",
+             "status": "Survived", "testsCompleted": 3},
+        ]}},
+    }), encoding="utf-8")
+    counts = adapter.parse_elements(path)
+    assert (counts["detected"], counts["undetected"], counts["invalid"]) == (1, 1, 0)
+    assert adapter.score_of(counts) == 0.5

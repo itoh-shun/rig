@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Verified the `elements` path against a real Stryker report (9.6.1, command runner,
+  26 mutants on a throwaway project). No fix was needed: the adapter's score matched
+  Stryker's own in all three states — 53.85% with a weak suite, 88.46% after adding
+  boundary and error cases, 80.77% once three boundary assertions were deleted, which
+  the baseline comparison reported as a warning while `npm test` stayed green. Adds a
+  regression test built from the real report's shape, since a live report carries
+  fields (`killedBy`, `mutatorName`, `statusReason`, `testsCompleted`, and top-level
+  `config` / `framework` / `testFiles` / `thresholds`) that the synthetic fixtures did
+  not. This closes the "no real Stryker report has been parsed" caveat from 1.31.1.
+
 ## [1.31.1] - 2026-08-07
 
 Fixes the mutmut integration 1.31.0 shipped, which was written against a command that
