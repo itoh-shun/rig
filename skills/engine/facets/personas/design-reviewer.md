@@ -1,6 +1,6 @@
 ---
 name: design-reviewer
-description: 変更を design 視点で read-only 評価する。抽象化レベル/命名遵守/後方互換/別案比較を見る。3-way 並列レビューの1枠。
+description: 変更を design 視点で read-only 評価する。抽象化レベル/命名遵守/後方互換/別案比較を見る。4-way 並列レビューの1枠。
 ---
 
 # persona: design-reviewer
