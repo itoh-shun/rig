@@ -1,19 +1,20 @@
 """validation drill: /rig:drill coverage check for gate-bearing recipes (#266).
 
-`/rig:drill` measures reviewer detection rates by injecting bug seeds from the
-seed catalog (facets/instructions/drill.md, the "種の class" table) into a
-synthetic diff and running review fan-out. A recipe's review/acceptance gate is
-therefore only *drill-coverable* when the gate is enforced by reviewer personas
-that have a corresponding seed class ("検出すべき観点" column) in that catalog.
+`/rig:drill` measures reviewer detection rates with two shipped corpus shapes:
+standard seed classes synthesized from the table in facets/instructions/drill.md,
+and fixed fixture cases under skills/engine/corpora/fixture/. A recipe's
+review/acceptance gate is therefore drill-coverable when its reviewer personas
+have a corresponding perspective in either corpus.
 
 This check WARNs (never FAILs — coverage guidance, not schema) for shipped
 gate-bearing recipes that /rig:drill cannot exercise:
-  - recipes whose reviewer personas all lack a seed class in the catalog, and
+  - recipes whose reviewer personas all lack a measured perspective, and
   - recipes with a gate but no reviewer personas at all (aggregated into one
     WARN; their gate efficacy is only visible via `rig stats` rubber-stamp
     detection, not via drill).
 Recipes with at least one covered reviewer count as coverable, but reviewers
-without a seed class are still surfaced (detection rate unmeasured for them).
+without a corpus perspective are still surfaced (detection rate unmeasured for
+them).
 """
 
 import pathlib
@@ -28,7 +29,7 @@ _PERSPECTIVE_HEADER = "検出すべき観点"
 
 
 def parse_seed_perspectives(drill_md: pathlib.Path) -> set[str]:
-    """Extract the perspectives /rig:drill can exercise from the seed catalog.
+    """Extract the perspectives /rig:drill can exercise from the standard catalog.
 
     Reads the markdown table in facets/instructions/drill.md whose header row
     contains the "検出すべき観点" column and collects that column's tokens
@@ -56,6 +57,37 @@ def parse_seed_perspectives(drill_md: pathlib.Path) -> set[str]:
             token = token.strip()
             if token:
                 perspectives.add(token)
+    return perspectives
+
+
+def parse_fixture_perspectives(corpus_dir: pathlib.Path | None = None) -> set[str]:
+    """Extract reviewer perspectives measured by the fixed fixture corpus.
+
+    The fixed corpus is as valid a measurement surface as the synthesized
+    standard catalog: every violation carries an explicit `perspectives` answer
+    key and is scored deterministically. Invalid/unreadable cases are ignored
+    here and separately surfaced by `check_fixture_corpus_integrity`.
+    """
+    import json
+
+    root = corpus_dir or (SKILLS / "corpora" / "fixture")
+    cases_dir = root / "cases"
+    if not cases_dir.is_dir():
+        return set()
+
+    perspectives: set[str] = set()
+    for case_dir in cases_dir.iterdir():
+        meta_file = case_dir / "case.json"
+        if not case_dir.is_dir() or not meta_file.exists():
+            continue
+        try:
+            case = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for violation in case.get("violations") or []:
+            for perspective in violation.get("perspectives") or []:
+                if isinstance(perspective, str) and perspective.strip():
+                    perspectives.add(perspective.strip())
     return perspectives
 
 
@@ -240,15 +272,16 @@ def _is_covered(persona: str, perspectives: set[str]) -> bool:
 def check_drill_coverage(
     recipe_files: list[pathlib.Path],
     drill_instruction: pathlib.Path | None = None,
+    fixture_corpus: pathlib.Path | None = None,
 ) -> None:
     """WARN for gate-bearing recipes that /rig:drill cannot exercise (#266)."""
     drill_md = drill_instruction or (FACETS / "instructions" / "drill.md")
-    perspectives = parse_seed_perspectives(drill_md)
+    perspectives = parse_seed_perspectives(drill_md) | parse_fixture_perspectives(fixture_corpus)
     if not perspectives:
         _emit(
             "WARN",
-            f"drill coverage — seed catalog table ('{_PERSPECTIVE_HEADER}' column) not found in"
-            f" {drill_md.name} (cannot check which gates /rig:drill exercises)",
+            "drill coverage — no reviewer perspectives found in the standard or fixture corpus"
+            " (cannot check which gates /rig:drill exercises)",
         )
         return
 
@@ -281,15 +314,15 @@ def check_drill_coverage(
             _emit(
                 "WARN",
                 f"drill coverage — recipe {path.stem}: gate-bearing, but none of its reviewers"
-                f" ({', '.join(reviewers)}) have a seed class in the drill catalog"
-                f" (/rig:drill cannot exercise this gate; extend the seed catalog or the personas)",
+                f" ({', '.join(reviewers)}) have a measured perspective in the drill corpora"
+                f" (/rig:drill cannot exercise this gate; extend a corpus or the personas)",
             )
             continue
         if uncovered:
             _emit(
                 "WARN",
-                f"drill coverage — recipe {path.stem}: reviewers without a drill seed class:"
-                f" {', '.join(uncovered)} (their detection rate stays unmeasured)",
+                f"drill coverage — recipe {path.stem}: reviewers without a measured drill"
+                f" perspective: {', '.join(uncovered)} (their detection rate stays unmeasured)",
             )
         coverable.append(path.stem)
 
@@ -304,5 +337,5 @@ def check_drill_coverage(
     _emit(
         "PASS",
         f"drill coverage: {len(coverable)}/{gated_total} gate-bearing recipes exercisable by"
-        f" /rig:drill (seed perspectives: {', '.join(sorted(perspectives))})",
+        f" /rig:drill (measured perspectives: {', '.join(sorted(perspectives))})",
     )
