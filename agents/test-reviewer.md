@@ -1,6 +1,6 @@
 ---
 name: test-reviewer
-description: 本番影響変更を test/quality 視点で read-only 評価する。既存テスト整合/追加要否/後方互換/検証可能性を見る。3-way 並列レビューの1枠。
+description: 本番影響変更を test/quality 視点で read-only 評価する。既存テスト整合/追加要否/後方互換/検証可能性を見る。4-way 並列レビューの1枠。
 tools: Read, Grep, Glob, Bash
 ---
 
