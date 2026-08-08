@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## [2.2.2] - 2026-08-08
+
+**A Stop hook that interrupted sessions it had no business in.** The
+instinct-learning reminder (`hooks/suggest-instincts.sh`, #306) returns
+`decision: block` — it does not leave a note, it prevents the session from ending
+and spends a full round-trip. Most sessions have no instinct worth recording, so
+almost every firing is spent saying "nothing this time". Nothing about it was
+sized for that cost:
+
+- **It had no gate at all.** Its partner `inject-instincts.sh` opens with
+  `[ -f "$WB" ] || exit 0`; this one checked nothing — not `.rig/`, not whether
+  the session had touched rig. It fired in every session of every project that
+  had the plugin installed.
+- **Every failure path degraded to firing on every turn.** No session id,
+  unparseable payload, an unwritable marker directory — each produced an empty
+  parse result, which read as "not a recursive call, no id to de-duplicate
+  against", so the reminder fired and kept firing. The de-duplication was the
+  first thing to break and its failure mode was maximum noise.
+- **The once-per-session marker lived under `$TMPDIR`**, so any environment
+  handing out a per-invocation temp directory lost the guarantee silently.
+- **The command it printed could not be run.** `python3 scripts/workbench.py
+  instincts --add` is a repo-relative path that exists in no project that
+  installed rig — which is every project this hook ships to.
+
+Now it fires only when each precondition is affirmatively true: not already in a
+stop-hook round-trip, a payload that parses with a session id and a readable
+transcript, a transcript showing the session used rig, a runnable command to
+suggest, and a marker it can actually write. Anything it cannot establish exits
+silently. The no-session-id fallback is deliberately reversed — the old behaviour
+fired anyway on the reasoning that losing the reminder is worse than repeating
+it, which for a blocking hook means blocking every turn of the whole session.
+The marker moved to `XDG_STATE_HOME`, and the suggested command resolves
+`rig-wb wb instincts` first, falling back to the plugin-root path.
+
 ## [2.2.1] - 2026-08-08
 
 **The gate could not see the file that governs every run.** #386 rewrote §6 of
