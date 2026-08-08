@@ -32,9 +32,15 @@ _REQUIRED = _TOP_FIELDS - {
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 _RUBRIC_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+# Must stay in step with `eval.affected._surface`: an id that analysis can produce
+# and a case cannot declare is debt nobody is allowed to pay off, which turns the
+# ratchet's warning into a permanent one. `engine` (the engine's own prose) is
+# registry v2; the name segment accepts uppercase because ids are the file's stem
+# verbatim and `SKILL.md` is spelled that way — lowercasing it here would mint a
+# name that matches no file.
 _PROMPT_SURFACE_ID = re.compile(
-    r"^(?:recipe|instruction|persona|policy|wiki|pattern|contract|agent|command):"
-    r"[a-z0-9][a-z0-9/_-]{0,127}$"
+    r"^(?:recipe|instruction|persona|policy|wiki|pattern|contract|agent|command|engine):"
+    r"[A-Za-z0-9][A-Za-z0-9/_-]{0,127}$"
 )
 _SHA = re.compile(r"^[0-9a-f]{7,64}$")
 _SPEC_EXCLUDED_FIELDS = frozenset({

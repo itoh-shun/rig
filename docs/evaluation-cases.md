@@ -59,6 +59,21 @@ habit does not stay confined to this job.
 | has no case yet | `uncovered`, exit 1 | **`coverage_debt`**, exit 0 |
 | its coverage was removed by this change | not detected | **`coverage_regressions`**, exit 1 |
 | kind not in the registry | `uncovered`, exit 1 | `uncovered`, exit 1 |
+| the registry itself was **widened** | `uncovered`, exit 1 | reported, exit 0 |
+| the registry itself was **narrowed** | `uncovered`, exit 1 | `registry_narrowings`, exit 1 |
+
+The last two rows are newer than the rest and were forced by the first change that
+tried to use this table. Editing `evals/prompt-surfaces.json` was fatal outright, on
+the reasoning that changing what the gate can see is not a coverage question — true,
+and the consequence was that **the registry could never be extended without failing
+the job**. That is #383's shape aimed at the one change class that widens the gate's
+coverage, and no eval case can be written for a registry, so there was no way to pass
+it. The registry is therefore monotonic like everything else here: adding a root, or
+widening one, is the direction the gate is meant to move and passes with a notice.
+Removing a root, renaming its kind (which orphans every case bound to the old ids
+without deleting a single case, so `coverage_regressions` cannot see it), or dropping
+its extensions or its recursion is coverage going down, and stays fatal. As with
+`coverage_regressions`, a base tree that cannot be read yields no accusation.
 
 Debt is reported, never swallowed: the report lists each uncovered path and the commits
 that touched it, and CI raises a GitHub warning annotation with the count. What cannot
@@ -140,7 +155,30 @@ The same rule applies to a mock judge paired with a real subject: without the fl
 rejected before execution, and with the flag it still cannot produce quality RED success.
 
 The versioned prompt registry covers Rig facets (including output contracts), patterns,
-recipes, shipped/native agents, and commands. `affected` uses a shell-free Git name diff and the existing typed brick graph to
+recipes, shipped/native agents, commands, and — since registry v2 — the engine's own prose:
+the Markdown sitting directly in `skills/engine/`, which is `SKILL.md` and `PACKS.md`.
+
+That last root closed a hole worth naming, because it is the ratchet's own defect pointing
+the other way. Every root the registry knew about was a *subdirectory* of `skills/engine/`,
+so the two documents governing all of them were the only prompt surfaces in the repository
+the analysis could not see: touching one line of a persona registered as affected, while
+rewriting §6 of `SKILL.md` — the section that decides PARSE/RESOLVE/COMPOSE/RUN for every
+run — reported `noop`. `--require-cases` fired on everything and distinguished nothing;
+this fired on everything except the file that matters most.
+
+The root is stated as a rule about the directory rather than as a list of two filenames, so
+adding a third engine document does not silently reopen it. It is deliberately **not**
+recursive: its subdirectories are either registered above already, or are not prose at all
+(`corpora/` is drill fixture data — evidence the gate consumes, not text the model reads).
+A registered subdirectory always wins, so a recipe stays `recipe:bugfix` rather than
+becoming `engine:recipes/bugfix`.
+
+Note what this depends on. Under `--require-cases` this root could not have shipped: the
+first change to `SKILL.md` would have failed the job with no way to pass it, since the case
+that would cover it is itself a change to a prompt surface. As debt it is counted, named,
+and exit 0 — the ratchet is what makes the registry extensible at all.
+
+`affected` uses a shell-free Git name diff and the existing typed brick graph to
 reverse-map direct changes and instruction/persona/policy/wiki dependencies to recipes and
 approved canonical cases under `evals/cases/`. Drafts never satisfy coverage or quality
 evidence. Cases bind coverage explicitly through unique `prompt_surfaces` registry IDs such

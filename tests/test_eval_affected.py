@@ -423,3 +423,199 @@ def test_unrelated_histories_fall_back_to_the_base_instead_of_erroring(tmp_path)
     result = analyze_affected(repo, base=base, head="detached")
     assert result["merge_base"] == base
     assert "commands/alpha.md" in result["changed_files"]
+
+
+# ── the engine's own prose (registry version 2) ──────────────────────────────
+# Every root the registry knew about was a *subdirectory* of `skills/engine/`, so
+# the two documents that govern all of them — SKILL.md, which decides
+# PARSE/RESOLVE/COMPOSE/RUN for every run, and PACKS.md, which SKILL.md itself
+# sends the reader to — were the only prompt surfaces in the repository the gate
+# could not see. Touching one line of a persona registered as affected; rewriting
+# SKILL.md §6 reported `noop`. That is the ratchet's own defect pointing the other
+# way: #383/#384 fixed a check that fired on everything and distinguished nothing,
+# and this fixes a check that did not fire on the file that matters most.
+
+
+def _engine_repo(tmp_path: pathlib.Path):
+    repo, _ = _repo(tmp_path)
+    engine = repo / "skills" / "engine"
+    (engine / "recipes").mkdir(parents=True)
+    (engine / "corpora" / "fixture").mkdir(parents=True)
+    (engine / "SKILL.md").write_text("engine prose\n", encoding="utf-8")
+    (engine / "PACKS.md").write_text("pack prose\n", encoding="utf-8")
+    (engine / "recipes" / "auth.md").write_text(
+        "---\nname: auth\nsteps: []\n---\n", encoding="utf-8")
+    (engine / "corpora" / "fixture" / "seed.md").write_text("fixture\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "engine")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def test_the_engine_document_is_an_affected_surface(tmp_path):
+    """The hole itself: rewriting SKILL.md used to report `noop`."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base = _engine_repo(tmp_path)
+    (repo / "skills" / "engine" / "SKILL.md").write_text("rewritten\n", encoding="utf-8")
+
+    result = analyze_affected(repo, base=base, ratchet=True)
+    assert [s["id"] for s in result["affected_surfaces"]] == ["engine:SKILL"]
+    assert result["status"] == "debt"
+    assert result["coverage_debt"] == ["skills/engine/SKILL.md"]
+
+
+def test_the_pack_document_the_engine_points_at_counts_too(tmp_path):
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base = _engine_repo(tmp_path)
+    (repo / "skills" / "engine" / "PACKS.md").write_text("rewritten\n", encoding="utf-8")
+    assert [s["id"] for s in analyze_affected(repo, base=base)["affected_surfaces"]] \
+        == ["engine:PACKS"]
+
+
+def test_a_registered_subdirectory_still_wins_over_the_engine_root(tmp_path):
+    """Order matters: a recipe must stay `recipe:auth`, not become
+    `engine:recipes/auth`, or every case binding in the repository breaks."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base = _engine_repo(tmp_path)
+    (repo / "skills" / "engine" / "recipes" / "auth.md").write_text(
+        "---\nname: auth\nsteps: []\nx: 1\n---\n", encoding="utf-8")
+    assert [s["id"] for s in analyze_affected(repo, base=base)["affected_surfaces"]] \
+        == ["recipe:auth"]
+
+
+def test_engine_subdirectories_that_are_not_prose_stay_out(tmp_path):
+    """`corpora/` is drill fixture data — evidence the gate consumes, not prose the
+    model reads. A recursive root would have swept it in and demanded cases for it."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base = _engine_repo(tmp_path)
+    (repo / "skills" / "engine" / "corpora" / "fixture" / "seed.md").write_text(
+        "changed\n", encoding="utf-8")
+    result = analyze_affected(repo, base=base, ratchet=True)
+    assert result["affected_surfaces"] == []
+    assert result["status"] == "noop"
+
+
+def test_the_engine_document_is_debt_under_ratchet_and_fatal_under_the_old_form(tmp_path):
+    """Why this could not have shipped before #384. Under `--require-cases` the very
+    first change to SKILL.md would fail the job with no way to pass it; as debt it is
+    counted, named, and exit 0."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base = _engine_repo(tmp_path)
+    (repo / "skills" / "engine" / "SKILL.md").write_text("rewritten\n", encoding="utf-8")
+
+    assert analyze_affected(repo, base=base, ratchet=True)["status"] == "debt"
+    assert analyze_affected(repo, base=base, require_cases=True)["status"] == "uncovered"
+
+
+def test_a_case_bound_to_the_engine_document_pays_the_debt_down(tmp_path):
+    """Debt has to be payable, or it is just a permanent warning nobody can clear."""
+    from rig_workbench.eval.affected import analyze_affected
+
+    repo, base = _engine_repo(tmp_path)
+    _case(repo, "engine:SKILL")
+    (repo / "skills" / "engine" / "SKILL.md").write_text("rewritten\n", encoding="utf-8")
+
+    result = analyze_affected(repo, base=base, ratchet=True)
+    assert result["status"] == "pass"
+    assert result["coverage_debt"] == []
+    assert result["affected_cases"] == ["affected-case"]
+
+
+# ── the registry is monotonic too ────────────────────────────────────────────
+# Editing `evals/prompt-surfaces.json` used to be fatal outright, on the reasoning
+# that changing what the gate can see is not a coverage question. True, and the
+# consequence was that the registry could never be extended without failing the
+# job — #383's shape exactly, aimed at the one change class that *widens* the
+# gate's coverage. So the registry gets the rule the rest of the module uses.
+
+
+def _registry_repo(tmp_path: pathlib.Path):
+    from rig_workbench.eval.affected import REGISTRY_REL, prompt_surface_registry
+    from rig_workbench.eval.cases import canonical_json
+
+    repo, _ = _repo(tmp_path)
+    path = repo / REGISTRY_REL
+    path.parent.mkdir(parents=True)
+    path.write_text(canonical_json(prompt_surface_registry()), encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "registry")
+    return repo, _git(repo, "rev-parse", "HEAD"), path
+
+
+def test_widening_the_registry_is_allowed_and_reported(tmp_path):
+    """The change that closes a blind spot must be mergeable. It was not."""
+    from rig_workbench.eval.affected import analyze_affected, prompt_surface_registry
+    from rig_workbench.eval.cases import canonical_json
+
+    repo, base, path = _registry_repo(tmp_path)
+    narrower = copy.deepcopy(prompt_surface_registry())
+    narrower["roots"] = narrower["roots"][:3]
+    path.write_text(canonical_json(narrower), encoding="utf-8")   # base is the narrow one
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "narrow base")
+    base = _git(repo, "rev-parse", "HEAD")
+    path.write_text(canonical_json(prompt_surface_registry()), encoding="utf-8")
+
+    result = analyze_affected(repo, base=base, ratchet=True)
+    assert result["registry_changed"] is True
+    assert result["registry_narrowings"] == []
+    assert result["status"] == "noop"
+
+
+@pytest.mark.parametrize("mode", [{"ratchet": True}, {"require_cases": True}])
+def test_removing_a_root_is_a_narrowing_and_stays_fatal(tmp_path, mode, monkeypatch):
+    """Coverage going *down* is the direction that must never pass — the same rule
+    as `coverage_regressions`, applied to the field of view rather than the cases."""
+    from rig_workbench.eval import affected as affected_module
+    from rig_workbench.eval.affected import analyze_affected
+    from rig_workbench.eval.cases import canonical_json
+
+    repo, base, path = _registry_repo(tmp_path)
+    monkeypatch.setattr(affected_module, "_SURFACE_FLAT_ROOTS", ())
+    path.write_text(canonical_json(affected_module.prompt_surface_registry()),
+                    encoding="utf-8")
+
+    result = analyze_affected(repo, base=base, **mode)
+    assert result["status"] == "uncovered"
+    assert any("root removed: skills/engine/" in line
+               for line in result["registry_narrowings"])
+
+
+def test_renaming_a_kind_counts_as_a_narrowing(tmp_path, monkeypatch):
+    """It orphans every case bound to the old ids without deleting a single case,
+    so `coverage_regressions` cannot see it."""
+    from rig_workbench.eval import affected as affected_module
+    from rig_workbench.eval.affected import analyze_affected
+    from rig_workbench.eval.cases import canonical_json
+
+    repo, base, path = _registry_repo(tmp_path)
+    monkeypatch.setattr(affected_module, "_SURFACE_PREFIXES",
+                        (("skills/engine/recipes/", "workflow"),))
+    path.write_text(canonical_json(affected_module.prompt_surface_registry()),
+                    encoding="utf-8")
+
+    result = analyze_affected(repo, base=base, ratchet=True)
+    assert result["status"] == "uncovered"
+    assert any("kind renamed" in line for line in result["registry_narrowings"])
+
+
+def test_a_registry_that_cannot_be_read_at_the_base_accuses_nobody(tmp_path):
+    """Same stance as `coverage_regressions`: a comparison that cannot be made is
+    not evidence of a regression."""
+    from rig_workbench.eval.affected import REGISTRY_REL, prompt_surface_registry
+    from rig_workbench.eval.affected import analyze_affected
+    from rig_workbench.eval.cases import canonical_json
+
+    repo, base = _repo(tmp_path)                 # no registry at the base at all
+    path = repo / REGISTRY_REL
+    path.parent.mkdir(parents=True)
+    path.write_text(canonical_json(prompt_surface_registry()), encoding="utf-8")
+
+    result = analyze_affected(repo, base=base, ratchet=True)
+    assert result["registry_changed"] is True
+    assert result["registry_narrowings"] == []
+    assert result["status"] == "noop"
