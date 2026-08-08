@@ -31,7 +31,7 @@ steps:
     instruction: parallel-review
     pattern: parallel-fanout
     gate: review-gate
-    personas: [security-reviewer, design-reviewer, test-reviewer]
+    personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     output_contract: review-verdict
   - id: acceptance
     instruction: acceptance-check
@@ -59,13 +59,13 @@ steps:
 
 ## 使う場面
 
-`/rig "<バグ修正の依頼>"` から `task_type: bugfix` として自動選択される workbench 既定 recipe。`recipes/debug`（原因不明のバグの調査重視）・`recipes/hotfix`（速度最優先で reproduce/plan/review を省略）とは異なり、**隔離 worktree ＋ 3-way review ＋ machine-gate な acceptance-check** をフルで通す「通常のバグ修正」の既定パス。
+`/rig "<バグ修正の依頼>"` から `task_type: bugfix` として自動選択される workbench 既定 recipe。`recipes/debug`（原因不明のバグの調査重視）・`recipes/hotfix`（速度最優先で reproduce/plan/review を省略）とは異なり、**隔離 worktree ＋ 4-way review ＋ machine-gate な acceptance-check** をフルで通す「通常のバグ修正」の既定パス。
 
 | recipe | 特徴 |
 |---|---|
 | `hotfix` | 最短パス。design/review を省略。verify の gate も軽量（build/lint のみ） |
 | `debug` | 原因不明時の調査重視（isolate で仮説列挙） |
-| **bugfix**（本 recipe） | 通常のバグ修正の既定。review-diff（3-way）＋ 13項目の acceptance-check まで通す |
+| **bugfix**（本 recipe） | 通常のバグ修正の既定。review-diff（4-way）＋ 13項目の acceptance-check まで通す |
 
 ## 展開手順
 
@@ -74,7 +74,7 @@ steps:
 3. **plan** — 根拠に基づき修正方針を立てる（`implement` instruction を読解・仮説列挙モードで使用。コード変更はまだ行わない — `recipes/debug` の isolate step と同じ考え方）。
 4. **implement** — 最小限の修正を実施する。
 5. **test** — build/lint/test を実行する。
-6. **review-diff** — security/design/test の3観点並列レビュー（`review-gate`）。
+6. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー（`review-gate`）。
 7. **acceptance** — `facets/instructions/acceptance-check` が13基準（standard 8 + bugfix 5）を判定し `scripts/workbench.py gate` に記録する。`failed` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
 
 ## isolated worktree との関係
