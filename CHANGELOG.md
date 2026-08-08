@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## [2.2.1] - 2026-08-08
+
+**The gate could not see the file that governs every run.** #386 rewrote §6 of
+`SKILL.md` and the prompt evaluation gate reported `noop`. Every root the surface
+registry knew about — facets, patterns, recipes, agents, commands — is a
+*subdirectory* of `skills/engine/`, so the two documents governing all of them
+were the only prompt surfaces in the repository the analysis could not see.
+Touching one line of a persona registered as affected; rewriting the section that
+decides PARSE/RESOLVE/COMPOSE/RUN did not. That is the defect #384 fixed, pointing
+the other way: there, a check fired on everything and distinguished nothing; here,
+it did not fire on what matters most.
+
+Registry v2 adds `skills/engine/` as a **non-recursive** root of kind `engine`,
+covering `SKILL.md` and `PACKS.md`. Stated as a rule about the directory rather
+than a list of two filenames, so a third engine document does not silently reopen
+the hole. Registered subdirectories still win, so a recipe stays `recipe:bugfix`
+and never becomes `engine:recipes/bugfix`; `corpora/` stays out, being drill
+fixture data the gate consumes rather than prose the model reads. Case ids may now
+declare `engine:` bindings — without that half the debt would have been unpayable,
+which is a permanent warning rather than a ratchet.
+
+This could not have shipped before the ratchet. Under `--require-cases` the first
+change to `SKILL.md` would fail with no way to pass, because the case covering it
+is itself a change to a prompt surface. As debt it is counted, named, and exit 0.
+
+**And the registry itself is now monotonic**, which the above change forced.
+Editing `evals/prompt-surfaces.json` was fatal outright, on the reasoning that
+changing what the gate can see is not a coverage question — true, and the effect
+was that the registry could never be extended without failing the job. #383's shape
+again, aimed at the one change class that *widens* coverage, and unpassable by
+construction since no eval case can be written for a registry. Now: widening a root
+passes with a notice; removing one, renaming its kind (which orphans every case
+bound to the old ids without deleting a case, so `coverage_regressions` cannot see
+it), or dropping its extensions or recursion is fatal. A base tree that cannot be
+read still accuses nobody.
+
 ## [2.2.0] - 2026-08-08
 
 **A rule stated 152 times and never once counted.** `context-minimal` is called a

@@ -108,6 +108,15 @@ jobs:
           if debt:
               print(f"::warning::prompt coverage debt: {len(debt)} surface(s) have no "
                     f"evaluation case yet — {', '.join(debt)}")
+          # The registry is monotonic like the cases are. Widening it is the direction
+          # the gate is meant to move and is only announced; narrowing it already
+          # failed the command above, and is named here so the reason is in the log
+          # rather than only in an exit code.
+          for line in report.get("registry_narrowings") or []:
+              print(f"::error::prompt surface registry narrowed — {line}")
+          if report.get("registry_changed") and not report.get("registry_narrowings"):
+              print("::notice::prompt surface registry widened; the gate now sees more "
+                    "than it did on the base commit")
           PY
 
       - name: Untrusted or fork prompt quality handoff

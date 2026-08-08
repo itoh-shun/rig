@@ -10,7 +10,7 @@ from typing import Any
 
 from .cases import EvalCaseError, canonical_json, validate_case
 
-REGISTRY_VERSION = 1
+REGISTRY_VERSION = 2
 _SURFACE_PREFIXES = (
     ("skills/engine/facets/instructions/", "instruction"),
     ("skills/engine/facets/personas/", "persona"),
@@ -23,15 +23,45 @@ _SURFACE_PREFIXES = (
     ("agents/", "agent"),
     ("commands/", "command"),
 )
+
+# Roots whose **direct children** are surfaces while their subdirectories are not.
+#
+# `skills/engine/` holds the engine's own prose — SKILL.md, which decides
+# PARSE/RESOLVE/COMPOSE/RUN for every single run, and PACKS.md, which SKILL.md
+# itself sends the reader to. Every registered root above is a *subdirectory* of
+# this one, so the two documents that govern all of them were the only prompt
+# surfaces in the repository that the registry could not see: editing one line of
+# a persona registered as an affected surface, while rewriting §6 of SKILL.md
+# reported `noop`. That is the same defect the ratchet was built to remove
+# (#383/#384), pointing the other way — there, a check that fired on everything
+# distinguished nothing; here, the check does not fire on the file that matters
+# most.
+#
+# Stated as a rule about the directory rather than as a list of two filenames on
+# purpose: an explicit list reproduces the hole the moment somebody adds a third
+# engine document. Subdirectories are excluded because they are either already
+# registered above, or are not prompt surfaces at all (`corpora/` is drill
+# fixture data — evidence the gate consumes, not prose the model reads).
+_SURFACE_FLAT_ROOTS = (
+    ("skills/engine/", "engine"),
+)
 _KNOWN_SUFFIXES = {".md", ".yaml", ".yml"}
+# The declaration of what the surfaces are, checked in so a change to the gate's
+# field of view shows up in a diff.
+REGISTRY_REL = "evals/prompt-surfaces.json"
 
 
 def prompt_surface_registry() -> dict:
     return {
         "prompt_surface_registry_version": REGISTRY_VERSION,
         "roots": [
-            {"prefix": prefix, "kind": kind, "extensions": sorted(_KNOWN_SUFFIXES)}
+            {"prefix": prefix, "kind": kind, "recursive": True,
+             "extensions": sorted(_KNOWN_SUFFIXES)}
             for prefix, kind in _SURFACE_PREFIXES
+        ] + [
+            {"prefix": prefix, "kind": kind, "recursive": False,
+             "extensions": sorted(_KNOWN_SUFFIXES)}
+            for prefix, kind in _SURFACE_FLAT_ROOTS
         ],
     }
 
@@ -108,18 +138,30 @@ def _resolved_head(root: pathlib.Path, head: str) -> str:
     return value
 
 
+def _classify(path: str, prefix: str, kind: str) -> dict:
+    suffix = pathlib.PurePosixPath(path).suffix
+    relative = path[len(prefix):]
+    name = str(pathlib.PurePosixPath(relative).with_suffix(""))
+    resolved_kind = kind if suffix in _KNOWN_SUFFIXES and name else "unknown"
+    return {"path": path, "kind": resolved_kind, "id": f"{resolved_kind}:{name}"}
+
+
 def _surface(path: str) -> dict | None:
-    if path == "evals/prompt-surfaces.json":
-        return {"path": path, "kind": "unknown", "id": "unknown:prompt-surface-registry"}
+    if path == REGISTRY_REL:
+        # Not a prompt surface: it is the declaration of what the prompt surfaces
+        # *are*. Judged by `_registry_narrowings` instead — no eval case can be
+        # written for a registry, so demanding one made it permanently unpassable.
+        return None
     for prefix, kind in _SURFACE_PREFIXES:
         if path.startswith(prefix):
-            suffix = pathlib.PurePosixPath(path).suffix
-            relative = path[len(prefix):]
-            name = str(pathlib.PurePosixPath(relative).with_suffix(""))
-            resolved_kind = kind if suffix in _KNOWN_SUFFIXES and name else "unknown"
-            return {"path": path, "kind": resolved_kind, "id": f"{resolved_kind}:{name}"}
+            return _classify(path, prefix, kind)
     if path.startswith("skills/engine/facets/"):
         return {"path": path, "kind": "unknown", "id": f"unknown:{path}"}
+    # Checked after the recursive roots so a registered subdirectory always wins:
+    # a recipe stays `recipe:<name>` rather than becoming `engine:recipes/<name>`.
+    for prefix, kind in _SURFACE_FLAT_ROOTS:
+        if path.startswith(prefix) and "/" not in path[len(prefix):]:
+            return _classify(path, prefix, kind)
     return None
 
 
@@ -248,6 +290,68 @@ def _surface_commits(
             if commits:
                 result[path] = commits
     return result
+
+
+def _registry_at(root: pathlib.Path, revision: str) -> dict[str, dict] | None:
+    """prefix → its declared root at `revision`, or None if unreadable.
+
+    Same stance as `_coverage_at`: None means the question could not be answered,
+    and the caller then declines to accuse the change of anything.
+    """
+    try:
+        blob = subprocess.run(
+            ["git", "show", f"{revision}:{REGISTRY_REL}"], cwd=root,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if blob.returncode != 0:
+        return None                    # not present at the base — nothing to lose
+    try:
+        value = json.loads(blob.stdout)
+    except json.JSONDecodeError:
+        return None
+    roots = value.get("roots") if isinstance(value, dict) else None
+    if not isinstance(roots, list):
+        return None
+    return {r["prefix"]: r for r in roots if isinstance(r, dict) and isinstance(r.get("prefix"), str)}
+
+
+def _registry_narrowings(before: dict[str, dict] | None, after: dict) -> list[str]:
+    """What this change took away from the gate's field of view.
+
+    Editing the registry used to be fatal outright, on the reasoning that changing
+    what the gate can see is not a coverage question. True, and the consequence was
+    that **the registry could never be extended without failing the job** — the
+    exact shape #383 was: a check nobody can pass, whose real lesson is that this
+    job gets merged past. It taught that on the one change class that widens the
+    gate's coverage.
+
+    So the same rule the rest of this module uses applies to the registry itself:
+    it is monotonic. Adding a root, or widening one, is the direction the gate is
+    supposed to move and passes. Removing a root, renaming its kind (which silently
+    orphans every case bound to the old ids), or narrowing its extensions or its
+    recursion is coverage going *down*, and stays fatal.
+    """
+    if before is None:
+        return []
+    after_by_prefix = {r["prefix"]: r for r in after.get("roots", [])}
+    lost: list[str] = []
+    for prefix, root in sorted(before.items()):
+        now = after_by_prefix.get(prefix)
+        if now is None:
+            lost.append(f"root removed: {prefix} (was {root.get('kind')})")
+            continue
+        if now.get("kind") != root.get("kind"):
+            lost.append(f"kind renamed: {prefix} {root.get('kind')} -> {now.get('kind')} "
+                        "(orphans every case bound to the old ids)")
+        dropped = set(root.get("extensions") or []) - set(now.get("extensions") or [])
+        if dropped:
+            lost.append(f"extensions dropped: {prefix} ({', '.join(sorted(dropped))})")
+        if root.get("recursive") and not now.get("recursive", True):
+            lost.append(f"no longer recursive: {prefix}")
+    return lost
 
 
 def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | None:
@@ -407,6 +511,13 @@ def analyze_affected(
     regressions = _regressions(_coverage_at(root, merge_base),
                                {case["id"]: set(case.get("prompt_surfaces", []))
                                 for case in cases}) if ratchet else []
+    # The registry is monotonic too, in both modes. Widening what the gate can see
+    # is the direction it is meant to move; narrowing it is coverage going down.
+    registry_changed = REGISTRY_REL in changed
+    registry_narrowings = (
+        _registry_narrowings(_registry_at(root, merge_base), prompt_surface_registry())
+        if registry_changed else []
+    )
     evidence: dict[str, str] = {}
     if evidence_dir is not None:
         evidence_root = pathlib.Path(evidence_dir)
@@ -422,10 +533,10 @@ def analyze_affected(
                         found = True
                         break
             evidence[case_id] = "present" if found else "absent"
-    if not surfaces:
-        status = "noop"
-    elif uncovered or regressions:
+    if uncovered or regressions or registry_narrowings:
         status = "uncovered"
+    elif not surfaces:
+        status = "noop"
     elif debt:
         # Deliberately its own status rather than folded into `pass`: the run is
         # allowed to proceed, and the number is still reported so paying it down is
@@ -434,8 +545,12 @@ def analyze_affected(
     else:
         status = "pass"
     return {
-        "eval_affected_schema_version": 1,
+        "eval_affected_schema_version": 2,
         "registry_version": REGISTRY_VERSION,
+        # Reported rather than inferred from `changed_files`: a reader checking why
+        # the gate's field of view moved should not have to know the registry's path.
+        "registry_changed": registry_changed,
+        "registry_narrowings": registry_narrowings,
         "base": base, "head": head, "resolved_head": resolved_head,
         # The fork point the comparison actually used. Printed so a surprising
         # result can be checked against it instead of guessed at.
