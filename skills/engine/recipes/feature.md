@@ -36,7 +36,7 @@ steps:
     instruction: parallel-review
     pattern: parallel-fanout
     gate: review-gate
-    personas: [security-reviewer, design-reviewer, test-reviewer]
+    personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     output_contract: review-verdict
   - id: acceptance
     instruction: acceptance-check
@@ -74,7 +74,7 @@ steps:
 4. **implement** — 設計に従って実装する。
 5. **test** — build/lint/test を実行する。
 6. **update-docs-if-needed** — 公開挙動・API・設定を変えた場合のみドキュメントを更新する（無関係なら skip・`no_unrelated_diff` を守る）。
-7. **review-diff** — security/design/test の3観点並列レビュー。
+7. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー。
 8. **acceptance** — 13基準（standard 8 + feature 5）の acceptance-check（`max_retries: 2`）。
 
 ## bugfix との違い

@@ -13,8 +13,8 @@ steps:
     instruction: parallel-review
     pattern: parallel-fanout
     gate: acceptance-gate
-    acceptance: ["3-way review に REJECT が無い", "APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み"]
-    personas: [security-reviewer, design-reviewer, test-reviewer]
+    acceptance: ["4-way review に REJECT が無い", "APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み"]
+    personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     policies: [pre-push-review]
     output_contract: review-verdict
 autonomy: interactive
@@ -39,6 +39,6 @@ autonomy: interactive
 2. **design** — 設計ドキュメントを作成する。`design-reviewer` が grilling し、ユーザーが承認するまで反復してから次へ進む。
 3. **implement** — 承認済み設計に従って実装する（継承）。
 4. **verify** — build / lint / test を `acceptance-gate` で受け入れ基準まで収束させる（継承）。
-5. **review** — security / design / test を `parallel-fanout` で並列評価し、`acceptance-gate` で「REJECT が無い」へ収束させる。
+5. **review** — security / design / test / behavioral-correctness を `parallel-fanout` で並列評価し、`acceptance-gate` で「REJECT が無い」へ収束させる。
 6. **pr** — `pr-hygiene` / `branch-strategy` に従い push して PR を開く（継承）。
 7. **merge** — CI 通過を確認してマージし後片付けを行う（継承）。

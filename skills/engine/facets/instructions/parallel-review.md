@@ -1,6 +1,6 @@
 # instruction: parallel-review
 
-レビュー対象の diff またはファイル列を受け取り、security / design / test の3観点を並列に評価して着手判断を得る。
+レビュー対象の diff またはファイル列を受け取り、security / design / test / behavioral-correctness の4観点を並列に評価して着手判断を得る。
 
 ## 手順
 
@@ -10,11 +10,12 @@
 
 ### ② 並列レビューの dispatch（`pattern: parallel-fanout`）
 
-`pattern: parallel-fanout` に従い、1メッセージで3つの subagent を同時に起動する。
+`pattern: parallel-fanout` に従い、1メッセージで4つの subagent を同時に起動する。
 
 - **security 観点**: `agents/security-reviewer` が存在する場合はそれを使う。使えない場合は `facets/personas/security-reviewer` を合成して subagent に渡す。
 - **design 観点**: `agents/design-reviewer` が存在する場合はそれを使う。使えない場合は `facets/personas/design-reviewer` を合成して subagent に渡す。
 - **test 観点**: `agents/test-reviewer` が存在する場合はそれを使う。使えない場合は `facets/personas/test-reviewer` を合成して subagent に渡す。
+- **behavioral-correctness 観点**: `agents/behavioral-correctness-reviewer` が存在する場合はそれを使う。使えない場合は `facets/personas/behavioral-correctness-reviewer` を合成して subagent に渡す。状態遷移・非同期 busy state・意味/単位・別実装の等価性・操作到達性・境界条件を、壊す入力から逆算して評価する。
 
 **追加観点（任意）**: 変更の性質に応じて `--persona` / manifest `default_personas` / recipe `personas[]` で fan-out に追加できる（同経路で dispatch・dedup は §5）。shipped の追加枠：
 
@@ -39,7 +40,7 @@
 
 ### ③ 集約（`pattern: review-gate`）
 
-3つの verdict が揃ったら `pattern: review-gate` で着手判断を決定する。`--verify-findings`（または recipe `verify_findings: true`）が有効なら、集約前に各 REJECT 根拠・マージ前必須条件を `finding-verifier` で反証し、REFUTED をゲートから除く（`patterns/review-gate`「敵対的検証」）。
+4つの verdict が揃ったら `pattern: review-gate` で着手判断を決定する。`--verify-findings`（または recipe `verify_findings: true`）が有効なら、集約前に各 REJECT 根拠・マージ前必須条件を `finding-verifier` で反証し、REFUTED をゲートから除く（`patterns/review-gate`「敵対的検証」）。
 
 **検証結果の記録（`facets/policies/suppression-memory`）**: `finding-verifier` が **REFUTED** と判定した所見（および user が明示的に却下した条件）は `.rig/review-suppressions.jsonl` へ追記する（次回 dispatch から再指摘を抑止）。逆に、既存 suppression にマッチする所見を verifier が **UPHELD** と判定した場合は、所見をサイレントに落とさずゲートへ通し、当該 suppression に期限切れフラグを付ける（upheld な所見 > suppression）。
 

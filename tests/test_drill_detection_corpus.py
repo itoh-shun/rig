@@ -75,6 +75,24 @@ is unhandled and failures disappear silently.
 `mergeMetadata` accepts and returns `any`, which removes type safety from a
 public export. Use a generic or `unknown` with narrowing.
 """,
+    "ts-behavioral-correctness": """
+## Findings
+
+### HIGH: preview中に確認操作が再実行できる
+`dialogSubmitting` が `confirming` しか見ておらず preview 中を loading として扱いません。preview API が in-flight の間に二重 submit や close が可能になるので、previewing || confirming を busy state にする必要があります。
+
+### HIGH: 部分成功後の未完了状態を確認なしで離脱できる
+`canLeaveWithoutConfirmation` が lines だけを見ており、shortfalls が残る partial success 状態を無視しています。lines=0 / shortfalls>0 では事後処理が未完了なので cancel/leave に確認が必要です。
+
+### HIGH: 発注数量に在庫単位を付けている
+`recommendedQuantityLabel` は ORDER の recommendedQuantity にも常に inventoryUnit を表示しています。ORDER は orderUnit の数量なので、発注単位と在庫単位の unit mismatch になります。
+
+### HIGH: 日次標準偏差をイベント粒度で計算している
+`dailySigma` が same day のイベントを日ごとに aggregate せず、生イベントの sumSquares から分散を出しています。日次需要の統計なら同日複数イベントを先に group しないと集約粒度が変わります。
+
+### HIGH: モバイルで降順へ切り替えられない
+`mobileSortOptions` は key しか選べず、`applyMobileSortSelection` は同じ key の再選択で ASC/DESC を toggle する設計です。native select の onChange は同じ value の再選択では発火しないため DESC が unreachable です。
+""",
 }
 
 VAGUE = """
@@ -97,6 +115,12 @@ I read through cache.ts. The change touches `REPORTING_TOKEN`, `summarize`,
 `sortEntries`, `reportUsage`, and `mergeMetadata`. Everything is exported from
 the same module and the naming is consistent. Formatting matches the project
 style and the file remains small.
+""",
+    "ts-behavioral-correctness": """
+I read through workflow.ts. The change touches `dialogSubmitting`,
+`canLeaveWithoutConfirmation`, `recommendedQuantityLabel`, `dailySigma`,
+`mobileSortOptions`, and `applyMobileSortSelection`. The functions are small,
+naming is consistent, and the module remains easy to scan.
 """,
 }
 
@@ -132,11 +156,11 @@ def emitted():
 def test_corpus_ships_planted_cases_and_one_clean_case():
     cases = load_cases()
     assert {c["id"] for c in cases} == {
-        "py-mixed-violations", "ts-mixed-violations", CLEAN_CASE,
+        "py-mixed-violations", "ts-mixed-violations", "ts-behavioral-correctness", CLEAN_CASE,
     }
     clean = [c for c in cases if c.get("clean")]
     assert len(clean) == 1 and clean[0]["violations"] == []
-    assert sum(len(c["violations"]) for c in violation_cases()) == 10
+    assert sum(len(c["violations"]) for c in violation_cases()) == 15
     assert isinstance(load_corpus_meta()["corpus_version"], int)
 
 
@@ -295,6 +319,17 @@ def test_row_attributes_planted_defects_by_perspective():
     assert (score["detected"], score["seeded"]) == (2, 2)
     assert score["clean_diffs"] == 1 and score["clean_findings"] == 0
     assert score["clean_fp_rate"] == 0.0
+
+
+def test_behavioral_correctness_reviewer_has_five_accountable_seeds():
+    row = build_drill_row({
+        "ts-behavioral-correctness": {
+            "behavioral-correctness-reviewer": IDEAL["ts-behavioral-correctness"],
+        },
+    })
+    score = row["scores"][0]
+    assert score["attribution"] == "perspective"
+    assert (score["detected"], score["seeded"]) == (5, 5)
 
 
 def test_missed_defects_are_recorded_by_class_and_in_detail():

@@ -1,6 +1,6 @@
 # instruction: pr-review
 
-既存 PR を番号/URL で受け取り、GitHub MCP で取得して security / design / test の3観点を並列評価し、structured verdict へ収束させる。`parallel-review` の「対象＝既存 PR」版。実作業（読解・評価）は subagent に dispatch し、親は verdict 行だけ集約する（context-minimal）。
+既存 PR を番号/URL で受け取り、GitHub MCP で取得して security / design / test / behavioral-correctness の4観点を並列評価し、structured verdict へ収束させる。`parallel-review` の「対象＝既存 PR」版。実作業（読解・評価）は subagent に dispatch し、親は verdict 行だけ集約する（context-minimal）。
 
 ## 手順
 
@@ -14,11 +14,12 @@
 
 ### ② 並列レビューの dispatch（`pattern: parallel-fanout`）
 
-1メッセージで3つの subagent を同時起動し、各々に PR の diff/ファイルを渡す。
+1メッセージで4つの subagent を同時起動し、各々に PR の diff/ファイルを渡す。
 
 - **security**: `agents/security-reviewer` 優先、無ければ `facets/personas/security-reviewer` を合成。
 - **design**: `agents/design-reviewer` 優先、無ければ `facets/personas/design-reviewer` を合成。
 - **test**: `agents/test-reviewer` 優先、無ければ `facets/personas/test-reviewer` を合成。
+- **behavioral-correctness**: `agents/behavioral-correctness-reviewer` 優先、無ければ `facets/personas/behavioral-correctness-reviewer` を合成。状態遷移・非同期 busy state・意味/単位・別実装の等価性・操作到達性・境界条件を、壊す入力から逆算して評価する。
 
 各 subagent の出力は `output-contracts/review-verdict` に従わせる。`--adversarial` 指定時は lazy-senior / cognitive-economist の敵対レビュー step（`facets/instructions/adversarial-review`）を追加する。
 
@@ -26,7 +27,7 @@
 
 ### ③ 集約（`acceptance-gate` 内で `review-gate`）
 
-3 verdict が揃ったら `review-gate` で統合し、recipe の acceptance（3観点判定済み／指摘が「どのファイルの何を・なぜ・どう直すか」分かる粒度／総合 verdict が出ている）へ収束させる。未達なら不足観点を再 dispatch する。
+4 verdict が揃ったら `review-gate` で統合し、recipe の acceptance（4観点判定済み／指摘が「どのファイルの何を・なぜ・どう直すか」分かる粒度／総合 verdict が出ている）へ収束させる。未達なら不足観点を再 dispatch する。
 
 `finding-verifier` による反証を行った場合は `facets/policies/suppression-memory` に従い記録する: **REFUTED** 所見（および user が却下した条件）は `.rig/review-suppressions.jsonl` へ追記し、既存 suppression にマッチする **UPHELD** 所見はサイレントに落とさずゲートへ通して当該 suppression に期限切れフラグを付ける。
 
@@ -49,11 +50,12 @@
 ```
 ## rig pr-review: <総合判定>
 
-| 観点     | 判定                        |
-|----------|-----------------------------|
-| security | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
-| design   | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
-| test     | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
+| 観点                   | 判定                                      |
+|------------------------|-------------------------------------------|
+| security               | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
+| design                 | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
+| test                   | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
+| behavioral-correctness | <APPROVE|APPROVE_WITH_CONDITIONS|REJECT> |
 
 ### 必須対応事項（REJECT / APPROVE_WITH_CONDITIONS の観点のみ）
 - （観点名）: <根拠・条件を1文で>

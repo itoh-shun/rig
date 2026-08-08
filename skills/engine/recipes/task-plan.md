@@ -29,8 +29,8 @@ steps:
     instruction: parallel-review
     pattern: parallel-fanout
     gate: acceptance-gate
-    acceptance: ["3-way review に REJECT が無い", "APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み"]
-    personas: [security-reviewer, design-reviewer, test-reviewer]
+    acceptance: ["4-way review に REJECT が無い", "APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み"]
+    personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     policies: [pre-push-review]
     output_contract: review-verdict
 autonomy: interactive
@@ -61,7 +61,7 @@ autonomy: interactive
 1. **plan** — `planner` が依頼を `task-plan`（細粒度・検証つき・未確定を先出し）へ分解。**承認を取ってから**実行（`--plan` で計画提示・停止）。
 2. **implement** — タスク順（依存順）に実装。1タスク＝1 subagent（context-minimal）・`--tdd` で red-green-refactor。独立タスクは `--orchestrate` の DAG 並列に渡せる。
 3. **verify** — 計画の各タスクの検証（テスト/コマンド/観察）＋ build/lint/test を acceptance-gate で。
-4. **review** — security/design/test の並列レビュー（2段目）を review-gate で。
+4. **review** — security/design/test/behavioral-correctness の4-way並列レビュー（2段目）を review-gate で。
 
 手順本体は `facets/instructions/task-plan`、分解の作法は `planner`、出力は `output-contracts/task-plan` に従う。配線・PR・マージまで要るなら `/rig:dev`（release-flow）へ接続。
 

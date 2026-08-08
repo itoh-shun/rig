@@ -1,13 +1,13 @@
 ---
 name: review-only
-description: 現在の変更に 3-way 並列レビュー(security/design/test)だけを実行するテンプレ workflow。
+description: 現在の変更に 4-way 並列レビュー(security/design/test/behavioral-correctness)だけを実行するテンプレ workflow。
 scope: shipped
 steps:
   - id: review
     instruction: parallel-review
     pattern: parallel-fanout
     gate: review-gate
-    personas: [security-reviewer, design-reviewer, test-reviewer]
+    personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     output_contract: review-verdict
 autonomy: interactive
 ---
@@ -21,5 +21,5 @@ autonomy: interactive
 
 ## 展開
 1. 変更収集（`git diff` / 対象ファイル列）。
-2. `parallel-review` instruction に従い security/design/test を並列起動（reviewer agent 優先）。
+2. `parallel-review` instruction に従い security/design/test/behavioral-correctness を並列起動（reviewer agent 優先）。
 3. `review-gate` で集約し判定を提示。REJECT があれば停止し user へ。

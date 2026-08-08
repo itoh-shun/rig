@@ -150,7 +150,7 @@ def test_adaptive_bugfix_graph_references_are_resolved():
 
 def test_existing_bugfix_recipe_bytes_are_unchanged():
     expected = {
-        "bugfix.md": "68137ec65dbc969caf62b7259e40828ed7232be149963ff6b666c46c390b5947",
+        "bugfix.md": "929fb2104bbda259a9cc351a2bf723a73aa290aa0c1ba540e5d0ea444c182798",
         "fast-bugfix.md": "a922f07ff1e94805d43b8589f7cb08a3e3d51277fc50e739a576c7ba584b345d",
     }
     actual = {
