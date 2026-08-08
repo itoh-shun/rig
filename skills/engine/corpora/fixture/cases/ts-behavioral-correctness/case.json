@@ -11,7 +11,7 @@
       "perspectives": ["behavioral-correctness"],
       "summary": "dialogSubmitting ignores the preview phase, leaving a window where the confirm action can be triggered again or the dialog can close while preview is in flight.",
       "location": "(?i)dialogSubmitting",
-      "concept": "(?i)(preview|busy|loading|in[- ]?flight|double|duplicate|submit|confirming only|二重|送信中|再実行|ローディング)"
+      "concept": "(?i)(preview(?:ing)?|busy state|loading|in[- ]?flight|double action|duplicate action|confirming only|二重|送信中|再実行|ローディング)"
     },
     {
       "id": "partial-success-cancel",
@@ -20,7 +20,7 @@
       "perspectives": ["behavioral-correctness"],
       "summary": "canLeaveWithoutConfirmation ignores remaining shortfalls, so a partial-success state with no cart lines can leave without warning.",
       "location": "(?i)canLeaveWithoutConfirmation",
-      "concept": "(?i)(shortfall|partial success|partial[- ]?success|unfinished|pending|cancel|leave|未完了|部分入荷|部分成功|不足|キャンセル|離脱)"
+      "concept": "(?i)(shortfall|partial success|partial[- ]?success|unfinished|pending|cancel confirmation|未完了|部分入荷|部分成功|不足|キャンセル確認|離脱確認)"
     },
     {
       "id": "quantity-unit-confusion",
@@ -38,7 +38,7 @@
       "perspectives": ["behavioral-correctness"],
       "summary": "dailySigma now computes variance across raw events instead of aggregating quantities per day first, so multiple events on the same day change the result.",
       "location": "(?i)dailySigma",
-      "concept": "(?i)(daily|per day|same day|group|aggregate|granularity|sumSquares|event[- ]?level|日次|同日|日ごと|集約|粒度|イベント単位)"
+      "concept": "(?i)(per[- ]?day|same day|group(?:ing)?|aggregate|granularity|sumSquares|event[- ]?level|同日|日ごと|集約|粒度|イベント単位)"
     },
     {
       "id": "mobile-sort-unreachable",
@@ -47,7 +47,7 @@
       "perspectives": ["behavioral-correctness"],
       "summary": "mobileSortOptions exposes only the sort key and relies on selecting the same key again to toggle direction; a native select does not fire change when the selected value does not change, so DESC is unreachable.",
       "location": "(?i)(mobileSortOptions|applyMobileSortSelection)",
-      "concept": "(?i)(select|onChange|same value|reselect|re-select|toggle|ASC|DESC|unreachable|再選択|同じ値|降順|昇順|切り替)"
+      "concept": "(?i)(onChange|same value|reselect|re-select|toggle|ASC|DESC|unreachable|再選択|同じ値|降順|昇順|切り替)"
     }
   ]
 }
