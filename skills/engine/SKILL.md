@@ -372,6 +372,10 @@ RUN フェーズは2つのバックエンドを持つ。**既定は manual**。
 - 親コンテキストに**長い tool 出力やコード本文を引き込まない**。subagent には `output-contracts/review-verdict` 等の機械抽出可能な structured-report を返させ、親は判定行だけ読む。
 - 並列可能な独立観点は `patterns/parallel-fanout` で**1メッセージ多 dispatch**。集約は `patterns/review-gate`。
 
+**計測（`workbench.py context`）** — この規律はこれまで**一度も計測されていなかった**。`harness-taxonomy` が名指しする穴のうち2つ（散文で止まる強制・計測なしで出荷された規則）を同時に踏んでいる状態であり、誰も数えない規律は誰にも気づかれずに劣化する。rig が印字した1バイトは tool result として親コンテキストに戻るため、**rig の stdout こそが rig の親コンテキスト消費そのもの**である。これは rig が責任を負い、かつ観測できる唯一の部分なので、そこだけを invocation 単位で `.rig/context.jsonl` に記録する（`RIG_NO_CONTEXT_METER=1` で無効化）。
+
+計測**しない**もの——セッション全体の context、会話、親が自分で読んだファイル、そして「親が本当に subagent に dispatch したか」——はレポート自身に明記される。rig は subprocess であり、それらは見えない。「あなたの context 使用量」を名乗る数字は捏造になるが、「rig があなたに向けて印字した量」は検証可能で、しかも rig が動かせるレバーそのものである。出力を増やす変更（step バナー・flow map）は、この数字が動くことを前提に予算を決める。
+
 ### run-continuity（可視マーカー＋再アンカー）— 中断後も駆動を切らさない
 
 RUN 規律は SKILL.md 指示の recency に依存するため、**途中で質疑・脱線が挟まると親が静かに red flag（直接実装・ゲート省略）へ逸れ**、しかもそれが画面に出ず user が「rig が駆動中か」を見分けられない。これを常時 ON の規律で防ぐ。**opt-in ではない。** 出力増は1行ヘッダ＋ step 境界に限定し、軽さ既定・context-minimal を壊さない。

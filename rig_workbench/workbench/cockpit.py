@@ -46,6 +46,40 @@ def _aggregate_token_usage(root: pathlib.Path) -> dict:
     return totals if any_usage else {}
 
 
+def queue_depth_lines(root: pathlib.Path) -> list[str]:
+    """`.rig/queue.json` as counts, plus the items that are stuck on a person.
+
+    Read directly rather than through `queueing.queue_list`, because that module binds
+    its path to the invocation cwd at import time and cockpit is given an explicit root.
+    An unparseable store is reported as unreadable — the same stance `queueing` takes
+    (#360): a queue we cannot read is never displayed as an empty one, because "0
+    queued" and "the backlog file is broken" must not look identical on a dashboard.
+    """
+    path = root / ".rig" / "queue.json"
+    if not path.is_file():
+        return ["No local queue (stack work with `/rig:queue add \"<task>\"`)."]
+    try:
+        items = json.loads(path.read_text(encoding="utf-8")).get("items") or []
+    except (OSError, ValueError, AttributeError):
+        return [f"Unreadable: {path} — repair it before the next `queue go` "
+                "(rig will not rewrite it)."]
+    counts: dict[str, int] = {}
+    for item in items:
+        if isinstance(item, dict):
+            counts[item.get("status") or "?"] = counts.get(item.get("status") or "?", 0) + 1
+    active = {k: v for k, v in counts.items() if k != "done"}
+    if not active:
+        return [f"Nothing pending ({counts.get('done', 0)} done)."]
+    out = ["  ".join(f"{status}={n}" for status, n in sorted(active.items()))]
+    failed = [i for i in items if isinstance(i, dict) and i.get("status") == "failed"]
+    for item in failed[:3]:
+        out.append(f"failed #{item.get('id')}: {str(item.get('task') or '')[:44]}"
+                   f" -> `/rig:queue retry {item.get('id')}`")
+    if len(failed) > 3:
+        out.append(f"… and {len(failed) - 3} more failed (`/rig:queue list`)")
+    return out
+
+
 def cmd_cockpit(_args: argparse.Namespace) -> None:
     """Aggregate board/gate/drill/audit onto one read-only Mission Control screen (#307).
 
@@ -109,6 +143,17 @@ def cmd_cockpit(_args: argparse.Namespace) -> None:
         cache = f", cache_read={usage['cache_read_input_tokens']}" if usage["cache_read_input_tokens"] else ""
         print(f"│ {usage['calls']} call(s), prompt={usage['prompt_tokens']}, "
               f"completion={usage['completion_tokens']}, total={total}{cache}")
+
+    # ── Queue depth ────────────────────────────────────────────────────────
+    # Lives here and not in the per-turn status line on purpose. Backlog depth is a
+    # thing you go and look at, not a thing that needs to be re-stated in the parent
+    # session on every turn — and the parent session is exactly the budget
+    # `context-minimal` is protecting (`workbench.py context` now counts it).
+    # Local backend only: github/gitlab depth would mean shelling out to `gh`/`glab`,
+    # and cockpit is documented as reading files and nothing else.
+    print("├─ Queue depth (local backend)")
+    for line in queue_depth_lines(root):
+        print(f"│ {line}")
 
     # ── Safety strip ──────────────────────────────────────────────────────
     print("├─ Safety strip")

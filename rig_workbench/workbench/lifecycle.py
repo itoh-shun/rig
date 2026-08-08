@@ -15,6 +15,9 @@ from .capabilities import resolve_task_route
 from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
+from .flow_view import render_flow, render_transition
+from .progress import from_state as progress_from_state
+from .progress import load_recipe_steps
 from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
                                 apply_prompt_regression_sensor,
                                 ensure_prompt_criterion)
@@ -186,7 +189,11 @@ def cmd_new(args: argparse.Namespace) -> None:
         task["team"] = _binding.team
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
-    save_json(d / "steps.json", {"steps": []})
+    # Seed the recipe's declared steps so every later view has a denominator. An
+    # unreadable recipe seeds nothing and the run behaves exactly as before — the
+    # step list is display metadata, never an input to the accept decision.
+    seeded = load_recipe_steps(task["recipe"])
+    save_json(d / "steps.json", {"steps": seeded, "seeded": bool(seeded)})
     save_json(d / "acceptance.json", acc)
 
     # ── Selection-rationale banner (Phase 1 §3: code prints this deterministically instead of leaving it to prose) ──
@@ -214,6 +221,9 @@ def cmd_new(args: argparse.Namespace) -> None:
         reason = "--no-worktree specified" if args.no_worktree else "route policy"
         print(f"worktree: none ({reason})")
     print(f"state: {d.relative_to(root)}/")
+
+    for line in render_flow(seeded, acc):
+        print(line)
 
     similar = find_similar_tasks(root, args.input, exclude_task_id=task_id)
     if similar:
@@ -243,7 +253,15 @@ def cmd_step(args: argparse.Namespace) -> None:
             else:
                 data["steps"].append({"name": name, "status": status, "updated_at": now_iso()})
         save_json(d / "steps.json", data)
-        print(f"{task_id} steps: " + " ".join(f"{s['name']}={s['status']}" for s in data["steps"]))
+        progress = progress_from_state(data)
+        if progress.known:
+            for line in render_transition(progress):
+                print(line)
+        else:
+            # Runs registered before the recipe was seeded have no denominator, so
+            # they keep the flat listing rather than getting a fabricated one.
+            print(f"{task_id} steps: "
+                  + " ".join(f"{s['name']}={s['status']}" for s in data["steps"]))
 
 
 def cmd_gate(args: argparse.Namespace) -> None:

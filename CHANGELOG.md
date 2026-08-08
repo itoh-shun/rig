@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+## [2.2.0] - 2026-08-08
+
+**A rule stated 152 times and never once counted.** `context-minimal` is called a
+hard rule in SKILL.md §6, and nothing in this repository measured a byte of it —
+which is two of the holes rig's own `harness-taxonomy` names, at the same time:
+enforcement that stops at prose, and a rule shipped without measurement. The
+existing token metering only ever covered HTTP providers, and `/rig:go`'s default
+manual backend never reaches `orchestrate` at all, so the main path wasn't even in
+`runs.jsonl`.
+
+Every byte a rig command prints returns to the parent as a tool result, so **rig's
+stdout is rig's contribution to the parent's context**. That is the part rig is
+responsible for and the only part it can observe, so that is what `workbench.py
+context` counts — per invocation, into `.rig/context.jsonl`, with the scope stated
+in the report itself: not the session's total context, not the conversation, not
+files the parent opened on its own, and not whether the parent actually dispatched
+to a subagent. A number claiming to be "your context usage" would be a fabrication.
+`RIG_NO_CONTEXT_METER=1` turns it off.
+
+This landed *first*, and deliberately: everything below adds output, and adding
+output to an unmeasured area is precisely what the doctrine forbids.
+
+**What the recipe is going to do, shown to somebody who doesn't already know.**
+The registration banner named the chosen recipe and stopped. `bugfix` is seven
+steps, fans out to three reviewers at step six and judges fifteen criteria at step
+seven; the information existed the whole time in `orchestrate plan`, one command
+away from the path anybody takes — an asset present and not connected.
+
+- `new` prints the flow map, with `◆` on the steps that are hard stops and the
+  final gate's criterion count.
+- **Shape decides the display.** Twelve shipped recipes have exactly one step, and
+  `[▸] 1/1` is a progress bar over a single item. Those show their fan-out and gate
+  instead of a position — what's complex about them is inside the step.
+- Each step transition prints position and what's next (~7 lines a run, not per
+  turn). A retry shows `↻` and its attempt separately from the position, because a
+  bar that won't move reads as a stuck run.
+- `board` gains the bar, the position, and a **whose-move-is-it** column in one
+  vocabulary — plus the `あなた待ち / 他人待ち / 実行中` footer that is the only
+  thing that makes a multi-task board glanceable.
+
+The denominator is real: `steps.json` is seeded from the resolved recipe at
+registration, and records *that it was seeded*. An unseeded run grows its step list
+from whatever gets reported, so deriving a denominator from list length would
+announce "1/1, all steps complete" about a run whose step count nobody knows. The
+seeding fact is read, not inferred, and runs registered by an older rig keep the
+previous display rather than being handed a number nobody measured. Throughout,
+the step list is display metadata and never an input to the accept decision — that
+stays with the acceptance gate.
+
+**`queue go` now says what the batch left on your desk.** `3/4 done` describes the
+queue's bookkeeping: `DONE` means the gate settled and the verifier passed, which
+is neither "merged" nor "nothing left to do" — each of those tasks is in its own
+worktree waiting for a person. The tally is followed by the batch regrouped by the
+move each item waits on, in `board`'s exact wording. Linking is evidence-based: a
+queue item becomes a workbench task inside the provider's own session, so an item
+whose id can't be recovered is listed as unlinked rather than bucketed on a guess.
+In a screen whose job is "which of these needs me", a wrong attribution is worse
+than an admitted gap.
+
+**Queue depth moved to `cockpit`, not the status header.** Backlog depth is
+something you go and look at; the parent session's context is the budget
+`context-minimal` protects, and it is now a number that moves. An unreadable queue
+store is reported as unreadable, never as an empty one — the same stance #360
+established, because "0 queued" and "the backlog file is broken" must not look
+identical on a dashboard.
+
 ## [2.1.1] - 2026-08-07
 
 **The prompt evaluation gate was red on every change that touched a prompt

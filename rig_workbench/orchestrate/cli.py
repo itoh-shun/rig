@@ -66,6 +66,7 @@ Exit code 0=success / 1=error or ESCALATE / 3=run parked at a human gate (`run` 
 
 import sys
 
+from .. import context_meter
 from ..gh_requirement import advise_gh
 from .commands import (cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
                        cmd_next, cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status,
@@ -108,6 +109,9 @@ def main():
         print(__doc__)
         sys.exit(0 if len(sys.argv) < 2 else 1)
     cmd, rest = sys.argv[1], sys.argv[2:]
+    # Count what this invocation prints at the parent session. context-minimal is
+    # called a hard rule and was never measured; see rig_workbench/context_meter.
+    context_meter.install(f"orchestrate {cmd}", rest)
     if _advises_gh(cmd, rest):
         advise_gh(f"orchestrate {cmd}")
     COMMANDS[cmd](rest)
