@@ -24,8 +24,8 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 
 | 種別 | 役割 | 現在の在庫 |
 |---|---|---|
-| **agent**（native 委譲先・優先） | read-only reviewer。専用 context・tool 制限つきで起動 | `agents/security-reviewer` `agents/design-reviewer` `agents/test-reviewer` `agents/performance-reviewer` `agents/observability-reviewer` `agents/api-compat-reviewer` `agents/migration-reviewer` `agents/docs-reviewer` `agents/finding-verifier` `agents/lazy-senior-reviewer` `agents/cognitive-economist-reviewer` |
-| **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
+| **agent**（native 委譲先・優先） | read-only reviewer。専用 context・tool 制限つきで起動 | `agents/security-reviewer` `agents/design-reviewer` `agents/test-reviewer` `agents/behavioral-correctness-reviewer` `agents/performance-reviewer` `agents/observability-reviewer` `agents/api-compat-reviewer` `agents/migration-reviewer` `agents/docs-reviewer` `agents/finding-verifier` `agents/lazy-senior-reviewer` `agents/cognitive-economist-reviewer` |
+| **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/behavioral-correctness-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
 | **instruction facet**（薄い委譲） | 手順の routing。既存 skill/command/agent に委譲する thin な指示 | `facets/instructions/parallel-review` `facets/instructions/intake` `facets/instructions/design` `facets/instructions/implement` `facets/instructions/verify` `facets/instructions/visual-verify` `facets/instructions/pr` `facets/instructions/merge` `facets/instructions/adversarial-review` `facets/instructions/adaptive-assess` |
 | **output-contract facet** | subagent 出力の機械抽出可能フォーマット定義 | `facets/output-contracts/review-verdict`（着手判断の集約用・既定） `facets/output-contracts/review-findings`（severity・file:line・Blocking/Non-blocking を明示する詳細版。`/rig:drill` と厳しめレビュー依頼で使用） `facets/output-contracts/conformance-report`（ガバナンス適合性＝総合行〔force 率必須〕・層の到達・チーム別スコア表・乖離） |
 | **policy facet** | 末尾注入のガードレール | `facets/policies/pr-hygiene` `facets/policies/pre-push-review` `facets/policies/ci-cost` `facets/policies/branch-strategy` `facets/policies/risk-based-testing` `facets/policies/cross-llm-legibility` `facets/policies/suppression-memory`（レビュー却下学習＝`.rig/review-suppressions.jsonl`。REFUTED/却下所見を記録し再指摘を抑止・UPHELD には負ける） `facets/policies/comment-policy`（`--comment` の投稿統制＝severity マッピング・nit 上限5・Pre-existing note・再レビュー収束） `facets/policies/org-policy`（組織ポリシーが効くリポジトリでのガードレール＝層の緩和・封印ロールへの自己登録・台帳編集・無記名 force の禁止。ポリシー未設定なら不活性） |
@@ -570,14 +570,16 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 
 ### [1] ai-quirk — <quirk の短い名前>
 - 書き込み先: ~/.claude/rig/knowledge/ai-quirks/<name>-descriptive.md（既存・上書き 2026-06-20）
-               既存の先頭: "# ai-quirk: <name>\n何が起きたか..."
+               既存の先頭: "# ai-quirk: <name>\
+何が起きたか..."
                ~/.claude/rig/knowledge/ai-quirks/<name>-policy.md（新規）
 - 内容草案: ...（記述形：何が起きたか / 規範形：次回 prompt に注入するルール）
 
 ### [2] pitfall — <落とし穴の短い名前>
 - 書き込み先: <repo>/.claude/rig/knowledge/accumulated/<name>.md（新規）
                ~/.claude/projects/<proj>/memory/<name>.md（既存・上書き 2026-06-18）
-               既存の先頭: "# pitfall: <name>\n前回の学び..."
+               既存の先頭: "# pitfall: <name>\
+前回の学び..."
                MEMORY.md に1行ポインタ追加
 - 内容草案: ...
 
