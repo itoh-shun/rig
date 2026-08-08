@@ -5,10 +5,16 @@ synthetic recipes + a synthetic seed catalog so the tests do not depend on the
 shipped tree.
 """
 
+import json
+
 import pytest
 
 from rig_workbench.validation import state
-from rig_workbench.validation.drill import check_drill_coverage, parse_seed_perspectives
+from rig_workbench.validation.drill import (
+    check_drill_coverage,
+    parse_fixture_perspectives,
+    parse_seed_perspectives,
+)
 
 CATALOG = """# instruction: drill
 
@@ -46,6 +52,21 @@ def test_seed_perspectives_parsed_and_split(catalog):
     assert parse_seed_perspectives(catalog.parent / "missing.md") == set()
 
 
+def test_fixture_perspectives_are_measured(tmp_path):
+    root = tmp_path / "fixture"
+    case = root / "cases" / "behavioral"
+    case.mkdir(parents=True)
+    (case / "case.json").write_text(json.dumps({
+        "id": "behavioral",
+        "clean": False,
+        "violations": [{
+            "id": "async-gap",
+            "perspectives": ["behavioral-correctness"],
+        }],
+    }), encoding="utf-8")
+    assert parse_fixture_perspectives(root) == {"behavioral-correctness"}
+
+
 def test_covered_review_gate_recipe_passes(write_recipe, catalog, emitted):
     path = write_recipe("covered", recipe_md("covered", (
         "  - id: review\n    instruction: parallel-review\n    gate: review-gate\n"
@@ -54,6 +75,29 @@ def test_covered_review_gate_recipe_passes(write_recipe, catalog, emitted):
     check_drill_coverage([path], drill_instruction=catalog)
     lines = emitted()
     assert not any(line.startswith(("[WARN]", "[FAIL]")) for line in lines)
+    assert any(line.startswith("[PASS]") and "1/1" in line for line in lines)
+
+
+def test_fixture_only_reviewer_counts_as_covered(write_recipe, catalog, emitted, tmp_path):
+    root = tmp_path / "fixture"
+    case = root / "cases" / "behavioral"
+    case.mkdir(parents=True)
+    (case / "case.json").write_text(json.dumps({
+        "id": "behavioral",
+        "clean": False,
+        "violations": [{
+            "id": "async-gap",
+            "perspectives": ["behavioral-correctness"],
+        }],
+    }), encoding="utf-8")
+    path = write_recipe("behavioral", recipe_md("behavioral", (
+        "  - id: review\n    instruction: parallel-review\n    gate: review-gate\n"
+        "    personas: [behavioral-correctness-reviewer]\n"
+    )))
+    check_drill_coverage([path], drill_instruction=catalog, fixture_corpus=root)
+    lines = emitted()
+    assert not any("behavioral-correctness-reviewer" in line and line.startswith("[WARN]")
+                   for line in lines)
     assert any(line.startswith("[PASS]") and "1/1" in line for line in lines)
 
 
@@ -152,8 +196,6 @@ def test_shipped_catalog_covers_prose_recipe_perspectives():
 def test_aggregate_drill_confidence_corpus_filter(tmp_path):
     """#270: corpus filter separates standard vs project scores; rows without
     the field predate the distinction and count as standard."""
-    import json
-
     from rig_workbench.workbench.confidence import aggregate_drill_confidence
 
     rig = tmp_path / ".rig"
