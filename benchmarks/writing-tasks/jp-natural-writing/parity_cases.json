@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "description": "GPT reference vs Claude candidate Japanese quality benchmark. Each category has train/dev/holdout cases.",
+  "cases": [
+    {
+      "id": "business-chat-train-01",
+      "split": "train",
+      "category": "business_chat",
+      "prompt": "同僚からSlackで「これ今日中にいけそう？」と聞かれました。今日中は厳しいですが、明日の午前中なら対応できます。相手と普段から普通に話す関係です。自然な返信だけを書いてください。"
+    },
+    {
+      "id": "business-chat-dev-01",
+      "split": "dev",
+      "category": "business_chat",
+      "prompt": "チームメンバーから「さっきの修正、もう見てもらえました？」と聞かれました。まだ見られておらず、30分後くらいに確認できそうです。Slackで自然に返してください。"
+    },
+    {
+      "id": "business-chat-holdout-01",
+      "split": "holdout",
+      "category": "business_chat",
+      "prompt": "同僚から「明日の打ち合わせ、資料なくても大丈夫？」と聞かれました。資料は必須ではありませんが、論点を3つだけメモしてきてほしいです。短く自然に返してください。"
+    },
+
+    {
+      "id": "code-review-train-01",
+      "split": "train",
+      "category": "code_review",
+      "prompt": "PRレビューコメントを書いてください。状況: null の可能性がある値をそのまま参照しており、特定条件で例外になります。相手を責めず、問題と直し方がすぐ分かる日本語にしてください。コメント本文だけを書いてください。"
+    },
+    {
+      "id": "code-review-dev-01",
+      "split": "dev",
+      "category": "code_review",
+      "prompt": "PRレビューコメントを書いてください。状況: 同じDBクエリがループ内で毎回実行されており、件数が増えるとN+1になる実装です。簡潔で、押しつけがましくない日本語にしてください。"
+    },
+    {
+      "id": "code-review-holdout-01",
+      "split": "holdout",
+      "category": "code_review",
+      "prompt": "PRレビューコメントを書いてください。状況: 例外を catch したあとログだけ出して正常終了扱いにしており、呼び出し側が失敗を検知できません。指摘内容と改善案を自然な日本語で短く書いてください。"
+    },
+
+    {
+      "id": "technical-explanation-train-01",
+      "split": "train",
+      "category": "technical_explanation",
+      "prompt": "非エンジニアの社内メンバーに「キャッシュって結局なに？」と聞かれました。Webシステムのキャッシュを、専門用語を増やしすぎず、幼稚にもならない日本語で2〜4文で説明してください。"
+    },
+    {
+      "id": "technical-explanation-dev-01",
+      "split": "dev",
+      "category": "technical_explanation",
+      "prompt": "若手エンジニアに、楽観ロックと悲観ロックの違いを説明してください。教科書の定義を並べるのではなく、使い分けが分かる自然な日本語で5文以内にしてください。"
+    },
+    {
+      "id": "technical-explanation-holdout-01",
+      "split": "holdout",
+      "category": "technical_explanation",
+      "prompt": "プロダクトマネージャーに「APIの後方互換性を壊すってどういうこと？」と聞かれました。実務で何が困るのかが伝わるように、自然な日本語で短く説明してください。"
+    },
+
+    {
+      "id": "rewrite-train-01",
+      "split": "train",
+      "category": "rewrite",
+      "prompt": "次の文章を、意味を変えずに自然で簡潔な業務文へ直してください。『本件につきましては、こちら側にて対応を実施させていただく形となりますので、ご確認いただけますと幸いです。』"
+    },
+    {
+      "id": "rewrite-dev-01",
+      "split": "dev",
+      "category": "rewrite",
+      "prompt": "次の文章を、固すぎず失礼でもない日本語に直してください。『ご連絡いただきありがとうございます。いただきました内容につきまして確認を行わせていただき、改めてご連絡させていただければと存じます。』"
+    },
+    {
+      "id": "rewrite-holdout-01",
+      "split": "holdout",
+      "category": "rewrite",
+      "prompt": "次の文章のAIっぽい冗長さを減らし、自然な日本語に直してください。『この機能を利用することによって、ユーザーはより効率的に作業を実施することが可能となります。』"
+    },
+
+    {
+      "id": "casual-train-01",
+      "split": "train",
+      "category": "casual",
+      "prompt": "友人から『今日飲みに行かない？』と来ました。行きたいのですが仕事が少し長引きそうで、20時半くらいなら行けます。普段のLINEっぽく返してください。"
+    },
+    {
+      "id": "casual-dev-01",
+      "split": "dev",
+      "category": "casual",
+      "prompt": "友人から『この前すすめてた映画どうだった？』と聞かれました。面白かったけれど前半は少し眠かった、後半はかなり好きだった、という感じをLINEで自然に返してください。"
+    },
+    {
+      "id": "casual-holdout-01",
+      "split": "holdout",
+      "category": "casual",
+      "prompt": "友人から『駅着いた！どこいる？』と来ました。自分は改札を出たところのコンビニ前にいます。短いLINE返信を書いてください。"
+    },
+
+    {
+      "id": "politeness-train-01",
+      "split": "train",
+      "category": "politeness",
+      "prompt": "取引先にメールで、先方からもらった資料に1ページだけ不足があることを伝え、該当ページの再送をお願いしてください。必要以上にへりくだらず、丁寧に2〜4文で書いてください。件名は不要です。"
+    },
+    {
+      "id": "politeness-dev-01",
+      "split": "dev",
+      "category": "politeness",
+      "prompt": "社外の担当者に、こちらの確認が遅れて返信が1日遅れたことを詫びつつ、質問への回答を送る前置きを書いてください。大げさな謝罪にせず自然な敬語にしてください。"
+    },
+    {
+      "id": "politeness-holdout-01",
+      "split": "holdout",
+      "category": "politeness",
+      "prompt": "初めてやり取りする取引先に、候補日として火曜か木曜の午後を提示し、都合のよい時間を聞く文章を書いてください。過剰敬語を避け、簡潔にしてください。"
+    },
+
+    {
+      "id": "ambiguity-train-01",
+      "split": "train",
+      "category": "ambiguity",
+      "prompt": "上司からチャットで『昨日のあれ、どうなった？』と来ました。直前まで話していた障害対応のことだと分かっており、原因は特定済み、修正はまだ、本日中に直す予定です。自然に返してください。"
+    },
+    {
+      "id": "ambiguity-dev-01",
+      "split": "dev",
+      "category": "ambiguity",
+      "prompt": "同僚から『例の件、先方OKだったよ』と来ました。自分はその承認を待っていて、次は自分がリリース作業を進める番です。文脈を繰り返し説明せず、自然に返してください。"
+    },
+    {
+      "id": "ambiguity-holdout-01",
+      "split": "holdout",
+      "category": "ambiguity",
+      "prompt": "チームのチャットで『そこだけ先に直せる？』と聞かれました。対象箇所は直前の会話で共有済みです。技術的には可能で、他の修正と切り離して先に出せます。短く返してください。"
+    },
+
+    {
+      "id": "conciseness-train-01",
+      "split": "train",
+      "category": "conciseness",
+      "prompt": "『確認したところ設定値が古いままでした。新しい値へ直したので、もう一度試してもらえますか』という内容を、社内チャット向けにもっと短くしてください。情報は落とさないでください。"
+    },
+    {
+      "id": "conciseness-dev-01",
+      "split": "dev",
+      "category": "conciseness",
+      "prompt": "チームに『CIが落ちているのは今回の変更ではなく、main側ですでに失敗しているテストが原因。こちらのPR固有の失敗はない』と伝えたいです。2文以内で自然に書いてください。"
+    },
+    {
+      "id": "conciseness-holdout-01",
+      "split": "holdout",
+      "category": "conciseness",
+      "prompt": "『調査したがこちらでは再現しなかった。追加でブラウザとOSのバージョンが分かると調べやすい』という内容を、サポート担当者向けの短い文章にしてください。"
+    },
+
+    {
+      "id": "incident-report-train-01",
+      "split": "train",
+      "category": "incident_report",
+      "prompt": "障害の社内共有を書いてください。事実: 10:05から10:18までログインしづらい状態、原因は認証DBへの接続枯渇、10:18に接続数上限を一時的に引き上げて復旧、恒久対応はこれから。事実と今後を分け、煽らない日本語で簡潔にしてください。"
+    },
+    {
+      "id": "incident-report-dev-01",
+      "split": "dev",
+      "category": "incident_report",
+      "prompt": "社内向けに障害状況を共有してください。13:40から一部の画像アップロードが失敗。CDNではなくアプリ側のタイムアウト設定が原因と判明。14:12に設定変更して復旧。再発防止策は未確定です。短く分かりやすく書いてください。"
+    },
+    {
+      "id": "incident-report-holdout-01",
+      "split": "holdout",
+      "category": "incident_report",
+      "prompt": "障害の一次報を書いてください。現在、検索APIの応答が遅く、一部でタイムアウトが発生しています。原因は調査中で、回避策もまだありません。分かっていないことを断定せず、社内チャット向けに簡潔に書いてください。"
+    },
+
+    {
+      "id": "support-reply-train-01",
+      "split": "train",
+      "category": "support_reply",
+      "prompt": "ユーザーから『パスワードを変えたのにログインできません』と問い合わせが来ました。まずメールアドレスの入力違いと、古いパスワードが自動入力されていないかを確認してほしいです。責任を押しつけず、サポート返信として自然に書いてください。"
+    },
+    {
+      "id": "support-reply-dev-01",
+      "split": "dev",
+      "category": "support_reply",
+      "prompt": "ユーザーから『CSVをアップロードしたらエラーになった』と問い合わせが来ました。原因特定にはエラー画面の文言とCSVの列名が必要ですが、個人情報を含むファイルそのものは送ってほしくありません。分かりやすく案内してください。"
+    },
+    {
+      "id": "support-reply-holdout-01",
+      "split": "holdout",
+      "category": "support_reply",
+      "prompt": "ユーザーから『昨日まで見えていたデータが消えた』と問い合わせが来ました。実際には表示期間のフィルターが今月に切り替わっただけの可能性が高いですが、まだ断定はできません。確認手順を自然なサポート文で案内してください。"
+    }
+  ]
+}
