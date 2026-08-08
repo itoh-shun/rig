@@ -36,7 +36,7 @@ steps:
     instruction: parallel-review
     pattern: parallel-fanout
     gate: review-gate
-    personas: [security-reviewer, design-reviewer, test-reviewer]
+    personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     output_contract: review-verdict
   - id: acceptance
     instruction: acceptance-check
@@ -74,7 +74,7 @@ steps:
 
 - `implement`: diff と `git diff --check` を強制
 - `test`: `pytest` を強制
-- `review-diff`: 通常の bugfix と同じ 3-way review
+- `review-diff`: 通常の bugfix と同じ 4-way review
 - `acceptance`: 13 基準を維持しつつ、diff/whitespace/test を機械チェックして `max_retries: 2`
 
 ## 使い分け
