@@ -389,9 +389,14 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
 
     def _run_one(it):
         task = it["task"]
+        task_id = ""
         _set_status(it["id"], "running")
         try:
             rc, out = run_provider(gen, "generator", _build_queue_task_prompt(task, gen), cfg)
+            # The only trace linking this queue item to the workbench task it created:
+            # registration happened inside the provider's own session (see
+            # workbench.batch for why an unrecoverable id is reported, not guessed).
+            task_id = _find_task_id(out)
             rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, out), cfg, persona="queue")
             ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
             note = ("✅ rig: gate settled (needs /rig:rig board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
@@ -400,13 +405,44 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
             # left every remaining item pinned at `running` with no way to tell why (#360).
             ok, note = False, f"❌ rig: {type(e).__name__}: {e}"[:300]
         _set_status(it["id"], "done" if ok else "failed", note)
-        return (it, ok)
+        return {"id": it["id"], "task": task, "ok": ok, "task_id": task_id}
 
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         results = list(ex.map(_run_one, items))
-    done = sum(1 for _, ok in results if ok)
-    for it, ok in results:
-        print(f"  [{'DONE' if ok else 'FAIL'}] #{it['id']}  {it['task']}")
+    done = sum(1 for r in results if r["ok"])
+    for r in results:
+        print(f"  [{'DONE' if r['ok'] else 'FAIL'}] #{r['id']}  {r['task']}")
     print(f"\n=== GO complete: {done}/{len(results)} done [{backend}] ===")
+    # `done` counts settled gates, not finished work: every one of those tasks is still
+    # sitting in its own worktree waiting for a person to accept or discard it. Say so.
+    for line in _batch_lines(results):
+        print(line)
     sys.exit(0 if done == len(results) else 1)
+
+
+def _find_task_id(text: str) -> str:
+    """Best-effort, and never a reason for GO to fail."""
+    try:
+        from ..workbench.batch import find_task_id
+        return find_task_id(text)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _batch_lines(results: list[dict]) -> list[str]:
+    """The regrouped "what you must do next" block, or nothing.
+
+    Imported lazily and wrapped: the batch already ran, and a rendering problem in the
+    summary must not turn a completed GO into a traceback.
+    """
+    try:
+        from ..workbench.batch import group_batch, render_batch
+        from ..workbench.state import maybe_repo_root
+
+        root = maybe_repo_root()
+        if root is None:
+            return []
+        return render_batch(group_batch(root, results))
+    except Exception:  # noqa: BLE001
+        return []
 

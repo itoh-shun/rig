@@ -320,16 +320,20 @@ When multiple AI tasks are running or completed, `/rig:go board` is a management
 ```
 [running    ] rig-20260705-091200-search-feature
     add search to the inventory list
-    type=feature      recipe=feature      mode=isolated   step=implement(running)      gate=-
+    feature        [✓✓✓▸···] 3/7 implement    gate=-                    … rig 実行中
 [gate_passed] rig-20260705-090800-login-fix
     fix the login bug
-    type=bugfix       recipe=bugfix       mode=isolated   step=acceptance(passed)      gate=passed
+    bugfix         [✓✓✓✓✓✓✓] 7/7 done        gate=passed               → あなた: diff を見て accept
 [gate_failed] rig-20260705-091500-readme-clarity
     make the README clearer
-    type=documentation recipe=documentation mode=isolated step=verify-commands(failed) gate=failed
+    documentation  [✓✓✓✓−✓✓] 7/7 done        gate=failed               → あなた: 未達基準を直す or discard
+
+あなた待ち 2 / 他人待ち 0 / 実行中 1
 ```
 
-It tells you: which task is still running, which passed or failed its gate, which worktree holds changes, which run is ready for `diff` review, and which should be `discard`ed. `/rig:go board --all` widens this to every task ever recorded, not just active ones.
+Every column answers one question: how far along (`3/7`, the recipe's own step count — see [Flow visibility](#flow-visibility)), whether the machine gate has ruled, and **whose move it is**. That last column is the reason `board` exists — a list of tasks that doesn't say which ones are waiting on *you* is a list you have to open one by one — and the footer counts it, so a glance is enough. `⏸` means the run is parked on somebody else's signature at a human gate; `⚠ not-isolated` marks the one case where discarding isn't free. `/rig:go board --all` widens this to every task ever recorded, not just active ones.
+
+Tasks registered by an older rig have no recorded step list, so they keep the previous `step=<name>(<status>)` display rather than being given a denominator nobody measured.
 
 ### Cockpit — Mission Control (`/rig:go cockpit`, read-only, #307)
 
@@ -338,6 +342,88 @@ One screen aggregating the run timeline, gate radar, drill-measured reviewer con
 ```
 python3 scripts/workbench.py cockpit
 ```
+
+Cockpit is also where **queue depth** lives — `queued=/running=/failed=` from `.rig/queue.json`, with the retry command for anything that failed. It's deliberately not in the per-turn status header: backlog depth is something you go and look at, and the parent session's context is the budget `context-minimal` protects. An unreadable queue store is reported as unreadable, never as an empty one — "0 queued" and "the backlog file is broken" must not look the same on a dashboard.
+
+### Flow visibility
+
+The registration banner used to name the chosen recipe and stop there. `bugfix` is seven steps, fans out to three reviewers at step six and judges fifteen criteria at step seven — all of it real, none of it anywhere you'd see it unless you already knew to run `orchestrate plan`. So `new` now prints the map:
+
+```
+flow: 7 steps
+  ▸ 1 inspect                  orchestrator
+    2 reproduce                debugger
+    3 plan                     debugger
+    4 implement                implementer
+    5 test                     implementer
+    6 review-diff            ◆ レビュー判定が揃うまで進まない  3人並列: security-reviewer / design-reviewer / test-reviewer
+    7 acceptance             ◆ 受け入れ基準で機械判定  implementer
+  ◆ = ここを通らないと先に進めない（最終ゲートは 15 基準）
+  あなたの出番: 全 step 通過後。差分を見て accept か discard（それまで作業ツリーは無傷）
+```
+
+**The shape of the recipe decides the display.** Twelve of the shipped recipes have exactly one step, and rendering `[▸] 1/1` for those is a progress bar over a single item — a number carrying no information. What's complex about those runs is *inside* the step, so they show their fan-out and their gate instead of a position:
+
+```
+flow: 1 step — review
+  3人が並列でレビューし、全員の判定が揃うまで終わりません
+    ├ security-reviewer
+    ├ design-reviewer
+    ├ test-reviewer
+  ◆ レビュー判定が揃うまで進まない
+```
+
+Then each step transition prints where the run is and what's next — about seven lines per run, not per turn:
+
+```
+  [✓✓✓✓▸··] 4/7 → test
+      ▸ 5 test                   implementer
+      次: review-diff
+```
+
+The denominator is the recipe's own: `steps.json` is seeded from the resolved recipe at registration, so `4/7` is a count that exists rather than one invented for the display. A recipe that can't be read seeds nothing and the run behaves exactly as before — the step list is display metadata and is **never** an input to the accept decision, which stays with the acceptance gate.
+
+### `queue go`'s completion summary
+
+`queue go` reported `3/4 done`. `DONE` there means the gate settled and the verifier passed — which is not "merged", and not even "nothing left to do": every one of those tasks is sitting in its own isolated worktree waiting for a person. So the tally is now followed by the batch regrouped by **the move each item is waiting on**, in `board`'s exact wording:
+
+```
+次にやること（バッチが残した判断）
+  → あなた: diff を見て accept  (2)
+    #1  rig-20260705-090800-login-fix
+        ログイン失敗を直す
+    → /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes
+  ✗ キュー側で失敗（差分レビュー以前）  (1)
+    #3  壊れているやつ
+    → 原因を確認して `queue retry <id>`
+  ? task id を出力に残さず、状態を確認できませんでした  (1)
+```
+
+A queue item becomes a workbench task inside the provider's own session, so the only trace linking them is the task id the provider printed. When it's there the item is grouped by that task's real state; when it isn't, the item is listed as unlinked rather than folded into a bucket on a guess. In a screen whose whole job is "which of these needs me", a wrong attribution is worse than an admitted gap.
+
+### Context metering (`/rig:go context`)
+
+`context-minimal` is stated 152 times in this repository and called a hard rule. Nothing counted a single byte of it — which is two of the holes rig's own `harness-taxonomy` names, at once: enforcement that stops at prose, and a rule shipped without measurement. A discipline nobody counts degrades without anyone noticing.
+
+Every byte a rig command prints comes back to the parent session as a tool result, so **rig's stdout is rig's contribution to the parent's context**. That's the part rig is responsible for and the part it can observe, so that's what's counted — per invocation, attributed to a task when one is in scope, into `.rig/context.jsonl` (gitignored, same tier as `runs.jsonl`).
+
+```bash
+python3 scripts/workbench.py context                 # all time
+python3 scripts/workbench.py context --since-days 7
+```
+
+```
+## rig context (last 7 days)
+
+rig printed 41.2KB at the parent session across 118 invocation(s)
+  ≈ 10,547 tokens (rough: ~4 bytes/token)
+
+### by command (biggest first)
+   18.9KB   46%  wb diff                        4 call(s), largest 7.7KB
+    9.1KB   22%  wb board                      31 call(s), largest 412B
+```
+
+**What it does not measure**, stated in the report itself: the session's total context, the conversation, files the parent read on its own, or whether the parent actually dispatched to a subagent instead of doing the work itself. rig runs as a subprocess and can't see any of that. A number claiming to be "your context usage" would be a fabrication; this one claims only "what rig printed at you", which is checkable and is the lever rig controls. Set `RIG_NO_CONTEXT_METER=1` to turn it off.
 
 ### Stats
 

@@ -7,6 +7,8 @@ import pathlib
 import re
 from collections import Counter
 
+from .progress import from_state as progress_from_state
+from .progress import next_action
 from .config import (ACTIVE_STATUSES, CHECK_ICON, GATE_PRESETS, NEXT_ACTIONS,
                      STEP_ICON, TASK_TYPES)
 from .state import (_diff_lines, _load_audit, budget_status, build_acceptance,
@@ -106,23 +108,48 @@ def cmd_board(args: argparse.Namespace) -> None:
         print("\nTo start a new task: /rig:rig \"<task>\"")
         return
 
+    waiting_on_you: list[str] = []
+    waiting_on_others: list[str] = []
     for t in tasks:
         d = base / t["task_id"]
         acc = load_json(d / "acceptance.json", {"checks": []})
         gs = gate_status(acc) if acc.get("checks") else "-"
-        steps = load_json(d / "steps.json", {"steps": []})["steps"]
-        last_step = f"{steps[-1]['name']}({steps[-1]['status']})" if steps else "-"
+        step_state = load_json(d / "steps.json", {"steps": []})
+        steps = step_state["steps"]
+        prog = progress_from_state(step_state)
         mode = "isolated" if t.get("worktree_path") else "not-isolated"
+        action = next_action(t, prog, gs)
+
+        # Seeded runs get a real position; runs registered before seeding existed have
+        # no denominator, so they keep echoing the last name reported rather than
+        # being given a fabricated one.
+        if prog.known:
+            where = f"[{prog.bar}] {prog.label(width=14)}"
+        else:
+            where = f"{steps[-1]['name']}({steps[-1]['status']})" if steps else "-"
 
         _, _, over_budget = budget_status(t)
         print(f"[{t['status']:<11}] {t['task_id']}" + ("  ⚠ over budget" if over_budget else ""))
         print(f"    {t['input'][:70]}{'…' if len(t['input']) > 70 else ''}")
-        print(f"    type={t['task_type']:<14} recipe={t.get('recipe') or '-':<14} "
-              f"mode={mode:<13} step={last_step:<20} gate={gs}")
+        print(f"    {t.get('recipe') or t['task_type']:<14} {where:<26} "
+              f"gate={gs:<20} {action}")
+        if mode != "isolated":
+            # Worth a line of its own: an un-isolated task writes into the working
+            # tree as it goes, which is the one case where "discard" is not free.
+            print(f"    ⚠ {mode}")
+        if action.startswith("→"):
+            waiting_on_you.append(t["task_id"])
+        elif action.startswith("⏸"):
+            waiting_on_others.append(t["task_id"])
     if not args.all:
-        print(f"\n({sum(1 for t in tasks if t['status'] == 'gate_failed')} gate_failed / "
-              f"{sum(1 for t in tasks if t['status'] == 'gate_passed')} awaiting diff/accept)")
-        print("Next actions: /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes")
+        # The count that decides whether this screen needs anything from the reader.
+        # A list of tasks that does not say which ones are yours is a list you have to
+        # open one by one, which is the thing `board` exists to replace.
+        print(f"\nあなた待ち {len(waiting_on_you)} / 他人待ち {len(waiting_on_others)} / "
+              f"実行中 {len(tasks) - len(waiting_on_you) - len(waiting_on_others)}")
+        if waiting_on_you:
+            print("Next actions: /rig:rig diff <task_id> · /rig:rig accept <task_id> "
+                  "· /rig:rig discard <task_id> --yes")
 
 
 def cmd_log(args: argparse.Namespace) -> None:

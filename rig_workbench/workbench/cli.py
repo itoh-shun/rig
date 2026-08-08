@@ -23,6 +23,9 @@ Dependencies: the installed rig-workbench runtime package
 """
 
 import argparse
+import sys
+
+from .. import context_meter
 
 from ..gh_requirement import advise_gh
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
@@ -30,6 +33,7 @@ from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
+from .context_report import cmd_context
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
@@ -239,6 +243,12 @@ def main() -> None:
                    help="with --inject-preview: machine-readable JSON (for hooks/inject-instincts.sh)")
     p.set_defaults(func=cmd_instincts)
 
+    p = sub.add_parser("context", help="how much of the parent session's context rig's own "
+                       "output has consumed (`.rig/context.jsonl`) — the measurement "
+                       "context-minimal never had")
+    p.add_argument("--since-days", type=int, help="restrict to the last N days (default: all)")
+    p.set_defaults(func=cmd_context)
+
     p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")
     p.add_argument("--limit", type=int, help="show only the latest N entries")
     p.add_argument("--action", help="filter by action name (e.g. accept_force)")
@@ -246,6 +256,9 @@ def main() -> None:
     p.set_defaults(func=cmd_audit)
 
     args = parser.parse_args()
+    # Installed after parsing so `--help` and usage errors, which argparse writes and
+    # exits on, are not counted as run output.
+    context_meter.install(f"wb {args.cmd}", sys.argv[1:])
     if args.cmd in _GH_ADVISORY_COMMANDS:
         advise_gh(f"workbench {args.cmd}")
     args.func(args)
