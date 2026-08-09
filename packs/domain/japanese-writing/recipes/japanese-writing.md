@@ -1,6 +1,6 @@
 ---
 name: japanese-writing
-description: 明示された事実と宛先形式を守る日本語完成稿を作り、別の担い手が Rules v2 で検証する opt-in recipe。
+description: 明示された事実と宛先形式を守る日本語完成稿を作り、別の担い手が Rules v2.3 で検証する opt-in recipe。
 scope: shipped
 steps:
   - id: write
@@ -20,7 +20,7 @@ steps:
       - "障害連絡またはサポート返信では、該当する安全策を満たしている"
       - "最終判定は生成者と異なるモデルまたは provider の japanese-writing-reviewer が行っている"
     personas: [japanese-writing-reviewer]
-    policies: [independent-verification, japanese-writing-rules-v2]
+    policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2]
     output_contract: japanese-writing-verdict
 autonomy: interactive
 ---
@@ -47,12 +47,13 @@ autonomy: interactive
 runtime が解釈する step schema の `instruction`、`personas`、`policies`、`output_contract` に
 必須 facet を明示しています。pack validation はこれらの参照解決に失敗した pack を拒否します。
 runtime の recipe schema に provider 固定フィールドはないため、provider 分離は review の
-acceptance criterion と `independent-verification` policy で必須化し、起動時に
+acceptance criterion と `independent-verification` policy で必須化します。headless runtime は
+`secure-provider-execution` policy により sealed provider lane を選び、起動時に
 `--verifier-provider` で生成 provider と異なる値を指定します。
 
-## Rules v2 の意図
+## Rules v2.3 の意図
 
-Rules v2 は、文章の人間らしさを検出器の点数や語数制限で作る規則ではありません。
+Rules v2.3 は、文章の人間らしさを検出器の点数や語数制限で作る規則ではありません。
 実測で効いた失敗境界を、事実保持、宛先形式、敬語、文の焦点、情報順序、句読点、
 障害連絡・サポート返信の安全策として明文化したものです。固定文字数、文数、句読点数、
 検出器回避、同一モデルの自己採点は採用しません。

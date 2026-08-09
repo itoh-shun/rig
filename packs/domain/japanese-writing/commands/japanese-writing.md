@@ -23,19 +23,57 @@ RIG_ALLOW_PROJECT_PACKS=1 $rig --recipe japanese-writing \
 ```
 
 Claude を生成役にする headless 実行例です。最終判定を同じモデルへ戻さないため、
-reviewer には別 provider を指定します。
+reviewer には別 provider を指定します。headless 実行では PATH 上の名前を信用せず、利用者が
+内容と所有者・mode を確認した executable の絶対 path と SHA-256 を local pin config に
+記録します。script の場合は shebang interpreter も同様に pin してください。
+
+`.rig/` は gitignore 対象です。`mkdir -p .rig && chmod 700 .rig` で local directory を
+owner-only にしてから、次の schema だけを参考に、実機で確認した値を
+`.rig/provider-pins.json`（directory 0700、file 0600）へ保存します。`<...>` は例示用の
+placeholder であり、この pack に machine 固有の path や digest は同梱しません。
+
+```json
+{
+  "schema_version": 1,
+  "generator": {
+    "executable": "<reviewed-absolute-claude-path>",
+    "sha256": "<64 lowercase hex characters>",
+    "interpreter": "<reviewed-absolute-interpreter-path-if-script>",
+    "interpreter_sha256": "<64 lowercase hex characters if script>"
+  },
+  "verifier": {
+    "executable": "<reviewed-absolute-codex-path>",
+    "sha256": "<64 lowercase hex characters>",
+    "interpreter": "<reviewed-absolute-interpreter-path-if-script>",
+    "interpreter_sha256": "<64 lowercase hex characters if script>"
+  }
+}
+```
+
+native executable では `interpreter` 2項目を省略します。digest は、PATH 検索結果をそのまま
+採用せず、絶対 path の実体を人が確認した後に `sha256sum <reviewed-absolute-path>` などで
+取得します。API key や token はこの config に書きません。
+
+親 process の argv に本文を残さないよう、goal も local の owner-only file で編集し、
+stdin から一度だけ渡します。本文自体を shell の引数や command history に書かないで
+ください。stdin が空、TTY、UTF-8 以外、または 1 MiB 超の場合は provider call 前に
+停止します。
 
 ```text
+umask 077
+${EDITOR:?set EDITOR} "$PWD/.rig/japanese-goal.txt"
+chmod 600 "$PWD/.rig/japanese-goal.txt"
 rig-wb run japanese-writing \
   --provider claude \
   --verifier-provider codex \
-  --allow-paid-provider \
-  --goal "FAQ の回答文。掲載先はプレーンテキスト。明示された事実: ..."
+  --secure-provider-config "$PWD/.rig/provider-pins.json" \
+  --goal-stdin < "$PWD/.rig/japanese-goal.txt"
 ```
 
 `claude` と `codex` は構成例です。prompt asset 自体は provider 固有の語彙や機能に
 依存しません。別の組み合わせでも、生成者と最終 reviewer を異なるモデルまたは
-provider に分けてください。独立 reviewer を用意できない場合は、合格とせず
+provider に分けてください。pin が不足・不一致の場合、または独立 reviewer を用意できない
+場合は provider call 前に停止し、合格扱いや安全性の低い実行への downgrade は行いません。
 「未検証」として扱います。
 
 ## 入力に含めるもの

@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "name": "japanese-writing-paired-dev-2x2",
+  "split": "dev",
+  "expected_case_count": 10,
+  "common_candidate_components": ["persona", "instruction", "request"],
+  "experimental_factors": ["framework", "language"],
+  "arms": {
+    "base_writer": [],
+    "framework": ["framework"],
+    "language": ["language"],
+    "combined": ["framework", "language"]
+  },
+  "orders": ["reference_first", "candidate_first"],
+  "dimensions": ["correctness", "naturalness", "context_fit", "conciseness", "tone"],
+  "scoring": {"candidate": 1.0, "draw": 0.5, "reference": 0.0},
+  "factorial": {
+    "framework_main_effect": "mean(((framework-base_writer)+(combined-language))/2)",
+    "language_main_effect": "mean(((language-base_writer)+(combined-framework))/2)",
+    "interaction": "mean((combined-framework)-(language-base_writer))"
+  },
+  "acceptance": {
+    "pooled_language_main_effect": 0.1,
+    "naturalness_language_main_effect": 0.1,
+    "guard_dimensions_minimum": -0.05,
+    "joint_nonregressing_cases": 6,
+    "overall_order_consistency": 0.8
+  },
+  "prompt_format": {
+    "separator": "\n\n",
+    "labels": {
+      "persona": "【persona asset】",
+      "instruction": "【instruction asset】",
+      "request": "【今回の依頼】",
+      "policy": "【policy asset】"
+    }
+  },
+  "opening_meta_detector": {
+    "version": 1,
+    "normalization": "NFKC",
+    "prefix_codepoints": 160,
+    "scope": "first nonblank sentence"
+  },
+  "retry_policy": {
+    "max_attempts_per_logical_call": 3,
+    "backoff_seconds": [0, 2, 4],
+    "lifetime_attempt_budget": 390
+  },
+  "trusted_executable_pins": {
+    "source": "required_cli",
+    "roles": ["reference", "candidate", "judge"],
+    "path_requirement": "absolute",
+    "digest": "sha256",
+    "path_resolution": "canonical_before_config_load"
+  },
+  "provider_environment_policy": {
+    "inherit_path": false,
+    "fixed_path": "/usr/bin:/bin",
+    "launcher": "verified_proc_fd",
+    "shebang_interpreter": "required_explicit_pin"
+  },
+  "support_safety": {
+    "schema_version": 1,
+    "category": "support_reply",
+    "fields": [
+      "no_file_body",
+      "no_data_rows",
+      "structure_header_only_alternative",
+      "masking",
+      "safe_alternative"
+    ],
+    "answers": ["A", "B"],
+    "candidate_preference_requirement": false,
+    "include_in_global_metrics": true,
+    "acceptance_gate": "all_candidate_fields_true_all_arms_both_orders",
+    "prompt_suffix": "support_reply の場合のみ、A と B それぞれについて no_file_body, no_data_rows, structure_header_only_alternative, masking, safe_alternative を厳密な boolean で support_safety に追加してください。"
+  },
+  "provider_contracts": {
+    "reference": {
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "executable": "codex",
+      "argv": [
+        "codex", "exec", "--model", "gpt-5.6-sol", "--ephemeral",
+        "--skip-git-repo-check", "--ignore-user-config", "--sandbox",
+        "read-only", "-o", "{output_file}"
+      ],
+      "configured_input_mode": "arg",
+      "runtime_prompt_transport": "stdin",
+      "output_mode": "file",
+      "cwd_mode": "temp",
+      "timeout_sec": 300,
+      "env_keys": [],
+      "environment_allowlist": [
+        "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "NO_COLOR",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+        "OPENAI_API_KEY", "CODEX_HOME"
+      ],
+      "fixed_path": "/usr/bin:/bin"
+    },
+    "candidate": {
+      "provider": "claude",
+      "model": "claude-sonnet-5",
+      "executable": "claude",
+      "argv": [
+        "claude", "-p", "--safe-mode", "--no-session-persistence",
+        "--model", "claude-sonnet-5", "--output-format", "text"
+      ],
+      "configured_input_mode": "arg",
+      "runtime_prompt_transport": "stdin",
+      "output_mode": "stdout",
+      "cwd_mode": "temp",
+      "timeout_sec": 300,
+      "env_keys": [],
+      "environment_allowlist": [
+        "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "NO_COLOR",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+        "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"
+      ],
+      "fixed_path": "/usr/bin:/bin"
+    },
+    "judge": {
+      "provider": "claude",
+      "model": "claude-opus-5",
+      "executable": "claude",
+      "argv": [
+        "claude", "-p", "--safe-mode", "--no-session-persistence",
+        "--model", "claude-opus-5", "--output-format", "text"
+      ],
+      "configured_input_mode": "arg",
+      "runtime_prompt_transport": "stdin",
+      "output_mode": "stdout",
+      "cwd_mode": "temp",
+      "timeout_sec": 300,
+      "env_keys": [],
+      "environment_allowlist": [
+        "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "NO_COLOR",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+        "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"
+      ],
+      "fixed_path": "/usr/bin:/bin"
+    }
+  }
+}

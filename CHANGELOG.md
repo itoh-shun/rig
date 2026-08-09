@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## [2.3.0] - 2026-08-09
+
+**Independent Japanese-writing runs now have a real process boundary.** The
+`secure-provider-execution` marker makes the Japanese pack fail before any provider
+call or run-state write unless generator and verifier Claude/Codex executables are
+pinned by reviewed absolute paths and SHA-256 digests (plus an explicit interpreter
+pin for scripts). Runtime executes sealed verified bytes, transports prompts only on
+stdin, fixes provider isolation flags and PATH, and filters credentials by vendor.
+Opaque command providers cannot enter this lane.
+
+Sensitive state, provider-output artifacts, and telemetry use owner-only directories,
+descriptor-relative no-follow opens, 0600 fsynced temporary files, and atomic rename;
+unverified symlink or hardlink targets are never truncated. The Japanese pack remains
+at semantic version 0.4.0 but now requires engine >=2.3.0. Existing recipes without
+the explicit secure marker, including `goal-loop`, retain their previous runtime path.
+
 ## [2.2.2] - 2026-08-08
 
 **A Stop hook that interrupted sessions it had no business in.** The

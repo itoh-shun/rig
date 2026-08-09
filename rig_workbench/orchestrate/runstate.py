@@ -5,9 +5,11 @@ import json
 import datetime
 import pathlib
 import hashlib
+import stat
 
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
+from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
 
 EXECUTION_POLICY_VERSION = 1
 _EXECUTION_FIELDS = (
@@ -173,6 +175,17 @@ def new_state(
 
 def save_state(state: dict, path: pathlib.Path) -> None:
     """Persist potentially sensitive run state without following filesystem links."""
+    if state.get("secure_runtime"):
+        persisted = json.loads(json.dumps(state, ensure_ascii=False))
+        goal = persisted.get("goal")
+        if isinstance(goal, str):
+            persisted["secure_runtime"]["goal_sha256"] = hashlib.sha256(
+                goal.encode("utf-8")
+            ).hexdigest()
+            persisted["goal"] = None
+        payload = json.dumps(persisted, ensure_ascii=False, indent=2).encode("utf-8")
+        atomic_write_bytes(path, payload)
+        return
     path = pathlib.Path(path).absolute()
     parent = path.parent
     created_parent = not parent.exists()
@@ -318,11 +331,21 @@ def telemetry_append(state: dict, final: str) -> None:
         failure_mode = classify_failure(state)
         if failure_mode is not None:
             rec["failure_mode"] = failure_mode
-        config.RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with config.RUNS_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        encoded = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+        if state.get("secure_runtime"):
+            history_path = state.get("secure_history_path")
+            if not isinstance(history_path, str):
+                raise OSError("secure runtime history path is missing")
+            atomic_append_line(pathlib.Path(history_path), encoded)
+        else:
+            config.RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with config.RUNS_PATH.open("a", encoding="utf-8") as f:
+                f.write(encoded.decode("utf-8"))
     except Exception:
         pass
+
+    if state.get("secure_runtime"):
+        return  # never mirror a sensitive run into ambient cross-project state
 
     # ── Mirror into the global index (~/.rig/runs.jsonl) as well ─────────────
     # Keep the per-project log (cwd/.rig) while enabling cross-project aggregation of
@@ -391,7 +414,34 @@ def _validate_recipe_provenance(state: dict) -> None:
 
 
 def load_state(path: pathlib.Path) -> dict:
-    state = json.loads(path.read_text(encoding="utf-8"))
+    path = pathlib.Path(path).absolute()
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+        ):
+            raise OSError("run-state must be a caller-owned regular file with one link")
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+    finally:
+        os.close(descriptor)
+    state = json.loads(payload.decode("utf-8"))
+    if state.get("secure_runtime"):
+        secure_payload = read_secure_bytes(path)
+        if secure_payload != payload:
+            raise OSError("secure run-state changed during verification")
+        state = json.loads(secure_payload.decode("utf-8"))
     _validate_recipe_provenance(state)
     enforce_executable_state(state)
     return state

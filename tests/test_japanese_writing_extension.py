@@ -23,9 +23,11 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
 
     manifest = validate_pack(PACK)
     assert manifest["id"] == "japanese-writing"
+    assert manifest["version"] == "0.4.0"
     assert manifest["dependencies"] == []
     assert manifest["assets"]["policy"] == [
         "facets/policies/japanese-writing-rules-v2.md",
+        "facets/policies/secure-provider-execution.md",
         "facets/policies/writing-delivery-contract.md",
     ]
     recipe = parse_frontmatter_subset(PACK / "recipes/japanese-writing.md")
@@ -34,7 +36,7 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
         "writing-delivery-contract", "japanese-writing-rules-v2"
     ]
     assert recipe["steps"][1]["policies"] == [
-        "independent-verification", "japanese-writing-rules-v2"
+        "independent-verification", "secure-provider-execution", "japanese-writing-rules-v2"
     ]
     assert recipe["steps"][1]["personas"] == ["japanese-writing-reviewer"]
     assert recipe["steps"][1]["output_contract"] == "japanese-writing-verdict"
@@ -47,12 +49,10 @@ def test_rules_v2_contains_measured_boundaries_without_detector_or_quota_gates()
     rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
-    for phrase in (
-        "完成稿を一つだけ", "複数案、選択肢", "宛先形式", "明示された事実",
-    ):
+    for phrase in ("完成稿を一つだけ", "複数案、選択肢", "宛先形式"):
         assert phrase in delivery
     for phrase in (
-        "敬称", "一文には一つの中心", "情報", "句点、読点", "タイムゾーン",
+        "固有名詞", "敬称", "一文には一つの中心", "情報", "句点、読点", "タイムゾーン",
         "復旧予定時刻", "秘密情報", "固定 quota", "AI detector",
         "同じモデルによる自己採点", "繰り返し、引用し、整形し、変換し",
         "[REDACTED]", "秘密でない情報だけを必要最小限",
@@ -60,6 +60,224 @@ def test_rules_v2_contains_measured_boundaries_without_detector_or_quota_gates()
         assert phrase in rules
     assert "framework の出力境界は `writing-delivery-contract`" in rules
     assert "detector" not in delivery.lower()
+
+
+def test_delivery_eval_rejects_reader_visible_workflow_state():
+    from rig_workbench.packs.manifest import read_json_yaml
+
+    path = PACK / "evals/cases/japanese-writing-no-workflow-meta/case.json"
+    _raw, case = read_json_yaml(path)
+    checks = set(case["deterministic_checks"])
+    for phrase in ("レビュー", "合格", "完成稿", "生成過程"):
+        assert f"not_contains:{phrase}" in checks
+
+
+def test_terminal_boundary_eval_rejects_wrappers_separators_and_adjustment_offers():
+    from rig_workbench.eval.runner import _check
+    from rig_workbench.packs.manifest import read_json_yaml
+
+    path = PACK / "evals/cases/japanese-writing-no-workflow-meta/case.json"
+    _raw, case = read_json_yaml(path)
+    checks = set(case["deterministic_checks"])
+    for spec in (
+        "regex:^OPS-JP-META-1.*リリース手順の確認です。$",
+        "not_contains:---",
+        "not_contains:執筆方針",
+        "not_contains:調整できます",
+    ):
+        assert spec in checks
+    output = (
+        "OPS-JP-META-1について、2026年8月12日14:00に会議室Bで運用会議を開きます。"
+        "議題はリリース手順の確認です。"
+    )
+    assert all(_check(spec, output, 0)["status"] == "pass"
+               for spec in case["deterministic_checks"])
+
+
+def test_ambiguity_eval_keeps_only_facts_common_to_plausible_readings():
+    from rig_workbench.eval.runner import _check
+    from rig_workbench.packs.manifest import read_json_yaml
+
+    path = PACK / "evals/cases/japanese-writing-ambiguity/case.json"
+    _raw, case = read_json_yaml(path)
+    checks = set(case["deterministic_checks"])
+    for phrase in ("佐藤さん", "高橋さん"):
+        assert f"not_contains:{phrase}" in checks
+    output = "会議後に共有する旨が伝えられました。"
+    assert all(_check(spec, output, 0)["status"] == "pass"
+               for spec in case["deterministic_checks"])
+
+
+def test_internal_register_eval_rejects_customer_support_politeness():
+    from rig_workbench.eval.runner import _check
+    from rig_workbench.packs.manifest import read_json_yaml
+
+    path = PACK / "evals/cases/japanese-writing-internal-register/case.json"
+    _raw, case = read_json_yaml(path)
+    checks = set(case["deterministic_checks"])
+    assert "not_contains:お待ちいただけますか" in checks
+    assert "not_contains:少々お待ちください" in checks
+    output = "まだ確認できていません。20分後に確認し、確認後にコメントします。"
+    assert all(_check(spec, output, 0)["status"] == "pass"
+               for spec in case["deterministic_checks"])
+
+
+def test_technical_explanation_eval_answers_directly_without_formula_sections():
+    from rig_workbench.eval.runner import _check
+    from rig_workbench.packs.manifest import read_json_yaml
+
+    path = PACK / "evals/cases/japanese-writing-technical-operation/case.json"
+    _raw, case = read_json_yaml(path)
+    checks = set(case["deterministic_checks"])
+    for spec in (
+        "regex:^write-throughは.*write-backは.*$",
+        "not_contains:仕組み:",
+        "not_contains:挙動:",
+        "not_contains:判断基準:",
+        "not_contains:代償:",
+        "not_contains:メリット:",
+        "not_contains:デメリット:",
+    ):
+        assert spec in checks
+    output = (
+        "write-throughはキャッシュへの書き込みと同時に保存先へ同期するため、"
+        "整合性を保ちやすい一方で書き込みが遅くなります。write-backは先にキャッシュへ"
+        "書き込み、後で保存先へ反映するため高速ですが、反映前の障害で失うリスクがあります。"
+    )
+    assert all(_check(spec, output, 0)["status"] == "pass"
+               for spec in case["deterministic_checks"])
+
+
+def test_support_eval_requires_no_file_no_rows_and_masking():
+    from rig_workbench.eval.runner import _check
+    from rig_workbench.packs.manifest import read_json_yaml
+
+    path = PACK / "evals/cases/japanese-writing-support-data-minimization/case.json"
+    _raw, case = read_json_yaml(path)
+    checks = set(case["deterministic_checks"])
+    assert "contains:だけ" in checks
+    assert (
+        "regex:^CSVファイル本体.*データ行.*ヘッダーまたは列名.*氏名.*メールアドレス.*マスク.*$"
+        in checks
+    )
+    output = (
+        "CSVファイル本体は送らないでください。データ行も送らないでください。"
+        "ヘッダーまたは列名だけを共有してください。エラー画面を送る場合は、"
+        "氏名とメールアドレスをマスクしてください。"
+    )
+    assert all(_check(spec, output, 0)["status"] == "pass"
+               for spec in case["deterministic_checks"])
+
+
+def test_writer_and_delivery_keep_internal_workflow_state_outside_output():
+    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    delivery = (PACK / "facets/policies/writing-delivery-contract.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "reviewer、policy、合否、修正履歴、作成手順は内部実行情報" in writer
+    assert "想定読者への完成稿に含めません" in writer
+    assert "reviewer への受け渡しと判定は runtime が出力の外で処理" in delivery
+    for phrase in ("検証済み", "合格", "修正済み", "適用 policy", "生成過程"):
+        assert phrase in delivery
+    assert "事実保持と言い換えの規則は persona と内容 policy に委ねます" in delivery
+
+
+def test_japanese_write_starts_and_stops_at_the_reader_facing_artifact():
+    instruction = (PACK / "facets/instructions/japanese-write.md").read_text(
+        encoding="utf-8"
+    )
+
+    for phrase in (
+        "想定読者が最初に読む完成稿の本文から始め",
+        "完成稿の最後の文で終えます",
+        "生成過程や適用 policy の説明",
+        "本文と補足を分ける区切り線",
+        "追加調整の申し出",
+    ):
+        assert phrase in instruction
+
+
+def test_rules_v2_3_preserve_internal_register_and_avoid_repetition():
+    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "# policy: Japanese Writing Rules v2.3" in rules
+    assert "依頼や謝罪の強さも媒体と読み手との関係に合わせます" in rules
+    assert "顧客対応の依頼敬語や定型挨拶に引き上げません" in rules
+    assert "同じ事実を、前置き、謝罪、理由、まとめで言い直しません" in rules
+    assert "すでに共有された主題" in rules
+    recipe = (PACK / "recipes/japanese-writing.md").read_text(encoding="utf-8")
+    assert "Rules v2.3" in recipe
+    assert "Rules v2 " not in recipe
+
+
+def test_rules_v2_3_preserve_ambiguity_precedence():
+    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+        encoding="utf-8"
+    )
+
+    for phrase in (
+        "主体、指示語、修飾先が入力だけでは一意に決まらない",
+        "参照先を推測で名指ししません",
+        "どの解釈にも共通する事実だけで成立する表現",
+        "主語と述語、修飾先の対応を読み手が追える形",
+    ):
+        assert phrase in rules
+    assert "指示語の参照先を明確にします" not in rules
+
+
+def test_rules_v2_3_answer_technical_questions_directly_without_a_formula():
+    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "## 技術説明" in rules
+    for phrase in (
+        "利用者が実際に尋ねていることへ直接答えます",
+        "その答えの理由を説明するために必要な分だけ",
+        "答えを変えない内部詳細",
+        "網羅的な列挙",
+        "定型的な代償の節",
+    ):
+        assert phrase in rules
+    for phrase in ("選択に効く違い", "代表的な挙動や用途", "主な代償だけ"):
+        assert phrase not in rules
+    assert "入力にない実装前提は加えません" in rules
+
+
+def test_writer_sets_one_atomic_support_boundary_in_every_policy_arm():
+    instruction = (PACK / "facets/instructions/japanese-write.md").read_text(
+        encoding="utf-8"
+    )
+    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+        encoding="utf-8"
+    )
+    delivery = (PACK / "facets/policies/writing-delivery-contract.md").read_text(
+        encoding="utf-8"
+    )
+
+    atomic_boundary = (
+        "サポート返信で個人情報や業務データを含み得るときは、ファイル本体やデータ行は"
+        "送らないでくださいと読み手に明示し、同じ段落で、代わりにヘッダーまたは列名だけを"
+        "知らせ、氏名やメールアドレスなど不要な識別情報をマスクするよう案内します。"
+    )
+    assert atomic_boundary in writer.replace("\n", "")
+    assert "必要性が明示されない限り" not in writer
+
+    common = instruction + writer
+    arms = {
+        "raw": common,
+        "framework": common + delivery,
+        "language": common + rules,
+        "combined": common + delivery + rules,
+    }
+    assert all(atomic_boundary in prompt.replace("\n", "")
+               for prompt in arms.values())
+    for phrase in ("個人情報や業務データ", "ファイル本体やデータ行"):
+        assert phrase not in rules
 
 
 def test_project_install_resolves_every_owned_prompt_asset(monkeypatch, tmp_path):
@@ -114,11 +332,21 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
     from rig_workbench.packs.manifest import read_json_yaml
 
     outputs = {
+        "japanese-writing-ambiguity": (
+            "会議後に共有する旨が伝えられました。"
+        ),
         "japanese-writing-incident-delivery": (
             "INC-JP-17についてお知らせします。\n\n"
             "2026年8月9日14:10 JSTに、注文APIの一部でエラーを検知しました。"
             "新規注文の一部に影響しています。14:32 JSTに再起動を実施しました。\n\n"
             "原因と復旧見込みは調査中です。次回は15:30 JSTに状況を更新します。"
+        ),
+        "japanese-writing-internal-register": (
+            "まだ確認できていません。20分後に確認し、確認後にコメントします。"
+        ),
+        "japanese-writing-no-workflow-meta": (
+            "OPS-JP-META-1について、2026年8月12日14:00に会議室Bで運用会議を開きます。"
+            "議題はリリース手順の確認です。"
         ),
         "japanese-writing-review-rejects-invention": (
             "対象形式: plain-text\n検査:\n"
@@ -136,6 +364,17 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
             "[REDACTED] として削除しました。確認のため、アプリのバージョン、"
             "発生時刻、秘密情報を除去したエラー文をお知らせください。"
         ),
+        "japanese-writing-support-data-minimization": (
+            "CSVファイル本体は送らないでください。データ行も送らないでください。"
+            "ヘッダーまたは列名だけを共有してください。エラー画面を送る場合は、"
+            "氏名とメールアドレスをマスクしてください。"
+        ),
+        "japanese-writing-technical-operation": (
+            "write-throughはキャッシュへの書き込みと同時に保存先へ同期するため、"
+            "整合性を保ちやすい一方で書き込みが遅くなります。write-backは先に"
+            "キャッシュへ書き込み、後で保存先へ反映するため高速ですが、反映前の"
+            "障害で失うリスクがあります。"
+        ),
     }
     for path in sorted((PACK / "evals/cases").glob("*/case.json")):
         _raw, case = read_json_yaml(path)
@@ -150,6 +389,12 @@ def test_docs_show_install_use_and_cross_model_review():
     assert "$rig --recipe japanese-writing" in command
     assert "--provider claude" in command
     assert "--verifier-provider codex" in command
+    assert '--secure-provider-config "$PWD/.rig/provider-pins.json"' in command
+    assert "--goal-stdin" in command
+    assert '--goal-stdin < "$PWD/.rig/japanese-goal.txt"' in command
+    assert '--goal "' not in command
+    assert '"schema_version": 1' in command
+    assert "machine 固有の path や digest は同梱しません" in command
     for relative in ("skills/engine/SKILL.md", "skills/engine/PACKS.md"):
         catalog = (REPO_ROOT / relative).read_text(encoding="utf-8")
         assert "domain:japanese-writing" in catalog

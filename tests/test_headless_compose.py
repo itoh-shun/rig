@@ -388,7 +388,7 @@ def test_japanese_pack_runs_writer_then_its_bound_independent_reviewer(
 
     final = providers.run_loop(
         state, tmp_path / "run-state.json", "writer-provider", "review-provider",
-        {"model": "shared-model"}, 10, quiet=True,
+        {"model": "shared-model", "secure_runtime": True}, 10, quiet=True,
     )
 
     assert final == "DONE"

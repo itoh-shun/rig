@@ -9,6 +9,7 @@ import pathlib
 import subprocess
 import concurrent.futures as futures
 from collections import Counter
+from functools import wraps
 
 from . import config
 from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_manifest,
@@ -19,6 +20,54 @@ from .providers import (parse_step_model_spec, read_result_artifact, run_loop,
                         unknown_step_model_ids)
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe
+from .secure_runtime import (SecureRuntimeError, close_secure_launchers,
+                             load_pin_config, preflight_secure_runtime,
+                             requires_secure_runtime)
+from .secure_fs import (
+    acquire_output_lock,
+    prepare_output_target,
+    release_output_lock,
+)
+
+
+_SECURE_PIN_FLAGS = {
+    "--generator-executable": ("generator", "executable"),
+    "--generator-executable-sha256": ("generator", "sha256"),
+    "--generator-interpreter": ("generator", "interpreter"),
+    "--generator-interpreter-sha256": ("generator", "interpreter_sha256"),
+    "--verifier-executable": ("verifier", "executable"),
+    "--verifier-executable-sha256": ("verifier", "sha256"),
+    "--verifier-interpreter": ("verifier", "interpreter"),
+    "--verifier-interpreter-sha256": ("verifier", "interpreter_sha256"),
+}
+_GOAL_STDIN_MAX_BYTES = 1024 * 1024
+
+
+def _read_goal_stdin() -> str:
+    """Read one bounded UTF-8 goal payload without normalizing its bytes."""
+    try:
+        interactive = sys.stdin.isatty()
+    except OSError as error:
+        raise SecureRuntimeError("--goal-stdin could not inspect stdin") from error
+    if interactive:
+        raise SecureRuntimeError("--goal-stdin refuses an interactive terminal")
+    try:
+        stream = getattr(sys.stdin, "buffer", sys.stdin)
+        payload = stream.read(_GOAL_STDIN_MAX_BYTES + 1)
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8")
+    except (OSError, UnicodeError) as error:
+        raise SecureRuntimeError("--goal-stdin could not read a private UTF-8 payload") from error
+    if len(payload) == 0:
+        raise SecureRuntimeError("--goal-stdin requires a nonempty payload")
+    if len(payload) > _GOAL_STDIN_MAX_BYTES:
+        raise SecureRuntimeError(
+            f"--goal-stdin exceeds the {_GOAL_STDIN_MAX_BYTES}-byte limit"
+        )
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SecureRuntimeError("--goal-stdin requires valid UTF-8") from error
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 def render_plan(recipe: str, steps: list[dict], execution: dict | None = None) -> str:
@@ -108,6 +157,33 @@ def _state_path(args, default="run-state.json") -> pathlib.Path:
     return pathlib.Path(args[0]) if args else pathlib.Path(default)
 
 
+def _locked_secure_state_mutation(path_from_args):
+    """Hold the secure run lock across a command's complete mutation window."""
+    def decorate(command):
+        @wraps(command)
+        def guarded(args):
+            state_path = path_from_args(args)
+            if state_path is None:
+                return command(args)
+            initial = load_state(state_path)
+            if not initial.get("secure_runtime"):
+                return command(args)
+            try:
+                descriptor = acquire_output_lock(state_path)
+            except OSError as error:
+                print(f"[BLOCKED] {error}")
+                raise SystemExit(2) from error
+            try:
+                # Reload after locking: another short mutation may have completed
+                # between the optimistic first read and our successful lock.
+                return command(args)
+            finally:
+                release_output_lock(descriptor)
+
+        return guarded
+    return decorate
+
+
 def cmd_init(args):
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
@@ -166,6 +242,7 @@ def _run_checks(checks: list[str]) -> list[dict]:
     return results
 
 
+@_locked_secure_state_mutation(_state_path)
 def cmd_check(args):
     sp = _state_path(args)
     state = load_state(sp)
@@ -200,6 +277,7 @@ def _fmt_duration(seconds: float) -> str:
     return f"{mins}m"
 
 
+@_locked_secure_state_mutation(_state_path)
 def cmd_resume(args):
     """Verify-first resume ritual (session-startup ritual for long-running agents).
 
@@ -278,6 +356,7 @@ def cmd_resume(args):
         sys.exit(3)
 
 
+@_locked_secure_state_mutation(_state_path)
 def cmd_verdict(args):
     sp = _state_path(args)
     state = load_state(sp)
@@ -312,6 +391,7 @@ def cmd_verdict(args):
     print(f"verdict recorded: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}. Proceed with `next`.")
 
 
+@_locked_secure_state_mutation(_state_path)
 def cmd_next(args):
     sp = _state_path(args)
     state = load_state(sp)
@@ -362,6 +442,26 @@ def _stage_gate_lines(step: dict, st: dict) -> list[str]:
     return lines
 
 
+def _approve_state_path(args) -> pathlib.Path | None:
+    if not args:
+        return None
+    rest = args[1:]
+    positional = []
+    i = 0
+    while i < len(rest):
+        if rest[i] in ("--note", "--actor") and i + 1 < len(rest):
+            i += 2
+        elif rest[i] == "--deny":
+            i += 1
+        elif not rest[i].startswith("-"):
+            positional.append(rest[i])
+            i += 1
+        else:
+            i += 1
+    return _state_path(positional)
+
+
+@_locked_secure_state_mutation(_approve_state_path)
 def cmd_approve(args):
     """Cast a human-gate decision on a step of a run (v2.1).
 
@@ -463,7 +563,13 @@ def cmd_run(args):
     if not args:
         print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
               "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
-              "[--max-steps N] [--goal G] [--check command] [--out f] [--isolate] [--auto-route] "
+              "[--secure-provider-config /absolute/path/to/provider-pins.json | "
+              "--generator-executable PATH --generator-executable-sha256 HEX "
+              "[--generator-interpreter PATH --generator-interpreter-sha256 HEX] "
+              "--verifier-executable PATH --verifier-executable-sha256 HEX "
+              "[--verifier-interpreter PATH --verifier-interpreter-sha256 HEX]] "
+              "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
+              "[--out f] [--isolate] [--auto-route] "
               "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     path = resolve_recipe(args[0])
@@ -478,7 +584,10 @@ def cmd_run(args):
     gen = ver = None
     generators: list[str] = []
     goal = None
+    goal_from_argv = False
+    goal_stdin = False
     out = pathlib.Path("run-state.json")
+    out_explicit = False
     max_steps = 40
     max_parallel = 4
     quorum = "all"
@@ -503,6 +612,17 @@ def cmd_run(args):
         elif a == "--provider-cmd" and i + 1 < len(args):
             cfg["provider_cmd"] = args[i + 1]
             i += 2
+        elif a == "--secure-provider-config" and i + 1 < len(args):
+            try:
+                cfg["secure_pins"] = load_pin_config(args[i + 1])
+            except SecureRuntimeError as error:
+                diagnostic(f"[BLOCKED] {error}")
+                raise SystemExit(2) from error
+            i += 2
+        elif a in _SECURE_PIN_FLAGS and i + 1 < len(args):
+            role, field = _SECURE_PIN_FLAGS[a]
+            cfg.setdefault("secure_pins", {}).setdefault(role, {})[field] = args[i + 1]
+            i += 2
         elif a == "--model" and i + 1 < len(args):
             cfg["model"] = args[i + 1]
             i += 2
@@ -523,12 +643,17 @@ def cmd_run(args):
             i += 1
         elif a == "--goal" and i + 1 < len(args):
             goal = args[i + 1]
+            goal_from_argv = True
             i += 2
+        elif a == "--goal-stdin":
+            goal_stdin = True
+            i += 1
         elif a == "--check" and i + 1 < len(args):
             cli_checks.append(args[i + 1])
             i += 2
         elif a == "--out" and i + 1 < len(args):
             out = pathlib.Path(args[i + 1])
+            out_explicit = True
             i += 2
         elif a == "--max-steps" and i + 1 < len(args):
             max_steps = int(args[i + 1])
@@ -578,6 +703,27 @@ def cmd_run(args):
         sys.exit(1)
     if step_models:
         cfg["step_models"] = step_models
+    secure_required = requires_secure_runtime(fm.get("name", path.stem), steps)
+    if secure_required and goal_from_argv and goal:
+        diagnostic(
+            "[BLOCKED] secure-provider-execution refuses --goal because parent argv "
+            "is long-lived; provide the goal with --goal-stdin"
+        )
+        raise SystemExit(2)
+    if goal_from_argv and goal_stdin:
+        diagnostic("[ERROR] --goal and --goal-stdin are mutually exclusive")
+        raise SystemExit(2)
+    if secure_required and not goal_stdin:
+        diagnostic(
+            "[BLOCKED] secure-provider-execution requires a private goal via --goal-stdin"
+        )
+        raise SystemExit(2)
+    if goal_stdin:
+        try:
+            goal = _read_goal_stdin()
+        except SecureRuntimeError as error:
+            diagnostic(f"[BLOCKED] {error}")
+            raise SystemExit(2) from error
     if not gen and generators:
         gen = generators[0]            # --generators alone is fine (first one as representative)
     if not gen:
@@ -611,7 +757,39 @@ def cmd_run(args):
         )
         sys.exit(1)
     ver = ver or gen  # default to the same provider (but a separate process and role)
+    if secure_required:
+        if generators and (len(generators) != 1 or generators[0] != gen):
+            diagnostic(
+                "[BLOCKED] secure-provider-execution requires exactly one pinned generator"
+            )
+            raise SystemExit(2)
+        if not out_explicit:
+            out = pathlib.Path(".rig") / "secure-runs" / (
+                f"run-{time.time_ns()}-{os.getpid()}.json"
+            )
+        try:
+            prepare_output_target(out)
+            cfg["_secure_output_lock"] = acquire_output_lock(out)
+            cfg["_secure_launchers"] = preflight_secure_runtime(gen, ver, cfg)
+        except (OSError, SecureRuntimeError) as error:
+            close_secure_launchers(cfg.pop("_secure_launchers", None))
+            release_output_lock(cfg.pop("_secure_output_lock", None))
+            diagnostic(f"[BLOCKED] {error}")
+            raise SystemExit(2) from error
+        cfg["secure_runtime"] = True
     state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
+    if cfg.get("secure_runtime"):
+        state["secure_runtime"] = {
+            "policy_version": 1,
+            "prompt_transport": "stdin",
+            "providers": {
+                role: {
+                    "provider": launcher.provider,
+                    "launcher_sha256": list(launcher.launcher_hashes),
+                }
+                for role, launcher in cfg["_secure_launchers"].items()
+            },
+        }
     for sid, model in step_models.items():   # record runtime overrides in run-state (traceable later)
         state["history"].append({"action": "STEP_MODEL_OVERRIDE", "step": sid, "model": model})
     iso = None
@@ -629,34 +807,40 @@ def cmd_run(args):
                  + ", ".join(f"{k}={v}" for k, v in step_models.items())) if step_models else ""
     diagnostic(f"\nAutonomous run: provider={gen} / verifier={'+'.join(ver) if isinstance(ver, list) else ver} / "
                f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}{overrides}\n")
-    final = run_loop(state, out, gen, ver, cfg, max_steps,
-                     max_parallel=max_parallel, quorum=quorum,
-                     generators=(generators or None), quiet=artifact_stdout)
-    if iso:
-        outcome = teardown_isolation(iso, final)
-        state["isolation"]["outcome"] = outcome
-        save_state(state, out)
-        label = {"merged": f"gate green → ff-merged {iso['branch']} and removed the worktree",
-                 "clean-removed": "no changes → removed the worktree",
-                 "kept": f"worktree and branch preserved (please inspect): {iso['dir']}"}[outcome]
-        diagnostic(f"◈ Isolated run outcome: {label}")
-    diagnostic(f"\n=== Finished: {final} ===  run-state: {out}")
-    artifact = state.get("result_artifact")
-    if final == "DONE" and isinstance(artifact, dict) and artifact.get("path"):
-        diagnostic(f"deliverable: {artifact['path']}")
-        if state.get("recipe") == "japanese-writing":
-            content = read_result_artifact(state, out)
-            if content is None:
-                diagnostic("[ERROR] completed deliverable cannot be read safely")
-                sys.exit(1)
-            sys.stdout.write(content)
-    if final == "AWAIT_APPROVAL":
-        # Parked on a person, not failed. A distinct code so CI can tell "waiting for
-        # sign-off" from "the run broke" — reporting either as the other is wrong.
-        diagnostic("The run is parked at a human gate. Approve with "
-                   f"`rig-wb orchestrate approve <step-id> {out}`, then `resume`.")
-        sys.exit(3)
-    sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
+    try:
+        final = run_loop(state, out, gen, ver, cfg, max_steps,
+                         max_parallel=max_parallel, quorum=quorum,
+                         generators=(generators or None), quiet=artifact_stdout)
+        if iso:
+            outcome = teardown_isolation(iso, final)
+            state["isolation"]["outcome"] = outcome
+            save_state(state, out)
+            label = {
+                "merged": f"gate green → ff-merged {iso['branch']} and removed the worktree",
+                "clean-removed": "no changes → removed the worktree",
+                "kept": f"worktree and branch preserved (please inspect): {iso['dir']}",
+            }[outcome]
+            diagnostic(f"◈ Isolated run outcome: {label}")
+        diagnostic(f"\n=== Finished: {final} ===  run-state: {out}")
+        artifact = state.get("result_artifact")
+        if final == "DONE" and isinstance(artifact, dict) and artifact.get("path"):
+            diagnostic(f"deliverable: {artifact['path']}")
+            if state.get("recipe") == "japanese-writing":
+                content = read_result_artifact(state, out)
+                if content is None:
+                    diagnostic("[ERROR] completed deliverable cannot be read safely")
+                    sys.exit(1)
+                sys.stdout.write(content)
+        if final == "AWAIT_APPROVAL":
+            # Parked on a person, not failed. A distinct code so CI can tell "waiting for
+            # sign-off" from "the run broke" — reporting either as the other is wrong.
+            diagnostic("The run is parked at a human gate. Approve with "
+                       f"`rig-wb orchestrate approve <step-id> {out}`, then `resume`.")
+            sys.exit(3)
+        sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
+    finally:
+        close_secure_launchers(cfg.pop("_secure_launchers", None))
+        release_output_lock(cfg.pop("_secure_output_lock", None))
 
 
 def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: str,

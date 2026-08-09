@@ -35,6 +35,8 @@ The model does each step's "work", but this runner decides "what happens next":
                                      original branch; unmet/dirty/non-ff runs preserve the worktree and branch
                                      (the spatial version of determinism-by-gate).
                                      Verifier-role CLIs get read-only permissions pinned via argv (claude --allowedTools / codex --sandbox read-only)
+  run ... --goal-stdin               Read the goal once from bounded UTF-8 stdin. Required by recipes that declare
+                                     secure-provider-execution; those recipes refuse goal text in parent argv.
   ab <recipe1> <recipe2> ...          Run the same goal through multiple recipe variants concurrently and compare
     --provider <name> --goal G        speed/retries/results (#291). Each variant runs in its own isolated worktree
                                      (same path as --isolate), so variants never conflict.

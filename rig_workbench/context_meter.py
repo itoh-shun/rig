@@ -114,6 +114,24 @@ def _task_id_hint(argv: list[str]) -> str:
     return ""
 
 
+def _redact_argv(argv: list[str]) -> list[str]:
+    """Remove goal bodies before the command telemetry closure can persist them."""
+    redacted = []
+    redact_next = False
+    for argument in argv:
+        if redact_next:
+            redacted.append("[REDACTED]")
+            redact_next = False
+        elif argument == "--goal":
+            redacted.append(argument)
+            redact_next = True
+        elif argument.startswith("--goal="):
+            redacted.append("--goal=[REDACTED]")
+        else:
+            redacted.append(argument)
+    return redacted
+
+
 def install(command: str, argv: list[str] | None = None) -> None:
     """Start counting this invocation's stdout. Idempotent; safe to call unguarded."""
     global _meter, _command
@@ -136,11 +154,12 @@ def _record(argv: list[str]) -> None:
     if root is None:
         return
     try:
+        safe_argv = _redact_argv(argv)
         record = {
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "command": _command,
-            "argv": argv[:8],
-            "task_id": _task_id_hint(argv),
+            "argv": safe_argv[:8],
+            "task_id": _task_id_hint(safe_argv),
             "bytes": meter.bytes,
             "lines": meter.lines,
             "invoker": os.environ.get("RIG_INVOKER") or "direct",

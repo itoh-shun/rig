@@ -23,6 +23,12 @@ from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
 from .runstate import (compute_next, enforce_executable_state, gate_outcome, save_state,
                        stage_gate_status, telemetry_append)
+from .secure_runtime import (
+    SecureRuntimeError,
+    requires_secure_runtime,
+    run_secure_provider,
+)
+from .secure_fs import atomic_write_bytes, read_bytes as read_secure_bytes
 
 _BENCH_COUNTER_LOCK = threading.Lock()
 
@@ -521,6 +527,14 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
         return run_http_provider(provider, prompt, cfg)
     if provider == "anthropic":
         return run_anthropic_provider(prompt, cfg, state, step_id)
+    if cfg.get("secure_runtime"):
+        launcher = (cfg.get("_secure_launchers") or {}).get(role)
+        if launcher is None or launcher.provider != provider:
+            return 126, "[secure provider role/provider mismatch]"
+        try:
+            return run_secure_provider(launcher, prompt, cfg)
+        except SecureRuntimeError as error:
+            return 126, f"[secure provider refused: {error}]"
     argv = build_argv(provider, role, prompt, cfg, persona)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
@@ -642,6 +656,9 @@ def _spool_full_output(text: str, cfg: dict, label: str) -> str | None:
     if path is None:
         return None
     try:
+        if cfg.get("secure_runtime"):
+            atomic_write_bytes(path, text.encode("utf-8"))
+            return str(path)
         d = path.parent
         created = not d.exists()
         d.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -685,6 +702,17 @@ def _artifact_record(
     if path is None or not path.is_file():
         return None
     try:
+        if cfg.get("secure_runtime"):
+            content = read_secure_bytes(path)
+            return {
+                "path": str(path.absolute()),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "bytes": len(content),
+                "provider": provider,
+                "backend": _effective_provider_backend(provider),
+                "model": model,
+                **({"step": step} if step else {}),
+            }
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(path, flags)
         try:
@@ -722,6 +750,11 @@ def _read_artifact(record: dict, cfg: dict) -> str | None:
     if expected is None or raw.parent != expected.parent:
         return None
     try:
+        if cfg.get("secure_runtime"):
+            content = read_secure_bytes(raw)
+            if hashlib.sha256(content).hexdigest() != record.get("sha256"):
+                return None
+            return content.decode("utf-8")
         for component in (raw, *raw.parents):
             if component.is_symlink():
                 return None
@@ -746,7 +779,10 @@ def read_result_artifact(state: dict, run_state_path: pathlib.Path) -> str | Non
     """Return the verified final deliverable for a CLI run, if it is safely readable."""
     return _read_artifact(
         state.get("result_artifact"),
-        {"run_dir": str(pathlib.Path(run_state_path).absolute().parent)},
+        {
+            "run_dir": str(pathlib.Path(run_state_path).absolute().parent),
+            "secure_runtime": bool(state.get("secure_runtime")),
+        },
     )
 
 
@@ -1061,8 +1097,16 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
             )
         parsed_ok, criteria = _judge_output(out)
         ok = rc == 0 and parsed_ok
+        if cfg.get("secure_runtime"):
+            criteria = [
+                {"n": item.get("n"), "verdict": item.get("verdict"), "anchor": ""}
+                for item in criteria
+            ]
+            note = f"exit {rc}; verdict={'pass' if ok else 'fail'}"
+        else:
+            note = f"exit {rc}; {_excerpt(out)}"
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
-                "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
+                "criteria": criteria, "note": note}
 
     if len(tasks) == 1:
         return [_one(tasks[0])]
@@ -1088,10 +1132,18 @@ def _run_artifact_reviewers(
         )
         parsed_ok, criteria = _judge_output(out)
         ok = rc == 0 and parsed_ok
+        if cfg.get("secure_runtime"):
+            criteria = [
+                {"n": item.get("n"), "verdict": item.get("verdict"), "anchor": ""}
+                for item in criteria
+            ]
+            note = f"exit {rc}; verdict={'pass' if ok else 'fail'}"
+        else:
+            note = f"exit {rc}; {_excerpt(out)}"
         return {
             "by": f"{provider}:{persona}", "persona": persona,
             "provider": provider, "ok": ok, "criteria": criteria,
-            "note": f"exit {rc}; {_excerpt(out)}",
+            "note": note,
         }
 
     if len(tasks) == 1:
@@ -1787,9 +1839,13 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
             gen_cfg,
             step_id=step["id"],
         )
+        captured = (
+            "" if cfg.get("secure_runtime") and rc != 0
+            else _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}")
+        )
         return (
             gen_list[0],
-            _capture_output(out, cfg, f"{step['id']}-{gen_list[0]}"),
+            captured,
             [],
             rc,
         )
@@ -2452,6 +2508,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     if artifact is not None:
         st["artifact"] = artifact
         state["result_artifact"] = artifact
+    elif cfg.get("secure_runtime"):
+        state["stopped"] = {
+            "reason": "secure provider output artifact could not be persisted safely",
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
                                  "provider": winner or gen_list[0],
@@ -2513,6 +2576,22 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
+    if cfg.get("secure_runtime") and len(gen_list) != 1:
+        state["stopped"] = {
+            "reason": "secure-provider-execution requires exactly one pinned generator",
+            "kind": "BLOCKED",
+            "at": state.get("steps", [{}])[0].get("id", "—"),
+        }
+    if requires_secure_runtime(state.get("recipe", ""), state.get("steps") or []) \
+            and not cfg.get("secure_runtime"):
+        state["stopped"] = {
+            "reason": (
+                "secure-provider-execution requires reviewed executable SHA pins "
+                "and sealed provider launchers"
+            ),
+            "kind": "BLOCKED",
+            "at": state.get("steps", [{}])[0].get("id", "—"),
+        }
     independent_artifact_workflow = any(
         index > 0 and "independent-verification" in (step.get("policies") or [])
         for index, step in enumerate(state.get("steps") or [])
@@ -2531,6 +2610,10 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         return "BLOCKED"
     if sp is not None:      # run dir = where the run-state lives; full over-budget outputs spool there
         cfg = {**cfg, "run_dir": cfg.get("run_dir") or str(pathlib.Path(sp).resolve().parent)}
+        if state.get("secure_runtime"):
+            state["secure_history_path"] = str(
+                pathlib.Path(sp).absolute().parent / "runtime-history.jsonl"
+            )
     if any(s["needs"] for s in state["steps"]):
         final = run_dag(state, sp, gen_list, ver, cfg, max_steps, quiet, max_parallel, quorum)
         state["token_usage"] = cfg.get("_token_usage") or {}
