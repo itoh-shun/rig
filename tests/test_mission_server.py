@@ -1,7 +1,6 @@
 """Interactive Mission Control: browser actions must stay behind RIG Core."""
 
 import json
-import pathlib
 
 import pytest
 
@@ -44,7 +43,7 @@ def test_outcome_is_constrained_to_known_statuses():
         "wb", "record-outcome", "rig-20260809-login", "--status", "incident",
         "--note", "rollback",
     ]
-    with pytest.raises(ValueError, match="ok\|incident"):
+    with pytest.raises(ValueError, match=r"ok\|incident"):
         mission_server.action_argv(
             "outcome", "rig-20260809-login", {"status": "ignored"}
         )
