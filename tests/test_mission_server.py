@@ -104,9 +104,12 @@ def test_server_uses_random_csrf_and_loopback_address(tmp_path):
         server.server_close()
 
 
-def test_interactive_html_contains_live_controls_but_no_force():
+def test_interactive_html_contains_live_and_durable_controls_but_no_force():
     page = mission_server.interactive_html("csrf-secret")
     assert "RIG Mission Control" in page
+    assert "Autonomous AI Run" in page
+    assert "Start AI Run" in page
+    assert "AI Queue" in page
     assert "Register isolated task" in page
     assert "View Diff" in page
     assert "Accept" in page
