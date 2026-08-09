@@ -12,7 +12,7 @@ def _isolated(monkeypatch, tmp_path):
 
 
 def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_path):
-    from rig_workbench.packs.manifest import parse_frontmatter_subset
+    from rig_workbench.packs.manifest import parse_frontmatter_subset, read_json_yaml
     from rig_workbench.packs.resolver import resolve_asset
     from rig_workbench.packs.validation import validate_pack
 
@@ -23,13 +23,20 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
 
     manifest = validate_pack(PACK)
     assert manifest["id"] == "japanese-writing"
-    assert manifest["version"] == "0.4.0"
+    assert manifest["version"] == "0.5.0"
+    _raw, compatibility = read_json_yaml(PACK / "compatibility.yaml")
+    assert compatibility["pack_version"] == "0.5.0"
+    assert compatibility["engine"] == ">=2.3.0"
     assert manifest["dependencies"] == []
     assert manifest["assets"]["policy"] == [
         "facets/policies/japanese-writing-rules-v2.md",
         "facets/policies/secure-provider-execution.md",
         "facets/policies/writing-delivery-contract.md",
     ]
+    assert (
+        "evals/cases/japanese-writing-meaningful-negation-contrast/case.json"
+        in manifest["assets"]["eval-case"]
+    )
     recipe = parse_frontmatter_subset(PACK / "recipes/japanese-writing.md")
     assert "model" not in recipe and "verifier_model" not in recipe
     assert recipe["steps"][0]["policies"] == [
@@ -130,7 +137,8 @@ def test_technical_explanation_eval_answers_directly_without_formula_sections():
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     for spec in (
-        "regex:^write-throughは.*write-backは.*$",
+        "regex:^write-throughは.*同時に保存先へ同期.*書き込みが遅く.*"
+        "write-backは.*後で保存先へ反映.*反映前の障害.*失うリスク.*$",
         "not_contains:仕組み:",
         "not_contains:挙動:",
         "not_contains:判断基準:",
@@ -139,6 +147,9 @@ def test_technical_explanation_eval_answers_directly_without_formula_sections():
         "not_contains:デメリット:",
     ):
         assert spec in checks
+    rubric = case["semantic_rubric"][0]["description"]
+    assert "condition-to-result mapping" in rubric
+    assert "decision-relevant conflicts, waits, and post-failure behavior" in rubric
     output = (
         "write-throughはキャッシュへの書き込みと同時に保存先へ同期するため、"
         "整合性を保ちやすい一方で書き込みが遅くなります。write-backは先にキャッシュへ"
@@ -156,14 +167,19 @@ def test_support_eval_requires_no_file_no_rows_and_masking():
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     assert "contains:だけ" in checks
-    assert (
-        "regex:^CSVファイル本体.*データ行.*ヘッダーまたは列名.*氏名.*メールアドレス.*マスク.*$"
-        in checks
-    )
+    for spec in (
+        "contains:スクリーンショット",
+        "contains:エラー文",
+        "contains:テキスト",
+        "regex:^CSVファイル本体.*データ行.*ヘッダーまたは列名.*氏名.*メールアドレス.*マスク.*"
+        "スクリーンショット.*送らない.*エラー文.*テキスト.*$",
+    ):
+        assert spec in checks
     output = (
         "CSVファイル本体は送らないでください。データ行も送らないでください。"
-        "ヘッダーまたは列名だけを共有してください。エラー画面を送る場合は、"
-        "氏名とメールアドレスをマスクしてください。"
+        "ヘッダーまたは列名だけを共有し、氏名とメールアドレスはマスクしてください。"
+        "スクリーンショットは送らないでください。秘密情報と不要な識別情報を"
+        "除いたエラー文をテキストで共有してください。"
     )
     assert all(_check(spec, output, 0)["status"] == "pass"
                for spec in case["deterministic_checks"])
@@ -198,22 +214,49 @@ def test_japanese_write_starts_and_stops_at_the_reader_facing_artifact():
         assert phrase in instruction
 
 
-def test_rules_v2_3_preserve_internal_register_and_avoid_repetition():
+def test_rules_v2_4_avoids_only_same_proposition_repetition():
     rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
 
-    assert "# policy: Japanese Writing Rules v2.3" in rules
+    assert "# policy: Japanese Writing Rules v2.4" in rules
     assert "依頼や謝罪の強さも媒体と読み手との関係に合わせます" in rules
     assert "顧客対応の依頼敬語や定型挨拶に引き上げません" in rules
-    assert "同じ事実を、前置き、謝罪、理由、まとめで言い直しません" in rules
-    assert "すでに共有された主題" in rules
+    assert "最終成果物の中で同じ命題を言い換えて繰り返しません" in rules
+    for meaning_change in ("否定の有無", "対比", "因果の帰属", "時点・状態の違い"):
+        assert meaning_change in rules
+    assert "重複として省略しません" in rules
     recipe = (PACK / "recipes/japanese-writing.md").read_text(encoding="utf-8")
-    assert "Rules v2.3" in recipe
+    assert "Rules v2.4" in recipe
     assert "Rules v2 " not in recipe
 
 
-def test_rules_v2_3_preserve_ambiguity_precedence():
+def test_meaningful_negation_contrast_and_time_state_are_not_deduplicated():
+    from rig_workbench.eval.runner import _check
+    from rig_workbench.packs.manifest import read_json_yaml
+
+    path = PACK / "evals/cases/japanese-writing-meaningful-negation-contrast/case.json"
+    _raw, case = read_json_yaml(path)
+    checks = set(case["deterministic_checks"])
+    for spec in (
+        "contains:解消していません",
+        "contains:一方",
+        "contains:暫定回避策",
+        "contains:利用できます",
+        "contains:恒久対応",
+        "contains:明日",
+        "regex:^障害は解消していません.*一方.*暫定回避策.*利用できます.*恒久対応.*明日.*$",
+    ):
+        assert spec in checks
+    output = (
+        "障害は解消していません。一方、暫定回避策は利用できます。"
+        "恒久対応は明日実施します。"
+    )
+    assert all(_check(spec, output, 0)["status"] == "pass"
+               for spec in case["deterministic_checks"])
+
+
+def test_rules_v2_4_preserve_ambiguity_precedence():
     rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
@@ -228,7 +271,7 @@ def test_rules_v2_3_preserve_ambiguity_precedence():
     assert "指示語の参照先を明確にします" not in rules
 
 
-def test_rules_v2_3_answer_technical_questions_directly_without_a_formula():
+def test_rules_v2_4_requires_decision_relevant_condition_result_mapping():
     rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
@@ -236,15 +279,17 @@ def test_rules_v2_3_answer_technical_questions_directly_without_a_formula():
     assert "## 技術説明" in rules
     for phrase in (
         "利用者が実際に尋ねていることへ直接答えます",
-        "その答えの理由を説明するために必要な分だけ",
-        "答えを変えない内部詳細",
+        "選択に必要な条件と結果の対応を少なくとも一つ",
+        "結論に影響しない内部詳細",
         "網羅的な列挙",
-        "定型的な代償の節",
+        "競合",
+        "待ち",
+        "障害後の挙動",
+        "判断に関係する場合は残します",
+        "定型的な見出しを並べません",
+        "入力にない前提を作りません",
     ):
         assert phrase in rules
-    for phrase in ("選択に効く違い", "代表的な挙動や用途", "主な代償だけ"):
-        assert phrase not in rules
-    assert "入力にない実装前提は加えません" in rules
 
 
 def test_writer_sets_one_atomic_support_boundary_in_every_policy_arm():
@@ -266,6 +311,11 @@ def test_writer_sets_one_atomic_support_boundary_in_every_policy_arm():
     )
     assert atomic_boundary in writer.replace("\n", "")
     assert "必要性が明示されない限り" not in writer
+    screenshot_boundary = (
+        "エラーの確認が必要なサポート返信では、スクリーンショットを送らせず、秘密情報と"
+        "不要な識別情報を除いたエラー文をテキストで共有するよう依頼します。"
+    )
+    assert screenshot_boundary in writer.replace("\n", "").replace("  ", "")
 
     common = instruction + writer
     arms = {
@@ -344,6 +394,10 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
         "japanese-writing-internal-register": (
             "まだ確認できていません。20分後に確認し、確認後にコメントします。"
         ),
+        "japanese-writing-meaningful-negation-contrast": (
+            "障害は解消していません。一方、暫定回避策は利用できます。"
+            "恒久対応は明日実施します。"
+        ),
         "japanese-writing-no-workflow-meta": (
             "OPS-JP-META-1について、2026年8月12日14:00に会議室Bで運用会議を開きます。"
             "議題はリリース手順の確認です。"
@@ -366,8 +420,9 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
         ),
         "japanese-writing-support-data-minimization": (
             "CSVファイル本体は送らないでください。データ行も送らないでください。"
-            "ヘッダーまたは列名だけを共有してください。エラー画面を送る場合は、"
-            "氏名とメールアドレスをマスクしてください。"
+            "ヘッダーまたは列名だけを共有し、氏名とメールアドレスはマスクしてください。"
+            "スクリーンショットは送らないでください。秘密情報と不要な識別情報を"
+            "除いたエラー文をテキストで共有してください。"
         ),
         "japanese-writing-technical-operation": (
             "write-throughはキャッシュへの書き込みと同時に保存先へ同期するため、"
