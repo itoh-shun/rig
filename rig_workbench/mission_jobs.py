@@ -69,7 +69,7 @@ def _pid_alive(pid: object) -> bool:
         return False
     try:
         os.kill(pid, 0)
-    except (OSError, ProcessLookupError):
+    except OSError:
         return False
     return True
 
@@ -138,15 +138,45 @@ def validate_run_request(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def ensure_worker(root: pathlib.Path, *, provider: str, verifier_provider: str,
-                  max_parallel: int) -> dict[str, Any]:
-    """Launch one detached queue-drainer, or reuse the live one.
+def assert_worker_compatible(root: pathlib.Path, *, provider: str,
+                             verifier_provider: str, max_parallel: int) -> dict[str, Any]:
+    """Refuse a provider change while one shared local queue worker is active.
 
-    New queue items can be added while the worker is running. mission_worker
-    re-checks the persistent queue after each ``queue go`` batch until no queued
-    items remain.
+    The local queue does not carry provider metadata per item. Silently accepting
+    a new Claude item while a rig worker is draining the queue would execute that
+    item with rig. Refusal is safer than pretending the requested configuration
+    can be honored.
     """
     current = worker_state(root)
+    active = current.get("status") == "starting" or (
+        current.get("status") == "running" and current.get("alive")
+    )
+    if not active:
+        return current
+    requested = (provider, verifier_provider, max_parallel)
+    actual = (
+        current.get("provider"),
+        current.get("verifier_provider"),
+        current.get("max_parallel"),
+    )
+    if requested != actual:
+        raise ValueError(
+            "a durable worker is already active with "
+            f"{actual[0]}→{actual[1]} parallel={actual[2]}; "
+            "new queue items must use the same worker configuration until it drains"
+        )
+    return current
+
+
+def ensure_worker(root: pathlib.Path, *, provider: str, verifier_provider: str,
+                  max_parallel: int) -> dict[str, Any]:
+    """Launch one detached queue-drainer, or reuse the compatible live one."""
+    current = assert_worker_compatible(
+        root,
+        provider=provider,
+        verifier_provider=verifier_provider,
+        max_parallel=max_parallel,
+    )
     if current.get("status") in {"starting", "running"} and (
         current.get("status") == "starting" or current.get("alive")
     ):
@@ -200,16 +230,12 @@ def ensure_worker(root: pathlib.Path, *, provider: str, verifier_provider: str,
     try:
         proc = subprocess.Popen(command, **kwargs)
     except Exception:
-        log.close()
         state["status"] = "failed_to_start"
         state["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
         _atomic_json(worker_state_path(root), state)
         raise
     finally:
-        try:
-            log.close()
-        except Exception:
-            pass
+        log.close()
     return {"started": True, "pid": proc.pid, "generation": generation}
 
 
