@@ -34,6 +34,24 @@ def test_corrupt_queue_is_visible_and_never_treated_as_empty(tmp_path):
     assert error and "unreadable queue" in error
 
 
+def test_submission_lock_reclaims_abandoned_lock(tmp_path, monkeypatch):
+    lock = tmp_path / ".rig" / "mission-control" / "submission.lock"
+    lock.mkdir(parents=True)
+    old = mission_jobs.time.time() - 60
+    os.utime(lock, (old, old))
+    with mission_jobs.submission_lock(tmp_path, timeout=0.1):
+        assert lock.is_dir()
+    assert not lock.exists()
+
+
+def test_submission_lock_refuses_live_competing_submitter(tmp_path):
+    lock = tmp_path / ".rig" / "mission-control" / "submission.lock"
+    lock.mkdir(parents=True)
+    with pytest.raises(ValueError, match="another Mission Control process"):
+        with mission_jobs.submission_lock(tmp_path, timeout=0.01):
+            pass
+
+
 def _write_live_worker(tmp_path, **overrides):
     path = mission_jobs.worker_state_path(tmp_path)
     state = {
@@ -49,6 +67,15 @@ def _write_live_worker(tmp_path, **overrides):
     state.update(overrides)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state), encoding="utf-8")
+
+
+def _write_queue(tmp_path, *, status="failed"):
+    path = tmp_path / ".rig" / "queue.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "next_id": 2,
+        "items": [{"id": 1, "task": "fix login", "status": status, "note": ""}],
+    }), encoding="utf-8")
 
 
 def test_active_worker_rejects_silent_provider_switch(tmp_path):
@@ -67,6 +94,18 @@ def test_active_worker_rejects_silent_provider_switch(tmp_path):
         max_parallel=2,
     )
     assert current["alive"] is True
+
+
+def test_running_item_cannot_be_retried_while_live_worker_owns_it(tmp_path):
+    _write_queue(tmp_path, status="running")
+    _write_live_worker(tmp_path)
+    with pytest.raises(ValueError, match="still owned by the live worker"):
+        mission_jobs.assert_retryable(tmp_path, "1")
+
+
+def test_failed_item_is_retryable(tmp_path):
+    _write_queue(tmp_path, status="failed")
+    assert mission_jobs.assert_retryable(tmp_path, "1")["status"] == "failed"
 
 
 def test_ensure_worker_reuses_compatible_live_worker_without_spawning(tmp_path, monkeypatch):
