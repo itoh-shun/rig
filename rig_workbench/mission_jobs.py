@@ -7,6 +7,7 @@ its log lives.  It deliberately does not invent a second job scheduler.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import os
@@ -21,6 +22,7 @@ WORKER_SCHEMA = "rig.mission-worker/v1"
 ALLOWED_PROVIDERS = ("rig", "claude", "codex", "grok", "lmstudio", "ollama", "mock")
 MAX_PARALLEL = 8
 _STARTING_STALE_SECONDS = 15
+_SUBMIT_LOCK_STALE_SECONDS = 30
 
 
 def _control_dir(root: pathlib.Path) -> pathlib.Path:
@@ -33,6 +35,46 @@ def worker_state_path(root: pathlib.Path) -> pathlib.Path:
 
 def worker_log_path(root: pathlib.Path) -> pathlib.Path:
     return _control_dir(root) / "worker.log"
+
+
+@contextlib.contextmanager
+def submission_lock(root: pathlib.Path, timeout: float = 5.0):
+    """Cross-process lock around provider-check → enqueue → worker-launch.
+
+    ``queue.json`` already serializes each individual mutation, but two Mission
+    Control servers could otherwise both observe "no worker", enqueue different
+    provider requests, then launch two queue drainers. Atomic directory creation
+    gives a dependency-free lock on POSIX and Windows. The critical section is
+    intentionally tiny; a 30s-old empty lock directory is treated as an
+    abandoned launcher and reclaimed.
+    """
+    control = _control_dir(root)
+    control.mkdir(parents=True, exist_ok=True)
+    lock_dir = control / "submission.lock"
+    deadline = time.monotonic() + timeout
+    acquired = False
+    while not acquired:
+        try:
+            lock_dir.mkdir()
+            acquired = True
+        except FileExistsError:
+            try:
+                age = time.time() - lock_dir.stat().st_mtime
+                if age > _SUBMIT_LOCK_STALE_SECONDS:
+                    lock_dir.rmdir()
+                    continue
+            except (FileNotFoundError, OSError):
+                continue
+            if time.monotonic() >= deadline:
+                raise ValueError("another Mission Control process is submitting durable work")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            lock_dir.rmdir()
+        except (FileNotFoundError, OSError):
+            pass
 
 
 def _atomic_json(path: pathlib.Path, value: dict[str, Any]) -> None:
@@ -62,6 +104,16 @@ def queue_items(root: pathlib.Path) -> tuple[list[dict[str, Any]], str | None]:
     if not isinstance(value, dict) or not isinstance(value.get("items", []), list):
         return [], "unreadable queue: .rig/queue.json must contain an object with items[]"
     return [x for x in value.get("items", []) if isinstance(x, dict)], None
+
+
+def queue_item(root: pathlib.Path, queue_id: str) -> dict[str, Any]:
+    items, error = queue_items(root)
+    if error:
+        raise ValueError(error)
+    match = next((item for item in items if str(item.get("id")) == queue_id), None)
+    if match is None:
+        raise ValueError(f"queue item not found: {queue_id}")
+    return match
 
 
 def _pid_alive(pid: object) -> bool:
@@ -140,13 +192,7 @@ def validate_run_request(payload: dict[str, Any]) -> dict[str, Any]:
 
 def assert_worker_compatible(root: pathlib.Path, *, provider: str,
                              verifier_provider: str, max_parallel: int) -> dict[str, Any]:
-    """Refuse a provider change while one shared local queue worker is active.
-
-    The local queue does not carry provider metadata per item. Silently accepting
-    a new Claude item while a rig worker is draining the queue would execute that
-    item with rig. Refusal is safer than pretending the requested configuration
-    can be honored.
-    """
+    """Refuse a provider change while one shared local queue worker is active."""
     current = worker_state(root)
     active = current.get("status") == "starting" or (
         current.get("status") == "running" and current.get("alive")
@@ -166,6 +212,18 @@ def assert_worker_compatible(root: pathlib.Path, *, provider: str,
             "new queue items must use the same worker configuration until it drains"
         )
     return current
+
+
+def assert_retryable(root: pathlib.Path, queue_id: str) -> dict[str, Any]:
+    """Do not requeue work that a live provider process still owns."""
+    item = queue_item(root, queue_id)
+    status = item.get("status")
+    if status not in {"failed", "running"}:
+        raise ValueError(f"queue #{queue_id} is {status!r}, not retryable from Mission Control")
+    worker = worker_state(root)
+    if status == "running" and worker.get("status") == "running" and worker.get("alive"):
+        raise ValueError(f"queue #{queue_id} is still owned by the live worker; wait or inspect its log")
+    return item
 
 
 def ensure_worker(root: pathlib.Path, *, provider: str, verifier_provider: str,
