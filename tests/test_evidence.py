@@ -20,8 +20,24 @@ def test_field_summary_keeps_missing_costs_unmeasured():
     assert summary["arms"]["rig"]["defects_caught"] == 2
     assert summary["arms"]["rig"]["tokens_mean"] is None
     assert summary["arms"]["bare"]["tokens_mean"] == 1000.0
+    assert summary["arms"]["bare"]["defects_caught"] is None
+    assert summary["arms"]["bare"]["defects_measured_n"] == 0
     assert summary["comparison"]["incident_rate_delta_pp_bare_minus_rig"] == 100.0
     assert summary["claim"] == "observational-not-causal"
+
+
+def test_field_summary_defects_caught_is_none_when_never_measured():
+    rows = [
+        {"schema": evidence.FIELD_SCHEMA, "arm": "bare", "outcome": "ok", "tokens": 500},
+        {"schema": evidence.FIELD_SCHEMA, "arm": "bare", "outcome": "incident", "tokens": 700},
+    ]
+    summary = evidence.summarize_field_study(rows)
+    bare = summary["arms"]["bare"]
+    assert bare["defects_measured_n"] == 0
+    assert bare["defects_caught"] is None, (
+        "an arm with zero recorded defects_caught observations must report "
+        "unmeasured (None), not a misleading 0"
+    )
 
 
 def test_field_summary_computes_quality_cost_only_on_joint_measurements():
@@ -137,6 +153,34 @@ def test_invalid_fleet_schema_is_visible_not_treated_as_empty(tmp_path):
     result = evidence.fleet_snapshot(tmp_path)
     assert result["configured"] is True
     assert "unsupported fleet schema" in result["error"]
+
+
+def test_corrupt_fleet_config_is_visible_not_treated_as_unconfigured(tmp_path):
+    fleet_path = tmp_path / ".rig" / "fleet.json"
+    fleet_path.parent.mkdir(parents=True, exist_ok=True)
+    fleet_path.write_text("{not valid json", encoding="utf-8")
+
+    result = evidence.fleet_snapshot(tmp_path)
+    assert result["configured"] is True, (
+        "a fleet.json that fails to parse must surface as an error, not the "
+        "same 'configured: False' state as no fleet.json at all"
+    )
+    assert "error" in result
+
+
+def test_non_object_fleet_config_is_visible_not_treated_as_unconfigured(tmp_path):
+    fleet_path = tmp_path / ".rig" / "fleet.json"
+    fleet_path.parent.mkdir(parents=True, exist_ok=True)
+    fleet_path.write_text("[]", encoding="utf-8")
+
+    result = evidence.fleet_snapshot(tmp_path)
+    assert result["configured"] is True
+    assert "error" in result
+
+
+def test_missing_fleet_config_is_reported_as_not_configured(tmp_path):
+    result = evidence.fleet_snapshot(tmp_path)
+    assert result == {"configured": False, "projects": 0, "teams": {}, "reports": []}
 
 
 def test_mission_control_snapshot_has_stable_core_contract(tmp_path):

@@ -201,7 +201,9 @@ def _arm_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "n": len(rows),
         "incidents": incidents,
         "incident_rate_pct": round(incidents / len(rows) * 100, 2) if rows else None,
-        "defects_caught": sum(int(r["defects_caught"]) for r in defects_rows),
+        "defects_caught": (
+            sum(int(r["defects_caught"]) for r in defects_rows) if defects_rows else None
+        ),
         "defects_measured_n": len(defects_rows),
         "tokens_measured_n": len(token_rows),
         "tokens_total": sum(int(r["tokens"]) for r in token_rows) if token_rows else None,
@@ -321,9 +323,11 @@ def save_fleet_config(root: pathlib.Path, projects: list[str], since_days: int =
 
 def fleet_snapshot(root: pathlib.Path) -> dict[str, Any]:
     path = root / ".rig" / "fleet.json"
-    config = _load_json(path)
-    if not config:
+    if not path.is_file():
         return {"configured": False, "projects": 0, "teams": {}, "reports": []}
+    config = _load_json(path)
+    if config is None:
+        return {"configured": True, "error": f"unreadable fleet config: {path}"}
     if config.get("schema") != FLEET_SCHEMA:
         return {"configured": True, "error": f"unsupported fleet schema: {config.get('schema')!r}"}
     try:
