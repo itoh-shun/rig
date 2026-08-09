@@ -31,9 +31,11 @@ from .evidence import find_repo_root
 from .mission_control import build_snapshot
 from .mission_jobs import (
     ALLOWED_PROVIDERS,
+    assert_retryable,
     assert_worker_compatible,
     ensure_worker,
     queue_items,
+    submission_lock,
     validate_run_request,
     worker_log_tail,
     worker_state,
@@ -184,9 +186,9 @@ def action_argv(action: str, task_id: str | None, payload: dict[str, Any]) -> li
 
 def start_durable_run(root: pathlib.Path, payload: dict[str, Any]) -> dict[str, Any]:
     spec = validate_run_request(payload)
-    with _JOB_START_LOCK:
-        # Queue items do not carry provider metadata. Check before persisting so
-        # an incompatible active worker cannot pick this item with the wrong model.
+    # _JOB_START_LOCK serializes threads in this HTTP process; submission_lock
+    # closes the same race across two Mission Control processes on one repo.
+    with _JOB_START_LOCK, submission_lock(root):
         assert_worker_compatible(
             root,
             provider=spec["provider"],
@@ -209,7 +211,10 @@ def retry_durable_run(root: pathlib.Path, queue_id: str,
                       payload: dict[str, Any]) -> dict[str, Any]:
     if not _QUEUE_ID.fullmatch(queue_id):
         raise ValueError("invalid local queue id")
-    with _JOB_START_LOCK:
+    with _JOB_START_LOCK, submission_lock(root):
+        # A live provider still owns a running item. Requeueing it would create
+        # a misleading transition that its eventual DONE/FAIL could overwrite.
+        assert_retryable(root, queue_id)
         current = worker_state(root)
         defaults = {
             "task": "retry",
