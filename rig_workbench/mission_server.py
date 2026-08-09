@@ -5,13 +5,10 @@ Every mutating request is translated into an argv list for ``rig_workbench.cli``
 and executed without a shell, so the existing workbench/governance enforcement
 remains the only authority for accept, discard and approvals.
 
-Security boundary (v2):
-- binds to loopback only;
-- random per-process CSRF token required on every POST;
-- no CORS headers / no wildcard origins;
-- no ``--force`` endpoint;
-- destructive discard needs the exact task id as confirmation;
-- actor identity is never accepted from the browser payload.
+Autonomous work is durable without becoming a second scheduler: Mission Control
+persists work through RIG's existing local queue and launches a detached queue
+drain worker. Closing the browser or this HTTP server does not own that worker's
+lifetime.
 """
 
 from __future__ import annotations
@@ -32,6 +29,14 @@ from typing import Any
 
 from .evidence import find_repo_root
 from .mission_control import build_snapshot
+from .mission_jobs import (
+    ALLOWED_PROVIDERS,
+    ensure_worker,
+    queue_items,
+    validate_run_request,
+    worker_log_tail,
+    worker_state,
+)
 from .mission_ui import interactive_html
 from .workbench.config import TASK_TYPES
 from .workbench.reporting import read_all_tasks
@@ -41,6 +46,7 @@ MAX_BODY_BYTES = 64 * 1024
 COMMAND_TIMEOUT_SECONDS = 120
 POLL_MS = 2000
 _TASK_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_QUEUE_ID = re.compile(r"^[0-9]+$")
 
 
 def _json_file(path: pathlib.Path, default: object) -> object:
@@ -79,8 +85,24 @@ def task_detail(root: pathlib.Path, task_id: str) -> dict[str, Any]:
     }
 
 
+def durable_snapshot(root: pathlib.Path) -> dict[str, Any]:
+    items, error = queue_items(root)
+    counts: dict[str, int] = {}
+    for item in items:
+        status = str(item.get("status") or "?")
+        counts[status] = counts.get(status, 0) + 1
+    return {
+        "queue_error": error,
+        "items": list(reversed(items[-40:])),
+        "counts": counts,
+        "worker": worker_state(root),
+        "worker_log_tail": worker_log_tail(root),
+        "providers": list(ALLOWED_PROVIDERS),
+    }
+
+
 def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
-    """Mission Control snapshot plus the small task index needed by the live UI."""
+    """Mission Control snapshot plus task and durable-queue state for the live UI."""
     snapshot = build_snapshot(root)
     base = runs_dir(root)
     tasks = read_all_tasks(base)
@@ -110,6 +132,7 @@ def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
         "interactive": True,
         "force_available": False,
     }
+    snapshot["jobs"] = durable_snapshot(root)
     return snapshot
 
 
@@ -188,6 +211,47 @@ def action_argv(action: str, task_id: str | None, payload: dict[str, Any]) -> li
     raise ValueError(f"unsupported action: {action}")
 
 
+def start_durable_run(root: pathlib.Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist one queue item, then ensure a detached worker is draining the queue."""
+    spec = validate_run_request(payload)
+    queued = _run_cli(root, ["queue", "add", spec["task"], "--backend", "local"])
+    if not queued["ok"]:
+        return queued
+    worker = ensure_worker(
+        root,
+        provider=spec["provider"],
+        verifier_provider=spec["verifier_provider"],
+        max_parallel=spec["max_parallel"],
+    )
+    return {"ok": True, "queued": queued, "worker": worker, "spec": spec}
+
+
+def retry_durable_run(root: pathlib.Path, queue_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not _QUEUE_ID.fullmatch(queue_id):
+        raise ValueError("invalid local queue id")
+    current = worker_state(root)
+    defaults = {
+        "task": "retry",
+        "provider": payload.get("provider") or current.get("provider") or "rig",
+        "verifier_provider": (
+            payload.get("verifier_provider") or current.get("verifier_provider")
+            or payload.get("provider") or current.get("provider") or "rig"
+        ),
+        "max_parallel": payload.get("max_parallel") or current.get("max_parallel") or 1,
+    }
+    spec = validate_run_request(defaults)
+    retried = _run_cli(root, ["queue", "retry", queue_id, "--backend", "local"])
+    if not retried["ok"]:
+        return retried
+    worker = ensure_worker(
+        root,
+        provider=spec["provider"],
+        verifier_provider=spec["verifier_provider"],
+        max_parallel=spec["max_parallel"],
+    )
+    return {"ok": True, "retried": retried, "worker": worker}
+
+
 class MissionControlHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -213,6 +277,7 @@ class MissionControlHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -292,19 +357,27 @@ class MissionControlHandler(BaseHTTPRequestHandler):
         try:
             payload = self._payload()
             if path == "/api/tasks":
-                argv = action_argv("new", None, payload)
+                result = _run_cli(self.server.root, action_argv("new", None, payload))
+            elif path == "/api/jobs":
+                result = start_durable_run(self.server.root, payload)
             else:
-                match = re.fullmatch(
-                    r"/api/tasks/([^/]+)/(accept|discard|approval|outcome)", path
-                )
-                if not match:
-                    self._json(404, {"error": "not found"})
-                    return
-                task_id = urllib.parse.unquote(match.group(1))
-                _task_dir(self.server.root, task_id)
-                argv = action_argv(match.group(2), task_id, payload)
-            result = _run_cli(self.server.root, argv)
-            self._json(200 if result["ok"] else 409, result)
+                retry = re.fullmatch(r"/api/jobs/([0-9]+)/retry", path)
+                if retry:
+                    result = retry_durable_run(self.server.root, retry.group(1), payload)
+                else:
+                    match = re.fullmatch(
+                        r"/api/tasks/([^/]+)/(accept|discard|approval|outcome)", path
+                    )
+                    if not match:
+                        self._json(404, {"error": "not found"})
+                        return
+                    task_id = urllib.parse.unquote(match.group(1))
+                    _task_dir(self.server.root, task_id)
+                    result = _run_cli(
+                        self.server.root,
+                        action_argv(match.group(2), task_id, payload),
+                    )
+            self._json(200 if result.get("ok") else 409, result)
         except (OSError, ValueError) as exc:
             self._json(400, {"error": str(exc)})
 
@@ -336,12 +409,13 @@ def main(argv: list[str] | None = None) -> None:
     print(f"RIG Mission Control v2: {url}")
     print(f"repo: {root}")
     print("security: loopback-only · per-process CSRF · no GUI force bypass")
+    print("durable runs: .rig/queue.json + detached queue worker")
     if not args.no_open:
         threading.Timer(0.2, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
-        print("\nMission Control stopped.")
+        print("\nMission Control stopped. Detached AI queue workers keep running.")
     finally:
         server.server_close()
 
