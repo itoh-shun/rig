@@ -45,6 +45,20 @@ Candidate と Judge は同じベンダーでも、`identity` が異なるモデ�
 
 コマンドが最終回答以外も stdout に出す場合は `output_mode: "file"` を使い、argv に `{output_file}` を置きます。Codex CLI の例はこの方式です。
 
+### ローカル設定を必ず隔離する
+
+Writer/Judge はローカルの CLI 設定を一切読まない状態で起動します。読ませると、測っているのが「モデルの日本語品質」ではなく「そのマシンの設定」になります。
+
+`claude` には `--safe-mode` を付けます。認証・モデル選択・組み込みツールはそのままに、hooks・CLAUDE.md・skills・plugins・MCP を無効化します。**これが無いと出力が壊れます**: Stop hook が `decision: "block"` を返す環境では追加ターンが強制され、`--output-format text` が拾う最終メッセージが hook 由来のコメントに置き換わります。Writer なら回答でない文字列が候補文として、Judge なら判定でない文字列が判定として記録されます。エラーにはならず、静かに全ケースが汚染されます。
+
+`codex` には `--ignore-user-config` を付けます。`$CODEX_HOME/config.toml` を読まなくなるため、そこに登録された hooks / plugins が外れます。
+
+既知の残差: `--ignore-user-config` を付けても `$CODEX_HOME/skills` は読み込まれます（`Skill descriptions were shortened to fit the 2% skills context budget` の警告が出ます）。完全に揃えたい場合は、認証情報だけを置いた最小ディレクトリを `CODEX_HOME` に指定して起動してください。揃えないまま測る場合は、結果に「Reference 側のみ skills 常駐」と明記します。
+
+`cwd_mode: "temp"` により、リポジトリ直下の `AGENTS.md` / `CLAUDE.md` / プロジェクト skills は読み込まれません。
+
+Provider 設定を変えると fingerprint が変わり、古い checkpoint は再利用されません。設定は測定の一部なので、結果 JSON と一緒に「どの argv で測ったか」を残してください。
+
 ## まず設定だけ検証
 
 ```bash
