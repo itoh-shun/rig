@@ -18,8 +18,8 @@ def japanese_pack_release_errors(root, runtime_version: str) -> list[str]:
     except Exception as error:
         return [f"cannot read Japanese-writing compatibility metadata: {error}"]
     errors = []
-    if pack.get("version") != "0.5.0":
-        errors.append("Japanese-writing pack semantic version must be 0.5.0")
+    if pack.get("version") != "0.6.0":
+        errors.append("Japanese-writing pack semantic version must be 0.6.0")
     if compatibility.get("pack_version") != pack.get("version"):
         errors.append("Japanese-writing pack/compatibility versions differ")
     required = ">=2.3.0"
@@ -90,7 +90,7 @@ def check_release_metadata() -> None:
     else:
         _emit(
             "PASS",
-            "release: Japanese-writing pack 0.5.0 requires engine >=2.3.0",
+            "release: Japanese-writing pack 0.6.0 requires engine >=2.3.0",
         )
 
 

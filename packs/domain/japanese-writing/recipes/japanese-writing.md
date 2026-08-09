@@ -1,6 +1,6 @@
 ---
 name: japanese-writing
-description: 明示された事実と宛先形式を守る日本語完成稿を作り、別の担い手が Rules v2.4 で検証する opt-in recipe。
+description: 明示された事実と宛先形式を守る日本語完成稿を作り、別の担い手が Rules v3 で検証する opt-in recipe。
 scope: shipped
 steps:
   - id: write
@@ -51,12 +51,12 @@ acceptance criterion と `independent-verification` policy で必須化します
 `secure-provider-execution` policy により sealed provider lane を選び、起動時に
 `--verifier-provider` で生成 provider と異なる値を指定します。
 
-## Rules v2.4 の意図
+## Rules v3 の意図
 
-Rules v2.4 は、文章の人間らしさを検出器の点数や語数制限で作る規則ではありません。
-実測で効いた失敗境界を、事実保持、宛先形式、敬語、文の焦点、情報順序、句読点、
-障害連絡・サポート返信の安全策として明文化したものです。固定文字数、文数、句読点数、
-検出器回避、同一モデルの自己採点は採用しません。
+Rules v3 は、読み手と掲載先に合う文体、直接の答えに必要な具体性、短い会話文を
+連続した発話として保つ構造だけを扱います。長さや構造に固定 quota は置きません。
+事実保持と安全性は `japanese-writer`、宛先形式と最終成果物の境界は
+`writing-delivery-contract` が担います。
 
 手順の正本は `facets/instructions/{japanese-write,japanese-writing-review}`、出力境界と
 日本語規則の正本は `facets/policies/{writing-delivery-contract,japanese-writing-rules-v2}`

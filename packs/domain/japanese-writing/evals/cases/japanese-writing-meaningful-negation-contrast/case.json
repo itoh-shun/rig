@@ -60,7 +60,7 @@
   "repeat": 3,
   "semantic_rubric": [
     {
-      "description": "The final artifact does not restate the same proposition, but preserves meaning-changing negation, contrast, causal attribution, and time or state differences instead of deleting them as repetition.",
+      "description": "The final artifact preserves meaning-changing negation, contrast, causal attribution, and time or state differences without omitting or conflating them.",
       "id": "meaningful_negation_contrast",
       "weight": 1.0
     }

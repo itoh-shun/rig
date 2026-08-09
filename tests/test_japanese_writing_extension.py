@@ -23,9 +23,9 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
 
     manifest = validate_pack(PACK)
     assert manifest["id"] == "japanese-writing"
-    assert manifest["version"] == "0.5.0"
+    assert manifest["version"] == "0.6.0"
     _raw, compatibility = read_json_yaml(PACK / "compatibility.yaml")
-    assert compatibility["pack_version"] == "0.5.0"
+    assert compatibility["pack_version"] == "0.6.0"
     assert compatibility["engine"] == ">=2.3.0"
     assert manifest["dependencies"] == []
     assert manifest["assets"]["policy"] == [
@@ -49,7 +49,7 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
     assert recipe["steps"][1]["output_contract"] == "japanese-writing-verdict"
 
 
-def test_rules_v2_contains_measured_boundaries_without_detector_or_quota_gates():
+def test_rules_v3_is_exactly_three_language_bullets_with_delegated_boundaries():
     delivery = (PACK / "facets/policies/writing-delivery-contract.md").read_text(
         encoding="utf-8"
     )
@@ -58,15 +58,49 @@ def test_rules_v2_contains_measured_boundaries_without_detector_or_quota_gates()
     )
     for phrase in ("完成稿を一つだけ", "複数案、選択肢", "宛先形式"):
         assert phrase in delivery
-    for phrase in (
-        "固有名詞", "敬称", "一文には一つの中心", "情報", "句点、読点", "タイムゾーン",
-        "復旧予定時刻", "秘密情報", "固定 quota", "AI detector",
-        "同じモデルによる自己採点", "繰り返し、引用し、整形し、変換し",
-        "[REDACTED]", "秘密でない情報だけを必要最小限",
+    assert "# policy: Japanese Writing Rules v3" in rules
+    assert "事実と安全性は `japanese-writer` persona" in rules
+    assert "出力形式は `writing-delivery-contract`" in rules
+    bullets = [line for line in rules.splitlines() if line.startswith("- ")]
+    assert bullets == [
+        "- 読み手との関係と掲載先に合う文体・敬語を選び、途中で揺らしません。友人や同僚への文面を、顧客対応の丁寧さや定型挨拶へ引き上げません。",
+        "- 問いまたは要点を自然な日本語で直接伝え、読み手が判断・行動するために必要な具体性を残します。説明の型や網羅的な列挙のために文を増やしません。",
+        "- 短い会話は一続きの発話として書き、事実ごとの改行・箇条書きや、意味が途切れるほどの省略を避けます。長さと構造は用途・掲載先・保持する情報量に合わせ、固定の文字数・文数・句読点数を基準にしません。",
+    ]
+    for category_specific in (
+        "条件と結果", "内部詳細", "否定", "対比", "因果", "時点", "状態",
     ):
-        assert phrase in rules
-    assert "framework の出力境界は `writing-delivery-contract`" in rules
+        assert category_specific not in rules
+    for duplicate_section in ("## 技術説明", "## 障害連絡", "## サポート返信"):
+        assert duplicate_section not in rules
     assert "detector" not in delivery.lower()
+
+
+def test_writer_owns_fact_integrity_in_two_high_signal_bullets():
+    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    bullets = [line for line in writer.splitlines() if line.startswith("- ")]
+
+    assert all(
+        phrase in bullets[0]
+        for phrase in (
+            "固有名詞", "数値", "単位", "日時とタイムゾーン", "状態", "条件",
+            "否定", "主体", "関係",
+        )
+    )
+    assert all(
+        phrase in bullets[1]
+        for phrase in (
+            "参照先", "原因", "意図", "評価", "実績", "期日", "約束",
+        )
+    )
+    assert "推測" in bullets[1]
+    assert bullets[2].startswith("- 依頼された形式の完成稿だけを書き")
+    for duplicated_rule in (
+        "読み手との関係に合う常体または敬体",
+        "一文には一つの中心",
+        "結論、理由・状況、必要な行動の順",
+    ):
+        assert duplicated_rule not in writer
 
 
 def test_delivery_eval_rejects_reader_visible_workflow_state():
@@ -214,21 +248,19 @@ def test_japanese_write_starts_and_stops_at_the_reader_facing_artifact():
         assert phrase in instruction
 
 
-def test_rules_v2_4_avoids_only_same_proposition_repetition():
+def test_rules_v3_keeps_short_conversation_continuous_without_fact_rules():
     rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
 
-    assert "# policy: Japanese Writing Rules v2.4" in rules
-    assert "依頼や謝罪の強さも媒体と読み手との関係に合わせます" in rules
-    assert "顧客対応の依頼敬語や定型挨拶に引き上げません" in rules
-    assert "最終成果物の中で同じ命題を言い換えて繰り返しません" in rules
-    for meaning_change in ("否定の有無", "対比", "因果の帰属", "時点・状態の違い"):
-        assert meaning_change in rules
-    assert "重複として省略しません" in rules
+    assert "# policy: Japanese Writing Rules v3" in rules
+    assert "短い会話は一続きの発話" in rules
+    assert "意味が途切れるほどの省略を避けます" in rules
+    for fact_rule in ("否定", "対比", "因果", "時点", "状態"):
+        assert fact_rule not in rules
     recipe = (PACK / "recipes/japanese-writing.md").read_text(encoding="utf-8")
-    assert "Rules v2.4" in recipe
-    assert "Rules v2 " not in recipe
+    assert "Rules v3" in recipe
+    assert "Rules v2" not in recipe
 
 
 def test_meaningful_negation_contrast_and_time_state_are_not_deduplicated():
@@ -238,6 +270,13 @@ def test_meaningful_negation_contrast_and_time_state_are_not_deduplicated():
     path = PACK / "evals/cases/japanese-writing-meaningful-negation-contrast/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
+    rubric = case["semantic_rubric"][0]["description"]
+    assert rubric == (
+        "The final artifact preserves meaning-changing negation, contrast, causal "
+        "attribution, and time or state differences without omitting or conflating them."
+    )
+    for style_criterion in ("continuous utterance", "conversation", "brevity"):
+        assert style_criterion not in rubric
     for spec in (
         "contains:解消していません",
         "contains:一方",
@@ -256,40 +295,45 @@ def test_meaningful_negation_contrast_and_time_state_are_not_deduplicated():
                for spec in case["deterministic_checks"])
 
 
-def test_rules_v2_4_preserve_ambiguity_precedence():
-    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
-        encoding="utf-8"
-    )
+def test_writer_preserves_ambiguity_precedence_while_rules_delegate_facts():
+    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(encoding="utf-8")
 
     for phrase in (
-        "主体、指示語、修飾先が入力だけでは一意に決まらない",
-        "参照先を推測で名指ししません",
+        "入力だけでは決まらない参照先",
+        "推測で補わず",
+        "主体とそれらの関係",
+        "参照先が入力だけでは一意に決まらず",
+        "対話で確認できない場合",
         "どの解釈にも共通する事実だけで成立する表現",
-        "主語と述語、修飾先の対応を読み手が追える形",
     ):
-        assert phrase in rules
-    assert "指示語の参照先を明確にします" not in rules
+        assert phrase in writer
+    assert "事実と安全性は `japanese-writer` persona" in rules
+    assert "参照先" not in "\n".join(
+        line for line in rules.splitlines() if line.startswith("- ")
+    )
 
 
-def test_rules_v2_4_requires_decision_relevant_condition_result_mapping():
+def test_technical_eval_owns_decision_relevant_condition_result_details():
+    from rig_workbench.packs.manifest import read_json_yaml
+
     rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
+    _raw, case = read_json_yaml(
+        PACK / "evals/cases/japanese-writing-technical-operation/case.json"
+    )
+    rubric = case["semantic_rubric"][0]["description"]
 
-    assert "## 技術説明" in rules
+    assert "## 技術説明" not in rules
     for phrase in (
-        "利用者が実際に尋ねていることへ直接答えます",
-        "選択に必要な条件と結果の対応を少なくとも一つ",
-        "結論に影響しない内部詳細",
-        "網羅的な列挙",
-        "競合",
-        "待ち",
-        "障害後の挙動",
-        "判断に関係する場合は残します",
-        "定型的な見出しを並べません",
-        "入力にない前提を作りません",
+        "condition-to-result mapping",
+        "decision-relevant conflicts, waits, and post-failure behavior",
+        "conclusion-irrelevant internals or exhaustive enumeration",
     ):
-        assert phrase in rules
+        assert phrase in rubric
+    for category_specific in ("条件と結果", "内部詳細"):
+        assert category_specific not in rules
 
 
 def test_writer_sets_one_atomic_support_boundary_in_every_policy_arm():
@@ -369,7 +413,11 @@ def test_project_install_resolves_every_owned_prompt_asset(monkeypatch, tmp_path
     assert "# persona: japanese-writer" in write_prompt
     assert "# instruction: japanese-write" in write_prompt
     assert "# policy: writing-delivery-contract" in write_prompt
-    assert "# policy: Japanese Writing Rules v2" in write_prompt
+    assert "# policy: Japanese Writing Rules v3" in write_prompt
+    composed_rules = write_prompt.split("# policy: Japanese Writing Rules v3", 1)[1]
+    assert len([line for line in composed_rules.splitlines() if line.startswith("- ")]) == 3
+    for duplicate_section in ("## 技術説明", "## 障害連絡", "## サポート返信"):
+        assert duplicate_section not in composed_rules
     assert "# persona: japanese-writing-reviewer" in review_prompt
     assert "# instruction: japanese-writing-review" in review_prompt
     assert "# output contract: japanese-writing-verdict" in review_prompt
