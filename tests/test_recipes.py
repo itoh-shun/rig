@@ -9,8 +9,10 @@ from rig_workbench.orchestrate.graph import build_brick_graph
 from rig_workbench.orchestrate.recipes import (
     auto_orchestrate,
     evaluate_condition,
+    load_steps,
     parse_frontmatter,
     resolve_effective,
+    resolve_extends,
     resolve_plan_json,
     size_class,
 )
@@ -97,6 +99,45 @@ steps:
 
     assert steps[0]["executor"] == "generate"
     assert steps[1]["executor"] == ""
+
+
+def test_load_steps_retains_prompt_composition_references(write_recipe):
+    path = write_recipe(
+        "composed",
+        """---
+name: composed
+steps:
+  - id: plan
+    instruction: task-plan
+    personas: [planner]
+    output_contract: task-plan
+    policies: [risk-based-testing, ci-cost]
+---""",
+    )
+
+    step = resolve_plan_json(path)["steps"][0]
+
+    assert step["instruction"] == "task-plan"
+    assert step["personas"] == ["planner"]
+    assert step["output_contract"] == "task-plan"
+    assert step["policies"] == ["risk-based-testing", "ci-cost"]
+
+
+def test_resolved_steps_retain_the_declaring_recipe_source(write_recipe):
+    path = write_recipe(
+        "owned",
+        """---
+name: owned
+steps:
+  - id: write
+    instruction: implement
+---""",
+    )
+
+    resolved, _warnings = resolve_extends(parse_frontmatter(path), path)
+    step = load_steps(resolved)[0]
+
+    assert step["recipe_source"] == str(path.resolve())
 
 
 def test_adaptive_bugfix_recipe_has_bounded_executor_flow():

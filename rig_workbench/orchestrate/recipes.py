@@ -203,7 +203,8 @@ def load_steps(fm: dict) -> list[dict]:
             "executor": s["executor"] if "executor" in s else "generate",
             "gate": None if gate in (None, "—", "-") else gate,
             "pattern": s.get("pattern"),
-            "personas": list(s.get("personas") or []),       # roles of parallel verifiers
+            "personas": list(s.get("personas") or []),       # generator roles; also verifier lenses at gates
+            "policies": list(s.get("policies") or []),       # prompt guardrails, composed last
             "needs": list(s.get("needs") or []),             # optional: dependency steps (DAG parallelism)
             "acceptance": list(s.get("acceptance") or []),
             "checks": list(s.get("checks") or []),          # optional: machine-verification commands
@@ -215,6 +216,10 @@ def load_steps(fm: dict) -> list[dict]:
             "auto_route": s.get("auto_route"),               # optional: --auto-route candidates (#264)
             "actor": s.get("actor"),                         # optional: org ROLE owning this stage (v2.1)
             "human_gate": s.get("human_gate"),               # optional: halt for a person's sign-off (v2.1)
+            # Prompt facets declared by a resolved recipe must stay bound to
+            # that recipe's owner. None identifies old persisted/manual steps
+            # created before composition provenance existed.
+            "recipe_source": s.get("_recipe_source"),
         })
     return out
 
@@ -299,6 +304,9 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         else:
             ensure_recipe_trusted(parent_path)
         parent_fm = parse_frontmatter(parent_path)
+        for step in parent_fm.get("steps") or []:
+            if isinstance(step, dict):
+                step.setdefault("_recipe_source", str(parent_path.resolve()))
         chain.append((parent_name, parent_fm))
         visited.add(parent_name)
         trail.append(parent_name)
@@ -317,6 +325,9 @@ def resolve_extends(fm: dict, recipe_path: pathlib.Path) -> tuple[dict, list[str
       - Origin markers from inheritance end up as "inherited" / "override" / "added"
     """
     warnings: list[str] = []
+    for step in fm.get("steps") or []:
+        if isinstance(step, dict):
+            step.setdefault("_recipe_source", str(recipe_path.resolve()))
     raw_steps = [s for s in (fm.get("steps") or []) if isinstance(s, dict)]
     if not fm.get("extends"):
         for s in raw_steps:

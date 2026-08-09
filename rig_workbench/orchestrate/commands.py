@@ -15,7 +15,8 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
-from .providers import parse_step_model_spec, run_loop, unknown_step_model_ids
+from .providers import (parse_step_model_spec, read_result_artifact, run_loop,
+                        unknown_step_model_ids)
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe
 
@@ -467,6 +468,11 @@ def cmd_run(args):
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    artifact_stdout = fm.get("name", path.stem) == "japanese-writing"
+
+    def diagnostic(*items, **kwargs):
+        print(*items, file=sys.stderr if artifact_stdout else sys.stdout, **kwargs)
+
     execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
     gen = ver = None
@@ -505,7 +511,7 @@ def cmd_run(args):
             # Precedence: --step-model > recipe frontmatter `model:` > global --model.
             parsed = parse_step_model_spec(args[i + 1])
             if parsed is None:
-                print(f"[ERROR] --step-model expects <step-id>=<model> (e.g. plan=sonnet), got: {args[i + 1]}")
+                diagnostic(f"[ERROR] --step-model expects <step-id>=<model> (e.g. plan=sonnet), got: {args[i + 1]}")
                 sys.exit(1)
             step_models[parsed[0]] = parsed[1]
             i += 2
@@ -567,17 +573,17 @@ def cmd_run(args):
     # Unknown step ids abort the run before anything executes (no silent ignores; #293)
     unknown = unknown_step_model_ids(step_models, steps)
     if unknown:
-        print(f"[ERROR] --step-model: unknown step id(s): {', '.join(unknown)} "
-              f"(recipe `{fm.get('name', path.stem)}` steps: {', '.join(s['id'] for s in steps)})")
+        diagnostic(f"[ERROR] --step-model: unknown step id(s): {', '.join(unknown)} "
+                   f"(recipe `{fm.get('name', path.stem)}` steps: {', '.join(s['id'] for s in steps)})")
         sys.exit(1)
     if step_models:
         cfg["step_models"] = step_models
     if not gen and generators:
         gen = generators[0]            # --generators alone is fine (first one as representative)
     if not gen:
-        print("[ERROR] --provider <name> (or --generators a,b,c) is required"
-              " (rig|claude|codex|grok|ollama|lmstudio|cmd|mock). rig = launch each step as a rig harness (recommended)."
-              " ollama/lmstudio = local LLM (server required; pick a model with --model). Use mock for tests.")
+        diagnostic("[ERROR] --provider <name> (or --generators a,b,c) is required"
+                   " (rig|claude|codex|grok|ollama|lmstudio|cmd|mock). rig = launch each step as a rig harness (recommended)."
+                   " ollama/lmstudio = local LLM (server required; pick a model with --model). Use mock for tests.")
         sys.exit(1)
 
     # ── Guard against accidental launches from inside Claude Code ────────────
@@ -591,7 +597,7 @@ def cmd_run(args):
         any(p in ("claude", "rig") for p in generators) or \
         (isinstance(ver, list) and any(p in ("claude", "rig") for p in ver))
     if _cc_env and _headless_claude and not cfg.get("allow_headless_in_cc"):
-        print(
+        diagnostic(
             "[BLOCKED] Inside a Claude Code session, `--provider claude` / `--provider rig` "
             "spawns `claude -p` as a separate subprocess.\n"
             "\n"
@@ -613,19 +619,19 @@ def cmd_run(args):
         iso = setup_isolation(fm.get("name", path.stem))
         cfg["cwd"] = iso["dir"]
         state["isolation"] = iso
-        print(f"◈ Isolated run: worktree={iso['dir']} / branch={iso['branch']}")
-    print(render_plan(state["recipe"], steps, execution))
+        diagnostic(f"◈ Isolated run: worktree={iso['dir']} / branch={iso['branch']}")
+    diagnostic(render_plan(state["recipe"], steps, execution))
     panel = f" / judge-panel={','.join(generators)}" if len(generators) > 1 else ""
     if isinstance(ver, list):
         panel += f" / model-quorum={','.join(ver)}"
     dag = " / DAG-parallel" if any(s["needs"] for s in steps) else ""
     overrides = ("\nStep-model overrides: "
                  + ", ".join(f"{k}={v}" for k, v in step_models.items())) if step_models else ""
-    print(f"\nAutonomous run: provider={gen} / verifier={'+'.join(ver) if isinstance(ver, list) else ver} / "
-          f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}{overrides}\n")
+    diagnostic(f"\nAutonomous run: provider={gen} / verifier={'+'.join(ver) if isinstance(ver, list) else ver} / "
+               f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}{overrides}\n")
     final = run_loop(state, out, gen, ver, cfg, max_steps,
                      max_parallel=max_parallel, quorum=quorum,
-                     generators=(generators or None))
+                     generators=(generators or None), quiet=artifact_stdout)
     if iso:
         outcome = teardown_isolation(iso, final)
         state["isolation"]["outcome"] = outcome
@@ -633,13 +639,22 @@ def cmd_run(args):
         label = {"merged": f"gate green → ff-merged {iso['branch']} and removed the worktree",
                  "clean-removed": "no changes → removed the worktree",
                  "kept": f"worktree and branch preserved (please inspect): {iso['dir']}"}[outcome]
-        print(f"◈ Isolated run outcome: {label}")
-    print(f"\n=== Finished: {final} ===  run-state: {out}")
+        diagnostic(f"◈ Isolated run outcome: {label}")
+    diagnostic(f"\n=== Finished: {final} ===  run-state: {out}")
+    artifact = state.get("result_artifact")
+    if final == "DONE" and isinstance(artifact, dict) and artifact.get("path"):
+        diagnostic(f"deliverable: {artifact['path']}")
+        if state.get("recipe") == "japanese-writing":
+            content = read_result_artifact(state, out)
+            if content is None:
+                diagnostic("[ERROR] completed deliverable cannot be read safely")
+                sys.exit(1)
+            sys.stdout.write(content)
     if final == "AWAIT_APPROVAL":
         # Parked on a person, not failed. A distinct code so CI can tell "waiting for
         # sign-off" from "the run broke" — reporting either as the other is wrong.
-        print("The run is parked at a human gate. Approve with "
-              f"`rig-wb orchestrate approve <step-id> {out}`, then `resume`.")
+        diagnostic("The run is parked at a human gate. Approve with "
+                   f"`rig-wb orchestrate approve <step-id> {out}`, then `resume`.")
         sys.exit(3)
     sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
 

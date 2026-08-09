@@ -150,6 +150,14 @@ _GENERATOR_EDIT_ENFCE = {
 }
 
 
+def _effective_provider_backend(provider: str) -> str:
+    """Canonical execution backend used for separation-of-duty comparisons."""
+    # `rig` is a prompt/harness mode, but build_argv executes it through the same
+    # Claude CLI as `claude`; treating those labels as independent would be alias
+    # laundering rather than an independent review.
+    return "claude-cli" if provider in ("rig", "claude") else provider
+
+
 def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
     if provider == "mock":
         return [sys.executable, "-c", MOCK_SRC, role, persona]
@@ -601,32 +609,145 @@ def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None =
     return text[:head_n] + marker + text[-tail_n:]
 
 
-def _spool_full_output(text: str, cfg: dict, label: str) -> str | None:
-    """Write the full text to <run_dir>/step-outputs/<label>.txt. None if no run dir (best-effort)."""
+def _artifact_path(cfg: dict, label: str) -> pathlib.Path | None:
     run_dir = (cfg or {}).get("run_dir")
     configured_output_dir = os.environ.get("RIG_STEP_OUTPUT_DIR")
     if not run_dir and not configured_output_dir:
         return None
+    directory = (
+        pathlib.Path(configured_output_dir)
+        if configured_output_dir
+        else pathlib.Path(run_dir) / "step-outputs"
+    ).absolute()
+    if run_dir:
+        run_root = pathlib.Path(run_dir).absolute()
+        if not directory.is_relative_to(run_root):
+            return None
+    # `resolve()` is deliberately not used here: it would hide a link traversal by
+    # turning the attacker's target into the apparent destination.
+    for component in (directory, *directory.parents):
+        if component.is_symlink():
+            return None
+    if run_dir and not directory.resolve(strict=False).is_relative_to(
+        run_root.resolve(strict=False),
+    ):
+        return None
+    safe_label = re.sub(r"[^A-Za-z0-9._-]", "_", label)
+    return directory / f"{safe_label}.txt"
+
+
+def _spool_full_output(text: str, cfg: dict, label: str) -> str | None:
+    """Persist full provider output with owner-only permissions (best-effort)."""
+    path = _artifact_path(cfg, label)
+    if path is None:
+        return None
     try:
-        d = (
-            pathlib.Path(configured_output_dir)
-            if configured_output_dir
-            else pathlib.Path(run_dir) / "step-outputs"
-        )
-        d.mkdir(parents=True, exist_ok=True)
-        p = d / f"{label}.txt"
-        p.write_text(text, encoding="utf-8")
-        return str(p)
-    except Exception:
+        d = path.parent
+        created = not d.exists()
+        d.mkdir(parents=True, mode=0o700, exist_ok=True)
+        if d.is_symlink():
+            return None
+        dir_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        dir_fd = os.open(d, dir_flags)
+        try:
+            if created:
+                os.fchmod(dir_fd, 0o700)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path.name, flags, 0o600, dir_fd=dir_fd)
+            try:
+                os.fchmod(descriptor, 0o600)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    descriptor = -1
+                    stream.write(text)
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+        finally:
+            os.close(dir_fd)
+        return str(path)
+    except (OSError, UnicodeError):
         return None
 
 
 def _capture_output(text: str, cfg: dict, label: str) -> str:
     """Apply the truncation budget to a captured provider output; spool the full text if possible."""
     text = text or ""
+    full_path = _spool_full_output(text, cfg, label)
     if len(text) <= OUTPUT_CAP_CHARS:
         return text
-    return _clip_output(text, full_path=_spool_full_output(text, cfg, label))
+    return _clip_output(text, full_path=full_path)
+
+
+def _artifact_record(
+    cfg: dict, label: str, *, provider: str, model: str | None, step: str | None = None,
+) -> dict | None:
+    path = _artifact_path(cfg, label)
+    if path is None or not path.is_file():
+        return None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            with os.fdopen(fd, "rb") as stream:
+                fd = -1
+                content = stream.read()
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except OSError:
+        return None
+    return {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "bytes": len(content),
+        "provider": provider,
+        "backend": _effective_provider_backend(provider),
+        "model": model,
+        **({"step": step} if step else {}),
+    }
+
+
+def _read_artifact(record: dict, cfg: dict) -> str | None:
+    """Read a recorded artifact only from the configured output root and verify its digest."""
+    raw_path = record.get("path") if isinstance(record, dict) else None
+    if not isinstance(raw_path, str):
+        return None
+    try:
+        raw = pathlib.Path(raw_path).absolute()
+    except OSError:
+        return None
+    expected = _artifact_path(cfg, "placeholder")
+    if expected is None or raw.parent != expected.parent:
+        return None
+    try:
+        for component in (raw, *raw.parents):
+            if component.is_symlink():
+                return None
+        fd = os.open(raw, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            with os.fdopen(fd, "rb") as stream:
+                fd = -1
+                content = stream.read()
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        if hashlib.sha256(content).hexdigest() != record.get("sha256"):
+            return None
+        return content.decode("utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def read_result_artifact(state: dict, run_state_path: pathlib.Path) -> str | None:
+    """Return the verified final deliverable for a CLI run, if it is safely readable."""
+    return _read_artifact(
+        state.get("result_artifact"),
+        {"run_dir": str(pathlib.Path(run_state_path).absolute().parent)},
+    )
 
 
 # #334: pass-with-conditions tokens, both contracts. PASS_WITH_CONDITIONS is the headless
@@ -729,6 +850,172 @@ def _load_persona_brief(persona: str) -> str | None:
     return text.strip() or None
 
 
+def _recipe_pack_owner(source: str) -> str | None:
+    """Return the validated pack owning a recipe source, if any."""
+    from rig_workbench.packs.catalog import discover_builtin_packs
+    from rig_workbench.packs.resolver import resolved_collection
+
+    source_path = pathlib.Path(source).resolve()
+    for record in resolved_collection(project=config.INVOCATION_CWD):
+        root = record.path.resolve()
+        if source_path == root or source_path.is_relative_to(root):
+            return record.id
+    for (_namespace, pack_id), (path, _manifest) in discover_builtin_packs().items():
+        root = path.resolve()
+        if source_path == root or source_path.is_relative_to(root):
+            return pack_id
+    return None
+
+
+def _load_composition_asset(
+    kind: str, name: str, *, recipe_source: str | None = None,
+    recipe_owner: str | None = None, recipe_owner_root: str | None = None,
+) -> tuple[dict, str] | None:
+    """Resolve one prompt facet through the pack resolver and trust gate.
+
+    Resolved recipes fail closed on missing declarations. An old persisted or
+    manually-built step without ``recipe_source`` keeps the historical generic
+    fallback for backward compatibility.
+    """
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.resolver import resolve_asset, resolve_bound_asset
+    from rig_workbench.packs.trust import ensure_asset_trusted
+    from .recipes import parse_frontmatter
+
+    if not isinstance(name, str) or not name:
+        if recipe_source:
+            raise PackError(f"resolved recipe has an empty required {kind} reference")
+        return None
+    if recipe_owner:
+        actual_owner = _recipe_pack_owner(recipe_source or "")
+        try:
+            source_path = pathlib.Path(recipe_source or "").resolve(strict=True)
+            owner_root = pathlib.Path(recipe_owner_root or "").resolve(strict=True)
+            owner_path_matches = source_path.is_relative_to(owner_root)
+        except OSError:
+            owner_path_matches = False
+        if actual_owner != recipe_owner or not owner_path_matches:
+            raise PackError(
+                f"recipe owner '{recipe_owner}' is unavailable for required {kind} facet '{name}'"
+            )
+    names = [name]
+    # Core wiki pages historically live below knowledge/wiki/, while pack
+    # knowledge assets live directly below facets/knowledge/. Try the overlay
+    # namespace first so a project wiki continues to shadow shipped knowledge.
+    if kind == "wiki" and not name.startswith("wiki/"):
+        names = [f"wiki/{name}", name]
+    resolved = None
+    pack_owner = recipe_owner or (_recipe_pack_owner(recipe_source) if recipe_source else None)
+    if recipe_source:
+        for candidate in names:
+            resolved = resolve_bound_asset(
+                kind, candidate, recipe_source, project=config.INVOCATION_CWD,
+            )
+            if resolved is not None:
+                break
+        if pack_owner and resolved is None:
+            raise PackError(
+                f"owner '{pack_owner}' does not bind required {kind} facet '{name}'"
+            )
+    if resolved is None:
+        resolved = next(
+            (asset for candidate in names
+             if (asset := resolve_asset(
+                 kind, candidate, project=config.INVOCATION_CWD,
+             )) is not None),
+            None,
+        )
+    if resolved is None:
+        if recipe_source:
+            raise PackError(
+                f"required {kind} facet '{name}' cannot be resolved for recipe {recipe_source}"
+            )
+        return None
+    path = ensure_asset_trusted(resolved)
+    if not path.is_file():
+        if recipe_source:
+            raise PackError(f"required {kind} facet '{name}' is not a readable file")
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+        frontmatter = parse_frontmatter(path) if text.startswith("---") else {}
+    except (OSError, UnicodeError) as error:
+        if recipe_source:
+            raise PackError(f"cannot read required {kind} facet '{name}': {error}") from error
+        return None
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            text = text[end + 4:]
+    body = text.strip()
+    if not body:
+        if recipe_source:
+            raise PackError(f"required {kind} facet '{name}' has no prompt body")
+        return None
+    return frontmatter, body
+
+
+_WIKI_REF_RE = re.compile(r"^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$")
+
+
+def _generator_facets(step: dict) -> dict[str, list[str]]:
+    """Resolve generator prompt facets without provider-specific behavior."""
+    recipe_source = step.get("recipe_source")
+    owner_args = {
+        "recipe_owner": step.get("recipe_owner"),
+        "recipe_owner_root": step.get("recipe_owner_root"),
+    }
+    personas: list[str] = []
+    wiki_names: list[str] = []
+    for name in step.get("personas") or []:
+        asset = _load_composition_asset(
+            "persona", name, recipe_source=recipe_source, **owner_args,
+        )
+        if asset is None:
+            continue
+        frontmatter, body = asset
+        personas.append(body)
+        for reference in frontmatter.get("inject") or []:
+            if not isinstance(reference, str):
+                continue
+            match = _WIKI_REF_RE.fullmatch(reference.strip())
+            if match and match.group(1) not in wiki_names:
+                wiki_names.append(match.group(1))
+
+    knowledge = []
+    for name in wiki_names:
+        asset = _load_composition_asset(
+            "wiki", name, recipe_source=recipe_source, **owner_args,
+        )
+        if asset is not None:
+            knowledge.append(asset[1])
+
+    instruction = _load_composition_asset(
+        "instruction", step.get("instruction") or "", recipe_source=recipe_source,
+        **owner_args,
+    )
+    output_contract = None
+    if step.get("output_contract"):
+        output_contract = _load_composition_asset(
+            "output-contract", step["output_contract"], recipe_source=recipe_source,
+            **owner_args,
+        )
+    policies = []
+    for name in step.get("policies") or []:
+        asset = _load_composition_asset(
+            "policy", name, recipe_source=recipe_source, **owner_args,
+        )
+        if asset is not None:
+            policies.append(asset[1])
+    return {
+        "persona": personas,
+        "knowledge": knowledge,
+        "instruction": [instruction[1]] if instruction is not None else [],
+        "output_contract": [output_contract[1]] if output_contract is not None else [],
+        "policy": policies,
+    }
+
+
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
                            cfg: dict, max_parallel: int,
                            state: dict | None = None, step_id: str | None = None) -> list[dict]:
@@ -772,7 +1059,8 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
                 state=state,
                 step_id=step_id,
             )
-        ok, criteria = _judge_output(out)
+        parsed_ok, criteria = _judge_output(out)
+        ok = rc == 0 and parsed_ok
         return {"by": f"{v}:{p}", "persona": p, "provider": v, "ok": ok,
                 "criteria": criteria, "note": f"exit {rc}; {_excerpt(out)}"}
 
@@ -781,6 +1069,36 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
     with _f.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         res = list(ex.map(_one, tasks))
     return sorted(res, key=lambda r: (r["persona"], r["provider"]))  # deterministic regardless of completion order
+
+
+def _run_artifact_reviewers(
+    ver, state: dict, step: dict, artifact: str, cfg: dict, max_parallel: int,
+) -> list[dict]:
+    """Run recipe-composed personas as the actual independent verifiers."""
+    vers = ver if isinstance(ver, list) else [ver]
+    personas = step.get("personas") or ["reviewer"]
+    tasks = [(provider, persona) for persona in personas for provider in vers]
+
+    def _one(task):
+        provider, persona = task
+        prompt = _build_artifact_review_prompt(state, step, persona, artifact)
+        rc, out = _run_provider_counted(
+            state, provider, "verifier", prompt, cfg,
+            persona=persona, step_id=step["id"],
+        )
+        parsed_ok, criteria = _judge_output(out)
+        ok = rc == 0 and parsed_ok
+        return {
+            "by": f"{provider}:{persona}", "persona": persona,
+            "provider": provider, "ok": ok, "criteria": criteria,
+            "note": f"exit {rc}; {_excerpt(out)}",
+        }
+
+    if len(tasks) == 1:
+        return [_one(tasks[0])]
+    with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as executor:
+        results = list(executor.map(_one, tasks))
+    return sorted(results, key=lambda item: (item["persona"], item["provider"]))
 
 
 _MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
@@ -990,13 +1308,62 @@ def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str
     return "\n".join(lines)
 
 
+def _compose_prompt_sections(facets: dict[str, list[str]], task_contract: str) -> str:
+    if not any(facets.values()):
+        return task_contract
+    sections = []
+    for title, key in (
+        ("Persona", "persona"),
+        ("Knowledge", "knowledge"),
+        ("Instruction", "instruction"),
+    ):
+        if facets[key]:
+            sections.append(f"## {title}\n\n" + "\n\n".join(facets[key]))
+    sections.append("## Task Contract\n\n" + task_contract)
+    for title, key in (("Output Contract", "output_contract"), ("Policy", "policy")):
+        if facets[key]:
+            sections.append(f"## {title}\n\n" + "\n\n".join(facets[key]))
+    return "\n\n".join(sections)
+
+
 def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
     contract = _build_step_contract(state, step, st)
-    return (
+    if state.get("recipe") == "japanese-writing" and step.get("id") == "write":
+        output_rule = (
+            "Return only the completed deliverable text on stdout. Do not add status, "
+            "path, explanation, Markdown fencing, or a STATUS line."
+        )
+    else:
+        output_rule = "Keep output concise. When the work is complete, end with 'STATUS: done'."
+    task_contract = (
         f"You are a rig subagent (in charge of {step['id']}).\n"
         f"{contract}\n"
-        "Keep output concise. When the work is complete, end with 'STATUS: done'."
+        f"{output_rule}"
     )
+    return _compose_prompt_sections(_generator_facets(step), task_contract)
+
+
+def _build_artifact_review_prompt(
+    state: dict, step: dict, persona: str, artifact: str,
+) -> str:
+    persona_step = {**step, "personas": [persona]}
+    goal = state.get("goal")
+    task_lines = [
+        "Act only as an independent reviewer; do not rewrite the artifact.",
+        f"recipe: {state['recipe']}",
+        f"step: {step['id']}",
+        f"goal: {wrap_untrusted(goal, 'task text') if goal else '(none)'}",
+    ]
+    if step.get("acceptance"):
+        task_lines.append("acceptance_criteria:")
+        task_lines.extend(f"- {criterion}" for criterion in step["acceptance"])
+    task_lines.extend([
+        "artifact_under_review:",
+        wrap_untrusted(artifact, "generated artifact"),
+        "Judge the artifact against the declared acceptance criteria and output contract.",
+    ])
+    task_contract = "\n".join(task_lines)
+    return _compose_prompt_sections(_generator_facets(persona_step), task_contract)
 
 
 def _git_diff_evidence(cfg: dict) -> str | None:
@@ -1440,13 +1807,19 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
         cands = list(ex.map(_gen, gen_list))
     cands.sort(key=lambda c: gen_list.index(c["provider"]))   # evaluate in generation order = deterministic
+    failed_candidate = next((candidate for candidate in cands if candidate["rc"] != 0), None)
+    if failed_candidate is not None:
+        return (
+            failed_candidate["provider"], failed_candidate["out"], [],
+            failed_candidate["rc"],
+        )
     for i, c in enumerate(cands):
         c["out"] = _capture_output(c["out"], cfg, f"{step['id']}-{c['provider']}-cand{i + 1}")
     judged, winner, product = [], None, cands[0]["out"]
     jver = ver[0] if isinstance(ver, list) else ver            # the judge is the first verifier provider
     diff = _git_diff_evidence(cfg)                             # verify the diff, not the transcript
     for c in cands:                                            # judge ALL candidates (no early stop)
-        _, jout = _run_provider_counted(
+        judge_rc, jout = _run_provider_counted(
             state,
             jver,
             "verifier",
@@ -1455,9 +1828,16 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
             persona="judge",
             step_id=step["id"],
         )
-        ok, criteria = _judge_output(jout)
+        parsed_ok, criteria = _judge_output(jout)
+        ok = judge_rc == 0 and parsed_ok
         judged.append({"provider": c["provider"], "ok": ok, "criteria": criteria,
                        "note": _excerpt(jout)})
+        if judge_rc != 0:
+            state["stopped"] = {
+                "reason": f"verifier failed (exit {judge_rc})",
+                "kind": "BLOCKED", "at": step["id"],
+            }
+            return None, product, judged, None
         if ok and winner is None:
             winner, product = c["provider"], c["out"]
             judged[-1]["winner"] = True
@@ -1769,6 +2149,156 @@ def _execute_targeted_review(
         }
 
 
+def _prior_artifact(state: dict, step: dict) -> dict | None:
+    latest = None
+    for candidate in state.get("steps") or []:
+        if candidate.get("id") == step.get("id"):
+            break
+        record = (state.get("step_state") or {}).get(candidate.get("id"), {}).get("artifact")
+        if isinstance(record, dict):
+            latest = record
+    return latest
+
+
+def _has_prior_step(state: dict, step: dict) -> bool:
+    return bool(state.get("steps") and state["steps"][0].get("id") != step.get("id"))
+
+
+def _execute_artifact_review(
+    state: dict, step: dict, st: dict, artifact_record: dict,
+    ver, cfg: dict, max_parallel: int, quorum: str, log,
+) -> bool:
+    """Execute an independent-verification step directly against the prior artifact."""
+    artifact = _read_artifact(artifact_record, cfg)
+    if artifact is None:
+        state["stopped"] = {
+            "reason": "independent review artifact is missing, outside the run, or changed",
+            "kind": "BLOCKED", "at": step["id"],
+        }
+        return True
+    artifact_hash = artifact_record.get("sha256")
+    reviewed_hashes = st.setdefault("reviewed_hashes", [])
+    if artifact_hash in reviewed_hashes:
+        state["stopped"] = {
+            "reason": "independent review refused an identical artifact already reviewed",
+            "kind": "BLOCKED", "at": step["id"],
+        }
+        return True
+    _generator_model, verifier_model = effective_step_models(step, cfg)
+    verifier_providers = ver if isinstance(ver, list) else [ver]
+    if "cmd" in verifier_providers:
+        state["stopped"] = {
+            "reason": (
+                "independent review rejected cmd provider identity cannot be proven "
+                "from an opaque command template"
+            ),
+            "kind": "BLOCKED", "at": step["id"],
+        }
+        return True
+    if any(
+        _effective_provider_backend(provider)
+        == (artifact_record.get("backend")
+            or _effective_provider_backend(str(artifact_record.get("provider"))))
+        and not (
+            artifact_record.get("model")
+            and verifier_model
+            and verifier_model != artifact_record.get("model")
+        )
+        for provider in verifier_providers
+    ):
+        state["stopped"] = {
+            "reason": (
+                "independent review rejected the same provider/model via its effective backend; "
+                "same-backend review requires two explicit unequal models"
+            ),
+            "kind": "BLOCKED", "at": step["id"],
+        }
+        return True
+    review_cfg = {**cfg, "model": verifier_model} if verifier_model else cfg
+    results = _run_artifact_reviewers(
+        ver, state, step, artifact, review_cfg, max_parallel,
+    )
+    reviewed_hashes.append(artifact_hash)
+    st["reviewed_artifact"] = {
+        key: artifact_record[key] for key in ("path", "sha256", "bytes")
+    }
+    passes, total = sum(1 for result in results if result["ok"]), len(results)
+    if quorum == "majority" and total > 1:
+        st["verdicts"].append({
+            "by": f"{'+'.join(verifier_providers)}:quorum-majority",
+            "ok": passes * 2 > total,
+            "note": f"{passes}/{total} pass",
+        })
+    else:
+        st["verdicts"].extend(results)
+    with _HIST_LOCK:
+        state["history"].append({
+            "action": "INDEPENDENT_REVIEW", "step": step["id"],
+            "artifact_sha256": artifact_record["sha256"],
+            "reviewers": [result["by"] for result in results],
+        })
+    log(f"   ↳ independent artifact review: PASS {passes}/{total}")
+    accepted = passes * 2 > total if quorum == "majority" and total > 1 else passes == total
+    if accepted:
+        return True
+
+    # A REVISE verdict is feedback for the producing writer, not an invitation to
+    # ask the reviewer the same question about immutable bytes.  Route back to the
+    # recorded producer and give max_retries additional writer attempts.
+    if st.get("retries", 0) >= step.get("max_retries", 0):
+        state["stopped"] = {
+            "reason": (
+                f"step `{step['id']}` rejected {st.get('retries', 0) + 1} artifacts "
+                "without convergence → escalating"
+            ),
+            "kind": "ESCALATE", "at": step["id"],
+        }
+        return True
+    producer_id = artifact_record.get("step")
+    producer_index = next(
+        (index for index, candidate in enumerate(state.get("steps") or [])
+         if candidate.get("id") == producer_id),
+        None,
+    )
+    if producer_index is None:
+        # Backward-compatible artifact records may not carry the producer id. The
+        # nearest prior artifact-owning step is the only safe legacy inference.
+        producer_index = next(
+            (index for index in range(state.get("cursor", 0) - 1, -1, -1)
+             if (state.get("step_state") or {}).get(
+                 state["steps"][index].get("id"), {},
+             ).get("artifact", {}).get("sha256") == artifact_hash),
+            None,
+        )
+    if producer_index is None:
+        state["stopped"] = {
+            "reason": "independent review cannot identify the artifact's writer",
+            "kind": "BLOCKED", "at": step["id"],
+        }
+        return True
+    st["retries"] = st.get("retries", 0) + 1
+    compact_findings = "; ".join(
+        result.get("note", "")[:240] for result in results if not result.get("ok")
+    )[:800]
+    producer_id = state["steps"][producer_index]["id"]
+    producer_state = state["step_state"][producer_id]
+    producer_state["status"] = "pending"
+    producer_state["checks"] = []
+    producer_state["verdicts"] = []
+    if compact_findings:
+        producer_state["last_failure"] = compact_findings
+    st["status"] = "pending"
+    st["checks"] = []
+    st["verdicts"] = []
+    state["cursor"] = producer_index
+    with _HIST_LOCK:
+        state["history"].append({
+            "action": "REVISE", "step": step["id"], "producer": producer_id,
+            "artifact_sha256": artifact_hash, "retry": st["retries"],
+        })
+    return True
+
+
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
@@ -1820,6 +2350,24 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         return
     if executor == "checks-only":
         _run_step_checks(step, st, cfg)
+        return
+
+    artifact_record = _prior_artifact(state, step)
+    independent_artifact_review = (
+        "independent-verification" in (step.get("policies") or [])
+        and _has_prior_step(state, step)
+    )
+    if independent_artifact_review and artifact_record is None:
+        state["stopped"] = {
+            "reason": "independent review requires a persisted prior artifact",
+            "kind": "BLOCKED", "at": step["id"],
+        }
+        return
+    if independent_artifact_review:
+        _execute_artifact_review(
+            state, step, st, artifact_record, ver, cfg,
+            max_parallel, quorum, log,
+        )
         return
 
     effective_step = step
@@ -1874,28 +2422,40 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         cfg,
         max_parallel,
     )
-    if (
-        _uses_adaptive_executors(state)
-        and generator_rc != 0
-    ):
+    if state.get("stopped"):
+        return
+    if generator_rc not in (None, 0):
         with _HIST_LOCK:
             state["history"].append({
-                "action": "EXEC_FAILED",
-                "step": step["id"],
-                "provider": winner or gen_list[0],
-                "exit_status": generator_rc,
-                "out": out[:1000],
+                "action": "EXEC_FAILED", "step": step["id"],
+                "provider": winner or gen_list[0], "exit_status": generator_rc,
             })
-        if not state.get("stopped"):
-            state["stopped"] = {
-                "reason": f"adaptive generator failed (exit {generator_rc})",
-                "kind": "BLOCKED",
-                "at": step["id"],
-            }
+        state["stopped"] = {
+            "reason": (
+                f"adaptive generator failed (exit {generator_rc})"
+                if _uses_adaptive_executors(state)
+                else f"generator failed (exit {generator_rc})"
+            ),
+            "kind": "BLOCKED", "at": step["id"],
+        }
         return
+    artifact_provider = winner or gen_list[0]
+    if len(gen_list) == 1:
+        artifact_label = f"{step['id']}-{artifact_provider}"
+    else:
+        artifact_index = gen_list.index(artifact_provider) + 1
+        artifact_label = f"{step['id']}-{artifact_provider}-cand{artifact_index}"
+    artifact = _artifact_record(
+        cfg, artifact_label, provider=artifact_provider, model=gen_model,
+        step=step["id"],
+    )
+    if artifact is not None:
+        st["artifact"] = artifact
+        state["result_artifact"] = artifact
     with _HIST_LOCK:
         state["history"].append({"action": "EXEC", "step": step["id"],
-                                 "provider": winner or gen_list[0], "out": out[:200],
+                                 "provider": winner or gen_list[0],
+                                 **({"artifact_sha256": artifact["sha256"]} if artifact else {}),
                                  **({"model": gen_model} if gen_model else {})})
     if judged:
         log(f"   ↳ judge-panel {len(judged)} candidates → winner: {winner or '(none)'}")
@@ -1953,6 +2513,18 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
+    independent_artifact_workflow = any(
+        index > 0 and "independent-verification" in (step.get("policies") or [])
+        for index, step in enumerate(state.get("steps") or [])
+    )
+    if "cmd" in gen_list and independent_artifact_workflow:
+        state["stopped"] = {
+            "reason": (
+                "independent review rejected cmd generator identity cannot be proven "
+                "from an opaque command template"
+            ),
+            "kind": "BLOCKED", "at": state.get("steps", [{}])[0].get("id", "—"),
+        }
     execution = enforce_executable_state(state)
     if not execution["orchestratable"]:
         state["token_usage"] = cfg.get("_token_usage") or {}
