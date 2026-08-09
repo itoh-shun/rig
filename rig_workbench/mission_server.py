@@ -31,6 +31,7 @@ from .evidence import find_repo_root
 from .mission_control import build_snapshot
 from .mission_jobs import (
     ALLOWED_PROVIDERS,
+    assert_worker_compatible,
     ensure_worker,
     queue_items,
     validate_run_request,
@@ -47,6 +48,7 @@ COMMAND_TIMEOUT_SECONDS = 120
 POLL_MS = 2000
 _TASK_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _QUEUE_ID = re.compile(r"^[0-9]+$")
+_JOB_START_LOCK = threading.Lock()
 
 
 def _json_file(path: pathlib.Path, default: object) -> object:
@@ -66,7 +68,6 @@ def _task_dir(root: pathlib.Path, task_id: str) -> pathlib.Path:
 
 
 def task_detail(root: pathlib.Path, task_id: str) -> dict[str, Any]:
-    """Presentation-neutral task detail assembled from existing workbench artifacts."""
     base = _task_dir(root, task_id)
     task = _json_file(base / "task.json", {})
     steps = _json_file(base / "steps.json", {"steps": []})
@@ -76,13 +77,8 @@ def task_detail(root: pathlib.Path, task_id: str) -> dict[str, Any]:
     if isinstance(acceptance, dict) and acceptance.get("checks"):
         acceptance = dict(acceptance)
         acceptance["status"] = gate_status(acceptance)
-    return {
-        "task": task,
-        "steps": steps,
-        "acceptance": acceptance,
-        "review": review,
-        "outcome": outcome,
-    }
+    return {"task": task, "steps": steps, "acceptance": acceptance,
+            "review": review, "outcome": outcome}
 
 
 def durable_snapshot(root: pathlib.Path) -> dict[str, Any]:
@@ -102,14 +98,11 @@ def durable_snapshot(root: pathlib.Path) -> dict[str, Any]:
 
 
 def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
-    """Mission Control snapshot plus task and durable-queue state for the live UI."""
     snapshot = build_snapshot(root)
     base = runs_dir(root)
     tasks = read_all_tasks(base)
-    tasks.sort(
-        key=lambda item: item.get("updated_at") or item.get("created_at") or "",
-        reverse=True,
-    )
+    tasks.sort(key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+               reverse=True)
     index = []
     for task in tasks:
         task_id = str(task.get("task_id") or "")
@@ -137,39 +130,21 @@ def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
 
 
 def _run_cli(root: pathlib.Path, argv: list[str]) -> dict[str, Any]:
-    """Execute the canonical RIG CLI without a shell and capture its decision."""
     env = dict(os.environ)
     env["RIG_INVOKER"] = "mission-control/v2"
     command = [sys.executable, "-m", "rig_workbench.cli", *argv]
     try:
-        proc = subprocess.run(
-            command,
-            cwd=root,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=COMMAND_TIMEOUT_SECONDS,
-            check=False,
-        )
+        proc = subprocess.run(command, cwd=root, env=env, text=True, capture_output=True,
+                              timeout=COMMAND_TIMEOUT_SECONDS, check=False)
     except subprocess.TimeoutExpired as exc:
-        return {
-            "ok": False,
-            "exit_code": None,
-            "stdout": exc.stdout or "",
-            "stderr": f"command timed out after {COMMAND_TIMEOUT_SECONDS}s",
-            "argv": argv,
-        }
-    return {
-        "ok": proc.returncode == 0,
-        "exit_code": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-        "argv": argv,
-    }
+        return {"ok": False, "exit_code": None, "stdout": exc.stdout or "",
+                "stderr": f"command timed out after {COMMAND_TIMEOUT_SECONDS}s",
+                "argv": argv}
+    return {"ok": proc.returncode == 0, "exit_code": proc.returncode,
+            "stdout": proc.stdout, "stderr": proc.stderr, "argv": argv}
 
 
 def action_argv(action: str, task_id: str | None, payload: dict[str, Any]) -> list[str]:
-    """Map a GUI action to the existing CLI. No policy decisions happen here."""
     if action == "new":
         text = str(payload.get("input") or "").strip()
         task_type = str(payload.get("task_type") or "").strip()
@@ -178,12 +153,9 @@ def action_argv(action: str, task_id: str | None, payload: dict[str, Any]) -> li
         if task_type not in TASK_TYPES:
             raise ValueError(f"unknown task type: {task_type!r}")
         return ["wb", "new", text, "--type", task_type]
-
     if task_id is None or not _TASK_ID.fullmatch(task_id):
         raise ValueError("a valid task id is required")
-
     if action == "accept":
-        # There is intentionally no browser representation of --force.
         return ["wb", "accept", task_id]
     if action == "discard":
         if payload.get("confirm") != task_id:
@@ -197,7 +169,6 @@ def action_argv(action: str, task_id: str | None, payload: dict[str, Any]) -> li
         note = str(payload.get("note") or "").strip()
         if note:
             argv += ["--note", note[:2000]]
-        # No --actor from the browser: governance resolves the real local actor.
         return argv
     if action == "outcome":
         status = str(payload.get("status") or "")
@@ -212,43 +183,59 @@ def action_argv(action: str, task_id: str | None, payload: dict[str, Any]) -> li
 
 
 def start_durable_run(root: pathlib.Path, payload: dict[str, Any]) -> dict[str, Any]:
-    """Persist one queue item, then ensure a detached worker is draining the queue."""
     spec = validate_run_request(payload)
-    queued = _run_cli(root, ["queue", "add", spec["task"], "--backend", "local"])
-    if not queued["ok"]:
-        return queued
-    worker = ensure_worker(
-        root,
-        provider=spec["provider"],
-        verifier_provider=spec["verifier_provider"],
-        max_parallel=spec["max_parallel"],
-    )
+    with _JOB_START_LOCK:
+        # Queue items do not carry provider metadata. Check before persisting so
+        # an incompatible active worker cannot pick this item with the wrong model.
+        assert_worker_compatible(
+            root,
+            provider=spec["provider"],
+            verifier_provider=spec["verifier_provider"],
+            max_parallel=spec["max_parallel"],
+        )
+        queued = _run_cli(root, ["queue", "add", spec["task"], "--backend", "local"])
+        if not queued["ok"]:
+            return queued
+        worker = ensure_worker(
+            root,
+            provider=spec["provider"],
+            verifier_provider=spec["verifier_provider"],
+            max_parallel=spec["max_parallel"],
+        )
     return {"ok": True, "queued": queued, "worker": worker, "spec": spec}
 
 
-def retry_durable_run(root: pathlib.Path, queue_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def retry_durable_run(root: pathlib.Path, queue_id: str,
+                      payload: dict[str, Any]) -> dict[str, Any]:
     if not _QUEUE_ID.fullmatch(queue_id):
         raise ValueError("invalid local queue id")
-    current = worker_state(root)
-    defaults = {
-        "task": "retry",
-        "provider": payload.get("provider") or current.get("provider") or "rig",
-        "verifier_provider": (
-            payload.get("verifier_provider") or current.get("verifier_provider")
-            or payload.get("provider") or current.get("provider") or "rig"
-        ),
-        "max_parallel": payload.get("max_parallel") or current.get("max_parallel") or 1,
-    }
-    spec = validate_run_request(defaults)
-    retried = _run_cli(root, ["queue", "retry", queue_id, "--backend", "local"])
-    if not retried["ok"]:
-        return retried
-    worker = ensure_worker(
-        root,
-        provider=spec["provider"],
-        verifier_provider=spec["verifier_provider"],
-        max_parallel=spec["max_parallel"],
-    )
+    with _JOB_START_LOCK:
+        current = worker_state(root)
+        defaults = {
+            "task": "retry",
+            "provider": payload.get("provider") or current.get("provider") or "rig",
+            "verifier_provider": (
+                payload.get("verifier_provider") or current.get("verifier_provider")
+                or payload.get("provider") or current.get("provider") or "rig"
+            ),
+            "max_parallel": payload.get("max_parallel") or current.get("max_parallel") or 1,
+        }
+        spec = validate_run_request(defaults)
+        assert_worker_compatible(
+            root,
+            provider=spec["provider"],
+            verifier_provider=spec["verifier_provider"],
+            max_parallel=spec["max_parallel"],
+        )
+        retried = _run_cli(root, ["queue", "retry", queue_id, "--backend", "local"])
+        if not retried["ok"]:
+            return retried
+        worker = ensure_worker(
+            root,
+            provider=spec["provider"],
+            verifier_provider=spec["verifier_provider"],
+            max_parallel=spec["max_parallel"],
+        )
     return {"ok": True, "retried": retried, "worker": worker}
 
 
@@ -260,10 +247,7 @@ class MissionControlHTTPServer(ThreadingHTTPServer):
         self.root = root
         self.csrf_token = csrf_token
         _host, port = self.server_address[:2]
-        self.allowed_origins = {
-            f"http://127.0.0.1:{port}",
-            f"http://localhost:{port}",
-        }
+        self.allowed_origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
 
 
 class MissionControlHandler(BaseHTTPRequestHandler):
@@ -287,11 +271,9 @@ class MissionControlHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
-        self.send_header(
-            "Content-Security-Policy",
-            "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
-            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-        )
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+                         "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -365,35 +347,26 @@ class MissionControlHandler(BaseHTTPRequestHandler):
                 if retry:
                     result = retry_durable_run(self.server.root, retry.group(1), payload)
                 else:
-                    match = re.fullmatch(
-                        r"/api/tasks/([^/]+)/(accept|discard|approval|outcome)", path
-                    )
+                    match = re.fullmatch(r"/api/tasks/([^/]+)/(accept|discard|approval|outcome)", path)
                     if not match:
                         self._json(404, {"error": "not found"})
                         return
                     task_id = urllib.parse.unquote(match.group(1))
                     _task_dir(self.server.root, task_id)
-                    result = _run_cli(
-                        self.server.root,
-                        action_argv(match.group(2), task_id, payload),
-                    )
+                    result = _run_cli(self.server.root,
+                                      action_argv(match.group(2), task_id, payload))
             self._json(200 if result.get("ok") else 409, result)
         except (OSError, ValueError) as exc:
             self._json(400, {"error": str(exc)})
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="rig-mission-control-live",
-        description="interactive localhost RIG Mission Control",
-    )
+    parser = argparse.ArgumentParser(prog="rig-mission-control-live",
+                                     description="interactive localhost RIG Mission Control")
     parser.add_argument("--repo", type=pathlib.Path, default=pathlib.Path.cwd())
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument(
-        "--no-open",
-        action="store_true",
-        help="do not open the browser automatically",
-    )
+    parser.add_argument("--no-open", action="store_true",
+                        help="do not open the browser automatically")
     return parser
 
 
