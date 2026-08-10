@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rig-workbench"
-version = "2.2.2"
+version = "2.3.0"
 description = "rig — an AI Quality Operating System that runs anywhere. Install as a pip package; drop into Claude Code / Codex / Cursor as a skill; recipe-driven workflow with force-proof accept, cross-LLM verifier, and isolated worktrees — now with an org layer: a common policy that only tightens downstream, role-based permissions, approvals with separation of duties, expiring waivers, and a tamper-evident audit ledger."
 readme = "README.md"
 requires-python = ">=3.10"

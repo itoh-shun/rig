@@ -66,3 +66,30 @@ def test_run_verifiers_parallel_mock_provider_is_unaffected_by_prompt_content():
     by_persona = {r["persona"]: r["ok"] for r in results}
     assert by_persona["security-reviewer"] is True
     assert by_persona["some-fail-persona"] is False
+
+
+def test_run_verifiers_parallel_returns_an_ordinary_verdict_after_provider_output(
+    monkeypatch,
+):
+    monkeypatch.setattr(providers, "_load_persona_brief", lambda _persona: None)
+    monkeypatch.setattr(
+        providers,
+        "run_provider",
+        lambda *_args, **_kwargs: (
+            0,
+            "CRITERION 1: PASS — ordinary evidence\nVERDICT: PASS",
+        ),
+    )
+
+    assert providers.run_verifiers_parallel(
+        "ordinary-provider", "review this", ["ordinary-reviewer"], {}, 1,
+    ) == [{
+        "by": "ordinary-provider:ordinary-reviewer",
+        "persona": "ordinary-reviewer",
+        "provider": "ordinary-provider",
+        "ok": True,
+        "criteria": [
+            {"n": 1, "verdict": "PASS", "anchor": "ordinary evidence"},
+        ],
+        "note": "exit 0; CRITERION 1: PASS — ordinary evidence VERDICT: PASS",
+    }]

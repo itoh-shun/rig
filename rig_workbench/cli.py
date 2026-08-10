@@ -380,7 +380,8 @@ Usage:
   rig-wb <sub> [args]
 
 Sub-commands:
-  run <recipe> --provider <name> ...    orchestrate: autonomous run
+  run <recipe> --provider <name> [--goal-stdin] ...
+                                        orchestrate: autonomous run
   plan <recipe> [--json] [--with ...]   orchestrate: show plan
   runs [--limit N] [--recipe R] [--html <path>]
                                         orchestrate: telemetry list / HTML dashboard

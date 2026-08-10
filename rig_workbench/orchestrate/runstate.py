@@ -4,9 +4,12 @@ import os
 import json
 import datetime
 import pathlib
+import hashlib
+import stat
 
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
+from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
 
 EXECUTION_POLICY_VERSION = 1
 _EXECUTION_FIELDS = (
@@ -85,12 +88,60 @@ def enforce_executable_state(state: dict) -> dict:
     return execution
 
 # ── run-state ────────────────────────────────────────────────────────────────
+def _recipe_owner_provenance(source: str) -> dict | None:
+    """Resolve an installed recipe source to its validated owner identity."""
+    from rig_workbench.packs.catalog import discover_builtin_packs
+    from rig_workbench.packs.resolver import resolved_collection
+
+    try:
+        source_path = pathlib.Path(source).resolve(strict=True)
+    except OSError:
+        return None
+    candidates = [
+        (record.id, record.path, record.manifest)
+        for record in resolved_collection(project=config.INVOCATION_CWD)
+    ]
+    candidates.extend(
+        (pack_id, root, manifest)
+        for (_namespace, pack_id), (root, manifest) in discover_builtin_packs().items()
+    )
+    for owner, root, manifest in candidates:
+        root = root.resolve()
+        try:
+            relative = source_path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        declared = {
+            item for paths in manifest.get("assets", {}).values() for item in paths
+        }
+        if relative in declared:
+            return {
+                "source": str(source_path),
+                "owner": owner,
+                "root": str(root),
+                "source_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+            }
+    return None
+
+
 def new_state(
     recipe: str, steps: list[dict], goal: str | None, execution: dict | None = None,
 ) -> dict:
     if execution is None:
         execution = validate_executable_steps(steps)
     no_orchestrate = execution.get("manual_only") if isinstance(execution, dict) else None
+    bound_steps = []
+    provenance_by_source = {}
+    for original in steps:
+        step = dict(original)
+        source = step.get("recipe_source")
+        provenance = _recipe_owner_provenance(source) if isinstance(source, str) else None
+        if provenance is not None:
+            step["recipe_owner"] = provenance["owner"]
+            step["recipe_owner_root"] = provenance["root"]
+            provenance_by_source[provenance["source"]] = provenance
+        bound_steps.append(step)
+    steps = bound_steps
     state = {
         "recipe": recipe,
         "goal": goal,
@@ -114,12 +165,59 @@ def new_state(
         "no_orchestrate": no_orchestrate,
         "execution": execution,
     }
+    if provenance_by_source:
+        state["recipe_provenance"] = [
+            provenance_by_source[source] for source in sorted(provenance_by_source)
+        ]
     enforce_executable_state(state)
     return state
 
 
 def save_state(state: dict, path: pathlib.Path) -> None:
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    """Persist potentially sensitive run state without following filesystem links."""
+    if state.get("secure_runtime"):
+        persisted = json.loads(json.dumps(state, ensure_ascii=False))
+        goal = persisted.get("goal")
+        if isinstance(goal, str):
+            persisted["secure_runtime"]["goal_sha256"] = hashlib.sha256(
+                goal.encode("utf-8")
+            ).hexdigest()
+            persisted["goal"] = None
+        payload = json.dumps(persisted, ensure_ascii=False, indent=2).encode("utf-8")
+        atomic_write_bytes(path, payload)
+        return
+    path = pathlib.Path(path).absolute()
+    parent = path.parent
+    created_parent = not parent.exists()
+
+    # A run-state contains the goal and may contain user/project identifiers.  Refuse
+    # link traversal before creating or opening anything; in particular, chmod must
+    # never be applied through a symlink to an unrelated directory or file.
+    for component in (parent, *parent.parents):
+        try:
+            if component.is_symlink():
+                raise OSError(f"refusing symlinked run-state path: {component}")
+        except OSError:
+            raise
+    parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    dir_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    dir_fd = os.open(parent, dir_flags)
+    try:
+        if created_parent:
+            os.fchmod(dir_fd, 0o700)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path.name, flags, 0o600, dir_fd=dir_fd)
+        try:
+            os.fchmod(fd, 0o600)
+            payload = json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8")
+            with os.fdopen(fd, "wb") as stream:
+                fd = -1
+                stream.write(payload)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    finally:
+        os.close(dir_fd)
 
 
 def _verdict_summary(v: dict) -> dict:
@@ -233,11 +331,21 @@ def telemetry_append(state: dict, final: str) -> None:
         failure_mode = classify_failure(state)
         if failure_mode is not None:
             rec["failure_mode"] = failure_mode
-        config.RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with config.RUNS_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        encoded = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+        if state.get("secure_runtime"):
+            history_path = state.get("secure_history_path")
+            if not isinstance(history_path, str):
+                raise OSError("secure runtime history path is missing")
+            atomic_append_line(pathlib.Path(history_path), encoded)
+        else:
+            config.RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with config.RUNS_PATH.open("a", encoding="utf-8") as f:
+                f.write(encoded.decode("utf-8"))
     except Exception:
         pass
+
+    if state.get("secure_runtime"):
+        return  # never mirror a sensitive run into ambient cross-project state
 
     # ── Mirror into the global index (~/.rig/runs.jsonl) as well ─────────────
     # Keep the per-project log (cwd/.rig) while enabling cross-project aggregation of
@@ -255,8 +363,153 @@ def telemetry_append(state: dict, final: str) -> None:
         pass
 
 
+def _validate_recipe_provenance(state: dict) -> None:
+    """Fail a resumed owner-bound run closed if its exact pack owner is unavailable."""
+    persisted = state.get("recipe_provenance")
+    owner_bound_steps = [
+        step for step in state.get("steps") or [] if step.get("recipe_owner")
+    ]
+    if persisted is None and not owner_bound_steps:
+        return  # genuinely legacy run-state
+    if not isinstance(persisted, list) or not persisted:
+        state["stopped"] = {
+            "reason": "owner-bound recipe provenance is missing from run-state",
+            "kind": "BLOCKED", "at": "—",
+        }
+        return
+    by_source = {}
+    for expected in persisted:
+        if not isinstance(expected, dict) or not isinstance(expected.get("source"), str):
+            state["stopped"] = {
+                "reason": "owner-bound recipe provenance is malformed",
+                "kind": "BLOCKED", "at": "—",
+            }
+            return
+        current = _recipe_owner_provenance(expected["source"])
+        if current is None:
+            state["stopped"] = {
+                "reason": f"recipe owner disappeared for {expected['source']}",
+                "kind": "BLOCKED", "at": "—",
+            }
+            return
+        if current != expected:
+            state["stopped"] = {
+                "reason": f"recipe owner provenance changed for {expected['source']}",
+                "kind": "BLOCKED", "at": "—",
+            }
+            return
+        by_source[expected["source"]] = expected
+    for step in owner_bound_steps:
+        record = by_source.get(step.get("recipe_source"))
+        if (
+            record is None
+            or record["owner"] != step.get("recipe_owner")
+            or record["root"] != step.get("recipe_owner_root")
+        ):
+            state["stopped"] = {
+                "reason": f"step `{step.get('id')}` lost its owner-bound recipe provenance",
+                "kind": "BLOCKED", "at": step.get("id", "—"),
+            }
+            return
+
+
+def _validate_secure_review_category_binding(state: dict) -> None:
+    """Reject missing, changed, or duplicated secure Japanese category bindings."""
+    if state.get("recipe") != "japanese-writing" or not state.get("secure_runtime"):
+        return
+    allowed = {"general", "incident_report", "support_reply"}
+    category = state.get("review_category")
+    secure_category = state["secure_runtime"].get("review_category")
+    bindings = [
+        row for row in state.get("history") or []
+        if row.get("action") == "BIND_REVIEW_CATEGORY"
+    ]
+    if (
+        category not in allowed
+        or secure_category != category
+        or bindings != [{"action": "BIND_REVIEW_CATEGORY", "category": category}]
+    ):
+        raise OSError("secure Japanese review category binding is missing or changed")
+
+
+def _validate_secure_material_profile_binding(state: dict) -> None:
+    """Reject missing or changed secure Japanese style-material bindings."""
+    if state.get("recipe") != "japanese-writing" or not state.get("secure_runtime"):
+        return
+    allowed = {"none", "technical", "conversation"}
+    profile = state.get("material_profile")
+    secure = state["secure_runtime"]
+    if (
+        profile not in allowed
+        or secure.get("material_profile") != profile
+        or not _exact_equal(state.get("material_provenance"), secure.get("material_provenance"))
+        or not _exact_equal(state.get("material_snapshot"), secure.get("material_snapshot"))
+    ):
+        raise OSError("secure Japanese material profile binding is missing or changed")
+    write = next(
+        (step for step in state.get("steps") or [] if step.get("id") == "write"), None
+    )
+    if write is None:
+        raise OSError("secure Japanese material profile binding has no write step")
+    try:
+        from .providers import japanese_material_metadata
+        expected = japanese_material_metadata(write, profile)
+    except Exception as error:
+        raise OSError(
+            "secure Japanese material profile binding provenance cannot be verified"
+        ) from error
+    if not _exact_equal(state.get("material_provenance"), expected):
+        raise OSError("secure Japanese material profile binding is missing or changed")
+    snapshot = state.get("material_snapshot")
+    if profile == "none":
+        if snapshot is not None:
+            raise OSError("secure Japanese material profile binding has an unexpected snapshot")
+        return
+    if not isinstance(snapshot, dict) or set(snapshot) != {"path", "sha256", "size_bytes"}:
+        raise OSError("secure Japanese material profile binding has no sealed snapshot")
+    try:
+        payload = read_secure_bytes(pathlib.Path(str(snapshot["path"])))
+    except OSError as error:
+        raise OSError("secure Japanese material profile snapshot cannot be verified") from error
+    if (
+        len(payload) != snapshot.get("size_bytes")
+        or hashlib.sha256(payload).hexdigest() != snapshot.get("sha256")
+    ):
+        raise OSError("secure Japanese material profile snapshot changed")
+
+
 def load_state(path: pathlib.Path) -> dict:
-    state = json.loads(path.read_text(encoding="utf-8"))
+    path = pathlib.Path(path).absolute()
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+        ):
+            raise OSError("run-state must be a caller-owned regular file with one link")
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+    finally:
+        os.close(descriptor)
+    state = json.loads(payload.decode("utf-8"))
+    if state.get("secure_runtime"):
+        secure_payload = read_secure_bytes(path)
+        if secure_payload != payload:
+            raise OSError("secure run-state changed during verification")
+        state = json.loads(secure_payload.decode("utf-8"))
+    _validate_secure_review_category_binding(state)
+    _validate_secure_material_profile_binding(state)
+    _validate_recipe_provenance(state)
     enforce_executable_state(state)
     return state
 

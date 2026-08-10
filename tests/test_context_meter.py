@@ -132,6 +132,22 @@ def test_record_appends_one_json_line_per_invocation(tmp_path, monkeypatch):
     assert record["task_id"] == "rig-20260101-101010-demo"
 
 
+def test_record_never_persists_raw_goal_argv(tmp_path, monkeypatch):
+    (tmp_path / ".rig").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(context_meter, "_command", "orchestrate run")
+    monkeypatch.setattr(context_meter, "_meter", context_meter._CountingStream(io.StringIO()))
+    context_meter._meter.write("blocked\n")
+
+    context_meter._record(
+        ["run", "japanese-writing", "--goal", "private-goal-sentinel"]
+    )
+
+    payload = (tmp_path / context_meter.CONTEXT_REL).read_text(encoding="utf-8")
+    assert "private-goal-sentinel" not in payload
+    assert "[REDACTED]" in payload
+
+
 def test_task_id_hint_only_recognises_rigs_own_shape():
     """A wrong attribution is worse than none in a report whose job is to find the
     expensive task, so nothing is inferred from a flag or a bare word."""

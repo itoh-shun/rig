@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "semantics_version": 6,
+  "name": "japanese-writing-fresh-dev-workflow-claude-review",
+  "split": "dev",
+  "expected_case_count": 10,
+  "arms": ["raw_writer", "reviewed_workflow"],
+  "orders": ["reference_first", "candidate_first"],
+  "dimensions": ["correctness", "naturalness", "context_fit", "conciseness", "tone"],
+  "scoring": {"candidate": 1.0, "draw": 0.5, "reference": 0.0},
+  "state_machine": ["R_READY", "A0", "REVIEW0", "A1", "REVIEW1", "FINAL", "NON_DELIVERABLE"],
+  "semantic_rewrite_max": 1,
+  "max_logical_calls": 90,
+  "logical_call_graph": {
+    "always_per_case": ["R", "A0", "REVIEW0", "JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST"],
+    "if_review0_revise": ["A1", "REVIEW1"],
+    "if_final_hash_differs_from_a0": ["JUDGE_REVIEWED_REFERENCE_FIRST", "JUDGE_REVIEWED_CANDIDATE_FIRST"],
+    "if_final_hash_equals_a0": ["ALIAS_REVIEWED_REFERENCE_FIRST", "ALIAS_REVIEWED_CANDIDATE_FIRST"],
+    "if_review0_contract_exhausted": ["JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST"],
+    "if_review1_contract_exhausted": ["JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST"],
+    "second_nonapproval": "NON_DELIVERABLE"
+  },
+  "review_exhaustion": {
+    "reason_code": "review_contract_exhausted",
+    "eligible_stages": ["REVIEW0", "REVIEW1"],
+    "required_attempts": 3,
+    "required_finish_status": "invalid",
+    "required_parse_status": "invalid",
+    "transition": "NON_DELIVERABLE",
+    "review0_rewrite_count": 0,
+    "review1_rewrite_count": 1,
+    "raw_arm_judgments": true,
+    "reviewed_arm_judgments": false,
+    "resume_policy": "sealed_exact_attempt_set",
+    "otherwise": "abort"
+  },
+  "material_supply": {
+    "category_mapping": {"casual": "conversation", "code_review": "technical", "technical_explanation": "technical"},
+    "content_policy": "style_only_no_facts_no_quotation",
+    "default_profile": "none",
+    "excluded_roles": ["reference", "reviewer", "judge"],
+    "max_utf8_bytes": 2048,
+    "profiles": ["none", "technical", "conversation"],
+    "public_metadata": ["profile", "asset_id", "asset_sha256", "source_blob"],
+    "recipient_roles": ["candidate"]
+  },
+  "provider_roles": {
+    "reference": {"provider": "codex", "model": "gpt-5.6-sol", "sandbox": "read-only", "prompt_transport": "stdin"},
+    "candidate": {"provider": "claude", "model": "claude-sonnet-5", "sandbox": "safe-mode", "prompt_transport": "stdin"},
+    "reviewer": {"provider": "claude", "model": "claude-opus-5", "sandbox": "safe-mode", "prompt_transport": "stdin"},
+    "judge": {"provider": "codex", "model": "gpt-5.5", "sandbox": "read-only", "prompt_transport": "stdin"}
+  },
+  "provider_contracts": {
+    "reference": {
+      "provider": "codex",
+      "model": "gpt-5.6-sol",
+      "executable": "codex",
+      "argv": ["codex", "exec", "--model", "gpt-5.6-sol", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--sandbox", "read-only", "-o", "{output_file}"],
+      "configured_input_mode": "arg",
+      "runtime_prompt_transport": "stdin",
+      "output_mode": "file",
+      "cwd_mode": "temp",
+      "timeout_sec": 300,
+      "env_keys": [],
+      "environment_allowlist": ["HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "NO_COLOR", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "OPENAI_API_KEY", "CODEX_HOME"],
+      "fixed_path": "/usr/bin:/bin"
+    },
+    "candidate": {
+      "provider": "claude",
+      "model": "claude-sonnet-5",
+      "executable": "claude",
+      "argv": ["claude", "-p", "--safe-mode", "--no-session-persistence", "--model", "claude-sonnet-5", "--output-format", "text"],
+      "configured_input_mode": "arg",
+      "runtime_prompt_transport": "stdin",
+      "output_mode": "stdout",
+      "cwd_mode": "temp",
+      "timeout_sec": 300,
+      "env_keys": [],
+      "environment_allowlist": ["HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "NO_COLOR", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
+      "fixed_path": "/usr/bin:/bin"
+    },
+    "reviewer": {
+      "provider": "claude",
+      "model": "claude-opus-5",
+      "executable": "claude",
+      "argv": ["claude", "-p", "--safe-mode", "--no-session-persistence", "--model", "claude-opus-5", "--output-format", "text"],
+      "configured_input_mode": "arg",
+      "runtime_prompt_transport": "stdin",
+      "output_mode": "stdout",
+      "cwd_mode": "temp",
+      "timeout_sec": 300,
+      "env_keys": [],
+      "environment_allowlist": ["HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "NO_COLOR", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
+      "fixed_path": "/usr/bin:/bin"
+    },
+    "judge": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "executable": "codex",
+      "argv": ["codex", "exec", "--model", "gpt-5.5", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--sandbox", "read-only", "-o", "{output_file}"],
+      "configured_input_mode": "arg",
+      "runtime_prompt_transport": "stdin",
+      "output_mode": "file",
+      "cwd_mode": "temp",
+      "timeout_sec": 300,
+      "env_keys": [],
+      "environment_allowlist": ["HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "NO_COLOR", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "OPENAI_API_KEY", "CODEX_HOME"],
+      "fixed_path": "/usr/bin:/bin"
+    }
+  },
+  "retry_policy": {
+    "max_attempts_per_logical_call": 3,
+    "backoff_seconds": [0, 2, 4],
+    "lifetime_attempt_budget": 270
+  },
+  "review_contract": {
+    "parser_version": 3,
+    "rows": ["単一成果物", "形式", "事実保持", "推測なし", "日本語", "秘密情報", "障害・サポート安全性"],
+    "core_pass_rows": ["単一成果物", "形式", "事実保持", "推測なし", "日本語"],
+    "applicable_safety_categories": ["incident_report", "support_reply"],
+    "bounds": {"max_output_bytes": 16384, "max_target_format_codepoints": 80, "max_anchor_codepoints": 500, "max_repair_conditions": 7, "max_repair_codepoints": 500},
+    "approval": "exact_APPROVE_with_nonblocking_rows",
+    "check_keys": ["single_artifact", "format", "fact_preservation", "no_inference", "japanese_quality", "secret_handling", "incident_support_safety"],
+    "format": "strict_json",
+    "runtime_categories": ["general", "incident_report", "support_reply"],
+    "runtime_invalid_retry_budget": 3,
+    "status_enums": {
+      "fact_preservation": ["FAIL", "PASS", "UNKNOWN"],
+      "format": ["FAIL", "PASS", "UNKNOWN"],
+      "incident_support_safety": ["FAIL", "N/A", "PASS", "UNKNOWN"],
+      "japanese_quality": ["FAIL", "PASS"],
+      "no_inference": ["FAIL", "PASS", "UNKNOWN"],
+      "secret_handling": ["FAIL", "N/A", "PASS"],
+      "single_artifact": ["FAIL", "PASS"]
+    },
+    "target_formats": ["email", "plain-text", "markdown", "ticket", "other"],
+    "top_level_keys": ["target_format", "checks", "repair_conditions", "verdict"],
+    "unverified_policy": "parser_invalid",
+    "verdict_enum": ["APPROVE", "REVISE", "UNVERIFIED"]
+  },
+  "support_safety": {
+    "category": "support_reply",
+    "fields": ["no_file_body", "no_data_rows", "structure_header_only_alternative", "masking", "safe_alternative"],
+    "prompt_suffix": "support_reply の場合のみ、A と B それぞれについて no_file_body, no_data_rows, structure_header_only_alternative, masking, safe_alternative を厳密な boolean で support_safety に追加してください。"
+  },
+  "acceptance": {
+    "deliverable_cases": 10,
+    "workflow_overall_effect": 0.1,
+    "workflow_naturalness_effect": 0.1,
+    "guard_dimensions": ["correctness", "context_fit", "conciseness", "tone"],
+    "guard_dimensions_minimum": -0.05,
+    "joint_nonregressing_cases": 6,
+    "overall_order_consistency": 0.8,
+    "reviewed_support_all_fields_both_orders": true,
+    "support_preference_gate": false
+  }
+}
