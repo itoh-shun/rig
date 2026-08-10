@@ -9,6 +9,8 @@ from rig_workbench.eval.affected import REGISTRY_REL, _surface
 from rig_workbench.eval.cases import EvalCaseError
 from rig_workbench.eval.gate import evaluate_gate
 
+from .state import effective_base
+
 
 CRITERION = "prompt_regression_passed"
 
@@ -30,8 +32,15 @@ def _judged(path: str) -> bool:
 def _context(root: pathlib.Path, task: dict) -> tuple[pathlib.Path, str]:
     worktree = task.get("worktree_path")
     repo = pathlib.Path(worktree) if isinstance(worktree, str) and worktree else root
-    base = task.get("base_commit")
-    return repo, base if isinstance(base, str) and base else "HEAD"
+    # Live merge base, not the registration-time record (#312): reading
+    # `base_commit` directly widened the range the moment the branch was rebased,
+    # so this criterion judged already-merged commits and demanded coverage for
+    # prompt surfaces the task never touched. `effective_base` already absorbs
+    # every unresolvable case by handing the recorded value back, so the "HEAD"
+    # fallback below is reached exactly where it was before: no `base_commit`
+    # recorded at all.
+    base, _drift = effective_base(root, task)
+    return repo, base or "HEAD"
 
 
 def _has_prompt_diff(root: pathlib.Path, task: dict) -> bool:

@@ -235,3 +235,62 @@ def test_a_case_only_diff_still_raises_the_criterion(tmp_path):
 
     acc = build_acceptance(task_id, "bugfix", repo)
     assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is True
+
+
+# ── the range follows a rebase ────────────────────────────────────────────────
+def test_a_stale_recorded_base_does_not_attribute_intervening_prompt_surfaces(tmp_path):
+    """The recorded `base_commit` is the fork point as it stood at registration.
+    Reading it directly meant a rebase silently widened the range, so this
+    criterion judged commits that were already merged and reviewed, and demanded
+    coverage for prompt surfaces the task never touched. Every other sensor
+    resolves the base through `effective_base`; this one now does too.
+    """
+    from rig_workbench.workbench import prompt_regression
+    from rig_workbench.workbench.state import build_acceptance, effective_base
+
+    repo, task, task_id = _fixture(tmp_path)
+    recorded = task["base_commit"]
+    base_branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+
+    # A prompt surface lands on the base branch *after* this task was registered —
+    # someone else's already-merged work, exactly what a rebase pulls underneath.
+    _touch(repo, INSTRUCTION)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "someone else's prompt change")
+    moved = _git(repo, "rev-parse", "HEAD")
+
+    # Forking the task branch from the new tip reproduces the post-rebase shape
+    # without driving `git rebase`: merge-base is `moved`, the record still says
+    # `recorded`.
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "rig/x", str(worktree), moved)
+    _touch(worktree, "rig_workbench/workbench/unrelated.py", "x = 1\n")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-q", "-m", "this task's actual work")
+
+    task.update(base_branch=base_branch, branch="rig/x", worktree_path=str(worktree))
+    assert effective_base(repo, task) == (moved, recorded)
+    assert prompt_regression._context(repo, task)[1] == moved
+
+    # This task's diff is one non-prompt file, so the criterion is not raised at
+    # all — and nothing names the surface that arrived with the intervening commit.
+    acc = build_acceptance(task_id, "bugfix", repo)
+    assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is False
+    assert prompt_regression.apply_prompt_regression_sensor(repo, task, acc) == []
+    assert prompt_regression.CRITERION not in [item["name"] for item in acc["checks"]]
+    assert INSTRUCTION not in json.dumps(acc)
+
+    # A criterion persisted by an earlier run against the stale base is dropped
+    # on the next evaluation rather than left to block on borrowed debt.
+    acc["checks"].append({"name": prompt_regression.CRITERION, "status": "warning",
+                          "detail": f"machine eval gate: debt — {INSTRUCTION}"})
+    assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is False
+    assert prompt_regression.CRITERION not in [item["name"] for item in acc["checks"]]
+
+    # Both directions: with no base_branch to resolve against, `effective_base`
+    # hands the record back and the old, wrong attribution reappears — the assert
+    # above is pinning the resolution, not merely a diff that happens to be clean.
+    stale = dict(task, base_branch="")
+    assert effective_base(repo, stale) == (recorded, None)
+    _stale_acc, check = _sensor(repo, stale)
+    assert check["status"] == "warning" and INSTRUCTION in check["detail"]
