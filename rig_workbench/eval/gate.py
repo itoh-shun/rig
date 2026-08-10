@@ -131,21 +131,42 @@ def evaluate_gate(
     repo: pathlib.Path | str, *, base: str, head: str = "working",
     evidence_dir: pathlib.Path | str, provider: str | None = None,
     model: str | None = None, judge_provider: str | None = None,
-    judge_model: str | None = None,
+    judge_model: str | None = None, ratchet: bool = False,
 ) -> tuple[dict, int]:
+    """`ratchet` is the same direction CI drives with `eval affected --ratchet`.
+
+    Off, this is the strict form: every affected surface must already have a case
+    or the change is `uncovered`. On, it delegates the classification to
+    `analyze_affected` in exactly the argument shape the CLI uses, so a surface
+    nobody has written a case for yet comes back as `debt` — reported, exit 0 —
+    while removing coverage, an unregistered surface kind, or a narrowed registry
+    stay fatal. Nothing about the evidence checks below changes: the cases that
+    *do* exist are still evaluated in either mode.
+    """
     root = pathlib.Path(repo).resolve()
     affected = analyze_affected(
-        root, base=base, head=head, require_cases=True, evidence_dir=evidence_dir,
+        root, base=base, head=head, require_cases=not ratchet, ratchet=ratchet,
+        evidence_dir=evidence_dir,
     )
+    debt = affected["coverage_debt"]
     if affected["status"] == "noop":
         return ({"eval_gate_schema_version": 1, "status": "noop", "base": base,
                  "head": head, "resolved_head": affected["resolved_head"],
-                 "cases": [], "failures": []}, 0)
+                 "cases": [], "coverage_debt": debt, "failures": []}, 0)
     if affected["status"] == "uncovered":
+        # Regressions and registry narrowings reach `uncovered` on their own,
+        # without ever landing in `affected["uncovered"]` — a deleted case touches
+        # no surface, and the registry is explicitly not one. Reported as their own
+        # failures because listing only the paths left this branch failing with an
+        # empty `failures` and no way to see why.
         return ({"eval_gate_schema_version": 1, "status": "failed", "base": base,
                  "head": head, "resolved_head": affected["resolved_head"],
-                 "cases": affected["affected_cases"],
-                 "failures": [f"uncovered:{path}" for path in affected["uncovered"]]}, 1)
+                 "cases": affected["affected_cases"], "coverage_debt": debt,
+                 "failures": [f"uncovered:{path}" for path in affected["uncovered"]]
+                 + [f"coverage_regression:{item}"
+                    for item in affected["coverage_regressions"]]
+                 + [f"registry_narrowed:{item}"
+                    for item in affected["registry_narrowings"]]}, 1)
     resolved_head = _resolve_commit(root, "HEAD" if head == "working" else head)
     resolved_base = _resolve_commit(root, base)
     expected_diff = execution_diff_sha256(root, base=resolved_base, head=head)
@@ -186,8 +207,13 @@ def evaluate_gate(
         failures.extend(quality)
     status = "pass" if not failures and not infra else ("infra_error" if infra else "failed")
     exit_code = 0 if status == "pass" else (2 if infra else 1)
+    if status == "pass" and debt:
+        # Its own status rather than folded into `pass`, matching `eval affected`:
+        # the run proceeds, and the number stays visible so paying it down is
+        # progress rather than a silence that reads as coverage.
+        status = "debt"
     return ({
         "eval_gate_schema_version": 1, "status": status, "base": base, "head": head,
         "resolved_head": affected["resolved_head"], "cases": affected["affected_cases"],
-        "failures": sorted(failures + infra),
+        "coverage_debt": debt, "failures": sorted(failures + infra),
     }, exit_code)
