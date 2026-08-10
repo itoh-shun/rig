@@ -80,13 +80,27 @@ DEP_PROSE_SUFFIXES = (".md", ".markdown", ".rst", ".txt")
 EXCERPT_MAX = 60
 
 
+# What a *rendered* finding must never carry, which is wider than what
+# INVISIBLE_RE *detects*: C0/C1 control characters are not injection findings in
+# their own right (they are not a hiding mechanism), but an excerpt carrying a
+# raw ESC rewrites the terminal it is printed into. Escaping them here changes
+# no verdict — this runs at render time only. The whitespace `.split()` below
+# collapses (\t \n \r \v \f) is deliberately left out: escaping it first would
+# turn it into visible text and defeat the collapsing.
+_RENDER_ESCAPE_RE = re.compile(f"(?:{INVISIBLE_RE.pattern})|[\\x00-\\x08\\x0e-\\x1f\\x7f-\\x9f]")
+
+
 def _escape_invisible(s: str) -> str:
-    return INVISIBLE_RE.sub(lambda m: f"<U+{ord(m.group(0)):04X}>", s)
+    return _RENDER_ESCAPE_RE.sub(lambda m: f"<U+{ord(m.group(0)):04X}>", s)
 
 
 def bounded_excerpt(text: str, limit: int = EXCERPT_MAX) -> str:
-    """Single-line excerpt: invisible characters escaped, whitespace collapsed,
-    hard-bounded. Findings never carry raw invisible characters."""
+    """Single-line excerpt: invisible and control characters escaped, whitespace
+    collapsed, hard-bounded. Findings never carry raw invisible characters.
+
+    Shared with the evidence-anchor sensor (`anchors._excerpt`), which renders
+    LLM-authored reviewer prose into findings and needs the same neutralization
+    at the same point; only the bound differs."""
     s = " ".join(_escape_invisible(text).split())
     return s if len(s) <= limit else s[: limit - 1] + "…"
 

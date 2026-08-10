@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig instincts`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -160,13 +160,16 @@ python3 scripts/workbench.py cockpit
 
 **v1は完全にread-only**——accept/discard等の破壊的操作はここでは一切行わず、次に打つべき既存コマンドを案内するだけ。出力はそのままユーザーに提示してよい（整形の追加は不要）。ユーザーが「全体を一目で見たい」「今何をすればいいか教えて」と言ったら、`board`より先にこのコマンドを提案する。
 
-## `/rig review <task_id> --set <persona>=<verdict>`
+## `/rig review <task_id> --set <persona>=<verdict> [--body <persona>=@<path>]`
 
 ```
 python3 scripts/workbench.py review <task_id> --set security-reviewer=APPROVE --set design-reviewer=REJECT
+python3 scripts/workbench.py review <task_id> --set design-reviewer=REJECT --body design-reviewer=@/tmp/design.md
 ```
 
 review 系 step（`review-diff`/`parallel-review`/`pr-review`）で reviewer persona の verdict が確定したら記録する。verdict は `APPROVE`/`REJECT`/`APPROVE_WITH_CONDITIONS`。gate の合否そのものには影響しない**観測専用**の記録で、`/rig stats` の「Verifier behavior」（ゴム印検知）に使われる。review 系タスクの RUN では、review-gate の集約結果が出た時点でこのコマンドを呼ぶ運用にする。
+
+`--body <persona>=@<path>` は任意で、その reviewer の本文全文を PATH から読んで `.rig/runs/<task_id>/reviews/<persona>.md` に永続化する（`--set` で verdict を出した persona にのみ付けられる・繰り返し可）。verdict ラベルは `file:line` の証拠アンカーを捨ててしまうので、後から `/rig scan-anchors --diff <task_id>` で検査したいなら本文ごと残す。`review.json` の形は変わらない。
 
 ホスト組み込みのレビューskillをネイティブ・レーンとして使った場合（`parallel-review` ②参照）、その票も **`native-code-review`**／**`native-security-review`** という persona 名で同様に記録する——組み込み skill も persona と同じくゴム印検知・履歴集計の対象にする（測れないレビュアーを増やさない）。
 
@@ -234,11 +237,11 @@ python3 scripts/workbench.py stream-checks <task_id>
 python3 scripts/workbench.py stream-checks <task_id> --watch --interval 5
 ```
 
-**実装中の軽量ストリーミングチェック（#302）**。高速な機械センサー3種（secret/injection/destructive——diffスコープ・LLM不要・数十ms）をtask worktreeに対してその場で走らせ、findingsを**ヒントとして**表示する。長い実装stepで「verifyまで待って指摘をまとめて食らう」手戻りを減らすための、gateの**プレビュー**。
+**実装中の軽量ストリーミングチェック（#302）**。高速な機械センサー4種（secret/injection/destructive——diffスコープ／evidence-anchor——`.rig/runs/<task_id>/reviews/*.md`スコープ。いずれもLLM不要・数十ms）をその場で走らせ、findingsを**ヒントとして**表示する。長い実装stepで「verifyまで待って指摘をまとめて食らう」手戻りを減らすための、gateの**プレビュー**。
 
 - **構造的にgateをブロックできない**: このコマンドはacceptance.jsonを読みも書きもせず、常にexit 0。合否は従来通りgate評価（同じ検出器がそこでもう一度走る）が決める。
 - **opt-in**: 何も自動では呼ばない。`implement.md`が「実装の節目で呼んでよい」と案内するのみ（小さい変更では不要）。
-- `--watch --interval N`はポーリング監視（diffのhashが変わったときだけ再表示——静かなworktreeでは黙る）。`--max-passes M`で回数を制限（テスト/CI用）。
+- `--watch --interval N`はポーリング監視（diff・untrackedファイル名・記録済みreview本文のhashが変わったときだけ再表示——静かなworktreeでは黙る）。review本文はworktreeの外（`.rig/runs/`配下）にあるため、diffだけを見るhashではanchorセンサーが再発火しない。hashは4センサー共通なので、本文の変更で他3センサーのヒントも再表示される（常にexit 0・書き込みなしなので再表示は無害。取りこぼしのほうが危険という判断）。`--max-passes M`で回数を制限（テスト/CI用）。
 
 ## `/rig stale-refs [paths…]`
 
@@ -270,6 +273,27 @@ python3 scripts/workbench.py scan-destructive --diff <task_id>
 1. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、fail-grade 検出で `no_destructive_operation` を **failed** に、warning のみなら **warning** にする。
 2. 人がレビューして問題なしと確認した場合の脱出口は `gate <task_id> --set no_destructive_operation=passed`（`destructive_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
 3. **スコープの正直な明示**：これは**差分に書き込まれた**破壊的コマンド（スクリプト・CI設定・マイグレーション）の検出であり、エージェントが実行時に打つコマンドの傍受ではない（それはホストのパーミッション機構の責務）。rig が完全に管理できる成果物＝diff の中の時限爆弾を人に見せるのがこのセンサーの仕事。
+
+## `/rig scan-anchors [paths…] [--diff <task_id>]`
+
+```
+python3 scripts/workbench.py scan-anchors [paths…]
+python3 scripts/workbench.py scan-anchors --diff <task_id>
+```
+
+決定論の証拠アンカー検査（**opt-in** gate 基準 `evidence_anchors_resolve` の機械センサーと同一実装）。reviewer 本文中の `path/to/file.ext:42`（`:10-18` の範囲も可）が**実在する行を指すか**だけを見る。paths 指定で本文ファイル／その `*.md` を含むディレクトリを走査（アンカーは repo root 基準で解決・base commit なし）、`--diff <task_id>` は `review --body` が記録した `.rig/runs/<task_id>/reviews/*.md` を、その worktree→base commit の順で解決する＝gate センサーが見るものと同一。検出ありは exit 1。
+
+1. 解決は **worktree が先・base commit が後**。diff が削除／改名したファイルへの引用を fail にしないための必須の2段目であり、抜けると正当な引用が偽陽性になる。
+2. 判定は3値で、**SKIPPED を黙って合格にしない**（バイナリ・生成物・symlink・読めないファイルは理由つきで別枠に出す）。grade は2段階——参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転・ディレクトリ指定）は **fail-grade**、ファイル自体を特定できなかった（`streaming.py:67` のような裸の basename 等）は **warning-grade**。
+3. gate 側は **既定では走らない**。`evidence_anchors_resolve` はどのプリセットにも入っておらず、プロジェクトが `.rig/gates.json` の `extra_criteria` で追加したときだけ有効になる（未導入のうちは no-op）。有効時は fail-grade 検出で **failed**、warning のみなら **warning**。脱出口は `gate <task_id> --set evidence_anchors_resolve=passed`（`anchor_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+4. **どこに入れるか**：アンカーは **task の worktree を基準に解決する**ので、worktree を持つ task 種別のプリセットに入れる。既定は `standard`（`bugfix`/`feature`/`refactor`/`test`/`performance`/`documentation`/`design`/`investigation`/`release_support` が合成する土台）＝
+
+   ```json
+   {"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}
+   ```
+
+   逆に **`review`／`security` プリセットに入れても永久に発火しない**。`review`/`security_review` の task は route が worktree を作らないためで（`rig_workbench/workbench/capabilities.py`）、名前が対になっているぶん間違えやすい。センサーはこの状況で黙らず「worktree が無いので評価していない」と明示する。
+5. **このセンサーが見るのは「実装 task に対して記録された review 本文」**。`/rig:go` の review fan-out は実装 task の worktree に対して走り、その verdict と本文を `review <task_id> --body` で同じ task に記録する——そこがこのセンサーの対象。単体の `review` task（worktree 無し）ではない。
 
 ## `/rig digest [--period week|month] [--out PATH]`
 

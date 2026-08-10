@@ -42,6 +42,8 @@ def _print_checks(acc: dict) -> None:
             print(f"      tamper: {line}")
         for line in c.get("injection_findings") or []:
             print(f"      inject: {line}")
+        for line in c.get("anchor_findings") or []:
+            print(f"      anchor: {line}")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
