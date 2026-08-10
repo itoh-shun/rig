@@ -12,6 +12,16 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 MODULE_PATH = ROOT / "benchmarks/writing-tasks/jp-natural-writing/workflow_dev_eval.py"
 PAIRED_MODULE_PATH = ROOT / "benchmarks/writing-tasks/jp-natural-writing/paired_dev_eval.py"
+CURRENT_WORKFLOW_PROTOCOL_PATH = ROOT / (
+    "benchmarks/writing-tasks/jp-natural-writing/workflow_dev_protocol.json"
+)
+CLAUDE_REVIEW_PROTOCOL_PATH = ROOT / (
+    "benchmarks/writing-tasks/jp-natural-writing/workflow_claude_review_protocol.json"
+)
+CLAUDE_REVIEW_CONFIG_PATH = ROOT / (
+    "benchmarks/writing-tasks/jp-natural-writing/"
+    "workflow_claude_review.providers.example.json"
+)
 
 
 def test_historical_paired_evaluator_bytes_remain_frozen():
@@ -20,6 +30,170 @@ def test_historical_paired_evaluator_bytes_remain_frozen():
     assert hashlib.sha256(PAIRED_MODULE_PATH.read_bytes()).hexdigest() == (
         "0d8a065ffc89b827f156e09003b443725c18e80dc4df912edc99510704c37e45"
     )
+    assert hashlib.sha256(CURRENT_WORKFLOW_PROTOCOL_PATH.read_bytes()).hexdigest() == (
+        "0128b339a7ca0db6656de8b32da1d2f260fae85e5320d94ea76d92fd7013f8d6"
+    )
+    shared_config = ROOT / (
+        "benchmarks/writing-tasks/jp-natural-writing/parity.providers.example.json"
+    )
+    assert hashlib.sha256(shared_config.read_bytes()).hexdigest() == (
+        "1d18efed7ad4b9503db1e3a3400b715115ca0adbec9c0c9e33f5fc205a007dd7"
+    )
+
+
+def test_claude_review_profile_is_distinct_and_pins_exact_roles():
+    module = load_module()
+
+    assert module.PROTOCOL_PATH == CLAUDE_REVIEW_PROTOCOL_PATH
+    assert module.CONFIG_PATH == CLAUDE_REVIEW_CONFIG_PATH
+    protocol = module.load_workflow_protocol()
+    assert protocol["name"] == "japanese-writing-fresh-dev-workflow-claude-review"
+    assert protocol["semantics_version"] == 3
+    assert protocol["provider_roles"] == {
+        "reference": {
+            "provider": "codex", "model": "gpt-5.6-sol",
+            "sandbox": "read-only", "prompt_transport": "stdin",
+        },
+        "candidate": {
+            "provider": "claude", "model": "claude-sonnet-5",
+            "sandbox": "safe-mode", "prompt_transport": "stdin",
+        },
+        "reviewer": {
+            "provider": "claude", "model": "claude-opus-5",
+            "sandbox": "safe-mode", "prompt_transport": "stdin",
+        },
+        "judge": {
+            "provider": "codex", "model": "gpt-5.5",
+            "sandbox": "read-only", "prompt_transport": "stdin",
+        },
+    }
+    historical = json.loads(CURRENT_WORKFLOW_PROTOCOL_PATH.read_text())
+    for unchanged in (
+        "split", "expected_case_count", "arms", "orders", "dimensions",
+        "scoring", "state_machine", "semantic_rewrite_max", "max_logical_calls",
+        "logical_call_graph", "review_exhaustion", "retry_policy",
+        "review_contract", "support_safety", "acceptance",
+    ):
+        assert protocol[unchanged] == historical[unchanged]
+    config = json.loads(CLAUDE_REVIEW_CONFIG_PATH.read_text())
+    assert set(config) == {"reference", "candidate", "reviewer", "judge"}
+    assert [config[role]["identity"] for role in config] == [
+        "gpt-5.6-sol", "claude-sonnet-5", "claude-opus-5", "gpt-5.5",
+    ]
+    assert all(set(entry) == {
+        "provider", "model", "identity", "argv", "input_mode",
+        "output_mode", "cwd_mode", "timeout_sec",
+    } for entry in config.values())
+    assert all(not Path(entry["argv"][0]).is_absolute()
+               for entry in config.values())
+    assert "path" not in json.dumps(config).lower()
+    assert "key" not in json.dumps(config).lower()
+
+
+def test_claude_review_bundle_maps_audit_families_and_uses_disjoint_seals(tmp_path):
+    module = load_module()
+    codex = tmp_path / "codex"
+    claude = tmp_path / "claude"
+    for path in (codex, claude):
+        path.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+        path.chmod(0o700)
+    interpreter = Path("/bin/sh")
+    interpreter_hash = module.sha256_file(interpreter.resolve())
+    pins = module.validate_trusted_executable_pins({
+        role: {
+            "path": codex if role in {"reference", "judge"} else claude,
+            "sha256": module.sha256_file(
+                codex if role in {"reference", "judge"} else claude
+            ),
+            "interpreter_path": interpreter,
+            "interpreter_sha256": interpreter_hash,
+        }
+        for role in ("reference", "candidate", "reviewer", "judge")
+    })
+    try:
+        specs, providers = module._load_workflow_provider_bundle(
+            CLAUDE_REVIEW_CONFIG_PATH, module.paired._load_parity(), pins
+        )
+        assert {role: spec.identity for role, spec in specs.items()} == {
+            "reference": "gpt-5.6-sol",
+            "candidate": "claude-sonnet-5",
+            "reviewer": "claude-opus-5",
+            "judge": "gpt-5.5",
+        }
+        assert {role: spec.audit_role for role, spec in specs.items()} == {
+            "reference": "reference",
+            "candidate": "candidate",
+            "reviewer": "judge",
+            "judge": "reference",
+        }
+        fd_sets = [set(spec.launcher_fds) for spec in specs.values()]
+        assert all(not left & right for index, left in enumerate(fd_sets)
+                   for right in fd_sets[index + 1:])
+        assert len({id(spec.launcher_chain) for spec in specs.values()}) == 4
+        assert len({metadata["provider_spec_sha256"]
+                    for metadata in providers.values()}) == 4
+        module.validate_workflow_provider_protocol(
+            specs, providers, module.load_workflow_protocol()
+        )
+        source_environment = {
+            "PATH": "/untrusted",
+            "OPENAI_API_KEY": "openai-only",
+            "CODEX_HOME": "/codex-home",
+            "ANTHROPIC_API_KEY": "anthropic-only",
+            "CLAUDE_CONFIG_DIR": "/claude-home",
+        }
+        captured = {}
+        for role, spec in specs.items():
+            def fake_run(argv, **kwargs):
+                captured[role] = kwargs["env"]
+                if spec.output_mode == "file":
+                    output_path = Path(argv[argv.index("-o") + 1])
+                    output_path.write_text("ok", encoding="utf-8")
+                return subprocess.CompletedProcess(
+                    argv, 0, stdout="ok", stderr=""
+                )
+
+            assert module.secure_run_provider(
+                spec,
+                "private prompt",
+                environ=source_environment,
+                run_command=fake_run,
+            ) == "ok"
+        for role in ("reference", "judge"):
+            assert captured[role]["OPENAI_API_KEY"] == "openai-only"
+            assert "ANTHROPIC_API_KEY" not in captured[role]
+            assert captured[role]["PATH"] == "/usr/bin:/bin"
+        for role in ("candidate", "reviewer"):
+            assert captured[role]["ANTHROPIC_API_KEY"] == "anthropic-only"
+            assert "OPENAI_API_KEY" not in captured[role]
+            assert captured[role]["PATH"] == "/usr/bin:/bin"
+    finally:
+        for pin in pins.values():
+            for descriptor in pin["launcher_fds"]:
+                os.close(descriptor)
+
+
+@pytest.mark.parametrize(
+    ("role", "field", "value"),
+    [
+        ("reviewer", "identity", "claude-sonnet-5"),
+        ("judge", "model", "gpt-5.6-sol"),
+        ("reviewer", "provider", "codex"),
+    ],
+)
+def test_claude_review_config_rejects_wrong_identity_model_or_family(
+    tmp_path, role, field, value,
+):
+    module = load_module()
+    config = json.loads(CLAUDE_REVIEW_CONFIG_PATH.read_text())
+    config[role][field] = value
+    path = tmp_path / "wrong-profile.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="four exact"):
+        module._load_workflow_provider_bundle(
+            path, module.paired._load_parity(), {}
+        )
 
 
 def test_authoritative_prompt_composer_fences_task_artifact_and_repair_inputs():
@@ -253,7 +427,7 @@ def test_workflow_protocol_is_separate_and_preregisters_exact_bounds():
     ]
     assert workflow["arms"] == ["raw_writer", "reviewed_workflow"]
     assert workflow["semantic_rewrite_max"] == 1
-    assert workflow["semantics_version"] == 2
+    assert workflow["semantics_version"] == 3
     assert workflow["review_exhaustion"] == {
         "reason_code": "review_contract_exhausted",
         "eligible_stages": ["REVIEW0", "REVIEW1"],
@@ -278,8 +452,24 @@ def test_workflow_protocol_is_separate_and_preregisters_exact_bounds():
     assert set(workflow["provider_contracts"]) == {
         "reference", "candidate", "reviewer", "judge",
     }
-    assert workflow["provider_contracts"]["reviewer"] \
-        == workflow["provider_contracts"]["reference"]
+    assert workflow["provider_contracts"]["reference"]["argv"] == [
+        "codex", "exec", "--model", "gpt-5.6-sol", "--ephemeral",
+        "--skip-git-repo-check", "--ignore-user-config", "--sandbox",
+        "read-only", "-o", "{output_file}",
+    ]
+    assert workflow["provider_contracts"]["candidate"]["argv"] == [
+        "claude", "-p", "--safe-mode", "--no-session-persistence",
+        "--model", "claude-sonnet-5", "--output-format", "text",
+    ]
+    assert workflow["provider_contracts"]["reviewer"]["argv"] == [
+        "claude", "-p", "--safe-mode", "--no-session-persistence",
+        "--model", "claude-opus-5", "--output-format", "text",
+    ]
+    assert workflow["provider_contracts"]["judge"]["argv"] == [
+        "codex", "exec", "--model", "gpt-5.5", "--ephemeral",
+        "--skip-git-repo-check", "--ignore-user-config", "--sandbox",
+        "read-only", "-o", "{output_file}",
+    ]
     assert workflow["review_contract"]["bounds"] == {
         "max_output_bytes": 16384,
         "max_target_format_codepoints": 80,
@@ -355,18 +545,36 @@ def _workflow_fixture(
     protocol = module.load_workflow_protocol()
 
     class Spec:
-        def __init__(self, role):
+        def __init__(self, role, index):
+            contract = protocol["provider_contracts"][role]
             self.role = role
+            self.identity = contract["model"]
+            self.configured_argv = tuple(contract["argv"])
+            self.input_mode = contract["configured_input_mode"]
+            self.output_mode = contract["output_mode"]
+            self.cwd_mode = contract["cwd_mode"]
+            self.timeout_sec = contract["timeout_sec"]
+            self.env = ()
+            self.audit_role = (
+                "reference" if role in {"reference", "judge"}
+                else "candidate" if role == "candidate" else "judge"
+            )
+            self.launcher_fds = (100 + index,)
 
-    specs = {role: Spec(role) for role in ("reference", "candidate", "reviewer", "judge")}
+    specs = {
+        role: Spec(role, index)
+        for index, role in enumerate(
+            ("reference", "candidate", "reviewer", "judge")
+        )
+    }
     providers = {
         role: {
-            "provider": f"fake-{role}",
-            "requested_model": f"model-{role}",
-            "reported_model": f"model-{role}",
-            "provider_spec_sha256": role[0] * 64,
+            "provider": protocol["provider_contracts"][role]["provider"],
+            "requested_model": protocol["provider_contracts"][role]["model"],
+            "reported_model": protocol["provider_contracts"][role]["model"],
+            "provider_spec_sha256": str(index + 1) * 64,
         }
-        for role in specs
+        for index, role in enumerate(specs)
     }
     calls = []
     protocol_swapped = False
@@ -521,6 +729,15 @@ def test_workflow_fingerprint_binds_sources_cases_prompts_graph_and_provider_pin
     )
     assert module.canonical_sha256(changed) != original
 
+    changed_pin = json.loads(json.dumps(providers))
+    changed_pin["reviewer"]["executable_sha256"] = "f" * 64
+    changed_pin["reviewer"]["launcher_chain"] = [{"sha256": "f" * 64}]
+    pin_changed = module.build_workflow_fingerprint_inputs(
+        cases=cases, cases_path=cases_path, protocol=protocol,
+        providers=changed_pin, judgment_prompt_fn=judgment_prompt,
+    )
+    assert module.canonical_sha256(pin_changed) != original
+
     real_review = module.compose_review_prompt
     monkeypatch.setattr(
         module, "compose_review_prompt",
@@ -587,6 +804,24 @@ def test_result_protocol_provenance_uses_manifest_binding_after_midrun_path_swap
     assert result["provenance"]["protocol_sha256"] \
         == manifest["fingerprint_inputs"]["protocol_sha256"]
     assert result["provenance"]["protocol_sha256"] != module.sha256_file(swapped)
+
+
+def test_claude_review_profile_rejects_a_historical_protocol_manifest(tmp_path):
+    module = load_module()
+    _result, _calls, run_dir = _workflow_fixture(module, tmp_path)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["fingerprint_inputs"]["protocol_sha256"] = module.sha256_file(
+        CURRENT_WORKFLOW_PROTOCOL_PATH
+    )
+    manifest["fingerprint"] = module.canonical_sha256(
+        manifest["fingerprint_inputs"]
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="run manifest fingerprint mismatch"):
+        _workflow_fixture(module, tmp_path)
 
 
 def test_workflow_revise_allows_exactly_one_rewrite_and_fresh_rereview(tmp_path):
@@ -1029,7 +1264,7 @@ def test_workflow_cli_dry_run_requires_four_separate_pins_without_calls(
     ]
     for role, executable in (
         ("reference", codex), ("candidate", claude),
-        ("reviewer", codex), ("judge", claude),
+        ("reviewer", claude), ("judge", codex),
     ):
         args.extend([
             f"--{role}-executable", str(executable.resolve()),
@@ -1048,9 +1283,11 @@ def test_workflow_cli_dry_run_requires_four_separate_pins_without_calls(
     assert len(report["fingerprint"]) == 64
     assert set(report["providers"]) == {"reference", "candidate", "reviewer", "judge"}
     assert report["providers"]["reference"]["launcher_chain"] \
+        == report["providers"]["judge"]["launcher_chain"]
+    assert report["providers"]["candidate"]["launcher_chain"] \
         == report["providers"]["reviewer"]["launcher_chain"]
-    assert report["providers"]["reference"]["provider_spec_sha256"] \
-        != report["providers"]["reviewer"]["provider_spec_sha256"]
+    assert len({row["provider_spec_sha256"]
+                for row in report["providers"].values()}) == 4
 
 
 def test_direct_workflow_cli_dry_run_works_without_pythonpath(tmp_path):
@@ -1068,7 +1305,7 @@ def test_direct_workflow_cli_dry_run_works_without_pythonpath(tmp_path):
     ]
     for role, executable in (
         ("reference", codex), ("candidate", claude),
-        ("reviewer", codex), ("judge", claude),
+        ("reviewer", claude), ("judge", codex),
     ):
         argv.extend([
             f"--{role}-executable", str(executable.resolve()),

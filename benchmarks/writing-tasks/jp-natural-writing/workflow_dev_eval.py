@@ -27,9 +27,9 @@ REPO = HERE.parents[2]
 MODULE_PATH = Path(__file__).resolve()
 PAIRED_PATH = HERE / "paired_dev_eval.py"
 PARITY_PATH = HERE / "parity.py"
-PROTOCOL_PATH = HERE / "workflow_dev_protocol.json"
+PROTOCOL_PATH = HERE / "workflow_claude_review_protocol.json"
 DEV_CASES = HERE / "parity_cases.dev.json"
-CONFIG_PATH = HERE / "parity.providers.example.json"
+CONFIG_PATH = HERE / "workflow_claude_review.providers.example.json"
 RECIPE_PATH = REPO / "packs/domain/japanese-writing/recipes/japanese-writing.md"
 EXPECTED_DEV_CASES = 10
 SCHEMA = 5
@@ -102,7 +102,7 @@ WORKFLOW_REVIEW_BOUNDS = {
     "max_repair_codepoints": 500,
 }
 PARSER_VERSION = 2
-PROVIDER_CONTRACTS_SHA256 = "63004a3cfe3873a05da15d2ac2e4758d778ad486e1e22a4222aba83880bedee3"
+PROVIDER_CONTRACTS_SHA256 = "af99bcb363f998003577257224c77e1abc9f7bab6e46ddaef7461ceacefb236f"
 LOGICAL_CALL_GRAPH = {
     "always_per_case": [
         "R", "A0", "REVIEW0", "JUDGE_RAW_REFERENCE_FIRST",
@@ -154,8 +154,9 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
     }
     if (
         protocol.get("schema") != 1
-        or protocol.get("semantics_version") != 2
-        or protocol.get("name") != "japanese-writing-fresh-dev-workflow"
+        or protocol.get("semantics_version") != 3
+        or protocol.get("name")
+        != "japanese-writing-fresh-dev-workflow-claude-review"
         or protocol.get("split") != "dev"
         or protocol.get("expected_case_count") != EXPECTED_DEV_CASES
         or protocol.get("arms") != ["raw_writer", "reviewed_workflow"]
@@ -203,8 +204,8 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
     role_expectations = {
         "reference": ("codex", "gpt-5.6-sol", "read-only"),
         "candidate": ("claude", "claude-sonnet-5", "safe-mode"),
-        "reviewer": ("codex", "gpt-5.6-sol", "read-only"),
-        "judge": ("claude", "claude-opus-5", "safe-mode"),
+        "reviewer": ("claude", "claude-opus-5", "safe-mode"),
+        "judge": ("codex", "gpt-5.5", "read-only"),
     }
     for role, (provider, model, sandbox) in role_expectations.items():
         if protocol.get("provider_roles", {}).get(role) != {
@@ -1451,6 +1452,7 @@ def _run_workflow_evaluation_unlocked(
         raise ValueError("workflow provider metadata mismatch")
     if protocol != load_workflow_protocol():
         raise ValueError("workflow protocol is not the tracked definition")
+    validate_workflow_provider_protocol(specs, providers, protocol)
     if max_attempts != protocol["retry_policy"]["max_attempts_per_logical_call"]:
         raise ValueError("workflow transport retry bound mismatch")
     fingerprint_inputs = build_workflow_fingerprint_inputs(
@@ -1816,44 +1818,49 @@ def _load_workflow_provider_bundle(
     trusted_pins: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     raw = json.loads(config_path.read_text(encoding="utf-8"))
-    reference, candidate, judges = parity.load_config(config_path)
-    if len(judges) != 1:
-        raise ValueError("workflow requires exactly one judge")
-    reviewer = type(reference)(
-        role="reviewer",
-        identity=reference.identity,
-        argv=reference.argv,
-        input_mode=reference.input_mode,
-        output_mode=reference.output_mode,
-        timeout_sec=reference.timeout_sec,
-        cwd_mode=reference.cwd_mode,
-        env=reference.env,
-    )
+    roles = ("reference", "candidate", "reviewer", "judge")
+    if tuple(raw) != roles:
+        raise ValueError("workflow config must contain four ordered provider roles")
     unresolved = {
-        "reference": reference,
-        "candidate": candidate,
-        "reviewer": reviewer,
-        "judge": judges[0],
+        role: parity.ProviderSpec.from_dict(role, raw[role]) for role in roles
+    }
+    expected_identities = {
+        "reference": "gpt-5.6-sol",
+        "candidate": "claude-sonnet-5",
+        "reviewer": "claude-opus-5",
+        "judge": "gpt-5.5",
+    }
+    expected_families = {
+        "reference": "codex",
+        "candidate": "claude",
+        "reviewer": "claude",
+        "judge": "codex",
+    }
+    if (
+        {role: spec.identity for role, spec in unresolved.items()}
+        != expected_identities
+        or len({spec.identity.casefold() for spec in unresolved.values()}) != 4
+        or any(
+            raw[role].get("model") != expected_identities[role]
+            or raw[role].get("provider") != expected_families[role]
+            for role in roles
+        )
+    ):
+        raise ValueError("workflow requires four exact provider/model identities")
+    audit_roles = {
+        "reference": "reference",
+        "candidate": "candidate",
+        "reviewer": "judge",
+        "judge": "reference",
     }
     specs = {
         role: paired.pin_provider_spec(
-            spec,
-            "reference" if role == "reviewer" else role,
-            trusted_pins[role],
+            spec, audit_roles[role], trusted_pins[role]
         )
         for role, spec in unresolved.items()
     }
-    judge_entries = raw.get("judges")
-    if not isinstance(judge_entries, list) or len(judge_entries) != 1:
-        raise ValueError("provider config requires exactly one judge entry")
-    entries = {
-        "reference": raw.get("reference", {}),
-        "candidate": raw.get("candidate", {}),
-        "reviewer": raw.get("reference", {}),
-        "judge": judge_entries[0],
-    }
     providers = {
-        role: paired.provider_audit_metadata(specs[role], entries[role])
+        role: paired.provider_audit_metadata(specs[role], raw[role])
         for role in specs
     }
     return specs, providers
@@ -1886,13 +1893,33 @@ def validate_workflow_provider_protocol(
     protocol: dict[str, Any],
 ) -> None:
     roles = {"reference", "candidate", "reviewer", "judge"}
-    if set(specs) != roles or set(providers) != roles:
+    if (
+        set(specs) != roles
+        or set(providers) != roles
+        or len({metadata.get("provider_spec_sha256")
+                for metadata in providers.values()}) != 4
+    ):
         raise ValueError("workflow provider roles mismatch")
+    expected_identities = {
+        role: contract["model"]
+        for role, contract in protocol["provider_contracts"].items()
+    }
+    if (
+        {role: spec.identity for role, spec in specs.items()}
+        != expected_identities
+        or len({spec.identity.casefold() for spec in specs.values()}) != 4
+    ):
+        raise ValueError("workflow provider identities must be exact and distinct")
     for role, contract in protocol["provider_contracts"].items():
         if _actual_provider_contract(specs[role], providers[role]) != contract:
             raise ValueError(f"workflow provider protocol mismatch for {role}")
-    if set(specs["reference"].launcher_fds) & set(specs["reviewer"].launcher_fds):
-        raise ValueError("workflow reviewer must use a separately sealed launcher")
+    descriptor_sets = [set(spec.launcher_fds) for spec in specs.values()]
+    if any(not descriptors for descriptors in descriptor_sets) or any(
+        left & right
+        for index, left in enumerate(descriptor_sets)
+        for right in descriptor_sets[index + 1 :]
+    ):
+        raise ValueError("workflow roles must use separately sealed launchers")
 
 
 def build_parser() -> argparse.ArgumentParser:
