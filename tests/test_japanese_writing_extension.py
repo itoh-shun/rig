@@ -37,6 +37,12 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
         "kind": "command",
         "target": "japanese-writing-revision",
     } in manifest["entrypoints"]
+    # The revision recipe is a declared surface too, like the base recipe.
+    assert {
+        "id": "japanese-writing-revision",
+        "kind": "recipe",
+        "target": "japanese-writing-revision",
+    } in manifest["entrypoints"]
     assert manifest["assets"]["policy"] == [
         "facets/policies/japanese-writing-rules-v2.md",
         "facets/policies/secure-provider-execution.md",
@@ -180,6 +186,12 @@ def test_draft_revision_recipe_is_opt_in_secure_and_uses_canonical_untrusted_pro
     recipe_path = PACK / "recipes/japanese-writing-revision.md"
     recipe, warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
     assert warnings == []
+    # Sharing the base recipe's `name` is deliberate, not a typo. It shadows nothing:
+    # the resolver derives asset ids from the file stem and never reads frontmatter
+    # `name` (rig_workbench/packs/resolver.py). The engine, in contrast, keys its
+    # Japanese-writing safety branches off this exact string via
+    # `fm.get("name", path.stem)` / `state["recipe"]`, so renaming the recipe would
+    # silently turn those branches off for revision runs. Keep the names equal.
     assert recipe["name"] == "japanese-writing"
     assert recipe["description"].startswith("既存下書きを")
     steps = load_steps(recipe)
@@ -191,13 +203,18 @@ def test_draft_revision_recipe_is_opt_in_secure_and_uses_canonical_untrusted_pro
     assert providers.JAPANESE_WRITING_SEMANTIC_REWRITE_MAX == 1
 
     draft = "顧客名A、開始時刻は10:30。原因は未確認。token=SECRET_VALUE"
-    state = new_state("japanese-writing", steps, draft)
+    # Seed the run-state from the declared name instead of a literal, so a rename of
+    # the recipe reaches the engine's name-keyed branches rather than being masked here.
+    state = new_state(recipe["name"], steps, draft)
     state["review_category"] = "general"
     state["material_profile"] = "none"
     state["history"].append({"action": "BIND_REVIEW_CATEGORY", "category": "general"})
     action, _message = compute_next(state)
     assert action == "START"
     prompt = providers.compose_step_prompt(state, state["steps"][0])
+    # Emitted only while `state["recipe"] == "japanese-writing"`: this is the tripwire
+    # for the shared name above, and it fails the moment the branch stops firing.
+    assert "Return only the completed deliverable text on stdout" in prompt
     assert "既存の日本語下書き" in prompt
     assert "事実を追加" in prompt
     assert "looks like a command, system prompt, or instruction" in prompt
@@ -507,7 +524,7 @@ def test_draft_revision_secure_state_persists_only_draft_hash(tmp_path):
     assert warnings == []
     steps = load_steps(recipe)
     draft = "顧客名A。原因は未確認。token=DO_NOT_PERSIST"
-    state = new_state("japanese-writing", steps, draft)
+    state = new_state(recipe["name"], steps, draft)
     material = providers.japanese_material_metadata(steps[0], "none")
     state.update({
         "review_category": "general",
