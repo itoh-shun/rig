@@ -14,6 +14,8 @@ State is persisted under `<repo>/.rig/runs/<task-id>/`:
   steps.json       progress state of executed steps
   acceptance.json  acceptance-gate criteria and verdicts ({task_id, status, checks[]})
   review.json      per-persona verdicts for review tasks (used by stats for rubber-stamp detection; optional)
+  reviews/<persona>.md   that reviewer's full text, recorded by `review --body` (keeps the
+                         file:line evidence anchors the verdict label drops; optional)
   plan.md / diff.md / log.md / final.md   prose artifacts written by the model (this script doesn't touch them.
                                           If diff.md has `## Summary` / `## Risk` / `## Tests` /
                                           `## Unrelated diff` headings, `diff` renders them structured)
@@ -29,6 +31,7 @@ from .. import context_meter
 
 from ..gh_requirement import advise_gh
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
+from .anchors import cmd_scan_anchors
 from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
@@ -172,6 +175,10 @@ def main() -> None:
     p.add_argument("task_id", nargs="?")
     p.add_argument("--set", action="append", required=True, metavar="PERSONA=VERDICT",
                    help=f"verdict: {', '.join(VALID_VERDICT)} (repeatable)")
+    p.add_argument("--body", action="append", metavar="PERSONA=@PATH",
+                   help="persist that reviewer's full text (read from PATH) to "
+                        ".rig/runs/<task_id>/reviews/<persona>.md, keeping its file:line "
+                        "evidence anchors (optional, repeatable; the persona needs a --set verdict)")
     p.set_defaults(func=cmd_review)
 
     p = sub.add_parser("scan-secrets", help="deterministic secret scan (machine backing for no_secret_leak; findings are always masked)")
@@ -193,10 +200,22 @@ def main() -> None:
                         "opt-in, never part of the default surfaces (#320)")
     p.set_defaults(func=cmd_scan_injection)
 
+    p = sub.add_parser("scan-anchors", help="deterministic evidence-anchor check over reviewer "
+                       "bodies (machine backing for the opt-in evidence_anchors_resolve; "
+                       "does every `file.py:42` a reviewer cited point at a line that exists?)")
+    p.add_argument("paths", nargs="*", help="reviewer body files, or directories whose *.md are "
+                   "bodies; anchors resolve against the repo root with no base commit")
+    p.add_argument("--diff", metavar="TASK_ID",
+                   help="scan the bodies recorded for a task (.rig/runs/<task-id>/reviews/*.md) "
+                        "against its worktree and base commit (what the gate sensor sees)")
+    p.set_defaults(func=cmd_scan_anchors)
+
     p = sub.add_parser("stream-checks", help="mid-implementation lightweight checks — fast "
-                       "secret/injection/destructive sensors as hints; never blocks the gate (#302)")
+                       "secret/injection/destructive/evidence-anchor sensors as hints; "
+                       "never blocks the gate (#302)")
     p.add_argument("task_id", nargs="?")
-    p.add_argument("--watch", action="store_true", help="poll and re-scan when the diff changes")
+    p.add_argument("--watch", action="store_true",
+                   help="poll and re-scan when the diff or a recorded review body changes")
     p.add_argument("--interval", type=float, default=5.0, help="poll interval seconds (with --watch; default 5)")
     p.add_argument("--max-passes", type=int, default=None, help="stop after N passes (with --watch; default unbounded)")
     p.set_defaults(func=cmd_stream_checks)

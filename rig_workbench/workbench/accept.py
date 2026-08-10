@@ -9,6 +9,12 @@ import re
 import shutil
 import sys
 
+# `ast_diff` is stdlib-only and also runnable directly as
+# `python3 scripts/ast_diff.py <base.py> <new.py>`; reuse it here rather than
+# duplicating its logic (#280). It has to live inside the package to be importable:
+# reaching a sibling `scripts/` dir through sys.path works in a checkout but
+# resolves to a non-existent `site-packages/scripts` once installed.
+from .. import ast_diff
 from ..govern import enforce as govern_enforce
 from .config import CHECK_ICON, RECOMMENDATION
 from .state import (_diff_lines, audit_append, build_acceptance,
@@ -17,14 +23,6 @@ from .state import (_diff_lines, audit_append, build_acceptance,
                     load_json, load_task, now_iso, parse_diff_md, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
                     task_lock, verify_provenance, warn, worktree_dirty)
-
-# scripts/ast_diff.py is a standalone, dependency-free script (also runnable directly
-# as `python3 scripts/ast_diff.py <base.py> <new.py>`); reuse it here rather than
-# duplicating its logic (#280).
-_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-import ast_diff  # noqa: E402
 
 
 def _task_head(root: pathlib.Path, task: dict) -> str | None:

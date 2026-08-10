@@ -18,6 +18,79 @@ unverified symlink or hardlink targets are never truncated. The Japanese pack re
 at semantic version 0.4.0 but now requires engine >=2.3.0. Existing recipes without
 the explicit secure marker, including `goal-loop`, retain their previous runtime path.
 
+## [2.2.3] - 2026-08-10
+
+**Every `rig-wb wb` subcommand was broken for anyone using the installed CLI.**
+`rig_workbench/workbench/accept.py` reached a sibling `scripts/` directory through
+`sys.path` to `import ast_diff`. In a checkout that resolves to `<repo>/scripts`;
+installed it resolves to `site-packages/scripts`, which does not exist — and
+`scripts/ast_diff.py` was never shipped, because pyproject's package finder only
+includes `rig_workbench* / benchmarks* / skills* / packs*`. `accept.py` is imported
+by `workbench/cli.py`, so `rig-wb wb <anything>` died at import with
+`ModuleNotFoundError: No module named 'ast_diff'`; the only workaround was
+`PYTHONPATH=<repo>/scripts` on every invocation. The module now lives at
+`rig_workbench/ast_diff.py` and is imported as part of the package.
+`python3 scripts/ast_diff.py <base.py> <new.py>` still works — that path is now a
+launcher onto the same `main()`.
+
+**`/rig:setup` never noticed a stale install.** The skip decision was "does
+`rig-wb version` succeed", with no version comparison anywhere in
+`scripts/install.sh`. A rig-wb installed in July sat at 1.6.0 while the repo moved
+on, and every `/rig:setup` since reported "already installed ✓" — while the 1.6.0
+launcher kept loading the current repo's `scripts/workbench.py` and failing with
+`ModuleNotFoundError: No module named 'rig_workbench.workbench'`, which reads like
+"rig-wb is not installed" rather than "rig-wb is out of date". The installer now
+compares the installed version against this checkout's
+`rig_workbench.__version__`, shows both, and **asks** whether to update. `--yes`
+answers that prompt, `--force` reinstalls as before, and `--check` stays
+detection-only — it reports the skew and installs nothing. Distribution is a git
+ref, not a registry, so nothing here queries PyPI.
+
+Three properties that comparison has to have, and did not:
+
+- **What is compared is what is installed.** It compared the checkout and
+  installed `${REPO_URL}@master` — a different artefact. On a branch ahead of
+  master, accepting the update installed master, the checkout still disagreed,
+  and the same prompt came back on the next run. A nag that cannot be satisfied
+  teaches people to ignore it. Without an explicit `--ref` the install source is
+  now the checkout itself (`pipx install <dir>` / `uv tool install <dir>` /
+  `pip install --user <dir>` all take a directory), so accepting converges by
+  construction. `--ref` still installs that ref from GitHub, and in that mode
+  nothing is compared and no update is offered: this script cannot know a remote
+  ref's version without fetching it.
+- **Ordering, not equality.** "Different" was read as "older", so an installed
+  2.3.0 against a 2.2.3 checkout was announced as `Update 2.3.0 → 2.2.3?` and,
+  under `--yes`, performed unattended. A newer install is now reported and kept;
+  `--force` remains the way to install an older checkout on purpose. `--yes` may
+  skip the question but never the sentence naming what is being replaced and
+  where the replacement comes from.
+- **Unreadable is undetermined, not stale.** The version was the last whitespace
+  token of whatever `rig-wb version` printed, which turned a non-zero exit into
+  `?`, a leading warning line into its last word and a usage dump into `all` —
+  each shown as an "installed:" version and each a fabricated mismatch. Only the
+  two documented shapes (`rig-wb X.Y.Z`, or a bare `X.Y.Z`) are accepted now;
+  anything else falls back to presence-only and replaces nothing.
+
+**One resolver for `scripts/*.py`.** `rig_workbench/repo_paths.py` is now the only
+place that answers "where is `scripts/<name>.py`" — `RIG_HOME`, then the install
+source, then cwd and its parents. `orchestrate/mcp_scan.py` and
+`orchestrate/commands.py` computed it from their own depth
+(`parent.parent.parent`) and never consulted `RIG_HOME`, so an installed rig
+looked for `site-packages/scripts/mcp_server.py` and reported #263 as "not
+installed" even with `RIG_HOME` pointing at a checkout that has it. Resolving from
+the package root removes the depth question instead of fixing two of its answers.
+
+**The skew notice no longer quotes repo text raw.** `rig-wb`'s one-line
+version-skew warning captured `__version__` with `[^"]+`, which spans newlines,
+and printed it unprocessed — enough for a hostile checkout to put terminal escapes
+and forged warning lines on rig-wb's stderr. The capture is bounded to one line
+and goes through the injection scanner's `bounded_excerpt`, which now escapes
+control characters as well as invisible ones.
+
+The version bump is load-bearing rather than ceremonial: the broken build and the
+fixed one would otherwise both answer `2.2.2`, so the new comparison — and
+`rig-wb`'s own skew line — would skip exactly the installs that need replacing.
+
 ## [2.2.2] - 2026-08-08
 
 **A Stop hook that interrupted sessions it had no business in.** The

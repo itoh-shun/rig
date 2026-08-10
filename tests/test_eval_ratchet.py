@@ -241,3 +241,78 @@ def test_debt_exits_zero_and_uncovered_exits_one(tmp_path):
     strict = run_cli(repo, "--base", base, "--head", "HEAD", "--require-cases")
     assert strict.returncode == 1
     assert json.loads(strict.stdout)["status"] == "uncovered"
+
+
+# ── the acceptance gate drives the same ratchet ──────────────────────────────
+# `evaluate_gate` is the path the local `prompt_regression_passed` criterion runs.
+# It used to be hard-wired to `require_cases=True` while CI drove `--ratchet`, so
+# the same branch failed locally and passed in CI. These pin the parity.
+def gate(repo, base, head="working", **kwargs):
+    from rig_workbench.eval.gate import evaluate_gate
+
+    return evaluate_gate(repo, base=base, head=head,
+                         evidence_dir=repo / ".rig" / "evals" / "results", **kwargs)
+
+
+def test_gate_ratchet_reports_debt_without_failing(tmp_path):
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    report, code = gate(repo, base, ratchet=True)
+    assert code == 0 and report["status"] == "debt"
+    assert report["coverage_debt"] == [INSTRUCTION]
+    assert report["failures"] == []
+    assert report["status"] != analyze(repo, base, require_cases=True)["status"]
+
+
+def test_gate_without_ratchet_keeps_its_exact_old_meaning(tmp_path):
+    """The default is untouched: `affected-run` and `eval gate` still run strict."""
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    report, code = gate(repo, base)
+    assert code == 1 and report["status"] == "failed"
+    assert report["failures"] == [f"uncovered:{INSTRUCTION}"]
+
+
+def test_gate_ratchet_fails_on_a_coverage_regression_and_says_which(tmp_path):
+    """A deleted case touches no prompt surface, so it never lands in `uncovered`.
+    Reporting only those paths left this failing with an empty `failures` list — a
+    verdict with no reason in it, which is the same silence the ratchet replaced."""
+    repo, base = _repo(tmp_path)
+    _write_case(repo, "login-case", ["instruction:login"])
+    _touch(repo, INSTRUCTION)
+    base = _commit(repo, "add coverage")
+    (repo / "evals" / "cases" / "login-case" / "case.json").unlink()
+    report, code = gate(repo, base, ratchet=True)
+    assert code == 1 and report["status"] == "failed"
+    assert any(item.startswith("coverage_regression:") and "login-case" in item
+               for item in report["failures"])
+
+
+def test_gate_ratchet_still_fails_on_an_unregistered_surface_kind(tmp_path):
+    repo, base = _repo(tmp_path)
+    _touch(repo, "skills/engine/recipes/notes.txt")
+    report, code = gate(repo, base, ratchet=True)
+    assert code == 1 and report["status"] == "failed"
+    assert report["failures"] == ["uncovered:skills/engine/recipes/notes.txt"]
+
+
+def test_gate_ratchet_names_a_narrowed_registry(tmp_path):
+    """The registry is judged by `_registry_narrowings`, not by `uncovered` — same
+    empty-`failures` hole, reported the same way."""
+    from rig_workbench.eval.affected import REGISTRY_REL
+
+    repo, base = _repo(tmp_path)
+    registry = repo / REGISTRY_REL
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(json.dumps({
+        "prompt_surface_registry_version": 2,
+        "roots": [{"prefix": "retired/", "kind": "retired", "recursive": True,
+                   "extensions": [".md"]}],
+    }), encoding="utf-8")
+    base = _commit(repo, "declare a root the code no longer has")
+    registry.write_text(json.dumps({"prompt_surface_registry_version": 2, "roots": []}),
+                        encoding="utf-8")
+    report, code = gate(repo, base, ratchet=True)
+    assert code == 1 and report["status"] == "failed"
+    assert any(item.startswith("registry_narrowed:") and "retired/" in item
+               for item in report["failures"])

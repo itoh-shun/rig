@@ -1,6 +1,6 @@
 ---
-description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/review/gc/audit/scan-secrets/scan-injection/digest/stream-checks/stale-refs/scan-destructive/instincts/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | stream-checks [id] [--watch --interval N --max-passes M] | stale-refs [paths…] | scan-destructive [paths…|--diff id] | instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview] | gh issue <n> | gh pr <n> review|fix | gh ci"
+description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/review/gc/audit/scan-secrets/scan-injection/digest/stream-checks/stale-refs/scan-destructive/scan-anchors/instincts/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v [--body p=@path] | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | stream-checks [id] [--watch --interval N --max-passes M] | stale-refs [paths…] | scan-destructive [paths…|--diff id] | scan-anchors [paths…|--diff id] | instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -27,7 +27,7 @@ $ARGUMENTS
 | `board [--all]` | `facets/instructions/workbench-ops`（**全 task を一覧するダッシュボード**。複数タスクを並行で進めているときの単一の確認場所） |
 | `cockpit` | `facets/instructions/workbench-ops`（**board・gate・drill・cost・auditを一画面に集約するMission Control**。read-only。次アクションを案内するのみで accept/discard 自体は実行しない） |
 | `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
-| `review <task_id> --set <persona>=<verdict>` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録） |
+| `review <task_id> --set <persona>=<verdict> [--body <persona>=@<path>]` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録。`--body` は任意で、その reviewer 本文を `.rig/runs/<task_id>/reviews/<persona>.md` に永続化する＝verdict ラベルが捨てる `file:line` 証拠アンカーを残す） |
 | `gc [--older-than <N>d] [--dry-run]` | `facets/instructions/workbench-ops`（視覚検証成果物（`.rig/runs/*/visual/`・`.rig/visual/adhoc/*`）の age-based 処分。既定14日・`--dry-run` で候補表示のみ） |
 | `audit [--limit N] [--action A] [--since YYYY-MM-DD]` | `facets/instructions/workbench-ops`（`accept --force` 等の恒久監査ログ `.rig/audit.jsonl` の一覧・絞り込み） |
 | `scan-secrets [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論シークレットスキャン。gate 基準 `no_secret_leak` の機械センサーと同一実装。`--diff` で task worktree の差分のみを走査、抜粋は常にマスク済み） |
@@ -36,6 +36,7 @@ $ARGUMENTS
 | `stream-checks [<task_id>] [--watch --interval N --max-passes M]` | `facets/instructions/workbench-ops`（実装中の軽量ストリーミングチェック。secret/injection/destructiveの3センサーをtask worktreeにその場で走らせfindingsをヒント表示。gateをブロックしない・常にexit 0） |
 | `stale-refs [paths…]` | `facets/instructions/workbench-ops`（manifest・知識層の経年劣化検知。バッククォート引用の相対パス参照のうち実在しなくなったものをWARN列挙。exit 0） |
 | `scan-destructive [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の破壊的コマンドスキャン。gate 基準 `no_destructive_operation` の機械センサーと同一実装。fail-grade/warning-gradeの2段階） |
+| `scan-anchors [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の証拠アンカー検査。reviewer 本文中の `file:line` が実在する行を指すかを確認。**opt-in** gate 基準 `evidence_anchors_resolve` の機械センサーと同一実装＝既定プリセットには入らない。`--diff` で task の `reviews/*.md` を worktree→base commit の順に解決） |
 | `instincts [--add TEXT --evidence E --confidence C] [--mute ID\|--expire ID\|--decay\|--inject-preview]` | `facets/instructions/workbench-ops`（セッション横断の継続的instinct学習層。未検証パターンをconfidence付きで記録・decay・次回セッション注入プレビュー） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |

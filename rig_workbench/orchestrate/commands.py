@@ -12,6 +12,7 @@ import concurrent.futures as futures
 from collections import Counter
 from functools import wraps
 
+from .. import repo_paths
 from . import config
 from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_manifest,
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
@@ -1318,9 +1319,12 @@ def cmd_runs(args):
         else:
             i += 1
     if html_out:
-        dash = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "dashboard.py"
-        if not dash.exists():
-            print(f"[ERROR] dashboard.py not found: {dash}")
+        # Shared resolver: RIG_HOME, then the install source, then cwd. A path
+        # computed from this file's parents lands inside site-packages once
+        # installed, where there is no scripts/ at all.
+        dash = repo_paths.find_script("dashboard.py")
+        if dash is None:
+            print(f"[ERROR] dashboard.py not found: {repo_paths.script_path('dashboard.py')}")
             sys.exit(1)
         cmd = [sys.executable, str(dash), "--repo", str(config.INVOCATION_CWD),
                "--out", html_out, "--limit", str(limit)]

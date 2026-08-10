@@ -53,6 +53,9 @@ Changelog = "https://github.com/itoh-shun/rig/blob/master/CHANGELOG.md"
 
 [project.scripts]
 rig-wb = "rig_workbench.cli:main"       # pip installer 経由の CLI entrypoint
+rig-evidence = "rig_workbench.evidence:main"  # real-project RIG-vs-bare evidence + fleet measurement
+rig-mission-control = "rig_workbench.mission_control:main"  # read-only HTML/JSON control-plane view
+rig-mission-control-live = "rig_workbench.mission_server:main"  # localhost interactive + durable queue control
 
 # ── パッケージ探索 ──────────────────────────────────────────────
 # rig_workbench/ を Python パッケージとして拾う。scripts/*.py は
