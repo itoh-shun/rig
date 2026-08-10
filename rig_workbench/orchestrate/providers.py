@@ -1052,6 +1052,11 @@ def _generator_facets(step: dict) -> dict[str, list[str]]:
     }
 
 
+def resolve_prompt_facets(step: dict) -> dict[str, list[str]]:
+    """Resolve the trusted facets consumed by the pure prompt composers."""
+    return _generator_facets(step)
+
+
 def run_verifiers_parallel(ver, prompt: str, personas: list[str],
                            cfg: dict, max_parallel: int,
                            state: dict | None = None, step_id: str | None = None) -> list[dict]:
@@ -1125,7 +1130,7 @@ def _run_artifact_reviewers(
 
     def _one(task):
         provider, persona = task
-        prompt = _build_artifact_review_prompt(state, step, persona, artifact)
+        prompt = compose_artifact_review_prompt(state, step, persona, artifact)
         rc, out = _run_provider_counted(
             state, provider, "verifier", prompt, cfg,
             persona=persona, step_id=step["id"],
@@ -1299,7 +1304,12 @@ def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str
         attempt = int(st.get("retries", 0)) + 1
         lines.append(f"attempt: {attempt}")
         if st.get("last_failure"):
-            lines.append(f"previous_failure: {st['last_failure']}")
+            lines.append(
+                "previous_failure: "
+                + wrap_untrusted(
+                    st["last_failure"], "review correction conditions"
+                )
+            )
         recent = state.get("history", [])[-3:]
         if recent:
             lines.append("recent_history:")
@@ -1378,7 +1388,14 @@ def _compose_prompt_sections(facets: dict[str, list[str]], task_contract: str) -
     return "\n\n".join(sections)
 
 
-def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
+def compose_step_prompt(
+    state: dict,
+    step: dict,
+    st: dict | None = None,
+    *,
+    facets: dict[str, list[str]] | None = None,
+) -> str:
+    """Compose the canonical runtime generator prompt as a pure function."""
     contract = _build_step_contract(state, step, st)
     if state.get("recipe") == "japanese-writing" and step.get("id") == "write":
         output_rule = (
@@ -1392,12 +1409,21 @@ def _build_prompt(state: dict, step: dict, st: dict | None = None) -> str:
         f"{contract}\n"
         f"{output_rule}"
     )
-    return _compose_prompt_sections(_generator_facets(step), task_contract)
+    return _compose_prompt_sections(
+        _generator_facets(step) if facets is None else facets,
+        task_contract,
+    )
 
 
-def _build_artifact_review_prompt(
-    state: dict, step: dict, persona: str, artifact: str,
+def compose_artifact_review_prompt(
+    state: dict,
+    step: dict,
+    persona: str,
+    artifact: str,
+    *,
+    facets: dict[str, list[str]] | None = None,
 ) -> str:
+    """Compose the canonical runtime artifact-review prompt as a pure function."""
     persona_step = {**step, "personas": [persona]}
     goal = state.get("goal")
     task_lines = [
@@ -1415,7 +1441,35 @@ def _build_artifact_review_prompt(
         "Judge the artifact against the declared acceptance criteria and output contract.",
     ])
     task_contract = "\n".join(task_lines)
-    return _compose_prompt_sections(_generator_facets(persona_step), task_contract)
+    return _compose_prompt_sections(
+        _generator_facets(persona_step) if facets is None else facets,
+        task_contract,
+    )
+
+
+def compose_repair_prompt(
+    state: dict,
+    step: dict,
+    artifact: str,
+    correction_conditions: str,
+    *,
+    facets: dict[str, list[str]] | None = None,
+) -> str:
+    """Compose one canonical repair prompt from parsed, bounded review data."""
+    persisted = (state.get("step_state") or {}).get(step.get("id"))
+    repair_state = dict(persisted) if isinstance(persisted, dict) else {"retries": 1}
+    repair_state["last_failure"] = correction_conditions
+    base = compose_step_prompt(state, step, repair_state, facets=facets)
+    artifact_section = (
+        "## Artifact to repair\n\n"
+        + wrap_untrusted(artifact, "generated artifact")
+    )
+    return base + "\n\n" + artifact_section
+
+
+# Compatibility aliases for integrations that imported the historical private names.
+_build_prompt = compose_step_prompt
+_build_artifact_review_prompt = compose_artifact_review_prompt
 
 
 def _git_diff_evidence(cfg: dict) -> str | None:
@@ -1835,7 +1889,7 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
             state,
             gen_list[0],
             "generator",
-            _build_prompt(state, step, state["step_state"][step["id"]]),
+            compose_step_prompt(state, step, state["step_state"][step["id"]]),
             gen_cfg,
             step_id=step["id"],
         )
@@ -1855,7 +1909,7 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
             state,
             p,
             "generator",
-            _build_prompt(state, step, state["step_state"][step["id"]]),
+            compose_step_prompt(state, step, state["step_state"][step["id"]]),
             gen_cfg,
             step_id=step["id"],
         )
@@ -2125,7 +2179,7 @@ def execute_informed_repair(
         state,
         gen_list[0],
         "generator",
-        _build_prompt(state, repair_step, repair_state),
+        compose_step_prompt(state, repair_step, repair_state),
         generator_cfg,
         step_id=repair_step["id"],
     )
