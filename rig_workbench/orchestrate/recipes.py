@@ -216,6 +216,7 @@ def load_steps(fm: dict) -> list[dict]:
             "auto_route": s.get("auto_route"),               # optional: --auto-route candidates (#264)
             "actor": s.get("actor"),                         # optional: org ROLE owning this stage (v2.1)
             "human_gate": s.get("human_gate"),               # optional: halt for a person's sign-off (v2.1)
+            "material_profiles": s.get("material_profiles"), # bounded opt-in style material mapping
             # Prompt facets declared by a resolved recipe must stay bound to
             # that recipe's owner. None identifies old persisted/manual steps
             # created before composition provenance existed.

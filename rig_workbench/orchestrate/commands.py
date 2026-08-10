@@ -3,6 +3,7 @@
 import sys
 import os
 import json
+import hashlib
 import time
 import shlex
 import pathlib
@@ -16,8 +17,10 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
-from .providers import (parse_step_model_spec, read_result_artifact, run_loop,
-                        unknown_step_model_ids)
+from .providers import (JAPANESE_MATERIAL_PROFILES, JAPANESE_WRITING_REVIEW_CATEGORIES,
+                        resolve_japanese_material, parse_step_model_spec,
+                        read_result_artifact, run_loop, unknown_step_model_ids)
+from ..packs.model import PackError
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe
 from .secure_runtime import (SecureRuntimeError, close_secure_launchers,
@@ -25,6 +28,7 @@ from .secure_runtime import (SecureRuntimeError, close_secure_launchers,
                              requires_secure_runtime)
 from .secure_fs import (
     acquire_output_lock,
+    atomic_write_bytes,
     prepare_output_target,
     release_output_lock,
 )
@@ -569,6 +573,8 @@ def cmd_run(args):
               "--verifier-executable PATH --verifier-executable-sha256 HEX "
               "[--verifier-interpreter PATH --verifier-interpreter-sha256 HEX]] "
               "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
+              "[--review-category general|incident_report|support_reply] "
+              "[--material-profile none|technical|conversation] "
               "[--out f] [--isolate] [--auto-route] "
               "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
@@ -586,6 +592,8 @@ def cmd_run(args):
     goal = None
     goal_from_argv = False
     goal_stdin = False
+    review_category = None
+    material_profile = "none"
     out = pathlib.Path("run-state.json")
     out_explicit = False
     max_steps = 40
@@ -648,6 +656,18 @@ def cmd_run(args):
         elif a == "--goal-stdin":
             goal_stdin = True
             i += 1
+        elif a == "--review-category" and i + 1 < len(args):
+            review_category = args[i + 1]
+            i += 2
+        elif a == "--material-profile":
+            if i + 1 >= len(args):
+                diagnostic(
+                    "[BLOCKED] --material-profile requires "
+                    "none|technical|conversation"
+                )
+                raise SystemExit(2)
+            material_profile = args[i + 1]
+            i += 2
         elif a == "--check" and i + 1 < len(args):
             cli_checks.append(args[i + 1])
             i += 2
@@ -704,6 +724,36 @@ def cmd_run(args):
     if step_models:
         cfg["step_models"] = step_models
     secure_required = requires_secure_runtime(fm.get("name", path.stem), steps)
+    if (
+        secure_required
+        and fm.get("name", path.stem) == "japanese-writing"
+        and review_category not in JAPANESE_WRITING_REVIEW_CATEGORIES
+    ):
+        diagnostic(
+            "[BLOCKED] secure Japanese writing requires --review-category "
+            "general|incident_report|support_reply"
+        )
+        raise SystemExit(2)
+    if (
+        secure_required
+        and fm.get("name", path.stem) == "japanese-writing"
+        and material_profile not in JAPANESE_MATERIAL_PROFILES
+    ):
+        diagnostic(
+            "[BLOCKED] secure Japanese writing requires --material-profile "
+            "none|technical|conversation"
+        )
+        raise SystemExit(2)
+    material_text = None
+    material_metadata = None
+    if secure_required and fm.get("name", path.stem) == "japanese-writing":
+        try:
+            material_text, material_metadata = resolve_japanese_material(
+                steps[0], material_profile
+            )
+        except PackError as error:
+            diagnostic(f"[BLOCKED] {error}")
+            raise SystemExit(2) from error
     if secure_required and goal_from_argv and goal:
         diagnostic(
             "[BLOCKED] secure-provider-execution refuses --goal because parent argv "
@@ -770,6 +820,16 @@ def cmd_run(args):
         try:
             prepare_output_target(out)
             cfg["_secure_output_lock"] = acquire_output_lock(out)
+            material_snapshot = None
+            if material_text is not None:
+                snapshot_path = out.parent / f".{out.name}.material"
+                snapshot_bytes = material_text.encode("utf-8")
+                atomic_write_bytes(snapshot_path, snapshot_bytes)
+                material_snapshot = {
+                    "path": str(snapshot_path.absolute()),
+                    "sha256": hashlib.sha256(snapshot_bytes).hexdigest(),
+                    "size_bytes": len(snapshot_bytes),
+                }
             cfg["_secure_launchers"] = preflight_secure_runtime(gen, ver, cfg)
         except (OSError, SecureRuntimeError) as error:
             close_secure_launchers(cfg.pop("_secure_launchers", None))
@@ -778,10 +838,25 @@ def cmd_run(args):
             raise SystemExit(2) from error
         cfg["secure_runtime"] = True
     state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
+    if secure_required and fm.get("name", path.stem) == "japanese-writing":
+        state["review_category"] = review_category
+        state["material_profile"] = material_profile
+        state["material_provenance"] = material_metadata
+        state["material_snapshot"] = material_snapshot
+        state["history"].append({
+            "action": "BIND_REVIEW_CATEGORY",
+            "category": review_category,
+        })
     if cfg.get("secure_runtime"):
         state["secure_runtime"] = {
             "policy_version": 1,
             "prompt_transport": "stdin",
+            **({"review_category": review_category}
+               if state.get("recipe") == "japanese-writing" else {}),
+            **({"material_profile": material_profile,
+                "material_provenance": material_metadata,
+                "material_snapshot": material_snapshot}
+               if state.get("recipe") == "japanese-writing" else {}),
             "providers": {
                 role: {
                     "provider": launcher.provider,

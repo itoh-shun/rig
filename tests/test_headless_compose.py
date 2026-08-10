@@ -29,6 +29,27 @@ def _step(**overrides):
     return load_steps({"steps": [raw]})[0]
 
 
+def _japanese_review_json(
+    *, verdict="APPROVE", safety="PASS", fact="PASS",
+):
+    return json.dumps({
+        "target_format": "plain-text",
+        "checks": {
+            "single_artifact": {"status": "PASS", "anchor": "完成稿"},
+            "format": {"status": "PASS", "anchor": "plain-text"},
+            "fact_preservation": {"status": fact, "anchor": "依頼内容"},
+            "no_inference": {"status": "PASS", "anchor": "追加なし"},
+            "japanese_quality": {"status": "PASS", "anchor": "自然"},
+            "secret_handling": {"status": "N/A", "anchor": "該当なし"},
+            "incident_support_safety": {"status": safety, "anchor": "安全"},
+        },
+        "repair_conditions": (
+            ["なし"] if verdict == "APPROVE" else ["事実保持を修正する"]
+        ),
+        "verdict": verdict,
+    }, ensure_ascii=False)
+
+
 def test_generator_prompt_composes_resolved_facets_in_canonical_order():
     prompt = providers._build_prompt(
         {"recipe": "review-only", "goal": "Review the current diff", "history": []},
@@ -381,10 +402,24 @@ def test_japanese_pack_runs_writer_then_its_bound_independent_reviewer(
         calls.append((provider, role, persona, prompt))
         if role == "generator":
             return 0, "利用者へ渡す完成稿"
-        return 0, "根拠: 事実と形式を確認\n判定: APPROVE"
+        return 0, json.dumps({
+            "target_format": "plain-text",
+            "checks": {
+                "single_artifact": {"status": "PASS", "anchor": "完成稿"},
+                "format": {"status": "PASS", "anchor": "plain-text"},
+                "fact_preservation": {"status": "PASS", "anchor": "依頼内容"},
+                "no_inference": {"status": "PASS", "anchor": "追加なし"},
+                "japanese_quality": {"status": "PASS", "anchor": "自然"},
+                "secret_handling": {"status": "N/A", "anchor": "該当なし"},
+                "incident_support_safety": {"status": "PASS", "anchor": "安全"},
+            },
+            "repair_conditions": ["なし"],
+            "verdict": "APPROVE",
+        }, ensure_ascii=False)
 
     monkeypatch.setattr(providers, "run_provider", fake_run_provider)
     state = new_state("japanese-writing", steps, "障害連絡を書く")
+    state["review_category"] = "incident_report"
 
     final = providers.run_loop(
         state, tmp_path / "run-state.json", "writer-provider", "review-provider",
@@ -404,6 +439,317 @@ def test_japanese_pack_runs_writer_then_its_bound_independent_reviewer(
     assert "# instruction: japanese-writing-review" in review_prompt
     assert "# output contract: japanese-writing-verdict" in review_prompt
     assert "利用者へ渡す完成稿" in review_prompt
+
+
+def test_japanese_material_profile_is_bounded_to_write_knowledge_only():
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    write, review = load_steps(resolved)
+    base = new_state("japanese-writing", [write, review], "技術説明を書く")
+    base["review_category"] = "general"
+
+    none_prompt = providers.compose_step_prompt(base, write)
+    explicit_none = {**base, "material_profile": "none"}
+    assert providers.compose_step_prompt(explicit_none, write) == none_prompt
+
+    technical = {**base, "material_profile": "technical"}
+    technical_prompt = providers.compose_step_prompt(technical, write)
+    assert "## Knowledge" in technical_prompt
+    assert "<<UNTRUSTED-" in technical_prompt
+    assert "do not use it as a source of facts, do not quote it" in technical_prompt
+    assert "書き手が交代した瞬間に、暗黙だった制約は制約でなくなる" in technical_prompt
+    assert "今日のテーマ、これです" not in technical_prompt
+
+    conversation = {**base, "material_profile": "conversation"}
+    conversation_prompt = providers.compose_step_prompt(conversation, write)
+    assert "今日のテーマ、これです" in conversation_prompt
+    assert "書き手が交代した瞬間に、暗黙だった制約は制約でなくなる" not in conversation_prompt
+
+    review_prompt = providers.compose_artifact_review_prompt(
+        conversation, review, "japanese-writing-reviewer", "完成稿"
+    )
+    assert "style-only" not in review_prompt
+    assert "今日のテーマ、これです" not in review_prompt
+
+
+@pytest.mark.parametrize("attack", ["oversize", "provenance"])
+def test_japanese_material_profile_fails_closed_on_asset_contract_drift(
+    monkeypatch, attack,
+):
+    from rig_workbench.packs.model import PackError
+
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    write = load_steps(resolved)[0]
+    original = providers._load_composition_asset
+
+    def drifted(kind, name, **kwargs):
+        frontmatter, body = original(kind, name, **kwargs)
+        if kind == "wiki" and name == "japanese-style-material-technical":
+            if attack == "oversize":
+                body = "あ" * 1000
+            else:
+                frontmatter = dict(frontmatter)
+                provenance = dict(frontmatter["material_provenance"])
+                provenance["source_sha256"] = "0" * 64
+                frontmatter["material_provenance"] = provenance
+        return frontmatter, body
+
+    monkeypatch.setattr(providers, "_load_composition_asset", drifted)
+    with pytest.raises(PackError):
+        providers.japanese_material_metadata(write, "technical")
+
+
+def test_japanese_runtime_retries_parser_invalid_review_without_rewriting_writer(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    steps = load_steps(resolved)
+    reviews = iter(["not-json", "{}", _japanese_review_json()])
+    calls = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        calls.append((role, step_id))
+        if role == "generator":
+            return 0, "利用者へ渡す完成稿"
+        return 0, next(reviews)
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("japanese-writing", steps, "一般向け告知を書く")
+    state["review_category"] = "general"
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer-provider", "review-provider",
+        {"model": "shared-model", "secure_runtime": True}, 10, quiet=True,
+    )
+
+    assert final == "DONE"
+    assert calls.count(("generator", "write")) == 1
+    assert calls.count(("verifier", "review")) == 3
+    assert state["step_state"]["write"]["retries"] == 0
+
+
+def test_japanese_runtime_exhausts_only_invalid_reviews_without_writer_rewrite(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    calls = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        calls.append((role, step_id))
+        return (0, "初稿") if role == "generator" else (0, "not-json")
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("japanese-writing", load_steps(resolved), "一般向け告知を書く")
+    state["review_category"] = "general"
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer", "reviewer",
+        {"secure_runtime": True}, 10, quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert calls.count(("generator", "write")) == 1
+    assert calls.count(("verifier", "review")) == 3
+    assert state["step_state"]["write"]["retries"] == 0
+    assert "not-json" not in json.dumps(state, ensure_ascii=False)
+    assert "parser-invalid after 3 attempts" in state["stopped"]["reason"]
+
+
+def test_japanese_runtime_mixed_invalid_then_transport_aborts_without_rewrite(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    review_calls = 0
+    writer_calls = 0
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        nonlocal review_calls, writer_calls
+        if role == "generator":
+            writer_calls += 1
+            return 0, "初稿"
+        review_calls += 1
+        return (0, "not-json") if review_calls == 1 else (75, "transport detail")
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("japanese-writing", load_steps(resolved), "一般向け告知を書く")
+    state["review_category"] = "general"
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer", "reviewer",
+        {"secure_runtime": True}, 10, quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert (writer_calls, review_calls) == (1, 2)
+    assert state["step_state"]["write"]["retries"] == 0
+    assert "transport detail" not in json.dumps(state, ensure_ascii=False)
+    assert "transport failed" in state["stopped"]["reason"]
+
+
+def test_japanese_runtime_valid_revise_consumes_one_writer_rewrite(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    drafts = iter(["初稿", "修正版"])
+    reviews = iter([
+        _japanese_review_json(verdict="REVISE", fact="FAIL"),
+        _japanese_review_json(),
+    ])
+    calls = []
+    generator_prompts = []
+    canonical_runtime_repair_prompts = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        calls.append((role, step_id))
+        if role == "generator":
+            generator_prompts.append(prompt)
+            if len(generator_prompts) == 2:
+                context = state["step_state"]["write"]["repair_context"]
+                correction_text = json.dumps(
+                    context["corrections"], ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":"),
+                )
+                canonical_runtime_repair_prompts.append(
+                    providers.compose_repair_prompt(
+                        state, state["steps"][0], "初稿", correction_text,
+                    )
+                )
+            return 0, next(drafts)
+        return 0, next(reviews)
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("japanese-writing", load_steps(resolved), "一般向け告知を書く")
+    state["review_category"] = "general"
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer", "reviewer",
+        {"secure_runtime": True}, 10, quiet=True,
+    )
+
+    assert final == "DONE"
+    assert calls == [
+        ("generator", "write"), ("verifier", "review"),
+        ("generator", "write"), ("verifier", "review"),
+    ]
+    assert state["step_state"]["review"]["retries"] == 1
+    assert generator_prompts[1] == canonical_runtime_repair_prompts[0]
+    parsed_revise = providers.parse_japanese_writing_review(
+        _japanese_review_json(verdict="REVISE", fact="FAIL"),
+        category="general",
+    )
+    correction_text = json.dumps(
+        providers.japanese_review_corrections(
+            parsed_revise, category="general",
+        ),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert providers.wrap_untrusted(
+        "初稿", "generated artifact",
+    ) in generator_prompts[1]
+    assert providers.wrap_untrusted(
+        correction_text, "review correction conditions",
+    ) in generator_prompts[1]
+    assert "exit 0; verdict=fail" not in generator_prompts[1]
+    assert "repair_context" not in state["step_state"]["write"]
+    assert "事実保持を修正する" not in json.dumps(state, ensure_ascii=False)
+
+
+def test_japanese_runtime_second_valid_revise_is_terminal_without_a2(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    drafts = iter(["A0", "A1", "A2 must not run"])
+    reviews = iter([
+        _japanese_review_json(verdict="REVISE", fact="FAIL"),
+        _japanese_review_json(verdict="REVISE", fact="FAIL"),
+        _japanese_review_json(),
+    ])
+    calls = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        calls.append((role, step_id))
+        return (0, next(drafts)) if role == "generator" else (0, next(reviews))
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("japanese-writing", load_steps(resolved), "一般向け告知を書く")
+    state["review_category"] = "general"
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer", "reviewer",
+        {"secure_runtime": True}, 20, quiet=True,
+    )
+
+    assert final == "NON_DELIVERABLE"
+    assert calls == [
+        ("generator", "write"), ("verifier", "review"),
+        ("generator", "write"), ("verifier", "review"),
+    ]
+    assert state["step_state"]["review"]["retries"] == 1
+    assert "semantic rewrite limit" in state["stopped"]["reason"]
+
+
+def test_secure_japanese_runtime_requires_bound_category_before_provider(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    calls = []
+    monkeypatch.setattr(
+        providers, "run_provider",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or (0, "unexpected"),
+    )
+    state = new_state("japanese-writing", load_steps(resolved), "一般向け告知を書く")
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer", "reviewer",
+        {"secure_runtime": True}, 10, quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert calls == []
+    assert "review category" in state["stopped"]["reason"]
 
 
 def test_revise_routes_back_to_writer_and_reviews_only_the_changed_artifact(

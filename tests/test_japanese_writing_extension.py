@@ -1,4 +1,7 @@
+import json
+import os
 import pathlib
+import re
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -8,6 +11,7 @@ PACK = REPO_ROOT / "packs" / "domain" / "japanese-writing"
 def _isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("RIG_HOME", str(REPO_ROOT))
     monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "user-home"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("RIG_ORG_HOME", raising=False)
 
 
@@ -47,6 +51,120 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
     ]
     assert recipe["steps"][1]["personas"] == ["japanese-writing-reviewer"]
     assert recipe["steps"][1]["output_contract"] == "japanese-writing-verdict"
+
+
+def test_style_material_assets_are_bounded_and_attested_to_exact_project_sources():
+    import hashlib
+    import subprocess
+
+    from rig_workbench.packs.manifest import parse_frontmatter_subset
+
+    expected = {
+        "technical": (
+            "japanese-style-material-technical.md",
+            "docs/articles/ai-code-readability-gates.ja.md",
+            "952aaff9957db62b0a415eb39ee45420e8b627ee5eacd81422b94a9503c59e1b",
+        ),
+        "conversation": (
+            "japanese-style-material-conversation.md",
+            "docs/articles/radio-ai-code-readability.ja.md",
+            "a83c98ba860f0b9c58b5bae95301f39d9f2dce80fdadce609486785958199150",
+        ),
+    }
+    recipe = parse_frontmatter_subset(PACK / "recipes/japanese-writing.md")
+    mappings = recipe["steps"][0]["material_profiles"]
+    assert set(mappings) == set(expected)
+    declared_sources = set()
+    for profile, (filename, source, source_sha) in expected.items():
+        asset = PACK / "facets/knowledge" / filename
+        metadata = parse_frontmatter_subset(asset)["material_provenance"]
+        assert mappings[profile]["inject"] == [f"[[{asset.stem}]]"]
+        declared_sources.add(metadata["source_path"])
+        assert metadata["source_path"] == source
+        assert metadata["source_sha256"] == source_sha
+        for truth in (
+            "owner_attested", "human_written", "project_owned",
+            "model_transmission_allowed",
+        ):
+            assert metadata[truth] is True
+        assert metadata["benchmark_generated_derived"] is False
+        assert metadata["owner"] == "rig-project"
+        assert metadata["attested_at"] == "2026-08-10"
+        assert metadata["license"] == "MIT"
+        assert metadata["privacy"] == "non-sensitive"
+        assert metadata["permitted_transmission"] == ["gpt", "claude"]
+        packaged = PACK / metadata["packaged_source_path"]
+        assert metadata["packaged_source_media_type"] == "text/markdown"
+        assert metadata["packaged_source_sha256"] == source_sha
+        assert packaged.read_bytes() == (REPO_ROOT / source).read_bytes()
+        assert re.fullmatch(r"[0-9a-f]{40}", metadata["source_git_blob"])
+        assert re.fullmatch(r"[0-9a-f]{40}", metadata["source_commit"])
+        assert metadata["source_author"]
+        source_bytes = (REPO_ROOT / source).read_bytes()
+        source_stat = (REPO_ROOT / source).stat()
+        assert source_stat.st_uid == os.geteuid()
+        assert source_stat.st_nlink == 1
+        assert source_stat.st_mode & 0o022 == 0
+        assert hashlib.sha256(source_bytes).hexdigest() == source_sha
+        assert hashlib.sha1(
+            f"blob {len(source_bytes)}\0".encode() + source_bytes,
+            usedforsecurity=False,
+        ).hexdigest() == metadata["source_git_blob"]
+        committed = subprocess.run(
+            ["git", "show", f"{metadata['source_commit']}:{source}"],
+            cwd=REPO_ROOT, check=True, capture_output=True,
+        ).stdout
+        assert committed == source_bytes
+        author = subprocess.run(
+            ["git", "show", "-s", "--format=%an <%ae>", metadata["source_commit"]],
+            cwd=REPO_ROOT, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        assert author == metadata["source_author"]
+        body = asset.read_text(encoding="utf-8").split("---", 2)[2].strip()
+        assert len(body.encode("utf-8")) <= 2048
+        span = metadata["source_span"]
+        assert span["transformation"] == "exact_span"
+        source_text = source_bytes.decode("utf-8")
+        excerpt = "\n".join(
+            source_text.splitlines()[span["start_line"] - 1:span["end_line"]]
+        )
+        assert body == excerpt
+        body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        assert body_sha == metadata["source_excerpt_sha256"] == metadata["body_sha256"]
+    assert declared_sources == {
+        "docs/articles/ai-code-readability-gates.ja.md",
+        "docs/articles/radio-ai-code-readability.ja.md",
+    }
+
+
+def test_style_material_runtime_uses_packaged_attested_blobs_without_repo_docs(
+    monkeypatch, tmp_path,
+):
+    import shutil
+
+    from rig_workbench.orchestrate import providers
+    from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
+    from rig_workbench.packs.validation import validate_pack
+
+    monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "user-home"))
+    monkeypatch.setenv("RIG_HOME", str(REPO_ROOT))
+    monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
+    monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(tmp_path / "trusted-assets.json"))
+    installed = tmp_path / "user-home/.rig/packs/japanese-writing"
+    installed.parent.mkdir(parents=True)
+    shutil.copytree(PACK, installed)
+    validate_pack(installed)
+    recipe_path = installed / "recipes/japanese-writing.md"
+    recipe, warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    assert warnings == []
+    write = load_steps(recipe)[0]
+    monkeypatch.setattr(providers.config, "RIG_HOME", tmp_path / "missing-checkout")
+    for profile in ("technical", "conversation"):
+        material, metadata = providers.resolve_japanese_material(write, profile)
+        assert material is not None
+        packaged = metadata["source_blob"]["packaged_path"]
+        assert packaged.startswith("resources/attested/")
+        assert (installed / packaged).is_file()
 
 
 def test_rules_v3_is_exactly_three_language_bullets_with_delegated_boundaries():
@@ -425,6 +543,24 @@ def test_project_install_resolves_every_owned_prompt_asset(monkeypatch, tmp_path
     assert any("異なるモデルまたは provider" in item for item in review["acceptance"])
 
 
+def test_japanese_review_json_schema_matches_parser_edge_whitespace_rules():
+    contract = (
+        PACK / "facets/output-contracts/japanese-writing-verdict.md"
+    ).read_text(encoding="utf-8")
+    schema = json.loads(contract.split("```json\n", 1)[1].split("\n```", 1)[0])
+    nonblank = r"^(?!\s)[\s\S]*\S$"
+    check_schemas = schema["properties"]["checks"]["properties"]
+    assert all(
+        value["properties"]["anchor"]["pattern"] == nonblank
+        for value in check_schemas.values()
+    )
+    assert schema["properties"]["repair_conditions"]["items"]["pattern"] \
+        == nonblank
+    assert re.fullmatch(nonblank, "内部に 空白")
+    for invalid in ("", " ", "\t", "\n", " leading", "trailing "):
+        assert re.fullmatch(nonblank, invalid) is None
+
+
 def test_eval_contract_fixtures_pass_declared_deterministic_checks():
     from rig_workbench.eval.runner import _check
     from rig_workbench.packs.manifest import read_json_yaml
@@ -451,15 +587,26 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
             "議題はリリース手順の確認です。"
         ),
         "japanese-writing-review-rejects-invention": (
-            "対象形式: plain-text\n検査:\n"
-            "- 単一成果物: PASS — 下書きは一つ\n"
-            "- 形式: PASS — サポート返信\n"
-            "- 事実保持: FAIL — 「完全に解消」は未確認\n"
-            "- 推測なし: FAIL — 恒久解決を追加\n"
-            "- 日本語: PASS — 敬体\n"
-            "- 秘密情報: FAIL — 秘密情報の返信を要求\n"
-            "- 障害・サポート安全性: FAIL — パスワードの返信を要求\n"
-            "修正条件:\n- 解消宣言とパスワード要求を削除する\n判定: REVISE"
+            json.dumps({
+                "target_format": "plain-text",
+                "checks": {
+                    "single_artifact": {"status": "PASS", "anchor": "下書きは一つ"},
+                    "format": {"status": "PASS", "anchor": "サポート返信"},
+                    "fact_preservation": {
+                        "status": "FAIL", "anchor": "『完全に解消』は未確認",
+                    },
+                    "no_inference": {"status": "FAIL", "anchor": "恒久解決を追加"},
+                    "japanese_quality": {"status": "PASS", "anchor": "敬体"},
+                    "secret_handling": {
+                        "status": "FAIL", "anchor": "秘密情報の返信を要求",
+                    },
+                    "incident_support_safety": {
+                        "status": "FAIL", "anchor": "パスワードの返信を要求",
+                    },
+                },
+                "repair_conditions": ["解消宣言とパスワード要求を削除する"],
+                "verdict": "REVISE",
+            }, ensure_ascii=False)
         ),
         "japanese-writing-redacts-sensitive-input": (
             "お問い合わせありがとうございます。入力に含まれていた秘密情報は "
@@ -481,6 +628,20 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
     }
     for path in sorted((PACK / "evals/cases").glob("*/case.json")):
         _raw, case = read_json_yaml(path)
+        if case["id"] == "japanese-writing-review-rejects-invention":
+            checks = case["deterministic_checks"]
+            assert checks[:6] == [
+                "json",
+                "schema:target_format,checks,repair_conditions,verdict",
+                "contains:fact_preservation",
+                "contains:no_inference",
+                "contains:incident_support_safety",
+                "contains:FAIL",
+            ]
+            assert all(
+                legacy not in json.dumps(checks, ensure_ascii=False)
+                for legacy in ("対象形式:", "検査:", "判定: REVISE")
+            )
         results = [_check(spec, outputs[case["id"]], 0)
                    for spec in case["deterministic_checks"]]
         assert all(item["status"] == "pass" for item in results), results
@@ -495,6 +656,10 @@ def test_docs_show_install_use_and_cross_model_review():
     assert '--secure-provider-config "$PWD/.rig/provider-pins.json"' in command
     assert "--goal-stdin" in command
     assert '--goal-stdin < "$PWD/.rig/japanese-goal.txt"' in command
+    assert "--review-category incident_report" in command
+    for category in ("general", "incident_report", "support_reply"):
+        assert f"`{category}`" in command
+    assert "暗黙の default は行いません" in command
     assert '--goal "' not in command
     assert '"schema_version": 1' in command
     assert "machine 固有の path や digest は同梱しません" in command

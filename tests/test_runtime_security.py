@@ -40,11 +40,34 @@ def _independent_recipe(path: pathlib.Path) -> pathlib.Path:
         "  - id: review\n"
         "    instruction: japanese-writing-review\n"
         "    gate: review-gate\n"
+        "    output_contract: japanese-writing-verdict\n"
         "    policies: [independent-verification, secure-provider-execution]\n"
         "---\n",
         encoding="utf-8",
     )
     return path
+
+
+def _bind_secure_review_category(state: dict, category: str = "general") -> None:
+    material = {
+        "profile": "none", "asset_id": None, "asset_sha256": None,
+        "source_blob": None,
+    }
+    state["review_category"] = category
+    state["material_profile"] = "none"
+    state["material_provenance"] = material
+    state["material_snapshot"] = None
+    state["secure_runtime"] = {
+        "policy_version": 1,
+        "review_category": category,
+        "material_profile": "none",
+        "material_provenance": material,
+        "material_snapshot": None,
+    }
+    state["history"].append({
+        "action": "BIND_REVIEW_CATEGORY",
+        "category": category,
+    })
 
 
 def test_run_usage_discovers_config_and_all_direct_pin_flags(capsys):
@@ -57,6 +80,8 @@ def test_run_usage_discovers_config_and_all_direct_pin_flags(capsys):
     assert stopped.value.code == 1
     assert "--secure-provider-config" in usage
     assert "--goal-stdin" in usage
+    assert "--review-category general|incident_report|support_reply" in usage
+    assert "--material-profile none|technical|conversation" in usage
     for role in ("generator", "verifier"):
         assert f"--{role}-executable" in usage
         assert f"--{role}-executable-sha256" in usage
@@ -128,6 +153,8 @@ def test_secure_run_rejects_parent_argv_goal_before_provider_or_state(
                 "codex",
                 "--goal",
                 "障害連絡を書く",
+                "--review-category",
+                "incident_report",
                 "--out",
                 str(tmp_path / "run-state.json"),
             ]
@@ -136,6 +163,62 @@ def test_secure_run_rejects_parent_argv_goal_before_provider_or_state(
     assert stopped.value.code == 2
     assert not (tmp_path / "run-state.json").exists()
     assert "--goal-stdin" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("category_args", [[], ["--review-category", "unknown"]])
+def test_secure_japanese_run_requires_explicit_valid_review_category_before_input_or_provider(
+    tmp_path, monkeypatch, capsys, category_args,
+):
+    from rig_workbench.orchestrate import commands
+
+    recipe = _independent_recipe(tmp_path / "japanese-writing.md")
+    stdin = _CountingStdin(b"private goal")
+    monkeypatch.setattr(commands, "resolve_recipe", lambda _name: recipe)
+    monkeypatch.setattr(commands.sys, "stdin", stdin)
+    monkeypatch.setattr(
+        commands, "preflight_secure_runtime",
+        lambda *_args, **_kwargs: pytest.fail("provider launchers opened"),
+    )
+    monkeypatch.setattr(
+        commands, "new_state", lambda *_args, **_kwargs: pytest.fail("state created"),
+    )
+
+    with pytest.raises(SystemExit) as stopped:
+        commands.cmd_run([
+            "japanese-writing", "--provider", "claude",
+            "--verifier-provider", "codex", "--goal-stdin", *category_args,
+        ])
+
+    assert stopped.value.code == 2
+    assert "--review-category" in capsys.readouterr().err
+    assert stdin.read_calls == 0
+
+
+@pytest.mark.parametrize("profile_args", [["--material-profile", "invented"], ["--material-profile"]])
+def test_secure_japanese_run_rejects_unknown_material_profile_before_input_or_provider(
+    tmp_path, monkeypatch, capsys, profile_args,
+):
+    from rig_workbench.orchestrate import commands
+
+    recipe = _independent_recipe(tmp_path / "japanese-writing.md")
+    stdin = _CountingStdin(b"private goal")
+    monkeypatch.setattr(commands, "resolve_recipe", lambda _name: recipe)
+    monkeypatch.setattr(commands.sys, "stdin", stdin)
+    monkeypatch.setattr(
+        commands, "preflight_secure_runtime",
+        lambda *_args, **_kwargs: pytest.fail("provider launchers opened"),
+    )
+
+    with pytest.raises(SystemExit) as stopped:
+        commands.cmd_run([
+            "japanese-writing", "--provider", "claude",
+            "--verifier-provider", "codex", "--goal-stdin",
+            "--review-category", "general", *profile_args,
+        ])
+
+    assert stopped.value.code == 2
+    assert "--material-profile" in capsys.readouterr().err
+    assert stdin.read_calls == 0
 
 
 def test_legacy_nonsecure_run_keeps_goal_argv_compatibility(
@@ -199,6 +282,8 @@ def test_secure_goal_stdin_without_pins_stops_before_provider_or_state(
                 "--verifier-provider",
                 "codex",
                 "--goal-stdin",
+                "--review-category",
+                "general",
                 "--out",
                 str(tmp_path / "run-state.json"),
             ]
@@ -249,6 +334,8 @@ def test_secure_goal_stdin_boundaries_fail_before_provider_or_state(
                 "--verifier-provider",
                 "codex",
                 "--goal-stdin",
+                "--review-category",
+                "general",
             ]
         )
 
@@ -289,6 +376,8 @@ def test_secure_run_rejects_unsafe_explicit_output_before_provider(
                 "--verifier-provider",
                 "codex",
                 "--goal-stdin",
+                "--review-category",
+                "general",
                 "--out",
                 str(unsafe_parent / "run-state.json"),
             ]
@@ -333,6 +422,8 @@ def test_secure_run_lock_rejects_second_session_before_provider_and_preserves_st
                     "--verifier-provider",
                     "codex",
                     "--goal-stdin",
+                    "--review-category",
+                    "general",
                     "--out",
                     str(state_path),
                 ]
@@ -360,7 +451,7 @@ def test_secure_resume_refuses_active_run_lock_without_writing(
         [step_factory(id="write", policies=["secure-provider-execution"])],
         "private",
     )
-    state["secure_runtime"] = {"policy_version": 1}
+    _bind_secure_review_category(state)
     save_state(state, state_path)
     before = state_path.read_bytes()
     active_run_lock = acquire_output_lock(state_path)
@@ -388,7 +479,7 @@ def test_secure_resume_never_reads_goal_stdin(tmp_path, monkeypatch, step_factor
         [step_factory(id="write", policies=["secure-provider-execution"])],
         "private",
     )
-    state["secure_runtime"] = {"policy_version": 1}
+    _bind_secure_review_category(state)
     save_state(state, state_path)
     forbidden_stdin = _CountingStdin(b"unexpected", read_error=True)
     monkeypatch.setattr(commands.sys, "stdin", forbidden_stdin)
@@ -396,6 +487,119 @@ def test_secure_resume_never_reads_goal_stdin(tmp_path, monkeypatch, step_factor
     commands.cmd_resume([str(state_path)])
 
     assert forbidden_stdin.read_calls == 0
+
+
+def test_secure_japanese_state_rejects_review_category_tamper_on_load(
+    tmp_path, step_factory,
+):
+    from rig_workbench.orchestrate.runstate import load_state, new_state, save_state
+
+    state_path = tmp_path / "run-state.json"
+    state = new_state(
+        "japanese-writing",
+        [step_factory(id="write", policies=["secure-provider-execution"])],
+        "private",
+    )
+    state["review_category"] = "support_reply"
+    state["history"].append({
+        "action": "BIND_REVIEW_CATEGORY", "category": "support_reply",
+    })
+    state["secure_runtime"] = {
+        "policy_version": 1,
+        "review_category": "support_reply",
+    }
+    save_state(state, state_path)
+    tampered = json.loads(state_path.read_text(encoding="utf-8"))
+    tampered["review_category"] = "general"
+    state_path.write_text(json.dumps(tampered), encoding="utf-8")
+
+    with pytest.raises(OSError, match="review category binding"):
+        load_state(state_path)
+
+
+def test_secure_japanese_state_rejects_material_profile_tamper_on_load(
+    tmp_path, step_factory,
+):
+    from rig_workbench.orchestrate.runstate import load_state, new_state, save_state
+
+    state_path = tmp_path / "run-state.json"
+    state = new_state(
+        "japanese-writing",
+        [step_factory(id="write", policies=["secure-provider-execution"])],
+        "private",
+    )
+    _bind_secure_review_category(state)
+    save_state(state, state_path)
+    tampered = json.loads(state_path.read_text(encoding="utf-8"))
+    tampered["material_profile"] = "technical"
+    tampered["secure_runtime"]["material_profile"] = "technical"
+    state_path.write_text(json.dumps(tampered), encoding="utf-8")
+
+    with pytest.raises(OSError, match="material profile binding"):
+        load_state(state_path)
+
+
+def test_secure_material_snapshot_is_stable_during_run_and_asset_drift_blocks_resume(
+    tmp_path, monkeypatch,
+):
+    from rig_workbench.orchestrate import providers
+    from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
+    from rig_workbench.orchestrate.runstate import load_state, new_state, save_state
+    from rig_workbench.orchestrate.secure_fs import atomic_write_bytes
+
+    recipe_path = pathlib.Path(__file__).resolve().parents[1] / (
+        "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    recipe, _warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    write, review = load_steps(recipe)
+    material, metadata = providers.resolve_japanese_material(write, "technical")
+    assert material is not None
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    snapshot_path = private / ".run-state.json.material"
+    snapshot_bytes = material.encode("utf-8")
+    atomic_write_bytes(snapshot_path, snapshot_bytes)
+    snapshot = {
+        "path": str(snapshot_path),
+        "sha256": hashlib.sha256(snapshot_bytes).hexdigest(),
+        "size_bytes": len(snapshot_bytes),
+    }
+    state = new_state("japanese-writing", [write, review], "技術説明を書く")
+    state["review_category"] = "general"
+    state["history"].append({"action": "BIND_REVIEW_CATEGORY", "category": "general"})
+    state["material_profile"] = "technical"
+    state["material_provenance"] = metadata
+    state["material_snapshot"] = snapshot
+    state["secure_runtime"] = {
+        "policy_version": 1,
+        "review_category": "general",
+        "material_profile": "technical",
+        "material_provenance": metadata,
+        "material_snapshot": snapshot,
+    }
+    prompt_before = providers.compose_step_prompt(state, write)
+    state_path = private / "run-state.json"
+    save_state(state, state_path)
+
+    original_loader = providers._load_composition_asset
+    def changed_material(kind, name, **kwargs):
+        if kind == "wiki" and name == "japanese-style-material-technical":
+            from rig_workbench.packs.model import PackError
+            raise PackError("synthetic material asset swap")
+        return original_loader(kind, name, **kwargs)
+    monkeypatch.setattr(providers, "_load_composition_asset", changed_material)
+    assert providers.compose_step_prompt(state, write) == prompt_before
+    repair_prompt = providers.compose_repair_prompt(
+        state, write, "初稿", "検証済み修正条件"
+    )
+    marker = "書き手が交代した瞬間に、暗黙だった制約は制約でなくなる"
+    assert marker in prompt_before and marker in repair_prompt
+    with pytest.raises(OSError, match="provenance cannot be verified"):
+        load_state(state_path)
+
+    atomic_write_bytes(snapshot_path, b"changed")
+    with pytest.raises(Exception, match="snapshot hash changed"):
+        providers.compose_step_prompt(state, write)
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -423,6 +627,23 @@ def _fake_provider(
     path.chmod(0o700)
 
 
+def _valid_japanese_review_output(*, safety="PASS") -> str:
+    return json.dumps({
+        "target_format": "plain-text",
+        "checks": {
+            "single_artifact": {"status": "PASS", "anchor": "one"},
+            "format": {"status": "PASS", "anchor": "format"},
+            "fact_preservation": {"status": "PASS", "anchor": "facts"},
+            "no_inference": {"status": "PASS", "anchor": "grounded"},
+            "japanese_quality": {"status": "PASS", "anchor": "Japanese"},
+            "secret_handling": {"status": "N/A", "anchor": "none"},
+            "incident_support_safety": {"status": safety, "anchor": "safe"},
+        },
+        "repair_conditions": ["なし"],
+        "verdict": "APPROVE",
+    }, ensure_ascii=False)
+
+
 @pytest.mark.parametrize("explicit_out", [True, False])
 def test_valid_pinned_fake_claude_to_codex_uses_stdin_and_secure_flags(
     tmp_path, monkeypatch, capsys, explicit_out,
@@ -442,7 +663,7 @@ def test_valid_pinned_fake_claude_to_codex_uses_stdin_and_secure_flags(
         "復旧作業は完了しました。",
         stdin_log=generator_stdin,
     )
-    _fake_provider(verifier, verifier_argv, "VERDICT: PASS")
+    _fake_provider(verifier, verifier_argv, _valid_japanese_review_output())
     interpreter = pathlib.Path("/bin/sh")
     pin_config = tmp_path / "provider-pins.json"
     pin_config.write_text(
@@ -497,6 +718,8 @@ def test_valid_pinned_fake_claude_to_codex_uses_stdin_and_secure_flags(
         "--secure-provider-config",
         str(pin_config),
         "--goal-stdin",
+        "--review-category",
+        "incident_report",
     ]
     if explicit_out:
         run_args += ["--out", str(tmp_path / "run-state.json")]
@@ -540,6 +763,11 @@ def test_valid_pinned_fake_claude_to_codex_uses_stdin_and_secure_flags(
     persisted = state_path.read_text(encoding="utf-8")
     assert "障害連絡を書く" not in persisted
     assert "goal_sha256" in persisted
+    persisted_state = json.loads(persisted)
+    assert persisted_state["review_category"] == "incident_report"
+    assert persisted_state["secure_runtime"]["review_category"] == "incident_report"
+    assert {"action": "BIND_REVIEW_CATEGORY", "category": "incident_report"} \
+        in persisted_state["history"]
 
 
 @pytest.mark.parametrize("attack", ["symlink", "hardlink"])
@@ -771,3 +999,86 @@ def test_direct_run_loop_cannot_bypass_secure_preflight(monkeypatch):
     assert final == "BLOCKED"
     assert calls == []
     assert "exactly one pinned generator" in multi_state["stopped"]["reason"]
+
+
+def test_japanese_artifact_review_uses_canonical_strict_json_parser_only(monkeypatch):
+    from rig_workbench.orchestrate import providers
+
+    checks = {
+        "single_artifact": {"status": "PASS", "anchor": "one"},
+        "format": {"status": "PASS", "anchor": "format"},
+        "fact_preservation": {"status": "PASS", "anchor": "facts"},
+        "no_inference": {"status": "PASS", "anchor": "grounded"},
+        "japanese_quality": {"status": "PASS", "anchor": "Japanese"},
+        "secret_handling": {"status": "N/A", "anchor": "none"},
+        "incident_support_safety": {"status": "PASS", "anchor": "safe"},
+    }
+    approved = json.dumps({
+        "target_format": "plain-text",
+        "checks": checks,
+        "repair_conditions": ["なし"],
+        "verdict": "APPROVE",
+    })
+    state = {"review_category": "support_reply"}
+    step = {"output_contract": "japanese-writing-verdict"}
+
+    valid, ok, criteria = providers._artifact_review_judgment(state, step, approved)
+    assert valid is True
+    assert ok is True
+    assert [row["verdict"] for row in criteria] == [
+        "PASS", "PASS", "PASS", "PASS", "PASS", "N/A", "PASS",
+    ]
+
+    revised = json.loads(approved)
+    revised["checks"]["fact_preservation"]["status"] = "FAIL"
+    revised["repair_conditions"] = ["事実保持を修正する"]
+    revised["verdict"] = "REVISE"
+    assert providers._artifact_review_judgment(
+        state, step, json.dumps(revised)
+    )[1] is False
+    assert providers._artifact_review_judgment(
+        state, step, "VERDICT: PASS"
+    ) == (False, False, [])
+    safety_na = json.loads(approved)
+    safety_na["checks"]["incident_support_safety"]["status"] = "N/A"
+    safety_na_json = json.dumps(safety_na)
+    assert providers._artifact_review_judgment(
+        state, step, safety_na_json
+    ) == (False, False, [])
+    general_state = {"review_category": "general"}
+    assert providers._artifact_review_judgment(
+        general_state, step, safety_na_json
+    )[1] is True
+
+    runtime_step = {
+        "id": "review",
+        "personas": ["japanese-writing-reviewer"],
+        "output_contract": "japanese-writing-verdict",
+    }
+    monkeypatch.setattr(
+        providers, "compose_artifact_review_prompt",
+        lambda *_args, **_kwargs: "trusted-review-prompt",
+    )
+    monkeypatch.setattr(
+        providers, "_run_provider_counted",
+        lambda *_args, **_kwargs: (0, approved),
+    )
+    result = providers._run_artifact_reviewers(
+        "codex", state, runtime_step, "artifact", {"secure_runtime": True}, 1,
+    )
+    assert result[0]["ok"] is True
+    assert result[0]["note"] == "exit 0; verdict=pass"
+    assert all(row["anchor"] == "" for row in result[0]["criteria"])
+
+
+def test_non_japanese_artifact_review_keeps_legacy_verdict_parser():
+    from rig_workbench.orchestrate import providers
+
+    state = {}
+    step = {"output_contract": "review-verdict"}
+    assert providers._artifact_review_judgment(
+        state, step, "reason\nVERDICT: PASS"
+    )[1] is True
+    assert providers._artifact_review_judgment(
+        state, step, "reason\nVERDICT: FAIL"
+    )[1] is False

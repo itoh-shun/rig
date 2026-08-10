@@ -16,7 +16,6 @@ import json
 import os
 import re
 import sys
-import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -32,12 +31,31 @@ DEV_CASES = HERE / "parity_cases.dev.json"
 CONFIG_PATH = HERE / "workflow_claude_review.providers.example.json"
 RECIPE_PATH = REPO / "packs/domain/japanese-writing/recipes/japanese-writing.md"
 EXPECTED_DEV_CASES = 10
-SCHEMA = 5
+SCHEMA = 6
 
 # Direct script execution starts with only this benchmark directory on sys.path.
 # Add the resolved repository root deterministically before importing runtime code.
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+
+from rig_workbench.orchestrate.providers import (  # noqa: E402
+    JAPANESE_WRITING_REVIEW_ALLOWED_STATUSES as WORKFLOW_REVIEW_ALLOWED_STATUSES,
+    JAPANESE_WRITING_REVIEW_APPLICABLE_SAFETY_CATEGORIES as WORKFLOW_APPLICABLE_SAFETY_CATEGORIES,
+    JAPANESE_WRITING_REVIEW_BOUNDS as WORKFLOW_REVIEW_BOUNDS,
+    JAPANESE_WRITING_REVIEW_CHECK_KEYS as WORKFLOW_REVIEW_CHECK_KEYS,
+    JAPANESE_WRITING_REVIEW_CHECK_LABELS as WORKFLOW_REVIEW_CHECK_LABELS,
+    JAPANESE_WRITING_REVIEW_CATEGORIES as WORKFLOW_REVIEW_CATEGORIES,
+    JAPANESE_WRITING_REVIEW_CORE_PASS_ROWS as WORKFLOW_CORE_PASS_ROWS,
+    JAPANESE_WRITING_REVIEW_PARSER_VERSION as PARSER_VERSION,
+    JAPANESE_WRITING_REVIEW_MAX_INVALID_ATTEMPTS as WORKFLOW_REVIEW_MAX_INVALID_ATTEMPTS,
+    JAPANESE_WRITING_REVIEW_ROWS as WORKFLOW_REVIEW_ROWS,
+    JAPANESE_WRITING_REVIEW_TARGET_FORMATS as WORKFLOW_REVIEW_TARGET_FORMATS,
+    JAPANESE_WRITING_REVIEW_TOP_LEVEL_KEYS as WORKFLOW_REVIEW_TOP_LEVEL_KEYS,
+    JAPANESE_WRITING_REVIEW_VERDICTS as WORKFLOW_REVIEW_VERDICTS,
+    JAPANESE_WRITING_SEMANTIC_REWRITE_MAX as WORKFLOW_SEMANTIC_REWRITE_MAX,
+    japanese_review_corrections as parsed_review_corrections,
+    parse_japanese_writing_review as parse_workflow_review,
+)
 
 
 def _load_frozen_paired() -> Any:
@@ -74,34 +92,6 @@ _round = paired._round
 _candidate_points = paired._candidate_points
 _dimension_points = paired._dimension_points
 
-WORKFLOW_REVIEW_ROWS = (
-    "単一成果物",
-    "形式",
-    "事実保持",
-    "推測なし",
-    "日本語",
-    "秘密情報",
-    "障害・サポート安全性",
-)
-WORKFLOW_CORE_PASS_ROWS = {"単一成果物", "形式", "事実保持", "推測なし", "日本語"}
-WORKFLOW_APPLICABLE_SAFETY_CATEGORIES = {"incident_report", "support_reply"}
-WORKFLOW_REVIEW_ALLOWED_STATUSES = {
-    "単一成果物": {"PASS", "FAIL"},
-    "形式": {"PASS", "FAIL", "UNKNOWN"},
-    "事実保持": {"PASS", "FAIL", "UNKNOWN"},
-    "推測なし": {"PASS", "FAIL", "UNKNOWN"},
-    "日本語": {"PASS", "FAIL"},
-    "秘密情報": {"PASS", "FAIL", "N/A"},
-    "障害・サポート安全性": {"PASS", "FAIL", "N/A", "UNKNOWN"},
-}
-WORKFLOW_REVIEW_BOUNDS = {
-    "max_output_bytes": 16384,
-    "max_target_format_codepoints": 80,
-    "max_anchor_codepoints": 500,
-    "max_repair_conditions": 7,
-    "max_repair_codepoints": 500,
-}
-PARSER_VERSION = 2
 PROVIDER_CONTRACTS_SHA256 = "af99bcb363f998003577257224c77e1abc9f7bab6e46ddaef7461ceacefb236f"
 LOGICAL_CALL_GRAPH = {
     "always_per_case": [
@@ -137,6 +127,25 @@ REVIEW_EXHAUSTION_POLICY = {
     "resume_policy": "sealed_exact_attempt_set",
     "otherwise": "abort",
 }
+MATERIAL_PROFILE_BY_CATEGORY = {
+    "technical_explanation": "technical",
+    "code_review": "technical",
+    "casual": "conversation",
+}
+MATERIAL_SUPPLY_POLICY = {
+    "profiles": ["none", "technical", "conversation"],
+    "category_mapping": MATERIAL_PROFILE_BY_CATEGORY,
+    "default_profile": "none",
+    "max_utf8_bytes": 2048,
+    "recipient_roles": ["candidate"],
+    "excluded_roles": ["reference", "reviewer", "judge"],
+    "public_metadata": ["profile", "asset_id", "asset_sha256", "source_blob"],
+    "content_policy": "style_only_no_facts_no_quotation",
+}
+
+
+def workflow_material_profile(category: str) -> str:
+    return MATERIAL_PROFILE_BY_CATEGORY.get(category, "none")
 
 
 def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
@@ -154,7 +163,7 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
     }
     if (
         protocol.get("schema") != 1
-        or protocol.get("semantics_version") != 3
+        or protocol.get("semantics_version") != 6
         or protocol.get("name")
         != "japanese-writing-fresh-dev-workflow-claude-review"
         or protocol.get("split") != "dev"
@@ -167,10 +176,11 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
         != {"candidate": 1.0, "draw": 0.5, "reference": 0.0}
         or protocol.get("state_machine")
         != ["R_READY", "A0", "REVIEW0", "A1", "REVIEW1", "FINAL", "NON_DELIVERABLE"]
-        or protocol.get("semantic_rewrite_max") != 1
+        or protocol.get("semantic_rewrite_max") != WORKFLOW_SEMANTIC_REWRITE_MAX
         or protocol.get("max_logical_calls") != 90
         or protocol.get("logical_call_graph") != LOGICAL_CALL_GRAPH
         or protocol.get("review_exhaustion") != REVIEW_EXHAUSTION_POLICY
+        or protocol.get("material_supply") != MATERIAL_SUPPLY_POLICY
         or set(protocol.get("provider_contracts", {}))
         != {"reference", "candidate", "reviewer", "judge"}
         or canonical_sha256(protocol.get("provider_contracts"))
@@ -182,6 +192,26 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
             "lifetime_attempt_budget": 270,
         }
         or protocol.get("review_contract", {}).get("parser_version") != PARSER_VERSION
+        or protocol.get("review_contract", {}).get("format") != "strict_json"
+        or protocol.get("review_contract", {}).get("top_level_keys")
+        != list(WORKFLOW_REVIEW_TOP_LEVEL_KEYS)
+        or protocol.get("review_contract", {}).get("check_keys")
+        != list(WORKFLOW_REVIEW_CHECK_KEYS)
+        or protocol.get("review_contract", {}).get("target_formats")
+        != list(WORKFLOW_REVIEW_TARGET_FORMATS)
+        or protocol.get("review_contract", {}).get("status_enums")
+        != {
+            key: sorted(WORKFLOW_REVIEW_ALLOWED_STATUSES[label])
+            for key, label in WORKFLOW_REVIEW_CHECK_LABELS.items()
+        }
+        or protocol.get("review_contract", {}).get("verdict_enum")
+        != list(WORKFLOW_REVIEW_VERDICTS)
+        or protocol.get("review_contract", {}).get("unverified_policy")
+        != "parser_invalid"
+        or protocol.get("review_contract", {}).get("runtime_categories")
+        != list(WORKFLOW_REVIEW_CATEGORIES)
+        or protocol.get("review_contract", {}).get("runtime_invalid_retry_budget")
+        != WORKFLOW_REVIEW_MAX_INVALID_ATTEMPTS
         or protocol.get("review_contract", {}).get("rows") != list(WORKFLOW_REVIEW_ROWS)
         or protocol.get("review_contract", {}).get("core_pass_rows")
         != ["単一成果物", "形式", "事実保持", "推測なし", "日本語"]
@@ -216,98 +246,6 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
         }:
             raise ValueError("invalid workflow dev provider roles")
     return protocol
-
-
-def _parse_workflow_verdict(line: str) -> str:
-    """Parse the exact verdict token after a narrow Japanese-equivalent delimiter."""
-    if not line.startswith("判定") or len(line) <= len("判定") + 2:
-        raise ValueError("workflow review contract final verdict token is invalid")
-    delimiter_index = len("判定")
-    if line[delimiter_index] not in {":", "："}:
-        raise ValueError("workflow review contract final verdict token is invalid")
-    spacing = line[delimiter_index + 1]
-    if unicodedata.normalize("NFKC", spacing) != " ":
-        raise ValueError("workflow review contract final verdict token is invalid")
-    verdict = line[delimiter_index + 2 :]
-    if verdict == "UNVERIFIED":
-        raise ValueError("workflow review contract verdict is unverified")
-    if verdict not in {"APPROVE", "REVISE"}:
-        raise ValueError("workflow review contract final verdict token is invalid")
-    return verdict
-
-
-def parse_workflow_review(raw: str, *, category: str) -> dict[str, Any]:
-    """Parse one bounded shipped Japanese review verdict without coercion."""
-    if len(raw.encode("utf-8")) > WORKFLOW_REVIEW_BOUNDS["max_output_bytes"]:
-        raise ValueError("workflow review contract exceeds its size bound")
-    lines = raw.splitlines()
-    if len(lines) < 12 or not re.fullmatch(r"対象形式: \S(?:.*\S)?", lines[0]):
-        raise ValueError("workflow review contract is malformed")
-    if len(lines[0].removeprefix("対象形式: ")) > WORKFLOW_REVIEW_BOUNDS[
-        "max_target_format_codepoints"
-    ] or lines[1] != "検査:":
-        raise ValueError("workflow review contract is malformed")
-    try:
-        repair_index = lines.index("修正条件:", 2)
-    except ValueError as error:
-        raise ValueError("workflow review contract is malformed") from error
-    row_lines = lines[2:repair_index]
-    if len(row_lines) != len(WORKFLOW_REVIEW_ROWS):
-        raise ValueError("workflow review contract rows are missing or duplicated")
-    rows: dict[str, dict[str, str]] = {}
-    pattern = re.compile(r"- ([^:]+): (PASS|FAIL|N/A|UNKNOWN) — (\S(?:.*\S)?)")
-    for line in row_lines:
-        match = pattern.fullmatch(line)
-        if match is None:
-            raise ValueError("workflow review contract row is malformed")
-        label, status, anchor = match.groups()
-        if (
-            label not in WORKFLOW_REVIEW_ROWS
-            or label in rows
-            or status not in WORKFLOW_REVIEW_ALLOWED_STATUSES[label]
-            or len(anchor) > WORKFLOW_REVIEW_BOUNDS["max_anchor_codepoints"]
-        ):
-            raise ValueError("workflow review contract row is invalid")
-        rows[label] = {"status": status, "anchor": anchor}
-    if tuple(rows) != WORKFLOW_REVIEW_ROWS:
-        raise ValueError("workflow review contract row order is invalid")
-    repair_lines = lines[repair_index + 1 : -1]
-    if (
-        not repair_lines
-        or len(repair_lines) > WORKFLOW_REVIEW_BOUNDS["max_repair_conditions"]
-        or any(not re.fullmatch(r"- \S(?:.*\S)?", line) for line in repair_lines)
-        or any(
-            len(line.removeprefix("- "))
-            > WORKFLOW_REVIEW_BOUNDS["max_repair_codepoints"]
-            for line in repair_lines
-        )
-    ):
-        raise ValueError("workflow review contract repair conditions are malformed")
-    verdict = _parse_workflow_verdict(lines[-1])
-    repair_conditions = [line.removeprefix("- ") for line in repair_lines]
-    approved = all(rows[label]["status"] == "PASS" for label in WORKFLOW_CORE_PASS_ROWS)
-    approved = approved and rows["秘密情報"]["status"] in {"PASS", "N/A"}
-    safety_allowed = (
-        {"PASS"} if category in WORKFLOW_APPLICABLE_SAFETY_CATEGORIES
-        else {"PASS", "N/A"}
-    )
-    approved = approved and rows["障害・サポート安全性"]["status"] in safety_allowed
-    if verdict == "APPROVE" and not approved:
-        raise ValueError("workflow review contract approval has blocking rows")
-    if verdict == "REVISE" and approved:
-        raise ValueError("workflow review contract revise has no blocking row")
-    if verdict == "APPROVE" and repair_conditions != ["なし"]:
-        raise ValueError("workflow review contract approval has repair conditions")
-    if verdict == "REVISE" and repair_conditions == ["なし"]:
-        raise ValueError("workflow review contract revise lacks repair conditions")
-    return {
-        "parser_version": PARSER_VERSION,
-        "target_format": lines[0].removeprefix("対象形式: "),
-        "rows": rows,
-        "repair_conditions": repair_conditions,
-        "verdict": verdict,
-        "approved": verdict == "APPROVE",
-    }
 
 
 def load_workflow_steps() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -346,14 +284,27 @@ def _workflow_composition() -> tuple[
     )
 
 
-@functools.lru_cache(maxsize=1)
-def _runtime_start_template() -> dict[str, Any]:
+@functools.lru_cache(maxsize=len(WORKFLOW_REVIEW_CATEGORIES))
+def _runtime_start_template(category: str) -> dict[str, Any]:
     from rig_workbench.orchestrate.runstate import compute_next, new_state
 
     write_step, review_step, _write_facets, _review_facets = _workflow_composition()
     state = new_state(
         "japanese-writing", [write_step, review_step], "<WORKFLOW_REQUEST>"
     )
+    runtime_category = (
+        category
+        if category in WORKFLOW_APPLICABLE_SAFETY_CATEGORIES
+        else "general"
+    )
+    if runtime_category not in WORKFLOW_REVIEW_CATEGORIES:
+        raise ValueError("workflow case category cannot bind a runtime category")
+    state["review_category"] = runtime_category
+    state["material_profile"] = workflow_material_profile(category)
+    state["history"].append({
+        "action": "BIND_REVIEW_CATEGORY",
+        "category": runtime_category,
+    })
     action, _message = compute_next(state)
     if action != "START" or state["steps"][state["cursor"]]["id"] != "write":
         raise ValueError("workflow runtime could not start write")
@@ -363,14 +314,20 @@ def _runtime_start_template() -> dict[str, Any]:
 def build_workflow_runtime_state(
     request: str,
     *,
+    category: str,
     stage: str,
     correction_conditions: str | None = None,
+    material_profile: str | None = None,
 ) -> dict[str, Any]:
     """Construct the same state transitions the shipped runtime composes from."""
     from rig_workbench.orchestrate.runstate import compute_next
 
-    state = copy.deepcopy(_runtime_start_template())
+    state = copy.deepcopy(_runtime_start_template(category))
     state["goal"] = request
+    if material_profile is not None:
+        if material_profile not in {"none", "technical", "conversation"}:
+            raise ValueError("invalid workflow material profile")
+        state["material_profile"] = material_profile
     if stage == "write":
         return state
     action, _message = compute_next(state)
@@ -399,11 +356,15 @@ def build_workflow_runtime_state(
     return state
 
 
-def compose_write_prompt(request: str) -> str:
+def compose_write_prompt(
+    request: str, *, category: str, material_profile: str | None = None,
+) -> str:
     from rig_workbench.orchestrate.providers import compose_step_prompt
 
     _write_step, _review_step, write_facets, _review_facets = _workflow_composition()
-    state = build_workflow_runtime_state(request, stage="write")
+    state = build_workflow_runtime_state(
+        request, category=category, stage="write", material_profile=material_profile,
+    )
     write_step = state["steps"][state["cursor"]]
     return compose_step_prompt(
         state,
@@ -413,11 +374,56 @@ def compose_write_prompt(request: str) -> str:
     )
 
 
-def compose_review_prompt(request: str, artifact: str) -> str:
+def compose_write_prompt_with_frozen_material(
+    request: str,
+    *,
+    category: str,
+    material_profile: str,
+    material_text: str | None,
+) -> str:
+    """Compose canonically from one already verified in-memory material snapshot."""
+    from rig_workbench.orchestrate.providers import compose_step_prompt
+
+    if material_profile not in {"none", "technical", "conversation"}:
+        raise ValueError("invalid workflow material profile")
+    if (material_profile == "none") != (material_text is None):
+        raise ValueError("frozen workflow material does not match its profile")
+    _write_step, _review_step, write_facets, _review_facets = _workflow_composition()
+    state = build_workflow_runtime_state(
+        request, category=category, stage="write", material_profile="none",
+    )
+    write_step = state["steps"][state["cursor"]]
+    frozen_facets = copy.deepcopy(write_facets)
+    if material_text is not None:
+        frozen_facets["knowledge"].append(material_text)
+    return compose_step_prompt(
+        state,
+        write_step,
+        state["step_state"]["write"],
+        facets=frozen_facets,
+    )
+
+
+@functools.lru_cache(maxsize=3)
+def _workflow_material_metadata_for_profile(profile: str) -> dict[str, object]:
+    from rig_workbench.orchestrate.providers import japanese_material_metadata
+
+    write_step, _review_step, _write_facets, _review_facets = _workflow_composition()
+    return japanese_material_metadata(write_step, profile)
+
+
+def workflow_material_metadata(category: str) -> dict[str, object]:
+    """Return an independent copy of verified hash-only provenance for one case."""
+    return copy.deepcopy(
+        _workflow_material_metadata_for_profile(workflow_material_profile(category))
+    )
+
+
+def compose_review_prompt(request: str, artifact: str, *, category: str) -> str:
     from rig_workbench.orchestrate.providers import compose_artifact_review_prompt
 
     _write_step, _review_step, _write_facets, review_facets = _workflow_composition()
-    state = build_workflow_runtime_state(request, stage="review")
+    state = build_workflow_runtime_state(request, category=category, stage="review")
     review_step = state["steps"][state["cursor"]]
     return compose_artifact_review_prompt(
         state,
@@ -426,34 +432,6 @@ def compose_review_prompt(request: str, artifact: str) -> str:
         artifact,
         facets=review_facets,
     )
-
-
-def parsed_review_corrections(
-    parsed: dict[str, Any], *, category: str
-) -> dict[str, Any]:
-    """Return only blocking parsed rows and bounded correction conditions."""
-    rows = parsed["rows"]
-    blocking: dict[str, dict[str, str]] = {}
-    for label in WORKFLOW_REVIEW_ROWS:
-        status = rows[label]["status"]
-        allowed = {"PASS"}
-        if label == "秘密情報":
-            allowed = {"PASS", "N/A"}
-        elif label == "障害・サポート安全性":
-            allowed = (
-                {"PASS"}
-                if category in WORKFLOW_APPLICABLE_SAFETY_CATEGORIES
-                else {"PASS", "N/A"}
-            )
-        if status not in allowed:
-            blocking[label] = {"status": status, "anchor": rows[label]["anchor"]}
-    if parsed.get("verdict") != "REVISE" or not blocking:
-        raise ValueError("repair requires one strictly parsed REVISE verdict")
-    return {
-        "parser_version": PARSER_VERSION,
-        "failing_rows": blocking,
-        "correction_conditions": list(parsed["repair_conditions"]),
-    }
 
 
 def compose_repair_prompt(
@@ -470,6 +448,7 @@ def compose_repair_prompt(
     correction_text = canonical_json(corrections).decode("utf-8")
     state = build_workflow_runtime_state(
         request,
+        category=category,
         stage="repair",
         correction_conditions=correction_text,
     )
@@ -491,16 +470,27 @@ def _support_judge_prompt(prompt: str, category: str, protocol: dict[str, Any]) 
 
 def _fingerprint_revise_review(category: str) -> dict[str, Any]:
     safety = "PASS" if category in WORKFLOW_APPLICABLE_SAFETY_CATEGORIES else "N/A"
-    raw = (
-        "対象形式: plain-text\n検査:\n"
-        "- 単一成果物: PASS — fingerprint\n"
-        "- 形式: PASS — fingerprint\n"
-        "- 事実保持: FAIL — fingerprint\n"
-        "- 推測なし: PASS — fingerprint\n"
-        "- 日本語: PASS — fingerprint\n"
-        "- 秘密情報: N/A — fingerprint\n"
-        f"- 障害・サポート安全性: {safety} — fingerprint\n"
-        "修正条件:\n- fingerprint correction\n判定: REVISE"
+    statuses = {
+        "single_artifact": "PASS",
+        "format": "PASS",
+        "fact_preservation": "FAIL",
+        "no_inference": "PASS",
+        "japanese_quality": "PASS",
+        "secret_handling": "N/A",
+        "incident_support_safety": safety,
+    }
+    raw = json.dumps(
+        {
+            "target_format": "plain-text",
+            "checks": {
+                key: {"status": statuses[key], "anchor": "fingerprint"}
+                for key in WORKFLOW_REVIEW_CHECK_KEYS
+            },
+            "repair_conditions": ["fingerprint correction"],
+            "verdict": "REVISE",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     return parse_workflow_review(raw, category=category)
 
@@ -529,6 +519,7 @@ def build_workflow_fingerprint_inputs(
                 "category": category,
                 "request_sha256": sha256_text(request),
                 "case_sha256": canonical_sha256(case),
+                "material": workflow_material_metadata(category),
             }
         )
         revise = _fingerprint_revise_review(category)
@@ -544,9 +535,13 @@ def build_workflow_fingerprint_inputs(
             }
         prompt_plan[case["id"]] = {
             "reference_prompt_sha256": sha256_text(request),
-            "write_prompt_sha256": sha256_text(compose_write_prompt(request)),
+            "write_prompt_sha256": sha256_text(
+                compose_write_prompt(request, category=category)
+            ),
             "review_template_sha256": sha256_text(
-                compose_review_prompt(request, sentinel_candidate)
+                compose_review_prompt(
+                    request, sentinel_candidate, category=category
+                )
             ),
             "repair_template_sha256": sha256_text(
                 compose_repair_prompt(
@@ -583,6 +578,7 @@ def build_workflow_fingerprint_inputs(
         "cases_file_sha256": sha256_file(cases_path),
         "cases": case_rows,
         "logical_call_graph": protocol["logical_call_graph"],
+        "material_supply": protocol["material_supply"],
         "prompt_plan": prompt_plan,
         "providers": provider_bindings,
     }
@@ -700,9 +696,11 @@ def _expected_artifact_prompt(
     if artifact_name == "R":
         return case["prompt"]
     if artifact_name == "A0":
-        return compose_write_prompt(case["prompt"])
+        return compose_write_prompt(case["prompt"], category=case["category"])
     if artifact_name == "REVIEW0":
-        return compose_review_prompt(case["prompt"], artifacts["A0"]["text"])
+        return compose_review_prompt(
+            case["prompt"], artifacts["A0"]["text"], category=case["category"]
+        )
     if artifact_name == "A1":
         return compose_repair_prompt(
             case["prompt"],
@@ -711,7 +709,9 @@ def _expected_artifact_prompt(
             category=case["category"],
         )
     if artifact_name == "REVIEW1":
-        return compose_review_prompt(case["prompt"], artifacts["A1"]["text"])
+        return compose_review_prompt(
+            case["prompt"], artifacts["A1"]["text"], category=case["category"]
+        )
     raise ValueError("unknown workflow artifact stage")
 
 
@@ -734,6 +734,8 @@ def _artifact_context(
         "stage": artifact_name,
         "request_sha256": sha256_text(case["prompt"]),
     }
+    if artifact_name in {"A0", "A1"}:
+        context["material"] = workflow_material_metadata(case["category"])
     if artifact_name == "REVIEW0":
         context["candidate_output_sha256"] = artifacts["A0"]["output_sha256"]
     elif artifact_name == "A1":
@@ -889,9 +891,13 @@ def validate_workflow_checkpoint(
     for case_id, case_state in state["workflow_cases"].items():
         if set(case_state) != {
             "state", "rewrite_count", "artifacts", "final_alias",
-            "reason_code", "review_exhaustion",
+            "reason_code", "review_exhaustion", "material",
         }:
             raise ValueError("workflow checkpoint case state is malformed")
+        if case_state.get("material") != workflow_material_metadata(
+            case_by_id[case_id]["category"]
+        ):
+            raise ValueError("workflow checkpoint material binding mismatch")
         artifacts = case_state.get("artifacts")
         if not isinstance(artifacts, dict) or not set(artifacts) <= allowed_artifacts:
             raise ValueError("workflow checkpoint artifacts are malformed")
@@ -1365,6 +1371,7 @@ def _workflow_summary(
                 "rewrite_count": item["rewrite_count"],
                 "final_alias": item["final_alias"],
                 "reason_code": item["reason_code"],
+                "material": item["material"],
                 "reference_sha256": artifacts["R"]["output_sha256"],
                 "reference_size_bytes": artifacts["R"]["output_size_bytes"],
                 "a0_sha256": artifacts["A0"]["output_sha256"],
@@ -1500,6 +1507,7 @@ def _run_workflow_evaluation_unlocked(
                 "final_alias": None,
                 "reason_code": None,
                 "review_exhaustion": None,
+                "material": workflow_material_metadata(case["category"]),
             },
         )
         artifacts = item["artifacts"]
@@ -1518,7 +1526,9 @@ def _run_workflow_evaluation_unlocked(
             )
             persist()
         if "A0" not in artifacts:
-            prompt = compose_write_prompt(case["prompt"])
+            prompt = compose_write_prompt(
+                case["prompt"], category=case["category"]
+            )
             artifacts["A0"] = _workflow_record(
                 logical_call_id=f"workflow:gen:{case['id']}:A0",
                 phase="generation",
@@ -1536,7 +1546,10 @@ def _run_workflow_evaluation_unlocked(
         if item["state"] == "NON_DELIVERABLE" and item["review_exhaustion"]:
             continue
         if "REVIEW0" not in artifacts:
-            prompt = compose_review_prompt(case["prompt"], artifacts["A0"]["text"])
+            prompt = compose_review_prompt(
+                case["prompt"], artifacts["A0"]["text"],
+                category=case["category"],
+            )
             logical_id = f"workflow:review:{case['id']}:0"
             try:
                 artifacts["REVIEW0"] = _workflow_record(
@@ -1602,7 +1615,8 @@ def _run_workflow_evaluation_unlocked(
                 persist()
             if "REVIEW1" not in artifacts:
                 prompt = compose_review_prompt(
-                    case["prompt"], artifacts["A1"]["text"]
+                    case["prompt"], artifacts["A1"]["text"],
+                    category=case["category"],
                 )
                 logical_id = f"workflow:review:{case['id']}:1"
                 try:

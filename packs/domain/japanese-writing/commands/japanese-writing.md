@@ -67,8 +67,26 @@ rig-wb run japanese-writing \
   --provider claude \
   --verifier-provider codex \
   --secure-provider-config "$PWD/.rig/provider-pins.json" \
+  --review-category incident_report \
+  --material-profile none \
   --goal-stdin < "$PWD/.rig/japanese-goal.txt"
 ```
+
+`--review-category` は必須です。通常文は `general`、障害報告は
+`incident_report`、サポート返信は `support_reply` を明示します。本文からの推測や
+暗黙の default は行いません。この値は run-state に固定され、resume 時の欠落・変更を
+拒否します。`incident_report` と `support_reply` では安全性検査の `N/A` を合格扱いに
+しません。
+
+`--material-profile` は `none`（既定）、`technical`、`conversation` のいずれかです。
+本文から推測しません。後二者は project-owned の短い文体素材を write prompt の Knowledge
+位置に一つだけ注入します。素材は事実の根拠にせず、引用もしません。同じ素材を初稿と一度だけの
+修正に使い、reviewer には渡しません。この選択と素材・出典 blob の hash は run-state に固定されます。
+provider 起動前に選択済み bytes を run-state 隣接の owner-only snapshot へ封印し、初稿と修正は
+同じ snapshot だけを読みます。実行中に pack asset が変わっても prompt を差し替えず、resume 時には
+現在の asset/source provenance との不一致を拒否します。
+出典全体は MIT の不活性 resource として pack 内に同梱され、実行時の照合はその封印済み blob に対して
+行います。元の `/docs` checkout は実行時依存ではありません。
 
 `claude` と `codex` は構成例です。prompt asset 自体は provider 固有の語彙や機能に
 依存しません。別の組み合わせでも、生成者と最終 reviewer を異なるモデルまたは

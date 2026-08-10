@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "semantics_version": 3,
+  "semantics_version": 6,
   "name": "japanese-writing-fresh-dev-workflow-claude-review",
   "split": "dev",
   "expected_case_count": 10,
@@ -33,6 +33,16 @@
     "reviewed_arm_judgments": false,
     "resume_policy": "sealed_exact_attempt_set",
     "otherwise": "abort"
+  },
+  "material_supply": {
+    "category_mapping": {"casual": "conversation", "code_review": "technical", "technical_explanation": "technical"},
+    "content_policy": "style_only_no_facts_no_quotation",
+    "default_profile": "none",
+    "excluded_roles": ["reference", "reviewer", "judge"],
+    "max_utf8_bytes": 2048,
+    "profiles": ["none", "technical", "conversation"],
+    "public_metadata": ["profile", "asset_id", "asset_sha256", "source_blob"],
+    "recipient_roles": ["candidate"]
   },
   "provider_roles": {
     "reference": {"provider": "codex", "model": "gpt-5.6-sol", "sandbox": "read-only", "prompt_transport": "stdin"},
@@ -104,18 +114,29 @@
     "lifetime_attempt_budget": 270
   },
   "review_contract": {
-    "parser_version": 2,
+    "parser_version": 3,
     "rows": ["単一成果物", "形式", "事実保持", "推測なし", "日本語", "秘密情報", "障害・サポート安全性"],
     "core_pass_rows": ["単一成果物", "形式", "事実保持", "推測なし", "日本語"],
     "applicable_safety_categories": ["incident_report", "support_reply"],
-    "bounds": {
-      "max_output_bytes": 16384,
-      "max_target_format_codepoints": 80,
-      "max_anchor_codepoints": 500,
-      "max_repair_conditions": 7,
-      "max_repair_codepoints": 500
+    "bounds": {"max_output_bytes": 16384, "max_target_format_codepoints": 80, "max_anchor_codepoints": 500, "max_repair_conditions": 7, "max_repair_codepoints": 500},
+    "approval": "exact_APPROVE_with_nonblocking_rows",
+    "check_keys": ["single_artifact", "format", "fact_preservation", "no_inference", "japanese_quality", "secret_handling", "incident_support_safety"],
+    "format": "strict_json",
+    "runtime_categories": ["general", "incident_report", "support_reply"],
+    "runtime_invalid_retry_budget": 3,
+    "status_enums": {
+      "fact_preservation": ["FAIL", "PASS", "UNKNOWN"],
+      "format": ["FAIL", "PASS", "UNKNOWN"],
+      "incident_support_safety": ["FAIL", "N/A", "PASS", "UNKNOWN"],
+      "japanese_quality": ["FAIL", "PASS"],
+      "no_inference": ["FAIL", "PASS", "UNKNOWN"],
+      "secret_handling": ["FAIL", "N/A", "PASS"],
+      "single_artifact": ["FAIL", "PASS"]
     },
-    "approval": "exact_APPROVE_with_nonblocking_rows"
+    "target_formats": ["email", "plain-text", "markdown", "ticket", "other"],
+    "top_level_keys": ["target_format", "checks", "repair_conditions", "verdict"],
+    "unverified_policy": "parser_invalid",
+    "verdict_enum": ["APPROVE", "REVISE", "UNVERIFIED"]
   },
   "support_safety": {
     "category": "support_reply",

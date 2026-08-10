@@ -8,6 +8,11 @@ steps:
     pattern: serial
     personas: [japanese-writer]
     policies: [writing-delivery-contract, japanese-writing-rules-v2]
+    material_profiles:
+      technical:
+        inject: ["[[japanese-style-material-technical]]"]
+      conversation:
+        inject: ["[[japanese-style-material-conversation]]"]
   - id: review
     instruction: japanese-writing-review
     pattern: serial
@@ -57,6 +62,15 @@ Rules v3 は、読み手と掲載先に合う文体、直接の答えに必要�
 連続した発話として保つ構造だけを扱います。長さや構造に固定 quota は置きません。
 事実保持と安全性は `japanese-writer`、宛先形式と最終成果物の境界は
 `writing-delivery-contract` が担います。
+
+secure runtime の `material_profile` は `none|technical|conversation` の明示値だけを受け付け、
+goal から推測しません。`technical` と `conversation` は、それぞれ recipe に owner-bound された
+短い wiki asset を一つだけ write の Knowledge 位置へ注入します。素材は文体専用の untrusted data
+として囲い、事実の根拠や引用には使いません。初稿と一度だけの修正は同じ素材を使い、reviewer へは
+渡しません。`none` は素材導入前と同じ prompt bytes を保ちます。
+secure runtime は選択時の prompt-ready bytes を 0600 snapshot へ固定し、同一 run の初稿・修正で
+再利用します。resume では snapshot hash に加え、現在の pack asset と出典全体の hash も再検証します。
+出典全体は pack 内の MIT resource blob を検証し、repository の `/docs` checkout には依存しません。
 
 手順の正本は `facets/instructions/{japanese-write,japanese-writing-review}`、出力境界と
 日本語規則の正本は `facets/policies/{writing-delivery-contract,japanese-writing-rules-v2}`

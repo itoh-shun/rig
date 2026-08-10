@@ -48,7 +48,8 @@ def test_claude_review_profile_is_distinct_and_pins_exact_roles():
     assert module.CONFIG_PATH == CLAUDE_REVIEW_CONFIG_PATH
     protocol = module.load_workflow_protocol()
     assert protocol["name"] == "japanese-writing-fresh-dev-workflow-claude-review"
-    assert protocol["semantics_version"] == 3
+    assert protocol["semantics_version"] == 6
+    assert protocol["material_supply"] == module.MATERIAL_SUPPLY_POLICY
     assert protocol["provider_roles"] == {
         "reference": {
             "provider": "codex", "model": "gpt-5.6-sol",
@@ -72,7 +73,7 @@ def test_claude_review_profile_is_distinct_and_pins_exact_roles():
         "split", "expected_case_count", "arms", "orders", "dimensions",
         "scoring", "state_machine", "semantic_rewrite_max", "max_logical_calls",
         "logical_call_graph", "review_exhaustion", "retry_policy",
-        "review_contract", "support_safety", "acceptance",
+        "support_safety", "acceptance",
     ):
         assert protocol[unchanged] == historical[unchanged]
     config = json.loads(CLAUDE_REVIEW_CONFIG_PATH.read_text())
@@ -88,6 +89,50 @@ def test_claude_review_profile_is_distinct_and_pins_exact_roles():
                for entry in config.values())
     assert "path" not in json.dumps(config).lower()
     assert "key" not in json.dumps(config).lower()
+
+
+def test_workflow_material_mapping_is_explicit_hash_bound_and_candidate_only():
+    module = load_module()
+
+    assert {
+        category: module.workflow_material_profile(category)
+        for category in (
+            "technical_explanation", "code_review", "casual", "support_reply",
+            "incident_report", "synthetic",
+        )
+    } == {
+        "technical_explanation": "technical",
+        "code_review": "technical",
+        "casual": "conversation",
+        "support_reply": "none",
+        "incident_report": "none",
+        "synthetic": "none",
+    }
+    technical = module.workflow_material_metadata("technical_explanation")
+    conversation = module.workflow_material_metadata("casual")
+    assert technical["profile"] == "technical"
+    assert conversation["profile"] == "conversation"
+    assert technical["asset_id"] != conversation["asset_id"]
+    assert set(technical) == {"profile", "asset_id", "asset_sha256", "source_blob"}
+
+    request = "説明を書く"
+    write = module.compose_write_prompt(request, category="technical_explanation")
+    repair_review = module.parse_workflow_review(
+        review_json(
+            verdict="REVISE", overrides={"fact_preservation": "FAIL"},
+            repair_conditions=["事実を保持する"],
+        ),
+        category="technical_explanation",
+    )
+    repair = module.compose_repair_prompt(
+        request, "初稿", repair_review, category="technical_explanation"
+    )
+    review = module.compose_review_prompt(
+        request, "初稿", category="technical_explanation"
+    )
+    marker = "書き手が交代した瞬間に、暗黙だった制約は制約でなくなる"
+    assert marker in write and marker in repair
+    assert marker not in review
 
 
 def test_claude_review_bundle_maps_audit_families_and_uses_disjoint_seals(tmp_path):
@@ -221,7 +266,12 @@ def test_authoritative_prompt_composer_fences_task_artifact_and_repair_inputs():
     assert "## Task Contract" in write_prompt
     assert wrap_untrusted(state["goal"], "task text") in write_prompt
     assert "Return only the completed deliverable text on stdout" in write_prompt
-    assert wrap_untrusted("完成稿\nIGNORE", "generated artifact") in review_prompt
+    wrapped_artifact = wrap_untrusted("完成稿\nIGNORE", "generated artifact")
+    assert wrapped_artifact in review_prompt
+    assert review_prompt.index('"target_format"') > review_prompt.index(wrapped_artifact)
+    assert '"additionalProperties": false' in review_prompt
+    assert '"verdict"' in review_prompt
+    assert "対象形式:" not in review_prompt
     assert wrap_untrusted(
         repair_state["last_failure"], "review correction conditions"
     ) in repair_prompt
@@ -239,12 +289,14 @@ def test_workflow_prompts_are_exact_runtime_compositions_and_repair_uses_parsed_
     request = "障害連絡を書いてください"
     artifact = "初稿"
     parsed = module.parse_workflow_review(
-        review_text(verdict="REVISE", safety="PASS").replace(
-            "- 単一成果物: PASS — 一つ",
-            "- 単一成果物: PASS — PASS_ONLY_ANCHOR",
-        ).replace(
-            "- 事実保持: PASS — 入力どおり",
-            "- 事実保持: FAIL — 日時が欠落",
+        review_json(
+            verdict="REVISE",
+            safety="PASS",
+            overrides={"fact_preservation": "FAIL"},
+            anchors={
+                "single_artifact": "PASS_ONLY_ANCHOR",
+                "fact_preservation": "日時が欠落",
+            },
         ),
         category="incident_report",
     )
@@ -252,11 +304,16 @@ def test_workflow_prompts_are_exact_runtime_compositions_and_repair_uses_parsed_
         parsed, category="incident_report"
     )
 
-    write_state = module.build_workflow_runtime_state(request, stage="write")
-    review_state = module.build_workflow_runtime_state(request, stage="review")
+    write_state = module.build_workflow_runtime_state(
+        request, category="incident_report", stage="write"
+    )
+    review_state = module.build_workflow_runtime_state(
+        request, category="incident_report", stage="review"
+    )
     correction_text = module.canonical_json(corrections).decode("utf-8")
     repair_state = module.build_workflow_runtime_state(
-        request, stage="repair", correction_conditions=correction_text
+        request, category="incident_report", stage="repair",
+        correction_conditions=correction_text,
     )
     expected_write = providers.compose_step_prompt(
         write_state,
@@ -276,8 +333,12 @@ def test_workflow_prompts_are_exact_runtime_compositions_and_repair_uses_parsed_
         correction_text,
     )
 
-    assert module.compose_write_prompt(request) == expected_write
-    assert module.compose_review_prompt(request, artifact) == expected_review
+    assert module.compose_write_prompt(
+        request, category="incident_report"
+    ) == expected_write
+    assert module.compose_review_prompt(
+        request, artifact, category="incident_report"
+    ) == expected_review
     assert module.compose_repair_prompt(
         request, artifact, parsed, category="incident_report"
     ) == expected_repair
@@ -288,7 +349,9 @@ def test_workflow_prompts_are_exact_runtime_compositions_and_repair_uses_parsed_
         "recent_history:\n- INDEPENDENT_REVIEW:review\n- REVISE:review\n- START:write"
         in expected_repair
     )
-    assert module.sha256_text(module.compose_write_prompt(request)) \
+    assert module.sha256_text(
+        module.compose_write_prompt(request, category="incident_report")
+    ) \
         == module.sha256_text(expected_write)
 
 
@@ -300,17 +363,23 @@ def test_workflow_a0_prompt_equals_runtime_after_real_start_transition():
     request = "利用者向けのお知らせを書く"
     write, review = module.load_workflow_steps()
     state = new_state("japanese-writing", [write, review], request)
+    state["review_category"] = "general"
+    state["history"].append({
+        "action": "BIND_REVIEW_CATEGORY", "category": "general",
+    })
     action, _message = compute_next(state)
     assert action == "START"
     expected = providers.compose_step_prompt(
         state, state["steps"][0], state["step_state"]["write"]
     )
 
-    actual = module.compose_write_prompt(request)
+    actual = module.compose_write_prompt(request, category="general")
     assert actual == expected
     assert module.sha256_text(actual) == module.sha256_text(expected)
     assert "attempt: 1" in actual
-    assert "recent_history:\n- START:write" in actual
+    assert (
+        "recent_history:\n- BIND_REVIEW_CATEGORY:None\n- START:write" in actual
+    )
 
 
 def load_module():
@@ -321,96 +390,163 @@ def load_module():
     return module
 
 
-def review_text(*, verdict="APPROVE", safety="N/A", duplicate=""):
-    repair = "なし" if verdict == "APPROVE" else "事実保持を修正する"
-    return (
-        "対象形式: plain-text\n"
-        "検査:\n"
-        "- 単一成果物: PASS — 一つ\n"
-        "- 形式: PASS — 指定どおり\n"
-        "- 事実保持: PASS — 入力どおり\n"
-        "- 推測なし: PASS — 追加なし\n"
-        "- 日本語: PASS — 自然\n"
-        "- 秘密情報: N/A — 該当なし\n"
-        f"- 障害・サポート安全性: {safety} — 該当確認\n"
-        f"{duplicate}"
-        "修正条件:\n"
-        f"- {repair}\n"
-        f"判定: {verdict}"
+def review_json(
+    *, verdict="APPROVE", safety="N/A", overrides=None, anchors=None,
+    repair_conditions=None,
+):
+    statuses = {
+        "single_artifact": "PASS",
+        "format": "PASS",
+        "fact_preservation": "PASS",
+        "no_inference": "PASS",
+        "japanese_quality": "PASS",
+        "secret_handling": "N/A",
+        "incident_support_safety": safety,
+    }
+    statuses.update(overrides or {})
+    anchor_values = {
+        key: f"anchor-{key}" for key in statuses
+    }
+    anchor_values.update(anchors or {})
+    repair = repair_conditions or (
+        ["なし"] if verdict == "APPROVE" else ["事実保持を修正する"]
     )
+    return json.dumps(
+        {
+            "target_format": "plain-text",
+            "checks": {
+                key: {"status": status, "anchor": anchor_values[key]}
+                for key, status in statuses.items()
+            },
+            "repair_conditions": repair,
+            "verdict": verdict,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def test_workflow_review_contract_parses_strict_json_without_semantic_loss():
+    from rig_workbench.orchestrate import providers
+
+    module = load_module()
+    assert module.parse_workflow_review is providers.parse_japanese_writing_review
+    assert module.parsed_review_corrections is providers.japanese_review_corrections
+    parsed = module.parse_workflow_review(
+        review_json(
+            verdict="REVISE",
+            overrides={"fact_preservation": "FAIL"},
+        ),
+        category="business_chat",
+    )
+
+    assert parsed["parser_version"] == 3
+    assert parsed["verdict"] == "REVISE"
+    assert parsed["approved"] is False
+    assert parsed["rows"]["事実保持"]["status"] == "FAIL"
+    assert parsed["repair_conditions"] == ["事実保持を修正する"]
 
 
 def test_workflow_review_contract_requires_unique_complete_approval_rows():
     module = load_module()
 
-    approved = module.parse_workflow_review(review_text(), category="business_chat")
+    approved = module.parse_workflow_review(review_json(), category="business_chat")
     assert approved["approved"] is True
     assert approved["verdict"] == "APPROVE"
     revised = module.parse_workflow_review(
-        review_text(verdict="REVISE").replace(
-            "- 事実保持: PASS", "- 事実保持: FAIL"
+        review_json(
+            verdict="REVISE", overrides={"fact_preservation": "FAIL"}
         ),
         category="business_chat",
     )
     assert revised["approved"] is False
     assert revised["repair_conditions"] == ["事実保持を修正する"]
 
-    for colon in (":", "："):
-        for equivalent_spacing in (" ", "\u3000", "\u00a0"):
-            delimiter_normalized = module.parse_workflow_review(
-                review_text(verdict="REVISE").replace(
-                    "- 推測なし: PASS", "- 推測なし: FAIL"
-                ).replace(
-                    "判定: REVISE", f"判定{colon}{equivalent_spacing}REVISE"
-                ),
-                category="business_chat",
-            )
-            assert delimiter_normalized["verdict"] == "REVISE"
-            assert delimiter_normalized["approved"] is False
-
-    for malformed in (
-        review_text(verdict="UNVERIFIED"),
-        review_text(verdict="UNVERIFIED").replace(
-            "判定: UNVERIFIED", "判定：\u3000UNVERIFIED"
-        ),
-        review_text(verdict="REVISE").replace(
-            "- 事実保持: PASS", "- 事実保持: FAIL"
-        ).replace("判定: REVISE", "判定： REVIEW"),
-        review_text(verdict="REVISE").replace(
-            "- 事実保持: PASS", "- 事実保持: FAIL"
-        ).replace("判定: REVISE", "判定： ＲＥＶＩＳＥ"),
-        review_text(verdict="REVISE").replace(
-            "- 事実保持: PASS", "- 事実保持: FAIL"
+    valid_payload = json.loads(review_json())
+    missing = json.loads(review_json())
+    del missing["checks"]["format"]
+    extra = json.loads(review_json())
+    extra["checks"]["extra"] = {"status": "PASS", "anchor": "extra"}
+    unknown_top = json.loads(review_json())
+    unknown_top["extra"] = True
+    wrong_status = json.loads(review_json(verdict="REVISE"))
+    wrong_status["checks"]["single_artifact"]["status"] = "N/A"
+    invalid_format_status = json.loads(review_json(verdict="REVISE"))
+    invalid_format_status["checks"]["format"]["status"] = "N/A"
+    blocking_approve = json.loads(review_json())
+    blocking_approve["checks"]["fact_preservation"]["status"] = "UNKNOWN"
+    extra_check_field = json.loads(review_json())
+    extra_check_field["checks"]["format"]["reason"] = "not allowed"
+    malformed = (
+        review_json(verdict="UNVERIFIED"),
+        review_json(verdict="UNKNOWN"),
+        review_json(
+            verdict="REVISE", overrides={"fact_preservation": "FAIL"}
         ) + "\n補足",
-        review_text().replace("- 事実保持: PASS", "- 事実保持: UNKNOWN"),
-        review_text(verdict="REVISE").replace(
-            "- 単一成果物: PASS", "- 単一成果物: N/A"
+        "```json\n" + review_json() + "\n```",
+        (
+            "対象形式: plain-text\n検査:\n"
+            "- 単一成果物: PASS — legacy\n判定: APPROVE"
         ),
-        review_text(verdict="REVISE").replace(
-            "- 形式: PASS", "- 形式: N/A"
+        json.dumps(missing, ensure_ascii=False),
+        json.dumps(extra, ensure_ascii=False),
+        json.dumps(unknown_top, ensure_ascii=False),
+        json.dumps(wrong_status, ensure_ascii=False),
+        json.dumps(invalid_format_status, ensure_ascii=False),
+        json.dumps(blocking_approve, ensure_ascii=False),
+        json.dumps(extra_check_field, ensure_ascii=False),
+        review_json().replace(
+            '"verdict":"APPROVE"',
+            '"verdict":"APPROVE","verdict":"APPROVE"',
         ),
-        review_text(duplicate="- 日本語: PASS — 重複\n"),
-        review_text().replace("- 形式: PASS — 指定どおり\n", ""),
-    ):
+        review_json().replace(
+            '"status":"PASS"',
+            '"status":"PASS","status":"PASS"',
+            1,
+        ),
+        review_json().replace('"target_format":"plain-text"', '"target_format":NaN'),
+        review_json().replace('"target_format":"plain-text"', '"target_format":"pdf"'),
+        review_json(anchors={"single_artifact": ""}),
+        review_json(anchors={"single_artifact": " leading"}),
+        review_json(anchors={"single_artifact": "trailing "}),
+        review_json(anchors={"single_artifact": "\t"}),
+        review_json(
+            verdict="REVISE", overrides={"fact_preservation": "FAIL"},
+            repair_conditions=[" "],
+        ),
+        review_json(
+            verdict="REVISE", overrides={"fact_preservation": "FAIL"},
+            repair_conditions=["\t"],
+        ),
+        review_json(
+            verdict="REVISE",
+            overrides={"fact_preservation": "FAIL"},
+            repair_conditions=["なし", "事実保持を修正する"],
+        ),
+    )
+    assert set(valid_payload) == {
+        "target_format", "checks", "repair_conditions", "verdict",
+    }
+    for invalid in malformed:
         with pytest.raises(ValueError, match="review contract"):
-            module.parse_workflow_review(malformed, category="business_chat")
+            module.parse_workflow_review(invalid, category="business_chat")
 
     with pytest.raises(ValueError, match="review contract"):
-        module.parse_workflow_review(review_text(safety="N/A"), category="support_reply")
+        module.parse_workflow_review(review_json(safety="N/A"), category="support_reply")
     assert module.parse_workflow_review(
-        review_text(safety="PASS"), category="incident_report"
+        review_json(safety="PASS"), category="incident_report"
     )["approved"] is True
     with pytest.raises(ValueError, match="review contract"):
         module.parse_workflow_review(
-            review_text().replace("一つ", "x" * 501), category="business_chat"
+            review_json(anchors={"single_artifact": "x" * 501}),
+            category="business_chat",
         )
     with pytest.raises(ValueError, match="review contract"):
         module.parse_workflow_review(
-            review_text(verdict="REVISE").replace(
-                "- 事実保持: PASS", "- 事実保持: FAIL"
-            ).replace(
-                "- 事実保持を修正する",
-                "\n".join(f"- repair-{index}" for index in range(8)),
+            review_json(
+                verdict="REVISE",
+                overrides={"fact_preservation": "FAIL"},
+                repair_conditions=[f"repair-{index}" for index in range(8)],
             ),
             category="business_chat",
         )
@@ -427,7 +563,8 @@ def test_workflow_protocol_is_separate_and_preregisters_exact_bounds():
     ]
     assert workflow["arms"] == ["raw_writer", "reviewed_workflow"]
     assert workflow["semantic_rewrite_max"] == 1
-    assert workflow["semantics_version"] == 3
+    assert workflow["semantic_rewrite_max"] == module.WORKFLOW_SEMANTIC_REWRITE_MAX
+    assert workflow["semantics_version"] == 6
     assert workflow["review_exhaustion"] == {
         "reason_code": "review_contract_exhausted",
         "eligible_stages": ["REVIEW0", "REVIEW1"],
@@ -477,6 +614,35 @@ def test_workflow_protocol_is_separate_and_preregisters_exact_bounds():
         "max_repair_conditions": 7,
         "max_repair_codepoints": 500,
     }
+    assert workflow["review_contract"]["parser_version"] == 3
+    assert workflow["review_contract"]["format"] == "strict_json"
+    assert workflow["review_contract"]["top_level_keys"] == [
+        "target_format", "checks", "repair_conditions", "verdict",
+    ]
+    assert workflow["review_contract"]["check_keys"] == [
+        "single_artifact", "format", "fact_preservation", "no_inference",
+        "japanese_quality", "secret_handling", "incident_support_safety",
+    ]
+    assert workflow["review_contract"]["target_formats"] == [
+        "email", "plain-text", "markdown", "ticket", "other",
+    ]
+    assert workflow["review_contract"]["status_enums"] == {
+        "single_artifact": ["FAIL", "PASS"],
+        "format": ["FAIL", "PASS", "UNKNOWN"],
+        "fact_preservation": ["FAIL", "PASS", "UNKNOWN"],
+        "no_inference": ["FAIL", "PASS", "UNKNOWN"],
+        "japanese_quality": ["FAIL", "PASS"],
+        "secret_handling": ["FAIL", "N/A", "PASS"],
+        "incident_support_safety": ["FAIL", "N/A", "PASS", "UNKNOWN"],
+    }
+    assert workflow["review_contract"]["verdict_enum"] == [
+        "APPROVE", "REVISE", "UNVERIFIED",
+    ]
+    assert workflow["review_contract"]["unverified_policy"] == "parser_invalid"
+    assert workflow["review_contract"]["runtime_categories"] == [
+        "general", "incident_report", "support_reply",
+    ]
+    assert workflow["review_contract"]["runtime_invalid_retry_budget"] == 3
     assert workflow["acceptance"] == {
         "deliverable_cases": 10,
         "workflow_overall_effect": 0.1,
@@ -505,7 +671,17 @@ def test_workflow_protocol_rejects_every_preregistered_contract_mutation(tmp_pat
         ("provider_roles", "reviewer", {"provider": "codex", "model": "other"}),
         ("provider_contracts", "reviewer", {"argv": ["codex"]}),
         ("review_contract", "parser_version", 1),
+        ("review_contract", "format", "text_lines"),
+        ("review_contract", "top_level_keys", ["verdict"]),
+        ("review_contract", "check_keys", ["format"]),
+        ("review_contract", "target_formats", ["plain-text"]),
+        ("review_contract", "status_enums", {"format": ["PASS"]}),
+        ("review_contract", "verdict_enum", ["APPROVE"]),
+        ("review_contract", "unverified_policy", "success"),
+        ("review_contract", "runtime_categories", ["general"]),
+        ("review_contract", "runtime_invalid_retry_budget", 2),
         ("review_exhaustion", "otherwise", "continue"),
+        ("material_supply", "default_profile", "technical"),
         (
             "logical_call_graph",
             "if_review0_contract_exhausted",
@@ -526,7 +702,7 @@ def test_workflow_protocol_rejects_every_preregistered_contract_mutation(tmp_pat
 
 def _workflow_fixture(
     module, tmp_path, *, review0="APPROVE", review1="APPROVE",
-    mid_run_protocol_path=None, normalize_equivalent_verdict_delimiter=False,
+    mid_run_protocol_path=None,
     review0_invalid_cases=(), review1_invalid_cases=(), invalid_review_verdict="UNVERIFIED",
     review0_error_cases=(), review0_mixed_cases=(),
 ):
@@ -536,7 +712,10 @@ def _workflow_fixture(
         {
             "id": f"case-{index}",
             "split": "dev",
-            "category": "support_reply" if index == 9 else "synthetic",
+            "category": {
+                0: "technical_explanation", 1: "code_review", 2: "casual",
+                9: "support_reply",
+            }.get(index, "synthetic"),
             "prompt": f"request-{index}",
         }
         for index in range(10)
@@ -625,12 +804,14 @@ def _workflow_fixture(
             ):
                 verdict = "UNVERIFIED"
             safety = "PASS" if "request-9" in prompt else "N/A"
-            review = review_text(verdict=verdict, safety=safety).replace(
-                "- 事実保持: PASS", "- 事実保持: FAIL"
-            ) if verdict == "REVISE" else review_text(verdict=verdict, safety=safety)
-            if normalize_equivalent_verdict_delimiter:
-                review = review.replace(f"判定: {verdict}", f"判定： {verdict}")
-            return review
+            return review_json(
+                verdict=verdict,
+                safety=safety,
+                overrides=(
+                    {"fact_preservation": "FAIL"}
+                    if verdict == "REVISE" else None
+                ),
+            )
         order = "reference_first" if "ORDER: reference_first" in prompt else "candidate_first"
         winner = "B" if order == "reference_first" else "A"
         payload = {
@@ -741,7 +922,9 @@ def test_workflow_fingerprint_binds_sources_cases_prompts_graph_and_provider_pin
     real_review = module.compose_review_prompt
     monkeypatch.setattr(
         module, "compose_review_prompt",
-        lambda request, artifact: real_review(request, artifact) + "\nchanged",
+        lambda request, artifact, *, category: (
+            real_review(request, artifact, category=category) + "\nchanged"
+        ),
     )
     prompt_changed = module.build_workflow_fingerprint_inputs(
         cases=cases, cases_path=cases_path, protocol=protocol,
@@ -770,6 +953,14 @@ def test_workflow_approve_aliases_a0_without_rewrite_and_keeps_public_result_raw
     }
     assert all(row["state"] == "FINAL" and row["final_alias"] == "A0"
                for row in result["case_states"])
+    by_case = {row["case_id"]: row["material"] for row in result["case_states"]}
+    assert by_case["case-0"]["profile"] == "technical"
+    assert by_case["case-1"]["profile"] == "technical"
+    assert by_case["case-2"]["profile"] == "conversation"
+    assert by_case["case-3"] == {
+        "profile": "none", "asset_id": None, "asset_sha256": None,
+        "source_blob": None,
+    }
     assert sum(role == "candidate" for role, _prompt in calls) == 10
     assert sum(role == "reference" for role, _prompt in calls) == 10
     assert sum(role == "reviewer" for role, _prompt in calls) == 10
@@ -782,7 +973,7 @@ def test_workflow_approve_aliases_a0_without_rewrite_and_keeps_public_result_raw
         ):
             assert forbidden not in prompt.lower()
     public = json.dumps(result, ensure_ascii=False)
-    for raw in ("draft:", "reference:", "owner-only-reason", "対象形式:"):
+    for raw in ("draft:", "reference:", "owner-only-reason", "target_format"):
         assert raw not in public
     assert set(result["provenance"]["provider_spec_sha256"]) == {
         "reference", "candidate", "reviewer", "judge",
@@ -859,16 +1050,13 @@ def test_workflow_revise_allows_exactly_one_rewrite_and_fresh_rereview(tmp_path)
     )
 
 
-def test_equivalent_japanese_verdict_delimiter_is_a_valid_revise_semantic_result(
-    tmp_path,
-):
+def test_strict_json_revise_is_a_valid_semantic_result(tmp_path):
     module = load_module()
     result, calls, run_dir = _workflow_fixture(
         module,
         tmp_path,
         review0="REVISE",
         review1="APPROVE",
-        normalize_equivalent_verdict_delimiter=True,
     )
 
     assert result["counts"]["semantic_rewrites"] == 10
@@ -892,7 +1080,7 @@ def test_review0_invalid_exhaustion_is_terminal_and_other_cases_continue(tmp_pat
     )
 
     case0 = next(row for row in result["case_states"] if row["case_id"] == "case-0")
-    assert result["schema_version"] == 5
+    assert result["schema_version"] == 6
     assert case0["state"] == "NON_DELIVERABLE"
     assert case0["reason_code"] == "review_contract_exhausted"
     assert case0["rewrite_count"] == 0
@@ -910,7 +1098,7 @@ def test_review0_invalid_exhaustion_is_terminal_and_other_cases_continue(tmp_pat
     assert sum(role == "judge" for role, _prompt in calls) == 20
 
     checkpoint = json.loads((run_dir / "checkpoint.json").read_text())
-    assert checkpoint["schema"] == 5
+    assert checkpoint["schema"] == 6
     contained = checkpoint["workflow_cases"]["case-0"]["review_exhaustion"]
     assert contained["reason_code"] == "review_contract_exhausted"
     assert contained["stage"] == "REVIEW0"
@@ -920,7 +1108,7 @@ def test_review0_invalid_exhaustion_is_terminal_and_other_cases_continue(tmp_pat
     assert sum("::raw_writer::" in key for key in checkpoint["judgments"]) == 20
     assert sum("::reviewed_workflow::" in key for key in checkpoint["judgments"]) == 18
     public = json.dumps(result, ensure_ascii=False)
-    assert "対象形式:" not in public
+    assert "target_format" not in public
     assert "UNVERIFIED" not in public
     assert all(attempt["attempt_id"] not in public
                and attempt["output_sha256"] not in public

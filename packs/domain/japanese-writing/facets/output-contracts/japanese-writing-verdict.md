@@ -1,25 +1,110 @@
 # output contract: japanese-writing-verdict
 
-独立 reviewer は次の構造だけを返します。完成稿の全面的な書き直しや、根拠のない合格は禁止します。
+独立 reviewer は Markdown fence や前後の説明を付けず、末尾の JSON Schema を満たす単一の
+JSON object だけを返します。schema 自体は返しません。キーの省略・追加・重複は禁止です。
+完成稿の全面的な書き直しや、根拠のない合格も禁止します。
 
-```text
-対象形式: <email|plain-text|markdown|ticket|other>
-検査:
-- 単一成果物: PASS | FAIL — <完成稿への短いアンカー>
-- 形式: PASS | FAIL | UNKNOWN — <指定と完成稿へのアンカー>
-- 事実保持: PASS | FAIL | UNKNOWN — <入力と完成稿へのアンカー>
-- 推測なし: PASS | FAIL | UNKNOWN — <入力と完成稿へのアンカー>
-- 日本語: PASS | FAIL — <文体・敬語・一文の焦点・情報順序・句読点へのアンカー>
-- 秘密情報: PASS | FAIL | N/A — <値を引用せず、redaction・要求情報へのアンカー>
-- 障害・サポート安全性: PASS | FAIL | N/A | UNKNOWN — <該当箇所へのアンカー>
-修正条件:
-- <公開可能にするための最小変更。不要なら「なし」>
-判定: APPROVE | REVISE | UNVERIFIED
-```
+各 check の `status` は schema の列挙値から一つだけを選び、`anchor` には入力または完成稿の
+短い根拠箇所を書きます。秘密情報の値を `anchor` へ引用してはいけません。値の再表示、
+秘密情報の要求、redaction の欠落は blocking な `FAIL` とします。
 
 blocking な `FAIL` が一つでもあれば `REVISE` とします。入力不足で事実保持または安全性を
 確認できなければ推測せず `UNKNOWN` とし、公開可否に関わる場合は `REVISE` とします。
-秘密情報の値を根拠欄へ引用してはいけません。値の再表示、秘密情報の要求、redaction の欠落は
-blocking な `FAIL` とします。
-生成者と同じモデルしか reviewer に使えない場合は、内容に問題が見つからなくても
-`UNVERIFIED` とします。
+`APPROVE` では blocking な check を残さず、`repair_conditions` を `["なし"]` だけにします。
+`REVISE` では blocking な check を一つ以上示し、`repair_conditions` に「なし」を含めず、
+公開可能にする最小の修正条件を一つ以上書きます。生成者と同じモデルしか reviewer に
+使えない場合は `UNVERIFIED` とします。
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["target_format", "checks", "repair_conditions", "verdict"],
+  "properties": {
+    "target_format": {
+      "type": "string",
+      "enum": ["email", "plain-text", "markdown", "ticket", "other"]
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["single_artifact", "format", "fact_preservation", "no_inference", "japanese_quality", "secret_handling", "incident_support_safety"],
+      "properties": {
+        "single_artifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "anchor"],
+          "properties": {
+            "status": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "anchor": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+          }
+        },
+        "format": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "anchor"],
+          "properties": {
+            "status": {"type": "string", "enum": ["PASS", "FAIL", "UNKNOWN"]},
+            "anchor": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+          }
+        },
+        "fact_preservation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "anchor"],
+          "properties": {
+            "status": {"type": "string", "enum": ["PASS", "FAIL", "UNKNOWN"]},
+            "anchor": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+          }
+        },
+        "no_inference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "anchor"],
+          "properties": {
+            "status": {"type": "string", "enum": ["PASS", "FAIL", "UNKNOWN"]},
+            "anchor": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+          }
+        },
+        "japanese_quality": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "anchor"],
+          "properties": {
+            "status": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "anchor": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+          }
+        },
+        "secret_handling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "anchor"],
+          "properties": {
+            "status": {"type": "string", "enum": ["PASS", "FAIL", "N/A"]},
+            "anchor": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+          }
+        },
+        "incident_support_safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "anchor"],
+          "properties": {
+            "status": {"type": "string", "enum": ["PASS", "FAIL", "N/A", "UNKNOWN"]},
+            "anchor": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+          }
+        }
+      }
+    },
+    "repair_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 7,
+      "items": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^(?!\u005cs)[\u005cs\u005cS]*\u005cS$"}
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["APPROVE", "REVISE", "UNVERIFIED"]
+    }
+  }
+}
+```

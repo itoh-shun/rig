@@ -298,6 +298,14 @@ subagent prompt を組む前に、以下の順で関連する知識ブリック�
 - persona facet が `inject: ["[[slug]]", …]` を宣言している場合、各 `[[slug]]` を **tier 解決**（project overlay > global > org > **pack 同梱** > shipped `skills/engine/facets/knowledge/wiki/`）してページを取得し、**User 先頭（Knowledge 位置）に注入**する（1ホップ既定・過剰展開しない）。**pack の persona が `inject:` を持つ場合、その解決先はまず自分の pack の `facets/knowledge/<slug>.md`**（pack はそこにページを同梱する）。同 slug を global/project に置けば従来どおり上書きできる。
 - 本文中の `[[slug]]` も同様に解決対象。`[[slug|表示名]]` 記法可。解決できない `[[...]]` は**注入せず**、`--validate` がリンク切れとして報告する。
 - wiki は「事実」、persona は「判断・声」。**persona は事実を埋め込まず wiki を参照する**（暗黙知サイロを避ける）。
+- `japanese-writing` の `material_profile` は例外的な文体素材 selector で、`none|technical|conversation`
+  の明示値だけを使う（goal から推測しない）。recipe の `material_profiles.<profile>.inject` が owner-bound
+  wiki をちょうど一つ指し、UTF-8 上限・asset hash・出典 blob hash・owner attestation を検証してから、
+  「文体専用・事実利用禁止・引用禁止」の制御文と untrusted fence を付けて Knowledge 位置へ置く。
+  `none` は無注入、素材は generator の初稿と一度だけの修正だけに使い reviewer へ渡さない。
+  secure runtime は選択済み bytes を provider 起動前に owner-only snapshotへ固定し、同じrunでは
+  assetを再選択しない。resumeはsnapshotと現在のasset/source provenanceの両方を再検証する。
+  source全体はJapanese pack内のMIT resource blobで検証し、repository `/docs`を実行時依存にしない。
 
 **注入位置:**
 

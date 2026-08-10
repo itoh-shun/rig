@@ -413,6 +413,71 @@ def _validate_recipe_provenance(state: dict) -> None:
             return
 
 
+def _validate_secure_review_category_binding(state: dict) -> None:
+    """Reject missing, changed, or duplicated secure Japanese category bindings."""
+    if state.get("recipe") != "japanese-writing" or not state.get("secure_runtime"):
+        return
+    allowed = {"general", "incident_report", "support_reply"}
+    category = state.get("review_category")
+    secure_category = state["secure_runtime"].get("review_category")
+    bindings = [
+        row for row in state.get("history") or []
+        if row.get("action") == "BIND_REVIEW_CATEGORY"
+    ]
+    if (
+        category not in allowed
+        or secure_category != category
+        or bindings != [{"action": "BIND_REVIEW_CATEGORY", "category": category}]
+    ):
+        raise OSError("secure Japanese review category binding is missing or changed")
+
+
+def _validate_secure_material_profile_binding(state: dict) -> None:
+    """Reject missing or changed secure Japanese style-material bindings."""
+    if state.get("recipe") != "japanese-writing" or not state.get("secure_runtime"):
+        return
+    allowed = {"none", "technical", "conversation"}
+    profile = state.get("material_profile")
+    secure = state["secure_runtime"]
+    if (
+        profile not in allowed
+        or secure.get("material_profile") != profile
+        or not _exact_equal(state.get("material_provenance"), secure.get("material_provenance"))
+        or not _exact_equal(state.get("material_snapshot"), secure.get("material_snapshot"))
+    ):
+        raise OSError("secure Japanese material profile binding is missing or changed")
+    write = next(
+        (step for step in state.get("steps") or [] if step.get("id") == "write"), None
+    )
+    if write is None:
+        raise OSError("secure Japanese material profile binding has no write step")
+    try:
+        from .providers import japanese_material_metadata
+        expected = japanese_material_metadata(write, profile)
+    except Exception as error:
+        raise OSError(
+            "secure Japanese material profile binding provenance cannot be verified"
+        ) from error
+    if not _exact_equal(state.get("material_provenance"), expected):
+        raise OSError("secure Japanese material profile binding is missing or changed")
+    snapshot = state.get("material_snapshot")
+    if profile == "none":
+        if snapshot is not None:
+            raise OSError("secure Japanese material profile binding has an unexpected snapshot")
+        return
+    if not isinstance(snapshot, dict) or set(snapshot) != {"path", "sha256", "size_bytes"}:
+        raise OSError("secure Japanese material profile binding has no sealed snapshot")
+    try:
+        payload = read_secure_bytes(pathlib.Path(str(snapshot["path"])))
+    except OSError as error:
+        raise OSError("secure Japanese material profile snapshot cannot be verified") from error
+    if (
+        len(payload) != snapshot.get("size_bytes")
+        or hashlib.sha256(payload).hexdigest() != snapshot.get("sha256")
+    ):
+        raise OSError("secure Japanese material profile snapshot changed")
+
+
 def load_state(path: pathlib.Path) -> dict:
     path = pathlib.Path(path).absolute()
     descriptor = os.open(
@@ -442,6 +507,8 @@ def load_state(path: pathlib.Path) -> dict:
         if secure_payload != payload:
             raise OSError("secure run-state changed during verification")
         state = json.loads(secure_payload.decode("utf-8"))
+    _validate_secure_review_category_binding(state)
+    _validate_secure_material_profile_binding(state)
     _validate_recipe_provenance(state)
     enforce_executable_state(state)
     return state
