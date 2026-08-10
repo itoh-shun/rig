@@ -46,11 +46,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import pathlib
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+
+from . import repo_paths
 
 CRITERION = "mutation_score_not_regressed"
 DEFAULT_BASELINE = ".rig/mutation-baseline.json"
@@ -344,19 +345,11 @@ def evaluate(counts: dict, baseline: dict | None, tolerance: float) -> dict:
 
 
 def _workbench_script() -> pathlib.Path:
-    """Locate scripts/workbench.py — env override, then install source, then cwd."""
-    env = os.environ.get("RIG_HOME")
-    candidates = []
-    if env:
-        candidates.append(pathlib.Path(env))
-    here = pathlib.Path(__file__).resolve().parent
-    candidates.extend([here.parent, here.parent.parent])
-    cwd = pathlib.Path.cwd().resolve()
-    candidates.extend([cwd, *cwd.parents])
-    for candidate in candidates:
-        script = candidate / "scripts" / "workbench.py"
-        if script.is_file():
-            return script
+    """Locate scripts/workbench.py — env override, then install source, then cwd
+    (the shared search in `repo_paths`)."""
+    script = repo_paths.find_script("workbench.py")
+    if script:
+        return script
     raise ReportError(
         "scripts/workbench.py not found — set RIG_HOME to the rig repo root to use --apply"
     )

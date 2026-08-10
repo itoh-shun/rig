@@ -4,7 +4,7 @@
 # Usage:
 #   scripts/install.sh                             # interactive mode (recommended)
 #   scripts/install.sh --yes                       # install without confirmation
-#   scripts/install.sh --ref <branch|tag|sha>      # pin a specific ref (default: master)
+#   scripts/install.sh --ref <branch|tag|sha>      # install that ref from GitHub instead
 #   scripts/install.sh --check                     # only check installability, then exit
 #   scripts/install.sh --uninstall                 # remove rig-workbench
 #
@@ -20,28 +20,53 @@
 # by hand; the extension is offered here. Nothing in this section can fail the
 # install.
 #
-# Idempotent: skips if `rig-wb version` already succeeds (--force reinstalls).
+# Source: the checkout this script ships with, so that the version compared and
+# the version installed are the same artefact and an accepted update converges.
+# `--ref` switches to ${REPO_URL}@<ref> — whose version cannot be known without a
+# network fetch, so no comparison and no update offer is made in that mode.
+#
+# Idempotent, but version-aware: skips when the installed `rig-wb` matches this
+# checkout, and when it is *newer* (installing over it would be a downgrade, so
+# it is reported and declined — `--force` is the escape hatch). Only an older
+# install is offered an update (--yes answers yes, --check only reports).
+# Presence alone is not enough — a stale rig-wb keeps loading this repo's
+# scripts/*.py and fails with import errors that read like "rig-wb is not
+# installed". An unreadable version on either side is undetermined, never a
+# mismatch: presence-only behaviour, nothing is replaced.
 # Exit: 0=ready / 1=no install method / 2=bad flag
 set -euo pipefail
 
 REPO_URL="git+https://github.com/itoh-shun/rig.git"
 DEFAULT_REF="master"
+# This script lives at <repo>/scripts/install.sh; the checkout it ships with is
+# what the installed CLI has to match.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── flag parsing ────────────────────────────────────────────────────────
 YES=0
 REF="$DEFAULT_REF"
+REF_EXPLICIT=0       # `--ref` given: install that ref, never the local checkout
 CHECK_ONLY=0
 UNINSTALL=0
 FORCE=0
+UPDATE_CONFIRMED=0   # set when the version-mismatch prompt was answered yes
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes) YES=1; shift ;;
-    --ref) REF="${2:-}"; shift 2 ;;
+    --ref)
+      REF="${2:-}"
+      if [ -z "$REF" ]; then
+        echo "[ERROR] --ref requires a value" >&2
+        exit 2
+      fi
+      REF_EXPLICIT=1
+      shift 2
+      ;;
     --check) CHECK_ONLY=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help)
-      sed -n '1,24p' "$0"
+      sed -n '1,36p' "$0"
       exit 0
       ;;
     *)
@@ -50,6 +75,32 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# ── install source ──────────────────────────────────────────────────────
+# What is compared has to be what is installed. Comparing the installed CLI
+# against this checkout while installing `@master` gave a prompt that could not
+# be satisfied: accepting it installed master, the checkout still disagreed, and
+# the same prompt came back on the next run. So without an explicit `--ref` the
+# checkout this script ships with *is* the install source — the two are the same
+# artefact by construction. All three backends take a directory as the package
+# spec (`pipx install <dir>`, `uv tool install <dir>`, `pip install <dir>`).
+#
+# pyproject.toml is required as well as the package: piped into bash,
+# ${BASH_SOURCE[0]} is not a path and REPO_ROOT lands on `/`, which must not
+# count as a checkout.
+LOCAL_SOURCE=0
+if [ "$REF_EXPLICIT" -eq 0 ] \
+   && [ -f "$REPO_ROOT/rig_workbench/__init__.py" ] \
+   && [ -f "$REPO_ROOT/pyproject.toml" ]; then
+  LOCAL_SOURCE=1
+fi
+if [ "$LOCAL_SOURCE" -eq 1 ]; then
+  SPEC="$REPO_ROOT"
+  SOURCE_DESC="this checkout ($REPO_ROOT)"
+else
+  SPEC="${REPO_URL}@${REF}"
+  SOURCE_DESC="ref '$REF'"
+fi
 
 # ── gh + gh-stack (optional) ────────────────────────────────────────────
 # `gh` plus the github/gh-stack extension add stacked-PR publishing. They are
@@ -201,6 +252,59 @@ if [ "$UNINSTALL" -eq 0 ]; then
   echo ""
 fi
 
+# ── version comparison helpers ──────────────────────────────────────────
+# The number to match is the one `rig-wb version` prints, i.e.
+# rig_workbench/__init__.py's __version__ — not pyproject.toml's (they are two
+# separate literals). Read it textually: this runs before rig-wb exists and must
+# not import anything.
+repo_version() {
+  [ -f "$REPO_ROOT/rig_workbench/__init__.py" ] || return 0
+  sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' "$REPO_ROOT/rig_workbench/__init__.py" | head -n 1
+}
+
+# `rig-wb version` prints "rig-wb X.Y.Z"; older builds printed a bare "X.Y.Z".
+# Nothing else is a version. Taking the last token of whatever came out turned a
+# non-zero exit into "?", a leading warning line into its last word, and a usage
+# dump into "all" — each shown as an "installed:" version and each a fabricated
+# mismatch. Empty output means undetermined, and the caller falls back to
+# presence-only rather than declaring the CLI stale.
+VERSION_SHAPE='^[[:space:]]*(rig-wb[[:space:]]+)?([0-9]+(\.[0-9]+)*([._+-][0-9A-Za-z._+-]+)?)[[:space:]]*$'
+version_number() {
+  # The whole output has to be one of the two shapes — matching a line out of the
+  # middle is how a warning line became a version.
+  if [[ $1 =~ $VERSION_SHAPE ]]; then
+    printf '%s' "${BASH_REMATCH[2]}"
+  fi
+}
+
+# Orders $1 against $2: "gt" / "eq" / "lt", or "" when they cannot be ordered
+# (equal numbers, differing suffixes — "2.2.3" vs "2.2.3rc1"). Without this the
+# comparison was equality-only, so an installed 2.3.0 against a 2.2.3 checkout
+# was announced as an update and performed as a downgrade.
+# Not `sort -V`: this script also has to run on bash 3.2 / BSD userland.
+version_cmp() {
+  local a b n i x y
+  local IFS=.
+  [[ $1 =~ ^([0-9]+(\.[0-9]+)*) ]] || return 0
+  a="${BASH_REMATCH[1]}"
+  [[ $2 =~ ^([0-9]+(\.[0-9]+)*) ]] || return 0
+  b="${BASH_REMATCH[1]}"
+  local A B
+  A=($a); B=($b)
+  n=${#A[@]}
+  [ "${#B[@]}" -gt "$n" ] && n=${#B[@]}
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    x=${A[$i]:-0}; y=${B[$i]:-0}
+    # 10# so a zero-padded component is not read as octal.
+    if [ "$((10#$x))" -gt "$((10#$y))" ]; then printf 'gt'; return 0; fi
+    if [ "$((10#$x))" -lt "$((10#$y))" ]; then printf 'lt'; return 0; fi
+    i=$((i + 1))
+  done
+  [ "$1" = "$2" ] && printf 'eq'
+  return 0
+}
+
 # ── existing install check ──────────────────────────────────────────────
 if command -v rig-wb >/dev/null 2>&1; then
   CURRENT=$(rig-wb version 2>/dev/null || echo "?")
@@ -214,10 +318,82 @@ if command -v rig-wb >/dev/null 2>&1; then
     echo "✓ Uninstall complete"
     exit 0
   fi
+  # "Installed" is not the question — "matches this checkout" is. A rig-wb from an
+  # older release keeps being found on PATH and keeps loading this repo's
+  # scripts/*.py, so a skew surfaces as an unrelated-looking ImportError rather
+  # than as "your CLI is out of date".
+  INSTALLED_VER=$(version_number "$CURRENT")
+  # Only the local checkout has a knowable version: an explicit `--ref` names
+  # something on GitHub that this script would have to fetch to identify.
+  REPO_VER=""
+  if [ "$LOCAL_SOURCE" -eq 1 ]; then
+    REPO_VER=$(version_number "$(repo_version)")
+  fi
   if [ "$FORCE" -eq 0 ]; then
-    echo "✓ rig-wb is already installed: $CURRENT"
-    echo "  Use --force to reinstall, --uninstall to remove."
-    exit 0
+    # Nothing comparable — no readable checkout next to this script (curl | bash,
+    # or a copied file), an explicit --ref, or a `rig-wb version` that did not
+    # print a version. Presence-only, the behaviour this installer had before it
+    # learned to compare: report and stop, never replace anything.
+    if [ -z "$REPO_VER" ] || [ -z "$INSTALLED_VER" ]; then
+      echo "✓ rig-wb is already installed: $CURRENT"
+      if [ -z "$INSTALLED_VER" ]; then
+        echo "  (version undetermined: \`rig-wb version\` printed something unexpected —"
+        echo "   skipping the version check rather than guessing it is stale)"
+      fi
+      echo "  Use --force to reinstall, --uninstall to remove."
+      exit 0
+    fi
+    ORDER=$(version_cmp "$REPO_VER" "$INSTALLED_VER")
+    if [ "$ORDER" = "eq" ]; then
+      echo "✓ rig-wb is already installed: $CURRENT"
+      echo "  Use --force to reinstall, --uninstall to remove."
+      exit 0
+    fi
+    if [ "$ORDER" != "gt" ]; then
+      # The installed CLI is newer than this checkout (or the two cannot be
+      # ordered). Replacing it is a downgrade, not an update: never offered,
+      # never done under --yes. --force is the escape hatch, and says so.
+      echo "◇ No update to offer"
+      echo "  installed:  $INSTALLED_VER"
+      echo "  this repo:  $REPO_VER  ($REPO_ROOT)"
+      echo "  The installed rig-wb is not older than this checkout, so installing this"
+      echo "  checkout would be a downgrade. Keeping $INSTALLED_VER."
+      echo "  Use --force to install this checkout anyway."
+      if [ "$CHECK_ONLY" -eq 0 ]; then
+        exit 0
+      fi
+      # --check reports the environment too; it owns the documented exit codes.
+    else
+      echo "◇ Version mismatch"
+      echo "  installed:  $INSTALLED_VER"
+      echo "  this repo:  $REPO_VER  ($REPO_ROOT)"
+      echo "  A stale rig-wb still loads this repo's scripts, so the mismatch usually"
+      echo "  shows up as an import error rather than as a version complaint."
+      if [ "$CHECK_ONLY" -eq 1 ]; then
+        # --check is detection only: report and fall through to environment
+        # detection, which owns the documented exit codes. Never prompt, never install.
+        echo "  Run /rig:setup (without --check) to update."
+      elif [ "$YES" -eq 1 ]; then
+        # --yes is allowed to skip the question, not to change the global CLI
+        # unannounced: name what is being replaced and where it comes from.
+        echo "  --yes: updating rig-wb $INSTALLED_VER → $REPO_VER from $SOURCE_DESC."
+        FORCE=1
+      else
+        echo ""
+        # `|| UPDATE_ANS=""` : with no tty the read hits EOF and returns non-zero,
+        # which `set -e` would turn into a bare exit 1. No answer means no consent,
+        # not a crash.
+        read -r -p "Update rig-wb $INSTALLED_VER → $REPO_VER (from $SOURCE_DESC)? [y/N] " UPDATE_ANS \
+          || UPDATE_ANS=""
+        case "$UPDATE_ANS" in
+          y|Y|yes|Yes) FORCE=1; UPDATE_CONFIRMED=1 ;;
+          *)
+            echo "Keeping $INSTALLED_VER. Re-run /rig:setup to update."
+            exit 0
+            ;;
+        esac
+      fi
+    fi
   fi
 fi
 
@@ -283,21 +459,28 @@ EOF
 fi
 
 # ── confirm ─────────────────────────────────────────────────────────────
-SPEC="${REPO_URL}@${REF}"
+# SPEC was fixed before the version comparison, so what was compared, what is
+# shown here and what is installed are one and the same.
 if [ "$YES" -eq 0 ]; then
   echo ""
-  echo "◇ About to run"
+  echo "◇ About to run  (source: $SOURCE_DESC)"
   case "$METHOD" in
-    pipx) echo "  pipx install \"$SPEC\"" ;;
-    uv)   echo "  uv tool install \"$SPEC\"" ;;
-    pip)  echo "  $PYTHON_CMD -m pip install --user \"$SPEC\"" ;;
+    pipx) echo "  pipx install $([ "$FORCE" -eq 1 ] && echo '--force ')\"$SPEC\"" ;;
+    uv)   echo "  uv tool install $([ "$FORCE" -eq 1 ] && echo '--force ')\"$SPEC\"" ;;
+    pip)  echo "  $PYTHON_CMD -m pip install --user $([ "$FORCE" -eq 1 ] && echo '--upgrade ')\"$SPEC\"" ;;
   esac
   echo ""
-  read -r -p "Continue? [y/N] " ANS
-  case "$ANS" in
-    y|Y|yes|Yes) ;;
-    *) echo "Aborted."; exit 0 ;;
-  esac
+  # The update prompt above was already a yes/no on this exact install; asking a
+  # second time for the same decision is noise. The command is still shown.
+  if [ "$UPDATE_CONFIRMED" -eq 1 ]; then
+    echo "(confirmed above)"
+  else
+    read -r -p "Continue? [y/N] " ANS
+    case "$ANS" in
+      y|Y|yes|Yes) ;;
+      *) echo "Aborted."; exit 0 ;;
+    esac
+  fi
 fi
 
 # ── install ─────────────────────────────────────────────────────────────
@@ -320,8 +503,17 @@ case "$METHOD" in
     ;;
   pip)
     # PEP 668 environments (Debian family) may require --break-system-packages.
-    # Try a plain --user first and show guidance if it fails.
-    if ! $PYTHON_CMD -m pip install --user "$SPEC" 2>&1; then
+    # Try a plain --user first and show guidance if it fails. --upgrade on the
+    # reinstall/update path: without it pip reports "already satisfied" for a
+    # VCS spec and the stale version survives. Spelled out rather than built as
+    # an array — an empty array under `set -u` is an error on bash 3.2 (macOS).
+    PIP_OK=1
+    if [ "$FORCE" -eq 1 ]; then
+      $PYTHON_CMD -m pip install --user --upgrade "$SPEC" 2>&1 || PIP_OK=0
+    else
+      $PYTHON_CMD -m pip install --user "$SPEC" 2>&1 || PIP_OK=0
+    fi
+    if [ "$PIP_OK" -eq 0 ]; then
       cat >&2 <<'EOF'
 
 [HINT] pip install --user was rejected. On a PEP 668 environment, try:

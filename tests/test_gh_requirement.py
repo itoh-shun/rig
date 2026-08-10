@@ -25,6 +25,7 @@ import sys
 
 import pytest
 
+from rig_workbench import __version__ as RIG_WB_VERSION
 from rig_workbench import gh_requirement as ghreq
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -526,9 +527,14 @@ def _fake_pipx(sandbox_bin):
 
 def _fake_rig_wb(sandbox_bin):
     """A stand-in `rig-wb` so install.sh takes its 'already installed' path and
-    never runs a real pip/pipx install during a test."""
+    never runs a real pip/pipx install during a test.
+
+    It reports *this checkout's* version on purpose: the installer skips on a match
+    and offers an update on a mismatch, so an arbitrary number would send these gh
+    tests down the update path instead of the one they are about.
+    """
     path = sandbox_bin / "rig-wb"
-    path.write_text("#!/bin/bash\necho 'rig-wb 9.9.9-test'\n", encoding="utf-8")
+    path.write_text(f"#!/bin/bash\necho 'rig-wb {RIG_WB_VERSION}'\n", encoding="utf-8")
     path.chmod(0o755)
     return path
 
