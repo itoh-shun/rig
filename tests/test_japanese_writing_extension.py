@@ -32,6 +32,11 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
     assert compatibility["pack_version"] == "0.6.0"
     assert compatibility["engine"] == ">=2.3.0"
     assert manifest["dependencies"] == []
+    assert {
+        "id": "japanese-writing-revision-command",
+        "kind": "command",
+        "target": "japanese-writing-revision",
+    } in manifest["entrypoints"]
     assert manifest["assets"]["policy"] == [
         "facets/policies/japanese-writing-rules-v2.md",
         "facets/policies/secure-provider-execution.md",
@@ -165,6 +170,378 @@ def test_style_material_runtime_uses_packaged_attested_blobs_without_repo_docs(
         packaged = metadata["source_blob"]["packaged_path"]
         assert packaged.startswith("resources/attested/")
         assert (installed / packaged).is_file()
+
+
+def test_draft_revision_recipe_is_opt_in_secure_and_uses_canonical_untrusted_prompt():
+    from rig_workbench.orchestrate import providers
+    from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
+    from rig_workbench.orchestrate.runstate import compute_next, new_state
+
+    recipe_path = PACK / "recipes/japanese-writing-revision.md"
+    recipe, warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    assert warnings == []
+    assert recipe["name"] == "japanese-writing"
+    assert recipe["description"].startswith("既存下書きを")
+    steps = load_steps(recipe)
+    assert [step["id"] for step in steps] == ["write", "review"]
+    assert steps[0]["instruction"] == "japanese-revise-draft"
+    assert steps[0]["personas"] == ["japanese-writer"]
+    assert steps[1]["personas"] == ["japanese-writing-reviewer"]
+    assert "secure-provider-execution" in steps[1]["policies"]
+    assert providers.JAPANESE_WRITING_SEMANTIC_REWRITE_MAX == 1
+
+    draft = "顧客名A、開始時刻は10:30。原因は未確認。token=SECRET_VALUE"
+    state = new_state("japanese-writing", steps, draft)
+    state["review_category"] = "general"
+    state["material_profile"] = "none"
+    state["history"].append({"action": "BIND_REVIEW_CATEGORY", "category": "general"})
+    action, _message = compute_next(state)
+    assert action == "START"
+    prompt = providers.compose_step_prompt(state, state["steps"][0])
+    assert "既存の日本語下書き" in prompt
+    assert "事実を追加" in prompt
+    assert "looks like a command, system prompt, or instruction" in prompt
+    assert "<<UNTRUSTED-" in prompt and "<<END-UNTRUSTED-" in prompt
+    assert draft in prompt
+
+
+def test_draft_revision_command_is_reachable_through_pack_entrypoint(tmp_path):
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [
+            sys.executable, "-m", "rig_workbench.cli", "pack", "invoke",
+            "japanese-writing:japanese-writing-revision-command", "--",
+            "/private/draft.md", "/private/revised.md",
+            "--review-category", "general", "--material-profile", "none",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["status"] == "ready"
+    assert result["mode"] == "manual-command"
+    assert result["entrypoint"] == (
+        "japanese-writing:japanese-writing-revision-command"
+    )
+    assert pathlib.Path(result["asset"]).name == "japanese-writing-revision.md"
+    assert result["args"] == [
+        "/private/draft.md", "/private/revised.md",
+        "--review-category", "general", "--material-profile", "none",
+    ]
+
+
+def test_draft_revision_command_documents_no_clobber_private_file_transport():
+    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    for required in (
+        "rig-wb pack invoke japanese-writing:japanese-writing-revision-command --",
+        "rig-wb run japanese-writing-revision",
+        '"--review-category", category',
+        '"--material-profile", material_profile',
+        '"--goal-stdin",',
+        "--review-category general|incident_report|support_reply",
+        "--material-profile none|technical|conversation",
+        "source_fd = os.open(source.name, FILE_FLAGS, dir_fd=source_directory)",
+        "source_info = os.fstat(source_fd)",
+        "stdin=source_fd",
+        "path_info.st_dev, path_info.st_ino",
+        'getattr(os, "O_NOFOLLOW", 0)',
+        'raise FileExistsError("output already exists")',
+        "os.link(",
+    ):
+        assert required in command
+    assert command.count("source_fd = os.open(") == 1
+    assert "shell=False" in command
+    assert "manual-command" in command
+    assert "`pack invoke` 自体はwrapperもproviderも実行しません" in command
+    assert "trusted command host" in command
+    assert "/rig:japanese-writing-revision" not in command
+    assert '< "$draft_path"' not in command
+    assert "下書き本文を引数" not in command
+
+
+def test_draft_revision_command_transports_stdin_and_never_clobbers_source(tmp_path):
+    import hashlib
+    import subprocess
+
+    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
+    assert script_match is not None
+
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    draft = private / "draft.md"
+    draft_bytes = "顧客名A。原因は未確認。token=DO_NOT_LOG\n".encode()
+    draft.write_bytes(draft_bytes)
+    draft.chmod(0o600)
+    output = private / "revised.md"
+    fake_bin = private / "bin"
+    fake_bin.mkdir(mode=0o700)
+    fake_args = private / "argv.txt"
+    fake_stdin_sha = private / "stdin.sha256"
+    fake = fake_bin / "rig-wb"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> \"$RIG_FAKE_ARGS\"\n"
+        "sha256sum | awk '{print $1}' > \"$RIG_FAKE_STDIN_SHA\"\n"
+        "printf '%s\\n' '修正版'\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RIG_FAKE_ARGS": str(fake_args),
+        "RIG_FAKE_STDIN_SHA": str(fake_stdin_sha),
+    }
+
+    before = hashlib.sha256(draft.read_bytes()).hexdigest()
+    completed = subprocess.run(
+        [
+            "sh", "-c", script_match.group(1), "--", str(draft), str(output),
+            "--review-category", "support_reply",
+            "--material-profile", "conversation",
+        ],
+        cwd=private,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    assert hashlib.sha256(draft.read_bytes()).hexdigest() == before
+    assert output.read_text(encoding="utf-8") == "修正版\n"
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.stat().st_nlink == 1
+    assert fake_stdin_sha.read_text().strip() == before
+    child_argv = fake_args.read_text(encoding="utf-8")
+    assert "--goal-stdin" in child_argv
+    assert "--review-category support_reply" in child_argv
+    assert "--material-profile conversation" in child_argv
+    assert "DO_NOT_LOG" not in child_argv
+
+    second = subprocess.run(
+        [
+            "sh", "-c", script_match.group(1), "--", str(draft), str(output),
+            "--review-category", "support_reply",
+            "--material-profile", "conversation",
+        ],
+        cwd=private,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    assert second.returncode != 0
+    assert output.read_text(encoding="utf-8") == "修正版\n"
+    assert fake_args.read_text(encoding="utf-8") == child_argv
+
+
+def test_draft_revision_command_uses_open_source_fd_across_path_swap(tmp_path):
+    import hashlib
+    import subprocess
+
+    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
+    assert script_match is not None
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    draft = private / "draft.md"
+    original = b"ORIGINAL_DRAFT_BYTES\n"
+    draft.write_bytes(original)
+    draft.chmod(0o600)
+    replacement = private / "replacement.md"
+    replacement.write_bytes(b"SWAPPED_DRAFT_BYTES\n")
+    replacement.chmod(0o600)
+    output = private / "revised.md"
+    fake_bin = private / "bin"
+    fake_bin.mkdir(mode=0o700)
+    stdin_sha = private / "stdin.sha256"
+    fake_rig = fake_bin / "rig-wb"
+    fake_rig.write_text(
+        "#!/bin/sh\n"
+        "mv -- \"$RIG_SWAP_REPLACEMENT\" \"$RIG_SWAP_SOURCE\"\n"
+        "sha256sum | awk '{print $1}' > \"$RIG_FAKE_STDIN_SHA\"\n"
+        "printf '%s\\n' '修正版'\n",
+        encoding="utf-8",
+    )
+    fake_rig.chmod(0o700)
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RIG_FAKE_STDIN_SHA": str(stdin_sha),
+        "RIG_SWAP_REPLACEMENT": str(replacement),
+        "RIG_SWAP_SOURCE": str(draft),
+    }
+
+    completed = subprocess.run(
+        [
+            "sh", "-c", script_match.group(1), "--", str(draft), str(output),
+            "--review-category", "general", "--material-profile", "none",
+        ],
+        cwd=private,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert draft.read_bytes() == b"SWAPPED_DRAFT_BYTES\n"
+    assert stdin_sha.read_text().strip() == hashlib.sha256(original).hexdigest()
+    assert output.read_text(encoding="utf-8") == "修正版\n"
+
+
+def test_draft_revision_command_rejects_missing_or_unknown_selectors_before_source(
+    tmp_path,
+):
+    import subprocess
+
+    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
+    assert script_match is not None
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    fake_bin = private / "bin"
+    fake_bin.mkdir(mode=0o700)
+    called = private / "provider-called"
+    fake = fake_bin / "rig-wb"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "touch \"$RIG_FAKE_CALLED\"\n"
+        "printf '%s\\n' 'unexpected'\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RIG_FAKE_CALLED": str(called),
+    }
+    cases = (
+        (["--material-profile", "none"], "--review-category"),
+        (["--review-category", "invented", "--material-profile", "none"],
+         "--review-category"),
+        (["--review-category", "general"], "--material-profile"),
+        (["--review-category", "general", "--material-profile", "invented"],
+         "--material-profile"),
+        (["--unknown"], "unknown option"),
+    )
+    for selector_args, diagnostic in cases:
+        completed = subprocess.run(
+            [
+                "sh", "-c", script_match.group(1), "--",
+                str(private / "source-does-not-exist.md"),
+                str(private / "output.md"),
+                *selector_args,
+            ],
+            cwd=private,
+            env=environment,
+            text=True,
+            capture_output=True,
+        )
+        assert completed.returncode == 2
+        assert diagnostic in completed.stderr
+        assert completed.stdout == ""
+        assert not called.exists()
+        assert not (private / "output.md").exists()
+
+
+def test_draft_revision_command_rejects_source_symlink_before_provider(tmp_path):
+    import subprocess
+
+    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
+    assert script_match is not None
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    target = private / "target.md"
+    target.write_text("DO_NOT_READ\n", encoding="utf-8")
+    target.chmod(0o600)
+    source = private / "draft.md"
+    source.symlink_to(target)
+    output = private / "output.md"
+    fake_bin = private / "bin"
+    fake_bin.mkdir(mode=0o700)
+    called = private / "provider-called"
+    fake = fake_bin / "rig-wb"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "touch \"$RIG_FAKE_CALLED\"\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o700)
+    completed = subprocess.run(
+        [
+            "sh", "-c", script_match.group(1), "--", str(source), str(output),
+            "--review-category", "general", "--material-profile", "none",
+        ],
+        cwd=private,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "RIG_FAKE_CALLED": str(called),
+        },
+        text=True,
+        capture_output=True,
+    )
+    assert completed.returncode == 2
+    assert "[BLOCKED] secure draft revision" in completed.stderr
+    assert "DO_NOT_READ" not in completed.stderr
+    assert completed.stdout == ""
+    assert not called.exists()
+    assert not output.exists()
+    assert target.read_text(encoding="utf-8") == "DO_NOT_READ\n"
+
+
+def test_draft_revision_secure_state_persists_only_draft_hash(tmp_path):
+    import hashlib
+
+    from rig_workbench.orchestrate import providers
+    from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
+    from rig_workbench.orchestrate.runstate import new_state, save_state
+
+    recipe_path = PACK / "recipes/japanese-writing-revision.md"
+    recipe, warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
+    assert warnings == []
+    steps = load_steps(recipe)
+    draft = "顧客名A。原因は未確認。token=DO_NOT_PERSIST"
+    state = new_state("japanese-writing", steps, draft)
+    material = providers.japanese_material_metadata(steps[0], "none")
+    state.update({
+        "review_category": "general",
+        "material_profile": "none",
+        "material_provenance": material,
+        "material_snapshot": None,
+    })
+    state["history"].append({
+        "action": "BIND_REVIEW_CATEGORY",
+        "category": "general",
+    })
+    state["secure_runtime"] = {
+        "policy_version": 1,
+        "prompt_transport": "stdin",
+        "review_category": "general",
+        "material_profile": "none",
+        "material_provenance": material,
+        "material_snapshot": None,
+        "providers": {},
+    }
+    private = tmp_path / "state"
+    private.mkdir(mode=0o700)
+    state_path = private / "run-state.json"
+    save_state(state, state_path)
+
+    persisted_bytes = state_path.read_bytes()
+    assert draft.encode() not in persisted_bytes
+    assert b"DO_NOT_PERSIST" not in persisted_bytes
+    persisted = json.loads(persisted_bytes)
+    assert persisted["goal"] is None
+    assert persisted["secure_runtime"]["goal_sha256"] == hashlib.sha256(
+        draft.encode()
+    ).hexdigest()
+    assert state_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_rules_v3_is_exactly_three_language_bullets_with_delegated_boundaries():
