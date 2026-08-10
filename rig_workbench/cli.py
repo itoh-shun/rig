@@ -22,6 +22,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
+import re
 import sys
 import types
 
@@ -452,12 +453,38 @@ Examples:
     )
 
 
+def _warn_version_skew() -> None:
+    """One stderr line when the checkout being driven is not this CLI's version.
+
+    An old rig-wb stays on PATH and keeps loading the *current* repo's scripts/*.py,
+    so the skew surfaces as an import error from a layout that release never had —
+    which reads as "rig-wb is not installed" rather than "rig-wb is out of date".
+    Naming both versions turns that into an actionable line.
+
+    Never blocks, never raises, never fires from a source checkout (there the repo's
+    __init__.py is the very file this __version__ came from). `RIG_SKIP_VERSION_CHECK=1`
+    silences it.
+    """
+    if os.environ.get("RIG_SKIP_VERSION_CHECK"):
+        return
+    try:
+        init = _rig_home() / "rig_workbench" / "__init__.py"
+        match = re.search(r'^__version__ = "([^"]+)"', init.read_text(encoding="utf-8"), re.M)
+        if match and match.group(1) != __version__:
+            print(f"[rig-wb] version skew: CLI {__version__} vs repo {match.group(1)} "
+                  f"({_rig_home()}). Run /rig:setup to update.", file=sys.stderr)
+    except Exception:
+        # No repo in reach, unreadable file, anything else: this is a courtesy line.
+        pass
+
+
 def main() -> None:
     # Tell downstream scripts/*.py that the caller is this CLI (`rig-wb`).
     # telemetry_append in scripts/orchestrate.py and audit_append in workbench.py
     # pick this up and record invoker info in `.rig/runs.jsonl` / `.rig/audit.jsonl`,
     # so we can distinguish runs via rig-wb from direct `python3 scripts/...` calls.
     os.environ.setdefault("RIG_INVOKER", f"rig-wb/{__version__}")
+    _warn_version_skew()
 
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help", "help"):

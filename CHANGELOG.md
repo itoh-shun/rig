@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+**Every `rig-wb wb` subcommand was broken for anyone using the installed CLI.**
+`rig_workbench/workbench/accept.py` reached a sibling `scripts/` directory through
+`sys.path` to `import ast_diff`. In a checkout that resolves to `<repo>/scripts`;
+installed it resolves to `site-packages/scripts`, which does not exist — and
+`scripts/ast_diff.py` was never shipped, because pyproject's package finder only
+includes `rig_workbench* / benchmarks* / skills* / packs*`. `accept.py` is imported
+by `workbench/cli.py`, so `rig-wb wb <anything>` died at import with
+`ModuleNotFoundError: No module named 'ast_diff'`; the only workaround was
+`PYTHONPATH=<repo>/scripts` on every invocation. The module now lives at
+`rig_workbench/ast_diff.py` and is imported as part of the package.
+`python3 scripts/ast_diff.py <base.py> <new.py>` still works — that path is now a
+launcher onto the same `main()`.
+
+**`/rig:setup` never noticed a stale install.** The skip decision was "does
+`rig-wb version` succeed", with no version comparison anywhere in
+`scripts/install.sh`. A rig-wb installed in July sat at 1.6.0 while the repo moved
+on, and every `/rig:setup` since reported "already installed ✓" — while the 1.6.0
+launcher kept loading the current repo's `scripts/workbench.py` and failing with
+`ModuleNotFoundError: No module named 'rig_workbench.workbench'`, which reads like
+"rig-wb is not installed" rather than "rig-wb is out of date". The installer now
+compares the installed version against this checkout's
+`rig_workbench.__version__`, shows both, and **asks** whether to update. `--yes`
+answers that prompt, `--force` reinstalls as before, and `--check` stays
+detection-only — it reports the skew and installs nothing. Distribution is a git
+ref, not a registry, so nothing here queries PyPI.
+
 ## [2.2.2] - 2026-08-08
 
 **A Stop hook that interrupted sessions it had no business in.** The

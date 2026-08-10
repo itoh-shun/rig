@@ -20,12 +20,19 @@
 # by hand; the extension is offered here. Nothing in this section can fail the
 # install.
 #
-# Idempotent: skips if `rig-wb version` already succeeds (--force reinstalls).
+# Idempotent, but version-aware: skips only when the installed `rig-wb` matches
+# this checkout. On a mismatch both versions are shown and an update is *offered*
+# (--yes answers yes, --force always reinstalls, --check only reports). Presence
+# alone is not enough — a stale rig-wb keeps loading this repo's scripts/*.py and
+# fails with import errors that read like "rig-wb is not installed".
 # Exit: 0=ready / 1=no install method / 2=bad flag
 set -euo pipefail
 
 REPO_URL="git+https://github.com/itoh-shun/rig.git"
 DEFAULT_REF="master"
+# This script lives at <repo>/scripts/install.sh; the checkout it ships with is
+# what the installed CLI has to match.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── flag parsing ────────────────────────────────────────────────────────
 YES=0
@@ -33,6 +40,7 @@ REF="$DEFAULT_REF"
 CHECK_ONLY=0
 UNINSTALL=0
 FORCE=0
+UPDATE_CONFIRMED=0   # set when the version-mismatch prompt was answered yes
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes) YES=1; shift ;;
@@ -41,7 +49,7 @@ while [ $# -gt 0 ]; do
     --uninstall) UNINSTALL=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help)
-      sed -n '1,24p' "$0"
+      sed -n '1,28p' "$0"
       exit 0
       ;;
     *)
@@ -201,6 +209,21 @@ if [ "$UNINSTALL" -eq 0 ]; then
   echo ""
 fi
 
+# ── version comparison helpers ──────────────────────────────────────────
+# The number to match is the one `rig-wb version` prints, i.e.
+# rig_workbench/__init__.py's __version__ — not pyproject.toml's (they are two
+# separate literals). Read it textually: this runs before rig-wb exists and must
+# not import anything.
+repo_version() {
+  [ -f "$REPO_ROOT/rig_workbench/__init__.py" ] || return 0
+  sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' "$REPO_ROOT/rig_workbench/__init__.py" | head -n 1
+}
+
+# `rig-wb version` prints "rig-wb X.Y.Z"; older builds printed a bare "X.Y.Z".
+version_number() {
+  printf '%s' "$1" | awk 'NF{print $NF}' | head -n 1
+}
+
 # ── existing install check ──────────────────────────────────────────────
 if command -v rig-wb >/dev/null 2>&1; then
   CURRENT=$(rig-wb version 2>/dev/null || echo "?")
@@ -214,10 +237,47 @@ if command -v rig-wb >/dev/null 2>&1; then
     echo "✓ Uninstall complete"
     exit 0
   fi
+  # "Installed" is not the question — "matches this checkout" is. A rig-wb from an
+  # older release keeps being found on PATH and keeps loading this repo's
+  # scripts/*.py, so a skew surfaces as an unrelated-looking ImportError rather
+  # than as "your CLI is out of date".
+  INSTALLED_VER=$(version_number "$CURRENT")
+  REPO_VER=$(repo_version)
   if [ "$FORCE" -eq 0 ]; then
-    echo "✓ rig-wb is already installed: $CURRENT"
-    echo "  Use --force to reinstall, --uninstall to remove."
-    exit 0
+    # No readable checkout next to this script (curl | bash, or a copied file):
+    # nothing to compare against, so keep the old presence-only behaviour.
+    if [ -z "$REPO_VER" ] || [ "$INSTALLED_VER" = "$REPO_VER" ]; then
+      echo "✓ rig-wb is already installed: $CURRENT"
+      echo "  Use --force to reinstall, --uninstall to remove."
+      exit 0
+    fi
+    echo "◇ Version mismatch"
+    echo "  installed:  ${INSTALLED_VER:-unknown}"
+    echo "  this repo:  $REPO_VER  ($REPO_ROOT)"
+    echo "  A stale rig-wb still loads this repo's scripts, so the mismatch usually"
+    echo "  shows up as an import error rather than as a version complaint."
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+      # --check is detection only: report and fall through to environment
+      # detection, which owns the documented exit codes. Never prompt, never install.
+      echo "  Run /rig:setup (without --check) to update."
+    elif [ "$YES" -eq 1 ]; then
+      echo "  --yes: updating to $REPO_VER from ref '$REF'."
+      FORCE=1
+    else
+      echo ""
+      # `|| UPDATE_ANS=""` : with no tty the read hits EOF and returns non-zero,
+      # which `set -e` would turn into a bare exit 1. No answer means no consent,
+      # not a crash.
+      read -r -p "Update rig-wb ${INSTALLED_VER:-unknown} → $REPO_VER? [y/N] " UPDATE_ANS \
+        || UPDATE_ANS=""
+      case "$UPDATE_ANS" in
+        y|Y|yes|Yes) FORCE=1; UPDATE_CONFIRMED=1 ;;
+        *)
+          echo "Keeping ${INSTALLED_VER:-the installed version}. Re-run /rig:setup to update."
+          exit 0
+          ;;
+      esac
+    fi
   fi
 fi
 
@@ -288,16 +348,22 @@ if [ "$YES" -eq 0 ]; then
   echo ""
   echo "◇ About to run"
   case "$METHOD" in
-    pipx) echo "  pipx install \"$SPEC\"" ;;
-    uv)   echo "  uv tool install \"$SPEC\"" ;;
-    pip)  echo "  $PYTHON_CMD -m pip install --user \"$SPEC\"" ;;
+    pipx) echo "  pipx install $([ "$FORCE" -eq 1 ] && echo '--force ')\"$SPEC\"" ;;
+    uv)   echo "  uv tool install $([ "$FORCE" -eq 1 ] && echo '--force ')\"$SPEC\"" ;;
+    pip)  echo "  $PYTHON_CMD -m pip install --user $([ "$FORCE" -eq 1 ] && echo '--upgrade ')\"$SPEC\"" ;;
   esac
   echo ""
-  read -r -p "Continue? [y/N] " ANS
-  case "$ANS" in
-    y|Y|yes|Yes) ;;
-    *) echo "Aborted."; exit 0 ;;
-  esac
+  # The update prompt above was already a yes/no on this exact install; asking a
+  # second time for the same decision is noise. The command is still shown.
+  if [ "$UPDATE_CONFIRMED" -eq 1 ]; then
+    echo "(confirmed above)"
+  else
+    read -r -p "Continue? [y/N] " ANS
+    case "$ANS" in
+      y|Y|yes|Yes) ;;
+      *) echo "Aborted."; exit 0 ;;
+    esac
+  fi
 fi
 
 # ── install ─────────────────────────────────────────────────────────────
@@ -320,8 +386,17 @@ case "$METHOD" in
     ;;
   pip)
     # PEP 668 environments (Debian family) may require --break-system-packages.
-    # Try a plain --user first and show guidance if it fails.
-    if ! $PYTHON_CMD -m pip install --user "$SPEC" 2>&1; then
+    # Try a plain --user first and show guidance if it fails. --upgrade on the
+    # reinstall/update path: without it pip reports "already satisfied" for a
+    # VCS spec and the stale version survives. Spelled out rather than built as
+    # an array — an empty array under `set -u` is an error on bash 3.2 (macOS).
+    PIP_OK=1
+    if [ "$FORCE" -eq 1 ]; then
+      $PYTHON_CMD -m pip install --user --upgrade "$SPEC" 2>&1 || PIP_OK=0
+    else
+      $PYTHON_CMD -m pip install --user "$SPEC" 2>&1 || PIP_OK=0
+    fi
+    if [ "$PIP_OK" -eq 0 ]; then
       cat >&2 <<'EOF'
 
 [HINT] pip install --user was rejected. On a PEP 668 environment, try:

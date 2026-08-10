@@ -4,19 +4,16 @@ Unit tests for the pure semantic_diff()/format_summary() functions, plus a
 subprocess smoke test of the workbench.py diff integration.
 """
 
-import importlib.util
 import pathlib
 import subprocess
 import sys
 
 import pytest
 
+from rig_workbench import ast_diff
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
-
-_SPEC = importlib.util.spec_from_file_location("ast_diff", REPO_ROOT / "scripts" / "ast_diff.py")
-ast_diff = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(ast_diff)
 
 
 def test_added_and_removed_functions():

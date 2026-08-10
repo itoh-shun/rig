@@ -23,8 +23,11 @@ $ARGUMENTS
    パッケージなので勝手には入れない。**認証も要件ではない**——状態を表示するだけで、
    `gh auth login` を実行することも要求することもしない。
 2. **環境検知**: `pipx` / `uv` / `pip` のいずれが使えるか（優先順は pipx > uv > pip）。
-3. **既存インストール確認**: `rig-wb version` が通れば skip（`--force` で再インストール）。
-4. **確認**: どの方法で何を入れるか user に見せてから続行（`--yes` で省略）。
+3. **既存インストールの照合**: 「入っているか」ではなく **「この checkout と一致しているか」** を見る。
+   `rig-wb version` の値を `rig_workbench/__init__.py` の `__version__` と比較し、一致すれば skip。
+   食い違っていれば**両方のバージョンを表示して更新するか尋ねる**（`--yes` で確認省略、`--force` は常に再インストール、
+   `--check` は表示のみ）。黙って入れ替えることはしない。
+4. **確認**: どの方法で何を入れるか user に見せてから続行（`--yes`、および 3 で更新に同意済みなら省略）。
 5. **インストール**: git+URL 経由で `github.com/itoh-shun/rig.git` から取得。
 6. **検証**: `rig-wb version` が返ればOK、PATH に無ければ `pipx ensurepath` / `~/.local/bin` の追加を案内。
 
@@ -73,8 +76,8 @@ rig は **Claude Code 内の skill として動く**（`/rig:go`）だけでな�
 
 - `--yes` — 対話プロンプトを省略して install（skill の中で自動実行するときに使う）。gh-stack の導入確認も省略。
 - `--force` — 既にインストール済でも再インストール（gh-stack も `--force` で入れ直す）。
-- `--check` — 検出だけして終了。exit 0 = install 方法がある、exit 1 = 無い。gh / gh-stack の状態は
-  **表示するだけで exit code には影響しない**（任意なので）。
+- `--check` — 検出だけして終了。exit 0 = install 方法がある、exit 1 = 無い。gh / gh-stack の状態と
+  バージョン不一致は **表示するだけで exit code には影響しない**（prompt も install もしない）。
 - `--uninstall` — `rig-workbench` を外す（pipx / uv / pip の入れ方に合わせて自動判定）。
 - `--ref <ref>` — 特定 branch / tag / commit を指定（既定 `master`）。
 
