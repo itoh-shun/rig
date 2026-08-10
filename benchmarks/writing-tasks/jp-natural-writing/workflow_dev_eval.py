@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -100,7 +101,7 @@ WORKFLOW_REVIEW_BOUNDS = {
     "max_repair_conditions": 7,
     "max_repair_codepoints": 500,
 }
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 PROVIDER_CONTRACTS_SHA256 = "63004a3cfe3873a05da15d2ac2e4758d778ad486e1e22a4222aba83880bedee3"
 LOGICAL_CALL_GRAPH = {
     "always_per_case": [
@@ -194,6 +195,24 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
     return protocol
 
 
+def _parse_workflow_verdict(line: str) -> str:
+    """Parse the exact verdict token after a narrow Japanese-equivalent delimiter."""
+    if not line.startswith("判定") or len(line) <= len("判定") + 2:
+        raise ValueError("workflow review contract final verdict token is invalid")
+    delimiter_index = len("判定")
+    if line[delimiter_index] not in {":", "："}:
+        raise ValueError("workflow review contract final verdict token is invalid")
+    spacing = line[delimiter_index + 1]
+    if unicodedata.normalize("NFKC", spacing) != " ":
+        raise ValueError("workflow review contract final verdict token is invalid")
+    verdict = line[delimiter_index + 2 :]
+    if verdict == "UNVERIFIED":
+        raise ValueError("workflow review contract verdict is unverified")
+    if verdict not in {"APPROVE", "REVISE"}:
+        raise ValueError("workflow review contract final verdict token is invalid")
+    return verdict
+
+
 def parse_workflow_review(raw: str, *, category: str) -> dict[str, Any]:
     """Parse one bounded shipped Japanese review verdict without coercion."""
     if len(raw.encode("utf-8")) > WORKFLOW_REVIEW_BOUNDS["max_output_bytes"]:
@@ -241,10 +260,7 @@ def parse_workflow_review(raw: str, *, category: str) -> dict[str, Any]:
         )
     ):
         raise ValueError("workflow review contract repair conditions are malformed")
-    verdict_match = re.fullmatch(r"判定: (APPROVE|REVISE|UNVERIFIED)", lines[-1])
-    if verdict_match is None or verdict_match.group(1) == "UNVERIFIED":
-        raise ValueError("workflow review contract verdict is blocking")
-    verdict = verdict_match.group(1)
+    verdict = _parse_workflow_verdict(lines[-1])
     repair_conditions = [line.removeprefix("- ") for line in repair_lines]
     approved = all(rows[label]["status"] == "PASS" for label in WORKFLOW_CORE_PASS_ROWS)
     approved = approved and rows["秘密情報"]["status"] in {"PASS", "N/A"}

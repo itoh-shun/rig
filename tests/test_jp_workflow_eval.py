@@ -181,8 +181,33 @@ def test_workflow_review_contract_requires_unique_complete_approval_rows():
     assert revised["approved"] is False
     assert revised["repair_conditions"] == ["事実保持を修正する"]
 
+    for colon in (":", "："):
+        for equivalent_spacing in (" ", "\u3000", "\u00a0"):
+            delimiter_normalized = module.parse_workflow_review(
+                review_text(verdict="REVISE").replace(
+                    "- 推測なし: PASS", "- 推測なし: FAIL"
+                ).replace(
+                    "判定: REVISE", f"判定{colon}{equivalent_spacing}REVISE"
+                ),
+                category="business_chat",
+            )
+            assert delimiter_normalized["verdict"] == "REVISE"
+            assert delimiter_normalized["approved"] is False
+
     for malformed in (
         review_text(verdict="UNVERIFIED"),
+        review_text(verdict="UNVERIFIED").replace(
+            "判定: UNVERIFIED", "判定：\u3000UNVERIFIED"
+        ),
+        review_text(verdict="REVISE").replace(
+            "- 事実保持: PASS", "- 事実保持: FAIL"
+        ).replace("判定: REVISE", "判定： REVIEW"),
+        review_text(verdict="REVISE").replace(
+            "- 事実保持: PASS", "- 事実保持: FAIL"
+        ).replace("判定: REVISE", "判定： ＲＥＶＩＳＥ"),
+        review_text(verdict="REVISE").replace(
+            "- 事実保持: PASS", "- 事実保持: FAIL"
+        ) + "\n補足",
         review_text().replace("- 事実保持: PASS", "- 事実保持: UNKNOWN"),
         review_text(verdict="REVISE").replace(
             "- 単一成果物: PASS", "- 単一成果物: N/A"
@@ -267,7 +292,7 @@ def test_workflow_protocol_rejects_every_preregistered_contract_mutation(tmp_pat
         ("support_safety", "fields", ["masking"]),
         ("provider_roles", "reviewer", {"provider": "codex", "model": "other"}),
         ("provider_contracts", "reviewer", {"argv": ["codex"]}),
-        ("review_contract", "parser_version", 2),
+        ("review_contract", "parser_version", 1),
         ("logical_call_graph", "second_nonapproval", "FINAL"),
         (None, "max_logical_calls", 91),
     ]
@@ -283,7 +308,7 @@ def test_workflow_protocol_rejects_every_preregistered_contract_mutation(tmp_pat
 
 def _workflow_fixture(
     module, tmp_path, *, review0="APPROVE", review1="APPROVE",
-    mid_run_protocol_path=None,
+    mid_run_protocol_path=None, normalize_equivalent_verdict_delimiter=False,
 ):
     module.paired.time.sleep = lambda _seconds: None
     cases_path = tmp_path / "parity_cases.dev.json"
@@ -330,9 +355,12 @@ def _workflow_fixture(
         if spec.role == "reviewer":
             verdict = review1 if "revised-draft:" in prompt else review0
             safety = "PASS" if "request-9" in prompt else "N/A"
-            return review_text(verdict=verdict, safety=safety).replace(
+            review = review_text(verdict=verdict, safety=safety).replace(
                 "- 事実保持: PASS", "- 事実保持: FAIL"
             ) if verdict == "REVISE" else review_text(verdict=verdict, safety=safety)
+            if normalize_equivalent_verdict_delimiter:
+                review = review.replace(f"判定: {verdict}", f"判定： {verdict}")
+            return review
         order = "reference_first" if "ORDER: reference_first" in prompt else "candidate_first"
         winner = "B" if order == "reference_first" else "A"
         payload = {
@@ -517,6 +545,47 @@ def test_workflow_revise_allows_exactly_one_rewrite_and_fresh_rereview(tmp_path)
     assert len(repair_prompts) == 10
     assert all("## Task Contract" in prompt and "Artifact to repair" in prompt
                for prompt in repair_prompts)
+
+    journal = [
+        json.loads(line)
+        for line in (tmp_path / "run" / "calls.jsonl").read_text().splitlines()
+    ]
+    review_finishes = [
+        row for row in journal
+        if row.get("event") == "attempt_finished"
+        and row.get("logical_call_id", "").startswith("workflow:review:")
+    ]
+    assert len(review_finishes) == 20
+    assert all(
+        row["status"] == "success" and row["parse_status"] == "valid"
+        for row in review_finishes
+    )
+
+
+def test_equivalent_japanese_verdict_delimiter_is_a_valid_revise_semantic_result(
+    tmp_path,
+):
+    module = load_module()
+    result, calls, run_dir = _workflow_fixture(
+        module,
+        tmp_path,
+        review0="REVISE",
+        review1="APPROVE",
+        normalize_equivalent_verdict_delimiter=True,
+    )
+
+    assert result["counts"]["semantic_rewrites"] == 10
+    assert all(row["state"] == "FINAL" and row["final_alias"] == "A1"
+               for row in result["case_states"])
+    assert sum(role == "reviewer" for role, _prompt in calls) == 20
+    journal = [json.loads(line) for line in (run_dir / "calls.jsonl").read_text().splitlines()]
+    review_finishes = [
+        row for row in journal
+        if row.get("event") == "attempt_finished"
+        and row.get("logical_call_id", "").startswith("workflow:review:")
+    ]
+    assert len(review_finishes) == 20
+    assert all(row["status"] == "success" for row in review_finishes)
 
 
 def test_workflow_second_reject_is_nondeliverable(

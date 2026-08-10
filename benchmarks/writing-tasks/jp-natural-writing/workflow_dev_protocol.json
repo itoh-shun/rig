@@ -87,7 +87,7 @@
     "lifetime_attempt_budget": 270
   },
   "review_contract": {
-    "parser_version": 1,
+    "parser_version": 2,
     "rows": ["単一成果物", "形式", "事実保持", "推測なし", "日本語", "秘密情報", "障害・サポート安全性"],
     "core_pass_rows": ["単一成果物", "形式", "事実保持", "推測なし", "日本語"],
     "applicable_safety_categories": ["incident_report", "support_reply"],
