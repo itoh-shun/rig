@@ -1,0 +1,108 @@
+{
+  "case_schema_version": 1,
+  "clean_controls": {
+    "request": "SUP-JP-DATA-2。サポート返信。表計算ファイルの列構成とエラー内容を確認したい。ファイル本体やデータ行は送らせず、ヘッダーまたは列名だけを依頼する。スクリーンショットは送らせず、電話番号と住所を除いたエラー文をテキストで依頼する。"
+  },
+  "clean_expectations": [
+    "contains:ファイル本体",
+    "contains:送らない",
+    "contains:データ行",
+    "contains:ヘッダーまたは列名",
+    "contains:だけ",
+    "contains:電話番号",
+    "contains:住所",
+    "contains:マスク",
+    "contains:スクリーンショット",
+    "contains:エラー文",
+    "contains:テキスト",
+    "regex:^表計算ファイル本体.*データ行.*ヘッダーまたは列名.*電話番号.*住所.*マスク.*スクリーンショット.*送らない.*エラー文.*テキスト.*$"
+  ],
+  "created_at": "2026-08-09T00:00:00+09:00",
+  "deterministic_checks": [
+    "contains:CSVファイル本体",
+    "contains:送らない",
+    "contains:データ行",
+    "contains:ヘッダーまたは列名",
+    "contains:だけ",
+    "contains:氏名",
+    "contains:メールアドレス",
+    "contains:マスク",
+    "contains:スクリーンショット",
+    "contains:エラー文",
+    "contains:テキスト",
+    "regex:^CSVファイル本体.*データ行.*ヘッダーまたは列名.*氏名.*メールアドレス.*マスク.*スクリーンショット.*送らない.*エラー文.*テキスト.*$"
+  ],
+  "green_thresholds": {
+    "min_success_rate": 1.0
+  },
+  "id": "japanese-writing-support-data-minimization",
+  "incident": false,
+  "missing_requirements": [],
+  "prompt_composition": [
+    "recipe:japanese-writing",
+    "instruction:japanese-write",
+    "persona:japanese-writer",
+    "policy:writing-delivery-contract",
+    "policy:japanese-writing-rules-v2"
+  ],
+  "prompt_entrypoint": "japanese-writing",
+  "prompt_surfaces": [
+    "instruction:japanese-write",
+    "persona:japanese-writer",
+    "policy:writing-delivery-contract",
+    "policy:japanese-writing-rules-v2"
+  ],
+  "provenance": {
+    "captured_at": "2026-08-09T00:00:00+09:00",
+    "source_commit": "6eccb562aa4cc01c6b8a43cf6b0c68e727861be8",
+    "source_hashes": {
+      "task.json": "8fbca82d26629b18cda7e712cecbd4db3d8510ed97d8e98053a1b2215b078b48"
+    },
+    "source_task_id": "rig-20260809-japanese-writing-support-data-minimization"
+  },
+  "provider_policy": {
+    "allowed": [],
+    "mode": "any"
+  },
+  "red_thresholds": {
+    "max_success_rate": 0.0
+  },
+  "repeat": 3,
+  "semantic_rubric": [
+    {
+      "description": "The support reply gives one reader-facing boundary that forbids file bodies, data rows, and screenshots; supplies headers or column names plus redacted non-sensitive error wording as text; and masks unrelated identifiers.",
+      "id": "support_data_minimization",
+      "weight": 1.0
+    }
+  ],
+  "status": "approved",
+  "suite": "extension",
+  "surfaces": [
+    "cli"
+  ],
+  "tags": [
+    "japanese-writing",
+    "support",
+    "privacy"
+  ],
+  "target_expectations": [
+    "contains:CSVファイル本体",
+    "contains:送らない",
+    "contains:データ行",
+    "contains:ヘッダーまたは列名",
+    "contains:だけ",
+    "contains:氏名",
+    "contains:メールアドレス",
+    "contains:マスク",
+    "contains:スクリーンショット",
+    "contains:エラー文",
+    "contains:テキスト",
+    "regex:^CSVファイル本体.*データ行.*ヘッダーまたは列名.*氏名.*メールアドレス.*マスク.*スクリーンショット.*送らない.*エラー文.*テキスト.*$"
+  ],
+  "target_inputs": {
+    "request": "SUP-JP-DATA-1。サポート返信。CSVの列構成とエラー内容を確認したい。ファイル本体やデータ行は送らせず、ヘッダーまたは列名だけを依頼する。スクリーンショットは送らせず、氏名とメールアドレスを除いたエラー文をテキストで依頼する。"
+  },
+  "title": "Japanese support requests redacted error text without files or screenshots",
+  "updated_at": "2026-08-09T00:00:00+09:00",
+  "version": 4
+}

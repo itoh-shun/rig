@@ -12,4 +12,4 @@ by file path via importlib so the package works before we physically move the
 files — a low-risk first step toward the "runs anywhere" positioning.
 """
 
-__version__ = "2.2.3"
+__version__ = "2.3.0"

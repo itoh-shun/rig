@@ -1,0 +1,17 @@
+{
+  "reference": {
+    "identity": "gpt-5.6-sol",
+    "argv": ["codex", "exec", "--model", "gpt-5.6-sol", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--sandbox", "read-only", "-o", "{output_file}"],
+    "input_mode": "arg", "output_mode": "file", "cwd_mode": "temp", "timeout_sec": 300
+  },
+  "candidate": {
+    "identity": "claude-sonnet-5",
+    "argv": ["claude", "-p", "--safe-mode", "--no-session-persistence", "--model", "claude-sonnet-5", "--output-format", "text"],
+    "input_mode": "arg", "output_mode": "stdout", "cwd_mode": "temp", "timeout_sec": 300
+  },
+  "judges": [{
+    "identity": "gpt-5.5",
+    "argv": ["codex", "exec", "--model", "gpt-5.5", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--sandbox", "read-only", "-o", "{output_file}"],
+    "input_mode": "arg", "output_mode": "file", "cwd_mode": "temp", "timeout_sec": 300
+  }]
+}
