@@ -9,6 +9,7 @@ import sys
 from rig_workbench.govern import identity as govern_identity
 from rig_workbench.packs.model import PackError
 
+from .anchors import apply_anchor_sensor
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
 from .capabilities import resolve_task_route
@@ -317,6 +318,11 @@ def cmd_gate(args: argparse.Namespace) -> None:
             # patterns and mass deletions warning-grade; --set
             # no_destructive_operation=passed is the recorded escape hatch.
             sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # Evidence-anchor sensor: do the `file.py:42` anchors in this task's
+            # recorded reviewer bodies point at lines that exist? Opt-in — the
+            # criterion is in no preset, only in `.rig/gates.json` extra_criteria —
+            # so this is a no-op on a default gate.
+            sensor_notes += apply_anchor_sensor(root, d, task, acc, explicit_set=explicit_set)
             sensor_notes += apply_prompt_regression_sensor(root, task, acc)
 
         acc["status"] = gate_status(acc)
@@ -339,10 +345,40 @@ def cmd_gate(args: argparse.Namespace) -> None:
             sys.exit(1)
 
 
+# A --body persona becomes a filename, so it may not carry a path separator or
+# start with a dot/dash. --set stays unrestricted (it only ever becomes a JSON key).
+REVIEW_BODY_PERSONA_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+
+
+def read_review_body(pair: str) -> tuple[str, str]:
+    """Parse one `--body <persona>=@<path>` pair into (persona, text)."""
+    if "=" not in pair:
+        die(f"--body must be given as <persona>=@<path> (got: {pair!r})")
+    persona, ref = pair.split("=", 1)
+    if not ref.startswith("@"):
+        die(f"--body takes @<path> to a file holding the reviewer text, not inline text (got: {pair!r})")
+    if not REVIEW_BODY_PERSONA_RE.match(persona):
+        die(f"persona '{persona}' cannot be used as a --body filename "
+            "(must start with a letter/digit, then letters/digits/'.'/'_'/':'/'-')")
+    try:
+        return persona, pathlib.Path(ref[1:]).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        die(f"--body file for persona '{persona}' cannot be read ({ref[1:]}): {exc}")
+
+
 def cmd_review(args: argparse.Namespace) -> None:
-    """Record per-persona verdicts for review tasks (used by stats for rubber-stamp detection)."""
+    """Record per-persona verdicts for review tasks (used by stats for rubber-stamp detection).
+
+    The optional `--body <persona>=@<path>` additionally persists the reviewer's full
+    text to `.rig/runs/<task_id>/reviews/<persona>.md` — that prose carries the
+    `file:line` evidence anchors, which the verdict label alone throws away.
+    review.json stays labels-only so none of its readers have to change.
+    """
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
+    # Read every body before taking the lock: an unreadable path must not leave
+    # verdicts recorded with their bodies missing.
+    bodies = dict(read_review_body(pair) for pair in (args.body or []))
     with task_lock(root, task_id):
         d = run_dir(root, task_id)
         data = load_json(d / "review.json", {"task_id": task_id, "verdicts": []})
@@ -354,6 +390,19 @@ def cmd_review(args: argparse.Namespace) -> None:
             if verdict not in VALID_VERDICT:
                 die(f"verdict '{verdict}' is invalid. Valid: {', '.join(VALID_VERDICT)}")
             by_persona[persona] = {"persona": persona, "verdict": verdict, "recorded_at": now_iso()}
+        # A body without a verdict (here or recorded earlier) is a typo, not a review:
+        # keeping it would file evidence under a reviewer who never rendered a judgement.
+        for persona in bodies:
+            if persona not in by_persona:
+                die(f"--body persona '{persona}' has no verdict for this task. "
+                    f"Record one with --set {persona}=<{'|'.join(VALID_VERDICT)}>. "
+                    f"Known: {', '.join(sorted(by_persona)) or '(none)'}")
         data["verdicts"] = list(by_persona.values())
         save_json(d / "review.json", data)
+        for persona, text in bodies.items():
+            body_path = d / "reviews" / f"{persona}.md"
+            body_path.parent.mkdir(parents=True, exist_ok=True)
+            body_path.write_text(text, encoding="utf-8")  # upsert: the body tracks the current verdict
         print(f"{task_id} review verdicts: " + " ".join(f"{v['persona']}={v['verdict']}" for v in data["verdicts"]))
+        if bodies:
+            print(f"{task_id} review bodies: " + " ".join(f"reviews/{p}.md" for p in sorted(bodies)))
