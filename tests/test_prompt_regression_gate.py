@@ -104,3 +104,193 @@ def test_prompt_diff_git_failure_fails_closed_and_worktree_evidence_is_used(
     prompt_regression.apply_prompt_regression_sensor(repo, task, acc)
     assert seen["repo"] == worktree
     assert seen["evidence_dir"] == worktree / ".rig" / "evals" / "results"
+
+
+# ── the criterion follows CI's ratchet, not the strict gate ──────────────────
+# The sensor drove `evaluate_gate` in its strict form while CI drove
+# `eval affected --ratchet`, so a change whose only prompt-surface edit had no
+# case yet failed locally and passed in CI. Debt is warning-grade here: the run
+# proceeds, and the missing coverage is named rather than reported as checked.
+def _sensor(repo, task):
+    from rig_workbench.workbench import prompt_regression
+    from rig_workbench.workbench.state import build_acceptance
+
+    acc = build_acceptance(task["task_id"], "bugfix", repo)
+    prompt_regression.apply_prompt_regression_sensor(repo, task, acc)
+    return acc, next(item for item in acc["checks"]
+                     if item["name"] == prompt_regression.CRITERION)
+
+
+def _write_case(repo, case_id, surfaces):
+    import copy
+
+    from rig_workbench.eval.cases import canonical_json
+    from test_eval_cases import valid_case
+
+    case = copy.deepcopy(valid_case())
+    case["id"] = case_id
+    case["target_inputs"] = {"prompt_surface_fixture": f"binding for {case_id}"}
+    case["prompt_surfaces"] = surfaces
+    path = repo / "evals" / "cases" / case_id / "case.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(canonical_json(case), encoding="utf-8")
+    return path
+
+
+def _touch(repo, relative, text="changed\n"):
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+INSTRUCTION = "skills/engine/facets/instructions/login.md"
+
+
+def test_a_surface_with_no_case_yet_is_a_warning_and_does_not_block_accept(tmp_path):
+    from rig_workbench.eval.affected import analyze_affected
+    from rig_workbench.workbench.state import gate_status
+
+    repo, task, _task_id = _fixture(tmp_path)
+    _touch(repo, INSTRUCTION)
+
+    ratchet = analyze_affected(repo, base=task["base_commit"], head="working",
+                               ratchet=True)
+    assert ratchet["status"] == "debt" and ratchet["coverage_debt"] == [INSTRUCTION]
+
+    acc, check = _sensor(repo, task)
+    assert check["status"] == "warning"
+    assert INSTRUCTION in check["detail"]
+
+    # Warning-grade rather than passed: the gate settles somewhere accept allows,
+    # and the missing coverage is still on the report.
+    for item in acc["checks"]:
+        if item["status"] == "pending":
+            item["status"] = "passed"
+    assert gate_status(acc) == "passed_with_warnings"
+
+
+def test_losing_coverage_that_existed_still_fails_the_criterion(tmp_path):
+    repo, task, _task_id = _fixture(tmp_path)
+    _write_case(repo, "login-case", ["instruction:login"])
+    _touch(repo, INSTRUCTION)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add coverage")
+    task["base_commit"] = _git(repo, "rev-parse", "HEAD")
+    (repo / "evals" / "cases" / "login-case" / "case.json").unlink()
+
+    _acc, check = _sensor(repo, task)
+    assert check["status"] == "failed"
+
+
+def test_an_unregistered_surface_kind_still_fails_the_criterion(tmp_path):
+    repo, task, _task_id = _fixture(tmp_path)
+    _touch(repo, "skills/engine/recipes/notes.txt")
+    _acc, check = _sensor(repo, task)
+    assert check["status"] == "failed"
+
+
+def test_debt_does_not_make_the_criterion_settable(tmp_path):
+    """The refusal stays. Debt was the only thing that made this criterion a wall,
+    and it no longer blocks; what is left fatal — removed coverage, an untracked
+    surface kind, failing evidence — is structural, not a heuristic that can
+    false-positive, so there is nothing here for a manual override to correct."""
+    repo, _task, task_id = _fixture(tmp_path)
+    _touch(repo, INSTRUCTION)
+    environment = {"PYTHONPATH": str(REPO_ROOT), "RIG_HOME": str(REPO_ROOT)}
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "workbench.py"), "gate", task_id,
+         "--set", "prompt_regression_passed=passed"], cwd=repo, env=environment,
+        capture_output=True, text=True,
+    )
+    assert completed.returncode == 1
+    assert "machine-controlled" in completed.stderr
+
+
+def test_the_gate_command_reports_debt_as_a_warning_and_exits_zero(tmp_path):
+    repo, _task, task_id = _fixture(tmp_path)
+    _touch(repo, INSTRUCTION)
+    environment = {"PYTHONPATH": str(REPO_ROOT), "RIG_HOME": str(REPO_ROOT)}
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "workbench.py"), "gate", task_id],
+        cwd=repo, env=environment, capture_output=True, text=True,
+    )
+    assert completed.returncode == 0
+    assert "⚠ prompt_regression_passed" in completed.stdout
+    assert "prompt-regression sensor: warning" in completed.stdout
+
+
+def test_a_case_only_diff_still_raises_the_criterion(tmp_path):
+    """Pins the trigger, not just its downstream effect: deleting a case touches no
+    prompt surface, so a criterion keyed on surfaces alone was blind to the one
+    outcome the ratchet keeps fatal."""
+    from rig_workbench.workbench import prompt_regression
+    from rig_workbench.workbench.state import build_acceptance
+
+    repo, task, task_id = _fixture(tmp_path)
+    _write_case(repo, "login-case", ["instruction:login"])
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add coverage")
+    task["base_commit"] = _git(repo, "rev-parse", "HEAD")
+    (repo / "evals" / "cases" / "login-case" / "case.json").unlink()
+
+    acc = build_acceptance(task_id, "bugfix", repo)
+    assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is True
+
+
+# ── the range follows a rebase ────────────────────────────────────────────────
+def test_a_stale_recorded_base_does_not_attribute_intervening_prompt_surfaces(tmp_path):
+    """The recorded `base_commit` is the fork point as it stood at registration.
+    Reading it directly meant a rebase silently widened the range, so this
+    criterion judged commits that were already merged and reviewed, and demanded
+    coverage for prompt surfaces the task never touched. Every other sensor
+    resolves the base through `effective_base`; this one now does too.
+    """
+    from rig_workbench.workbench import prompt_regression
+    from rig_workbench.workbench.state import build_acceptance, effective_base
+
+    repo, task, task_id = _fixture(tmp_path)
+    recorded = task["base_commit"]
+    base_branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+
+    # A prompt surface lands on the base branch *after* this task was registered —
+    # someone else's already-merged work, exactly what a rebase pulls underneath.
+    _touch(repo, INSTRUCTION)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "someone else's prompt change")
+    moved = _git(repo, "rev-parse", "HEAD")
+
+    # Forking the task branch from the new tip reproduces the post-rebase shape
+    # without driving `git rebase`: merge-base is `moved`, the record still says
+    # `recorded`.
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "rig/x", str(worktree), moved)
+    _touch(worktree, "rig_workbench/workbench/unrelated.py", "x = 1\n")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-q", "-m", "this task's actual work")
+
+    task.update(base_branch=base_branch, branch="rig/x", worktree_path=str(worktree))
+    assert effective_base(repo, task) == (moved, recorded)
+    assert prompt_regression._context(repo, task)[1] == moved
+
+    # This task's diff is one non-prompt file, so the criterion is not raised at
+    # all — and nothing names the surface that arrived with the intervening commit.
+    acc = build_acceptance(task_id, "bugfix", repo)
+    assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is False
+    assert prompt_regression.apply_prompt_regression_sensor(repo, task, acc) == []
+    assert prompt_regression.CRITERION not in [item["name"] for item in acc["checks"]]
+    assert INSTRUCTION not in json.dumps(acc)
+
+    # A criterion persisted by an earlier run against the stale base is dropped
+    # on the next evaluation rather than left to block on borrowed debt.
+    acc["checks"].append({"name": prompt_regression.CRITERION, "status": "warning",
+                          "detail": f"machine eval gate: debt — {INSTRUCTION}"})
+    assert prompt_regression.ensure_prompt_criterion(repo, task, acc) is False
+    assert prompt_regression.CRITERION not in [item["name"] for item in acc["checks"]]
+
+    # Both directions: with no base_branch to resolve against, `effective_base`
+    # hands the record back and the old, wrong attribution reappears — the assert
+    # above is pinning the resolution, not merely a diff that happens to be clean.
+    stale = dict(task, base_branch="")
+    assert effective_base(repo, stale) == (recorded, None)
+    _stale_acc, check = _sensor(repo, stale)
+    assert check["status"] == "warning" and INSTRUCTION in check["detail"]
