@@ -75,11 +75,15 @@ rig は **Claude Code 内の skill として動く**（`/rig:go`）だけでな�
 ## flag
 
 - `--yes` — 対話プロンプトを省略して install（skill の中で自動実行するときに使う）。gh-stack の導入確認も省略。
-- `--force` — 既にインストール済でも再インストール（gh-stack も `--force` で入れ直す）。
+  ただし**黙って置き換えることはない**: 更新するときは「何を何に、どこから」を必ず1行出す。
+  導入済みの版が checkout より**新しい**場合は downgrade になるので `--yes` でも実行しない（逃げ道は `--force` だけ）。
+- `--force` — 既にインストール済でも再インストール（gh-stack も `--force` で入れ直す）。版の前後関係も無視する。
 - `--check` — 検出だけして終了。exit 0 = install 方法がある、exit 1 = 無い。gh / gh-stack の状態と
   バージョン不一致は **表示するだけで exit code には影響しない**（prompt も install もしない）。
 - `--uninstall` — `rig-workbench` を外す（pipx / uv / pip の入れ方に合わせて自動判定）。
-- `--ref <ref>` — 特定 branch / tag / commit を指定（既定 `master`）。
+- `--ref <ref>` — GitHub からその branch / tag / commit を入れる。**既定は ref ではなく install.sh 自身の
+  checkout**（比較する物と入れる物を同一にしないと、更新に同意しても不一致が消えず prompt が再発する）。
+  `--ref` 明示時はその版をローカルで知りようがないので、版比較も更新の提案も行わない（presence-only に退避）。
 
 ## 例
 
@@ -87,9 +91,9 @@ rig は **Claude Code 内の skill として動く**（`/rig:go`）だけでな�
 /rig:setup                 # 対話で install（初回の推奨）
 /rig:setup --yes           # 確認なしで install
 /rig:setup --check         # 現環境で install できるかだけ調べる
-/rig:setup --force         # 既に入っていても最新に更新
+/rig:setup --force         # 既に入っていても（新しくても）この checkout を入れ直す
 /rig:setup --uninstall     # 外す
-/rig:setup --ref v1.3.0    # 特定タグで pin
+/rig:setup --ref v1.3.0    # GitHub の特定タグで pin（版比較はしない）
 ```
 
 ## 実行後にできること

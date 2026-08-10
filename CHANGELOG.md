@@ -30,6 +30,47 @@ answers that prompt, `--force` reinstalls as before, and `--check` stays
 detection-only — it reports the skew and installs nothing. Distribution is a git
 ref, not a registry, so nothing here queries PyPI.
 
+Three properties that comparison has to have, and did not:
+
+- **What is compared is what is installed.** It compared the checkout and
+  installed `${REPO_URL}@master` — a different artefact. On a branch ahead of
+  master, accepting the update installed master, the checkout still disagreed,
+  and the same prompt came back on the next run. A nag that cannot be satisfied
+  teaches people to ignore it. Without an explicit `--ref` the install source is
+  now the checkout itself (`pipx install <dir>` / `uv tool install <dir>` /
+  `pip install --user <dir>` all take a directory), so accepting converges by
+  construction. `--ref` still installs that ref from GitHub, and in that mode
+  nothing is compared and no update is offered: this script cannot know a remote
+  ref's version without fetching it.
+- **Ordering, not equality.** "Different" was read as "older", so an installed
+  2.3.0 against a 2.2.3 checkout was announced as `Update 2.3.0 → 2.2.3?` and,
+  under `--yes`, performed unattended. A newer install is now reported and kept;
+  `--force` remains the way to install an older checkout on purpose. `--yes` may
+  skip the question but never the sentence naming what is being replaced and
+  where the replacement comes from.
+- **Unreadable is undetermined, not stale.** The version was the last whitespace
+  token of whatever `rig-wb version` printed, which turned a non-zero exit into
+  `?`, a leading warning line into its last word and a usage dump into `all` —
+  each shown as an "installed:" version and each a fabricated mismatch. Only the
+  two documented shapes (`rig-wb X.Y.Z`, or a bare `X.Y.Z`) are accepted now;
+  anything else falls back to presence-only and replaces nothing.
+
+**One resolver for `scripts/*.py`.** `rig_workbench/repo_paths.py` is now the only
+place that answers "where is `scripts/<name>.py`" — `RIG_HOME`, then the install
+source, then cwd and its parents. `orchestrate/mcp_scan.py` and
+`orchestrate/commands.py` computed it from their own depth
+(`parent.parent.parent`) and never consulted `RIG_HOME`, so an installed rig
+looked for `site-packages/scripts/mcp_server.py` and reported #263 as "not
+installed" even with `RIG_HOME` pointing at a checkout that has it. Resolving from
+the package root removes the depth question instead of fixing two of its answers.
+
+**The skew notice no longer quotes repo text raw.** `rig-wb`'s one-line
+version-skew warning captured `__version__` with `[^"]+`, which spans newlines,
+and printed it unprocessed — enough for a hostile checkout to put terminal escapes
+and forged warning lines on rig-wb's stderr. The capture is bounded to one line
+and goes through the injection scanner's `bounded_excerpt`, which now escapes
+control characters as well as invisible ones.
+
 The version bump is load-bearing rather than ceremonial: the broken build and the
 fixed one would otherwise both answer `2.2.2`, so the new comparison — and
 `rig-wb`'s own skew line — would skip exactly the installs that need replacing.

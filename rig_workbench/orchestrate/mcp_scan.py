@@ -13,6 +13,8 @@ import pathlib
 import re
 import sys
 
+from .. import repo_paths
+
 _SECRET_RE = re.compile(
     r"-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
     r"|[Aa][Ww][Ss][A-Za-z_]*(SECRET|secret)[A-Za-z_]*\s*[=:]\s*[A-Za-z0-9/+=]{20,}"
@@ -32,7 +34,12 @@ def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
     `cmd_mcp_scan` (human-readable display) and the validation package's CI check
     (judgment logic lives in exactly one place).
     """
-    path = mcp_server_path or (pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "mcp_server.py")
+    # Shared resolver: RIG_HOME, then the install source, then cwd. Deriving the
+    # path from this file's parents pointed at a site-packages/scripts that never
+    # exists, so an installed rig reported #263 as "not installed" even with
+    # RIG_HOME pointing at a checkout that has it.
+    path = mcp_server_path or repo_paths.find_script("mcp_server.py") \
+        or repo_paths.script_path("mcp_server.py")
     if not path.exists():
         return {"available": False, "reason": f"{path} not found (#263 not installed)", "tools": []}
     source = path.read_text(encoding="utf-8")

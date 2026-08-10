@@ -26,7 +26,7 @@ import re
 import sys
 import types
 
-from . import __version__
+from . import __version__, repo_paths
 
 # ── rig repo root discovery ──────────────────────────────────────────────
 
@@ -34,29 +34,15 @@ from . import __version__
 def _rig_home() -> pathlib.Path:
     """Return the rig repo root. For subcommands that need access to scripts/*.py.
 
-    Priority:
-      1. The `RIG_HOME` env var (the canonical way when used from another repo;
-         same as .claude-plugin/bin/rig)
-      2. The install source (when installed from inside the repo via `pip install -e .`)
-      3. The current directory / its parents (the `cd path/to/rig` then `rig-wb` case)
-
-    If none is found, raises an exception with hints on how to run. Subcommands
-    like `usage` that only need `.rig/runs.jsonl` should use `_rig_data_root()`
-    instead of calling this.
+    The search order lives in `repo_paths` — RIG_HOME, then the install source,
+    then cwd and its parents — and is shared with every other module that reaches
+    for `scripts/*.py`. What is local to this function is the failure: raising with
+    hints on how to run. Subcommands like `usage` that only need `.rig/runs.jsonl`
+    should use `_rig_data_root()` instead of calling this.
     """
-    env = os.environ.get("RIG_HOME")
-    if env:
-        p = pathlib.Path(env).resolve()
-        if (p / "scripts" / "orchestrate.py").exists():
-            return p
-    here = pathlib.Path(__file__).resolve().parent
-    for candidate in (here.parent, here.parent.parent):
-        if (candidate / "scripts" / "orchestrate.py").exists():
-            return candidate
-    cwd = pathlib.Path.cwd().resolve()
-    for candidate in (cwd, *cwd.parents):
-        if (candidate / "scripts" / "orchestrate.py").exists():
-            return candidate
+    root = repo_paths.find_root()
+    if root:
+        return root
     raise RuntimeError(
         "rig repo root not found. Try one of the following:\n"
         "  1. cd into the rig repo before running rig-wb\n"
@@ -464,15 +450,31 @@ def _warn_version_skew() -> None:
     Never blocks, never raises, never fires from a source checkout (there the repo's
     __init__.py is the very file this __version__ came from). `RIG_SKIP_VERSION_CHECK=1`
     silences it.
+
+    The checkout being described is not necessarily trusted — whatever sits between
+    the quotes of some repo's `__version__` lands on this line. `[^"]+` spans
+    newlines, so a hostile `__init__.py` could put whole blocks of its own text on
+    stderr, terminal escapes and forged warning lines included. So: one line, a
+    bounded capture, and the same escaping the injection scanner uses when it
+    quotes untrusted text back at a terminal.
     """
     if os.environ.get("RIG_SKIP_VERSION_CHECK"):
         return
     try:
         init = _rig_home() / "rig_workbench" / "__init__.py"
-        match = re.search(r'^__version__ = "([^"]+)"', init.read_text(encoding="utf-8"), re.M)
+        match = re.search(r'^__version__ = "([^"\n]{1,64})"',
+                          init.read_text(encoding="utf-8"), re.M)
         if match and match.group(1) != __version__:
-            print(f"[rig-wb] version skew: CLI {__version__} vs repo {match.group(1)} "
-                  f"({_rig_home()}). Run /rig:setup to update.", file=sys.stderr)
+            # Imported here rather than at module scope: this function runs on every
+            # rig-wb invocation, injection.py pulls in the workbench state module,
+            # and only the rare skew case needs it.
+            from .workbench.injection import bounded_excerpt
+
+            repo_version = bounded_excerpt(match.group(1), 32)
+            # The path is filesystem-controlled too, so it gets the same treatment.
+            print(f"[rig-wb] version skew: CLI {__version__} vs repo {repo_version} "
+                  f"({bounded_excerpt(str(_rig_home()), 200)}). Run /rig:setup to update.",
+                  file=sys.stderr)
     except Exception:
         # No repo in reach, unreadable file, anything else: this is a courtesy line.
         pass
