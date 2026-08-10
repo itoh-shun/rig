@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [2.2.3] - 2026-08-10
+
 **Every `rig-wb wb` subcommand was broken for anyone using the installed CLI.**
 `rig_workbench/workbench/accept.py` reached a sibling `scripts/` directory through
 `sys.path` to `import ast_diff`. In a checkout that resolves to `<repo>/scripts`;
@@ -27,6 +29,10 @@ compares the installed version against this checkout's
 answers that prompt, `--force` reinstalls as before, and `--check` stays
 detection-only — it reports the skew and installs nothing. Distribution is a git
 ref, not a registry, so nothing here queries PyPI.
+
+The version bump is load-bearing rather than ceremonial: the broken build and the
+fixed one would otherwise both answer `2.2.2`, so the new comparison — and
+`rig-wb`'s own skew line — would skip exactly the installs that need replacing.
 
 ## [2.2.2] - 2026-08-08
 

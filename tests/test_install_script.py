@@ -164,7 +164,9 @@ def test_check_only_reports_skew_without_installing(tmp_path, stub_bin):
     """--check stays detection-only: no prompt, no install, documented exit codes."""
     bin_dir = stub_bin(0, rig_wb_version="1.6.0", with_pipx=True)
     result = _run_installer(bin_dir, tmp_path, args=("--check",))
-    assert result.returncode in (0, 1), result.stdout + result.stderr
+    # The stub pipx makes an install method available, so --check's documented
+    # "exit 0 = an install method exists" is pinned, not merely tolerated.
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "Version mismatch" in result.stdout
     assert "Environment detection" in result.stdout
     assert "◇ Installing" not in result.stdout
@@ -178,9 +180,13 @@ def test_uninstall_is_unaffected_by_a_version_skew(tmp_path, stub_bin):
     assert "Version mismatch" not in result.stdout
 
 
-def test_reported_version_matches_package_metadata():
-    """The installer compares against __init__.py; a drifting pyproject would ship
-    a wheel whose recorded version is not the one `rig-wb version` prints."""
+def test_reported_version_matches_the_other_version_literals():
+    """The installer compares against __init__.py; a drifting pyproject would ship a
+    wheel whose recorded version is not the one `rig-wb version` prints, and a
+    drifting plugin.json would misreport the same release to Claude Code."""
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert re.search(rf'^version = "{re.escape(REPO_VERSION)}"$', pyproject, re.M), \
         "pyproject.toml [project] version and rig_workbench.__version__ disagree"
+    plugin = (REPO_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    assert f'"version": "{REPO_VERSION}"' in plugin, \
+        ".claude-plugin/plugin.json version and rig_workbench.__version__ disagree"
