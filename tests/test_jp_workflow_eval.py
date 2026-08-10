@@ -253,6 +253,27 @@ def test_workflow_protocol_is_separate_and_preregisters_exact_bounds():
     ]
     assert workflow["arms"] == ["raw_writer", "reviewed_workflow"]
     assert workflow["semantic_rewrite_max"] == 1
+    assert workflow["semantics_version"] == 2
+    assert workflow["review_exhaustion"] == {
+        "reason_code": "review_contract_exhausted",
+        "eligible_stages": ["REVIEW0", "REVIEW1"],
+        "required_attempts": 3,
+        "required_finish_status": "invalid",
+        "required_parse_status": "invalid",
+        "transition": "NON_DELIVERABLE",
+        "review0_rewrite_count": 0,
+        "review1_rewrite_count": 1,
+        "raw_arm_judgments": True,
+        "reviewed_arm_judgments": False,
+        "resume_policy": "sealed_exact_attempt_set",
+        "otherwise": "abort",
+    }
+    assert workflow["logical_call_graph"]["if_review0_contract_exhausted"] == [
+        "JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST",
+    ]
+    assert workflow["logical_call_graph"]["if_review1_contract_exhausted"] == [
+        "JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST",
+    ]
     assert workflow["max_logical_calls"] == 90
     assert set(workflow["provider_contracts"]) == {
         "reference", "candidate", "reviewer", "judge",
@@ -283,6 +304,7 @@ def test_workflow_protocol_rejects_every_preregistered_contract_mutation(tmp_pat
     module = load_module()
     pristine = module.load_workflow_protocol()
     mutations = [
+        (None, "semantics_version", 1),
         ("scoring", "candidate", 0.9),
         ("dimensions", 4, "verbosity"),
         ("acceptance", "guard_dimensions", ["correctness", "tone"]),
@@ -293,6 +315,12 @@ def test_workflow_protocol_rejects_every_preregistered_contract_mutation(tmp_pat
         ("provider_roles", "reviewer", {"provider": "codex", "model": "other"}),
         ("provider_contracts", "reviewer", {"argv": ["codex"]}),
         ("review_contract", "parser_version", 1),
+        ("review_exhaustion", "otherwise", "continue"),
+        (
+            "logical_call_graph",
+            "if_review0_contract_exhausted",
+            ["JUDGE_REVIEWED_REFERENCE_FIRST"],
+        ),
         ("logical_call_graph", "second_nonapproval", "FINAL"),
         (None, "max_logical_calls", 91),
     ]
@@ -309,6 +337,8 @@ def test_workflow_protocol_rejects_every_preregistered_contract_mutation(tmp_pat
 def _workflow_fixture(
     module, tmp_path, *, review0="APPROVE", review1="APPROVE",
     mid_run_protocol_path=None, normalize_equivalent_verdict_delimiter=False,
+    review0_invalid_cases=(), review1_invalid_cases=(), invalid_review_verdict="UNVERIFIED",
+    review0_error_cases=(), review0_mixed_cases=(),
 ):
     module.paired.time.sleep = lambda _seconds: None
     cases_path = tmp_path / "parity_cases.dev.json"
@@ -340,6 +370,7 @@ def _workflow_fixture(
     }
     calls = []
     protocol_swapped = False
+    review0_attempts = {}
 
     def runner(spec, prompt, _attempts):
         nonlocal protocol_swapped
@@ -353,7 +384,38 @@ def _workflow_fixture(
             prefix = "revised-draft:" if "## Artifact to repair" in prompt else "draft:"
             return prefix + module.sha256_text(prompt)[:8]
         if spec.role == "reviewer":
-            verdict = review1 if "revised-draft:" in prompt else review0
+            is_rereview = "revised-draft:" in prompt
+            verdict = review1 if is_rereview else review0
+            matching_case = next(
+                (
+                    index for index in range(10)
+                    if f"request-{index}" in prompt
+                ),
+                None,
+            )
+            if not is_rereview and matching_case is not None:
+                review0_attempts[matching_case] = review0_attempts.get(matching_case, 0) + 1
+                if matching_case in review0_error_cases:
+                    raise TimeoutError("synthetic transport timeout")
+                if (
+                    matching_case in review0_mixed_cases
+                    and review0_attempts[matching_case] > 1
+                ):
+                    raise TimeoutError("synthetic mixed transport timeout")
+            if not is_rereview and any(
+                f"request-{index}" in prompt for index in review0_invalid_cases
+            ):
+                verdict = invalid_review_verdict
+            if (
+                not is_rereview
+                and matching_case in review0_mixed_cases
+                and review0_attempts[matching_case] == 1
+            ):
+                verdict = "UNVERIFIED"
+            if is_rereview and any(
+                f"request-{index}" in prompt for index in review1_invalid_cases
+            ):
+                verdict = "UNVERIFIED"
             safety = "PASS" if "request-9" in prompt else "N/A"
             review = review_text(verdict=verdict, safety=safety).replace(
                 "- 事実保持: PASS", "- 事実保持: FAIL"
@@ -588,6 +650,138 @@ def test_equivalent_japanese_verdict_delimiter_is_a_valid_revise_semantic_result
     assert all(row["status"] == "success" for row in review_finishes)
 
 
+def test_review0_invalid_exhaustion_is_terminal_and_other_cases_continue(tmp_path):
+    module = load_module()
+    result, calls, run_dir = _workflow_fixture(
+        module, tmp_path, review0_invalid_cases={0}
+    )
+
+    case0 = next(row for row in result["case_states"] if row["case_id"] == "case-0")
+    assert result["schema_version"] == 5
+    assert case0["state"] == "NON_DELIVERABLE"
+    assert case0["reason_code"] == "review_contract_exhausted"
+    assert case0["rewrite_count"] == 0
+    assert result["counts"] == {
+        "cases": 10,
+        "deliverable": 9,
+        "semantic_rewrites": 0,
+        "logical_provider_calls": 50,
+        "judgments": 38,
+        "aliased_judgments": 18,
+    }
+    assert result["gates"]["deliverable_10_of_10"] is False
+    assert result["gates"]["accepted"] is False
+    assert sum(role == "reviewer" for role, _prompt in calls) == 12
+    assert sum(role == "judge" for role, _prompt in calls) == 20
+
+    checkpoint = json.loads((run_dir / "checkpoint.json").read_text())
+    assert checkpoint["schema"] == 5
+    contained = checkpoint["workflow_cases"]["case-0"]["review_exhaustion"]
+    assert contained["reason_code"] == "review_contract_exhausted"
+    assert contained["stage"] == "REVIEW0"
+    assert len(contained["attempts"]) == 3
+    assert all(set(attempt) == {"attempt_id", "output_sha256"}
+               for attempt in contained["attempts"])
+    assert sum("::raw_writer::" in key for key in checkpoint["judgments"]) == 20
+    assert sum("::reviewed_workflow::" in key for key in checkpoint["judgments"]) == 18
+    public = json.dumps(result, ensure_ascii=False)
+    assert "対象形式:" not in public
+    assert "UNVERIFIED" not in public
+    assert all(attempt["attempt_id"] not in public
+               and attempt["output_sha256"] not in public
+               for attempt in contained["attempts"])
+
+
+def test_review1_invalid_exhaustion_preserves_rewrite_and_resume_is_sealed(tmp_path):
+    module = load_module()
+    result, calls, run_dir = _workflow_fixture(
+        module,
+        tmp_path,
+        review0="REVISE",
+        review1="APPROVE",
+        review1_invalid_cases={0},
+    )
+
+    case0 = next(row for row in result["case_states"] if row["case_id"] == "case-0")
+    assert case0["state"] == "NON_DELIVERABLE"
+    assert case0["reason_code"] == "review_contract_exhausted"
+    assert case0["rewrite_count"] == 1
+    assert result["counts"] == {
+        "cases": 10,
+        "deliverable": 9,
+        "semantic_rewrites": 10,
+        "logical_provider_calls": 88,
+        "judgments": 38,
+        "aliased_judgments": 0,
+    }
+    assert sum(role == "reviewer" for role, _prompt in calls) == 22
+    assert sum(role == "judge" for role, _prompt in calls) == 38
+    checkpoint = json.loads((run_dir / "checkpoint.json").read_text())
+    contained = checkpoint["workflow_cases"]["case-0"]["review_exhaustion"]
+    assert contained["stage"] == "REVIEW1"
+    assert len(contained["attempts"]) == 3
+    assert sum("::raw_writer::" in key for key in checkpoint["judgments"]) == 20
+    assert sum("::reviewed_workflow::" in key for key in checkpoint["judgments"]) == 18
+
+    resumed, resumed_calls, _same_run_dir = _workflow_fixture(
+        module,
+        tmp_path,
+        review0="REVISE",
+        review1="APPROVE",
+        review1_invalid_cases={0},
+    )
+    assert resumed["fingerprint"] == result["fingerprint"]
+    assert resumed_calls == []
+
+
+def test_review_exhaustion_resume_rejects_a_later_success_for_same_call(tmp_path):
+    module = load_module()
+    _result, _calls, run_dir = _workflow_fixture(
+        module, tmp_path, review0_invalid_cases={0}
+    )
+    calls_path = run_dir / "calls.jsonl"
+    rows = [json.loads(line) for line in calls_path.read_text().splitlines()]
+    logical_id = "workflow:review:case-0:0"
+    old_start = next(
+        row for row in rows
+        if row.get("event") == "attempt_started"
+        and row.get("logical_call_id") == logical_id
+    )
+    old_finish = next(
+        row for row in rows
+        if row.get("event") == "attempt_finished"
+        and row.get("logical_call_id") == logical_id
+    )
+    replacement_id = "e" * 32
+    new_start = {
+        **old_start,
+        "sequence": rows[-1]["sequence"] + 1,
+        "attempt_id": replacement_id,
+        "attempt_no": 4,
+        "recorded_ns": rows[-1]["recorded_ns"] + 1,
+    }
+    new_finish = {
+        **old_finish,
+        "sequence": rows[-1]["sequence"] + 2,
+        "attempt_id": replacement_id,
+        "attempt_no": 4,
+        "recorded_ns": rows[-1]["recorded_ns"] + 2,
+        "status": "success",
+        "parse_status": "valid",
+        "error_type": None,
+        "parsed_result_sha256": "d" * 64,
+    }
+    calls_path.write_text(
+        "\n".join(json.dumps(row, sort_keys=True)
+                  for row in [*rows, new_start, new_finish]) + "\n",
+        encoding="utf-8",
+    )
+    calls_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="review exhaustion binding mismatch"):
+        _workflow_fixture(module, tmp_path, review0_invalid_cases={0})
+
+
 def test_workflow_second_reject_is_nondeliverable(
     tmp_path,
 ):
@@ -611,8 +805,12 @@ def test_malformed_review_is_journal_invalid_and_never_consumes_semantic_rewrite
     tmp_path, invalid_verdict,
 ):
     module = load_module()
-    with pytest.raises(RuntimeError, match="provider failed after 3 attempts"):
-        _workflow_fixture(module, tmp_path, review0=invalid_verdict)
+    result, _calls, _run_dir = _workflow_fixture(
+        module,
+        tmp_path,
+        review0_invalid_cases={0},
+        invalid_review_verdict=invalid_verdict,
+    )
 
     run_dir = tmp_path / "run"
     journal = [json.loads(line) for line in (run_dir / "calls.jsonl").read_text().splitlines()]
@@ -626,6 +824,24 @@ def test_malformed_review_is_journal_invalid_and_never_consumes_semantic_rewrite
     state = json.loads((run_dir / "checkpoint.json").read_text())
     assert state["workflow_cases"]["case-0"]["rewrite_count"] == 0
     assert "REVIEW0" not in state["workflow_cases"]["case-0"]["artifacts"]
+    assert state["workflow_cases"]["case-0"]["reason_code"] \
+        == "review_contract_exhausted"
+    assert result["counts"]["deliverable"] == 9
+
+
+@pytest.mark.parametrize("mode", ["transport", "mixed"])
+def test_review_exhaustion_with_transport_error_still_aborts(tmp_path, mode):
+    module = load_module()
+    options = (
+        {"review0_error_cases": {0}}
+        if mode == "transport"
+        else {"review0_mixed_cases": {0}}
+    )
+    with pytest.raises(RuntimeError, match="provider failed after 3 attempts"):
+        _workflow_fixture(module, tmp_path, **options)
+
+    state = json.loads((tmp_path / "run" / "checkpoint.json").read_text())
+    assert state["workflow_cases"]["case-0"]["review_exhaustion"] is None
 
 
 def test_workflow_resume_makes_no_duplicate_calls_and_tamper_fails_closed(tmp_path):

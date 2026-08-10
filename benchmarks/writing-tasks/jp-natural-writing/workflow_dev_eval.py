@@ -32,7 +32,7 @@ DEV_CASES = HERE / "parity_cases.dev.json"
 CONFIG_PATH = HERE / "parity.providers.example.json"
 RECIPE_PATH = REPO / "packs/domain/japanese-writing/recipes/japanese-writing.md"
 EXPECTED_DEV_CASES = 10
-SCHEMA = 4
+SCHEMA = 5
 
 # Direct script execution starts with only this benchmark directory on sys.path.
 # Add the resolved repository root deterministically before importing runtime code.
@@ -115,7 +115,27 @@ LOGICAL_CALL_GRAPH = {
     "if_final_hash_equals_a0": [
         "ALIAS_REVIEWED_REFERENCE_FIRST", "ALIAS_REVIEWED_CANDIDATE_FIRST",
     ],
+    "if_review0_contract_exhausted": [
+        "JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST",
+    ],
+    "if_review1_contract_exhausted": [
+        "JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST",
+    ],
     "second_nonapproval": "NON_DELIVERABLE",
+}
+REVIEW_EXHAUSTION_POLICY = {
+    "reason_code": "review_contract_exhausted",
+    "eligible_stages": ["REVIEW0", "REVIEW1"],
+    "required_attempts": 3,
+    "required_finish_status": "invalid",
+    "required_parse_status": "invalid",
+    "transition": "NON_DELIVERABLE",
+    "review0_rewrite_count": 0,
+    "review1_rewrite_count": 1,
+    "raw_arm_judgments": True,
+    "reviewed_arm_judgments": False,
+    "resume_policy": "sealed_exact_attempt_set",
+    "otherwise": "abort",
 }
 
 
@@ -134,6 +154,7 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
     }
     if (
         protocol.get("schema") != 1
+        or protocol.get("semantics_version") != 2
         or protocol.get("name") != "japanese-writing-fresh-dev-workflow"
         or protocol.get("split") != "dev"
         or protocol.get("expected_case_count") != EXPECTED_DEV_CASES
@@ -148,6 +169,7 @@ def load_workflow_protocol(path: Path = PROTOCOL_PATH) -> dict[str, Any]:
         or protocol.get("semantic_rewrite_max") != 1
         or protocol.get("max_logical_calls") != 90
         or protocol.get("logical_call_graph") != LOGICAL_CALL_GRAPH
+        or protocol.get("review_exhaustion") != REVIEW_EXHAUSTION_POLICY
         or set(protocol.get("provider_contracts", {}))
         != {"reference", "candidate", "reviewer", "judge"}
         or canonical_sha256(protocol.get("provider_contracts"))
@@ -745,6 +767,58 @@ def _journal_rows_by_attempt(
     return starts, finishes
 
 
+def _review_contract_exhaustion(
+    journal_records: list[dict[str, Any]],
+    *,
+    logical_call_id: str,
+    stage: str,
+    max_attempts: int,
+) -> dict[str, Any] | None:
+    starts = [
+        row for row in journal_records
+        if row.get("event") == "attempt_started"
+        and row.get("logical_call_id") == logical_call_id
+    ]
+    finishes = [
+        row for row in journal_records
+        if row.get("event") == "attempt_finished"
+        and row.get("logical_call_id") == logical_call_id
+    ]
+    starts.sort(key=lambda row: row.get("attempt_no", -1))
+    finishes.sort(key=lambda row: row.get("attempt_no", -1))
+    if (
+        len(starts) != max_attempts
+        or len(finishes) != max_attempts
+        or [row.get("attempt_no") for row in starts]
+        != list(range(1, max_attempts + 1))
+        or [row.get("attempt_no") for row in finishes]
+        != list(range(1, max_attempts + 1))
+        or any(
+            start.get("attempt_id") != finish.get("attempt_id")
+            for start, finish in zip(starts, finishes, strict=True)
+        )
+        or any(
+            finish.get("status") != "invalid"
+            or finish.get("parse_status") != "invalid"
+            or not re.fullmatch(r"[0-9a-f]{64}", str(finish.get("output_sha256", "")))
+            for finish in finishes
+        )
+    ):
+        return None
+    return {
+        "reason_code": "review_contract_exhausted",
+        "stage": stage,
+        "logical_call_id": logical_call_id,
+        "attempts": [
+            {
+                "attempt_id": finish["attempt_id"],
+                "output_sha256": finish["output_sha256"],
+            }
+            for finish in finishes
+        ],
+    }
+
+
 def validate_workflow_checkpoint(
     *,
     state: dict[str, Any],
@@ -812,7 +886,10 @@ def validate_workflow_checkpoint(
     referenced_attempts: list[str] = []
     allowed_artifacts = {"R", "A0", "REVIEW0", "A1", "REVIEW1"}
     for case_id, case_state in state["workflow_cases"].items():
-        if set(case_state) != {"state", "rewrite_count", "artifacts", "final_alias"}:
+        if set(case_state) != {
+            "state", "rewrite_count", "artifacts", "final_alias",
+            "reason_code", "review_exhaustion",
+        }:
             raise ValueError("workflow checkpoint case state is malformed")
         artifacts = case_state.get("artifacts")
         if not isinstance(artifacts, dict) or not set(artifacts) <= allowed_artifacts:
@@ -879,6 +956,42 @@ def validate_workflow_checkpoint(
             ):
                 raise ValueError("workflow checkpoint journal binding mismatch")
             referenced_attempts.append(attempt_id)
+        exhaustion = case_state.get("review_exhaustion")
+        if exhaustion is not None:
+            if not isinstance(exhaustion, dict):
+                raise ValueError("workflow checkpoint review exhaustion is malformed")
+            stage = exhaustion.get("stage")
+            stage_index = {"REVIEW0": 0, "REVIEW1": 1}.get(stage)
+            if stage_index is None:
+                raise ValueError("workflow checkpoint review exhaustion is malformed")
+            logical_id = f"workflow:review:{case_id}:{stage_index}"
+            expected = _review_contract_exhaustion(
+                journal_records,
+                logical_call_id=logical_id,
+                stage=stage,
+                max_attempts=protocol["retry_policy"]["max_attempts_per_logical_call"],
+            )
+            prompt = _expected_artifact_prompt(
+                case_by_id[case_id], stage, artifacts
+            )
+            context = _artifact_context(case_by_id[case_id], stage, artifacts)
+            logical_starts = [
+                row for row in journal_records
+                if row.get("event") == "attempt_started"
+                and row.get("logical_call_id") == logical_id
+            ]
+            if (
+                exhaustion != expected
+                or any(
+                    start.get("phase") != "review"
+                    or start.get("prompt_sha256") != sha256_text(prompt)
+                    or start.get("provider_spec_sha256")
+                    != providers["reviewer"]["provider_spec_sha256"]
+                    or any(start.get(key) != value for key, value in context.items())
+                    for start in logical_starts
+                )
+            ):
+                raise ValueError("workflow checkpoint review exhaustion binding mismatch")
         _validate_case_terminal_state(case_state)
 
     for key, record in state["judgments"].items():
@@ -991,6 +1104,8 @@ def _validate_case_terminal_state(case_state: dict[str, Any]) -> None:
     artifacts = case_state["artifacts"]
     state_name = case_state.get("state")
     final_alias = case_state.get("final_alias")
+    reason_code = case_state.get("reason_code")
+    exhaustion = case_state.get("review_exhaustion")
     if state_name not in {
         "R_READY", "A0", "REVIEW0", "A1", "REVIEW1", "FINAL",
         "NON_DELIVERABLE",
@@ -1005,17 +1120,39 @@ def _validate_case_terminal_state(case_state: dict[str, Any]) -> None:
             or review_key not in artifacts
             or artifacts[review_key]["parsed"].get("approved") is not True
             or case_state["rewrite_count"] != expected_rewrites
+            or reason_code is not None
+            or exhaustion is not None
         ):
             raise ValueError("workflow checkpoint terminal state mismatch")
     elif state_name == "NON_DELIVERABLE":
-        if (
-            final_alias is not None
-            or case_state["rewrite_count"] != 1
-            or "REVIEW1" not in artifacts
-            or artifacts["REVIEW1"]["parsed"].get("approved") is not False
+        exhausted_stage = exhaustion.get("stage") if isinstance(exhaustion, dict) else None
+        rejected_after_rewrite = (
+            reason_code is None
+            and exhaustion is None
+            and case_state["rewrite_count"] == 1
+            and "REVIEW1" in artifacts
+            and artifacts["REVIEW1"]["parsed"].get("approved") is False
+        )
+        review0_exhausted = (
+            reason_code == "review_contract_exhausted"
+            and exhausted_stage == "REVIEW0"
+            and case_state["rewrite_count"] == 0
+            and not {"REVIEW0", "A1", "REVIEW1"} & set(artifacts)
+        )
+        review1_exhausted = (
+            reason_code == "review_contract_exhausted"
+            and exhausted_stage == "REVIEW1"
+            and case_state["rewrite_count"] == 1
+            and "REVIEW0" in artifacts
+            and artifacts["REVIEW0"]["parsed"].get("verdict") == "REVISE"
+            and "A1" in artifacts
+            and "REVIEW1" not in artifacts
+        )
+        if final_alias is not None or not (
+            rejected_after_rewrite or review0_exhausted or review1_exhausted
         ):
             raise ValueError("workflow checkpoint terminal state mismatch")
-    elif final_alias is not None:
+    elif final_alias is not None or reason_code is not None or exhaustion is not None:
         raise ValueError("workflow checkpoint terminal state mismatch")
 
 
@@ -1226,6 +1363,7 @@ def _workflow_summary(
                 "state": item["state"],
                 "rewrite_count": item["rewrite_count"],
                 "final_alias": item["final_alias"],
+                "reason_code": item["reason_code"],
                 "reference_sha256": artifacts["R"]["output_sha256"],
                 "reference_size_bytes": artifacts["R"]["output_size_bytes"],
                 "a0_sha256": artifacts["A0"]["output_sha256"],
@@ -1353,7 +1491,14 @@ def _run_workflow_evaluation_unlocked(
     for case in cases:
         item = state["workflow_cases"].setdefault(
             case["id"],
-            {"state": "R_READY", "rewrite_count": 0, "artifacts": {}, "final_alias": None},
+            {
+                "state": "R_READY",
+                "rewrite_count": 0,
+                "artifacts": {},
+                "final_alias": None,
+                "reason_code": None,
+                "review_exhaustion": None,
+            },
         )
         artifacts = item["artifacts"]
         if "R" not in artifacts:
@@ -1386,23 +1531,41 @@ def _run_workflow_evaluation_unlocked(
             )
             item["state"] = "A0"
             persist()
+        if item["state"] == "NON_DELIVERABLE" and item["review_exhaustion"]:
+            continue
         if "REVIEW0" not in artifacts:
             prompt = compose_review_prompt(case["prompt"], artifacts["A0"]["text"])
-            artifacts["REVIEW0"] = _workflow_record(
-                logical_call_id=f"workflow:review:{case['id']}:0",
-                phase="review",
-                prompt=prompt,
-                role="reviewer",
-                specs=specs,
-                providers=providers,
-                journal=journal,
-                runner=runner,
-                context=_artifact_context(case, "REVIEW0", artifacts),
-                max_attempts=max_attempts,
-                parser=lambda raw, category=case["category"]: parse_workflow_review(
-                    raw, category=category
-                ),
-            )
+            logical_id = f"workflow:review:{case['id']}:0"
+            try:
+                artifacts["REVIEW0"] = _workflow_record(
+                    logical_call_id=logical_id,
+                    phase="review",
+                    prompt=prompt,
+                    role="reviewer",
+                    specs=specs,
+                    providers=providers,
+                    journal=journal,
+                    runner=runner,
+                    context=_artifact_context(case, "REVIEW0", artifacts),
+                    max_attempts=max_attempts,
+                    parser=lambda raw, category=case["category"]: parse_workflow_review(
+                        raw, category=category
+                    ),
+                )
+            except RuntimeError:
+                exhaustion = _review_contract_exhaustion(
+                    journal.records(),
+                    logical_call_id=logical_id,
+                    stage="REVIEW0",
+                    max_attempts=max_attempts,
+                )
+                if exhaustion is None:
+                    raise
+                item["state"] = "NON_DELIVERABLE"
+                item["reason_code"] = "review_contract_exhausted"
+                item["review_exhaustion"] = exhaustion
+                persist()
+                continue
             item["state"] = "REVIEW0"
             persist()
         review0 = artifacts["REVIEW0"]["parsed"]
@@ -1439,21 +1602,37 @@ def _run_workflow_evaluation_unlocked(
                 prompt = compose_review_prompt(
                     case["prompt"], artifacts["A1"]["text"]
                 )
-                artifacts["REVIEW1"] = _workflow_record(
-                    logical_call_id=f"workflow:review:{case['id']}:1",
-                    phase="review",
-                    prompt=prompt,
-                    role="reviewer",
-                    specs=specs,
-                    providers=providers,
-                    journal=journal,
-                    runner=runner,
-                    context=_artifact_context(case, "REVIEW1", artifacts),
-                    max_attempts=max_attempts,
-                    parser=lambda raw, category=case["category"]: parse_workflow_review(
-                        raw, category=category
-                    ),
-                )
+                logical_id = f"workflow:review:{case['id']}:1"
+                try:
+                    artifacts["REVIEW1"] = _workflow_record(
+                        logical_call_id=logical_id,
+                        phase="review",
+                        prompt=prompt,
+                        role="reviewer",
+                        specs=specs,
+                        providers=providers,
+                        journal=journal,
+                        runner=runner,
+                        context=_artifact_context(case, "REVIEW1", artifacts),
+                        max_attempts=max_attempts,
+                        parser=lambda raw, category=case["category"]: parse_workflow_review(
+                            raw, category=category
+                        ),
+                    )
+                except RuntimeError:
+                    exhaustion = _review_contract_exhaustion(
+                        journal.records(),
+                        logical_call_id=logical_id,
+                        stage="REVIEW1",
+                        max_attempts=max_attempts,
+                    )
+                    if exhaustion is None:
+                        raise
+                    item["state"] = "NON_DELIVERABLE"
+                    item["reason_code"] = "review_contract_exhausted"
+                    item["review_exhaustion"] = exhaustion
+                    persist()
+                    continue
                 item["state"] = "REVIEW1"
                 persist()
             if artifacts["REVIEW1"]["parsed"]["approved"]:

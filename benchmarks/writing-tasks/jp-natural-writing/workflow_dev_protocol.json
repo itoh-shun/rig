@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "semantics_version": 2,
   "name": "japanese-writing-fresh-dev-workflow",
   "split": "dev",
   "expected_case_count": 10,
@@ -15,7 +16,23 @@
     "if_review0_revise": ["A1", "REVIEW1"],
     "if_final_hash_differs_from_a0": ["JUDGE_REVIEWED_REFERENCE_FIRST", "JUDGE_REVIEWED_CANDIDATE_FIRST"],
     "if_final_hash_equals_a0": ["ALIAS_REVIEWED_REFERENCE_FIRST", "ALIAS_REVIEWED_CANDIDATE_FIRST"],
+    "if_review0_contract_exhausted": ["JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST"],
+    "if_review1_contract_exhausted": ["JUDGE_RAW_REFERENCE_FIRST", "JUDGE_RAW_CANDIDATE_FIRST"],
     "second_nonapproval": "NON_DELIVERABLE"
+  },
+  "review_exhaustion": {
+    "reason_code": "review_contract_exhausted",
+    "eligible_stages": ["REVIEW0", "REVIEW1"],
+    "required_attempts": 3,
+    "required_finish_status": "invalid",
+    "required_parse_status": "invalid",
+    "transition": "NON_DELIVERABLE",
+    "review0_rewrite_count": 0,
+    "review1_rewrite_count": 1,
+    "raw_arm_judgments": true,
+    "reviewed_arm_judgments": false,
+    "resume_policy": "sealed_exact_attempt_set",
+    "otherwise": "abort"
   },
   "provider_roles": {
     "reference": {"provider": "codex", "model": "gpt-5.6-sol", "sandbox": "read-only", "prompt_transport": "stdin"},
