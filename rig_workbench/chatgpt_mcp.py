@@ -48,9 +48,7 @@ class RigGateway:
         if not root.is_dir():
             raise RigMcpError(f"repository root does not exist: {root}")
         if not ((root / ".git").exists() or (root / ".rig").exists()):
-            raise RigMcpError(
-                f"repository root must contain .git or .rig: {root}"
-            )
+            raise RigMcpError(f"repository root must contain .git or .rig: {root}")
         return cls(root, allow_write=allow_write, timeout_seconds=timeout_seconds)
 
     @staticmethod
@@ -175,8 +173,6 @@ def create_server(gateway: RigGateway):
             "Prefer status/board/diff/plan before mutating actions. Never represent a gate "
             "pass as proof of correctness. Accept has no force surface through this adapter."
         ),
-        stateless_http=True,
-        json_response=True,
     )
 
     @mcp.tool()
