@@ -410,3 +410,135 @@ def test_installed_interpreter_reads_the_console_script_shebang(tmp_path, monkey
     interpreter, reason = hostcheck._installed_interpreter()
     assert interpreter is None
     assert "shebang" in reason
+
+
+# ── untrusted text rendered to a terminal and into --json ───────────────
+# `gh auth status` output, an import probe's stderr and a console script's
+# shebang are all outside text. Rendered raw they carry terminal escapes (an OSC
+# sequence retitles the window of whoever ran hostcheck) and zero-width / bidi
+# characters — the exact code points `workbench/injection.py` grades FAIL — into
+# both surfaces, and `--json` uses `ensure_ascii=False`, so the serializer is not
+# a backstop. Written as escape sequences on purpose: a raw U+200B in this file
+# would make rig's own injection sensor fail the diff that adds the test.
+
+_ESC = "\x1b"
+_BEL = "\x07"
+_ZWSP = "\u200b"  # zero-width space, written escaped on purpose
+_RLO = "\u202e"  # right-to-left override, likewise
+RAW_MARKERS = (_ESC, _BEL, _ZWSP, _RLO)
+
+_HOSTILE_STATUS = (
+    "github.com\n"
+    f"  Logged in to github.com account {_ESC}]0;pwned{_BEL}ev{_ZWSP}il{_RLO}tester (keyring)\n"
+    f"  - Token scopes: 'repo', 'g{_ESC}]0;pwned{_BEL}ist{_ZWSP}', '{_RLO}gro'\n"
+)
+_HOSTILE_PROBE_STDERR = {
+    "installed": True, "interpreter": f"/opt/{_ESC}]0;pwned{_BEL}venv{_ZWSP}/bin/python",
+    "interpreter_source": "shebang of /usr/local/bin/rig-wb",
+    "returncode": 1, "payload": None,
+    "stderr": f"{_ESC}]0;pwned{_BEL}Segmentation{_ZWSP}fault{_RLO}",
+}
+_HOSTILE_PROBE_ERRORS = {
+    "installed": True, "interpreter": "/opt/venv/bin/python",
+    "interpreter_source": "shebang of /usr/local/bin/rig-wb",
+    "returncode": 0, "stderr": "",
+    "payload": {"package": f"/opt/{_ESC}]0;pwned{_BEL}rig{_ZWSP}/__init__.py",
+                "errors": {"rig_workbench.workbench":
+                           f"ModuleNotFoundError: {_ESC}]0;pwned{_BEL}gone{_RLO}"}},
+}
+
+
+def _hostile_result() -> dict:
+    checks = [
+        hostcheck.check_gh_auth_scopes(
+            pathlib.Path("/nonexistent"),
+            probe=_gh(_HOSTILE_STATUS), remotes=GH_REMOTE),
+        hostcheck.check_gh_auth_scopes(
+            pathlib.Path("/nonexistent"),
+            probe=_gh(f"{_ESC}]0;pwned{_BEL}not logged in{_ZWSP}{_RLO}\nsecond line",
+                      returncode=1),
+            remotes=GH_REMOTE),
+        hostcheck.check_installed_import(pathlib.Path("/nonexistent"),
+                                         probe=_HOSTILE_PROBE_STDERR),
+        hostcheck.check_installed_import(pathlib.Path("/nonexistent"),
+                                         probe=_HOSTILE_PROBE_ERRORS),
+    ]
+    return {"root": "/nonexistent", "checks": checks,
+            "missing": [c["id"] for c in checks if not c["ok"]], "skipped": [], "ok": False}
+
+
+def test_hostile_probe_output_never_reaches_the_terminal_raw(capsys):
+    """An OSC sequence in `gh auth status` output must not retitle the reader's terminal."""
+    hostcheck._print_report(_hostile_result())
+    printed = capsys.readouterr().out
+    for marker in RAW_MARKERS:
+        assert marker not in printed, f"raw {marker!r} reached the terminal report"
+    # Escaped, not dropped: a fix that deleted the fields would pass the check above.
+    assert "<U+001B>" in printed and "<U+200B>" in printed and "<U+202E>" in printed
+
+
+def test_hostile_probe_output_never_reaches_the_json_raw():
+    """`--json` serializes with ensure_ascii=False (hostcheck.cmd_hostcheck), so the
+    JSON encoder escapes control characters but passes U+200B/U+202E straight through."""
+    payload = json.dumps(_hostile_result(), ensure_ascii=False, indent=2, sort_keys=True)
+    for marker in RAW_MARKERS:
+        assert marker not in payload, f"raw {marker!r} reached the --json output"
+    assert "<U+200B>" in payload and "<U+202E>" in payload
+
+
+def test_hostile_text_is_escaped_in_the_fields_not_only_in_the_rendering():
+    """Escaping at construction is what makes --json safe; print-time would not."""
+    result = hostcheck.check_gh_auth_scopes(
+        pathlib.Path("/nonexistent"), probe=_gh(_HOSTILE_STATUS), remotes=GH_REMOTE)
+    assert not any(m in result["account"] for m in RAW_MARKERS)
+    assert all(not any(m in scope for m in RAW_MARKERS) for scope in result["scopes"])
+    # A hostile scope string is still not the `repo` scope, so the verdict holds.
+    assert "repo" in result["scopes"]
+    assert result["ok"] is True
+
+    imported = hostcheck.check_installed_import(pathlib.Path("/nonexistent"),
+                                                probe=_HOSTILE_PROBE_ERRORS)
+    assert not any(m in imported["package"] for m in RAW_MARKERS)
+    assert not any(m in imported["interpreter"] for m in RAW_MARKERS)
+    assert imported["ok"] is False
+
+
+def test_account_capture_is_bounded():
+    """An unbounded `\\S+` lets one run of non-whitespace become the whole account name."""
+    output = "  Logged in to github.com account " + "A" * 500 + "\n  - Token scopes: 'repo'"
+    result = hostcheck.check_gh_auth_scopes(
+        pathlib.Path("/nonexistent"), probe=_gh(output), remotes=GH_REMOTE)
+    assert len(result["account"]) <= hostcheck.ACCOUNT_MAX
+
+
+def test_gitignore_patterns_are_escaped_before_being_echoed(tmp_path, capsys):
+    """`.gitignore` is repo content, and repo content is not this code's own words."""
+    (tmp_path / ".gitignore").write_text(f".rig/{_ESC}]0;pwned{_BEL}{_ZWSP}\n", encoding="utf-8")
+    result = hostcheck.check_state_ignored(tmp_path)
+    assert result["ok"] is True
+    assert not any(m in result["patterns"][0] for m in RAW_MARKERS)
+
+
+def test_bench_case_without_its_own_probe_refuses_to_run_instead_of_asking_the_host():
+    """`probe=None` means "go ask the host" — under a header that says "no network"."""
+    with pytest.raises(ValueError, match="live host"):
+        hostcheck.run_case(hostcheck.check_gh_auth_scopes,
+                           ("no_gh_key", {}, True), pathlib.Path("/nonexistent"))
+    with pytest.raises(ValueError, match="live host"):
+        hostcheck.run_case(hostcheck.check_installed_import,
+                           ("no_probe_key", {}, True), pathlib.Path("/nonexistent"))
+
+
+def test_probes_never_inherit_stdin(monkeypatch):
+    """A probe that decides to prompt would otherwise hang on the session's terminal."""
+    import subprocess as _subprocess
+
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(hostcheck.subprocess, "run", fake_run)
+    hostcheck._run(["gh", "auth", "status"])
+    assert seen["stdin"] is _subprocess.DEVNULL

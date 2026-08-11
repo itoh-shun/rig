@@ -47,6 +47,20 @@ import subprocess
 import tempfile
 
 from . import gh_requirement
+from .workbench.injection import bounded_excerpt
+
+# Bounds for the untrusted strings below. `gh auth status` output, an import
+# probe's stderr and a console script's shebang are all *outside* text: none of
+# it is authored by this repo, and all of it is rendered both to a terminal and
+# into `--json`. Every one of them goes through `bounded_excerpt` — the same
+# neutralisation the injection scanner applies when it quotes untrusted text back
+# (control characters and zero-width/bidi code points become <U+XXXX>, whitespace
+# collapses, length is capped). Not a second escaper: a hole closed with the tool
+# that already exists for it.
+ACCOUNT_MAX = 64      # matches the capture bound in _GH_ACCOUNT_RE
+SCOPE_MAX = 40        # the longest real scope, `security_events`, is 15
+MESSAGE_MAX = 200     # probe stderr, import errors, `gh auth status` failure lines
+PATH_MAX = 200        # interpreter paths, resolved package files
 
 CONTAINER_ENV_VARS = (
     "REMOTE_CONTAINERS",
@@ -146,7 +160,9 @@ def check_state_ignored(root: pathlib.Path) -> dict:
         for raw in gitignore.read_text(encoding="utf-8", errors="replace").splitlines():
             line = raw.strip()
             if line.rstrip("/") in {".rig", "/.rig"} or line.startswith(".rig/"):
-                patterns.append(line)
+                # File content, echoed to a terminal: escaped like every other
+                # string here that this repo's code did not write.
+                patterns.append(bounded_excerpt(line, PATH_MAX))
     return {
         "id": "state_ignored",
         "ok": bool(patterns),
@@ -180,17 +196,25 @@ GH_SCOPE_GRANTS = {
 }
 
 _GH_SCOPES_RE = re.compile(r"Token scopes:\s*(?P<scopes>.*)")
-_GH_ACCOUNT_RE = re.compile(r"\baccount\s+(\S+)")
+# Bounded capture: an unbounded `\S+` lets one hostile run of non-whitespace
+# become the whole "account name". (The bound is not the escaping — `\S` matches
+# ESC and U+200B happily — so the capture also goes through `bounded_excerpt`.)
+_GH_ACCOUNT_RE = re.compile(r"\baccount\s+(\S{1,%d})" % ACCOUNT_MAX)
 
 PROBE_TIMEOUT_SECONDS = 10.0
 
 
 def _run(argv: list[str], *, cwd: str | None = None, env: dict | None = None,
          timeout: float = PROBE_TIMEOUT_SECONDS) -> tuple[int, str, str]:
-    """Run a read-only probe. A missing binary or a timeout is a failure, never a crash."""
+    """Run a read-only probe. A missing binary or a timeout is a failure, never a crash.
+
+    `stdin` is closed: a probe that decides to prompt would otherwise inherit the
+    session's terminal and hang until the timeout, with the prompt printed into
+    whatever was on screen.
+    """
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                              cwd=cwd, env=env)
+                              cwd=cwd, env=env, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
         return 127, "", f"{argv[0]} not found"
     except subprocess.TimeoutExpired:
@@ -256,7 +280,11 @@ def parse_token_scopes(output: str) -> list[str] | None:
         if raw.lower() in ("", "none"):
             continue
         for field in raw.split(","):
-            scope = field.strip().strip("'\"")
+            # Escaped here, at the point the scope list stops being `gh` output
+            # and becomes a rig value: real scope names are short ASCII, so this
+            # is a no-op on every honest token, and a hostile "scope" that no
+            # longer matches `repo` after escaping was never going to satisfy it.
+            scope = bounded_excerpt(field.strip().strip("'\""), SCOPE_MAX)
             if scope and scope not in seen:
                 seen.append(scope)
     return seen if found_line else None
@@ -317,14 +345,15 @@ def check_gh_auth_scopes(
                 "remedy": "Install the GitHub CLI (https://github.com/cli/cli#installation), "
                           "or ignore this if nothing here pushes to GitHub."}
     if result.get("returncode", 1) != 0:
+        failure = (result.get("output") or "").strip()
         return {**base, "ok": False, "state": "not-authenticated",
-                "detail": [(result.get("output") or "").strip().splitlines()[0]
-                           if (result.get("output") or "").strip() else "`gh auth status` failed"],
+                "detail": [bounded_excerpt(failure.splitlines()[0], MESSAGE_MAX)
+                           if failure else "`gh auth status` failed"],
                 "remedy": "gh auth login"}
 
     output = result.get("output") or ""
     account_match = _GH_ACCOUNT_RE.search(output)
-    account = account_match.group(1) if account_match else None
+    account = bounded_excerpt(account_match.group(1), ACCOUNT_MAX) if account_match else None
     scopes = parse_token_scopes(output)
     if scopes is None:
         return {**base, "ok": False, "state": "scopes-unknown", "account": account,
@@ -438,10 +467,17 @@ def check_installed_import(
     against whatever is installed on the host.
     """
     result = installed_import_probe(modules) if probe is None else probe
+    # Everything the probe hands back is outside text: the interpreter path comes
+    # from a console script's shebang, the payload and stderr from whatever that
+    # interpreter chose to print. `interpreter` here is the *rendered* copy — the
+    # raw one stays in `result` for the code that has to compare paths.
+    interpreter = result.get("interpreter")
+    shown_interpreter = (bounded_excerpt(interpreter, PATH_MAX)
+                         if isinstance(interpreter, str) else interpreter)
     base = {
         "id": "installed_import",
         "applicable": True,
-        "interpreter": result.get("interpreter"),
+        "interpreter": shown_interpreter,
         "failed_modules": [],
         "package": None,
         "requirement": (
@@ -454,31 +490,42 @@ def check_installed_import(
                 "detail": ["`rig-wb` is not on PATH — this repo runs scripts/*.py directly, "
                            "so there is no installed copy to verify"],
                 "remedy": ""}
-    if result.get("interpreter") is None:
+    if interpreter is None:
         return {**base, "ok": False, "state": "interpreter-unknown",
-                "detail": [result.get("interpreter_source", "interpreter not resolved")],
+                "detail": [bounded_excerpt(
+                    result.get("interpreter_source") or "interpreter not resolved", MESSAGE_MAX)],
                 "remedy": "Resolve it by hand: run `<python> -c 'import rig_workbench.workbench'` "
                           "from a directory outside this repo with PYTHONPATH unset."}
     payload = result.get("payload")
     if payload is None:
         return {**base, "ok": False, "state": "probe-failed",
                 "detail": [f"the probe returned {result.get('returncode')} with no JSON",
-                           result.get("stderr", "")[:200] or "(no stderr)"],
+                           bounded_excerpt(result.get("stderr") or "", MESSAGE_MAX) or "(no stderr)"],
                 "remedy": "Run the probe by hand from outside the repo to see what the "
                           "interpreter printed."}
     errors = payload.get("errors") or {}
-    package = payload.get("package")
-    detail = [f"interpreter: {result['interpreter']}"]
+    raw_package = payload.get("package")
+    package = (bounded_excerpt(raw_package, PATH_MAX)
+               if isinstance(raw_package, str) else raw_package)
+    detail = [f"interpreter: {shown_interpreter}"]
     if package:
         detail.append(f"resolved: {package}")
     if errors:
+        # Both halves are the probe's own words — the module names come back from
+        # its JSON, not from INSTALLED_IMPORT_MODULES, and the messages are
+        # arbitrary exception text.
+        shown = sorted((bounded_excerpt(str(name), MESSAGE_MAX),
+                        bounded_excerpt(str(message), MESSAGE_MAX))
+                       for name, message in errors.items())
         return {**base, "ok": False, "state": "import-failed", "package": package,
-                "failed_modules": sorted(errors),
-                "detail": detail + [f"{name}: {message}" for name, message in sorted(errors.items())],
+                "failed_modules": [name for name, _ in shown],
+                "detail": detail + [f"{name}: {message}" for name, message in shown],
                 "remedy": "Reinstall the CLI so the wheel matches the source: "
                           "`uv tool install --force rig-workbench` / `pipx reinstall rig-workbench` "
                           "(`/rig:setup` does the same)."}
-    editable = bool(package) and _is_inside(pathlib.Path(package), root)
+    # The raw path, not the rendered one: this is a filesystem comparison, and an
+    # escaped path would resolve to somewhere that does not exist.
+    editable = bool(raw_package) and _is_inside(pathlib.Path(raw_package), root)
     if editable:
         # An editable install points at the source tree, so every subpackage is
         # present by construction — this green says the import works, not that a
@@ -721,6 +768,23 @@ def _materialise(root: pathlib.Path, files: dict) -> None:
         target.write_text(content, encoding="utf-8")
 
 
+def _required_probe(spec: dict, key: str, label: str) -> dict:
+    """The case's own probe output, or a refusal to run the case at all.
+
+    `check_*(probe=None)` means "go ask the host", which is precisely what
+    `--bench` promises it never does — a case missing its key would silently start
+    reading the operator's real `gh` token while the header still says "no
+    network". A corpus case with no recorded output has no ground truth either, so
+    there is nothing to measure: fail loudly instead of measuring the host.
+    """
+    probe = spec.get(key)
+    if not isinstance(probe, dict):
+        raise ValueError(
+            f"bench case {label!r}: no {key!r} probe output. --bench cases must carry their "
+            "own probe result; passing None would fall back to probing the live host.")
+    return probe
+
+
 def run_case(check, case: BenchCase, workdir: pathlib.Path) -> dict:
     label, spec, expect_ok = case
     _materialise(workdir, spec.get("files", {}))
@@ -735,11 +799,12 @@ def run_case(check, case: BenchCase, workdir: pathlib.Path) -> dict:
         # none of them means something different on a machine with a better token.
         # `remotes` defaults to a GitHub remote so a case that forgets it measures
         # scope parsing rather than silently becoming a not-applicable skip.
-        kwargs = {"probe": spec.get("gh"), "remotes": spec.get("remotes", GH_REMOTE_SAMPLE)}
+        kwargs = {"probe": _required_probe(spec, "gh", label),
+                  "remotes": spec.get("remotes", GH_REMOTE_SAMPLE)}
         if "required" in spec:
             kwargs["required"] = spec["required"]
     elif check is check_installed_import:
-        kwargs = {"probe": spec.get("probe")}
+        kwargs = {"probe": _required_probe(spec, "probe", label)}
     result = check(workdir, **kwargs)
     return {"label": label, "expect_ok": expect_ok, "ok": result["ok"],
             "correct": result["ok"] == expect_ok}
