@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## [2.4.1] - 2026-08-11
+## [2.4.2] - 2026-08-11
 
 **Codex hooks now follow Codex's JSON contracts instead of Claude Code's
 PreCompact stdout convention.** The shared plugin resolves either `PLUGIN_ROOT`
@@ -12,6 +12,20 @@ exit 127. Codex PreCompact returns valid no-op JSON; a compact-only
 the compacted context. It does not claim to reconstruct omitted state.
 Claude Code retains its plaintext PreCompact instructions. Execution-level
 regression tests cover both plugin roots and the rootless Codex-native mirror.
+
+## [2.4.1] - 2026-08-11
+
+**The research and examples that accompanied the Japanese-writing work are now
+published with their provenance intact.** This patch adds three parity summaries
+without the full candidate or reference prose. They retain the bounded judge reasons
+needed to audit each preference, and contain only the repository's synthetic dev and
+train cases. The patch also adds the historical Codex handoff that explains the
+measurement caveats and the before/after/v2 Qiita-style Rig introduction examples.
+
+It also publishes the exported `sales-playbook` skill. Its README now restores
+credit and a link to the source channel, distinguishes the source material from
+Rig's organization and wording, and makes the limits of the bundled MIT license
+explicit. Claims supported by a single video remain marked for verification.
 
 ## [2.4.0] - 2026-08-11
 
