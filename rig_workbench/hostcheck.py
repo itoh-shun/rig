@@ -22,15 +22,26 @@ containerise it" cannot quietly persist as "we never did".
 
 **Network:** `gh_auth_scopes` runs `gh auth status`, which contacts github.com
 (bounded, read-only). It is the only check that leaves the machine, and it is
-skipped entirely when the repo has no GitHub remote. `--bench` never runs it: the
-corpus injects the probe output, so measurement stays offline.
+skipped entirely when the repo has no GitHub remote — or when `git remote -v`
+could not be read at all, which is reported rather than assumed. `--bench` never
+runs it: the corpus injects the probe output, so measurement stays offline.
 
 **A check that cannot verify its axis reports MISS, not OK.** An unreadable token
-scope list, an unresolvable interpreter — these are "not verified", and hostcheck
-is advisory, so a false MISS costs a line of output while a false OK costs the
-run it was supposed to protect. The one exception is *not applicable*: a check
-whose subject does not exist here reports `applicable: false` and says so on its
-own line, which is not the same as claiming to have looked.
+scope list, an unresolvable interpreter, an editable install that cannot show a
+packaging omission, a `git remote -v` that failed — these are "not verified", and
+hostcheck is advisory, so a false MISS costs a line of output while a false OK
+costs the run it was supposed to protect. The one exception is *not applicable*:
+a check whose subject does not exist here reports `applicable: false` and says so
+on its own line, which is not the same as claiming to have looked. "We could not
+look" is never spelled `applicable: false` — that would be a claim about the
+subject, made by code that never reached it.
+
+**Scopes belong to one token, not to the machine.** `gh auth status` reports every
+host it holds a token for, and every account within a host. The run pushes with
+exactly one of them — the active account on the host in this repo's remote — so
+that is the only stanza `check_gh_auth_scopes` reads. Unioning them all was the
+original shape of this code, and it reported a green whenever *some* token on the
+machine had `repo`.
 
 Exit codes: 0 = every prerequisite present, 3 = at least one missing (advisory),
 and with `--strict`, a missing prerequisite exits 1 so CI can block on it.
@@ -201,10 +212,14 @@ _GH_SCOPES_RE = re.compile(r"Token scopes:\s*(?P<scopes>.*)")
 # become the whole "account name". (The bound is not the escaping — `\S` matches
 # ESC and U+200B happily — so the capture also goes through `bounded_excerpt`.)
 _GH_ACCOUNT_RE = re.compile(r"\baccount\s+(\S{1,%d})" % ACCOUNT_MAX)
-# A host block header: an unindented, bare host name. Bounded like every other
-# capture that meets outside text, and anchored so an indented `- Token: ...` line
-# can never be mistaken for the start of a new host.
+# A host block header: an unindented, bare host name on a line of its own.
+# Bounded like every other capture that meets outside text, and anchored so an
+# indented `- Token: ...` line can never be mistaken for the start of a new host.
 _GH_HOST_HEADER_RE = re.compile(r"^(?P<host>[A-Za-z0-9][A-Za-z0-9.\-]{0,%d})\s*:?\s*$" % HOST_MAX)
+# Inside a host block, one stanza per account: `✓ Logged in to github.com account
+# tester (keyring)`, followed by `- Active account: true` for the one gh will use.
+_GH_LOGGED_IN_RE = re.compile(r"\bLogged in to\b", re.IGNORECASE)
+_GH_ACTIVE_ACCOUNT_RE = re.compile(r"Active account:\s*true", re.IGNORECASE)
 
 PROBE_TIMEOUT_SECONDS = 10.0
 
@@ -289,6 +304,20 @@ def gh_hosts(output: str) -> list[str]:
     return [host for host, _text in _host_blocks(output) if host is not None]
 
 
+def _host_header(line: str) -> str | None:
+    """`github.com` out of a host block header line, or None if this is not one.
+
+    A dot is required: without it `error:` on a line of its own reads as a host
+    called `error`, and one unexpected unindented word would silently start a new
+    block and hide the real one. Every host `gh` reports is a domain name.
+    """
+    match = _GH_HOST_HEADER_RE.match(line)
+    if match is None:
+        return None
+    host = match.group("host").lower()
+    return host if "." in host.strip(".") else None
+
+
 def _host_blocks(output: str) -> list[tuple[str | None, str]]:
     """Split `gh auth status` output into (host, block) pairs.
 
@@ -298,9 +327,9 @@ def _host_blocks(output: str) -> list[tuple[str | None, str]]:
     """
     blocks: list[tuple[str | None, list[str]]] = [(None, [])]
     for line in output.splitlines():
-        match = _GH_HOST_HEADER_RE.match(line)
-        if match:
-            blocks.append((match.group("host").lower(), []))
+        host = _host_header(line)
+        if host is not None:
+            blocks.append((host, []))
         else:
             blocks[-1][1].append(line)
     return [(host, "\n".join(lines)) for host, lines in blocks]
@@ -333,6 +362,35 @@ def _text_for_host(output: str, host: str | None) -> str:
     return ""
 
 
+def _active_account_text(host_text: str) -> str:
+    """The part of a host block describing the account `gh` will actually use.
+
+    One host can hold several accounts, and `gh` prints a stanza per account
+    inside the host's block. Only the active one signs the requests, so an
+    inactive account's scopes are exactly as irrelevant as another host's — the
+    same mistake one level down, and it was live: an active token short of `repo`
+    read as fine because a `GITHUB_TOKEN` stanza further down the same block had
+    it.
+
+    `gh` marks the active one with `Active account: true`. When it marks exactly
+    one, that stanza is the answer. When it marks none, the block describes a
+    single account (older `gh`, or a captured fragment) and all of it is. When it
+    marks several — which `gh` does not do — the union of the *active* ones is
+    still narrower than the whole block, and there is nothing better to pick.
+    """
+    stanzas: list[list[str]] = []
+    for line in host_text.splitlines():
+        if _GH_LOGGED_IN_RE.search(line):
+            stanzas.append([])
+        if stanzas:
+            stanzas[-1].append(line)
+    if not stanzas:
+        return host_text
+    active = ["\n".join(lines) for lines in stanzas
+              if _GH_ACTIVE_ACCOUNT_RE.search("\n".join(lines))]
+    return "\n".join(active) if active else host_text
+
+
 def parse_token_scopes(output: str, host: str | None = None) -> list[str] | None:
     """Token scopes for `host` from `gh auth status` output — None when it never said.
 
@@ -346,7 +404,7 @@ def parse_token_scopes(output: str, host: str | None = None) -> list[str] | None
     """
     seen: list[str] = []
     found_line = False
-    for match in _GH_SCOPES_RE.finditer(_text_for_host(output, host)):
+    for match in _GH_SCOPES_RE.finditer(_active_account_text(_text_for_host(output, host))):
         found_line = True
         raw = match.group("scopes").strip()
         if raw.lower() in ("", "none"):
@@ -466,7 +524,7 @@ def check_gh_auth_scopes(
                 "remedy": f"gh auth login -h {shown_host}"}
     # Everything below reads only this host's block: scopes granted on another
     # host are another token's, and this run will not be using it.
-    host_text = _text_for_host(output, host)
+    host_text = _active_account_text(_text_for_host(output, host))
     account_match = _GH_ACCOUNT_RE.search(host_text)
     account = bounded_excerpt(account_match.group(1), ACCOUNT_MAX) if account_match else None
     scopes = parse_token_scopes(output, host)
@@ -885,6 +943,32 @@ ghe.example.com
   - Token: gho_************************************
   - Token scopes: 'gist'"""
 
+# Two accounts on one host — the same mistake one level down. Only the active
+# account signs the run's requests; the `GITHUB_TOKEN` stanza below it is not the
+# token `gh pr create` will use, so its `repo` is not this run's `repo`.
+_GH_STATUS_INACTIVE_ACCOUNT_HAS_REPO = """github.com
+  ✓ Logged in to github.com account tester (keyring)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org'
+
+  ✓ Logged in to github.com account robot (GITHUB_TOKEN)
+  - Active account: false
+  - Token: ghp_************************************
+  - Token scopes: 'repo', 'workflow'"""
+
+_GH_STATUS_ACTIVE_ACCOUNT_HAS_REPO = """github.com
+  ✓ Logged in to github.com account robot (GITHUB_TOKEN)
+  - Active account: false
+  - Token: ghp_************************************
+  - Token scopes: 'gist'
+
+  ✓ Logged in to github.com account tester (keyring)
+  - Active account: true
+  - Token: gho_************************************
+  - Token scopes: 'read:org', 'repo'"""
+
 _GH_STATUS_OTHER_HOST_ONLY = """ghe.example.com
   ✓ Logged in to ghe.example.com account admin (keyring)
   - Active account: true
@@ -921,6 +1005,12 @@ GH_AUTH_CORPUS: tuple[BenchCase, ...] = (
     ("target_host_has_the_scope_others_do_not",
      {"gh": {"installed": True, "returncode": 0,
              "output": _GH_STATUS_TARGET_HOST_HAS_REPO}}, True),
+    ("inactive_account_has_the_scope_the_active_one_lacks",
+     {"gh": {"installed": True, "returncode": 0,
+             "output": _GH_STATUS_INACTIVE_ACCOUNT_HAS_REPO}}, False),
+    ("active_account_has_the_scope_and_is_not_listed_first",
+     {"gh": {"installed": True, "returncode": 0,
+             "output": _GH_STATUS_ACTIVE_ACCOUNT_HAS_REPO}}, True),
     ("logged_in_elsewhere_but_not_to_the_remote_host",
      {"gh": {"installed": True, "returncode": 0,
              "output": _GH_STATUS_OTHER_HOST_ONLY}}, False),

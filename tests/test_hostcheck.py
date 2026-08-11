@@ -377,6 +377,62 @@ def test_scope_parsing_is_scoped_to_a_host_when_asked_and_whole_when_not():
     assert hostcheck.gh_hosts("  - Token scopes: 'repo'") == []
 
 
+_MULTI_ACCOUNT_STATUS = """github.com
+  ✓ Logged in to github.com account tester (keyring)
+  - Active account: true
+  - Token scopes: 'gist', 'read:org'
+
+  ✓ Logged in to github.com account robot (GITHUB_TOKEN)
+  - Active account: false
+  - Token scopes: 'repo', 'workflow'"""
+
+
+def test_an_inactive_accounts_scopes_are_not_this_runs_scopes(tmp_path):
+    """One host, two accounts: only the active one signs what the run pushes."""
+    result = hostcheck.check_gh_auth_scopes(
+        tmp_path, remotes=GH_REMOTE, probe=_gh(_MULTI_ACCOUNT_STATUS))
+    assert result["ok"] is False
+    assert result["scopes"] == ["gist", "read:org"]
+    assert result["missing_scopes"] == ["repo"]
+    assert result["account"] == "tester"
+
+
+def test_the_active_account_is_found_wherever_gh_prints_it(tmp_path):
+    """Order is not the marker — `Active account: true` is."""
+    swapped = """github.com
+  ✓ Logged in to github.com account robot (GITHUB_TOKEN)
+  - Active account: false
+  - Token scopes: 'gist'
+
+  ✓ Logged in to github.com account tester (keyring)
+  - Active account: true
+  - Token scopes: 'repo'"""
+    result = hostcheck.check_gh_auth_scopes(tmp_path, remotes=GH_REMOTE, probe=_gh(swapped))
+    assert result["ok"] is True
+    assert result["scopes"] == ["repo"]
+    assert result["account"] == "tester"
+
+
+def test_a_single_account_block_is_read_whole_however_it_is_marked(tmp_path):
+    """`Active account` is absent from older `gh` and from short captures."""
+    for marker in ("", "  - Active account: true\n"):
+        result = hostcheck.check_gh_auth_scopes(
+            tmp_path, remotes=GH_REMOTE,
+            probe=_gh("github.com\n  ✓ Logged in to github.com account tester (keyring)\n"
+                      f"{marker}  - Token scopes: 'repo'"))
+        assert result["ok"] is True, repr(marker)
+        assert result["scopes"] == ["repo"]
+
+
+def test_a_stray_unindented_word_does_not_open_a_host_block():
+    """`error:` is not a host. Reading it as one would hide the block after it."""
+    output = "error:\ngithub.com\n  - Token scopes: 'repo'"
+    assert hostcheck.gh_hosts(output) == ["github.com"]
+    assert hostcheck.parse_token_scopes(output, "github.com") == ["repo"]
+    assert hostcheck.gh_hosts(
+        "You are not logged into any GitHub hosts. To log in, run: gh auth login") == []
+
+
 # ── a probe that could not run is not a probe that found nothing ────────
 
 
