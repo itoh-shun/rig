@@ -38,6 +38,13 @@ def test_capability_claude_code_precompact_injection_is_supported():
     assert host_adapters.capability("claude-code", "precompact_context_injection") == "supported"
 
 
+def test_capability_codex_precompact_injection_is_unsupported_with_declared_fallback():
+    assert host_adapters.capability("codex", "precompact_context_injection") == "unsupported"
+    fallback = host_adapters.degrade_behavior("codex", "precompact_context_injection")
+    assert fallback is not None
+    assert "SessionStart(source=compact)" in fallback
+
+
 def test_capability_unregistered_feature_is_unsupported_not_silently_supported():
     assert host_adapters.capability("claude-code", "no-such-feature") == "unsupported"
 
