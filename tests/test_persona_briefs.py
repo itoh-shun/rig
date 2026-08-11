@@ -24,6 +24,35 @@ def test_load_persona_brief_resolves_nested_path():
     assert providers._load_persona_brief("design/ux-reviewer") is not None
 
 
+def test_dialogue_tech_explainer_injects_observable_writing_knowledge():
+    facets = providers.resolve_prompt_facets({
+        "personas": ["styles/dialogue-tech-explainer"],
+    })
+
+    assert len(facets["persona"]) == 1
+    assert "質問役" in facets["persona"][0]
+    assert "年齢や性別" in facets["persona"][0]
+    assert "専門persona" in facets["persona"][0]
+    assert "内部名" in facets["persona"][0]
+    assert len(facets["knowledge"]) == 1
+    assert "理解の遷移" in facets["knowledge"][0]
+    assert "固有の口癖" in facets["knowledge"][0]
+    assert "初学者" in facets["knowledge"][0]
+
+
+def test_dialogue_style_composes_with_an_existing_specialist_persona():
+    facets = providers.resolve_prompt_facets({
+        "personas": ["styles/dialogue-tech-explainer", "security-reviewer"],
+    })
+
+    assert len(facets["persona"]) == 2
+    assert any("質問役" in body for body in facets["persona"])
+    assert any("権限" in body for body in facets["persona"])
+    assert len(facets["knowledge"]) == 2
+    assert any("理解の遷移" in body for body in facets["knowledge"])
+    assert any("認証" in body for body in facets["knowledge"])
+
+
 def test_load_persona_brief_unknown_persona_returns_none():
     assert providers._load_persona_brief("no-such-persona") is None
 
