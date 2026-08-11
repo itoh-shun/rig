@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## [2.4.0] - 2026-08-11
+
+**Technical articles can now use a dialogue structure without imitating a named
+writer or inferring demographic traits.** The new
+`styles/dialogue-tech-explainer` persona separates a reader's current question
+from a specialist's bounded answer, advances one point per exchange, and falls
+back to concise prose when the source has no genuine question or decision.
+Its `dialogue-tech-writing` knowledge page captures the reusable structure—how
+questions advance understanding, how code interrupts the rhythm, and when not
+to use dialogue—while leaving facts, safety, register, and delivery format to
+the other personas and policies composed in the same step.
+
+Three generated Rig-introduction examples record the same draft under plain
+generation, Japanese writing, and Japanese writing plus the dialogue persona.
+They are examples rather than benchmark evidence; the short source intentionally
+shows that the persona does not force dialogue where it adds no explanatory
+value.
+
 ## [2.3.0] - 2026-08-09
 
 **Independent Japanese-writing runs now have a real process boundary.** The
