@@ -24,19 +24,24 @@ forbid writing an unrun scan into a gate record. This is prose, not a sensor, an
 persona says so.
 
 `rig-wb hostcheck` gains two checks drawn from failures that actually stopped runs:
-whether `gh` is authenticated with the scopes rig's own GitHub writes need, and whether
+whether `gh` is authenticated with the scopes rig's own GitHub writes need, read off the
+active account's stanza for the host this repo's remote actually points at, and whether
 the *installed* `rig-wb` imports its subpackages from a directory outside any checkout
 with `PYTHONPATH` unset — the exact condition under which a packaging omission hides
-from every in-repo test. Both are injectable and carry `--bench` corpora with negative
-cases, so a token whose scopes cannot be read reports MISS rather than OK, and an
-editable install says out loud that its green cannot speak for a built wheel. `/rig:go`
-runs hostcheck once per session before a long autonomous run and never blocks on it.
+from every in-repo test. Both are injectable and carry `--bench` corpora whose negative
+cases were confirmed against the pre-fix code. An axis that could not be verified
+reports MISS, never OK: a token whose scopes `gh` will not print, a git invocation that
+failed rather than a repository with no GitHub remote, and an editable install, whose
+green would only ever have described the source tree it points at. `/rig:go` runs
+hostcheck before each natural-language task and never blocks on it.
 
 `rig-wb wb context` judges what it measured against declared budgets and prints each
-budget beside its verdict. It still reports no dispatch rate: Claude Code hands a
-subagent's shell the same environment and session id as the parent's, so the signal
-does not exist, and the report states that rather than letting a reader assume the
-axis was clean.
+budget beside its verdict. The budget line and the report's heavy section are separate
+thresholds — as one constant the verdict could only read `ok` when the section was
+empty, which printed one fact twice. It still reports no dispatch rate: Claude Code
+hands a subagent's shell the same environment and session id as the parent's, so the
+signal does not exist, and the report states that rather than letting a reader assume
+the axis was clean.
 
 ## [2.4.0] - 2026-08-11
 
