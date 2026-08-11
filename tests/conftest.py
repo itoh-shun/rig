@@ -29,6 +29,36 @@ os.environ["RIG_SKIP_GH_CHECK"] = "1"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# How much slower than a developer machine a CI runner is allowed to be before a
+# `subprocess.run(..., timeout=...)` in this suite gives up. Sized off a real
+# failure, not off a guess: the jp-workflow dry-run costs ~16s of pure
+# single-threaded CPU locally (`real 16.4s / user 15.4s`) and still blew a 30s
+# budget on GitHub's 3.12 runner, so a factor of 2 is demonstrably too small.
+# Six keeps ~3x headroom over the slowest run CI has actually shown us.
+#
+# The default has to be the safe value on its own: .github/workflows/validate.yml
+# runs bare `pytest -q` and sets no environment, so CI always takes this number.
+# The override exists for the opposite case — a machine slower still, or a
+# developer deliberately tightening the budget to hunt a hang.
+CI_TIMEOUT_FACTOR = float(os.environ.get("RIG_TEST_TIMEOUT_FACTOR", "6"))
+
+# Nothing gets less than this, however fast it measures: a subprocess that
+# normally finishes in 50ms is not healthier for being killed at 300ms, and the
+# floor is what keeps the fast call sites at the suite's existing 30s idiom.
+MIN_SUBPROCESS_TIMEOUT = 30.0
+
+
+def subprocess_timeout(measured_seconds: float) -> float:
+    """Budget for a `subprocess.run(timeout=...)` from the call's measured cost.
+
+    Pass what the subprocess actually costs on a developer machine — measure it,
+    do not estimate it — and this scales it for a loaded CI runner. Recording the
+    measurement at the call site is the point: a bare `timeout=30` says nothing
+    about whether 30 is generous or one bad scheduling window from flaking.
+    """
+    return max(MIN_SUBPROCESS_TIMEOUT, measured_seconds * CI_TIMEOUT_FACTOR)
+
+
 import pytest  # noqa: E402
 
 
