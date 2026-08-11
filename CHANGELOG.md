@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## [2.5.0] - 2026-08-11
+
+**Review flows now speak before they finish exploring, and the orchestrator is held
+to the same claim discipline it imposes on its reviewers.** Ten days of usage data
+showed a third of sessions were security reviews abandoned mid-exploration with zero
+findings emitted: the reviewers are subagents, so nothing reached the operator until
+the barrier released, and the barrier never released. `parallel-review`, `pr-review`,
+`security-audit` and `adversarial-review` now require a first report before dispatch —
+capped at five tool calls, explicitly a preview rather than a verdict, and retractable
+without penalty — and relay each verdict as it lands instead of only after aggregation.
+The barrier itself is unchanged; judgment still happens at the gate.
+
+`review-verdict` already forces subagents to carry evidence anchors and a stated
+confidence, and `scan-anchors` verifies those anchors exist. The parent had no such
+contract, and three retractions in a single day came from the same shape: asserting the
+state of a CI check, a gate, a branch or a sensor scan that was never run. The
+`orchestrator`, `goal-driver`, `implementer` and `talk-assistant` personas now name
+those six subjects, require an explicit `未検証:` prefix for anything unverified, and
+forbid writing an unrun scan into a gate record. This is prose, not a sensor, and each
+persona says so.
+
+`rig-wb hostcheck` gains two checks drawn from failures that actually stopped runs:
+whether `gh` is authenticated with the scopes rig's own GitHub writes need, and whether
+the *installed* `rig-wb` imports its subpackages from a directory outside any checkout
+with `PYTHONPATH` unset — the exact condition under which a packaging omission hides
+from every in-repo test. Both are injectable and carry `--bench` corpora with negative
+cases, so a token whose scopes cannot be read reports MISS rather than OK, and an
+editable install says out loud that its green cannot speak for a built wheel. `/rig:go`
+runs hostcheck once per session before a long autonomous run and never blocks on it.
+
+`rig-wb wb context` judges what it measured against declared budgets and prints each
+budget beside its verdict. It still reports no dispatch rate: Claude Code hands a
+subagent's shell the same environment and session id as the parent's, so the signal
+does not exist, and the report states that rather than letting a reader assume the
+axis was clean.
+
 ## [2.4.0] - 2026-08-11
 
 **Technical articles can now use a dialogue structure without imitating a named

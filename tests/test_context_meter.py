@@ -22,6 +22,7 @@ import sys
 import pytest
 
 from rig_workbench import context_meter
+from rig_workbench.workbench import context_report
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
@@ -160,14 +161,94 @@ def test_task_id_hint_only_recognises_rigs_own_shape():
 def test_summarize_orders_by_bytes_not_by_call_count():
     """Forty cheap `status` calls are not the problem; one command that dumps a diff
     into the parent is. Sorting by calls would bury the thing worth fixing."""
-    records = [{"command": "wb status", "bytes": 100} for _ in range(40)]
+    records = [{"command": "wb status", "bytes": 100, "task_id": "rig-cheap"}
+               for _ in range(40)]
     records.append({"command": "wb diff", "bytes": 90_000, "task_id": "rig-1"})
     summary = context_meter.summarize(records)
     assert list(summary["by_command"]) == ["wb diff", "wb status"]
     assert summary["by_command"]["wb status"]["calls"] == 40
     assert summary["by_command"]["wb diff"]["max"] == 90_000
     assert summary["bytes"] == 94_000
-    assert summary["by_task"] == {"rig-1": 90_000}
+    # the same ordering property has to hold per task: the one expensive task outranks
+    # the one that was merely chatty.
+    assert list(summary["by_task"]) == ["rig-1", "rig-cheap"]
+    assert summary["by_task"]["rig-1"]["bytes"] == 90_000
+
+
+def test_summarize_reports_a_tasks_call_count_largest_and_span():
+    """Bytes alone cannot separate "one command dumped a diff" from "this task kept
+    feeding the parent all afternoon", and the two want different fixes."""
+    records = [
+        {"command": "wb status", "bytes": 100, "task_id": "rig-1",
+         "ts": "2026-01-01T09:00:00+09:00"},
+        {"command": "wb diff", "bytes": 5_000, "task_id": "rig-1",
+         "ts": "2026-01-01T12:30:00+09:00"},
+        {"command": "wb board", "bytes": 200, "task_id": "rig-1",
+         "ts": "2026-01-01T10:00:00+09:00"},
+    ]
+    entry = context_meter.summarize(records)["by_task"]["rig-1"]
+    assert entry["calls"] == 3
+    assert entry["max"] == 5_000
+    assert entry["first_ts"] == "2026-01-01T09:00:00+09:00"
+    assert entry["last_ts"] == "2026-01-01T12:30:00+09:00"
+
+
+def test_summarize_survives_records_written_before_these_fields_existed():
+    """`.rig/context.jsonl` is append-only and predates every field added since. A
+    reader that crashed on an old line would take the whole history down with it."""
+    summary = context_meter.summarize([{"bytes": 100, "task_id": "rig-old"},
+                                       {"bytes": 50, "task_id": "rig-old"}])
+    entry = summary["by_task"]["rig-old"]
+    assert entry["bytes"] == 150
+    assert entry["calls"] == 2
+    assert entry["first_ts"] == ""          # unknown, not guessed
+    assert entry["last_ts"] == ""
+
+
+def test_summarize_does_not_let_an_undated_record_reset_a_tasks_start():
+    """The mixed case, which is the one that produces a wrong number rather than a
+    crash: `.rig/context.jsonl` is append-only, so a task can hold both old undated
+    lines and new dated ones. Folding an undated line in as "" would sort below every
+    real timestamp and hand the report a span starting from nowhere."""
+    records = [
+        {"bytes": 10, "task_id": "rig-1"},                          # pre-`ts` record
+        {"bytes": 10, "task_id": "rig-1", "ts": "2026-01-01T09:00:00+09:00"},
+        {"bytes": 10, "task_id": "rig-1", "ts": "2026-01-01T10:00:00+09:00"},
+    ]
+    entry = context_meter.summarize(records)["by_task"]["rig-1"]
+    assert entry["first_ts"] == "2026-01-01T09:00:00+09:00"
+    assert entry["last_ts"] == "2026-01-01T10:00:00+09:00"
+
+
+# ── judging what was measured ────────────────────────────────────────────────
+def test_budget_verdicts_flag_the_invocation_and_task_that_went_over():
+    records = [
+        {"command": "wb diff", "bytes": context_meter.NOTABLE_BYTES + 1,
+         "task_id": "rig-big"},
+        {"command": "wb board", "bytes": context_meter.TASK_BUDGET_BYTES,
+         "task_id": "rig-big"},
+        {"command": "wb status", "bytes": 10, "task_id": "rig-small"},
+    ]
+    summary = context_meter.summarize(records)
+    invocations, tasks = context_meter.budget_verdicts(records, summary)
+
+    assert invocations["over"] == 2 and invocations["checked"] == 3
+    assert invocations["budget"] == context_meter.NOTABLE_BYTES
+    assert tasks["over"] == 1 and tasks["checked"] == 2
+    assert tasks["budget"] == context_meter.TASK_BUDGET_BYTES
+    assert tasks["worst"] == context_meter.NOTABLE_BYTES + 1 + context_meter.TASK_BUDGET_BYTES
+
+
+def test_budget_verdicts_are_clean_when_everything_is_small():
+    records = [{"command": "wb status", "bytes": 10, "task_id": "rig-1"}]
+    summary = context_meter.summarize(records)
+    assert [v["over"] for v in context_meter.budget_verdicts(records, summary)] == [0, 0]
+
+
+def test_budget_verdicts_do_not_divide_by_an_empty_history():
+    """No records at all must produce zeros, not a `max()` on an empty sequence."""
+    assert [v["worst"] for v in
+            context_meter.budget_verdicts([], context_meter.summarize([]))] == [0, 0]
 
 
 def test_load_skips_unparseable_lines_rather_than_failing(tmp_path):
@@ -193,6 +274,19 @@ def test_load_since_days_drops_older_records(tmp_path):
 
 def test_load_on_a_repo_that_has_no_records(tmp_path):
     assert context_meter.load(tmp_path) == []
+
+
+@pytest.mark.parametrize("first,last,expected", [
+    ("2026-01-01T09:00:00+09:00", "2026-01-01T09:20:00+09:00", ", over 20m"),
+    ("2026-01-01T09:00:00+09:00", "2026-01-02T11:05:00+09:00", ", over 26h05m"),
+    ("", "2026-01-01T09:00:00+09:00", ""),          # pre-`ts` record
+    ("2026-01-01T09:00:00+09:00", "not-a-timestamp", ""),   # corrupted line
+    ("2026-01-01T09:00:00+09:00", "2026-01-01T09:00:30+09:00", ""),  # under a minute
+])
+def test_span_is_silent_rather_than_wrong(first, last, expected):
+    """A span it cannot compute must cost nothing. The byte count is the measurement;
+    the span is only there to say whether the cost arrived all at once."""
+    assert context_report._span(first, last) == expected
 
 
 @pytest.mark.parametrize("size,expected", [(0, "0B"), (512, "512B"),
@@ -224,12 +318,75 @@ def test_a_real_invocation_records_itself(git_repo):
 
 def test_the_report_states_what_it_does_not_measure(git_repo):
     """The number is only defensible because its scope is stated. "Your context usage"
-    would be a fabrication — rig is a subprocess and cannot see the session."""
+    would be a fabrication — rig is a subprocess and cannot see the session.
+
+    The `ok` verdict makes this load-bearing rather than decorative. Only rig-wb
+    invocations are counted, so a parent that spent its whole context on raw greps
+    still reads `ok` here; and no dispatch rate is reported because Claude Code
+    exports no signal that distinguishes a subagent's shell from the parent's. Both
+    sentences are asserted because untested prose is how a report starts overclaiming.
+    """
     (git_repo / ".rig").mkdir()
     run_cli(["board"], git_repo)
     out = run_cli(["context"], git_repo).stdout
     assert "not the session's total context" in out
     assert "rig's own output only" in out
+    assert "No dispatch rate is" in out
+    assert "only rig-wb invocations are counted" in out
+    assert "two thousand raw greps" in out
+
+
+def test_the_report_prints_the_budget_next_to_every_verdict(git_repo):
+    """An `ok` whose threshold is invisible cannot be argued with, and a verdict nobody
+    can argue with is the sensor failure this repository already has a name for."""
+    (git_repo / ".rig").mkdir()
+    run_cli(["board"], git_repo)
+    out = run_cli(["context"], git_repo).stdout
+    assert "### budget" in out
+    assert "[ok  ] single invocation" in out
+    assert f"budget {context_meter.human(context_meter.NOTABLE_BYTES)}" in out
+    assert f"budget {context_meter.human(context_meter.TASK_BUDGET_BYTES)}" in out
+    assert "not limits it enforces" in out
+
+
+def test_the_report_says_over_when_an_invocation_blows_the_budget(git_repo):
+    (git_repo / ".rig").mkdir()
+    (git_repo / context_meter.CONTEXT_REL).write_text(
+        json.dumps({"ts": "2026-01-01T09:00:00+09:00", "command": "wb diff",
+                    "bytes": context_meter.NOTABLE_BYTES * 3, "task_id": "rig-x"}) + "\n",
+        encoding="utf-8")
+    out = run_cli(["context"], git_repo).stdout
+    assert "[over] single invocation" in out
+    assert "1/1 invocation(s) over" in out
+
+
+def test_the_report_reads_records_written_before_the_new_fields_existed(git_repo):
+    """The oldest lines in `.rig/context.jsonl` have no `ts` and no `task_id`. Reading
+    them must produce a report, not a traceback."""
+    (git_repo / ".rig").mkdir()
+    (git_repo / context_meter.CONTEXT_REL).write_text(
+        json.dumps({"bytes": 120}) + "\n"
+        + json.dumps({"bytes": 90, "task_id": "rig-old"}) + "\n",
+        encoding="utf-8")
+    report = run_cli(["context"], git_repo)
+    assert report.returncode == 0, report.stderr
+    assert "rig-old" in report.stdout
+    assert "### budget" in report.stdout
+
+
+def test_the_report_shows_how_long_a_task_kept_printing(git_repo):
+    """Two tasks can cost the same bytes and mean different things: one command that
+    dumped a diff, or an afternoon of the parent reading rig output itself."""
+    (git_repo / ".rig").mkdir()
+    (git_repo / context_meter.CONTEXT_REL).write_text(
+        json.dumps({"ts": "2026-01-01T09:00:00+09:00", "command": "wb board",
+                    "bytes": 100, "task_id": "rig-slow"}) + "\n"
+        + json.dumps({"ts": "2026-01-01T12:30:00+09:00", "command": "wb diff",
+                      "bytes": 100, "task_id": "rig-slow"}) + "\n",
+        encoding="utf-8")
+    out = run_cli(["context"], git_repo).stdout
+    assert "over 3h30m" in out
+    assert "2 call(s)" in out
 
 
 def test_context_report_on_an_unmeasured_repo_says_so(git_repo):

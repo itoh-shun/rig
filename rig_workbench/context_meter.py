@@ -19,6 +19,25 @@ of doing the work itself. rig runs as a subprocess and cannot see any of that. A
 that claimed to be "your context usage" would be a fabrication; this one claims only
 "what rig printed at you", which is checkable and is the lever rig controls.
 
+**Dispatch is not detectable, and this was checked rather than assumed.** The obvious
+wish is a `dispatch rate`: of the rig commands run, how many ran inside a subagent
+rather than in the parent thread. Claude Code exports no signal that answers it —
+checked against Claude Code 2.1.224 and 2.1.227, which is the clause to re-test before
+trusting this paragraph on a much later version. The environment a Bash tool call
+receives is built from a fixed set — `CLAUDECODE`,
+`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDE_PID`, `AI_AGENT`,
+`CLAUDE_EFFORT` — with no field for agent depth; `CLAUDE_CODE_CHILD_SESSION` is set
+unconditionally, so the parent's own shell carries it too, and `CLAUDE_CODE_SESSION_ID`
+is the *session's* id, which a subagent shares with its parent. Compared directly
+inside one session, the parent's shell and its subagent's shell receive an identical
+set of variables. Session transcripts are no better: rig cannot reliably tell which
+transcript record is the invocation currently running (concurrent tool calls, colliding
+command strings, write ordering, a private format).
+
+So dispatch is left unmeasured on purpose. A guessed dispatch rate would be the failure
+mode this repository already has a name for — a sensor that reports green on an axis it
+never inspected is worse than no sensor, because it ends the search.
+
 Records land in `.rig/context.jsonl` (gitignored, same tier as `runs.jsonl`). Reading
 is `rig-wb wb context`; the weekly digest carries the rollup.
 """
@@ -35,10 +54,21 @@ import sys
 
 CONTEXT_REL = ".rig/context.jsonl"
 
-# Above this, one invocation is worth naming in the report. Not a limit and not a
-# gate: the point is to make the top emitters visible, and a threshold that fired on
-# every `status` call would bury them.
+# Above this, one invocation is worth naming in the report, and it is also the budget
+# line a single invocation is judged against. A threshold that fired on every `status`
+# call would bury the top emitters, which is why it is not lower.
+#
+# Still not a gate. Nothing in rig consumes the verdict this produces — no acceptance
+# gate, no exit code, no other flow reads it. It is a line in a report, and the report
+# prints the number next to every verdict so a reader can disagree with the number
+# rather than with the word "ok".
 NOTABLE_BYTES = 2000
+
+# The same budget line for one task's accumulated rig output, expressed as a multiple
+# so the relationship stays visible. This one is a convention and nothing more: no
+# measurement established that ten notable invocations' worth is the point where a task
+# stopped dispatching. It is printed alongside the verdict for exactly that reason.
+TASK_BUDGET_BYTES = 10 * NOTABLE_BYTES
 
 
 class _CountingStream(io.TextIOBase):
@@ -201,10 +231,16 @@ def summarize(records: list[dict]) -> dict:
 
     Sorted by bytes rather than call count on purpose: forty cheap `status` calls are
     not the problem, and one command that dumps a diff into the parent is.
+
+    Per-task entries carry the same shape as per-command ones plus the timestamps of
+    the first and last invocation, which is what turns "this task was expensive" into
+    "this task kept feeding the parent for six hours". Records written before those
+    fields existed have no `ts` at all, so the span is reported as unknown ("") rather
+    than guessed — a missing field must never be a crash or an invented value.
     """
     total = sum(r.get("bytes", 0) for r in records)
     by_command: dict[str, dict] = {}
-    by_task: dict[str, int] = {}
+    by_task: dict[str, dict] = {}
     for record in records:
         entry = by_command.setdefault(record.get("command") or "?",
                                       {"bytes": 0, "calls": 0, "max": 0})
@@ -213,13 +249,61 @@ def summarize(records: list[dict]) -> dict:
         entry["calls"] += 1
         entry["max"] = max(entry["max"], size)
         if record.get("task_id"):
-            by_task[record["task_id"]] = by_task.get(record["task_id"], 0) + size
+            task = by_task.setdefault(record["task_id"],
+                                      {"bytes": 0, "calls": 0, "max": 0,
+                                       "first_ts": "", "last_ts": ""})
+            task["bytes"] += size
+            task["calls"] += 1
+            task["max"] = max(task["max"], size)
+            stamp = record.get("ts")
+            if stamp:
+                # Undated records are skipped rather than folded in as "": an empty
+                # string sorts below every real timestamp, so one old line in a task
+                # that also has dated ones would silently reset its start to nothing.
+                task["first_ts"] = min(task["first_ts"] or stamp, stamp)
+                task["last_ts"] = max(task["last_ts"], stamp)
     return {
         "calls": len(records),
         "bytes": total,
         "by_command": dict(sorted(by_command.items(), key=lambda kv: -kv[1]["bytes"])),
-        "by_task": dict(sorted(by_task.items(), key=lambda kv: -kv[1])),
+        "by_task": dict(sorted(by_task.items(), key=lambda kv: -kv[1]["bytes"])),
     }
+
+
+def budget_verdicts(records: list[dict], summary: dict) -> list[dict]:
+    """Judge what was measured against the declared budgets, and nothing else.
+
+    Two lines, both derived from numbers this module states out loud: how many single
+    invocations went over `NOTABLE_BYTES`, and how many tasks went over
+    `TASK_BUDGET_BYTES`. Each verdict carries the budget it was judged against so the
+    report can print it — an "ok" whose threshold is invisible is unfalsifiable, and
+    that is the shape of sensor this repository has already been burned by.
+
+    Returns dicts, not a pass/fail: the caller prints them. Deliberately nothing here
+    exits non-zero or feeds a gate.
+    """
+    over_invocations = [r for r in records
+                        if r.get("bytes", 0) >= NOTABLE_BYTES]
+    over_tasks = [(task_id, entry) for task_id, entry in summary["by_task"].items()
+                  if entry["bytes"] >= TASK_BUDGET_BYTES]
+    return [
+        {
+            "label": "single invocation",
+            "budget": NOTABLE_BYTES,
+            "over": len(over_invocations),
+            "checked": len(records),
+            "worst": max((r.get("bytes", 0) for r in records), default=0),
+            "unit": "invocation(s)",
+        },
+        {
+            "label": "one task's total",
+            "budget": TASK_BUDGET_BYTES,
+            "over": len(over_tasks),
+            "checked": len(summary["by_task"]),
+            "worst": max((e["bytes"] for e in summary["by_task"].values()), default=0),
+            "unit": "task(s)",
+        },
+    ]
 
 
 def human(size: int) -> str:

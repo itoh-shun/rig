@@ -708,7 +708,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q` — `tests/` 配下の54テストスイート。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
 | 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
-| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務） |
+| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する） |
 | テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
