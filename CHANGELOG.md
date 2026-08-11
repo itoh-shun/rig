@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## [2.4.2] - 2026-08-11
+
+**Codex hooks now follow Codex's JSON contracts instead of Claude Code's
+PreCompact stdout convention.** The shared plugin resolves either `PLUGIN_ROOT`
+or `CLAUDE_PLUGIN_ROOT`, so Codex no longer tries to execute `/hooks/*.sh` and
+exit 127. Codex PreCompact returns valid no-op JSON; a compact-only
+`SessionStart` hook then attempts a best-effort re-anchor from state retained in
+the compacted context. It does not claim to reconstruct omitted state.
+Claude Code retains its plaintext PreCompact instructions. Execution-level
+regression tests cover both plugin roots and the rootless Codex-native mirror.
+
 ## [2.4.1] - 2026-08-11
 
 **The research and examples that accompanied the Japanese-writing work are now
