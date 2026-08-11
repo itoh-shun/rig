@@ -15,11 +15,11 @@
 
 ## 手順
 
-### ⓪ ホスト前提の確認（自走の前に1回だけ・ブロックしない）
+### ⓪ ホスト前提の確認（自走の前・ブロックしない）
 
 長い自走は、**開始前からすでに壊れていた前提**で途中から死ぬ。実際に観測された例：`gh` のトークンにスコープが足りず PR を作る段で停止した／pipx・uv で入れた `rig-wb` がチェックアウトの外から import できなかった。どれも走らせてみて初めて分かるものではなく、開始前に1コマンドで分かる。
 
-**セッションで最初に workbench 経路へ入るときだけ**次を実行する（task ごとではない。2本目以降のタスクでは省く）:
+**workbench 経路に入るたびに**次を実行する。**「セッション初回だけ」ではない**——それを保証する状態を rig はどこにも持っていないので、走るたびに走る（`gh auth status` を含むため実測で数秒かかる。ブロックはしない）:
 
 ```
 rig-wb hostcheck --json      # 未導入なら: python3 -m rig_workbench.cli hostcheck --json
@@ -32,8 +32,12 @@ rig-wb hostcheck --json      # 未導入なら: python3 -m rig_workbench.cli hos
   [hostcheck] <id>: <requirement の要点> — fix: <remedy>
   ```
 - `skipped[]`（`applicable: false`）は**「満たしている」ではなく「この環境では検査していない」**。既定では出さないが、`missing` を提示するときに1行添えてよい（例: `未検査: gh_auth_scopes（GitHub remote 無し）`）。満たしたことにして黙らない。
-- `gh_auth_scopes` の `scopes-unknown` は「スコープが足りない」ではなく「**スコープを読めなかった**」。そのまま未検証として伝える（fine-grained PAT / GitHub App / `GH_TOKEN` では `gh` がスコープ行を出力しない）。
-- ユーザーが指摘を「今は無視する」と言った場合、**そのセッションでは二度と出さない**。
+- **「読めなかった」と「足りない」を混ぜない。** hostcheck は検証できなかった軸を `ok: false` で返すが、`state` が理由を分ける。そのまま伝える:
+  - `scopes-unknown` — `gh` がスコープ行を出さないトークン（fine-grained PAT / GitHub App / `GH_TOKEN`）。スコープ不足ではなく未検証。
+  - `remotes-unknown` — `git remote -v` が失敗した。GitHub remote の有無自体が不明で、「remote が無い」ではない。
+  - `editable-install` — `rig-wb` が site-packages ではなくソースツリーから import されている。wheel の同梱漏れはこの経路では原理的に出ないので、この軸は**検査できていない**（開発チェックアウトでは MISS が正常）。
+  - `probe-timed-out` — `gh auth status` が時間内に答えなかった。認証の問題ではないので `gh auth login` を勧めない。
+- ユーザーが指摘を「今は無視する」と言った場合、**その会話の間は再提示しない**（モデルが覚えているだけで、永続化される状態はない。新しいセッションでは再び出る）。
 
 ### ① タスク分類（task_type の決定）
 

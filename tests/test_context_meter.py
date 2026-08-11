@@ -193,9 +193,11 @@ def test_summarize_reports_a_tasks_call_count_largest_and_span():
     assert entry["last_ts"] == "2026-01-01T12:30:00+09:00"
 
 
-def test_summarize_survives_records_written_before_these_fields_existed():
-    """`.rig/context.jsonl` is append-only and predates every field added since. A
-    reader that crashed on an old line would take the whole history down with it."""
+def test_summarize_survives_a_record_with_no_timestamp():
+    """rig writes `ts` on every line and always has, so this is not an old-format case.
+    It is the hand-edited file, the line some other tool appended, and `summarize()`
+    being a pure function over whatever dicts a caller hands it. A reader that crashed
+    on one such line would take the whole history down with it."""
     summary = context_meter.summarize([{"bytes": 100, "task_id": "rig-old"},
                                        {"bytes": 50, "task_id": "rig-old"}])
     entry = summary["by_task"]["rig-old"]
@@ -205,15 +207,32 @@ def test_summarize_survives_records_written_before_these_fields_existed():
     assert entry["last_ts"] == ""
 
 
-def test_summarize_does_not_let_an_undated_record_reset_a_tasks_start():
-    """The mixed case, which is the one that produces a wrong number rather than a
-    crash: `.rig/context.jsonl` is append-only, so a task can hold both old undated
-    lines and new dated ones. Folding an undated line in as "" would sort below every
-    real timestamp and hand the report a span starting from nowhere."""
+def test_summarize_does_not_let_a_leading_undated_record_reset_a_tasks_start():
+    """The mixed case, which produces a wrong number rather than a crash: one task can
+    hold both dated and undated lines. Folding an undated one in as "" would sort below
+    every real timestamp and hand the report a span starting from nowhere."""
     records = [
-        {"bytes": 10, "task_id": "rig-1"},                          # pre-`ts` record
+        {"bytes": 10, "task_id": "rig-1"},                          # no `ts`
         {"bytes": 10, "task_id": "rig-1", "ts": "2026-01-01T09:00:00+09:00"},
         {"bytes": 10, "task_id": "rig-1", "ts": "2026-01-01T10:00:00+09:00"},
+    ]
+    entry = context_meter.summarize(records)["by_task"]["rig-1"]
+    assert entry["first_ts"] == "2026-01-01T09:00:00+09:00"
+    assert entry["last_ts"] == "2026-01-01T10:00:00+09:00"
+
+
+def test_summarize_does_not_let_a_trailing_undated_record_erase_a_tasks_span():
+    """Same mix, opposite order, and the order is the whole point: with the undated
+    line *first*, `first_ts or stamp` heals a broken guard on the next record, so that
+    arrangement passes even when undated records are being folded in as "". With the
+    undated line last there is nothing left to heal it — `first_ts` collapses back to
+    "" and `last_ts` with it, and the report loses a span it had already computed.
+    Verified by mutation: dropping the `if stamp:` guard fails this test and not the
+    one above it."""
+    records = [
+        {"bytes": 10, "task_id": "rig-1", "ts": "2026-01-01T09:00:00+09:00"},
+        {"bytes": 10, "task_id": "rig-1", "ts": "2026-01-01T10:00:00+09:00"},
+        {"bytes": 10, "task_id": "rig-1"},                          # no `ts`, arrives last
     ]
     entry = context_meter.summarize(records)["by_task"]["rig-1"]
     assert entry["first_ts"] == "2026-01-01T09:00:00+09:00"
@@ -223,7 +242,7 @@ def test_summarize_does_not_let_an_undated_record_reset_a_tasks_start():
 # ── judging what was measured ────────────────────────────────────────────────
 def test_budget_verdicts_flag_the_invocation_and_task_that_went_over():
     records = [
-        {"command": "wb diff", "bytes": context_meter.NOTABLE_BYTES + 1,
+        {"command": "wb diff", "bytes": context_meter.INVOCATION_BUDGET_BYTES + 1,
          "task_id": "rig-big"},
         {"command": "wb board", "bytes": context_meter.TASK_BUDGET_BYTES,
          "task_id": "rig-big"},
@@ -233,10 +252,27 @@ def test_budget_verdicts_flag_the_invocation_and_task_that_went_over():
     invocations, tasks = context_meter.budget_verdicts(records, summary)
 
     assert invocations["over"] == 2 and invocations["checked"] == 3
-    assert invocations["budget"] == context_meter.NOTABLE_BYTES
+    assert invocations["budget"] == context_meter.INVOCATION_BUDGET_BYTES
     assert tasks["over"] == 1 and tasks["checked"] == 2
     assert tasks["budget"] == context_meter.TASK_BUDGET_BYTES
-    assert tasks["worst"] == context_meter.NOTABLE_BYTES + 1 + context_meter.TASK_BUDGET_BYTES
+    assert tasks["worst"] == (context_meter.INVOCATION_BUDGET_BYTES + 1
+                              + context_meter.TASK_BUDGET_BYTES)
+
+
+def test_the_budget_line_and_the_report_threshold_are_allowed_to_disagree():
+    """The reason they are two constants. While one number served as both, the budget
+    verdict was the report's heavy section restated: it could only read `ok` when that
+    section was empty, so the report printed one fact twice and neither line could
+    contradict the other. An invocation between the two now goes over budget and stays
+    out of the section — a `[over]` with nothing listed under it is the shape that
+    proves the split is real."""
+    assert context_meter.REPORT_THRESHOLD_BYTES > context_meter.INVOCATION_BUDGET_BYTES
+    between = (context_meter.INVOCATION_BUDGET_BYTES + context_meter.REPORT_THRESHOLD_BYTES) // 2
+    records = [{"command": "wb status", "bytes": between, "task_id": "rig-1"}]
+    invocations, _ = context_meter.budget_verdicts(records,
+                                                   context_meter.summarize(records))
+    assert invocations["over"] == 1
+    assert [r for r in records if r["bytes"] >= context_meter.REPORT_THRESHOLD_BYTES] == []
 
 
 def test_budget_verdicts_are_clean_when_everything_is_small():
@@ -279,7 +315,7 @@ def test_load_on_a_repo_that_has_no_records(tmp_path):
 @pytest.mark.parametrize("first,last,expected", [
     ("2026-01-01T09:00:00+09:00", "2026-01-01T09:20:00+09:00", ", over 20m"),
     ("2026-01-01T09:00:00+09:00", "2026-01-02T11:05:00+09:00", ", over 26h05m"),
-    ("", "2026-01-01T09:00:00+09:00", ""),          # pre-`ts` record
+    ("", "2026-01-01T09:00:00+09:00", ""),          # a line with no `ts`
     ("2026-01-01T09:00:00+09:00", "not-a-timestamp", ""),   # corrupted line
     ("2026-01-01T09:00:00+09:00", "2026-01-01T09:00:30+09:00", ""),  # under a minute
 ])
@@ -344,25 +380,44 @@ def test_the_report_prints_the_budget_next_to_every_verdict(git_repo):
     out = run_cli(["context"], git_repo).stdout
     assert "### budget" in out
     assert "[ok  ] single invocation" in out
-    assert f"budget {context_meter.human(context_meter.NOTABLE_BYTES)}" in out
+    assert f"budget {context_meter.human(context_meter.INVOCATION_BUDGET_BYTES)}" in out
     assert f"budget {context_meter.human(context_meter.TASK_BUDGET_BYTES)}" in out
     assert "not limits it enforces" in out
 
 
 def test_the_report_says_over_when_an_invocation_blows_the_budget(git_repo):
+    threshold = context_meter.REPORT_THRESHOLD_BYTES
     (git_repo / ".rig").mkdir()
     (git_repo / context_meter.CONTEXT_REL).write_text(
         json.dumps({"ts": "2026-01-01T09:00:00+09:00", "command": "wb diff",
-                    "bytes": context_meter.NOTABLE_BYTES * 3, "task_id": "rig-x"}) + "\n",
+                    "bytes": threshold * 3, "task_id": "rig-x"}) + "\n",
         encoding="utf-8")
     out = run_cli(["context"], git_repo).stdout
     assert "[over] single invocation" in out
     assert "1/1 invocation(s) over" in out
+    # over the report threshold too, so the section that itemises them appears
+    assert f"### single invocations over {context_meter.human(threshold)}" in out
 
 
-def test_the_report_reads_records_written_before_the_new_fields_existed(git_repo):
-    """The oldest lines in `.rig/context.jsonl` have no `ts` and no `task_id`. Reading
-    them must produce a report, not a traceback."""
+def test_the_report_can_say_over_budget_without_listing_anything_as_heavy(git_repo):
+    """The split, end to end. An invocation between the budget and the report threshold
+    must fail the budget line and stay out of the heavy section — when those were one
+    number this state could not be reached, and the two lines were the same fact."""
+    (git_repo / ".rig").mkdir()
+    between = (context_meter.INVOCATION_BUDGET_BYTES + context_meter.REPORT_THRESHOLD_BYTES) // 2
+    (git_repo / context_meter.CONTEXT_REL).write_text(
+        json.dumps({"ts": "2026-01-01T09:00:00+09:00", "command": "wb status",
+                    "bytes": between, "task_id": "rig-x"}) + "\n",
+        encoding="utf-8")
+    out = run_cli(["context"], git_repo).stdout
+    assert "[over] single invocation" in out
+    assert "### single invocations over" not in out
+
+
+def test_the_report_reads_a_line_that_has_neither_ts_nor_task_id(git_repo):
+    """Not an old rig record — rig has written both since the file's first line — but a
+    hand-edited or externally appended one. Reading it must produce a report, not a
+    traceback."""
     (git_repo / ".rig").mkdir()
     (git_repo / context_meter.CONTEXT_REL).write_text(
         json.dumps({"bytes": 120}) + "\n"

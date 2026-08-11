@@ -59,6 +59,7 @@ from .workbench.injection import bounded_excerpt
 # that already exists for it.
 ACCOUNT_MAX = 64      # matches the capture bound in _GH_ACCOUNT_RE
 SCOPE_MAX = 40        # the longest real scope, `security_events`, is 15
+HOST_MAX = 100        # a host read out of a git remote URL, echoed into a remedy command
 MESSAGE_MAX = 200     # probe stderr, import errors, `gh auth status` failure lines
 PATH_MAX = 200        # interpreter paths, resolved package files
 
@@ -200,6 +201,10 @@ _GH_SCOPES_RE = re.compile(r"Token scopes:\s*(?P<scopes>.*)")
 # become the whole "account name". (The bound is not the escaping — `\S` matches
 # ESC and U+200B happily — so the capture also goes through `bounded_excerpt`.)
 _GH_ACCOUNT_RE = re.compile(r"\baccount\s+(\S{1,%d})" % ACCOUNT_MAX)
+# A host block header: an unindented, bare host name. Bounded like every other
+# capture that meets outside text, and anchored so an indented `- Token: ...` line
+# can never be mistaken for the start of a new host.
+_GH_HOST_HEADER_RE = re.compile(r"^(?P<host>[A-Za-z0-9][A-Za-z0-9.\-]{0,%d})\s*:?\s*$" % HOST_MAX)
 
 PROBE_TIMEOUT_SECONDS = 10.0
 
@@ -224,10 +229,16 @@ def _run(argv: list[str], *, cwd: str | None = None, env: dict | None = None,
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
-def git_remotes(root: pathlib.Path) -> str:
-    """`git remote -v` for this repo, or '' when git/the repo is unavailable."""
-    _rc, out, _err = _run(["git", "-C", str(root), "remote", "-v"])
-    return out
+def git_remotes(root: pathlib.Path) -> tuple[int, str, str]:
+    """`git remote -v` for this repo, as (returncode, stdout, stderr).
+
+    The return code is part of the answer, not plumbing to be dropped. `git remote
+    -v` exits 128 with empty stdout when this is not a git repository (or git is
+    unusable), and empty stdout is indistinguishable from "a repository with no
+    remotes" — so a caller that reads only stdout turns *we could not look* into
+    the positive claim *there is no GitHub remote here*.
+    """
+    return _run(["git", "-C", str(root), "remote", "-v"])
 
 
 _REMOTE_URL_RE = re.compile(r"^\S+\s+(\S+)", re.MULTILINE)
@@ -242,18 +253,30 @@ def _remote_host(url: str) -> str:
     return authority.split("/")[0].split(":")[0].lower()
 
 
-def has_github_remote(remote_text: str) -> bool:
-    """Does any remote point at github.com (or a GHE host named github.*)?
+def github_remote_host(remote_text: str) -> str | None:
+    """The GitHub host this repo's remotes point at, or None when there is none.
 
     Matched on the host, not on the whole line: a GitLab repo called `github-tools`
     is not a reason to start reporting `gh` token scopes at someone who never uses
     the GitHub CLI.
+
+    The *name* matters as much as the boolean, because `gh auth status` reports one
+    block per host and only the block for this host says anything about the token
+    the run will push with. The first match wins when several remotes name
+    different GitHub hosts — `git remote -v` lists `origin` first in the common
+    case, and a repo pushing to two different GitHub installations has no single
+    answer to give here anyway.
     """
     for url in _REMOTE_URL_RE.findall(remote_text):
         host = _remote_host(url)
         if host == "github.com" or host.endswith(".github.com") or host.startswith("github."):
-            return True
-    return False
+            return host
+    return None
+
+
+def has_github_remote(remote_text: str) -> bool:
+    """Does any remote point at github.com (or a GHE host named github.*)?"""
+    return github_remote_host(remote_text) is not None
 
 
 def gh_auth_probe() -> dict:
@@ -261,8 +284,57 @@ def gh_auth_probe() -> dict:
     return gh_requirement.probe_auth_status()
 
 
-def parse_token_scopes(output: str) -> list[str] | None:
-    """Token scopes from `gh auth status` output — None when it never said.
+def gh_hosts(output: str) -> list[str]:
+    """The hosts `gh auth status` printed a block for, in order."""
+    return [host for host, _text in _host_blocks(output) if host is not None]
+
+
+def _host_blocks(output: str) -> list[tuple[str | None, str]]:
+    """Split `gh auth status` output into (host, block) pairs.
+
+    `gh` prints one block per host it holds a token for: an unindented line naming
+    the host, then indented lines about that host's token. Anything before the
+    first such header belongs to no host and comes back under `None`.
+    """
+    blocks: list[tuple[str | None, list[str]]] = [(None, [])]
+    for line in output.splitlines():
+        match = _GH_HOST_HEADER_RE.match(line)
+        if match:
+            blocks.append((match.group("host").lower(), []))
+        else:
+            blocks[-1][1].append(line)
+    return [(host, "\n".join(lines)) for host, lines in blocks]
+
+
+def _text_for_host(output: str, host: str | None) -> str:
+    """The part of `gh auth status` output that describes `host`.
+
+    Three cases, and the middle one is the reason this function exists:
+
+    * `host is None` — the caller has no host in mind (a direct parse of a
+      captured snippet). Everything is in scope.
+    * the output names hosts — only the matching block is in scope. Scopes granted
+      to a *different* host say nothing about the token this run will push with,
+      and unioning them is how a github.com token short of `repo` reads as fine
+      because some GitHub Enterprise token on the same machine has it.
+    * the output names no host at all — one token is described and there is
+      nothing to attribute it to but the host we asked about, so it is in scope.
+      Real `gh` always prints the header; this keeps short captured fragments
+      (and any future format that drops it) meaning what they look like they mean.
+    """
+    blocks = _host_blocks(output)
+    if host is None:
+        return "\n".join(text for _host, text in blocks)
+    matched = [text for candidate, text in blocks if candidate == host.lower()]
+    if matched:
+        return "\n".join(matched)
+    if all(candidate is None for candidate, _text in blocks):
+        return blocks[0][1]
+    return ""
+
+
+def parse_token_scopes(output: str, host: str | None = None) -> list[str] | None:
+    """Token scopes for `host` from `gh auth status` output — None when it never said.
 
     None and `[]` are different answers and must stay different: `[]` is a token
     that reported "none" (a classic token with nothing granted), while None is a
@@ -274,7 +346,7 @@ def parse_token_scopes(output: str) -> list[str] | None:
     """
     seen: list[str] = []
     found_line = False
-    for match in _GH_SCOPES_RE.finditer(output):
+    for match in _GH_SCOPES_RE.finditer(_text_for_host(output, host)):
         found_line = True
         raw = match.group("scopes").strip()
         if raw.lower() in ("", "none"):
@@ -307,25 +379,10 @@ def check_gh_auth_scopes(
     A run that opens a PR at the end discovers a missing scope at the end. The
     probe is one bounded read-only call up front. `probe` / `remotes` are
     injectable so `--bench` can measure the parsing against fixed `gh auth status`
-    output instead of against whichever token happens to be on the host.
+    output instead of against whichever token happens to be on the host. An
+    injected `remotes` stands for a *successful* `git remote -v`; only the live
+    path can fail to read the remotes at all.
     """
-    remote_text = git_remotes(root) if remotes is None else remotes
-    if not has_github_remote(remote_text):
-        return {
-            "id": "gh_auth_scopes",
-            "ok": True,
-            "applicable": False,
-            "state": "no-github-remote",
-            "scopes": [],
-            "missing_scopes": [],
-            "required_scopes": list(required),
-            "account": None,
-            "detail": ["no GitHub remote — rig's `gh` writes cannot apply here"],
-            "requirement": "`gh` needs the scopes rig's GitHub writes use, but only where GitHub is the remote.",
-            "remedy": "",
-        }
-
-    result = gh_auth_probe() if probe is None else probe
     base = {
         "id": "gh_auth_scopes",
         "applicable": True,
@@ -339,11 +396,56 @@ def check_gh_auth_scopes(
             "`gh release create` (the release workflow) fail at the end of a run without them."
         ),
     }
+    if remotes is None:
+        remote_rc, remote_text, remote_error = git_remotes(root)
+    else:
+        remote_rc, remote_text, remote_error = 0, remotes, ""
+    if remote_rc != 0:
+        # Not `no-github-remote`: that is a claim about the repository, and we did
+        # not get to look at the repository. An axis we could not read is MISS.
+        first_line = (remote_error or "").strip().splitlines()
+        return {**base, "ok": False, "state": "remotes-unknown",
+                "detail": [f"`git remote -v` exited {remote_rc} — cannot tell whether "
+                           "this repo pushes to GitHub",
+                           bounded_excerpt(first_line[0], MESSAGE_MAX) if first_line
+                           else "(no stderr)"],
+                "remedy": "Run hostcheck from inside the git repository rig operates on "
+                          "(`--repo <path>`), or fix the git invocation the message above names."}
+
+    host = github_remote_host(remote_text)
+    if host is None:
+        return {
+            "id": "gh_auth_scopes",
+            "ok": True,
+            "applicable": False,
+            "state": "no-github-remote",
+            "scopes": [],
+            "missing_scopes": [],
+            "required_scopes": list(required),
+            "account": None,
+            "detail": ["no GitHub remote — rig's `gh` writes cannot apply here"],
+            "requirement": "`gh` needs the scopes rig's GitHub writes use, but only where GitHub is the remote.",
+            "remedy": "",
+        }
+    # The host comes out of a remote URL in this repo's git config: outside text,
+    # rendered to a terminal and pasted into a suggested command.
+    shown_host = bounded_excerpt(host, HOST_MAX)
+
+    result = gh_auth_probe() if probe is None else probe
     if not result.get("installed", False):
         return {**base, "ok": False, "state": "gh-missing",
                 "detail": ["`gh` is not on PATH"],
                 "remedy": "Install the GitHub CLI (https://github.com/cli/cli#installation), "
                           "or ignore this if nothing here pushes to GitHub."}
+    if result.get("returncode") == 124:
+        # A timeout is not a logout. `gh auth login` is the wrong instruction and
+        # the wrong diagnosis: nothing here says anything about the token.
+        return {**base, "ok": False, "state": "probe-timed-out",
+                "detail": [f"`gh auth status` did not answer within "
+                           f"{gh_requirement.AUTH_PROBE_TIMEOUT_SECONDS:g}s — the token was "
+                           "not read, which is not the same as it being wrong"],
+                "remedy": "Re-run when github.com is reachable, or check scopes by hand "
+                          "(`gh auth status`) if this machine is offline on purpose."}
     if result.get("returncode", 1) != 0:
         failure = (result.get("output") or "").strip()
         return {**base, "ok": False, "state": "not-authenticated",
@@ -352,9 +454,22 @@ def check_gh_auth_scopes(
                 "remedy": "gh auth login"}
 
     output = result.get("output") or ""
-    account_match = _GH_ACCOUNT_RE.search(output)
+    hosts = gh_hosts(output)
+    if hosts and host not in hosts:
+        # `gh` is logged in — somewhere else. The run pushes to `host`, so the
+        # tokens it does hold are not the ones that have to carry the scope.
+        return {**base, "ok": False, "state": "not-authenticated",
+                "detail": [f"`gh` holds no token for {shown_host} (the host this repo's "
+                           "remote points at)",
+                           "authenticated hosts: " + ", ".join(
+                               bounded_excerpt(name, HOST_MAX) for name in hosts)],
+                "remedy": f"gh auth login -h {shown_host}"}
+    # Everything below reads only this host's block: scopes granted on another
+    # host are another token's, and this run will not be using it.
+    host_text = _text_for_host(output, host)
+    account_match = _GH_ACCOUNT_RE.search(host_text)
     account = bounded_excerpt(account_match.group(1), ACCOUNT_MAX) if account_match else None
-    scopes = parse_token_scopes(output)
+    scopes = parse_token_scopes(output, host)
     if scopes is None:
         return {**base, "ok": False, "state": "scopes-unknown", "account": account,
                 "detail": ["authenticated, but `gh auth status` printed no token-scope line "
@@ -366,10 +481,12 @@ def check_gh_auth_scopes(
     if missing:
         return {**base, "ok": False, "state": "scopes-missing", "account": account,
                 "scopes": scopes, "missing_scopes": missing,
-                "detail": [f"has: {', '.join(scopes) or 'none'}"],
-                "remedy": f"gh auth refresh -h github.com -s {','.join(missing)}"}
+                "detail": [f"{shown_host} has: {', '.join(scopes) or 'none'}"],
+                # `-h <host>`, not a hardcoded github.com: refreshing the wrong
+                # host's token is a remedy that changes nothing and reports success.
+                "remedy": f"gh auth refresh -h {shown_host} -s {','.join(missing)}"}
     return {**base, "ok": True, "state": "ok", "account": account, "scopes": scopes,
-            "detail": [f"{account or 'authenticated'}: {', '.join(scopes)}"],
+            "detail": [f"{account or 'authenticated'}@{shown_host}: {', '.join(scopes)}"],
             "remedy": ""}
 
 
@@ -429,8 +546,21 @@ def _installed_interpreter() -> tuple[str | None, str]:
     # `#!/usr/bin/env python3` -> take the argument, not `env`.
     path = candidate[-1] if candidate and candidate[0].endswith("env") else (
         candidate[0] if candidate else "")
-    if not path or not os.path.exists(path):
-        return None, f"{script} points at {path or '<empty>'}, which does not exist"
+    if not path:
+        return None, f"{script} has an empty shebang"
+    if not os.path.isabs(path):
+        # `#!/usr/bin/env python3` names an interpreter, not a location — which is
+        # how uv writes console scripts on some platforms. Treating the bare name
+        # as a path made every such install a permanent `interpreter-unknown`
+        # MISS: a check that can never pass is not a check. Resolve it the way the
+        # shebang itself would, and say in `interpreter_source` that we did, so
+        # the answer names the python it actually ran.
+        resolved = shutil.which(path)
+        if resolved is None:
+            return None, f"{script} points at {path}, which is not on PATH"
+        return resolved, f"shebang of {script} (`{path}` resolved on PATH)"
+    if not os.path.exists(path):
+        return None, f"{script} points at {path}, which does not exist"
     return path, f"shebang of {script}"
 
 
@@ -523,18 +653,62 @@ def check_installed_import(
                 "remedy": "Reinstall the CLI so the wheel matches the source: "
                           "`uv tool install --force rig-workbench` / `pipx reinstall rig-workbench` "
                           "(`/rig:setup` does the same)."}
-    # The raw path, not the rendered one: this is a filesystem comparison, and an
+    if not isinstance(raw_package, str) or not raw_package:
+        # The import worked but the probe could not say what file it came from, so
+        # there is no way to tell an installed copy from a source tree. Same rule
+        # as everywhere else here: not verified is MISS.
+        return {**base, "ok": False, "state": "package-path-unknown", "detail": detail + [
+            "`rig_workbench` imported but reported no __file__ — hostcheck cannot tell "
+            "whether that was a built install or a source tree"],
+            "remedy": "Run `<python> -c 'import rig_workbench; print(rig_workbench.__file__)'` "
+                      "with the interpreter above and check where it resolves."}
+    # The raw path, not the rendered one: this is a filesystem question, and an
     # escaped path would resolve to somewhere that does not exist.
-    editable = bool(raw_package) and _is_inside(pathlib.Path(raw_package), root)
-    if editable:
-        # An editable install points at the source tree, so every subpackage is
-        # present by construction — this green says the import works, not that a
-        # built wheel would. Saying so is the difference between a sensor and a
-        # rubber stamp.
-        detail.append("editable install pointing at this checkout: a packaging omission "
-                      "cannot show up here — verify a built wheel separately")
+    if not _is_installed_copy(pathlib.Path(raw_package)):
+        # An editable install imports from a source tree, where every subpackage
+        # is present by construction — the packaging omission this check exists
+        # for cannot appear, so the axis has not been verified. That is MISS, the
+        # same answer `scopes-unknown` gives a token whose scopes cannot be read;
+        # `ok: True` with a caveat in the prose was a green nobody had earned.
+        #
+        # The old test was `is this path inside the repo root`, which is narrower
+        # than the thing it was standing in for: an editable install of a *different*
+        # checkout is just as unable to reproduce a packaging bug, and used to pass
+        # without even the caveat. "Not under site-packages" is the actual question.
+        where = " (this checkout)" if _is_inside(pathlib.Path(raw_package), root) else ""
+        return {**base, "ok": False, "state": "editable-install", "package": package,
+                "detail": detail + [
+                    f"imported from a source tree{where}, not from an install directory: "
+                    "a wheel that omits a subpackage still imports fine here, so this "
+                    "check has not been run against anything"],
+                "remedy": "Verify a built wheel: `uv tool install --force rig-workbench` "
+                          "(or `pipx install .` from a build) and re-run hostcheck. "
+                          "In a source checkout this axis is expected to be MISS."}
     return {**base, "ok": True, "state": "ok", "package": package, "detail": detail,
             "remedy": ""}
+
+
+_INSTALL_DIR_NAMES = frozenset({"site-packages", "dist-packages"})
+
+
+def _is_installed_copy(package: pathlib.Path) -> bool:
+    """Does this package path live in an interpreter's install directory?
+
+    Both the literal path and its symlink-resolved form count. Resolving alone
+    would call a perfectly ordinary wheel a source tree whenever some parent of
+    site-packages happens to be a symlink; not resolving at all would miss a
+    package reached through one. The cost of the union is the reverse-symlink
+    case — a `site-packages/rig_workbench` symlinked *to* a source tree reads as
+    installed — which `pip install -e` has not produced since egg-links, and which
+    no bounded check can distinguish from a real install from the outside.
+    """
+    candidates = [package]
+    try:
+        candidates.append(package.resolve())
+    except OSError:
+        pass
+    return any(part in _INSTALL_DIR_NAMES
+               for candidate in candidates for part in candidate.parts)
 
 
 def _is_inside(path: pathlib.Path, root: pathlib.Path) -> bool:
@@ -682,6 +856,41 @@ _GH_STATUS_FINE_GRAINED = """github.com
 _GH_STATUS_LOGGED_OUT = ("You are not logged into any GitHub hosts. "
                          "To log in, run: gh auth login")
 
+# Multi-host output. `gh auth status` reports *every* host it holds a token for,
+# and the scopes of one host say nothing about another: the run pushes to the
+# host in the remote, and only that token has to carry `repo`. The corpus needs
+# these because every single-host case above passes whether the parser reads one
+# host block or blindly unions all of them — the axis was untested, and an
+# untested axis is where a check quietly turns green.
+_GH_STATUS_ENTERPRISE_HAS_REPO = """github.com
+  ✓ Logged in to github.com account tester (keyring)
+  - Active account: true
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org'
+
+ghe.example.com
+  ✓ Logged in to ghe.example.com account admin (keyring)
+  - Active account: false
+  - Token: gho_************************************
+  - Token scopes: 'repo', 'workflow'"""
+
+_GH_STATUS_TARGET_HOST_HAS_REPO = """github.com
+  ✓ Logged in to github.com account tester (keyring)
+  - Active account: true
+  - Token: gho_************************************
+  - Token scopes: 'read:org', 'repo'
+
+ghe.example.com
+  ✓ Logged in to ghe.example.com account admin (keyring)
+  - Token: gho_************************************
+  - Token scopes: 'gist'"""
+
+_GH_STATUS_OTHER_HOST_ONLY = """ghe.example.com
+  ✓ Logged in to ghe.example.com account admin (keyring)
+  - Active account: true
+  - Token: gho_************************************
+  - Token scopes: 'repo', 'workflow'"""
+
 GH_AUTH_CORPUS: tuple[BenchCase, ...] = (
     ("full_classic_token",
      {"gh": {"installed": True, "returncode": 0, "output": _GH_STATUS_FULL}}, True),
@@ -703,6 +912,18 @@ GH_AUTH_CORPUS: tuple[BenchCase, ...] = (
     # or a rubber stamp. `ok` must be False — "cannot verify" is not "verified".
     ("fine_grained_token_hides_scopes",
      {"gh": {"installed": True, "returncode": 0, "output": _GH_STATUS_FINE_GRAINED}}, False),
+    # The three multi-host cases. The first is the one that matters: the remote
+    # host is short a scope and a *different* host has it, which a parser that
+    # unions every block reports as fine.
+    ("another_host_has_the_scope_this_one_lacks",
+     {"gh": {"installed": True, "returncode": 0,
+             "output": _GH_STATUS_ENTERPRISE_HAS_REPO}}, False),
+    ("target_host_has_the_scope_others_do_not",
+     {"gh": {"installed": True, "returncode": 0,
+             "output": _GH_STATUS_TARGET_HOST_HAS_REPO}}, True),
+    ("logged_in_elsewhere_but_not_to_the_remote_host",
+     {"gh": {"installed": True, "returncode": 0,
+             "output": _GH_STATUS_OTHER_HOST_ONLY}}, False),
     ("logged_out",
      {"gh": {"installed": True, "returncode": 1, "output": _GH_STATUS_LOGGED_OUT}}, False),
     ("probe_timed_out",
@@ -750,6 +971,23 @@ INSTALLED_IMPORT_CORPUS: tuple[BenchCase, ...] = (
     ("probe_printed_nothing_parseable",
      {"probe": {**_IMPORT_PROBE_OK, "returncode": 1, "payload": None,
                 "stderr": "Segmentation fault"}}, False),
+    # An editable install imports from a source tree, so every subpackage is
+    # present by construction and the packaging omission this check exists for
+    # cannot appear. That is "not verified", which is MISS — the same answer the
+    # gh check gives a token whose scopes it cannot read. Both spellings are
+    # here, because the earlier version only noticed the first one: an editable
+    # install of *this* checkout, and an editable install of some other one.
+    ("editable_install_of_this_checkout",
+     {"probe": {**_IMPORT_PROBE_OK,
+                "payload": {"package": "{root}/rig_workbench/__init__.py", "errors": {}}}},
+     False),
+    ("editable_install_of_another_checkout",
+     {"probe": {**_IMPORT_PROBE_OK,
+                "payload": {"package": "/home/tester/src/rig/rig_workbench/__init__.py",
+                            "errors": {}}}}, False),
+    ("import_worked_but_named_no_file",
+     {"probe": {**_IMPORT_PROBE_OK,
+                "payload": {"package": None, "errors": {}}}}, False),
 )
 
 BENCH_CORPORA = {
@@ -785,6 +1023,24 @@ def _required_probe(spec: dict, key: str, label: str) -> dict:
     return probe
 
 
+def _bind_probe_root(probe: dict, workdir: pathlib.Path) -> dict:
+    """Expand `{root}` in a corpus probe's package path to the case's own workdir.
+
+    One case needs a package path that really is inside the repo root the check is
+    given (an editable install of *this* checkout), and the root is a temporary
+    directory that does not exist when the corpus is written. Nothing else in the
+    corpus is templated: this is a path, not a general substitution mechanism.
+    """
+    payload = probe.get("payload")
+    if not isinstance(payload, dict) or not isinstance(payload.get("package"), str):
+        return probe
+    package = payload["package"]
+    if "{root}" not in package:
+        return probe
+    return {**probe, "payload": {**payload,
+                                 "package": package.replace("{root}", str(workdir))}}
+
+
 def run_case(check, case: BenchCase, workdir: pathlib.Path) -> dict:
     label, spec, expect_ok = case
     _materialise(workdir, spec.get("files", {}))
@@ -804,7 +1060,7 @@ def run_case(check, case: BenchCase, workdir: pathlib.Path) -> dict:
         if "required" in spec:
             kwargs["required"] = spec["required"]
     elif check is check_installed_import:
-        kwargs = {"probe": _required_probe(spec, "probe", label)}
+        kwargs = {"probe": _bind_probe_root(_required_probe(spec, "probe", label), workdir)}
     result = check(workdir, **kwargs)
     return {"label": label, "expect_ok": expect_ok, "ok": result["ok"],
             "correct": result["ok"] == expect_ok}
@@ -855,7 +1111,8 @@ def _print_bench(result: dict) -> None:
           "probe result. Negative cases include configurations that look like the prerequisite\n"
           "without being it — a committed devcontainer.json with no container around the\n"
           "session, an allow-list with no deny rules, a commented-out ignore, a token whose\n"
-          "scopes cannot be read, an installed package that imports only inside the checkout.\n")
+          "scopes cannot be read, a token whose `repo` scope belongs to a different host than\n"
+          "the remote, an install that imports from a source tree instead of a built wheel.\n")
     for name, data in result["checks"].items():
         recall = f"{data['detected']}/{data['positives']}"
         print(f"### {name}")

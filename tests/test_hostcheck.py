@@ -1,15 +1,17 @@
 import json
 import pathlib
+import subprocess
 
 import pytest
 
-from rig_workbench import hostcheck
+from rig_workbench import gh_requirement, hostcheck
 
 GH_REMOTE = "origin\tgit@github.com:example/repo.git (fetch)\n"
 
 # Captured before the autouse fixture below stubs it out, for the one test that
 # exercises the real probe's plumbing rather than a verdict.
 _REAL_IMPORT_PROBE = hostcheck.installed_import_probe
+_REAL_GIT_REMOTES = hostcheck.git_remotes
 
 
 def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
@@ -30,7 +32,9 @@ def _no_host_probes(monkeypatch):
     differently on the machine running it. Tests that care about a probe inject
     it explicitly.
     """
-    monkeypatch.setattr(hostcheck, "git_remotes", lambda root: "")
+    # A *successful* `git remote -v` that listed nothing: (rc, stdout, stderr).
+    # The rc matters — a failed one is a different answer entirely, pinned below.
+    monkeypatch.setattr(hostcheck, "git_remotes", lambda root: (0, "", ""))
     monkeypatch.setattr(
         hostcheck, "gh_auth_probe",
         lambda: pytest.fail("gh_auth_probe must not run: no GitHub remote in this fixture"))
@@ -300,6 +304,111 @@ def test_gh_scope_parsing_separates_none_from_not_reported():
         "repo", "workflow"]
 
 
+# ── one host's scopes are not another's ─────────────────────────────────
+
+_MULTI_HOST_STATUS = """github.com
+  ✓ Logged in to github.com account tester (keyring)
+  - Active account: true
+  - Token scopes: 'gist', 'read:org'
+
+ghe.example.com
+  ✓ Logged in to ghe.example.com account admin (keyring)
+  - Token scopes: 'repo', 'workflow'"""
+
+
+def test_scopes_are_read_from_the_remote_host_block_not_unioned(tmp_path):
+    """A GHE token with `repo` must not satisfy a github.com remote that lacks it."""
+    result = hostcheck.check_gh_auth_scopes(
+        tmp_path, remotes=GH_REMOTE, probe=_gh(_MULTI_HOST_STATUS))
+    assert result["ok"] is False
+    assert result["state"] == "scopes-missing"
+    assert result["scopes"] == ["gist", "read:org"]
+    assert result["missing_scopes"] == ["repo"]
+    # And the account is the one on this host, not whoever is logged in elsewhere.
+    assert result["account"] == "tester"
+
+
+def test_the_remote_host_decides_which_block_is_read(tmp_path):
+    """Same output, a GHE remote: now the GHE block is the one that counts."""
+    result = hostcheck.check_gh_auth_scopes(
+        tmp_path, remotes="origin\tgit@ghe.example.com:a/b.git (fetch)\n",
+        probe=_gh(_MULTI_HOST_STATUS))
+    assert result["state"] == "no-github-remote"
+
+    # ...and with a github.<company> GHE remote, which `has_github_remote` accepts:
+    ghe = _MULTI_HOST_STATUS.replace("ghe.example.com", "github.example.com")
+    result = hostcheck.check_gh_auth_scopes(
+        tmp_path, remotes="origin\tgit@github.example.com:a/b.git (fetch)\n", probe=_gh(ghe))
+    assert result["ok"] is True
+    assert result["scopes"] == ["repo", "workflow"]
+    assert result["account"] == "admin"
+    assert "github.example.com" in result["detail"][0]
+
+
+def test_being_logged_in_somewhere_else_is_not_being_logged_in_here(tmp_path):
+    result = hostcheck.check_gh_auth_scopes(
+        tmp_path, remotes=GH_REMOTE,
+        probe=_gh("ghe.example.com\n  ✓ Logged in to ghe.example.com account admin\n"
+                  "  - Token scopes: 'repo'"))
+    assert result["ok"] is False
+    assert result["state"] == "not-authenticated"
+    assert result["remedy"] == "gh auth login -h github.com"
+
+
+def test_the_refresh_remedy_names_the_host_it_has_to_refresh(tmp_path):
+    """`gh auth refresh -h github.com` on a GHE remote refreshes the wrong token."""
+    result = hostcheck.check_gh_auth_scopes(
+        tmp_path, remotes="origin\tgit@github.corp.net:a/b.git (fetch)\n",
+        probe=_gh("github.corp.net\n  - Token scopes: 'gist'"))
+    assert result["remedy"] == "gh auth refresh -h github.corp.net -s repo"
+
+
+def test_scope_parsing_is_scoped_to_a_host_when_asked_and_whole_when_not():
+    assert hostcheck.parse_token_scopes(_MULTI_HOST_STATUS, "github.com") == [
+        "gist", "read:org"]
+    assert hostcheck.parse_token_scopes(_MULTI_HOST_STATUS, "ghe.example.com") == [
+        "repo", "workflow"]
+    # A host `gh` said nothing about: no scope line for it, which is not `[]`.
+    assert hostcheck.parse_token_scopes(_MULTI_HOST_STATUS, "other.example.com") is None
+    # Headerless output describes one token and nothing to attribute it to but the
+    # host being asked about — the deliberate fallback, not an accident.
+    assert hostcheck.parse_token_scopes("  - Token scopes: 'repo'", "github.com") == ["repo"]
+    assert hostcheck.gh_hosts(_MULTI_HOST_STATUS) == ["github.com", "ghe.example.com"]
+    assert hostcheck.gh_hosts("  - Token scopes: 'repo'") == []
+
+
+# ── a probe that could not run is not a probe that found nothing ────────
+
+
+def test_unreadable_remotes_are_not_reported_as_having_no_github_remote(monkeypatch, tmp_path):
+    """`git remote -v` exiting 128 with empty stdout is "we did not look".
+
+    Run against the real `git`, in a directory that is not a repository: the
+    failure mode is the one an operator meets, not one this test invented.
+    """
+    monkeypatch.setattr(hostcheck, "git_remotes", _REAL_GIT_REMOTES)
+    rc, out, err = hostcheck.git_remotes(tmp_path)
+    assert (rc, out) != (0, "") and err, "expected git to fail outside a repository"
+
+    result = hostcheck.check_gh_auth_scopes(tmp_path)
+    assert result["state"] == "remotes-unknown"
+    assert result["ok"] is False
+    # Not `applicable: false` — that would say the subject does not exist here,
+    # and whether it exists is exactly what could not be established.
+    assert result["applicable"] is True
+    assert "not a git repository" in " ".join(result["detail"]).lower()
+
+
+def test_a_timed_out_probe_is_not_diagnosed_as_a_logout(tmp_path):
+    """`gh auth login` is the wrong remedy for a network that did not answer."""
+    result = hostcheck.check_gh_auth_scopes(
+        tmp_path, remotes=GH_REMOTE,
+        probe=_gh("gh auth status timed out after 5s", returncode=124))
+    assert result["ok"] is False
+    assert result["state"] == "probe-timed-out"
+    assert "gh auth login" not in result["remedy"]
+
+
 def test_required_scopes_stay_derived_from_what_rig_actually_runs():
     """`gh project` appears nowhere in rig, so `read:project` must not be required."""
     assert hostcheck.GH_REQUIRED_SCOPES == ("repo",)
@@ -360,15 +469,55 @@ def test_installed_import_is_skipped_when_nothing_is_installed(tmp_path):
     assert result["applicable"] is False
 
 
-def test_installed_import_says_so_when_the_install_points_at_this_checkout(tmp_path):
-    """An editable install cannot reproduce a packaging omission — the pass must admit it."""
+def test_editable_install_of_this_checkout_is_not_verified_and_must_not_pass(tmp_path):
+    """An editable install cannot reproduce a packaging omission, so it proves nothing.
+
+    This used to be `ok: True` with the caveat in the prose — the check reported a
+    green for an axis it had not exercised. Unverifiable is MISS, the same answer
+    `scopes-unknown` gives a token whose scopes cannot be read.
+    """
     package = tmp_path / "rig_workbench" / "__init__.py"
     package.parent.mkdir(parents=True)
     package.write_text("", encoding="utf-8")
     result = hostcheck.check_installed_import(
         tmp_path, probe=_import_probe(payload={"package": str(package), "errors": {}}))
-    assert result["ok"] is True
-    assert any("editable" in line for line in result["detail"])
+    assert result["ok"] is False
+    assert result["applicable"] is True
+    assert result["state"] == "editable-install"
+    assert any("this checkout" in line for line in result["detail"])
+
+
+def test_editable_install_of_another_checkout_is_caught_too(tmp_path):
+    """The question is "is this a built install", not "is this path under my root".
+
+    An editable install pointing at some *other* source tree is exactly as unable
+    to show a packaging omission, and the root-relative test used to let it pass
+    without even the caveat.
+    """
+    result = hostcheck.check_installed_import(
+        tmp_path, probe=_import_probe(
+            payload={"package": "/home/tester/src/rig/rig_workbench/__init__.py", "errors": {}}))
+    assert result["ok"] is False
+    assert result["state"] == "editable-install"
+
+
+def test_a_wheel_in_site_packages_still_passes(tmp_path):
+    """The regression that matters in the other direction: normal installs stay green."""
+    for install_dir in ("site-packages", "dist-packages"):
+        result = hostcheck.check_installed_import(
+            tmp_path, probe=_import_probe(payload={
+                "package": f"/opt/venv/lib/python3.13/{install_dir}/rig_workbench/__init__.py",
+                "errors": {}}))
+        assert result["ok"] is True, install_dir
+        assert result["state"] == "ok"
+
+
+def test_an_import_that_names_no_file_is_not_a_pass(tmp_path):
+    """`__file__` of None leaves no way to tell an install from a source tree."""
+    result = hostcheck.check_installed_import(
+        tmp_path, probe=_import_probe(payload={"package": None, "errors": {}}))
+    assert result["ok"] is False
+    assert result["state"] == "package-path-unknown"
 
 
 def test_installed_import_probe_runs_outside_the_repo_without_pythonpath(monkeypatch, tmp_path):
@@ -410,6 +559,35 @@ def test_installed_interpreter_reads_the_console_script_shebang(tmp_path, monkey
     interpreter, reason = hostcheck._installed_interpreter()
     assert interpreter is None
     assert "shebang" in reason
+
+
+def test_env_style_shebang_resolves_instead_of_missing_forever(tmp_path, monkeypatch):
+    """`#!/usr/bin/env python3` names an interpreter, not a path.
+
+    Treating the bare name as a path made `os.path.exists("python3")` false and
+    the check a permanent `interpreter-unknown` MISS — a check that can never pass
+    on such an install is not measuring anything.
+    """
+    real_python = tmp_path / "bin" / "python3"
+    real_python.parent.mkdir(parents=True)
+    real_python.write_text("", encoding="utf-8")
+    script = tmp_path / "rig-wb"
+    script.write_text("#!/usr/bin/env python3\nimport sys\n", encoding="utf-8")
+    monkeypatch.setattr(
+        hostcheck.shutil, "which",
+        lambda name: str(script) if name == "rig-wb" else str(real_python))
+    interpreter, reason = hostcheck._installed_interpreter()
+    assert interpreter == str(real_python)
+    # The source names what it did: a green whose interpreter nobody can name
+    # proves nothing, and "resolved on PATH" is a weaker claim than an absolute
+    # shebang, so it has to be visible.
+    assert "resolved on PATH" in reason
+
+    monkeypatch.setattr(hostcheck.shutil, "which",
+                        lambda name: str(script) if name == "rig-wb" else None)
+    interpreter, reason = hostcheck._installed_interpreter()
+    assert interpreter is None
+    assert "not on PATH" in reason
 
 
 # ── untrusted text rendered to a terminal and into --json ───────────────
@@ -542,3 +720,56 @@ def test_probes_never_inherit_stdin(monkeypatch):
     monkeypatch.setattr(hostcheck.subprocess, "run", fake_run)
     hostcheck._run(["gh", "auth", "status"])
     assert seen["stdin"] is _subprocess.DEVNULL
+
+
+# ── the probe hostcheck delegates to ────────────────────────────────────
+# `gh_requirement.probe_auth_status` lives in the module that owns gh probing,
+# but hostcheck is its only caller and every property below is one hostcheck
+# depends on — so the tests that pin it live next to the code that reads it.
+
+
+def test_probe_auth_status_reports_a_missing_binary_without_running_anything(monkeypatch):
+    monkeypatch.setattr(gh_requirement.shutil, "which", lambda name: None)
+    monkeypatch.setattr(gh_requirement, "_run",
+                        lambda *a, **k: pytest.fail("must not shell out with no `gh`"))
+    assert gh_requirement.probe_auth_status() == {
+        "installed": False, "returncode": 127, "output": ""}
+
+
+def test_probe_auth_status_keeps_the_return_code_and_both_streams(monkeypatch):
+    """hostcheck reads scopes off `output` and diagnoses off `returncode`.
+
+    `gh auth status` prints its report to stderr on some versions and stdout on
+    others, so dropping either stream loses the scope line on half the fleet.
+    """
+    monkeypatch.setattr(gh_requirement.shutil, "which", lambda name: "/usr/bin/gh")
+    monkeypatch.setattr(gh_requirement, "_run",
+                        lambda argv, timeout=None: (1, "on stdout", "on stderr"))
+    result = gh_requirement.probe_auth_status()
+    assert result["installed"] is True
+    assert result["returncode"] == 1
+    assert "on stdout" in result["output"] and "on stderr" in result["output"]
+
+
+def test_probe_auth_status_surfaces_a_timeout_as_124_not_as_success(monkeypatch):
+    """The distinction hostcheck turns into `probe-timed-out` rather than a logout."""
+    monkeypatch.setattr(gh_requirement.shutil, "which", lambda name: "/usr/bin/gh")
+
+    def hang(argv, timeout=None, **kwargs):
+        raise subprocess.TimeoutExpired(argv, timeout or 0)
+
+    monkeypatch.setattr(gh_requirement.subprocess, "run", hang)
+    result = gh_requirement.probe_auth_status()
+    assert result["returncode"] == 124
+    assert "timed out" in result["output"]
+
+
+def test_probe_auth_status_is_bounded(monkeypatch):
+    """Unbounded, this is a hang at the start of every session that runs hostcheck."""
+    seen = {}
+    monkeypatch.setattr(gh_requirement.shutil, "which", lambda name: "/usr/bin/gh")
+    monkeypatch.setattr(gh_requirement, "_run",
+                        lambda argv, timeout=None: seen.update(argv=argv, timeout=timeout) or (0, "", ""))
+    gh_requirement.probe_auth_status()
+    assert seen["argv"] == ["gh", "auth", "status"]
+    assert seen["timeout"] == gh_requirement.AUTH_PROBE_TIMEOUT_SECONDS

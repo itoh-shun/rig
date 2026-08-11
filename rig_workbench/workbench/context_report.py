@@ -22,8 +22,9 @@ from .state import repo_root
 def _span(first_ts: str, last_ts: str) -> str:
     """How long a task kept printing at the parent, or nothing at all.
 
-    Silent on records written before timestamps were kept and on anything it cannot
-    parse. A span is context for the byte count, never a reason to lose the byte count.
+    Silent on a record with no usable `ts` — rig writes one on every line, but the file
+    is hand-editable and anything can append to it — and on anything it cannot parse. A
+    span is context for the byte count, never a reason to lose the byte count.
     """
     if not first_ts or not last_ts or first_ts == last_ts:
         return ""
@@ -77,7 +78,9 @@ def cmd_context(args: argparse.Namespace) -> None:
               f"worst {context_meter.human(verdict['worst'])}")
     print()
     print("  Both budgets are conventions rig declares, not limits it enforces: nothing")
-    print("  reads this verdict, no gate fails on it. And `ok` is narrow — it means rig")
+    print("  reads this verdict, no gate fails on it. They are also not the threshold")
+    print("  the section below uses — that one is measured and higher, so this line can")
+    print("  read `over` with nothing listed there. And `ok` is narrow — it means rig")
     print("  stayed inside its own output budget. It says nothing about how the parent")
     print("  spent the rest of its context, because only rig-wb invocations are counted")
     print("  here; a session that burned itself out on two thousand raw greps still")
@@ -98,10 +101,11 @@ def cmd_context(args: argparse.Namespace) -> None:
                   f"{entry['calls']:>3} call(s), "
                   f"largest {context_meter.human(entry['max'])}{span}")
 
-    heavy = [r for r in records if r.get("bytes", 0) >= context_meter.NOTABLE_BYTES]
+    threshold = context_meter.REPORT_THRESHOLD_BYTES
+    heavy = [r for r in records if r.get("bytes", 0) >= threshold]
     if heavy:
         heavy.sort(key=lambda r: -r.get("bytes", 0))
-        print(f"\n### single invocations over {context_meter.human(context_meter.NOTABLE_BYTES)}")
+        print(f"\n### single invocations over {context_meter.human(threshold)}")
         for record in heavy[:8]:
             print(f"  {context_meter.human(record['bytes']):>8}  {record.get('ts', '?')}  "
                   f"{record.get('command', '?')}")
