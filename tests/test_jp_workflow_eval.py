@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import subprocess_timeout
+
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULE_PATH = ROOT / "benchmarks/writing-tasks/jp-natural-writing/workflow_dev_eval.py"
@@ -1508,9 +1510,12 @@ def test_direct_workflow_cli_dry_run_works_without_pythonpath(tmp_path):
         "LANG": "C.UTF-8",
     }
 
+    # ~16s of pure single-threaded CPU locally, so a busy runner scales it
+    # directly. The 30s this used to carry was under 2x that and timed out on
+    # CI's 3.12 job while 3.10 passed — the same test, decided by scheduling.
     completed = subprocess.run(
         argv, cwd=tmp_path, env=environment, text=True,
-        capture_output=True, timeout=30, check=False,
+        capture_output=True, timeout=subprocess_timeout(16.0), check=False,
     )
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout)["scope"] == "fresh-dev-workflow"
