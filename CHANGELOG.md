@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+**The prompt quality gate could not pass, and adding the missing secrets would not
+have fixed it.** `validate.yml`'s "Trusted prompt quality evidence" step ran
+`rig-wb eval affected-run`, which starts the provider as an external binary. The
+job installs `pip install -e .` and nothing else, so no provider exists on the
+runner and none is authenticated — the step failed before it measured anything, and
+PR #402, the first change to carry a root-tier eval case, was merged red.
+
+CI no longer measures. A maintainer runs `rig-wb eval affected-run` locally against
+real providers and commits the signed result to
+`evals/evidence/<case-id>/current.json`; CI recomputes the binding and checks the
+signature, which needs git and one secret (`RIG_EVAL_ATTESTATION_KEY`) instead of
+five plus a provider CLI. The four provider secrets became optional pins rather than
+preconditions, and the step still fails closed: no key, no pass.
+
+Committed evidence forced the binding to change. `execution_commit == HEAD` cannot
+hold for a file in the repository — committing it moves HEAD past the tree it
+describes — so evidence is now verified at the commit it was *measured* at, which is
+HEAD's ancestor: the recorded `execution_diff_sha256` is recomputed from the recorded
+base to the recorded commit, and no prompt surface this change is accountable for may
+have moved since. That last check intersects with the affected set rather than
+failing on any change in the range, so a merge bringing in another PR's already-gated
+persona stays legal while an edit the author makes after measuring does not.
+`affected-run` refuses a dirty working tree and pins the resolved commit into the
+signed diff, so the hash CI recomputes is the one that was signed by construction
+rather than by coincidence.
+
 ## [2.3.0] - 2026-08-09
 
 **Independent Japanese-writing runs now have a real process boundary.** The

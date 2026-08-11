@@ -4,9 +4,10 @@ Rig evaluation cases provide a standard-library-only capture, execution, compari
 promotion boundary.
 
 Promoted cases live at `evals/cases/<id>/case.json`. New captures are always unapproved
-drafts at `.rig/evals/drafts/<id>/case.json`; execution results are reserved under
-`.rig/evals/results/`. Capture records bounded summaries and SHA-256 provenance for source
-artifacts, never raw logs.
+drafts at `.rig/evals/drafts/<id>/case.json`; ad-hoc execution results are reserved under
+`.rig/evals/results/`, while the signed evidence a gate consumes is committed to
+`evals/evidence/<case-id>/current.json`. Capture records bounded summaries and SHA-256
+provenance for source artifacts, never raw logs.
 
 ```console
 rig-wb eval capture <task-id> [--repo <repository>]
@@ -115,13 +116,72 @@ a clean-control regression.
 Use `--execution-base <git-ref>` for PR evidence. Rig resolves it with shell-free Git,
 requires it to be an ancestor of HEAD, and binds the resolved commit into the signed result.
 The signed `execution_diff_sha256` also hashes the base diff, including tracked/staged
-binary diff data and framed untracked path/content. Gates recompute it for committed or
-working heads, so evidence signed before a later uncommitted prompt edit cannot be reused.
-When omitted, the historical repository-root commit remains the compatibility default; such
-evidence will not satisfy a gate whose requested PR base is a different commit.
+binary diff data and framed untracked path/content. A bare `eval run` hashes the working
+tree, so evidence signed before a later uncommitted prompt edit cannot be reused;
+`affected-run` instead pins the resolved head, because its evidence is meant to be committed
+and re-checked from history later. When omitted, the historical repository-root commit
+remains the compatibility default.
+
+## Who measures, and what CI checks
+
+CI does not run providers. `codex` and `claude` are external binaries; a GitHub runner that
+installs the package and nothing else has neither, and no credentials for them either. The
+step that tried anyway failed before it measured anything and was merged past, which is the
+same lesson as `--require-cases` on an empty corpus: a check nobody can pass teaches that
+this job is ignored.
+
+So the measurement is a maintainer's:
+
+```console
+rig-wb eval affected-run --base <pr-base> --head HEAD \
+  --provider <provider> --model <model> \
+  --judge-provider <judge> --judge-model <judge-model>
+git add evals/evidence && git commit -m 'signed evaluation evidence'
+```
+
+`affected-run` refuses a dirty working tree — anything uncommitted would be measured but
+not described — and writes one signed result per case to
+`evals/evidence/<case-id>/current.json`. One file per case, overwritten: the gate collects
+every result under the tree whose `case_id` matches, and a second `current` for the same
+case is `current_evidence_count`.
+
+CI then runs `eval gate --evidence-dir evals/evidence`, which needs git and the signing key
+and nothing else. Committing evidence changes what the gate can bind to, because
+`execution_commit == HEAD` is false the instant the file is tracked — committing it makes a
+new HEAD. What stays true is that the measured commit is HEAD's **ancestor**, so the gate:
+
+- requires `execution_commit` to resolve and to be an ancestor of the resolved head;
+- recomputes `execution_diff_sha256` from the *recorded* base to the *recorded* commit and
+  requires the signed value to match — CI never supplies the base, so a base branch moving
+  under a long-lived PR no longer invalidates a measurement;
+- requires that no prompt surface **this change is accountable for** has moved since the
+  measurement, computed as the intersection of the surfaces changed in `measured..head`
+  with the surfaces this change is being gated on.
+
+The intersection is what keeps a merge legal: everything the base branch did since the fork
+sits inside `measured..head`, was gated on its own PR, and is not this change's to answer
+for. An edit the author makes after measuring is in both sets and fails. The comparison is
+path-level, so a surface edited after the measurement and restored to the measured content
+escapes both sets; that takes a key holder deliberately round-tripping a file, and every
+other reuse of stale evidence lands in the intersection.
+
+Committed evidence still expires: `MAX_RESULT_AGE` is 30 days, so a branch left open past
+that reports `invalid_evidence:<case-id>:evaluation result is stale` and has to be measured
+again. Freshness is the one property no signature can carry.
+
+The gate fails closed on a missing key: without one no signature can be checked, and a gate
+that shrugs when it cannot verify is not a gate. `RIG_EVAL_PROVIDER`, `RIG_EVAL_MODEL`,
+`RIG_EVAL_JUDGE_PROVIDER`, and `RIG_EVAL_JUDGE_MODEL` are optional pins — with none set, the
+provider constraint is whatever the case's own `provider_policy` declares, plus the standing
+refusal of `mock` evidence. A case with `{"mode": "any", "allowed": []}` therefore accepts
+any non-mock provider; tightening it is a one-line edit that changes `case_hash` and costs
+one re-measurement.
 
 Every result is signed with HMAC-SHA256. Set `RIG_EVAL_ATTESTATION_KEY` to a secret of at
-least 32 bytes in CI. Without it, Rig atomically creates a private `0600` key at
+least 32 bytes in CI, and make it **random** rather than a passphrase: committed evidence
+publishes both the signature and `key_id` (`sha256(key)[:16]`), which is harmless against a
+`secrets.token_bytes(32)` key and an offline guessing oracle against a memorable one.
+Without an explicit key, Rig atomically creates a private `0600` key at
 `${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`. Verification rejects missing,
 weakly permissioned, non-regular, or symlinked keys. Keep this key outside the repository;
 never commit or print it. Rig strips attestation environment variables from evaluator and

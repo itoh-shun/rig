@@ -297,26 +297,37 @@ def test_affected_run_is_nonmock_and_atomic(tmp_path, monkeypatch):
     )
     assert code == 0 and report["status"] == "pass"
     assert destination is not None and destination.is_dir()
-    first_destination = destination
-    assert first_destination.name == f"affected-{_git(repo, 'rev-parse', 'HEAD')}"
+    # One committed file per case, at a stable path: the gate collects every result
+    # under the evidence tree whose case_id matches, and a second `current` for the
+    # same case is `current_evidence_count`. A per-commit directory accumulated
+    # exactly that as soon as a case was measured twice.
+    evidence = repo / "evals" / "evidence" / case["id"] / "current.json"
+    assert destination == repo / "evals" / "evidence" and evidence.is_file()
+    first_signed = json.loads(evidence.read_text(encoding="utf-8"))
+    assert first_signed["execution_commit"] == _git(repo, "rev-parse", "HEAD")
 
     recipe.write_text(recipe.read_text(encoding="utf-8") + "next commit\n", encoding="utf-8")
+    with pytest.raises(EvalCaseError, match="clean working tree"):
+        run_affected(
+            repo, base=base, head="HEAD", provider="command", model="fixture",
+            judge_provider="command", judge_model="fixture", provider_command=command,
+            judge_command=judge_command,
+        )
     _git(repo, "add", recipe.relative_to(repo).as_posix())
     _git(repo, "commit", "-q", "-m", "second prompt head")
     second_head = _git(repo, "rev-parse", "HEAD")
+    # Evidence the previous run left in the tree is this command's own output, not
+    # an uncommitted input, so it does not itself trip the clean-tree precondition.
     second, second_code, second_destination = run_affected(
         repo, base=base, head="HEAD", provider="command", model="fixture",
         judge_provider="command", judge_model="fixture", provider_command=command,
         judge_command=judge_command,
     )
     assert second_code == 0 and second["resolved_head"] == second_head
-    assert second_destination is not None and second_destination != first_destination
-    with pytest.raises(EvalCaseError, match="already exist.*commit"):
-        run_affected(
-            repo, base=base, head="HEAD", provider="command", model="fixture",
-            judge_provider="command", judge_model="fixture", provider_command=command,
-            judge_command=judge_command,
-        )
+    assert second_destination == destination
+    second_signed = json.loads(evidence.read_text(encoding="utf-8"))
+    assert second_signed["execution_commit"] == second_head
+    assert list((repo / "evals" / "evidence" / case["id"]).iterdir()) == [evidence]
 
 
 # ── divergence: what the branch changed, not what the base branch did (#367) ──

@@ -22,6 +22,22 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     assert "RIG_EVAL_PROVIDER" in workflow and "RIG_EVAL_MODEL" in workflow
     assert "RIG_EVAL_JUDGE_PROVIDER" in workflow and "RIG_EVAL_JUDGE_MODEL" in workflow
     assert "pull_request.head.sha" in workflow
+    # CI verifies a maintainer's signed measurement; it never drives a provider
+    # itself. `affected-run` starts the provider as an external binary, which is
+    # not installed and not authenticated on a runner — the job could not pass
+    # with every secret set, and #402 merged red proving it.
+    trusted = workflow.split("- name: Trusted prompt quality evidence", 1)[1]
+    executed = [line.strip() for line in trusted.splitlines()
+                if line.strip() and not line.strip().startswith(("#", "echo"))]
+    assert all("affected-run" not in line for line in executed)
+    assert "eval gate" in trusted and "--evidence-dir evals/evidence" in trusted
+    # Fail closed, and on the signing key alone: the other four secrets only pin
+    # evidence that is already signed, so requiring them would keep the job
+    # unpassable for no verification gained.
+    assert 'if [ -z "$RIG_EVAL_ATTESTATION_KEY" ]; then' in trusted
+    for optional in ("RIG_EVAL_PROVIDER", "RIG_EVAL_MODEL",
+                     "RIG_EVAL_JUDGE_PROVIDER", "RIG_EVAL_JUDGE_MODEL"):
+        assert f'if [ -n "${optional}" ]; then' in trusted
     assert "head.repo.full_name == github.repository" in workflow
     assert "author_association == 'OWNER'" in workflow
     assert "chmod 600" in workflow and "unset RIG_EVAL_ATTESTATION_KEY" in workflow
@@ -34,3 +50,5 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     )[0]
     assert "secrets." not in untrusted
     assert "rig-wb eval affected-run" in untrusted and "origin branch" in untrusted
+    # A measurement nobody committed is a measurement CI cannot see.
+    assert "evals/evidence/" in untrusted

@@ -138,8 +138,16 @@ jobs:
           fi
           echo "Prompt quality remains intentionally unmet for an untrusted/fork PR." >&2
           echo "Maintainer: check out the PR head on an origin branch, then run: rig-wb eval affected-run --base ${{ steps.comparison.outputs.base }} --head HEAD --provider <trusted-provider> --model <model> --judge-provider <trusted-judge> --judge-model <judge-model>" >&2
+          echo "Then commit the signed evidence written under evals/evidence/ and push it; this job verifies that evidence rather than measuring anything itself." >&2
           exit 1
 
+      # Verification, not measurement. This step used to drive `affected-run`,
+      # which starts the provider as an external binary — none is installed on the
+      # runner and none is authenticated there, so the step could not pass even
+      # with all five secrets set, and #402 was merged red on exactly that. The
+      # measurement is now a maintainer's, run locally against real providers and
+      # signed; CI recomputes the binding and checks the signature, which needs
+      # nothing but git and one key.
       - name: Trusted prompt quality evidence
         if: >-
           github.event_name == 'push' ||
@@ -160,8 +168,13 @@ jobs:
             echo "No affected evaluation case to run; quality gate is a no-op."
             exit 0
           fi
-          if [ -z "$RIG_EVAL_ATTESTATION_KEY" ] || [ -z "$RIG_EVAL_PROVIDER" ] || [ -z "$RIG_EVAL_MODEL" ] || [ -z "$RIG_EVAL_JUDGE_PROVIDER" ] || [ -z "$RIG_EVAL_JUDGE_MODEL" ]; then
-            echo "Prompt quality evidence requires a trusted maintainer run. Fork authors: ask a maintainer to rerun this same-repo PR command with trusted provider and judge credentials; missing evidence cannot pass." >&2
+          # Fail closed on the key alone. Without it no signature can be checked,
+          # and a gate that shrugs when it cannot verify is not a gate. The four
+          # provider secrets are no longer required — nothing here runs a provider
+          # — but they still pin the evidence when they are set; unset, the case's
+          # own `provider_policy` and the standing ban on mock evidence apply.
+          if [ -z "$RIG_EVAL_ATTESTATION_KEY" ]; then
+            echo "Prompt quality evidence requires a trusted maintainer run. Fork authors: ask a maintainer to run 'rig-wb eval affected-run' with trusted provider and judge credentials and commit the signed evidence; missing evidence cannot pass." >&2
             exit 1
           fi
           state_dir="$(mktemp -d)"
@@ -171,7 +184,13 @@ jobs:
           chmod 600 "$state_dir/rig/eval-attestation.key"
           unset RIG_EVAL_ATTESTATION_KEY
           export XDG_STATE_HOME="$state_dir"
-          rig-wb eval affected-run --base "${{ steps.comparison.outputs.base }}" \
-            --head HEAD --provider "$RIG_EVAL_PROVIDER" --model "$RIG_EVAL_MODEL" \
-            --judge-provider "$RIG_EVAL_JUDGE_PROVIDER" \
-            --judge-model "$RIG_EVAL_JUDGE_MODEL"
+          # `if` rather than `[ ... ] && ...`: this shell runs with `-e`, where a
+          # false test is a failing command and would abort the step whenever an
+          # optional secret is unset.
+          set -- eval gate --base "${{ steps.comparison.outputs.base }}" \
+            --head HEAD --evidence-dir evals/evidence
+          if [ -n "$RIG_EVAL_PROVIDER" ]; then set -- "$@" --provider "$RIG_EVAL_PROVIDER"; fi
+          if [ -n "$RIG_EVAL_MODEL" ]; then set -- "$@" --model "$RIG_EVAL_MODEL"; fi
+          if [ -n "$RIG_EVAL_JUDGE_PROVIDER" ]; then set -- "$@" --judge-provider "$RIG_EVAL_JUDGE_PROVIDER"; fi
+          if [ -n "$RIG_EVAL_JUDGE_MODEL" ]; then set -- "$@" --judge-model "$RIG_EVAL_JUDGE_MODEL"; fi
+          rig-wb "$@"

@@ -363,6 +363,7 @@ def run_case(
     repeat: int, phase: str, command: str | None = None, timeout_s: float = 30,
     judge_adapter: JudgeAdapter | None = None, now: dt.datetime | None = None,
     execution_base: str | None = None,
+    execution_head: str | None = None,
     result_root: pathlib.Path | str | None = None,
     prompt_prefix: str | None = None,
     prompt_binding_sha256: str | None = None,
@@ -415,8 +416,18 @@ def run_case(
         _git_identity(root) if execution_base is None
         else _git_identity(root, execution_base)
     )
+    if execution_head is not None and not re.fullmatch(r"[0-9a-f]{40}", execution_head):
+        raise EvalCaseError("execution head must be a resolved commit")
+    # `working` stays the default because a bare `eval run` measures the tree in
+    # front of the operator, uncommitted edits included. `affected-run` pins the
+    # resolved commit instead: its evidence is meant to be committed and re-checked
+    # later, and a gate can only recompute a tree-to-tree diff from history. Same
+    # value on a clean tree, but equal by construction rather than by luck.
     execution_diff = (
-        execution_diff_sha256(root, base=execution_base_commit)
+        execution_diff_sha256(
+            root, base=execution_base_commit,
+            head=execution_head if execution_head is not None else "working",
+        )
         if execution_status == "available" and execution_base_commit is not None
         else hashlib.sha256(b"rig-eval-execution-unavailable-v1").hexdigest()
     )

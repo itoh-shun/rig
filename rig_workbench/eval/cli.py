@@ -381,6 +381,12 @@ def cmd_eval(argv: list[str]) -> int:
             output = dict(report)
             output["result_dir"] = str(destination) if destination is not None else None
             print(canonical_json(output), end="")
+            if destination is not None:
+                # stderr so the report on stdout stays parseable. CI verifies this
+                # evidence instead of measuring its own; unpushed, it proves nothing.
+                print(f"Commit the signed evidence under {destination} and push it; "
+                      "the CI gate verifies it rather than re-running the provider.",
+                      file=sys.stderr)
             return exit_code
     except EvalCaseError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)

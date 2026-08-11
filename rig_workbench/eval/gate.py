@@ -8,10 +8,20 @@ import subprocess
 
 from rig_workbench import __version__
 
-from .affected import analyze_affected
+from .affected import _changed_files, _surface, analyze_affected
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
 from .compare import validate_result
 from .execution import execution_diff_sha256
+
+
+def _git_ok(root: pathlib.Path, argv: list[str]) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", *argv], cwd=root, capture_output=True, timeout=10, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _resolve_commit(root: pathlib.Path, revision: str) -> str:
@@ -127,6 +137,64 @@ def quality_result_failures(
     return sorted(set(failures))
 
 
+def _evidence_identity_failures(
+    root: pathlib.Path, result: dict, case_id: str, *, resolved_head: str, head: str,
+    affected_surfaces: set[str],
+) -> list[str]:
+    """Bind evidence to the commit it was measured at rather than to HEAD.
+
+    Evidence that lives in the repository can never claim `execution_commit ==
+    HEAD`: committing the file makes a new HEAD, so the claim is false the instant
+    the evidence is tracked. What stays true is that the measured commit is HEAD's
+    **ancestor** — the evidence commit is a child of the tree it describes. So the
+    diff is recomputed at the measured commit instead, from the base the evidence
+    itself recorded. That also drops the gate's dependence on whichever base CI
+    happens to pass: the signed `(base, measured)` pair pins one exact tree, and
+    re-deriving it needs no agreement about where "the base" is while the base
+    branch keeps moving underneath a long-lived PR.
+
+    Ancestry alone would let any already-measured commit vouch for a later prompt
+    edit, so the last check closes that: no prompt surface **this change is
+    accountable for** may have moved since the measurement. Intersecting with the
+    affected set, rather than failing on any surface change in the range, is what
+    keeps a merge legal — another PR's persona landing on the base branch is inside
+    `measured..HEAD` but is not this change's to answer for, and it was already
+    gated on its own PR. A surface the author edits after measuring is in both sets
+    and fails, which is the case that matters.
+
+    Known limit: the comparison is path-level, so a surface edited after the
+    measurement and then restored to the measured content escapes both sets. That
+    takes a key holder deliberately round-tripping a file; every other reuse of
+    stale evidence lands in the intersection.
+    """
+    if result["execution_status"] != "available":
+        return []                      # already `execution_identity_unavailable`
+    measured = result["execution_commit"]
+    measured_base = result["execution_base_commit"]
+    if not _git_ok(root, ["rev-parse", "--verify", "--quiet", f"{measured}^{{commit}}"]):
+        return [f"execution_commit_unreachable:{case_id}"]
+    if not _git_ok(root, ["merge-base", "--is-ancestor", measured, resolved_head]):
+        return [f"execution_commit_unreachable:{case_id}"]
+    if not _git_ok(root, ["rev-parse", "--verify", "--quiet",
+                          f"{measured_base}^{{commit}}"]):
+        return [f"execution_base_unreachable:{case_id}"]
+    failures: list[str] = []
+    try:
+        recomputed = execution_diff_sha256(root, base=measured_base, head=measured)
+    except EvalCaseError:
+        return [f"execution_base_unreachable:{case_id}"]
+    if recomputed != result["execution_diff_sha256"]:
+        failures.append(f"execution_diff_mismatch:{case_id}")
+    # `head` rather than `resolved_head` so the working-tree form keeps seeing
+    # unstaged and untracked prompt edits: an uncommitted persona rewrite after
+    # signing is exactly the reuse this is here to refuse.
+    moved = {path for path in _changed_files(root, measured, head)
+             if _surface(path) is not None}
+    failures.extend(f"execution_prompt_surface_changed:{case_id}:{path}"
+                    for path in sorted(moved & affected_surfaces))
+    return failures
+
+
 def evaluate_gate(
     repo: pathlib.Path | str, *, base: str, head: str = "working",
     evidence_dir: pathlib.Path | str, provider: str | None = None,
@@ -142,6 +210,10 @@ def evaluate_gate(
     while removing coverage, an unregistered surface kind, or a narrowed registry
     stay fatal. Nothing about the evidence checks below changes: the cases that
     *do* exist are still evaluated in either mode.
+
+    The evidence itself is judged against the commit it was measured at rather
+    than against `base`/`head` — see `_evidence_identity_failures`. `base` and
+    `head` decide only *which* cases are affected.
     """
     root = pathlib.Path(repo).resolve()
     affected = analyze_affected(
@@ -168,12 +240,11 @@ def evaluate_gate(
                  + [f"registry_narrowed:{item}"
                     for item in affected["registry_narrowings"]]}, 1)
     resolved_head = _resolve_commit(root, "HEAD" if head == "working" else head)
-    resolved_base = _resolve_commit(root, base)
-    expected_diff = execution_diff_sha256(root, base=resolved_base, head=head)
     cases = _cases(root)
     failures: list[str] = []
     infra: list[str] = []
     evidence_root = pathlib.Path(evidence_dir)
+    affected_surfaces = {item["path"] for item in affected["affected_surfaces"]}
     for case_id in affected["affected_cases"]:
         case = cases.get(case_id)
         if case is None:
@@ -197,14 +268,18 @@ def evaluate_gate(
             continue
         result = matching[0]
         quality = quality_result_failures(
-            result, case, expected_commit=resolved_head, expected_base=resolved_base,
-            expected_diff=expected_diff, provider=provider, model=model,
+            result, case, provider=provider, model=model,
             judge_provider=judge_provider, judge_model=judge_model,
         )
+        identity = _evidence_identity_failures(
+            root, result, case_id, resolved_head=resolved_head, head=head,
+            affected_surfaces=affected_surfaces,
+        )
         if any(item.startswith(("execution_", "executor_", "judge_executor_"))
-               for item in quality):
+               for item in [*quality, *identity]):
             failures.append(f"execution_identity_mismatch:{case_id}")
         failures.extend(quality)
+        failures.extend(identity)
     status = "pass" if not failures and not infra else ("infra_error" if infra else "failed")
     exit_code = 0 if status == "pass" else (2 if infra else 1)
     if status == "pass" and debt:
