@@ -34,12 +34,18 @@ def _git(repo: pathlib.Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def _measured(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, pathlib.Path]:
+def _measured(
+    tmp_path: pathlib.Path, *, uncovered_surface: str | None = None,
+) -> tuple[pathlib.Path, str, pathlib.Path]:
     """A repo whose one prompt change has been measured and the evidence committed.
 
     Returns the repo, the fork point the gate compares against, and the evidence
     file. `execution_commit` is HEAD's parent here, which is the whole point: the
     act of committing evidence moves HEAD past the commit the evidence describes.
+
+    `uncovered_surface` adds a second prompt surface that no case covers, which is
+    the ordinary shape of a change in this repository — two surfaces have cases and
+    ~198 do not. It forces the ratchet path through both ends of the workflow.
     """
     from rig_workbench.eval.affected_run import run_affected
     from rig_workbench.eval.cases import canonical_json
@@ -70,15 +76,21 @@ def _measured(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, pathlib.Path]:
     case_path = repo / "evals" / "cases" / CASE_ID / "case.json"
     case_path.parent.mkdir(parents=True)
     case_path.write_text(canonical_json(case), encoding="utf-8")
+    if uncovered_surface is not None:
+        extra = repo / uncovered_surface
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_text("a prompt surface nobody has written a case for\n",
+                         encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "prompt change")
 
     report, code, destination = run_affected(
         repo, base=base, head="HEAD", provider="command", model="fixture",
         judge_provider="command", judge_model="fixture", provider_command=COMMAND,
-        judge_command=JUDGE_COMMAND,
+        judge_command=JUDGE_COMMAND, ratchet=uncovered_surface is not None,
     )
-    assert code == 0 and report["status"] == "pass", report
+    expected = "debt" if uncovered_surface is not None else "pass"
+    assert code == 0 and report["status"] == expected, report
     _git(repo, "add", "evals/evidence")
     _git(repo, "commit", "-q", "-m", "signed evaluation evidence")
     return repo, base, destination / CASE_ID / "current.json"
@@ -134,6 +146,30 @@ def test_evidence_committed_after_the_measurement_still_verifies(tmp_path):
     # sensor drives.
     working, working_code = _gate(repo, base, head="working")
     assert working_code == 0 and working["status"] == "pass"
+
+
+def test_a_change_touching_one_covered_and_one_uncovered_surface_can_pass(tmp_path):
+    """The shape that made this job unpassable in both directions.
+
+    Two prompt surfaces in this repository have an evaluation case and ~198 do not,
+    so touching a covered surface alongside any of the others is the ordinary PR,
+    not the exotic one. Strict, `affected-run` refuses to measure it at all *and*
+    the gate reports `uncovered:` — a red no evidence can answer, which is how a
+    check teaches people to merge past it (#383/#384). Ratcheting, the covered
+    surface is measured and verified while the rest is carried as a reported number.
+    """
+    repo, base, _evidence = _measured(tmp_path, uncovered_surface="commands/nobody.md")
+
+    report, code = _gate(repo, base, ratchet=True)
+    assert code == 0 and report["status"] == "debt", report
+    assert report["coverage_debt"] == ["commands/nobody.md"]
+    assert report["cases"] == [CASE_ID] and report["failures"] == []
+
+    # Strict is the mode CI used to drive, and it is still available: the failure
+    # it reports is the one nothing in the change can fix.
+    strict, strict_code = _gate(repo, base)
+    assert strict_code == 1
+    assert "uncovered:commands/nobody.md" in strict["failures"]
 
 
 def test_a_signature_from_another_key_or_no_key_at_all_is_refused(tmp_path, monkeypatch):

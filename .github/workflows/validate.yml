@@ -143,7 +143,7 @@ jobs:
             exit 0
           fi
           echo "Prompt quality remains intentionally unmet for an untrusted/fork PR." >&2
-          echo "Maintainer: check out the PR head on an origin branch, then run: rig-wb eval affected-run --base ${{ steps.comparison.outputs.base }} --head HEAD --provider <trusted-provider> --model <model> --judge-provider <trusted-judge> --judge-model <judge-model>" >&2
+          echo "Maintainer: check out the PR head on an origin branch, then run: rig-wb eval affected-run --base ${{ steps.comparison.outputs.base }} --head HEAD --ratchet --provider <trusted-provider> --model <model> --judge-provider <trusted-judge> --judge-model <judge-model>" >&2
           echo "Then commit the signed evidence written under evals/evidence/ and push it; this job verifies that evidence rather than measuring anything itself." >&2
           exit 1
 
@@ -193,8 +193,13 @@ jobs:
           # `if` rather than `[ ... ] && ...`: this shell runs with `-e`, where a
           # false test is a failing command and would abort the step whenever an
           # optional secret is unset.
+          # `--ratchet`, matching the structural step above. Strict here would fail
+          # any PR that touches one covered surface alongside any of the ~198 that
+          # have no case yet — `uncovered:<path>`, unfixable by evidence — so the
+          # two steps in this job would be enforcing opposite policies. The
+          # evidence checks are the same in either mode.
           set -- eval gate --base "${{ steps.comparison.outputs.base }}" \
-            --head HEAD --evidence-dir evals/evidence
+            --head HEAD --evidence-dir evals/evidence --ratchet
           if [ -n "$RIG_EVAL_PROVIDER" ]; then set -- "$@" --provider "$RIG_EVAL_PROVIDER"; fi
           if [ -n "$RIG_EVAL_MODEL" ]; then set -- "$@" --model "$RIG_EVAL_MODEL"; fi
           if [ -n "$RIG_EVAL_JUDGE_PROVIDER" ]; then set -- "$@" --judge-provider "$RIG_EVAL_JUDGE_PROVIDER"; fi

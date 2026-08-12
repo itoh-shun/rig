@@ -31,6 +31,13 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
                 if line.strip() and not line.strip().startswith(("#", "echo"))]
     assert all("affected-run" not in line for line in executed)
     assert "eval gate" in trusted and "--evidence-dir evals/evidence" in trusted
+    # Both steps in this job ratchet or neither does. Strict here fails a PR that
+    # touches one covered surface next to any surface without a case yet — an
+    # `uncovered:` no amount of signed evidence can answer — while the step above
+    # calls that same surface debt and exits 0.
+    gate_invocation = [line for line in trusted.splitlines()
+                       if "eval gate" in line or "--evidence-dir" in line]
+    assert any("--ratchet" in line for line in gate_invocation), gate_invocation
     # Fail closed, and on the signing key alone: the other four secrets only pin
     # evidence that is already signed, so requiring them would keep the job
     # unpassable for no verification gained.

@@ -25,8 +25,8 @@ rig-wb eval promote <draft-id> --baseline <result.json> --current <result.json> 
 rig-wb eval affected --base <git-ref> [--head <git-ref|working>] \
   [--require-cases | --ratchet] [--evidence-dir <directory>] [--json]
 rig-wb eval gate --base <git-ref> [--head <git-ref|working>] \
-  --evidence-dir <directory> [--provider <provider>] [--model <model>]
-rig-wb eval affected-run --base <git-ref> --head HEAD \
+  --evidence-dir <directory> [--ratchet] [--provider <provider>] [--model <model>]
+rig-wb eval affected-run --base <git-ref> --head HEAD [--ratchet] \
   --provider <provider> --model <model> \
   --judge-provider <provider> --judge-model <model>
 ```
@@ -133,11 +133,18 @@ this job is ignored.
 So the measurement is a maintainer's:
 
 ```console
-rig-wb eval affected-run --base <pr-base> --head HEAD \
+rig-wb eval affected-run --base <pr-base> --head HEAD --ratchet \
   --provider <provider> --model <model> \
   --judge-provider <judge> --judge-model <judge-model>
 git add evals/evidence && git commit -m 'signed evaluation evidence'
 ```
+
+`--ratchet` on both ends, matching CI. Two prompt surfaces in this repository have a case
+and around 198 do not, so a change that touches a covered surface next to any other one is
+ordinary. Strict, `affected-run` refuses to measure such a change at all and the gate
+reports `uncovered:<path>` — a red that no amount of signed evidence answers, which is the
+same defect as `--require-cases` on an empty corpus. Ratcheting, the covered surfaces are
+measured and verified while the rest is reported as debt.
 
 `affected-run` refuses a dirty working tree — anything uncommitted would be measured but
 not described — and writes one signed result per case to

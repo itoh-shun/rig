@@ -72,20 +72,40 @@ def _dirty_paths(root: pathlib.Path) -> list[str]:
 def run_affected(
     repo: pathlib.Path | str, *, base: str, head: str, provider: str, model: str,
     judge_provider: str, judge_model: str, provider_command: str | None = None,
-    judge_command: str | None = None, timeout_s: float = 30,
+    judge_command: str | None = None, timeout_s: float = 30, ratchet: bool = False,
 ) -> tuple[dict, int, pathlib.Path | None]:
+    """`ratchet` has to reach here too, or the CI gate's ratchet buys nothing.
+
+    A change that touches one covered surface next to a surface nobody has written
+    a case for yet is the ordinary shape in this repository — two prompt surfaces
+    are covered and ~198 are not. Strict, this refuses to measure it at all, so the
+    maintainer cannot produce the evidence the gate then reports as
+    `evidence_absent`: the two ends of the same workflow would disagree about
+    whether a case-less surface is fatal, and the PR would be unpassable from both.
+    The evidence written is identical in either mode; only the coverage question
+    changes.
+    """
     if provider == "mock" or judge_provider == "mock":
         raise EvalCaseError("affected-run forbids mock provider and mock judge")
     root = pathlib.Path(repo).resolve()
-    affected = analyze_affected(root, base=base, head=head, require_cases=True)
+    affected = analyze_affected(root, base=base, head=head,
+                                require_cases=not ratchet, ratchet=ratchet)
     if affected["status"] == "noop":
-        report, code = evaluate_gate(root, base=base, head=head, evidence_dir=root / ".rig" / "none")
+        report, code = evaluate_gate(root, base=base, head=head,
+                                     evidence_dir=root / ".rig" / "none", ratchet=ratchet)
         return report, code, None
     if affected["status"] == "uncovered":
         return ({"eval_gate_schema_version": 1, "status": "failed", "base": base,
                  "head": head, "resolved_head": affected["resolved_head"],
                  "cases": affected["affected_cases"],
                  "failures": [f"uncovered:{item}" for item in affected["uncovered"]]}, 1, None)
+    if not affected["affected_cases"]:
+        # Reachable only under `ratchet`: every surface this change touched is still
+        # debt, so there is nothing to measure. Same answer as `noop` rather than an
+        # empty run that would report a destination holding no evidence.
+        report, code = evaluate_gate(root, base=base, head=head,
+                                     evidence_dir=root / ".rig" / "none", ratchet=ratchet)
+        return report, code, None
     cases: dict[str, dict] = {}
     for case_id in affected["affected_cases"]:
         path = root / "evals" / "cases" / case_id / "case.json"
@@ -151,6 +171,7 @@ def run_affected(
         report, code = evaluate_gate(
             root, base=base, head=head, evidence_dir=staging, provider=provider,
             model=model, judge_provider=judge_provider, judge_model=judge_model,
+            ratchet=ratchet,
         )
         if code != 0:
             return report, code, None
