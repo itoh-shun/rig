@@ -44,10 +44,27 @@ access to a branch could re-apply a prompt humans had reverted and restore, byte
 for byte, the signed evidence that once measured it — both are public in the
 history, and every other check passed by construction. A case's evidence may now
 only move forward: its `started_at`, which is inside the signed payload, is
-compared against the evidence for the same case at the fork point. The price is a
-tightening — a branch whose measurement predates another measurement of the same
-case on the base branch is told to measure again once it merges that base branch
-in, which is the demand the 30-day expiry already makes.
+compared against the evidence for the same case on the base branch's tip.
+
+The comparison is deliberately made of things the branch under review does not
+choose. It reads `evals/evidence/` as a literal path rather than resolving the
+`--evidence-dir` argument, because committing that directory as a symlink pointed
+the comparison at a path no commit had ever held; and it compares at the base
+branch's tip rather than at the fork point, because forking from before a case was
+first measured left the fork point holding nothing to compare against. Both
+silences were a pass. A symlink at or under the evidence directory is now refused
+by name, and a comparison that cannot be made at all is
+`evidence_ratchet_unavailable` rather than a shrug — this check is the only thing
+between someone holding no key and evidence that looks current, so it does not get
+to abstain.
+
+The price is a tightening — a branch whose measurement predates another
+measurement of the same case on the base branch is told to measure again, which is
+the demand the 30-day expiry already makes and the one git already made by
+conflicting on the single-line evidence file both branches write. What the base
+tip changes is that it arrives on the PR rather than on the push after it. The
+ratchet starts protecting a case once a second measurement of it exists on the
+base branch: with none committed, there is nothing to move backwards from.
 
 Three smaller things this made load bearing. `eval gate` and `affected-run` take
 `--ratchet` and CI passes it: strict, a change touching one covered surface next to

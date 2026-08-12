@@ -162,7 +162,14 @@ new HEAD. The binding is the measured **content**, not the measured commit:
   whole surface set at the measured commit, so a path the gate holds accountable and the
   measurement never saw is a file created afterwards, and fails;
 - evidence may only move forward. Its `started_at` is compared against the evidence for the
-  same case at the fork point, and older evidence is `evidence_regression:<case-id>`;
+  same case on the **base branch's tip**, and older evidence is
+  `evidence_regression:<case-id>`. The comparison reads `evals/evidence/` as a literal path
+  at the base commit CI supplies — not the `--evidence-dir` argument and not the fork point,
+  because both of those are things the branch under review chooses for itself. A symlink at
+  or under the evidence directory is `evidence_symlink:<path>`, refused rather than
+  followed, and a comparison that cannot be made at all — a git that will not answer, a
+  clone whose blobs were never fetched — is `evidence_ratchet_unavailable:<case-id>` rather
+  than a pass;
 - `execution_diff_sha256` is recomputed from the *recorded* base to the *recorded* commit and
   must match, whenever history still holds both — a provenance check on the evidence's own
   account of itself. CI never supplies the base, so a base branch moving under a long-lived
@@ -184,9 +191,24 @@ The evidence ratchet is what makes any of this worth signing. Without it, someon
 no key can open a PR that re-applies a prompt humans reverted and restores, byte for byte,
 the signed evidence that measured it — both are public in the history, and every other
 check passes by construction. The price is stated: a branch whose measurement predates
-another measurement of the same case on the base branch is told to measure again once it
-merges that base branch in. That is a tightening of the intersection rule, and it is the
-demand the 30-day expiry already makes.
+another measurement of the same case on the base branch is told to measure again. That is a
+tightening of the intersection rule, and it is the demand the 30-day expiry already makes.
+
+That price is one those two branches already owed each other, and git rather than this gate
+is what collects it: both write `evals/evidence/<case-id>/current.json`, and the file is one
+canonical-JSON line whose `started_at`, `result_sha256`, and `attestation` cannot coincide,
+so the second branch conflicts and no merge button will land it. Comparing against the base
+tip only changes *when* the demand is made — on the PR, before the merge, rather than on the
+push after it. The structural half of that guarantee is a property of the current
+configuration, not a law: a `*.json` merge driver in `.gitattributes` (`union`, say) would
+auto-merge that line and dissolve it. There is no `.gitattributes` in this repository today,
+and adding one that covers `evals/evidence/` should be treated as changing this gate.
+
+The ratchet also has a start date. It protects a case from the moment a *second* measurement
+of it exists on the base branch: with no committed evidence for a case, there is nothing to
+move backwards from, and the check correctly passes. This repository currently has none at
+all, so today the ratchet is inert everywhere and only the content binding is load bearing.
+"Replay is refused" becomes true for a case one measurement after its first one lands.
 
 Known limit: comparison is per-file content, so a surface edited after the measurement and
 restored byte-for-byte passes — which is correct, since the tree being gated is then the
