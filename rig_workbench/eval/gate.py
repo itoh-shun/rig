@@ -132,6 +132,12 @@ def _evidence_symlinks(evidence_root: pathlib.Path, resolved_head: str,
     Only the evidence tree itself is examined. Parent directories are not: a repo
     checked out under a symlinked path (`/tmp` on macOS, any `tmp_path` fixture)
     is ordinary and has nothing to do with where evidence points.
+
+    The walk is the load-bearing half and has no way to abstain — it reads the
+    same directory entries the evidence itself is read from. The tree scan is
+    defence in depth over what would land, and a git that will not answer it
+    leaves the walk's answer standing rather than becoming a failure of its own:
+    it cannot hide a link the gate actually read.
     """
     def name(path: pathlib.Path) -> str:
         try:

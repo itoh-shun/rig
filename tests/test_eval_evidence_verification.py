@@ -874,7 +874,9 @@ def test_two_branches_measuring_one_case_cannot_merge_without_a_human(tmp_path):
     merged = subprocess.run(["git", "merge", "--no-edit", "neighbour"], cwd=repo,
                             capture_output=True, text=True)
     assert merged.returncode != 0
-    assert f"evals/evidence/{CASE_ID}/current.json" in merged.stdout
+    # Asked of the index rather than of git's message, which is neither a stable
+    # string nor reliably on one stream.
+    assert _git(repo, "ls-files", "-u", "--", EVIDENCE_REL)
 
 
 def test_evidence_carrying_no_content_binding_at_all_is_refused(tmp_path):
