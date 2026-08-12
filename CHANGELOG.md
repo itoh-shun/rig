@@ -35,6 +35,14 @@ failed rather than a repository with no GitHub remote, and an editable install, 
 green would only ever have described the source tree it points at. `/rig:go` runs
 hostcheck before each natural-language task and never blocks on it.
 
+CI's prompt quality step is a ratchet now, like the structural step beside it. This
+repository cannot satisfy it by any configuration — the `RIG_EVAL_*` secrets are unset
+and the job installs only the Python package, so no provider executable exists on the
+runner to run a case with — and failing anyway made every prompt-surface change red
+with no action that could turn it green. Unmeasurable is debt: the affected cases are
+named in a warning and in the run summary, and the step exits 0. A repository that has
+a trusted lane is still enforced exactly as before.
+
 `rig-wb wb context` judges what it measured against declared budgets and prints each
 budget beside its verdict. The budget line and the report's heavy section are separate
 thresholds — as one constant the verdict could only read `ok` when the section was
