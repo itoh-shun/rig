@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import pathlib
+import posixpath
 import subprocess
 
 from rig_workbench import __version__
@@ -13,6 +15,23 @@ from .affected import analyze_affected
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
 from .compare import validate_result
 from .execution import execution_diff_sha256
+
+# Where a measurement lands once it is committed. `evals/` is where the cases and
+# the surface registry already live and is not a prompt-surface root, so evidence
+# landing here adds nothing to the gate's own field of view. One file per case,
+# overwritten: `_evidence_index` collects every `*.json` under the tree whose
+# `case_id` matches, and a second `current` result for the same case is
+# `current_evidence_count`, so an accumulating layout breaks the gate the first
+# time a case is measured twice.
+#
+# The ratchet reads this path as a **literal** rather than deriving it from
+# `--evidence-dir`, and that is the whole of the fix for the relocation bypass:
+# a derived path is an attacker input, and pointing `evals/evidence` at a
+# directory with no history was enough to make the comparison come back empty.
+# `--evidence-dir` still says where the evidence being judged is *read* from —
+# `affected-run` gates its own staging directory with it — but what that evidence
+# has to beat is fixed by the repository's layout, not by the argument.
+EVIDENCE_REL = "evals/evidence"
 
 
 def _git_ok(root: pathlib.Path, argv: list[str]) -> bool:
@@ -91,6 +110,59 @@ def _evidence_index(evidence_root: pathlib.Path) -> dict[str, list[dict]]:
             continue
         index.setdefault(value["case_id"], []).append(value)
     return index
+
+
+def _evidence_symlinks(evidence_root: pathlib.Path, resolved_head: str,
+                       root: pathlib.Path) -> list[str]:
+    """Links at or under the evidence tree, which this gate does not accept.
+
+    Two readers, two answers, and the gap between them was a bypass: evidence is
+    read off the **filesystem** (`_evidence_index` walks it), while the ratchet
+    reads the **tree** at a commit. Committing `evals/evidence` as a link to
+    another directory let the first reader follow it to blobs the second one was
+    never looking at, and the ratchet then had nothing to compare against.
+
+    Fixing the ratchet's path (`EVIDENCE_REL`) closes that on its own. The shape
+    is refused as well because it is not one anything here writes, and because a
+    link is the one entry whose *content* is a path — read it and the gate is
+    judging a file chosen by name resolution rather than by the layout it gates.
+    Both readers are checked: the walk covers what is read, including the
+    uncommitted `head="working"` form, and the tree scan covers what would land.
+
+    Only the evidence tree itself is examined. Parent directories are not: a repo
+    checked out under a symlinked path (`/tmp` on macOS, any `tmp_path` fixture)
+    is ordinary and has nothing to do with where evidence points.
+    """
+    def name(path: pathlib.Path) -> str:
+        try:
+            return path.relative_to(root).as_posix()
+        except ValueError:
+            return path.as_posix()
+
+    found: set[str] = set()
+    if evidence_root.is_symlink():
+        found.add(name(evidence_root))
+    elif evidence_root.is_dir():
+        for parent, dirnames, filenames in os.walk(evidence_root, followlinks=False):
+            for entry in [*dirnames, *filenames]:
+                path = pathlib.Path(parent) / entry
+                if path.is_symlink():
+                    found.add(name(path))
+    try:
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "-z", resolved_head, "--", EVIDENCE_REL],
+            cwd=root, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return sorted(found)
+    if listing.returncode != 0:
+        return sorted(found)
+    for entry in listing.stdout.split("\0"):
+        # `<mode> <type> <object>\t<path>`; 120000 is git's mode for a symlink.
+        if entry.startswith("120000 ") and "\t" in entry:
+            found.add(entry.split("\t", 1)[1])
+    return sorted(found)
 
 
 def quality_result_failures(
@@ -260,10 +332,10 @@ def _evidence_identity_failures(
 
 
 def _evidence_ratchet_failures(
-    root: pathlib.Path, result: dict, case_id: str, *, merge_base: str,
-    evidence_rel: str | None,
+    result: dict, case_id: str, *,
+    prior: dict[str, tuple[dt.datetime, str]] | None,
 ) -> list[str]:
-    """Refuse evidence older than the evidence this branch forked from.
+    """Refuse evidence older than the evidence the base branch already holds.
 
     Everything else here is a statement about *some* trusted measurement. Without
     this, an attacker who holds no key at all can open a PR that re-applies a
@@ -276,40 +348,64 @@ def _evidence_ratchet_failures(
 
     So evidence ratchets like everything else in this module: for a given case it
     may only move forward. `started_at` is the ordering, and it is inside the
-    signed payload, so moving it is forgery rather than editing. The comparison
-    point is the **fork point** rather than the base tip, which is what keeps two
-    concurrent PRs legal — a branch that forked before another one landed is
-    compared against the evidence that existed when it forked, not against the
-    evidence its neighbour has since committed.
+    signed payload, so moving it is forgery rather than editing.
 
     `started_at` also survives what ancestry does not: a squash or rebase carries
     the timestamp through unchanged, which is why the ratchet is written on the
     timestamp and not on the measured commit's descent.
 
-    The cost is stated rather than hidden. Two PRs whose surfaces are covered by
-    the same case, where the second measured before the first landed and then
-    merged the base branch in, are told to measure again — the base branch holds a
-    newer measurement of that case than the one they are carrying. That is a
-    tightening of the intersection rule, which would have let the second through on
-    the grounds that its neighbour was gated on its own PR. It is the same demand
-    the 30-day expiry already makes, it names what to do, and the alternative is a
-    ratchet with a hole exactly the size of the attack above.
+    The comparison point is the **base branch's tip**, not the fork point. The
+    fork point was chosen to keep two concurrent PRs legal, and it cost the whole
+    check: where a branch forks from is the author's choice, so branching from
+    before a case was ever measured left nothing to compare against and the
+    ratchet fell silent. `base` is not the author's choice — CI hands it
+    `pull_request.base.sha` on a PR and `github.event.before` on a push — so a
+    lower bound taken there is one the branch cannot move.
 
-    Unreadable or absent prior evidence means the question could not be answered,
-    and the caller then declines to accuse the change of anything — the same stance
-    as `_coverage_at` and `_registry_at`.
+    Taking the tip rather than the largest `started_at` anywhere in the base
+    branch's history is deliberate: for history to hold a *newer* measurement than
+    the tip, evidence on the base branch must have moved backwards, which needs
+    either a merge resolved to the older side or a push that bypassed this gate —
+    and the push event runs this same check with `before` as its base, so the
+    branch goes red when it happens rather than quietly lowering the bound. The
+    walk it saves is one `git show` per evidence file per re-measurement, forever.
+
+    The cost is stated rather than hidden. Two PRs whose surfaces are covered by
+    the same case, where the second measured before the first landed, are told to
+    measure again — the base branch holds a newer measurement of that case than
+    the one they are carrying. That is a tightening of the intersection rule,
+    which would have let the second through on the grounds that its neighbour was
+    gated on its own PR. It is the same demand the 30-day expiry already makes, it
+    names what to do, and it is *already* what those two PRs owe each other: both
+    write `evals/evidence/<case-id>/current.json`, so git refuses to merge the
+    second one without a human resolving that file by hand. What the base tip
+    changes is when they are told — on the PR, before the merge button, rather
+    than on the push that follows it.
+
+    A question that could not be answered is now an accusation
+    (`evidence_ratchet_unavailable`) rather than a shrug. This is not the stance
+    `_coverage_at` and `_registry_at` take, and the difference is what the check
+    is for: coverage monotonicity is one guard among several, while this is the
+    only thing standing between someone with no key at all and evidence that
+    looks current. Every other check passes a replay by construction. It costs no
+    false positives, either: this runs only where a valid current result for the
+    case exists, and a case with no evidence at the head is already
+    `evidence_absent`.
+
+    `prior` being empty *for this case* is an answer rather than a failure to
+    answer: the base branch holds no measurement of it, so there is nothing to
+    move backwards from. That is the state this repository ships in — no evidence
+    is committed yet — and a case is protected from the second measurement of it
+    that lands on the base branch onwards.
     """
-    if evidence_rel is None:
-        return []
-    prior = _prior_evidence(root, merge_base, evidence_rel)
     if prior is None:
-        return []
+        return [f"evidence_ratchet_unavailable:{case_id}"]
     earlier = prior.get(case_id)
     if earlier is None:
         return []                      # no measurement to go backwards from
     current = _started_at(result)
     if current is None:
-        return []
+        return [f"evidence_ratchet_unavailable:{case_id}"]
     # Named like the module's other monotonic failures (`coverage_regression`,
     # `registry_narrowed`) because it is the same rule: evidence only moves
     # forward. Re-measuring is the answer in both the honest and the hostile
@@ -333,21 +429,26 @@ def _started_at(result: dict) -> dt.datetime | None:
     return value if value.tzinfo is not None else None
 
 
-def _prior_evidence(
-    root: pathlib.Path, revision: str, evidence_rel: str,
+def _base_evidence(
+    root: pathlib.Path, revision: str,
 ) -> dict[str, tuple[dt.datetime, str]] | None:
-    """case id → (when its evidence at `revision` was measured, its identity).
+    """case id → (when the evidence at `revision` was measured, its identity).
 
-    None if the question could not be answered at all.
+    Read once for every gated case rather than once per case, which is the same
+    correction `_evidence_index` needed: the tree is the same tree each time.
+
+    None means the question could not be answered — a git that would not answer,
+    or a repository whose objects are not all present (a blobless clone reaches
+    this). The caller turns that into a named failure rather than a pass.
+
+    The directory a result is filed under has to be its case here too, the rule
+    `_evidence_index` applies at the head. Nothing an author writes reaches this
+    revision, so the asymmetry was harmless; it was also an invitation to file a
+    result under a case it is not, on the one side that would not have noticed.
     """
-    if evidence_rel in {"", "."}:
-        # `evidence_dir` is a caller's argument and nothing stops it being the
-        # repository root. `ls-tree -- .` would then walk the whole tree and read
-        # every `.json` in it, per gated case, to answer a question about evidence.
-        return None
     try:
         listing = subprocess.run(
-            ["git", "ls-tree", "-r", "-z", "--name-only", revision, "--", evidence_rel],
+            ["git", "ls-tree", "-r", "-z", "--name-only", revision, "--", EVIDENCE_REL],
             cwd=root, capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=15, shell=False,
         )
@@ -378,6 +479,9 @@ def _prior_evidence(
         if started is None:
             continue
         case_id = value["case_id"]
+        parent = posixpath.dirname(path)
+        if parent != EVIDENCE_REL and posixpath.basename(parent) != case_id:
+            continue
         entry = (started, str(value.get("result_sha256")))
         if case_id not in found or entry > found[case_id]:
             found[case_id] = entry
@@ -435,14 +539,14 @@ def evaluate_gate(
     evidence_root = pathlib.Path(evidence_dir)
     evidence_index = _evidence_index(evidence_root)
     affected_surfaces = {item["path"] for item in affected["affected_surfaces"]}
-    # Where the evidence lives inside this repository, if it does. A staging
-    # directory outside the tree — the shape `affected-run` gates its own output
-    # with — has no history to ratchet against, and the ratchet then declines to
-    # accuse rather than inventing a comparison.
-    try:
-        evidence_rel = evidence_root.resolve().relative_to(root).as_posix()
-    except (OSError, ValueError):
-        evidence_rel = None
+    failures.extend(f"evidence_symlink:{item}"
+                    for item in _evidence_symlinks(evidence_root, resolved_head, root))
+    # Read at the base branch's tip, once for every case. `base` is resolved
+    # rather than passed through so the revision handed to git is a commit id this
+    # repository produced, and so a base that cannot be resolved is an error
+    # instead of an unanswerable comparison.
+    prior = (_base_evidence(root, _resolve_commit(root, base))
+             if affected["affected_cases"] else {})
     for case_id in affected["affected_cases"]:
         case = cases.get(case_id)
         if case is None:
@@ -479,10 +583,7 @@ def evaluate_gate(
             root, result, case_id, resolved_head=resolved_head, head=head,
             affected_surfaces=affected_surfaces,
         )
-        identity.extend(_evidence_ratchet_failures(
-            root, result, case_id, merge_base=affected["merge_base"],
-            evidence_rel=evidence_rel,
-        ))
+        identity.extend(_evidence_ratchet_failures(result, case_id, prior=prior))
         if any(item.startswith(("execution_", "executor_", "judge_executor_"))
                for item in [*quality, *identity]):
             failures.append(f"execution_identity_mismatch:{case_id}")

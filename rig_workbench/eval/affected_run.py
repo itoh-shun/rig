@@ -11,17 +11,11 @@ import tempfile
 
 from .affected import analyze_affected, prompt_surface_digests
 from .cases import EvalCaseError
-from .gate import evaluate_gate
+# Where this run files what it measured. Defined by the gate rather than here,
+# because the gate now reads that path literally to decide what a measurement has
+# to beat: one writer and one ratchet, both naming the same constant.
+from .gate import EVIDENCE_REL, evaluate_gate
 from .runner import make_judge_adapter, run_case
-
-# Committed, because CI no longer measures anything: it verifies what a maintainer
-# measured. `evals/` is where the cases and the surface registry already live and
-# is not a prompt-surface root, so evidence landing here adds nothing to the gate's
-# own field of view. One file per case, overwritten: `_evidence` collects every
-# `*.json` under the tree whose `case_id` matches, and a second `current` result
-# for the same case is `current_evidence_count`, so an accumulating layout breaks
-# the gate the first time a case is measured twice.
-EVIDENCE_REL = "evals/evidence"
 
 
 def _rev_parse(root: pathlib.Path, revision: str) -> str:
