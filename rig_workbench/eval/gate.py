@@ -569,10 +569,10 @@ def evaluate_gate(
     # Read at `base`, once for every case rather than once per case. `base` is
     # resolved rather than passed through so the revision handed to git is a
     # commit id this repository produced, and so a base that cannot be resolved is
-    # an error instead of an unanswerable comparison. Resolution accepts a
-    # symbolic ref, which is what lets CI hand this `origin/<base branch>` and get
-    # the tip as it stands now — see `_evidence_ratchet_failures` for why the
-    # caller has to supply a tip rather than a remembered one.
+    # an error instead of an unanswerable comparison. Whether `base` names a tip
+    # is the caller's to get right — CI resolves the ref in the runner and passes
+    # a commit id, so this call is a second line of defence rather than the
+    # mechanism. See `_evidence_ratchet_failures` for why it has to be a tip.
     prior = (_base_evidence(root, _resolve_commit(root, base))
              if affected["affected_cases"] else {})
     for case_id in affected["affected_cases"]:

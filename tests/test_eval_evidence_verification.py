@@ -727,7 +727,10 @@ def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path)
     """The price of the ratchet, paid deliberately and recoverably.
 
     A branch carrying a measurement of the same case older than the one already on
-    the base branch is refused when it merges that base branch in. The intersection
+    the base branch is refused as soon as the comparison sees that base branch —
+    the merge below is how this fixture arranges a shared surface, not what
+    triggers the refusal; `test_the_bound_is_the_newest_evidence_on_the_base_branch`
+    pins the same failure with no merge at all. The intersection
     rule alone would have let it through — the neighbouring measurement was gated
     on its own PR — but on the wire that branch is indistinguishable from one
     replaying an old blob, and the two cannot both be answered. This is the

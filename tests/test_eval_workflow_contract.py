@@ -230,6 +230,16 @@ def test_the_base_resolution_step_finds_the_live_tip_in_an_actions_checkout(tmp_
     code, wrote = _run_step(script, runner, output, push_base="not-a-sha")
     assert code == 2 and wrote == "", (code, wrote)
 
+    # A fetch that fails while the checkout already holds the ref: warn and use
+    # what is here. That is the tip as of checkout — older than the live tip, but
+    # still resolved from the base branch rather than taken from the payload, so
+    # it is not a value this branch can pin. Exercised by breaking the remote
+    # after the initial fetch, since a fetch failure and a missing ref are the
+    # same row otherwise and only the second one is meant to stop the job.
+    git(runner, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+    code, wrote = _run_step(script, runner, output, base_ref="master", pr_base=m1)
+    assert (code, wrote) == (0, f"base={m2}"), (code, wrote)
+
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="the step is a bash script")
 def test_the_base_the_workflow_resolves_is_the_one_that_refuses_a_replay(tmp_path, monkeypatch):
