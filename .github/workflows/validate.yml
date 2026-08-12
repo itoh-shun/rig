@@ -83,17 +83,49 @@ jobs:
       - name: Install rig with its declared dependencies (no optional extras)
         run: pip install -e .
 
+      # Ask git what the base branch's tip is now; do not take the payload's word
+      # for it. `github.event.pull_request.base.sha` is a snapshot of the base
+      # branch from when the event fired, and an author who opens the PR before a
+      # revert lands pins it there for the life of the PR. The damage is not only
+      # that the evidence ratchet then compares against the very measurement it
+      # exists to refuse — the diff is taken from `merge-base(base, head)`, so a
+      # head restored to the pinned commit's content drops the surface out of the
+      # diff entirely and the case is never selected. Nothing in this job runs.
+      #
+      # A push is the opposite case and must keep `github.event.before`: there,
+      # `origin/<branch>` *is* the commit being gated, so resolving the live tip
+      # would diff the push against itself and this job would be `noop` forever.
+      # `before` is the tip the push replaced, chosen by the server at push time
+      # and not something a branch can hold stale.
       - name: Resolve comparison base
         id: comparison
         env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           PUSH_BASE: ${{ github.event.before }}
         run: |
-          base="${PR_BASE:-$PUSH_BASE}"
-          if [ -z "$base" ]; then
-            echo "Cannot resolve prompt evaluation base." >&2
+          if [ -n "$BASE_REF" ]; then
+            # `fetch-depth: 0` fetches every branch, so the remote-tracking ref is
+            # normally already here. Re-fetching is the cheap guarantee that it
+            # is, and it also picks up whatever landed after this job started.
+            if ! git fetch --no-tags --quiet origin \
+                "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
+              echo "::warning::could not fetch ${BASE_REF}; falling back to the ref this checkout already has"
+            fi
+            base="$(git rev-parse --verify --quiet "refs/remotes/origin/${BASE_REF}^{commit}")" || base=
+          else
+            base="$PUSH_BASE"
+          fi
+          # Fail closed rather than fall back. Every fallback available here is a
+          # value the branch under review can influence, which is the hole this
+          # step was rewritten to close.
+          case "$base" in
+            "" | *[!0-9a-f]*) base= ;;
+          esac
+          if [ -z "$base" ] || [ "${#base}" -ne 40 ]; then
+            echo "Cannot resolve prompt evaluation base for ${BASE_REF:-push}." >&2
             exit 2
           fi
+          echo "Comparing against $base"
           echo "base=$base" >> "$GITHUB_OUTPUT"
 
       # Ratchet, not threshold. `--require-cases` fails every change that touches a

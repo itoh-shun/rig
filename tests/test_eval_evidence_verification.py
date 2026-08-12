@@ -670,6 +670,59 @@ def test_forking_before_the_evidence_existed_does_not_escape_the_ratchet(tmp_pat
     assert (repo / RECIPE_REL).read_text(encoding="utf-8") == BAD
 
 
+def test_the_replay_is_refused_at_the_base_tip_and_invisible_at_a_pinned_snapshot(tmp_path):
+    """Why `--base` has to be resolved rather than read out of the event payload.
+
+    `github.event.pull_request.base.sha` is the base branch as the event saw it.
+    An author cannot set it to an arbitrary commit, but they can *pin* it, by
+    opening the PR before the revert lands — an ordinary thing to do, with the
+    30-day evidence expiry as the only bound on how long the pin is worth holding.
+
+    What that buys is not a quiet ratchet. It is a blind gate. The affected set
+    diffs from `merge-base(base, head)`, so a head restored to the pinned commit's
+    content has no prompt surface in its diff at all: no case is selected, and the
+    gate returns before it reaches evidence, symlinks, or anything else in this
+    module. Both halves are asserted below, because a guard written against the
+    *status* would only move the hole to a repository busy enough that some
+    unrelated file also moved between the two commits.
+
+    So the fix is not in this module — the ratchet is right, and it is the same
+    check either way. CI resolves the base branch's live tip instead
+    (`.github/workflows/validate.yml`, pinned by `test_eval_workflow_contract.py`).
+    Against that base the same branch is refused, which is what this keeps true.
+    """
+    repo, _root, pr1_tip, pr2_tip, replayable = _reverted(tmp_path)
+
+    # The attacker branches where the PR was opened, then updates it the ordinary
+    # way — merge the base branch in so the PR is mergeable — and puts both files
+    # back to what the pinned commit held. Nothing here needs a key.
+    _git(repo, "checkout", "-q", "-b", "evil", pr1_tip)
+    _git(repo, "merge", "-q", "--no-edit", "trunk")
+    (repo / RECIPE_REL).write_text(BAD, encoding="utf-8")
+    (repo / EVIDENCE_REL).write_text(replayable, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "PR3: re-land the reverted prompt and its evidence")
+
+    live, live_code = _gate(repo, pr2_tip, ratchet=True)
+    assert live_code == 1, live
+    assert live["failures"] == [f"evidence_regression:{CASE_ID}"], live
+    assert live["cases"] == [CASE_ID], live
+
+    # The pinned snapshot, recorded rather than tolerated: it is what CI used to
+    # hand the gate, and the reason it no longer does. Nothing is examined at all
+    # here, so `failures` being empty says nothing about this branch.
+    pinned, pinned_code = _gate(repo, pr1_tip, ratchet=True)
+    assert pinned_code == 0 and not pinned["failures"], pinned
+    assert pinned["cases"] == [] and pinned["status"] == "noop", pinned
+
+    # And it merges, which is what made the difference between those two bases
+    # worth changing a workflow over.
+    _git(repo, "checkout", "-q", "trunk")
+    _git(repo, "merge", "-q", "--no-edit", "evil")
+    assert (repo / RECIPE_REL).read_text(encoding="utf-8") == BAD
+    assert (repo / EVIDENCE_REL).read_text(encoding="utf-8").strip() == replayable.strip()
+
+
 def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path):
     """The price of the ratchet, paid deliberately and recoverably.
 
