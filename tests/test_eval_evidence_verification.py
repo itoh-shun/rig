@@ -783,6 +783,100 @@ def test_a_base_branch_the_ratchet_cannot_read_is_refused_rather_than_waved_thro
     assert report["failures"] == [f"evidence_ratchet_unavailable:{CASE_ID}"], report
 
 
+def test_the_bound_is_the_newest_evidence_on_the_base_branch_for_that_case(tmp_path):
+    """Which of the base branch's files the comparison is taken from.
+
+    The head side rejects a second current result outright; the base side cannot,
+    because it reads whatever a past commit happens to hold — a leftover from a
+    rename, a result filed under the wrong case. So it takes the newest
+    measurement of the case being gated, and it applies the same rule the head
+    side does about the directory a result is filed under. Taking the oldest would
+    lower the bound; reading another case's directory would raise it.
+    """
+    from rig_workbench.eval.affected import prompt_surface_digests
+    from rig_workbench.eval.execution import execution_diff_sha256
+
+    repo, _base, evidence = _measured(tmp_path)
+    signed = json.loads(evidence.read_text(encoding="utf-8"))
+
+    _git(repo, "checkout", "-q", "-b", "master")
+    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    stale = evidence.parent / "previous.json"
+    stale.write_text(evidence.read_text(encoding="utf-8"), encoding="utf-8")
+    _resign(stale, started_at="2026-08-11T08:00:00+00:00")
+    misfiled = repo / "evals" / "evidence" / "some-other-case" / "current.json"
+    misfiled.parent.mkdir(parents=True)
+    misfiled.write_text(evidence.read_text(encoding="utf-8"), encoding="utf-8")
+    _resign(misfiled, started_at="2026-08-11T11:00:00+00:00")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "the base branch, with the debris a branch collects")
+    newer = _git(repo, "rev-parse", "HEAD")
+
+    _git(repo, "checkout", "-q", "trunk")
+    recipe = repo / RECIPE_REL
+    recipe.write_text(recipe.read_text(encoding="utf-8") + "this branch's own edit\n",
+                      encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "this branch's prompt change")
+    measured = _git(repo, "rev-parse", "HEAD")
+
+    def measure_at(started_at: str):
+        _resign(evidence, started_at=started_at,
+                prompt_surface_digests=prompt_surface_digests(repo, measured),
+                execution_commit=measured,
+                execution_diff_sha256=execution_diff_sha256(
+                    repo, base=signed["execution_base_commit"], head=measured))
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", f"measured at {started_at}")
+        return _gate(repo, newer)
+
+    # Newer than the base branch's measurement of *this* case. The 11:00 result
+    # filed under another case's directory is not a measurement of this one.
+    report, code = measure_at("2026-08-11T10:00:00+00:00")
+    assert code == 0 and report["status"] == "pass", report
+
+    # Behind it, though ahead of the leftover the rename left in the same
+    # directory: the bound is the newest of them, not the oldest.
+    behind, behind_code = measure_at("2026-08-11T08:30:00+00:00")
+    assert behind_code == 1
+    assert behind["failures"] == [f"evidence_regression:{CASE_ID}"], behind
+
+
+def test_two_branches_measuring_one_case_cannot_merge_without_a_human(tmp_path):
+    """What actually collects the ratchet's price, and it is not this gate.
+
+    Two branches whose surfaces are covered by the same case both write
+    `evals/evidence/<case-id>/current.json`, and a result is one line of canonical
+    JSON whose `started_at`, `result_sha256`, and `attestation` cannot coincide.
+    So the second branch conflicts and no merge button will land it, which is why
+    comparing against the base tip only changes *when* the demand to measure again
+    arrives, not whether it does.
+
+    The docs lean on this, so it is pinned: multi-line evidence would merge
+    cleanly and dissolve the guarantee, and so would a `*.json` merge driver in
+    `.gitattributes` — of which this repository has none.
+    """
+    repo, _base, evidence = _measured(tmp_path)
+    assert len(evidence.read_text(encoding="utf-8").splitlines()) == 1
+    assert not (repo / ".gitattributes").exists()
+    fork = _git(repo, "rev-parse", "HEAD")
+
+    _git(repo, "checkout", "-q", "-b", "neighbour")
+    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "a neighbouring PR measures the same case")
+
+    _git(repo, "checkout", "-q", "-b", "mine", fork)
+    _resign(evidence, started_at="2026-08-11T08:00:00+00:00")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "this PR measures the same case")
+
+    merged = subprocess.run(["git", "merge", "--no-edit", "neighbour"], cwd=repo,
+                            capture_output=True, text=True)
+    assert merged.returncode != 0
+    assert f"evals/evidence/{CASE_ID}/current.json" in merged.stdout
+
+
 def test_evidence_carrying_no_content_binding_at_all_is_refused(tmp_path):
     """What a key holder can produce by accident, and the gate's floor under it.
 
