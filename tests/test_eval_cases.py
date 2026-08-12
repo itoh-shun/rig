@@ -66,6 +66,10 @@ def test_validate_case_accepts_versioned_case_and_canonicalizes_deterministicall
         lambda c: c["provider_policy"].update(mode="sometimes"),
         lambda c: c["provider_policy"].update(min_isolation="sandboxed"),
         lambda c: c["provider_policy"].update(min_isolation=True),
+        # Unhashable values reached the set-membership test and raised TypeError, which
+        # a caller catching EvalCaseError never sees as a rejected case.
+        lambda c: c["provider_policy"].update(min_isolation=[]),
+        lambda c: c["provider_policy"].update(min_isolation={"level": "os-enforced"}),
         lambda c: c.update(surfaces=[{}]),
     ],
 )

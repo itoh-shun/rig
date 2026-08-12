@@ -56,6 +56,28 @@ ISOLATION_RANK: dict[str, int] = {"none": 0, "agent-policy": 1, "os-enforced": 2
 ISOLATION_LEVELS = frozenset(ISOLATION_RANK)
 
 
+def isolation_floor_violations(policy: dict, result: dict) -> list[str]:
+    """Result fields recording less isolation than the case's `min_isolation` floor.
+
+    `judge_provider == "none"` is the one value `run_case` writes when no judge adapter
+    was supplied at all, so that result's `judge_isolation` records the absence of a
+    judge process rather than an unisolated one, and the floor has nothing to constrain.
+    Holding it to the floor anyway would reject evidence `run_case` deliberately
+    produces (a rubric-free case needs no judge), i.e. demand a run that can never pass.
+    The exemption cannot be used to dodge a judge: a case with a `semantic_rubric` and
+    no judge fails as `judge_unmeasured` regardless of isolation, so only cases that
+    require no judging reach it. Every consumer of the floor goes through here so the
+    runner and the gates cannot disagree about which evidence a floor admits.
+    """
+    if policy.get("min_isolation") is None:
+        return []
+    floor = ISOLATION_RANK[policy["min_isolation"]]
+    fields = ["provider_isolation"]
+    if result["judge_provider"] != "none":
+        fields.append("judge_isolation")
+    return [field for field in fields if ISOLATION_RANK[result[field]] < floor]
+
+
 def canonical_json(value: Any) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -234,7 +256,8 @@ def validate_case(case: Any) -> dict:
                        or not (_ID if field == "judge_providers" else _MODEL_ID).fullmatch(value)
                        for value in values)):
             raise EvalCaseError(f"provider_policy.{field} is invalid")
-    if "min_isolation" in policy and policy["min_isolation"] not in ISOLATION_LEVELS:
+    if "min_isolation" in policy and (not isinstance(policy["min_isolation"], str)
+                                      or policy["min_isolation"] not in ISOLATION_LEVELS):
         raise EvalCaseError("provider_policy.min_isolation is invalid")
     if (isinstance(obj["repeat"], bool) or not isinstance(obj["repeat"], int)
             or not 1 <= obj["repeat"] <= 100):

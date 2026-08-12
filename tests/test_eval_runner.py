@@ -351,7 +351,8 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
     seen = []
     monkeypatch.setattr(
         runner, "_eval_agent_argv",
-        lambda selected, goal, repo, model: ([selected, "--model", model, "-"], "os-enforced"),
+        lambda selected, goal, repo, model, **_kwargs: (
+            [selected, "--model", model, "-"], "os-enforced"),
     )
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
     monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
@@ -596,10 +597,168 @@ def test_agent_policy_evidence_cannot_satisfy_a_case_demanding_os_enforced_isola
     assert f"provider_isolation_policy:{demanding['id']}" in failures
 
 
+@pytest.mark.parametrize("field", ["provider_isolation", "judge_isolation"])
+@pytest.mark.parametrize("value", [[], {"level": "os-enforced"}])
+def test_unhashable_recorded_isolation_is_rejected_as_a_case_error(
+    monkeypatch, tmp_path, field, value,
+):
+    """An unhashable value reached the level lookup and raised TypeError instead."""
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import validate_result
+
+    result, _seen = run_with_fake_provider(monkeypatch, tmp_path, "claude")
+    result[field] = value
+    with pytest.raises(EvalCaseError, match=field):
+        validate_result(result, now=NOW, verify_attestation=False)
+
+
+def test_a_floor_binds_the_judge_only_when_a_judge_actually_ran(monkeypatch, tmp_path):
+    """`run_case` and the gate must admit the same evidence.
+
+    With no judge adapter the result records `judge_provider: "none"` and, necessarily,
+    `judge_isolation: "none"` — the absence of a judge process, not an unisolated one.
+    The runner already produced that evidence for a rubric-free case under a floor while
+    the gate rejected it, so the only possible run was one whose evidence never passed.
+    """
+    from rig_workbench.eval import runner
+    from rig_workbench.eval.gate import quality_result_failures
+
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": [], "min_isolation": "os-enforced"}
+    assert not case["semantic_rubric"], "a rubric-free case is the one that needs no judge"
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
+    monkeypatch.setattr(
+        runner.subprocess, "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "ok", ""),
+    )
+
+    _path, result = runner.run_case(
+        case, repo=tmp_path, provider="codex", model="fixture", repeat=3,
+        phase="current", now=NOW,
+    )
+    assert result["judge_provider"] == "none" and result["judge_isolation"] == "none"
+    failures = quality_result_failures(result, case, verify_attestation=False)
+    assert f"judge_isolation_policy:{case['id']}" not in failures
+
+    # A judge that did run is still held to the floor; the exemption is about absence.
+    claude_judge = runner.make_judge_adapter(provider="claude", model="fixture", repo=tmp_path)
+    ran_a_judge = copy.deepcopy(result)
+    ran_a_judge["judge_provider"] = claude_judge.judge_provider
+    ran_a_judge["judge_isolation"] = claude_judge.judge_isolation
+    resign(ran_a_judge)
+    assert f"judge_isolation_policy:{case['id']}" in quality_result_failures(
+        ran_a_judge, case, verify_attestation=False
+    )
+
+    # And the exemption cannot be used to skip judging: a case that needs a rubric
+    # fails for the missing judge, so only cases needing no judge ever reach it.
+    needs_a_judge = copy.deepcopy(case)
+    needs_a_judge["semantic_rubric"] = [
+        {"id": "correct", "description": "Correct", "weight": 1.0},
+    ]
+    unjudged = copy.deepcopy(result)
+    unjudged["case_hash"] = _spec_hash(needs_a_judge)
+    resign(unjudged)
+    assert f"judge_unmeasured:{case['id']}" in quality_result_failures(
+        unjudged, needs_a_judge, verify_attestation=False
+    )
+
+
+def test_a_result_from_the_previous_schema_says_so_instead_of_looking_malformed(
+    monkeypatch, tmp_path,
+):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import validate_result
+
+    result, _seen = run_with_fake_provider(monkeypatch, tmp_path, "codex")
+    v2 = {key: value for key, value in result.items()
+          if key not in {"provider_isolation", "judge_isolation"}}
+    v2["eval_result_schema_version"] = 2
+    with pytest.raises(EvalCaseError, match="unsupported eval_result_schema_version"):
+        validate_result(v2, now=NOW, verify_attestation=False)
+
+    # Genuinely malformed current-schema evidence keeps its own diagnosis.
+    broken = copy.deepcopy(result)
+    broken.pop("provider_isolation")
+    with pytest.raises(EvalCaseError, match="schema fields are invalid"):
+        validate_result(broken, now=NOW, verify_attestation=False)
+
+
 def _spec_hash(case):
     from rig_workbench.eval.cases import evaluation_spec_hash
 
     return evaluation_spec_hash(case)
+
+
+def approved_case_ids():
+    """Directory name of every approved case actually committed to this repository."""
+    root = REPO_ROOT / "evals" / "cases"
+    return [path.parent.name for path in sorted(root.glob("*/case.json"))
+            if json.loads(path.read_text(encoding="utf-8"))["status"] == "approved"]
+
+
+def approved_case(case_id):
+    path = REPO_ROOT / "evals" / "cases" / case_id / "case.json"
+    raw = path.read_text(encoding="utf-8")
+    return json.loads(raw), raw
+
+
+def test_the_repository_has_approved_cases_to_hold_to_a_floor():
+    """Without this, an empty case set makes the parametrized floor tests cover nothing."""
+    assert approved_case_ids()
+
+
+@pytest.mark.parametrize("case_id", approved_case_ids())
+def test_every_approved_case_declares_the_isolation_its_evidence_must_have(case_id):
+    """The floor is a declaration, not a default.
+
+    Before claude became a permitted provider the runner refused it outright, so an
+    approved case could only ever be answered under codex's OS-enforced sandbox. With
+    claude allowed, a case that names no floor silently starts accepting agent-policy
+    evidence instead. These cases read prompt surfaces out of the worktree they are
+    measuring, so anything short of OS enforcement leaves the subject able to edit the
+    material it is being scored on. Asserting it here means deleting the field from a
+    case fails the suite rather than quietly weakening what its green means.
+    """
+    from rig_workbench.eval.cases import canonical_json, validate_case
+
+    case, raw = approved_case(case_id)
+    validate_case(case)
+    assert raw == canonical_json(case), f"{case_id} case.json is not canonical"
+    assert case["provider_policy"].get("min_isolation") == "os-enforced", (
+        f"approved case {case_id} accepts evidence weaker than OS-enforced isolation"
+    )
+
+
+@pytest.mark.parametrize("case_id", approved_case_ids())
+def test_approved_cases_reject_agent_policy_evidence_and_accept_os_enforced(
+    monkeypatch, tmp_path, case_id,
+):
+    from rig_workbench.eval.gate import quality_result_failures
+
+    case, _raw = approved_case(case_id)
+
+    weak, _seen = run_with_fake_provider(monkeypatch, tmp_path, "claude")
+    assert weak["provider_isolation"] == "agent-policy"
+    weak["case_id"] = case["id"]
+    weak["case_hash"] = _spec_hash(case)
+    resign(weak)
+    assert f"provider_isolation_policy:{case['id']}" in quality_result_failures(
+        weak, case, verify_attestation=False
+    )
+
+    strong, _seen = run_with_fake_provider(monkeypatch, tmp_path, "codex")
+    assert strong["provider_isolation"] == "os-enforced"
+    strong["case_id"] = case["id"]
+    strong["case_hash"] = _spec_hash(case)
+    resign(strong)
+    # The floor must reject weak evidence without rejecting everything: an OS-enforced
+    # run still clears it, so a green failure here is about isolation and nothing else.
+    assert f"provider_isolation_policy:{case['id']}" not in quality_result_failures(
+        strong, case, verify_attestation=False
+    )
 
 
 def test_recorded_isolation_level_is_covered_by_the_result_attestation(monkeypatch, tmp_path):
@@ -951,7 +1110,8 @@ def test_real_provider_nonzero_is_infrastructure_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
     monkeypatch.setattr(runner.shutil, "which", lambda _executable: "/bin/codex")
     monkeypatch.setattr(
-        runner, "_eval_agent_argv", lambda *_args: (["codex", "exec"], "os-enforced"),
+        runner, "_eval_agent_argv",
+        lambda *_args, **_kwargs: (["codex", "exec"], "os-enforced"),
     )
     monkeypatch.setattr(
         runner.subprocess, "run",
@@ -1048,3 +1208,155 @@ def test_command_evaluator_and_judge_cannot_read_attestation_key(tmp_path):
     assert evidence == {"status": "measured", "criteria": [
         {"id": "correct", "status": "pass", "score": 1.0}
     ]}
+
+
+def test_read_only_workspace_is_unwritable_and_always_removed():
+    from rig_workbench.eval.runner import read_only_workspace
+
+    with read_only_workspace(REPO_ROOT) as workspace:
+        opened = workspace
+        assert opened.is_dir() and opened.stat().st_mode & 0o222 == 0
+        with pytest.raises(PermissionError):
+            (opened / "written").write_text("x", encoding="utf-8")
+    assert not opened.exists()
+
+    # A 0555 directory is exactly the kind that resists cleanup: the failure path has to
+    # restore the mode itself, or the next run inherits litter it cannot delete.
+    with pytest.raises(RuntimeError):
+        with read_only_workspace(REPO_ROOT) as workspace:
+            failed = workspace
+            raise RuntimeError("injected failure")
+    assert not failed.exists()
+
+
+def _cli_run_with_fake_provider(monkeypatch, tmp_path, provider, *, judge_provider=None):
+    """Drive `eval run` end to end with the provider process faked out."""
+    from rig_workbench.eval import cli as eval_cli
+    from rig_workbench.eval import runner
+    from rig_workbench.eval.cases import canonical_json
+
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": []}
+    case["semantic_rubric"] = [{"id": "correct", "description": "Correct", "weight": 1.0}]
+    draft = tmp_path / ".rig" / "evals" / "drafts" / case["id"]
+    draft.mkdir(parents=True)
+    (draft / "case.json").write_text(canonical_json(case), encoding="utf-8")
+    seen = []
+    real_run = subprocess.run
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == "git":  # Execution identity still comes from the real repository.
+            return real_run(argv, **kwargs)
+        cwd = pathlib.Path(kwargs["cwd"])
+        seen.append({"argv": argv, "cwd": cwd, "mode": cwd.stat().st_mode & 0o777})
+        return subprocess.CompletedProcess(argv, 0, json.dumps({
+            "status": "measured",
+            "criteria": [{"id": "correct", "status": "pass", "score": 1}],
+        }), "")
+
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    code = eval_cli.cmd_eval([
+        "run", case["id"], "--provider", provider, "--model", "fixture",
+        "--repeat", "3", "--phase", "current", "--repo", str(tmp_path),
+        *(["--judge-provider", judge_provider, "--judge-model", "fixture"]
+          if judge_provider else []),
+    ])
+    assert code == 0 and seen
+    return seen
+
+
+def test_cli_runs_claude_from_a_read_only_workspace_that_can_still_read_the_repo(
+    monkeypatch, tmp_path, capsys,
+):
+    seen = _cli_run_with_fake_provider(
+        monkeypatch, tmp_path, "claude", judge_provider="claude",
+    )
+    capsys.readouterr()
+    root = tmp_path.resolve()
+
+    subjects = [call for call in seen if "--json-schema" not in call["argv"]]
+    judges = [call for call in seen if "--json-schema" in call["argv"]]
+    assert subjects and judges
+    for call in seen:
+        # Nothing the process can reach by a relative path is writable.
+        assert call["cwd"] != root and not call["cwd"].is_relative_to(root)
+        assert call["mode"] & 0o222 == 0
+    # The subject still has to read the prompt surfaces the case names, so the repository
+    # is handed to it as a second readable root; the judge is answered from its prompt
+    # alone and is never told where the repository is.
+    for call in subjects:
+        assert call["argv"][call["argv"].index("--add-dir") + 1] == str(root)
+    assert all("--add-dir" not in call["argv"] for call in judges)
+    # The workspace does not outlive the run.
+    assert not any(call["cwd"].exists() for call in seen)
+
+
+def test_cli_leaves_the_codex_adapter_in_the_repository_it_sandboxes(
+    monkeypatch, tmp_path, capsys,
+):
+    seen = _cli_run_with_fake_provider(
+        monkeypatch, tmp_path, "codex", judge_provider="codex",
+    )
+    capsys.readouterr()
+    root = tmp_path.resolve()
+
+    for call in seen:
+        assert call["cwd"] == root
+        assert call["argv"][call["argv"].index("--cd") + 1] == str(root)
+        assert call["argv"][call["argv"].index("--sandbox") + 1] == "read-only"
+        assert "--add-dir" not in call["argv"]
+
+
+def test_a_readable_root_equal_to_the_adapter_cwd_is_not_repeated_in_the_argv(
+    monkeypatch, tmp_path,
+):
+    from rig_workbench.eval import EvalCaseError, runner
+
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": []}
+    seen = []
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
+    monkeypatch.setattr(runner.subprocess, "run", lambda argv, **_kwargs: (
+        seen.append(argv) or subprocess.CompletedProcess(argv, 0, "scenario", "")
+    ))
+    runner.run_case(
+        case, repo=tmp_path, provider="claude", model="fixture", repeat=3,
+        phase="current", now=NOW, readable_root=tmp_path,
+    )
+    assert seen and all("--add-dir" not in argv for argv in seen)
+
+    with pytest.raises(EvalCaseError, match="readable root"):
+        runner.run_case(
+            draft_case(), repo=tmp_path, provider="mock", model="fixture", repeat=3,
+            phase="current", now=NOW, readable_root=tmp_path / "absent",
+        )
+
+
+def test_a_workspace_inside_the_measured_tree_is_refused(monkeypatch, tmp_path):
+    from rig_workbench.eval import EvalCaseError, runner
+    from rig_workbench.eval.runner import read_only_workspace
+
+    # The ambient temporary directory decides where mkdtemp lands, and inside the
+    # repository it would be a writable scratch directory in the very tree the run is
+    # supposed to leave alone.
+    monkeypatch.setattr(runner.tempfile, "tempdir", str(tmp_path))
+    with pytest.raises(EvalCaseError, match="outside the repository"):
+        with read_only_workspace(tmp_path):
+            pass
+    assert not list(tmp_path.glob("rig-eval-read-only-*"))
+
+
+def test_claude_outside_the_repository_must_be_told_where_the_repository_is(tmp_path):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.runner import run_case
+
+    workspace = tmp_path.parent / f"{tmp_path.name}-workspace"
+    workspace.mkdir()
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": []}
+    with pytest.raises(EvalCaseError, match="readable root"):
+        run_case(
+            case, repo=tmp_path, provider="claude", model="fixture", repeat=3,
+            phase="current", now=NOW, execution_cwd=workspace,
+        )

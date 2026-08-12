@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -14,7 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from rig_workbench import __version__
@@ -24,6 +25,7 @@ from .cases import (
     EvalCaseError,
     canonical_json,
     evaluation_spec_hash,
+    isolation_floor_violations,
     validate_case,
 )
 from .execution import execution_diff_sha256
@@ -59,7 +61,7 @@ JUDGE_OUTPUT_SCHEMA = json.dumps({
 
 def _eval_agent_argv(
     provider: str, prompt: str, repo: pathlib.Path, model: str,
-    *, json_schema: str | None = None,
+    *, json_schema: str | None = None, readable_root: pathlib.Path | None = None,
 ) -> tuple[list[str], str]:
     """Read-only, ephemeral eval adapter; deliberately independent of benchmark wrappers.
 
@@ -78,10 +80,17 @@ def _eval_agent_argv(
         # outside the process stops a write.
         # `--permission-mode plan` is deliberately absent: with writes denied, plan mode
         # answers "enable Write or leave plan mode" instead of producing the output.
+        # `--add-dir` is what makes the read-only workspace usable. `Read` already reaches
+        # absolute paths outside the cwd without it; what the subject loses by moving out
+        # of the repository is knowing where the repository *is*, so a case that says
+        # "リポジトリ直下の …" has nothing to resolve against. Naming it as a second working
+        # directory restores that. It grants no write tool, and a break that reaches one
+        # already has the repository at the same uid, so the level below is unaffected.
         return [
             "claude", "-p", "--safe-mode", "--no-session-persistence",
             "--strict-mcp-config", "--output-format", "text",
             *(["--json-schema", json_schema] if json_schema else []),
+            *(["--add-dir", str(readable_root)] if readable_root is not None else []),
             "--tools", "Read,Glob,Grep",
             "--disallowedTools", "Write,Edit,NotebookEdit,Bash",
             "--model", model,
@@ -89,11 +98,51 @@ def _eval_agent_argv(
     if provider == "codex":
         del prompt  # Prompt is transported confidentially via stdin exactly once.
         del json_schema  # codex has no structured-output flag; its argv is unchanged.
+        del readable_root  # codex reads through `--cd`; its argv must not move.
         return [
             "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
             "--cd", str(repo), "--ephemeral", "-m", model, "-",
         ], "os-enforced"
     raise EvalCaseError("unsupported read-only evaluation adapter")
+
+
+@contextlib.contextmanager
+def read_only_workspace(root: pathlib.Path | str) -> Iterator[pathlib.Path]:
+    """Yield a 0555 directory outside the repository, for use as an adapter cwd.
+
+    The same device pack evaluation already uses: an agent whose tool policy has been
+    broken still has to name a writable path, and a relative one now lands somewhere the
+    operating system refuses. It contains nothing else — the repository stays writable at
+    the same uid — so this raises the floor, it does not reach `os-enforced`.
+    """
+    outside = pathlib.Path(root).resolve()
+    workspace = pathlib.Path(tempfile.mkdtemp(prefix="rig-eval-read-only-"))
+    try:
+        # `TMPDIR` decides where that landed. Inside the measured tree it would be a
+        # writable scratch directory in the repository, which is the opposite of the point.
+        if workspace.resolve().is_relative_to(outside):
+            raise EvalCaseError("read-only adapter workspace must be outside the repository")
+        workspace.chmod(0o555)
+        yield workspace
+    finally:
+        try:
+            workspace.chmod(0o755)
+        except OSError:
+            pass
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def adapter_cwd(
+    provider: str | None, workspace: pathlib.Path, root: pathlib.Path,
+) -> pathlib.Path:
+    """Where one adapter process should run from.
+
+    Only `claude` moves. It carries no sandbox of its own, so the read-only workspace is
+    the only OS-level containment available to it. `codex` already runs under
+    `--sandbox read-only --cd <repo>`: moving its cwd would rewrite the argv its
+    isolation is verified against, and buy nothing it does not already have.
+    """
+    return workspace if provider == "claude" else root
 
 
 def eval_isolation_level(provider: str, repo: pathlib.Path, model: str) -> str:
@@ -210,6 +259,7 @@ def _check(spec: str, output: str, returncode: int) -> dict:
 def _execute(
     *, provider: str, model: str, payload: str, phase: str, kind: str, index: int,
     repeat: int, repo: pathlib.Path, command: str | None, timeout_s: float,
+    readable_root: pathlib.Path | None = None,
 ) -> tuple[int, str, str, str | None]:
     if provider == "mock":
         failures = math.ceil(repeat * 2 / 3)
@@ -225,7 +275,9 @@ def _execute(
         if not argv or pathlib.Path(argv[0]).name != argv[0] or argv[0] not in COMMAND_ALLOWLIST:
             raise EvalCaseError("command executable is not allowlisted")
     elif provider in {"claude", "codex"}:
-        argv, _isolation = _eval_agent_argv(provider, payload, repo, model)
+        argv, _isolation = _eval_agent_argv(
+            provider, payload, repo, model, readable_root=readable_root,
+        )
         if not argv or shutil.which(argv[0]) is None:
             return 127, "", "provider executable unavailable", "unavailable"
     else:
@@ -371,7 +423,7 @@ def _sample(
     case: dict, *, provider: str, model: str, phase: str, kind: str, index: int,
     repeat: int, repo: pathlib.Path, command: str | None, timeout_s: float,
     judge_adapter: JudgeAdapter | None, prompt_prefix: str | None,
-    execution_cwd: pathlib.Path,
+    execution_cwd: pathlib.Path, readable_root: pathlib.Path | None = None,
 ) -> dict:
     inputs = case["target_inputs"] if kind == "target" else case["clean_controls"]
     input_payload = canonical_json(inputs).rstrip("\n")
@@ -380,6 +432,7 @@ def _sample(
     returncode, stdout, stderr, infra = _execute(
         provider=provider, model=model, payload=payload, phase=phase, kind=kind,
         index=index, repeat=repeat, repo=execution_cwd, command=command, timeout_s=timeout_s,
+        readable_root=readable_root,
     )
     expectations = case.get(
         "target_expectations" if kind == "target" else "clean_expectations",
@@ -438,6 +491,7 @@ def run_case(
     prompt_binding_sha256: str | None = None,
     pack_tree_sha256: str | None = None,
     execution_cwd: pathlib.Path | str | None = None,
+    readable_root: pathlib.Path | str | None = None,
 ) -> tuple[pathlib.Path, dict]:
     validate_case(case)
     if phase not in {"baseline", "current"}:
@@ -481,19 +535,37 @@ def run_case(
         raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
     started_wall = _iso(now)
     adapter_cwd = pathlib.Path(execution_cwd).resolve() if execution_cwd is not None else root
+    # A second readable root only means something once the adapter runs outside the tree
+    # the case reads from; naming the cwd again would be argv noise.
+    readable = pathlib.Path(readable_root).resolve() if readable_root is not None else None
+    if readable is not None:
+        if not readable.is_dir():
+            raise EvalCaseError("readable root must be an existing directory")
+        if readable == adapter_cwd:
+            readable = None
+    if provider == "claude" and adapter_cwd != root and readable is None:
+        # A subject that cannot name the tree it is asked to read answers about nothing at
+        # all, and that reads as red quality rather than as the misconfiguration it is.
+        raise EvalCaseError("claude outside the repository requires a readable root")
     provider_isolation = eval_isolation_level(provider, adapter_cwd, model)
     judge_isolation = str(getattr(judge_adapter, "judge_isolation", "none"))
     if judge_isolation not in ISOLATION_RANK:
         raise EvalCaseError("judge adapter reports an unknown isolation level")
+    absent = "custom" if judge_adapter else "none"
+    judge_provider = str(getattr(judge_adapter, "judge_provider", absent))
+    judge_model = str(getattr(judge_adapter, "judge_model", absent))
     # An absent `min_isolation` accepts any level: the result records what it ran under,
     # so a case that has not asked for OS enforcement still cannot hide having skipped it.
-    required_isolation = policy.get("min_isolation")
-    if required_isolation is not None:
-        floor = ISOLATION_RANK[required_isolation]
-        if ISOLATION_RANK[provider_isolation] < floor:
-            raise EvalCaseError("provider isolation violates case provider policy")
-        if judge_adapter is not None and ISOLATION_RANK[judge_isolation] < floor:
-            raise EvalCaseError("judge isolation violates case provider policy")
+    # The floor is applied through the same helper the gates use, on the very fields the
+    # result will carry, so refusing to run and refusing the evidence stay one decision.
+    below_floor = isolation_floor_violations(policy, {
+        "provider_isolation": provider_isolation, "judge_isolation": judge_isolation,
+        "judge_provider": judge_provider,
+    })
+    if below_floor:
+        raise EvalCaseError(
+            f"{below_floor[0].replace('_', ' ')} violates case provider policy"
+        )
     execution_commit, execution_base_commit, execution_status = (
         _git_identity(root) if execution_base is None
         else _git_identity(root, execution_base)
@@ -507,12 +579,14 @@ def run_case(
     target = [_sample(case, provider=provider, model=model, phase=phase, kind="target",
                       index=index, repeat=repeat, repo=root, command=command,
                       timeout_s=timeout_s, judge_adapter=judge_adapter,
-                      prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd)
+                      prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd,
+                      readable_root=readable)
               for index in range(1, repeat + 1)]
     clean = [_sample(case, provider=provider, model=model, phase=phase, kind="clean",
                      index=index, repeat=repeat, repo=root, command=command,
                      timeout_s=timeout_s, judge_adapter=judge_adapter,
-                     prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd)
+                     prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd,
+                     readable_root=readable)
              for index in range(1, repeat + 1)]
     target_pass = sum(row["outcome"] == "pass" for row in target)
     clean_pass = sum(row["outcome"] == "pass" for row in clean)
@@ -521,8 +595,6 @@ def run_case(
         ("measured" if all(row["judge"].get("status") == "measured"
                            for row in [*target, *clean]) else "unmeasured")
     )
-    judge_provider = str(getattr(judge_adapter, "judge_provider", "custom" if judge_adapter else "none"))
-    judge_model = str(getattr(judge_adapter, "judge_model", "custom" if judge_adapter else "none"))
     judge_executor_version = str(
         getattr(judge_adapter, "judge_executor_version", __version__)
     )

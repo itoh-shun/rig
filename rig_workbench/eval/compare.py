@@ -11,10 +11,10 @@ from typing import Any
 from .attestation import verify_result_attestation
 from .cases import (
     ISOLATION_LEVELS,
-    ISOLATION_RANK,
     EvalCaseError,
     canonical_json,
     evaluation_spec_hash,
+    isolation_floor_violations,
     validate_case,
 )
 from .safety import unsafe_text_reason
@@ -44,15 +44,18 @@ def validate_result(
         "pack_tree_sha256",
         "result_sha256", "attestation",
     }
+    # Version before field set: a result from an older schema is missing fields this
+    # one requires, so the field check would report it as malformed and hide the only
+    # thing that is actually wrong with it — that it predates the current schema.
+    version = result.get("eval_result_schema_version")
+    if isinstance(version, bool) or version != 3:
+        raise EvalCaseError("unsupported eval_result_schema_version")
     unknown = set(result) - required
     missing = required - set(result)
     if unknown or missing:
         raise EvalCaseError("evaluation result schema fields are invalid")
     if verify_attestation and not verify_result_attestation(result):
         raise EvalCaseError("evaluation result attestation is invalid")
-    if (isinstance(result["eval_result_schema_version"], bool)
-            or result["eval_result_schema_version"] != 3):
-        raise EvalCaseError("unsupported eval_result_schema_version")
     for field in (
         "case_id", "provider", "model", "executor_version", "judge_provider",
         "judge_model", "judge_executor_version",
@@ -63,7 +66,7 @@ def validate_result(
     if result["provider"] not in {"mock", "claude", "codex", "command"}:
         raise EvalCaseError("evaluation result provider is invalid")
     for field in ("provider_isolation", "judge_isolation"):
-        if result[field] not in ISOLATION_LEVELS:
+        if not isinstance(result[field], str) or result[field] not in ISOLATION_LEVELS:
             raise EvalCaseError(f"evaluation result {field} is invalid")
     if (not isinstance(result["case_hash"], str)
             or not re.fullmatch(r"[0-9a-f]{64}", result["case_hash"])):
@@ -259,11 +262,8 @@ def compare_results(
         raise EvalCaseError("evaluation result violates judge provider policy")
     if policy.get("judge_models") and baseline["judge_model"] not in policy["judge_models"]:
         raise EvalCaseError("evaluation result violates judge model policy")
-    if policy.get("min_isolation") is not None:
-        floor = ISOLATION_RANK[policy["min_isolation"]]
-        if any(ISOLATION_RANK[baseline[field]] < floor
-               for field in ("provider_isolation", "judge_isolation")):
-            raise EvalCaseError("evaluation result violates isolation policy")
+    if isolation_floor_violations(policy, baseline):
+        raise EvalCaseError("evaluation result violates isolation policy")
     if baseline["repeat"] != case["repeat"] or current["repeat"] != case["repeat"]:
         raise EvalCaseError("evaluation result repeat does not match case repeat")
     if baseline["judge_provider"] == "mock" or current["judge_provider"] == "mock":

@@ -127,11 +127,32 @@ nothing outside the process stops a write, and `Read` can still reach absolute p
 the working directory. Hence `agent-policy`, and hence green from a Claude run is not
 interchangeable with green from a Codex run — the evidence says which one you have.
 
+Because that policy is the only thing refusing a write, the Claude adapter is not run in
+the repository. `eval run`, `eval reproduce`, and `eval affected-run` create a `0555`
+directory outside the worktree, run the adapter from there, and remove it when the run
+ends — the same device pack evaluation already uses. A write the policy failed to refuse
+then has to name an absolute path to land anywhere at all: a relative one is refused by
+the operating system rather than by the agent. The repository itself stays writable at the
+same uid, so this is a raised floor and not `os-enforced`; the recorded level does not
+change. Subject runs add `--add-dir <repo>`, because what a subject loses by moving out of
+the repository is not the ability to read it — `Read` reaches absolute paths anyway — but
+knowing where it is, and a case that says "リポジトリ直下の …" then has nothing to resolve
+against. Naming the repository as a second working directory restores that and grants no
+write tool. Judge runs get no `--add-dir`: a verdict is answered from the prompt alone.
+The Codex adapter does not move; it keeps `--sandbox read-only --cd <repo>`,
+which already denies writes from outside the process.
+
 A case that requires OS enforcement declares `provider_policy.min_isolation:
 "os-enforced"`; runs, comparisons, and gates then reject weaker subject or judge evidence.
-The key is optional, and omitting it accepts any level — safe only because the level is
-always recorded. Pack evaluation keeps the stricter bar unconditionally: durable,
-redistributed evidence still requires an OS-level read-only adapter.
+A result whose `judge_provider` is `none` ran no judge at all, so the floor does not apply
+to its `judge_isolation`: that field records an absent process, not an unisolated one, and
+a rubric-free case legitimately runs without a judge. Every approved case in this
+repository declares the floor, and a test asserts it: these cases read prompt surfaces out
+of the worktree they measure, so anything below OS enforcement would let a subject edit
+the material it is scored on. The key is syntactically optional, and omitting it accepts
+any level — tolerable only because the level is always recorded. Pack evaluation keeps the
+stricter bar unconditionally: durable, redistributed evidence still requires an OS-level
+read-only adapter.
 
 Semantic judging supports `mock`, `command`, `claude`, and `codex` through
 `--judge-provider` and `--judge-model`; command judges additionally require
