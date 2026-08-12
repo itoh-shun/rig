@@ -274,6 +274,37 @@ def test_a_branch_behind_on_an_unrelated_case_is_not_charged_for_it(tmp_path):
     assert report["coverage_stale"] == [] and report["coverage_regressions"] == []
 
 
+def test_stale_coverage_through_a_recipe_names_only_the_paths_that_reach_it(tmp_path):
+    """A surface is also covered when a case covers a recipe that composes it, and the
+    stale reading has to follow the same edges — including the edge it must *not*
+    follow. Charging every affected path for a recipe only one of them reaches names
+    a recipe the author never touched and, worse, takes the other path out of
+    `coverage_debt`, which is the count CI publishes as its warning."""
+    repo, _root = _repo(tmp_path)
+    recipe = repo / "skills/engine/recipes/auth.md"
+    recipe.parent.mkdir(parents=True, exist_ok=True)
+    recipe.write_text("---\nname: auth\nsteps:\n  - id: review\n"
+                      "    personas: [reviewer]\n---\n", encoding="utf-8")
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    _touch(repo, INSTRUCTION)                       # reaches no recipe at all
+    fork = _commit(repo, "a recipe, its persona, and an unrelated instruction")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    base = _commit(repo, "the base branch covers the recipe")
+
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    _touch(repo, INSTRUCTION, "edited too\n")
+    head = _commit(repo, "edit both, carrying no case")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered"
+    assert [item for item in report["coverage_stale"] if item.startswith(PERSONA)], report
+    assert not [item for item in report["coverage_stale"]
+                if item.startswith(INSTRUCTION)], report
+    # The honest debt is still counted rather than swallowed by the recipe's failure.
+    assert report["coverage_debt"] == [INSTRUCTION], report
+
+
 def test_the_landing_view_keeps_what_the_base_gained_and_drops_what_this_removed(tmp_path):
     """The three-way rule stated on its own, because both readings depend on it."""
     from rig_workbench.eval.affected import _landing_coverage, _regressions

@@ -707,7 +707,14 @@ def analyze_affected(
         if demand and not matched:
             recipe_paths = [item["path"] for item in surfaces]
             if landing_recipes.get(recipe):
-                for path in recipe_paths or [f"recipe:{recipe}"]:
+                # Only the surfaces that actually reach this recipe. Charging every
+                # affected path was harmless while the target was `debt` — a superset
+                # of an exit-0 count — and is not once the target is fatal: it would
+                # name a recipe an unrelated path has nothing to do with, and take
+                # that path out of `coverage_debt`, which is the number CI publishes.
+                reaching = [path for path in recipe_paths
+                            if recipe in recipes_by_surface[path]]
+                for path in reaching or [f"recipe:{recipe}"]:
                     stale_by_path.setdefault(
                         path,
                         f"{path} (recipe:{recipe} is covered on the base branch by "
