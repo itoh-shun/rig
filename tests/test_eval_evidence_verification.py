@@ -670,6 +670,153 @@ def test_forking_before_the_evidence_existed_does_not_escape_the_ratchet(tmp_pat
     assert (repo / RECIPE_REL).read_text(encoding="utf-8") == BAD
 
 
+def _covered_after_the_fork(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, str]:
+    """A surface that landed before anyone wrote a case for it, then got one.
+
+    This repository's actual shape: `evals/cases/` holds a handful of cases and
+    every prompt surface predates them, so "fork from before this case existed" is
+    available for almost any surface, and needs no key and no forgery — only a
+    commit id from the public history.
+
+    Returns the repo, the commit where the surface exists and the case does not,
+    and the base branch's tip, where the case exists and has been measured.
+    """
+    from rig_workbench.eval.affected_run import run_affected
+    from rig_workbench.eval.cases import canonical_json
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "trunk")
+    _git(repo, "config", "user.email", "eval@test.invalid")
+    _git(repo, "config", "user.name", "eval-test")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    root_commit = _git(repo, "rev-parse", "HEAD")
+
+    recipe = repo / RECIPE_REL
+    recipe.parent.mkdir(parents=True)
+    recipe.write_text(GOOD, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "the prompt surface, with no case for it yet")
+    uncovered = _git(repo, "rev-parse", "HEAD")
+
+    case = copy.deepcopy(valid_case())
+    case["id"] = CASE_ID
+    case["prompt_surfaces"] = ["recipe:sample"]
+    case["provider_policy"] = {
+        "mode": "allowlist", "allowed": ["command"], "models": ["fixture"],
+        "judge_providers": ["command"], "judge_models": ["fixture"],
+    }
+    case["target_inputs"] = {"prompt_surface_fixture": "explicit binding fixture"}
+    case["deterministic_checks"] = ["contains:prompt_surface_fixture"]
+    case["clean_controls"] = {"prompt_surface_fixture": "control"}
+    case_path = repo / CASE_REL
+    case_path.parent.mkdir(parents=True)
+    case_path.write_text(canonical_json(case), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "somebody writes the case and measures it")
+    report, code, _destination = run_affected(
+        repo, base=root_commit, head="HEAD", provider="command", model="fixture",
+        judge_provider="command", judge_model="fixture", provider_command=COMMAND,
+        judge_command=JUDGE_COMMAND,
+    )
+    assert code == 0, report
+    _git(repo, "add", "evals/evidence")
+    _git(repo, "commit", "-q", "-m", "signed evaluation evidence")
+    return repo, uncovered, _git(repo, "rev-parse", "HEAD")
+
+
+def test_forking_before_the_case_existed_does_not_drop_the_requirement(tmp_path):
+    """The same fork, aimed one layer lower: at the coverage, not the evidence.
+
+    Moving the evidence ratchet to the base tip left the *coverage* ratchet on the
+    fork point, and that was enough on its own — with no case at the fork point
+    there is nothing to replay and nothing to forge. Fork from before the case was
+    written, edit only the prompt, carry no case and no evidence: the surface read
+    as one nobody has written a case for, which is debt, which is exit 0. No key,
+    no signature, no evidence.
+
+    Then the merge restores the case, because the branch never deleted it, and the
+    push to the default branch runs the same gate and fails on
+    `execution_prompt_surface_changed` — green PR, red trunk, which is #402's shape
+    and the thing every ratchet in this module was written to stop.
+
+    What is compared is the coverage the *merge* would land, so the branch is
+    charged for the case it will inherit rather than only for the tree it carries.
+    """
+    repo, uncovered, base_tip = _covered_after_the_fork(tmp_path)
+
+    # The control: the same edit, forked from the base tip. Refused, and refused
+    # for the right reason — the case is right there and its measurement no longer
+    # describes the surface.
+    _git(repo, "checkout", "-q", "-b", "honest")
+    recipe = repo / RECIPE_REL
+    recipe.write_text(BAD, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "PR2: change the prompt, from the base tip")
+    control, control_code = _gate(repo, base_tip, ratchet=True)
+    assert control_code == 1 and any(
+        item.startswith("execution_prompt_surface_changed") for item in control["failures"]
+    ), control
+
+    _git(repo, "checkout", "-q", "-b", "evil", uncovered)
+    recipe.write_text(BAD, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "PR3: change the prompt, carrying no case")
+    assert not (repo / CASE_REL).exists() and not (repo / EVIDENCE_REL).exists()
+    assert _git(repo, "merge-base", base_tip, "HEAD") == uncovered
+
+    report, code = _gate(repo, base_tip, ratchet=True)
+    assert code == 1, report
+    assert [item for item in report["failures"]
+            if item.startswith(f"coverage_stale:{RECIPE_REL} ")], report
+    # Not debt: somebody did write a case for this surface. Reporting it as debt is
+    # the bypass, so the same path must not appear as both.
+    assert report["coverage_debt"] == [], report
+
+    # And it really was mergeable — no conflict, and the bad prompt lands.
+    _git(repo, "checkout", "-q", "trunk")
+    _git(repo, "merge", "-q", "--no-edit", "evil")
+    assert recipe.read_text(encoding="utf-8") == BAD
+    assert (repo / CASE_REL).exists(), "the merge restores the case the branch lacked"
+    after, after_code = _gate(repo, base_tip, ratchet=True)
+    assert after_code == 1 and any(
+        item.startswith("execution_prompt_surface_changed") for item in after["failures"]
+    ), after                          # the red push the PR is no longer hiding
+
+
+def test_carrying_the_case_with_its_binding_emptied_is_the_same_refusal(tmp_path):
+    """The one-line mutation of the fork above, which "is the case present?" misses.
+
+    Carry the case, and delete the surface it binds. At the fork point the case did
+    not exist, so nothing was taken away and it is not a coverage regression; the
+    branch's own tree then says this surface is covered by nothing at all. Only
+    asking the landing tree — the branch's cases plus what the base branch gained
+    since the fork — separates that from honest debt, which is why both readings go
+    through one predicate rather than two spellings of it.
+    """
+    from rig_workbench.eval.cases import canonical_json
+
+    repo, uncovered, base_tip = _covered_after_the_fork(tmp_path)
+
+    _git(repo, "checkout", "-q", "-b", "evil", uncovered)
+    case = json.loads(_git(repo, "show", f"{base_tip}:{CASE_REL}"))
+    case["prompt_surfaces"] = []
+    case_path = repo / CASE_REL
+    case_path.parent.mkdir(parents=True, exist_ok=True)
+    case_path.write_text(canonical_json(case), encoding="utf-8")
+    (repo / RECIPE_REL).write_text(BAD, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "PR3: keep the case, drop what it covers")
+
+    report, code = _gate(repo, base_tip, ratchet=True)
+    assert code == 1, report
+    assert [item for item in report["failures"]
+            if item.startswith(f"coverage_stale:{RECIPE_REL} ")], report
+    assert report["coverage_debt"] == [], report
+
+
 def test_the_replay_is_refused_at_the_base_tip_and_invisible_at_a_pinned_snapshot(tmp_path):
     """Why `--base` has to be resolved rather than read out of the event payload.
 

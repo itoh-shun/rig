@@ -79,6 +79,29 @@ Both are before the merge button. The ratchet starts protecting a case once a
 second measurement of it exists on the base branch: with none committed, there is
 nothing to move backwards from.
 
+Moving the evidence ratchet to the base tip and leaving the **coverage** ratchet on
+the fork point left the same bypass with the key removed. Fork from a commit before
+the case was written, edit only the prompt, and carry no case: at the fork point
+there is no coverage to lose and no case to match, so the surface reports as
+`coverage_debt` and exit 0 — no key, no signature, no evidence. The merge then
+restores the case, because the branch never deleted it, and the push to the default
+branch fails on `execution_prompt_surface_changed`. Green PR, red trunk, #402's
+shape again.
+
+Coverage and the registry are now compared against the base branch's tip too, and
+what is judged is the state the merge would land: this branch's cases, plus what the
+base branch has gained since the fork. The diff that decides *which surfaces this
+change touches* stays at `merge-base(base, head)` — that is what all three merge
+buttons land, and diffing from the tip is what made a release-scale PR structurally
+unpassable (#367). A surface the base branch covers and this change does not is
+`coverage_stale`, fatal, and distinct from debt: somebody did write that case, and
+merging the base branch in and re-measuring is what clears it. The demand is scoped
+to the affected surfaces, so a branch merely behind on a case it does not touch is
+charged nothing, and a case the base branch added after the fork is not read as a
+deletion. `affected-run` reports regressions, staleness and registry narrowings by
+name instead of exiting 1 with an empty `failures` list, and a base tree the ratchet
+cannot read is `coverage_base_unreadable` rather than a quiet pass.
+
 Three smaller things this made load bearing. `eval gate` and `affected-run` take
 `--ratchet` and CI passes it: strict, a change touching one covered surface next to
 any of the ~198 without a case failed `uncovered:<path>`, which no evidence can

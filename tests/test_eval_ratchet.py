@@ -219,6 +219,119 @@ def test_a_case_that_was_never_approved_is_not_counted_as_lost(tmp_path):
     assert report["coverage_regressions"] == []
 
 
+# ── the comparison point: the base branch's tip, not the fork ────────────────
+def _forked(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, str]:
+    """Two surfaces exist, then the base branch writes a case for one of them.
+
+    Returns the repo, the fork point where neither surface has a case, and the base
+    branch's tip. A branch forked at the first commit is behind on that case without
+    having deleted anything, which is the state the fork-point comparison could not
+    tell apart from "nobody has written this case yet".
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    _touch(repo, PERSONA)
+    fork = _commit(repo, "two surfaces, no cases")
+    _write_case(repo, "login-case", ["instruction:login"])
+    return repo, fork, _commit(repo, "the base branch writes the case")
+
+
+def test_a_case_written_on_the_base_branch_after_the_fork_is_still_owed(tmp_path):
+    """The bypass: fork from before the case, edit only the prompt, carry no case.
+
+    Against the fork point there was no coverage to lose and no case to match, so
+    the surface came back as debt and exit 0 — and the merge then landed the edit
+    next to the case it restores, which the base branch's own push refuses. The
+    comparison is the tip now, so what the merge would land is what is judged.
+    """
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    head = _commit(repo, "edit the covered prompt, carrying no case")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered"
+    assert any(INSTRUCTION in item and "login-case" in item
+               for item in report["coverage_stale"]), report
+    # Reported as exactly one of the two, and not as the survivable one.
+    assert report["coverage_debt"] == []
+    # Nothing was taken away: the branch never had the case to delete.
+    assert report["coverage_regressions"] == []
+
+
+def test_a_branch_behind_on_an_unrelated_case_is_not_charged_for_it(tmp_path):
+    """What keeps the tip usable as the reference: only a case that covers a surface
+    *this change edits* is owed. Every other PR open while a case lands is untouched,
+    which is the difference between a ratchet and a branch-wide rebase demand."""
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature", fork)
+    _touch(repo, PERSONA, "an edit to the surface nobody covered\n")
+    head = _commit(repo, "edit the uncovered surface only")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "debt"
+    assert report["coverage_debt"] == [PERSONA]
+    assert report["coverage_stale"] == [] and report["coverage_regressions"] == []
+
+
+def test_the_landing_view_keeps_what_the_base_gained_and_drops_what_this_removed(tmp_path):
+    """The three-way rule stated on its own, because both readings depend on it."""
+    from rig_workbench.eval.affected import _landing_coverage, _regressions
+
+    fork = {"kept": {"instruction:login"}}
+    base = {"kept": {"instruction:login"}, "added-since": {"persona:reviewer"}}
+    landing = _landing_coverage({}, base, fork)      # a branch carrying neither
+
+    assert landing == {"added-since": {"persona:reviewer"}}
+    lost = _regressions(base, landing)
+    assert [item for item in lost if "kept" in item], lost
+    assert not [item for item in lost if "added-since" in item], lost
+    assert _landing_coverage({}, None, fork) is None
+    assert _landing_coverage({}, base, None) is None
+
+
+def test_a_registry_root_the_base_branch_added_after_the_fork_is_not_a_narrowing(tmp_path):
+    """The same three-way reading, and why the registry does not get a `stale`.
+
+    Being behind on a root means the merge lands the base branch's *wider* field of
+    view, so nothing stops being seen and there is nothing to demand. Being behind
+    on a case means the merge lands somebody's case next to an unmeasured edit.
+    """
+    from rig_workbench.eval.affected import _landing_registry, _registry_narrowings
+
+    def root(prefix, extensions=(".md",)):
+        return {"prefix": prefix, "kind": prefix.strip("/"), "recursive": True,
+                "extensions": list(extensions)}
+
+    fork = {"agents/": root("agents/")}
+    base = {"agents/": root("agents/", (".md", ".yaml")), "commands/": root("commands/")}
+    behind = {"roots": [root("agents/")]}            # forked before both additions
+
+    assert _registry_narrowings(base, _landing_registry(behind, base, fork)) == []
+    # And what this branch really does take away is still fatal.
+    removed = _landing_registry({"roots": []}, base, fork)
+    assert any("agents/" in item for item in _registry_narrowings(base, removed))
+
+
+def test_a_base_coverage_that_cannot_be_read_is_named_rather_than_passed(tmp_path,
+                                                                        monkeypatch):
+    """`_regressions` shrugs at an unanswerable comparison because it is one guard
+    among several. This one is the guard, so it says so instead."""
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    head = _commit(repo, "edit a surface")
+    monkeypatch.setattr(module, "_coverage_at", lambda *args, **kwargs: None)
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is True
+    assert report["status"] == "uncovered"
+    # Strict mode never asks the question: every uncovered surface already fails it.
+    strict = analyze(repo, base, head=head, require_cases=True)
+    assert strict["coverage_base_unreadable"] is False
+
+
 # ── the CLI contract CI depends on ───────────────────────────────────────────
 def run_cli(repo, *args):
     import os
@@ -286,6 +399,22 @@ def test_gate_ratchet_fails_on_a_coverage_regression_and_says_which(tmp_path):
     assert code == 1 and report["status"] == "failed"
     assert any(item.startswith("coverage_regression:") and "login-case" in item
                for item in report["failures"])
+
+
+def test_gate_ratchet_names_stale_coverage_and_what_covers_it(tmp_path):
+    """Same empty-`failures` hole as a regression, and the same repair: a surface
+    the base branch covers and this change does not touches nothing in `uncovered`,
+    so the reason has to be named or the exit code stands alone."""
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    head = _commit(repo, "edit the covered prompt, carrying no case")
+
+    report, code = gate(repo, base, head=head, ratchet=True)
+    assert code == 1 and report["status"] == "failed"
+    assert any(item.startswith(f"coverage_stale:{INSTRUCTION} ") and "login-case" in item
+               for item in report["failures"]), report
+    assert report["coverage_debt"] == []
 
 
 def test_gate_ratchet_still_fails_on_an_unregistered_surface_kind(tmp_path):

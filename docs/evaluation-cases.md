@@ -59,6 +59,7 @@ habit does not stay confined to this job.
 | has a case | pass | pass |
 | has no case yet | `uncovered`, exit 1 | **`coverage_debt`**, exit 0 |
 | its coverage was removed by this change | not detected | **`coverage_regressions`**, exit 1 |
+| the base branch has a case for it; this change does not | `uncovered`, exit 1 | **`coverage_stale`**, exit 1 |
 | kind not in the registry | `uncovered`, exit 1 | `uncovered`, exit 1 |
 | the registry itself was **widened** | `uncovered`, exit 1 | reported, exit 0 |
 | the registry itself was **narrowed** | `uncovered`, exit 1 | `registry_narrowings`, exit 1 |
@@ -83,9 +84,42 @@ happen is coverage going *down* — deleting a promoted case, or narrowing the
 the governance layer applies to policy layers, and the debt count is a number that moves
 from the first day rather than a wall that never opens.
 
-`coverage_regressions` is only claimed when it can be demonstrated. If the base tree
-cannot be read — a shallow clone, an unborn ref — the comparison reports no regression
-rather than accusing the change of deleting everything.
+`coverage_regressions` is only claimed when it can be demonstrated: a base tree that
+cannot be read yields no accusation rather than a claim that everything was deleted.
+The unanswerable comparison is reported on its own (`coverage_base_unreadable`, exit 1)
+instead of passing quietly, because under `--ratchet` this comparison is the one that
+notices a branch forked from before a case existed.
+
+### Which commit coverage is compared against
+
+Two references, and the split is deliberate:
+
+* **What this change changes** is diffed from `merge-base(base, head)`. That is what all
+  three merge buttons land — merge and squash are three-way from the fork point, rebase
+  replays the branch's own commits — so diffing from the base *tip* would charge a branch
+  for everything the base branch did since it forked, which is what made a release-scale
+  PR structurally unpassable (#367).
+* **What this change must still cover** is compared against `base`, the base branch's tip,
+  through the coverage the merge would land: this branch's cases, plus what the base branch
+  has gained since the fork. Coverage is state rather than a diff, and the state that
+  matters is the one that ends up on the default branch.
+
+Against the fork point the two questions were the same question, and that was a bypass with
+no key in it: fork from a commit before the case was written, edit only the prompt, carry no
+case, and the surface reported as `coverage_debt` and exit 0. The merge then restored the
+case — the branch never deleted it — and the push to the default branch failed on
+`execution_prompt_surface_changed`. Green PR, red trunk, which is #402's shape.
+
+So being behind the base branch on a case that covers a surface this change edits is
+`coverage_stale` and fatal. It is not debt: somebody did write that case. What clears it is
+merging the base branch in and re-measuring, which is what the default branch's own push
+would demand a moment later. A branch merely behind on a case it does not touch is charged
+nothing — the demand is scoped to the affected surfaces, which is what keeps the tip usable
+as the reference while other PRs are open.
+
+The registry is read the same way and gets no `stale` of its own: being behind on a root
+means the merge lands the base branch's *wider* field of view, so nothing the gate could see
+stops being seen. A root this branch actually removes is still `registry_narrowings`.
 
 The paid quality steps key off `affected_cases`, not off the status: with no case covering
 the change there is nothing to measure, and demanding a provider run anyway is what made
