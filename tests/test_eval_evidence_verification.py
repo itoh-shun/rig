@@ -10,7 +10,9 @@ that the evidence describes *this* tree. These tests pin what that check refuses
 import copy
 import hashlib
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 
 import pytest
@@ -26,6 +28,10 @@ JUDGE_COMMAND = (
 )
 RECIPE_REL = "skills/engine/recipes/sample.md"
 CASE_ID = "verify-case"
+CASE_REL = f"evals/cases/{CASE_ID}/case.json"
+EVIDENCE_REL = f"evals/evidence/{CASE_ID}/current.json"
+BAD = "---\nname: sample\nsteps: []\n---\nBAD PROMPT (later reverted)\n"
+GOOD = "---\nname: sample\nsteps: []\n---\nGOOD PROMPT\n"
 
 
 def _git(repo: pathlib.Path, *args: str) -> str:
@@ -506,22 +512,20 @@ def test_a_rewriting_merge_does_not_turn_the_default_branch_red(tmp_path, strate
     assert f"execution_prompt_surface_changed:{CASE_ID}:{RECIPE_REL}" in edited["failures"]
 
 
-def test_an_old_signed_measurement_cannot_be_replayed_out_of_the_history(tmp_path):
-    """The gate's whole reason to exist, and what it did not check.
+def _reverted(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, str, str]:
+    """A history holding everything a replay needs, all of it public.
 
-    The attacker holds no key. Everything they use is already public in the
-    repository: a prompt that was measured green and later reverted by humans, and
-    the signed evidence blob that measured it. Restoring both in one PR satisfies
-    every other check by construction — the signature is genuine, the measured
-    commit really is an ancestor, and the content matches because it is the same
-    content. Without a ratchet on the evidence itself, write access to a branch is
-    enough to re-land a reverted prompt, and signing the evidence bought nothing.
+    A prompt is measured green (PR1); humans revert it and measure again (PR2).
+    The attacker holds no key — the bad prompt and the signed blob that measured
+    it are both readable straight out of the history, and putting the two back
+    satisfies every other check in this module by construction.
+
+    Returns the repo, the commit before any of this (where a branch can fork to
+    find no evidence at all), the two PR tips, and PR1's evidence blob. Three
+    tests below re-land that blob by three different routes.
     """
     from rig_workbench.eval.affected_run import run_affected
     from rig_workbench.eval.cases import canonical_json
-
-    bad = "---\nname: sample\nsteps: []\n---\nBAD PROMPT (later reverted)\n"
-    good = "---\nname: sample\nsteps: []\n---\nGOOD PROMPT\n"
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -543,7 +547,7 @@ def test_an_old_signed_measurement_cannot_be_replayed_out_of_the_history(tmp_pat
     case["target_inputs"] = {"prompt_surface_fixture": "explicit binding fixture"}
     case["deterministic_checks"] = ["contains:prompt_surface_fixture"]
     case["clean_controls"] = {"prompt_surface_fixture": "control"}
-    case_path = repo / "evals" / "cases" / CASE_ID / "case.json"
+    case_path = repo / CASE_REL
     case_path.parent.mkdir(parents=True)
     case_path.write_text(canonical_json(case), encoding="utf-8")
 
@@ -559,33 +563,111 @@ def test_an_old_signed_measurement_cannot_be_replayed_out_of_the_history(tmp_pat
 
     recipe = repo / RECIPE_REL
     recipe.parent.mkdir(parents=True)
-    recipe.write_text(bad, encoding="utf-8")
+    recipe.write_text(BAD, encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "PR1: the prompt that was later found bad")
     measure(root_commit)
     pr1_tip = _git(repo, "rev-parse", "HEAD")
-    replayable = _git(repo, "show", f"{pr1_tip}:evals/evidence/{CASE_ID}/current.json")
+    replayable = _git(repo, "show", f"{pr1_tip}:{EVIDENCE_REL}")
 
-    recipe.write_text(good, encoding="utf-8")
+    recipe.write_text(GOOD, encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "PR2: humans revert it; the eval never saw why")
     measure(pr1_tip)
-    pr2_tip = _git(repo, "rev-parse", "HEAD")
+    return repo, root_commit, pr1_tip, _git(repo, "rev-parse", "HEAD"), replayable
+
+
+def test_an_old_signed_measurement_cannot_be_replayed_out_of_the_history(tmp_path):
+    """The gate's whole reason to exist, and what it did not check.
+
+    The attacker holds no key. Restoring the reverted prompt together with the
+    evidence that measured it satisfies every other check by construction — the
+    signature is genuine, the measured commit really is an ancestor, and the
+    content matches because it is the same content. Without a ratchet on the
+    evidence itself, write access to a branch is enough to re-land a reverted
+    prompt, and signing the evidence bought nothing.
+    """
+    repo, _root, pr1_tip, pr2_tip, replayable = _reverted(tmp_path)
+    recipe = repo / RECIPE_REL
 
     honest, honest_code = _gate(repo, pr1_tip)
     assert honest_code == 0, honest
 
-    recipe.write_text(bad, encoding="utf-8")
-    (repo / "evals" / "evidence" / CASE_ID / "current.json").write_text(
-        replayable, encoding="utf-8"
-    )
+    recipe.write_text(BAD, encoding="utf-8")
+    (repo / EVIDENCE_REL).write_text(replayable, encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "PR3: re-land the reverted prompt with its old evidence")
 
     report, code = _gate(repo, pr2_tip)
     assert code == 1, report
     assert f"evidence_regression:{CASE_ID}" in report["failures"]
-    assert recipe.read_text(encoding="utf-8") == bad     # the PoC really did re-land it
+    assert recipe.read_text(encoding="utf-8") == BAD     # the PoC really did re-land it
+
+
+def test_the_evidence_directory_cannot_be_moved_out_from_under_the_ratchet(tmp_path):
+    """The same replay, with the comparison pointed somewhere it finds nothing.
+
+    Committing `evals/evidence` as a link to a directory that has no history was
+    enough to silence the whole ratchet: the gate reads evidence off the
+    filesystem and followed the link, while the comparison resolved the link and
+    asked git about `evals/evidence-real`, which no commit has ever held. Neither
+    half of that is true any more — the comparison path is a literal, and the
+    shape is refused on its own.
+
+    Nothing about this branch is hard to merge: it forks from the base tip, so it
+    conflicts with nothing, and the merge really does land the bad prompt.
+    """
+    repo, _root, _pr1_tip, pr2_tip, replayable = _reverted(tmp_path)
+
+    _git(repo, "checkout", "-q", "-b", "evil")
+    relocated = repo / "evals" / "evidence-real" / CASE_ID
+    relocated.mkdir(parents=True)
+    (relocated / "current.json").write_text(replayable, encoding="utf-8")
+    shutil.rmtree(repo / "evals" / "evidence")
+    os.symlink("evidence-real", repo / "evals" / "evidence")
+    (repo / RECIPE_REL).write_text(BAD, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "PR3: relocate the evidence directory")
+    assert _git(repo, "ls-files", "-s", "evals/evidence").startswith("120000")
+
+    report, code = _gate(repo, pr2_tip)
+    assert code == 1, report
+    assert "evidence_symlink:evals/evidence" in report["failures"]
+    assert f"evidence_regression:{CASE_ID}" in report["failures"]
+
+    # And it really was mergeable, which is what made it worth refusing.
+    _git(repo, "checkout", "-q", "trunk")
+    _git(repo, "merge", "-q", "--no-edit", "evil")
+    assert (repo / RECIPE_REL).read_text(encoding="utf-8") == BAD
+
+
+def test_forking_before_the_evidence_existed_does_not_escape_the_ratchet(tmp_path):
+    """Where a branch forks from is the author's choice, so it cannot be the
+    comparison point.
+
+    Branching from before this case was ever measured left the fork point holding
+    no evidence, and "nothing to compare against" was a pass. The base branch's
+    tip is what the measurement has to beat now, and a branch cannot move that.
+    """
+    repo, root_commit, pr1_tip, pr2_tip, replayable = _reverted(tmp_path)
+
+    _git(repo, "checkout", "-q", "-b", "evil", root_commit)
+    for rel in (CASE_REL, RECIPE_REL):
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_git(repo, "show", f"{pr1_tip}:{rel}") + "\n", encoding="utf-8")
+    (repo / RECIPE_REL).write_text(BAD, encoding="utf-8")
+    evidence = repo / EVIDENCE_REL
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text(replayable, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "PR3: re-land it from before the evidence existed")
+    assert _git(repo, "merge-base", pr2_tip, "HEAD") == root_commit
+
+    report, code = _gate(repo, pr2_tip)
+    assert code == 1, report
+    assert f"evidence_regression:{CASE_ID}" in report["failures"]
+    assert (repo / RECIPE_REL).read_text(encoding="utf-8") == BAD
 
 
 def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path):
@@ -644,6 +726,82 @@ def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path)
     _git(repo, "commit", "-q", "-m", "measure again")
     cleared, cleared_code = _gate(repo, newer)
     assert cleared_code == 0 and cleared["status"] == "pass", cleared
+
+
+def test_a_base_branch_the_ratchet_cannot_read_is_refused_rather_than_waved_through(
+    tmp_path,
+):
+    """A question that cannot be answered is an accusation, not a pass.
+
+    Every other unanswerable case in this module abstains, which is the right
+    stance for a guard that sits alongside others. This one sits alone: every
+    remaining check passes a replayed measurement by construction, so "I could not
+    read the base branch" has to be a refusal or the attack becomes "arrange for
+    it to be unreadable".
+
+    The unreadable base here is a real shape rather than a stub. A clone made with
+    `--filter=blob:none` has the trees but not the blobs, and reads them from the
+    remote on demand; on a runner with no network for that fetch, this is exactly
+    what the ratchet sees.
+    """
+    from rig_workbench.eval.affected import prompt_surface_digests
+    from rig_workbench.eval.execution import execution_diff_sha256
+
+    repo, _base, evidence = _measured(tmp_path)
+    signed = json.loads(evidence.read_text(encoding="utf-8"))
+    # The base branch's own copy of this evidence, which is the blob that goes
+    # missing below. It exists nowhere in this branch's history, so nothing else
+    # the gate recomputes needs to read it.
+    _git(repo, "checkout", "-q", "-b", "master")
+    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "the base branch re-measures the same case")
+    newer = _git(repo, "rev-parse", "HEAD")
+
+    _git(repo, "checkout", "-q", "trunk")
+    recipe = repo / RECIPE_REL
+    recipe.write_text(recipe.read_text(encoding="utf-8") + "this branch's own edit\n",
+                      encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "this branch's prompt change")
+    measured = _git(repo, "rev-parse", "HEAD")
+    _resign(evidence, started_at="2026-08-11T10:00:00+00:00",
+            prompt_surface_digests=prompt_surface_digests(repo, measured),
+            execution_commit=measured,
+            execution_diff_sha256=execution_diff_sha256(
+                repo, base=signed["execution_base_commit"], head=measured))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "this branch's own measurement")
+
+    blob = _git(repo, "rev-parse", f"{newer}:{EVIDENCE_REL}")
+    loose = repo / ".git" / "objects" / blob[:2] / blob[2:]
+    assert loose.is_file(), "fixture assumes the base branch's evidence is a loose object"
+    loose.unlink()
+
+    report, code = _gate(repo, newer)
+    assert code == 1, report
+    assert report["failures"] == [f"evidence_ratchet_unavailable:{CASE_ID}"], report
+
+
+def test_evidence_carrying_no_content_binding_at_all_is_refused(tmp_path):
+    """What a key holder can produce by accident, and the gate's floor under it.
+
+    `rig-wb eval run` writes `prompt_surface_digests: null` — it measures without
+    a tree to bind to — and that file is a properly signed result. Filed under
+    `evals/evidence/` it would be a measurement of nothing in particular, and the
+    content binding, which is the only binding left after a squash, would have
+    nothing to compare. Refusing it is what makes the rest of that check load
+    bearing rather than optional.
+    """
+    repo, base, evidence = _measured(tmp_path)
+    _resign(evidence, prompt_surface_digests=None)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "evidence measured without a tree")
+
+    report, code = _gate(repo, base)
+    assert code == 1, report
+    assert f"execution_digests_absent:{CASE_ID}" in report["failures"]
+    assert f"execution_identity_mismatch:{CASE_ID}" in report["failures"]
 
 
 def test_the_directory_a_result_is_filed_under_has_to_be_its_case(tmp_path):
