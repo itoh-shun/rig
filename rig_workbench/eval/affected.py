@@ -9,6 +9,7 @@ import subprocess
 from typing import Any
 
 from .cases import EvalCaseError, canonical_json, validate_case
+from .execution import GIT_DETERMINISTIC
 
 REGISTRY_VERSION = 2
 _SURFACE_PREFIXES = (
@@ -95,7 +96,13 @@ def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     for value, label in ((base, "base"), (head, "head")):
         if not isinstance(value, str) or not value or "\n" in value or "\x00" in value:
             raise EvalCaseError(f"affected {label} revision is invalid")
-    args = ["git", "diff", "--name-only", "--relative", _merge_base(root, base, head)]
+    # Same pins as the signed diff: which files this reports decides which cases
+    # are affected, and `diff.renames` alone changes that answer — a rename is one
+    # path under detection and two without it. `core.quotePath` decides whether a
+    # non-ASCII path arrives in a form any surface prefix can match.
+    args = ["git", *GIT_DETERMINISTIC,
+            "diff", "--name-only", "--relative", "--no-ext-diff", "--no-textconv",
+            _merge_base(root, base, head)]
     if head != "working":
         args.append(head)
     args.append("--")
@@ -111,7 +118,8 @@ def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     paths = set(completed.stdout.splitlines())
     if head == "working":
         untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"], cwd=root,
+            ["git", *GIT_DETERMINISTIC, "ls-files", "--others", "--exclude-standard"],
+            cwd=root,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=15, shell=False,
         )

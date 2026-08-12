@@ -189,6 +189,37 @@ def test_a_signature_from_another_key_or_no_key_at_all_is_refused(tmp_path, monk
                                     for item in absent["failures"]), absent
 
 
+def test_the_signed_diff_does_not_depend_on_the_verifying_machines_git_config(tmp_path):
+    """The hash is now computed on one machine and recomputed on another.
+
+    While both ends were the same process, `git diff` inheriting the caller's
+    configuration cost nothing. Split across a maintainer's laptop and a runner it
+    becomes a way for the gate to be permanently unpassable with the cause named
+    nowhere: `diff.noprefix` or `diff.renames` in a `~/.gitconfig` changes the
+    bytes for an identical pair of trees, and the only report is
+    `execution_diff_mismatch`.
+    """
+    from rig_workbench.eval.execution import execution_diff_sha256
+
+    repo, base, _evidence = _measured(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    default = execution_diff_sha256(repo, base=base, head=head)
+
+    for key, value in (
+        ("diff.noprefix", "true"), ("diff.renames", "false"),
+        ("diff.algorithm", "histogram"), ("diff.context", "7"),
+        ("diff.mnemonicPrefix", "true"), ("diff.indentHeuristic", "false"),
+        ("core.quotePath", "true"), ("color.diff", "always"),
+    ):
+        _git(repo, "config", key, value)
+        assert execution_diff_sha256(repo, base=base, head=head) == default, key
+
+    # End to end: evidence signed under the default configuration still verifies
+    # against a checkout carrying all of the above.
+    report, code = _gate(repo, base)
+    assert code == 0 and report["status"] == "pass", report
+
+
 def test_a_rewritten_diff_hash_is_refused_even_when_the_signature_is_valid(tmp_path):
     """The key holder is trusted to measure, not to describe a tree they did not."""
     repo, base, evidence = _measured(tmp_path)
