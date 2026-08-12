@@ -8,6 +8,12 @@
 
 `git diff` または対象ファイル列を取得し、レビュアーへ渡すコンテキストを確定する。
 
+**第一報（先出し）**: ② の dispatch に入る**前に**、取得した対象だけで読み取れる範囲を数行で報告する（変更ファイルと規模・触っている領域・特に見るべき観点）。
+
+- **上限**: 第一報の前は、対象取得（`git diff`）を含めて Read/Grep/Glob 等の tool 呼び出しを**5回以内**に留める。上限であってノルマではない（1回で出せるなら1回でよい）。
+- **判定ではなくプレビュー**。`review-gate` の根拠にしない。後続の verdict で補強しても**撤回してもよく、撤回は失点ではない**。断定できないことは「未確認」と書く。
+- reviewer は subagent なので途中出力は user に届かない——**fan-out の待ち時間を沈黙で埋めない**。
+
 ### ② 並列レビューの dispatch（`pattern: parallel-fanout`）
 
 `pattern: parallel-fanout` に従い、1メッセージで4つの subagent を同時に起動する。
@@ -39,6 +45,8 @@
 各 subagent の出力形式は `output-contracts/review-verdict` に従わせること。
 
 ### ③ 集約（`pattern: review-gate`）
+
+**verdict の中継（集約の前）**: 揃った verdict は、`finding-verifier` の反証と `review-gate` の集約に入る**前に**、各行（persona 名・判定・1行根拠）をそのまま中継する。バリア構造は変えない——中継するのは、反証（もう1ラウンドの subagent 起動）と集約の間に user が何も見えない時間を作らないため。dispatch を分割した場合は届いた順に中継する。
 
 4つの verdict が揃ったら `pattern: review-gate` で着手判断を決定する。`--verify-findings`（または recipe `verify_findings: true`）が有効なら、集約前に各 REJECT 根拠・マージ前必須条件を `finding-verifier` で反証し、REFUTED をゲートから除く（`patterns/review-gate`「敵対的検証」）。
 

@@ -162,7 +162,7 @@
       "covered_by": [
         {
           "kind": "command",
-          "note": "コンテナ隔離・permissions.deny・実行状態の除外を検出する（開発環境の構成であり、製品の構成ではない）",
+          "note": "コンテナ隔離・permissions.deny・実行状態の除外・gh の認証とトークンスコープ・インストール版パッケージの import 可否を検出する（開発環境の構成であり、製品の構成ではない）",
           "ref": "rig-wb hostcheck"
         },
         {

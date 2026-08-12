@@ -11,8 +11,33 @@
 | `scripts/workbench.py` | task-id 発行・worktree 作成・gate 記録・accept/discard・stats/review の実装（`gates` サブコマンドが基準 ID の正本） |
 | `facets/instructions/workbench-ops` | `/rig status`\|`diff`\|`accept`\|`discard`\|`log`\|`stats` の手順 |
 | `facets/instructions/gh-flow` | `/rig gh issue`\|`pr`\|`ci` の手順 |
+| `rig_workbench/hostcheck.py` | ホスト側前提の検査（`rig-wb hostcheck`。⓪の正本） |
 
 ## 手順
+
+### ⓪ ホスト前提の確認（自走の前・ブロックしない）
+
+長い自走は、**開始前からすでに壊れていた前提**で途中から死ぬ。実際に観測された例：`gh` のトークンにスコープが足りず PR を作る段で停止した／pipx・uv で入れた `rig-wb` がチェックアウトの外から import できなかった。どれも走らせてみて初めて分かるものではなく、開始前に1コマンドで分かる。
+
+**workbench 経路に入るたびに**次を実行する。**「セッション初回だけ」ではない**——それを保証する状態を rig はどこにも持っていないので、走るたびに走る（`gh auth status` を含むため実測で数秒かかる。ブロックはしない）:
+
+```
+rig-wb hostcheck --json      # 未導入なら: python3 -m rig_workbench.cli hostcheck --json
+```
+
+- **`--strict` を付けない。exit code で分岐しない。** 前提が欠けていると exit 3 を返すが、それは助言であって失敗ではない（`--strict` の exit 1 は CI 用）。**exit 3 でもタスクを止めず、そのまま①へ進む**。ホスト側の前提はユーザーの領分で、rig は報告するだけ。
+- **出すのは欠けているものだけ。** JSON の `missing[]` に出た check だけを次の1行形式で提示する。全部揃っていれば**何も出さない**（毎回のノイズにしない）:
+
+  ```
+  [hostcheck] <id>: <requirement の要点> — fix: <remedy>
+  ```
+- `skipped[]`（`applicable: false`）は**「満たしている」ではなく「この環境では検査していない」**。既定では出さないが、`missing` を提示するときに1行添えてよい（例: `未検査: gh_auth_scopes（GitHub remote 無し）`）。満たしたことにして黙らない。
+- **「読めなかった」と「足りない」を混ぜない。** hostcheck は検証できなかった軸を `ok: false` で返すが、`state` が理由を分ける。そのまま伝える:
+  - `scopes-unknown` — `gh` がスコープ行を出さないトークン（fine-grained PAT / GitHub App / `GH_TOKEN`）。スコープ不足ではなく未検証。
+  - `remotes-unknown` — `git remote -v` が失敗した。GitHub remote の有無自体が不明で、「remote が無い」ではない。
+  - `editable-install` — `rig-wb` が site-packages ではなくソースツリーから import されている。wheel の同梱漏れはこの経路では原理的に出ないので、この軸は**検査できていない**（開発チェックアウトでは MISS が正常）。
+  - `probe-timed-out` — `gh auth status` が時間内に答えなかった。認証の問題ではないので `gh auth login` を勧めない。
+- ユーザーが指摘を「今は無視する」と言った場合、**その会話の間は再提示しない**（モデルが覚えているだけで、永続化される状態はない。新しいセッションでは再び出る）。
 
 ### ① タスク分類（task_type の決定）
 

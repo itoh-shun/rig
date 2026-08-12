@@ -22,7 +22,11 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     assert "coverage_debt" in workflow          # the debt is reported, not swallowed
     assert "eval affected-run" in workflow
     # The paid steps run when there is a case to run, not merely when a file moved.
+    # Asserted two ways: the read of the key, and the `runnable` comparison each of
+    # the two steps guards itself with. The comparison is the semantic marker and
+    # keeps the assertion honest if some unrelated line starts reading the key.
     assert workflow.count('r["affected_cases"]') == 2
+    assert workflow.count('if [ "$runnable" = "0" ]') == 2
     assert "RIG_EVAL_ATTESTATION_KEY" in workflow
     assert "RIG_EVAL_PROVIDER" in workflow and "RIG_EVAL_MODEL" in workflow
     assert "RIG_EVAL_JUDGE_PROVIDER" in workflow and "RIG_EVAL_JUDGE_MODEL" in workflow
@@ -55,6 +59,13 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     assert "chmod 600" in workflow and "unset RIG_EVAL_ATTESTATION_KEY" in workflow
     assert "missing evidence cannot pass" in workflow
     assert "trusted maintainer run" in workflow
+    # A surface nobody has written a case for is debt, and `--ratchet` above is what
+    # says so — reported and exit 0, decided inside `eval gate`. What reaches this
+    # step is a case that does exist, so the only thing left to report here is a
+    # verdict, and nothing may swallow the exit code that carries it.
+    assert "continue-on-error" not in workflow
+    assert "|| true" not in trusted
+    assert "origin branch" in workflow
     assert "--provider mock" not in workflow
     assert workflow.index("eval affected") < workflow.index("eval affected-run")
     untrusted = workflow.split("- name: Untrusted or fork prompt quality handoff", 1)[1].split(
