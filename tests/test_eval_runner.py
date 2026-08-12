@@ -438,9 +438,25 @@ def run_with_fake_provider(monkeypatch, tmp_path, provider, *, stdout="ok", judg
     return result, seen
 
 
+def pin_parent_claude_session(monkeypatch):
+    """Stand a calling Claude Code session up in the environment under test.
+
+    Without this the strip assertions below are vacuous: the suite is run with
+    `CLAUDECODE`/`CLAUDE_CODE_SESSION_ID` unset, so "no session variable reached the
+    child" is true of an executor that strips nothing at all.
+    """
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "parent-session")
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/parent/config")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "auth-token-fixture")
+    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+
+
 def test_claude_eval_records_agent_policy_isolation_and_denies_write_tools(
     monkeypatch, tmp_path,
 ):
+    pin_parent_claude_session(monkeypatch)
     result, seen = run_with_fake_provider(monkeypatch, tmp_path, "claude")
 
     # Replaces the former prohibition (claude was rejected outright): claude is now
@@ -472,6 +488,36 @@ def runner_claude_auth_environment():
     return CLAUDE_AUTH_ENVIRONMENT
 
 
+def test_claude_eval_strips_the_calling_session_but_keeps_authentication(
+    monkeypatch, tmp_path,
+):
+    pin_parent_claude_session(monkeypatch)
+    _result, seen = run_with_fake_provider(monkeypatch, tmp_path, "claude")
+
+    assert seen
+    for _argv, kwargs in seen:
+        environment = kwargs["env"]
+        # A nested run must not be told it is a child of the session that launched it.
+        for stripped in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
+                         "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CONFIG_DIR"):
+            assert stripped not in environment
+        # Both halves are pinned on purpose: a strip that also takes the credentials
+        # turns every real run into `provider_unavailable`, which is a green suite and
+        # no measurement at all.
+        assert environment["CLAUDE_CODE_OAUTH_TOKEN"] == "auth-token-fixture"
+        assert environment["CLAUDE_CODE_USE_BEDROCK"] == "1"
+
+
+def test_codex_eval_keeps_the_environment_the_claude_strip_removes(monkeypatch, tmp_path):
+    """The strip is scoped to the provider it is about, not applied to every child."""
+    pin_parent_claude_session(monkeypatch)
+    _result, seen = run_with_fake_provider(monkeypatch, tmp_path, "codex")
+
+    assert seen
+    for _argv, kwargs in seen:
+        assert kwargs["env"]["CLAUDE_CODE_SESSION_ID"] == "parent-session"
+
+
 def test_codex_eval_still_records_os_enforced_isolation(monkeypatch, tmp_path):
     result, seen = run_with_fake_provider(monkeypatch, tmp_path, "codex")
 
@@ -486,6 +532,7 @@ def test_claude_judge_reports_agent_policy_isolation_into_the_result(monkeypatch
     verdict = json.dumps({"status": "measured", "criteria": [
         {"id": "correct", "status": "pass", "score": 1},
     ]})
+    pin_parent_claude_session(monkeypatch)  # or the CLAUDECODE assertion below is vacuous
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
     judge = runner.make_judge_adapter(provider="claude", model="fixture", repo=tmp_path)
     assert judge.judge_isolation == "agent-policy"

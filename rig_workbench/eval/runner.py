@@ -534,20 +534,20 @@ def run_case(
     except OSError as exc:
         raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
     started_wall = _iso(now)
-    adapter_cwd = pathlib.Path(execution_cwd).resolve() if execution_cwd is not None else root
+    execution_root = pathlib.Path(execution_cwd).resolve() if execution_cwd is not None else root
     # A second readable root only means something once the adapter runs outside the tree
     # the case reads from; naming the cwd again would be argv noise.
     readable = pathlib.Path(readable_root).resolve() if readable_root is not None else None
     if readable is not None:
         if not readable.is_dir():
             raise EvalCaseError("readable root must be an existing directory")
-        if readable == adapter_cwd:
+        if readable == execution_root:
             readable = None
-    if provider == "claude" and adapter_cwd != root and readable is None:
+    if provider == "claude" and execution_root != root and readable is None:
         # A subject that cannot name the tree it is asked to read answers about nothing at
         # all, and that reads as red quality rather than as the misconfiguration it is.
         raise EvalCaseError("claude outside the repository requires a readable root")
-    provider_isolation = eval_isolation_level(provider, adapter_cwd, model)
+    provider_isolation = eval_isolation_level(provider, execution_root, model)
     judge_isolation = str(getattr(judge_adapter, "judge_isolation", "none"))
     if judge_isolation not in ISOLATION_RANK:
         raise EvalCaseError("judge adapter reports an unknown isolation level")
@@ -579,13 +579,13 @@ def run_case(
     target = [_sample(case, provider=provider, model=model, phase=phase, kind="target",
                       index=index, repeat=repeat, repo=root, command=command,
                       timeout_s=timeout_s, judge_adapter=judge_adapter,
-                      prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd,
+                      prompt_prefix=prompt_prefix, execution_cwd=execution_root,
                       readable_root=readable)
               for index in range(1, repeat + 1)]
     clean = [_sample(case, provider=provider, model=model, phase=phase, kind="clean",
                      index=index, repeat=repeat, repo=root, command=command,
                      timeout_s=timeout_s, judge_adapter=judge_adapter,
-                     prompt_prefix=prompt_prefix, execution_cwd=adapter_cwd,
+                     prompt_prefix=prompt_prefix, execution_cwd=execution_root,
                      readable_root=readable)
              for index in range(1, repeat + 1)]
     target_pass = sum(row["outcome"] == "pass" for row in target)
