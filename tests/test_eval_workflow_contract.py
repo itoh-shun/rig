@@ -133,14 +133,21 @@ def _resolve_step(root: pathlib.Path) -> str:
 
 
 def _run_step(script: pathlib.Path, cwd: pathlib.Path, output: pathlib.Path,
-              *, base_ref: str = "", push_base: str = "") -> tuple[int, str]:
+              *, base_ref: str = "", push_base: str = "", pr_base: str = "") -> tuple[int, str]:
+    """Run the step with everything the event would put in its environment.
+
+    `PR_BASE` is `github.event.pull_request.base.sha`, which the step no longer
+    reads. It is supplied anyway so these tests keep saying something when run
+    against a workflow that does read it: the difference then shows up as the base
+    that comes out, rather than as a step that cannot start.
+    """
     output.write_text("", encoding="utf-8")
     completed = subprocess.run(
         # GitHub runs a `run:` block as `bash -e {0}`, and `-e` is what decides
         # whether a failing `git rev-parse` aborts the step or is handled.
         ["bash", "-e", str(script)], cwd=cwd, capture_output=True, text=True,
         env={"PATH": os.environ["PATH"], "HOME": str(cwd),
-             "BASE_REF": base_ref, "PUSH_BASE": push_base,
+             "BASE_REF": base_ref, "PUSH_BASE": push_base, "PR_BASE": pr_base,
              "GITHUB_OUTPUT": str(output)},
     )
     return completed.returncode, output.read_text(encoding="utf-8").strip()
@@ -205,11 +212,12 @@ def test_the_base_resolution_step_finds_the_live_tip_in_an_actions_checkout(tmp_
     assert git(runner, "rev-parse", "HEAD") == head_sha
 
     output = tmp_path / "github_output"
-    # A PR gets the tip as it stands now — not `m1`, which is what the payload's
-    # `base.sha` would still be holding for a PR opened before `m2` landed.
-    code, wrote = _run_step(script, runner, output, base_ref="master")
-    assert (code, wrote) == (0, f"base={m2}"), (code, wrote)
+    # A PR gets the tip as it stands now — and `m1` is handed to the step at the
+    # same time, because that is what `base.sha` still holds for a PR opened
+    # before `m2` landed. Ignoring it is the whole change.
     assert m2 != m1
+    code, wrote = _run_step(script, runner, output, base_ref="master", pr_base=m1)
+    assert (code, wrote) == (0, f"base={m2}"), (code, wrote)
 
     # A push is gated against the tip it replaced. Resolving `origin/master` here
     # would name the commit being pushed and the diff would be empty forever.
@@ -274,10 +282,13 @@ def test_the_base_the_workflow_resolves_is_the_one_that_refuses_a_replay(tmp_pat
         "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
     git(runner, "checkout", "-q", "--force", head_sha)
 
-    code, wrote = _run_step(script, runner, tmp_path / "github_output", base_ref="trunk")
+    # `PR_BASE` is the pin: `base.sha` for a PR opened at M1 and never refreshed.
+    # The step is given it and must not use it.
+    code, wrote = _run_step(script, runner, tmp_path / "github_output",
+                            base_ref="trunk", pr_base=pr1_tip)
     assert code == 0, wrote
     resolved = wrote.split("=", 1)[1]
-    assert resolved == pr2_tip, (resolved, pr2_tip, pr1_tip)
+    assert resolved == pr2_tip, f"resolved {resolved}; pinned {pr1_tip}; tip {pr2_tip}"
 
     def gate(base: str):
         return evaluate_gate(runner, base=base, head="HEAD",
