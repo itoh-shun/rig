@@ -19,7 +19,7 @@ def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
     from rig_workbench.packs.lock import tree_hash
 
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "pack-quality-fixture-key-is-at-least-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "3659c02bba0d9f0b8a7428b8114909baa8223779a77950727159a16e8becff5e")
     pack = _write_pack(root, "quality-pack", recipe=True)
     case_path = pack / "evals/cases/hello-case/case.json"
     case = copy.deepcopy(valid_case())
@@ -505,7 +505,7 @@ def test_pack_test_structural_mock_and_provider_unavailable(tmp_path, monkeypatc
         references=[], resources={},
     )
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "pack-test-fixture-key-is-at-least-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "34dfea1570bf021743c4473d901eea84c5d3c581423485e4f463d4ce929b1d2b")
     before = tree_hash(pack)
     structural, code = test_pack(pack, project=tmp_path)
     assert code == 0 and structural["status"] == "structural_only"

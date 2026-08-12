@@ -130,7 +130,7 @@ def _run_eval(args, cwd):
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(
         filter(None, [str(repo_root), os.environ.get("PYTHONPATH")])
     ))
-    env["RIG_EVAL_ATTESTATION_KEY"] = "eval-cli-test-attestation-key-at-least-32-bytes"
+    env["RIG_EVAL_ATTESTATION_KEY"] = "ce19278be0744f82ddb8f054901f90698a441e610e86d6fecca043fd51d926fb"
     return subprocess.run([sys.executable, "-m", "rig_workbench.cli", "eval", *args],
                           cwd=cwd, env=env, capture_output=True, text=True, timeout=30)
 

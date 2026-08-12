@@ -86,6 +86,16 @@ def _parser() -> argparse.ArgumentParser:
     gate.add_argument("--model")
     gate.add_argument("--judge-provider")
     gate.add_argument("--judge-model")
+    # The same direction the structural step ahead of it in CI already drives.
+    # Without this flag the gate is strict, and a PR that touches one covered
+    # surface plus any of the 198 that have no case yet fails `uncovered:` no
+    # matter how much signed evidence it carries — a check nobody can pass, which
+    # is the shape (#383/#384) the ratchet exists to remove. Evidence checks are
+    # untouched by it: the cases that do exist are judged identically either way.
+    gate.add_argument("--ratchet", action="store_true",
+                      help="coverage may only go up: an affected surface with no "
+                           "case yet is debt rather than a failure, while removing "
+                           "coverage and unregistered surface kinds stay fatal")
     affected_run = sub.add_parser("affected-run", help="atomically run and gate affected cases")
     affected_run.add_argument("--base", required=True)
     affected_run.add_argument("--head", default="HEAD")
@@ -99,6 +109,10 @@ def _parser() -> argparse.ArgumentParser:
     affected_run.add_argument("--command", dest="provider_command")
     affected_run.add_argument("--judge-command")
     affected_run.add_argument("--timeout", type=float, default=30)
+    affected_run.add_argument("--ratchet", action="store_true",
+                              help="measure the covered surfaces and report the rest "
+                                   "as debt, instead of refusing to measure anything "
+                                   "while one affected surface has no case yet")
     return parser
 
 
@@ -368,6 +382,7 @@ def cmd_eval(argv: list[str]) -> int:
                 args.repo, base=args.base, head=args.head,
                 evidence_dir=args.evidence_dir, provider=args.provider, model=args.model,
                 judge_provider=args.judge_provider, judge_model=args.judge_model,
+                ratchet=args.ratchet,
             )
             print(canonical_json(report), end="")
             return exit_code
@@ -377,10 +392,17 @@ def cmd_eval(argv: list[str]) -> int:
                 model=args.model, judge_provider=args.judge_provider,
                 judge_model=args.judge_model, provider_command=args.provider_command,
                 judge_command=args.judge_command, timeout_s=args.timeout,
+                ratchet=args.ratchet,
             )
             output = dict(report)
             output["result_dir"] = str(destination) if destination is not None else None
             print(canonical_json(output), end="")
+            if destination is not None:
+                # stderr so the report on stdout stays parseable. CI verifies this
+                # evidence instead of measuring its own; unpushed, it proves nothing.
+                print(f"Commit the signed evidence under {destination} and push it; "
+                      "the CI gate verifies it rather than re-running the provider.",
+                      file=sys.stderr)
             return exit_code
     except EvalCaseError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)

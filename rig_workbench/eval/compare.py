@@ -12,6 +12,12 @@ from .attestation import verify_result_attestation
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
 from .safety import unsafe_text_reason
 
+# 3 adds `prompt_surface_digests`. Bumped rather than accepted as an optional
+# field: a result written before it carries no content binding at all, and a
+# refusal by version names that, where the exact-field-set check would only say
+# "schema fields are invalid". Defined next to the validator and re-exported by
+# `runner`, which writes it.
+RESULT_SCHEMA_VERSION = 3
 MAX_RESULT_AGE = dt.timedelta(days=30)
 FUTURE_TOLERANCE = dt.timedelta(minutes=5)
 
@@ -34,6 +40,7 @@ def validate_result(
         "execution_diff_sha256",
         "prompt_binding_sha256",
         "pack_tree_sha256",
+        "prompt_surface_digests",
         "result_sha256", "attestation",
     }
     unknown = set(result) - required
@@ -43,7 +50,7 @@ def validate_result(
     if verify_attestation and not verify_result_attestation(result):
         raise EvalCaseError("evaluation result attestation is invalid")
     if (isinstance(result["eval_result_schema_version"], bool)
-            or result["eval_result_schema_version"] != 2):
+            or result["eval_result_schema_version"] != RESULT_SCHEMA_VERSION):
         raise EvalCaseError("unsupported eval_result_schema_version")
     for field in (
         "case_id", "provider", "model", "executor_version", "judge_provider",
@@ -82,6 +89,18 @@ def validate_result(
             and (not isinstance(result["pack_tree_sha256"], str)
                  or not re.fullmatch(r"[0-9a-f]{64}", result["pack_tree_sha256"]))):
         raise EvalCaseError("evaluation result pack_tree_sha256 is invalid")
+    digests = result["prompt_surface_digests"]
+    if digests is not None:
+        # Object ids, so both git hash algorithms are legal widths. `None` is the
+        # shape a result measured outside a repository takes; the gate refuses it
+        # on its own, because there the map is the binding rather than a detail.
+        if not isinstance(digests, dict) or any(
+            not isinstance(path, str) or not path or unsafe_text_reason(path)
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", digest)
+            for path, digest in digests.items()
+        ):
+            raise EvalCaseError("evaluation result prompt_surface_digests is invalid")
     if not isinstance(result["phase"], str) or result["phase"] not in {"baseline", "current"}:
         raise EvalCaseError("evaluation result phase is invalid")
     if (isinstance(result["elapsed_s"], bool)

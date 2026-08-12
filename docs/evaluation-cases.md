@@ -4,9 +4,10 @@ Rig evaluation cases provide a standard-library-only capture, execution, compari
 promotion boundary.
 
 Promoted cases live at `evals/cases/<id>/case.json`. New captures are always unapproved
-drafts at `.rig/evals/drafts/<id>/case.json`; execution results are reserved under
-`.rig/evals/results/`. Capture records bounded summaries and SHA-256 provenance for source
-artifacts, never raw logs.
+drafts at `.rig/evals/drafts/<id>/case.json`; ad-hoc execution results are reserved under
+`.rig/evals/results/`, while the signed evidence a gate consumes is committed to
+`evals/evidence/<case-id>/current.json`. Capture records bounded summaries and SHA-256
+provenance for source artifacts, never raw logs.
 
 ```console
 rig-wb eval capture <task-id> [--repo <repository>]
@@ -24,8 +25,8 @@ rig-wb eval promote <draft-id> --baseline <result.json> --current <result.json> 
 rig-wb eval affected --base <git-ref> [--head <git-ref|working>] \
   [--require-cases | --ratchet] [--evidence-dir <directory>] [--json]
 rig-wb eval gate --base <git-ref> [--head <git-ref|working>] \
-  --evidence-dir <directory> [--provider <provider>] [--model <model>]
-rig-wb eval affected-run --base <git-ref> --head HEAD \
+  --evidence-dir <directory> [--ratchet] [--provider <provider>] [--model <model>]
+rig-wb eval affected-run --base <git-ref> --head HEAD [--ratchet] \
   --provider <provider> --model <model> \
   --judge-provider <provider> --judge-model <model>
 ```
@@ -115,13 +116,148 @@ a clean-control regression.
 Use `--execution-base <git-ref>` for PR evidence. Rig resolves it with shell-free Git,
 requires it to be an ancestor of HEAD, and binds the resolved commit into the signed result.
 The signed `execution_diff_sha256` also hashes the base diff, including tracked/staged
-binary diff data and framed untracked path/content. Gates recompute it for committed or
-working heads, so evidence signed before a later uncommitted prompt edit cannot be reused.
-When omitted, the historical repository-root commit remains the compatibility default; such
-evidence will not satisfy a gate whose requested PR base is a different commit.
+binary diff data and framed untracked path/content. A bare `eval run` hashes the working
+tree, so evidence signed before a later uncommitted prompt edit cannot be reused;
+`affected-run` instead pins the resolved head, because its evidence is meant to be committed
+and re-checked from history later. When omitted, the historical repository-root commit
+remains the compatibility default.
 
-Every result is signed with HMAC-SHA256. Set `RIG_EVAL_ATTESTATION_KEY` to a secret of at
-least 32 bytes in CI. Without it, Rig atomically creates a private `0600` key at
+## Who measures, and what CI checks
+
+CI does not run providers. `codex` and `claude` are external binaries; a GitHub runner that
+installs the package and nothing else has neither, and no credentials for them either. The
+step that tried anyway failed before it measured anything and was merged past, which is the
+same lesson as `--require-cases` on an empty corpus: a check nobody can pass teaches that
+this job is ignored.
+
+So the measurement is a maintainer's:
+
+```console
+rig-wb eval affected-run --base <pr-base> --head HEAD --ratchet \
+  --provider <provider> --model <model> \
+  --judge-provider <judge> --judge-model <judge-model>
+git add evals/evidence && git commit -m 'signed evaluation evidence'
+```
+
+`--ratchet` on both ends, matching CI. Two prompt surfaces in this repository have a case
+and around 198 do not, so a change that touches a covered surface next to any other one is
+ordinary. Strict, `affected-run` refuses to measure such a change at all and the gate
+reports `uncovered:<path>` — a red that no amount of signed evidence answers, which is the
+same defect as `--require-cases` on an empty corpus. Ratcheting, the covered surfaces are
+measured and verified while the rest is reported as debt.
+
+`affected-run` refuses a dirty working tree — anything uncommitted would be measured but
+not described — and writes one signed result per case to
+`evals/evidence/<case-id>/current.json`. One file per case, overwritten: the gate collects
+every result under the tree whose `case_id` matches, and a second `current` for the same
+case is `current_evidence_count`.
+
+CI then runs `eval gate --evidence-dir evals/evidence`, which needs git and the signing key
+and nothing else. Committing evidence changes what the gate can bind to, because
+`execution_commit == HEAD` is false the instant the file is tracked — committing it makes a
+new HEAD. The binding is the measured **content**, not the measured commit:
+
+- every prompt surface **this change is accountable for** must still hold the object id the
+  measurement signed for it, taken from the `prompt_surface_digests` map. The map covers the
+  whole surface set at the measured commit, so a path the gate holds accountable and the
+  measurement never saw is a file created afterwards, and fails;
+- evidence may only move forward. Its `started_at` is compared against the evidence for the
+  same case on the **base branch's tip**, and older evidence is
+  `evidence_regression:<case-id>`. The comparison reads `evals/evidence/` as a literal path
+  at the base commit CI supplies — not the `--evidence-dir` argument and not the fork point,
+  because both of those are things the branch under review chooses for itself. CI resolves
+  that commit rather than reading it out of the event, because
+  `github.event.pull_request.base.sha` is the base branch *as the event saw it*: opening a PR
+  before a revert lands pins it to the commit that still carried the reverted prompt. A
+  pinned base does not merely quiet the ratchet — the affected set diffs from
+  `merge-base(base, head)`, so a head restored to that commit's content has no prompt surface
+  in its diff and no case is selected at all, which skips every check on this list. The
+  workflow therefore asks git for `origin/<base branch>` on a PR, and uses
+  `github.event.before` — the tip the push replaced — on a push, where resolving the live tip
+  would diff the push against itself. A symlink at
+  or under the evidence directory is `evidence_symlink:<path>`, refused rather than
+  followed, and a comparison that cannot be made at all — a git that will not answer, a
+  clone whose blobs were never fetched — is `evidence_ratchet_unavailable:<case-id>` rather
+  than a pass;
+- `execution_diff_sha256` is recomputed from the *recorded* base to the *recorded* commit and
+  must match, whenever history still holds both — a provenance check on the evidence's own
+  account of itself. That base is the one the measurement wrote down, never the comparison
+  base above, so a base branch moving under a long-lived PR does not invalidate a
+  measurement.
+
+Content rather than ancestry because ancestry does not survive this repository's own merge
+buttons. Squash and rebase are both enabled, and each rewrites the branch so the measured
+commit is gone or is nobody's ancestor: the PR check is green, and the push to the default
+branch immediately after the merge is red, recoverable only by measuring on the default
+branch and pushing straight to it. A squash reproduces the branch's files exactly, so the
+content survives it.
+
+Intersecting with the affected set, rather than comparing the whole map, is what keeps a
+merge legal: everything the base branch did since the fork is not this change's to answer
+for and was gated on its own PR. An edit the author makes after measuring is in the
+intersection and fails.
+
+The evidence ratchet is what makes any of this worth signing. Without it, someone holding
+no key can open a PR that re-applies a prompt humans reverted and restores, byte for byte,
+the signed evidence that measured it — both are public in the history, and every other
+check passes by construction. The price is stated: a branch whose measurement predates
+another measurement of the same case on the base branch is told to measure again. That is a
+tightening of the intersection rule, and it is the demand the 30-day expiry already makes.
+
+That price is one those two branches already owed each other, and git rather than this gate
+is what collects it: both write `evals/evidence/<case-id>/current.json`, and the file is one
+canonical-JSON line whose `started_at`, `result_sha256`, and `attestation` cannot coincide,
+so the second branch conflicts and no merge button will land it. Comparing against the base
+tip only changes *when* the demand is made, and by how much: the fork point made it on the
+push that resolved that conflict, and the base tip makes it on the branch's next CI run —
+its next push, or a re-run, which now re-reads the tip rather than replaying a snapshot.
+Both are before the merge button; the gain is a shorter gap, not a new guarantee. The
+structural half of that guarantee is a property of the current
+configuration, not a law: a `*.json` merge driver in `.gitattributes` (`union`, say) would
+auto-merge that line and dissolve it. There is no `.gitattributes` in this repository today,
+and adding one that covers `evals/evidence/` should be treated as changing this gate.
+
+The ratchet also has a start date. It protects a case from the moment a *second* measurement
+of it exists on the base branch: with no committed evidence for a case, there is nothing to
+move backwards from, and the check correctly passes. This repository currently has none at
+all, so today the ratchet is inert everywhere and only the content binding is load bearing.
+"Replay is refused" becomes true for a case one measurement after its first one lands.
+
+Known limit: comparison is per-file content, so a surface edited after the measurement and
+restored byte-for-byte passes — which is correct, since the tree being gated is then the
+tree that was measured. What genuinely escapes is everything outside the surface registry:
+prompt-composition code under `rig_workbench/`, `scripts/`, or `skills/engine/corpora/` can
+change after a measurement without invalidating it. The registry is this gate's declared
+field of view; the older whole-tree diff bound more only as a side effect.
+
+Committed evidence still expires: `MAX_RESULT_AGE` is 30 days, so a branch left open past
+that reports `invalid_evidence:<case-id>:evaluation result is stale` and has to be measured
+again. Freshness is the one property no signature can carry.
+
+Thirty days stays thirty days now that the evidence is a committed artifact rather than a
+file under `.rig/`, and the decision is deliberate rather than inherited. The consequence is
+real — checking out an old commit and running the gate reports every result stale, so past
+commits cannot be re-verified — and it is the right trade: what the gate certifies is that
+a provider measured this prompt recently, and a provider's behaviour is the one input here
+that changes without any commit recording it.
+
+The gate fails closed on a missing key: without one no signature can be checked, and a gate
+that shrugs when it cannot verify is not a gate. `RIG_EVAL_PROVIDER`, `RIG_EVAL_MODEL`,
+`RIG_EVAL_JUDGE_PROVIDER`, and `RIG_EVAL_JUDGE_MODEL` are optional pins — with none set, the
+provider constraint is whatever the case's own `provider_policy` declares, plus the standing
+refusal of `mock` evidence. A case with `{"mode": "any", "allowed": []}` therefore accepts
+any non-mock provider; tightening it is a one-line edit that changes `case_hash` and costs
+one re-measurement.
+
+Every result is signed with HMAC-SHA256. `RIG_EVAL_ATTESTATION_KEY` must be **64 hex
+characters**, exactly what `openssl rand -hex 32` emits; anything else is refused with
+`configured attestation key is invalid`, and the CI job checks the same shape before it
+writes the secret to a key file. Randomness cannot be verified, so the form is the
+enforceable proxy for it, and prose alone was not enough: committed evidence publishes both
+the signature and `key_id` (`sha256(key)[:16]`) on a public repository, which is harmless
+against generated material and a complete offline guessing oracle against a memorable
+passphrase — one that ends in forgery by someone who never had the key.
+Without an explicit key, Rig atomically creates a private `0600` key at
 `${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`. Verification rejects missing,
 weakly permissioned, non-regular, or symlinked keys. Keep this key outside the repository;
 never commit or print it. Rig strips attestation environment variables from evaluator and

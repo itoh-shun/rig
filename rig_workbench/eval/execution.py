@@ -8,6 +8,35 @@ import subprocess
 
 from .cases import EvalCaseError
 
+# Pinned rather than inherited from whoever invokes us.
+#
+# The measurement now happens on a maintainer's machine and the recomputation on
+# a runner, so `git diff` has become a cross-machine function and every knob that
+# changes its bytes has become a way for the gate to fail for a reason it cannot
+# report. Measured on this repository: `diff.noprefix=true` and
+# `diff.renames=false` each produce a different `execution_diff_sha256` for the
+# identical tree pair. A maintainer with either in `~/.gitconfig` would sign
+# evidence CI can only answer with `execution_diff_mismatch` — permanently, and
+# with the cause named nowhere. That is the same "nobody can pass this" defect
+# this change exists to remove, arriving by another door.
+#
+# `--no-ext-diff` on the command line already covers `diff.external` and
+# `--no-textconv` covers a textconv driver declared in `.gitattributes`.
+# `core.quotePath` is here because `--name-only` escapes non-ASCII paths under
+# the default, which no surface prefix then matches. Not covered:
+# `diff.orderFile`, which git offers no way to unset from the command line — an
+# empty value is read as a missing file and fails outright.
+GIT_DETERMINISTIC = (
+    "-c", "core.quotePath=false",
+    "-c", "color.diff=false",
+    "-c", "diff.noprefix=false",
+    "-c", "diff.mnemonicPrefix=false",
+    "-c", "diff.renames=false",
+    "-c", "diff.algorithm=myers",
+    "-c", "diff.context=3",
+    "-c", "diff.indentHeuristic=true",
+)
+
 
 def _run(repo: pathlib.Path, argv: list[str]) -> bytes:
     try:
@@ -28,7 +57,8 @@ def execution_diff_sha256(
 ) -> str:
     """Hash base→head/working tracked diff plus untracked path/content framing."""
     diff_argv = [
-        "git", "diff", "--binary", "--full-index", "--no-ext-diff", base,
+        "git", *GIT_DETERMINISTIC,
+        "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv", base,
     ]
     if head != "working":
         diff_argv.append(head)
@@ -40,11 +70,16 @@ def execution_diff_sha256(
     digest.update(tracked)
     if head == "working":
         raw_paths = _run(
-            repo, ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            repo, ["git", *GIT_DETERMINISTIC,
+                   "ls-files", "--others", "--exclude-standard", "-z"],
         )
         paths = sorted(
             path for path in raw_paths.split(b"\0") if path
+            # Both places a run stages or files its own results. Without the
+            # second, an uncommitted evidence file from an earlier run frames
+            # itself into the execution identity of the next one.
             and not path.startswith(b".rig/evals/results/")
+            and not path.startswith(b"evals/evidence/")
             and not any(
                 path == prefix.encode("utf-8")
                 or path.startswith(prefix.encode("utf-8") + b"/")
