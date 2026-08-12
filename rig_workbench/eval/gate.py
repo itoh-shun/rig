@@ -340,6 +340,11 @@ def _prior_evidence(
 
     None if the question could not be answered at all.
     """
+    if evidence_rel in {"", "."}:
+        # `evidence_dir` is a caller's argument and nothing stops it being the
+        # repository root. `ls-tree -- .` would then walk the whole tree and read
+        # every `.json` in it, per gated case, to answer a question about evidence.
+        return None
     try:
         listing = subprocess.run(
             ["git", "ls-tree", "-r", "-z", "--name-only", revision, "--", evidence_rel],

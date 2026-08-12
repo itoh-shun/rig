@@ -199,6 +199,13 @@ Committed evidence still expires: `MAX_RESULT_AGE` is 30 days, so a branch left 
 that reports `invalid_evidence:<case-id>:evaluation result is stale` and has to be measured
 again. Freshness is the one property no signature can carry.
 
+Thirty days stays thirty days now that the evidence is a committed artifact rather than a
+file under `.rig/`, and the decision is deliberate rather than inherited. The consequence is
+real — checking out an old commit and running the gate reports every result stale, so past
+commits cannot be re-verified — and it is the right trade: what the gate certifies is that
+a provider measured this prompt recently, and a provider's behaviour is the one input here
+that changes without any commit recording it.
+
 The gate fails closed on a missing key: without one no signature can be checked, and a gate
 that shrugs when it cannot verify is not a gate. `RIG_EVAL_PROVIDER`, `RIG_EVAL_MODEL`,
 `RIG_EVAL_JUDGE_PROVIDER`, and `RIG_EVAL_JUDGE_MODEL` are optional pins — with none set, the

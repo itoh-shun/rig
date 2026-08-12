@@ -371,6 +371,36 @@ def test_a_prompt_surface_edited_after_the_measurement_invalidates_it(tmp_path):
     assert f"execution_identity_mismatch:{CASE_ID}" in committed["failures"]
 
 
+def test_an_untracked_surface_added_after_the_measurement_invalidates_it(tmp_path):
+    """The shape a content binding could plausibly miss, and does not.
+
+    A surface created after the measurement has no entry in the signed map — the
+    map is taken from the measured commit's tree, and the file was not in it. The
+    absence is the finding: there is nothing to compare against, so the surface
+    cannot be one that was measured. The working-tree form is where this matters,
+    because that is the local sensor's, and an untracked file is what a
+    half-finished persona looks like on a maintainer's machine.
+    """
+    repo, base, _evidence = _measured(tmp_path)
+    added = repo / "commands" / "brand-new.md"
+    added.parent.mkdir(parents=True, exist_ok=True)
+    added.write_text("a prompt surface that did not exist when this was measured\n",
+                     encoding="utf-8")
+
+    untracked, untracked_code = _gate(repo, base, head="working", ratchet=True)
+    assert untracked_code == 1, untracked
+    assert (f"execution_prompt_surface_changed:{CASE_ID}:commands/brand-new.md"
+            in untracked["failures"])
+
+    # Committing it does not change the answer; it was still not measured.
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add a surface after measuring")
+    committed, committed_code = _gate(repo, base, ratchet=True)
+    assert committed_code == 1
+    assert (f"execution_prompt_surface_changed:{CASE_ID}:commands/brand-new.md"
+            in committed["failures"])
+
+
 def test_a_surface_the_base_branch_moved_does_not_invalidate_the_measurement(tmp_path):
     """Why the check intersects with the affected set instead of failing on any
     surface change in the range.
