@@ -1,4 +1,9 @@
+import os
 import pathlib
+import shutil
+import subprocess
+
+import pytest
 
 
 def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
@@ -109,3 +114,181 @@ def test_validate_workflow_resolves_the_comparison_base_instead_of_trusting_the_
                  if "--base " in line and not line.lstrip().startswith("#")]
     assert len(consumers) == 3, consumers
     assert all("steps.comparison.outputs.base" in line for line in consumers), consumers
+
+
+def _resolve_step(root: pathlib.Path) -> str:
+    """The `run:` body of the base-resolution step, taken from the workflow itself.
+
+    Read rather than restated: a copy would go on passing after the workflow it
+    claims to test stopped saying the same thing.
+    """
+    import yaml
+
+    document = yaml.safe_load(
+        (root / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
+    )
+    step = next(item for item in document["jobs"]["prompt-evaluation"]["steps"]
+                if item.get("name") == "Resolve comparison base")
+    return step["run"]
+
+
+def _run_step(script: pathlib.Path, cwd: pathlib.Path, output: pathlib.Path,
+              *, base_ref: str = "", push_base: str = "") -> tuple[int, str]:
+    output.write_text("", encoding="utf-8")
+    completed = subprocess.run(
+        # GitHub runs a `run:` block as `bash -e {0}`, and `-e` is what decides
+        # whether a failing `git rev-parse` aborts the step or is handled.
+        ["bash", "-e", str(script)], cwd=cwd, capture_output=True, text=True,
+        env={"PATH": os.environ["PATH"], "HOME": str(cwd),
+             "BASE_REF": base_ref, "PUSH_BASE": push_base,
+             "GITHUB_OUTPUT": str(output)},
+    )
+    return completed.returncode, output.read_text(encoding="utf-8").strip()
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the step is a bash script")
+def test_the_base_resolution_step_finds_the_live_tip_in_an_actions_checkout(tmp_path):
+    """Run the step verbatim against what `actions/checkout` actually leaves behind.
+
+    The step depends on `refs/remotes/origin/<base branch>` being resolvable in a
+    workspace checked out at a detached head sha, which is a claim about the
+    action rather than about this repository. `actions/checkout` fetches
+    `+refs/heads/*:refs/remotes/origin/*` and `+refs/tags/*:refs/tags/*` whenever
+    `fetch-depth` is 0, so the ref is there; this reproduces that fetch and proves
+    it, and the step re-fetches anyway so the answer is the tip as it stands now
+    rather than the tip as of checkout.
+
+    The two failure rows are the point of the test as much as the first two. A
+    base this step cannot resolve must stop the job, because every value it could
+    fall back to is one the branch under review can influence.
+    """
+    pytest.importorskip("yaml")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    script = tmp_path / "resolve.sh"
+    script.write_text(_resolve_step(root), encoding="utf-8")
+
+    def git(repo: pathlib.Path, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=repo, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git(seed, "init", "-q", "-b", "master")
+    git(seed, "config", "user.email", "sim@test.invalid")
+    git(seed, "config", "user.name", "sim")
+    (seed / "f").write_text("one\n", encoding="utf-8")
+    git(seed, "add", ".")
+    git(seed, "commit", "-qm", "m1")
+    m1 = git(seed, "rev-parse", "HEAD")
+    git(seed, "checkout", "-q", "-b", "feature")
+    (seed / "g").write_text("two\n", encoding="utf-8")
+    git(seed, "add", ".")
+    git(seed, "commit", "-qm", "the PR head")
+    head_sha = git(seed, "rev-parse", "HEAD")
+    git(seed, "checkout", "-q", "master")
+    (seed / "h").write_text("three\n", encoding="utf-8")
+    git(seed, "add", ".")
+    git(seed, "commit", "-qm", "master moves after the PR was opened")
+    m2 = git(seed, "rev-parse", "HEAD")
+    git(seed, "remote", "add", "origin", str(origin))
+    git(seed, "push", "-q", "origin", "master", "feature")
+
+    runner = tmp_path / "runner"
+    runner.mkdir()
+    git(runner, "init", "-q")
+    git(runner, "remote", "add", "origin", str(origin))
+    git(runner, "fetch", "--no-tags", "--prune", "--no-recurse-submodules", "origin",
+        "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
+    git(runner, "checkout", "-q", "--force", head_sha)
+    assert git(runner, "rev-parse", "HEAD") == head_sha
+
+    output = tmp_path / "github_output"
+    # A PR gets the tip as it stands now — not `m1`, which is what the payload's
+    # `base.sha` would still be holding for a PR opened before `m2` landed.
+    code, wrote = _run_step(script, runner, output, base_ref="master")
+    assert (code, wrote) == (0, f"base={m2}"), (code, wrote)
+    assert m2 != m1
+
+    # A push is gated against the tip it replaced. Resolving `origin/master` here
+    # would name the commit being pushed and the diff would be empty forever.
+    code, wrote = _run_step(script, runner, output, push_base=m1)
+    assert (code, wrote) == (0, f"base={m1}"), (code, wrote)
+
+    code, wrote = _run_step(script, runner, output, base_ref="no-such-branch")
+    assert code == 2 and wrote == "", (code, wrote)
+
+    code, wrote = _run_step(script, runner, output, push_base="not-a-sha")
+    assert code == 2 and wrote == "", (code, wrote)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the step is a bash script")
+def test_the_base_the_workflow_resolves_is_the_one_that_refuses_a_replay(tmp_path, monkeypatch):
+    """The replay, gated with the base this workflow actually produces.
+
+    The two tests above pin the halves — the step resolves the live tip, and the
+    gate refuses a replay measured against the live tip. This joins them, because
+    the bug they answer lived exactly in the join: every check in `eval gate` was
+    correct, and CI was handing it a base at which there was nothing to check.
+
+    Borrowing `_reverted` from the verification suite is deliberate. A second copy
+    of the M1/revert/replay fixture would drift, and the point is that this is the
+    *same* attack that suite already refuses, run through the workflow's own shell.
+    """
+    pytest.importorskip("yaml")
+    import test_eval_evidence_verification as verification
+    from rig_workbench.eval.gate import evaluate_gate
+
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", verification.KEY)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    script = tmp_path / "resolve.sh"
+    script.write_text(_resolve_step(root), encoding="utf-8")
+    git = verification._git
+
+    # M1 measured the bad prompt; the humans reverted and re-measured at M2.
+    repo, _root_commit, pr1_tip, pr2_tip, replayable = verification._reverted(tmp_path)
+
+    # The attacker opened the PR at M1, then merged the base branch in and put the
+    # prompt and its evidence back. They hold no key; both blobs are public.
+    git(repo, "checkout", "-q", "-b", "evil", pr1_tip)
+    git(repo, "merge", "-q", "--no-edit", "trunk")
+    (repo / verification.RECIPE_REL).write_text(verification.BAD, encoding="utf-8")
+    (repo / verification.EVIDENCE_REL).write_text(replayable, encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "PR3: re-land the reverted prompt with its evidence")
+    head_sha = git(repo, "rev-parse", "HEAD")
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    git(repo, "remote", "add", "origin", str(origin))
+    git(repo, "push", "-q", "origin", "trunk", "evil")
+
+    # What the runner has when the step starts: `fetch-depth: 0`, detached at the
+    # PR head sha.
+    runner = tmp_path / "runner"
+    runner.mkdir()
+    git(runner, "init", "-q")
+    git(runner, "remote", "add", "origin", str(origin))
+    git(runner, "fetch", "--no-tags", "--prune", "--no-recurse-submodules", "origin",
+        "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
+    git(runner, "checkout", "-q", "--force", head_sha)
+
+    code, wrote = _run_step(script, runner, tmp_path / "github_output", base_ref="trunk")
+    assert code == 0, wrote
+    resolved = wrote.split("=", 1)[1]
+    assert resolved == pr2_tip, (resolved, pr2_tip, pr1_tip)
+
+    def gate(base: str):
+        return evaluate_gate(runner, base=base, head="HEAD",
+                             evidence_dir=runner / "evals" / "evidence", ratchet=True)
+
+    report, exit_code = gate(resolved)
+    assert exit_code == 1, report
+    assert f"evidence_regression:{verification.CASE_ID}" in report["failures"], report
+
+    # And with the payload's snapshot, which is what this step used to emit: not a
+    # ratchet that stayed quiet, a gate that looked at nothing.
+    pinned, pinned_code = gate(pr1_tip)
+    assert pinned_code == 0 and pinned["status"] == "noop" and not pinned["cases"], pinned
+    assert (runner / verification.RECIPE_REL).read_text(encoding="utf-8") == verification.BAD
