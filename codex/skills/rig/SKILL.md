@@ -34,4 +34,11 @@ For multi-step recipes with deterministic transitions (retry/escalate/DAG-parall
 
 ## Run-continuity
 
-If `.codex/hooks.json`'s `PreCompact` hook is installed (see `codex/hooks.json` in this repo), an active rig run's state survives context compaction the same way it does in Claude Code. See `hooks/preserve-rig-state.sh` for what it preserves.
+If `.codex/hooks.json` is installed (see `codex/hooks.json` in this repo), its
+`PreCompact` hook returns the valid no-op JSON Codex requires and its
+`SessionStart(source=compact)` hook attempts a best-effort re-anchor from state
+retained in the compacted context. Claude Code instead consumes
+`hooks/preserve-rig-state.sh`'s plaintext PreCompact instructions. The Codex
+entrypoints are `hooks/codex-precompact.sh` and
+`hooks/inject-run-continuity.sh`; they cannot reconstruct state omitted by the
+compactor.

@@ -54,7 +54,13 @@ jobs:
       - name: Run computational orchestrator selftest (determinism)
         run: python3 scripts/orchestrate.py selftest
 
+      # Raising a per-subprocess budget buys stability at the cost of slower hang
+      # detection, and those `timeout=` values were the only bound on a wedged
+      # child here — without a step budget the fallback is Actions' 6-hour job
+      # default. The observed suite is ~1950s, so 90 minutes keeps ~2.8x headroom
+      # while still failing a genuine hang in minutes rather than hours.
       - name: Run pytest suite
+        timeout-minutes: 90
         run: pytest -q
 
   prompt-evaluation:

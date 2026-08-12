@@ -28,6 +28,49 @@ persona stays legal while an edit the author makes after measuring does not.
 signed diff, so the hash CI recomputes is the one that was signed by construction
 rather than by coincidence.
 
+## [2.4.2] - 2026-08-11
+
+**Codex hooks now follow Codex's JSON contracts instead of Claude Code's
+PreCompact stdout convention.** The shared plugin resolves either `PLUGIN_ROOT`
+or `CLAUDE_PLUGIN_ROOT`, so Codex no longer tries to execute `/hooks/*.sh` and
+exit 127. Codex PreCompact returns valid no-op JSON; a compact-only
+`SessionStart` hook then attempts a best-effort re-anchor from state retained in
+the compacted context. It does not claim to reconstruct omitted state.
+Claude Code retains its plaintext PreCompact instructions. Execution-level
+regression tests cover both plugin roots and the rootless Codex-native mirror.
+
+## [2.4.1] - 2026-08-11
+
+**The research and examples that accompanied the Japanese-writing work are now
+published with their provenance intact.** This patch adds three parity summaries
+without the full candidate or reference prose. They retain the bounded judge reasons
+needed to audit each preference, and contain only the repository's synthetic dev and
+train cases. The patch also adds the historical Codex handoff that explains the
+measurement caveats and the before/after/v2 Qiita-style Rig introduction examples.
+
+It also publishes the exported `sales-playbook` skill. Its README now restores
+credit and a link to the source channel, distinguishes the source material from
+Rig's organization and wording, and makes the limits of the bundled MIT license
+explicit. Claims supported by a single video remain marked for verification.
+
+## [2.4.0] - 2026-08-11
+
+**Technical articles can now use a dialogue structure without imitating a named
+writer or inferring demographic traits.** The new
+`styles/dialogue-tech-explainer` persona separates a reader's current question
+from a specialist's bounded answer, advances one point per exchange, and falls
+back to concise prose when the source has no genuine question or decision.
+Its `dialogue-tech-writing` knowledge page captures the reusable structure—how
+questions advance understanding, how code interrupts the rhythm, and when not
+to use dialogue—while leaving facts, safety, register, and delivery format to
+the other personas and policies composed in the same step.
+
+Three generated Rig-introduction examples record the same draft under plain
+generation, Japanese writing, and Japanese writing plus the dialogue persona.
+They are examples rather than benchmark evidence; the short source intentionally
+shows that the persona does not force dialogue where it adds no explanatory
+value.
+
 ## [2.3.0] - 2026-08-09
 
 **Independent Japanese-writing runs now have a real process boundary.** The

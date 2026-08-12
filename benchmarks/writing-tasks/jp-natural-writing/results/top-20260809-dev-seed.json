@@ -1,0 +1,368 @@
+{
+  "schema_version": 1,
+  "metric": "candidate_preference; 0.5 means head-to-head parity",
+  "split": "dev",
+  "reference": {
+    "role": "reference",
+    "identity": "gpt-5.6-sol",
+    "argv": [
+      "codex",
+      "exec",
+      "--model",
+      "gpt-5.6-sol",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--ignore-user-config",
+      "--sandbox",
+      "read-only",
+      "-o",
+      "{output_file}"
+    ],
+    "input_mode": "arg",
+    "output_mode": "file",
+    "timeout_sec": 300,
+    "cwd_mode": "temp",
+    "env_keys": []
+  },
+  "candidate": {
+    "role": "candidate",
+    "identity": "claude-sonnet-5",
+    "argv": [
+      "claude",
+      "-p",
+      "--safe-mode",
+      "--no-session-persistence",
+      "--model",
+      "claude-sonnet-5",
+      "--output-format",
+      "text"
+    ],
+    "input_mode": "arg",
+    "output_mode": "stdout",
+    "timeout_sec": 300,
+    "cwd_mode": "temp",
+    "env_keys": []
+  },
+  "judges": [
+    {
+      "role": "judge[0]",
+      "identity": "claude-opus-5",
+      "argv": [
+        "claude",
+        "-p",
+        "--safe-mode",
+        "--no-session-persistence",
+        "--model",
+        "claude-opus-5",
+        "--output-format",
+        "text"
+      ],
+      "input_mode": "arg",
+      "output_mode": "stdout",
+      "timeout_sec": 300,
+      "cwd_mode": "temp",
+      "env_keys": []
+    }
+  ],
+  "candidate_rules_sha256": "e12309327293e2682abf2cf5a0bbf67440b8787ea437bc11876a697db0b1d05c",
+  "cases": 10,
+  "judgments": 20,
+  "candidate_preference": 0.65,
+  "ci95_by_case": [
+    0.395,
+    0.905
+  ],
+  "gap_from_parity": 0.15,
+  "order_consistency": 0.8,
+  "categories": {
+    "ambiguity": {
+      "cases": 1,
+      "candidate_preference": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    },
+    "business_chat": {
+      "cases": 1,
+      "candidate_preference": 0.5,
+      "ci95": [
+        0.5,
+        0.5
+      ]
+    },
+    "casual": {
+      "cases": 1,
+      "candidate_preference": 0.5,
+      "ci95": [
+        0.5,
+        0.5
+      ]
+    },
+    "code_review": {
+      "cases": 1,
+      "candidate_preference": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    },
+    "conciseness": {
+      "cases": 1,
+      "candidate_preference": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "incident_report": {
+      "cases": 1,
+      "candidate_preference": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    },
+    "politeness": {
+      "cases": 1,
+      "candidate_preference": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "rewrite": {
+      "cases": 1,
+      "candidate_preference": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    },
+    "support_reply": {
+      "cases": 1,
+      "candidate_preference": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    },
+    "technical_explanation": {
+      "cases": 1,
+      "candidate_preference": 0.5,
+      "ci95": [
+        0.5,
+        0.5
+      ]
+    }
+  },
+  "dimensions": {
+    "conciseness": 0.775,
+    "context_fit": 0.525,
+    "correctness": 0.55,
+    "naturalness": 0.55,
+    "tone": 0.375
+  },
+  "case_results": [
+    {
+      "id": "business-chat-dev-01",
+      "split": "dev",
+      "category": "business_chat",
+      "candidate_score": 0.5,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 0.5,
+          "verdicts": [
+            "reference",
+            "candidate"
+          ],
+          "reasons": [
+            "両者とも「未確認」「30分後」という要点は満たすが、Aは待たせている点への一言と「確認でき次第ご連絡します」という次アクションまで示しており、催促した相手への返信として過不足がない。冗長さもなく定型的なAI文体も見られない。Bは簡潔で口語的な自然さはあるものの、「まだです」だけでは相手が再度確認しに来る必要が残り、やや素っ気なく情報も不足気味。簡潔さのみBが上回るが、総合ではAが優位。",
+            "両者とも「未確認・30分後」という事実は正確に伝えている。Aは相手の「見てもらえました？」に「見られそう」と動詞を揃えており、Slackの同僚間として過不足がなく、「！」が語調を和らげている。Bの「確認でき次第ご連絡します」は情報としては有用だが、期限を破ったわけでもない状況での「すみません」と締めの定型句が謝罪サンドイッチ的なAI文体に寄り、「確認」の重複もあって冗長。敬語の距離感も「ご連絡します」がやや硬い。差は大きくないが、簡潔さと文体の自然さでAが上回る。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "code-review-dev-01",
+      "split": "dev",
+      "category": "code_review",
+      "candidate_score": 1.0,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 1.0,
+          "verdicts": [
+            "candidate",
+            "candidate"
+          ],
+          "reasons": [
+            "Bは「このループ、」という主題提示や「クエリが飛ぶ」といった実務的な言い回しが自然で、「マップに載せる」と改善案が具体的。Aは丁寧で角が立たないが、「〜できそうです」「〜はいかがでしょうか？」の二段構えがやや婉曲で定型的、指摘内容もぼやける。柔らかさはAが上だがBも「できますか」と疑問形で押しつけがましくなく、総合ではBがやや優位。",
+            "Aは「このループ、」の主題提示と省略、「クエリが飛んで」といったエンジニアの実務的な語彙で日本語として自然に流れ、問題の指摘から具体的な代替案までを二文で必要十分に収めている。BはN+1という指摘内容自体は正確で、「できそうです」「いかがでしょうか」の緩和表現により押しつけがましくなさではAを上回るが、「件数増加時のN+1を避けるため」が名詞の連結で硬く、一文目と二文目で同じ提案を言い直しているぶん冗長。簡潔さと語順・省略の自然さでAが優り、総合的に僅差でAを支持する。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "technical-explanation-dev-01",
+      "split": "dev",
+      "category": "technical_explanation",
+      "candidate_score": 0.5,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 0.5,
+          "verdicts": [
+            "reference",
+            "candidate"
+          ],
+          "reasons": [
+            "両者とも内容は正確で使い分けにも触れている。Bはバージョン番号やSELECT FOR UPDATE、リトライなど具体度が高く実務的だが、1文が長く、3文目と5文目で使い分けの話が重複し、「〜に向いていて、〜に向いている」という並列構文がやや機械的。Aは4文で無駄がなく、考え方→適する場面→注意点という情報順序が日本語として自然で、です・ます調が若手への説明という距離感にも合う。総合ではAがわずかに優位だが差は大きくない。",
+            "依頼の核は「使い分けが分かること」。Aは楽観・悲観の両方に具体的な場面（在庫の同時購入／プロフィール編集）を挙げ、リトライ実装とデッドロックというトレードオフまで示していて判断材料が揃う。Bは悲観側の例しかなく、楽観側は条件の記述にとどまり説明不足。文体はBのです・ます調と短文が読みやすく自然だが、一文一行＋行末改行の並びがやや機械的。Aは冒頭2文が定義の並列に近いのが弱点で、その分文章の滑らかさではBに劣るものの、残り3文で依頼の要求を満たしており総合ではAが上回る。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rewrite-dev-01",
+      "split": "dev",
+      "category": "rewrite",
+      "candidate_score": 1.0,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 1.0,
+          "verdicts": [
+            "candidate",
+            "candidate"
+          ],
+          "reasons": [
+            "両者ともほぼ同一で、原文の二重敬語を適切に整理できている。Bは「いただいた」を省いても文脈から相手の連絡内容であることが明らかで、日本語らしい省略として自然。Aは意味の明示性でわずかに勝るが冗長さが残り、加えて鉤括弧で囲む体裁は依頼された成果物としてやや余分。差は小さい。",
+            "本文はほぼ同等で、どちらも二重敬語を解消し自然な距離感になっている。BはA に「いただいた」を足しており原文のニュアンスをわずかに保つが、直前に『ご連絡ありがとうございます』がある以上冗長さの側に傾く。加えてBは全体を「」で囲んでおり、書き換え文そのものとして提示する場面では余計な体裁。差は小さいがAがやや簡潔で余分な要素がない。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "casual-dev-01",
+      "split": "dev",
+      "category": "casual",
+      "candidate_score": 0.5,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 0.5,
+          "verdicts": [
+            "draw",
+            "draw"
+          ],
+          "reasons": [
+            "両者とも「面白かった／前半眠い／後半好き」の3要素をLINEらしい距離感で過不足なく伝えている。Bは「眠くなっちゃった」「めちゃくちゃ」や助詞の省略で口語的な自然さがやや上、Aは「すすめてくれてありがとう」で勧めてくれた相手への応答として文脈適合がやや上。定型的なAI文体や冗長さはどちらにもなく、優劣は実質的に拮抗。",
+            "どちらも「面白かった／前半は眠い／後半は好き」の3点を過不足なく伝え、LINEらしいくだけた距離感も適切。Aは「眠くなっちゃった」の口語感と短さが強みだが、感嘆符が半角で表記が不統一。Bの「すすめてくれてありがとう」は友人が勧めた側という文脈から自然に出る一言で、余計な定型まとめとは言い切れず、絵文字と全角表記も一貫している。簡潔さでA、温度感と表記でBが勝る程度で、総合的な優劣は実質的にない。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "politeness-dev-01",
+      "split": "dev",
+      "category": "politeness",
+      "candidate_score": 0.0,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 0.0,
+          "verdicts": [
+            "reference",
+            "reference"
+          ],
+          "reasons": [
+            "Bは自分側の確認に「ご」を付けており、「ご確認が1日遅れ」だと相手の確認が遅れたと読め、責任の所在が逆転する敬語の誤り。依頼の「返信が1日遅れた」とも対象がずれている。Aは謝罪→理由→本題の順序が自然で、大げさにならず簡潔。ただしAは「1日」に触れておらず、Bの方が事実の明示という点では具体的なので、その一点のみBに利がある。総合ではAが優位。",
+            "Aは「ご確認」が相手側の行為を指す形になり、遅延の主体が依頼文（こちら側の確認遅れ）とずれる。さらに「1日」が返信ではなく確認に係っており、何が1日遅れたのかを誤って伝えている。Bは「ご返信が遅くなり」という定型的で自然な表現を用い、遅れた理由も簡潔に添えたうえで回答へつないでおり、敬語・距離感ともに適切。Bは「1日」を省いているが、Aの主体のずれに比べれば軽微。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ambiguity-dev-01",
+      "split": "dev",
+      "category": "ambiguity",
+      "candidate_score": 1.0,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 1.0,
+          "verdicts": [
+            "candidate",
+            "candidate"
+          ],
+          "reasons": [
+            "どちらも文脈を繰り返さず要件を満たすが、同僚のくだけた連絡への返信としてはBの「了解、ありがとう。じゃあ」が距離感として自然。Aは「ありがとうございます！」「こちらで」がやや過剰に丁寧で、感嘆符も含めて定型的な印象を与える。意味内容の正確さは互角。",
+            "どちらも意味は正確で文脈の再説明もない。ただし相手は同僚で、Aの「了解、ありがとう。じゃあ」という運びの方が距離感が合い、承認→着手の流れも簡潔。Bは「ありがとうございます！」の感嘆符と丁寧体がやや他人行儀で、「こちらでリリース作業を進めます」も「リリース進めます」に比べ説明的。差は小さいが、自然さと簡潔さでAがわずかに上回る。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "conciseness-dev-01",
+      "split": "dev",
+      "category": "conciseness",
+      "candidate_score": 0.0,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 0.0,
+          "verdicts": [
+            "reference",
+            "reference"
+          ],
+          "reasons": [
+            "情報量・敬体・簡潔さはほぼ同等だが、Aは「CIの失敗は」と主題を先に置いてから否定→原因と続くため情報順序が自然。Bは主題提示前に否定が来て、末尾に原因と結果が詰まり読み手に負荷がかかる。ただしBは依頼者の「CIが落ちている」を活かし、Aの「失敗」重複を避けている点で僅差。",
+            "内容・敬体・長さはほぼ同等だが、情報順序で差が出る。Bは「CIの失敗は」と主題を先に立ててから否定・原因へ進むため、読み手が何の話か即座に把握でき、報告文として自然。Aは「今回の変更ではなく」という否定から始まり、主節の「CIが落ちています」が文末に来るため、係り受けを保持したまま読む負担がわずかに大きい。また依頼文の「main側」というチーム内の言い回しをBが保っている点も適合的。いずれもAI的な前置きや余計なまとめはなく、差は小さい。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "incident-report-dev-01",
+      "split": "dev",
+      "category": "incident_report",
+      "candidate_score": 1.0,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 1.0,
+          "verdicts": [
+            "candidate",
+            "candidate"
+          ],
+          "reasons": [
+            "依頼で明示された「CDNではなくアプリ側」という切り分け情報をAは落としており、事実の網羅性でBが上。社内向けの障害共有では発生・原因・復旧・対策を項目化したBの形式が一覧性が高く、短く分かりやすくという要件にも合致する。Aは散文として自然で「ご迷惑をおかけしました」の一言も社内文脈で不自然ではないが、情報量と実用性でBが優る。トーンはどちらも過不足なく、定型的なAI文体も目立たない。",
+            "Aは依頼にあった「CDNではなくアプリ側」という切り分け情報を保持しており、事実の欠落がない。Bはこの点を落としているため、原因特定の経緯が伝わらない。また社内共有という文脈では、A の箇条書きは時刻・原因・復旧・再発防止が一目で追え、必要十分。Bは文章として自然だが「【障害復旧のお知らせ】」「ご迷惑をおかけしました」が対外通知寄りで、社内向けとしてはやや距離が遠い。Aの「再発防止策: 検討中、未確定」はやや重複気味だが、減点は小さい。"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "support-reply-dev-01",
+      "split": "dev",
+      "category": "support_reply",
+      "candidate_score": 1.0,
+      "judges": [
+        {
+          "judge": "claude-opus-5",
+          "candidate_score": 1.0,
+          "verdicts": [
+            "candidate",
+            "candidate"
+          ],
+          "reasons": [
+            "Bは必要な2点を冒頭で示し、各項目の具体的な取得方法（全文コピー／1行目のみ）まで自然な流れで説明できており、依頼の要件を過不足なく満たしている。Aは「以下のようにご案内ください」という前置きと引用ブロックの入れ子が冗長で、さらに「列名を『列A』のように伏せてよい」という案内は、原因特定に列名が必要という前提と矛盾しかねない点が減点。Aは禁止事項の列挙がやや強い口調で、Bのほうが問い合わせ対応としての距離感と簡潔さが優れる。ただしAも個人情報を送らない旨を明示しており、差は決定的ではない。",
+            "Aは依頼された案内文そのものを、必要な2点と個人情報を送らせない配慮（スクリーンショットの切り取り、1行目のみコピー）まで簡潔にまとめており、そのまま送れる自然な日本語になっている。Bは「以下のようにご案内ください」という余計なメタ的前置きと引用ブロックで一段階挟まる分、依頼への直接性が落ち、番号付き箇条書きと注意書きの重複でやや冗長。列名自体の伏せ字提案はB独自の有用な補足だが、全体の自然さ・簡潔さでAが上回る。"
+          ]
+        }
+      ]
+    }
+  ]
+}
