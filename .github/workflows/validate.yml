@@ -166,9 +166,34 @@ jobs:
             echo "No affected evaluation case to run; quality gate is a no-op."
             exit 0
           fi
+          # Ratchet, same as the structural step above and for the same reason. A
+          # repository with no trusted lane cannot satisfy this by any configuration:
+          # the secrets are unset *and* this job installs only the Python package, so
+          # no provider executable exists on the runner to run a case with. Failing
+          # anyway made every prompt-surface change red with no action that could turn
+          # it green — which is exactly what `--require-cases` did before it became a
+          # ratchet, and it was merged past for the same reason.
+          #
+          # So: unmeasurable is debt, named in the log and in the run summary, exit 0.
+          # A repository that has the lane is still enforced, but by `affected-run`'s
+          # own exit code below rather than by a refusal here — this branch is the only
+          # thing that changed, and losing a configured lane shows up as the warning
+          # appearing where it never used to.
           if [ -z "$RIG_EVAL_ATTESTATION_KEY" ] || [ -z "$RIG_EVAL_PROVIDER" ] || [ -z "$RIG_EVAL_MODEL" ] || [ -z "$RIG_EVAL_JUDGE_PROVIDER" ] || [ -z "$RIG_EVAL_JUDGE_MODEL" ]; then
-            echo "Prompt quality evidence requires a trusted maintainer run. Fork authors: ask a maintainer to rerun this same-repo PR command with trusted provider and judge credentials; missing evidence cannot pass." >&2
-            exit 1
+            # Case ids reach a `::warning::` line, where a newline would open a
+            # workflow command. They are repo-authored filenames rather than event
+            # data, and this step never runs for a fork — but "it cannot be hostile
+            # from here" is the assumption this whole change is about not making.
+            cases="$(python3 -c 'import json, re; r = json.load(open("/tmp/rig-affected.json")); print(", ".join(re.sub(r"[^A-Za-z0-9._-]", "?", c)[:80] for c in r["affected_cases"]))')"
+            echo "::warning::prompt quality unmeasured: $runnable affected case(s) were not run because this repository has no trusted evaluation lane (RIG_EVAL_* unset) — $cases"
+            {
+              echo "### Prompt quality: unmeasured"
+              echo ""
+              echo "\`$cases\` cover a prompt surface this change touched, and nothing ran them."
+              echo "Set the \`RIG_EVAL_*\` secrets and give the runner a provider executable to"
+              echo "turn this into a measurement; until then this is recorded debt, not evidence."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           state_dir="$(mktemp -d)"
           mkdir -p "$state_dir/rig"

@@ -35,10 +35,11 @@ autonomy: interactive
 ## 展開
 
 1. **スコープ宣言** — 対象パス/機能と「守る資産」を1行。**倫理境界**（自プロダクト or 許可済みローカル/ステージング・DAST は範囲外）を確認。
-2. **threat-model**（`security/threat-modeler`）— 信頼境界とデータフローを地図化し STRIDE で優先脅威を絞る。
-3. **決定論センサー（任意）** — プロジェクトに SAST/SCA/secret スキャンがあれば `scripts/sast_adapter.py`・`workbench.py scan-secrets` の出力を取り込み、機械が拾える面を先に潰す。
-4. **exploit 探索**（`security/exploit-researcher` ＋独立検証 `security-reviewer` を `parallel-fanout`）— `attack-catalog` の技法で刺さる経路を試す。**刺さったものだけ Confirmed**。
-5. **集約**（`review-gate`）— `security-findings` 形式で severity 順・証拠アンカー付きに提示。
+2. **第一報（先出し）** — 探索に入る前に、対象取得だけで読み取れる攻撃面を数行で出す（tool 呼び出し5回以内・所見は全て Suspected 扱い・**判定ではなくプレビュー**）。沈黙のまま探索を続けない。
+3. **threat-model**（`security/threat-modeler`）— 信頼境界とデータフローを地図化し STRIDE で優先脅威を絞る。
+4. **決定論センサー（任意）** — プロジェクトに SAST/SCA/secret スキャンがあれば `scripts/sast_adapter.py`・`workbench.py scan-secrets` の出力を取り込み、機械が拾える面を先に潰す。
+5. **exploit 探索**（`security/exploit-researcher` ＋独立検証 `security-reviewer` を `parallel-fanout`）— `attack-catalog` の技法で刺さる経路を試す。**刺さったものだけ Confirmed**。
+6. **集約**（`review-gate`）— `security-findings` 形式で severity 順・証拠アンカー付きに提示。
 
 ## 出口
 

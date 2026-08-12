@@ -237,6 +237,24 @@ def _probe_auth() -> tuple[bool, str | None]:
     return True, _parse_account(out or err)
 
 
+def probe_auth_status() -> dict:
+    """The raw `gh auth status` result, for callers that need the text and not a verdict.
+
+    This module owns "did the probe run and what did it print"; it deliberately
+    does not own "is that good enough", which depends on the caller. `hostcheck`
+    is the one caller that has an opinion (it reads token scopes off the output),
+    and it parses this dict rather than shelling out to `gh` a second time.
+
+    Read-only, bounded by `AUTH_PROBE_TIMEOUT_SECONDS`, never raises. A missing
+    binary is `installed: False`; a timeout is a non-zero return code, never a
+    silent success.
+    """
+    if shutil.which("gh") is None:
+        return {"installed": False, "returncode": 127, "output": ""}
+    rc, out, err = _run(["gh", "auth", "status"], timeout=AUTH_PROBE_TIMEOUT_SECONDS)
+    return {"installed": True, "returncode": rc, "output": f"{out}\n{err}".strip()}
+
+
 def check_gh(*, probe_auth: bool = True) -> GhStatus:
     """Probe the environment and report exactly one state. Never raises, never mutates.
 
