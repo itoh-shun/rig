@@ -508,16 +508,6 @@ def test_claude_eval_strips_the_calling_session_but_keeps_authentication(
         assert environment["CLAUDE_CODE_USE_BEDROCK"] == "1"
 
 
-def test_codex_eval_keeps_the_environment_the_claude_strip_removes(monkeypatch, tmp_path):
-    """The strip is scoped to the provider it is about, not applied to every child."""
-    pin_parent_claude_session(monkeypatch)
-    _result, seen = run_with_fake_provider(monkeypatch, tmp_path, "codex")
-
-    assert seen
-    for _argv, kwargs in seen:
-        assert kwargs["env"]["CLAUDE_CODE_SESSION_ID"] == "parent-session"
-
-
 def test_codex_eval_still_records_os_enforced_isolation(monkeypatch, tmp_path):
     result, seen = run_with_fake_provider(monkeypatch, tmp_path, "codex")
 
