@@ -78,7 +78,8 @@ def test_mock_baseline_runs_target_and_clean_three_times_and_writes_canonical_re
         phase="baseline", now=NOW,
     )
 
-    assert result["eval_result_schema_version"] == 2
+    assert result["eval_result_schema_version"] == 3
+    assert result["provider_isolation"] == "none" and result["judge_isolation"] == "none"
     assert [row["outcome"] for row in result["target"]] == ["fail", "fail", "pass"]
     assert [row["outcome"] for row in result["clean"]] == ["pass", "pass", "pass"]
     assert result["summary"]["target_failure_rate"] == pytest.approx(2 / 3)
@@ -350,7 +351,7 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
     seen = []
     monkeypatch.setattr(
         runner, "_eval_agent_argv",
-        lambda selected, goal, repo, model: [selected, "--model", model, "-"],
+        lambda selected, goal, repo, model: ([selected, "--model", model, "-"], "os-enforced"),
     )
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
     monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
@@ -386,7 +387,8 @@ def test_codex_judge_transports_prompt_only_in_argv(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(
         runner, "_eval_agent_argv",
-        lambda provider, prompt, repo, model: [provider, "exec", "-m", model, "-"],
+        lambda provider, prompt, repo, model, **_kwargs: (
+            [provider, "exec", "-m", model, "-"], "os-enforced"),
     )
     monkeypatch.setattr(runner.shutil, "which", lambda _name: "/bin/codex")
 
@@ -412,16 +414,207 @@ def test_codex_judge_transports_prompt_only_in_argv(monkeypatch, tmp_path):
     assert transported["output"] == "subject output"
 
 
-def test_claude_eval_fails_closed_without_os_read_only_guarantee(tmp_path):
-    from rig_workbench.eval import EvalCaseError, runner
+def run_with_fake_provider(monkeypatch, tmp_path, provider, *, stdout="ok", judge=None):
+    """Run one case against a stubbed CLI and return (result, [(argv, kwargs), ...])."""
+    from rig_workbench.eval import runner
 
     case = draft_case()
     case["provider_policy"] = {"mode": "any", "allowed": []}
-    with pytest.raises(EvalCaseError, match="OS-level read-only"):
-        runner.run_case(
-            case, repo=tmp_path, provider="claude", model="fixture", repeat=3,
-            phase="current", now=NOW,
-        )
+    seen = []
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    _path, result = runner.run_case(
+        case, repo=tmp_path, provider=provider, model="fixture", repeat=3,
+        phase="current", now=NOW, judge_adapter=judge,
+    )
+    return result, seen
+
+
+def test_claude_eval_records_agent_policy_isolation_and_denies_write_tools(
+    monkeypatch, tmp_path,
+):
+    result, seen = run_with_fake_provider(monkeypatch, tmp_path, "claude")
+
+    # Replaces the former prohibition (claude was rejected outright): claude is now
+    # allowed, but its evidence must say it ran under in-agent policy, not OS enforcement.
+    assert result["provider_isolation"] == "agent-policy"
+    assert result["judge_isolation"] == "none"
+    for argv, kwargs in seen:
+        assert argv[0] == "claude" and kwargs["shell"] is False
+        # Structured output belongs to the judge only; a subject must answer in prose.
+        assert "--json-schema" not in argv
+        assert "--safe-mode" in argv and "--strict-mcp-config" in argv
+        assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep"
+        denied = argv[argv.index("--disallowedTools") + 1].split(",")
+        assert {"Write", "Edit", "Bash"} <= set(denied)
+        assert "--dangerously-skip-permissions" not in argv
+        assert "--allow-dangerously-skip-permissions" not in argv
+        # The prompt travels by stdin exactly once: never in argv, never in the child env.
+        assert kwargs["input"] and kwargs["input"] not in argv
+        assert "RIG_EVAL_INPUT" not in kwargs["env"]
+        # A nested run must not inherit the calling Claude Code session.
+        assert "CLAUDECODE" not in kwargs["env"]
+        assert not [key for key in kwargs["env"] if key.startswith("CLAUDE_")
+                    and key not in runner_claude_auth_environment()]
+
+
+def runner_claude_auth_environment():
+    from rig_workbench.eval.runner import CLAUDE_AUTH_ENVIRONMENT
+
+    return CLAUDE_AUTH_ENVIRONMENT
+
+
+def test_codex_eval_still_records_os_enforced_isolation(monkeypatch, tmp_path):
+    result, seen = run_with_fake_provider(monkeypatch, tmp_path, "codex")
+
+    assert result["provider_isolation"] == "os-enforced"
+    assert all("--sandbox" in argv and argv[argv.index("--sandbox") + 1] == "read-only"
+               for argv, _kwargs in seen)
+
+
+def test_claude_judge_reports_agent_policy_isolation_into_the_result(monkeypatch, tmp_path):
+    from rig_workbench.eval import runner
+
+    verdict = json.dumps({"status": "measured", "criteria": [
+        {"id": "correct", "status": "pass", "score": 1},
+    ]})
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
+    judge = runner.make_judge_adapter(provider="claude", model="fixture", repo=tmp_path)
+    assert judge.judge_isolation == "agent-policy"
+
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": []}
+    case["semantic_rubric"] = [{"id": "correct", "description": "Correct", "weight": 1.0}]
+    seen = []
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, verdict if argv[0] == "claude" else "ok", "")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    _path, result = runner.run_case(
+        case, repo=tmp_path, provider="codex", model="fixture", repeat=3,
+        phase="current", now=NOW, judge_adapter=judge,
+    )
+
+    assert result["provider_isolation"] == "os-enforced"
+    assert result["judge_isolation"] == "agent-policy"
+    assert result["judge"] == {"required": True, "status": "measured"}
+    judge_calls = [(argv, kwargs) for argv, kwargs in seen if argv[0] == "claude"]
+    assert judge_calls and all("RIG_EVAL_JUDGE_INPUT" not in kwargs["env"]
+                               and "CLAUDECODE" not in kwargs["env"]
+                               for _argv, kwargs in judge_calls)
+    # Without a schema the CLI answers in fenced prose, which is not parseable evidence.
+    for argv, _kwargs in judge_calls:
+        schema = json.loads(argv[argv.index("--json-schema") + 1])
+        assert schema["required"] == ["status", "criteria"]
+    subject_calls = [argv for argv, _kwargs in seen if argv[0] == "codex"]
+    assert subject_calls and all("--json-schema" not in argv for argv in subject_calls)
+
+
+def test_custom_judge_adapter_without_isolation_attribute_is_never_isolated(tmp_path):
+    from rig_workbench.eval import runner
+
+    case = draft_case()
+    case["semantic_rubric"] = [{"id": "correct", "description": "Correct", "weight": 1.0}]
+
+    def judge(_case, _payload, _output):
+        return {"status": "measured", "criteria": [
+            {"id": "correct", "status": "pass", "score": 1.0},
+        ]}
+
+    _path, result = runner.run_case(
+        case, repo=tmp_path, provider="mock", model="fixture", repeat=3,
+        phase="current", now=NOW, judge_adapter=judge,
+    )
+    assert result["judge_isolation"] == "none"
+
+
+def test_case_demanding_os_enforced_isolation_refuses_claude_subject_and_judge(
+    monkeypatch, tmp_path,
+):
+    from rig_workbench.eval import EvalCaseError, runner
+
+    case = draft_case()
+    case["provider_policy"] = {"mode": "any", "allowed": [], "min_isolation": "os-enforced"}
+    monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
+    monkeypatch.setattr(
+        runner.subprocess, "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "ok", ""),
+    )
+
+    with pytest.raises(EvalCaseError, match="provider isolation"):
+        runner.run_case(case, repo=tmp_path, provider="claude", model="fixture", repeat=3,
+                        phase="current", now=NOW)
+
+    claude_judge = runner.make_judge_adapter(
+        provider="claude", model="fixture", repo=tmp_path,
+    )
+    with pytest.raises(EvalCaseError, match="judge isolation"):
+        runner.run_case(case, repo=tmp_path, provider="codex", model="fixture", repeat=3,
+                        phase="current", now=NOW, judge_adapter=claude_judge)
+
+    _path, result = runner.run_case(
+        case, repo=tmp_path, provider="codex", model="fixture", repeat=3,
+        phase="current", now=NOW,
+    )
+    assert result["provider_isolation"] == "os-enforced"
+
+
+def test_agent_policy_evidence_cannot_satisfy_a_case_demanding_os_enforced_isolation(
+    monkeypatch, tmp_path,
+):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import compare_results
+    from rig_workbench.eval.gate import quality_result_failures
+
+    demanding = draft_case()
+    demanding["provider_policy"] = {
+        "mode": "any", "allowed": [], "min_isolation": "os-enforced",
+    }
+    current, _seen = run_with_fake_provider(monkeypatch, tmp_path, "claude")
+    baseline = copy.deepcopy(current)
+    baseline["phase"] = "baseline"
+    baseline["case_hash"] = current["case_hash"] = _spec_hash(demanding)
+    resign(baseline)
+    resign(current)
+
+    with pytest.raises(EvalCaseError, match="isolation policy"):
+        compare_results(baseline, current, case=demanding, now=NOW)
+    failures = quality_result_failures(current, demanding, verify_attestation=False)
+    assert f"provider_isolation_policy:{demanding['id']}" in failures
+
+
+def _spec_hash(case):
+    from rig_workbench.eval.cases import evaluation_spec_hash
+
+    return evaluation_spec_hash(case)
+
+
+def test_recorded_isolation_level_is_covered_by_the_result_attestation(monkeypatch, tmp_path):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.attestation import verify_result_attestation
+    from rig_workbench.eval.compare import validate_result
+
+    result, _seen = run_with_fake_provider(monkeypatch, tmp_path, "claude")
+    assert verify_result_attestation(result) is True
+
+    upgraded = copy.deepcopy(result)
+    upgraded["provider_isolation"] = "os-enforced"
+    assert verify_result_attestation(upgraded) is False
+    with pytest.raises(EvalCaseError):
+        validate_result(upgraded, now=NOW)
 
 
 def test_codex_eval_uses_external_read_only_workspace_and_source_is_never_cwd(
@@ -758,7 +951,7 @@ def test_real_provider_nonzero_is_infrastructure_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
     monkeypatch.setattr(runner.shutil, "which", lambda _executable: "/bin/codex")
     monkeypatch.setattr(
-        runner, "_eval_agent_argv", lambda *_args: ["codex", "exec"],
+        runner, "_eval_agent_argv", lambda *_args: (["codex", "exec"], "os-enforced"),
     )
     monkeypatch.setattr(
         runner.subprocess, "run",

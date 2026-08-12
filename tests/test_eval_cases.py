@@ -64,6 +64,8 @@ def test_validate_case_accepts_versioned_case_and_canonicalizes_deterministicall
         lambda c: c["target_inputs"].update(api_token="sk-live-example-secret"),
         lambda c: c.update(title="safe\u202eevil"),
         lambda c: c["provider_policy"].update(mode="sometimes"),
+        lambda c: c["provider_policy"].update(min_isolation="sandboxed"),
+        lambda c: c["provider_policy"].update(min_isolation=True),
         lambda c: c.update(surfaces=[{}]),
     ],
 )

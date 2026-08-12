@@ -9,7 +9,14 @@ import re
 from typing import Any
 
 from .attestation import verify_result_attestation
-from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
+from .cases import (
+    ISOLATION_LEVELS,
+    ISOLATION_RANK,
+    EvalCaseError,
+    canonical_json,
+    evaluation_spec_hash,
+    validate_case,
+)
 from .safety import unsafe_text_reason
 
 MAX_RESULT_AGE = dt.timedelta(days=30)
@@ -28,6 +35,7 @@ def validate_result(
     required = {
         "eval_result_schema_version", "case_id", "case_hash", "source_commit",
         "source_base_commit", "provider", "model", "executor_version", "phase",
+        "provider_isolation", "judge_isolation",
         "judge_provider", "judge_model", "judge_executor_version",
         "started_at", "elapsed_s", "repeat", "target", "clean", "judge", "summary",
         "execution_commit", "execution_base_commit", "execution_status",
@@ -43,7 +51,7 @@ def validate_result(
     if verify_attestation and not verify_result_attestation(result):
         raise EvalCaseError("evaluation result attestation is invalid")
     if (isinstance(result["eval_result_schema_version"], bool)
-            or result["eval_result_schema_version"] != 2):
+            or result["eval_result_schema_version"] != 3):
         raise EvalCaseError("unsupported eval_result_schema_version")
     for field in (
         "case_id", "provider", "model", "executor_version", "judge_provider",
@@ -54,6 +62,9 @@ def validate_result(
             raise EvalCaseError(f"evaluation result {field} is invalid")
     if result["provider"] not in {"mock", "claude", "codex", "command"}:
         raise EvalCaseError("evaluation result provider is invalid")
+    for field in ("provider_isolation", "judge_isolation"):
+        if result[field] not in ISOLATION_LEVELS:
+            raise EvalCaseError(f"evaluation result {field} is invalid")
     if (not isinstance(result["case_hash"], str)
             or not re.fullmatch(r"[0-9a-f]{64}", result["case_hash"])):
         raise EvalCaseError("evaluation result case_hash is invalid")
@@ -226,7 +237,7 @@ def compare_results(
         raise EvalCaseError("comparison requires baseline and current phases")
     for field in (
         "case_id", "case_hash", "source_commit", "source_base_commit", "provider", "model",
-        "executor_version",
+        "executor_version", "provider_isolation", "judge_isolation",
         "judge_provider", "judge_model", "judge_executor_version",
     ):
         if baseline[field] != current[field]:
@@ -248,6 +259,11 @@ def compare_results(
         raise EvalCaseError("evaluation result violates judge provider policy")
     if policy.get("judge_models") and baseline["judge_model"] not in policy["judge_models"]:
         raise EvalCaseError("evaluation result violates judge model policy")
+    if policy.get("min_isolation") is not None:
+        floor = ISOLATION_RANK[policy["min_isolation"]]
+        if any(ISOLATION_RANK[baseline[field]] < floor
+               for field in ("provider_isolation", "judge_isolation")):
+            raise EvalCaseError("evaluation result violates isolation policy")
     if baseline["repeat"] != case["repeat"] or current["repeat"] != case["repeat"]:
         raise EvalCaseError("evaluation result repeat does not match case repeat")
     if baseline["judge_provider"] == "mock" or current["judge_provider"] == "mock":

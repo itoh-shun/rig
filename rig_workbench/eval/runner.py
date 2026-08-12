@@ -19,35 +19,102 @@ from typing import Any
 
 from rig_workbench import __version__
 from .attestation import sign_result_attestation
-from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
+from .cases import (
+    ISOLATION_RANK,
+    EvalCaseError,
+    canonical_json,
+    evaluation_spec_hash,
+    validate_case,
+)
 from .execution import execution_diff_sha256
 from .safety import unsafe_text_reason
 
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 OUTPUT_CAP = 4096
 COMMAND_ALLOWLIST = frozenset({"python", "python3", "node", "printf", "echo", "true", "false"})
+# Claude Code inherits the calling session through CLAUDECODE/CLAUDE_*; a nested eval
+# run must not be told it is a child of the session that launched it. Auth-bearing
+# variables are kept so subscription, Bedrock and Vertex credentials still resolve.
+CLAUDE_AUTH_ENVIRONMENT = frozenset({
+    "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+})
 JudgeAdapter = Callable[[dict, str, str], dict]
+# Claude Code answers a judge prompt in prose with a fenced code block, which is not
+# parseable evidence. `--json-schema` makes the CLI emit the bare verdict object instead.
+JUDGE_OUTPUT_SCHEMA = json.dumps({
+    "type": "object", "additionalProperties": False,
+    "required": ["status", "criteria"],
+    "properties": {
+        "status": {"type": "string"},
+        "criteria": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["id", "status", "score"],
+            "properties": {"id": {"type": "string"}, "status": {"type": "string"},
+                           "score": {"type": "number"}},
+        }},
+    },
+}, separators=(",", ":"), sort_keys=True)
 
 
-def _eval_agent_argv(provider: str, prompt: str, repo: pathlib.Path, model: str) -> list[str]:
-    """Read-only, ephemeral eval adapter; deliberately independent of benchmark wrappers."""
+def _eval_agent_argv(
+    provider: str, prompt: str, repo: pathlib.Path, model: str,
+    *, json_schema: str | None = None,
+) -> tuple[list[str], str]:
+    """Read-only, ephemeral eval adapter; deliberately independent of benchmark wrappers.
+
+    Returns the argv together with the isolation strength that argv actually buys, so
+    the two cannot drift: weakening the flags means editing the level beside them.
+    """
     if provider == "claude":
-        raise EvalCaseError("Claude CLI cannot guarantee OS-level read-only evaluation")
+        del prompt  # Prompt is transported confidentially via stdin exactly once.
+        # The Claude CLI has no OS-level sandbox. `--tools` requests a built-in tool set
+        # without Write/Edit/Bash and `--disallowedTools` denies those by name as well;
+        # measured behaviour is that writes are refused, but the resulting set is not a
+        # closed one (a session tool outside the permission registry was still offered).
+        # `--safe-mode` drops this repository's hooks, skills and MCP servers so the eval
+        # measures the model and not the local configuration. All of that is policy the
+        # agent applies to itself in-process, hence `agent-policy`: unlike codex, nothing
+        # outside the process stops a write.
+        # `--permission-mode plan` is deliberately absent: with writes denied, plan mode
+        # answers "enable Write or leave plan mode" instead of producing the output.
+        return [
+            "claude", "-p", "--safe-mode", "--no-session-persistence",
+            "--strict-mcp-config", "--output-format", "text",
+            *(["--json-schema", json_schema] if json_schema else []),
+            "--tools", "Read,Glob,Grep",
+            "--disallowedTools", "Write,Edit,NotebookEdit,Bash",
+            "--model", model,
+        ], "agent-policy"
     if provider == "codex":
         del prompt  # Prompt is transported confidentially via stdin exactly once.
+        del json_schema  # codex has no structured-output flag; its argv is unchanged.
         return [
             "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
             "--cd", str(repo), "--ephemeral", "-m", model, "-",
-        ]
+        ], "os-enforced"
     raise EvalCaseError("unsupported read-only evaluation adapter")
 
 
-def _child_environment(**updates: str) -> dict[str, str]:
+def eval_isolation_level(provider: str, repo: pathlib.Path, model: str) -> str:
+    """Isolation strength the adapter argv actually applies for this provider."""
+    if provider in {"claude", "codex"}:
+        return _eval_agent_argv(provider, "", repo, model)[1]
+    return "none"
+
+
+def _child_environment(provider: str | None = None, **updates: str) -> dict[str, str]:
     """Return executor environment without evaluation attestation credentials."""
     environment = {
         key: value for key, value in os.environ.items()
         if not key.startswith("RIG_EVAL_ATTESTATION_")
     }
+    if provider == "claude":
+        environment = {
+            key: value for key, value in environment.items()
+            if key in CLAUDE_AUTH_ENVIRONMENT
+            or not (key == "CLAUDECODE" or key.startswith("CLAUDE_"))
+        }
     environment.update(updates)
     return environment
 
@@ -158,7 +225,7 @@ def _execute(
         if not argv or pathlib.Path(argv[0]).name != argv[0] or argv[0] not in COMMAND_ALLOWLIST:
             raise EvalCaseError("command executable is not allowlisted")
     elif provider in {"claude", "codex"}:
-        argv = _eval_agent_argv(provider, payload, repo, model)
+        argv, _isolation = _eval_agent_argv(provider, payload, repo, model)
         if not argv or shutil.which(argv[0]) is None:
             return 127, "", "provider executable unavailable", "unavailable"
     else:
@@ -167,9 +234,9 @@ def _execute(
         "RIG_EVAL_PHASE": phase, "RIG_EVAL_KIND": kind,
         "RIG_EVAL_INDEX": str(index),
     }
-    if provider != "codex":
+    if provider not in {"claude", "codex"}:
         environment_values["RIG_EVAL_INPUT"] = payload
-    environment = _child_environment(**environment_values)
+    environment = _child_environment(provider, **environment_values)
     try:
         completed = subprocess.run(
             argv, cwd=repo, env=environment,
@@ -265,12 +332,14 @@ def make_judge_adapter(
         prompt = _judge_prompt(case, payload, output)
         selected = argv
         if provider in {"claude", "codex"}:
-            selected = _eval_agent_argv(provider, prompt, root, model)
+            selected, _isolation = _eval_agent_argv(
+                provider, prompt, root, model, json_schema=JUDGE_OUTPUT_SCHEMA,
+            )
             if not selected or shutil.which(selected[0]) is None:
                 return {"status": "error", "criteria": []}
         assert selected is not None
-        environment = _child_environment(**(
-            {} if provider == "codex" else {"RIG_EVAL_JUDGE_INPUT": prompt}
+        environment = _child_environment(provider, **(
+            {} if provider in {"claude", "codex"} else {"RIG_EVAL_JUDGE_INPUT": prompt}
         ))
         try:
             completed = subprocess.run(
@@ -294,6 +363,7 @@ def make_judge_adapter(
     judge.judge_provider = provider  # type: ignore[attr-defined]
     judge.judge_model = model  # type: ignore[attr-defined]
     judge.judge_executor_version = __version__  # type: ignore[attr-defined]
+    judge.judge_isolation = eval_isolation_level(provider, root, model)  # type: ignore[attr-defined]
     return judge
 
 
@@ -411,6 +481,19 @@ def run_case(
         raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
     started_wall = _iso(now)
     adapter_cwd = pathlib.Path(execution_cwd).resolve() if execution_cwd is not None else root
+    provider_isolation = eval_isolation_level(provider, adapter_cwd, model)
+    judge_isolation = str(getattr(judge_adapter, "judge_isolation", "none"))
+    if judge_isolation not in ISOLATION_RANK:
+        raise EvalCaseError("judge adapter reports an unknown isolation level")
+    # An absent `min_isolation` accepts any level: the result records what it ran under,
+    # so a case that has not asked for OS enforcement still cannot hide having skipped it.
+    required_isolation = policy.get("min_isolation")
+    if required_isolation is not None:
+        floor = ISOLATION_RANK[required_isolation]
+        if ISOLATION_RANK[provider_isolation] < floor:
+            raise EvalCaseError("provider isolation violates case provider policy")
+        if judge_adapter is not None and ISOLATION_RANK[judge_isolation] < floor:
+            raise EvalCaseError("judge isolation violates case provider policy")
     execution_commit, execution_base_commit, execution_status = (
         _git_identity(root) if execution_base is None
         else _git_identity(root, execution_base)
@@ -455,8 +538,10 @@ def run_case(
         "prompt_binding_sha256": prompt_binding_sha256,
         "pack_tree_sha256": pack_tree_sha256,
         "provider": provider, "model": model, "executor_version": __version__,
+        "provider_isolation": provider_isolation,
         "judge_provider": judge_provider, "judge_model": judge_model,
         "judge_executor_version": judge_executor_version,
+        "judge_isolation": judge_isolation,
         "phase": phase, "started_at": started_wall,
         "elapsed_s": round(time.monotonic() - started, 6), "repeat": repeat,
         "target": target, "clean": clean,

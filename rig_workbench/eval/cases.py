@@ -46,6 +46,14 @@ _SHA = re.compile(r"^[0-9a-f]{7,64}$")
 _SPEC_EXCLUDED_FIELDS = frozenset({
     "status", "title", "failure_summary", "missing_requirements", "created_at", "updated_at",
 })
+# How strongly the workspace was held read-only while a provider ran, ordered weakest
+# first. `os-enforced` means the operating system refused writes (codex's `--sandbox
+# read-only`); `agent-policy` means only the agent's own tool policy did (Claude Code's
+# `--tools`/`--permission-mode`, which nothing outside the process enforces). Green
+# produced under the two is not interchangeable, so every result records the level it
+# actually ran under instead of leaving it to be guessed from the provider name.
+ISOLATION_RANK: dict[str, int] = {"none": 0, "agent-policy": 1, "os-enforced": 2}
+ISOLATION_LEVELS = frozenset(ISOLATION_RANK)
 
 
 def canonical_json(value: Any) -> str:
@@ -207,7 +215,7 @@ def validate_case(case: Any) -> dict:
         raise EvalCaseError("tags contains a duplicate")
     policy = _exact(
         obj["provider_policy"],
-        {"mode", "allowed", "models", "judge_providers", "judge_models"},
+        {"mode", "allowed", "models", "judge_providers", "judge_models", "min_isolation"},
         "provider_policy", {"mode", "allowed"},
     )
     if (not isinstance(policy["mode"], str)
@@ -226,6 +234,8 @@ def validate_case(case: Any) -> dict:
                        or not (_ID if field == "judge_providers" else _MODEL_ID).fullmatch(value)
                        for value in values)):
             raise EvalCaseError(f"provider_policy.{field} is invalid")
+    if "min_isolation" in policy and policy["min_isolation"] not in ISOLATION_LEVELS:
+        raise EvalCaseError("provider_policy.min_isolation is invalid")
     if (isinstance(obj["repeat"], bool) or not isinstance(obj["repeat"], int)
             or not 1 <= obj["repeat"] <= 100):
         raise EvalCaseError("repeat must be an integer from 1 to 100")

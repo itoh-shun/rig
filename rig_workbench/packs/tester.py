@@ -114,6 +114,8 @@ def test_pack(
     if provider == "command" or judge_provider == "command":
         raise PackError("pack evaluation forbids command subject and judge adapters")
     if provider == "claude" or judge_provider == "claude":
+        # Durable, redistributed evidence keeps the stricter bar: claude runs under
+        # agent-policy isolation, which the eval harness records but packs do not accept.
         raise PackError("pack evaluation requires an OS-level read-only adapter")
     if result_dir is None:
         raise PackError("pack quality evaluation requires caller-selected --result-dir")
