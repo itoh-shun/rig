@@ -1,142 +1,93 @@
-# ChatGPTからRigを使う — remote MCP adapter
+# ChatGPTからRig remote MCPを使う
 
-Rigには従来から`stdio`のMCP server (`scripts/mcp_server.py`) がある。これはローカルhost/agent向けであり、ChatGPTから直接接続する入口にはならない。
+Rigのserver contract、install、tool、安全境界はclient-neutralな
+[`remote-mcp.md`](./remote-mcp.md) を参照する。この文書ではChatGPTとの接続だけを扱う。
 
-ChatGPTはremote MCP serverへ接続するため、このadapterはpackage-nativeな`rig-mcp` commandとして **Streamable HTTP** を提供する。実行ロジックをMCP側へ複製せず、すべて`rig-wb`の既存code pathへ委譲する。
+> OpenAI側の提供条件とUIは変わりうる。この文書は2026-08-12時点。最新情報は
+> OpenAI公式のDeveloper mode / MCP apps documentationを確認すること。
 
-> OpenAI側の提供条件・UIは変わりうる。この文書のChatGPT部分は2026-08-11時点。最新情報はOpenAIのDeveloper mode / MCP appsドキュメントを確認すること。
+## 接続構成
 
-## 1. install
+`rig-mcp`は安全のためloopbackにしかbindせず、TLSやOAuthを終端しない。ChatGPTとの
+接続は、次の二つを別の構成として選ぶ。
 
-```bash
-pip install 'rig-workbench[mcp]'
-```
+### Secure MCP Tunnel
 
-source checkoutなら:
-
-```bash
-pip install -e '.[mcp]'
-```
-
-## 2. read-onlyで起動する
-
-対象repositoryを一つ固定して起動する。
-
-```bash
-rig-mcp \
-  --repo /path/to/project \
-  --transport streamable-http
-```
-
-既定値:
-
-- bind: `127.0.0.1:8000`
-- endpoint: `/mcp` (MCP Python SDKのStreamable HTTP既定値)
-- repository: server起動時に固定
-- write actions: **disabled**
-
-利用できるread tool:
-
-- `rig_status`
-- `rig_board`
-- `rig_diff`
-- `rig_plan`
-
-## 3. write actionsを許可する
+OpenAIのtunnel clientを`rig-mcp`と同じprivate環境で動かし、その転送先をlocalの
+`http://127.0.0.1:8000/mcp`にする。tunnel clientが対応している場合はstdioを転送先に
+してもよい。ChatGPT appではURL接続ではなく`Connection = Tunnel`を選び、発行された
+`tunnel_id`を指定する。tunnel用のHTTPS endpointをappのdirect server URLとして
+登録する手順ではない。
 
 ```bash
 rig-mcp \
   --repo /path/to/project \
   --transport streamable-http \
-  --allow-write
+  --allow-unauthenticated-http
 ```
 
-追加で使えるtool:
+### public HTTPS endpoint
 
-- `rig_run`
-- `rig_accept`
-- `rig_discard`
+別案は、認証付きHTTPS reverse proxyを公開し、外側の`https://.../mcp`からlocalの
+`http://127.0.0.1:8000/mcp`へ転送するdirect URL構成である。proxyがTLSと認証を担う。
+public endpointでOAuthを使うなら、ChatGPTのMCP OAuth要件を満たす必要がある。
 
-`rig_accept`はMCP独自のmerge実装を持たない。`rig-wb wb accept`へ委譲するため、worktree、base branch、diff summary、acceptance gateなど既存の構造的前提をそのまま通る。
-
-remote adapterからは`--force`を公開しない。`rig_discard`もtool argumentとして`confirm=true`が必要になる。
-
-## 4. ChatGPTへつなぐ
-
-ChatGPTはローカルMCP serverへ直接接続しない。二つの方法がある。
-
-1. Rig MCP serverを認証付きHTTPS endpointとしてremote deployする。
-2. 開発PC / private network上で動かす場合は、OpenAIが案内するSecure MCP Tunnelを使う。
-
-ChatGPT側ではDeveloper modeでcustom MCP appを作り、remote endpoint (`.../mcp`) を登録してtool scanを行う。
+`rig-mcp`のtransport securityはloopbackのHost/Originだけを許可する。proxyはupstreamの
+`Host`を実際に設定したloopback host（例: `127.0.0.1:8000`）へ書き換え、外部の`Origin`
+をそのまま転送しない。`Origin`は除去するか、許可されたloopback originへ書き換える。
+`rig-mcp`を`0.0.0.0`へ直接公開する構成はsupportしない。
+`--allow-unauthenticated-http`は認証機能ではなく、adapterのHTTP endpoint自体には認証が
+ないことへのacknowledgementである。Host/Origin検証も認証ではない。localhostは同じhostの
+他user/processから到達しうるので、dedicated single-user host/containerを使うか、loopbackへ
+直接到達できる主体を制限する。
 
 OpenAI公式:
 
+- Secure MCP Tunnel: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
 - Developer mode and MCP apps in ChatGPT: https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt
-- Apps in ChatGPT: https://help.openai.com/en/articles/11487775-connectors-in-chatgpt
+- MCP server authentication: https://developers.openai.com/plugins/build/auth
 
-2026-08-11時点では、ChatGPT Webでcustom MCP appsを設定する。OpenAIの案内ではmobile appからMCP appsは利用できない。Full MCPのwrite/modify actionsはBusiness / Enterprise / Edu向けで、Proはdeveloper modeでread/fetch権限のMCP接続が対象になる。
+## permissionを段階的に開く
 
-## 5. このadapterの境界
-
-```text
-ChatGPT
-   |
-   | remote MCP / Streamable HTTP
-   v
-rig-mcp
-   |
-   | fixed argv, no shell
-   v
-python -m rig_workbench.cli
-   |
-   +--> plan / run
-   +--> wb status / board / diff
-   +--> wb accept / discard
-   |
-   v
-Rig run state + worktree + acceptance gate
-```
-
-MCP serverは新しいauthorityではない。ChatGPTに緑色の成功表示が出ても、Rig coreのgateを迂回してよい理由にはならない。
-
-### repository binding
-
-一つのserver processは一つのrepository rootに固定する。ChatGPTから任意pathを渡して別repositoryへ移動するtoolは公開しない。
-
-複数projectを扱う場合は、projectごとにserver instance / port / tunnel identityを分ける。これにより、ChatGPTへ渡したapp permissionとfilesystem authorityの境界を一致させやすい。
-
-### command injection
-
-recipe、task id、providerは識別子としてvalidationし、shellを介さずargvで`rig-wb`へ渡す。goalだけは自然文としてargvの一要素に渡す。
-
-### output size
-
-stdout/stderrはそれぞれ128 KiBでtruncateする。巨大なdiffやlogをMCP responseへ無制限に載せない。
-
-## 6. local MCP clientで使う場合
-
-同じentrypointはstdioも使える。
+最初はread-onlyで接続し、`rig_status`、`rig_board`、`rig_diff`、`rig_plan`を確認する。
+writeが必要なserver instanceだけ`--allow-write`を付けて再起動する。write toolを使える
+ChatGPT planやworkspace条件はOpenAI側の最新documentationで確認する。
 
 ```bash
-rig-mcp --repo /path/to/project --transport stdio
+rig-mcp \
+  --repo /path/to/project \
+  --transport streamable-http \
+  --allow-unauthenticated-http \
+  --allow-write \
+  --operator-id alice@example.com
 ```
 
-ChatGPT接続ではremote MCPが必要だが、MCP Inspectorやstdio対応hostでadapterのtool contractを確認するときに使える。
+外側のtunnel/proxyは、このinstanceで指定した一人のoperatorだけを認証しなければならない。
+adapterはChatGPT callerのidentity/scopeをRigへ伝播しないため、multi-user/shared-workspaceで
+同じwrite-enabled HTTP instanceを共有する構成はsupportしない。`--operator-id`はchildの
+`RIG_ACTOR`と`RIG_USER`に設定される。principalごとのOAuth/scope伝播は将来の課題である。
 
-## 7. 最初に試す会話
+serverを再起動しても、ChatGPT側のaction snapshotは自動更新・自動有効化されない。
+appの管理画面でactionをrefreshし、追加・変更された定義をreviewしてから必要なactionを
+明示的に有効化する。新しいactionは既定でdisabledになる。実際のreview/publish手順は
+workspaceごとに変わりうるため、上記のDeveloper mode公式helpを確認する。
 
-read-only serverなら:
+write-enabledでも`rig_run`は常にGit worktreeをisolateし、`rig_accept`はtask idを要求し
+forceを公開しない。ただしworktree isolationはprovider/recipeのexternal effectをsandbox
+しない。acceptの前にdiffとgateを確認する。
+
+最初のread-only会話例:
 
 ```text
 Rigのboardを見て、止まっているtaskと次に人間が判断すべきものを教えて。
 ```
 
-writeを有効にした環境なら:
+write-enabled instanceの例:
 
 ```text
 bugfix recipeをCodex providerでisolated runして。
 終わったらdiffとgateを見せて。acceptはまだしないで。
 ```
 
-この順序を推奨する。ChatGPTを「Rigを迂回して作業するagent」にするのではなく、Rigのcontrol planeを会話から操作するhostとして扱う。
+ChatGPTはRigを迂回する新しいauthorityではなく、Rig control planeを会話から操作する
+MCP clientの一つである。

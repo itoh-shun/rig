@@ -45,12 +45,17 @@ $ARGUMENTS
 
 ### ② 自然文タスク（上記のいずれにも一致しない場合）
 
-`facets/instructions/workbench` に従い、①タスク分類（task_type）→②
-`rig-wb wb route --type <type> --json` の capability authority による recipe 解決
+`facets/instructions/workbench` に従い、⓪ホスト前提の確認（`rig-wb hostcheck`）→①タスク分類
+（task_type）→②`rig-wb wb route --type <type> --json` の capability authority による recipe 解決
 →③`patterns/isolated-worktree` に従った隔離 worktree での RUN →④
-`scripts/workbench.py gate` による acceptance-gate 判定→⑤結果サマリの5段を駆動する。
+`scripts/workbench.py gate` による acceptance-gate 判定→⑤結果サマリを駆動する。
 route は読み取り専用で、自動 install・network・trust 承認を行わない。ユーザーが recipe や
 step を明示しなくてもよい（明示したい場合は `/rig:dev --recipe <name> ...` を使う）。
+
+**⓪はブロックしない**——`--strict` は付けず、exit 3 でもタスクを止めない。欠けている前提だけを
+1行ずつ報告して①へ進む（手順の正本は `facets/instructions/workbench` ⓪）。`gh auth status` を
+含むので毎回数秒かかる。**「セッション初回だけ」ではなく毎回走る**——それを保証する状態を rig は
+どこにも持っていないので、書いても実装が無い約束になる。
 
 ## `/rig:dev` との使い分け
 

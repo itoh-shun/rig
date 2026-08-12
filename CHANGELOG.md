@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+`rig-mcp` adds a package-native, client-neutral MCP adapter for one initialized Rig
+repository. Read tools are the default; isolated run, gated accept, and confirmed
+discard are registered only with explicit write enablement. Streamable HTTP is
+loopback-only with DNS-rebinding protection and requires explicit acknowledgement
+that the endpoint itself is unauthenticated. Write-enabled HTTP additionally binds
+the child Rig identity to one configured operator; multi-user sharing is unsupported.
+A customer-run Secure MCP Tunnel client
+can target that local endpoint, or a separate authenticated HTTPS reverse proxy can
+provide a public direct URL; `rig-mcp` itself terminates neither TLS nor OAuth. Stdio
+is available for local hosts.
+The adapter delegates asynchronously through an isolated Python invocation to the
+canonical CLI, bounds goals and in-memory pipe capture, terminates timed-out or
+cancelled process groups, serializes mutations per server, and retains
+the former ChatGPT module name as a compatibility import. ChatGPT remains one
+documented client rather than defining the server contract.
+
+## [2.5.0] - 2026-08-11
+
+**Review flows now speak before they finish exploring, and the orchestrator is held
+to the same claim discipline it imposes on its reviewers.** Ten days of usage data
+showed a third of sessions were security reviews abandoned mid-exploration with zero
+findings emitted: the reviewers are subagents, so nothing reached the operator until
+the barrier released, and the barrier never released. `parallel-review`, `pr-review`,
+`security-audit` and `adversarial-review` now require a first report before dispatch —
+capped at five tool calls, explicitly a preview rather than a verdict, and retractable
+without penalty — and relay each verdict as it lands instead of only after aggregation.
+The barrier itself is unchanged; judgment still happens at the gate.
+
+`review-verdict` already forces subagents to carry evidence anchors and a stated
+confidence, and `scan-anchors` verifies those anchors exist. The parent had no such
+contract, and three retractions in a single day came from the same shape: asserting the
+state of a CI check, a gate, a branch or a sensor scan that was never run. The
+`orchestrator`, `goal-driver`, `implementer` and `talk-assistant` personas now name
+those six subjects, require an explicit `未検証:` prefix for anything unverified, and
+forbid writing an unrun scan into a gate record. This is prose, not a sensor, and each
+persona says so.
+
+`rig-wb hostcheck` gains two checks drawn from failures that actually stopped runs:
+whether `gh` is authenticated with the scopes rig's own GitHub writes need, read off the
+active account's stanza for the host this repo's remote actually points at, and whether
+the *installed* `rig-wb` imports its subpackages from a directory outside any checkout
+with `PYTHONPATH` unset — the exact condition under which a packaging omission hides
+from every in-repo test. Both are injectable and carry `--bench` corpora whose negative
+cases were confirmed against the pre-fix code. An axis that could not be verified
+reports MISS, never OK: a token whose scopes `gh` will not print, a git invocation that
+failed rather than a repository with no GitHub remote, and an editable install, whose
+green would only ever have described the source tree it points at. `/rig:go` runs
+hostcheck before each natural-language task and never blocks on it.
+
+CI's prompt quality step is a ratchet now, like the structural step beside it. This
+repository cannot satisfy it by any configuration — the `RIG_EVAL_*` secrets are unset
+and the job installs only the Python package, so no provider executable exists on the
+runner to run a case with — and failing anyway made every prompt-surface change red
+with no action that could turn it green. Unmeasurable is debt: the affected cases are
+named in a warning and in the run summary, and the step exits 0. A repository that has
+a trusted lane is still enforced exactly as before.
+
+`rig-wb wb context` judges what it measured against declared budgets and prints each
+budget beside its verdict. The budget line and the report's heavy section are separate
+thresholds — as one constant the verdict could only read `ok` when the section was
+empty, which printed one fact twice. It still reports no dispatch rate: Claude Code
+hands a subagent's shell the same environment and session id as the parent's, so the
+signal does not exist, and the report states that rather than letting a reader assume
+the axis was clean.
+
+## [2.4.2] - 2026-08-11
+
+**Codex hooks now follow Codex's JSON contracts instead of Claude Code's
+PreCompact stdout convention.** The shared plugin resolves either `PLUGIN_ROOT`
+or `CLAUDE_PLUGIN_ROOT`, so Codex no longer tries to execute `/hooks/*.sh` and
+exit 127. Codex PreCompact returns valid no-op JSON; a compact-only
+`SessionStart` hook then attempts a best-effort re-anchor from state retained in
+the compacted context. It does not claim to reconstruct omitted state.
+Claude Code retains its plaintext PreCompact instructions. Execution-level
+regression tests cover both plugin roots and the rootless Codex-native mirror.
+
 ## [2.4.1] - 2026-08-11
 
 **The research and examples that accompanied the Japanese-writing work are now

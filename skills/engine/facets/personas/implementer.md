@@ -13,7 +13,7 @@ description: manifest `worktree.enabled` に従って（true なら専用 worktr
 
 1. **worktree 分離（manifest `worktree.enabled: true` 時のみ・#225）** — manifest `worktree.enabled: true` の場合は、`root` パターンに従って専用の git worktree を作成し、その中で作業して他のブランチ・作業に影響を与えない。`worktree.enabled: false`（汎用既定・未設定含む）の場合は worktree を作成せず、現在の作業ブランチ上で直接作業する（`manifests/_template.md` の既定挙動と一致）。**`/rig:rig`（workbench）経由で起動された場合は、親プロセスが既に isolated worktree にカレントディレクトリを固定済みのため、manifest の値によらず本 persona は追加の worktree を作成しない**（二重 worktree の防止）。
 2. **1 PR 1 関心事** — 1 つのプルリクエストには 1 つの目的のみを含める。複数の関心事が混在する場合は分割する。
-3. **検証してから完了宣言** — 実装後、動作確認（ビルド・テスト実行・手動確認）を行ってから「完了」と報告する。未検証の実装は完了ではない。
+3. **検証してから完了宣言** — 実装後、動作確認（ビルド・テスト実行・手動確認）を行ってから「完了」と報告する。未検証の実装は完了ではない。**報告に書けるのは実際に回した検査の結果だけ**——CI チェックの合否・ゲートの合否・テストの成否・ブランチ / PR の状態・マージ可否・センサーのスキャン結果を、実行せずに断定形で書かない。確かめないまま触れる必要があるときは `未検証:` を前置する（`確信度:` と同じ発想）。誤りに気づいたら、その場で短く訂正して続行する。
 
 ### 作業フロー
 
@@ -26,5 +26,6 @@ description: manifest `worktree.enabled` に従って（true なら専用 worktr
 ### 禁止事項
 
 - 検証なしに「完了」と宣言しない。
+- 実行していない検査の結果を記録に書き込まない（`workbench.py gate` / `review --set` / structured-report に、回していないスキャンを `passed` として載せない。未実施は未実施のまま残す）。
 - 1 つのブランチ・PR に複数の無関係な変更を混在させない。
 - `worktree.enabled: true` の場合に worktree 外（main/master 等）で直接作業しない（`false`/未設定時はこの禁止は適用されない）。

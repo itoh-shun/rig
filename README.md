@@ -24,7 +24,7 @@ Three properties keep the safety flow real (not just documented):
 
 rig is deliberately **not** a heavyweight external engine with its own DSL. Inside a Claude Code session it is a thin quality/safety layer composed from Claude Code's own primitives — slash commands (`commands/`), the skill (`skills/engine`), subagents (`agents/`), and hooks (`hooks/`). The isolation, the gate, and the accept step add discipline to the session you already work in; they don't replace it with another tool.
 
-The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §13 "Standalone CLI". An MCP server exposing this same engine ships as `scripts/mcp_server.py` (#263) — see §7 "MCP server (#263)" for the tool list and opt-in wiring.
+The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §13 "Standalone CLI". The package-native remote/SDK MCP path ships as `rig-mcp`; see [`docs/remote-mcp.md`](docs/remote-mcp.md). The historical stdlib-only local stdio adapter remains `scripts/mcp_server.py` (#263) with a different, non-interchangeable tool contract — see §7.
 
 And the differentiator over "we have quality gates" framings: rig's gates and reviewers are **measured, not asserted**. `/rig:drill` (§11) scores each reviewer persona's actual detection rate against injected known bugs, and `/rig:go stats` (§10) flags rubber-stamp reviewers and frequently-failing gates from real run history. A gate you can't measure is a hope; rig treats gate efficacy as data.
 
@@ -553,13 +553,23 @@ The same schema-v2 acceptance criteria apply; `bare_model`/`rig_model` are recor
 
 ### MCP server (#263)
 
-To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:
+For the package-native MCP SDK adapter, including Streamable HTTP and stdio, install
+`rig-workbench[mcp]` and run `rig-mcp`. Its client-neutral setup, fixed-repository
+boundary, conditional write tools, and single-operator HTTP constraints are documented
+in [`docs/remote-mcp.md`](docs/remote-mcp.md). This is the remote/SDK integration path.
+
+The existing `scripts/mcp_server.py` remains a stdlib-only historical/local stdio
+adapter for agents, CI, and separate processes:
 
 ```bash
 python3 scripts/mcp_server.py
 ```
 
-It listens for Model Context Protocol (JSON-RPC 2.0, line-delimited) on stdio. It doesn't depend on the official `mcp` SDK — to match `workbench.py`/`orchestrate.py`'s stdlib-only stance and avoid a heavy third-party dependency, it implements a minimal stdio transport with the standard library alone. No new execution engine: every tool is a thin adapter that shells out to `workbench.py`/`orchestrate.py`, so accept/discard's force-proof requirements (`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`, etc.) go through the exact same code path and can't be bypassed via MCP either.
+It listens for Model Context Protocol (JSON-RPC 2.0, line-delimited) on stdio and does
+not depend on the official `mcp` SDK. Its tools below differ from `rig-mcp`; the two
+contracts are not interchangeable. No new execution engine: every tool is a thin adapter
+that shells out to `workbench.py`/`orchestrate.py`, so accept/discard's force-proof
+requirements go through the same code path.
 
 Tools provided:
 
@@ -708,13 +718,13 @@ As of 2026, the Codex CLI has extension mechanisms (Skills, Hooks, Subagent TOML
 | Mechanism | File added | What it does |
 |---|---|---|
 | Skills | `codex/skills/engine/SKILL.md` | A thin skill following Codex's `.agents/skills/<name>/SKILL.md` convention (`name`/`description` frontmatter). No new engine — it's a procedural pointer to the existing `workbench.py`/`orchestrate.py` |
-| Hooks | `codex/hooks.json` | Wires run-continuity into Codex's `PreCompact` event by reusing the exact same `hooks/preserve-rig-state.sh` (it contains nothing Claude-Code-specific, so there's nothing to duplicate) |
+| Hooks | `codex/hooks.json` | Codex `PreCompact` returns valid no-op JSON through `hooks/codex-precompact.sh`; `SessionStart(source=compact)` then attempts a best-effort re-anchor through `hooks/inject-run-continuity.sh`. Claude Code keeps the unchanged plaintext `hooks/preserve-rig-state.sh` path |
 | Subagents | `.codex/agents/security-reviewer.toml` | A Codex-native subagent definition with the same review axes and output contract as `agents/security-reviewer.md`. `sandbox_mode = "read-only"` asks Codex's own sandbox to enforce read-only, layered on top of — not replacing — rig's existing argv-level enforcement (`--sandbox read-only` in `orchestrate.py`'s `build_argv`); defense in depth |
-| MCP | (docs only) | Register `scripts/mcp_server.py` (#263) under `[mcp_servers.rig]` in `~/.codex/config.toml` or `.codex/config.toml`: `command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]` |
+| MCP | `rig-mcp` (remote/SDK); `scripts/mcp_server.py` (legacy local stdio) | Prefer package-native `rig-mcp --repo <repo> --transport stdio`. Keep `command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]` only when the legacy, different tool contract is required. |
 
-Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or `.agents/skills/rig/` at the repo root), copying `codex/hooks.json` to `.codex/hooks.json` (or merging its `PreCompact` entry into `~/.codex/hooks.json`), and leaving `.codex/agents/security-reviewer.toml` where it is — Codex picks up project-scoped agents from `.codex/agents/` automatically.
+Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or `.agents/skills/rig/` at the repo root), copying `codex/hooks.json` to this source tree's `.codex/hooks.json`, and leaving `.codex/agents/security-reviewer.toml` where it is — Codex picks up project-scoped agents from `.codex/agents/` automatically. The hook commands resolve scripts from the current git root, so this file is source-tree/project scoped. Reusing it in another repository requires installing rig's `hooks/` directory there too; do not copy it into a global config and expect every repository to contain those scripts.
 
-**Honest verification note:** there is no `codex` CLI in this environment, so none of this has been exercised against a real Codex session. What was verified: `codex/hooks.json` is valid JSON; `.codex/agents/security-reviewer.toml` parses with Python's `tomllib` and only uses fields documented on [Codex's official Subagents page](https://developers.openai.com/codex/subagents) (`name`/`description`/`sandbox_mode`/`developer_instructions`); the existing stateless `--provider codex` path (`build_argv`'s `codex` branch, including the `--sandbox read-only` verifier enforcement) was left completely untouched, and `orchestrate.py selftest`'s existing coverage for it still passes, confirming backward compatibility. Actually loading the skill, firing the hook, having Codex enforce `sandbox_mode` on the subagent, and connecting to the MCP server all require a live Codex CLI and remain **unverified** — the paths/schemas here are sourced from Codex's official docs (Subagents/Hooks/Skills pages) but haven't been run live.
+**Honest verification note:** regression tests now execute every run-continuity hook command, not just parse its JSON config. They verify exit 0 and the host-specific stdout contracts with only `PLUGIN_ROOT`, only `CLAUDE_PLUGIN_ROOT`, and no plugin root for the Codex-native mirror. They do not simulate Codex's event dispatcher, subagent sandbox enforcement, or MCP connection. Those still require a real host session; the hook shapes are sourced from Codex's official Hooks documentation and the reported failures were reproduced against Codex CLI 0.147.0.
 
 ### Host adapter layer — generalizing beyond Codex (#304)
 
@@ -724,7 +734,7 @@ Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or
 | Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
 |---|---|---|---|---|---|---|---|---|
 | Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
-| Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
+| Codex CLI | supported | supported | supported | supported | supported | unsupported | supported | unverified |
 | Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
 | Grok Build | unverified | unverified | unverified | unverified | unverified | unverified | unverified | unverified |
 ```
@@ -733,11 +743,12 @@ Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or
 **grok-build (#328)** is the cheapest host so far: it documents full Claude Code compatibility (auto-loads Claude Code plugins/skills/hooks/MCP/CLAUDE.md with zero configuration), so its `HOSTS` entry is a **native passthrough** — no event renaming, no relocated files; rig's existing Claude Code layout *is* the integration. Every capability is marked `unverified` (the compat claim is theirs; there is no grok CLI in this environment to exercise it), and one gap is declared explicitly: grok's headless mode documents no read-only/sandbox flag, so when using `--provider grok` (a `grok -p` headless branch in `build_argv`, with per-step `-m` model support), the verifier role's read-only enforcement rests on the prompt contract alone — one layer thinner than `claude` (`--allowedTools`) or `codex` (`--sandbox read-only`). `--always-approve` is deliberately never passed (it auto-approves tool executions; a generator that wants it can opt in via `--provider-cmd`).
 
 What building the Cursor entry actually surfaced (confirmed against `cursor.com/docs/hooks` and `/docs/skills`):
+- **Codex and Claude Code do not share PreCompact stdout semantics** — Codex requires JSON and does not use plaintext as compaction instructions. Rig returns a valid no-op there and attempts a best-effort re-anchor from Codex's supported `SessionStart(source=compact)` `additionalContext` path. It can only recover state retained by the compactor.
 - **Hook event names are camelCase** (`PreCompact` → `preCompact`, `UserPromptSubmit` → `beforeSubmitPrompt`) — exactly the cross-host divergence #304 anticipated.
 - **Cursor also reads `.agents/skills/`** for legacy Claude/Codex compatibility, so `codex/skills/engine/SKILL.md` installed there works for Cursor too — no new skill file needed.
 - **`preCompact` is documented as observational-only** — it cannot inject preserved run-state the way Claude Code's `PreCompact` does. Rather than pretend this works, that's declared as an explicit `degrade` (`cursor/hooks.json` gives up on state preservation and only returns a short notification), and the capability table marks it `unsupported`.
 
-**Honest verification note:** `scripts/host_adapters.py`'s mapping and its golden-fixture test (`tests/test_host_adapters.py`) are verified as code. Actual hook firing / skill loading on a live Cursor or Codex install is unverified (Codex for the same reason as above; there's no Cursor install in this environment either). Claude Code's existing behavior is completely unchanged by this batch.
+**Honest verification note:** `scripts/host_adapters.py`'s mapping and its golden-fixture test (`tests/test_host_adapters.py`) are verified as code. Hook command execution is covered for Codex and Claude Code, but actual host event dispatch / skill loading is not automated; there is no Cursor install in this environment. Claude Code's plaintext PreCompact behavior is retained and covered by regression tests.
 
 ### Fable 5 refusal-classifier → fallback handling (`--provider anthropic`, #297)
 
@@ -807,7 +818,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Orchestrator unit behavior (recipe resolution & trust gate, queueing, run-state, graph, CLI surface) | `pytest -q` — 54-test suite under `tests/`; CI (`validate.yml`) enforces it alongside `ruff` (0 findings), the validator, and both selftests |
 | Acceptance-gate criteria, accept/discard mechanics | `scripts/workbench.py` — exercised against scratch git repos each release (see `CHANGELOG.md` entries for the verification notes) |
 | Documented requirement vs. the evidence behind it | `rig-wb coverage` (source of truth: `evals/coverage-map.json`; default verifies the map against the tree and runs in CI, `--run` executes the deterministic evidence) |
-| Host-side prerequisites (container isolation, `permissions.deny`, ignored run state) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's) |
+| Host-side prerequisites (container isolation, `permissions.deny`, ignored run state, `gh` auth + token scopes, the installed `rig-wb` importing from outside a checkout) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's. An axis it cannot verify reports MISS, never OK; a subject that does not exist here reports `applicable: false` on its own line) |
 | Detection power of the test suite (mutation) | `rig-wb mutation` (finds the report and reads its format itself — `elements` from Stryker, `mutmut` from 3.x's `export-cicd-stats`, `junit` from 2.x's `junitxml`; `--run` runs the project's own tool first. A drop against the baseline becomes a warning-grade criterion — the tool itself is the project's choice) |
 | ASVS chapters vs. the inspection surface rig has | `rig-wb asvs` (source of truth: `evals/asvs-map.json`; `--check` verifies every cited mechanism exists and runs in CI, and **blind chapters are stated, not omitted**) |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
@@ -916,6 +927,8 @@ One deliberate non-feature: `actor` does **not** block execution. rig cannot ver
 - [`skills/engine/patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) — worktree/run-state design
 - [`docs/architecture.md`](./docs/architecture.md) — architecture proof points (determinism, gate enforcement, judge measurement)
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
+- [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutral remote/stdio MCP adapter and its safety boundary
+- [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — connecting the remote adapter to ChatGPT
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License
