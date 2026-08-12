@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## [2.6.0] - 2026-08-12
+
+**An evaluation can now run on Claude, and every result says what isolation it was
+run under.** codex executes cases inside `codex exec --sandbox read-only`, which the
+OS enforces; the Claude CLI has no equivalent, and that asymmetry was handled by
+refusing Claude outright — for the judge as well as the generator, since both build
+their argv the same way. Refusing is not the only honest response to an asymmetry.
+Recording it is.
+
+`_eval_agent_argv` now returns the isolation an argv actually buys, ranked
+`none` < `agent-policy` < `os-enforced`, and every result records `provider_isolation`
+and `judge_isolation` inside the signed payload — rewriting one to claim a stronger
+level fails verification. A case declares the floor its evidence must clear with
+`provider_policy.min_isolation`, so agent-level evidence cannot quietly satisfy a case
+that needs the OS to enforce it. The one approved case declares `os-enforced`: its task
+reads `skills/engine/SKILL.md`, so without OS enforcement the subject being measured
+can rewrite the material it is marked against.
+
+Claude runs with `--safe-mode --no-session-persistence --strict-mcp-config`, the tool
+set narrowed to `Read,Glob,Grep`, writes denied by name, and its working directory a
+`0555` temporary directory outside the repository — `--add-dir` names the repository so
+reads still resolve. Policy refuses a write first; the unwritable directory is the net
+for the case where it does not.
+
 ## [2.5.0] - 2026-08-11
 
 **Review flows now speak before they finish exploring, and the orchestrator is held
