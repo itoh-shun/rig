@@ -105,8 +105,9 @@ cannot read is `coverage_base_unreadable` rather than a quiet pass.
 The workflow step that runs it could not report any of that. The report exists only
 on the command's stdout, redirected to a file, and the step's shell runs with `-e`:
 a *failing* run aborted at the redirect, so the report was never printed and the
-annotation block below it — every line of which exists for a failing run, including
-the registry one — could not execute. The step captures the status, prints the
+annotation block below it never ran. The `::notice::` for a widened registry was
+reachable, because widening exits 0; the `::error::` lines, which exist only for a
+failing run, could not execute at all. The step captures the status, prints the
 report, annotates, and then exits with it. `coverage_stale` gets a line of its own,
 because "merge the base branch in and re-measure" is not something an exit code can
 say.

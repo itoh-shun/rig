@@ -138,8 +138,8 @@ jobs:
         run: |
           # The report exists only on this command's stdout, and this shell runs with
           # `-e`: a non-zero exit aborted the step at the redirect, so a *failing* run
-          # printed no report at all and none of the annotations below — every one of
-          # which exists for a failing run — could ever execute. Capture the status,
+          # printed no report at all, and the `::error::` annotations below — which
+          # exist only for a failing run — could never execute. Capture the status,
           # print the report, explain it, then fail with it.
           set +e
           rig-wb eval affected --base "${{ steps.comparison.outputs.base }}" \
