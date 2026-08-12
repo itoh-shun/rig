@@ -18,7 +18,7 @@ import pytest
 from test_eval_cases import valid_case
 
 
-KEY = "evidence-verification-key-at-least-thirty-two-bytes"
+KEY = "281e19ca85e66d28f2ca844cd986dcd1fa74b2ff0c1a9b3b360e6aa6bd7470a5"
 COMMAND = 'python3 -c "import os; print(os.environ[\'RIG_EVAL_INPUT\'])"'
 JUDGE_COMMAND = (
     'python3 -c "import json; print(json.dumps({\'status\':\'measured\','
@@ -175,7 +175,7 @@ def test_a_change_touching_one_covered_and_one_uncovered_surface_can_pass(tmp_pa
 def test_a_signature_from_another_key_or_no_key_at_all_is_refused(tmp_path, monkeypatch):
     repo, base, _evidence = _measured(tmp_path)
 
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "a-different-key-of-at-least-thirty-two-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "426be8c18c0584f171ad5807f19b1971d6e1878fecb0240c46e1767b675e389d")
     wrong, wrong_code = _gate(repo, base)
     assert wrong_code == 2 and any(item.startswith("invalid_evidence")
                                    for item in wrong["failures"]), wrong
@@ -218,6 +218,35 @@ def test_the_signed_diff_does_not_depend_on_the_verifying_machines_git_config(tm
     # against a checkout carrying all of the above.
     report, code = _gate(repo, base)
     assert code == 0 and report["status"] == "pass", report
+
+
+def test_a_configured_key_that_is_not_machine_generated_is_refused(tmp_path, monkeypatch):
+    """Length was never the property that mattered; unguessability was.
+
+    32 bytes of passphrase satisfied the old rule. On a public repository with
+    committed evidence, the published `key_id = sha256(key)[:16]` is a complete
+    offline oracle against it, and a hit is forgery by an outsider — strictly worse
+    than replaying a real measurement.
+    """
+    from rig_workbench.eval.attestation import sign_result_attestation
+    from rig_workbench.eval.cases import EvalCaseError
+
+    repo, base, _evidence = _measured(tmp_path)
+
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "correct-horse-battery-stapler-42")
+    with pytest.raises(EvalCaseError, match="64 hex characters"):
+        sign_result_attestation({"case_id": CASE_ID})
+    report, code = _gate(repo, base)
+    assert code == 2 and any(item.startswith("invalid_evidence")
+                             for item in report["failures"]), report
+
+    # 64 characters but not hex, so length alone still does not buy it.
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "z" * 64)
+    with pytest.raises(EvalCaseError, match="64 hex characters"):
+        sign_result_attestation({"case_id": CASE_ID})
+
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", KEY)
+    assert len(sign_result_attestation({"case_id": CASE_ID})["key_id"]) == 16
 
 
 def test_a_rewritten_diff_hash_is_refused_even_when_the_signature_is_valid(tmp_path):

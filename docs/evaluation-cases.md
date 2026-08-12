@@ -184,10 +184,14 @@ refusal of `mock` evidence. A case with `{"mode": "any", "allowed": []}` therefo
 any non-mock provider; tightening it is a one-line edit that changes `case_hash` and costs
 one re-measurement.
 
-Every result is signed with HMAC-SHA256. Set `RIG_EVAL_ATTESTATION_KEY` to a secret of at
-least 32 bytes in CI, and make it **random** rather than a passphrase: committed evidence
-publishes both the signature and `key_id` (`sha256(key)[:16]`), which is harmless against a
-`secrets.token_bytes(32)` key and an offline guessing oracle against a memorable one.
+Every result is signed with HMAC-SHA256. `RIG_EVAL_ATTESTATION_KEY` must be **64 hex
+characters**, exactly what `openssl rand -hex 32` emits; anything else is refused with
+`configured attestation key is invalid`, and the CI job checks the same shape before it
+writes the secret to a key file. Randomness cannot be verified, so the form is the
+enforceable proxy for it, and prose alone was not enough: committed evidence publishes both
+the signature and `key_id` (`sha256(key)[:16]`) on a public repository, which is harmless
+against generated material and a complete offline guessing oracle against a memorable
+passphrase — one that ends in forgery by someone who never had the key.
 Without an explicit key, Rig atomically creates a private `0600` key at
 `${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`. Verification rejects missing,
 weakly permissioned, non-regular, or symlinked keys. Keep this key outside the repository;

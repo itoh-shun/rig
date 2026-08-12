@@ -168,7 +168,7 @@ def test_eval_gate_rejects_absent_and_mock_then_accepts_signed_real_provider(
     from rig_workbench.eval.gate import evaluate_gate
     from rig_workbench.eval.runner import make_judge_adapter, run_case
 
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "gate-test-attestation-key-at-least-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "9a08efed395dde7aaa1e4d756d6bb66029d7ebe2befcaee35d572f7e6a485022")
     repo, base = _repo(tmp_path)
     (repo / "middle.txt").write_text("middle\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -255,7 +255,7 @@ def test_affected_run_is_nonmock_and_atomic(tmp_path, monkeypatch):
     from rig_workbench.eval.affected_run import run_affected
     from rig_workbench.eval.cases import canonical_json
 
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "affected-run-key-at-least-thirty-two-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "768fb32644deb4f304189c743b89b4dfbb794f5eec14c8c53db5751ad155eb8d")
     repo, base = _repo(tmp_path)
     recipe = repo / "skills" / "engine" / "recipes" / "atomic.md"
     recipe.parent.mkdir(parents=True)

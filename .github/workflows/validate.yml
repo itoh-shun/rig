@@ -183,6 +183,20 @@ jobs:
             echo "Prompt quality evidence requires a trusted maintainer run. Fork authors: ask a maintainer to run 'rig-wb eval affected-run' with trusted provider and judge credentials and commit the signed evidence; missing evidence cannot pass." >&2
             exit 1
           fi
+          # Checked here as well as in the library, because this job hands the key
+          # to `rig-wb` as a *file* and the shape rule lives on the environment
+          # path. The repository is public and committed evidence publishes
+          # `key_id = sha256(key)[:16]`, so a memorable secret is an offline
+          # guessing oracle that ends in outright forgery by an outsider. The
+          # value is never echoed.
+          case "$RIG_EVAL_ATTESTATION_KEY" in
+            *[!0-9a-fA-F]*) shaped=no ;;
+            *) shaped=yes ;;
+          esac
+          if [ "$shaped" != yes ] || [ "${#RIG_EVAL_ATTESTATION_KEY}" -ne 64 ]; then
+            echo "RIG_EVAL_ATTESTATION_KEY must be 64 hex characters, as produced by 'openssl rand -hex 32'. Regenerate the secret and re-sign the evidence." >&2
+            exit 1
+          fi
           state_dir="$(mktemp -d)"
           mkdir -p "$state_dir/rig"
           chmod 700 "$state_dir/rig"

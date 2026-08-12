@@ -18,7 +18,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 @pytest.fixture(autouse=True)
 def trusted_eval_environment(tmp_path, monkeypatch):
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "test-only-eval-attestation-key-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "819804239a829011972226e7978766152de9a2fa10500de2f4515476505fee16")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "eval@test.invalid"], cwd=tmp_path,
                    check=True)
