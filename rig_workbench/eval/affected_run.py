@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 
-from .affected import analyze_affected
+from .affected import analyze_affected, prompt_surface_digests
 from .cases import EvalCaseError
 from .gate import evaluate_gate
 from .runner import make_judge_adapter, run_case
@@ -128,9 +128,12 @@ def run_affected(
             "affected-run requires a clean working tree; uncommitted: "
             + ", ".join(dirty[:5]) + (" …" if len(dirty) > 5 else "")
         )
-    # Staged under `.rig/` rather than in the destination: `execution_diff_sha256`
-    # skips that prefix when it frames untracked input, so a multi-case run cannot
-    # hash the evidence of its own earlier case into the identity of its later one.
+    # Staged outside the destination so a multi-case run cannot hash the evidence
+    # of its own earlier case into the identity of its later one, and so a run that
+    # fails partway leaves the committed evidence untouched. (The older reason —
+    # that `execution_diff_sha256` skips this prefix when framing untracked input —
+    # no longer applies: `execution_head` is always a resolved commit here, so the
+    # untracked framing never runs.)
     staging_parent = root / ".rig" / "evals" / "results"
     staging_parent.mkdir(parents=True, exist_ok=True)
     destination = root / EVIDENCE_REL
@@ -141,13 +144,18 @@ def run_affected(
             command=judge_command, timeout_s=timeout_s,
         )
         produced: dict[str, pathlib.Path] = {}
+        # Taken once, at the commit every case is measured at, and signed into each
+        # result: this is what lets the gate ask "has the prompt this was measured
+        # against moved?" from content rather than from ancestry, and content is the
+        # only form of that question a squash or rebase merge leaves answerable.
+        digests = prompt_surface_digests(root, affected["resolved_head"])
         for case_id in sorted(cases):
             path, result = run_case(
                 cases[case_id], repo=root, provider=provider, model=model,
                 repeat=cases[case_id]["repeat"], phase="current",
                 command=provider_command, timeout_s=timeout_s, judge_adapter=judge,
                 execution_base=base, execution_head=affected["resolved_head"],
-                result_root=staging,
+                result_root=staging, prompt_surface_digests=digests,
             )
             produced[case_id] = path
             if any(row["infra_status"] is not None
@@ -175,6 +183,11 @@ def run_affected(
         )
         if code != 0:
             return report, code, None
+        # One `os.replace` per case rather than one for the whole directory, which
+        # the `<case-id>/current.json` layout costs: a failure midway leaves some
+        # cases updated and some not. Each result is bound to its own measurement,
+        # so a half-applied run fails closed on the cases that did not move; it is
+        # not silently accepted.
         for case_id, path in produced.items():
             final = destination / case_id / "current.json"
             final.parent.mkdir(parents=True, exist_ok=True)

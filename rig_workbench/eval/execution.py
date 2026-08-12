@@ -75,7 +75,11 @@ def execution_diff_sha256(
         )
         paths = sorted(
             path for path in raw_paths.split(b"\0") if path
+            # Both places a run stages or files its own results. Without the
+            # second, an uncommitted evidence file from an earlier run frames
+            # itself into the execution identity of the next one.
             and not path.startswith(b".rig/evals/results/")
+            and not path.startswith(b"evals/evidence/")
             and not any(
                 path == prefix.encode("utf-8")
                 or path.startswith(prefix.encode("utf-8") + b"/")

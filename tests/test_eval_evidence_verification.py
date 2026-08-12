@@ -277,10 +277,20 @@ def test_a_faked_base_commit_is_refused(tmp_path):
     assert f"execution_base_unreachable:{CASE_ID}" in unreachable["failures"]
 
 
-def test_a_measurement_from_outside_this_history_is_refused(tmp_path):
-    """Ancestry, not mere existence: evidence must come from a commit this head
-    actually contains, or a sibling branch could vouch for a tree nobody reviewed."""
+def test_a_measurement_of_a_tree_that_is_not_this_one_is_refused(tmp_path):
+    """What replaced ancestry, and why it had to be replaced.
+
+    Requiring the measured commit to be an ancestor of the head reads as the
+    natural check and cannot survive this repository's own merge buttons: squash
+    and rebase are both enabled, and each rewrites the branch so the measured
+    commit is gone or is nobody's ancestor. The binding is the measured *content*
+    instead, so what has to stay refused is evidence describing prompt content
+    other than the content being landed — however its commit id reads.
+    """
     repo, base, evidence = _measured(tmp_path)
+
+    # A commit id swapped for one off this branch. The evidence's own account of
+    # itself stops being internally consistent, which is provenance failing.
     _git(repo, "checkout", "-q", "-b", "sibling", base)
     (repo / "sibling.txt").write_text("elsewhere\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -291,7 +301,20 @@ def test_a_measurement_from_outside_this_history_is_refused(tmp_path):
     _resign(evidence, execution_commit=sibling)
     report, code = _gate(repo, base)
     assert code == 1
-    assert f"execution_commit_unreachable:{CASE_ID}" in report["failures"]
+    assert f"execution_diff_mismatch:{CASE_ID}" in report["failures"]
+    assert f"execution_identity_mismatch:{CASE_ID}" in report["failures"]
+
+    # And the substantive form: a real, internally consistent measurement of a
+    # different prompt. Nothing about it is forged — it simply measured a recipe
+    # this head does not have.
+    signed = json.loads(evidence.read_text(encoding="utf-8"))
+    _resign(evidence, prompt_surface_digests={
+        **signed["prompt_surface_digests"], RECIPE_REL: "0" * 40,
+    })
+    elsewhere, elsewhere_code = _gate(repo, base)
+    assert elsewhere_code == 1
+    assert (f"execution_prompt_surface_changed:{CASE_ID}:{RECIPE_REL}"
+            in elsewhere["failures"])
 
 
 def test_affected_run_refuses_to_measure_a_head_it_is_not_standing_on(tmp_path):
@@ -381,3 +404,240 @@ def test_a_surface_the_base_branch_moved_does_not_invalidate_the_measurement(tmp
     assert from_fork_code == 1
     assert (f"execution_prompt_surface_changed:{CASE_ID}:commands/other.md"
             in from_fork["failures"])
+
+
+def _land_rewritten(repo: pathlib.Path, base: str, strategy: str) -> str:
+    """Reproduce GitHub's squash and rebase merge buttons, including the aftermath.
+
+    Both are enabled on this repository. Both drop the measured commit out of the
+    history: the branch is deleted and, on a runner, `actions/checkout` fetches
+    refs rather than loose objects, so the commit the evidence names is simply not
+    there. `gc --prune=now` after deleting the branch is what makes the fixture
+    match that, rather than quietly leaving the object reachable through a reflog
+    the runner would never have.
+
+    Returns the default branch's tip before the merge, which is the base the push
+    event hands the gate (`github.event.before`).
+    """
+    merged = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "master", base)
+    (repo / "unrelated.md").write_text("the default branch moved on\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "an unrelated change on the default branch")
+    before = _git(repo, "rev-parse", "HEAD")
+    if strategy == "squash":
+        _git(repo, "merge", "-q", "--squash", merged)
+        _git(repo, "commit", "-q", "-m", "the whole PR as one commit (#404)")
+    else:
+        _git(repo, "checkout", "-q", "trunk")
+        _git(repo, "rebase", "-q", "master")
+        _git(repo, "checkout", "-q", "master")
+        _git(repo, "merge", "-q", "--ff-only", "trunk")
+    _git(repo, "branch", "-q", "-D", "trunk")
+    _git(repo, "reflog", "expire", "--expire=all", "--all")
+    _git(repo, "gc", "-q", "--prune=now")
+    return before
+
+
+@pytest.mark.parametrize("strategy", ["squash", "rebase"])
+def test_a_rewriting_merge_does_not_turn_the_default_branch_red(tmp_path, strategy):
+    """The failure a PR check cannot show you, because it happens after merging.
+
+    Squash and rebase are both enabled here, and both rewrite the branch. Under an
+    ancestry binding the PR is green — the measured commit is the PR head's
+    ancestor — and the push job on the default branch is red immediately after the
+    merge button, with `execution_commit_unreachable` and no way to recover except
+    measuring on the default branch and pushing straight to it. That is #402's
+    "merged red" with nobody able to see it coming.
+    """
+    repo, base, _evidence = _measured(tmp_path)
+    before = _land_rewritten(repo, base, strategy)
+
+    # The measured commit is genuinely gone, which is the whole difficulty.
+    signed = json.loads(
+        (repo / "evals" / "evidence" / CASE_ID / "current.json").read_text(encoding="utf-8")
+    )
+    assert subprocess.run(["git", "rev-parse", "--verify", "--quiet",
+                           signed["execution_commit"] + "^{commit}"],
+                          cwd=repo, capture_output=True).returncode != 0
+
+    report, code = _gate(repo, before)
+    assert code == 0 and report["status"] == "pass", report
+
+    # And the content binding is still doing its job on the rewritten history: an
+    # edit after the measurement fails exactly as it does on a merge commit.
+    recipe = repo / RECIPE_REL
+    recipe.write_text(recipe.read_text(encoding="utf-8") + "unmeasured edit\n",
+                      encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "a prompt edit nobody measured")
+    edited, edited_code = _gate(repo, before)
+    assert edited_code == 1
+    assert f"execution_prompt_surface_changed:{CASE_ID}:{RECIPE_REL}" in edited["failures"]
+
+
+def test_an_old_signed_measurement_cannot_be_replayed_out_of_the_history(tmp_path):
+    """The gate's whole reason to exist, and what it did not check.
+
+    The attacker holds no key. Everything they use is already public in the
+    repository: a prompt that was measured green and later reverted by humans, and
+    the signed evidence blob that measured it. Restoring both in one PR satisfies
+    every other check by construction — the signature is genuine, the measured
+    commit really is an ancestor, and the content matches because it is the same
+    content. Without a ratchet on the evidence itself, write access to a branch is
+    enough to re-land a reverted prompt, and signing the evidence bought nothing.
+    """
+    from rig_workbench.eval.affected_run import run_affected
+    from rig_workbench.eval.cases import canonical_json
+
+    bad = "---\nname: sample\nsteps: []\n---\nBAD PROMPT (later reverted)\n"
+    good = "---\nname: sample\nsteps: []\n---\nGOOD PROMPT\n"
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "trunk")
+    _git(repo, "config", "user.email", "eval@test.invalid")
+    _git(repo, "config", "user.name", "eval-test")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    root_commit = _git(repo, "rev-parse", "HEAD")
+
+    case = copy.deepcopy(valid_case())
+    case["id"] = CASE_ID
+    case["prompt_surfaces"] = ["recipe:sample"]
+    case["provider_policy"] = {
+        "mode": "allowlist", "allowed": ["command"], "models": ["fixture"],
+        "judge_providers": ["command"], "judge_models": ["fixture"],
+    }
+    case["target_inputs"] = {"prompt_surface_fixture": "explicit binding fixture"}
+    case["deterministic_checks"] = ["contains:prompt_surface_fixture"]
+    case["clean_controls"] = {"prompt_surface_fixture": "control"}
+    case_path = repo / "evals" / "cases" / CASE_ID / "case.json"
+    case_path.parent.mkdir(parents=True)
+    case_path.write_text(canonical_json(case), encoding="utf-8")
+
+    def measure(measurement_base: str) -> None:
+        report, code, _destination = run_affected(
+            repo, base=measurement_base, head="HEAD", provider="command",
+            model="fixture", judge_provider="command", judge_model="fixture",
+            provider_command=COMMAND, judge_command=JUDGE_COMMAND,
+        )
+        assert code == 0, report
+        _git(repo, "add", "evals/evidence")
+        _git(repo, "commit", "-q", "-m", "signed evaluation evidence")
+
+    recipe = repo / RECIPE_REL
+    recipe.parent.mkdir(parents=True)
+    recipe.write_text(bad, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "PR1: the prompt that was later found bad")
+    measure(root_commit)
+    pr1_tip = _git(repo, "rev-parse", "HEAD")
+    replayable = _git(repo, "show", f"{pr1_tip}:evals/evidence/{CASE_ID}/current.json")
+
+    recipe.write_text(good, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "PR2: humans revert it; the eval never saw why")
+    measure(pr1_tip)
+    pr2_tip = _git(repo, "rev-parse", "HEAD")
+
+    honest, honest_code = _gate(repo, pr1_tip)
+    assert honest_code == 0, honest
+
+    recipe.write_text(bad, encoding="utf-8")
+    (repo / "evals" / "evidence" / CASE_ID / "current.json").write_text(
+        replayable, encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "PR3: re-land the reverted prompt with its old evidence")
+
+    report, code = _gate(repo, pr2_tip)
+    assert code == 1, report
+    assert f"evidence_regression:{CASE_ID}" in report["failures"]
+    assert recipe.read_text(encoding="utf-8") == bad     # the PoC really did re-land it
+
+
+def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path):
+    """The price of the ratchet, paid deliberately and recoverably.
+
+    A branch carrying a measurement of the same case older than the one already on
+    the base branch is refused when it merges that base branch in. The intersection
+    rule alone would have let it through — the neighbouring measurement was gated
+    on its own PR — but on the wire that branch is indistinguishable from one
+    replaying an old blob, and the two cannot both be answered. This is the
+    tightening, chosen over a ratchet with a hole the size of the replay above. It
+    names itself, it is the demand the 30-day expiry already makes, and measuring
+    again clears it.
+    """
+    from rig_workbench.eval.affected import prompt_surface_digests
+    from rig_workbench.eval.execution import execution_diff_sha256
+
+    repo, base, evidence = _measured(tmp_path)
+    signed = json.loads(evidence.read_text(encoding="utf-8"))
+
+    # The base branch takes a newer measurement of this case.
+    _git(repo, "checkout", "-q", "-b", "master")
+    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "a neighbouring PR re-measures the same case")
+    newer = _git(repo, "rev-parse", "HEAD")
+
+    # This branch edits its surface and carries a measurement taken before that
+    # landed: the content binding is honest, only the measurement is behind.
+    _git(repo, "checkout", "-q", "trunk")
+    recipe = repo / RECIPE_REL
+    recipe.write_text(recipe.read_text(encoding="utf-8") + "this branch's own edit\n",
+                      encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "this branch's prompt change")
+    measured = _git(repo, "rev-parse", "HEAD")
+    _resign(evidence, started_at="2026-08-11T08:00:00+00:00",
+            prompt_surface_digests=prompt_surface_digests(repo, measured),
+            execution_commit=measured,
+            execution_diff_sha256=execution_diff_sha256(
+                repo, base=signed["execution_base_commit"], head=measured))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "this branch's own measurement")
+    # Its own evidence survives the merge, which is what a human resolving that
+    # conflict does.
+    _git(repo, "merge", "-q", "--no-ff", "-X", "ours", "-m", "merge the base branch", newer)
+
+    report, code = _gate(repo, newer)
+    assert code == 1, report
+    # Nothing else is wrong with it: the ratchet is the only complaint.
+    assert report["failures"] == [f"evidence_regression:{CASE_ID}"], report
+
+    # Measuring again clears it — same content, a measurement that is not behind.
+    _resign(evidence, started_at="2026-08-11T10:00:00+00:00")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "measure again")
+    cleared, cleared_code = _gate(repo, newer)
+    assert cleared_code == 0 and cleared["status"] == "pass", cleared
+
+
+def test_the_directory_a_result_is_filed_under_has_to_be_its_case(tmp_path):
+    """`<case-id>/current.json` was a convention only the writing side observed.
+
+    Matching on the `case_id` field alone made the directory decoration: a result
+    filed under any other case's directory verified, and a stale copy left behind
+    by a rename counted as a second current result for a case it was never in.
+    """
+    repo, base, evidence = _measured(tmp_path)
+    misfiled = repo / "evals" / "evidence" / "some-other-case" / "current.json"
+    misfiled.parent.mkdir(parents=True)
+    misfiled.write_text(evidence.read_text(encoding="utf-8"), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "a copy filed under the wrong case")
+
+    report, code = _gate(repo, base)
+    assert code == 0 and report["status"] == "pass", report
+
+    # Filed under its own case, the same copy is the duplicate it looks like.
+    duplicate = repo / "evals" / "evidence" / CASE_ID / "previous.json"
+    duplicate.write_text(evidence.read_text(encoding="utf-8"), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "two current results for one case")
+    counted, counted_code = _gate(repo, base)
+    assert counted_code == 1
+    assert f"current_evidence_count:{CASE_ID}" in counted["failures"]

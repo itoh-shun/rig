@@ -20,10 +20,10 @@ from typing import Any
 from rig_workbench import __version__
 from .attestation import sign_result_attestation
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
+from .compare import RESULT_SCHEMA_VERSION
 from .execution import execution_diff_sha256
 from .safety import unsafe_text_reason
 
-RESULT_SCHEMA_VERSION = 2
 OUTPUT_CAP = 4096
 COMMAND_ALLOWLIST = frozenset({"python", "python3", "node", "printf", "echo", "true", "false"})
 JudgeAdapter = Callable[[dict, str, str], dict]
@@ -60,7 +60,11 @@ def _iso(now: dt.datetime | None) -> str:
     value = now or dt.datetime.now(dt.timezone.utc)
     if value.tzinfo is None:
         raise EvalCaseError("evaluation time must include a timezone")
-    return value.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
+    # Microseconds, not seconds: the gate orders a case's evidence by this field
+    # to refuse an older measurement being replayed over a newer one, and two runs
+    # inside the same second are ordinary — the second-resolution form made them
+    # indistinguishable.
+    return value.astimezone(dt.timezone.utc).isoformat(timespec="microseconds")
 
 
 def _git_identity(
@@ -368,6 +372,7 @@ def run_case(
     prompt_prefix: str | None = None,
     prompt_binding_sha256: str | None = None,
     pack_tree_sha256: str | None = None,
+    prompt_surface_digests: dict[str, str] | None = None,
     execution_cwd: pathlib.Path | str | None = None,
 ) -> tuple[pathlib.Path, dict]:
     validate_case(case)
@@ -393,6 +398,12 @@ def run_case(
         raise EvalCaseError("prompt binding sha256 is invalid")
     if pack_tree_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", pack_tree_sha256):
         raise EvalCaseError("pack tree sha256 is invalid")
+    if prompt_surface_digests is not None:
+        prompt_surface_digests = dict(prompt_surface_digests)
+        if any(not isinstance(path, str) or not isinstance(digest, str)
+               or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", digest)
+               for path, digest in prompt_surface_digests.items()):
+            raise EvalCaseError("prompt surface digests are invalid")
     policy = case["provider_policy"]
     if policy["mode"] == "allowlist" and provider not in policy["allowed"]:
         raise EvalCaseError("provider violates case provider policy")
@@ -465,6 +476,7 @@ def run_case(
         "execution_diff_sha256": execution_diff,
         "prompt_binding_sha256": prompt_binding_sha256,
         "pack_tree_sha256": pack_tree_sha256,
+        "prompt_surface_digests": prompt_surface_digests,
         "provider": provider, "model": model, "executor_version": __version__,
         "judge_provider": judge_provider, "judge_model": judge_model,
         "judge_executor_version": judge_executor_version,

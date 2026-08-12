@@ -78,7 +78,11 @@ def test_mock_baseline_runs_target_and_clean_three_times_and_writes_canonical_re
         phase="baseline", now=NOW,
     )
 
-    assert result["eval_result_schema_version"] == 2
+    # 3 since `prompt_surface_digests` joined the signed payload. A bare `run` does
+    # not record one — the gate is where it becomes the binding, and the gate
+    # refuses evidence without it rather than reading around the absence.
+    assert result["eval_result_schema_version"] == 3
+    assert result["prompt_surface_digests"] is None
     assert [row["outcome"] for row in result["target"]] == ["fail", "fail", "pass"]
     assert [row["outcome"] for row in result["clean"]] == ["pass", "pass", "pass"]
     assert result["summary"]["target_failure_rate"] == pytest.approx(2 / 3)

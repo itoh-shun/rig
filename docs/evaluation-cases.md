@@ -155,22 +155,45 @@ case is `current_evidence_count`.
 CI then runs `eval gate --evidence-dir evals/evidence`, which needs git and the signing key
 and nothing else. Committing evidence changes what the gate can bind to, because
 `execution_commit == HEAD` is false the instant the file is tracked — committing it makes a
-new HEAD. What stays true is that the measured commit is HEAD's **ancestor**, so the gate:
+new HEAD. The binding is the measured **content**, not the measured commit:
 
-- requires `execution_commit` to resolve and to be an ancestor of the resolved head;
-- recomputes `execution_diff_sha256` from the *recorded* base to the *recorded* commit and
-  requires the signed value to match — CI never supplies the base, so a base branch moving
-  under a long-lived PR no longer invalidates a measurement;
-- requires that no prompt surface **this change is accountable for** has moved since the
-  measurement, computed as the intersection of the surfaces changed in `measured..head`
-  with the surfaces this change is being gated on.
+- every prompt surface **this change is accountable for** must still hold the object id the
+  measurement signed for it, taken from the `prompt_surface_digests` map. The map covers the
+  whole surface set at the measured commit, so a path the gate holds accountable and the
+  measurement never saw is a file created afterwards, and fails;
+- evidence may only move forward. Its `started_at` is compared against the evidence for the
+  same case at the fork point, and older evidence is `evidence_regression:<case-id>`;
+- `execution_diff_sha256` is recomputed from the *recorded* base to the *recorded* commit and
+  must match, whenever history still holds both — a provenance check on the evidence's own
+  account of itself. CI never supplies the base, so a base branch moving under a long-lived
+  PR does not invalidate a measurement.
 
-The intersection is what keeps a merge legal: everything the base branch did since the fork
-sits inside `measured..head`, was gated on its own PR, and is not this change's to answer
-for. An edit the author makes after measuring is in both sets and fails. The comparison is
-path-level, so a surface edited after the measurement and restored to the measured content
-escapes both sets; that takes a key holder deliberately round-tripping a file, and every
-other reuse of stale evidence lands in the intersection.
+Content rather than ancestry because ancestry does not survive this repository's own merge
+buttons. Squash and rebase are both enabled, and each rewrites the branch so the measured
+commit is gone or is nobody's ancestor: the PR check is green, and the push to the default
+branch immediately after the merge is red, recoverable only by measuring on the default
+branch and pushing straight to it. A squash reproduces the branch's files exactly, so the
+content survives it.
+
+Intersecting with the affected set, rather than comparing the whole map, is what keeps a
+merge legal: everything the base branch did since the fork is not this change's to answer
+for and was gated on its own PR. An edit the author makes after measuring is in the
+intersection and fails.
+
+The evidence ratchet is what makes any of this worth signing. Without it, someone holding
+no key can open a PR that re-applies a prompt humans reverted and restores, byte for byte,
+the signed evidence that measured it — both are public in the history, and every other
+check passes by construction. The price is stated: a branch whose measurement predates
+another measurement of the same case on the base branch is told to measure again once it
+merges that base branch in. That is a tightening of the intersection rule, and it is the
+demand the 30-day expiry already makes.
+
+Known limit: comparison is per-file content, so a surface edited after the measurement and
+restored byte-for-byte passes — which is correct, since the tree being gated is then the
+tree that was measured. What genuinely escapes is everything outside the surface registry:
+prompt-composition code under `rig_workbench/`, `scripts/`, or `skills/engine/corpora/` can
+change after a measurement without invalidating it. The registry is this gate's declared
+field of view; the older whole-tree diff bound more only as a side effect.
 
 Committed evidence still expires: `MAX_RESULT_AGE` is 30 days, so a branch left open past
 that reports `invalid_evidence:<case-id>:evaluation result is stale` and has to be measured

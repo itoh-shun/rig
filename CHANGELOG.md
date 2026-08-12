@@ -18,15 +18,47 @@ preconditions, and the step still fails closed: no key, no pass.
 
 Committed evidence forced the binding to change. `execution_commit == HEAD` cannot
 hold for a file in the repository — committing it moves HEAD past the tree it
-describes — so evidence is now verified at the commit it was *measured* at, which is
-HEAD's ancestor: the recorded `execution_diff_sha256` is recomputed from the recorded
-base to the recorded commit, and no prompt surface this change is accountable for may
-have moved since. That last check intersects with the affected set rather than
-failing on any change in the range, so a merge bringing in another PR's already-gated
-persona stays legal while an edit the author makes after measuring does not.
-`affected-run` refuses a dirty working tree and pins the resolved commit into the
-signed diff, so the hash CI recomputes is the one that was signed by construction
-rather than by coincidence.
+describes — and requiring the measured commit to be HEAD's *ancestor* instead only
+holds for one of the three merge buttons this repository has enabled. Squash and
+rebase both rewrite the branch, so the measured commit is gone or is nobody's
+ancestor: the PR check is green and the push to the default branch immediately
+after the merge is red, recoverable only by measuring on the default branch and
+pushing straight to it.
+
+So the binding is the measured **content**. Evidence signs the object id of every
+prompt surface in the tree it measured (`prompt_surface_digests`, result schema
+version 3), and the gate requires every surface this change is accountable for to
+still hold the id that was signed. A squash reproduces the branch's files exactly,
+so that survives it. Intersecting with the affected set rather than the whole map
+is what keeps a merge legal — another PR's already-gated persona is not this
+change's to answer for — while an edit the author makes after measuring fails. The
+recorded `execution_diff_sha256` is still recomputed from the recorded base to the
+recorded commit whenever history holds both, as a provenance check on the
+evidence's own account of itself. `affected-run` refuses a dirty working tree and
+pins the resolved commit into the signed diff, so the hash CI recomputes is the one
+that was signed by construction rather than by coincidence.
+
+Evidence also ratchets, and without that none of the rest was worth signing.
+`evals/evidence/<case-id>/current.json` is a tracked file, so anyone with write
+access to a branch could re-apply a prompt humans had reverted and restore, byte
+for byte, the signed evidence that once measured it — both are public in the
+history, and every other check passed by construction. A case's evidence may now
+only move forward: its `started_at`, which is inside the signed payload, is
+compared against the evidence for the same case at the fork point. The price is a
+tightening — a branch whose measurement predates another measurement of the same
+case on the base branch is told to measure again once it merges that base branch
+in, which is the demand the 30-day expiry already makes.
+
+Three smaller things this made load bearing. `eval gate` and `affected-run` take
+`--ratchet` and CI passes it: strict, a change touching one covered surface next to
+any of the ~198 without a case failed `uncovered:<path>`, which no evidence can
+answer, and `affected-run` refused to measure it at all. `git diff` runs under a
+pinned configuration at both ends, because measuring on a laptop and recomputing on
+a runner made `diff.noprefix` and `diff.renames` able to make the gate permanently
+unpassable with the cause reported nowhere. And `RIG_EVAL_ATTESTATION_KEY` must be
+64 hex characters: committed evidence publishes `key_id` on a public repository,
+where a memorable passphrase is an offline guessing oracle ending in forgery by
+someone who never held the key.
 
 ## [2.4.2] - 2026-08-11
 

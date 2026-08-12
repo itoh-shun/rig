@@ -173,6 +173,47 @@ def _surface(path: str) -> dict | None:
     return None
 
 
+def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
+    """Every prompt surface in `revision`'s tree, mapped to its git object id.
+
+    Signed into the evidence so that "has this measurement's tree moved?" can be
+    answered from content instead of from ancestry. Ancestry cannot survive a
+    squash or rebase merge — both drop the measured commit out of the history
+    entirely, and the evidence travelling with them then names a commit that is
+    either gone or no longer an ancestor of anything. Content survives both,
+    because a squash of a branch reproduces its files exactly.
+
+    Recorded for the whole surface set rather than only the surfaces the change
+    touched: the gate's affected set is computed from whichever base CI hands it,
+    the measurement's from whichever base the maintainer passed, and the two need
+    not agree. A path present in the gate's set and missing from a narrower
+    recording would be indistinguishable from a file created after the
+    measurement, which has to fail. Recording all of them makes the absence
+    itself meaningful — surfaces missing here did not exist when this was
+    measured.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "ls-tree", "-r", "-z", revision], cwd=root, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=30, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise EvalCaseError("cannot read prompt surface digests") from exc
+    if completed.returncode != 0:
+        raise EvalCaseError("cannot read prompt surface digests")
+    digests: dict[str, str] = {}
+    for entry in completed.stdout.split("\0"):
+        if not entry or "\t" not in entry:
+            continue
+        metadata, path = entry.split("\t", 1)
+        fields = metadata.split(" ")
+        if len(fields) != 3 or fields[1] != "blob":
+            continue                   # submodule or tree: not a file we can hash
+        if _surface(path) is not None:
+            digests[path] = fields[2]
+    return digests
+
+
 def _graph(
     root: pathlib.Path, *, mode: str = "source-tree",
 ) -> tuple[dict[str, dict], list[dict]]:

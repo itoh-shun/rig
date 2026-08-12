@@ -214,6 +214,7 @@ def test_eval_gate_rejects_absent_and_mock_then_accepts_signed_real_provider(
         'python3 -c "import json; print(json.dumps({\'status\':\'measured\','
         '\'criteria\':[{\'id\':\'correct\',\'status\':\'pass\',\'score\':1.0}]}))"'
     )
+    from rig_workbench.eval.affected import prompt_surface_digests
     _path, real = run_case(
         case, repo=repo, provider="command", model="fixture", repeat=3,
         phase="current", command=command,
@@ -221,6 +222,10 @@ def test_eval_gate_rejects_absent_and_mock_then_accepts_signed_real_provider(
             provider="command", model="fixture", repo=repo, command=judge_command
         ),
         now=now, execution_base=base,
+        # The gate binds evidence to the prompt content it measured, so evidence
+        # carrying no such map cannot pass it. `affected-run` records one for every
+        # result it writes; evidence hand-assembled here has to do the same.
+        prompt_surface_digests=prompt_surface_digests(repo, "HEAD"),
     )
     evidence = tmp_path / "real-evidence"
     evidence.mkdir()

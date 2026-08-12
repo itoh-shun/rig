@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import pathlib
 import subprocess
 
 from rig_workbench import __version__
 
-from .affected import _changed_files, _surface, analyze_affected
+from .affected import analyze_affected
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
 from .compare import validate_result
 from .execution import execution_diff_sha256
@@ -57,18 +58,39 @@ def _cases(root: pathlib.Path) -> dict[str, dict]:
     return loaded
 
 
-def _evidence(evidence_root: pathlib.Path, case_id: str) -> list[dict]:
-    found: list[dict] = []
+def _evidence_index(evidence_root: pathlib.Path) -> dict[str, list[dict]]:
+    """case id → its evidence, reading the tree once.
+
+    `<case-id>/current.json` was a convention held up only by the side that writes
+    it: matching on the `case_id` field alone meant the directory name was
+    decoration, and case A's result filed under `evals/evidence/B/` verified. The
+    directory now has to agree, which is the rule `packs/evidence.py` already
+    enforces for its own `evals/results/<case-id>/` layout. A file directly in the
+    root keeps matching on the field, because that is the shape `affected-run`
+    stages and gates before it files anything.
+
+    Read once rather than per case: the previous form re-walked and re-parsed the
+    whole tree for every affected case.
+    """
+    index: dict[str, list[dict]] = {}
     if not evidence_root.is_dir():
-        return found
+        return index
     for path in sorted(evidence_root.rglob("*.json")):
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise EvalCaseError("evaluation gate evidence is malformed") from exc
-        if isinstance(value, dict) and value.get("case_id") == case_id:
-            found.append(value)
-    return found
+            # Named, because "evidence is malformed" with a tree to search is a
+            # worse report than the exception it came from.
+            raise EvalCaseError(
+                f"evaluation gate evidence is malformed: {path.name}"
+            ) from exc
+        if not isinstance(value, dict) or not isinstance(value.get("case_id"), str):
+            continue
+        parent = path.parent
+        if parent != evidence_root and parent.name != value["case_id"]:
+            continue
+        index.setdefault(value["case_id"], []).append(value)
+    return index
 
 
 def quality_result_failures(
@@ -137,62 +159,224 @@ def quality_result_failures(
     return sorted(set(failures))
 
 
+def _head_digest(root: pathlib.Path, path: str, *, resolved_head: str, head: str) -> str | None:
+    """The object id this path has at the head being gated, or None if absent.
+
+    The working-tree form hashes the file on disk rather than reading the tree, so
+    an uncommitted prompt edit made after signing is seen. `--path` applies the
+    same attribute-driven filters git would apply on the way in, so the id is
+    comparable with one that came out of `ls-tree`.
+    """
+    if head == "working":
+        candidate = root / path
+        if not candidate.is_file():
+            return None
+        argv = ["hash-object", f"--path={path}", "--", str(candidate)]
+    else:
+        argv = ["rev-parse", "--verify", "--quiet", f"{resolved_head}:{path}"]
+    try:
+        completed = subprocess.run(
+            ["git", *argv], cwd=root, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=15, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = completed.stdout.strip()
+    if completed.returncode != 0 or not value:
+        return None
+    return value
+
+
 def _evidence_identity_failures(
     root: pathlib.Path, result: dict, case_id: str, *, resolved_head: str, head: str,
     affected_surfaces: set[str],
 ) -> list[str]:
-    """Bind evidence to the commit it was measured at rather than to HEAD.
+    """Bind evidence to the prompt content it measured, not to a commit id.
 
     Evidence that lives in the repository can never claim `execution_commit ==
     HEAD`: committing the file makes a new HEAD, so the claim is false the instant
-    the evidence is tracked. What stays true is that the measured commit is HEAD's
-    **ancestor** — the evidence commit is a child of the tree it describes. So the
-    diff is recomputed at the measured commit instead, from the base the evidence
-    itself recorded. That also drops the gate's dependence on whichever base CI
-    happens to pass: the signed `(base, measured)` pair pins one exact tree, and
-    re-deriving it needs no agreement about where "the base" is while the base
-    branch keeps moving underneath a long-lived PR.
+    the evidence is tracked. The obvious repair — require the measured commit to be
+    HEAD's **ancestor** — holds for a merge commit and fails for the other two
+    merge buttons this repository has enabled. Squash and rebase both rewrite the
+    branch, so the measured commit is either gone from the history or no longer an
+    ancestor of anything, and the evidence that travelled in with the merge is
+    refused *after* landing: the PR is green, the push to the default branch is
+    red, and nobody could have seen it coming. That is #402's shape with a longer
+    fuse, and it is why ancestry is not the binding here.
 
-    Ancestry alone would let any already-measured commit vouch for a later prompt
-    edit, so the last check closes that: no prompt surface **this change is
-    accountable for** may have moved since the measurement. Intersecting with the
-    affected set, rather than failing on any surface change in the range, is what
-    keeps a merge legal — another PR's persona landing on the base branch is inside
-    `measured..HEAD` but is not this change's to answer for, and it was already
-    gated on its own PR. A surface the author edits after measuring is in both sets
-    and fails, which is the case that matters.
+    What a squash preserves exactly is content. So the measurement signs the object
+    id of every prompt surface in the tree it measured, and the question becomes:
+    does every surface **this change is accountable for** still hold the content
+    that was measured? Intersecting with the affected set, rather than comparing
+    the whole map, is what keeps a merge legal — another PR's persona landing on
+    the base branch is not this change's to answer for and was gated on its own PR.
+    A surface the author edits after measuring is in both sets and fails.
 
-    Known limit: the comparison is path-level, so a surface edited after the
-    measurement and then restored to the measured content escapes both sets. That
-    takes a key holder deliberately round-tripping a file; every other reuse of
-    stale evidence lands in the intersection.
+    Recording the entire surface set rather than only the affected part is what
+    makes a *missing* entry meaningful: a path the gate holds accountable and the
+    measurement never saw is a file created after the measurement, and fails.
+
+    The `(base, measured)` diff is still recomputed, as a provenance check on the
+    evidence's own account of itself, whenever history still holds both commits.
+    After a squash it does not, and this check is skipped — which is safe only
+    because it was never the binding: content is, and the evidence ratchet in
+    `_evidence_ratchet_failures` is what stops an old signed measurement being
+    replayed onto matching content.
+
+    Known limit: comparison is per-file content, so a surface edited after the
+    measurement and restored byte-for-byte passes. That is not a hole — the tree
+    being gated is then the tree that was measured. What genuinely escapes is
+    everything outside the surface registry: prompt-composition code under
+    `rig_workbench/`, `scripts/`, or `skills/engine/corpora/` can change after a
+    measurement without invalidating it. The registry is this gate's declared
+    field of view and always was; the older whole-tree diff bound more only as a
+    side effect.
     """
     if result["execution_status"] != "available":
         return []                      # already `execution_identity_unavailable`
+    recorded = result.get("prompt_surface_digests")
+    if not isinstance(recorded, dict):
+        # No content binding at all: measured outside a repository, or by a version
+        # that predates the map. Nothing here can be checked, so nothing passes.
+        return [f"execution_digests_absent:{case_id}"]
+    failures: list[str] = []
+    for path in sorted(affected_surfaces):
+        if _head_digest(root, path, resolved_head=resolved_head, head=head) != recorded.get(path):
+            failures.append(f"execution_prompt_surface_changed:{case_id}:{path}")
     measured = result["execution_commit"]
     measured_base = result["execution_base_commit"]
     if not _git_ok(root, ["rev-parse", "--verify", "--quiet", f"{measured}^{{commit}}"]):
-        return [f"execution_commit_unreachable:{case_id}"]
-    if not _git_ok(root, ["merge-base", "--is-ancestor", measured, resolved_head]):
-        return [f"execution_commit_unreachable:{case_id}"]
+        return failures                # squashed or rebased away; content decides
     if not _git_ok(root, ["rev-parse", "--verify", "--quiet",
                           f"{measured_base}^{{commit}}"]):
-        return [f"execution_base_unreachable:{case_id}"]
-    failures: list[str] = []
+        return [*failures, f"execution_base_unreachable:{case_id}"]
     try:
         recomputed = execution_diff_sha256(root, base=measured_base, head=measured)
     except EvalCaseError:
-        return [f"execution_base_unreachable:{case_id}"]
+        return [*failures, f"execution_base_unreachable:{case_id}"]
     if recomputed != result["execution_diff_sha256"]:
         failures.append(f"execution_diff_mismatch:{case_id}")
-    # `head` rather than `resolved_head` so the working-tree form keeps seeing
-    # unstaged and untracked prompt edits: an uncommitted persona rewrite after
-    # signing is exactly the reuse this is here to refuse.
-    moved = {path for path in _changed_files(root, measured, head)
-             if _surface(path) is not None}
-    failures.extend(f"execution_prompt_surface_changed:{case_id}:{path}"
-                    for path in sorted(moved & affected_surfaces))
     return failures
+
+
+def _evidence_ratchet_failures(
+    root: pathlib.Path, result: dict, case_id: str, *, merge_base: str,
+    evidence_rel: str | None,
+) -> list[str]:
+    """Refuse evidence older than the evidence this branch forked from.
+
+    Everything else here is a statement about *some* trusted measurement. Without
+    this, an attacker who holds no key at all can open a PR that re-applies a
+    prompt a human already reverted and restores, byte for byte, the signed
+    evidence blob that measured it — both are public in the git history. Every
+    other check passes by construction: the signature is genuine, the measured
+    commit really is an ancestor, and the content matches because it is the same
+    content. Write access to a branch would be enough to land a prompt nobody
+    re-measured, which is exactly what signing evidence was supposed to prevent.
+
+    So evidence ratchets like everything else in this module: for a given case it
+    may only move forward. `started_at` is the ordering, and it is inside the
+    signed payload, so moving it is forgery rather than editing. The comparison
+    point is the **fork point** rather than the base tip, which is what keeps two
+    concurrent PRs legal — a branch that forked before another one landed is
+    compared against the evidence that existed when it forked, not against the
+    evidence its neighbour has since committed.
+
+    `started_at` also survives what ancestry does not: a squash or rebase carries
+    the timestamp through unchanged, which is why the ratchet is written on the
+    timestamp and not on the measured commit's descent.
+
+    The cost is stated rather than hidden. Two PRs whose surfaces are covered by
+    the same case, where the second measured before the first landed and then
+    merged the base branch in, are told to measure again — the base branch holds a
+    newer measurement of that case than the one they are carrying. That is a
+    tightening of the intersection rule, which would have let the second through on
+    the grounds that its neighbour was gated on its own PR. It is the same demand
+    the 30-day expiry already makes, it names what to do, and the alternative is a
+    ratchet with a hole exactly the size of the attack above.
+
+    Unreadable or absent prior evidence means the question could not be answered,
+    and the caller then declines to accuse the change of anything — the same stance
+    as `_coverage_at` and `_registry_at`.
+    """
+    if evidence_rel is None:
+        return []
+    prior = _prior_evidence(root, merge_base, evidence_rel)
+    if prior is None:
+        return []
+    earlier = prior.get(case_id)
+    if earlier is None:
+        return []                      # no measurement to go backwards from
+    current = _started_at(result)
+    if current is None:
+        return []
+    # Named like the module's other monotonic failures (`coverage_regression`,
+    # `registry_narrowed`) because it is the same rule: evidence only moves
+    # forward. Re-measuring is the answer in both the honest and the hostile
+    # reading of it.
+    #
+    # Equal timestamps are decided by identity rather than allowed through. The
+    # ordering has microsecond resolution, so a tie means the same measurement —
+    # unless it does not, and then it is a substitution the ordering cannot see.
+    started, digest = earlier
+    if current < started or (current == started
+                             and str(result.get("result_sha256")) != digest):
+        return [f"evidence_regression:{case_id}"]
+    return []
+
+
+def _started_at(result: dict) -> dt.datetime | None:
+    try:
+        value = dt.datetime.fromisoformat(str(result["started_at"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return None
+    return value if value.tzinfo is not None else None
+
+
+def _prior_evidence(
+    root: pathlib.Path, revision: str, evidence_rel: str,
+) -> dict[str, tuple[dt.datetime, str]] | None:
+    """case id → (when its evidence at `revision` was measured, its identity).
+
+    None if the question could not be answered at all.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "-z", "--name-only", revision, "--", evidence_rel],
+            cwd=root, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+    found: dict[str, tuple[dt.datetime, str]] = {}
+    for path in listing.stdout.split("\0"):
+        if not path.endswith(".json"):
+            continue
+        try:
+            blob = subprocess.run(
+                ["git", "show", f"{revision}:{path}"], cwd=root, capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=15, shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if blob.returncode != 0:
+            return None
+        try:
+            value = json.loads(blob.stdout)
+        except json.JSONDecodeError:
+            continue      # malformed evidence at the fork point is not this change's fault
+        if not isinstance(value, dict) or not isinstance(value.get("case_id"), str):
+            continue
+        started = _started_at(value)
+        if started is None:
+            continue
+        case_id = value["case_id"]
+        entry = (started, str(value.get("result_sha256")))
+        if case_id not in found or entry > found[case_id]:
+            found[case_id] = entry
+    return found
 
 
 def evaluate_gate(
@@ -244,13 +428,22 @@ def evaluate_gate(
     failures: list[str] = []
     infra: list[str] = []
     evidence_root = pathlib.Path(evidence_dir)
+    evidence_index = _evidence_index(evidence_root)
     affected_surfaces = {item["path"] for item in affected["affected_surfaces"]}
+    # Where the evidence lives inside this repository, if it does. A staging
+    # directory outside the tree — the shape `affected-run` gates its own output
+    # with — has no history to ratchet against, and the ratchet then declines to
+    # accuse rather than inventing a comparison.
+    try:
+        evidence_rel = evidence_root.resolve().relative_to(root).as_posix()
+    except (OSError, ValueError):
+        evidence_rel = None
     for case_id in affected["affected_cases"]:
         case = cases.get(case_id)
         if case is None:
             failures.append(f"case_absent:{case_id}")
             continue
-        candidates = _evidence(evidence_root, case_id)
+        candidates = evidence_index.get(case_id, [])
         if not candidates:
             failures.append(f"evidence_absent:{case_id}")
             continue
@@ -262,6 +455,12 @@ def evaluate_gate(
                 infra.append(f"invalid_evidence:{case_id}:{exc}")
                 continue
             valid.append(result)
+        if not valid:
+            # Every candidate already said why it was rejected. Adding "there is
+            # not exactly one current result" on top of that reads as a second,
+            # different problem — the shape stale evidence took, where an expiry
+            # was reported as an infrastructure fault plus a miscount.
+            continue
         matching = [result for result in valid if result["phase"] == "current"]
         if len(matching) != 1:
             failures.append(f"current_evidence_count:{case_id}")
@@ -275,6 +474,10 @@ def evaluate_gate(
             root, result, case_id, resolved_head=resolved_head, head=head,
             affected_surfaces=affected_surfaces,
         )
+        identity.extend(_evidence_ratchet_failures(
+            root, result, case_id, merge_base=affected["merge_base"],
+            evidence_rel=evidence_rel,
+        ))
         if any(item.startswith(("execution_", "executor_", "judge_executor_"))
                for item in [*quality, *identity]):
             failures.append(f"execution_identity_mismatch:{case_id}")
