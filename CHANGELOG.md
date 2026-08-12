@@ -58,13 +58,26 @@ by name, and a comparison that cannot be made at all is
 between someone holding no key and evidence that looks current, so it does not get
 to abstain.
 
+Which commit is the tip turned out to be a demand on CI rather than a property of
+the argument. `github.event.pull_request.base.sha` is the base branch as the event
+saw it, and opening a PR before a revert lands pins it to the commit that still
+carried the reverted prompt. That is worse than a quiet ratchet: the affected set
+diffs from `merge-base(base, head)`, so a head restored to the pinned commit's
+content carries no prompt surface at all and no case is selected, skipping every
+check above. The workflow now resolves `origin/<base branch>` itself on a PR, and
+keeps `github.event.before` on a push, where the branch's live tip is the commit
+being gated. It fails the job rather than falling back, because everything
+available as a fallback is a value the branch under review can influence.
+
 The price is a tightening — a branch whose measurement predates another
 measurement of the same case on the base branch is told to measure again, which is
 the demand the 30-day expiry already makes and the one git already made by
 conflicting on the single-line evidence file both branches write. What the base
-tip changes is that it arrives on the PR rather than on the push after it. The
-ratchet starts protecting a case once a second measurement of it exists on the
-base branch: with none committed, there is nothing to move backwards from.
+tip changes is how soon it arrives: the fork point made the demand on the push
+that resolved that conflict, and the base tip makes it on the branch's next CI run.
+Both are before the merge button. The ratchet starts protecting a case once a
+second measurement of it exists on the base branch: with none committed, there is
+nothing to move backwards from.
 
 Three smaller things this made load bearing. `eval gate` and `affected-run` take
 `--ratchet` and CI passes it: strict, a change touching one covered surface next to
