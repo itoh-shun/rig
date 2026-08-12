@@ -165,15 +165,25 @@ new HEAD. The binding is the measured **content**, not the measured commit:
   same case on the **base branch's tip**, and older evidence is
   `evidence_regression:<case-id>`. The comparison reads `evals/evidence/` as a literal path
   at the base commit CI supplies — not the `--evidence-dir` argument and not the fork point,
-  because both of those are things the branch under review chooses for itself. A symlink at
+  because both of those are things the branch under review chooses for itself. CI resolves
+  that commit rather than reading it out of the event, because
+  `github.event.pull_request.base.sha` is the base branch *as the event saw it*: opening a PR
+  before a revert lands pins it to the commit that still carried the reverted prompt. A
+  pinned base does not merely quiet the ratchet — the affected set diffs from
+  `merge-base(base, head)`, so a head restored to that commit's content has no prompt surface
+  in its diff and no case is selected at all, which skips every check on this list. The
+  workflow therefore asks git for `origin/<base branch>` on a PR, and uses
+  `github.event.before` — the tip the push replaced — on a push, where resolving the live tip
+  would diff the push against itself. A symlink at
   or under the evidence directory is `evidence_symlink:<path>`, refused rather than
   followed, and a comparison that cannot be made at all — a git that will not answer, a
   clone whose blobs were never fetched — is `evidence_ratchet_unavailable:<case-id>` rather
   than a pass;
 - `execution_diff_sha256` is recomputed from the *recorded* base to the *recorded* commit and
   must match, whenever history still holds both — a provenance check on the evidence's own
-  account of itself. CI never supplies the base, so a base branch moving under a long-lived
-  PR does not invalidate a measurement.
+  account of itself. That base is the one the measurement wrote down, never the comparison
+  base above, so a base branch moving under a long-lived PR does not invalidate a
+  measurement.
 
 Content rather than ancestry because ancestry does not survive this repository's own merge
 buttons. Squash and rebase are both enabled, and each rewrites the branch so the measured
@@ -198,8 +208,11 @@ That price is one those two branches already owed each other, and git rather tha
 is what collects it: both write `evals/evidence/<case-id>/current.json`, and the file is one
 canonical-JSON line whose `started_at`, `result_sha256`, and `attestation` cannot coincide,
 so the second branch conflicts and no merge button will land it. Comparing against the base
-tip only changes *when* the demand is made — on the PR, before the merge, rather than on the
-push after it. The structural half of that guarantee is a property of the current
+tip only changes *when* the demand is made, and by how much: the fork point made it on the
+push that resolved that conflict, and the base tip makes it on the branch's next CI run —
+its next push, or a re-run, which now re-reads the tip rather than replaying a snapshot.
+Both are before the merge button; the gain is a shorter gap, not a new guarantee. The
+structural half of that guarantee is a property of the current
 configuration, not a law: a `*.json` merge driver in `.gitattributes` (`union`, say) would
 auto-merge that line and dissolve it. There is no `.gitattributes` in this repository today,
 and adding one that covers `evals/evidence/` should be treated as changing this gate.

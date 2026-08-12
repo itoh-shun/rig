@@ -364,9 +364,25 @@ def _evidence_ratchet_failures(
     fork point was chosen to keep two concurrent PRs legal, and it cost the whole
     check: where a branch forks from is the author's choice, so branching from
     before a case was ever measured left nothing to compare against and the
-    ratchet fell silent. `base` is not the author's choice — CI hands it
-    `pull_request.base.sha` on a PR and `github.event.before` on a push — so a
-    lower bound taken there is one the branch cannot move.
+    ratchet fell silent.
+
+    "Tip" has to mean the tip at the time of the check, and that is a demand on
+    the caller rather than a property of `base`. `github.event.pull_request.base.sha`
+    is the base branch as the event saw it, and an author who opens the PR before
+    a revert lands pins it to the commit that still carried the reverted prompt.
+    They cannot choose an arbitrary value, but a pin is all a replay needs. So CI
+    resolves `refs/remotes/origin/<base branch>` itself on a PR and passes
+    `github.event.before` on a push — that one *is* a tip, chosen by the server at
+    push time — and a lower bound taken at either is one the branch cannot move.
+    See `.github/workflows/validate.yml`; the two paths are pinned by
+    `tests/test_eval_workflow_contract.py`, and what a pinned base costs is pinned
+    by `test_the_replay_is_refused_at_the_base_tip_and_invisible_at_a_pinned_snapshot`.
+
+    A pinned base is worse than a silent ratchet, which is why it is a workflow
+    concern and not one this function can defend against. The affected set diffs
+    from `merge-base(base, head)`, so a head restored to the pinned commit's
+    content carries no prompt surface in its diff: no case is selected, and
+    `evaluate_gate` returns at `noop` before it reaches this function at all.
 
     Taking the tip rather than the largest `started_at` anywhere in the base
     branch's history is deliberate: for history to hold a *newer* measurement than
@@ -385,8 +401,11 @@ def _evidence_ratchet_failures(
     names what to do, and it is *already* what those two PRs owe each other: both
     write `evals/evidence/<case-id>/current.json`, so git refuses to merge the
     second one without a human resolving that file by hand. What the base tip
-    changes is when they are told — on the PR, before the merge button, rather
-    than on the push that follows it.
+    changes is only *when* they are told, and by how much: the fork point told
+    them on the push that resolved that conflict, and the base tip tells them on
+    the branch's next CI run — its next push, or a re-run, which now re-reads the
+    tip rather than replaying a snapshot. Both are before the merge button. The
+    gain is a shorter gap, not a new guarantee.
 
     A question that could not be answered is now an accusation
     (`evidence_ratchet_unavailable`) rather than a shrug. This is not the stance
@@ -478,7 +497,7 @@ def _base_evidence(
         try:
             value = json.loads(blob.stdout)
         except json.JSONDecodeError:
-            continue      # malformed evidence at the fork point is not this change's fault
+            continue      # malformed evidence on the base branch is not this change's fault
         if not isinstance(value, dict) or not isinstance(value.get("case_id"), str):
             continue
         started = _started_at(value)
@@ -547,10 +566,13 @@ def evaluate_gate(
     affected_surfaces = {item["path"] for item in affected["affected_surfaces"]}
     failures.extend(f"evidence_symlink:{item}"
                     for item in _evidence_symlinks(evidence_root, resolved_head, root))
-    # Read at the base branch's tip, once for every case. `base` is resolved
-    # rather than passed through so the revision handed to git is a commit id this
-    # repository produced, and so a base that cannot be resolved is an error
-    # instead of an unanswerable comparison.
+    # Read at `base`, once for every case rather than once per case. `base` is
+    # resolved rather than passed through so the revision handed to git is a
+    # commit id this repository produced, and so a base that cannot be resolved is
+    # an error instead of an unanswerable comparison. Resolution accepts a
+    # symbolic ref, which is what lets CI hand this `origin/<base branch>` and get
+    # the tip as it stands now — see `_evidence_ratchet_failures` for why the
+    # caller has to supply a tip rather than a remembered one.
     prior = (_base_evidence(root, _resolve_commit(root, base))
              if affected["affected_cases"] else {})
     for case_id in affected["affected_cases"]:
