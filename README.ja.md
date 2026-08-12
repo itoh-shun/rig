@@ -605,17 +605,17 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 | 機構 | 追加したファイル | 内容 |
 |---|---|---|
 | Skills | `codex/skills/engine/SKILL.md` | Codexの`.agents/skills/<name>/SKILL.md`規約（`name`/`description` frontmatter）に沿った薄いskill。新しいエンジンは作らず、既存の`workbench.py`/`orchestrate.py`への手続き的ポインタに留める |
-| Hooks | `codex/hooks.json` | `PreCompact`イベントで既存の`hooks/preserve-rig-state.sh`をそのまま再利用（Claude Code専用の記述は含まれていないスクリプトなので複製不要）。run-continuityをCodexの圧縮イベントにも配線 |
+| Hooks | `codex/hooks.json` | Codexの`PreCompact`は`hooks/codex-precompact.sh`から妥当なno-op JSONを返し、`SessionStart(source=compact)`で`hooks/inject-run-continuity.sh`がbest-effortの再アンカーを試みる。Claude Codeは未変更の`hooks/preserve-rig-state.sh`平文出力を利用 |
 | Subagents | `.codex/agents/security-reviewer.toml` | `agents/security-reviewer.md`と同じ評価軸・出力契約を持つCodexネイティブsubagent定義。`sandbox_mode = "read-only"`でCodex自身のサンドボックスにもread-only強制を効かせる——rig側の`orchestrate.py`argv注入（`--sandbox read-only`）による既存の強制は変更せず残す（多層防御） |
 | MCP | （手順のみ） | `scripts/mcp_server.py`（#263）を`~/.codex/config.toml`または`.codex/config.toml`の`[mcp_servers.rig]`に`command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]`として登録する |
 
-インストール：`codex/skills/rig/`を`~/.agents/skills/rig/`（または repo 直下の`.agents/skills/rig/`）へコピー/シンボリックリンク、`codex/hooks.json`を`.codex/hooks.json`にコピーまたは`~/.codex/hooks.json`の`PreCompact`にマージ。`.codex/agents/security-reviewer.toml`はリポジトリ直下に置くだけでproject-scoped agentとして認識される（Codexの規約）。
+インストール：`codex/skills/rig/`を`~/.agents/skills/rig/`（または repo 直下の`.agents/skills/rig/`）へコピー/シンボリックリンクし、`codex/hooks.json`をこのsource treeの`.codex/hooks.json`へコピーする。`.codex/agents/security-reviewer.toml`はリポジトリ直下に置くだけでproject-scoped agentとして認識される（Codexの規約）。hook commandは現在のgit rootからscriptを探すため、この設定はsource-tree/project scoped。他repoで使うならrigの`hooks/`もそのrepoへ配置する必要があり、global configへ設定ファイルだけをコピーしても動かない。
 
-**正直な検証範囲**：この環境には`codex` CLIが無く、実際のCodexセッションでの動作確認はできていません。実施した検証は次の通り：
-- `codex/hooks.json`はJSONとして妥当。
+**正直な検証範囲**：run-continuityの各hook commandは、設定JSONを読むだけでなく実際に起動する回帰テストで検証する。`PLUGIN_ROOT`のみ、`CLAUDE_PLUGIN_ROOT`のみ、Codexネイティブ設定でplugin rootなし、の各ケースでexit 0とホスト別stdout契約を確認済み。Codexのevent dispatcher自体、subagent sandbox強制、MCP接続は自動テストしていない。hook形式はCodex公式Hooks文書に基づき、今回の失敗はCodex CLI 0.147.0で再現した。
+- `codex/hooks.json`はJSONとして妥当で、hook commandの実行結果もJSONとして検証する。
 - `.codex/agents/security-reviewer.toml`は`tomllib`でパース可能で、[Codex公式ドキュメント](https://developers.openai.com/codex/subagents)に記載のフィールド（`name`/`description`/`sandbox_mode`/`developer_instructions`）のみを使用。
 - 既存の`--provider codex`ステートレス呼び出し（`build_argv`の`codex`分岐、`--sandbox read-only`の検証者強制含む）は本バッチで一切変更しておらず、`orchestrate.py selftest`の既存テストがそのままPASSすることで後方互換を確認。
-- Skill配布形式・hooksの実際の発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIでの実行が必要で**未検証**です。
+- Skill配布形式・hooksの実際のevent発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIセッションでの確認が必要です。
 
 ### ホストアダプタ層（複数ホストへの一般化・#304）
 
@@ -625,7 +625,7 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 | Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
 |---|---|---|---|---|---|---|---|---|
 | Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
-| Codex CLI | supported | supported | supported | supported | supported | unverified | supported | unverified |
+| Codex CLI | supported | supported | supported | supported | supported | unsupported | supported | unverified |
 | Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
 | Grok Build | unverified | unverified | unverified | unverified | unverified | unverified | unverified | unverified |
 ```
@@ -634,11 +634,12 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 **grok-build（#328）**はこれまでで最も安いホスト対応：grok-buildはClaude Code完全互換（plugins/skills/hooks/MCP/CLAUDE.mdをゼロ設定で自動読込）を公式に謳っているため、`HOSTS`エントリは**native passthrough**——イベント名変換もファイル再配置も不要で、rigの既存Claude Codeレイアウトがそのまま統合になる。全capabilityは`unverified`（互換性の主張は先方のドキュメントであり、この環境にgrok CLIが無いため実機未検証）。ギャップも1点明示：grokのheadlessモードにはread-only/sandboxフラグが文書化されていないため、`--provider grok`（`build_argv`の`grok -p` headless分岐。step別`-m`モデル指定対応）使用時、検証者ロールのread-only強制は**プロンプト契約のみ**に依る——`claude`（`--allowedTools`）や`codex`（`--sandbox read-only`）より1層薄い。`--always-approve`は意図的に渡さない（ツール実行を自動承認するフラグであり、検証者に渡してはならない。必要なgeneratorは`--provider-cmd`でopt-in可能）。
 
 Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
+- **CodexとClaude CodeではPreCompact stdout契約が異なる**——CodexはJSONを要求し、平文を圧縮指示として扱わない。rigはここで妥当なno-op JSONを返し、Codexが対応する`SessionStart(source=compact)`の`additionalContext`からbest-effortの再アンカーを試みる。compactorが残さなかった状態は復元できない。
 - **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。
 - **skillは`.agents/skills/`もlegacy互換で読む**——`codex/skills/engine/SKILL.md`をそこに置けばCursorでもそのまま使える（新規ファイル不要）。
 - **`preCompact`はobservational-onlyで、run-continuityの状態注入はできない**（公式ドキュメントに明記）。ここは黙って「動いたふり」をせず`degrade`として明示し（`cursor/hooks.json`は状態保全を諦め、短い通知メッセージのみを返す設計にした）、READMEの表上もunsupportedと表示する。
 
-**正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`tests/test_host_adapters.py`）はコードとして検証済み。実際のCursor/Codex実機でのhook発火・skill読み込みは未検証（Codexは上記と同じ理由、Cursorはこの環境にCursor自体が無いため）。Claude Code向けの既存動作は本バッチで一切変更していない。
+**正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`tests/test_host_adapters.py`）はコードとして検証済み。Codex/Claude Code向けhook commandの実行は回帰テスト済みだが、ホスト自身のevent dispatch・skill読み込みは自動化していない（Cursorはこの環境に実機なし）。Claude CodeのPreCompact平文出力は維持され、回帰テストで固定している。
 
 ### Fable 5 refusal-classifier→フォールバック（`--provider anthropic`・#297）
 

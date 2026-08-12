@@ -48,7 +48,8 @@ HOSTS: dict[str, dict] = {
         "capabilities": {
             "skills": "supported", "hooks": "supported", "subagents": "supported",
             "mcp": "supported", "read_only_sandbox": "supported",
-            "precompact_context_injection": "unverified",  # the event fires, but the same injection semantics as Claude Code are unconfirmed
+            # Codex requires common JSON output; plain stdout is not compaction context.
+            "precompact_context_injection": "unsupported",
             "session_start": "supported", "tool_acl": "unverified",
         },
         "hook_events": {
@@ -60,8 +61,10 @@ HOSTS: dict[str, dict] = {
         "skill_paths": [".agents/skills/rig/SKILL.md", "~/.agents/skills/rig/SKILL.md"],
         "mcp_config_key": "mcp_servers",  # config.toml's [mcp_servers.*] (a different key name than JSON's mcpServers)
         "degrade": {
-            "precompact_context_injection": "warn — unverified against a live instance. If it doesn't work, "
-                "run-continuity may be lost across compaction (never silently broken: called out in README/CHANGELOG)",
+            "precompact_context_injection":
+                "fail-safe — PreCompact returns valid no-op JSON because Codex does not accept "
+                "Claude Code's plaintext compaction instructions. SessionStart(source=compact) "
+                "instead attempts a best-effort re-anchor from retained compacted context",
         },
         "source": "developers.openai.com/codex/{hooks,skills,subagents} (researched for #294)",
     },
