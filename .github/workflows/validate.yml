@@ -175,9 +175,10 @@ jobs:
           # ratchet, and it was merged past for the same reason.
           #
           # So: unmeasurable is debt, named in the log and in the run summary, exit 0.
-          # Configured is still enforced — the `exit 1` below is unchanged for any
-          # repository that has earned the lane, and losing it after that shows up as
-          # the warning appearing where it never used to.
+          # A repository that has the lane is still enforced, but by `affected-run`'s
+          # own exit code below rather than by a refusal here — this branch is the only
+          # thing that changed, and losing a configured lane shows up as the warning
+          # appearing where it never used to.
           if [ -z "$RIG_EVAL_ATTESTATION_KEY" ] || [ -z "$RIG_EVAL_PROVIDER" ] || [ -z "$RIG_EVAL_MODEL" ] || [ -z "$RIG_EVAL_JUDGE_PROVIDER" ] || [ -z "$RIG_EVAL_JUDGE_MODEL" ]; then
             # Case ids reach a `::warning::` line, where a newline would open a
             # workflow command. They are repo-authored filenames rather than event
