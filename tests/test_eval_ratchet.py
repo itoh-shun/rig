@@ -491,21 +491,79 @@ def test_a_graph_the_reader_gave_up_on_is_not_a_base_that_wired_nothing(tmp_path
                                                                        monkeypatch):
     """How that refusal is actually reached, which is the part worth pinning.
 
-    `_graph` reports a tree it cannot parse as a graph with nothing in it, and a
-    graph with nothing in it adds no edges — the answer is indistinguishable from a
-    base branch that wired nothing up, and identical to the behaviour this reading
-    replaced. Surfaces in the tree and no nodes out is the signature.
+    `_graph`'s adapter answers a tree it cannot parse with a graph containing
+    nothing, and a graph containing nothing adds no edges — indistinguishable from
+    a base branch that wired nothing up, and identical to the behaviour this
+    reading replaced. Reading a revision therefore asks strictly, and the refusal
+    travels as a refusal.
     """
     from rig_workbench.eval import affected as module
+    from rig_workbench.orchestrate import recipes as recipes_module
 
     repo, fork, base = _forked(tmp_path)
     _git(repo, "checkout", "-q", "-b", "evil", fork)
     _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
     head = _commit(repo, "edit the covered prompt")
-    monkeypatch.setattr(module, "_graph", lambda *args, **kwargs: ({}, []))
+
+    def gave_up(*args, **kwargs):
+        raise ValueError("the reader gave up")
+
+    # Patched where the adapter reads, not where it returns: the point is that the
+    # adapter's own `except` would have turned this into `({}, [])`.
+    monkeypatch.setattr(recipes_module, "parse_frontmatter", gave_up)
+    assert module._graph(repo) == ({}, []), "the lenient read still shrugs"
 
     report = analyze(repo, base, head=head, ratchet=True)
     assert report["coverage_base_unreadable"] is True, report
+
+
+@pytest.mark.parametrize("frontmatter", [
+    "---\nname: auth\nsteps: [unclosed\n---\nbody\n",       # YAMLError, not ValueError
+    "---\njust a string\n---\nbody\n",                      # AttributeError on .get
+])
+def test_a_revision_that_cannot_be_parsed_is_a_named_failure_not_a_traceback(
+    tmp_path, frontmatter,
+):
+    """The half of "unreadable" that is not git's to report.
+
+    `parse_frontmatter` hands `yaml.safe_load` straight through, so neither of
+    these is a `ValueError` and neither was caught anywhere: the run ended in a
+    traceback with no report. Fail-closed either way, but the design says an
+    unreadable tree is a *named* failure — and the content is in history, where the
+    author of the change cannot edit it.
+    """
+    from rig_workbench.eval.affected import _graph_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, frontmatter)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    head = _commit(repo, "a revision whose frontmatter does not parse")
+
+    assert _graph_at(repo, head) is None
+
+
+def test_a_tree_with_no_bricks_in_it_is_an_answer_rather_than_a_refusal(tmp_path):
+    """The other direction, and the one that cost a passing change.
+
+    A repository that has not grown a recipe yet reads as a graph with nothing in
+    it, which is true. Reported as unreadable it becomes `coverage_base_unreadable`
+    — fatal, on the first branch anybody forks from early history, with no edit
+    that clears it. The two facts are now taken where they happen: git's exit
+    codes for "could it be read", the adapter's refusal for "could it be parsed".
+    """
+    from rig_workbench.eval.affected import _graph_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, "skills/engine/SKILL.md", "the engine's own prose\n")
+    base = _commit(repo, "engine prose, and no brick anywhere yet")
+    assert _graph_at(repo, base) == ({}, [])
+
+    _git(repo, "checkout", "-q", "-b", "later", base)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    head = _commit(repo, "add the first persona")
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is False, report
+    assert report["status"] == "debt" and report["coverage_debt"] == [PERSONA], report
 
 
 # ── the graph is read off the tree, and `.gitattributes` does not get a vote ──

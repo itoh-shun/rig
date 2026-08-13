@@ -216,13 +216,23 @@ def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
 
 
 def _graph(
-    root: pathlib.Path, *, mode: str = "source-tree",
+    root: pathlib.Path, *, mode: str = "source-tree", strict: bool = False,
 ) -> tuple[dict[str, dict], list[dict]]:
     """Use a hermetic source-tree graph for prompt regression analysis.
 
     Installed extension tiers are intentionally excluded: affected-case
     selection must describe the checked-out source tree, not ambient user or
     project pack state.
+
+    `strict` raises `EvalCaseError` where the default answers an unreadable tree
+    with an empty graph, and exists because those two answers mean opposite things
+    depending on who is asking. Reading the *working tree*, an empty graph costs a
+    demand the gate would otherwise make — the failure is toward asking for less,
+    and a raise there is a crash in the middle of an ordinary run. Reading a
+    *revision*, an empty graph is indistinguishable from "the base branch wired
+    nothing up", which is exactly the sentence that restores the bypass the
+    revision reading exists to close. So `_graph_at` asks strictly and turns the
+    refusal into a named failure, and nothing else does.
     """
     if mode != "source-tree":
         raise ValueError(f"unknown affected graph mode: {mode}")
@@ -281,20 +291,28 @@ def _graph(
                         target = candidates[0] if len(candidates) == 1 else f"wiki:{match.group(1)}"
                         edges.append({"from": node["id"], "to": target})
         return nodes, edges
-    except (OSError, UnicodeError, ValueError):
+    except Exception as exc:
+        if strict:
+            # Anything at all: `parse_frontmatter` hands `yaml.safe_load` straight
+            # through, so a broken revision raises `YAMLError` — not a `ValueError`
+            # — and a scalar where a mapping belongs raises `AttributeError`. The
+            # question being answered is "could this tree be read", and every one of
+            # those is the same no.
+            raise EvalCaseError("cannot read the brick graph") from exc
+        if not isinstance(exc, (OSError, UnicodeError, ValueError)):
+            raise
         return {}, []
 
 
 def _graphable(path: str) -> bool:
     """Whether `_graph`'s adapter would turn `path` into a node.
 
-    Deliberately the adapter's own predicate rather than `_surface`'s, which is
-    wider: the registry also calls `skills/engine/SKILL.md` a surface (a flat
-    root) and anything under `skills/engine/facets/` an `unknown` one, and the
-    adapter walks `_SURFACE_PREFIXES` only. Counting what the registry sees while
-    asking the adapter to produce nodes made "this tree has surfaces and yielded
-    no nodes" — the unreadability sentinel — fire on a tree that is simply an
-    engine document with no bricks under it, which no author could then fix.
+    The adapter is the only reader the temporary tree ever gets — `_graph`'s other
+    branch is for the rig checkout itself and a `TemporaryDirectory` is never that
+    — so writing a file it cannot use is work that cannot change the answer. Wider
+    than the adapter would be wrong in a second way as well: `_surface` also calls
+    `skills/engine/SKILL.md` a surface through a flat root, and anything under
+    `skills/engine/facets/` an `unknown` one, and neither becomes a node.
     """
     if pathlib.PurePosixPath(path).suffix not in _KNOWN_SUFFIXES:
         return False
@@ -420,24 +438,27 @@ def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[
     """The brick graph as it stands in `revision`'s tree, or None if unreadable.
 
     None rather than an empty graph, and the distinction is the whole point: the
-    caller turns None into a named failure, while an empty graph would mean "the
-    base branch wired nothing up" and quietly restore the bypass this reading
-    exists to close. `_graph`'s fixture adapter answers a tree it cannot parse with
-    `({}, [])`, so a tree that has surfaces in it and yielded no nodes is that
-    silence, not an answer.
+    caller turns None into a named failure, while an empty graph means "the base
+    branch wired nothing up" — a sentence that quietly restores the bypass this
+    reading exists to close if it is said about a tree nobody could read.
 
-    "Has surfaces in it" is counted by `_surfaces_at` with the adapter's own
-    predicate, so the two halves of that sentence are about the same set of files.
+    Both facts are therefore taken where they happen. Whether git could answer is
+    `_surfaces_at`'s exit codes and its parse of the batch; whether the tree could
+    be read is `strict=True`, which makes the adapter raise instead of shrugging.
+    Neither is inferred from how much came back. Counting was the earlier answer
+    and it was wrong in both directions at once: it could not see a tree that was
+    read but rendered (`git archive` and `export-ignore`), and it called a tree
+    with nothing in it unreadable — a fatal on a repository that has simply not
+    grown a recipe yet, which no author can clear by editing anything.
     """
     with tempfile.TemporaryDirectory(prefix="rig-eval-graph-") as directory:
         tree = pathlib.Path(directory)
-        extracted = _surfaces_at(root, revision, tree)
-        if extracted is None:
+        if _surfaces_at(root, revision, tree) is None:
             return None
-        nodes, edges = _graph(tree)
-        if extracted and not nodes:
+        try:
+            return _graph(tree, strict=True)
+        except EvalCaseError:
             return None
-        return nodes, edges
 
 
 def _landing_graph(
@@ -478,6 +499,22 @@ def _landing_graph(
     alike and cancels; what survives is only what the base branch genuinely added.
     Node ids are then translated into the branch's spelling by path, because that
     is what the reachability walk starts from.
+
+    **What this does not cover.** Cancelling is not the same as seeing, and there
+    are three kinds of reference the adapter does not model at all, so the base
+    branch adding one is not a `gained` edge and does not make the surface it
+    reaches stale. Measured against `build_brick_graph` on this repository:
+
+        agent -> persona          12 edges, adapter models 0
+        command -> instruction    23 edges, adapter models 0
+        wiki -> wiki               8 edges, adapter models 0
+
+    Everything else the core reader has, the adapter has (`recipe ->
+    instruction/pattern/persona/policy/contract`, `recipe -> recipe` through
+    `extends`, `persona -> wiki` through `inject`) — for those kinds it reports the
+    same or more, so the subtraction is the safe direction. Indirect coverage
+    through the three above is *not* ratcheted, and a change to a persona an agent
+    is the only thing referencing reads as `debt` rather than `coverage_stale`.
     """
     if base is None or fork is None:
         return None

@@ -129,6 +129,14 @@ were never exposed, because they already used `ls-tree`. A blob the read cannot
 produce — `missing`, in a blobless clone — is the same named fatal as an unreadable
 tree, and not a skipped file.
 
+What the revision reading does *not* cover, stated rather than left to be
+discovered: the reader it uses for a revision models `recipe ->
+instruction/pattern/persona/policy/contract`, `recipe -> recipe` through `extends`
+and `persona -> wiki` through `inject`, and does not model `agent -> persona`,
+`command -> instruction` or `wiki -> wiki` at all (12, 23 and 8 edges in this
+repository). Coverage that reaches a surface only through one of those three is
+not ratcheted — such a change reads as `debt`, not `coverage_stale`.
+
 On a push to the default branch none of this changes what happens, as long as
 `github.event.before` is an ancestor of what was pushed: the fork point is `before`
 itself, nothing is added back, and both landing views are the pushed tree. A
