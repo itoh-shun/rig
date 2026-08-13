@@ -109,11 +109,25 @@ the branch's working tree and handed to the landing view unchanged. So the same 
 survived one step further out: fork from before the base branch pointed a recipe at a
 persona, edit only the persona, touch no recipe, and the branch's own tree honestly
 reports that nothing reaches it. The merge restores the recipe the branch never
-touched. The graph is now read at the base tip and at the fork point as well — one
-`git archive` per revision rather than a `git show` per file — and merged edge by edge
-the way the case set is: `head | (base - fork)`, the monotone half, which can only
-over-state what lands. Over-stating asks for a re-measurement that the default
-branch's own push would ask for; under-stating is the bypass.
+touched. The graph is now read at the base tip and at the fork point as well, and
+merged edge by edge the way the case set is: `head | (base - fork)`, the monotone
+half, which can only over-state what lands. Over-stating asks for a re-measurement
+that the default branch's own push would ask for; under-stating is the bypass.
+
+Read with `git ls-tree` and `git cat-file`, and that is the substance of it rather
+than a note about cost. `git archive` renders a tree instead of reading it: it
+applies that tree's own `.gitattributes`, so `export-ignore` deletes whole
+directories from the output and `export-subst` rewrites the bytes of what survives
+— and the same line in `$GIT_DIR/info/attributes` does it with nothing in any tree
+and nothing in any diff. No flag turns that off for a tree-ish read. It made this
+one reading the part of the gate that a single unremarkable line could switch off:
+`.gitattributes` is under no surface prefix and is not the registry, so the PR
+adding it reports `noop` and merges through ordinary review, after which both sides
+of `base - fork` are missing the same edges, the difference is empty, and indirect
+coverage stops being noticed on every branch, silently. The two readings beside it
+were never exposed, because they already used `ls-tree`. A blob the read cannot
+produce — `missing`, in a blobless clone — is the same named fatal as an unreadable
+tree, and not a skipped file.
 
 On a push to the default branch none of this changes what happens, as long as
 `github.event.before` is an ancestor of what was pushed: the fork point is `before`

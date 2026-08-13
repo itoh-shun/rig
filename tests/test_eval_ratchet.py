@@ -517,24 +517,69 @@ SUBST_WIRED = ("---\nname: auth\nsteps:\n  - id: review\n"
                "    personas: [\"reviewer$Format:%H$\"]\n---\n")
 
 
-@pytest.mark.parametrize("attributes", [EXPORT_IGNORE, EXPORT_SUBST])
-def test_gitattributes_cannot_take_the_base_branchs_wiring_out_of_view(tmp_path,
-                                                                      attributes):
+def test_gitattributes_cannot_take_the_base_branchs_wiring_out_of_view(tmp_path):
     """The bypass that reached this analysis through the *reader* rather than the tree.
 
     Reading a revision with `git archive` renders it: the tree's own
-    `.gitattributes` decides what comes out, so `export-ignore` deletes whole
-    directories from the answer and `export-subst` rewrites the bytes of what
-    remains. Neither line is under a registered surface prefix and neither is the
-    registry, so the PR that adds one reports `noop` and merges through ordinary
-    review — and from then on every branch's base-tip and fork-point graph is
-    missing the same edges, `base - fork` is empty, and indirect coverage stops
-    being noticed at all, in silence.
+    `.gitattributes` decides what comes out, and `export-ignore` deletes whole
+    directories from the answer. That line is under no registered surface prefix
+    and is not the registry, so the PR that adds it reports `noop` and merges
+    through ordinary review — and from then on every branch's base-tip and
+    fork-point graph is missing the same edges, `base - fork` is empty, and
+    indirect coverage stops being noticed at all, in silence.
 
     Same fixture and same expected refusal as the test above with no
     `.gitattributes` in it. That is the whole assertion: the file changes nothing.
     """
-    repo, fork, base = _wired_after_the_fork(tmp_path, attributes=attributes)
+    repo, fork, base = _wired_after_the_fork(tmp_path, attributes=EXPORT_IGNORE)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "edit the persona only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PERSONA
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered", report
+    assert any(PERSONA in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+
+
+# The same recipe, wired, with one line YAML calls a comment. `git archive` under
+# `export-subst` replaces the placeholder with the archived commit's message body,
+# and a body whose second line starts at column 0 lands a second `steps:` key in
+# the frontmatter — emptying the first, for the rendering only.
+SUBST_COMMENT_WIRED = ("---\nname: auth\nsteps:\n  - id: review\n"
+                       "    personas: [reviewer]\n#$Format:%b$\n---\n")
+SUBST_MESSAGE = "the base branch wires the persona in\n\npad\nsteps: []\n"
+
+
+def test_a_commit_message_cannot_rewrite_the_recipe_the_reader_parses(tmp_path):
+    """`export-subst`: the same file, removing an edge without removing a path.
+
+    Not a second instance of the finding above but a second mechanism, which is
+    why the fix is a different reader rather than a check for `export-ignore`.
+    Nothing is missing from the rendering here — the recipe is present and
+    parses. It simply says something the tree does not say, and what it says is
+    that the step wires up nobody.
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    _touch(repo, ".gitattributes", EXPORT_SUBST)
+    _touch(repo, RECIPE, UNWIRED)
+    fork = _commit(repo, "a covered recipe, and a persona nothing references")
+
+    _touch(repo, RECIPE, SUBST_COMMENT_WIRED)
+    message = tmp_path / "message.txt"
+    message.write_text(SUBST_MESSAGE, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-F", str(message))
+    base = _git(repo, "rev-parse", "HEAD")
+
+    # Liveness: without the rendering actually diverging there is nothing to catch.
+    archived = subprocess.run(["git", "archive", "--format=tar", base], cwd=repo,
+                              capture_output=True, check=True).stdout
+    assert b"steps: []" in archived, "git no longer substitutes; this proves nothing"
+
     _git(repo, "checkout", "-q", "-b", "evil", fork)
     _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
     head = _commit(repo, "edit the persona only")
