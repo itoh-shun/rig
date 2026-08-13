@@ -6,6 +6,7 @@ import json
 import pathlib
 import re
 import subprocess
+import tempfile
 from typing import Any
 
 from .cases import EvalCaseError, canonical_json, validate_case
@@ -215,13 +216,23 @@ def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
 
 
 def _graph(
-    root: pathlib.Path, *, mode: str = "source-tree",
+    root: pathlib.Path, *, mode: str = "source-tree", strict: bool = False,
 ) -> tuple[dict[str, dict], list[dict]]:
     """Use a hermetic source-tree graph for prompt regression analysis.
 
     Installed extension tiers are intentionally excluded: affected-case
     selection must describe the checked-out source tree, not ambient user or
     project pack state.
+
+    `strict` raises `EvalCaseError` where the default answers an unreadable tree
+    with an empty graph, and exists because those two answers mean opposite things
+    depending on who is asking. Reading the *working tree*, an empty graph costs a
+    demand the gate would otherwise make — the failure is toward asking for less,
+    and a raise there is a crash in the middle of an ordinary run. Reading a
+    *revision*, an empty graph is indistinguishable from "the base branch wired
+    nothing up", which is exactly the sentence that restores the bypass the
+    revision reading exists to close. So `_graph_at` asks strictly and turns the
+    refusal into a named failure, and nothing else does.
     """
     if mode != "source-tree":
         raise ValueError(f"unknown affected graph mode: {mode}")
@@ -265,6 +276,17 @@ def _graph(
                         if step.get(field):
                             edges.append({"from": node["id"],
                                           "to": f"{kind}:{step[field]}"})
+                    # A gate is a pattern too, reached through a second field. Same
+                    # sentinel as `build_brick_graph`: a step with no gate spells it
+                    # as a placeholder dash, and a plain truth test grows an edge to
+                    # `pattern:—`. Missing this field made every gate in the
+                    # repository invisible to the revision reader — which is the
+                    # whole of the coverage a `gate:` earns — while `pattern:` on the
+                    # same step was seen, so whether the ratchet held came down to
+                    # which of two fields the wiring used.
+                    if step.get("gate") not in (None, "—", "-"):
+                        edges.append({"from": node["id"],
+                                      "to": f"pattern:{step['gate']}"})
                     for persona in step.get("personas") or []:
                         edges.append({"from": node["id"], "to": f"persona:{persona}"})
                     for policy in step.get("policies") or []:
@@ -280,12 +302,272 @@ def _graph(
                         target = candidates[0] if len(candidates) == 1 else f"wiki:{match.group(1)}"
                         edges.append({"from": node["id"], "to": target})
         return nodes, edges
-    except (OSError, UnicodeError, ValueError):
+    except Exception as exc:
+        if strict:
+            # Anything at all: `parse_frontmatter` hands `yaml.safe_load` straight
+            # through, so a broken revision raises `YAMLError` — not a `ValueError`
+            # — and a scalar where a mapping belongs raises `AttributeError`. The
+            # question being answered is "could this tree be read", and every one of
+            # those is the same no. Wider than the list because the list is a moving
+            # target: it would have to name whatever `yaml` raises next. A defect in
+            # this function is caught too, and reported as an unreadable base rather
+            # than as a traceback — the same direction, and the price of not having
+            # to keep an exhaustive list correct.
+            raise EvalCaseError("cannot read the brick graph") from exc
+        if not isinstance(exc, (OSError, UnicodeError, ValueError)):
+            raise
         return {}, []
 
 
+def _graphable(path: str) -> bool:
+    """Whether `_graph`'s adapter would turn `path` into a node.
+
+    The adapter is the only reader the temporary tree ever gets — `_graph`'s other
+    branch is for the rig checkout itself and a `TemporaryDirectory` is never that
+    — so writing a file it cannot use is work that cannot change the answer. Wider
+    than the adapter would be wrong in a second way as well: `_surface` also calls
+    `skills/engine/SKILL.md` a surface through a flat root, and anything under
+    `skills/engine/facets/` an `unknown` one, and neither becomes a node.
+    """
+    if pathlib.PurePosixPath(path).suffix not in _KNOWN_SUFFIXES:
+        return False
+    return any(path.startswith(prefix) for prefix, _kind in _SURFACE_PREFIXES)
+
+
+# `git ls-tree` reports a symlink as a *blob* too, at mode 120000, so a filter on
+# the object type is not a filter on "a file whose bytes are a prompt". Gitlinks
+# (160000) and trees (040000) are excluded by the same list.
+_REGULAR_FILE_MODES = frozenset({"100644", "100755"})
+
+
+def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -> int | None:
+    """Write `revision`'s graphable prompt surfaces into `destination`; count them.
+
+    `_graph` reads frontmatter off the filesystem, so answering "what did the
+    graph look like at that commit" means putting that commit's surfaces on a
+    filesystem. `git ls-tree -r` to name them and one `git cat-file --batch` to
+    read them, which is what `prompt_surface_digests` and `_coverage_at` already
+    do — and the reason they do is not only cost.
+
+    `git archive` is not a faithful read of a tree. It applies that tree's own
+    `.gitattributes`, so a path marked `export-ignore` is *absent from the
+    output*, and `export-subst` rewrites the bytes of the ones that remain. Both
+    are one line in a file that is under no registered surface prefix and is not
+    the registry, so a PR adding it reports `noop` and merges through ordinary
+    review — after which every branch's base-tip and fork-point graph silently
+    shrinks and the landing view stops noticing indirect coverage at all. The
+    same line in `$GIT_DIR/info/attributes` does it with nothing in any tree or
+    any diff. `git archive` has no flag that turns this off for a tree-ish read
+    (`--worktree-attributes` reads the *worktree's* attributes, which is worse).
+    Naming the object ids `ls-tree` reports and asking `cat-file` for those bytes
+    is not a rendering of the tree; it is the tree.
+
+    Entries are filtered here rather than written wholesale: only regular files
+    (`ls-tree` calls a symlink a blob as well), only paths `_graph`'s adapter
+    would make a node of, and no path that climbs out of the destination. A blob
+    the batch cannot produce — a blobless clone answers `missing` — is None, not
+    a skip: skipping is precisely the shrunken graph this function exists to stop
+    being possible.
+
+    Paths are decoded `surrogateescape` because they are used to *write files* the
+    other reader then has to recognise. `_graph` walks the result with `rglob`, so
+    a filename whose bytes are not UTF-8 comes back to it through `os.listdir`'s
+    surrogateescape; decoding it as U+FFFD here would write a name that reader
+    spells differently, and the branch's own graph would stop matching the base
+    branch's for that surface. `prompt_surface_digests` decodes `replace` because
+    it only ever uses the path as a key.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "-z", revision, "--"], cwd=root,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="surrogateescape", timeout=30, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+    wanted: list[tuple[str, str]] = []
+    for entry in listing.stdout.split("\0"):
+        if not entry or "\t" not in entry:
+            continue
+        metadata, path = entry.split("\t", 1)
+        fields = metadata.split(" ")
+        if len(fields) != 3 or fields[0] not in _REGULAR_FILE_MODES:
+            continue
+        if not re.fullmatch(r"[0-9a-f]{40,64}", fields[2]):
+            # The same demand `_merge_base` and `_resolved_head` make of a revision,
+            # widened to sha256 object ids: what goes back to git on the batch's
+            # stdin has to be an object id and nothing else.
+            return None
+        if not _graphable(path):
+            continue
+        parts = pathlib.PurePosixPath(path).parts
+        if not parts or ".." in parts or parts[0] in {"/", ""}:
+            continue
+        wanted.append((fields[2], path))
+    if not wanted:
+        return 0
+    try:
+        batch = subprocess.run(
+            ["git", "cat-file", "--batch"], cwd=root,
+            input="".join(f"{oid}\n" for oid, _ in wanted).encode("ascii"),
+            capture_output=True, timeout=30, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if batch.returncode != 0:
+        return None
+    # `<oid> SP <type> SP <size> LF <contents> LF`, one record per request line and
+    # in request order. Parsed as bytes throughout: the size is a byte count, and
+    # decoding the stream to text to find the headers would misalign every record
+    # after the first surface containing a non-ASCII character.
+    stream = batch.stdout
+    offset = 0
+    written = 0
+    for oid, path in wanted:
+        end = stream.find(b"\n", offset)
+        if end < 0:
+            return None
+        header = stream[offset:end].split(b" ")
+        if len(header) != 3 or header[0] != oid.encode("ascii") or header[1] != b"blob":
+            return None                     # `missing`, a wrong type, a short stream
+        try:
+            size = int(header[2])
+        except ValueError:
+            return None
+        if size < 0 or end + 1 + size > len(stream):
+            return None
+        target = destination.joinpath(*pathlib.PurePosixPath(path).parts)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(stream[end + 1:end + 1 + size])
+        except OSError:
+            return None
+        offset = end + 1 + size + 1         # the LF git writes after the contents
+        written += 1
+    return written
+
+
+def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[dict]] | None:
+    """The brick graph as it stands in `revision`'s tree, or None if unreadable.
+
+    None rather than an empty graph, and the distinction is the whole point: the
+    caller turns None into a named failure, while an empty graph means "the base
+    branch wired nothing up" — a sentence that quietly restores the bypass this
+    reading exists to close if it is said about a tree nobody could read.
+
+    Both facts are therefore taken where they happen. Whether git could answer is
+    `_surfaces_at`'s exit codes and its parse of the batch; whether the tree could
+    be read is `strict=True`, which makes the adapter raise instead of shrugging.
+    Neither is inferred from how much came back. Counting was the earlier answer
+    and it was wrong in both directions at once: it could not see a tree that was
+    read but rendered (`git archive` and `export-ignore`), and it called a tree
+    with nothing in it unreadable — a fatal on a repository that has simply not
+    grown a recipe yet, which no author can clear by editing anything.
+    """
+    with tempfile.TemporaryDirectory(prefix="rig-eval-graph-") as directory:
+        tree = pathlib.Path(directory)
+        if _surfaces_at(root, revision, tree) is None:
+            return None
+        try:
+            return _graph(tree, strict=True)
+        except EvalCaseError:
+            return None
+
+
+def _landing_graph(
+    head: tuple[dict[str, dict], list[dict]],
+    base: tuple[dict[str, dict], list[dict]] | None,
+    fork: tuple[dict[str, dict], list[dict]] | None,
+) -> tuple[dict[str, dict], list[dict]] | None:
+    """The reference graph the merge would put on the base branch.
+
+    `_landing_coverage` corrected the *case set* and left the other half of the
+    question where it was. Whether a surface is covered is not decided by the case
+    set alone: a persona is covered because some recipe references it and a case
+    binds that recipe, and that reference is an edge in this graph. Read only off
+    the branch's tree, the landing view judged coverage against the branch's
+    topology — so forking from before the base branch wired the reference, and
+    editing only the persona, reported `debt` and merged green, with the merge
+    restoring the reference the branch never touched.
+
+    Same three-way reading as the case set, at the granularity of a single edge:
+    `head | (base - fork)`. Edges rather than reachability, because reachability is
+    derived and the merge is not distributive over deriving it: "recipe R reaches
+    surface S" in the base tree can rest on a chain whose middle link the branch
+    replaced, and unioning the three trees' answers per surface asserts a reach no
+    tree has. Merging the relation and walking the result walks a graph that at
+    least corresponds to a tree — the one the merge produces. (Two references from
+    the same recipe to the same surface are one edge either way; the granularity
+    buys nothing there and is not claimed to.) And the same monotone half as
+    `_landing_coverage`: an edge the base branch *deleted* is not subtracted, so
+    coverage can be over-approximated and never under-approximated. Over-approxi-
+    mation here can only make `landing_covered` true, which is `coverage_stale` and
+    fatal — it cannot hide anything, only ask for a re-measurement that the base
+    branch's own push would ask for a moment later.
+
+    The two revisions are read by the same reader, which is what makes the
+    subtraction safe: `_graph` describes the rig repository itself through
+    `build_brick_graph` and every other tree through its adapter, and the two do
+    not agree edge for edge. Any such difference is present in `base` and in `fork`
+    alike and cancels; what survives is only what the base branch genuinely added.
+    Node ids are then translated into the branch's spelling by path, because that
+    is what the reachability walk starts from.
+
+    **What this does not cover.** Cancelling is not the same as seeing. Every
+    reference a *recipe* makes is modelled at both revisions — that is the one that
+    has to be, because a recipe is what a case binds — and what is not is
+    `agent -> persona`, `command -> instruction` and `wiki -> wiki`. The base branch
+    adding one of those is not a `gained` edge, so coverage that reaches a surface
+    only that way is not ratcheted: editing a persona nothing but an agent
+    references reads as `debt`, not `coverage_stale`.
+
+    That list is checked rather than asserted, by
+    `test_the_revision_reader_sees_every_reference_a_recipe_makes`, and the check is
+    a difference of edge *sets* because a count cannot answer this question. A
+    `recipe -> pattern` edge is reachable through two frontmatter fields, `pattern:`
+    and `gate:`; this reader modelled only the first, and the duplicates it emitted
+    from that one left it holding *more* `recipe -> pattern` edges than the core
+    reader while missing every gate in the repository. Per-kind totals showed a
+    surplus. The set difference showed 28 missing edges, and the branch that wired
+    coverage through `gate:` merged green while the identical branch wiring through
+    `pattern:` was refused.
+    """
+    if base is None or fork is None:
+        return None
+    head_nodes, head_edges = head
+    base_nodes, base_edges = base
+    gained = ({(edge["from"], edge["to"]) for edge in base_edges}
+              - {(edge["from"], edge["to"]) for edge in fork[1]})
+    if not gained:
+        return head_nodes, head_edges
+    path_of = {node["id"]: path for path, node in base_nodes.items()}
+
+    def canonical(node_id: str) -> str:
+        path = path_of.get(node_id)
+        return head_nodes[path]["id"] if path in head_nodes else node_id
+
+    nodes = {**{path: node for path, node in base_nodes.items() if path not in head_nodes},
+             **head_nodes}
+    edges = list(head_edges)
+    seen = {(edge["from"], edge["to"]) for edge in head_edges}
+    for source, target in sorted(gained):
+        edge = (canonical(source), canonical(target))
+        if edge not in seen:
+            seen.add(edge)
+            edges.append({"from": edge[0], "to": edge[1]})
+    return nodes, edges
+
+
 def _recipes_by_surface(root: pathlib.Path, surfaces: list[dict]) -> dict[str, list[str]]:
-    nodes_by_path, edges = _graph(root)
+    return _reachable_recipes(_graph(root), surfaces)
+
+
+def _reachable_recipes(
+    graph: tuple[dict[str, dict], list[dict]], surfaces: list[dict],
+) -> dict[str, list[str]]:
+    nodes_by_path, edges = graph
     reverse: dict[str, set[str]] = {}
     for edge in edges:
         reverse.setdefault(edge["to"], set()).add(edge["from"])
@@ -406,12 +688,16 @@ def _registry_narrowings(before: dict[str, dict] | None, after: dict) -> list[st
 def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | None:
     """case id → the prompt surfaces it covered at `revision`, or None if unreadable.
 
-    Read from the git tree rather than the working copy: the ratchet needs to know
-    what coverage existed *before* the change in order to tell a surface that was
-    never covered (debt) from one whose coverage this change removed (a
-    regression). None means the question could not be answered — a shallow clone,
-    an unborn ref — and the caller then declines to accuse anyone of a regression
-    it cannot demonstrate.
+    Read from the git tree rather than the working copy, and read at two revisions:
+    the base branch's tip, which is the coverage this change has to still deliver,
+    and the fork point, which is the only way to tell coverage this change *removed*
+    from coverage it simply never had. `_landing_coverage` combines them.
+
+    None means the question could not be answered — a blobless clone, a git that
+    would not answer. `_regressions` declines to accuse anyone of a regression it
+    cannot demonstrate; `analyze_affected` reports the unanswerable comparison
+    itself rather than passing quietly, because the base-tip reading is what stands
+    between a stale fork and an unmeasured prompt surface.
     """
     try:
         listing = subprocess.run(
@@ -447,6 +733,131 @@ def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | Non
         if isinstance(case_id, str) and isinstance(surfaces, list):
             coverage[case_id] = {s for s in surfaces if isinstance(s, str)}
     return coverage
+
+
+def _landing_coverage(head: dict[str, set[str]], base: dict[str, set[str]] | None,
+                      fork: dict[str, set[str]] | None) -> dict[str, set[str]] | None:
+    """The coverage the merge would put on the base branch, case by case.
+
+    Every comparison below this line asks a question about *state* — does the tree
+    that ends up on trunk still cover what the base branch covers — and the answer
+    has to be read off the tree the merge produces, not off the branch tip. The two
+    differ precisely where the branch is behind: a case the base branch gained after
+    this branch forked is missing from the branch and present after the merge,
+    because none of the three merge buttons removes it.
+
+    That gap was the bypass. Comparing the branch tip against the **fork point**
+    made "the case did not exist yet" and "the case is gone" the same answer, so
+    forking from before a case was written and editing only the prompt reported
+    `debt` — no case for this surface — and merged green, with the push to the
+    default branch going red on the very evidence check the PR never reached. The
+    same shape as #402 and the same shape #411 removed from the evidence ratchet.
+
+    So the reference is the base tip, and the branch is charged for what it *takes
+    away* rather than for what it never had: a surface is present after the merge
+    if the branch has it, or if the base branch has it and the fork point did not.
+    Written as `head | (base - fork)`, which makes coverage regression reduce to
+    `(base & fork) - head` — exactly "the branch dropped it and the base branch
+    still has it".
+
+    That is the monotone half of a three-way merge, and the other half is left out
+    on purpose: coverage the base branch *deleted* after the fork is not subtracted
+    from what the branch carries, so this can over-state what lands and never
+    under-state it. A true merge would drop it, which would let a case deleted on
+    the base branch excuse an unmeasured edit here. Over-statement costs nothing in
+    the other direction: `coverage_stale` is only reached for a surface this branch
+    does not cover, and `_regressions` only reads elements of `base`, so neither an
+    accusation nor a silence can be manufactured from the difference.
+
+    None means the question could not be answered; the caller turns that into a
+    named failure rather than a pass, because this is now the check that stands
+    between a stale fork and an unmeasured prompt.
+    """
+    if base is None or fork is None:
+        return None
+    landing = {case_id: set(surfaces) for case_id, surfaces in head.items()}
+    for case_id, surfaces in base.items():
+        gained = surfaces - fork.get(case_id, set())
+        if gained:
+            landing.setdefault(case_id, set()).update(gained)
+    return landing
+
+
+def _landing_registry(after: dict, base: dict[str, dict] | None,
+                      fork: dict[str, dict] | None) -> dict:
+    """The same three-way reading of the registry, root by root.
+
+    `after` is the registry the checked-out code declares. A root the base branch
+    added after this branch forked is not in it and will be in the merge, so it is
+    restored here rather than read as this change removing it — the identical
+    correction `_landing_coverage` makes, applied per attribute because a root can
+    be widened as well as added.
+
+    Unlike coverage, being behind here needs no equivalent of `coverage_stale`:
+    what the merge lands is the base branch's *wider* field of view, so nothing the
+    gate could see stops being seen. One shape is not corrected — a root the fork
+    point did not declare and both sides do, where the branch's own declaration
+    wins whole and an extension the base branch added to it is not merged in — and
+    a branch behind on that reads as a narrowing. It needs `_KNOWN_SUFFIXES` itself
+    to have widened since the fork, and the remedy is the same merge. Coverage
+    staleness is fatal because the opposite is true there — the merge lands the base
+    branch's case together with this branch's unmeasured edit to the surface it
+    covers.
+    """
+    if base is None:
+        return after
+    fork = fork or {}
+    roots = {root["prefix"]: dict(root) for root in after.get("roots", [])
+             if isinstance(root, dict) and isinstance(root.get("prefix"), str)}
+    for prefix, declared in base.items():
+        earlier = fork.get(prefix)
+        landing = roots.get(prefix)
+        if landing is None:
+            if earlier is None:
+                roots[prefix] = dict(declared)      # the base branch added it
+            continue
+        if earlier is None:
+            continue                # both sides declared it; this branch's wins
+        widened = set(declared.get("extensions") or []) - set(earlier.get("extensions") or [])
+        if widened:
+            landing["extensions"] = sorted(set(landing.get("extensions") or []) | widened)
+        if declared.get("recursive") and not earlier.get("recursive", True):
+            landing["recursive"] = True
+        if (declared.get("kind") != earlier.get("kind")
+                and landing.get("kind") == earlier.get("kind")):
+            landing["kind"] = declared.get("kind")
+    return {**after, "roots": sorted(roots.values(), key=lambda item: item["prefix"])}
+
+
+def _coverage_matches(
+    coverage: dict[str, set[str]], surfaces: list[dict], recipes: list[str],
+    recipes_by_surface: dict[str, list[str]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, bool]]:
+    """Which cases in `coverage` answer for each affected surface and recipe.
+
+    One predicate, asked twice: once of the cases this branch carries, and once of
+    the coverage the merge would land. Both readings have to agree on what "covered"
+    means — a second, separately written copy of the direct/recipe/indirect rules is
+    how the landing view would come to disagree with the branch view about the one
+    surface an attacker picks.
+    """
+    recipe_matches = {
+        recipe: [case_id for case_id, bound in sorted(coverage.items())
+                 if f"recipe:{recipe}" in bound]
+        for recipe in recipes
+    }
+    matched: dict[str, list[str]] = {}
+    covered: dict[str, bool] = {}
+    for surface in surfaces:
+        found = [case_id for case_id, bound in sorted(coverage.items())
+                 if surface["id"] in bound]
+        if surface["kind"] == "recipe":
+            found.extend(recipe_matches.get(surface["id"].split(":", 1)[-1], []))
+        matched[surface["path"]] = found
+        covered[surface["path"]] = bool(found) or any(
+            recipe_matches[recipe] for recipe in recipes_by_surface[surface["path"]]
+        )
+    return recipe_matches, matched, covered
 
 
 def _regressions(before: dict[str, set[str]] | None,
@@ -508,6 +919,38 @@ def analyze_affected(
     still fatal. Debt can only be paid down and coverage can only go up, which is
     the same monotonic rule the policy layer uses — and unlike a threshold, it
     produces a number that moves from the first day.
+
+    Two references, deliberately, and the split is the whole of the fix for the
+    fork-point bypass:
+
+    * **what this change changes** is diffed from `merge-base(base, head)`. That is
+      not a compromise with #367 but what all three merge buttons do — merge and
+      squash are three-way from the fork point, rebase replays the branch's own
+      diffs — so the fork point is literally the set of edits that will land, and
+      diffing from the tip would charge this branch for the base branch's work.
+    * **what this change must still cover** is compared against `base`, the base
+      branch's tip, through `_landing_coverage`. Coverage is state rather than a
+      diff, and the state that matters is the one the merge produces. Against the
+      fork point, forking from before a case existed and editing only the prompt
+      read as `debt` and merged green.
+
+    Being behind the base branch on a case that covers a surface this change edits
+    is therefore **stale**, and fatal: the case comes back with the merge and the
+    edit is unmeasured. It is not debt, because somebody did write that case.
+
+    "Covered" is read off the landing tree on both counts — the cases through
+    `_landing_coverage`, and the wiring that makes a case answer for a surface it
+    does not name through `_landing_graph`. Correcting only the first left the same
+    bypass one step further out: fork from before the base branch pointed a recipe
+    at a persona, edit only the persona, and the branch's own tree honestly reports
+    that nothing reaches it.
+
+    On a push to the default branch this all collapses back to the old reading, so
+    long as `github.event.before` is an ancestor of what was pushed: `merge-base`
+    returns `before` itself, `base - fork` is empty, and both landing views are the
+    pushed tree. A force-push is the exception — ancestry is what the argument rests
+    on — and there the push is judged like any other divergent history, which is to
+    say a case the rewrite dropped is named rather than passed over.
     """
     try:
         root = pathlib.Path(repo).resolve()
@@ -517,54 +960,121 @@ def analyze_affected(
     resolved_head = _resolved_head(root, head)
     merge_base = _merge_base(root, base, head)
     surfaces = [surface for path in changed if (surface := _surface(path)) is not None]
-    recipes_by_surface = _recipes_by_surface(root, surfaces)
+    head_graph = _graph(root)
+    recipes_by_surface = _reachable_recipes(head_graph, surfaces)
     recipes = sorted({recipe for values in recipes_by_surface.values() for recipe in values})
     cases = _load_cases(root)
     selected: list[str] = []
     uncovered: list[str] = []
     debt: list[str] = []
+    # Keyed by path so a surface that is stale both directly and through a recipe
+    # is reported once, the way `debt` is deduplicated by being a set of paths.
+    stale_by_path: dict[str, str] = {}
     demand = require_cases or ratchet
-    recipe_matches = {
-        recipe: [
-            case["id"] for case in cases
-            if f"recipe:{recipe}" in case.get("prompt_surfaces", [])
-        ]
-        for recipe in recipes
-    }
+    head_coverage = {case["id"]: set(case.get("prompt_surfaces", [])) for case in cases}
+    # Only under the ratchet. Strict mode already fails every affected surface this
+    # branch does not cover, whatever the base branch says about it, so it has
+    # nothing to gain from the landing view and keeps its exact old meaning.
+    base_coverage = _coverage_at(root, base) if ratchet else None
+    landing_coverage = (
+        _landing_coverage(head_coverage, base_coverage, _coverage_at(root, merge_base))
+        if ratchet else None
+    )
+    # Both arguments of "is this covered?" get the same correction, or the fix is
+    # half a fix: the case set says which cases exist, the graph says which surfaces
+    # they reach, and reading the second one off the branch judges the merge by the
+    # branch's wiring. Gated on `ratchet` like the coverage read above — strict mode
+    # keeps its exact old meaning — and on there being a surface to ask about: the
+    # graph is consulted only through `_reachable_recipes(…, surfaces)`, so with no
+    # affected surface there is nothing for it to answer and `recipes` is empty for
+    # the same reason. Reading it anyway made a `noop` change fatal on the strength
+    # of a question nobody asked, which is the one direction `coverage_unreadable`
+    # must not fire in.
+    needs_landing_graph = bool(ratchet and surfaces)
+    landing_graph = (
+        _landing_graph(head_graph, _graph_at(root, base), _graph_at(root, merge_base))
+        if needs_landing_graph else None
+    )
+    landing_by_surface = (_reachable_recipes(landing_graph, surfaces)
+                          if landing_graph is not None else {})
+    landing_recipe_list = sorted(
+        {recipe for values in landing_by_surface.values() for recipe in values})
+    recipe_matches, matched_by_path, covered_by_path = _coverage_matches(
+        head_coverage, surfaces, recipes, recipes_by_surface)
+    landing_recipe_matches, landing_matched, landing_covered = (
+        _coverage_matches(landing_coverage, surfaces, landing_recipe_list, landing_by_surface)
+        if landing_coverage is not None and landing_graph is not None else ({}, {}, {})
+    )
     for surface in surfaces:
-        matched = [case["id"] for case in cases
-                   if surface["id"] in case.get("prompt_surfaces", [])]
-        if surface["kind"] == "recipe":
-            recipe = surface["id"].split(":", 1)[-1]
-            matched.extend(recipe_matches.get(recipe, []))
-        indirectly_covered = any(
-            recipe_matches[recipe] for recipe in recipes_by_surface[surface["path"]]
-        )
-        missing = demand and not matched and not indirectly_covered
+        path = surface["path"]
         if surface["kind"] == "unknown":
             # Not a coverage question: a file under a registered root whose kind the
             # registry does not recognise is a surface nobody is even tracking. That
             # stays fatal in both modes — a ratchet on an unmeasured thing is nothing.
-            uncovered.append(surface["path"])
-        elif missing:
-            (debt if ratchet else uncovered).append(surface["path"])
-        selected.extend(matched)
+            uncovered.append(path)
+        elif demand and not covered_by_path[path]:
+            if landing_covered.get(path):
+                # Covered once this lands, and not covered by anything this branch
+                # carries: the merge puts the base branch's case next to this
+                # branch's unmeasured edit to the surface it covers. Fatal rather
+                # than debt — debt is a surface nobody has written a case for, and
+                # somebody has written this one. Merging the base branch in and
+                # re-measuring is the answer, and is what the default branch's own
+                # push would demand a moment later.
+                owed = sorted(set(landing_matched[path]).union(
+                    case_id for recipe in landing_by_surface[path]
+                    for case_id in landing_recipe_matches[recipe]) - set(matched_by_path[path]))
+                stale_by_path[path] = (
+                    f"{path} (covered on the base branch by "
+                    f"{', '.join('case:' + item for item in owed) or 'a case'}, "
+                    "not by this change)")
+            else:
+                (debt if ratchet else uncovered).append(path)
+        selected.extend(matched_by_path[path])
     for recipe in recipes:
         matched = recipe_matches[recipe]
         if demand and not matched:
             recipe_paths = [item["path"] for item in surfaces]
-            (debt if ratchet else uncovered).extend(recipe_paths or [f"recipe:{recipe}"])
+            if landing_recipe_matches.get(recipe):
+                # Only the surfaces that actually reach this recipe. Charging every
+                # affected path was harmless while the target was `debt` — a superset
+                # of an exit-0 count — and is not once the target is fatal: it would
+                # name a recipe an unrelated path has nothing to do with, and take
+                # that path out of `coverage_debt`, which is the number CI publishes.
+                # Read off the landing graph, not the branch's: the sentence being
+                # printed is a claim about what the base branch covers, so "reaches
+                # this recipe" has to mean what it means there.
+                reaching = [path for path in recipe_paths
+                            if recipe in landing_by_surface.get(path, ())]
+                for path in reaching or [f"recipe:{recipe}"]:
+                    stale_by_path.setdefault(
+                        path,
+                        f"{path} (recipe:{recipe} is covered on the base branch by "
+                        f"{', '.join('case:' + item for item in landing_recipe_matches[recipe])}, "
+                        "not by this change)")
+            else:
+                (debt if ratchet else uncovered).extend(recipe_paths or [f"recipe:{recipe}"])
         selected.extend(matched)
     selected = sorted(set(selected))
-    debt = sorted(set(debt) - set(uncovered))
-    regressions = _regressions(_coverage_at(root, merge_base),
-                               {case["id"]: set(case.get("prompt_surfaces", []))
-                                for case in cases}) if ratchet else []
+    stale = [stale_by_path[path] for path in sorted(stale_by_path)]
+    debt = sorted(set(debt) - set(uncovered) - set(stale_by_path))
+    # A question that could not be answered is an accusation rather than a shrug,
+    # the stance `_evidence_ratchet_failures` takes and for the same reason: with
+    # the fork point gone as the reference, this comparison is the only thing that
+    # notices a branch forked from before a case existed. `_regressions` keeps the
+    # softer stance for its own `None` because it is one guard among several.
+    coverage_unreadable = ratchet and (
+        landing_coverage is None or (needs_landing_graph and landing_graph is None))
+    regressions = (_regressions(base_coverage, landing_coverage)
+                   if landing_coverage is not None else [])
     # The registry is monotonic too, in both modes. Widening what the gate can see
     # is the direction it is meant to move; narrowing it is coverage going down.
     registry_changed = REGISTRY_REL in changed
+    base_registry = _registry_at(root, base) if registry_changed else None
     registry_narrowings = (
-        _registry_narrowings(_registry_at(root, merge_base), prompt_surface_registry())
+        _registry_narrowings(base_registry,
+                             _landing_registry(prompt_surface_registry(), base_registry,
+                                               _registry_at(root, merge_base)))
         if registry_changed else []
     )
     evidence: dict[str, str] = {}
@@ -582,7 +1092,7 @@ def analyze_affected(
                         found = True
                         break
             evidence[case_id] = "present" if found else "absent"
-    if uncovered or regressions or registry_narrowings:
+    if uncovered or regressions or registry_narrowings or stale or coverage_unreadable:
         status = "uncovered"
     elif not surfaces:
         status = "noop"
@@ -601,8 +1111,9 @@ def analyze_affected(
         "registry_changed": registry_changed,
         "registry_narrowings": registry_narrowings,
         "base": base, "head": head, "resolved_head": resolved_head,
-        # The fork point the comparison actually used. Printed so a surprising
-        # result can be checked against it instead of guessed at.
+        # The fork point the *diff* used — what this branch changes is measured from
+        # here, while what it has to still cover is measured against `base`. Printed
+        # so a surprising result can be checked against it instead of guessed at.
         "merge_base": merge_base,
         "changed_files": changed,
         "affected_surfaces": sorted(surfaces, key=lambda item: item["path"]),
@@ -610,8 +1121,13 @@ def analyze_affected(
         "uncovered": sorted(set(uncovered)),
         "coverage_debt": debt,
         "coverage_regressions": regressions,
+        # Surfaces the base branch already has a case for and this change does not:
+        # behind, not undocumented. Its own list rather than folded into `uncovered`
+        # so the report says which of the two it is, and what clears it.
+        "coverage_stale": stale,
+        "coverage_base_unreadable": coverage_unreadable,
         "evidence_status": evidence,
         "surface_commits": _surface_commits(root, merge_base, head,
-                                            [*uncovered, *debt]),
+                                            [*uncovered, *debt, *sorted(stale_by_path)]),
         "status": status,
     }

@@ -136,16 +136,40 @@ jobs:
       # regression (exit 1), and an unregistered surface kind still fails outright.
       - name: Structural affected-case coverage (free)
         run: |
+          # The report exists only on this command's stdout, and this shell runs with
+          # `-e`: a non-zero exit aborted the step at the redirect, so a *failing* run
+          # printed no report at all, and the `::error::` annotations below — which
+          # exist only for a failing run — could never execute. Capture the status,
+          # print the report, explain it, then fail with it.
+          set +e
           rig-wb eval affected --base "${{ steps.comparison.outputs.base }}" \
             --head HEAD --ratchet --json > /tmp/rig-affected.json
+          status=$?
+          set -e
           cat /tmp/rig-affected.json
           python3 - <<'PY'
           import json
-          report = json.load(open("/tmp/rig-affected.json"))
+          try:
+              report = json.load(open("/tmp/rig-affected.json"))
+          except (OSError, ValueError):
+              # The command died before it could write a report; its own exit status
+              # is still what decides this step.
+              print("::error::eval affected produced no readable report")
+              raise SystemExit(0)
           debt = report["coverage_debt"]
           if debt:
               print(f"::warning::prompt coverage debt: {len(debt)} surface(s) have no "
                     f"evaluation case yet — {', '.join(debt)}")
+          # The one refusal here whose remedy is not "write a case": the base branch
+          # already has one, and this branch forked from before it. Named, because
+          # "merge the base branch in and re-measure" is not something an exit code
+          # can say.
+          for line in report.get("coverage_stale") or []:
+              print(f"::error::the base branch already covers this surface — merge it "
+                    f"in and re-measure: {line}")
+          if report.get("coverage_base_unreadable"):
+              print("::error::the base branch's coverage could not be read, so the "
+                    "coverage ratchet could not be applied")
           # The registry is monotonic like the cases are. Widening it is the direction
           # the gate is meant to move and is only announced; narrowing it already
           # failed the command above, and is named here so the reason is in the log
@@ -156,6 +180,7 @@ jobs:
               print("::notice::prompt surface registry widened; the gate now sees more "
                     "than it did on the base commit")
           PY
+          exit "$status"
 
       - name: Untrusted or fork prompt quality handoff
         if: >-

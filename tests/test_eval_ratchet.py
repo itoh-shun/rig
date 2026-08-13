@@ -13,8 +13,12 @@ already earned with a measured red→green run is a regression, and still fatal.
 
 import copy
 import json
+import os
 import pathlib
 import subprocess
+import tempfile
+
+import pytest
 
 from test_eval_cases import valid_case
 
@@ -219,6 +223,790 @@ def test_a_case_that_was_never_approved_is_not_counted_as_lost(tmp_path):
     assert report["coverage_regressions"] == []
 
 
+# ── the comparison point: the base branch's tip, not the fork ────────────────
+def _forked(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, str]:
+    """Two surfaces exist, then the base branch writes a case for one of them.
+
+    Returns the repo, the fork point where neither surface has a case, and the base
+    branch's tip. A branch forked at the first commit is behind on that case without
+    having deleted anything, which is the state the fork-point comparison could not
+    tell apart from "nobody has written this case yet".
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    _touch(repo, PERSONA)
+    fork = _commit(repo, "two surfaces, no cases")
+    _write_case(repo, "login-case", ["instruction:login"])
+    return repo, fork, _commit(repo, "the base branch writes the case")
+
+
+def test_a_case_written_on_the_base_branch_after_the_fork_is_still_owed(tmp_path):
+    """The bypass: fork from before the case, edit only the prompt, carry no case.
+
+    Against the fork point there was no coverage to lose and no case to match, so
+    the surface came back as debt and exit 0 — and the merge then landed the edit
+    next to the case it restores, which the base branch's own push refuses. The
+    comparison is the tip now, so what the merge would land is what is judged.
+    """
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    head = _commit(repo, "edit the covered prompt, carrying no case")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered"
+    assert any(INSTRUCTION in item and "login-case" in item
+               for item in report["coverage_stale"]), report
+    # Reported as exactly one of the two, and not as the survivable one.
+    assert report["coverage_debt"] == []
+    # Nothing was taken away: the branch never had the case to delete.
+    assert report["coverage_regressions"] == []
+
+
+def test_a_branch_behind_on_an_unrelated_case_is_not_charged_for_it(tmp_path):
+    """What keeps the tip usable as the reference: only a case that covers a surface
+    *this change edits* is owed. Every other PR open while a case lands is untouched,
+    which is the difference between a ratchet and a branch-wide rebase demand."""
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature", fork)
+    _touch(repo, PERSONA, "an edit to the surface nobody covered\n")
+    head = _commit(repo, "edit the uncovered surface only")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "debt"
+    assert report["coverage_debt"] == [PERSONA]
+    assert report["coverage_stale"] == [] and report["coverage_regressions"] == []
+
+
+def test_stale_coverage_through_a_recipe_names_only_the_paths_that_reach_it(tmp_path):
+    """A surface is also covered when a case covers a recipe that composes it, and the
+    stale reading has to follow the same edges — including the edge it must *not*
+    follow. Charging every affected path for a recipe only one of them reaches names
+    a recipe the author never touched and, worse, takes the other path out of
+    `coverage_debt`, which is the count CI publishes as its warning."""
+    repo, _root = _repo(tmp_path)
+    recipe = repo / "skills/engine/recipes/auth.md"
+    recipe.parent.mkdir(parents=True, exist_ok=True)
+    recipe.write_text("---\nname: auth\nsteps:\n  - id: review\n"
+                      "    personas: [reviewer]\n---\n", encoding="utf-8")
+    # A second recipe reaching the same persona, which nobody covers. Without it the
+    # debt branch of the recipe loop never runs, and "the same path is not counted as
+    # both stale and debt" is never actually asked.
+    _touch(repo, "skills/engine/recipes/other.md",
+           "---\nname: other\nsteps:\n  - id: review\n    personas: [reviewer]\n---\n")
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    _touch(repo, INSTRUCTION)                       # reaches no recipe at all
+    fork = _commit(repo, "two recipes, their persona, and an unrelated instruction")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    base = _commit(repo, "the base branch covers one of the recipes")
+
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    _touch(repo, INSTRUCTION, "edited too\n")
+    head = _commit(repo, "edit both, carrying no case")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered"
+    assert [item for item in report["coverage_stale"] if item.startswith(PERSONA)], report
+    assert not [item for item in report["coverage_stale"]
+                if item.startswith(INSTRUCTION)], report
+    # The honest debt is still counted rather than swallowed by the recipe's failure,
+    # and the persona is reported as exactly one of the two: the uncovered second
+    # recipe charges every affected path to debt, and a stale path is taken back out.
+    assert report["coverage_debt"] == [INSTRUCTION], report
+    # The triage list covers what is blocking, not only what is survivable.
+    assert PERSONA in report["surface_commits"], report
+
+
+def test_the_landing_view_keeps_what_the_base_gained_and_drops_what_this_removed(tmp_path):
+    """The three-way rule stated on its own, because both readings depend on it."""
+    from rig_workbench.eval.affected import _landing_coverage, _regressions
+
+    fork = {"kept": {"instruction:login"}}
+    base = {"kept": {"instruction:login"}, "added-since": {"persona:reviewer"}}
+    landing = _landing_coverage({}, base, fork)      # a branch carrying neither
+
+    assert landing == {"added-since": {"persona:reviewer"}}
+    lost = _regressions(base, landing)
+    assert [item for item in lost if "kept" in item], lost
+    assert not [item for item in lost if "added-since" in item], lost
+    assert _landing_coverage({}, None, fork) is None
+    assert _landing_coverage({}, base, None) is None
+
+
+# ── the other half of "covered": the wiring, not the cases ───────────────────
+UNWIRED = "---\nname: auth\nsteps: []\n---\n"
+WIRED = "---\nname: auth\nsteps:\n  - id: review\n    personas: [reviewer]\n---\n"
+RECIPE = "skills/engine/recipes/auth.md"
+
+
+def _wired_after_the_fork(
+    tmp_path: pathlib.Path, *, attributes: str | None = None,
+) -> tuple[pathlib.Path, str, str]:
+    """A covered recipe, and a persona it starts out not referencing.
+
+    Returns the repo, the fork point — where the persona is reachable from no
+    recipe — and the base branch's tip, where the recipe references it and the case
+    covering the recipe therefore covers the persona too.
+    """
+    repo, _root = _repo(tmp_path)
+    if attributes is not None:
+        _touch(repo, ".gitattributes", attributes)
+    _touch(repo, RECIPE, UNWIRED)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    fork = _commit(repo, "a covered recipe, and a persona nothing references")
+    _touch(repo, RECIPE, WIRED)
+    return repo, fork, _commit(repo, "the base branch wires the persona in")
+
+
+def test_a_reference_the_base_branch_added_after_the_fork_still_covers(tmp_path):
+    """The bypass one layer out from the case set.
+
+    Nothing is missing from this branch's cases — the case that covers the recipe
+    is right there, and unchanged. What the branch is behind on is the *reference*
+    that makes it answer for the persona, so a landing view reading the graph off
+    the branch's tree agrees with the branch that the persona is covered by nobody.
+    The merge restores a recipe the branch never touched.
+    """
+    repo, fork, base = _wired_after_the_fork(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "edit the persona only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PERSONA
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered"
+    assert any(PERSONA in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+    assert report["coverage_debt"] == [] and report["coverage_regressions"] == []
+
+
+PATTERN = "skills/engine/patterns/checklist.md"
+GATE_WIRED = "---\nname: auth\nsteps:\n  - id: review\n    gate: checklist\n---\n"
+UNGATED = "---\nname: auth\nsteps:\n  - id: review\n    gate: \"—\"\n---\n"
+
+
+def test_a_gate_the_base_branch_added_after_the_fork_covers_like_any_reference(tmp_path):
+    """`gate:` is the second field that names a pattern, and it was not read.
+
+    Exactly the shape above with one word changed, and for a long time the two
+    words did not agree: `pattern:` made the surface stale, `gate:` reported debt
+    and merged green, so whether the ratchet held came down to which field the base
+    branch happened to wire through. 23 of this repository's recipes use `gate:`.
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, UNGATED)
+    _touch(repo, PATTERN, "---\nname: checklist\n---\n")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    fork = _commit(repo, "a covered recipe, and a pattern nothing gates on")
+    _touch(repo, RECIPE, GATE_WIRED)
+    base = _commit(repo, "the base branch gates the step on the pattern")
+
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PATTERN, "---\nname: checklist\nedited: yes\n---\n")
+    head = _commit(repo, "edit the pattern only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PATTERN
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered", report
+    assert any(PATTERN in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+
+
+def test_the_placeholder_dash_a_gateless_step_carries_is_not_a_pattern(tmp_path):
+    """The reason the check is against the sentinel and not a plain truth test.
+
+    A step with no gate spells it as an em dash rather than omitting the key, so
+    `if step.get("gate")` grows an edge to `pattern:—` — a surface that does not
+    exist, charged to every recipe that has an ungated step.
+    """
+    from rig_workbench.eval.affected import _graph
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, UNGATED)
+    _touch(repo, PATTERN, "---\nname: checklist\n---\n")
+    assert [edge for edge in _graph(repo)[1] if edge["to"].startswith("pattern:")] == []
+
+
+def test_a_reference_this_branch_removes_is_not_added_back(tmp_path):
+    """The direction the subtraction exists for.
+
+    An edge the branch itself deletes is gone after the merge, so the persona it
+    used to reach really is uncovered: debt, which is survivable, and not stale,
+    which is not. Adding the base branch's edges without subtracting the fork's
+    would turn every such branch into a fatal one.
+    """
+    repo, fork, base = _wired_after_the_fork(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature", base)
+    _touch(repo, RECIPE, UNWIRED)                   # the branch takes the wiring out
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "unwire the persona and edit it")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_stale"] == [], report
+    assert report["coverage_debt"] == [PERSONA], report
+    assert report["status"] == "debt"
+
+
+def test_the_landing_graph_adds_what_the_base_wired_in_the_branchs_own_spelling(tmp_path):
+    """The rule on its own, including the translation the walk depends on.
+
+    `_graph` describes this repository through one reader and every other tree
+    through another, and they do not spell every node id the same way. The base and
+    fork readings go through the same reader so their difference is clean, but the
+    edges that survive it are joined onto the branch's graph and walked from a node
+    the branch names — so they have to arrive in the branch's dialect.
+    """
+    from rig_workbench.eval.affected import _landing_graph, _reachable_recipes, _surface
+
+    head_nodes = {RECIPE: {"id": "recipe:auth", "kind": "recipe", "path": RECIPE},
+                  PERSONA: {"id": "persona:reviewer", "kind": "persona", "path": PERSONA}}
+    other_nodes = {**head_nodes,
+                   PERSONA: {"id": "persona:facets/reviewer", "kind": "persona",
+                             "path": PERSONA}}
+    kept = {"from": "recipe:auth", "to": "persona:facets/reviewer"}
+    fork_edges = [{"from": "recipe:auth", "to": "instruction:login"}]
+
+    nodes, edges = _landing_graph((head_nodes, []), (other_nodes, [kept, *fork_edges]),
+                                  (other_nodes, fork_edges))
+    assert {"from": "recipe:auth", "to": "persona:reviewer"} in edges, edges
+    assert kept not in edges, "an id the branch spells differently must be translated"
+    # An edge the fork already had is not "gained", so a branch that removed it keeps
+    # its removal; and a surface the branch does not have keeps the base's own node.
+    assert [edge for edge in edges if edge["to"] == "instruction:login"] == []
+    assert _reachable_recipes((nodes, edges), [_surface(PERSONA)])[PERSONA] == ["auth"]
+    assert _landing_graph((head_nodes, []), None, (other_nodes, [])) is None
+    assert _landing_graph((head_nodes, []), (other_nodes, []), None) is None
+
+
+def test_the_two_graph_readers_agree_once_ids_are_translated():
+    """This repository is the tree where the two readers actually differ.
+
+    Every fixture above is read by one reader at all three revisions, so nothing in
+    them exercises the translation. Here `_graph` answers the working tree through
+    `build_brick_graph` and the revision through its adapter, and the ids for the
+    wiki pages disagree — which is the case that would quietly attach the base
+    branch's edges to nodes the walk never visits.
+    """
+    from rig_workbench.eval.affected import _graph, _graph_at, _landing_graph
+    from rig_workbench.orchestrate import config
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    if subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root,
+                      capture_output=True).returncode != 0:
+        pytest.skip("not a git checkout")
+    if config.RIG_HOME.resolve() != root.resolve():
+        # `_graph` only reaches `build_brick_graph` for the tree it calls home, and
+        # an installed rig elsewhere takes that away — leaving one reader on both
+        # sides, which is the case every fixture already covers.
+        pytest.skip("this checkout is not the rig home, so both reads use one reader")
+    head = _graph(root)
+    at_head = _graph_at(root, "HEAD")
+    assert at_head is not None
+    renamed = {node["id"] for path, node in at_head[0].items()
+               if path in head[0] and head[0][path]["id"] != node["id"]}
+    assert renamed, "the readers agree here now — this test no longer proves anything"
+
+    # An empty fork makes every edge the revision reader saw a gained one, so all of
+    # them go through the translation.
+    _nodes, edges = _landing_graph(head, at_head, ({}, []))
+    assert not [edge for edge in edges
+                if edge["from"] in renamed or edge["to"] in renamed], "untranslated ids"
+
+
+def test_the_revision_reader_sees_every_reference_a_recipe_makes():
+    """What the revision reader cannot see, measured the only way that can see it.
+
+    An edge the base branch adds and this reader does not model is coverage the
+    ratchet will not ask for, so "what is missing" is a claim the gate rests on —
+    and it has to be measured as a **difference of edge sets**, translated into one
+    spelling, which is the difference `_landing_graph` itself takes. Comparing
+    counts per kind cannot answer it: `recipe -> pattern` is reachable through two
+    frontmatter fields, the reader modelled one of them, and the duplicate edges it
+    emitted from the field it did read left it with *more* `recipe -> pattern` edges
+    than the core reader while missing 28 of the ones that mattered. A total hid a
+    hole; only the set showed it.
+
+    So the assertion is on the kinds present in that difference, and above all that
+    no reference a *recipe* makes is in it — a recipe is what a case binds, so an
+    unread field there is the ratchet not firing. Adding a step field to
+    `build_brick_graph` without adding it here fails this test.
+    """
+    from rig_workbench.eval.affected import _graph_at
+    from rig_workbench.orchestrate import config
+    from rig_workbench.orchestrate.graph import build_brick_graph
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    if subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root,
+                      capture_output=True).returncode != 0:
+        pytest.skip("not a git checkout")
+    if config.RIG_HOME.resolve() != root.resolve():
+        pytest.skip("this checkout is not the rig home, so both reads use one reader")
+
+    core = build_brick_graph(project=root, mode="core")
+    revision = _graph_at(root, "HEAD")
+    assert revision is not None
+    revision_nodes, revision_edges = revision
+    kind_of = {node["id"]: node["kind"] for node in revision_nodes.values()}
+    kind_of.update({node["id"]: node["kind"] for node in core["nodes"]})
+    # Same translation `_landing_graph` applies, and in the same direction.
+    id_at_path = {node["path"]: node["id"] for node in revision_nodes.values()}
+    path_of = {node["id"]: node["path"] for node in core["nodes"]}
+
+    def translated(node_id: str) -> str:
+        return id_at_path.get(path_of.get(node_id, ""), node_id)
+
+    missing = ({(translated(edge["from"]), translated(edge["to"]))
+                for edge in core["edges"]}
+               - {(edge["from"], edge["to"]) for edge in revision_edges})
+    assert missing, "the readers agree now — this test no longer proves anything"
+    assert {(kind_of.get(source, source.split(":", 1)[0]),
+             kind_of.get(target, target.split(":", 1)[0]))
+            for source, target in missing} == {
+        ("agent", "persona"), ("command", "instruction"), ("wiki", "wiki"),
+    }, sorted(missing)
+    assert not [edge for edge in missing if edge[0].startswith("recipe:")], \
+        "a reference a recipe makes is not modelled at the revision"
+    # And the wiring the fixtures above exercise is really there at scale.
+    assert len([edge for edge in revision_edges if edge["to"].startswith("pattern:")]) \
+        >= len([edge for edge in core["edges"] if edge["to"].startswith("pattern:")])
+    assert not [edge for edge in revision_edges if edge["to"] == "pattern:—"]
+
+
+def test_a_base_graph_that_cannot_be_read_is_named_rather_than_passed(tmp_path,
+                                                                     monkeypatch):
+    """Same stance as the coverage beside it, and for a sharper reason: `_graph`
+    answers a tree it cannot parse with an empty graph, and an empty graph adds no
+    edges — which is silently the behaviour the base-tip reading replaced."""
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    head = _commit(repo, "edit a surface")
+    monkeypatch.setattr(module, "_graph_at", lambda *args, **kwargs: None)
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is True
+    assert report["status"] == "uncovered"
+    strict = analyze(repo, base, head=head, require_cases=True)
+    assert strict["coverage_base_unreadable"] is False
+
+
+def test_a_graph_the_reader_gave_up_on_is_not_a_base_that_wired_nothing(tmp_path,
+                                                                       monkeypatch):
+    """How that refusal is actually reached, which is the part worth pinning.
+
+    `_graph`'s adapter answers a tree it cannot parse with a graph containing
+    nothing, and a graph containing nothing adds no edges — indistinguishable from
+    a base branch that wired nothing up, and identical to the behaviour this
+    reading replaced. Reading a revision therefore asks strictly, and the refusal
+    travels as a refusal.
+    """
+    from rig_workbench.eval import affected as module
+    from rig_workbench.orchestrate import recipes as recipes_module
+
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    head = _commit(repo, "edit the covered prompt")
+
+    def gave_up(*args, **kwargs):
+        raise ValueError("the reader gave up")
+
+    # Patched where the adapter reads, not where it returns: the point is that the
+    # adapter's own `except` would have turned this into `({}, [])`.
+    monkeypatch.setattr(recipes_module, "parse_frontmatter", gave_up)
+    assert module._graph(repo) == ({}, []), "the lenient read still shrugs"
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is True, report
+
+
+@pytest.mark.parametrize("frontmatter", [
+    "---\nname: auth\nsteps: [unclosed\n---\nbody\n",       # YAMLError, not ValueError
+    "---\njust a string\n---\nbody\n",                      # AttributeError on .get
+])
+def test_a_revision_that_cannot_be_parsed_is_a_named_failure_not_a_traceback(
+    tmp_path, frontmatter,
+):
+    """The half of "unreadable" that is not git's to report.
+
+    `parse_frontmatter` hands `yaml.safe_load` straight through, so neither of
+    these is a `ValueError` and neither was caught anywhere: the run ended in a
+    traceback with no report. Fail-closed either way, but the design says an
+    unreadable tree is a *named* failure — and the content is in history, where the
+    author of the change cannot edit it.
+    """
+    from rig_workbench.eval.affected import _graph_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, frontmatter)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    head = _commit(repo, "a revision whose frontmatter does not parse")
+
+    assert _graph_at(repo, head) is None
+
+
+def test_a_tree_with_no_bricks_in_it_is_an_answer_rather_than_a_refusal(tmp_path):
+    """The other direction, and the one that cost a passing change.
+
+    A repository that has not grown a recipe yet reads as a graph with nothing in
+    it, which is true. Reported as unreadable it becomes `coverage_base_unreadable`
+    — fatal, on the first branch anybody forks from early history, with no edit
+    that clears it. The two facts are now taken where they happen: git's exit
+    codes for "could it be read", the adapter's refusal for "could it be parsed".
+    """
+    from rig_workbench.eval.affected import _graph_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, "skills/engine/SKILL.md", "the engine's own prose\n")
+    base = _commit(repo, "engine prose, and no brick anywhere yet")
+    assert _graph_at(repo, base) == ({}, [])
+
+    _git(repo, "checkout", "-q", "-b", "later", base)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    head = _commit(repo, "add the first persona")
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is False, report
+    assert report["status"] == "debt" and report["coverage_debt"] == [PERSONA], report
+
+
+# ── the graph is read off the tree, and `.gitattributes` does not get a vote ──
+EXPORT_IGNORE = "skills/engine/recipes/ export-ignore\n"
+EXPORT_SUBST = "skills/engine/recipes/*.md export-subst\n"
+# Same recipe, with the persona's name spelled through a substitution placeholder.
+# Read from the tree it is a literal; rendered by `git archive` under export-subst
+# it becomes the commit hash, and the edge points at a persona that never existed.
+SUBST_WIRED = ("---\nname: auth\nsteps:\n  - id: review\n"
+               "    personas: [\"reviewer$Format:%H$\"]\n---\n")
+
+
+def test_gitattributes_cannot_take_the_base_branchs_wiring_out_of_view(tmp_path):
+    """The bypass that reached this analysis through the *reader* rather than the tree.
+
+    Reading a revision with `git archive` renders it: the tree's own
+    `.gitattributes` decides what comes out, and `export-ignore` deletes whole
+    directories from the answer. That line is under no registered surface prefix
+    and is not the registry, so the PR that adds it reports `noop` and merges
+    through ordinary review — and from then on every branch's base-tip and
+    fork-point graph is missing the same edges, `base - fork` is empty, and
+    indirect coverage stops being noticed at all, in silence.
+
+    Same fixture and same expected refusal as the test above with no
+    `.gitattributes` in it. That is the whole assertion: the file changes nothing.
+    """
+    repo, fork, base = _wired_after_the_fork(tmp_path, attributes=EXPORT_IGNORE)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "edit the persona only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PERSONA
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered", report
+    assert any(PERSONA in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+
+
+# The same recipe, wired, with one line YAML calls a comment. `git archive` under
+# `export-subst` replaces the placeholder with the archived commit's message body,
+# and a body whose second line starts at column 0 lands a second `steps:` key in
+# the frontmatter — emptying the first, for the rendering only.
+SUBST_COMMENT_WIRED = ("---\nname: auth\nsteps:\n  - id: review\n"
+                       "    personas: [reviewer]\n#$Format:%b$\n---\n")
+SUBST_MESSAGE = "the base branch wires the persona in\n\npad\nsteps: []\n"
+
+
+def test_a_commit_message_cannot_rewrite_the_recipe_the_reader_parses(tmp_path):
+    """`export-subst`: the same file, removing an edge without removing a path.
+
+    Not a second instance of the finding above but a second mechanism, which is
+    why the fix is a different reader rather than a check for `export-ignore`.
+    Nothing is missing from the rendering here — the recipe is present and
+    parses. It simply says something the tree does not say, and what it says is
+    that the step wires up nobody.
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    _touch(repo, ".gitattributes", EXPORT_SUBST)
+    _touch(repo, RECIPE, UNWIRED)
+    fork = _commit(repo, "a covered recipe, and a persona nothing references")
+
+    _touch(repo, RECIPE, SUBST_COMMENT_WIRED)
+    message = tmp_path / "message.txt"
+    message.write_text(SUBST_MESSAGE, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-F", str(message))
+    base = _git(repo, "rev-parse", "HEAD")
+
+    # Liveness: without the rendering actually diverging there is nothing to catch.
+    archived = subprocess.run(["git", "archive", "--format=tar", base], cwd=repo,
+                              capture_output=True, check=True).stdout
+    assert b"steps: []" in archived, "git no longer substitutes; this proves nothing"
+
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "edit the persona only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PERSONA
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered", report
+    assert any(PERSONA in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+
+
+def test_the_revision_reader_returns_the_tree_rather_than_a_rendering_of_it(tmp_path):
+    """The invariant underneath both variants above, asserted directly.
+
+    Whatever `.gitattributes` says, the bytes this reads are the bytes in the tree
+    and the set of paths is the set in the tree. Stated as an equality against the
+    same repository without the file, so it holds for every attribute git grows,
+    not only the two with a test above.
+    """
+    from rig_workbench.eval.affected import _graph_at, _surfaces_at
+
+    def _at(name: str, **kwargs) -> pathlib.Path:
+        (tmp_path / name).mkdir()
+        repo = _wired_after_the_fork(tmp_path / name, **kwargs)[0]
+        _touch(repo, RECIPE, SUBST_WIRED)
+        _commit(repo, "spell the persona through a substitution")
+        return repo
+
+    for label, attributes in (("ignore", EXPORT_IGNORE), ("subst", EXPORT_SUBST)):
+        marked = _at(label, attributes=attributes)
+        expected = _graph_at(_at(f"plain-{label}"), "HEAD")
+        assert expected is not None and expected[1], expected
+        assert _graph_at(marked, "HEAD") == expected, label
+
+        with tempfile.TemporaryDirectory() as directory:
+            written = pathlib.Path(directory)
+            assert _surfaces_at(marked, "HEAD", written) == 2
+            blob = subprocess.run(["git", "cat-file", "blob", f"HEAD:{RECIPE}"],
+                                  cwd=marked, capture_output=True, check=True).stdout
+            assert (written / RECIPE).read_bytes() == blob, label
+
+        # Liveness: if git ever stops rendering, these fixtures stop proving anything.
+        archived = subprocess.run(["git", "archive", "--format=tar", "HEAD"],
+                                  cwd=marked, capture_output=True, check=True).stdout
+        assert blob not in archived, f"{label}: git no longer rewrites the archive"
+
+
+def test_a_blob_the_reader_cannot_produce_is_unreadable_rather_than_missing(tmp_path,
+                                                                            monkeypatch):
+    """The way the replacement reader could have reintroduced the same bug.
+
+    `git ls-tree` names an object in a blobless clone perfectly well; `cat-file`
+    then answers `missing`. Skipping that entry rebuilds the silently shrunken
+    graph through a different door, so it is the named fatal instead — the stance
+    `_coverage_at` already takes for exactly this clone.
+    """
+    from rig_workbench.eval import affected as module
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, WIRED)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    head = _commit(repo, "a wired recipe")
+    assert module._graph_at(repo, head) is not None
+
+    real = subprocess.run
+
+    def blobless(args, **kwargs):
+        if args[:2] == ["git", "cat-file"]:
+            oid = kwargs["input"].decode("ascii").split("\n", 1)[0]
+            return subprocess.CompletedProcess(args, 0, f"{oid} missing\n".encode(), b"")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", blobless)
+    assert module._graph_at(repo, head) is None
+
+
+def test_a_symlink_at_a_surface_path_is_not_a_prompt_this_reads(tmp_path):
+    """`ls-tree` calls a symlink a blob, so the filter is on the mode, not the type."""
+    from rig_workbench.eval.affected import _surfaces_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, WIRED)
+    (repo / "skills" / "engine" / "recipes" / "escape.md").symlink_to("/etc/passwd")
+    head = _commit(repo, "a recipe and a symlink wearing a recipe's name")
+    assert _git(repo, "ls-tree", "-r", head).count("120000") == 1, "no symlink committed"
+
+    with tempfile.TemporaryDirectory() as directory:
+        written = pathlib.Path(directory)
+        assert _surfaces_at(repo, head, written) == 1
+        assert [path.name for path in written.rglob("*") if not path.is_dir()] == \
+            ["auth.md"]
+        assert not any(path.is_symlink() for path in written.rglob("*"))
+
+
+def test_a_surface_whose_name_is_not_utf8_is_spelled_the_same_by_both_readers(tmp_path):
+    """The paths this writes are read back by the *other* reader, which is why the
+    decoding matters.
+
+    `_graph` walks what was written with `rglob`, so a filename whose bytes are not
+    UTF-8 reaches it through `os.listdir`'s surrogateescape. Decoding it any other
+    way here writes a name that reader spells differently, and the base branch's
+    graph stops matching the branch's for that surface — a `coverage_stale` with no
+    edit an author could make to clear it.
+    """
+    from rig_workbench.eval.affected import _graph, _graph_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, WIRED)
+    name = b"skills/engine/facets/personas/caf\xe9.md"     # latin-1, not valid UTF-8
+    target = os.path.join(os.fsencode(str(repo)), name)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "wb") as handle:
+        handle.write(b"---\nname: reviewer\n---\n")
+    head = _commit(repo, "a surface whose name is not utf-8")
+    assert os.fsdecode(name) in _graph(repo)[0], "the head reader sees it"
+
+    at_head = _graph_at(repo, head)
+    assert at_head is not None and sorted(at_head[0]) == sorted(_graph(repo)[0])
+
+
+def test_an_engine_document_with_no_bricks_under_it_is_not_an_unreadable_graph(tmp_path):
+    """The unreadability sentinel counts what the graph reader can use, not what the
+    registry can see.
+
+    `skills/engine/SKILL.md` is a prompt surface and is not a brick: the registry
+    calls it one through a flat root, and the graph's adapter — which walks the
+    recursive roots — makes no node of it. Counting the first while asking for the
+    second reported a tree that has only engine prose in it as unreadable, which is
+    a fatal with no action an author could take to clear it.
+    """
+    from rig_workbench.eval.affected import _graph_at, _surface
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, "skills/engine/SKILL.md", "the engine's own prose\n")
+    head = _commit(repo, "engine prose and nothing else")
+    assert _surface("skills/engine/SKILL.md") is not None, "still a registered surface"
+    assert _graph_at(repo, head) == ({}, [])
+
+
+def test_a_change_touching_no_surface_stays_noop_when_the_graph_is_unreadable(
+    tmp_path, monkeypatch,
+):
+    """The graph is consulted only about affected surfaces, so with none of them it
+    is not consulted — and an unreadable one is not a verdict on a `noop` change."""
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, "rig_workbench/whatever.py")
+    monkeypatch.setattr(module, "_graph_at", lambda *args, **kwargs: None)
+
+    report = analyze(repo, base, ratchet=True)
+    assert report["status"] == "noop", report
+    assert report["coverage_base_unreadable"] is False, report
+
+
+def test_a_registry_root_the_base_branch_added_after_the_fork_is_not_a_narrowing(tmp_path):
+    """The same three-way reading, and why the registry does not get a `stale`.
+
+    Being behind on a root means the merge lands the base branch's *wider* field of
+    view, so nothing stops being seen and there is nothing to demand. Being behind
+    on a case means the merge lands somebody's case next to an unmeasured edit.
+    """
+    from rig_workbench.eval.affected import _landing_registry, _registry_narrowings
+
+    def root(prefix, extensions=(".md",)):
+        return {"prefix": prefix, "kind": prefix.strip("/"), "recursive": True,
+                "extensions": list(extensions)}
+
+    # `commands/` is where the base branch widened a root the branch already had:
+    # a new extension, and it made it recursive, and it renamed its kind.
+    narrow = {**root("commands/"), "recursive": False, "kind": "old"}
+    fork = {"agents/": root("agents/"), "commands/": narrow}
+    base = {"agents/": root("agents/", (".md", ".yaml")),
+            "commands/": root("commands/", (".md", ".yaml")),
+            "patterns/": root("patterns/")}
+    behind = {"roots": [root("agents/"), dict(narrow)]}   # forked before all of it
+
+    landing = _landing_registry(behind, base, fork)
+    assert _registry_narrowings(base, landing) == []
+    landed = {item["prefix"]: item for item in landing["roots"]}
+    assert landed["commands/"]["recursive"] is True
+    assert landed["commands/"]["kind"] == "commands"
+    # And what this branch really does take away is still fatal.
+    removed = _landing_registry({"roots": []}, base, fork)
+    assert any("agents/" in item for item in _registry_narrowings(base, removed))
+
+
+def test_a_registry_root_the_base_branch_removed_after_the_fork_is_not_charged_here(
+        tmp_path):
+    """The registry comparison read against the base tip, through `analyze_affected`.
+
+    The helper above pins the rule; this pins that the analysis is wired to it. A
+    root the *base branch* deleted after the fork is still in the fork point's
+    registry, so comparing against the fork accused a branch that is merely behind
+    of removing it — and a narrowing is fatal in both modes.
+    """
+    from rig_workbench.eval.affected import REGISTRY_REL, prompt_surface_registry
+
+    repo, _root = _repo(tmp_path)
+    declared = prompt_surface_registry()
+    extra = {"prefix": "retired/", "kind": "retired", "recursive": True,
+             "extensions": [".md"]}
+    _touch(repo, REGISTRY_REL,
+           json.dumps({**declared, "roots": [*declared["roots"], extra]}, indent=2))
+    fork = _commit(repo, "a registry with a root that is about to be retired")
+    _touch(repo, REGISTRY_REL, json.dumps(declared, indent=2))
+    base = _commit(repo, "the base branch retires it")
+
+    _git(repo, "checkout", "-q", "-b", "feature", fork)
+    _touch(repo, REGISTRY_REL, json.dumps(declared, indent=2) + "\n")
+    head = _commit(repo, "this branch touches the registry for its own reasons")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["registry_changed"] is True
+    assert report["registry_narrowings"] == [], report
+    assert report["status"] != "uncovered", report
+
+
+def test_a_case_the_base_branch_already_deleted_is_not_this_branchs_regression(tmp_path):
+    """Coverage regression is `(base & fork) - head`, not `fork - head`.
+
+    Against the fork point alone, a branch that deletes a case the base branch has
+    already deleted is charged for it — the coverage it "removed" is not on the base
+    branch to remove. Fatal, and unclearable except by restoring a case somebody
+    else retired.
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    _write_case(repo, "login-case", ["instruction:login"])
+    fork = _commit(repo, "a covered surface")
+    _git(repo, "rm", "-q", "-r", "evals/cases/login-case")
+    base = _commit(repo, "the base branch retires the case")
+
+    _git(repo, "checkout", "-q", "-b", "feature", fork)
+    _git(repo, "rm", "-q", "-r", "evals/cases/login-case")
+    _touch(repo, INSTRUCTION, "edited, with the case gone from both sides\n")
+    head = _commit(repo, "retire the same case and edit the surface")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_regressions"] == [], report
+    assert report["coverage_stale"] == [] and report["coverage_debt"] == [INSTRUCTION]
+
+
+def test_a_base_coverage_that_cannot_be_read_is_named_rather_than_passed(tmp_path,
+                                                                        monkeypatch):
+    """`_regressions` shrugs at an unanswerable comparison because it is one guard
+    among several. This one is the guard, so it says so instead."""
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    head = _commit(repo, "edit a surface")
+    monkeypatch.setattr(module, "_coverage_at", lambda *args, **kwargs: None)
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is True
+    assert report["status"] == "uncovered"
+    # Strict mode never asks the question: every uncovered surface already fails it.
+    strict = analyze(repo, base, head=head, require_cases=True)
+    assert strict["coverage_base_unreadable"] is False
+
+
 # ── the CLI contract CI depends on ───────────────────────────────────────────
 def run_cli(repo, *args):
     import os
@@ -286,6 +1074,67 @@ def test_gate_ratchet_fails_on_a_coverage_regression_and_says_which(tmp_path):
     assert code == 1 and report["status"] == "failed"
     assert any(item.startswith("coverage_regression:") and "login-case" in item
                for item in report["failures"])
+
+
+def test_gate_ratchet_names_stale_coverage_and_what_covers_it(tmp_path):
+    """Same empty-`failures` hole as a regression, and the same repair: a surface
+    the base branch covers and this change does not touches nothing in `uncovered`,
+    so the reason has to be named or the exit code stands alone."""
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    head = _commit(repo, "edit the covered prompt, carrying no case")
+
+    report, code = gate(repo, base, head=head, ratchet=True)
+    assert code == 1 and report["status"] == "failed"
+    assert any(item.startswith(f"coverage_stale:{INSTRUCTION} ") and "login-case" in item
+               for item in report["failures"]), report
+    assert report["coverage_debt"] == []
+
+
+def test_gate_ratchet_names_an_unreadable_base_rather_than_only_exiting_one(tmp_path,
+                                                                           monkeypatch):
+    """The report field is checked elsewhere; this is the sentence CI prints.
+
+    Without it the gate fails with an empty `failures` list — the hole the comment
+    beside this branch says it repaired — and the only thing left in the log is an
+    exit code for a refusal whose remedy is nothing the author did.
+    """
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    head = _commit(repo, "edit a surface")
+    monkeypatch.setattr(module, "_coverage_at", lambda *args, **kwargs: None)
+
+    report, code = gate(repo, base, head=head, ratchet=True)
+    assert code == 1 and report["status"] == "failed"
+    assert "coverage_base_unreadable" in report["failures"], report
+
+
+def test_the_measurement_path_refuses_a_stale_branch_and_names_why(tmp_path):
+    """The maintainer's own command, which the fork handoff in the workflow names.
+
+    `affected-run` is where evidence is produced, and it refuses to produce any for
+    a tree the gate would reject — signing a measurement of a tree that cannot land
+    is the failure mode both ratchets exist to prevent. Reached before a provider is
+    started, so this needs none.
+    """
+    from rig_workbench.eval.affected_run import run_affected
+
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    _commit(repo, "edit the covered prompt, carrying no case")
+
+    report, code, destination = run_affected(
+        repo, base=base, head="HEAD", provider="command", model="fixture",
+        judge_provider="command", judge_model="fixture",
+        provider_command="false", judge_command="false", ratchet=True,
+    )
+    assert code == 1 and destination is None, report
+    assert [item for item in report["failures"]
+            if item.startswith(f"coverage_stale:{INSTRUCTION} ")], report
 
 
 def test_gate_ratchet_still_fails_on_an_unregistered_surface_kind(tmp_path):

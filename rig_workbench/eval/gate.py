@@ -544,17 +544,21 @@ def evaluate_gate(
                  "head": head, "resolved_head": affected["resolved_head"],
                  "cases": [], "coverage_debt": debt, "failures": []}, 0)
     if affected["status"] == "uncovered":
-        # Regressions and registry narrowings reach `uncovered` on their own,
-        # without ever landing in `affected["uncovered"]` — a deleted case touches
-        # no surface, and the registry is explicitly not one. Reported as their own
-        # failures because listing only the paths left this branch failing with an
-        # empty `failures` and no way to see why.
+        # Regressions, stale coverage and registry narrowings reach `uncovered` on
+        # their own, without ever landing in `affected["uncovered"]` — a deleted
+        # case touches no surface, and the registry is explicitly not one. Reported
+        # as their own failures because listing only the paths left this branch
+        # failing with an empty `failures` and no way to see why.
         return ({"eval_gate_schema_version": 1, "status": "failed", "base": base,
                  "head": head, "resolved_head": affected["resolved_head"],
                  "cases": affected["affected_cases"], "coverage_debt": debt,
                  "failures": [f"uncovered:{path}" for path in affected["uncovered"]]
                  + [f"coverage_regression:{item}"
                     for item in affected["coverage_regressions"]]
+                 + [f"coverage_stale:{item}"
+                    for item in affected["coverage_stale"]]
+                 + (["coverage_base_unreadable"]
+                    if affected["coverage_base_unreadable"] else [])
                  + [f"registry_narrowed:{item}"
                     for item in affected["registry_narrowings"]]}, 1)
     resolved_head = _resolve_commit(root, "HEAD" if head == "working" else head)
