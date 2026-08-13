@@ -17,6 +17,7 @@ from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
 from .flow_view import render_flow, render_transition
+from .ports import docker_isolation
 from .progress import from_state as progress_from_state
 from .progress import load_recipe_steps
 from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
@@ -153,8 +154,17 @@ def cmd_new(args: argparse.Namespace) -> None:
     if ensure_rig_gitignored(root):
         print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
 
+    # Created now, ahead of the worktree: ports.allocate_ports prunes reservations
+    # whose run dir is missing (a task whose worktree was torn down without going
+    # through `discard`), and this task's own entry must not read as "missing" the
+    # instant a concurrent `new` call prunes the state while this one is still
+    # mid-registration. Still after the gate/base-branch resolution above, so a
+    # `die()` there still leaves no partial state on disk.
+    d.mkdir(parents=True, exist_ok=True)
+
     worktree_path: str | None = None
     branch: str | None = None
+    docker: dict | None = None
     create_worktree = route["worktree"] and not args.no_worktree
     if create_worktree:
         wt = default_worktree_path(root, task_id)
@@ -162,6 +172,12 @@ def cmd_new(args: argparse.Namespace) -> None:
         wt.parent.mkdir(parents=True, exist_ok=True)
         git(["worktree", "add", "-b", branch, str(wt), base_commit], cwd=root)
         worktree_path = str(wt)
+        # Docker/port isolation (parallel /rig runs otherwise collide on host ports
+        # and container names once a project's docker-compose.yml enters the
+        # picture — see ports.py's module docstring). Every isolated task gets a
+        # unique COMPOSE_PROJECT_NAME and a reserved port block written to
+        # .env.rig, whether or not this project actually uses Docker.
+        docker = docker_isolation(root, wt, task_id)
 
     task = {
         "task_id": task_id,
@@ -174,6 +190,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         "base_commit": base_commit,
         "branch": branch,
         "worktree_path": worktree_path,
+        "docker": docker,
         "status": "running",
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -188,7 +205,6 @@ def cmd_new(args: argparse.Namespace) -> None:
     if _binding.bound:
         task["org"] = _binding.org
         task["team"] = _binding.team
-    d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
     # Seed the recipe's declared steps so every later view has a denominator. An
     # unreadable recipe seeds nothing and the run behaves exactly as before — the
@@ -221,6 +237,10 @@ def cmd_new(args: argparse.Namespace) -> None:
     else:
         reason = "--no-worktree specified" if args.no_worktree else "route policy"
         print(f"worktree: none ({reason})")
+    if docker:
+        ports_range = f"{docker['ports'][0]}-{docker['ports'][-1]}" if docker["ports"] else "(none free)"
+        print(f"docker: COMPOSE_PROJECT_NAME={docker['compose_project']}, ports {ports_range} "
+              f"→ {docker['env_file']} (opt in from docker-compose.yml; see patterns/isolated-worktree.md)")
     print(f"state: {d.relative_to(root)}/")
 
     for line in render_flow(seeded, acc):

@@ -53,6 +53,12 @@
 
 隔離が task ごとに完結しているため、**複数の task を同時に走らせても互いに干渉しない**（別 worktree・別 branch）。`/rig:queue go --provider rig --max-parallel N` は各 queue item を `/rig:rig "<task>"` 経由で dispatch し、この隔離を使って**別プロセスの並列実行を安全にする**（headless プロセス同士が同じ作業ディレクトリを取り合うことがない）。並行タスクの全体像は `scripts/workbench.py board` が単一のダッシュボードとして提供する——`/rig:rig` を直接叩いた task も `/rig:queue` 経由の task も `.rig/runs/` に集約されるため、ターミナルを増やさずに1コマンドで状況を把握できる。
 
+## Docker / ポートの隔離
+
+worktree は**ファイル**の隔離であり、`docker compose` が握るホストポートやコンテナ名までは隔離しない——同じ `docker-compose.yml` を2つの task worktree が並行して `up` すると「port is already allocated」「container name already in use」で衝突する。`workbench.py new` は worktree を作る task ごとに、空いているホストポートを `count`（既定8個）だけ予約し、一意な `COMPOSE_PROJECT_NAME`（= task-id）とあわせて worktree 直下の `.env.rig` に書き出す（衝突を避けるため予約は `.rig/ports.json` に記録し、複数の `new` プロセスが同時に走っても同じポートを二重に配ることはない）。`.env.rig` は `$GIT_DIR/info/exclude`（対象リポジトリの `.gitignore` は一切書き換えない、リポジトリ共有の非追跡除外リストで、linked worktree 全体に効く）で自動的に除外されるため、`accept` の「worktree はクリーンでなければならない」前提を壊さない。`discard` は worktree 削除とあわせてこの予約も解放する。
+
+プロジェクト側で使うには、`docker-compose.yml` のポートを `${RIG_PORT_0:-3000}:3000` のように環境変数化し、`docker compose --env-file .env.rig up`（または `env_file: .env.rig`）で読み込む。何もしなければ `.env.rig` は素通りされるだけで、Docker を使わないプロジェクトには影響しない。詳細は `rig_workbench/workbench/ports.py` のモジュール docstring を参照。
+
 ## 既存ブリックとの関係
 
 | 部品 | 役割 |

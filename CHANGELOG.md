@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+**Two `/rig "<task>"` runs already got separate git worktrees, and still fought over
+the same Docker container names and host ports the moment either one ran
+`docker compose up`.** A worktree isolates files, not the two things a
+`docker-compose.yml` binds directly: an explicit `container_name:` and a fixed
+`ports: - "3000:3000"` are both process-wide, not scoped to whichever directory
+compose was invoked from, so two parallel task worktrees running the same compose
+file hit "port is already allocated" or "container name already in use" — the exact
+friction that made parallel rig runs feel unsafe even though the file-level isolation
+was already there.
+
+`workbench.py new` now reserves a block of currently-free host ports for every task
+that gets a worktree (8 by default, from a fixed high range chosen to stay clear of
+common dev-server defaults) and writes them alongside a unique `COMPOSE_PROJECT_NAME`
+(the task-id) to `.env.rig` at the worktree root. The reservation is recorded in
+`.rig/ports.json` under an exclusive lock, so two `new` invocations racing each other
+during `/rig:queue go --max-parallel N` are never handed the same port twice; `discard`
+releases the block again, and a task whose worktree was torn down by hand instead of
+through `discard` gets pruned the next time a port block is allocated, so the range
+does not monotonically fill up over a long-lived repo. A project opts in by
+parameterizing its compose file (`${RIG_PORT_0:-3000}:3000`) and passing
+`--env-file .env.rig`; a project that never touches Docker is unaffected.
+
+`.env.rig` is written *inside* the worktree — the same tree `accept` squash-merges into
+the main branch — so leaving it untracked would have failed accept's "worktree must be
+clean" precondition on every single task, and tracking it would have leaked a per-task
+port reservation into the project's history on the first accept. Neither happens:
+`$GIT_DIR/info/exclude` resolves to the git-common directory shared by every linked
+worktree of a repo, so writing to it once from the main tree, without touching the
+project's own tracked `.gitignore`, silently excludes `.env.rig` everywhere this repo
+has a worktree, present and future.
+
 **The prompt quality gate could not pass, and adding the missing secrets would not
 have fixed it.** `validate.yml`'s "Trusted prompt quality evidence" step ran
 `rig-wb eval affected-run`, which starts the provider as an external binary. The

@@ -17,6 +17,7 @@ import sys
 from .. import ast_diff
 from ..govern import enforce as govern_enforce
 from .config import CHECK_ICON, RECOMMENDATION
+from .ports import release_ports
 from .state import (_diff_lines, audit_append, build_acceptance,
                     current_identity, die, drift_lines, effective_base,
                     gate_status, git, load_access_control,
@@ -383,6 +384,10 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
         proc = git(["rev-parse", "--verify", task["branch"]], cwd=root, check=False)
         if proc.returncode == 0:
             git(["branch", "-D", task["branch"]], cwd=root)
+    # Free the reserved port block (ports.py) so a long-lived repo's range doesn't
+    # monotonically fill up with reservations from finished tasks. Idempotent and
+    # safe on tasks that never had one (--no-worktree runs, pre-existing tasks).
+    released = release_ports(root, task_id)
     if task["status"] != "accepted":  # cleanup after accept keeps the accepted status
         task["status"] = "discarded"
     task["cleaned_at"] = now_iso()
@@ -398,6 +403,8 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
         shutil.rmtree(visual_dir, ignore_errors=True)
 
     print(f"Removed the worktree and branch. The run log remains at {d.relative_to(root)}/.")
+    if released:
+        print(f"Released reserved ports: {', '.join(str(p) for p in released)}.")
     if visual_removed:
         print(f"Also removed temporary visual-verification images ({visual_dir.relative_to(root)}/).")
 
