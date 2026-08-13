@@ -297,7 +297,11 @@ def _graph(
             # through, so a broken revision raises `YAMLError` — not a `ValueError`
             # — and a scalar where a mapping belongs raises `AttributeError`. The
             # question being answered is "could this tree be read", and every one of
-            # those is the same no.
+            # those is the same no. Wider than the list because the list is a moving
+            # target: it would have to name whatever `yaml` raises next. A defect in
+            # this function is caught too, and reported as an unreadable base rather
+            # than as a traceback — the same direction, and the price of not having
+            # to keep an exhaustive list correct.
             raise EvalCaseError("cannot read the brick graph") from exc
         if not isinstance(exc, (OSError, UnicodeError, ValueError)):
             raise
@@ -500,21 +504,16 @@ def _landing_graph(
     Node ids are then translated into the branch's spelling by path, because that
     is what the reachability walk starts from.
 
-    **What this does not cover.** Cancelling is not the same as seeing, and there
-    are three kinds of reference the adapter does not model at all, so the base
-    branch adding one is not a `gained` edge and does not make the surface it
-    reaches stale. Measured against `build_brick_graph` on this repository:
-
-        agent -> persona          12 edges, adapter models 0
-        command -> instruction    23 edges, adapter models 0
-        wiki -> wiki               8 edges, adapter models 0
-
-    Everything else the core reader has, the adapter has (`recipe ->
+    **What this does not cover.** Cancelling is not the same as seeing, and three
+    kinds of reference are not modelled by the adapter at all — `agent -> persona`,
+    `command -> instruction`, and `wiki -> wiki`. The base branch adding one of
+    those is therefore not a `gained` edge and does not make the surface it reaches
+    stale. Every other kind the core reader has, the adapter has (`recipe ->
     instruction/pattern/persona/policy/contract`, `recipe -> recipe` through
-    `extends`, `persona -> wiki` through `inject`) — for those kinds it reports the
-    same or more, so the subtraction is the safe direction. Indirect coverage
-    through the three above is *not* ratcheted, and a change to a persona an agent
-    is the only thing referencing reads as `debt` rather than `coverage_stale`.
+    `extends`, `persona -> wiki` through `inject`), and reports at least as many of
+    them, which is the safe direction for a subtraction. So coverage that reaches a
+    surface only through one of the three is not ratcheted: editing a persona that
+    nothing but an agent references reads as `debt`, not `coverage_stale`.
     """
     if base is None or fork is None:
         return None
