@@ -168,7 +168,7 @@ def test_eval_gate_rejects_absent_and_mock_then_accepts_signed_real_provider(
     from rig_workbench.eval.gate import evaluate_gate
     from rig_workbench.eval.runner import make_judge_adapter, run_case
 
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "gate-test-attestation-key-at-least-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "9a08efed395dde7aaa1e4d756d6bb66029d7ebe2befcaee35d572f7e6a485022")
     repo, base = _repo(tmp_path)
     (repo / "middle.txt").write_text("middle\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -214,6 +214,7 @@ def test_eval_gate_rejects_absent_and_mock_then_accepts_signed_real_provider(
         'python3 -c "import json; print(json.dumps({\'status\':\'measured\','
         '\'criteria\':[{\'id\':\'correct\',\'status\':\'pass\',\'score\':1.0}]}))"'
     )
+    from rig_workbench.eval.affected import prompt_surface_digests
     _path, real = run_case(
         case, repo=repo, provider="command", model="fixture", repeat=3,
         phase="current", command=command,
@@ -221,6 +222,10 @@ def test_eval_gate_rejects_absent_and_mock_then_accepts_signed_real_provider(
             provider="command", model="fixture", repo=repo, command=judge_command
         ),
         now=now, execution_base=base,
+        # The gate binds evidence to the prompt content it measured, so evidence
+        # carrying no such map cannot pass it. `affected-run` records one for every
+        # result it writes; evidence hand-assembled here has to do the same.
+        prompt_surface_digests=prompt_surface_digests(repo, "HEAD"),
     )
     evidence = tmp_path / "real-evidence"
     evidence.mkdir()
@@ -255,7 +260,7 @@ def test_affected_run_is_nonmock_and_atomic(tmp_path, monkeypatch):
     from rig_workbench.eval.affected_run import run_affected
     from rig_workbench.eval.cases import canonical_json
 
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "affected-run-key-at-least-thirty-two-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "768fb32644deb4f304189c743b89b4dfbb794f5eec14c8c53db5751ad155eb8d")
     repo, base = _repo(tmp_path)
     recipe = repo / "skills" / "engine" / "recipes" / "atomic.md"
     recipe.parent.mkdir(parents=True)
@@ -297,26 +302,37 @@ def test_affected_run_is_nonmock_and_atomic(tmp_path, monkeypatch):
     )
     assert code == 0 and report["status"] == "pass"
     assert destination is not None and destination.is_dir()
-    first_destination = destination
-    assert first_destination.name == f"affected-{_git(repo, 'rev-parse', 'HEAD')}"
+    # One committed file per case, at a stable path: the gate collects every result
+    # under the evidence tree whose case_id matches, and a second `current` for the
+    # same case is `current_evidence_count`. A per-commit directory accumulated
+    # exactly that as soon as a case was measured twice.
+    evidence = repo / "evals" / "evidence" / case["id"] / "current.json"
+    assert destination == repo / "evals" / "evidence" and evidence.is_file()
+    first_signed = json.loads(evidence.read_text(encoding="utf-8"))
+    assert first_signed["execution_commit"] == _git(repo, "rev-parse", "HEAD")
 
     recipe.write_text(recipe.read_text(encoding="utf-8") + "next commit\n", encoding="utf-8")
+    with pytest.raises(EvalCaseError, match="clean working tree"):
+        run_affected(
+            repo, base=base, head="HEAD", provider="command", model="fixture",
+            judge_provider="command", judge_model="fixture", provider_command=command,
+            judge_command=judge_command,
+        )
     _git(repo, "add", recipe.relative_to(repo).as_posix())
     _git(repo, "commit", "-q", "-m", "second prompt head")
     second_head = _git(repo, "rev-parse", "HEAD")
+    # Evidence the previous run left in the tree is this command's own output, not
+    # an uncommitted input, so it does not itself trip the clean-tree precondition.
     second, second_code, second_destination = run_affected(
         repo, base=base, head="HEAD", provider="command", model="fixture",
         judge_provider="command", judge_model="fixture", provider_command=command,
         judge_command=judge_command,
     )
     assert second_code == 0 and second["resolved_head"] == second_head
-    assert second_destination is not None and second_destination != first_destination
-    with pytest.raises(EvalCaseError, match="already exist.*commit"):
-        run_affected(
-            repo, base=base, head="HEAD", provider="command", model="fixture",
-            judge_provider="command", judge_model="fixture", provider_command=command,
-            judge_command=judge_command,
-        )
+    assert second_destination == destination
+    second_signed = json.loads(evidence.read_text(encoding="utf-8"))
+    assert second_signed["execution_commit"] == second_head
+    assert list((repo / "evals" / "evidence" / case["id"]).iterdir()) == [evidence]
 
 
 # ── divergence: what the branch changed, not what the base branch did (#367) ──

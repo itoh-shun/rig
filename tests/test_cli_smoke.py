@@ -554,7 +554,7 @@ def test_installed_wheel_runs_stdlib_only_eval_mock_run_compare(tmp_path):
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "eval fixture"], cwd=repo, check=True)
     eval_env = _isolated_env()
-    eval_env["RIG_EVAL_ATTESTATION_KEY"] = "wheel-test-attestation-key-at-least-32-bytes"
+    eval_env["RIG_EVAL_ATTESTATION_KEY"] = "f6bcb502ae6752cd1867ce9e1f6f20675653ef74e538495c83a1a33a43efd691"
     common = [case_id, "--provider", "mock", "--model", "fixture", "--repeat", "3",
               "--repo", str(repo)]
     judge_command = (

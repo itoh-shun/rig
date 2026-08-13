@@ -148,7 +148,7 @@ def test_contract_composition_alias_resolves_owned_and_rejects_unknown():
 def test_runner_selects_target_and_clean_expectations(monkeypatch, tmp_path):
     case = next(case for _id, _pack, _manifest, case in iter_cases()
                 if case["id"] == "scenario-vet-rejects-invention")
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "bundled-case-test-attestation-key-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "1d776f6f459f67015e71c96db3a62a7d0f115ce1e4c6a071210d593ba59c2593")
 
     def execute(**kwargs):
         return 0, fixture(case["id"], kwargs["kind"]), "", None

@@ -103,7 +103,10 @@ def test_prompt_diff_git_failure_fails_closed_and_worktree_evidence_is_used(
     monkeypatch.setattr(prompt_regression, "evaluate_gate", fake_gate)
     prompt_regression.apply_prompt_regression_sensor(repo, task, acc)
     assert seen["repo"] == worktree
-    assert seen["evidence_dir"] == worktree / ".rig" / "evals" / "results"
+    # The committed location, not the gitignored staging one: this sensor and the
+    # CI gate must read the same evidence, or the criterion passes locally on an
+    # artifact that never reaches CI.
+    assert seen["evidence_dir"] == worktree / "evals" / "evidence"
 
 
 # ── the criterion follows CI's ratchet, not the strict gate ──────────────────

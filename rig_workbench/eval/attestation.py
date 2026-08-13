@@ -6,11 +6,23 @@ import hashlib
 import hmac
 import os
 import pathlib
+import re
 import secrets
 import stat
 import tempfile
 
 from .cases import EvalCaseError, canonical_json
+
+# A configured key must have the shape of machine-generated material, not merely
+# a length. `key_id = sha256(key)[:16]` used to live only in `.rig/`, which is
+# gitignored; signed evidence is committed now, so on a public repository the key
+# id is published with it and is a complete offline oracle for guessing the key.
+# Against a memorable 32-character passphrase — legal under the old length rule,
+# and only discouraged in prose — that turns "the maintainer measured this" into
+# something an outsider can forge outright, which is worse than any replay.
+# Randomness is not checkable, so the enforceable proxy is the form: 64 hex
+# characters, exactly what `openssl rand -hex 32` emits.
+_CONFIGURED_KEY = re.compile(r"[0-9a-fA-F]{64}")
 
 
 def _key_path() -> pathlib.Path:
@@ -62,10 +74,16 @@ def _read_file_key(path: pathlib.Path, *, create: bool) -> bytes:
 def _trusted_key(*, create: bool) -> bytes:
     configured = os.environ.get("RIG_EVAL_ATTESTATION_KEY")
     if configured is not None:
-        key = configured.encode("utf-8")
-        if len(key) < 32:
-            raise EvalCaseError("configured attestation key is invalid")
-        return key
+        if not _CONFIGURED_KEY.fullmatch(configured):
+            raise EvalCaseError(
+                "configured attestation key is invalid: RIG_EVAL_ATTESTATION_KEY must "
+                "be 64 hex characters, as produced by `openssl rand -hex 32`"
+            )
+        # Used as the literal ASCII bytes rather than decoded, because CI writes
+        # this same string into the key file and reads it back through
+        # `_read_file_key`; decoding on one path only would give the two ends
+        # different keys for the same secret.
+        return configured.encode("ascii")
     return _read_file_key(_key_path(), create=create)
 
 

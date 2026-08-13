@@ -26,6 +26,94 @@ set narrowed to `Read,Glob,Grep`, writes denied by name, and its working directo
 reads still resolve. Policy refuses a write first; the unwritable directory is the net
 for the case where it does not.
 
+**The prompt quality gate could not pass, and adding the missing secrets would not
+have fixed it.** `validate.yml`'s "Trusted prompt quality evidence" step ran
+`rig-wb eval affected-run`, which starts the provider as an external binary. The
+job installs `pip install -e .` and nothing else, so no provider exists on the
+runner and none is authenticated — the step failed before it measured anything, and
+PR #402, the first change to carry a root-tier eval case, was merged red.
+
+CI no longer measures. A maintainer runs `rig-wb eval affected-run` locally against
+real providers and commits the signed result to
+`evals/evidence/<case-id>/current.json`; CI recomputes the binding and checks the
+signature, which needs git and one secret (`RIG_EVAL_ATTESTATION_KEY`) instead of
+five plus a provider CLI. The four provider secrets became optional pins rather than
+preconditions, and the step still fails closed: no key, no pass.
+
+Committed evidence forced the binding to change. `execution_commit == HEAD` cannot
+hold for a file in the repository — committing it moves HEAD past the tree it
+describes — and requiring the measured commit to be HEAD's *ancestor* instead only
+holds for one of the three merge buttons this repository has enabled. Squash and
+rebase both rewrite the branch, so the measured commit is gone or is nobody's
+ancestor: the PR check is green and the push to the default branch immediately
+after the merge is red, recoverable only by measuring on the default branch and
+pushing straight to it.
+
+So the binding is the measured **content**. Evidence signs the object id of every
+prompt surface in the tree it measured (`prompt_surface_digests`, result schema
+version 3), and the gate requires every surface this change is accountable for to
+still hold the id that was signed. A squash reproduces the branch's files exactly,
+so that survives it. Intersecting with the affected set rather than the whole map
+is what keeps a merge legal — another PR's already-gated persona is not this
+change's to answer for — while an edit the author makes after measuring fails. The
+recorded `execution_diff_sha256` is still recomputed from the recorded base to the
+recorded commit whenever history holds both, as a provenance check on the
+evidence's own account of itself. `affected-run` refuses a dirty working tree and
+pins the resolved commit into the signed diff, so the hash CI recomputes is the one
+that was signed by construction rather than by coincidence.
+
+Evidence also ratchets, and without that none of the rest was worth signing.
+`evals/evidence/<case-id>/current.json` is a tracked file, so anyone with write
+access to a branch could re-apply a prompt humans had reverted and restore, byte
+for byte, the signed evidence that once measured it — both are public in the
+history, and every other check passed by construction. A case's evidence may now
+only move forward: its `started_at`, which is inside the signed payload, is
+compared against the evidence for the same case on the base branch's tip.
+
+The comparison is deliberately made of things the branch under review does not
+choose. It reads `evals/evidence/` as a literal path rather than resolving the
+`--evidence-dir` argument, because committing that directory as a symlink pointed
+the comparison at a path no commit had ever held; and it compares at the base
+branch's tip rather than at the fork point, because forking from before a case was
+first measured left the fork point holding nothing to compare against. Both
+silences were a pass. A symlink at or under the evidence directory is now refused
+by name, and a comparison that cannot be made at all is
+`evidence_ratchet_unavailable` rather than a shrug — this check is the only thing
+between someone holding no key and evidence that looks current, so it does not get
+to abstain.
+
+Which commit is the tip turned out to be a demand on CI rather than a property of
+the argument. `github.event.pull_request.base.sha` is the base branch as the event
+saw it, and opening a PR before a revert lands pins it to the commit that still
+carried the reverted prompt. That is worse than a quiet ratchet: the affected set
+diffs from `merge-base(base, head)`, so a head restored to the pinned commit's
+content carries no prompt surface at all and no case is selected, skipping every
+check above. The workflow now resolves `origin/<base branch>` itself on a PR, and
+keeps `github.event.before` on a push, where the branch's live tip is the commit
+being gated. It fails the job rather than falling back, because everything
+available as a fallback is a value the branch under review can influence.
+
+The price is a tightening — a branch whose measurement predates another
+measurement of the same case on the base branch is told to measure again, which is
+the demand the 30-day expiry already makes and the one git already made by
+conflicting on the single-line evidence file both branches write. What the base
+tip changes is how soon it arrives: the fork point made the demand on the push
+that resolved that conflict, and the base tip makes it on the branch's next CI run.
+Both are before the merge button. The ratchet starts protecting a case once a
+second measurement of it exists on the base branch: with none committed, there is
+nothing to move backwards from.
+
+Three smaller things this made load bearing. `eval gate` and `affected-run` take
+`--ratchet` and CI passes it: strict, a change touching one covered surface next to
+any of the ~198 without a case failed `uncovered:<path>`, which no evidence can
+answer, and `affected-run` refused to measure it at all. `git diff` runs under a
+pinned configuration at both ends, because measuring on a laptop and recomputing on
+a runner made `diff.noprefix` and `diff.renames` able to make the gate permanently
+unpassable with the cause reported nowhere. And `RIG_EVAL_ATTESTATION_KEY` must be
+64 hex characters: committed evidence publishes `key_id` on a public repository,
+where a memorable passphrase is an offline guessing oracle ending in forgery by
+someone who never held the key.
+
 ## [2.5.0] - 2026-08-11
 
 **Review flows now speak before they finish exploring, and the orchestrator is held

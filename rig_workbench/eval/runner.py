@@ -28,10 +28,10 @@ from .cases import (
     isolation_floor_violations,
     validate_case,
 )
+from .compare import RESULT_SCHEMA_VERSION
 from .execution import execution_diff_sha256
 from .safety import unsafe_text_reason
 
-RESULT_SCHEMA_VERSION = 3
 OUTPUT_CAP = 4096
 COMMAND_ALLOWLIST = frozenset({"python", "python3", "node", "printf", "echo", "true", "false"})
 # Claude Code inherits the calling session through CLAUDECODE/CLAUDE_*; a nested eval
@@ -176,7 +176,11 @@ def _iso(now: dt.datetime | None) -> str:
     value = now or dt.datetime.now(dt.timezone.utc)
     if value.tzinfo is None:
         raise EvalCaseError("evaluation time must include a timezone")
-    return value.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
+    # Microseconds, not seconds: the gate orders a case's evidence by this field
+    # to refuse an older measurement being replayed over a newer one, and two runs
+    # inside the same second are ordinary — the second-resolution form made them
+    # indistinguishable.
+    return value.astimezone(dt.timezone.utc).isoformat(timespec="microseconds")
 
 
 def _git_identity(
@@ -486,10 +490,12 @@ def run_case(
     repeat: int, phase: str, command: str | None = None, timeout_s: float = 30,
     judge_adapter: JudgeAdapter | None = None, now: dt.datetime | None = None,
     execution_base: str | None = None,
+    execution_head: str | None = None,
     result_root: pathlib.Path | str | None = None,
     prompt_prefix: str | None = None,
     prompt_binding_sha256: str | None = None,
     pack_tree_sha256: str | None = None,
+    prompt_surface_digests: dict[str, str] | None = None,
     execution_cwd: pathlib.Path | str | None = None,
     readable_root: pathlib.Path | str | None = None,
 ) -> tuple[pathlib.Path, dict]:
@@ -516,6 +522,12 @@ def run_case(
         raise EvalCaseError("prompt binding sha256 is invalid")
     if pack_tree_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", pack_tree_sha256):
         raise EvalCaseError("pack tree sha256 is invalid")
+    if prompt_surface_digests is not None:
+        prompt_surface_digests = dict(prompt_surface_digests)
+        if any(not isinstance(path, str) or not isinstance(digest, str)
+               or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", digest)
+               for path, digest in prompt_surface_digests.items()):
+            raise EvalCaseError("prompt surface digests are invalid")
     policy = case["provider_policy"]
     if policy["mode"] == "allowlist" and provider not in policy["allowed"]:
         raise EvalCaseError("provider violates case provider policy")
@@ -570,8 +582,18 @@ def run_case(
         _git_identity(root) if execution_base is None
         else _git_identity(root, execution_base)
     )
+    if execution_head is not None and not re.fullmatch(r"[0-9a-f]{40}", execution_head):
+        raise EvalCaseError("execution head must be a resolved commit")
+    # `working` stays the default because a bare `eval run` measures the tree in
+    # front of the operator, uncommitted edits included. `affected-run` pins the
+    # resolved commit instead: its evidence is meant to be committed and re-checked
+    # later, and a gate can only recompute a tree-to-tree diff from history. Same
+    # value on a clean tree, but equal by construction rather than by luck.
     execution_diff = (
-        execution_diff_sha256(root, base=execution_base_commit)
+        execution_diff_sha256(
+            root, base=execution_base_commit,
+            head=execution_head if execution_head is not None else "working",
+        )
         if execution_status == "available" and execution_base_commit is not None
         else hashlib.sha256(b"rig-eval-execution-unavailable-v1").hexdigest()
     )
@@ -609,6 +631,7 @@ def run_case(
         "execution_diff_sha256": execution_diff,
         "prompt_binding_sha256": prompt_binding_sha256,
         "pack_tree_sha256": pack_tree_sha256,
+        "prompt_surface_digests": prompt_surface_digests,
         "provider": provider, "model": model, "executor_version": __version__,
         "provider_isolation": provider_isolation,
         "judge_provider": judge_provider, "judge_model": judge_model,

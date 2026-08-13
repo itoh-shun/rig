@@ -18,7 +18,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 @pytest.fixture(autouse=True)
 def trusted_eval_environment(tmp_path, monkeypatch):
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "test-only-eval-attestation-key-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "819804239a829011972226e7978766152de9a2fa10500de2f4515476505fee16")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "eval@test.invalid"], cwd=tmp_path,
                    check=True)
@@ -78,7 +78,12 @@ def test_mock_baseline_runs_target_and_clean_three_times_and_writes_canonical_re
         phase="baseline", now=NOW,
     )
 
+    # 3 since `prompt_surface_digests` and the isolation levels joined the signed
+    # payload. A bare `run` records no digests — the gate is where they become the
+    # binding, and the gate refuses evidence without them rather than reading around
+    # the absence.
     assert result["eval_result_schema_version"] == 3
+    assert result["prompt_surface_digests"] is None
     assert result["provider_isolation"] == "none" and result["judge_isolation"] == "none"
     assert [row["outcome"] for row in result["target"]] == ["fail", "fail", "pass"]
     assert [row["outcome"] for row in result["clean"]] == ["pass", "pass", "pass"]
