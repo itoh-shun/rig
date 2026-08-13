@@ -384,7 +384,11 @@ identities in the case hash. Exit codes are 0 for pass/no-op,
 1 for quality or coverage failure, and 2 for malformed/configuration/infrastructure evidence.
 The workbench adds `prompt_regression_passed` only when its task diff touches a registered
 prompt surface. That criterion is machine-owned: `workbench.py gate --set
-prompt_regression_passed=passed` is rejected.
+prompt_regression_passed=passed` is rejected. It compares against the live merge base
+rather than the base branch's tip, so `coverage_stale` is CI's refusal alone: a task that
+`accept` passes can still be told in CI that the base branch covers a surface it edits.
+Pointing the local sensor at the tip would fail a long-lived task the moment somebody
+else's case lands, on the one criterion nobody can override by hand.
 
 CI always runs the free structural affected-case check. Prompt quality runs only with the
 trusted attestation key and pinned provider/model; forks without those credentials fail with

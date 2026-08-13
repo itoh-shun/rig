@@ -477,6 +477,27 @@ def test_a_base_graph_that_cannot_be_read_is_named_rather_than_passed(tmp_path,
     assert strict["coverage_base_unreadable"] is False
 
 
+def test_a_graph_the_reader_gave_up_on_is_not_a_base_that_wired_nothing(tmp_path,
+                                                                       monkeypatch):
+    """How that refusal is actually reached, which is the part worth pinning.
+
+    `_graph` reports a tree it cannot parse as a graph with nothing in it, and a
+    graph with nothing in it adds no edges — the answer is indistinguishable from a
+    base branch that wired nothing up, and identical to the behaviour this reading
+    replaced. Surfaces in the tree and no nodes out is the signature.
+    """
+    from rig_workbench.eval import affected as module
+
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    head = _commit(repo, "edit the covered prompt")
+    monkeypatch.setattr(module, "_graph", lambda *args, **kwargs: ({}, []))
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is True, report
+
+
 def test_a_registry_root_the_base_branch_added_after_the_fork_is_not_a_narrowing(tmp_path):
     """The same three-way reading, and why the registry does not get a `stale`.
 
@@ -490,14 +511,79 @@ def test_a_registry_root_the_base_branch_added_after_the_fork_is_not_a_narrowing
         return {"prefix": prefix, "kind": prefix.strip("/"), "recursive": True,
                 "extensions": list(extensions)}
 
-    fork = {"agents/": root("agents/")}
-    base = {"agents/": root("agents/", (".md", ".yaml")), "commands/": root("commands/")}
-    behind = {"roots": [root("agents/")]}            # forked before both additions
+    # `commands/` is where the base branch widened a root the branch already had:
+    # a new extension, and it made it recursive, and it renamed its kind.
+    narrow = {**root("commands/"), "recursive": False, "kind": "old"}
+    fork = {"agents/": root("agents/"), "commands/": narrow}
+    base = {"agents/": root("agents/", (".md", ".yaml")),
+            "commands/": root("commands/", (".md", ".yaml")),
+            "patterns/": root("patterns/")}
+    behind = {"roots": [root("agents/"), dict(narrow)]}   # forked before all of it
 
-    assert _registry_narrowings(base, _landing_registry(behind, base, fork)) == []
+    landing = _landing_registry(behind, base, fork)
+    assert _registry_narrowings(base, landing) == []
+    landed = {item["prefix"]: item for item in landing["roots"]}
+    assert landed["commands/"]["recursive"] is True
+    assert landed["commands/"]["kind"] == "commands"
     # And what this branch really does take away is still fatal.
     removed = _landing_registry({"roots": []}, base, fork)
     assert any("agents/" in item for item in _registry_narrowings(base, removed))
+
+
+def test_a_registry_root_the_base_branch_removed_after_the_fork_is_not_charged_here(
+        tmp_path):
+    """The registry comparison read against the base tip, through `analyze_affected`.
+
+    The helper above pins the rule; this pins that the analysis is wired to it. A
+    root the *base branch* deleted after the fork is still in the fork point's
+    registry, so comparing against the fork accused a branch that is merely behind
+    of removing it — and a narrowing is fatal in both modes.
+    """
+    from rig_workbench.eval.affected import REGISTRY_REL, prompt_surface_registry
+
+    repo, _root = _repo(tmp_path)
+    declared = prompt_surface_registry()
+    extra = {"prefix": "retired/", "kind": "retired", "recursive": True,
+             "extensions": [".md"]}
+    _touch(repo, REGISTRY_REL,
+           json.dumps({**declared, "roots": [*declared["roots"], extra]}, indent=2))
+    fork = _commit(repo, "a registry with a root that is about to be retired")
+    _touch(repo, REGISTRY_REL, json.dumps(declared, indent=2))
+    base = _commit(repo, "the base branch retires it")
+
+    _git(repo, "checkout", "-q", "-b", "feature", fork)
+    _touch(repo, REGISTRY_REL, json.dumps(declared, indent=2) + "\n")
+    head = _commit(repo, "this branch touches the registry for its own reasons")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["registry_changed"] is True
+    assert report["registry_narrowings"] == [], report
+    assert report["status"] != "uncovered", report
+
+
+def test_a_case_the_base_branch_already_deleted_is_not_this_branchs_regression(tmp_path):
+    """Coverage regression is `(base & fork) - head`, not `fork - head`.
+
+    Against the fork point alone, a branch that deletes a case the base branch has
+    already deleted is charged for it — the coverage it "removed" is not on the base
+    branch to remove. Fatal, and unclearable except by restoring a case somebody
+    else retired.
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    _write_case(repo, "login-case", ["instruction:login"])
+    fork = _commit(repo, "a covered surface")
+    _git(repo, "rm", "-q", "-r", "evals/cases/login-case")
+    base = _commit(repo, "the base branch retires the case")
+
+    _git(repo, "checkout", "-q", "-b", "feature", fork)
+    _git(repo, "rm", "-q", "-r", "evals/cases/login-case")
+    _touch(repo, INSTRUCTION, "edited, with the case gone from both sides\n")
+    head = _commit(repo, "retire the same case and edit the surface")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_regressions"] == [], report
+    assert report["coverage_stale"] == [] and report["coverage_debt"] == [INSTRUCTION]
 
 
 def test_a_base_coverage_that_cannot_be_read_is_named_rather_than_passed(tmp_path,
@@ -602,6 +688,51 @@ def test_gate_ratchet_names_stale_coverage_and_what_covers_it(tmp_path):
     assert any(item.startswith(f"coverage_stale:{INSTRUCTION} ") and "login-case" in item
                for item in report["failures"]), report
     assert report["coverage_debt"] == []
+
+
+def test_gate_ratchet_names_an_unreadable_base_rather_than_only_exiting_one(tmp_path,
+                                                                           monkeypatch):
+    """The report field is checked elsewhere; this is the sentence CI prints.
+
+    Without it the gate fails with an empty `failures` list — the hole the comment
+    beside this branch says it repaired — and the only thing left in the log is an
+    exit code for a refusal whose remedy is nothing the author did.
+    """
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    head = _commit(repo, "edit a surface")
+    monkeypatch.setattr(module, "_coverage_at", lambda *args, **kwargs: None)
+
+    report, code = gate(repo, base, head=head, ratchet=True)
+    assert code == 1 and report["status"] == "failed"
+    assert "coverage_base_unreadable" in report["failures"], report
+
+
+def test_the_measurement_path_refuses_a_stale_branch_and_names_why(tmp_path):
+    """The maintainer's own command, which the fork handoff in the workflow names.
+
+    `affected-run` is where evidence is produced, and it refuses to produce any for
+    a tree the gate would reject — signing a measurement of a tree that cannot land
+    is the failure mode both ratchets exist to prevent. Reached before a provider is
+    started, so this needs none.
+    """
+    from rig_workbench.eval.affected_run import run_affected
+
+    repo, fork, base = _forked(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, INSTRUCTION, "rewritten by a branch that carries no case\n")
+    _commit(repo, "edit the covered prompt, carrying no case")
+
+    report, code, destination = run_affected(
+        repo, base=base, head="HEAD", provider="command", model="fixture",
+        judge_provider="command", judge_model="fixture",
+        provider_command="false", judge_command="false", ratchet=True,
+    )
+    assert code == 1 and destination is None, report
+    assert [item for item in report["failures"]
+            if item.startswith(f"coverage_stale:{INSTRUCTION} ")], report
 
 
 def test_gate_ratchet_still_fails_on_an_unregistered_surface_kind(tmp_path):
