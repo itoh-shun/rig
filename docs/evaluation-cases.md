@@ -59,6 +59,7 @@ habit does not stay confined to this job.
 | has a case | pass | pass |
 | has no case yet | `uncovered`, exit 1 | **`coverage_debt`**, exit 0 |
 | its coverage was removed by this change | not detected | **`coverage_regressions`**, exit 1 |
+| the base branch has a case for it; this change does not | `uncovered`, exit 1 | **`coverage_stale`**, exit 1 |
 | kind not in the registry | `uncovered`, exit 1 | `uncovered`, exit 1 |
 | the registry itself was **widened** | `uncovered`, exit 1 | reported, exit 0 |
 | the registry itself was **narrowed** | `uncovered`, exit 1 | `registry_narrowings`, exit 1 |
@@ -83,9 +84,59 @@ happen is coverage going *down* — deleting a promoted case, or narrowing the
 the governance layer applies to policy layers, and the debt count is a number that moves
 from the first day rather than a wall that never opens.
 
-`coverage_regressions` is only claimed when it can be demonstrated. If the base tree
-cannot be read — a shallow clone, an unborn ref — the comparison reports no regression
-rather than accusing the change of deleting everything.
+`coverage_regressions` is only claimed when it can be demonstrated: a base tree that
+cannot be read yields no accusation rather than a claim that everything was deleted.
+The unanswerable comparison is reported on its own (`coverage_base_unreadable`, exit 1)
+instead of passing quietly, because under `--ratchet` this comparison is the one that
+notices a branch forked from before a case existed.
+
+### Which commit coverage is compared against
+
+Two references, and the split is deliberate:
+
+* **What this change changes** is diffed from `merge-base(base, head)`. That is what all
+  three merge buttons land — merge and squash are three-way from the fork point, rebase
+  replays the branch's own commits — so diffing from the base *tip* would charge a branch
+  for everything the base branch did since it forked, which is what made a release-scale
+  PR structurally unpassable (#367).
+* **What this change must still cover** is compared against `base`, the base branch's tip,
+  through the coverage the merge would land: this branch's cases, plus what the base branch
+  has gained since the fork. Coverage is state rather than a diff, and the state that
+  matters is the one that ends up on the default branch.
+
+Against the fork point the two questions were the same question, and that was a bypass with
+no key in it: fork from a commit before the case was written, edit only the prompt, carry no
+case, and the surface reported as `coverage_debt` and exit 0. The merge then restored the
+case — the branch never deleted it — and the push to the default branch failed on
+`execution_prompt_surface_changed`. Green PR, red trunk, which is #402's shape.
+
+So being behind the base branch on a case that covers a surface this change edits is
+`coverage_stale` and fatal. It is not debt: somebody did write that case. What clears it is
+merging the base branch in and re-measuring, which is what the default branch's own push
+would demand a moment later. A branch merely behind on a case it does not touch is charged
+nothing — the demand is scoped to the affected surfaces, which is what keeps the tip usable
+as the reference while other PRs are open.
+
+"Covered" is read off the landing tree on both of its halves. A case can answer for a surface
+it does not name — a persona is covered because some recipe references it and a case binds
+that recipe — and that reference is an edge in the brick graph, so the graph is read at the
+base tip and at the fork point too, and merged edge by edge exactly as the case set is. Read
+only off the branch's tree it left the same bypass one step out: fork from before the base
+branch pointed a recipe at a persona, edit only the persona, and the branch's own tree
+honestly reports that nothing reaches it, while the merge restores the recipe it never
+touched. Both merges keep what the base branch *deleted* after the fork rather than
+subtracting it, which can only over-state what lands — and over-stating asks for a
+re-measurement, where under-stating is the bypass.
+
+On a push to the default branch this reading collapses back to the branch's own tree, as
+long as `github.event.before` is an ancestor of what was pushed: the fork point is `before`
+itself and nothing is added back. A force-push is where that stops holding, and there the
+push is judged like any other divergent history — a case the rewrite dropped is named rather
+than passed over.
+
+The registry is read the same way and gets no `stale` of its own: being behind on a root
+means the merge lands the base branch's *wider* field of view, so nothing the gate could see
+stops being seen. A root this branch actually removes is still `registry_narrowings`.
 
 The paid quality steps key off `affected_cases`, not off the status: with no case covering
 the change there is nothing to measure, and demanding a provider run anyway is what made
@@ -215,7 +266,11 @@ new HEAD. The binding is the measured **content**, not the measured commit:
 - every prompt surface **this change is accountable for** must still hold the object id the
   measurement signed for it, taken from the `prompt_surface_digests` map. The map covers the
   whole surface set at the measured commit, so a path the gate holds accountable and the
-  measurement never saw is a file created afterwards, and fails;
+  measurement never saw is a file created afterwards, and fails. Its keys are validated as
+  paths: control and Unicode format characters, absolute and home-relative paths, `file:`
+  URIs and `..` traversal are refused. They are not scanned for secret-like values — the
+  keys come from `git ls-tree` and name files that are public in the repository, so that
+  scan can only ever be wrong about one, and once was, for every case at once;
 - evidence may only move forward. Its `started_at` is compared against the evidence for the
   same case on the **base branch's tip**, and older evidence is
   `evidence_regression:<case-id>`. The comparison reads `evals/evidence/` as a literal path
@@ -309,14 +364,33 @@ characters**, exactly what `openssl rand -hex 32` emits; anything else is refuse
 `configured attestation key is invalid`, and the CI job checks the same shape before it
 writes the secret to a key file. Randomness cannot be verified, so the form is the
 enforceable proxy for it, and prose alone was not enough: committed evidence publishes both
-the signature and `key_id` (`sha256(key)[:16]`) on a public repository, which is harmless
-against generated material and a complete offline guessing oracle against a memorable
-passphrase — one that ends in forgery by someone who never had the key.
+the signature and `key_id` on a public repository, which is harmless against generated
+material and a complete offline guessing oracle against a memorable passphrase — one that
+ends in forgery by someone who never had the key.
+
 Without an explicit key, Rig atomically creates a private `0600` key at
-`${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`. Verification rejects missing,
-weakly permissioned, non-regular, or symlinked keys. Keep this key outside the repository;
-never commit or print it. Rig strips attestation environment variables from evaluator and
-judge child processes. Recomputing the public SHA-256 fields cannot forge the attestation.
+`${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`, holding those same 64 hex
+characters, so **the file's contents are the value to paste into the
+`RIG_EVAL_ATTESTATION_KEY` repository secret** — that is the whole setup, and CI then writes
+the secret back into a key file at that path. `key_id` is `sha256(material)[:16]`, where the
+material is the 32 secret bytes the hex spells, not the notation it arrived in: the
+environment variable, the file CI writes, and the maintainer's key file all denote one key
+and therefore one `key_id`. Without that, a locally signed measurement is refused in CI as
+`invalid_evidence` and the sign-here-verify-there workflow cannot run at all.
+
+Key files written by earlier versions hold 32 raw bytes instead of hex. They keep working
+and need no regeneration; the secret to pair one with is its hex spelling
+(`xxd -p -c 64 "${XDG_STATE_HOME:-$HOME/.local/state}/rig/eval-attestation.key"`). Deleting
+the file instead makes Rig generate a hex one on the next signing run, at the cost of
+invalidating anything the old key signed. A secret generated separately from the local key
+file — `openssl rand -hex 32` pasted into the repository while Rig generated its own key on
+the maintainer's machine — is a second, unrelated key and never matched: overwrite it with
+the local file's hex. The pairing is what makes the secret meaningful, not its shape.
+
+Verification rejects missing, weakly permissioned, non-regular, or symlinked keys. Keep this
+key outside the repository and never commit it; print it only to copy it into the secret.
+Rig strips attestation environment variables from evaluator and judge child processes.
+Recomputing the public SHA-256 fields cannot forge the attestation.
 
 Threat model: attestation detects repository or result-file modification by a process that
 does not possess the trusted key. It is not an isolation sandbox against a malicious
@@ -388,7 +462,11 @@ evidence. Optional `provider_policy.models`, `judge_providers`, `judge_models`, 
 1 for quality or coverage failure, and 2 for malformed/configuration/infrastructure evidence.
 The workbench adds `prompt_regression_passed` only when its task diff touches a registered
 prompt surface. That criterion is machine-owned: `workbench.py gate --set
-prompt_regression_passed=passed` is rejected.
+prompt_regression_passed=passed` is rejected. It compares against the live merge base
+rather than the base branch's tip, so `coverage_stale` is CI's refusal alone: a task that
+`accept` passes can still be told in CI that the base branch covers a surface it edits.
+Pointing the local sensor at the tip would fail a long-lived task the moment somebody
+else's case lands, on the one criterion nobody can override by hand.
 
 CI always runs the free structural affected-case check. Prompt quality runs only with the
 trusted attestation key and pinned provider/model; forks without those credentials fail with

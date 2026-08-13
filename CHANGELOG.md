@@ -103,6 +103,89 @@ Both are before the merge button. The ratchet starts protecting a case once a
 second measurement of it exists on the base branch: with none committed, there is
 nothing to move backwards from.
 
+Moving the evidence ratchet to the base tip and leaving the **coverage** ratchet on
+the fork point left the same bypass with the key removed. Fork from a commit before
+the case was written, edit only the prompt, and carry no case: at the fork point
+there is no coverage to lose and no case to match, so the surface reports as
+`coverage_debt` and exit 0 — no key, no signature, no evidence. The merge then
+restores the case, because the branch never deleted it, and the push to the default
+branch fails on `execution_prompt_surface_changed`. Green PR, red trunk, #402's
+shape again.
+
+Coverage and the registry are now compared against the base branch's tip too, and
+what is judged is the state the merge would land: this branch's cases, plus what the
+base branch has gained since the fork. The diff that decides *which surfaces this
+change touches* stays at `merge-base(base, head)` — that is what all three merge
+buttons land, and diffing from the tip is what made a release-scale PR structurally
+unpassable (#367). A surface the base branch covers and this change does not is
+`coverage_stale`, fatal, and distinct from debt: somebody did write that case, and
+merging the base branch in and re-measuring is what clears it. The demand is scoped
+to the affected surfaces, so a branch merely behind on a case it does not touch is
+charged nothing, and a case the base branch added after the fork is not read as a
+deletion. `affected-run` reports regressions, staleness and registry narrowings by
+name instead of exiting 1 with an empty `failures` list, and a base tree the ratchet
+cannot read is `coverage_base_unreadable` rather than a quiet pass.
+
+Correcting the *cases* was half of it. Whether a surface is covered is not decided by
+the case set alone — a persona is covered because some recipe references it and a case
+binds that recipe — and that reference lives in the brick graph, which was read from
+the branch's working tree and handed to the landing view unchanged. So the same bypass
+survived one step further out: fork from before the base branch pointed a recipe at a
+persona, edit only the persona, touch no recipe, and the branch's own tree honestly
+reports that nothing reaches it. The merge restores the recipe the branch never
+touched. The graph is now read at the base tip and at the fork point as well, and
+merged edge by edge the way the case set is: `head | (base - fork)`, the monotone
+half, which can only over-state what lands. Over-stating asks for a re-measurement
+that the default branch's own push would ask for; under-stating is the bypass.
+
+Read with `git ls-tree` and `git cat-file`, and that is the substance of it rather
+than a note about cost. `git archive` renders a tree instead of reading it: it
+applies that tree's own `.gitattributes`, so `export-ignore` deletes whole
+directories from the output and `export-subst` rewrites the bytes of what survives
+— and the same line in `$GIT_DIR/info/attributes` does it with nothing in any tree
+and nothing in any diff. No flag turns that off for a tree-ish read. It made this
+one reading the part of the gate that a single unremarkable line could switch off:
+`.gitattributes` is under no surface prefix and is not the registry, so the PR
+adding it reports `noop` and merges through ordinary review, after which both sides
+of `base - fork` are missing the same edges, the difference is empty, and indirect
+coverage stops being noticed on every branch, silently. The two readings beside it
+were never exposed, because they already used `ls-tree`. A blob the read cannot
+produce — `missing`, in a blobless clone — is the same named fatal as an unreadable
+tree, and not a skipped file.
+
+A `gate:` is a reference to a pattern, and the revision reader did not read that
+field — so a base branch that gated a step on a pattern wired coverage the ratchet
+could not see, and a branch editing only that pattern merged green while the
+identical branch wired through `pattern:` was refused. 23 recipes here use `gate:`.
+It is read now, with the same placeholder sentinel `build_brick_graph` uses, since
+an ungated step spells its gate as an em dash rather than omitting the key.
+
+That one was missed because it was looked for with the wrong instrument. Comparing
+the two readers by counting edges per kind showed a *surplus* of `recipe -> pattern`
+— duplicates from the field that was read outnumbered the 28 that were not — and a
+total cannot show which edges are absent. The comparison is a difference of edge
+sets now, and a test makes the answer to it a checked claim rather than a sentence:
+every reference a recipe makes is modelled at a revision, and what is not modelled
+is `agent -> persona`, `command -> instruction` and `wiki -> wiki`. Coverage that
+reaches a surface only through those three is not ratcheted — such a change reads
+as `debt`, not `coverage_stale`.
+
+On a push to the default branch none of this changes what happens, as long as
+`github.event.before` is an ancestor of what was pushed: the fork point is `before`
+itself, nothing is added back, and both landing views are the pushed tree. A
+force-push breaks that ancestry, and there the push is judged like any other divergent
+history — a case the rewrite dropped is named instead of passed over.
+
+The workflow step that runs it could not report any of that. The report exists only
+on the command's stdout, redirected to a file, and the step's shell runs with `-e`:
+a *failing* run aborted at the redirect, so the report was never printed and the
+annotation block below it never ran. The `::notice::` for a widened registry was
+reachable, because widening exits 0; the `::error::` lines, which exist only for a
+failing run, could not execute at all. The step captures the status, prints the
+report, annotates, and then exits with it. `coverage_stale` gets a line of its own,
+because "merge the base branch in and re-measure" is not something an exit code can
+say.
+
 Three smaller things this made load bearing. `eval gate` and `affected-run` take
 `--ratchet` and CI passes it: strict, a change touching one covered surface next to
 any of the ~198 without a case failed `uncovered:<path>`, which no evidence can
@@ -113,6 +196,32 @@ unpassable with the cause reported nowhere. And `RIG_EVAL_ATTESTATION_KEY` must 
 64 hex characters: committed evidence publishes `key_id` on a public repository,
 where a memorable passphrase is an offline guessing oracle ending in forgery by
 someone who never held the key.
+
+**The two ends of that key never held the same secret.** CI writes the 64-character
+secret into a key file; a maintainer's key file held the 32 raw bytes Rig had
+generated there. No secret is both, so `key_id` differed across the crossing and a
+measurement signed on a laptop came back from CI as `invalid_evidence` — the whole
+purpose of committing signed evidence, unusable, and unnoticed only because no
+evidence had yet been committed to travel the route. The shape rule is unchanged;
+what changed is that the hex is read as a notation for 32 bytes wherever it appears,
+so the environment variable, CI's key file and the maintainer's key file denote one
+key. A generated key file now holds that hex, which makes its contents the value to
+paste into the repository secret. Key files from earlier versions keep signing and
+need no regeneration: pair one with its hex spelling.
+
+**And no case in this repository could be measured at all, because one filename
+reads as a credential.** A result records a digest for every prompt surface, and
+the keys of that map — paths from `git ls-tree` — were held to the rule written for
+values, whose OpenAI-key pattern `sk-[A-Za-z0-9_-]{8,}` matches the
+`sk-based-testing` inside `ri|sk-based-testing`. One of 202 paths therefore made
+every measurement invalid, and it was judged after the providers had run twelve
+times and the result had been signed, one line before the write. Digest keys are
+now held to a path rule: escapes out of the tree, absolute and home-relative
+paths, `file:` URIs and control characters are refused exactly as before, and the
+secret-value scan — which can only ever be wrong about a public filename — is not
+consulted. The detector itself is unchanged everywhere it guards an actual value.
+The runner applies that rule to its argument before the first provider call rather
+than after the last, since nothing about an argument improves while they run.
 
 ## [2.5.0] - 2026-08-11
 

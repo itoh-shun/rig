@@ -89,10 +89,21 @@ def run_affected(
                                      evidence_dir=root / ".rig" / "none", ratchet=ratchet)
         return report, code, None
     if affected["status"] == "uncovered":
+        # Every way `uncovered` can be reached, named. Listing only the paths left
+        # a coverage regression, stale coverage or a narrowed registry failing here
+        # with an empty `failures` and nothing to act on — `evaluate_gate` reports
+        # all of them and this path is the same refusal reached one step earlier.
         return ({"eval_gate_schema_version": 1, "status": "failed", "base": base,
                  "head": head, "resolved_head": affected["resolved_head"],
                  "cases": affected["affected_cases"],
-                 "failures": [f"uncovered:{item}" for item in affected["uncovered"]]}, 1, None)
+                 "failures": [f"uncovered:{item}" for item in affected["uncovered"]]
+                 + [f"coverage_regression:{item}"
+                    for item in affected["coverage_regressions"]]
+                 + [f"coverage_stale:{item}" for item in affected["coverage_stale"]]
+                 + (["coverage_base_unreadable"]
+                    if affected["coverage_base_unreadable"] else [])
+                 + [f"registry_narrowed:{item}"
+                    for item in affected["registry_narrowings"]]}, 1, None)
     if not affected["affected_cases"]:
         # Reachable only under `ratchet`: every surface this change touched is still
         # debt, so there is nothing to measure. Same answer as `noop` rather than an

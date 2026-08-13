@@ -29,17 +29,39 @@ def unsafe_key_reason(key: object) -> str | None:
     return "secret-like field name" if _SECRET_KEY.search(str(key)) else None
 
 
-def unsafe_text_reason(value: str) -> str | None:
-    if any(unicodedata.category(ch) == "Cf" for ch in value):
-        return "Unicode format control"
-    if any(ord(ch) < 32 and ch not in "\n\t" for ch in value):
-        return "control character"
+def _percent_decoded(value: str) -> str:
     decoded = value
     for _ in range(3):
         unquoted = urllib.parse.unquote(decoded)
         if unquoted == decoded:
             break
         decoded = unquoted
+    return decoded
+
+
+def unsafe_path_reason(value: str) -> str | None:
+    """Why a repository-relative path may not be recorded, or `None`.
+
+    Everything `unsafe_text_reason` refuses about *where* a string points —
+    escapes out of the tree, absolute and home-relative paths, `file:` URIs, and
+    the control and format characters that let a path lie about itself in a log
+    or a terminal — and nothing about what a value might contain.
+
+    Scanning a path for secret-like *values* looks free and is not. These paths
+    come from `git ls-tree` under registered prompt-surface prefixes: they name
+    files that are public in the repository, so a filename can never be a leaked
+    credential, and the credential patterns match ordinary English through their
+    prefixes. `sk-[A-Za-z0-9_-]{8,}` matched inside
+    `skills/engine/facets/policies/risk-based-testing.md` — the `sk-based-testing`
+    in `ri|sk-based-testing` — and refused every measurement this repository could
+    produce, after the providers had run and the result had been signed. A check
+    that cannot be true of a path but can be false of one is not protection.
+    """
+    if any(unicodedata.category(ch) == "Cf" for ch in value):
+        return "Unicode format control"
+    if any(ord(ch) < 32 and ch not in "\n\t" for ch in value):
+        return "control character"
+    decoded = _percent_decoded(value)
     if _FILE_URI.search(decoded):
         return "file URI"
     if _HOME_PATH.search(decoded):
@@ -50,8 +72,16 @@ def unsafe_text_reason(value: str) -> str | None:
         return "absolute path"
     if ".." in normalized.split("/"):
         return "path traversal"
+    return None
+
+
+def unsafe_text_reason(value: str) -> str | None:
+    reason = unsafe_path_reason(value)
+    if reason is not None:
+        return reason
     if _SECRET_VALUE.search(value):
         return "secret-like value"
-    if any(unsafe_key_reason(match.group(1)) for match in _ASSIGNMENT_LHS.finditer(decoded)):
+    if any(unsafe_key_reason(match.group(1))
+           for match in _ASSIGNMENT_LHS.finditer(_percent_decoded(value))):
         return "secret-like assignment"
     return None

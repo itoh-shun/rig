@@ -30,7 +30,7 @@ from .cases import (
 )
 from .compare import RESULT_SCHEMA_VERSION
 from .execution import execution_diff_sha256
-from .safety import unsafe_text_reason
+from .safety import unsafe_path_reason, unsafe_text_reason
 
 OUTPUT_CAP = 4096
 COMMAND_ALLOWLIST = frozenset({"python", "python3", "node", "printf", "echo", "true", "false"})
@@ -524,7 +524,15 @@ def run_case(
         raise EvalCaseError("pack tree sha256 is invalid")
     if prompt_surface_digests is not None:
         prompt_surface_digests = dict(prompt_surface_digests)
-        if any(not isinstance(path, str) or not isinstance(digest, str)
+        # The same rule `validate_result` applies at the end, applied here at the
+        # start. This map is an argument, so nothing about it can improve while
+        # the providers run; checking only its digests here left the paths to be
+        # judged after twelve provider calls, a computed `result_sha256` and a
+        # signature — the run then died one line before `_atomic_write` and the
+        # measurement was gone. Refusing it takes the same information and costs
+        # nothing.
+        if any(not isinstance(path, str) or not path or unsafe_path_reason(path)
+               or not isinstance(digest, str)
                or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", digest)
                for path, digest in prompt_surface_digests.items()):
             raise EvalCaseError("prompt surface digests are invalid")
