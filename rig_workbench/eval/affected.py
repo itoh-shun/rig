@@ -335,12 +335,20 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     the batch cannot produce — a blobless clone answers `missing` — is None, not
     a skip: skipping is precisely the shrunken graph this function exists to stop
     being possible.
+
+    Paths are decoded `surrogateescape` because they are used to *write files* the
+    other reader then has to recognise. `_graph` walks the result with `rglob`, so
+    a filename whose bytes are not UTF-8 comes back to it through `os.listdir`'s
+    surrogateescape; decoding it as U+FFFD here would write a name that reader
+    spells differently, and the branch's own graph would stop matching the base
+    branch's for that surface. `prompt_surface_digests` decodes `replace` because
+    it only ever uses the path as a key.
     """
     try:
         listing = subprocess.run(
             ["git", "ls-tree", "-r", "-z", revision, "--"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=30, shell=False,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="surrogateescape", timeout=30, shell=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -354,6 +362,11 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
         fields = metadata.split(" ")
         if len(fields) != 3 or fields[0] not in _REGULAR_FILE_MODES:
             continue
+        if not re.fullmatch(r"[0-9a-f]{40,64}", fields[2]):
+            # The same demand `_merge_base` and `_resolved_head` make of a revision,
+            # widened to sha256 object ids: what goes back to git on the batch's
+            # stdin has to be an object id and nothing else.
+            return None
         if not _graphable(path):
             continue
         parts = pathlib.PurePosixPath(path).parts

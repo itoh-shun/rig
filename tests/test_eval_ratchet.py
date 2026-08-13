@@ -13,6 +13,7 @@ already earned with a measured red→green run is a regression, and still fatal.
 
 import copy
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -672,6 +673,32 @@ def test_a_symlink_at_a_surface_path_is_not_a_prompt_this_reads(tmp_path):
         assert [path.name for path in written.rglob("*") if not path.is_dir()] == \
             ["auth.md"]
         assert not any(path.is_symlink() for path in written.rglob("*"))
+
+
+def test_a_surface_whose_name_is_not_utf8_is_spelled_the_same_by_both_readers(tmp_path):
+    """The paths this writes are read back by the *other* reader, which is why the
+    decoding matters.
+
+    `_graph` walks what was written with `rglob`, so a filename whose bytes are not
+    UTF-8 reaches it through `os.listdir`'s surrogateescape. Decoding it any other
+    way here writes a name that reader spells differently, and the base branch's
+    graph stops matching the branch's for that surface — a `coverage_stale` with no
+    edit an author could make to clear it.
+    """
+    from rig_workbench.eval.affected import _graph, _graph_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, WIRED)
+    name = b"skills/engine/facets/personas/caf\xe9.md"     # latin-1, not valid UTF-8
+    target = os.path.join(os.fsencode(str(repo)), name)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "wb") as handle:
+        handle.write(b"---\nname: reviewer\n---\n")
+    head = _commit(repo, "a surface whose name is not utf-8")
+    assert os.fsdecode(name) in _graph(repo)[0], "the head reader sees it"
+
+    at_head = _graph_at(repo, head)
+    assert at_head is not None and sorted(at_head[0]) == sorted(_graph(repo)[0])
 
 
 def test_an_engine_document_with_no_bricks_under_it_is_not_an_unreadable_graph(tmp_path):
