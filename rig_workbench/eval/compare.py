@@ -10,7 +10,7 @@ from typing import Any
 
 from .attestation import verify_result_attestation
 from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
-from .safety import unsafe_text_reason
+from .safety import unsafe_path_reason, unsafe_text_reason
 
 # 3 adds `prompt_surface_digests`. Bumped rather than accepted as an optional
 # field: a result written before it carries no content binding at all, and a
@@ -94,8 +94,11 @@ def validate_result(
         # Object ids, so both git hash algorithms are legal widths. `None` is the
         # shape a result measured outside a repository takes; the gate refuses it
         # on its own, because there the map is the binding rather than a detail.
+        # The keys are paths, so they are held to the path rule: escapes out of
+        # the tree still refused, secret-value scanning dropped — it can only ever
+        # be wrong about a filename `git ls-tree` handed us.
         if not isinstance(digests, dict) or any(
-            not isinstance(path, str) or not path or unsafe_text_reason(path)
+            not isinstance(path, str) or not path or unsafe_path_reason(path)
             or not isinstance(digest, str)
             or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", digest)
             for path, digest in digests.items()

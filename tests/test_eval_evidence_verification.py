@@ -109,6 +109,24 @@ def _gate(repo: pathlib.Path, base: str, head: str = "HEAD", **kwargs):
                          evidence_dir=repo / "evals" / "evidence", **kwargs)
 
 
+def _ci_state_home(path: pathlib.Path, secret: str) -> pathlib.Path:
+    """An `XDG_STATE_HOME` built the way `.github/workflows/validate.yml` builds one.
+
+    Reproduced through `sh` and `printf '%s'` rather than `write_text` so the file
+    is the workflow's file and not a convenient approximation of it: the bug these
+    tests pin lived precisely in what that command puts on disk.
+    """
+    (path / "rig").mkdir(parents=True)
+    os.chmod(path / "rig", 0o700)
+    key = path / "rig" / "eval-attestation.key"
+    subprocess.run(
+        ["sh", "-c", f'printf %s "$RIG_EVAL_ATTESTATION_KEY" > "{key}"'],
+        env={**os.environ, "RIG_EVAL_ATTESTATION_KEY": secret}, check=True,
+    )
+    key.chmod(0o600)
+    return path
+
+
 def _resign(evidence: pathlib.Path, **changes) -> None:
     """Rewrite evidence and re-sign it with the trusted key.
 
@@ -193,6 +211,74 @@ def test_a_signature_from_another_key_or_no_key_at_all_is_refused(tmp_path, monk
     absent, absent_code = _gate(repo, base)
     assert absent_code == 2 and any(item.startswith("invalid_evidence")
                                     for item in absent["failures"]), absent
+
+
+def test_a_locally_signed_measurement_verifies_under_the_ci_key_file(tmp_path, monkeypatch):
+    """The one operation this whole mechanism exists for, end to end.
+
+    The two ends never hold the same bytes. A maintainer signs with the key file
+    Rig keeps under XDG state; CI holds a GitHub secret, which carries text, and
+    writes it to that same path with `printf '%s'`. Unless the file's contents and
+    the secret's text are two notations for one key, `key_id = sha256(key)[:16]`
+    differs across the crossing and every signed measurement lands as
+    `invalid_evidence` — which is where this repository stood, invisibly, because
+    no evidence had been committed yet to travel the route.
+    """
+    monkeypatch.delenv("RIG_EVAL_ATTESTATION_KEY")
+    local = tmp_path / "maintainer-state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(local))
+    repo, base, _evidence = _measured(tmp_path)
+
+    # The key file is the value to paste into the secret, with no conversion step
+    # for a maintainer to get wrong.
+    stored = (local / "rig" / "eval-attestation.key").read_bytes()
+    text = stored.strip()
+    assert len(text) == 64 and set(text) <= set(b"0123456789abcdef"), stored
+    secret = text.decode("ascii")
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(_ci_state_home(tmp_path / "ci", secret)))
+    report, code = _gate(repo, base)
+    assert code == 0 and report["status"] == "pass", report
+
+    # And through the environment, which is the form CI receives it in before it
+    # writes the file.
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "empty-state"))
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", secret)
+    env_report, env_code = _gate(repo, base)
+    assert env_code == 0 and env_report["status"] == "pass", env_report
+
+
+def test_a_key_file_from_an_older_rig_keeps_signing_and_reaches_ci(tmp_path, monkeypatch):
+    """Maintainers who already have a key are not quietly cut off.
+
+    Rig used to write 32 raw bytes here and now writes their hex, so an existing
+    key file is the one case where the two ends genuinely hold different bytes for
+    the same secret — the file is 32 bytes, CI's is the 64 characters spelling
+    them. Both denote one key, so the old file keeps signing and its evidence
+    still verifies in CI; nothing has to be regenerated and no signature is
+    invalidated.
+    """
+    monkeypatch.delenv("RIG_EVAL_ATTESTATION_KEY")
+    local = tmp_path / "old-state"
+    (local / "rig").mkdir(parents=True)
+    raw = bytes(range(32))
+    legacy = local / "rig" / "eval-attestation.key"
+    legacy.write_bytes(raw)
+    legacy.chmod(0o600)
+    monkeypatch.setenv("XDG_STATE_HOME", str(local))
+    repo, base, _evidence = _measured(tmp_path)
+    assert legacy.read_bytes() == raw, "an existing key must not be rewritten"
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(_ci_state_home(tmp_path / "ci", raw.hex())))
+    report, code = _gate(repo, base)
+    assert code == 0 and report["status"] == "pass", report
+
+    # The interoperability is between one key's notations, not between any two
+    # keys: an unrelated secret of the same shape is still refused.
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "f" * 64)
+    wrong, wrong_code = _gate(repo, base)
+    assert wrong_code == 2 and any(item.startswith("invalid_evidence")
+                                   for item in wrong["failures"]), wrong
 
 
 def test_the_signed_diff_does_not_depend_on_the_verifying_machines_git_config(tmp_path):

@@ -211,7 +211,11 @@ new HEAD. The binding is the measured **content**, not the measured commit:
 - every prompt surface **this change is accountable for** must still hold the object id the
   measurement signed for it, taken from the `prompt_surface_digests` map. The map covers the
   whole surface set at the measured commit, so a path the gate holds accountable and the
-  measurement never saw is a file created afterwards, and fails;
+  measurement never saw is a file created afterwards, and fails. Its keys are validated as
+  paths: control and Unicode format characters, absolute and home-relative paths, `file:`
+  URIs and `..` traversal are refused. They are not scanned for secret-like values — the
+  keys come from `git ls-tree` and name files that are public in the repository, so that
+  scan can only ever be wrong about one, and once was, for every case at once;
 - evidence may only move forward. Its `started_at` is compared against the evidence for the
   same case on the **base branch's tip**, and older evidence is
   `evidence_regression:<case-id>`. The comparison reads `evals/evidence/` as a literal path
@@ -305,14 +309,33 @@ characters**, exactly what `openssl rand -hex 32` emits; anything else is refuse
 `configured attestation key is invalid`, and the CI job checks the same shape before it
 writes the secret to a key file. Randomness cannot be verified, so the form is the
 enforceable proxy for it, and prose alone was not enough: committed evidence publishes both
-the signature and `key_id` (`sha256(key)[:16]`) on a public repository, which is harmless
-against generated material and a complete offline guessing oracle against a memorable
-passphrase — one that ends in forgery by someone who never had the key.
+the signature and `key_id` on a public repository, which is harmless against generated
+material and a complete offline guessing oracle against a memorable passphrase — one that
+ends in forgery by someone who never had the key.
+
 Without an explicit key, Rig atomically creates a private `0600` key at
-`${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`. Verification rejects missing,
-weakly permissioned, non-regular, or symlinked keys. Keep this key outside the repository;
-never commit or print it. Rig strips attestation environment variables from evaluator and
-judge child processes. Recomputing the public SHA-256 fields cannot forge the attestation.
+`${XDG_STATE_HOME:-~/.local/state}/rig/eval-attestation.key`, holding those same 64 hex
+characters, so **the file's contents are the value to paste into the
+`RIG_EVAL_ATTESTATION_KEY` repository secret** — that is the whole setup, and CI then writes
+the secret back into a key file at that path. `key_id` is `sha256(material)[:16]`, where the
+material is the 32 secret bytes the hex spells, not the notation it arrived in: the
+environment variable, the file CI writes, and the maintainer's key file all denote one key
+and therefore one `key_id`. Without that, a locally signed measurement is refused in CI as
+`invalid_evidence` and the sign-here-verify-there workflow cannot run at all.
+
+Key files written by earlier versions hold 32 raw bytes instead of hex. They keep working
+and need no regeneration; the secret to pair one with is its hex spelling
+(`xxd -p -c 64 "${XDG_STATE_HOME:-$HOME/.local/state}/rig/eval-attestation.key"`). Deleting
+the file instead makes Rig generate a hex one on the next signing run, at the cost of
+invalidating anything the old key signed. A secret generated separately from the local key
+file — `openssl rand -hex 32` pasted into the repository while Rig generated its own key on
+the maintainer's machine — is a second, unrelated key and never matched: overwrite it with
+the local file's hex. The pairing is what makes the secret meaningful, not its shape.
+
+Verification rejects missing, weakly permissioned, non-regular, or symlinked keys. Keep this
+key outside the repository and never commit it; print it only to copy it into the secret.
+Rig strips attestation environment variables from evaluator and judge child processes.
+Recomputing the public SHA-256 fields cannot forge the attestation.
 
 Threat model: attestation detects repository or result-file modification by a process that
 does not possess the trusted key. It is not an isolation sandbox against a malicious

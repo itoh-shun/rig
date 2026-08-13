@@ -735,6 +735,12 @@ def test_attestation_default_key_is_atomic_private_and_rejects_missing_insecure_
     payload["attestation"] = sign_result_attestation(payload)
     key = state / "rig" / "eval-attestation.key"
     assert key.stat().st_mode & 0o777 == 0o600
+    # Hex, not the raw bytes this used to write: the file's contents are the value
+    # a maintainer pastes into `RIG_EVAL_ATTESTATION_KEY`, and that is the only
+    # reason CI can verify what this key signs. Reverting to `token_bytes` would
+    # leave every assertion around this one green and break that crossing.
+    generated = key.read_bytes().strip()
+    assert len(generated) == 64 and set(generated) <= set(b"0123456789abcdef")
     assert verify_result_attestation(payload) is True
 
     key.unlink()
