@@ -24,7 +24,7 @@ rig の本当の価値は、AI を動かすこと自体ではない。AI に作�
 
 rig は意図的に、独自 DSL を持つ重量級の外部エンジン**ではない**。Claude Code のセッション内では、Claude Code 自身のプリミティブ——slash command（`commands/`）・skill（`skills/engine`）・subagent（`agents/`）・hook（`hooks/`）——だけで合成された薄い品質・安全レイヤーとして動く。隔離・ゲート・accept は、いま作業しているセッションにそのまま規律として乗るのであって、別ツールへの乗り換えを要求しない。
 
-同じ設計にはもう一つの顔がある：このレイヤーの背後にある決定論エンジン（`scripts/orchestrate.py`。`rig_workbench/` としてパッケージ化され、pip の `rig-wb` CLI としても導入できる）は、**外部制御プレーン**を兼ねる。CI・別セッション・別ツール（Codex / Cursor 等）から、まったく同じ recipe・ゲート・read-only verifier をセッションの外から駆動できる——§13「横断利用（CLI として）」を参照。同じエンジンを公開する MCP サーバは `scripts/mcp_server.py`（#263）として既に出荷済み——ツール一覧・opt-in の配線は §7「MCPサーバ（#263）」を参照。
+同じ設計にはもう一つの顔がある：このレイヤーの背後にある決定論エンジン（`scripts/orchestrate.py`。`rig_workbench/` としてパッケージ化され、pip の `rig-wb` CLI としても導入できる）は、**外部制御プレーン**を兼ねる。CI・別セッション・別ツール（Codex / Cursor 等）から、まったく同じ recipe・ゲート・read-only verifier をセッションの外から駆動できる——§13「横断利用（CLI として）」を参照。package-nativeなremote/SDK MCP経路は`rig-mcp`として提供する（[`docs/remote-mcp.md`](docs/remote-mcp.md)）。従来の`scripts/mcp_server.py`（#263）は異なるtool contractを持つstdlib-onlyのlocal stdio adapterとして残る——§7を参照。
 
 そして「品質ゲートがあります」という他所の売り文句との差別化点：rig のゲートとレビュアーは主張されるだけでなく**実測される**。`/rig:drill`（§11）は既知バグの注入に対する各 reviewer persona の実際の検出率をスコア化し、`/rig:go stats`（§10）は実 run 履歴からラバースタンプ化したレビュアーや頻繁に落ちるゲートを炙り出す。測れないゲートは願望にすぎない——rig はゲートの実効性をデータとして扱う。
 
@@ -465,13 +465,20 @@ rig-wb bench --provider claude --allow-paid-provider --bare-model fable --rig-mo
 
 ### MCPサーバ（#263）
 
-Claude Codeセッションの外（別エージェント・CI・別プロセス）からrigを操作したい場合は、`scripts/mcp_server.py`を起動する：
+package-nativeなMCP SDK adapter（Streamable HTTP / stdio）は`rig-workbench[mcp]`をinstallし、
+`rig-mcp`で起動する。固定repository境界・write tool・単一operator HTTPの手順は
+[`docs/remote-mcp.md`](docs/remote-mcp.md)にある。remote/SDK integrationはこちらを使う。
+
+既存の`scripts/mcp_server.py`は、agent・CI・別process向けのstdlib-onlyな
+historical/local stdio adapterとして引き続き利用できる：
 
 ```bash
 python3 scripts/mcp_server.py
 ```
 
-stdioでModel Context Protocol（JSON-RPC 2.0、line-delimited）を待ち受ける。`mcp`公式SDKには依存しない——サードパーティ製の重い依存を増やさない方針を、workbench.py/orchestrate.pyのstdlib-only方針と揃えるため、stdlibのみで最小限のstdio transportを実装している。新しい実行エンジンは無い：全ツールはサブプロセスで`workbench.py`/`orchestrate.py`をそのまま呼ぶ薄いアダプタで、accept/discardのforce-proof要件（`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`等）はCLIと完全に同じコードパスを通るためMCP経由でもバイパスできない。
+stdioでModel Context Protocol（JSON-RPC 2.0、line-delimited）を待ち受け、`mcp`公式SDKには
+依存しない。以下のtoolは`rig-mcp`と異なり、両contractは相互置換できない。新しい実行
+engineはなく、`workbench.py`/`orchestrate.py`を呼ぶ薄いadapterである。
 
 提供ツール：
 
@@ -607,7 +614,7 @@ Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skill
 | Skills | `codex/skills/engine/SKILL.md` | Codexの`.agents/skills/<name>/SKILL.md`規約（`name`/`description` frontmatter）に沿った薄いskill。新しいエンジンは作らず、既存の`workbench.py`/`orchestrate.py`への手続き的ポインタに留める |
 | Hooks | `codex/hooks.json` | Codexの`PreCompact`は`hooks/codex-precompact.sh`から妥当なno-op JSONを返し、`SessionStart(source=compact)`で`hooks/inject-run-continuity.sh`がbest-effortの再アンカーを試みる。Claude Codeは未変更の`hooks/preserve-rig-state.sh`平文出力を利用 |
 | Subagents | `.codex/agents/security-reviewer.toml` | `agents/security-reviewer.md`と同じ評価軸・出力契約を持つCodexネイティブsubagent定義。`sandbox_mode = "read-only"`でCodex自身のサンドボックスにもread-only強制を効かせる——rig側の`orchestrate.py`argv注入（`--sandbox read-only`）による既存の強制は変更せず残す（多層防御） |
-| MCP | （手順のみ） | `scripts/mcp_server.py`（#263）を`~/.codex/config.toml`または`.codex/config.toml`の`[mcp_servers.rig]`に`command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]`として登録する |
+| MCP | `rig-mcp`（remote/SDK）; `scripts/mcp_server.py`（legacy local stdio） | package-nativeな`rig-mcp --repo <repo> --transport stdio`を優先する。legacyの異なるtool contractが必要な場合だけ従来の`command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]`を使う |
 
 インストール：`codex/skills/rig/`を`~/.agents/skills/rig/`（または repo 直下の`.agents/skills/rig/`）へコピー/シンボリックリンクし、`codex/hooks.json`をこのsource treeの`.codex/hooks.json`へコピーする。`.codex/agents/security-reviewer.toml`はリポジトリ直下に置くだけでproject-scoped agentとして認識される（Codexの規約）。hook commandは現在のgit rootからscriptを探すため、この設定はsource-tree/project scoped。他repoで使うならrigの`hooks/`もそのrepoへ配置する必要があり、global configへ設定ファイルだけをコピーしても動かない。
 
@@ -818,6 +825,8 @@ recipe と policy は**厳しい方**に合成される（quorum は高い方・
 - [`skills/engine/patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) — worktree・run state の設計
 - [`docs/architecture.md`](./docs/architecture.md) — アーキテクチャの実証ポイント
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
+- [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutralなremote/stdio MCP adapterと安全境界
+- [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — remote adapterをChatGPTへ接続する手順
 - [README.md](./README.md) — English version
 
 ## License

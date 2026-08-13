@@ -24,7 +24,7 @@ Three properties keep the safety flow real (not just documented):
 
 rig is deliberately **not** a heavyweight external engine with its own DSL. Inside a Claude Code session it is a thin quality/safety layer composed from Claude Code's own primitives — slash commands (`commands/`), the skill (`skills/engine`), subagents (`agents/`), and hooks (`hooks/`). The isolation, the gate, and the accept step add discipline to the session you already work in; they don't replace it with another tool.
 
-The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §13 "Standalone CLI". An MCP server exposing this same engine ships as `scripts/mcp_server.py` (#263) — see §7 "MCP server (#263)" for the tool list and opt-in wiring.
+The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §13 "Standalone CLI". The package-native remote/SDK MCP path ships as `rig-mcp`; see [`docs/remote-mcp.md`](docs/remote-mcp.md). The historical stdlib-only local stdio adapter remains `scripts/mcp_server.py` (#263) with a different, non-interchangeable tool contract — see §7.
 
 And the differentiator over "we have quality gates" framings: rig's gates and reviewers are **measured, not asserted**. `/rig:drill` (§11) scores each reviewer persona's actual detection rate against injected known bugs, and `/rig:go stats` (§10) flags rubber-stamp reviewers and frequently-failing gates from real run history. A gate you can't measure is a hope; rig treats gate efficacy as data.
 
@@ -553,13 +553,23 @@ The same schema-v2 acceptance criteria apply; `bare_model`/`rig_model` are recor
 
 ### MCP server (#263)
 
-To drive rig from outside a Claude Code session (another agent, CI, a separate process), start `scripts/mcp_server.py`:
+For the package-native MCP SDK adapter, including Streamable HTTP and stdio, install
+`rig-workbench[mcp]` and run `rig-mcp`. Its client-neutral setup, fixed-repository
+boundary, conditional write tools, and single-operator HTTP constraints are documented
+in [`docs/remote-mcp.md`](docs/remote-mcp.md). This is the remote/SDK integration path.
+
+The existing `scripts/mcp_server.py` remains a stdlib-only historical/local stdio
+adapter for agents, CI, and separate processes:
 
 ```bash
 python3 scripts/mcp_server.py
 ```
 
-It listens for Model Context Protocol (JSON-RPC 2.0, line-delimited) on stdio. It doesn't depend on the official `mcp` SDK — to match `workbench.py`/`orchestrate.py`'s stdlib-only stance and avoid a heavy third-party dependency, it implements a minimal stdio transport with the standard library alone. No new execution engine: every tool is a thin adapter that shells out to `workbench.py`/`orchestrate.py`, so accept/discard's force-proof requirements (`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`, etc.) go through the exact same code path and can't be bypassed via MCP either.
+It listens for Model Context Protocol (JSON-RPC 2.0, line-delimited) on stdio and does
+not depend on the official `mcp` SDK. Its tools below differ from `rig-mcp`; the two
+contracts are not interchangeable. No new execution engine: every tool is a thin adapter
+that shells out to `workbench.py`/`orchestrate.py`, so accept/discard's force-proof
+requirements go through the same code path.
 
 Tools provided:
 
@@ -710,7 +720,7 @@ As of 2026, the Codex CLI has extension mechanisms (Skills, Hooks, Subagent TOML
 | Skills | `codex/skills/engine/SKILL.md` | A thin skill following Codex's `.agents/skills/<name>/SKILL.md` convention (`name`/`description` frontmatter). No new engine — it's a procedural pointer to the existing `workbench.py`/`orchestrate.py` |
 | Hooks | `codex/hooks.json` | Codex `PreCompact` returns valid no-op JSON through `hooks/codex-precompact.sh`; `SessionStart(source=compact)` then attempts a best-effort re-anchor through `hooks/inject-run-continuity.sh`. Claude Code keeps the unchanged plaintext `hooks/preserve-rig-state.sh` path |
 | Subagents | `.codex/agents/security-reviewer.toml` | A Codex-native subagent definition with the same review axes and output contract as `agents/security-reviewer.md`. `sandbox_mode = "read-only"` asks Codex's own sandbox to enforce read-only, layered on top of — not replacing — rig's existing argv-level enforcement (`--sandbox read-only` in `orchestrate.py`'s `build_argv`); defense in depth |
-| MCP | (docs only) | Register `scripts/mcp_server.py` (#263) under `[mcp_servers.rig]` in `~/.codex/config.toml` or `.codex/config.toml`: `command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]` |
+| MCP | `rig-mcp` (remote/SDK); `scripts/mcp_server.py` (legacy local stdio) | Prefer package-native `rig-mcp --repo <repo> --transport stdio`. Keep `command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]` only when the legacy, different tool contract is required. |
 
 Install by copying/symlinking `codex/skills/rig/` to `~/.agents/skills/rig/` (or `.agents/skills/rig/` at the repo root), copying `codex/hooks.json` to this source tree's `.codex/hooks.json`, and leaving `.codex/agents/security-reviewer.toml` where it is — Codex picks up project-scoped agents from `.codex/agents/` automatically. The hook commands resolve scripts from the current git root, so this file is source-tree/project scoped. Reusing it in another repository requires installing rig's `hooks/` directory there too; do not copy it into a global config and expect every repository to contain those scripts.
 
@@ -917,6 +927,8 @@ One deliberate non-feature: `actor` does **not** block execution. rig cannot ver
 - [`skills/engine/patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) — worktree/run-state design
 - [`docs/architecture.md`](./docs/architecture.md) — architecture proof points (determinism, gate enforcement, judge measurement)
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
+- [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutral remote/stdio MCP adapter and its safety boundary
+- [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — connecting the remote adapter to ChatGPT
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License

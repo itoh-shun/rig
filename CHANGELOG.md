@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+`rig-mcp` adds a package-native, client-neutral MCP adapter for one initialized Rig
+repository. Read tools are the default; isolated run, gated accept, and confirmed
+discard are registered only with explicit write enablement. Streamable HTTP is
+loopback-only with DNS-rebinding protection and requires explicit acknowledgement
+that the endpoint itself is unauthenticated. Write-enabled HTTP additionally binds
+the child Rig identity to one configured operator; multi-user sharing is unsupported.
+A customer-run Secure MCP Tunnel client
+can target that local endpoint, or a separate authenticated HTTPS reverse proxy can
+provide a public direct URL; `rig-mcp` itself terminates neither TLS nor OAuth. Stdio
+is available for local hosts.
+The adapter delegates asynchronously through an isolated Python invocation to the
+canonical CLI, bounds goals and in-memory pipe capture, terminates timed-out or
+cancelled process groups, serializes mutations per server, and retains
+the former ChatGPT module name as a compatibility import. ChatGPT remains one
+documented client rather than defining the server contract.
+
 ## [2.6.0] - 2026-08-12
 
 **An evaluation can now run on Claude, and every result says what isolation it was
