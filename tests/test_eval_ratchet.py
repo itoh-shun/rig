@@ -16,6 +16,8 @@ import json
 import pathlib
 import subprocess
 
+import pytest
+
 from test_eval_cases import valid_case
 
 
@@ -285,11 +287,16 @@ def test_stale_coverage_through_a_recipe_names_only_the_paths_that_reach_it(tmp_
     recipe.parent.mkdir(parents=True, exist_ok=True)
     recipe.write_text("---\nname: auth\nsteps:\n  - id: review\n"
                       "    personas: [reviewer]\n---\n", encoding="utf-8")
+    # A second recipe reaching the same persona, which nobody covers. Without it the
+    # debt branch of the recipe loop never runs, and "the same path is not counted as
+    # both stale and debt" is never actually asked.
+    _touch(repo, "skills/engine/recipes/other.md",
+           "---\nname: other\nsteps:\n  - id: review\n    personas: [reviewer]\n---\n")
     _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
     _touch(repo, INSTRUCTION)                       # reaches no recipe at all
-    fork = _commit(repo, "a recipe, its persona, and an unrelated instruction")
+    fork = _commit(repo, "two recipes, their persona, and an unrelated instruction")
     _write_case(repo, "auth-case", ["recipe:auth"])
-    base = _commit(repo, "the base branch covers the recipe")
+    base = _commit(repo, "the base branch covers one of the recipes")
 
     _git(repo, "checkout", "-q", "-b", "evil", fork)
     _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
@@ -301,8 +308,12 @@ def test_stale_coverage_through_a_recipe_names_only_the_paths_that_reach_it(tmp_
     assert [item for item in report["coverage_stale"] if item.startswith(PERSONA)], report
     assert not [item for item in report["coverage_stale"]
                 if item.startswith(INSTRUCTION)], report
-    # The honest debt is still counted rather than swallowed by the recipe's failure.
+    # The honest debt is still counted rather than swallowed by the recipe's failure,
+    # and the persona is reported as exactly one of the two: the uncovered second
+    # recipe charges every affected path to debt, and a stale path is taken back out.
     assert report["coverage_debt"] == [INSTRUCTION], report
+    # The triage list covers what is blocking, not only what is survivable.
+    assert PERSONA in report["surface_commits"], report
 
 
 def test_the_landing_view_keeps_what_the_base_gained_and_drops_what_this_removed(tmp_path):
@@ -319,6 +330,151 @@ def test_the_landing_view_keeps_what_the_base_gained_and_drops_what_this_removed
     assert not [item for item in lost if "added-since" in item], lost
     assert _landing_coverage({}, None, fork) is None
     assert _landing_coverage({}, base, None) is None
+
+
+# ── the other half of "covered": the wiring, not the cases ───────────────────
+UNWIRED = "---\nname: auth\nsteps: []\n---\n"
+WIRED = "---\nname: auth\nsteps:\n  - id: review\n    personas: [reviewer]\n---\n"
+RECIPE = "skills/engine/recipes/auth.md"
+
+
+def _wired_after_the_fork(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, str]:
+    """A covered recipe, and a persona it starts out not referencing.
+
+    Returns the repo, the fork point — where the persona is reachable from no
+    recipe — and the base branch's tip, where the recipe references it and the case
+    covering the recipe therefore covers the persona too.
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, UNWIRED)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    fork = _commit(repo, "a covered recipe, and a persona nothing references")
+    _touch(repo, RECIPE, WIRED)
+    return repo, fork, _commit(repo, "the base branch wires the persona in")
+
+
+def test_a_reference_the_base_branch_added_after_the_fork_still_covers(tmp_path):
+    """The bypass one layer out from the case set.
+
+    Nothing is missing from this branch's cases — the case that covers the recipe
+    is right there, and unchanged. What the branch is behind on is the *reference*
+    that makes it answer for the persona, so a landing view reading the graph off
+    the branch's tree agrees with the branch that the persona is covered by nobody.
+    The merge restores a recipe the branch never touched.
+    """
+    repo, fork, base = _wired_after_the_fork(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "edit the persona only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PERSONA
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered"
+    assert any(PERSONA in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+    assert report["coverage_debt"] == [] and report["coverage_regressions"] == []
+
+
+def test_a_reference_this_branch_removes_is_not_added_back(tmp_path):
+    """The direction the subtraction exists for.
+
+    An edge the branch itself deletes is gone after the merge, so the persona it
+    used to reach really is uncovered: debt, which is survivable, and not stale,
+    which is not. Adding the base branch's edges without subtracting the fork's
+    would turn every such branch into a fatal one.
+    """
+    repo, fork, base = _wired_after_the_fork(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feature", base)
+    _touch(repo, RECIPE, UNWIRED)                   # the branch takes the wiring out
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "unwire the persona and edit it")
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_stale"] == [], report
+    assert report["coverage_debt"] == [PERSONA], report
+    assert report["status"] == "debt"
+
+
+def test_the_landing_graph_adds_what_the_base_wired_in_the_branchs_own_spelling(tmp_path):
+    """The rule on its own, including the translation the walk depends on.
+
+    `_graph` describes this repository through one reader and every other tree
+    through another, and they do not spell every node id the same way. The base and
+    fork readings go through the same reader so their difference is clean, but the
+    edges that survive it are joined onto the branch's graph and walked from a node
+    the branch names — so they have to arrive in the branch's dialect.
+    """
+    from rig_workbench.eval.affected import _landing_graph, _reachable_recipes, _surface
+
+    head_nodes = {RECIPE: {"id": "recipe:auth", "kind": "recipe", "path": RECIPE},
+                  PERSONA: {"id": "persona:reviewer", "kind": "persona", "path": PERSONA}}
+    other_nodes = {**head_nodes,
+                   PERSONA: {"id": "persona:facets/reviewer", "kind": "persona",
+                             "path": PERSONA}}
+    kept = {"from": "recipe:auth", "to": "persona:facets/reviewer"}
+    fork_edges = [{"from": "recipe:auth", "to": "instruction:login"}]
+
+    nodes, edges = _landing_graph((head_nodes, []), (other_nodes, [kept, *fork_edges]),
+                                  (other_nodes, fork_edges))
+    assert {"from": "recipe:auth", "to": "persona:reviewer"} in edges, edges
+    assert kept not in edges, "an id the branch spells differently must be translated"
+    # An edge the fork already had is not "gained", so a branch that removed it keeps
+    # its removal; and a surface the branch does not have keeps the base's own node.
+    assert [edge for edge in edges if edge["to"] == "instruction:login"] == []
+    assert _reachable_recipes((nodes, edges), [_surface(PERSONA)])[PERSONA] == ["auth"]
+    assert _landing_graph((head_nodes, []), None, (other_nodes, [])) is None
+    assert _landing_graph((head_nodes, []), (other_nodes, []), None) is None
+
+
+def test_the_two_graph_readers_agree_once_ids_are_translated():
+    """This repository is the tree where the two readers actually differ.
+
+    Every fixture above is read by one reader at all three revisions, so nothing in
+    them exercises the translation. Here `_graph` answers the working tree through
+    `build_brick_graph` and the revision through its adapter, and the ids for the
+    wiki pages disagree — which is the case that would quietly attach the base
+    branch's edges to nodes the walk never visits.
+    """
+    from rig_workbench.eval.affected import _graph, _graph_at, _landing_graph
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    if subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root,
+                      capture_output=True).returncode != 0:
+        pytest.skip("not a git checkout")
+    head = _graph(root)
+    at_head = _graph_at(root, "HEAD")
+    assert at_head is not None
+    renamed = {node["id"] for path, node in at_head[0].items()
+               if path in head[0] and head[0][path]["id"] != node["id"]}
+    assert renamed, "the readers agree here now — this test no longer proves anything"
+
+    # An empty fork makes every edge the revision reader saw a gained one, so all of
+    # them go through the translation.
+    _nodes, edges = _landing_graph(head, at_head, ({}, []))
+    assert not [edge for edge in edges
+                if edge["from"] in renamed or edge["to"] in renamed], "untranslated ids"
+    # And the ordinary case: nothing gained, nothing changed.
+    assert _landing_graph(head, at_head, at_head) == head
+
+
+def test_a_base_graph_that_cannot_be_read_is_named_rather_than_passed(tmp_path,
+                                                                     monkeypatch):
+    """Same stance as the coverage beside it, and for a sharper reason: `_graph`
+    answers a tree it cannot parse with an empty graph, and an empty graph adds no
+    edges — which is silently the behaviour the base-tip reading replaced."""
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, INSTRUCTION)
+    head = _commit(repo, "edit a surface")
+    monkeypatch.setattr(module, "_graph_at", lambda *args, **kwargs: None)
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["coverage_base_unreadable"] is True
+    assert report["status"] == "uncovered"
+    strict = analyze(repo, base, head=head, require_cases=True)
+    assert strict["coverage_base_unreadable"] is False
 
 
 def test_a_registry_root_the_base_branch_added_after_the_fork_is_not_a_narrowing(tmp_path):
