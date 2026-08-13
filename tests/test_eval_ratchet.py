@@ -533,7 +533,7 @@ def test_the_revision_reader_sees_every_reference_a_recipe_makes():
     unread field there is the ratchet not firing. Adding a step field to
     `build_brick_graph` without adding it here fails this test.
     """
-    from rig_workbench.eval.affected import _graph, _graph_at
+    from rig_workbench.eval.affected import _graph_at
     from rig_workbench.orchestrate import config
     from rig_workbench.orchestrate.graph import build_brick_graph
 
