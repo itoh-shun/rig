@@ -117,6 +117,23 @@ would demand a moment later. A branch merely behind on a case it does not touch 
 nothing — the demand is scoped to the affected surfaces, which is what keeps the tip usable
 as the reference while other PRs are open.
 
+"Covered" is read off the landing tree on both of its halves. A case can answer for a surface
+it does not name — a persona is covered because some recipe references it and a case binds
+that recipe — and that reference is an edge in the brick graph, so the graph is read at the
+base tip and at the fork point too, and merged edge by edge exactly as the case set is. Read
+only off the branch's tree it left the same bypass one step out: fork from before the base
+branch pointed a recipe at a persona, edit only the persona, and the branch's own tree
+honestly reports that nothing reaches it, while the merge restores the recipe it never
+touched. Both merges keep what the base branch *deleted* after the fork rather than
+subtracting it, which can only over-state what lands — and over-stating asks for a
+re-measurement, where under-stating is the bypass.
+
+On a push to the default branch this reading collapses back to the branch's own tree, as
+long as `github.event.before` is an ancestor of what was pushed: the fork point is `before`
+itself and nothing is added back. A force-push is where that stops holding, and there the
+push is judged like any other divergent history — a case the rewrite dropped is named rather
+than passed over.
+
 The registry is read the same way and gets no `stale` of its own: being behind on a root
 means the merge lands the base branch's *wider* field of view, so nothing the gate could see
 stops being seen. A root this branch actually removes is still `registry_narrowings`.

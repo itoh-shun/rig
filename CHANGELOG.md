@@ -102,6 +102,25 @@ deletion. `affected-run` reports regressions, staleness and registry narrowings 
 name instead of exiting 1 with an empty `failures` list, and a base tree the ratchet
 cannot read is `coverage_base_unreadable` rather than a quiet pass.
 
+Correcting the *cases* was half of it. Whether a surface is covered is not decided by
+the case set alone — a persona is covered because some recipe references it and a case
+binds that recipe — and that reference lives in the brick graph, which was read from
+the branch's working tree and handed to the landing view unchanged. So the same bypass
+survived one step further out: fork from before the base branch pointed a recipe at a
+persona, edit only the persona, touch no recipe, and the branch's own tree honestly
+reports that nothing reaches it. The merge restores the recipe the branch never
+touched. The graph is now read at the base tip and at the fork point as well — one
+`git archive` per revision rather than a `git show` per file — and merged edge by edge
+the way the case set is: `head | (base - fork)`, the monotone half, which can only
+over-state what lands. Over-stating asks for a re-measurement that the default
+branch's own push would ask for; under-stating is the bypass.
+
+On a push to the default branch none of this changes what happens, as long as
+`github.event.before` is an ancestor of what was pushed: the fork point is `before`
+itself, nothing is added back, and both landing views are the pushed tree. A
+force-push breaks that ancestry, and there the push is judged like any other divergent
+history — a case the rewrite dropped is named instead of passed over.
+
 The workflow step that runs it could not report any of that. The report exists only
 on the command's stdout, redirected to a file, and the step's shell runs with `-e`:
 a *failing* run aborted at the redirect, so the report was never printed and the
