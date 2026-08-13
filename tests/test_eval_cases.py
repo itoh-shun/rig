@@ -64,6 +64,12 @@ def test_validate_case_accepts_versioned_case_and_canonicalizes_deterministicall
         lambda c: c["target_inputs"].update(api_token="sk-live-example-secret"),
         lambda c: c.update(title="safe\u202eevil"),
         lambda c: c["provider_policy"].update(mode="sometimes"),
+        lambda c: c["provider_policy"].update(min_isolation="sandboxed"),
+        lambda c: c["provider_policy"].update(min_isolation=True),
+        # Unhashable values reached the set-membership test and raised TypeError, which
+        # a caller catching EvalCaseError never sees as a rejected case.
+        lambda c: c["provider_policy"].update(min_isolation=[]),
+        lambda c: c["provider_policy"].update(min_isolation={"level": "os-enforced"}),
         lambda c: c.update(surfaces=[{}]),
     ],
 )
@@ -130,7 +136,7 @@ def _run_eval(args, cwd):
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(
         filter(None, [str(repo_root), os.environ.get("PYTHONPATH")])
     ))
-    env["RIG_EVAL_ATTESTATION_KEY"] = "eval-cli-test-attestation-key-at-least-32-bytes"
+    env["RIG_EVAL_ATTESTATION_KEY"] = "ce19278be0744f82ddb8f054901f90698a441e610e86d6fecca043fd51d926fb"
     return subprocess.run([sys.executable, "-m", "rig_workbench.cli", "eval", *args],
                           cwd=cwd, env=env, capture_output=True, text=True, timeout=30)
 

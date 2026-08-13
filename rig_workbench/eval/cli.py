@@ -14,7 +14,7 @@ from .cases import EvalCaseError, canonical_json, validate_case
 from .compare import compare_results, validate_result
 from .gate import evaluate_gate
 from .promote import promote_case
-from .runner import make_judge_adapter, run_case
+from .runner import adapter_cwd, make_judge_adapter, read_only_workspace, run_case
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -86,6 +86,16 @@ def _parser() -> argparse.ArgumentParser:
     gate.add_argument("--model")
     gate.add_argument("--judge-provider")
     gate.add_argument("--judge-model")
+    # The same direction the structural step ahead of it in CI already drives.
+    # Without this flag the gate is strict, and a PR that touches one covered
+    # surface plus any of the 198 that have no case yet fails `uncovered:` no
+    # matter how much signed evidence it carries — a check nobody can pass, which
+    # is the shape (#383/#384) the ratchet exists to remove. Evidence checks are
+    # untouched by it: the cases that do exist are judged identically either way.
+    gate.add_argument("--ratchet", action="store_true",
+                      help="coverage may only go up: an affected surface with no "
+                           "case yet is debt rather than a failure, while removing "
+                           "coverage and unregistered surface kinds stay fatal")
     affected_run = sub.add_parser("affected-run", help="atomically run and gate affected cases")
     affected_run.add_argument("--base", required=True)
     affected_run.add_argument("--head", default="HEAD")
@@ -99,6 +109,10 @@ def _parser() -> argparse.ArgumentParser:
     affected_run.add_argument("--command", dest="provider_command")
     affected_run.add_argument("--judge-command")
     affected_run.add_argument("--timeout", type=float, default=30)
+    affected_run.add_argument("--ratchet", action="store_true",
+                              help="measure the covered surfaces and report the rest "
+                                   "as debt, instead of refusing to measure anything "
+                                   "while one affected surface has no case yet")
     return parser
 
 
@@ -283,18 +297,22 @@ def cmd_eval(argv: list[str]) -> int:
                 raise EvalCaseError("mock judge reproduce is only a dev probe; pass --allow-mock")
             if bool(args.judge_provider) != bool(args.judge_model):
                 raise EvalCaseError("judge provider and model must be specified together")
-            judge_adapter = (
-                make_judge_adapter(
-                    provider=args.judge_provider, model=args.judge_model, repo=root,
-                    command=args.judge_command, timeout_s=args.judge_timeout,
-                ) if args.judge_provider else None
-            )
-            output, result = run_case(
-                cases[0], repo=root, provider=args.provider, model=args.model,
-                repeat=cases[0]["repeat"], phase="baseline",
-                command=args.provider_command, timeout_s=args.timeout,
-                judge_adapter=judge_adapter, execution_base=args.execution_base,
-            )
+            with read_only_workspace(root) as workspace:
+                judge_adapter = (
+                    make_judge_adapter(
+                        provider=args.judge_provider, model=args.judge_model,
+                        repo=adapter_cwd(args.judge_provider, workspace, root),
+                        command=args.judge_command, timeout_s=args.judge_timeout,
+                    ) if args.judge_provider else None
+                )
+                output, result = run_case(
+                    cases[0], repo=root, provider=args.provider, model=args.model,
+                    repeat=cases[0]["repeat"], phase="baseline",
+                    command=args.provider_command, timeout_s=args.timeout,
+                    judge_adapter=judge_adapter, execution_base=args.execution_base,
+                    execution_cwd=adapter_cwd(args.provider, workspace, root),
+                    readable_root=root,
+                )
             print(output)
             dev_probe_only = args.provider == "mock" or args.judge_provider == "mock"
             samples = [*result["target"], *result["clean"]]
@@ -321,21 +339,26 @@ def cmd_eval(argv: list[str]) -> int:
             cases = _resolve_cases(root, args.case_or_suite)
             if bool(args.judge_provider) != bool(args.judge_model):
                 raise EvalCaseError("judge provider and model must be specified together")
-            judge_adapter = (
-                make_judge_adapter(
-                    provider=args.judge_provider, model=args.judge_model, repo=root,
-                    command=args.judge_command, timeout_s=args.judge_timeout,
+            with read_only_workspace(root) as workspace:
+                judge_adapter = (
+                    make_judge_adapter(
+                        provider=args.judge_provider, model=args.judge_model,
+                        repo=adapter_cwd(args.judge_provider, workspace, root),
+                        command=args.judge_command, timeout_s=args.judge_timeout,
+                    )
+                    if args.judge_provider else None
                 )
-                if args.judge_provider else None
-            )
-            for case in cases:
-                output, _result = run_case(
-                    case, repo=root, provider=args.provider, model=args.model,
-                    repeat=args.repeat, phase=args.phase, command=args.provider_command,
-                    timeout_s=args.timeout, judge_adapter=judge_adapter,
-                    execution_base=args.execution_base,
-                )
-                print(output)
+                for case in cases:
+                    output, _result = run_case(
+                        case, repo=root, provider=args.provider, model=args.model,
+                        repeat=args.repeat, phase=args.phase,
+                        command=args.provider_command,
+                        timeout_s=args.timeout, judge_adapter=judge_adapter,
+                        execution_base=args.execution_base,
+                        execution_cwd=adapter_cwd(args.provider, workspace, root),
+                        readable_root=root,
+                    )
+                    print(output)
             return 0
         if args.command == "compare":
             root = _resolve_repo(args.repo)
@@ -368,6 +391,7 @@ def cmd_eval(argv: list[str]) -> int:
                 args.repo, base=args.base, head=args.head,
                 evidence_dir=args.evidence_dir, provider=args.provider, model=args.model,
                 judge_provider=args.judge_provider, judge_model=args.judge_model,
+                ratchet=args.ratchet,
             )
             print(canonical_json(report), end="")
             return exit_code
@@ -377,10 +401,17 @@ def cmd_eval(argv: list[str]) -> int:
                 model=args.model, judge_provider=args.judge_provider,
                 judge_model=args.judge_model, provider_command=args.provider_command,
                 judge_command=args.judge_command, timeout_s=args.timeout,
+                ratchet=args.ratchet,
             )
             output = dict(report)
             output["result_dir"] = str(destination) if destination is not None else None
             print(canonical_json(output), end="")
+            if destination is not None:
+                # stderr so the report on stdout stays parseable. CI verifies this
+                # evidence instead of measuring its own; unpushed, it proves nothing.
+                print(f"Commit the signed evidence under {destination} and push it; "
+                      "the CI gate verifies it rather than re-running the provider.",
+                      file=sys.stderr)
             return exit_code
     except EvalCaseError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)

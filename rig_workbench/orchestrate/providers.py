@@ -172,11 +172,18 @@ RIG_VER_PREFIX = ("Invoke the `rig` skill via the Skill tool and, as an independ
 
 # Enforce grader != generator one level beyond "separate process": verifier-role CLIs get
 # **read-only permission flags pinned via argv** (a mechanism, not a polite prompt request).
-# The verifier cannot write, so tampering with the product under review or sneaking in
-# self-fixes is structurally impossible.
+# The two flag sets are not equally strong, and the eval harness names that difference
+# (`ISOLATION_RANK` in `rig_workbench/eval/cases.py`): codex's `--sandbox read-only` is
+# `os-enforced` — the operating system refuses the write, whatever the agent decides —
+# while a Claude tool allowlist is `agent-policy`: the agent refuses the write in-process,
+# and nothing outside that process stops one that gets past it. Both deny writes; only one
+# is enforced by something other than the program under review. (These are the mechanism
+# classes. The levels in `eval/cases.py` were measured against the eval adapter's argv,
+# which is stricter than this one — it also passes `--disallowedTools` and `--safe-mode` —
+# so nothing here claims this particular flag set was verified the same way.)
 _READONLY_ENFCE = {
-    "claude": ["--allowedTools", "Read,Grep,Glob"],   # headless tool allowlist
-    "codex":  ["--sandbox", "read-only"],              # codex exec sandbox
+    "claude": ["--allowedTools", "Read,Grep,Glob"],   # agent-policy: in-process allowlist
+    "codex":  ["--sandbox", "read-only"],              # os-enforced: codex exec sandbox
 }
 
 # The generator's counterpart problem (#331, discovered by a live #330 bench run):

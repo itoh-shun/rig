@@ -83,17 +83,49 @@ jobs:
       - name: Install rig with its declared dependencies (no optional extras)
         run: pip install -e .
 
+      # Ask git what the base branch's tip is now; do not take the payload's word
+      # for it. `github.event.pull_request.base.sha` is a snapshot of the base
+      # branch from when the event fired, and an author who opens the PR before a
+      # revert lands pins it there for the life of the PR. The damage is not only
+      # that the evidence ratchet then compares against the very measurement it
+      # exists to refuse — the diff is taken from `merge-base(base, head)`, so a
+      # head restored to the pinned commit's content drops the surface out of the
+      # diff entirely and the case is never selected. Nothing in this job runs.
+      #
+      # A push is the opposite case and must keep `github.event.before`: there,
+      # `origin/<branch>` *is* the commit being gated, so resolving the live tip
+      # would diff the push against itself and this job would be `noop` forever.
+      # `before` is the tip the push replaced, chosen by the server at push time
+      # and not something a branch can hold stale.
       - name: Resolve comparison base
         id: comparison
         env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           PUSH_BASE: ${{ github.event.before }}
         run: |
-          base="${PR_BASE:-$PUSH_BASE}"
-          if [ -z "$base" ]; then
-            echo "Cannot resolve prompt evaluation base." >&2
+          if [ -n "$BASE_REF" ]; then
+            # `fetch-depth: 0` fetches every branch, so the remote-tracking ref is
+            # normally already here. Re-fetching is the cheap guarantee that it
+            # is, and it also picks up whatever landed after this job started.
+            if ! git fetch --no-tags --quiet origin \
+                "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
+              echo "::warning::could not fetch ${BASE_REF}; falling back to the ref this checkout already has"
+            fi
+            base="$(git rev-parse --verify --quiet "refs/remotes/origin/${BASE_REF}^{commit}")" || base=
+          else
+            base="$PUSH_BASE"
+          fi
+          # Fail closed rather than fall back. Every fallback available here is a
+          # value the branch under review can influence, which is the hole this
+          # step was rewritten to close.
+          case "$base" in
+            "" | *[!0-9a-f]*) base= ;;
+          esac
+          if [ -z "$base" ] || [ "${#base}" -ne 40 ]; then
+            echo "Cannot resolve prompt evaluation base for ${BASE_REF:-push}." >&2
             exit 2
           fi
+          echo "Comparing against $base"
           echo "base=$base" >> "$GITHUB_OUTPUT"
 
       # Ratchet, not threshold. `--require-cases` fails every change that touches a
@@ -104,16 +136,40 @@ jobs:
       # regression (exit 1), and an unregistered surface kind still fails outright.
       - name: Structural affected-case coverage (free)
         run: |
+          # The report exists only on this command's stdout, and this shell runs with
+          # `-e`: a non-zero exit aborted the step at the redirect, so a *failing* run
+          # printed no report at all, and the `::error::` annotations below — which
+          # exist only for a failing run — could never execute. Capture the status,
+          # print the report, explain it, then fail with it.
+          set +e
           rig-wb eval affected --base "${{ steps.comparison.outputs.base }}" \
             --head HEAD --ratchet --json > /tmp/rig-affected.json
+          status=$?
+          set -e
           cat /tmp/rig-affected.json
           python3 - <<'PY'
           import json
-          report = json.load(open("/tmp/rig-affected.json"))
+          try:
+              report = json.load(open("/tmp/rig-affected.json"))
+          except (OSError, ValueError):
+              # The command died before it could write a report; its own exit status
+              # is still what decides this step.
+              print("::error::eval affected produced no readable report")
+              raise SystemExit(0)
           debt = report["coverage_debt"]
           if debt:
               print(f"::warning::prompt coverage debt: {len(debt)} surface(s) have no "
                     f"evaluation case yet — {', '.join(debt)}")
+          # The one refusal here whose remedy is not "write a case": the base branch
+          # already has one, and this branch forked from before it. Named, because
+          # "merge the base branch in and re-measure" is not something an exit code
+          # can say.
+          for line in report.get("coverage_stale") or []:
+              print(f"::error::the base branch already covers this surface — merge it "
+                    f"in and re-measure: {line}")
+          if report.get("coverage_base_unreadable"):
+              print("::error::the base branch's coverage could not be read, so the "
+                    "coverage ratchet could not be applied")
           # The registry is monotonic like the cases are. Widening it is the direction
           # the gate is meant to move and is only announced; narrowing it already
           # failed the command above, and is named here so the reason is in the log
@@ -124,6 +180,7 @@ jobs:
               print("::notice::prompt surface registry widened; the gate now sees more "
                     "than it did on the base commit")
           PY
+          exit "$status"
 
       - name: Untrusted or fork prompt quality handoff
         if: >-
@@ -143,9 +200,17 @@ jobs:
             exit 0
           fi
           echo "Prompt quality remains intentionally unmet for an untrusted/fork PR." >&2
-          echo "Maintainer: check out the PR head on an origin branch, then run: rig-wb eval affected-run --base ${{ steps.comparison.outputs.base }} --head HEAD --provider <trusted-provider> --model <model> --judge-provider <trusted-judge> --judge-model <judge-model>" >&2
+          echo "Maintainer: check out the PR head on an origin branch, then run: rig-wb eval affected-run --base ${{ steps.comparison.outputs.base }} --head HEAD --ratchet --provider <trusted-provider> --model <model> --judge-provider <trusted-judge> --judge-model <judge-model>" >&2
+          echo "Then commit the signed evidence written under evals/evidence/ and push it; this job verifies that evidence rather than measuring anything itself." >&2
           exit 1
 
+      # Verification, not measurement. This step used to drive `affected-run`,
+      # which starts the provider as an external binary — none is installed on the
+      # runner and none is authenticated there, so the step could not pass even
+      # with all five secrets set, and #402 was merged red on exactly that. The
+      # measurement is now a maintainer's, run locally against real providers and
+      # signed; CI recomputes the binding and checks the signature, which needs
+      # nothing but git and one key.
       - name: Trusted prompt quality evidence
         if: >-
           github.event_name == 'push' ||
@@ -166,34 +231,28 @@ jobs:
             echo "No affected evaluation case to run; quality gate is a no-op."
             exit 0
           fi
-          # Ratchet, same as the structural step above and for the same reason. A
-          # repository with no trusted lane cannot satisfy this by any configuration:
-          # the secrets are unset *and* this job installs only the Python package, so
-          # no provider executable exists on the runner to run a case with. Failing
-          # anyway made every prompt-surface change red with no action that could turn
-          # it green — which is exactly what `--require-cases` did before it became a
-          # ratchet, and it was merged past for the same reason.
-          #
-          # So: unmeasurable is debt, named in the log and in the run summary, exit 0.
-          # A repository that has the lane is still enforced, but by `affected-run`'s
-          # own exit code below rather than by a refusal here — this branch is the only
-          # thing that changed, and losing a configured lane shows up as the warning
-          # appearing where it never used to.
-          if [ -z "$RIG_EVAL_ATTESTATION_KEY" ] || [ -z "$RIG_EVAL_PROVIDER" ] || [ -z "$RIG_EVAL_MODEL" ] || [ -z "$RIG_EVAL_JUDGE_PROVIDER" ] || [ -z "$RIG_EVAL_JUDGE_MODEL" ]; then
-            # Case ids reach a `::warning::` line, where a newline would open a
-            # workflow command. They are repo-authored filenames rather than event
-            # data, and this step never runs for a fork — but "it cannot be hostile
-            # from here" is the assumption this whole change is about not making.
-            cases="$(python3 -c 'import json, re; r = json.load(open("/tmp/rig-affected.json")); print(", ".join(re.sub(r"[^A-Za-z0-9._-]", "?", c)[:80] for c in r["affected_cases"]))')"
-            echo "::warning::prompt quality unmeasured: $runnable affected case(s) were not run because this repository has no trusted evaluation lane (RIG_EVAL_* unset) — $cases"
-            {
-              echo "### Prompt quality: unmeasured"
-              echo ""
-              echo "\`$cases\` cover a prompt surface this change touched, and nothing ran them."
-              echo "Set the \`RIG_EVAL_*\` secrets and give the runner a provider executable to"
-              echo "turn this into a measurement; until then this is recorded debt, not evidence."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          # Fail closed on the key alone. Without it no signature can be checked,
+          # and a gate that shrugs when it cannot verify is not a gate. The four
+          # provider secrets are no longer required — nothing here runs a provider
+          # — but they still pin the evidence when they are set; unset, the case's
+          # own `provider_policy` and the standing ban on mock evidence apply.
+          if [ -z "$RIG_EVAL_ATTESTATION_KEY" ]; then
+            echo "Prompt quality evidence requires a trusted maintainer run. Fork authors: ask a maintainer to run 'rig-wb eval affected-run' with trusted provider and judge credentials and commit the signed evidence; missing evidence cannot pass." >&2
+            exit 1
+          fi
+          # Checked here as well as in the library, because this job hands the key
+          # to `rig-wb` as a *file* and the shape rule lives on the environment
+          # path. The repository is public and committed evidence publishes
+          # `key_id = sha256(key)[:16]`, so a memorable secret is an offline
+          # guessing oracle that ends in outright forgery by an outsider. The
+          # value is never echoed.
+          case "$RIG_EVAL_ATTESTATION_KEY" in
+            *[!0-9a-fA-F]*) shaped=no ;;
+            *) shaped=yes ;;
+          esac
+          if [ "$shaped" != yes ] || [ "${#RIG_EVAL_ATTESTATION_KEY}" -ne 64 ]; then
+            echo "RIG_EVAL_ATTESTATION_KEY must be 64 hex characters, as produced by 'openssl rand -hex 32'. Regenerate the secret and re-sign the evidence." >&2
+            exit 1
           fi
           state_dir="$(mktemp -d)"
           mkdir -p "$state_dir/rig"
@@ -202,7 +261,18 @@ jobs:
           chmod 600 "$state_dir/rig/eval-attestation.key"
           unset RIG_EVAL_ATTESTATION_KEY
           export XDG_STATE_HOME="$state_dir"
-          rig-wb eval affected-run --base "${{ steps.comparison.outputs.base }}" \
-            --head HEAD --provider "$RIG_EVAL_PROVIDER" --model "$RIG_EVAL_MODEL" \
-            --judge-provider "$RIG_EVAL_JUDGE_PROVIDER" \
-            --judge-model "$RIG_EVAL_JUDGE_MODEL"
+          # `if` rather than `[ ... ] && ...`: this shell runs with `-e`, where a
+          # false test is a failing command and would abort the step whenever an
+          # optional secret is unset.
+          # `--ratchet`, matching the structural step above. Strict here would fail
+          # any PR that touches one covered surface alongside any of the ~198 that
+          # have no case yet — `uncovered:<path>`, unfixable by evidence — so the
+          # two steps in this job would be enforcing opposite policies. The
+          # evidence checks are the same in either mode.
+          set -- eval gate --base "${{ steps.comparison.outputs.base }}" \
+            --head HEAD --evidence-dir evals/evidence --ratchet
+          if [ -n "$RIG_EVAL_PROVIDER" ]; then set -- "$@" --provider "$RIG_EVAL_PROVIDER"; fi
+          if [ -n "$RIG_EVAL_MODEL" ]; then set -- "$@" --model "$RIG_EVAL_MODEL"; fi
+          if [ -n "$RIG_EVAL_JUDGE_PROVIDER" ]; then set -- "$@" --judge-provider "$RIG_EVAL_JUDGE_PROVIDER"; fi
+          if [ -n "$RIG_EVAL_JUDGE_MODEL" ]; then set -- "$@" --judge-model "$RIG_EVAL_JUDGE_MODEL"; fi
+          rig-wb "$@"

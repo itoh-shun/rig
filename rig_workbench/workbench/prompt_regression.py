@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 
 from rig_workbench.eval.affected import REGISTRY_REL, _surface
+from rig_workbench.eval.affected_run import EVIDENCE_REL
 from rig_workbench.eval.cases import EvalCaseError
 from rig_workbench.eval.gate import evaluate_gate
 
@@ -24,6 +25,15 @@ def _judged(path: str) -> bool:
     for exactly the changes that are supposed to be fatal. CI does not have this
     hole — it runs the ratchet on every push — which is the same drift in a
     second place.
+
+    One refusal is CI's alone, deliberately. The base this sensor passes is the live
+    *merge base* rather than the base branch's tip, so the landing view collapses to
+    the working tree and `coverage_stale` is unreachable here: a branch behind on a
+    case that covers a surface it edits is green locally and red in CI. Handing it
+    the tip instead would turn a long-lived task red the moment somebody else's case
+    lands, on the one criterion `accept` refuses to override — a local gate nobody
+    can clear without performing the merge it is anticipating. The remedy CI names,
+    merging the base branch in and re-measuring, is the same either way.
     """
     return (_surface(path) is not None
             or path.startswith("evals/cases/") or path == REGISTRY_REL)
@@ -89,7 +99,11 @@ def apply_prompt_regression_sensor(root: pathlib.Path, task: dict, acc: dict) ->
         check["status"] = "failed"
         check["detail"] = f"machine eval gate infrastructure error: {exc}"
         return ["  prompt-regression sensor: failed"]
-    evidence_dir = repo / ".rig" / "evals" / "results"
+    # Where `affected-run` now leaves its signed evidence. It used to stage under
+    # `.rig/`, which is gitignored — fine while CI measured for itself, wrong once
+    # CI only verifies: evidence nobody can commit is evidence CI never sees, and
+    # this sensor would have kept passing on a local artifact the gate could not.
+    evidence_dir = repo / EVIDENCE_REL
     try:
         # Same direction CI drives (`eval affected --ratchet`). Strict mode failed
         # every change that touches a prompt surface while `evals/cases/` is empty

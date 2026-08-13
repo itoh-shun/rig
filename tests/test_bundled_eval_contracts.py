@@ -148,7 +148,7 @@ def test_contract_composition_alias_resolves_owned_and_rejects_unknown():
 def test_runner_selects_target_and_clean_expectations(monkeypatch, tmp_path):
     case = next(case for _id, _pack, _manifest, case in iter_cases()
                 if case["id"] == "scenario-vet-rejects-invention")
-    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "bundled-case-test-attestation-key-32-bytes")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "1d776f6f459f67015e71c96db3a62a7d0f115ce1e4c6a071210d593ba59c2593")
 
     def execute(**kwargs):
         return 0, fixture(case["id"], kwargs["kind"]), "", None
@@ -161,3 +161,61 @@ def test_runner_selects_target_and_clean_expectations(monkeypatch, tmp_path):
     assert all(row["outcome"] == "pass" for row in [*result["target"], *result["clean"]])
     assert {check["spec"] for check in result["target"][0]["checks"]} == set(case["target_expectations"])
     assert {check["spec"] for check in result["clean"][0]["checks"]} == set(case["clean_expectations"])
+
+
+def test_this_repositorys_own_prompt_surfaces_can_be_recorded_in_a_result(monkeypatch, tmp_path):
+    """The paths a real measurement here actually signs, not a synthetic map.
+
+    Every result records the whole surface set, so one unrecordable path makes
+    every case in the repository unmeasurable. That is what happened: the digest
+    keys were held to the rule for *values*, whose OpenAI-key pattern
+    `sk-[A-Za-z0-9_-]{8,}` matches inside
+    `skills/engine/facets/policies/risk-based-testing.md`. `run_case` refused it
+    after the providers had run and the result had been signed, one line before
+    the write. Synthetic fixtures could not see that — only this repository's own
+    paths could — so the map here comes from `git ls-tree`.
+    """
+    from rig_workbench.eval.affected import prompt_surface_digests
+
+    case = next(case for _id, _pack, _manifest, case in iter_cases()
+                if case["id"] == "scenario-vet-rejects-invention")
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "1d776f6f459f67015e71c96db3a62a7d0f115ce1e4c6a071210d593ba59c2593")
+    calls = []
+
+    def execute(**kwargs):
+        calls.append(kwargs["kind"])
+        return 0, fixture(case["id"], kwargs["kind"]), "", None
+
+    monkeypatch.setattr("rig_workbench.eval.runner._execute", execute)
+    surfaces = prompt_surface_digests(ROOT, "HEAD")
+    assert "skills/engine/facets/policies/risk-based-testing.md" in surfaces
+
+    path, result = run_case(
+        case, repo=ROOT, provider="codex", model="fixture-only", repeat=3,
+        phase="current", result_root=tmp_path, prompt_surface_digests=surfaces,
+    )
+    assert path.exists(), "the measurement must survive as far as the written file"
+    assert result["prompt_surface_digests"] == surfaces
+
+    # Still refused — and refused before a single provider call rather than after
+    # twelve of them, because nothing about an argument improves while they run.
+    calls.clear()
+    for key in ("evals/../../etc/passwd", "/etc/passwd", "~/keys.md", "a\u200bb.md"):
+        with pytest.raises(EvalCaseError, match="prompt surface digests"):
+            run_case(
+                case, repo=ROOT, provider="codex", model="fixture-only", repeat=3,
+                phase="current", result_root=tmp_path,
+                prompt_surface_digests={**surfaces, key: "0" * 40},
+            )
+    assert calls == []
+
+    # The detector is untouched — a key in a *value* is still caught, and this
+    # path still reads as one when asked the value question. Only the digest keys
+    # stopped asking it, which is why the two rules disagree here by design.
+    from rig_workbench.eval.safety import unsafe_path_reason, unsafe_text_reason
+
+    surface = "skills/engine/facets/policies/risk-based-testing.md"
+    assert unsafe_text_reason("sk-AbCdEf0123456789") == "secret-like value"
+    assert unsafe_path_reason("sk-AbCdEf0123456789") is None
+    assert unsafe_text_reason(surface) == "secret-like value"
+    assert unsafe_path_reason(surface) is None

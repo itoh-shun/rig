@@ -9,9 +9,22 @@ import re
 from typing import Any
 
 from .attestation import verify_result_attestation
-from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
-from .safety import unsafe_text_reason
+from .cases import (
+    ISOLATION_LEVELS,
+    EvalCaseError,
+    canonical_json,
+    evaluation_spec_hash,
+    isolation_floor_violations,
+    validate_case,
+)
+from .safety import unsafe_path_reason, unsafe_text_reason
 
+# 3 adds `prompt_surface_digests` and the two isolation levels. Bumped rather than
+# accepted as optional fields: a result written before them carries no content
+# binding and no account of what confined the run, and a refusal by version names
+# that, where the exact-field-set check would only say "schema fields are invalid".
+# Defined next to the validator and re-exported by `runner`, which writes it.
+RESULT_SCHEMA_VERSION = 3
 MAX_RESULT_AGE = dt.timedelta(days=30)
 FUTURE_TOLERANCE = dt.timedelta(minutes=5)
 
@@ -28,23 +41,28 @@ def validate_result(
     required = {
         "eval_result_schema_version", "case_id", "case_hash", "source_commit",
         "source_base_commit", "provider", "model", "executor_version", "phase",
+        "provider_isolation", "judge_isolation",
         "judge_provider", "judge_model", "judge_executor_version",
         "started_at", "elapsed_s", "repeat", "target", "clean", "judge", "summary",
         "execution_commit", "execution_base_commit", "execution_status",
         "execution_diff_sha256",
         "prompt_binding_sha256",
         "pack_tree_sha256",
+        "prompt_surface_digests",
         "result_sha256", "attestation",
     }
+    # Version before field set: a result from an older schema is missing fields this
+    # one requires, so the field check would report it as malformed and hide the only
+    # thing that is actually wrong with it — that it predates the current schema.
+    version = result.get("eval_result_schema_version")
+    if isinstance(version, bool) or version != RESULT_SCHEMA_VERSION:
+        raise EvalCaseError("unsupported eval_result_schema_version")
     unknown = set(result) - required
     missing = required - set(result)
     if unknown or missing:
         raise EvalCaseError("evaluation result schema fields are invalid")
     if verify_attestation and not verify_result_attestation(result):
         raise EvalCaseError("evaluation result attestation is invalid")
-    if (isinstance(result["eval_result_schema_version"], bool)
-            or result["eval_result_schema_version"] != 2):
-        raise EvalCaseError("unsupported eval_result_schema_version")
     for field in (
         "case_id", "provider", "model", "executor_version", "judge_provider",
         "judge_model", "judge_executor_version",
@@ -54,6 +72,9 @@ def validate_result(
             raise EvalCaseError(f"evaluation result {field} is invalid")
     if result["provider"] not in {"mock", "claude", "codex", "command"}:
         raise EvalCaseError("evaluation result provider is invalid")
+    for field in ("provider_isolation", "judge_isolation"):
+        if not isinstance(result[field], str) or result[field] not in ISOLATION_LEVELS:
+            raise EvalCaseError(f"evaluation result {field} is invalid")
     if (not isinstance(result["case_hash"], str)
             or not re.fullmatch(r"[0-9a-f]{64}", result["case_hash"])):
         raise EvalCaseError("evaluation result case_hash is invalid")
@@ -82,6 +103,21 @@ def validate_result(
             and (not isinstance(result["pack_tree_sha256"], str)
                  or not re.fullmatch(r"[0-9a-f]{64}", result["pack_tree_sha256"]))):
         raise EvalCaseError("evaluation result pack_tree_sha256 is invalid")
+    digests = result["prompt_surface_digests"]
+    if digests is not None:
+        # Object ids, so both git hash algorithms are legal widths. `None` is the
+        # shape a result measured outside a repository takes; the gate refuses it
+        # on its own, because there the map is the binding rather than a detail.
+        # The keys are paths, so they are held to the path rule: escapes out of
+        # the tree still refused, secret-value scanning dropped — it can only ever
+        # be wrong about a filename `git ls-tree` handed us.
+        if not isinstance(digests, dict) or any(
+            not isinstance(path, str) or not path or unsafe_path_reason(path)
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", digest)
+            for path, digest in digests.items()
+        ):
+            raise EvalCaseError("evaluation result prompt_surface_digests is invalid")
     if not isinstance(result["phase"], str) or result["phase"] not in {"baseline", "current"}:
         raise EvalCaseError("evaluation result phase is invalid")
     if (isinstance(result["elapsed_s"], bool)
@@ -226,7 +262,7 @@ def compare_results(
         raise EvalCaseError("comparison requires baseline and current phases")
     for field in (
         "case_id", "case_hash", "source_commit", "source_base_commit", "provider", "model",
-        "executor_version",
+        "executor_version", "provider_isolation", "judge_isolation",
         "judge_provider", "judge_model", "judge_executor_version",
     ):
         if baseline[field] != current[field]:
@@ -248,6 +284,8 @@ def compare_results(
         raise EvalCaseError("evaluation result violates judge provider policy")
     if policy.get("judge_models") and baseline["judge_model"] not in policy["judge_models"]:
         raise EvalCaseError("evaluation result violates judge model policy")
+    if isolation_floor_violations(policy, baseline):
+        raise EvalCaseError("evaluation result violates isolation policy")
     if baseline["repeat"] != case["repeat"] or current["repeat"] != case["repeat"]:
         raise EvalCaseError("evaluation result repeat does not match case repeat")
     if baseline["judge_provider"] == "mock" or current["judge_provider"] == "mock":
