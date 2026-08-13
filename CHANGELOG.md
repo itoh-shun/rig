@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+**A new dependency version is not automatically a trusted one.** `event-stream`,
+`ua-parser-js`, `xz-utils` and the 2024-2025 npm worm campaigns share the same
+shape: a package reviewers already trusted ships a version nobody actually looked
+at, and the compromise rides in on the next `npm install`/`pip install`. rig's
+acceptance gate had sensors for secrets, destructive commands, prompt-injection
+markers and gate tampering in the diff, but nothing looked at *what a diff adds to
+a dependency tree*.
+
+`rig_workbench/workbench/dependency_gate.py` adds that sensor, backing a new
+opt-in criterion `no_unvetted_dependency_update`. For every npm/pip/cargo
+manifest a task's diff adds or changes (`package-lock.json`, `requirements*.txt`,
+`Cargo.lock`), it diffs the parsed dependency set against the base commit and
+evaluates every newly-added or version-bumped package: whether the npm lockfile
+records an install-time lifecycle script (`hasInstallScript`, free — no network),
+whether the resolved version was published within a review-cooldown window
+(default 72h, `RIG_DEP_GATE_COOLDOWN_HOURS`), and whether it matches an open
+OSV.dev advisory. A confirmed OSV malicious-package match (`MAL-` id or alias) is
+fail-grade, matching the sensors' existing "unambiguous blocks" convention;
+everything else is warning-grade — a fresh release from a known maintainer is
+routine, not a verdict.
+
+Unlike the diff/secret/injection sensors, this one makes real network calls (a
+package registry, OSV.dev), so it follows `evidence_anchors_resolve`'s precedent
+rather than `no_injection_markers`'s: it ships in no `GATE_PRESETS` entry, and a
+project opts in through `.rig/gates.json` `extra_criteria`. `RIG_DEP_GATE_OFFLINE=1`
+skips both network signals outright (the install-script check keeps working, since
+it costs nothing); any single registry/OSV request that fails degrades to
+"could not verify this one" rather than a finding or a crash — a network-restricted
+CI runner must still be able to `gate`. Manual CLI: `workbench.py scan-dependencies
+[paths...] | --diff <task-id>`.
+
 **The prompt quality gate could not pass, and adding the missing secrets would not
 have fixed it.** `validate.yml`'s "Trusted prompt quality evidence" step ran
 `rig-wb eval affected-run`, which starts the provider as an external binary. The

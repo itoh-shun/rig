@@ -13,6 +13,7 @@ from .anchors import apply_anchor_sensor
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
                      VALID_STEP_STATUS, VALID_VERDICT)
 from .capabilities import resolve_task_route
+from .dependency_gate import apply_dependency_sensor
 from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
@@ -323,6 +324,13 @@ def cmd_gate(args: argparse.Namespace) -> None:
             # criterion is in no preset, only in `.rig/gates.json` extra_criteria —
             # so this is a no-op on a default gate.
             sensor_notes += apply_anchor_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # Dependency-acceptance-gate sensor: install-script/fresh-release/
+            # known-vulnerability signals on npm/pip/cargo manifest changes in the
+            # diff. Malicious-package (OSV "MAL-") matches are fail-grade, the rest
+            # warning-grade. Opt-in, like the anchor sensor above — it makes real
+            # network calls, so the criterion is in no preset, only in
+            # `.rig/gates.json` extra_criteria.
+            sensor_notes += apply_dependency_sensor(root, d, task, acc, explicit_set=explicit_set)
             sensor_notes += apply_prompt_regression_sensor(root, task, acc)
 
         acc["status"] = gate_status(acc)

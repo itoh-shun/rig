@@ -37,6 +37,7 @@ from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
 from .context_report import cmd_context
+from .dependency_gate import cmd_scan_dependencies
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
@@ -232,6 +233,17 @@ def main() -> None:
     p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")
     p.add_argument("--diff", metavar="TASK_ID", help="scan only the task worktree's diff vs its base commit")
     p.set_defaults(func=cmd_scan_destructive)
+
+    p = sub.add_parser("scan-dependencies", help="dependency-acceptance-gate scan over npm/pip/cargo "
+                       "manifest changes (machine backing for the opt-in no_unvetted_dependency_update; "
+                       "known-malicious-package OSV matches are fail-grade, install-script/fresh-release/"
+                       "known-vulnerability signals warning-grade — makes real network calls unless "
+                       "RIG_DEP_GATE_OFFLINE=1)")
+    p.add_argument("paths", nargs="*", help="manifest/lockfiles or directories to scan "
+                   "(default: current directory); every dependency found is treated as newly introduced")
+    p.add_argument("--diff", metavar="TASK_ID",
+                   help="scan only the dependencies the task worktree's diff adds or bumps vs its base commit")
+    p.set_defaults(func=cmd_scan_dependencies)
 
     p = sub.add_parser("digest", help="periodic telemetry digest in Markdown (runs / gates / force-accepts / rubber-stamps / drills)")
     p.add_argument("--period", choices=("week", "month"), default="week",
