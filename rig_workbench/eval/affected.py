@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import io
 import json
 import pathlib
 import re
 import subprocess
-import tarfile
 import tempfile
 from typing import Any
 
@@ -287,50 +285,121 @@ def _graph(
         return {}, []
 
 
+def _graphable(path: str) -> bool:
+    """Whether `_graph`'s adapter would turn `path` into a node.
+
+    Deliberately the adapter's own predicate rather than `_surface`'s, which is
+    wider: the registry also calls `skills/engine/SKILL.md` a surface (a flat
+    root) and anything under `skills/engine/facets/` an `unknown` one, and the
+    adapter walks `_SURFACE_PREFIXES` only. Counting what the registry sees while
+    asking the adapter to produce nodes made "this tree has surfaces and yielded
+    no nodes" — the unreadability sentinel — fire on a tree that is simply an
+    engine document with no bricks under it, which no author could then fix.
+    """
+    if pathlib.PurePosixPath(path).suffix not in _KNOWN_SUFFIXES:
+        return False
+    return any(path.startswith(prefix) for prefix, _kind in _SURFACE_PREFIXES)
+
+
+# `git ls-tree` reports a symlink as a *blob* too, at mode 120000, so a filter on
+# the object type is not a filter on "a file whose bytes are a prompt". Gitlinks
+# (160000) and trees (040000) are excluded by the same list.
+_REGULAR_FILE_MODES = frozenset({"100644", "100755"})
+
+
 def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -> int | None:
-    """Write `revision`'s prompt surfaces into `destination`; count them, or None.
+    """Write `revision`'s graphable prompt surfaces into `destination`; count them.
 
     `_graph` reads frontmatter off the filesystem, so answering "what did the
     graph look like at that commit" means putting that commit's surfaces on a
-    filesystem. One `git archive` of the whole tree rather than a `git show` per
-    file: the per-file form costs a process per surface per revision — measured at
-    0.73s for 200 files against 0.013s for the archive — and the whole tree is
-    asked for because `git archive` treats a pathspec that matches nothing as
-    fatal, which every fixture repo with only `skills/engine/` in it would be.
+    filesystem. `git ls-tree -r` to name them and one `git cat-file --batch` to
+    read them, which is what `prompt_surface_digests` and `_coverage_at` already
+    do — and the reason they do is not only cost.
 
-    Members are filtered here rather than handed to `tar` wholesale: only regular
-    files, only paths the registry calls a surface, and no path that climbs out of
-    the destination. That is the same stance `prompt_surface_digests` takes when it
-    skips anything that is not a blob — a symlink or a gitlink in the tree is not a
-    prompt this analysis can read, and it is not going to be followed to find out.
+    `git archive` is not a faithful read of a tree. It applies that tree's own
+    `.gitattributes`, so a path marked `export-ignore` is *absent from the
+    output*, and `export-subst` rewrites the bytes of the ones that remain. Both
+    are one line in a file that is under no registered surface prefix and is not
+    the registry, so a PR adding it reports `noop` and merges through ordinary
+    review — after which every branch's base-tip and fork-point graph silently
+    shrinks and the landing view stops noticing indirect coverage at all. The
+    same line in `$GIT_DIR/info/attributes` does it with nothing in any tree or
+    any diff. `git archive` has no flag that turns this off for a tree-ish read
+    (`--worktree-attributes` reads the *worktree's* attributes, which is worse).
+    Naming the object ids `ls-tree` reports and asking `cat-file` for those bytes
+    is not a rendering of the tree; it is the tree.
+
+    Entries are filtered here rather than written wholesale: only regular files
+    (`ls-tree` calls a symlink a blob as well), only paths `_graph`'s adapter
+    would make a node of, and no path that climbs out of the destination. A blob
+    the batch cannot produce — a blobless clone answers `missing` — is None, not
+    a skip: skipping is precisely the shrunken graph this function exists to stop
+    being possible.
     """
     try:
-        completed = subprocess.run(
-            ["git", "archive", "--format=tar", revision], cwd=root,
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "-z", revision, "--"], cwd=root,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+    wanted: list[tuple[str, str]] = []
+    for entry in listing.stdout.split("\0"):
+        if not entry or "\t" not in entry:
+            continue
+        metadata, path = entry.split("\t", 1)
+        fields = metadata.split(" ")
+        if len(fields) != 3 or fields[0] not in _REGULAR_FILE_MODES:
+            continue
+        if not _graphable(path):
+            continue
+        parts = pathlib.PurePosixPath(path).parts
+        if not parts or ".." in parts or parts[0] in {"/", ""}:
+            continue
+        wanted.append((fields[2], path))
+    if not wanted:
+        return 0
+    try:
+        batch = subprocess.run(
+            ["git", "cat-file", "--batch"], cwd=root,
+            input="".join(f"{oid}\n" for oid, _ in wanted).encode("ascii"),
             capture_output=True, timeout=30, shell=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if completed.returncode != 0:
+    if batch.returncode != 0:
         return None
+    # `<oid> SP <type> SP <size> LF <contents> LF`, one record per request line and
+    # in request order. Parsed as bytes throughout: the size is a byte count, and
+    # decoding the stream to text to find the headers would misalign every record
+    # after the first surface containing a non-ASCII character.
+    stream = batch.stdout
+    offset = 0
     written = 0
-    try:
-        with tarfile.open(fileobj=io.BytesIO(completed.stdout), mode="r:") as archive:
-            for member in archive:
-                if not member.isfile() or _surface(member.name) is None:
-                    continue
-                parts = pathlib.PurePosixPath(member.name).parts
-                if not parts or ".." in parts or parts[0] in {"/", ""}:
-                    continue
-                extracted = archive.extractfile(member)
-                if extracted is None:
-                    continue
-                target = destination.joinpath(*parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(extracted.read())
-                written += 1
-    except (OSError, tarfile.TarError, ValueError):
-        return None
+    for oid, path in wanted:
+        end = stream.find(b"\n", offset)
+        if end < 0:
+            return None
+        header = stream[offset:end].split(b" ")
+        if len(header) != 3 or header[0] != oid.encode("ascii") or header[1] != b"blob":
+            return None                     # `missing`, a wrong type, a short stream
+        try:
+            size = int(header[2])
+        except ValueError:
+            return None
+        if size < 0 or end + 1 + size > len(stream):
+            return None
+        target = destination.joinpath(*pathlib.PurePosixPath(path).parts)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(stream[end + 1:end + 1 + size])
+        except OSError:
+            return None
+        offset = end + 1 + size + 1         # the LF git writes after the contents
+        written += 1
     return written
 
 
@@ -343,6 +412,9 @@ def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[
     exists to close. `_graph`'s fixture adapter answers a tree it cannot parse with
     `({}, [])`, so a tree that has surfaces in it and yielded no nodes is that
     silence, not an answer.
+
+    "Has surfaces in it" is counted by `_surfaces_at` with the adapter's own
+    predicate, so the two halves of that sentence are about the same set of files.
     """
     with tempfile.TemporaryDirectory(prefix="rig-eval-graph-") as directory:
         tree = pathlib.Path(directory)
@@ -372,10 +444,14 @@ def _landing_graph(
     restoring the reference the branch never touched.
 
     Same three-way reading as the case set, at the granularity of a single edge:
-    `head | (base - fork)`. Edges rather than reachability, deliberately — merging
-    "which recipes reach this surface" per surface would lose the case where the
-    branch removes one reference while the base branch adds a different one to the
-    same pair, and read the sum as unchanged. And the same monotone half as
+    `head | (base - fork)`. Edges rather than reachability, because reachability is
+    derived and the merge is not distributive over deriving it: "recipe R reaches
+    surface S" in the base tree can rest on a chain whose middle link the branch
+    replaced, and unioning the three trees' answers per surface asserts a reach no
+    tree has. Merging the relation and walking the result walks a graph that at
+    least corresponds to a tree — the one the merge produces. (Two references from
+    the same recipe to the same surface are one edge either way; the granularity
+    buys nothing there and is not claimed to.) And the same monotone half as
     `_landing_coverage`: an edge the base branch *deleted* is not subtracted, so
     coverage can be over-approximated and never under-approximated. Over-approxi-
     mation here can only make `landing_covered` true, which is `coverage_stale` and
@@ -840,11 +916,16 @@ def analyze_affected(
     # half a fix: the case set says which cases exist, the graph says which surfaces
     # they reach, and reading the second one off the branch judges the merge by the
     # branch's wiring. Gated on `ratchet` like the coverage read above — strict mode
-    # keeps its exact old meaning, and neither mode pays for two `git archive`s it
-    # would not consult.
+    # keeps its exact old meaning — and on there being a surface to ask about: the
+    # graph is consulted only through `_reachable_recipes(…, surfaces)`, so with no
+    # affected surface there is nothing for it to answer and `recipes` is empty for
+    # the same reason. Reading it anyway made a `noop` change fatal on the strength
+    # of a question nobody asked, which is the one direction `coverage_unreadable`
+    # must not fire in.
+    needs_landing_graph = bool(ratchet and surfaces)
     landing_graph = (
         _landing_graph(head_graph, _graph_at(root, base), _graph_at(root, merge_base))
-        if ratchet else None
+        if needs_landing_graph else None
     )
     landing_by_surface = (_reachable_recipes(landing_graph, surfaces)
                           if landing_graph is not None else {})
@@ -914,7 +995,8 @@ def analyze_affected(
     # the fork point gone as the reference, this comparison is the only thing that
     # notices a branch forked from before a case existed. `_regressions` keeps the
     # softer stance for its own `None` because it is one guard among several.
-    coverage_unreadable = ratchet and (landing_coverage is None or landing_graph is None)
+    coverage_unreadable = ratchet and (
+        landing_coverage is None or (needs_landing_graph and landing_graph is None))
     regressions = (_regressions(base_coverage, landing_coverage)
                    if landing_coverage is not None else [])
     # The registry is monotonic too, in both modes. Widening what the gate can see

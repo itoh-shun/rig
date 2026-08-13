@@ -15,6 +15,7 @@ import copy
 import json
 import pathlib
 import subprocess
+import tempfile
 
 import pytest
 
@@ -338,7 +339,9 @@ WIRED = "---\nname: auth\nsteps:\n  - id: review\n    personas: [reviewer]\n---\
 RECIPE = "skills/engine/recipes/auth.md"
 
 
-def _wired_after_the_fork(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, str]:
+def _wired_after_the_fork(
+    tmp_path: pathlib.Path, *, attributes: str | None = None,
+) -> tuple[pathlib.Path, str, str]:
     """A covered recipe, and a persona it starts out not referencing.
 
     Returns the repo, the fork point — where the persona is reachable from no
@@ -346,6 +349,8 @@ def _wired_after_the_fork(tmp_path: pathlib.Path) -> tuple[pathlib.Path, str, st
     covering the recipe therefore covers the persona too.
     """
     repo, _root = _repo(tmp_path)
+    if attributes is not None:
+        _touch(repo, ".gitattributes", attributes)
     _touch(repo, RECIPE, UNWIRED)
     _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
     _write_case(repo, "auth-case", ["recipe:auth"])
@@ -500,6 +505,163 @@ def test_a_graph_the_reader_gave_up_on_is_not_a_base_that_wired_nothing(tmp_path
 
     report = analyze(repo, base, head=head, ratchet=True)
     assert report["coverage_base_unreadable"] is True, report
+
+
+# ── the graph is read off the tree, and `.gitattributes` does not get a vote ──
+EXPORT_IGNORE = "skills/engine/recipes/ export-ignore\n"
+EXPORT_SUBST = "skills/engine/recipes/*.md export-subst\n"
+# Same recipe, with the persona's name spelled through a substitution placeholder.
+# Read from the tree it is a literal; rendered by `git archive` under export-subst
+# it becomes the commit hash, and the edge points at a persona that never existed.
+SUBST_WIRED = ("---\nname: auth\nsteps:\n  - id: review\n"
+               "    personas: [\"reviewer$Format:%H$\"]\n---\n")
+
+
+@pytest.mark.parametrize("attributes", [EXPORT_IGNORE, EXPORT_SUBST])
+def test_gitattributes_cannot_take_the_base_branchs_wiring_out_of_view(tmp_path,
+                                                                      attributes):
+    """The bypass that reached this analysis through the *reader* rather than the tree.
+
+    Reading a revision with `git archive` renders it: the tree's own
+    `.gitattributes` decides what comes out, so `export-ignore` deletes whole
+    directories from the answer and `export-subst` rewrites the bytes of what
+    remains. Neither line is under a registered surface prefix and neither is the
+    registry, so the PR that adds one reports `noop` and merges through ordinary
+    review — and from then on every branch's base-tip and fork-point graph is
+    missing the same edges, `base - fork` is empty, and indirect coverage stops
+    being noticed at all, in silence.
+
+    Same fixture and same expected refusal as the test above with no
+    `.gitattributes` in it. That is the whole assertion: the file changes nothing.
+    """
+    repo, fork, base = _wired_after_the_fork(tmp_path, attributes=attributes)
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PERSONA, "---\nname: reviewer\nedited: yes\n---\n")
+    head = _commit(repo, "edit the persona only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PERSONA
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered", report
+    assert any(PERSONA in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+
+
+def test_the_revision_reader_returns_the_tree_rather_than_a_rendering_of_it(tmp_path):
+    """The invariant underneath both variants above, asserted directly.
+
+    Whatever `.gitattributes` says, the bytes this reads are the bytes in the tree
+    and the set of paths is the set in the tree. Stated as an equality against the
+    same repository without the file, so it holds for every attribute git grows,
+    not only the two with a test above.
+    """
+    from rig_workbench.eval.affected import _graph_at, _surfaces_at
+
+    def _at(name: str, **kwargs) -> pathlib.Path:
+        (tmp_path / name).mkdir()
+        repo = _wired_after_the_fork(tmp_path / name, **kwargs)[0]
+        _touch(repo, RECIPE, SUBST_WIRED)
+        _commit(repo, "spell the persona through a substitution")
+        return repo
+
+    for label, attributes in (("ignore", EXPORT_IGNORE), ("subst", EXPORT_SUBST)):
+        marked = _at(label, attributes=attributes)
+        expected = _graph_at(_at(f"plain-{label}"), "HEAD")
+        assert expected is not None and expected[1], expected
+        assert _graph_at(marked, "HEAD") == expected, label
+
+        with tempfile.TemporaryDirectory() as directory:
+            written = pathlib.Path(directory)
+            assert _surfaces_at(marked, "HEAD", written) == 2
+            blob = subprocess.run(["git", "cat-file", "blob", f"HEAD:{RECIPE}"],
+                                  cwd=marked, capture_output=True, check=True).stdout
+            assert (written / RECIPE).read_bytes() == blob, label
+
+        # Liveness: if git ever stops rendering, these fixtures stop proving anything.
+        archived = subprocess.run(["git", "archive", "--format=tar", "HEAD"],
+                                  cwd=marked, capture_output=True, check=True).stdout
+        assert blob not in archived, f"{label}: git no longer rewrites the archive"
+
+
+def test_a_blob_the_reader_cannot_produce_is_unreadable_rather_than_missing(tmp_path,
+                                                                            monkeypatch):
+    """The way the replacement reader could have reintroduced the same bug.
+
+    `git ls-tree` names an object in a blobless clone perfectly well; `cat-file`
+    then answers `missing`. Skipping that entry rebuilds the silently shrunken
+    graph through a different door, so it is the named fatal instead — the stance
+    `_coverage_at` already takes for exactly this clone.
+    """
+    from rig_workbench.eval import affected as module
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, WIRED)
+    _touch(repo, PERSONA, "---\nname: reviewer\n---\n")
+    head = _commit(repo, "a wired recipe")
+    assert module._graph_at(repo, head) is not None
+
+    real = subprocess.run
+
+    def blobless(args, **kwargs):
+        if args[:2] == ["git", "cat-file"]:
+            oid = kwargs["input"].decode("ascii").split("\n", 1)[0]
+            return subprocess.CompletedProcess(args, 0, f"{oid} missing\n".encode(), b"")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(module.subprocess, "run", blobless)
+    assert module._graph_at(repo, head) is None
+
+
+def test_a_symlink_at_a_surface_path_is_not_a_prompt_this_reads(tmp_path):
+    """`ls-tree` calls a symlink a blob, so the filter is on the mode, not the type."""
+    from rig_workbench.eval.affected import _surfaces_at
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, WIRED)
+    (repo / "skills" / "engine" / "recipes" / "escape.md").symlink_to("/etc/passwd")
+    head = _commit(repo, "a recipe and a symlink wearing a recipe's name")
+    assert _git(repo, "ls-tree", "-r", head).count("120000") == 1, "no symlink committed"
+
+    with tempfile.TemporaryDirectory() as directory:
+        written = pathlib.Path(directory)
+        assert _surfaces_at(repo, head, written) == 1
+        assert [path.name for path in written.rglob("*") if not path.is_dir()] == \
+            ["auth.md"]
+        assert not any(path.is_symlink() for path in written.rglob("*"))
+
+
+def test_an_engine_document_with_no_bricks_under_it_is_not_an_unreadable_graph(tmp_path):
+    """The unreadability sentinel counts what the graph reader can use, not what the
+    registry can see.
+
+    `skills/engine/SKILL.md` is a prompt surface and is not a brick: the registry
+    calls it one through a flat root, and the graph's adapter — which walks the
+    recursive roots — makes no node of it. Counting the first while asking for the
+    second reported a tree that has only engine prose in it as unreadable, which is
+    a fatal with no action an author could take to clear it.
+    """
+    from rig_workbench.eval.affected import _graph_at, _surface
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, "skills/engine/SKILL.md", "the engine's own prose\n")
+    head = _commit(repo, "engine prose and nothing else")
+    assert _surface("skills/engine/SKILL.md") is not None, "still a registered surface"
+    assert _graph_at(repo, head) == ({}, [])
+
+
+def test_a_change_touching_no_surface_stays_noop_when_the_graph_is_unreadable(
+    tmp_path, monkeypatch,
+):
+    """The graph is consulted only about affected surfaces, so with none of them it
+    is not consulted — and an unreadable one is not a verdict on a `noop` change."""
+    from rig_workbench.eval import affected as module
+
+    repo, base = _repo(tmp_path)
+    _touch(repo, "rig_workbench/whatever.py")
+    monkeypatch.setattr(module, "_graph_at", lambda *args, **kwargs: None)
+
+    report = analyze(repo, base, ratchet=True)
+    assert report["status"] == "noop", report
+    assert report["coverage_base_unreadable"] is False, report
 
 
 def test_a_registry_root_the_base_branch_added_after_the_fork_is_not_a_narrowing(tmp_path):
