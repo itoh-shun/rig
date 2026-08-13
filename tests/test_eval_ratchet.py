@@ -382,6 +382,53 @@ def test_a_reference_the_base_branch_added_after_the_fork_still_covers(tmp_path)
     assert report["coverage_debt"] == [] and report["coverage_regressions"] == []
 
 
+PATTERN = "skills/engine/patterns/checklist.md"
+GATE_WIRED = "---\nname: auth\nsteps:\n  - id: review\n    gate: checklist\n---\n"
+UNGATED = "---\nname: auth\nsteps:\n  - id: review\n    gate: \"—\"\n---\n"
+
+
+def test_a_gate_the_base_branch_added_after_the_fork_covers_like_any_reference(tmp_path):
+    """`gate:` is the second field that names a pattern, and it was not read.
+
+    Exactly the shape above with one word changed, and for a long time the two
+    words did not agree: `pattern:` made the surface stale, `gate:` reported debt
+    and merged green, so whether the ratchet held came down to which field the base
+    branch happened to wire through. 23 of this repository's recipes use `gate:`.
+    """
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, UNGATED)
+    _touch(repo, PATTERN, "---\nname: checklist\n---\n")
+    _write_case(repo, "auth-case", ["recipe:auth"])
+    fork = _commit(repo, "a covered recipe, and a pattern nothing gates on")
+    _touch(repo, RECIPE, GATE_WIRED)
+    base = _commit(repo, "the base branch gates the step on the pattern")
+
+    _git(repo, "checkout", "-q", "-b", "evil", fork)
+    _touch(repo, PATTERN, "---\nname: checklist\nedited: yes\n---\n")
+    head = _commit(repo, "edit the pattern only")
+    assert _git(repo, "diff", "--name-only", fork, head) == PATTERN
+
+    report = analyze(repo, base, head=head, ratchet=True)
+    assert report["status"] == "uncovered", report
+    assert any(PATTERN in item and "auth-case" in item
+               for item in report["coverage_stale"]), report
+
+
+def test_the_placeholder_dash_a_gateless_step_carries_is_not_a_pattern(tmp_path):
+    """The reason the check is against the sentinel and not a plain truth test.
+
+    A step with no gate spells it as an em dash rather than omitting the key, so
+    `if step.get("gate")` grows an edge to `pattern:—` — a surface that does not
+    exist, charged to every recipe that has an ungated step.
+    """
+    from rig_workbench.eval.affected import _graph
+
+    repo, _root = _repo(tmp_path)
+    _touch(repo, RECIPE, UNGATED)
+    _touch(repo, PATTERN, "---\nname: checklist\n---\n")
+    assert [edge for edge in _graph(repo)[1] if edge["to"].startswith("pattern:")] == []
+
+
 def test_a_reference_this_branch_removes_is_not_added_back(tmp_path):
     """The direction the subtraction exists for.
 
@@ -466,6 +513,65 @@ def test_the_two_graph_readers_agree_once_ids_are_translated():
     _nodes, edges = _landing_graph(head, at_head, ({}, []))
     assert not [edge for edge in edges
                 if edge["from"] in renamed or edge["to"] in renamed], "untranslated ids"
+
+
+def test_the_revision_reader_sees_every_reference_a_recipe_makes():
+    """What the revision reader cannot see, measured the only way that can see it.
+
+    An edge the base branch adds and this reader does not model is coverage the
+    ratchet will not ask for, so "what is missing" is a claim the gate rests on —
+    and it has to be measured as a **difference of edge sets**, translated into one
+    spelling, which is the difference `_landing_graph` itself takes. Comparing
+    counts per kind cannot answer it: `recipe -> pattern` is reachable through two
+    frontmatter fields, the reader modelled one of them, and the duplicate edges it
+    emitted from the field it did read left it with *more* `recipe -> pattern` edges
+    than the core reader while missing 28 of the ones that mattered. A total hid a
+    hole; only the set showed it.
+
+    So the assertion is on the kinds present in that difference, and above all that
+    no reference a *recipe* makes is in it — a recipe is what a case binds, so an
+    unread field there is the ratchet not firing. Adding a step field to
+    `build_brick_graph` without adding it here fails this test.
+    """
+    from rig_workbench.eval.affected import _graph, _graph_at
+    from rig_workbench.orchestrate import config
+    from rig_workbench.orchestrate.graph import build_brick_graph
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    if subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root,
+                      capture_output=True).returncode != 0:
+        pytest.skip("not a git checkout")
+    if config.RIG_HOME.resolve() != root.resolve():
+        pytest.skip("this checkout is not the rig home, so both reads use one reader")
+
+    core = build_brick_graph(project=root, mode="core")
+    revision = _graph_at(root, "HEAD")
+    assert revision is not None
+    revision_nodes, revision_edges = revision
+    kind_of = {node["id"]: node["kind"] for node in revision_nodes.values()}
+    kind_of.update({node["id"]: node["kind"] for node in core["nodes"]})
+    # Same translation `_landing_graph` applies, and in the same direction.
+    id_at_path = {node["path"]: node["id"] for node in revision_nodes.values()}
+    path_of = {node["id"]: node["path"] for node in core["nodes"]}
+
+    def translated(node_id: str) -> str:
+        return id_at_path.get(path_of.get(node_id, ""), node_id)
+
+    missing = ({(translated(edge["from"]), translated(edge["to"]))
+                for edge in core["edges"]}
+               - {(edge["from"], edge["to"]) for edge in revision_edges})
+    assert missing, "the readers agree now — this test no longer proves anything"
+    assert {(kind_of.get(source, source.split(":", 1)[0]),
+             kind_of.get(target, target.split(":", 1)[0]))
+            for source, target in missing} == {
+        ("agent", "persona"), ("command", "instruction"), ("wiki", "wiki"),
+    }, sorted(missing)
+    assert not [edge for edge in missing if edge[0].startswith("recipe:")], \
+        "a reference a recipe makes is not modelled at the revision"
+    # And the wiring the fixtures above exercise is really there at scale.
+    assert len([edge for edge in revision_edges if edge["to"].startswith("pattern:")]) \
+        >= len([edge for edge in core["edges"] if edge["to"].startswith("pattern:")])
+    assert not [edge for edge in revision_edges if edge["to"] == "pattern:—"]
 
 
 def test_a_base_graph_that_cannot_be_read_is_named_rather_than_passed(tmp_path,

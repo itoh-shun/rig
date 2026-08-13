@@ -129,13 +129,22 @@ were never exposed, because they already used `ls-tree`. A blob the read cannot
 produce — `missing`, in a blobless clone — is the same named fatal as an unreadable
 tree, and not a skipped file.
 
-What the revision reading does *not* cover, stated rather than left to be
-discovered: the reader it uses for a revision models `recipe ->
-instruction/pattern/persona/policy/contract`, `recipe -> recipe` through `extends`
-and `persona -> wiki` through `inject`, and does not model `agent -> persona`,
-`command -> instruction` or `wiki -> wiki` at all (12, 23 and 8 edges in this
-repository). Coverage that reaches a surface only through one of those three is
-not ratcheted — such a change reads as `debt`, not `coverage_stale`.
+A `gate:` is a reference to a pattern, and the revision reader did not read that
+field — so a base branch that gated a step on a pattern wired coverage the ratchet
+could not see, and a branch editing only that pattern merged green while the
+identical branch wired through `pattern:` was refused. 23 recipes here use `gate:`.
+It is read now, with the same placeholder sentinel `build_brick_graph` uses, since
+an ungated step spells its gate as an em dash rather than omitting the key.
+
+That one was missed because it was looked for with the wrong instrument. Comparing
+the two readers by counting edges per kind showed a *surplus* of `recipe -> pattern`
+— duplicates from the field that was read outnumbered the 28 that were not — and a
+total cannot show which edges are absent. The comparison is a difference of edge
+sets now, and a test makes the answer to it a checked claim rather than a sentence:
+every reference a recipe makes is modelled at a revision, and what is not modelled
+is `agent -> persona`, `command -> instruction` and `wiki -> wiki`. Coverage that
+reaches a surface only through those three is not ratcheted — such a change reads
+as `debt`, not `coverage_stale`.
 
 On a push to the default branch none of this changes what happens, as long as
 `github.event.before` is an ancestor of what was pushed: the fork point is `before`

@@ -276,6 +276,17 @@ def _graph(
                         if step.get(field):
                             edges.append({"from": node["id"],
                                           "to": f"{kind}:{step[field]}"})
+                    # A gate is a pattern too, reached through a second field. Same
+                    # sentinel as `build_brick_graph`: a step with no gate spells it
+                    # as a placeholder dash, and a plain truth test grows an edge to
+                    # `pattern:—`. Missing this field made every gate in the
+                    # repository invisible to the revision reader — which is the
+                    # whole of the coverage a `gate:` earns — while `pattern:` on the
+                    # same step was seen, so whether the ratchet held came down to
+                    # which of two fields the wiring used.
+                    if step.get("gate") not in (None, "—", "-"):
+                        edges.append({"from": node["id"],
+                                      "to": f"pattern:{step['gate']}"})
                     for persona in step.get("personas") or []:
                         edges.append({"from": node["id"], "to": f"persona:{persona}"})
                     for policy in step.get("policies") or []:
@@ -504,16 +515,24 @@ def _landing_graph(
     Node ids are then translated into the branch's spelling by path, because that
     is what the reachability walk starts from.
 
-    **What this does not cover.** Cancelling is not the same as seeing, and three
-    kinds of reference are not modelled by the adapter at all — `agent -> persona`,
-    `command -> instruction`, and `wiki -> wiki`. The base branch adding one of
-    those is therefore not a `gained` edge and does not make the surface it reaches
-    stale. Every other kind the core reader has, the adapter has (`recipe ->
-    instruction/pattern/persona/policy/contract`, `recipe -> recipe` through
-    `extends`, `persona -> wiki` through `inject`), and reports at least as many of
-    them, which is the safe direction for a subtraction. So coverage that reaches a
-    surface only through one of the three is not ratcheted: editing a persona that
-    nothing but an agent references reads as `debt`, not `coverage_stale`.
+    **What this does not cover.** Cancelling is not the same as seeing. Every
+    reference a *recipe* makes is modelled at both revisions — that is the one that
+    has to be, because a recipe is what a case binds — and what is not is
+    `agent -> persona`, `command -> instruction` and `wiki -> wiki`. The base branch
+    adding one of those is not a `gained` edge, so coverage that reaches a surface
+    only that way is not ratcheted: editing a persona nothing but an agent
+    references reads as `debt`, not `coverage_stale`.
+
+    That list is checked rather than asserted, by
+    `test_the_revision_reader_sees_every_reference_a_recipe_makes`, and the check is
+    a difference of edge *sets* because a count cannot answer this question. A
+    `recipe -> pattern` edge is reachable through two frontmatter fields, `pattern:`
+    and `gate:`; this reader modelled only the first, and the duplicates it emitted
+    from that one left it holding *more* `recipe -> pattern` edges than the core
+    reader while missing every gate in the repository. Per-kind totals showed a
+    surplus. The set difference showed 28 missing edges, and the branch that wired
+    coverage through `gate:` merged green while the identical branch wiring through
+    `pattern:` was refused.
     """
     if base is None or fork is None:
         return None
