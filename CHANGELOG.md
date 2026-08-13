@@ -90,6 +90,32 @@ unpassable with the cause reported nowhere. And `RIG_EVAL_ATTESTATION_KEY` must 
 where a memorable passphrase is an offline guessing oracle ending in forgery by
 someone who never held the key.
 
+**The two ends of that key never held the same secret.** CI writes the 64-character
+secret into a key file; a maintainer's key file held the 32 raw bytes Rig had
+generated there. No secret is both, so `key_id` differed across the crossing and a
+measurement signed on a laptop came back from CI as `invalid_evidence` — the whole
+purpose of committing signed evidence, unusable, and unnoticed only because no
+evidence had yet been committed to travel the route. The shape rule is unchanged;
+what changed is that the hex is read as a notation for 32 bytes wherever it appears,
+so the environment variable, CI's key file and the maintainer's key file denote one
+key. A generated key file now holds that hex, which makes its contents the value to
+paste into the repository secret. Key files from earlier versions keep signing and
+need no regeneration: pair one with its hex spelling.
+
+**And no case in this repository could be measured at all, because one filename
+reads as a credential.** A result records a digest for every prompt surface, and
+the keys of that map — paths from `git ls-tree` — were held to the rule written for
+values, whose OpenAI-key pattern `sk-[A-Za-z0-9_-]{8,}` matches the
+`sk-based-testing` inside `ri|sk-based-testing`. One of 202 paths therefore made
+every measurement invalid, and it was judged after the providers had run twelve
+times and the result had been signed, one line before the write. Digest keys are
+now held to a path rule: escapes out of the tree, absolute and home-relative
+paths, `file:` URIs and control characters are refused exactly as before, and the
+secret-value scan — which can only ever be wrong about a public filename — is not
+consulted. The detector itself is unchanged everywhere it guards an actual value.
+The runner applies that rule to its argument before the first provider call rather
+than after the last, since nothing about an argument improves while they run.
+
 ## [2.5.0] - 2026-08-11
 
 **Review flows now speak before they finish exploring, and the orchestrator is held

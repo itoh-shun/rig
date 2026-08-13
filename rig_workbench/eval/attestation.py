@@ -14,12 +14,12 @@ import tempfile
 from .cases import EvalCaseError, canonical_json
 
 # A configured key must have the shape of machine-generated material, not merely
-# a length. `key_id = sha256(key)[:16]` used to live only in `.rig/`, which is
-# gitignored; signed evidence is committed now, so on a public repository the key
-# id is published with it and is a complete offline oracle for guessing the key.
-# Against a memorable 32-character passphrase — legal under the old length rule,
-# and only discouraged in prose — that turns "the maintainer measured this" into
-# something an outsider can forge outright, which is worse than any replay.
+# a length. `key_id = sha256(material)[:16]` used to live only in `.rig/`, which
+# is gitignored; signed evidence is committed now, so on a public repository the
+# key id is published with it and is a complete offline oracle for guessing the
+# key. Against a memorable 32-character passphrase — legal under the old length
+# rule, and only discouraged in prose — that turns "the maintainer measured this"
+# into something an outsider can forge outright, which is worse than any replay.
 # Randomness is not checkable, so the enforceable proxy is the form: 64 hex
 # characters, exactly what `openssl rand -hex 32` emits.
 _CONFIGURED_KEY = re.compile(r"[0-9a-fA-F]{64}")
@@ -29,6 +29,32 @@ def _key_path() -> pathlib.Path:
     state = os.environ.get("XDG_STATE_HOME")
     base = pathlib.Path(state) if state else pathlib.Path.home() / ".local" / "state"
     return base / "rig" / "eval-attestation.key"
+
+
+def _key_material(stored: bytes) -> bytes:
+    """The secret bytes that a stored representation stands for.
+
+    One key reaches this process by routes that cannot all carry the same shape.
+    A GitHub secret holds text, so the environment and the file CI writes from it
+    hold the 64 hex characters of `openssl rand -hex 32`; a key file Rig generated
+    before this held the 32 raw bytes those characters spell. Both are notations
+    for one secret, so both decode to it, and `key_id` is a property of the secret
+    rather than of how it was written down.
+
+    Reading the hex notation as its own bytes is what made a locally signed
+    measurement unverifiable in CI: no secret is simultaneously 32 raw bytes and
+    the 64 characters that spell them, so the two ends derived different key ids
+    from the same key and every signature crossing between them was refused. The
+    two notations are distinguishable by construction — 32 raw bytes are never 64
+    characters — so nothing here has to guess.
+    """
+    try:
+        text = stored.strip().decode("ascii")
+    except UnicodeDecodeError:
+        return stored
+    if _CONFIGURED_KEY.fullmatch(text):
+        return bytes.fromhex(text)
+    return stored
 
 
 def _read_file_key(path: pathlib.Path, *, create: bool) -> bytes:
@@ -46,7 +72,11 @@ def _read_file_key(path: pathlib.Path, *, create: bool) -> bytes:
             temporary = pathlib.Path(temporary_name)
             try:
                 os.fchmod(descriptor, 0o600)
-                key = secrets.token_bytes(32)
+                # Written in the hex notation a GitHub secret can hold, so the
+                # file's own contents are the value to paste into
+                # `RIG_EVAL_ATTESTATION_KEY` — the maintainer never has to convert
+                # anything to let CI verify what this key signs.
+                key = (secrets.token_hex(32) + "\n").encode("ascii")
                 os.write(descriptor, key)
                 os.fsync(descriptor)
                 os.close(descriptor)
@@ -61,7 +91,7 @@ def _read_file_key(path: pathlib.Path, *, create: bool) -> bytes:
         metadata = path.lstat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
             raise EvalCaseError("attestation key must be a regular 0600 file")
-        key = path.read_bytes()
+        key = _key_material(path.read_bytes())
     except EvalCaseError:
         raise
     except OSError as exc:
@@ -79,11 +109,12 @@ def _trusted_key(*, create: bool) -> bytes:
                 "configured attestation key is invalid: RIG_EVAL_ATTESTATION_KEY must "
                 "be 64 hex characters, as produced by `openssl rand -hex 32`"
             )
-        # Used as the literal ASCII bytes rather than decoded, because CI writes
-        # this same string into the key file and reads it back through
-        # `_read_file_key`; decoding on one path only would give the two ends
-        # different keys for the same secret.
-        return configured.encode("ascii")
+        # Decoded, like every other route into `_key_material`. CI writes this
+        # same string into a key file and reads it back through `_read_file_key`,
+        # and a maintainer's key file holds either these characters or the bytes
+        # they spell; one notation decoded and another not is exactly how the two
+        # ends stopped agreeing on `key_id`.
+        return _key_material(configured.encode("ascii"))
     return _read_file_key(_key_path(), create=create)
 
 
