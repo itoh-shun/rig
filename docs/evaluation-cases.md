@@ -152,6 +152,60 @@ cap, hashing, and secret redaction. Claude and Codex runs reuse the existing ben
 adapter. Their unavailable, timeout, and nonzero exits are infrastructure failures rather
 than evidence that product quality is red.
 
+### Isolation strength is recorded, never assumed
+
+Providers do not buy the same isolation, so every result records the level it actually ran
+under in `provider_isolation` and `judge_isolation`, both inside the signed payload:
+
+| level | meaning | who runs there |
+| --- | --- | --- |
+| `os-enforced` | the operating system refused writes | `codex exec --sandbox read-only` |
+| `agent-policy` | only the agent's own tool policy refused writes | `claude` |
+| `none` | no isolation was applied | `mock`, `command` |
+
+The Claude CLI has no OS-level sandbox. Rig runs it as `claude -p --safe-mode
+--no-session-persistence --strict-mcp-config --output-format text --tools Read,Glob,Grep
+--disallowedTools Write,Edit,NotebookEdit,Bash --model <model>`: a built-in tool allowlist
+without Write, Edit or Bash, the same tools denied a second time, and no local hooks,
+skills, MCP servers or `CLAUDE.md` in play, with the prompt on stdin only and the caller's
+`CLAUDECODE`/`CLAUDE_*` session variables stripped from the child (auth variables are kept).
+`--permission-mode plan` is not used: with writes denied it makes the CLI ask for the Write
+tool back instead of answering. As a judge the same argv adds `--json-schema`, because the
+CLI otherwise returns a fenced code block wrapped in prose, which is not parseable evidence;
+subject runs never get the schema. Requesting a tool set does not prove a closed one — a
+session tool outside the CLI's permission registry was still offered in measurement — so
+what is verified here is that writes are refused, not that nothing else is reachable. That is policy the agent applies to itself in process:
+nothing outside the process stops a write, and `Read` can still reach absolute paths outside
+the working directory. Hence `agent-policy`, and hence green from a Claude run is not
+interchangeable with green from a Codex run — the evidence says which one you have.
+
+Because that policy is the only thing refusing a write, the Claude adapter is not run in
+the repository. `eval run`, `eval reproduce`, and `eval affected-run` create a `0555`
+directory outside the worktree, run the adapter from there, and remove it when the run
+ends — the same device pack evaluation already uses. A write the policy failed to refuse
+then has to name an absolute path to land anywhere at all: a relative one is refused by
+the operating system rather than by the agent. The repository itself stays writable at the
+same uid, so this is a raised floor and not `os-enforced`; the recorded level does not
+change. Subject runs add `--add-dir <repo>`, because what a subject loses by moving out of
+the repository is not the ability to read it — `Read` reaches absolute paths anyway — but
+knowing where it is, and a case that says "リポジトリ直下の …" then has nothing to resolve
+against. Naming the repository as a second working directory restores that and grants no
+write tool. Judge runs get no `--add-dir`: a verdict is answered from the prompt alone.
+The Codex adapter does not move; it keeps `--sandbox read-only --cd <repo>`,
+which already denies writes from outside the process.
+
+A case that requires OS enforcement declares `provider_policy.min_isolation:
+"os-enforced"`; runs, comparisons, and gates then reject weaker subject or judge evidence.
+A result whose `judge_provider` is `none` ran no judge at all, so the floor does not apply
+to its `judge_isolation`: that field records an absent process, not an unisolated one, and
+a rubric-free case legitimately runs without a judge. Every approved case in this
+repository declares the floor, and a test asserts it: these cases read prompt surfaces out
+of the worktree they measure, so anything below OS enforcement would let a subject edit
+the material it is scored on. The key is syntactically optional, and omitting it accepts
+any level — tolerable only because the level is always recorded. Pack evaluation keeps the
+stricter bar unconditionally: durable, redistributed evidence still requires an OS-level
+read-only adapter.
+
 Semantic judging supports `mock`, `command`, `claude`, and `codex` through
 `--judge-provider` and `--judge-model`; command judges additionally require
 `--judge-command`. Judge commands use bounded output, secret rejection, a timeout, and
@@ -160,7 +214,8 @@ measured fails comparison.
 
 Results are canonical, versioned JSON under
 `.rig/evals/results/<case-id>/<run-id>.json`. Comparison requires matching case hash, source
-commit, provider, model, integrity hash, fresh timestamps, and a Git execution commit/base
+commit, provider, model, isolation level, integrity hash, fresh timestamps, and a Git
+execution commit/base
 identity. Non-Git evidence cannot be compared or promoted. A target improvement never hides
 a clean-control regression.
 
@@ -402,8 +457,8 @@ deterministic no-op. `--require-cases` makes a known prompt without a bound case
 hash, Git HEAD/base identity, provider policy, optional provider/model pin, repeat count,
 and green target, clean-control, and semantic-judge samples. Result attestations bind the
 actual judge adapter's provider, model, and executor version; mock judges are never quality
-evidence. Optional `provider_policy.models`, `judge_providers`, and `judge_models` pin these
-identities in the case hash. Exit codes are 0 for pass/no-op,
+evidence. Optional `provider_policy.models`, `judge_providers`, `judge_models`, and
+`min_isolation` pin these identities in the case hash. Exit codes are 0 for pass/no-op,
 1 for quality or coverage failure, and 2 for malformed/configuration/infrastructure evidence.
 The workbench adds `prompt_regression_passed` only when its task diff touches a registered
 prompt surface. That criterion is machine-owned: `workbench.py gate --set

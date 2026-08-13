@@ -14,7 +14,7 @@ from .cases import EvalCaseError, canonical_json, validate_case
 from .compare import compare_results, validate_result
 from .gate import evaluate_gate
 from .promote import promote_case
-from .runner import make_judge_adapter, run_case
+from .runner import adapter_cwd, make_judge_adapter, read_only_workspace, run_case
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -297,18 +297,22 @@ def cmd_eval(argv: list[str]) -> int:
                 raise EvalCaseError("mock judge reproduce is only a dev probe; pass --allow-mock")
             if bool(args.judge_provider) != bool(args.judge_model):
                 raise EvalCaseError("judge provider and model must be specified together")
-            judge_adapter = (
-                make_judge_adapter(
-                    provider=args.judge_provider, model=args.judge_model, repo=root,
-                    command=args.judge_command, timeout_s=args.judge_timeout,
-                ) if args.judge_provider else None
-            )
-            output, result = run_case(
-                cases[0], repo=root, provider=args.provider, model=args.model,
-                repeat=cases[0]["repeat"], phase="baseline",
-                command=args.provider_command, timeout_s=args.timeout,
-                judge_adapter=judge_adapter, execution_base=args.execution_base,
-            )
+            with read_only_workspace(root) as workspace:
+                judge_adapter = (
+                    make_judge_adapter(
+                        provider=args.judge_provider, model=args.judge_model,
+                        repo=adapter_cwd(args.judge_provider, workspace, root),
+                        command=args.judge_command, timeout_s=args.judge_timeout,
+                    ) if args.judge_provider else None
+                )
+                output, result = run_case(
+                    cases[0], repo=root, provider=args.provider, model=args.model,
+                    repeat=cases[0]["repeat"], phase="baseline",
+                    command=args.provider_command, timeout_s=args.timeout,
+                    judge_adapter=judge_adapter, execution_base=args.execution_base,
+                    execution_cwd=adapter_cwd(args.provider, workspace, root),
+                    readable_root=root,
+                )
             print(output)
             dev_probe_only = args.provider == "mock" or args.judge_provider == "mock"
             samples = [*result["target"], *result["clean"]]
@@ -335,21 +339,26 @@ def cmd_eval(argv: list[str]) -> int:
             cases = _resolve_cases(root, args.case_or_suite)
             if bool(args.judge_provider) != bool(args.judge_model):
                 raise EvalCaseError("judge provider and model must be specified together")
-            judge_adapter = (
-                make_judge_adapter(
-                    provider=args.judge_provider, model=args.judge_model, repo=root,
-                    command=args.judge_command, timeout_s=args.judge_timeout,
+            with read_only_workspace(root) as workspace:
+                judge_adapter = (
+                    make_judge_adapter(
+                        provider=args.judge_provider, model=args.judge_model,
+                        repo=adapter_cwd(args.judge_provider, workspace, root),
+                        command=args.judge_command, timeout_s=args.judge_timeout,
+                    )
+                    if args.judge_provider else None
                 )
-                if args.judge_provider else None
-            )
-            for case in cases:
-                output, _result = run_case(
-                    case, repo=root, provider=args.provider, model=args.model,
-                    repeat=args.repeat, phase=args.phase, command=args.provider_command,
-                    timeout_s=args.timeout, judge_adapter=judge_adapter,
-                    execution_base=args.execution_base,
-                )
-                print(output)
+                for case in cases:
+                    output, _result = run_case(
+                        case, repo=root, provider=args.provider, model=args.model,
+                        repeat=args.repeat, phase=args.phase,
+                        command=args.provider_command,
+                        timeout_s=args.timeout, judge_adapter=judge_adapter,
+                        execution_base=args.execution_base,
+                        execution_cwd=adapter_cwd(args.provider, workspace, root),
+                        readable_root=root,
+                    )
+                    print(output)
             return 0
         if args.command == "compare":
             root = _resolve_repo(args.repo)

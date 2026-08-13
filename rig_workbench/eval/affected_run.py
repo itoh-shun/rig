@@ -15,7 +15,7 @@ from .cases import EvalCaseError
 # because the gate now reads that path literally to decide what a measurement has
 # to beat: one writer and one ratchet, both naming the same constant.
 from .gate import EVIDENCE_REL, evaluate_gate
-from .runner import make_judge_adapter, run_case
+from .runner import adapter_cwd, make_judge_adapter, read_only_workspace, run_case
 
 
 def _rev_parse(root: pathlib.Path, revision: str) -> str:
@@ -144,43 +144,50 @@ def run_affected(
     destination = root / EVIDENCE_REL
     staging = pathlib.Path(tempfile.mkdtemp(prefix=".affected-run.", dir=staging_parent))
     try:
-        judge = make_judge_adapter(
-            provider=judge_provider, model=judge_model, repo=root,
-            command=judge_command, timeout_s=timeout_s,
-        )
         produced: dict[str, pathlib.Path] = {}
         # Taken once, at the commit every case is measured at, and signed into each
         # result: this is what lets the gate ask "has the prompt this was measured
         # against moved?" from content rather than from ancestry, and content is the
         # only form of that question a squash or rebase merge leaves answerable.
         digests = prompt_surface_digests(root, affected["resolved_head"])
-        for case_id in sorted(cases):
-            path, result = run_case(
-                cases[case_id], repo=root, provider=provider, model=model,
-                repeat=cases[case_id]["repeat"], phase="current",
-                command=provider_command, timeout_s=timeout_s, judge_adapter=judge,
-                execution_base=base, execution_head=affected["resolved_head"],
-                result_root=staging, prompt_surface_digests=digests,
+        with read_only_workspace(root) as workspace:
+            judge = make_judge_adapter(
+                provider=judge_provider, model=judge_model,
+                repo=adapter_cwd(judge_provider, workspace, root),
+                command=judge_command, timeout_s=timeout_s,
             )
-            produced[case_id] = path
-            if any(row["infra_status"] is not None
-                   for row in [*result["target"], *result["clean"]]):
-                return ({"eval_gate_schema_version": 1, "status": "infra_error",
-                         "base": base, "head": head,
-                         "resolved_head": affected["resolved_head"], "cases": sorted(cases),
-                         "failures": [f"provider_unavailable:{case_id}"]}, 2, None)
-            if any(row["judge"]["status"] == "error"
-                   for row in [*result["target"], *result["clean"]]):
-                return ({"eval_gate_schema_version": 1, "status": "infra_error",
-                         "base": base, "head": head,
-                         "resolved_head": affected["resolved_head"], "cases": sorted(cases),
-                         "failures": [f"judge_unavailable:{case_id}"]}, 2, None)
-            if any(row["outcome"] != "pass"
-                   for row in [*result["target"], *result["clean"]]):
-                return ({"eval_gate_schema_version": 1, "status": "failed",
-                         "base": base, "head": head,
-                         "resolved_head": affected["resolved_head"], "cases": sorted(cases),
-                         "failures": [f"quality_not_green:{case_id}"]}, 1, None)
+            for case_id in sorted(cases):
+                path, result = run_case(
+                    cases[case_id], repo=root, provider=provider, model=model,
+                    repeat=cases[case_id]["repeat"], phase="current",
+                    command=provider_command, timeout_s=timeout_s, judge_adapter=judge,
+                    execution_base=base, execution_head=affected["resolved_head"],
+                    result_root=staging, prompt_surface_digests=digests,
+                    execution_cwd=adapter_cwd(provider, workspace, root),
+                    readable_root=root,
+                )
+                produced[case_id] = path
+                if any(row["infra_status"] is not None
+                       for row in [*result["target"], *result["clean"]]):
+                    return ({"eval_gate_schema_version": 1, "status": "infra_error",
+                             "base": base, "head": head,
+                             "resolved_head": affected["resolved_head"],
+                             "cases": sorted(cases),
+                             "failures": [f"provider_unavailable:{case_id}"]}, 2, None)
+                if any(row["judge"]["status"] == "error"
+                       for row in [*result["target"], *result["clean"]]):
+                    return ({"eval_gate_schema_version": 1, "status": "infra_error",
+                             "base": base, "head": head,
+                             "resolved_head": affected["resolved_head"],
+                             "cases": sorted(cases),
+                             "failures": [f"judge_unavailable:{case_id}"]}, 2, None)
+                if any(row["outcome"] != "pass"
+                       for row in [*result["target"], *result["clean"]]):
+                    return ({"eval_gate_schema_version": 1, "status": "failed",
+                             "base": base, "head": head,
+                             "resolved_head": affected["resolved_head"],
+                             "cases": sorted(cases),
+                             "failures": [f"quality_not_green:{case_id}"]}, 1, None)
         report, code = evaluate_gate(
             root, base=base, head=head, evidence_dir=staging, provider=provider,
             model=model, judge_provider=judge_provider, judge_model=judge_model,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import pathlib
 
-from rig_workbench.eval.runner import make_judge_adapter, run_case
+from rig_workbench.eval.runner import make_judge_adapter, read_only_workspace, run_case
 from rig_workbench.eval.gate import quality_result_failures
 
 from .manifest import canonical, read_json_yaml
@@ -114,6 +114,8 @@ def test_pack(
     if provider == "command" or judge_provider == "command":
         raise PackError("pack evaluation forbids command subject and judge adapters")
     if provider == "claude" or judge_provider == "claude":
+        # Durable, redistributed evidence keeps the stricter bar: claude runs under
+        # agent-policy isolation, which the eval harness records but packs do not accept.
         raise PackError("pack evaluation requires an OS-level read-only adapter")
     if result_dir is None:
         raise PackError("pack quality evaluation requires caller-selected --result-dir")
@@ -123,29 +125,33 @@ def test_pack(
     if bool(judge_provider) != bool(judge_model):
         raise PackError("judge provider and judge model must be specified together")
     try:
-        adapter_cwd = result_root / ".read-only-workspace"
-        adapter_cwd.mkdir(parents=True, exist_ok=True)
-        adapter_cwd.chmod(0o555)
-        judge = make_judge_adapter(
-            provider=judge_provider, model=judge_model, repo=adapter_cwd,
-            command=judge_command, timeout_s=timeout,
-        ) if judge_provider and judge_model else None
-        results: list[dict] = []
-        result_paths: list[str] = []
-        for rel in case_paths:
-            _raw, case = read_json_yaml(pack / rel)
-            prompt = compose_case_prompt(pack, manifest, case, project=project_path)
-            binding = prompt_binding_sha256(manifest, case, prompt)
-            result_path, result = run_case(
-                case, repo=project_path, provider=provider, model=model,
-                repeat=case["repeat"], phase="current", command=command,
-                timeout_s=timeout, judge_adapter=judge, result_root=result_root,
-                prompt_prefix=prompt, execution_cwd=adapter_cwd,
-                prompt_binding_sha256=binding,
-                pack_tree_sha256=tree_hash(pack),
-            )
-            results.append(result)
-            result_paths.append(str(result_path))
+        # The same 0555 workspace the eval harness builds, cleanup and "not inside the
+        # measured tree" check included, rather than a second hand-rolled one. Unlike
+        # `eval`, pack evaluation runs *both* adapters from it and never routes through
+        # `adapter_cwd()`: `compose_case_prompt` makes the prompt self-contained, so
+        # neither the subject nor the judge needs the repository as a cwd, and giving
+        # codex `--cd <project>` back would hand it the tree it does not need to see.
+        with read_only_workspace(project_path) as workspace:
+            judge = make_judge_adapter(
+                provider=judge_provider, model=judge_model, repo=workspace,
+                command=judge_command, timeout_s=timeout,
+            ) if judge_provider and judge_model else None
+            results: list[dict] = []
+            result_paths: list[str] = []
+            for rel in case_paths:
+                _raw, case = read_json_yaml(pack / rel)
+                prompt = compose_case_prompt(pack, manifest, case, project=project_path)
+                binding = prompt_binding_sha256(manifest, case, prompt)
+                result_path, result = run_case(
+                    case, repo=project_path, provider=provider, model=model,
+                    repeat=case["repeat"], phase="current", command=command,
+                    timeout_s=timeout, judge_adapter=judge, result_root=result_root,
+                    prompt_prefix=prompt, execution_cwd=workspace,
+                    prompt_binding_sha256=binding,
+                    pack_tree_sha256=tree_hash(pack),
+                )
+                results.append(result)
+                result_paths.append(str(result_path))
     except PackError:
         raise
     except Exception as exc:

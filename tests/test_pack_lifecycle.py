@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import hashlib
 import json
@@ -526,9 +527,26 @@ def test_pack_test_structural_mock_and_provider_unavailable(tmp_path, monkeypatc
         )
     assert not marker.exists() and not rejected_results.exists()
     result_dir = tmp_path.parent / f"{tmp_path.name}-durable-results"
+    # The adapters run from the eval harness's own 0555 workspace — one implementation,
+    # externality check and cleanup included — and not from a second hand-rolled 0555
+    # directory left behind under the result dir.
+    from rig_workbench.packs import tester as pack_tester
+    opened_workspaces = []
+    real_read_only_workspace = pack_tester.read_only_workspace
+
+    @contextlib.contextmanager
+    def recording_workspace(root):
+        with real_read_only_workspace(root) as workspace:
+            opened_workspaces.append(workspace)
+            assert workspace.is_dir() and workspace.stat().st_mode & 0o222 == 0
+            yield workspace
+
+    monkeypatch.setattr(pack_tester, "read_only_workspace", recording_workspace)
     mock, code = test_pack(pack, project=tmp_path, provider="mock", model="fixture",
                            judge_provider="mock", judge_model="fixture",
                            result_dir=result_dir)
+    assert opened_workspaces and not any(item.exists() for item in opened_workspaces)
+    assert not (result_dir / ".read-only-workspace").exists()
     assert code == 0 and mock["status"] == "non_quality_mock"
     assert mock["result_paths"] and all(pathlib.Path(item).is_file()
                                         for item in mock["result_paths"])
@@ -550,6 +568,29 @@ def test_pack_test_structural_mock_and_provider_unavailable(tmp_path, monkeypatc
                                   result_dir=result_dir / "unavailable",
                                   allow_paid_provider=True)
     assert code == 2 and unavailable["status"] == "provider_unavailable"
+
+
+def test_pack_evaluation_refuses_the_claude_adapter_as_subject_or_judge(tmp_path):
+    """The last barrier: `eval` now accepts claude, pack evidence still does not.
+
+    Pack results are durable and redistributed, so they keep the stricter bar — claude
+    runs under `agent-policy` isolation, where the write is refused in-process rather
+    than by the operating system. Nothing else in `test_pack` rejects it.
+    """
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.tester import test_pack
+
+    pack = _write_pack(tmp_path / "source", "claude-refusal-pack", recipe=True)
+    result_dir = tmp_path.parent / f"{tmp_path.name}-claude-refused"
+    with pytest.raises(PackError, match="OS-level read-only adapter"):
+        test_pack(pack, project=tmp_path, provider="claude", model="fixture",
+                  result_dir=result_dir)
+    # Judge side as well: a claude verdict is the same evidence by another door.
+    with pytest.raises(PackError, match="OS-level read-only adapter"):
+        test_pack(pack, project=tmp_path, provider="mock", model="fixture",
+                  judge_provider="claude", judge_model="fixture",
+                  result_dir=result_dir)
+    assert not result_dir.exists()
 
 
 def test_import_results_validates_every_staged_file_and_is_atomic(

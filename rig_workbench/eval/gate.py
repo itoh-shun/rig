@@ -12,7 +12,13 @@ import subprocess
 from rig_workbench import __version__
 
 from .affected import analyze_affected
-from .cases import EvalCaseError, canonical_json, evaluation_spec_hash, validate_case
+from .cases import (
+    EvalCaseError,
+    canonical_json,
+    evaluation_spec_hash,
+    isolation_floor_violations,
+    validate_case,
+)
 from .compare import validate_result
 from .execution import execution_diff_sha256
 
@@ -194,6 +200,8 @@ def quality_result_failures(
         failures.append(f"judge_provider_policy:{case_id}")
     if policy.get("judge_models") and result["judge_model"] not in policy["judge_models"]:
         failures.append(f"judge_model_policy:{case_id}")
+    failures.extend(f"{field}_policy:{case_id}"
+                    for field in isolation_floor_violations(policy, result))
     if provider is not None and result["provider"] != provider:
         failures.append(f"provider_mismatch:{case_id}")
     if model is not None and result["model"] != model:
