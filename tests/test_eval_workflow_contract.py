@@ -164,6 +164,63 @@ def _run_step(script: pathlib.Path, cwd: pathlib.Path, output: pathlib.Path,
     return completed.returncode, output.read_text(encoding="utf-8").strip()
 
 
+def _coverage_step(root: pathlib.Path) -> str:
+    """The `run:` body of the structural coverage step, taken from the workflow."""
+    import yaml
+
+    document = yaml.safe_load(
+        (root / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
+    )
+    step = next(item for item in document["jobs"]["prompt-evaluation"]["steps"]
+                if str(item.get("name", "")).startswith("Structural affected-case"))
+    return step["run"]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the step is a bash script")
+def test_the_coverage_step_prints_its_report_and_annotations_when_it_fails(tmp_path):
+    """A failing run is the only run whose report anyone needs, and it printed none.
+
+    The report exists only on the command's stdout, redirected to a file, and the
+    step's shell runs with `-e`. A non-zero exit therefore aborted the step at the
+    redirect: no `cat`, and no `::error::` — every annotation here exists only for a
+    failing run, so the whole block was unreachable for the case it was written for.
+    That is invisible to a test that reads the workflow as text, which is why this
+    one runs the step against a stub that fails the way the ratchet fails.
+
+    The report path is the one literal this test rewrites, so two of these can run
+    at once; it is asserted before it is replaced, so the rewrite cannot quietly
+    stop applying.
+    """
+    root = pathlib.Path(__file__).resolve().parent.parent
+    body = _coverage_step(root)
+    assert "/tmp/rig-affected.json" in body
+    report_path = tmp_path / "affected.json"
+    body = body.replace("/tmp/rig-affected.json", str(report_path))
+    body = body.replace('${{ steps.comparison.outputs.base }}', "deadbeef")
+
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "rig-wb").write_text(
+        "#!/bin/sh\n"
+        'printf %s \'{"coverage_debt": [], "coverage_stale": ["p.md (covered on the '
+        'base branch by case:c, not by this change)"], "coverage_base_unreadable": '
+        'true, "registry_narrowings": [], "registry_changed": false}\'\n'
+        "exit 1\n", encoding="utf-8")
+    (stub / "rig-wb").chmod(0o755)
+    script = tmp_path / "step.sh"
+    script.write_text(body, encoding="utf-8")
+
+    completed = subprocess.run(
+        ["bash", "-e", str(script)], cwd=tmp_path, capture_output=True, text=True,
+        env={"PATH": f"{stub}{os.pathsep}{os.environ['PATH']}", "HOME": str(tmp_path)},
+    )
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    assert "coverage_stale" in completed.stdout, completed.stdout
+    assert "::error::" in completed.stdout, completed.stdout
+    assert "merge it in and re-measure" in completed.stdout, completed.stdout
+    assert "could not be read" in completed.stdout, completed.stdout
+
+
 @pytest.mark.skipif(shutil.which("bash") is None, reason="the step is a bash script")
 def test_the_base_resolution_step_finds_the_live_tip_in_an_actions_checkout(tmp_path):
     """Run the step verbatim against what `actions/checkout` actually leaves behind.
