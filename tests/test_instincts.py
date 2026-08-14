@@ -12,9 +12,12 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench.instincts import (_instinct_is_learnable,
+from rig_workbench.workbench.instincts import (_host_instincts_path,
+                                               _instinct_is_learnable,
                                                add_instinct, decay_instincts,
-                                               load_instincts,
+                                               demote_instinct, load_instincts,
+                                               load_host_instincts,
+                                               promote_instinct,
                                                select_for_injection)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -24,6 +27,20 @@ WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
 def run_cli(args, cwd):
     return subprocess.run([sys.executable, str(WORKBENCH), *args],
                           capture_output=True, text=True, cwd=cwd, timeout=60)
+
+
+@pytest.fixture(autouse=True)
+def isolated_host_tier(tmp_path, monkeypatch):
+    """Pin the host tier into the test's own tmp dir.
+
+    Without this, every test in this file reads — and `select_for_injection` writes —
+    the developer's real `~/.rig/instincts.jsonl`, so a single promoted instinct on
+    the machine running the suite would start changing assertions. `monkeypatch.setenv`
+    reaches the CLI subprocesses too, since they inherit `os.environ`.
+    """
+    host_home = tmp_path / "host-home"
+    monkeypatch.setenv("RIG_USER_HOME", str(host_home))
+    return host_home
 
 
 @pytest.fixture
@@ -226,3 +243,146 @@ def test_cli_decay_reports_count(git_repo):
     r = run_cli(["instincts", "--decay"], git_repo)
     assert r.returncode == 0
     assert "Decayed 1 instinct" in r.stdout
+
+
+# ---- host tier: promotion, injection order, undo (T9) ------------------------
+
+def test_promote_moves_the_record_out_of_the_project_tier(git_repo):
+    add_instinct(git_repo, "subagents sometimes return an idle notification instead of a result",
+                 "observed twice in one session", None, 0.85)
+    target = load_instincts(git_repo)[0]["id"]
+
+    promoted = promote_instinct(git_repo, target)
+
+    assert promoted["id"] == target
+    assert promoted["promoted_at"]
+    assert [r["id"] for r in load_host_instincts()] == [target]
+    assert load_instincts(git_repo) == []
+
+
+def test_promoted_instinct_is_injected_from_an_unrelated_repo(git_repo, tmp_path):
+    add_instinct(git_repo, "this machine has no jq; use python3 to read JSON",
+                 "jq missing", None, 0.9)
+    promote_instinct(git_repo, load_instincts(git_repo)[0]["id"])
+
+    other = tmp_path / "other-repo"
+    (other / ".rig").mkdir(parents=True)
+
+    selected, _ = select_for_injection(other)
+
+    assert [s["text"] for s in selected] == ["this machine has no jq; use python3 to read JSON"]
+
+
+def test_project_tier_wins_ties_against_the_host_tier(git_repo, tmp_path):
+    """Equal confidence must not let a promoted record displace a local one — the
+    tier is only a tie-break, so promotion widens reach without silently outranking
+    what the repo learned about itself."""
+    seed = tmp_path / "seed-repo"
+    (seed / ".rig").mkdir(parents=True)
+    add_instinct(seed, "host fact", "e", None, 0.9)
+    promote_instinct(seed, load_instincts(seed)[0]["id"])
+    add_instinct(git_repo, "project fact", "e", None, 0.9)
+
+    selected, _ = select_for_injection(git_repo)
+
+    assert [s["text"] for s in selected] == ["project fact", "host fact"]
+
+
+def test_promotion_does_not_shrink_the_budget_available_to_project_instincts(git_repo, tmp_path):
+    """The 500-char injection budget is the reason promotion is per-record. A host
+    instinct that loses on confidence must not consume budget a project one needs."""
+    seed = tmp_path / "seed-repo"
+    (seed / ".rig").mkdir(parents=True)
+    add_instinct(seed, "L" * 280, "e", None, 0.75)
+    promote_instinct(seed, load_instincts(seed)[0]["id"])
+    add_instinct(git_repo, "P" * 280, "e", None, 0.95)
+
+    selected, total = select_for_injection(git_repo)
+
+    assert [s["text"] for s in selected] == ["P" * 280]  # a second 280 would blow the 500 cap
+    assert total == 280
+
+
+def test_host_records_shadowed_by_a_project_id_survive_a_write_back(git_repo, tmp_path):
+    """`_load_tiered` hides a host record whose id already exists in the project tier.
+    Saving the host file after an injection must still write the hidden record back."""
+    seed = tmp_path / "seed-repo"
+    (seed / ".rig").mkdir(parents=True)
+    add_instinct(seed, "shadowed", "e", None, 0.9)
+    shadowed = load_instincts(seed)[0]["id"]
+    add_instinct(seed, "also promoted", "e", None, 0.95)
+    kept = [r for r in load_instincts(seed) if r["id"] != shadowed][0]["id"]
+    promote_instinct(seed, shadowed)
+    promote_instinct(seed, kept)
+    # give the project tier a record carrying the same id as the shadowed host one
+    project_copy = dict(load_host_instincts()[0], text="project copy")
+    (git_repo / ".rig").mkdir(parents=True, exist_ok=True)
+    (git_repo / ".rig" / "instincts.jsonl").write_text(
+        json.dumps(project_copy, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    select_for_injection(git_repo)
+
+    assert sorted(r["id"] for r in load_host_instincts()) == sorted([shadowed, kept])
+
+
+def test_demote_returns_the_record_to_the_current_repo(git_repo):
+    add_instinct(git_repo, "not actually a host fact", "e", None, 0.8)
+    target = load_instincts(git_repo)[0]["id"]
+    promote_instinct(git_repo, target)
+
+    demoted = demote_instinct(git_repo, target)
+
+    assert "promoted_at" not in demoted
+    assert [r["id"] for r in load_instincts(git_repo)] == [target]
+    assert load_host_instincts() == []
+
+
+def test_promote_rejects_an_unknown_id(git_repo):
+    with pytest.raises(KeyError):
+        promote_instinct(git_repo, "in-nosuchthing")
+
+
+def test_promote_rejects_a_record_already_in_the_host_tier(git_repo, tmp_path):
+    add_instinct(git_repo, "dupe", "e", None, 0.8)
+    target = load_instincts(git_repo)[0]["id"]
+    promote_instinct(git_repo, target)
+    # re-create the same id in the project tier, as a second repo might hold
+    (git_repo / ".rig" / "instincts.jsonl").write_text(
+        json.dumps(load_host_instincts()[0], ensure_ascii=False) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        promote_instinct(git_repo, target)
+
+
+def test_decay_reaches_the_host_tier(git_repo, tmp_path):
+    add_instinct(git_repo, "aging host fact", "e", None, 0.9)
+    promote_instinct(git_repo, load_instincts(git_repo)[0]["id"])
+    host_path = _host_instincts_path()
+    recs = [json.loads(ln) for ln in host_path.read_text(encoding="utf-8").splitlines()]
+    recs[0]["last_seen"] = (datetime.datetime.now().astimezone()
+                            - datetime.timedelta(days=40)).isoformat(timespec="seconds")
+    host_path.write_text(json.dumps(recs[0], ensure_ascii=False) + "\n", encoding="utf-8")
+
+    assert decay_instincts(git_repo) == 1
+    assert load_host_instincts()[0]["confidence"] < 0.9
+
+
+def test_cli_mute_reaches_a_promoted_instinct(git_repo):
+    run_cli(["instincts", "--add", "noisy host fact", "--confidence", "0.9"], git_repo)
+    target = load_instincts(git_repo)[0]["id"]
+    assert run_cli(["instincts", "--promote", target], git_repo).returncode == 0
+
+    r = run_cli(["instincts", "--mute", target], git_repo)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert load_host_instincts()[0]["status"] == "muted"
+
+
+def test_cli_promote_then_demote_round_trips(git_repo):
+    run_cli(["instincts", "--add", "round trip", "--confidence", "0.8"], git_repo)
+    target = load_instincts(git_repo)[0]["id"]
+
+    assert run_cli(["instincts", "--promote", target], git_repo).returncode == 0
+    assert load_instincts(git_repo) == []
+    assert run_cli(["instincts", "--demote", target], git_repo).returncode == 0
+    assert [r["id"] for r in load_instincts(git_repo)] == [target]

@@ -31,7 +31,8 @@ if not selected:
     raise SystemExit(0)
 
 lines = ['[rig instincts] Lightweight, unverified patterns learned from past sessions in '
-         'this repo (separate from facets/knowledge — treat as a hint, not verified fact):']
+         'this repo, plus any promoted to the host tier (separate from facets/knowledge — '
+         'treat as a hint, not verified fact):']
 lines += [f\"- {r['text']}\" for r in selected]
 
 print(json.dumps({

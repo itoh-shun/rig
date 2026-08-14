@@ -254,6 +254,12 @@ def main() -> None:
     p.add_argument("--supersedes", help="with --add: explicitly mute this id, replacing it with the new one")
     p.add_argument("--mute", metavar="ID", help="mute the given id (stops being injected)")
     p.add_argument("--expire", metavar="ID", help="set the given id to expired")
+    p.add_argument("--promote", metavar="ID",
+                   help="move the given id to the host tier (~/.rig/instincts.jsonl) so it is "
+                        "injected in every repo. For facts about the harness or the machine, "
+                        "not about this codebase — one record at a time, never a whole store")
+    p.add_argument("--demote", metavar="ID",
+                   help="move the given id back from the host tier into this repo (undoes --promote)")
     p.add_argument("--decay", action="store_true",
                    help=f"decay active instincts whose last_seen hasn't refreshed in {_INSTINCT_DECAY_DAYS}+ days")
     p.add_argument("--inject-preview", action="store_true",
