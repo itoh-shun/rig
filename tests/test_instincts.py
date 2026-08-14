@@ -31,12 +31,11 @@ def run_cli(args, cwd):
 
 @pytest.fixture(autouse=True)
 def isolated_host_tier(tmp_path, monkeypatch):
-    """Pin the host tier into the test's own tmp dir.
+    """Give each test its own host tier.
 
-    Without this, every test in this file reads — and `select_for_injection` writes —
-    the developer's real `~/.rig/instincts.jsonl`, so a single promoted instinct on
-    the machine running the suite would start changing assertions. `monkeypatch.setenv`
-    reaches the CLI subprocesses too, since they inherit `os.environ`.
+    conftest already keeps the suite off the developer's real `~/.rig/instincts.jsonl`;
+    this narrows it further to one directory per test, so two tests in this file cannot
+    see each other's promoted records. Subprocesses inherit it through os.environ.
     """
     host_home = tmp_path / "host-home"
     monkeypatch.setenv("RIG_USER_HOME", str(host_home))

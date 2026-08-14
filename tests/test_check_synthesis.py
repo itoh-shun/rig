@@ -46,7 +46,15 @@ Prose below the frontmatter, with a comment nobody wants reflowed.
 
 @pytest.fixture(autouse=True)
 def isolated_host_tier(tmp_path, monkeypatch):
-    monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "host-home"))
+    """Give each test its own host tier.
+
+    conftest already keeps the suite off the developer's real `~/.rig/instincts.jsonl`;
+    this narrows it further to one directory per test, so two tests in this file cannot
+    see each other's promoted records. Subprocesses inherit it through os.environ.
+    """
+    host_home = tmp_path / "host-home"
+    monkeypatch.setenv("RIG_USER_HOME", str(host_home))
+    return host_home
 
 
 @pytest.fixture

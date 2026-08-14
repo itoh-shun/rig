@@ -33,6 +33,15 @@ os.environ["RIG_SKIP_GH_CHECK"] = "1"
 # fixtures as work. Only the global mirror is redirected: RIG_RUNS_PATH is deliberately
 # left alone, because a test that runs the CLI in a tmp repo expects the per-project log
 # to land in that repo's .rig/, and pinning it here would take that away.
+# The host instinct tier (`~/.rig/instincts.jsonl`). `select_for_injection` writes to it —
+# it bumps hit_count and refreshes last_seen on everything it picks — and the hook that
+# calls it is exercised by tests that have nothing to do with instincts
+# (test_codex_integration runs inject-instincts.sh with a copy of os.environ). A per-file
+# fixture cannot cover those, so on a machine that has promoted even one instinct the
+# suite would inflate its hit_count and push back its decay, invisibly.
+os.environ.setdefault("RIG_USER_HOME",
+                      tempfile.mkdtemp(prefix="rig-test-user-home-"))
+
 os.environ.setdefault("RIG_GLOBAL_RUNS_PATH",
                       str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-global-runs-"))
                           / "runs.jsonl"))

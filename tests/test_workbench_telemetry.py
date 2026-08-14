@@ -8,9 +8,14 @@ the code that now does it, and pin the two fields that have no source on this si
 """
 
 import json
+import os
 import pathlib
+import subprocess
+import sys
 
 import pytest
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 from rig_workbench.workbench.telemetry import _steps_record, record_task_run
 
@@ -179,28 +184,94 @@ def test_invoker_falls_back_to_the_backend_name(task_repo, monkeypatch):
 
 # ---- the wiring from accept / discard ----------------------------------------
 
-def test_accept_then_cleanup_records_exactly_one_run(tmp_path, global_mirror, monkeypatch):
-    """The guard that matters for the count this change exists to fix: `discard` also
-    runs as the cleanup step after an accept, and recording there too would double-count
-    every accepted task."""
-    from rig_workbench.workbench import accept as accept_mod
+def _cli(args, cwd):
+    env = dict(os.environ, RIG_ACTOR="alice")
+    return subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "workbench.py"), *args],
+                          capture_output=True, text=True, cwd=cwd, timeout=120, env=env)
 
-    root = tmp_path
-    (root / ".rig" / "runs" / "rig-1").mkdir(parents=True)
-    task = {"task_id": "rig-1", "recipe": "bugfix", "task_type": "bugfix",
-            "status": "accepted"}
 
-    record_task_run(root, task, "accepted")
-    # cleanup-after-accept: status is already `accepted`, so the discard path must not
-    # write a second line (accept.py's `discarded_now` guard).
-    assert task["status"] == "accepted"
-    discarded_now = task["status"] != "accepted"
-    if discarded_now:
-        record_task_run(root, task, "discarded")
+@pytest.fixture
+def accepting_repo(tmp_path):
+    """A repo with one task that `accept` will actually take.
 
-    rows = read_runs(root)
-    assert [r["final"] for r in rows] == ["DONE"]
-    assert accept_mod.record_task_run is record_task_run  # the wiring points at this
+    The full shape matters: `accept` needs a real worktree with a commit ahead of base
+    and a clean main tree, and `--no-worktree` records no branch at all. Short-cutting
+    any of it means the test never reaches the code it is here to cover.
+    """
+    for c in (["git", "init", "-q"], ["git", "config", "user.email", "t@t.com"],
+              ["git", "config", "user.name", "alice"]):
+        subprocess.run(c, cwd=tmp_path, check=True)
+    (tmp_path / "f.txt").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "add", "f.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+
+    _cli(["new", "add a thing", "--type", "feature"], tmp_path)
+    task_id = sorted(p.name for p in (tmp_path / ".rig" / "runs").iterdir())[-1]
+    d = tmp_path / ".rig" / "runs" / task_id
+
+    task = json.loads((d / "task.json").read_text(encoding="utf-8"))
+    wt = pathlib.Path(task["worktree_path"])
+    (wt / "g.txt").write_text("change\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=wt, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "work"], cwd=wt, check=True)
+
+    acc = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
+    for c in acc["checks"]:
+        c["status"] = "passed" if c["name"] == "no_unrelated_diff" else "skipped"
+    (d / "acceptance.json").write_text(json.dumps(acc), encoding="utf-8")
+    (d / "diff.md").write_text("## Summary\nx\n", encoding="utf-8")
+
+    # `new` writes .gitignore; accept refuses to run on a dirty main tree.
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "ignore"], cwd=tmp_path, check=True)
+    return tmp_path, task_id
+
+
+def test_accept_writes_exactly_one_record_through_the_cli(accepting_repo):
+    """Driven through `workbench.py accept`, not through `record_task_run`. Re-deriving
+    the caller's logic inside the test would leave both "accept records nothing" and
+    "cleanup records a second time" undetectable — which is what the previous version
+    of this test did."""
+    repo, task_id = accepting_repo
+
+    r = _cli(["accept", task_id], repo)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    rows = read_runs(repo)
+    assert [row["final"] for row in rows] == ["DONE"]
+    assert rows[0]["backend"] == "workbench"
+    assert rows[0]["task_id"] == task_id
+
+
+def test_cleanup_after_an_accept_does_not_record_a_second_time(accepting_repo):
+    """`discard` is also the cleanup step after an accept. Recording there too would
+    double-count every accepted task in the very number this change exists to fix."""
+    repo, task_id = accepting_repo
+    assert _cli(["accept", task_id], repo).returncode == 0
+
+    r = _cli(["discard", task_id, "--yes"], repo)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert [row["final"] for row in read_runs(repo)] == ["DONE"]
+
+
+def test_a_discard_without_an_accept_records_the_discard(accepting_repo):
+    repo, task_id = accepting_repo
+
+    assert _cli(["discard", task_id, "--yes"], repo).returncode == 0
+
+    assert [row["final"] for row in read_runs(repo)] == ["DISCARDED"]
+
+
+def test_the_run_record_lands_after_the_signed_provenance(accepting_repo):
+    """Ordering, asserted on the artifacts: a telemetry failure must not be able to
+    cost an accepted task its audit trail, so provenance is written first."""
+    repo, task_id = accepting_repo
+
+    assert _cli(["accept", task_id], repo).returncode == 0
+
+    assert (repo / ".rig" / "runs" / task_id / "provenance.json").exists()
+    assert read_runs(repo)
 
 
 def test_a_corrupt_steps_file_does_not_propagate_into_the_caller(task_repo):
