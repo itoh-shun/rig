@@ -1206,7 +1206,7 @@ def collect_auto_route_regret(rows: list) -> list[dict]:
         recipe = row.get("recipe")
         if not recipe:
             continue
-        for step in row.get("steps", []):
+        for step in _run_steps(row):
             step_id = step.get("id")
             if not step_id:
                 continue
@@ -1276,6 +1276,51 @@ def _print_auto_route_regret(rows: list) -> None:
                   f"passes more often on this step — the cheaper tier may be costing rework")
         print()
     print("  * = routed to at least once. Read-only: this reports recorded runs and changes no routing.")
+
+
+# `--personas` counts anything that produced a verdict, but not everything that produces a
+# verdict is a reviewer, and the three kinds cannot share a REJECT% column:
+#
+#   mechanism  a constant emitted by code, not a judgment. `providers._adaptive_budget_verdict`
+#              is `ok=False` and only exists when the invocation budget is exhausted, so it
+#              reads as 100% REJECT; the `adaptive-repair` verdict is `ok=True` and only exists
+#              when a mechanical check exited zero, so it reads as 0% REJECT. Neither number
+#              says anything about the code under review.
+#   fixture    test scaffolding (`mock:*`), whose rates are whatever a test needed them to be.
+#   reviewer   an actual lens whose PASS/REJECT spread is the signal worth reading.
+#
+# runs.jsonl keeps only `{by, ok}` per verdict (see runstate._verdict_summary), so the kind has
+# to be recovered from the name — which also means this classification works on the runs already
+# recorded, where the confusion happens.
+_MECHANISM_VERIFIERS = frozenset({"adaptive-budget", "adaptive-repair"})
+_FIXTURE_PREFIXES = ("mock:",)
+_VERIFIER_KIND_HEADINGS = (
+    ("reviewer", "reviewers (PASS/REJECT spread is the signal)"),
+    ("mechanism", "mechanisms (constant by construction — not a review)"),
+    ("fixture", "fixtures (test scaffolding)"),
+)
+
+
+def _run_steps(row: dict) -> list[dict]:
+    """The `steps` of one telemetry row, skipping anything that isn't a step object.
+
+    Per SKILL.md §6 the manual and workflow backends append their own lines to
+    runs.jsonl, so this log is not written solely by `telemetry_append` — a hand-written
+    record can carry `steps: ["review"]` where the schema wants
+    `[{"id": ..., "status": ..., "verdicts": [...]}]`. That has already happened once in
+    this repo's own log. Reading is best-effort for the same reason broken JSON lines are
+    skipped above: one malformed record must not take down aggregation over thousands of
+    good ones.
+    """
+    return [s for s in (row.get("steps") or []) if isinstance(s, dict)]
+
+
+def _verifier_kind(by: str) -> str:
+    if by in _MECHANISM_VERIFIERS:
+        return "mechanism"
+    if by.startswith(_FIXTURE_PREFIXES):
+        return "fixture"
+    return "reviewer"
 
 
 def cmd_runs(args):
@@ -1353,10 +1398,12 @@ def cmd_runs(args):
         return
 
     if personas_mode:
-        # Per-verifier tally: aggregate each run's steps[].verdicts[] by their by field
+        # Per-verifier tally: aggregate each run's steps[].verdicts[] by their by field,
+        # split by kind — a single table mixes three things whose REJECT% mean different
+        # things, and reading it as one column produces confident wrong conclusions.
         stats: dict[str, dict] = {}
         for r in rows:
-            for st in r.get("steps", []):
+            for st in _run_steps(r):
                 for v in st.get("verdicts", []):
                     by = v.get("by") or "?"
                     a = stats.setdefault(by, {"votes": 0, "ok": 0, "reject": 0})
@@ -1365,17 +1412,33 @@ def cmd_runs(args):
         if not stats:
             print("No verdict records yet (they accumulate from runs that pass review-gate / acceptance-gate).")
             return
+        by_kind: dict[str, list[str]] = {}
+        for by in stats:
+            by_kind.setdefault(_verifier_kind(by), []).append(by)
         print(f"## rig runs --personas (verifier votes across {len(rows)} runs)\n")
-        print(f"  {'verifier':28s} {'votes':>6s} {'PASS':>6s} {'REJECT':>7s} {'REJECT%':>8s}")
-        for by in sorted(stats, key=lambda k: -stats[k]["votes"]):
-            a = stats[by]
-            print(f"  {by:28s} {a['votes']:6d} {a['ok']:6d} {a['reject']:7d} "
-                  f"{a['reject'] / a['votes'] * 100:7.0f}%")
-        rubber = [by for by, a in stats.items() if a["votes"] >= 5 and a["reject"] == 0]
+        for kind, heading in _VERIFIER_KIND_HEADINGS:
+            names = by_kind.get(kind)
+            if not names:
+                continue
+            print(f"  {heading}")
+            print(f"  {'verifier':28s} {'votes':>6s} {'PASS':>6s} {'REJECT':>7s} {'REJECT%':>8s}")
+            for by in sorted(names, key=lambda k: -stats[k]["votes"]):
+                a = stats[by]
+                print(f"  {by:28s} {a['votes']:6d} {a['ok']:6d} {a['reject']:7d} "
+                      f"{a['reject'] / a['votes'] * 100:7.0f}%")
+            print()
+        # Only reviewers can rubber-stamp. A mechanism verdict is constant by construction
+        # and a fixture is test scaffolding; flagging either as "no bite" reads as a finding
+        # about review quality when it is a fact about the code that emits it.
+        rubber = [by for by in by_kind.get("reviewer", ())
+                  if stats[by]["votes"] >= 5 and stats[by]["reject"] == 0]
         if rubber:
-            print("\n  Pruning hint: " + ", ".join(sorted(rubber))
+            print("  Pruning hint: " + ", ".join(sorted(rubber))
                   + " cast 5+ votes without a single REJECT (possible rubber-stamping, or the lens"
                     " has no bite; consider dropping them or sharpening the lens)")
+        if by_kind.keys() - {"reviewer"}:
+            print("  Kinds are recovered from the verifier name (runs.jsonl keeps only {by, ok});"
+                  " an unrecognized name counts as a reviewer, so a new lens is never hidden.")
         return
 
     if regret_mode:
@@ -1401,7 +1464,7 @@ def cmd_runs(args):
                     a["completion_tokens"] += u.get("completion_tokens", 0)
                     a["cache_read_input_tokens"] += u.get("cache_read_input_tokens", 0)
                     a["calls"] += u.get("calls", 0)
-            for s in r.get("steps", []):                       # #297: Fable fallback/refusal occurrence count
+            for s in _run_steps(r):                            # #297: Fable fallback/refusal occurrence count
                 for ev in s.get("fable_events", []):
                     if ev.get("kind") == "fallback":
                         fallback_count += 1
@@ -1477,7 +1540,7 @@ def cmd_runs(args):
         key = (r.get("recipe", "?"), esc_at)
         gaps[key] = gaps.get(key, 0) + 1
         # Tally that step's verdicts (who rejected) so the /rig:forge draft can name names.
-        for st in r.get("steps", []):
+        for st in _run_steps(r):
             if st.get("id") != esc_at:
                 continue
             c = gap_verifiers.setdefault(key, Counter())
