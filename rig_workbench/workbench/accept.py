@@ -23,6 +23,7 @@ from .state import (_diff_lines, audit_append, build_acceptance,
                     load_json, load_task, now_iso, parse_diff_md, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
                     task_lock, verify_provenance, warn, worktree_dirty)
+from .telemetry import record_task_run
 
 
 def _task_head(root: pathlib.Path, task: dict) -> str | None:
@@ -284,6 +285,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     task["status"] = "accepted"
     task["accepted_at"] = now_iso()
     save_task(d, task)
+    record_task_run(root, task, "accepted")
 
     # The governed record of the decision. Written for every accept under a
     # policy, not only the forced ones: "who applied what, when, under which
@@ -383,11 +385,16 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
         proc = git(["rev-parse", "--verify", task["branch"]], cwd=root, check=False)
         if proc.returncode == 0:
             git(["branch", "-D", task["branch"]], cwd=root)
-    if task["status"] != "accepted":  # cleanup after accept keeps the accepted status
+    discarded_now = task["status"] != "accepted"  # cleanup after accept keeps the accepted status
+    if discarded_now:
         task["status"] = "discarded"
     task["cleaned_at"] = now_iso()
     task["worktree_path"] = None
     save_task(d, task)
+    if discarded_now:
+        # Only when this call is what ended the task. Cleaning up after an accept runs
+        # through here too, and that task was already recorded at accept time.
+        record_task_run(root, task, "discarded")
 
     # Temporary visual-verification artifacts (screenshots etc.) are a means, not
     # a decision record, so delete them immediately on discard

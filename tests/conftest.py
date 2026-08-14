@@ -11,6 +11,7 @@
 import os
 import pathlib
 import sys
+import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -25,6 +26,16 @@ os.environ["RIG_HOME"] = str(REPO_ROOT)
 # stderr. Silencing it pins the suite to one behaviour;
 # tests/test_gh_requirement.py owns the advisory and sets this per test.
 os.environ["RIG_SKIP_GH_CHECK"] = "1"
+
+# Every run that finishes is mirrored into ~/.rig/runs.jsonl for cross-project rollups
+# (runstate.append_run_record). Tests finish runs, so without this the suite writes into
+# the developer's own cross-project history and `rig-wb usage --global` starts counting
+# fixtures as work. Only the global mirror is redirected: RIG_RUNS_PATH is deliberately
+# left alone, because a test that runs the CLI in a tmp repo expects the per-project log
+# to land in that repo's .rig/, and pinning it here would take that away.
+os.environ.setdefault("RIG_GLOBAL_RUNS_PATH",
+                      str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-global-runs-"))
+                          / "runs.jsonl"))
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
