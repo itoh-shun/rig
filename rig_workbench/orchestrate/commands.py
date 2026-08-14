@@ -1513,14 +1513,17 @@ def cmd_runs(args):
         esc = f" / escalated@{r['escalated_at']}" if r.get("escalated_at") else ""
         print(f"  {r.get('ts', '?'):25s} {r.get('recipe', '?'):20s} {r.get('final', '?'):9s} "
               f"steps {r.get('steps_passed', '?')}/{r.get('steps_total', '?')} "
-              f"retries {r.get('retries', 0)}{esc}")
+              f"retries {r.get('retries') or 0}{esc}")
 
     agg: dict[str, dict] = {}
     for r in rows:
         a = agg.setdefault(r.get("recipe", "?"), {"n": 0, "done": 0, "retries": 0, "esc": 0})
         a["n"] += 1
         a["done"] += 1 if r.get("final") == "DONE" else 0
-        a["retries"] += r.get("retries", 0)
+        # `or 0`, not a get() default: the workbench backend records `retries: null`
+        # because it has no retry counter, and a key that is present with a null value
+        # never reaches the default. dashboard.py:86 already reads it this way.
+        a["retries"] += int(r.get("retries") or 0)
         a["esc"] += 1 if r.get("escalated_at") else 0
     print("\n## Per-recipe aggregates\n")
     print(f"  {'recipe':20s} {'runs':>5s} {'DONE%':>7s} {'avg-retry':>9s} {'esc':>4s}")

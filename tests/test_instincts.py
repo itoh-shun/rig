@@ -273,15 +273,32 @@ def test_promoted_instinct_is_injected_from_an_unrelated_repo(git_repo, tmp_path
     assert [s["text"] for s in selected] == ["this machine has no jq; use python3 to read JSON"]
 
 
-def test_project_tier_wins_ties_against_the_host_tier(git_repo, tmp_path):
-    """Equal confidence must not let a promoted record displace a local one — the
-    tier is only a tie-break, so promotion widens reach without silently outranking
-    what the repo learned about itself."""
-    seed = tmp_path / "seed-repo"
-    (seed / ".rig").mkdir(parents=True)
-    add_instinct(seed, "host fact", "e", None, 0.9)
-    promote_instinct(seed, load_instincts(seed)[0]["id"])
-    add_instinct(git_repo, "project fact", "e", None, 0.9)
+def _raw_instinct(rec_id: str, text: str, confidence: float) -> dict:
+    return {"id": rec_id, "text": text, "evidence": "e", "source_task_ids": [],
+            "confidence": confidence, "first_seen": "2026-01-01T00:00:00+09:00",
+            "last_seen": "2026-01-01T00:00:00+09:00", "hit_count": 1,
+            "decay_reason": None, "status": "active", "supersedes": []}
+
+
+def _write_store(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+                    encoding="utf-8")
+
+
+def test_project_tier_wins_ties_against_the_host_tier(git_repo):
+    """Equal confidence must not let a promoted record displace a local one — the tier
+    is only a tie-break, so promotion widens reach without silently outranking what the
+    repo learned about itself.
+
+    The ids are written by hand, and the host one sorts *first* alphabetically. With
+    `add_instinct` they would be content hashes, so the third sort key (id) would decide
+    the order about half the time and an implementation that dropped the tier key would
+    pass on the coin flip.
+    """
+    _write_store(_host_instincts_path(), [_raw_instinct("in-aaaaaaaaaa", "host fact", 0.9)])
+    _write_store(git_repo / ".rig" / "instincts.jsonl",
+                 [_raw_instinct("in-zzzzzzzzzz", "project fact", 0.9)])
 
     selected, _ = select_for_injection(git_repo)
 
@@ -386,3 +403,31 @@ def test_cli_promote_then_demote_round_trips(git_repo):
     assert load_instincts(git_repo) == []
     assert run_cli(["instincts", "--demote", target], git_repo).returncode == 0
     assert [r["id"] for r in load_instincts(git_repo)] == [target]
+
+
+def test_demote_rejects_an_id_that_is_not_in_the_host_tier(git_repo):
+    add_instinct(git_repo, "still local", "e", None, 0.8)
+
+    with pytest.raises(KeyError):
+        demote_instinct(git_repo, load_instincts(git_repo)[0]["id"])
+
+
+def test_demote_rejects_an_id_this_repo_already_holds(git_repo):
+    """Another repo can hold the same id in its project tier — bringing the host copy
+    down on top of it would leave two records claiming to be one."""
+    add_instinct(git_repo, "collides", "e", None, 0.8)
+    target = load_instincts(git_repo)[0]["id"]
+    promote_instinct(git_repo, target)
+    _write_store(git_repo / ".rig" / "instincts.jsonl",
+                 [_raw_instinct(target, "a local record with the same id", 0.8)])
+
+    with pytest.raises(ValueError):
+        demote_instinct(git_repo, target)
+
+
+def test_cli_reports_a_failed_demote_without_a_traceback(git_repo):
+    r = run_cli(["instincts", "--demote", "in-nosuchthing"], git_repo)
+
+    assert r.returncode != 0
+    assert "[ERROR]" in r.stdout
+    assert "Traceback" not in (r.stdout + r.stderr)

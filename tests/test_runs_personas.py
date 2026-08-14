@@ -131,12 +131,35 @@ def test_a_hand_written_record_does_not_break_the_aggregate(repo):
 
 
 def test_a_hand_written_record_does_not_break_the_default_listing(repo):
+    """`escalated_at` is what makes the default listing reach `steps` at all — the gap
+    prescriptions block skips a row without it, and it needs two occurrences to fire.
+    Without both, this passes on the unfixed code and pins nothing."""
     hand_written = {"ts": "2026-08-14T13:51:25+09:00", "recipe": "brainstorm",
-                    "backend": "manual", "final": "DONE", "steps": ["brainstorm"],
-                    "steps_passed": 1, "steps_total": 1, "retries": 0}
-    write_runs(repo, [hand_written])
+                    "backend": "manual", "final": "ESCALATE", "steps": ["brainstorm"],
+                    "steps_passed": 1, "steps_total": 1, "retries": 0,
+                    "escalated_at": "brainstorm"}
+    write_runs(repo, [hand_written, dict(hand_written)])
 
     r = run_cli(["runs"], repo)
 
     assert r.returncode == 0, r.stdout + r.stderr
     assert "brainstorm" in r.stdout
+    assert "Gap prescriptions" in r.stdout  # proves the steps-reading path was entered
+
+
+def test_a_null_retries_does_not_break_the_per_recipe_aggregate(repo):
+    """The workbench backend records `retries: null` because it has no retry counter.
+    The key is present, so a `get(..., 0)` default never applies, and the aggregate
+    raised TypeError after printing the run list — losing every section below it."""
+    write_runs(repo, [dict(run_row([]), retries=None, backend="workbench")])
+
+    r = run_cli(["runs"], repo)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Per-recipe aggregates" in r.stdout
+
+
+def test_a_null_retries_is_shown_as_zero_not_as_none(repo):
+    write_runs(repo, [dict(run_row([]), retries=None, backend="workbench")])
+
+    assert "retries None" not in run_cli(["runs"], repo).stdout

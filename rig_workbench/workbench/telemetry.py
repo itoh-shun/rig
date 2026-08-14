@@ -71,9 +71,20 @@ def _steps_record(d: pathlib.Path) -> list[dict]:
 def record_task_run(root: pathlib.Path, task: dict, status: str) -> None:
     """Append one telemetry line for a task that has just reached a terminal state.
 
-    Best-effort by construction: `append_run_record` swallows its own write failures,
-    and a task that ends is more important than a log line about it.
+    Best-effort for the whole body, not only for the write. `append_run_record` swallows
+    its own failures, but everything before it can raise on its own: a corrupt
+    `steps.json` raises from `json.loads`, a `steps.json` holding a list raises from
+    `.get`, and a missing run directory calls `die()`, which is a `SystemExit`. Any of
+    those would propagate into the caller — which is a task that has already ended — and
+    take down whatever the caller had not done yet. A log line is not worth that.
     """
+    try:
+        _record_task_run(root, task, status)
+    except (Exception, SystemExit):
+        return
+
+
+def _record_task_run(root: pathlib.Path, task: dict, status: str) -> None:
     d = run_dir(root, task["task_id"])
     steps = _steps_record(d)
     # `root`, not the process-wide default: the log belongs to the repository the task

@@ -72,11 +72,18 @@ RULES: tuple[CheckRule, ...] = (
             "exits immediately while checks are still being registered",
     ),
     CheckRule(
-        id="pytest-needs-claudecode-unset",
+        id="runtime-security-tests-unset-claudecode",
         requires=(r"CLAUDECODE", r"pytest"),
-        command='test -z "${CLAUDECODE:-}${CLAUDE_CODE_SESSION_ID:-}"',
-        why="the runtime-security tests assert on a guard that reads these variables, so "
-            "they fail for the wrong reason when the suite runs inside a session",
+        # Static, like every other rule. The obvious form of this check —
+        # `test -z "${CLAUDECODE:-}"` — asserts on the ambient environment, and rig's
+        # default launch path *is* a Claude Code session, so writing it into a recipe
+        # would make that step's gate fail on every run. The instinct is a precondition
+        # for one command, not an invariant of the step.
+        command="! git grep -nIE 'pytest[^|]*test_runtime_security' "
+                "| grep -v 'env -u CLAUDECODE' | grep -q .",
+        why="those tests assert on a guard that reads CLAUDECODE / "
+            "CLAUDE_CODE_SESSION_ID, so a command that runs them without unsetting both "
+            "fails for a reason that has nothing to do with the code",
     ),
     CheckRule(
         id="pack-persona-declares-inject",
@@ -146,7 +153,13 @@ def add_checks_to_recipe(path: pathlib.Path, step_id: str | None,
     if not path.exists():
         raise RecipeEditError(f"recipe not found: {path}")
     lines = path.read_text(encoding="utf-8").splitlines()
-    starts = [(i, ln) for i, ln in enumerate(lines) if re.match(r"^(\s*)- id:\s*\S", ln)]
+    fm_end = _frontmatter_end(lines, path)
+    # Only inside the frontmatter. A recipe's prose commonly shows a YAML example in a
+    # fenced block, and `- id:` in that example is not a step: scanning the whole file
+    # made the default (`--step` omitted, so the *last* match wins) target the
+    # documentation, write checks into it, and report success.
+    starts = [(i, ln) for i, ln in enumerate(lines[:fm_end])
+              if re.match(r"^(\s*)- id:\s*\S", ln)]
     if not starts:
         raise RecipeEditError(f"no steps found in {path} (expected a `- id: <step>` entry)")
     if step_id:
@@ -157,25 +170,38 @@ def add_checks_to_recipe(path: pathlib.Path, step_id: str | None,
     index, header = starts[-1] if not step_id else starts[0]
     indent = " " * (len(header) - len(header.lstrip()) + 2)
 
-    end = len(lines)
-    for j in range(index + 1, len(lines)):
-        if re.match(r"^\s*- id:\s*\S", lines[j]) or lines[j].strip() == "---":
+    end = fm_end
+    for j in range(index + 1, fm_end):
+        if re.match(r"^\s*- id:\s*\S", lines[j]):
             end = j
             break
     block = lines[index:end]
 
-    existing = {ln.strip().lstrip("- ").strip().strip('"') for ln in block}
-    to_add = [c for c in commands if c not in existing]
+    # Compare rendered lines, not loosely-stripped text. `.strip('"')` left the wrapping
+    # quotes on a command written in single quotes, so it never matched the copy already
+    # in the file and was appended again on every run; `lstrip("- ")` also eats a leading
+    # `-` from a command that begins with one.
+    existing = {ln.strip() for ln in block}
+    to_add = [c for c in commands if _render(c, indent).strip() not in existing]
     if not to_add:
         return []
 
+    rendered = [_render(c, indent) for c in to_add]
     checks_at = next((k for k, ln in enumerate(block)
-                      if re.match(r"^\s*checks:\s*$", ln)), None)
-    rendered = [f'{indent}  - "{c}"' if not _needs_single_quotes(c) else f"{indent}  - '{c}'"
-                for c in to_add]
+                      if re.match(r"^\s*checks:\s*(\[\s*\])?\s*$", ln)), None)
     if checks_at is None:
+        if any(re.match(r"^\s*checks:", ln) for ln in block):
+            # Some other form: a flow sequence with entries, an alias, a folded block.
+            # Adding a second `checks:` key would still parse — PyYAML keeps the last
+            # one — and silently drop one of the two lists.
+            raise RecipeEditError(
+                f"the step at {path}:{index + 1} declares `checks:` in a form this cannot "
+                "extend safely; add the entries by hand")
         block = block[:1] + [f"{indent}checks:"] + rendered + block[1:]
     else:
+        # `checks: []` has to lose the empty flow list first, or the block entries below
+        # it become a second value for the same key.
+        block[checks_at] = re.sub(r"checks:\s*\[\s*\]\s*$", "checks:", block[checks_at])
         insert_at = checks_at + 1
         while insert_at < len(block) and re.match(r"^\s*-\s", block[insert_at]):
             insert_at += 1
@@ -183,6 +209,21 @@ def add_checks_to_recipe(path: pathlib.Path, step_id: str | None,
 
     path.write_text("\n".join(lines[:index] + block + lines[end:]) + "\n", encoding="utf-8")
     return to_add
+
+
+def _frontmatter_end(lines: list[str], path: pathlib.Path) -> int:
+    """Index of the closing `---` of the YAML frontmatter."""
+    if not lines or lines[0].strip() != "---":
+        raise RecipeEditError(f"{path} does not start with YAML frontmatter")
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            return i
+    raise RecipeEditError(f"{path} has an unterminated YAML frontmatter")
+
+
+def _render(command: str, indent: str) -> str:
+    quote = "'" if _needs_single_quotes(command) else '"'
+    return f"{indent}  - {quote}{command}{quote}"
 
 
 def _needs_single_quotes(command: str) -> bool:

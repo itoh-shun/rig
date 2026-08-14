@@ -331,8 +331,14 @@ def _show_usage(argv: list[str]) -> None:
     # --global spans repos whose `.rig/runs/` this process cannot see.
     coverage_root: pathlib.Path | None
     if use_global:
-        runs_path = pathlib.Path.home() / ".rig" / "runs.jsonl"
-        scope = "global (~/.rig/runs.jsonl, mirror across all projects)"
+        # The writer resolves this through RIG_GLOBAL_RUNS_PATH
+        # (orchestrate.config.GLOBAL_RUNS_PATH). Computing it from $HOME here instead
+        # meant that in any environment which sets that variable, `usage --global`
+        # read a different file than the one every run was being written to.
+        from .orchestrate import config as _orch_config
+
+        runs_path = _orch_config.GLOBAL_RUNS_PATH
+        scope = f"global ({runs_path}, mirror across all projects)"
         coverage_root = None
     else:
         home = _rig_data_root()

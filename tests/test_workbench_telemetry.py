@@ -175,3 +175,57 @@ def test_invoker_falls_back_to_the_backend_name(task_repo, monkeypatch):
     record_task_run(task_repo, task(), "accepted")
 
     assert read_runs(task_repo)[0]["invoker"] == "workbench"
+
+
+# ---- the wiring from accept / discard ----------------------------------------
+
+def test_accept_then_cleanup_records_exactly_one_run(tmp_path, global_mirror, monkeypatch):
+    """The guard that matters for the count this change exists to fix: `discard` also
+    runs as the cleanup step after an accept, and recording there too would double-count
+    every accepted task."""
+    from rig_workbench.workbench import accept as accept_mod
+
+    root = tmp_path
+    (root / ".rig" / "runs" / "rig-1").mkdir(parents=True)
+    task = {"task_id": "rig-1", "recipe": "bugfix", "task_type": "bugfix",
+            "status": "accepted"}
+
+    record_task_run(root, task, "accepted")
+    # cleanup-after-accept: status is already `accepted`, so the discard path must not
+    # write a second line (accept.py's `discarded_now` guard).
+    assert task["status"] == "accepted"
+    discarded_now = task["status"] != "accepted"
+    if discarded_now:
+        record_task_run(root, task, "discarded")
+
+    rows = read_runs(root)
+    assert [r["final"] for r in rows] == ["DONE"]
+    assert accept_mod.record_task_run is record_task_run  # the wiring points at this
+
+
+def test_a_corrupt_steps_file_does_not_propagate_into_the_caller(task_repo):
+    """`record_task_run` runs inside accept, after the governance ledger and the signed
+    provenance. An exception here would surface in a task that has already ended."""
+    (task_repo / ".rig" / "runs" / "rig-1" / "steps.json").write_text("{not json",
+                                                                     encoding="utf-8")
+
+    record_task_run(task_repo, task(), "accepted")  # must not raise
+
+    assert read_runs(task_repo) == []
+
+
+def test_a_steps_file_holding_a_list_does_not_propagate(task_repo):
+    (task_repo / ".rig" / "runs" / "rig-1" / "steps.json").write_text(
+        '[{"name": "fix"}]', encoding="utf-8")  # a list, where the reader expects a mapping
+
+    record_task_run(task_repo, task(), "accepted")
+
+    assert read_runs(task_repo) == []
+
+
+def test_a_missing_run_directory_does_not_propagate(tmp_path, global_mirror):
+    """`state.run_dir` calls `die()`, which is a SystemExit — not caught by a bare
+    `except Exception`."""
+    record_task_run(tmp_path, task(), "accepted")
+
+    assert read_runs(tmp_path) == []

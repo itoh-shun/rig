@@ -285,7 +285,6 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     task["status"] = "accepted"
     task["accepted_at"] = now_iso()
     save_task(d, task)
-    record_task_run(root, task, "accepted")
 
     # The governed record of the decision. Written for every accept under a
     # policy, not only the forced ones: "who applied what, when, under which
@@ -317,6 +316,12 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     }
     signature = sign_provenance(root, provenance_record)
     save_json(d / "provenance.json", {"record": provenance_record, "signature": signature, "algo": "HMAC-SHA256"})
+
+    # After the governance ledger and the signed provenance, never before them. Those
+    # answer "who applied what, under which policy, and can it be shown untampered";
+    # this one is a usage statistic. Ordering it first would let a telemetry problem
+    # leave an accepted task with no audit record at all.
+    record_task_run(root, task, "accepted")
 
     names, stat, _ = _diff_lines(root, task)
     print(f"\n## rig accept: {task_id} ✓")

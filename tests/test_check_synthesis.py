@@ -306,8 +306,78 @@ def test_no_instinct_text_ever_reaches_the_generated_command(git_repo, recipe):
 
     run_cli(["instincts", "--generate-checks", "--recipe", "demo", "--step", "verify"], git_repo)
 
+    from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter
+
     body = recipe.read_text(encoding="utf-8")
     assert "rig-pwned" not in body
-    assert all(ln.strip().lstrip('- ').strip('"\'') in {r.command for r in RULES}
-               | {"python3 -m pytest -q"}
-               for ln in body.splitlines() if ln.strip().startswith("- \"") or ln.strip().startswith("- '"))
+    # Read the checks through the YAML parser rather than by stripping quotes off lines.
+    # A line-shaped assertion only inspects lines that *look* quoted, so it would pass
+    # vacuously the day the writer stops quoting — and `str.strip('"\'')` chews the
+    # trailing quote off a single-quoted command that ends in a double quote.
+    allowed = {r.command for r in RULES} | {"python3 -m pytest -q"}
+    for step in load_steps(parse_frontmatter(recipe)):
+        assert set(step["checks"]) <= allowed, step["checks"]
+
+
+def test_a_yaml_example_in_the_prose_is_not_mistaken_for_a_step(tmp_path):
+    """`--step` omitted means "the last step", and a recipe's prose commonly shows a
+    YAML example. Scanning the whole file made that example the last match, so the
+    checks went into the documentation and the CLI reported success."""
+    p = tmp_path / "demo.md"
+    p.write_text(
+        "---\nname: demo\nsteps:\n  - id: implement\n    instruction: implement\n---\n"
+        "\n## how to extend\n\n```yaml\nsteps:\n  - id: extra-step\n    instruction: verify\n```\n",
+        encoding="utf-8")
+
+    add_checks_to_recipe(p, None, ["true"])
+
+    body = p.read_text(encoding="utf-8")
+    front, _, prose = body.partition("\n---\n")
+    assert "true" in front
+    assert "true" not in prose
+
+
+def test_a_single_quoted_check_is_not_appended_twice(tmp_path):
+    """Idempotency has to survive the quoting the writer itself chose. Comparing loosely
+    stripped text left the wrapping quotes on, so these were re-added on every run."""
+    p = tmp_path / "demo.md"
+    p.write_text("---\nname: demo\nsteps:\n  - id: one\n    instruction: implement\n---\n",
+                 encoding="utf-8")
+    command = 'test -z "${CLAUDECODE:-}"'
+
+    assert add_checks_to_recipe(p, None, [command]) == [command]
+    assert add_checks_to_recipe(p, None, [command]) == []
+    assert p.read_text(encoding="utf-8").count("CLAUDECODE") == 1
+
+
+def test_an_empty_flow_list_is_extended_not_shadowed(tmp_path):
+    """`checks: []` did not match the block-style pattern, so a second `checks:` key was
+    inserted. PyYAML keeps the last one, so the generated checks vanished on load while
+    the CLI reported them as added."""
+    from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter
+
+    p = tmp_path / "demo.md"
+    p.write_text("---\nname: demo\nsteps:\n  - id: one\n    checks: []\n"
+                 "    instruction: implement\n---\n", encoding="utf-8")
+
+    add_checks_to_recipe(p, None, ["true"])
+
+    assert p.read_text(encoding="utf-8").count("checks:") == 1
+    assert load_steps(parse_frontmatter(p))[0]["checks"] == ["true"]
+
+
+def test_a_checks_form_this_cannot_extend_is_refused(tmp_path):
+    p = tmp_path / "demo.md"
+    p.write_text("---\nname: demo\nsteps:\n  - id: one\n    checks: [\"true\"]\n"
+                 "    instruction: implement\n---\n", encoding="utf-8")
+
+    with pytest.raises(RecipeEditError, match="extend safely"):
+        add_checks_to_recipe(p, None, ["false"])
+
+
+def test_a_file_without_frontmatter_is_refused(tmp_path):
+    p = tmp_path / "demo.md"
+    p.write_text("# just prose\n\n  - id: implement\n", encoding="utf-8")
+
+    with pytest.raises(RecipeEditError, match="frontmatter"):
+        add_checks_to_recipe(p, None, ["true"])
