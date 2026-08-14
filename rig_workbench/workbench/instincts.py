@@ -235,19 +235,12 @@ def select_for_injection(root: pathlib.Path, task_id: str | None = None) -> tupl
     can log which instincts were injected into which session, if it chooses to.
     """
     merged, project, host = _load_tiered(root)
-    candidates = sorted(
-        ((tier, r) for tier, r in merged
-         if r["status"] == "active" and r["confidence"] >= _INSTINCT_CONFIDENCE_THRESHOLD),
-        key=lambda tr: (-tr[1]["confidence"], 0 if tr[0] == TIER_PROJECT else 1, tr[1]["id"]),
-    )
-    selected, total_chars = [], 0
+    chosen, total_chars = _fit_within_budget(merged)
+    selected = []
     now = now_iso()
     touched: set[str] = set()
-    for tier, rec in candidates:
-        if total_chars + len(rec["text"]) > _INSTINCT_INJECT_CHAR_LIMIT:
-            continue
+    for tier, rec in chosen:
         selected.append(rec)
-        total_chars += len(rec["text"])
         rec["hit_count"] += 1
         rec["last_seen"] = now
         touched.add(tier)
@@ -256,6 +249,34 @@ def select_for_injection(root: pathlib.Path, task_id: str | None = None) -> tupl
     if TIER_HOST in touched:
         save_host_instincts(host)
     return selected, total_chars
+
+
+def _fit_within_budget(merged: list[tuple[str, dict]]) -> tuple[list[tuple[str, dict]], int]:
+    """The `(tier, record)` pairs that fit the injection budget, in order. Pure.
+
+    Split out so a caller can ask what *would* be injected without the bookkeeping
+    `select_for_injection` performs — asking the question must not count as a use and
+    push back the record's decay.
+    """
+    candidates = sorted(
+        ((tier, r) for tier, r in merged
+         if r["status"] == "active" and r["confidence"] >= _INSTINCT_CONFIDENCE_THRESHOLD),
+        key=lambda tr: (-tr[1]["confidence"], 0 if tr[0] == TIER_PROJECT else 1, tr[1]["id"]),
+    )
+    chosen, total = [], 0
+    for tier, rec in candidates:
+        if total + len(rec["text"]) > _INSTINCT_INJECT_CHAR_LIMIT:
+            continue
+        chosen.append((tier, rec))
+        total += len(rec["text"])
+    return chosen, total
+
+
+def injection_standing(root: pathlib.Path, target_id: str) -> tuple[bool, int, int]:
+    """`(would_be_injected, chars_in_use, budget)` for one record, without side effects."""
+    merged, _project, _host = _load_tiered(root)
+    chosen, total = _fit_within_budget(merged)
+    return (any(r["id"] == target_id for _, r in chosen), total, _INSTINCT_INJECT_CHAR_LIMIT)
 
 
 def promote_instinct(root: pathlib.Path, target_id: str) -> dict:
@@ -377,8 +398,21 @@ def cmd_instincts(args: argparse.Namespace) -> None:
             sys.exit(1)
         if args.promote:
             print(f"{rec['id']} promoted to the host tier ({_host_instincts_path()}). "
-                  "It is now injected in every repo, competing on confidence for the "
-                  f"{_INSTINCT_INJECT_CHAR_LIMIT}-char budget. Undo: instincts --demote {rec['id']}")
+                  "It is now a candidate in every repo, competing on confidence for the "
+                  f"{_INSTINCT_INJECT_CHAR_LIMIT}-char injection budget.")
+            # Competing is not winning, and "promoted" reads as "it will be injected now".
+            # Reporting the outcome here is the difference between a true statement and a
+            # useful one — the budget is usually the binding constraint, not the tier.
+            fits, used, budget = injection_standing(root, rec["id"])
+            here = pathlib.Path.cwd().name
+            if fits:
+                print(f"  It fits the budget here ({used}/{budget} chars in {here}).")
+            else:
+                print(f"  It does NOT fit here: the budget is already full "
+                      f"({used}/{budget} chars in {here}) with higher-scoring records, so "
+                      "it will not be injected until one of them decays or is muted.")
+            print("  Other repos have their own project tier, so the answer differs per repo.")
+            print(f"  Undo: instincts --demote {rec['id']}")
         else:
             print(f"{rec['id']} demoted back to this repo's project tier "
                   f"({_instincts_path(root)}).")

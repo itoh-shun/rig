@@ -430,3 +430,45 @@ def test_cli_reports_a_failed_demote_without_a_traceback(git_repo):
     assert r.returncode != 0
     assert "[ERROR]" in r.stdout
     assert "Traceback" not in (r.stdout + r.stderr)
+
+
+# ---- what --promote actually reports ----------------------------------------
+
+def test_promote_says_so_when_the_budget_is_already_full(git_repo):
+    """"Promoted" reads as "it will be injected now", and usually it will not — the
+    budget is the binding constraint, not the tier."""
+    _write_store(git_repo / ".rig" / "instincts.jsonl", [
+        _raw_instinct("in-aaaaaaaaaa", "A" * 260, 0.95),
+        _raw_instinct("in-bbbbbbbbbb", "B" * 240, 0.95),
+        _raw_instinct("in-cccccccccc", "C" * 100, 0.9),
+    ])
+
+    r = run_cli(["instincts", "--promote", "in-cccccccccc"], git_repo)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "does NOT fit here" in r.stdout
+    assert "500 chars" in r.stdout
+
+
+def test_promote_says_so_when_the_record_does_fit(git_repo):
+    _write_store(git_repo / ".rig" / "instincts.jsonl",
+                 [_raw_instinct("in-cccccccccc", "short enough", 0.9)])
+
+    r = run_cli(["instincts", "--promote", "in-cccccccccc"], git_repo)
+
+    assert "It fits the budget here" in r.stdout
+    assert "does NOT fit" not in r.stdout
+
+
+def test_asking_whether_it_fits_is_not_a_use(git_repo):
+    """`injection_standing` must not bump hit_count or refresh last_seen — asking the
+    question would otherwise push back the record's decay."""
+    from rig_workbench.workbench.instincts import injection_standing
+
+    add_instinct(git_repo, "a pattern", "e", None, 0.9)
+    before = load_instincts(git_repo)[0]
+
+    injection_standing(git_repo, before["id"])
+
+    after = load_instincts(git_repo)[0]
+    assert (after["hit_count"], after["last_seen"]) == (before["hit_count"], before["last_seen"])
