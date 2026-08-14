@@ -132,8 +132,6 @@ def test_every_rule_is_a_command_that_passes_on_a_clean_tree(tmp_path):
     subprocess.run(["git", "add", "f.txt"], cwd=tmp_path, check=True)
 
     for rule in RULES:
-        if "CLAUDECODE" in rule.command:
-            continue  # asserts on the ambient environment, not on the tree
         r = subprocess.run(rule.command, shell=True, cwd=tmp_path, capture_output=True)
         assert r.returncode == 0, f"{rule.id} fired on a clean tree: {r.stderr!r}"
 

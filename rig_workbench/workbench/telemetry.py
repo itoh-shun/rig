@@ -26,7 +26,7 @@ import os
 import pathlib
 
 from ..orchestrate.runstate import append_run_record
-from .state import load_json, now_iso, run_dir
+from .state import load_json, now_iso, runs_dir, warn
 
 # The workbench's own vocabulary for how a task ended, mapped onto the `final` values
 # already present in the log. `discarded` has no counterpart there — a human throwing
@@ -80,12 +80,20 @@ def record_task_run(root: pathlib.Path, task: dict, status: str) -> None:
     """
     try:
         _record_task_run(root, task, status)
-    except (Exception, SystemExit):
-        return
+    except (Exception, SystemExit) as e:
+        # One line, then carry on. Silence here would hide a telemetry path that is
+        # broken for every task — which is the same shape as the under-count this
+        # module exists to fix, and `usage`'s coverage note would blame the wrong cause.
+        warn(f"run telemetry not recorded for {task.get('task_id')}: {e!r}")
 
 
 def _record_task_run(root: pathlib.Path, task: dict, status: str) -> None:
-    d = run_dir(root, task["task_id"])
+    # Not `run_dir()`: it calls `die()`, which prints `[ERROR] task not found` to stderr
+    # before raising. Swallowing the SystemExit leaves the message, so a fully successful
+    # accept would end with a red error line about a failure that did not affect it.
+    d = runs_dir(root) / task["task_id"]
+    if not d.is_dir():
+        raise FileNotFoundError(d)
     steps = _steps_record(d)
     # `root`, not the process-wide default: the log belongs to the repository the task
     # is in, which is not always the directory the CLI was started from.

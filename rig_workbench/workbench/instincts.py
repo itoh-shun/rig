@@ -100,8 +100,16 @@ def _read_jsonl(path: pathlib.Path) -> list[dict]:
         return []
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
+        if not line.strip():
+            continue
+        try:
             out.append(json.loads(line))
+        except json.JSONDecodeError:
+            # Skip the line, keep the store. This file is append-shaped and the host tier
+            # is shared by every repository on the machine, so one truncated write would
+            # otherwise take instincts down everywhere at once — the same resilience
+            # `cmd_runs` already applies to its own log.
+            continue
     return out
 
 

@@ -341,9 +341,17 @@ def _show_usage(argv: list[str]) -> None:
         scope = f"global ({runs_path}, mirror across all projects)"
         coverage_root = None
     else:
+        # Same reason as the branch above, for the same reader: the writer resolves
+        # RIG_RUNS_PATH, and production code sets it (bench_providers points every run
+        # at an artifact directory). `_rig_data_root()` only walks up looking for a
+        # `.rig`, so those runs were written to one file and read from another.
+        from .orchestrate import config as _orch_config
+
         home = _rig_data_root()
-        runs_path = home / ".rig" / "runs.jsonl"
+        runs_path = _orch_config.RUNS_PATH
         scope = f"local (cwd={home})"
+        # Not `runs_path.parent`: this one scans `.rig/runs/` for unfinished tasks, which
+        # lives with the repository even when the log has been redirected elsewhere.
         coverage_root = home
 
     entries: list[dict] = []

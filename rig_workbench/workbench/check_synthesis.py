@@ -74,13 +74,15 @@ RULES: tuple[CheckRule, ...] = (
     CheckRule(
         id="runtime-security-tests-unset-claudecode",
         requires=(r"CLAUDECODE", r"pytest"),
-        # Static, like every other rule. The obvious form of this check —
-        # `test -z "${CLAUDECODE:-}"` — asserts on the ambient environment, and rig's
-        # default launch path *is* a Claude Code session, so writing it into a recipe
-        # would make that step's gate fail on every run. The instinct is a precondition
-        # for one command, not an invariant of the step.
+        # Static, like every other rule. The obvious form — `test -z "${CLAUDECODE:-}"` —
+        # asserts on the ambient environment, and rig's default launch path *is* a Claude
+        # Code session, so writing that into a recipe would fail the step's gate on every
+        # run. The instinct is a precondition for one command, not an invariant of a step.
+        # The exclusion matches CLAUDE_CODE_SESSION_ID rather than CLAUDECODE because the
+        # guard reads either variable: a command unsetting only the shorter one still
+        # fails, and the shorter string is a prefix of the longer.
         command="! git grep -nIE 'pytest[^|]*test_runtime_security' "
-                "| grep -v 'env -u CLAUDECODE' | grep -q .",
+                "| grep -v 'CLAUDE_CODE_SESSION_ID' | grep -q .",
         why="those tests assert on a guard that reads CLAUDECODE / "
             "CLAUDE_CODE_SESSION_ID, so a command that runs them without unsetting both "
             "fails for a reason that has nothing to do with the code",
