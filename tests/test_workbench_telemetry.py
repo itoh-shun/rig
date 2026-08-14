@@ -15,9 +15,9 @@ import sys
 
 import pytest
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-
 from rig_workbench.workbench.telemetry import _steps_record, record_task_run
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
