@@ -293,6 +293,55 @@ def demote_instinct(root: pathlib.Path, target_id: str) -> dict:
     return demoted
 
 
+def _cmd_generate_checks(root: pathlib.Path, args: argparse.Namespace) -> None:
+    """Convert recognized instincts into `checks:` on a project recipe.
+
+    Reports the instincts no rule recognized as well as the ones it did: covering 6 of
+    40 candidates and printing only the 6 would read as "the other 34 were fine".
+    """
+    from .check_synthesis import RecipeEditError, add_checks_to_recipe, synthesize
+
+    matched, unmatched = synthesize(root, args.min_confidence)
+    print(f"## rig instincts --generate-checks ({len(matched)} recognized, "
+          f"{len(unmatched)} with no matching rule)\n")
+    for s in matched:
+        where = " [host]" if s.tier == TIER_HOST else ""
+        print(f"● {s.rule.id}  (from {s.instinct_id}{where})")
+        print(f"    {s.rule.command}")
+        print(f"    why: {s.rule.why}")
+    if unmatched:
+        print(f"\n○ no rule matched ({len(unmatched)}):")
+        for rec in unmatched:
+            print(f"    [{rec['id']}] {rec['text'][:88]}")
+        print("  Recognizing a new shape means adding a rule to check_synthesis.RULES;"
+              " these are not covered by anything above.")
+    if not matched:
+        return
+    if args.dry_run:
+        print(f"\n--dry-run: nothing written. Drop it to add these to `{args.recipe}`.")
+        return
+
+    path = _project_recipe_path(root, args.recipe)
+    try:
+        added = add_checks_to_recipe(path, args.step, [s.rule.command for s in matched])
+    except RecipeEditError as e:
+        print(f"\n[ERROR] {e}")
+        sys.exit(1)
+    if added:
+        print(f"\nAdded {len(added)} check(s) to {path}"
+              + (f" (step {args.step})" if args.step else " (last step)"))
+    else:
+        print(f"\n{path} already has every one of these checks; nothing to add.")
+    print("These come from records the store itself calls unverified — a check that fires"
+          " may be a wrong instinct rather than a real defect.")
+
+
+def _project_recipe_path(root: pathlib.Path, name: str) -> pathlib.Path:
+    """Project tier only. A generated check has no business landing in a shipped recipe,
+    where it would ship to every repository that installs rig."""
+    return root / ".rig" / "recipes" / f"{name}.md"
+
+
 def cmd_instincts(args: argparse.Namespace) -> None:
     root = repo_root()
     if args.add:
@@ -306,6 +355,9 @@ def cmd_instincts(args: argparse.Namespace) -> None:
             sys.exit(1)
         print(f"instinct recorded: {rec['id']} (confidence={rec['confidence']})"
               + (f". Muted {args.supersedes}" if args.supersedes else ""))
+        return
+    if args.generate_checks:
+        _cmd_generate_checks(root, args)
         return
     if args.promote or args.demote:
         move, target_id = ((promote_instinct, args.promote) if args.promote

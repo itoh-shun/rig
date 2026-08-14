@@ -42,7 +42,8 @@ from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
 from .injection import cmd_scan_injection
-from .instincts import _INSTINCT_DECAY_DAYS, cmd_instincts
+from .instincts import (_INSTINCT_CONFIDENCE_THRESHOLD, _INSTINCT_DECAY_DAYS,
+                        cmd_instincts)
 from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
@@ -260,6 +261,19 @@ def main() -> None:
                         "not about this codebase — one record at a time, never a whole store")
     p.add_argument("--demote", metavar="ID",
                    help="move the given id back from the host tier into this repo (undoes --promote)")
+    p.add_argument("--generate-checks", action="store_true",
+                   help="convert instincts this tool recognizes into `checks:` entries and write "
+                        "them into a project recipe (.rig/recipes/<name>.md). Instincts it does "
+                        "not recognize are reported, not silently skipped")
+    p.add_argument("--recipe", default="bugfix", metavar="NAME",
+                   help="with --generate-checks: which project recipe to edit (default: bugfix)")
+    p.add_argument("--step", metavar="ID",
+                   help="with --generate-checks: which step to attach the checks to (default: the last)")
+    p.add_argument("--min-confidence", type=float, metavar="F",
+                   help="with --generate-checks: floor on instinct confidence "
+                        f"(default: the injection threshold, {_INSTINCT_CONFIDENCE_THRESHOLD})")
+    p.add_argument("--dry-run", action="store_true",
+                   help="with --generate-checks: report what would be written and stop")
     p.add_argument("--decay", action="store_true",
                    help=f"decay active instincts whose last_seen hasn't refreshed in {_INSTINCT_DECAY_DAYS}+ days")
     p.add_argument("--inject-preview", action="store_true",
