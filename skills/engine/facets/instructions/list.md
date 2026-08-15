@@ -52,7 +52,7 @@ recipe を全 tier 走査（§4.2.1 と同じ project → user → shipped 順�
 - **`· verify-findings`**：recipe に `verify_findings: true` が設定されている場合のみ付記。`--save-recipe --verify-findings` で保存した recipe が所見の敵対的検証（`patterns/review-gate`）つきで動くことを一覧で確認できる。省略時（`false`・未設定）は付記なし。
 - **`· capture`**（#184）：recipe に `capture: true` が設定されている場合のみ付記。`--save-recipe --capture` で保存した recipe が RUN 後の capture 提案を承認ダイアログなしで自動実行することを一覧で確認できる。省略時（`false`・未設定）は付記なし。
 
-並べ順は **`tdd` → `gated` → `workflow` → `no-defaults` → `orchestrate`（または `orchestrate(auto)`） → `cross-llm` → `no-capture` → `adversarial` → `visual` → `autonomous` → `no-orchestrate` → `design` → `review` → `capture` → `verify-findings`** の固定順（`orchestrate`/`orchestrate(auto)` は同一スロット・排他）。複数共存例：`[3 steps · interactive · tdd · gated]`。`extends` で継承した recipe も RESOLVE 後の確定値（継承分を含む）を評価する。`/rig:catalog`（`--list --global`）の recipe 一覧行にも同じメタデータ・同じ表示ルールを適用する。
+並べ順は **`tdd` → `gated` → `workflow` → `no-defaults` → `orchestrate`（または `orchestrate(auto)`） → `cross-llm` → `no-capture` → `no-tdd` → `adversarial` → `visual` → `autonomous` → `no-orchestrate` → `design` → `review` → `capture` → `verify-findings`** の固定順（`orchestrate`/`orchestrate(auto)` は同一スロット・排他）。複数共存例：`[3 steps · interactive · tdd · gated]`。`extends` で継承した recipe も RESOLVE 後の確定値（継承分を含む）を評価する。`/rig:catalog`（`--list --global`）の recipe 一覧行にも同じメタデータ・同じ表示ルールを適用する。
 
 ## `steps:` フィールド（step ID 列・#79, #160）
 

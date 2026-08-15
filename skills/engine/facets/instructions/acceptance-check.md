@@ -29,6 +29,7 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `bug_cause_identified`：reproduce/plan step で原因が特定されているか。
 - `fix_is_minimal`：diff が原因箇所に限定されているか（無関係な拡張がないか）。
 - `regression_test_added_or_explained`：回帰テストの有無、無ければ不要な理由。
+- `test_written_before_implementation_or_explained`：下記「テスト先行の判定」を参照。
 - `existing_behavior_preserved`：既存の正常系テストが green か。
 - `no_unrelated_refactor`：修正に無関係なリファクタが混ざっていないか。
 
@@ -36,8 +37,27 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `requirement_summary_written`：clarify-requirements/intake で確定した AC が記録されているか。
 - `implementation_matches_requirement`：実装内容と AC を突き合わせる。
 - `tests_added_or_explained`：新規テストの有無、無ければ既存テストで担保される旨の明示確認。
+- `test_written_before_implementation_or_explained`：下記「テスト先行の判定」を参照。
 - `public_api_changes_documented`：公開 API 変更が diff.md/README 等で説明されているか。
 - `migration_or_backward_compatibility_considered`：既存データ・既存呼び出し元への影響を検討したか。
+
+**テスト先行の判定（`test_written_before_implementation_or_explained`）**
+
+`write-failing-test` step（`facets/instructions/write-failing-test`）が残した証拠で判定する。
+`tests_added_or_explained` が「テストがあるか」を見るのに対し、こちらは「**実装より前にあり、
+その時点で失敗していたか**」を見る——両方 green でも別物であり、片方で代替しない。
+
+| 状況 | 判定 |
+|---|---|
+| Red を確認した記録（テスト名＋失敗出力の要点）があり、そのテストが今 green | `passed` |
+| テストを書けない理由が記録されている（ドキュメントのみの変更、テスト基盤の新設等） | `warning` ＋ detail に理由 |
+| `--no-tdd` で step 自体が外れている | `skipped` |
+| テストは追加されているが、実装より先に書いた証拠が無い | `warning` ＋ detail に「事後追加」 |
+| 実装だけがあり、テストも理由の記録も無い | `failed` |
+
+「後から書いたテストも結局あるので同じ」とは扱わない。Red を経ていないテストは、実装を追認するだけで
+挙動を固定できていないことがある——その差を残すための基準である。ただし**事後追加は `warning` 止まり**で、
+`failed` にするのはテストも説明も無い場合だけ（テストを書いた事実そのものは評価する）。
 
 **refactor プリセット（refactor）**
 - `behavior_boundaries_identified`：`identify-behavior-boundaries` step の成果物があるか。

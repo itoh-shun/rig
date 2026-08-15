@@ -412,6 +412,8 @@ def derive_badges(fm: dict, steps: list[dict]) -> list[str]:
         badges.append("cross-llm")
     if fm.get("no_capture") is True:
         badges.append("no-capture")
+    if fm.get("no_tdd") is True:
+        badges.append("no-tdd")
     if fm.get("adversarial") is True:
         badges.append("adversarial")
     if fm.get("visual") is True:
@@ -447,11 +449,15 @@ def derive_steps_field(steps: list[dict]) -> str:
 
 _SIZE_RANK = {"S": 0, "M": 1, "L": 2, "XL": 3}
 
+# `not --flag` / `!--flag` inside a step condition (see evaluate_condition)
+_NEGATED_FLAG_RE = re.compile(r"(?:\bnot\b\s*|!\s*)(--[a-z][a-z0-9-]*)")
+
 # recipe frontmatter key -> equivalent flag (the §4.3 "key interpretation" set)
 _KEY_TO_FLAG = {
     "tdd": "--tdd", "design": "--design", "review": "--review", "visual": "--visual",
     "adversarial": "--adversarial", "cross_llm": "--cross-llm", "orchestrate": "--orchestrate",
     "no_orchestrate": "--no-orchestrate", "no_capture": "--no-capture", "capture": "--capture",
+    "no_tdd": "--no-tdd",
     "no_default_personas": "--no-default-personas", "verify_findings": "--verify-findings",
 }
 
@@ -619,10 +625,19 @@ def evaluate_condition(cond: str | None, flags: set[str], size: str) -> tuple[bo
     """Evaluate a condition expression (e.g. "--design or size L+") — flag component OR size component.
 
     A condition with neither component, or an uninterpretable one, is always OFF (same handling as --validate #109).
+
+    A negated flag (`not --no-tdd` / `!--no-tdd`) inverts that default: the step is ON
+    unless the anti-flag is set. This is what makes a step *structural with an opt-out*
+    rather than opt-in — an unconditional step can only be dropped with `--skip`, and a
+    plain `--no-tdd` condition would switch the step ON exactly when asked to drop it.
     """
     if not cond:
         return True, "no condition"
-    cond_flags = re.findall(r"--[a-z][a-z0-9-]*", cond)
+    negated = set(_NEGATED_FLAG_RE.findall(cond))
+    blocked = sorted(negated & flags)
+    if blocked:
+        return False, f"suppressed by flag ({' '.join(blocked)})"
+    cond_flags = [f for f in re.findall(r"--[a-z][a-z0-9-]*", cond) if f not in negated]
     hit = sorted(set(cond_flags) & flags)
     if hit:
         return True, f"resolved by flag ({' '.join(hit)})"
@@ -635,6 +650,8 @@ def evaluate_condition(cond: str | None, flags: set[str], size: str) -> tuple[bo
         return False, f"size {need}+ not met (size {size})"
     if cond_flags:
         return False, f"flag not set ({' '.join(sorted(set(cond_flags)))})"
+    if negated:
+        return True, f"not suppressed ({' '.join(sorted(negated))} not set)"
     return False, "invalid condition (always OFF; #109)"
 
 
@@ -767,12 +784,14 @@ def resolve_effective(recipe_path: pathlib.Path, flags: list[str] | None = None,
     mode = {
         "autonomy": "autonomous" if "--autonomous" in fset else "interactive",
         "backend": "workflow" if "--workflow" in fset else "manual",
-        "tdd": "--tdd" in fset,
+        "tdd": "--tdd" in fset and "--no-tdd" not in fset,
         "orchestrate": orch,
         "capture": "off" if "--no-capture" in fset else ("auto" if "--capture" in fset else "ask"),
     }
     if "--capture" in fset and "--no-capture" in fset:
         warnings.append("--capture and --no-capture both specified: --no-capture wins (§7.3)")
+    if "--tdd" in fset and "--no-tdd" in fset:
+        warnings.append("--tdd and --no-tdd both specified: --no-tdd wins (§4.3 anti-flag rule)")
 
     from .gates import validate_executable_steps
     declared_no_orchestrate = fm.get("no_orchestrate", False)

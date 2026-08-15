@@ -58,8 +58,8 @@ def _step(name, status="pending", **extra):
 # ── seeding the denominator ──────────────────────────────────────────────────
 def test_seeding_reads_the_recipes_declared_steps():
     steps = load_recipe_steps("bugfix")
-    assert [s["name"] for s in steps] == ["inspect", "reproduce", "plan", "implement",
-                                          "test", "review-diff", "acceptance"]
+    assert [s["name"] for s in steps] == ["inspect", "reproduce", "plan", "write-failing-test",
+                                          "implement", "test", "review-diff", "acceptance"]
     assert all(s["status"] == "pending" for s in steps)
 
 
@@ -180,7 +180,7 @@ def test_a_settled_task_asks_for_nothing(status):
 # ── the map ──────────────────────────────────────────────────────────────────
 def test_a_multi_step_recipe_renders_its_steps_and_its_stops():
     out = "\n".join(render_flow(load_recipe_steps("bugfix"), {"checks": [{}] * 15}))
-    assert "flow: 7 steps" in out
+    assert "flow: 8 steps" in out
     assert "acceptance" in out and "implement" in out
     assert "最終ゲートは 15 基準" in out
     assert "◆" in out                                    # the hard stops are marked
@@ -249,7 +249,7 @@ def test_reporting_a_step_prints_the_transition(git_repo):
 
     result = run_cli(["step", task_id, "--set", "inspect=passed"], git_repo)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1/7" in result.stdout
+    assert "1/8" in result.stdout
     assert "reproduce" in result.stdout
 
 
@@ -260,7 +260,7 @@ def test_the_board_shows_a_position_and_who_is_waiting(git_repo):
 
     result = run_cli(["board"], git_repo)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1/7" in result.stdout
+    assert "1/8" in result.stdout
     assert "あなた待ち" in result.stdout
 
 

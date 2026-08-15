@@ -101,7 +101,8 @@ command asset は install だけでホストの slash command に自動登録さ
 | `--issue <id>` | 対象 Issue を指定（intake の入力） |
 | `--design` / `--review` | 該当 step を size 非依存で常時 ON にする |
 | `--visual` | verify を `visual-verify`（スクリーンショット等の視覚確認）へ委譲する |
-| `--tdd` | implement を TDD（red-green-refactor）で行う |
+| `--tdd` | implement を TDD（red-green-refactor）で行う。`write-failing-test` step を持たない recipe（`release-flow`・`refactor`・`hotfix` 等）で TDD を強制したいときに使う |
+| `--no-tdd` | `write-failing-test` step（`feature`/`bugfix` の既定 ON・テスト先行）を外す anti-flag。`--tdd` と同時指定なら `--no-tdd` が勝つ |
 | `--autonomous` | step ゲートを省き自律実行（既定は各 step で確認＝step ゲート ON）。acceptance-gate は維持（§4.5） |
 | `--plan` | COMPOSE まで実行し、合成ハーネスを人間可読で提示して**停止**（実行しない）（§5） |
 | `--save-plan <path>` | `--plan` と併用し、同一内容を `<path>` にも Markdown で書き出す。`--plan` なしなら `[WARN] --save-plan は --plan と組み合わせて使用してください（無視します）` を出して無視。既存ファイルは上書き確認あり（`--autonomous` 時は自動上書き） |
@@ -129,7 +130,7 @@ command asset は install だけでホストの slash command に自動登録さ
 | `--url <url>` | （design pack）監査モードを明示。実装画面を Playwright で取得し UI/UX・a11y を採点（bare な URL 引数でも自動検出） |
 | `--a11y-level <A\|AA\|AAA>` | （design pack）目標 WCAG レベル（既定 AA）。未達違反は検閲で重大度を上げる |
 
-> **フラグと recipe キーの等価**：`--tdd` / `--design` / `--review` / `--visual` / `--adversarial` / `--cross-llm` / `--orchestrate` / `--no-orchestrate` / `--capture` / `--no-capture` / `--verify-findings` / `--no-default-personas` / `--workflow` / `--autonomous` は、それぞれ同名の recipe キー（§3.5）と等価であり `--save-recipe` で保存される（§4.3）。**各フラグの効果詳細・競合規則の正本は `facets/instructions/resolve` 3.1**。
+> **フラグと recipe キーの等価**：`--tdd` / `--design` / `--review` / `--visual` / `--adversarial` / `--cross-llm` / `--orchestrate` / `--no-orchestrate` / `--capture` / `--no-capture` / `--no-tdd` / `--verify-findings` / `--no-default-personas` / `--workflow` / `--autonomous` は、それぞれ同名の recipe キー（§3.5）と等価であり `--save-recipe` で保存される（§4.3）。**各フラグの効果詳細・競合規則の正本は `facets/instructions/resolve` 3.1**。
 
 **`--list` 指定時** → §2 のブリック目録・flag 一覧に加え、recipe を全 tier 走査（§4.2 と同じ project → user → shipped 順）して tier 別・pack 別にグルーピング表示し、**停止**（解決も実行もしない）。各エントリは `name [N steps · badge…]  steps: <id列>  extends: <親 [tier]>  — description` 形式。**表示仕様の正本は `facets/instructions/list`**（tier/pack グルーピング・badge の導出と固定並び順・`steps:` フィールド・`★ default` マーカー・shadow 表示・出力例）— `--list` 実行時は必ずこれを読んで従う。**`--global` 併用時**は recipe 以外の全ブリック（persona・wiki 等）も横断し、レジストリ地図（`facets/instructions/catalog`）を提示。
 
@@ -158,7 +159,7 @@ recipe ファイル（`recipes/*.md`）は YAML frontmatter + 本文 Markdown �
 | `autonomy` | ✓ | `interactive`（各 step でゲート確認）/ `autonomous`（**step ゲートなし**。acceptance-gate 品質ループは維持） |
 | `extends` | — | 継承元 recipe の bare 名。その steps をベースに差分だけ上書きする（**N 段継承・深さ上限 5**・`remove: true` で継承元 step を静的除外。`facets/instructions/resolve` 2.2 が正本） |
 | `backend` | — | `manual`（既定）/ `workflow`。RUN の実行バックエンド宣言（§6） |
-| **フラグ等価キー** | — | `tdd` / `no_default_personas` / `orchestrate` / `no_orchestrate` / `cross_llm` / `capture` / `no_capture` / `adversarial` / `visual` / `design` / `review` / `verify_findings` — すべて boolean（省略時 `false`）。**対応フラグと等価・`--save-recipe` で保存され再利用時にフラグなしで再現・有効時は `--plan`／完了レポートに修飾子と `--list` に badge が付く**という同一の一般則（§4.3）に従う。**各キーの効果・競合規則（`orchestrate`⇔`no_orchestrate` / `capture`⇔`no_capture`）の正本は `facets/instructions/resolve` 3.1** |
+| **フラグ等価キー** | — | `tdd` / `no_default_personas` / `orchestrate` / `no_orchestrate` / `cross_llm` / `capture` / `no_capture` / `no_tdd` / `adversarial` / `visual` / `design` / `review` / `verify_findings` — すべて boolean（省略時 `false`）。**対応フラグと等価・`--save-recipe` で保存され再利用時にフラグなしで再現・有効時は `--plan`／完了レポートに修飾子と `--list` に badge が付く**という同一の一般則（§4.3）に従う。**各キーの効果・競合規則（`orchestrate`⇔`no_orchestrate` / `capture`⇔`no_capture` / `tdd`⇔`no_tdd`）の正本は `facets/instructions/resolve` 3.1** |
 
 ### step オブジェクトのキー
 
@@ -249,8 +250,10 @@ RESOLVE で確定した step リスト（extends 適用後・flag override 後�
 
 変更規模に応じて重い step を自動 OFF する。行数閾値は manifest の `size_thresholds`（`S_max` / `M_max` / `L_max`）で上書きできる（未設定時は pr-hygiene 基準 `100` / `200` / `400`。テンプレは `manifests/_template.md`）。
 
-- **S / M**（既定：`M_max` 以下＝～200行）: design / review / tdd を**既定 OFF**。明示 flag で ON にした場合のみ実行。
+- **S / M**（既定：`M_max` 以下＝～200行）: `condition` に size トークンを持つ design / review / tdd 系 step を**既定 OFF**。明示 flag で ON にした場合のみ実行。
 - **L 以上**（既定：`M_max` 超。`L_max` 超は分割必須）: design / review を推奨し、ON を促す。
+
+**size-aware の対象外＝構造的 step**：`feature`/`bugfix` の `design` と `write-failing-test` は size で間引かない（`write-failing-test` の `condition` は `not --no-tdd`＝size 非依存の opt-out）。小さい変更ほど「設計するまでもない」「テストは後で」が通り、その判断自体が検証されずに素通りするため——**基本フローの骨格は size で消えない**。省くなら `--no-tdd` / `--skip` で意図を宣言する（run log に残る）。「軽い変更を過剰に重く回す」アンチパターン（§10）が指すのは、size 条件付きの重い step（review fan-out の増員・視覚検証等）であって骨格ではない。
 
 **コスト予算（`--budget`・§3 flag）** — size-aware が「変更の重さ」で間引くのに対し、budget は**支出の上限**で間引く：`low`＝組み込み 3-way のみ（追加 reviewer・自動追加 step を抑止し、必要なら提案だけ出す）・workflow 禁止。`mid`＝3-way＋選択投入2枠まで。予算で抑止した項目は `--plan`／完了レポートに `[BUDGET: 抑止]` と明示する（サイレントに削らない）。manifest `default_budget: low|mid` で恒久設定・`--budget` フラグが優先。
 
@@ -436,7 +439,7 @@ RUN 規律は SKILL.md 指示の recency に依存するため、**途中で質�
 
 - 親が**直接コードを書き始める** / **再実装する**（**中断・質疑の直後に素の作業へ静かに戻る**場合を含む）。
 - 親が長い diff・ログ・ファイル全文を**自分の context に読み込む**。
-- 軽い変更を**過剰に重く**（不要な design/review/tdd を）回す。
+- 軽い変更を**過剰に重く**（size 条件付きの重い step を不要に ON にして）回す。`feature`/`bugfix` の design・write-failing-test は骨格なのでこれには当たらない（§4.4）。
 - `--only` / `--from` を無視して**部分実行せず全部やる**。
 - agent / subagent を使わず**親が全部書く**。
 - 親が `--workflow` / ultracode なしに Workflow を**無断起動する**。
@@ -639,7 +642,7 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 |---|---|
 | 親が直接作業し context を浪費する | 実作業は subagent へ dispatch、親は集約のみ |
 | 既存 skill/agent を再実装する | native を確認して委譲する（§8） |
-| 軽い変更を過剰に重く回す | size-aware 既定（S/M は design/review/tdd OFF）に従う |
+| 軽い変更を過剰に重く回す | size-aware 既定（S/M は size 条件付き step を OFF）に従う。骨格（design・write-failing-test）は対象外・§4.4 |
 | `--only`/`--from` を無視して全部やる | 指定範囲だけ実行する |
 | agent を使わず親が全部書く | parallel-fanout で subagent 群に dispatch |
 | 同じ所で粘り続ける | 2回詰まったら user に判断を仰ぐ |

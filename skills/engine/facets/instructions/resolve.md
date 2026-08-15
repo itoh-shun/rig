@@ -117,10 +117,12 @@ recipe の frontmatter に `extends: <parent-name>` が宣言されている場�
 | `--verify-findings` | `verify_findings` | review-gate に所見の敵対的検証（`finding-verifier` による反証段）を挿入する（`patterns/review-gate`「敵対的検証」） | — | `· verify-findings` |
 | `--capture` | `capture` | RUN 後の capture 提案を承認ダイアログなしで自動実行する（提案表示と事後報告は省略しない・§7.3）（#184） | `\| capture: on` | `· capture` |
 | `--no-capture` | `no_capture` | RUN 後の capture 提案を完全に抑止する（提案表示・承認ダイアログともに出さない）。`hotfix`/`debug` など軽量 recipe 向けの anti-flag（#137） | `\| no-capture: on` | `· no-capture` |
+| `--no-tdd` | `no_tdd` | `write-failing-test` step（`feature`/`bugfix` で `condition: "not --no-tdd"`＝既定 ON）を外す anti-flag。テスト先行が構造的に無理な変更のための宣言的な逃げ道で、gate 側の `test_written_before_implementation_or_explained` を `warning` で通す運用の代わりに**意図を明示**する。step を持たない recipe では無効（何も起きない） | `\| tdd: off` | `· no-tdd` |
 
 **競合規則**：
 
 - `orchestrate: true` と `no_orchestrate: true` が同時に設定されている場合は WARN を出して `no_orchestrate` 優先。`--validate` が矛盾を FAIL として検出する（`facets/instructions/validate` ③）。
+- `--tdd` と `--no-tdd` が同時に有効な場合は `--no-tdd` 優先＋`[WARN] --tdd と --no-tdd が同時指定されています（--no-tdd 優先）`（anti-flag の一般則）。
 - `--capture` と `--no-capture` が同時に有効な場合は `--no-capture` 優先＋`[WARN] --capture と --no-capture が同時指定されています（--no-capture 優先）`（§7.3 整合）。
 - `--skip` は `--design`/`--review` 等の明示 ON より後に適用され、**明示スキップが最終的に勝つ**（下記 4.）。
 

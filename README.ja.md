@@ -158,8 +158,8 @@ acceptance-gate は、run を反映候補として渡してよいかを判定す
 | preset | 上乗せ対象 | 基準の例 |
 |---|---|---|
 | `standard` | 全 task_type | `task_intent_satisfied`・`no_unrelated_diff`・`diff_summary_written`・`risk_summary_written`・`tests_pass_or_explained`・`no_type_errors_or_explained`・`no_secret_leak`・`no_gate_tampering`・`no_injection_markers`・`no_destructive_operation` |
-| `bugfix` | bugfix, performance | `bug_cause_identified`・`fix_is_minimal`・`regression_test_added_or_explained`・`existing_behavior_preserved`・`no_unrelated_refactor` |
-| `feature` | feature, test | `requirement_summary_written`・`implementation_matches_requirement`・`tests_added_or_explained`・`public_api_changes_documented`・`migration_or_backward_compatibility_considered` |
+| `bugfix` | bugfix, performance | `bug_cause_identified`・`fix_is_minimal`・`regression_test_added_or_explained`・`test_written_before_implementation_or_explained`・`existing_behavior_preserved`・`no_unrelated_refactor` |
+| `feature` | feature, test | `requirement_summary_written`・`implementation_matches_requirement`・`tests_added_or_explained`・`test_written_before_implementation_or_explained`・`public_api_changes_documented`・`migration_or_backward_compatibility_considered` |
 | `refactor` | refactor | `behavior_boundaries_identified`・`no_unintended_behavior_change`・`tests_confirm_behavior_preserved`・`no_unrelated_refactor`・`public_api_changes_documented_if_any` |
 | `review` | review | `findings_are_concrete`・`severity_labeled`・`file_references_included`・`blocking_and_non_blocking_separated`・`false_positive_risk_considered` |
 | `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |

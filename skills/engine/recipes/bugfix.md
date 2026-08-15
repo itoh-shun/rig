@@ -17,6 +17,12 @@ steps:
     instruction: implement
     pattern: serial
     personas: [debugger]
+  - id: write-failing-test
+    instruction: write-failing-test
+    pattern: serial
+    condition: "not --no-tdd"
+    personas: [implementer]
+    policies: [risk-based-testing]
   - id: implement
     instruction: implement
     pattern: serial
@@ -50,6 +56,7 @@ steps:
       - "bug_cause_identified — 原因を特定した"
       - "fix_is_minimal — 修正が最小限である"
       - "regression_test_added_or_explained — 回帰テストを追加したか、不要な理由を説明した"
+      - "test_written_before_implementation_or_explained — 修正前に失敗する回帰テストを書いたか、書けない理由を説明した"
       - "existing_behavior_preserved — 既存の正常系挙動を壊していない"
       - "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない"
     personas: [implementer]
@@ -65,17 +72,18 @@ steps:
 |---|---|
 | `hotfix` | 最短パス。design/review を省略。verify の gate も軽量（build/lint のみ） |
 | `debug` | 原因不明時の調査重視（isolate で仮説列挙） |
-| **bugfix**（本 recipe） | 通常のバグ修正の既定。review-diff（4-way）＋ 13項目の acceptance-check まで通す |
+| **bugfix**（本 recipe） | 通常のバグ修正の既定。テスト先行（write-failing-test）＋ review-diff（4-way）＋ 14項目の acceptance-check まで通す |
 
 ## 展開手順
 
 1. **inspect** — 依頼の何/なぜ/どこ/どこまでを確定する（`intake` 委譲）。
 2. **reproduce** — バグを再現する手順を確定する（`debugger` persona）。再現できないまま次へ進まない。
 3. **plan** — 根拠に基づき修正方針を立てる（`implement` instruction を読解・仮説列挙モードで使用。コード変更はまだ行わない — `recipes/debug` の isolate step と同じ考え方）。
-4. **implement** — 最小限の修正を実施する。
-5. **test** — build/lint/test を実行する。
-6. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー（`review-gate`）。
-7. **acceptance** — `facets/instructions/acceptance-check` が13基準（standard 8 + bugfix 5）を判定し `scripts/workbench.py gate` に記録する。`failed` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
+4. **write-failing-test** — ②で確定した再現条件を固定する回帰テストを**修正より先に**書き、失敗を確認する（`facets/instructions/write-failing-test`）。既定 ON・`--no-tdd` で外れる。再現手順が確定している bugfix では Red が最も自然に取れる——「直したつもりで直っていない」を構造的に潰す段。
+5. **implement** — 最小限の修正を実施し、④のテストを green にする。
+6. **test** — build/lint/test を実行する。
+7. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー（`review-gate`）。
+8. **acceptance** — `facets/instructions/acceptance-check` が14基準（standard 8 + bugfix 6）を判定し `scripts/workbench.py gate` に記録する。`failed` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
 
 ## isolated worktree との関係
 

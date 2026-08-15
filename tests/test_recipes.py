@@ -190,8 +190,17 @@ def test_adaptive_bugfix_graph_references_are_resolved():
 
 
 def test_existing_bugfix_recipe_bytes_are_unchanged():
+    """Pin the bugfix recipes so a change to them is always deliberate.
+
+    Not a freeze — it catches edits made *in passing* (e.g. while adding a
+    neighbouring recipe). Changing these files on purpose means updating the
+    hash in the same commit, which is exactly the moment to state why.
+
+    Last intentional change: the `write-failing-test` step (test-first is part of
+    the base flow, opt out with `--no-tdd`).
+    """
     expected = {
-        "bugfix.md": "929fb2104bbda259a9cc351a2bf723a73aa290aa0c1ba540e5d0ea444c182798",
+        "bugfix.md": "a41e5395412f98c4038124f51739624ec5afb48cf5aa19775cbaae3799bcb415",
         "fast-bugfix.md": "a922f07ff1e94805d43b8589f7cb08a3e3d51277fc50e739a576c7ba584b345d",
     }
     actual = {
@@ -335,3 +344,89 @@ def test_auto_orchestrate(step_factory):
     assert auto_orchestrate([s(id="a"), s(id="b", needs=["a"])])[0] is True
     assert auto_orchestrate([s(id="x")])[0] is False
     assert auto_orchestrate([s(id="x")], manifest_default=True)[0] is True
+
+
+# ── negated flag conditions (`not --no-tdd`) — structural step with an opt-out ──
+
+def test_negated_flag_condition_is_on_when_the_anti_flag_is_absent():
+    on, why = evaluate_condition("not --no-tdd", set(), "S")
+    assert on is True
+    assert "not suppressed" in why
+
+
+def test_negated_flag_condition_is_off_when_the_anti_flag_is_set():
+    on, why = evaluate_condition("not --no-tdd", {"--no-tdd"}, "XL")
+    assert on is False
+    assert "--no-tdd" in why
+
+
+def test_negated_flag_condition_ignores_size():
+    # A structural step must not be silently dropped for small diffs (§4.4).
+    for size in ("S", "M", "L", "XL"):
+        assert evaluate_condition("not --no-tdd", set(), size)[0] is True
+
+
+def test_bang_form_of_negation_is_equivalent():
+    assert evaluate_condition("!--no-tdd", {"--no-tdd"}, "S")[0] is False
+    assert evaluate_condition("!--no-tdd", set(), "S")[0] is True
+
+
+def test_a_negated_flag_is_not_read_as_a_positive_flag():
+    # The bug this syntax exists to avoid: matching --no-tdd positively would turn
+    # the step ON exactly when the caller asked for it to be dropped.
+    on, _ = evaluate_condition("not --no-tdd", {"--no-tdd"}, "S")
+    assert on is False
+
+
+def test_positive_and_negated_flags_can_coexist_in_one_condition():
+    assert evaluate_condition("--tdd or not --no-tdd", {"--tdd"}, "S")[0] is True
+    assert evaluate_condition("--tdd or not --no-tdd", {"--no-tdd"}, "S")[0] is False
+
+
+def test_existing_size_and_flag_conditions_are_unaffected():
+    assert evaluate_condition("--design or size L+", set(), "L")[0] is True
+    assert evaluate_condition("--design or size L+", set(), "S")[0] is False
+    assert evaluate_condition("--design or size L+", {"--design"}, "S")[0] is True
+    assert evaluate_condition(None, set(), "S")[0] is True
+    assert evaluate_condition("gibberish", set(), "S")[0] is False
+
+
+# ── test-first is part of the base flow (feature / bugfix) ──
+
+@pytest.mark.parametrize("recipe", ["feature", "bugfix"])
+def test_base_recipes_write_a_failing_test_before_implementing(recipe):
+    ids = [s["id"] for s in resolve_plan_json(config.RECIPES / f"{recipe}.md")["steps"]]
+    assert "write-failing-test" in ids, f"{recipe} lost its test-first step"
+    assert ids.index("write-failing-test") < ids.index("implement")
+
+
+@pytest.mark.parametrize("recipe", ["feature", "bugfix"])
+def test_test_first_step_is_on_by_default_at_every_size(recipe):
+    for diff_lines in (1, 150, 900):
+        resolved = resolve_effective(config.RECIPES / f"{recipe}.md", flags=[], diff_lines=diff_lines)
+        step = next(s for s in resolved["steps"] if s["id"] == "write-failing-test")
+        assert step["active"] is True, f"{recipe} dropped test-first at {diff_lines} lines"
+
+
+@pytest.mark.parametrize("recipe", ["feature", "bugfix"])
+def test_no_tdd_opts_out_of_the_test_first_step(recipe):
+    resolved = resolve_effective(config.RECIPES / f"{recipe}.md", flags=["--no-tdd"], diff_lines=10)
+    step = next(s for s in resolved["steps"] if s["id"] == "write-failing-test")
+    assert step["active"] is False
+    assert "--no-tdd" in step["why"]
+
+
+@pytest.mark.parametrize("recipe", ["feature", "bugfix"])
+def test_test_first_step_has_an_instruction_facet(recipe):
+    steps = resolve_plan_json(config.RECIPES / f"{recipe}.md")["steps"]
+    instr = next(s["instruction"] for s in steps if s["id"] == "write-failing-test")
+    assert (config.RECIPES.parent / "facets" / "instructions" / f"{instr}.md").is_file()
+
+
+def test_no_tdd_wins_over_tdd():
+    resolved = resolve_effective(config.RECIPES / "feature.md",
+                                 flags=["--tdd", "--no-tdd"], diff_lines=10)
+    assert resolved["mode"]["tdd"] is False
+    step = next(s for s in resolved["steps"] if s["id"] == "write-failing-test")
+    assert step["active"] is False
+    assert any("--no-tdd wins" in w for w in resolved["warnings"])
