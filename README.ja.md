@@ -487,9 +487,11 @@ engineはなく、`workbench.py`/`orchestrate.py`を呼ぶ薄いadapterである
 | `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
 | `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
 
+`rig_orchestrate_run`は既定で隔離実行する（#419）。`isolate`を省略した呼び出しは隔離worktreeで走り、`rig-mcp`の「常に隔離」と同じ安全側に揃う。メイン作業ツリーへ直接書き込むのは`isolate: false`を明示した場合だけ。
+
 opt-in：このサーバを起動しない限り何も変わらず、既存のCLI/skill経由の利用はそのまま有効。MCPクライアント（Claude Desktop等）から使う場合は、`command: python3`, `args: ["<repo>/scripts/mcp_server.py"]`をMCP設定に登録する。
 
-**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はMEDIUM（`rig_orchestrate_run`は`--isolate`未指定だとメイン作業ツリーに直接影響しうるため、呼び出し側で`isolate: true`を明示することを推奨、という具体的な指摘）。
+**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はLOW。以前は「`rig_orchestrate_run`は`isolate`未指定だとメイン作業ツリーに直接影響しうる」という理由でMEDIUMだったが、#419で隔離が既定になった。判定はハードコードした文言ではなくadapterの実際のargv組み立てから導いているので、隔離をopt-inに戻せばMEDIUMの指摘も戻る。
 
 ### コストティア自動ルーティング（`--auto-route`・`--auto-route-learn`・#264・#305）
 

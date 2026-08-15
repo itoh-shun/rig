@@ -76,6 +76,38 @@ def test_tools_call_orchestrate_runs_shells_out(tmp_path, monkeypatch):
     assert "No run records yet" in reply["result"]["content"][0]["text"]
 
 
+def test_orchestrate_run_isolates_when_the_caller_says_nothing():
+    # #419: the pre-fix adapter wrote straight into the main working tree whenever
+    # the MCP client omitted `isolate`, unlike rig-mcp which always isolates.
+    assert "--isolate" in mcp_server._orchestrate_run_args({"recipe": "r"})
+
+
+def test_orchestrate_run_honors_an_explicit_isolate_false():
+    assert "--isolate" not in mcp_server._orchestrate_run_args({"recipe": "r", "isolate": False})
+
+
+def test_orchestrate_run_honors_an_explicit_isolate_true():
+    assert "--isolate" in mcp_server._orchestrate_run_args({"recipe": "r", "isolate": True})
+
+
+def test_orchestrate_run_args_keep_the_other_flags():
+    args = mcp_server._orchestrate_run_args(
+        {"recipe": "r", "provider": "codex", "verifier_provider": "claude",
+         "goal": "g", "auto_route": True, "run_state_path": "s.json"}
+    )
+    assert args[:2] == ["run", "r"]
+    for flag, value in (("--provider", "codex"), ("--verifier-provider", "claude"),
+                        ("--goal", "g"), ("--out", "s.json")):
+        assert args[args.index(flag) + 1] == value
+    assert "--auto-route" in args
+
+
+def test_orchestrate_run_schema_documents_the_isolate_default():
+    isolate = mcp_server.TOOLS["rig_orchestrate_run"]["input_schema"]["properties"]["isolate"]
+    assert isolate["default"] is True
+    assert "isolate: false" in mcp_server.TOOLS["rig_orchestrate_run"]["description"]
+
+
 @pytest.mark.parametrize("force_proof_tool", ["rig_task_accept", "rig_task_discard"])
 def test_force_proof_tools_delegate_to_workbench_cli(force_proof_tool):
     # accept/discard must go through workbench.py's own code path (not reimplement
