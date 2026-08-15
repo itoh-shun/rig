@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig confidence` / `/rig context` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -180,6 +180,16 @@ python3 scripts/workbench.py stats [--recipe bugfix] [--verifier security-review
 ```
 
 `.rig/runs/` 配下の全 task を集計し、そのまま提示する（Runs/Accepted/Discarded/Failed gate のサマリ→Most used recipes→Gate results→Verifier behavior）。**`Warning:` 行が出た場合は必ずそのまま伝える**——`<persona> has 0 rejects across N runs. Possible rubber-stamp behavior.` は N≥5 かつ REJECT 0 件の reviewer に対する自動検知であり、ゴム印化（何でも通す reviewer）の疑いを人に気づかせるための唯一のシグナル。黙って握りつぶさない。verdict が一件も記録されていない場合は「未記録」の旨を伝え、`/rig review` での記録を促す。
+
+## `/rig context [--since-days N]`
+
+```
+python3 scripts/workbench.py context [--since-days 7]
+```
+
+`.rig/context.jsonl` を読むだけの read-only 集計（既定は全期間）。rig が印字した1バイトは tool result として親コンテキストに戻るため、**rig の stdout が rig の親コンテキスト消費そのもの**——それを invocation 単位で数え、コマンド別・task 別・重い単発呼び出しの順に提示する。`context-minimal` が主張してきた規律に、初めて数字を与えるための計測（`RIG_NO_CONTEXT_METER=1` で無効化）。
+
+**レポートが自分で否定している範囲をそのまま伝える**——セッション全体の context・会話・親が自分で読んだファイルは見えず、**dispatch 率も報告しない**（subagent と親のシェルに同じ環境が渡るため区別する信号が存在しない。推測値を出す方が無い方より悪い）。`### budget` 行は rig が宣言する慣習であってゲートではなく、`ok` は「rig が自分の出力予算に収まった」以上を意味しない。この但し書きを落として「context を計測しています」とだけ要約しない。
 
 ## `/rig gc [--older-than <N>d] [--dry-run]`
 
