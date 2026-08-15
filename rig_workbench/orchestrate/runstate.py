@@ -331,32 +331,57 @@ def telemetry_append(state: dict, final: str) -> None:
         failure_mode = classify_failure(state)
         if failure_mode is not None:
             rec["failure_mode"] = failure_mode
+    except Exception:
+        return  # a record that could not be built is a record not worth writing
+
+    append_run_record(rec,
+                      secure=bool(state.get("secure_runtime")),
+                      secure_history_path=state.get("secure_history_path"))
+
+
+def append_run_record(rec: dict, *, secure: bool = False,
+                      secure_history_path: str | None = None,
+                      runs_path: pathlib.Path | None = None,
+                      project: pathlib.Path | None = None) -> None:
+    """Append one finished telemetry record to `.rig/runs.jsonl`, then mirror it into the
+    global index (`~/.rig/runs.jsonl`) with `project` attached for cross-project rollups.
+
+    Split out of `telemetry_append` so a second backend can record through the same
+    writer instead of a parallel one. Building the record stays with each backend —
+    they know different things about a run — but *where* a record lands, keeping a
+    secure run out of ambient cross-project state, and the rule that a failed write
+    never breaks the run are one decision, and it is made here.
+
+    `runs_path` / `project` override the process-wide defaults, which are resolved from
+    the cwd at import time. That is right for orchestrate, which runs inside the repo it
+    is orchestrating, and wrong for a caller that already knows which repository the run
+    belongs to — a workbench task carries its own root.
+    """
+    target = runs_path or config.RUNS_PATH
+    try:
         encoded = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
-        if state.get("secure_runtime"):
-            history_path = state.get("secure_history_path")
-            if not isinstance(history_path, str):
+        if secure:
+            if not isinstance(secure_history_path, str):
                 raise OSError("secure runtime history path is missing")
-            atomic_append_line(pathlib.Path(history_path), encoded)
+            atomic_append_line(pathlib.Path(secure_history_path), encoded)
         else:
-            config.RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with config.RUNS_PATH.open("a", encoding="utf-8") as f:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8") as f:
                 f.write(encoded.decode("utf-8"))
     except Exception:
         pass
 
-    if state.get("secure_runtime"):
+    if secure:
         return  # never mirror a sensitive run into ambient cross-project state
 
-    # ── Mirror into the global index (~/.rig/runs.jsonl) as well ─────────────
     # Keep the per-project log (cwd/.rig) while enabling cross-project aggregation of
     # how much rig-wb is used overall. The `project` field preserves provenance.
     # Write failures are swallowed (best-effort; the cwd-side record is primary).
     try:
         global_path = config.GLOBAL_RUNS_PATH
         global_path.parent.mkdir(parents=True, exist_ok=True)
-        # After the cwd record is finalized (rec fully built), copy it with project attached
         global_rec = dict(rec)
-        global_rec["project"] = str(config.INVOCATION_CWD)
+        global_rec["project"] = str(project or config.INVOCATION_CWD)
         with global_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(global_rec, ensure_ascii=False) + "\n")
     except Exception:

@@ -253,6 +253,50 @@ _orch_delegates = {
 }
 
 
+# A workbench task is recorded when it reaches accept or discard — the two points it
+# actually ends. Everything else is still in flight: a failed gate is fixable and
+# re-runnable, so recording there would count one task many times.
+_WORKBENCH_TERMINAL_STATUSES = frozenset({"accepted", "discarded"})
+
+
+def _unfinished_workbench_tasks(root: pathlib.Path) -> int:
+    """Workbench tasks in this repo that have not reached a terminal state.
+
+    They have no run record and cannot have one yet, so they are missing from the count
+    above. Saying so is the difference between a number that is incomplete and a number
+    that is quietly wrong.
+    """
+    import json as _json
+
+    n = 0
+    for task_file in sorted((root / ".rig" / "runs").glob("*/task.json")):
+        try:
+            status = _json.loads(task_file.read_text(encoding="utf-8")).get("status")
+        except (OSError, _json.JSONDecodeError):
+            continue
+        if status not in _WORKBENCH_TERMINAL_STATUSES:
+            n += 1
+    return n
+
+
+def _usage_coverage_lines(root: pathlib.Path | None) -> list[str]:
+    """What this aggregate does not contain, stated rather than left to be discovered.
+
+    The count answers "how much has rig been used", and a reader takes a missing entry
+    as absence rather than as a blind spot. This log has two of those. One is countable
+    and gets counted; the other cannot be, and gets named.
+    """
+    lines = []
+    if root is not None:
+        pending = _unfinished_workbench_tasks(root)
+        if pending:
+            lines.append(f"  - {pending} workbench task(s) here have not reached accept or "
+                         "discard, so they have no record yet (`rig-wb wb board`).")
+    lines.append("  - A manual or workflow RUN that never went through `/rig:go` appends by "
+                 "prose instruction (SKILL.md §6), not by code, so it may be missing entirely.")
+    return lines
+
+
 def _show_usage(argv: list[str]) -> None:
     """Aggregate run counts per invoker from `.rig/runs.jsonl`.
 
@@ -283,13 +327,32 @@ def _show_usage(argv: list[str]) -> None:
         else:
             i += 1
 
+    # The unfinished-task count can only be taken for the repo we are standing in;
+    # --global spans repos whose `.rig/runs/` this process cannot see.
+    coverage_root: pathlib.Path | None
     if use_global:
-        runs_path = pathlib.Path.home() / ".rig" / "runs.jsonl"
-        scope = "global (~/.rig/runs.jsonl, mirror across all projects)"
+        # The writer resolves this through RIG_GLOBAL_RUNS_PATH
+        # (orchestrate.config.GLOBAL_RUNS_PATH). Computing it from $HOME here instead
+        # meant that in any environment which sets that variable, `usage --global`
+        # read a different file than the one every run was being written to.
+        from .orchestrate import config as _orch_config
+
+        runs_path = _orch_config.GLOBAL_RUNS_PATH
+        scope = f"global ({runs_path}, mirror across all projects)"
+        coverage_root = None
     else:
+        # Same reason as the branch above, for the same reader: the writer resolves
+        # RIG_RUNS_PATH, and production code sets it (bench_providers points every run
+        # at an artifact directory). `_rig_data_root()` only walks up looking for a
+        # `.rig`, so those runs were written to one file and read from another.
+        from .orchestrate import config as _orch_config
+
         home = _rig_data_root()
-        runs_path = home / ".rig" / "runs.jsonl"
+        runs_path = _orch_config.RUNS_PATH
         scope = f"local (cwd={home})"
+        # Not `runs_path.parent`: this one scans `.rig/runs/` for unfinished tasks, which
+        # lives with the repository even when the log has been redirected elsewhere.
+        coverage_root = home
 
     entries: list[dict] = []
     if runs_path.exists():
@@ -329,6 +392,9 @@ def _show_usage(argv: list[str]) -> None:
         }
         if use_global:
             payload["by_project"] = dict(by_project)
+        else:
+            payload["unfinished_workbench_tasks"] = _unfinished_workbench_tasks(coverage_root)
+        payload["not_counted"] = [ln.strip(" -") for ln in _usage_coverage_lines(coverage_root)]
         print(_json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
@@ -339,6 +405,11 @@ def _show_usage(argv: list[str]) -> None:
         print("\nNo records found. `rig-wb ...` has not been used yet.")
         if not use_global:
             print("Use `rig-wb usage --global` to see `~/.rig/runs.jsonl` (cross-project).")
+        # Especially here: "no records" is the reading most likely to be mistaken for
+        # "rig was not used", which is exactly the inference this note exists to block.
+        print("\nNot in this count:")
+        for line in _usage_coverage_lines(coverage_root):
+            print(line)
         return
     print(f"\nLast {len(entries)} runs:")
     for inv, n in by_invoker.most_common():
@@ -357,6 +428,9 @@ def _show_usage(argv: list[str]) -> None:
         print("\nBy project:")
         for proj, n in by_project.most_common():
             print(f"  {n:4d} runs   {proj}")
+    print("\nNot in this count:")
+    for line in _usage_coverage_lines(coverage_root):
+        print(line)
 
 
 def _print_help() -> None:

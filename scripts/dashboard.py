@@ -117,7 +117,10 @@ def by_recipe(runs: list[dict]) -> list[tuple[str, int]]:
 def verifier_votes(runs: list[dict]) -> list[dict]:
     stats: dict[str, dict] = {}
     for r in runs:
-        for st in r.get("steps") or []:
+        # Skip non-dict entries: SKILL.md §6 has the manual/workflow backends append to
+        # runs.jsonl by hand, so a record can carry `steps: ["review"]` instead of step
+        # objects. Best-effort, same as the broken-line skip when the log is parsed.
+        for st in (s for s in (r.get("steps") or []) if isinstance(s, dict)):
             for v in st.get("verdicts") or []:
                 name = v.get("by") or "?"
                 rec = stats.setdefault(name, {"total": 0, "ok": 0, "reject": 0})
