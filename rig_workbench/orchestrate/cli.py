@@ -35,6 +35,11 @@ The model does each step's "work", but this runner decides "what happens next":
                                      original branch; unmet/dirty/non-ff runs preserve the worktree and branch
                                      (the spatial version of determinism-by-gate).
                                      Verifier-role CLIs get read-only permissions pinned via argv (claude --allowedTools / codex --sandbox read-only)
+  run ... --reuse-session            Opt-in: continue ONE CLI conversation across the run's generator steps instead of
+                                     launching a fresh process each time (claude/grok; --session-id then --resume).
+                                     Verifiers always stay stateless — an independent check must not inherit the
+                                     generator's conversation. Falls back to stateless, with the reason recorded in
+                                     the run history, when the installed CLI lacks the flags or the run is DAG-parallel.
   run ... --goal-stdin               Read the goal once from bounded UTF-8 stdin. Required by recipes that declare
                                      secure-provider-execution; those recipes refuse goal text in parent argv.
   run ... --review-category C        Required for secure Japanese writing: general, incident_report, or support_reply.

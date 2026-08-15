@@ -584,6 +584,19 @@ Opt-in: nothing changes unless you start this server; existing CLI/skill usage i
 
 **Self threat-scan (`orchestrate.py mcp-scan`, #303):** since the tools it exposes could themselves carry over-broad shell/network permissions, plaintext secret exposure, or hook-injection risk, there's a command that statically analyzes `scripts/mcp_server.py`'s tool definitions using three adversarial lenses (attacker/defender/auditor). It never executes anything (deterministic, no side effects). Wired into `validate.py` for CI — current overall verdict is LOW. It used to be MEDIUM because `rig_orchestrate_run` reached the main working tree whenever the caller omitted `isolate`; since #419 isolation is the default, and the scan derives that verdict from the adapter's actual argv builder rather than a hardcoded label, so reverting to opt-in isolation puts the MEDIUM flag back.
 
+### CLI session reuse (`--reuse-session`, #326)
+
+Each step launches its CLI provider as a fresh process, so a run pays process startup per step and re-injects the prior context into every prompt. `orchestrate.py run --reuse-session` continues **one** conversation across the run's generator steps instead (`--session-id` to open it, `--resume` to continue — the flag shape `claude` headless and grok-build share).
+
+It is opt-in, and stays opt-in: statelessness is also a design property, not only a cost. Each step starting clean is part of what keeps steps independent.
+
+Two boundaries hold regardless of what the caller asks for:
+
+- **Verifiers are never resumed.** A grader that inherits the generator's conversation has already read its reasoning and is primed to agree — that is not an independent check. The role is refused inside the argv builder, so no call site can opt into it.
+- **Fallbacks are recorded, never silent.** CLI session support is version-dependent, so rig probes the installed binary's own `--help` rather than assuming. When the flags are absent — or the run is DAG-parallel, where concurrent steps would interleave a single conversation — the run continues stateless and the reason lands in the run history as `SESSION_REUSE_FALLBACK`. A silent fallback would be indistinguishable from a working feature.
+
+**Verification status:** argv construction, the role boundary, and the fallback path are covered by tests. The end-to-end behavior against a live `claude`/`grok` binary is **not** verified — #326 stays open until it is, and this feature should be treated as unproven against real CLIs until then.
+
 ### Cost-tier auto-routing (`--auto-route`, `--auto-route-learn`, #264, #305)
 
 Recipe steps can declare `auto_route.candidates` (a list of `{model, cost_tier, max_size}`, cheapest first). `orchestrate.py run --auto-route` deterministically picks the cheapest candidate whose `max_size` covers the measured diff size — a fallback only: runtime `--step-model` and the recipe's own `model:` both still win outright. The decision is recorded in `runs.jsonl`'s `steps[].auto_route`.

@@ -200,6 +200,110 @@ _GENERATOR_EDIT_ENFCE = {
 }
 
 
+# ── CLI session reuse (#326) ────────────────────────────────────────────────
+# Reusing one CLI conversation across a run's steps saves a process launch and
+# the re-injection of prior context. It is opt-in (`--reuse-session`) because
+# statelessness is also a design property, not just a cost: each step starting
+# clean is part of what keeps steps independent.
+#
+# Two boundaries are not negotiable:
+#   * **Generator only.** A verifier that inherits the generator's conversation
+#     is no longer an independent check — it has already read the generator's
+#     reasoning and is primed to agree with it. `_session_reuse_argv` refuses
+#     any role but "generator", so no caller can opt into that by mistake.
+#   * **No silent fallback.** CLI session support is version-dependent, so it is
+#     probed rather than assumed, and a fallback to stateless is recorded. A
+#     silent fallback looks exactly like a working feature while costing what it
+#     was meant to save.
+#
+# Flag shapes: claude headless (`--session-id` to start, `--resume` to continue)
+# and grok-build (docs.x.ai/build/cli/headless-scripting) use the same shape.
+# codex has no documented equivalent, so it is absent here and falls back.
+_SESSION_FLAGS = {
+    "claude": ("--session-id", "--resume"),
+    "rig": ("--session-id", "--resume"),      # runs through the claude binary
+    "grok": ("--session-id", "--resume"),
+}
+_SESSION_BINARY = {"claude": "claude", "rig": "claude", "grok": "grok"}
+_HELP_CACHE: dict[str, str] = {}
+
+
+def _cli_supports_session(binary: str) -> bool:
+    """Does this CLI advertise the session flags in its own --help?
+
+    Probed, not assumed: these flags moved across releases of both CLIs, and a
+    wrong assumption here spends a whole run passing a flag the binary rejects.
+    A CLI that cannot be probed at all (missing, or --help fails) counts as
+    unsupported — the pessimistic reading, which costs a fallback rather than a
+    broken run. Cached per binary so the probe is paid once per process.
+    """
+    if binary not in _HELP_CACHE:
+        try:
+            r = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=20)
+            # Some CLIs print help to stderr and/or exit non-zero; read both.
+            _HELP_CACHE[binary] = (r.stdout or "") + (r.stderr or "")
+        except (OSError, subprocess.SubprocessError):
+            _HELP_CACHE[binary] = ""
+    help_text = _HELP_CACHE[binary]
+    return all(flag in help_text for flag in ("--session-id", "--resume"))
+
+
+def _note_session_fallback(cfg: dict, provider: str, reason: str) -> None:
+    """Record one stateless fallback per provider (the run log carries it, not stdout spam)."""
+    notes = cfg.setdefault("session_reuse_notes", [])
+    if any(n.get("provider") == provider for n in notes):
+        return
+    notes.append({"provider": provider, "reason": reason})
+
+
+def prepare_session_reuse(cfg: dict, *, dag_parallel: bool, provider: str) -> None:
+    """Bind this run's session container to `cfg`, or turn reuse off with a reason.
+
+    Called once per run, and it has to be: `_generate` shallow-copies cfg whenever
+    a step pins its own model, so a container created lazily inside that copy dies
+    with it — every step would open a fresh session while reporting nothing. Making
+    the container here means the copies share it. It also has to be *per run* rather
+    than global: A/B variants shallow-copy cfg before their run starts, so each one
+    lands its own container and its own conversation.
+
+    DAG-parallel runs opt out entirely. Independent steps run concurrently there,
+    and two concurrent generator calls resuming one conversation interleave it —
+    cheaper is not worth incoherent.
+    """
+    if not cfg.get("reuse_session"):
+        return
+    if dag_parallel:
+        cfg["reuse_session"] = False
+        _note_session_fallback(cfg, provider, "steps run concurrently in DAG mode (one CLI session cannot be shared)")
+        return
+    cfg["session_ids"] = {}
+    cfg.setdefault("session_reuse_notes", [])
+
+
+def _session_reuse_argv(provider: str, role: str, cfg: dict) -> list[str]:
+    """Extra argv continuing this run's CLI conversation, or [] to stay stateless."""
+    if not cfg.get("reuse_session"):
+        return []
+    if role != "generator":
+        return []       # independent verification — never resume the generator's session
+    flags = _SESSION_FLAGS.get(provider)
+    if flags is None:
+        _note_session_fallback(cfg, provider, "no documented session flags for this CLI")
+        return []
+    if not _cli_supports_session(_SESSION_BINARY[provider]):
+        _note_session_fallback(cfg, provider, "installed CLI does not advertise --session-id/--resume")
+        return []
+    start_flag, resume_flag = flags
+    sessions = cfg.setdefault("session_ids", {})
+    existing = sessions.get(provider)
+    if existing:
+        return [resume_flag, existing]
+    import uuid
+
+    sessions[provider] = str(uuid.uuid4())
+    return [start_flag, sessions[provider]]
+
+
 def _effective_provider_backend(provider: str) -> str:
     """Canonical execution backend used for separation-of-duty comparisons."""
     # `rig` is a prompt/harness mode, but build_argv executes it through the same
@@ -219,6 +323,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
             argv += ["--model", cfg["model"]]              # per-step model support
         if cfg.get("claude_no_session_persistence"):
             argv.append("--no-session-persistence")
+        argv += _session_reuse_argv(provider, role, cfg)
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "claude":
         # Headless. In production the user can tune permission modes etc. via --provider-cmd.
@@ -227,6 +332,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
             argv += ["--model", cfg["model"]]              # per-step model support
         if cfg.get("claude_no_session_persistence"):
             argv.append("--no-session-persistence")
+        argv += _session_reuse_argv(provider, role, cfg)
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "codex":
         # --skip-git-repo-check: keep codex from refusing to start in non-git directories
@@ -235,6 +341,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv += ["--sandbox", "workspace-write" if role == "generator" else "read-only"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
+        argv += _session_reuse_argv(provider, role, cfg)   # always [] — records the fallback
         return argv + [prompt]
     if provider == "grok":
         # grok-build headless (`grok -p`, claude-CLI-shaped syntax;
@@ -249,7 +356,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv = ["grok", "-p", prompt, "--output-format", "plain"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
-        return argv
+        return argv + _session_reuse_argv(provider, role, cfg)
     if provider == "cmd":
         tmpl = cfg.get("provider_cmd") or ""
         if not tmpl:
@@ -546,6 +653,26 @@ def _record_benchmark_provider_call(
     return None
 
 
+def _flush_session_notes(cfg: dict, state: dict | None, step_id: str | None) -> None:
+    """Move pending session-reuse fallbacks into the run history (#326).
+
+    build_argv is a pure argv builder with no access to the run state, so it
+    parks the record on cfg; this is where it becomes durable. Emitted once per
+    provider — `_note_session_fallback` already deduplicates — so a long run does
+    not repeat the same line for every step.
+    """
+    notes = cfg.get("session_reuse_notes")
+    if not notes or state is None:
+        return
+    history = state.setdefault("history", [])
+    recorded = {h.get("provider") for h in history if h.get("action") == "SESSION_REUSE_FALLBACK"}
+    for note in notes:
+        if note["provider"] in recorded:
+            continue
+        history.append({"action": "SESSION_REUSE_FALLBACK", "step": step_id or "",
+                        "provider": note["provider"], "reason": note["reason"]})
+
+
 def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
                  state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
     journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
@@ -580,6 +707,7 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
         except SecureRuntimeError as error:
             return 126, f"[secure provider refused: {error}]"
     argv = build_argv(provider, role, prompt, cfg, persona)
+    _flush_session_notes(cfg, state, step_id)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600),
@@ -3193,6 +3321,8 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
+    prepare_session_reuse(cfg, dag_parallel=any(s["needs"] for s in state["steps"]),
+                          provider=gen_list[0] if gen_list else gen)
     if (
         cfg.get("secure_runtime")
         and state.get("recipe") == "japanese-writing"

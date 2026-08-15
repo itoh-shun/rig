@@ -493,6 +493,19 @@ opt-in：このサーバを起動しない限り何も変わらず、既存のCL
 
 **自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はLOW。以前は「`rig_orchestrate_run`は`isolate`未指定だとメイン作業ツリーに直接影響しうる」という理由でMEDIUMだったが、#419で隔離が既定になった。判定はハードコードした文言ではなくadapterの実際のargv組み立てから導いているので、隔離をopt-inに戻せばMEDIUMの指摘も戻る。
 
+### CLI セッション再利用（`--reuse-session`・#326）
+
+各ステップは CLI provider を毎回新しいプロセスとして起動するため、ステップ数に比例した起動コストがかかり、直前の文脈も毎回プロンプトへ再注入される。`orchestrate.py run --reuse-session` は、その run の generator ステップ間で会話を**1本**引き継ぐ（開始は `--session-id`、継続は `--resume`——claude headless と grok-build が共有するフラグ形）。
+
+opt-in であり、opt-in のまま置く。ステートレスであることはコストであると同時に設計上の性質でもある——各ステップが真っ新から始まることが、ステップ間の独立性を支えている。
+
+呼び出し側が何を要求しても動かない境界が2つある：
+
+- **verifier は決して再開しない。** 生成側の会話を引き継いだ採点者は、その推論を既に読んでおり同意する側に傾いている——それは独立した検証ではない。argv 構築の内側で role を拒否するので、どの呼び出し箇所からも有効にできない。
+- **fallback は必ず記録する（黙って落とさない）。** CLI のセッション機能はバージョン依存が強いので、仮定せず実際に入っているバイナリの `--help` を probe する。フラグが無い場合、あるいは DAG 並列実行（並行ステップが1本の会話を混線させる）の場合はステートレスで続行し、理由を run history に `SESSION_REUSE_FALLBACK` として残す。黙った fallback は「動いている機能」と見分けがつかない。
+
+**検証状況**：argv の構築・role 境界・fallback 経路はテストで固定済み。ただし実機の `claude`/`grok` に対するエンドツーエンドの挙動は**未検証**——#326 は実機検証が済むまで open のままであり、それまでこの機能は実 CLI に対して未証明として扱うこと。
+
 ### コストティア自動ルーティング（`--auto-route`・`--auto-route-learn`・#264・#305）
 
 recipeのstepは`auto_route.candidates`（`{model, cost_tier, max_size}`の列、安い順に宣言）を持てる。`orchestrate.py run --auto-route`は、現在の diff size を測定し、その`max_size`をカバーする最も安い候補を決定論的に選ぶ——あくまでフォールバックで、実行時の`--step-model`とrecipe自身の`model:`はどちらも優先されたまま。選択結果は`runs.jsonl`の`steps[].auto_route`に記録される。
