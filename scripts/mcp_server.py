@@ -145,14 +145,26 @@ def t_orchestrate_status(a):
     return _run(ORCHESTRATE, args)
 
 
-def t_orchestrate_run(a):
+def _orchestrate_run_args(a) -> list:
+    """Build the `orchestrate.py run` argv. Pure — no subprocess, so both the
+    regression tests and `orchestrate.py mcp-scan` can check the isolation
+    default by calling it instead of pattern-matching this file's source.
+
+    `isolate` defaults to True: an MCP caller that says nothing about isolation
+    gets the isolated worktree, matching `rig-mcp` (`remote_mcp.py`, which always
+    isolates). Only an explicit `isolate: false` runs against the main worktree.
+    """
     args = ["run", a["recipe"], "--provider", a.get("provider", "mock")]
     args = _opt(args, "--verifier-provider", a.get("verifier_provider"))
     args = _opt(args, "--goal", a.get("goal"))
-    args = _opt(args, "--isolate", a.get("isolate"))
+    args = _opt(args, "--isolate", a.get("isolate", True))
     args = _opt(args, "--auto-route", a.get("auto_route"))
     args = _opt(args, "--out", a.get("run_state_path"))
-    return _run(ORCHESTRATE, args)
+    return args
+
+
+def t_orchestrate_run(a):
+    return _run(ORCHESTRATE, _orchestrate_run_args(a))
 
 
 def t_orchestrate_runs(a):
@@ -261,7 +273,11 @@ TOOLS = {
     },
     "rig_orchestrate_run": {
         "fn": t_orchestrate_run,
-        "description": "Run every step autonomously, each as a separate-process rig harness (--isolate for worktree isolation)",
+        "description": (
+            "Run every step autonomously, each as a separate-process rig harness. "
+            "Runs in an isolated worktree by default — pass isolate: false to run "
+            "against the main working tree instead."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -269,7 +285,14 @@ TOOLS = {
                 "provider": {"type": "string"},
                 "verifier_provider": {"type": "string"},
                 "goal": {"type": "string"},
-                "isolate": {"type": "boolean"},
+                "isolate": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Run in an isolated worktree (default true). false writes to "
+                        "the main working tree directly."
+                    ),
+                },
                 "auto_route": {"type": "boolean"},
                 "run_state_path": {"type": "string"},
             },

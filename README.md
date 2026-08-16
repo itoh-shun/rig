@@ -158,8 +158,8 @@ Every task gets a criteria checklist drawn from `standard` (applies to every tas
 | preset | applies on top of `standard` for | sample criteria |
 |---|---|---|
 | `standard` | every task | `task_intent_satisfied` · `no_unrelated_diff` · `diff_summary_written` · `risk_summary_written` · `tests_pass_or_explained` · `no_type_errors_or_explained` · `no_secret_leak` · `no_gate_tampering` · `no_injection_markers` · `no_destructive_operation` |
-| `bugfix` | bugfix, performance | `bug_cause_identified` · `fix_is_minimal` · `regression_test_added_or_explained` · `existing_behavior_preserved` · `no_unrelated_refactor` |
-| `feature` | feature, test | `requirement_summary_written` · `implementation_matches_requirement` · `tests_added_or_explained` · `public_api_changes_documented` · `migration_or_backward_compatibility_considered` |
+| `bugfix` | bugfix, performance | `bug_cause_identified` · `fix_is_minimal` · `regression_test_added_or_explained` · `test_written_before_implementation_or_explained` · `existing_behavior_preserved` · `no_unrelated_refactor` |
+| `feature` | feature, test | `requirement_summary_written` · `implementation_matches_requirement` · `tests_added_or_explained` · `test_written_before_implementation_or_explained` · `public_api_changes_documented` · `migration_or_backward_compatibility_considered` |
 | `refactor` | refactor | `behavior_boundaries_identified` · `no_unintended_behavior_change` · `tests_confirm_behavior_preserved` · `no_unrelated_refactor` · `public_api_changes_documented_if_any` |
 | `review` | review | `findings_are_concrete` · `severity_labeled` · `file_references_included` · `blocking_and_non_blocking_separated` · `false_positive_risk_considered` |
 | `security` | security_review (on top of `review`) | `authn_authz_impact_checked` · `user_input_flow_checked` · `secret_exposure_checked` · `unsafe_eval_or_shell_checked` · `dependency_risk_checked` |
@@ -578,9 +578,24 @@ Tools provided:
 | `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
 | `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
 
+`rig_orchestrate_run` isolates by default (#419): omitting `isolate` runs in an isolated worktree, matching `rig-mcp`'s always-isolate stance. Only an explicit `isolate: false` writes to the main working tree.
+
 Opt-in: nothing changes unless you start this server; existing CLI/skill usage is unaffected. To wire it into an MCP client (e.g. Claude Desktop), register `command: python3`, `args: ["<repo>/scripts/mcp_server.py"]` in its MCP config.
 
-**Self threat-scan (`orchestrate.py mcp-scan`, #303):** since the tools it exposes could themselves carry over-broad shell/network permissions, plaintext secret exposure, or hook-injection risk, there's a command that statically analyzes `scripts/mcp_server.py`'s tool definitions using three adversarial lenses (attacker/defender/auditor). It never executes anything (deterministic, no side effects). Wired into `validate.py` for CI — current overall verdict is MEDIUM (`rig_orchestrate_run` can affect the main working tree directly when `--isolate` isn't set, so callers are advised to pass `isolate: true`).
+**Self threat-scan (`orchestrate.py mcp-scan`, #303):** since the tools it exposes could themselves carry over-broad shell/network permissions, plaintext secret exposure, or hook-injection risk, there's a command that statically analyzes `scripts/mcp_server.py`'s tool definitions using three adversarial lenses (attacker/defender/auditor). It never executes anything (deterministic, no side effects). Wired into `validate.py` for CI — current overall verdict is LOW. It used to be MEDIUM because `rig_orchestrate_run` reached the main working tree whenever the caller omitted `isolate`; since #419 isolation is the default, and the scan derives that verdict from the adapter's actual argv builder rather than a hardcoded label, so reverting to opt-in isolation puts the MEDIUM flag back.
+
+### CLI session reuse (`--reuse-session`, #326)
+
+Each step launches its CLI provider as a fresh process, so a run pays process startup per step and re-injects the prior context into every prompt. `orchestrate.py run --reuse-session` continues **one** conversation across the run's generator steps instead (`--session-id` to open it, `--resume` to continue — the flag shape `claude` headless and grok-build share).
+
+It is opt-in, and stays opt-in: statelessness is also a design property, not only a cost. Each step starting clean is part of what keeps steps independent.
+
+Two boundaries hold regardless of what the caller asks for:
+
+- **Verifiers are never resumed.** A grader that inherits the generator's conversation has already read its reasoning and is primed to agree — that is not an independent check. The role is refused inside the argv builder, so no call site can opt into it.
+- **Fallbacks are recorded, never silent.** CLI session support is version-dependent, so rig probes the installed binary's own `--help` rather than assuming. When the flags are absent — or the run is DAG-parallel, where concurrent steps would interleave a single conversation — the run continues stateless and the reason lands in the run history as `SESSION_REUSE_FALLBACK`. A silent fallback would be indistinguishable from a working feature.
+
+**Verification status:** argv construction, the role boundary, and the fallback path are covered by tests. The end-to-end behavior against a live `claude`/`grok` binary is **not** verified — #326 stays open until it is, and this feature should be treated as unproven against real CLIs until then.
 
 ### Cost-tier auto-routing (`--auto-route`, `--auto-route-learn`, #264, #305)
 
@@ -821,6 +836,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Host-side prerequisites (container isolation, `permissions.deny`, ignored run state, `gh` auth + token scopes, the installed `rig-wb` importing from outside a checkout) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's. An axis it cannot verify reports MISS, never OK; a subject that does not exist here reports `applicable: false` on its own line) |
 | Detection power of the test suite (mutation) | `rig-wb mutation` (finds the report and reads its format itself — `elements` from Stryker, `mutmut` from 3.x's `export-cicd-stats`, `junit` from 2.x's `junitxml`; `--run` runs the project's own tool first. A drop against the baseline becomes a warning-grade criterion — the tool itself is the project's choice) |
 | ASVS chapters vs. the inspection surface rig has | `rig-wb asvs` (source of truth: `evals/asvs-map.json`; `--check` verifies every cited mechanism exists and runs in CI, and **blind chapters are stated, not omitted**) |
+| A prompt-surface change (persona / instruction / recipe / facet) vs. the approved cases behind it | `rig-wb eval affected --ratchet` (a direction, not a threshold: a surface nobody has written a case for yet is **debt** — counted, named, exit 0 — while coverage this change *removes* is a regression and still fails. `--require-cases` is the strict form, correct as a destination and unreachable from an empty `evals/cases/`) |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
 | Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/engine/patterns/failure-taxonomy.md` |
 
@@ -929,6 +945,10 @@ One deliberate non-feature: `actor` does **not** block execution. rig cannot ver
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutral remote/stdio MCP adapter and its safety boundary
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — connecting the remote adapter to ChatGPT
+- [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence` / `rig-mission-control`: the field evidence ledger, production-outcome coverage, the quality-cost frontier, and the fleet governance rollup behind the read-only dashboard
+- [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — `rig-mission-control-live`: the localhost-only interactive surface, which reads and queues rather than deciding acceptance itself
+- [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — capturing, running, comparing and promoting evaluation cases (a capture starts unapproved)
+- [`docs/packs.md`](./docs/packs.md) — the pack format (`pack.yaml` / `compatibility.yaml`) and its CLI lifecycle: init, validate, doctor, install, test
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License

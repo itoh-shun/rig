@@ -25,12 +25,30 @@ _SECRET_RE = re.compile(
 _SHELL_RISK_RE = re.compile(r"shell\s*=\s*True|os\.system\(|os\.popen\(|[^_]eval\(|[^_]exec\(")
 
 
+def _isolates_by_default(mcp_server) -> bool:
+    """Does `rig_orchestrate_run` isolate when the caller says nothing about it (#419)?
+
+    Asks the argv builder rather than matching source text, so the verdict tracks
+    the code's real behavior. Still executes nothing: `_orchestrate_run_args` only
+    assembles a list. An adapter that doesn't expose it is treated as opt-in
+    isolation (the pre-#419 shape) — the more pessimistic reading.
+    """
+    build = getattr(mcp_server, "_orchestrate_run_args", None)
+    if not callable(build):
+        return False
+    try:
+        return "--isolate" in build({"recipe": "_mcp_scan_probe"})
+    except Exception:  # noqa: BLE001 — a scan must never fail on a malformed adapter
+        return False
+
+
 def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
     """Statically analyze scripts/mcp_server.py's tool definitions via three-layer
     adversarial reasoning (attacker/defender/auditor).
 
-    Never executes anything (only imports the module to read its `TOOLS` dict;
-    never calls a subprocess). Returns a JSON-serializable dict shared by
+    Never executes anything (imports the module to read its `TOOLS` dict and asks
+    its pure argv builder about the isolation default; never calls a subprocess).
+    Returns a JSON-serializable dict shared by
     `cmd_mcp_scan` (human-readable display) and the validation package's CI check
     (judgment logic lives in exactly one place).
     """
@@ -100,12 +118,20 @@ def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
             verdict, severity = "residual risk: low (structural preconditions enforced CLI-side, no force-proof bypass)", "low"
         elif is_run:
             attacker = f"could \"{name}\" run an arbitrary command as a recipe step and affect state outside the isolated worktree"
-            defender = ("`--isolate` isn't the default and must be explicitly set by the caller; merging back "
-                       "into the isolated worktree only ff-merges on DONE+clean+committed (reuses the existing "
-                       "isolate mechanism as-is)")
-            verdict = ("residual risk: medium (an MCP call without `isolate` can affect the main working tree "
-                      "directly — recommend the caller always sets `isolate: true`)")
-            severity = "medium"
+            if _isolates_by_default(mcp_server):
+                defender = ("`--isolate` is the default — a caller that says nothing about isolation still gets "
+                           "the isolated worktree; merging back only ff-merges on DONE+clean+committed (reuses "
+                           "the existing isolate mechanism as-is)")
+                verdict = ("residual risk: low (isolation is opt-out, not opt-in — only an explicit "
+                          "`isolate: false` reaches the main working tree)")
+                severity = "low"
+            else:
+                defender = ("`--isolate` isn't the default and must be explicitly set by the caller; merging back "
+                           "into the isolated worktree only ff-merges on DONE+clean+committed (reuses the existing "
+                           "isolate mechanism as-is)")
+                verdict = ("residual risk: medium (an MCP call without `isolate` can affect the main working tree "
+                          "directly — recommend the caller always sets `isolate: true`)")
+                severity = "medium"
         else:
             attacker = f"could \"{name}\" have side effects beyond read-only"
             defender = "board/status/diff etc. are read-only; they never mutate state"

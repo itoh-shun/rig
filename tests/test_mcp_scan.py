@@ -19,13 +19,41 @@ def test_missing_mcp_server_reports_unavailable(tmp_path):
     assert "not found" in result["reason"]
 
 
-def test_real_mcp_server_scans_clean_and_flags_run_as_medium():
+def test_real_mcp_server_scans_clean_and_run_is_low_because_it_isolates_by_default():
+    # #419 lowered this from medium: isolation is now opt-out, so an MCP call that
+    # says nothing about `isolate` no longer reaches the main working tree.
     result = mcp_scan(REPO_ROOT / "scripts" / "mcp_server.py")
     assert result["available"] is True
-    assert result["overall_severity"] in ("low", "medium")
+    assert result["overall_severity"] == "low"
+    by_name = {f["tool"]: f for f in result["tool_findings"]}
+    assert by_name["rig_orchestrate_run"]["severity"] == "low"
+    assert by_name["rig_orchestrate_run"]["kind"] == "write"
+
+
+def test_run_is_flagged_medium_again_if_isolation_goes_back_to_opt_in(tmp_path):
+    # The verdict must track real behavior, not a hardcoded label: an adapter whose
+    # argv builder omits --isolate by default is still the medium-risk shape.
+    p = tmp_path / "mcp_server.py"
+    p.write_text(
+        "def _orchestrate_run_args(a):\n"
+        "    return ['run', a['recipe']] + (['--isolate'] if a.get('isolate') else [])\n"
+        "TOOLS = {'rig_orchestrate_run': {'fn': _orchestrate_run_args, 'description': 'd', 'input_schema': {}}}\n",
+        encoding="utf-8",
+    )
+    result = mcp_scan(p)
     by_name = {f["tool"]: f for f in result["tool_findings"]}
     assert by_name["rig_orchestrate_run"]["severity"] == "medium"
-    assert by_name["rig_orchestrate_run"]["kind"] == "write"
+
+
+def test_run_without_an_argv_builder_is_read_pessimistically(tmp_path):
+    p = tmp_path / "mcp_server.py"
+    p.write_text(
+        "TOOLS = {'rig_orchestrate_run': {'fn': lambda a: None, 'description': 'd', 'input_schema': {}}}\n",
+        encoding="utf-8",
+    )
+    result = mcp_scan(p)
+    by_name = {f["tool"]: f for f in result["tool_findings"]}
+    assert by_name["rig_orchestrate_run"]["severity"] == "medium"
 
 
 def test_runs_aggregator_is_not_confused_with_run(tmp_path):
@@ -98,7 +126,7 @@ def test_scan_is_read_only_and_deterministic():
     assert r1 == r2
 
 
-def test_check_mcp_scan_emits_a_warn_for_medium_severity(monkeypatch):
+def test_check_mcp_scan_reports_the_real_severity(monkeypatch):
     validation_state.results.clear()
     validation_state._pass = validation_state._warn = validation_state._fail = 0
     check_mcp_scan()

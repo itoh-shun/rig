@@ -158,8 +158,8 @@ acceptance-gate は、run を反映候補として渡してよいかを判定す
 | preset | 上乗せ対象 | 基準の例 |
 |---|---|---|
 | `standard` | 全 task_type | `task_intent_satisfied`・`no_unrelated_diff`・`diff_summary_written`・`risk_summary_written`・`tests_pass_or_explained`・`no_type_errors_or_explained`・`no_secret_leak`・`no_gate_tampering`・`no_injection_markers`・`no_destructive_operation` |
-| `bugfix` | bugfix, performance | `bug_cause_identified`・`fix_is_minimal`・`regression_test_added_or_explained`・`existing_behavior_preserved`・`no_unrelated_refactor` |
-| `feature` | feature, test | `requirement_summary_written`・`implementation_matches_requirement`・`tests_added_or_explained`・`public_api_changes_documented`・`migration_or_backward_compatibility_considered` |
+| `bugfix` | bugfix, performance | `bug_cause_identified`・`fix_is_minimal`・`regression_test_added_or_explained`・`test_written_before_implementation_or_explained`・`existing_behavior_preserved`・`no_unrelated_refactor` |
+| `feature` | feature, test | `requirement_summary_written`・`implementation_matches_requirement`・`tests_added_or_explained`・`test_written_before_implementation_or_explained`・`public_api_changes_documented`・`migration_or_backward_compatibility_considered` |
 | `refactor` | refactor | `behavior_boundaries_identified`・`no_unintended_behavior_change`・`tests_confirm_behavior_preserved`・`no_unrelated_refactor`・`public_api_changes_documented_if_any` |
 | `review` | review | `findings_are_concrete`・`severity_labeled`・`file_references_included`・`blocking_and_non_blocking_separated`・`false_positive_risk_considered` |
 | `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |
@@ -487,9 +487,24 @@ engineはなく、`workbench.py`/`orchestrate.py`を呼ぶ薄いadapterである
 | `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
 | `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
 
+`rig_orchestrate_run`は既定で隔離実行する（#419）。`isolate`を省略した呼び出しは隔離worktreeで走り、`rig-mcp`の「常に隔離」と同じ安全側に揃う。メイン作業ツリーへ直接書き込むのは`isolate: false`を明示した場合だけ。
+
 opt-in：このサーバを起動しない限り何も変わらず、既存のCLI/skill経由の利用はそのまま有効。MCPクライアント（Claude Desktop等）から使う場合は、`command: python3`, `args: ["<repo>/scripts/mcp_server.py"]`をMCP設定に登録する。
 
-**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はMEDIUM（`rig_orchestrate_run`は`--isolate`未指定だとメイン作業ツリーに直接影響しうるため、呼び出し側で`isolate: true`を明示することを推奨、という具体的な指摘）。
+**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はLOW。以前は「`rig_orchestrate_run`は`isolate`未指定だとメイン作業ツリーに直接影響しうる」という理由でMEDIUMだったが、#419で隔離が既定になった。判定はハードコードした文言ではなくadapterの実際のargv組み立てから導いているので、隔離をopt-inに戻せばMEDIUMの指摘も戻る。
+
+### CLI セッション再利用（`--reuse-session`・#326）
+
+各ステップは CLI provider を毎回新しいプロセスとして起動するため、ステップ数に比例した起動コストがかかり、直前の文脈も毎回プロンプトへ再注入される。`orchestrate.py run --reuse-session` は、その run の generator ステップ間で会話を**1本**引き継ぐ（開始は `--session-id`、継続は `--resume`——claude headless と grok-build が共有するフラグ形）。
+
+opt-in であり、opt-in のまま置く。ステートレスであることはコストであると同時に設計上の性質でもある——各ステップが真っ新から始まることが、ステップ間の独立性を支えている。
+
+呼び出し側が何を要求しても動かない境界が2つある：
+
+- **verifier は決して再開しない。** 生成側の会話を引き継いだ採点者は、その推論を既に読んでおり同意する側に傾いている——それは独立した検証ではない。argv 構築の内側で role を拒否するので、どの呼び出し箇所からも有効にできない。
+- **fallback は必ず記録する（黙って落とさない）。** CLI のセッション機能はバージョン依存が強いので、仮定せず実際に入っているバイナリの `--help` を probe する。フラグが無い場合、あるいは DAG 並列実行（並行ステップが1本の会話を混線させる）の場合はステートレスで続行し、理由を run history に `SESSION_REUSE_FALLBACK` として残す。黙った fallback は「動いている機能」と見分けがつかない。
+
+**検証状況**：argv の構築・role 境界・fallback 経路はテストで固定済み。ただし実機の `claude`/`grok` に対するエンドツーエンドの挙動は**未検証**——#326 は実機検証が済むまで open のままであり、それまでこの機能は実 CLI に対して未証明として扱うこと。
 
 ### コストティア自動ルーティング（`--auto-route`・`--auto-route-learn`・#264・#305）
 
@@ -719,6 +734,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する） |
 | テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
+| プロンプト面（persona / instruction / recipe / facet）の変更と、承認済み評価ケースの対応 | `rig-wb eval affected --ratchet`（閾値ではなく方向で見る。まだケースの無い面は **debt** ＝数えて名前を出すが exit 0、その変更が**取り除いた**カバレッジは regression として fail。`--require-cases` は全面 fail の厳格版で、目的地としては正しいが空の `evals/cases/` からは到達できない） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 
@@ -827,6 +843,10 @@ recipe と policy は**厳しい方**に合成される（quorum は高い方・
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutralなremote/stdio MCP adapterと安全境界
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — remote adapterをChatGPTへ接続する手順
+- [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence` / `rig-mission-control`：実プロジェクトのフィールド証跡・本番アウトカム網羅率・品質/コストのフロンティア・複数リポジトリ横断の governance ロールアップと、それを見せる read-only ダッシュボード
+- [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — `rig-mission-control-live`：localhost 限定のインタラクティブ面。受け入れの判断そのものは持たず、読み取りとキュー投入に留まる
+- [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — 評価ケースの capture / 実行 / 比較 / promote（capture は未承認から始まる）
+- [`docs/packs.md`](./docs/packs.md) — pack のフォーマット（`pack.yaml` / `compatibility.yaml`）と CLI ライフサイクル：init・validate・doctor・install・test
 - [README.md](./README.md) — English version
 
 ## License

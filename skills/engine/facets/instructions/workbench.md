@@ -121,11 +121,13 @@ task を作らず停止する。
 | **bugfix**（bugfix・performance に上乗せ） | `bug_cause_identified` | 原因を特定した |
 | | `fix_is_minimal` | 修正が最小限である |
 | | `regression_test_added_or_explained` | 回帰テストを追加したか、不要な理由を説明した |
+| | `test_written_before_implementation_or_explained` | 修正前に失敗する回帰テストを書いたか、書けない理由を説明した |
 | | `existing_behavior_preserved` | 既存の正常系挙動を壊していない |
 | | `no_unrelated_refactor` | 依頼にない広範なリファクタが混ざっていない |
 | **feature**（feature・test に上乗せ） | `requirement_summary_written` | 要件のサマリが書かれている |
 | | `implementation_matches_requirement` | 実装が要件と一致している |
 | | `tests_added_or_explained` | テストを追加したか、理由を説明した |
+| | `test_written_before_implementation_or_explained` | 実装前に失敗するテストを書いたか、書けない理由を説明した |
 | | `public_api_changes_documented` | 公開 API 変更が説明されている |
 | | `migration_or_backward_compatibility_considered` | 移行・後方互換性を検討した |
 | **refactor**（refactor に上乗せ） | `behavior_boundaries_identified` | 変えてはいけない挙動境界を特定した |

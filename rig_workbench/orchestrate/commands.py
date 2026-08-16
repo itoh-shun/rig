@@ -694,6 +694,9 @@ def cmd_run(args):
         elif a == "--no-session-persistence":
             cfg["claude_no_session_persistence"] = True
             i += 1
+        elif a == "--reuse-session":   # #326: generator-only CLI session reuse (opt-in)
+            cfg["reuse_session"] = True
+            i += 1
         elif a == "--auto-route":
             cfg["auto_route"] = True
             i += 1

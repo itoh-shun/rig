@@ -18,6 +18,12 @@ steps:
     pattern: serial
     personas: [implementer]
     policies: [risk-based-testing]
+  - id: write-failing-test
+    instruction: write-failing-test
+    pattern: serial
+    condition: "not --no-tdd"
+    personas: [implementer]
+    policies: [risk-based-testing]
   - id: implement
     instruction: implement
     pattern: serial
@@ -55,6 +61,7 @@ steps:
       - "requirement_summary_written — 要件のサマリが書かれている"
       - "implementation_matches_requirement — 実装が要件と一致している"
       - "tests_added_or_explained — テストを追加したか、理由を説明した"
+      - "test_written_before_implementation_or_explained — 実装前に失敗するテストを書いたか、書けない理由を説明した"
       - "public_api_changes_documented — 公開 API 変更が説明されている"
       - "migration_or_backward_compatibility_considered — 移行・後方互換性を検討した"
     personas: [implementer]
@@ -71,11 +78,20 @@ steps:
 1. **inspect** — 何/なぜ/どこ/どこまでを確定する。
 2. **clarify-requirements** — AC（完了条件）を明文化する。曖昧な場合はここでユーザーに問い直す（`facets/instructions/intake` ①のスコープ確認を要件確定に特化して再適用）。
 3. **design** — 最低限の設計ドキュメント（目的・方針・AC・除外事項）を作成する（`facets/instructions/design`）。size が S でも省略しない（feature は常に design を1段挟む——size-aware の重い step 自動 OFF は verify/review 側の話であり、feature recipe 自体は既定で design を含む）。
-4. **implement** — 設計に従って実装する。
-5. **test** — build/lint/test を実行する。
-6. **update-docs-if-needed** — 公開挙動・API・設定を変えた場合のみドキュメントを更新する（無関係なら skip・`no_unrelated_diff` を守る）。
-7. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー。
-8. **acceptance** — 13基準（standard 8 + feature 5）の acceptance-check（`max_retries: 2`）。
+4. **write-failing-test** — AC を固定する失敗するテストを先に書き、失敗を確認する（`facets/instructions/write-failing-test`）。design と同じく **size に関係なく既定 ON**。`--no-tdd` を明示したときだけ外れる（`condition: "not --no-tdd"`）。
+5. **implement** — 設計に従い、④のテストを green にする最小実装を書く。
+6. **test** — build/lint/test を実行する。
+7. **update-docs-if-needed** — 公開挙動・API・設定を変えた場合のみドキュメントを更新する（無関係なら skip・`no_unrelated_diff` を守る）。
+8. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー。
+9. **acceptance** — 14基準（standard 8 + feature 6）の acceptance-check（`max_retries: 2`）。
+
+## design と TDD が既定で入っている理由
+
+feature recipe は「何を作るか（design）」と「作れたと言える条件（write-failing-test）」を**実装より前に**確定させる。
+どちらも size-aware の自動 OFF 対象にしていない——小さい変更ほど「設計するまでもない」「テストは後で」で飛ばされ、
+その判断自体が検証されないまま通るため。省きたい場合は gate で言い訳するのではなく `--no-tdd` / `--skip design` で
+意図を明示する（run log に残る）。テストが構造的に書けない変更のための逃げ道は
+`test_written_before_implementation_or_explained` を `warning` にする経路として gate 側に用意してある。
 
 ## bugfix との違い
 

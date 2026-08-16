@@ -44,6 +44,7 @@ def _check_pattern_or_gate(val: str | None, ctx: str, field: str) -> None:
 
 
 _SIZE_TOKEN_RE = re.compile(r"\b(?:S|M|L|XL)\+")
+_NEGATED_FLAG_RE = re.compile(r"(?:\bnot\b\s*|!\s*)--[a-z][a-z0-9-]*")
 
 
 def _check_condition(val: str | None, ctx: str, field: str) -> None:
@@ -52,8 +53,14 @@ def _check_condition(val: str | None, ctx: str, field: str) -> None:
     The canonical form is judged by "presence of a size token" rather than a
     mandatory `size:` prefix (to avoid a false WARN on release-flow.md's
     real-world value `"--design or size L+"`).
+
+    A negated flag (`not --no-tdd`) is exempt: it means "on unless opted out", which
+    is size-independent by design — demanding a size token there would push a
+    structural step back into size-aware gating, the opposite of what it declares.
     """
     if val is None:
+        return
+    if _NEGATED_FLAG_RE.search(str(val)):
         return
     if not _SIZE_TOKEN_RE.search(str(val)):
         _emit(
