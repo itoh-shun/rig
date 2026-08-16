@@ -850,6 +850,18 @@ rig のコマンドを呼ぶのは、散文を読めないもの——CI のス�
 
 `124` / `126` / `127` / `128+N` には rig の意味を一切与えません。GNU `timeout`・シェル・シグナル終了が既に所有しており、rig の provider 層自身が 124 と 127 をその意味のまま返しています。`timeout 60 rig-wb ...` を曖昧にしないためです。
 
+## 19. JSON 出力
+
+終了コードは「rig が答えに到達したか」を、`--json` は「その答えが何だったか」を伝えます。新しい JSON 出力は**自分が何であるかを名乗る** envelope です。
+
+```json
+{"schema": "rig.gates/v1", "status": "ok", "data": {"presets": {"standard": ["build_succeeds", "…"]}}}
+```
+
+`schema` はバージョンを自分の名前に含むので、payload がコピーされても包み直されても一緒に付いていきます——兄弟フィールドの `version` は、消費側が最初に落とすものです。`/v2` を知らない読み手は、半分だけ理解する代わりに**拒否できます**。`status` は `ok` / `rejected` / `error` の3つで、終了コード（§18）と同じ表から引くため、stdout と `$?` が食い違えません。
+
+**既存の `--json` は書き換えません。** それらには消費者がいます——このリポジトリ自身のテスト・`rig-mission-control`・`plan --json` を読む MCP アダプタ——契約を綺麗にするためにそれを壊すのは、実在するコストと見た目のコストを取り違えることです。`rig_workbench/jsonio.py` が独自形のままのコマンドを一覧し、テストがその**個数に上限**を持ちます（下げることしかできない＝prompt カバレッジのラチェットと同じ仕掛け）。最初の採用先は `rig-wb wb gates --json`——JSON 出力を**そもそも持っていなかった**ので、誰も壊しようがないためです。
+
 ## ドキュメント
 
 - [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
