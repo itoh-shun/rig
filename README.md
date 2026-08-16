@@ -935,6 +935,18 @@ Every rig command is called by something that cannot read prose — a CI step, a
 
 `124`, `126`, `127` and `128+N` are never given a rig meaning. GNU `timeout`, the shell and signal termination already own them — rig's own provider layer returns 124 and 127 with exactly those meanings — so `timeout 60 rig-wb ...` stays unambiguous.
 
+## 19. JSON output
+
+The exit status says whether rig reached an answer; `--json` says what the answer was. New JSON output is an envelope that identifies itself:
+
+```json
+{"schema": "rig.gates/v1", "status": "ok", "data": {"presets": {"standard": ["build_succeeds", "…"]}}}
+```
+
+`schema` carries its own version, so it stays attached to the payload wherever it is copied or re-wrapped — a sibling `version` field is the first thing a consumer drops — and a reader that does not know `/v2` can refuse it instead of half-understanding it. `status` is one of `ok` / `rejected` / `error`, drawn from the same table as the exit status (§18) so stdout and `$?` cannot disagree.
+
+**Older `--json` outputs are not rewritten.** They have consumers — this repo's own tests, `rig-mission-control`, the MCP adapter that reads `plan --json` — and breaking those to tidy a contract trades a real cost for a tidy one. `rig_workbench/jsonio.py` lists every command still on its own shape, and the suite caps that list at a number that may only be lowered: the same monotonic device the prompt-coverage ratchet uses. `rig-wb wb gates --json` is the first adopter, chosen because it had no JSON output at all and so could break nobody.
+
 ## Docs
 
 - [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
