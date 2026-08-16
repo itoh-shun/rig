@@ -26,6 +26,7 @@ import json
 import pathlib
 import statistics
 import sys
+from . import exitcodes
 from typing import Any
 
 FIELD_SCHEMA = "rig.field-study/v1"
@@ -467,6 +468,7 @@ def cmd_evidence(argv: list[str]) -> int:
         return 2
 
 
+@exitcodes.guard
 def main() -> None:
     raise SystemExit(cmd_evidence(sys.argv[1:]))
 

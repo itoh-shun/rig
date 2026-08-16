@@ -26,6 +26,7 @@ import re
 import sys
 import types
 
+from . import exitcodes
 from . import __version__, repo_paths
 
 # ── rig repo root discovery ──────────────────────────────────────────────
@@ -555,6 +556,7 @@ def _warn_version_skew() -> None:
         pass
 
 
+@exitcodes.guard
 def main() -> None:
     # Tell downstream scripts/*.py that the caller is this CLI (`rig-wb`).
     # telemetry_append in scripts/orchestrate.py and audit_append in workbench.py

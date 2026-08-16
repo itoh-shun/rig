@@ -20,7 +20,7 @@ import subprocess
 import sys
 from typing import Any, Awaitable, Callable
 
-from rig_workbench import __version__
+from rig_workbench import __version__, exitcodes
 
 
 _MAX_IDENTIFIER_LENGTH = 128
@@ -689,6 +689,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+@exitcodes.guard
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)

@@ -921,6 +921,20 @@ Recipe and policy merge to the **stricter** rule (higher quorum, union of roles,
 
 One deliberate non-feature: `actor` does **not** block execution. rig cannot verify that a human architect typed anything — only that one signed — and refusing to run would break every CI-driven pipeline for no safety gain. Running a stage outside its owning role warns and is recorded; the enforcement lives at the gate.
 
+## 18. Exit status
+
+Every rig command is called by something that cannot read prose — a CI step, a Makefile, another agent. Its exit status is the whole of what that caller gets, so it says one of three things:
+
+| status | meaning |
+|---|---|
+| `0` | rig ran and the answer is yes — the gate passed, the scan found nothing |
+| `1` | rig ran, judged, and the answer is no — the gate failed, findings exist. A verdict, not a malfunction: act on it, don't retry it |
+| `2` | rig could not produce an answer — bad usage, missing configuration, unreadable state, or an unplanned exception |
+
+**A crash is `2`, not `1`.** An unhandled exception exits 1 by default, which is the code for a rejection, and a caller cannot tell those apart. Both readings of that ambiguity are wrong in opposite directions: read `1` as a rejection and a traceback becomes a review nobody performed; read it as flakiness and a real rejection gets retried past. Every entry point pyproject installs is wrapped so a crash lands on `2` (`rig_workbench/exitcodes.py`).
+
+`124`, `126`, `127` and `128+N` are never given a rig meaning. GNU `timeout`, the shell and signal termination already own them — rig's own provider layer returns 124 and 127 with exactly those meanings — so `timeout 60 rig-wb ...` stays unambiguous.
+
 ## Docs
 
 - [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)

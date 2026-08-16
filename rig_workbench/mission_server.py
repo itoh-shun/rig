@@ -27,6 +27,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from . import exitcodes
 from .evidence import find_repo_root
 from .mission_control import build_snapshot
 from .mission_jobs import (
@@ -375,6 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+@exitcodes.guard
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if not (1 <= args.port <= 65535):
