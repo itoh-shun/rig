@@ -15,6 +15,7 @@ import urllib.request
 from dataclasses import dataclass, replace
 from typing import Mapping
 
+from . import caller as caller_mod
 from .bench_tasks import BenchTask, _copy_source, _remove_tree
 
 
@@ -209,9 +210,14 @@ def run_bare(
             infra_error=infra_error,
         )
 
+    # Re-entering the harness that started us spends a whole session answering a
+    # question the outer one is already holding. Which variables mean which harness
+    # is `caller`'s to know (#416 Phase 2) rather than this function's; the decision
+    # to refuse, and the escape hatch, stay here.
+    declared_caller = settings.get("caller")
+    invoked_by = caller_mod.detect(str(declared_caller) if declared_caller else None)
     if (
-        provider == "claude"
-        and (os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID"))
+        caller_mod.would_re_enter(invoked_by.id, provider=provider)
         and not settings.get("allow_headless_in_cc")
     ):
         return ProviderAttempt(
@@ -221,7 +227,8 @@ def run_bare(
             elapsed_s=time.monotonic() - started,
             invocations=0,
             stdout="",
-            stderr="headless Claude is blocked inside an active Claude Code session",
+            stderr=(f"headless {provider} is blocked inside an active "
+                    f"{invoked_by.id} session (detected via {invoked_by.source})"),
             infra_error=(
                 "blocked_headless_provider: pass allow_headless_in_cc only for an "
                 "explicitly authorized paid run"

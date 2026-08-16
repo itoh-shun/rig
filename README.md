@@ -964,6 +964,18 @@ The exit status says whether rig reached an answer; `--json` says what the answe
 
 **Older `--json` outputs are not rewritten.** They have consumers — this repo's own tests, `rig-mission-control`, the MCP adapter that reads `plan --json` — and breaking those to tidy a contract trades a real cost for a tidy one. `rig_workbench/jsonio.py` lists every command still on its own shape, and the suite caps that list at a number that may only be lowered: the same monotonic device the prompt-coverage ratchet uses. `rig-wb wb gates --json` is the first adopter, chosen because it had no JSON output at all and so could break nobody.
 
+## 20. Who called rig
+
+Rig is increasingly started by another harness rather than by a person. Launching headless Claude from inside a Claude Code session re-enters the same harness and spends a whole session answering a question the outer one is already holding, so rig identifies its caller and declines to do that (`rig_workbench/caller.py`; the escape hatch is still `--allow-headless-in-cc`).
+
+Three properties, because a hint that overstates itself is worse than none:
+
+- **A declaration beats a guess, and says which it was.** `--caller` / `RIG_CALLER` is what the operator stated; the environment is what rig inferred. The result carries both `source` and `declared`, so a consumer can weigh them differently instead of trusting an inference as far as a statement.
+- **Only Claude Code is detected.** Its variables are documented from measurement (§ context metering, verified against Claude Code 2.1.224 and 2.1.227). No marker is guessed for any other harness: one that fires on the wrong session is bad, and one that silently never fires while looking like coverage is worse. Those callers say so explicitly.
+- **Depth is not answered.** Claude Code hands a subagent's shell the same variables as the parent's, so rig can say *which* harness invoked it and not *at what depth*. There is no field for one, for the same reason `rig-wb context` reports no dispatch rate.
+
+**It is a hint.** It may inform runtime and reviewer selection; it never branches the quality rules. A gate that softens for one harness is not a gate, and it would soften exactly where nobody is watching — so the test suite checks structurally that no gate or acceptance path reads it.
+
 ## Docs
 
 - [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
