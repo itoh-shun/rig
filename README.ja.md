@@ -734,6 +734,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する） |
 | テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
+| プロンプト面（persona / instruction / recipe / facet）の変更と、承認済み評価ケースの対応 | `rig-wb eval affected --ratchet`（閾値ではなく方向で見る。まだケースの無い面は **debt** ＝数えて名前を出すが exit 0、その変更が**取り除いた**カバレッジは regression として fail。`--require-cases` は全面 fail の厳格版で、目的地としては正しいが空の `evals/cases/` からは到達できない） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 
@@ -842,6 +843,10 @@ recipe と policy は**厳しい方**に合成される（quorum は高い方・
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutralなremote/stdio MCP adapterと安全境界
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — remote adapterをChatGPTへ接続する手順
+- [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence` / `rig-mission-control`：実プロジェクトのフィールド証跡・本番アウトカム網羅率・品質/コストのフロンティア・複数リポジトリ横断の governance ロールアップと、それを見せる read-only ダッシュボード
+- [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — `rig-mission-control-live`：localhost 限定のインタラクティブ面。受け入れの判断そのものは持たず、読み取りとキュー投入に留まる
+- [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — 評価ケースの capture / 実行 / 比較 / promote（capture は未承認から始まる）
+- [`docs/packs.md`](./docs/packs.md) — pack のフォーマット（`pack.yaml` / `compatibility.yaml`）と CLI ライフサイクル：init・validate・doctor・install・test
 - [README.md](./README.md) — English version
 
 ## License

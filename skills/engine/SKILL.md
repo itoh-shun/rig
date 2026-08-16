@@ -74,6 +74,10 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **plan**（`--plan`・utility） | **`--plan` 表示仕様の正本**（ヘッダ・step テーブル・Gate/Checks/DAG/Knowledge ブロック） | `facets/instructions/plan` |
 > | **catalog**（`/rig:catalog`・`--list --global`・utility） | 全 tier 走査の横断レジストリ地図。`--graph` で固定11種の関係を導出 | `facets/instructions/catalog` |
 > | **hooks**（プラグイン同梱） | `PreCompact` で run-state を保全（§6 run-continuity ④） | `hooks/hooks.json` `hooks/preserve-rig-state.sh` |
+> | **evidence**（`rig-evidence`・utility） | 実プロジェクトの RIG-vs-bare フィールド証跡（`.rig/field-study.jsonl`）・本番アウトカム網羅率・品質/コストのフロンティア・複数リポジトリ横断の governance ロールアップ（`.rig/fleet.json`）の記録と集計。**出力仕様の正本は `docs/evidence-mission-control.md`** | `rig_workbench/evidence.py` |
+> | **mission-control**（`rig-mission-control`・utility） | 上記＋drill 実測の reviewer 信頼度・force-bypass 件数を1枚の read-only な HTML/JSON ダッシュボード（`rig.mission-control/v1`）へ集約。accept/discard/approve の変更操作は持たない | `rig_workbench/mission_control.py` |
+> | **mission-control-live**（`rig-mission-control-live`・utility） | 上記の localhost 限定インタラクティブ版（永続キュー付き）。**受け入れ・ガバナンス・承認・queue・provider の規則をブラウザ側で再実装しない**——判断は Core に残す | `rig_workbench/mission_server.py` `docs/interactive-mission-control.md` |
+> | **remote-mcp**（`rig-mcp`・utility） | client-neutral な remote/stdio MCP host adapter。recipe 実行は常に `--isolate` を付けて起動し、write 系 tool は write-enabled サーバにのみ存在する。**安全境界の正本は `docs/remote-mcp.md`** | `rig_workbench/remote_mcp.py` |
 
 ### Extension Catalog（opt-in）
 

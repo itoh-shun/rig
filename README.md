@@ -836,6 +836,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Host-side prerequisites (container isolation, `permissions.deny`, ignored run state, `gh` auth + token scopes, the installed `rig-wb` importing from outside a checkout) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's. An axis it cannot verify reports MISS, never OK; a subject that does not exist here reports `applicable: false` on its own line) |
 | Detection power of the test suite (mutation) | `rig-wb mutation` (finds the report and reads its format itself — `elements` from Stryker, `mutmut` from 3.x's `export-cicd-stats`, `junit` from 2.x's `junitxml`; `--run` runs the project's own tool first. A drop against the baseline becomes a warning-grade criterion — the tool itself is the project's choice) |
 | ASVS chapters vs. the inspection surface rig has | `rig-wb asvs` (source of truth: `evals/asvs-map.json`; `--check` verifies every cited mechanism exists and runs in CI, and **blind chapters are stated, not omitted**) |
+| A prompt-surface change (persona / instruction / recipe / facet) vs. the approved cases behind it | `rig-wb eval affected --ratchet` (a direction, not a threshold: a surface nobody has written a case for yet is **debt** — counted, named, exit 0 — while coverage this change *removes* is a regression and still fails. `--require-cases` is the strict form, correct as a destination and unreachable from an empty `evals/cases/`) |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
 | Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/engine/patterns/failure-taxonomy.md` |
 
@@ -944,6 +945,10 @@ One deliberate non-feature: `actor` does **not** block execution. rig cannot ver
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutral remote/stdio MCP adapter and its safety boundary
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — connecting the remote adapter to ChatGPT
+- [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence` / `rig-mission-control`: the field evidence ledger, production-outcome coverage, the quality-cost frontier, and the fleet governance rollup behind the read-only dashboard
+- [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — `rig-mission-control-live`: the localhost-only interactive surface, which reads and queues rather than deciding acceptance itself
+- [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — capturing, running, comparing and promoting evaluation cases (a capture starts unapproved)
+- [`docs/packs.md`](./docs/packs.md) — the pack format (`pack.yaml` / `compatibility.yaml`) and its CLI lifecycle: init, validate, doctor, install, test
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License
