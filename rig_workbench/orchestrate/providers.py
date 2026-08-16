@@ -25,6 +25,13 @@ from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
 from .runstate import (compute_next, enforce_executable_state, gate_outcome, save_state,
                        stage_gate_status, telemetry_append)
+from .runtime import (                                            # noqa: F401 (re-exported)
+    AgentContext, AgentRuntime, AgentTask, RuntimeCapabilities,
+    MOCK_SRC, RIG_GEN_PREFIX, RIG_VER_PREFIX,
+    _GENERATOR_EDIT_ENFCE, _HELP_CACHE, _READONLY_ENFCE,
+    _cli_supports_session, _note_session_fallback, _session_reuse_argv,
+    backend_for, build_argv, prepare_session_reuse, runtime_for,
+)
 from .secure_runtime import (
     SecureRuntimeError,
     requires_secure_runtime,
@@ -76,15 +83,9 @@ _JAPANESE_MATERIAL_ATTESTATIONS = {
 #
 # How each CLI is spoken to lives in `runtime.py` (#416 Phase 1): one adapter per
 # vendor, each declaring its capabilities, so this module asks what a runtime can do
-# instead of pattern-matching a provider name against flag strings. The names below
-# are re-exported because they are part of what callers and tests already reach for.
-from .runtime import (                                            # noqa: F401 (re-exported)
-    AgentContext, AgentRuntime, AgentTask, RuntimeCapabilities,
-    MOCK_SRC, RIG_GEN_PREFIX, RIG_VER_PREFIX,
-    _GENERATOR_EDIT_ENFCE, _HELP_CACHE, _READONLY_ENFCE,
-    _cli_supports_session, _note_session_fallback, _session_reuse_argv,
-    backend_for, build_argv, prepare_session_reuse, runtime_for,
-)
+# instead of pattern-matching a provider name against flag strings. Its names are
+# imported at the top of this file and re-exported, because they are part of what
+# callers and tests already reach for.
 
 
 def _effective_provider_backend(provider: str) -> str:
