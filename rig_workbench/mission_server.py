@@ -30,6 +30,7 @@ from typing import Any
 from . import exitcodes
 from .evidence import find_repo_root
 from .mission_control import build_snapshot
+from .workbench import assurance
 from .mission_jobs import (
     ALLOWED_PROVIDERS,
     assert_retryable,
@@ -81,7 +82,32 @@ def task_detail(root: pathlib.Path, task_id: str) -> dict[str, Any]:
         acceptance = dict(acceptance)
         acceptance["status"] = gate_status(acceptance)
     return {"task": task, "steps": steps, "acceptance": acceptance,
-            "review": review, "outcome": outcome}
+            "review": review, "outcome": outcome,
+            "assurance": _assurance(root, task_id)}
+
+
+def _assurance(root: pathlib.Path, task_id: str) -> dict[str, Any]:
+    """The task's Assurance Receipt, built fresh rather than read off disk (#428).
+
+    Built here so the answer describes the task as it is now: a receipt written to
+    `.rig/runs/<id>/assurance.json` at some earlier point may be stale, and Mission
+    Control serving a stale one without saying so would be the failure the receipt's
+    own freshness check exists to prevent. `freshness` reports how the file on disk
+    compares, so a client can show both without either being silently substituted.
+
+    A failure here must not take the task detail down with it. The receipt is a
+    projection of the same files this response already carries; losing it costs a
+    panel, and returning nothing costs the operator the page.
+    """
+    try:
+        receipt = assurance.build_receipt(root, task_id)
+    except Exception as e:                                     # noqa: BLE001
+        return {"receipt": None, "error": f"{type(e).__name__}: {e}", "stored": None}
+    stored = _json_file(_task_dir(root, task_id) / "assurance.json", None)
+    return {
+        "receipt": receipt,
+        "stored": assurance.verify(root, stored) if isinstance(stored, dict) else None,
+    }
 
 
 def durable_snapshot(root: pathlib.Path) -> dict[str, Any]:

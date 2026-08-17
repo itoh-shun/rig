@@ -95,6 +95,41 @@ accept 成功後（squash merge → **staged**・コミットはしない）:
 
 **スコープの誠実な明示**：これは非対称鍵（Ed25519/SLSA）による第三者公開検証ではない——鍵を持つ**同一環境内での事後改ざん検知**にとどまる（stdlib-onlyのworkbench.py依存原則を保つための意図的な選択）。SLSA相当の公開検証が要る場合は別途の仕組みが必要と案内する。
 
+### Assurance Receipt（`receipt`・#428）
+
+```
+python3 scripts/workbench.py receipt [<task_id>] [--json|--markdown]
+python3 scripts/workbench.py receipt [<task_id>] --verify
+```
+
+「なぜこの変更を accept してよいのか」を1枚にまとめた `rig.assurance-receipt/v1` を
+`.rig/runs/<task_id>/assurance.json` と `assurance.md` に書く。**投影であって判定ではない**——
+gate も来歴も承認もすでに決まったものを写すだけで、receipt 側で acceptance を再判定しない。
+
+3点だけ注意して読む：
+
+- **未記録は成功ではない**。producer の runtime/model、verifier の identity、両者の独立性は
+  rig が現状**記録していない**。これらは `{"observed": false, "reason": "..."}` として出る。
+  独立性の verdict は `independent` ではなく `unrecorded`——記録が無いことを
+  「独立していた」と読み替えない。
+- **worktree はサンドボックスではない**。isolation は `git-worktree` / `main-tree` であって、
+  eval 側の `none/agent-policy/os-enforced` ランクは使わない。OS が保証していない境界を
+  同じ語で呼ばない。
+- **陳腐化を検出できる**。receipt は投影元ファイルの sha256 を持つ。`--verify` は内容を
+  再計算し、gate を後から override した等で変わっていれば `invalidated` として exit 1 する
+  （mtime ではなく内容で判定する）。
+
+`final_status` は task 状態（`running`/`accepted`/`discarded`）と gate 状態
+（`passed`/`passed_with_warnings`/`pending`/`skipped`/`failed`）の**写像**で、判定ではない。
+`accepted-over-failed-gate` / `accepted-over-unresolved-gate` / `accepted-without-gate` は
+「accept されたが、その根拠はこれだけだった」を隠さないための語。
+`waiting-approval` だけは記録済みの承認判断から導くが、**quorum を満たすかの再評価はしない**
+——それは `govern` の判断であり、2つ目の意見はここに置かない。
+
+署名は増やさない。`accept` が書く `provenance.json` の HMAC 署名を**参照**し、
+それが今も検証できるかを報告するだけ——同じ事実に対する2つ目の署名は、食い違ったときに
+どちらが正かを説明できなくなる。
+
 ## 本番アウトカムへのフィードバックループ（`record-commit`/`record-outcome`/`trace-commit`・#289/#300）
 
 acceptance-gateはmerge時点の**予測**にすぎない。以下の3コマンドで、実際に何が起きたかを事後に突き合わせられるようにする：
