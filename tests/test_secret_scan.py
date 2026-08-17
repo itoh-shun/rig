@@ -313,3 +313,44 @@ def test_scan_secrets_cli_clean_paths_exits_zero(tmp_path):
     r = cli(repo, tmp_path / "wt", "scan-secrets", ".")
     assert r.returncode == 0, r.stderr
     assert "No potential secrets found." in r.stdout
+
+
+def test_signed_eval_evidence_is_entropy_allowlisted_but_not_leak_proof():
+    """A signed evaluation result is hashes almost end to end.
+
+    One digest per prompt surface, a sha256 per captured stream, the case hash, four
+    commit ids and the attestation signature — the things that let anyone recompute
+    the binding, and indistinguishable from a credential to an entropy heuristic.
+    Committing the first one produced 223 findings and a failed `no_secret_leak`
+    (#447), which is not a one-off: every PR that lands evidence hits it, including
+    the maintainer path `validate.yml` documents. A criterion overridden by hand every
+    time is one nobody reads.
+    """
+    evidence = "evals/evidence/style-persona-qiita-tech-writer/current.json"
+    assert entropy_allowlisted(evidence)
+    assert scan_line(f'"result_sha256": "{RANDOM_B64_40}"', evidence, 1) == []
+
+
+def test_the_evidence_allowlist_is_anchored_and_still_reports_real_credentials():
+    """Two ways this could become a hiding place, both closed.
+
+    `evidence` is too ordinary a directory name to silence wherever it appears, so
+    the rule is anchored at the repository root rather than matched at any depth like
+    `ALLOW_DIR_PARTS`. And only the entropy heuristic is silenced: a vendor-formatted
+    credential written into an evidence file is still a leak and still reported.
+    """
+    assert not entropy_allowlisted("src/evidence/collected.json")
+    assert not entropy_allowlisted("docs/evals/evidence/example.md")
+    # Compared as path components rather than as a string prefix, so a path that only
+    # starts with the tree cannot borrow its silence. Raised by an adversarial review
+    # of this change: git never hands these callers a `..`, but proving that no caller
+    # ever will is more expensive, and more fragile, than not depending on it.
+    assert not entropy_allowlisted("evals/evidence/../elsewhere/current.json")
+    assert not entropy_allowlisted("evals/evidence-notes/current.json")
+    # The forms that are legitimately the same path still resolve to it.
+    assert entropy_allowlisted("./evals/evidence/case/current.json")
+    assert entropy_allowlisted("evals\\evidence\\case\\current.json")
+
+    evidence = "evals/evidence/some-case/current.json"
+    findings = scan_line('"note": "AKIAIOSFODNN7EXAMPLE"', evidence, 2)
+    assert [f["kind"] for f in findings] == ["aws_access_key"]
