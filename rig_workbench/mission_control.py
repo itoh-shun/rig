@@ -15,6 +15,7 @@ import json
 import pathlib
 import sys
 
+from . import exitcodes
 from .evidence import find_repo_root, mission_control_snapshot
 from .workbench.cockpit import _aggregate_token_usage
 from .workbench.confidence import aggregate_drill_confidence
@@ -232,6 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+@exitcodes.guard
 def main() -> None:
     args = build_parser().parse_args()
     root = find_repo_root(args.repo)
