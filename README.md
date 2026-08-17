@@ -769,9 +769,25 @@ An experimental backend that delegates review-gate parallel fan-out to Anthropic
 
 `vscode-extension/` is a **read-only** sidebar Tree View of `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:rig board`. It parses the same `task.json`/`acceptance.json`/`steps.json` `scripts/workbench.py` already writes — no new state-management engine, and no accept/discard or any other write command is registered anywhere in the extension. See `vscode-extension/README.md` for install instructions (not yet published to the Marketplace) and honest verification scope (the parsing logic is unit-tested with plain Node; actually loading the extension in a live VS Code Extension Host is unverified in this environment).
 
+### Prompt evaluation gate (`rig-wb eval`, v2.1.1)
+
+Prompt surfaces — personas, instructions, recipes, facets — are the part of rig no compiler checks. `rig_workbench/eval/` maps a diff onto the surfaces it touches (registry: `evals/prompt-surfaces.json`) and asks for approved evaluation cases (`evals/cases/`) as the evidence behind that change:
+
+```bash
+rig-wb eval affected --base origin/master --ratchet    # which prompt surfaces did this diff touch, and are they covered?
+rig-wb eval capture <task-id>                           # capture a workbench task as an unapproved draft
+rig-wb eval run <case> / compare / promote              # run a case, compare against baseline, promote once evidence backs it
+rig-wb eval gate --base origin/master --evidence-dir <dir> --ratchet
+rig-wb eval affected-run --base origin/master --head HEAD --ratchet --provider <p> --judge-provider <j> …
+```
+
+`--ratchet` is the honest middle: **coverage may only go up.** A surface with no case yet is reported as `coverage_debt` and exits 0; *removing* existing coverage still fails, as do unregistered surface kinds. Without it the gate is strict, and a PR that touches one covered surface plus any of the many that have no case yet fails no matter how much signed evidence it carries — a check nobody can pass (#383/#384). Evidence checks are untouched either way: the cases that do exist are judged identically. CI runs this on every PR (`.github/workflows/validate.yml`); evidence for a fork PR has to come from a trusted maintainer run, because a fork cannot be handed provider credentials.
+
 ### Continuous cross-session instinct-learning layer (`instincts`, #306)
 
 `workbench.py instincts` manages `.rig/instincts.jsonl` — lightweight, confidence-scored, **unverified** patterns ("this project tends to be written this way", "searching here is faster"), completely separate from `facets/knowledge`'s verified wiki. `--add` rejects secrets/tokens/local absolute paths/`ENV_VAR=value`-shaped candidates outright, with the reason always shown. `--decay` lowers confidence for instincts unused 30+ days, expiring below 0.2 — implicit knowledge rots by design rather than accumulating forever. Conflict resolution is explicit, not inferred: `--supersedes <old-id>` is how the model declares that two instincts contradict, muting the old one. Only confidence >= 0.7 is selected for injection, capped at 500 chars total (context-minimal). `hooks/suggest-instincts.sh` (Stop) reminds the model to consider proposing a pattern — it doesn't extract one itself, since deciding what's durably useful is a judgment call the hook can't make. `hooks/inject-instincts.sh` (SessionStart) injects the selected instincts as `additionalContext`.
+
+Two tiers, moved one record at a time (#418): `--promote <id>` lifts an instinct out of the project tier (`.rig/instincts.jsonl`) into the **host tier** (`~/.rig/instincts.jsonl`, overridable with `RIG_USER_HOME`) so a pattern learned in one repository reaches all of them, and `--demote <id>` moves it back — a wrong promotion is not a one-way door. Promotion is deliberately per-record and human-named rather than automatic: most instincts describe one codebase and would be noise everywhere else, while the ones worth promoting describe the harness or the machine, and telling those apart is a judgment call the code does not guess from the text. The host tier is written before the project tier is rewritten, so a failed second write leaves the record in both places (visible, correctable) instead of in neither.
 
 Honest scope: automatic semantic contradiction *detection* isn't implemented — only the mechanical *resolution* once a contradiction is explicitly declared via `--supersedes`. Pattern extraction itself is left entirely to the model's judgment.
 
@@ -820,6 +836,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Documented requirement vs. the evidence behind it | `rig-wb coverage` (source of truth: `evals/coverage-map.json`; default verifies the map against the tree and runs in CI, `--run` executes the deterministic evidence) |
 | Host-side prerequisites (container isolation, `permissions.deny`, ignored run state, `gh` auth + token scopes, the installed `rig-wb` importing from outside a checkout) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's. An axis it cannot verify reports MISS, never OK; a subject that does not exist here reports `applicable: false` on its own line) |
 | Detection power of the test suite (mutation) | `rig-wb mutation` (finds the report and reads its format itself — `elements` from Stryker, `mutmut` from 3.x's `export-cicd-stats`, `junit` from 2.x's `junitxml`; `--run` runs the project's own tool first. A drop against the baseline becomes a warning-grade criterion — the tool itself is the project's choice) |
+| Prompt-surface change vs. the approved cases behind it | `rig-wb eval affected --ratchet` (source of truth: `evals/prompt-surfaces.json` + `evals/cases/`; CI-enforced on every PR — a surface with no case yet is reported as `coverage_debt`, removing existing coverage fails) |
 | ASVS chapters vs. the inspection surface rig has | `rig-wb asvs` (source of truth: `evals/asvs-map.json`; `--check` verifies every cited mechanism exists and runs in CI, and **blind chapters are stated, not omitted**) |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
 | Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/engine/patterns/failure-taxonomy.md` |
@@ -929,6 +946,10 @@ One deliberate non-feature: `actor` does **not** block execution. rig cannot ver
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — discipline pressure scenarios
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutral remote/stdio MCP adapter and its safety boundary
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — connecting the remote adapter to ChatGPT
+- [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence` (field RIG-vs-bare evidence, production-outcome coverage, the quality/cost frontier) and `rig-mission-control` (cross-repository fleet governance and its read-only HTML/JSON dashboard)
+- [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — Mission Control v2's localhost-only interactive surface (the browser implements no acceptance, governance, approval, queue, or provider rule of its own)
+- [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — the capture / execution / comparison / promotion boundary behind the prompt evaluation gate
+- [`docs/packs.md`](./docs/packs.md) — pack authoring (`pack.yaml` / `compatibility.yaml`) and the init / validate / doctor / install / test commands
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License
