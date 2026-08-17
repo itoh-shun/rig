@@ -489,7 +489,7 @@ engineはなく、`workbench.py`/`orchestrate.py`を呼ぶ薄いadapterである
 
 opt-in：このサーバを起動しない限り何も変わらず、既存のCLI/skill経由の利用はそのまま有効。MCPクライアント（Claude Desktop等）から使う場合は、`command: python3`, `args: ["<repo>/scripts/mcp_server.py"]`をMCP設定に登録する。
 
-**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はMEDIUM（`rig_orchestrate_run`は`--isolate`未指定だとメイン作業ツリーに直接影響しうるため、呼び出し側で`isolate: true`を明示することを推奨、という具体的な指摘）。
+**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はLOW。#419までMEDIUMだった：`rig_orchestrate_run`は呼び出し側が`isolate`について何も言わなければメイン作業ツリーに対して直接走り、対策は「呼び出し側が`isolate: true`を忘れないこと」だった。いまは`rig-mcp`と同じく既定で隔離し、抜け道は明示的な`isolate: false`ひとつだけ。しかもこの判定はアダプタのソースから既定値を**読み取って**出しており、断定ではない——危険な既定に戻せば判定も自動的にMEDIUMへ戻る。
 
 ### コストティア自動ルーティング（`--auto-route`・`--auto-route-learn`・#264・#305）
 

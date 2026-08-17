@@ -17,7 +17,7 @@ Claude Codeセッションの外（別エージェント・CI・別プロセス�
 python3 scripts/orchestrate.py mcp-scan [--json]
 ```
 
-`scripts/mcp_server.py`が公開するツール定義を対象に、shell/network権限過剰・secret平文露出・hookインジェクションの3観点を3層対抗推論（攻撃者→防御者→監査者）で静的分析する。**実行しない**（`TOOLS`辞書とソーステキストを読むだけ・決定論・副作用なし）。`validate.py`の`check_mcp_scan()`から自動的に呼ばれ、総合判定HIGHはCI FAIL、MEDIUMはWARNとして扱われる（`rig_orchestrate_run`は`--isolate`未指定でメイン作業ツリーに影響しうるためMEDIUM判定——呼び出し側での`isolate: true`明示を推奨、という具体的な注意喚起がここで機械的に出る）。
+`scripts/mcp_server.py`が公開するツール定義を対象に、shell/network権限過剰・secret平文露出・hookインジェクションの3観点を3層対抗推論（攻撃者→防御者→監査者）で静的分析する。**実行しない**（`TOOLS`辞書とソーステキストを読むだけ・決定論・副作用なし）。`validate.py`の`check_mcp_scan()`から自動的に呼ばれ、総合判定HIGHはCI FAIL、MEDIUMはWARNとして扱われる（現状はLOW）。判定は断定ではなくソースからの読み取りで出る——たとえば`rig_orchestrate_run`の隔離既定は`scripts/mcp_server.py`の該当行を読んで決まり、既定が「明示的な`isolate: false`のときだけ非隔離」でなくなればMEDIUMに戻る（#419）。
 
 ## `/rig status [<task_id>]`
 

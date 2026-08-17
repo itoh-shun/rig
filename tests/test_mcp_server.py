@@ -64,6 +64,30 @@ def test_tools_call_unknown_tool_is_an_error_result():
     assert reply["result"]["isError"] is True
 
 
+def _orchestrate_run_argv(monkeypatch, arguments):
+    """The argv the adapter would hand orchestrate.py, without running it."""
+    seen = []
+    monkeypatch.setattr(mcp_server, "_run", lambda script, args: seen.append(args) or {"ok": True, "text": ""})
+    mcp_server.t_orchestrate_run({"recipe": "bugfix", **arguments})
+    return seen[0]
+
+
+@pytest.mark.parametrize("arguments", [{}, {"isolate": None}])
+def test_orchestrate_run_isolates_when_the_caller_says_nothing(monkeypatch, arguments):
+    # #419: the caller saying nothing — an absent key, or a null this adapter never
+    # validates away — used to run against the main working tree. rig-mcp has always
+    # isolated unconditionally; this default has to land on the same side.
+    assert "--isolate" in _orchestrate_run_argv(monkeypatch, arguments)
+
+
+def test_orchestrate_run_honours_an_explicit_opt_out(monkeypatch):
+    assert "--isolate" not in _orchestrate_run_argv(monkeypatch, {"isolate": False})
+
+
+def test_orchestrate_run_still_isolates_when_asked_explicitly(monkeypatch):
+    assert "--isolate" in _orchestrate_run_argv(monkeypatch, {"isolate": True})
+
+
 def test_tools_call_orchestrate_runs_shells_out(tmp_path, monkeypatch):
     # A real subprocess round-trip through the thin wrapper, in an empty cwd
     # (read-only command; no .rig/ state exists yet — that's the expected path).

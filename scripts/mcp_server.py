@@ -149,7 +149,10 @@ def t_orchestrate_run(a):
     args = ["run", a["recipe"], "--provider", a.get("provider", "mock")]
     args = _opt(args, "--verifier-provider", a.get("verifier_provider"))
     args = _opt(args, "--goal", a.get("goal"))
-    args = _opt(args, "--isolate", a.get("isolate"))
+    # Isolate by default, matching rig-mcp (remote_mcp.py), which isolates unconditionally.
+    # Only an explicit false opts out — an absent key (and a null, which this adapter does
+    # not validate away) must never fall through to writing the main working tree.
+    args = _opt(args, "--isolate", a.get("isolate") is not False)
     args = _opt(args, "--auto-route", a.get("auto_route"))
     args = _opt(args, "--out", a.get("run_state_path"))
     return _run(ORCHESTRATE, args)
@@ -261,7 +264,8 @@ TOOLS = {
     },
     "rig_orchestrate_run": {
         "fn": t_orchestrate_run,
-        "description": "Run every step autonomously, each as a separate-process rig harness (--isolate for worktree isolation)",
+        "description": "Run every step autonomously, each as a separate-process rig harness. Isolated in a disposable "
+                       "git worktree by default; pass isolate: false to run against the main working tree instead",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -269,7 +273,8 @@ TOOLS = {
                 "provider": {"type": "string"},
                 "verifier_provider": {"type": "string"},
                 "goal": {"type": "string"},
-                "isolate": {"type": "boolean"},
+                "isolate": {"type": "boolean",
+                            "description": "default true — set false to run against the main working tree"},
                 "auto_route": {"type": "boolean"},
                 "run_state_path": {"type": "string"},
             },

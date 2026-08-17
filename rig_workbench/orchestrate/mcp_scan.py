@@ -7,6 +7,7 @@ executes anything — reads the TOOLS dict and source text only, deterministic,
 no side effects.
 """
 
+import ast
 import importlib.util
 import json
 import pathlib
@@ -23,6 +24,63 @@ _SECRET_RE = re.compile(
     r"|xox[baprs]-[A-Za-z0-9-]{10,}"
 )  # same intent as scripts/git-hooks/pre-commit's PATTERN (Python port of the shell regex)
 _SHELL_RISK_RE = re.compile(r"shell\s*=\s*True|os\.system\(|os\.popen\(|[^_]eval\(|[^_]exec\(")
+
+
+def _isolate_default_on(source: str) -> bool:
+    """Does the adapter pass `--isolate` when the caller says nothing about it? (#419)
+
+    Read out of the adapter rather than asserted. The verdict for `rig_orchestrate_run`
+    used to be a hardcoded "medium" that inspected nothing, which meant it would go on
+    reporting whatever it was written to report after the default changed either way.
+
+    Parsed rather than grepped, unlike the two regexes above. Those look for a pattern
+    that is damning wherever it appears; this one looks for a pattern that *clears* the
+    tool, and a text search over the whole file is far too easy to satisfy by accident —
+    the same line in a comment, a docstring or an unrelated helper would buy a LOW. So
+    the question asked is narrow: in the `t_orchestrate_run` that import actually leaves
+    behind, what is handed to `_opt` as the value of `--isolate`, everywhere it appears?
+    `ast.parse` never executes the module.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    # The *last* module-level definition, because that is the one that survives import.
+    # Taking the first would let a safe-looking definition followed by an unsafe one read
+    # as LOW while the unsafe one is what actually runs.
+    defs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "t_orchestrate_run"]
+    if not defs:
+        return False
+    values = [call.args[2] for call in ast.walk(defs[-1])
+              if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+              and call.func.id == "_opt" and len(call.args) == 3
+              and isinstance(call.args[1], ast.Constant) and call.args[1].value == "--isolate"]
+    # Every one of them, not the first: a second `--isolate` on another branch decides the
+    # behaviour just as much, and one safe branch is not a statement about the function.
+    return bool(values) and all(_reads_as_on_unless_false(v) for v in values)
+
+
+def _reads_as_on_unless_false(expr: ast.expr) -> bool:
+    """`a.get("isolate") is not False` or `a.get("isolate", True)` — and nothing else.
+
+    A bare `a.get("isolate")` is the pre-#419 default and must not read as on. Anything
+    the scan doesn't recognize reads as off: an unfamiliar spelling costs a WARN, which
+    is the direction to be wrong in.
+    """
+    if (isinstance(expr, ast.Compare) and len(expr.ops) == 1
+            and isinstance(expr.ops[0], ast.IsNot)
+            and _is_isolate_get(expr.left, argc=1)
+            and isinstance(expr.comparators[0], ast.Constant)
+            and expr.comparators[0].value is False):
+        return True
+    return (_is_isolate_get(expr, argc=2)
+            and isinstance(expr.args[1], ast.Constant) and expr.args[1].value is True)
+
+
+def _is_isolate_get(node: ast.expr, *, argc: int) -> bool:
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get" and len(node.args) == argc
+            and isinstance(node.args[0], ast.Constant) and node.args[0].value == "isolate")
 
 
 def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
@@ -89,6 +147,7 @@ def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
         return {"available": False, "reason": f"failed to import TOOLS: {e}", "tools": []}
 
     _ACCEPT_FAMILY = ("accept", "discard", "new", "gate")
+    isolate_by_default = _isolate_default_on(source)
     for name, spec in sorted(tools.items()):
         is_accept_family = any(h in name for h in _ACCEPT_FAMILY)
         is_run = name == "rig_orchestrate_run"  # exact match — don't confuse with "rig_orchestrate_runs" (read-only aggregator)
@@ -100,12 +159,21 @@ def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
             verdict, severity = "residual risk: low (structural preconditions enforced CLI-side, no force-proof bypass)", "low"
         elif is_run:
             attacker = f"could \"{name}\" run an arbitrary command as a recipe step and affect state outside the isolated worktree"
-            defender = ("`--isolate` isn't the default and must be explicitly set by the caller; merging back "
-                       "into the isolated worktree only ff-merges on DONE+clean+committed (reuses the existing "
-                       "isolate mechanism as-is)")
-            verdict = ("residual risk: medium (an MCP call without `isolate` can affect the main working tree "
-                      "directly — recommend the caller always sets `isolate: true`)")
-            severity = "medium"
+            if isolate_by_default:
+                defender = ("`--isolate` is the default — the adapter adds it unless the caller passes "
+                           "`isolate: false`, so an absent or null argument still isolates; merging back "
+                           "out of the isolated worktree only ff-merges on DONE+clean+committed (reuses "
+                           "the existing isolate mechanism as-is)")
+                verdict = ("residual risk: low (isolated unless the caller explicitly opts out with "
+                          "`isolate: false`, which stays available and is then the caller's own decision)")
+                severity = "low"
+            else:
+                defender = ("`--isolate` isn't the default and must be explicitly set by the caller; merging back "
+                           "into the isolated worktree only ff-merges on DONE+clean+committed (reuses the existing "
+                           "isolate mechanism as-is)")
+                verdict = ("residual risk: medium (an MCP call without `isolate` can affect the main working tree "
+                          "directly — recommend the caller always sets `isolate: true`)")
+                severity = "medium"
         else:
             attacker = f"could \"{name}\" have side effects beyond read-only"
             defender = "board/status/diff etc. are read-only; they never mutate state"
