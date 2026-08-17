@@ -165,6 +165,8 @@ def main() -> None:
     p.set_defaults(func=cmd_cockpit)
 
     p = sub.add_parser("gates", help="show the acceptance-gate preset definitions")
+    p.add_argument("--json", action="store_true",
+                   help="emit the presets as a rig.gates/v1 envelope (rig_workbench/jsonio.py)")
     p.set_defaults(func=cmd_gates)
 
     p = sub.add_parser("gc", help="age-based disposal of temporary visual-verification images (visual/) (patterns/visual-artifacts)")

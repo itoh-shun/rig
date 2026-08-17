@@ -7,6 +7,7 @@ import pathlib
 import re
 from collections import Counter
 
+from .. import jsonio
 from .progress import from_state as progress_from_state
 from .progress import next_action
 from .config import (ACTIVE_STATUSES, CHECK_ICON, GATE_PRESETS, NEXT_ACTIONS,
@@ -184,6 +185,25 @@ def cmd_log(args: argparse.Namespace) -> None:
 
 
 def cmd_gates(_args: argparse.Namespace) -> None:
+    # SKILL.md points here for the acceptance-criteria IDs, and until now the only
+    # way to read them was to parse this listing. `--json` is the first adopter of
+    # the envelope contract (`rig_workbench/jsonio.py`) precisely because there was
+    # no prior JSON shape here to break.
+    if getattr(_args, "json", False):
+        root = maybe_repo_root()
+        gates = load_project_gates(root) if root else {}
+        jsonio.emit("gates", {
+            "presets": {name: list(criteria) for name, criteria in GATE_PRESETS.items()},
+            "task_types": {tt: list(presets) for tt, presets in TASK_TYPES.items()},
+            # Project extensions are additive only and never remove a criterion, so
+            # they are reported beside the presets rather than merged into them —
+            # a consumer can tell which the repository added.
+            "project_extra_criteria": {
+                target: list(crits) for target, crits in (gates.get("extra_criteria") or {}).items()
+            },
+            "project_descriptions": dict(gates.get("descriptions") or {}),
+        })
+        return
     print("## acceptance-gate presets (source of truth)\n")
     for name, criteria in GATE_PRESETS.items():
         print(f"### {name}")
