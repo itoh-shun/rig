@@ -1408,3 +1408,46 @@ def test_claude_outside_the_repository_must_be_told_where_the_repository_is(tmp_
             case, repo=tmp_path, provider="claude", model="fixture", repeat=3,
             phase="current", now=NOW, execution_cwd=workspace,
         )
+
+
+def test_both_eval_adapters_shut_out_the_operator_local_configuration(tmp_path):
+    """Isolation is two axes, and `ISOLATION_RANK` only orders one of them.
+
+    The claude branch passes `--safe-mode` so "the eval measures the model and not the
+    local configuration". The codex branch bought `os-enforced` write isolation and, for
+    a while, no configuration hygiene at all: an eval run picked up the operator's
+    `~/.codex/config.toml` — personality, reasoning effort, two MCP servers — and fired
+    their SessionStart, UserPromptSubmit and Stop hooks. A case demanding the *higher*
+    isolation floor therefore got the *dirtier* environment, which inverts what the rank
+    is supposed to mean (#446).
+
+    `orchestrate.secure_runtime` already passed `--ignore-user-config`; only this adapter
+    was left behind. Pinning both together so neither can drift out alone.
+    """
+    from rig_workbench.eval import runner
+
+    claude_argv, claude_isolation = runner._eval_agent_argv(
+        "claude", "prompt", tmp_path, "some-model",
+    )
+    codex_argv, codex_isolation = runner._eval_agent_argv(
+        "codex", "prompt", tmp_path, "some-model",
+    )
+    assert "--safe-mode" in claude_argv
+    assert "--ignore-user-config" in codex_argv
+    assert (claude_isolation, codex_isolation) == ("agent-policy", "os-enforced")
+
+
+def test_the_codex_eval_adapter_matches_the_secure_runtime_it_lives_beside():
+    """Two places in this repository launch codex read-only. They disagreed once, in the
+    direction nobody would notice — the stricter-looking one was the looser one. Compared
+    as a set of flags rather than as an argv, because the two callers legitimately differ
+    on `--cd`, the model flag and where the prompt comes from."""
+    from rig_workbench.eval import runner
+    from rig_workbench.orchestrate import secure_runtime
+
+    eval_argv, _ = runner._eval_agent_argv("codex", "prompt", pathlib.Path("/tmp"), "m")
+    secure_argv = secure_runtime._provider_tail("codex", {"model": "m"})
+
+    hygiene = {"--skip-git-repo-check", "--ignore-user-config", "--ephemeral", "read-only"}
+    assert hygiene.issubset(set(eval_argv))
+    assert hygiene.issubset(set(secure_argv))
