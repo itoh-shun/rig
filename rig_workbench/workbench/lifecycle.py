@@ -6,6 +6,7 @@ import pathlib
 import re
 import sys
 
+from rig_workbench import caller
 from rig_workbench.govern import identity as govern_identity
 from rig_workbench.packs.model import PackError
 
@@ -184,6 +185,14 @@ def cmd_new(args: argparse.Namespace) -> None:
     # not count" has nothing to compare. org/team make a run attributable to a
     # team rather than to a directory; all three are absent for unbound repos.
     task["actor"] = govern_identity.current_actor(root)
+    # Which harness started this, for the assurance receipt (#428). `actor` is who
+    # rig runs as; this is what invoked rig, and the two answer different questions
+    # once another agent is the one typing. Recorded with `declared`/`source` intact
+    # so the receipt can keep an operator's statement apart from rig's own guess —
+    # flattening them is how a heuristic becomes a fact (`rig_workbench/caller.py`).
+    _caller = caller.detect(getattr(args, "caller", None))
+    task["caller"] = {"id": _caller.id, "source": _caller.source,
+                      "declared": _caller.declared}
     _binding = govern_identity.load_org_binding(root)
     if _binding.bound:
         task["org"] = _binding.org

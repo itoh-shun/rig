@@ -32,6 +32,7 @@ from .. import context_meter
 from ..gh_requirement import advise_gh
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
 from .anchors import cmd_scan_anchors
+from .assurance import cmd_receipt
 from .cockpit import cmd_cockpit
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
@@ -77,6 +78,10 @@ def main() -> None:
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
     p.add_argument("--budget-minutes", type=float,
                    help="estimated time in minutes; going over is flagged in status/board (#281, advisory only)")
+    p.add_argument("--caller",
+                   help="name the harness invoking rig, recorded on the task for its assurance "
+                        "receipt (#416, #428). This is a declaration; without it rig records only "
+                        "what it can infer from the environment, marked as an inference")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
@@ -138,6 +143,17 @@ def main() -> None:
     p = sub.add_parser("trace-commit", help="reverse-look-up a commit SHA to its task, gate prediction, and recorded outcome (#289, #300)")
     p.add_argument("sha", help="the commit SHA to look up")
     p.set_defaults(func=cmd_trace_commit)
+
+    p = sub.add_parser("receipt", help="build the task's portable Assurance Receipt "
+                                       "(rig.assurance-receipt/v1) — a projection of the "
+                                       "recorded gate/provenance/approvals, judging nothing (#428)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--json", action="store_true", help="print the receipt as JSON")
+    p.add_argument("--markdown", action="store_true", help="print the human-readable rendering")
+    p.add_argument("--verify", action="store_true",
+                   help="check a previously built receipt still matches the files it "
+                        "projected; exits non-zero when it is stale")
+    p.set_defaults(func=cmd_receipt)
 
     p = sub.add_parser("verify-provenance", help="verify an accepted task's signed provenance record (#299)")
     p.add_argument("task_id", nargs="?")

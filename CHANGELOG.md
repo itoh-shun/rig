@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+`workbench.py receipt` builds a portable Assurance Receipt — `rig.assurance-receipt/v1`,
+written to `.rig/runs/<task-id>/assurance.json` alongside a Markdown rendering of the same
+model. Everything a reviewer needs was already recorded across six files that each answer a
+different question, and none of which answers "why is this acceptable?". The receipt is the
+projection that does, and only that: it re-judges nothing, and the gate status it reports is
+copied rather than recomputed.
+
+What rig does not record is the point. The producing runtime and model, the verifier's
+identity, and whether the verifier was independent of the producer are all absent from task
+state today, so each is carried as `{"observed": false, "reason": …}` — never as a blank, a
+zero, or a default that reads as fine to someone skimming. The independence verdict is
+`unrecorded`, not `independent`. Isolation says `git-worktree` or `main-tree` rather than
+borrowing the evaluation sandbox's `os-enforced` rank, because a worktree keeps a change off
+the main tree and does not hold an OS boundary. `--verify` recomputes the digest of every
+source the receipt projected and reports `invalidated` when one has changed, by content
+rather than by mtime. The signature stays where it was: `accept`'s existing provenance HMAC
+is referenced and checked, not duplicated under a second key (#428).
+
+Mission Control's task detail carries the receipt too, built on request rather than read off
+disk — a receipt written earlier may be stale, and serving one unlabelled would undo the
+freshness check it carries. The stored file is reported alongside it with its own verdict.
+
+`workbench.py new` now records which harness invoked it, with `--caller` available to declare
+one. A declaration and an inference are stored distinctly, so the receipt can keep them apart.
+
 The legacy stdio adapter `scripts/mcp_server.py` now isolates by default, closing its one
 asymmetry with `rig-mcp`: `rig_orchestrate_run` used to run against the main working tree
 unless the caller remembered to pass `isolate: true`, and an absent or null argument fell
