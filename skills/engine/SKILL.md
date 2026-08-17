@@ -73,6 +73,8 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **list**（`--list`・utility） | **`--list` 表示仕様の正本**（tier/pack グルーピング・badge 導出・`steps:`） | `facets/instructions/list` |
 > | **plan**（`--plan`・utility） | **`--plan` 表示仕様の正本**（ヘッダ・step テーブル・Gate/Checks/DAG/Knowledge ブロック） | `facets/instructions/plan` |
 > | **catalog**（`/rig:catalog`・`--list --global`・utility） | 全 tier 走査の横断レジストリ地図。`--graph` で固定11種の関係を導出 | `facets/instructions/catalog` |
+> | **evidence**（`rig-evidence`・utility） | 実プロジェクトでの RIG-vs-bare フィールド証跡（`.rig/field-study.jsonl`）・本番アウトカム網羅率・Quality/Cost フロンティア・複数リポジトリ横断の governance ロールアップ（`.rig/fleet.json`）の記録／集計。**出力仕様の正本は `docs/evidence-mission-control.md`** | `rig_workbench/evidence.py` |
+> | **mission-control**（`rig-mission-control`・utility） | 上記に drill 実測の reviewer 信頼度・force-bypass 件数を重ね、一枚の **read-only** HTML/JSON ダッシュボード（`rig.mission-control/v1`）として可視化する。accept/discard/approve 等の変更操作は一切持たない | `rig_workbench/mission_control.py` |
 > | **hooks**（プラグイン同梱） | `PreCompact` で run-state を保全（§6 run-continuity ④） | `hooks/hooks.json` `hooks/preserve-rig-state.sh` |
 
 ### Extension Catalog（opt-in）
