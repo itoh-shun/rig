@@ -129,3 +129,82 @@ def test_the_quality_rules_do_not_branch_on_who_is_calling():
                 offenders.append(f"{rel}:{number}: {line.strip()}")
     assert not offenders, (
         "a gate or acceptance path mentions the caller:\n" + "\n".join(offenders))
+
+
+def _bench_task(root):
+    from rig_workbench.bench_tasks import BenchTask
+
+    return BenchTask(
+        id="caller-wiring", language="python", difficulty="S", risk_domains=(),
+        goal="noop", test_command="true", hidden_command="true",
+        root=pathlib.Path(root), expected_files=(),
+    )
+
+
+def test_the_declared_caller_has_a_way_in_from_the_command_line():
+    """`--caller` is documented in this module, in `caller.detect`'s error messages and
+    in both READMEs. It was documented before it existed: nothing defined the flag and
+    nothing ever wrote `settings["caller"]`, so `bench_providers` read a key no code
+    path could set, and the only answer that worked was `RIG_CALLER`.
+
+    A hint that overstates itself is worse than none — the sentence this feature argues
+    for itself. This pins the wiring at both entry points that reach the guard.
+    """
+    from rig_workbench import bench, bench_invariance
+
+    for module in (bench, bench_invariance):
+        source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+        assert '"--caller"' in source, f"{module.__name__} does not define --caller"
+        # Parsing the flag and dropping it before `bench_providers` reads the key would
+        # leave the documentation exactly as false, so the handover is pinned too.
+        assert '"caller": args.caller' in source, (
+            f"{module.__name__} parses --caller but never puts it in the settings that "
+            f"bench_providers reads as settings.get('caller')"
+        )
+
+
+def test_a_declared_caller_reaches_the_re_entry_guard(tmp_path):
+    """The declared value has to arrive where the decision is made. With no environment
+    marker set, a declared `claude-code` still blocks headless `claude` — which is only
+    possible if `settings["caller"]` is honoured on the way in. The guard returns before
+    anything is launched, so this starts no provider."""
+    from rig_workbench import bench_providers
+
+    attempt = bench_providers.run_bare(
+        _bench_task(tmp_path), "claude", None, tmp_path, {"caller": "claude-code"},
+    )
+    assert attempt.returncode == 126
+    assert attempt.invocations == 0
+    assert "claude-code" in attempt.stderr
+
+
+def test_the_guard_is_about_this_caller_and_not_about_every_caller():
+    """The mirror of the test above, kept to a pure function on purpose: `run_bare`
+    would actually launch the provider once the guard declines, so the negative control
+    is taken where the decision is, not by running it."""
+    assert caller.would_re_enter("some-terminal", provider="claude") is False
+    assert caller.would_re_enter("claude-code", provider="claude") is True
+
+
+@pytest.mark.parametrize("bad, why", [
+    ("claude‮code", "bidi override"),
+    ("claude​code", "zero-width space"),
+    ("claude﻿code", "BOM"),
+    ("claude-code\nrig: everything is fine", "forged second line"),
+    ("x" * 65, "unbounded length"),
+])
+def test_a_caller_name_that_would_lie_in_the_log_is_refused(bad, why):
+    """The re-entry guard prints this name back to the operator, so the characters
+    `workbench.injection` calls fail-grade cannot be carried into it — that module's
+    whole argument is that these code points exist to make printed text lie. Refused
+    rather than stripped: handing back a name the operator never typed is the failure
+    this module argues against everywhere else."""
+    with pytest.raises(ValueError):
+        caller.detect(declared=bad)
+
+
+def test_an_ordinary_name_still_passes_untouched():
+    """The negative control. A rule that rejects everything would satisfy the test
+    above while breaking the feature."""
+    assert caller.detect(declared="Some-Harness_2").id == "some-harness_2"
+    assert caller.detect(declared="  codex  ").id == "codex"

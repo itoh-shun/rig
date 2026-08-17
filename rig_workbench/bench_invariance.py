@@ -349,6 +349,11 @@ def cmd_invariance(argv: list[str]) -> None:
     parser.add_argument("--check-timeout", type=float, default=60)
     parser.add_argument("--base-url")
     parser.add_argument("--allow-headless-in-cc", action="store_true")
+    parser.add_argument(
+        "--caller",
+        help="name the harness that invoked rig (a statement, not a guess); "
+             "wins over RIG_CALLER and over any environment marker",
+    )
     parser.add_argument("--mock-scenario", choices=["success", "timeout", "malformed", "partial"], default="success")
     parser.add_argument("--out", type=pathlib.Path)
     parser.add_argument("--html", type=pathlib.Path)
@@ -373,6 +378,7 @@ def cmd_invariance(argv: list[str]) -> None:
         "check_timeout_s": args.check_timeout,
         "base_url": args.base_url,
         "allow_headless_in_cc": args.allow_headless_in_cc,
+        "caller": args.caller,
         "mock_scenario": args.mock_scenario,
     }
     summaries = run_invariance(selected, args.provider, models, args.runs, options)

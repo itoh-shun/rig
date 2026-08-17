@@ -34,6 +34,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+# The repository already has one definition of "characters that make printed text lie
+# about itself", and `scan-injection` treats it as fail-grade. Reusing it keeps a
+# second, quietly diverging list from existing.
+from .workbench.injection import INVISIBLE_RE
+
 #: What rig reports when nothing identifies the caller. Not a failure — a plain
 #: terminal is the common case, and guessing a harness there would be worse.
 UNKNOWN = "unknown"
@@ -96,13 +101,36 @@ def detect(declared: str | None = None) -> Caller:
     return Caller(id=UNKNOWN, source="none", declared=False)
 
 
+#: The longest caller name rig will carry. Harness names are short by nature; the
+#: bound exists because this value is echoed into stderr when the re-entry guard
+#: declines, and an unbounded one turns that message into a paste target.
+_MAX_NAME = 64
+
+
 def _normalise(name: str) -> str:
     """Lower-case and trim, but never snap an unfamiliar name onto a known one — rig
     does not know every harness that will ever call it, and silently rewriting a
-    caller's own name for it is how a hint starts lying."""
+    caller's own name for it is how a hint starts lying.
+
+    Two things are refused rather than rewritten. A name carrying zero-width or
+    bidi-control characters is rejected on the same definition `workbench.injection`
+    treats as fail-grade, because this name is printed back to the operator and those
+    code points exist to make printed text lie about itself. Newlines go with them: a
+    caller name is one token, and one that spans lines can forge a second log line.
+    Rejecting is deliberate — quietly stripping them would hand back a name the
+    operator never typed, which is the failure mode this whole module argues against.
+    """
     cleaned = name.strip().lower()
     if not cleaned:
         raise ValueError("--caller was given an empty value; omit it instead")
+    if len(cleaned) > _MAX_NAME:
+        raise ValueError(
+            f"--caller must be at most {_MAX_NAME} characters; got {len(cleaned)}"
+        )
+    if INVISIBLE_RE.search(cleaned) or any(c in cleaned for c in "\n\r"):
+        raise ValueError(
+            "--caller must not contain zero-width, bidi-control or newline characters"
+        )
     return cleaned
 
 
