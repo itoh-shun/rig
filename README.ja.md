@@ -679,7 +679,7 @@ rig-wb eval gate --base origin/master --evidence-dir <dir> --ratchet
 rig-wb eval affected-run --base origin/master --head HEAD --ratchet --provider <p> --judge-provider <j> …
 ```
 
-`--ratchet` が正直な中間解だ：**カバレッジは上がる方向にしか動かせない。** ケースがまだ無い面は `coverage_debt` として報告され exit 0、既存のカバレッジを**外す**変更と未登録の面種別は従来どおり fail。これが無いとゲートは厳格で、カバー済みの面1つと未カバーの面1つに触れた PR は、どれだけ署名済みの証拠を積んでも落ちる——誰にも通せない検査（#383/#384）になる。証拠検査自体はどちらでも不変で、存在するケースの判定は同一。CI は全 PR でこれを回す（`.github/workflows/validate.yml`）。fork PR の証拠は信頼された maintainer の実行から得る必要がある（fork に provider の資格情報を渡せないため）。
+`--ratchet` が正直な中間解だ：**カバレッジは上がる方向にしか動かせない。** ケースがまだ無い面は `coverage_debt` として報告され exit 0、既存のカバレッジを**外す**変更と未登録の面種別は従来どおり fail。これが無いとゲートは厳格で、カバー済みの面1つと未カバーの面1つに触れた PR は、どれだけ署名済みの証拠を積んでも落ちる——誰にも通せない検査（#383/#384）になる。証拠検査自体はどちらでも不変で、存在するケースの判定は同一。CI は全 PR でこれを回す（`.github/workflows/validate.yml`）。fork PR の証拠は信頼された maintainer の実行から得る必要がある（fork に provider の資格情報を渡せないため）。実際に当たる機会は少ない——ケースを持つプロンプト面は2つで、残り約198面は未カバーなので、fork が未カバー面に触れる限り構造チェックだけで通り、それ以上は求められない。カバー済みの面（`skills/engine/SKILL.md` がその1つ）に触れた場合は、maintainer が `eval affected-run` を回して署名済み証拠をレビュー対象ブランチへ push する——貢献者側の再実行は不要。詳細は [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) の「Who needs the key, and who cannot have it」を参照。
 
 ### セッション横断の継続的instinct学習層（`instincts`・#306）
 
