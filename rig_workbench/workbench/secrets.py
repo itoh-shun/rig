@@ -83,6 +83,23 @@ ALLOW_SUFFIXES = (".lock", ".sum")
 ALLOW_BASENAMES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml")
 ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
 
+# Anchored at the repository root rather than matched at any depth, unlike
+# ALLOW_DIR_PARTS. `evidence` is too ordinary a directory name to silence wherever
+# it appears; this silences the one tree whose whole purpose is to hold hashes.
+#
+# A signed evaluation result is hashes almost end to end — one digest per prompt
+# surface (~200 of them), a sha256 for each captured stdout and stderr, the case
+# hash, four commit ids, and the attestation signature. Those are what let anyone
+# recompute the binding, so the format cannot avoid them, and the entropy detector
+# cannot tell them from a credential. Committing one produced 223 findings and a
+# failed `no_secret_leak`, which is not a one-off: every PR that lands evidence hits
+# it, including the maintainer path `validate.yml` documents (#447). A criterion
+# that must be overridden by hand every time is a criterion nobody reads.
+#
+# Only the entropy heuristic is silenced here. A real vendor-formatted credential
+# (sk-ant-…, AKIA…, a PEM header) written into an evidence file is still reported.
+ALLOW_PATH_PREFIXES = (("evals", "evidence"),)
+
 # Tree-walk skips (never worth scanning at all) and binary/size guards.
 WALK_SKIP_DIRS = ("node_modules", ".git", ".rig", "__pycache__")
 MAX_FILE_BYTES = 1_000_000
@@ -111,11 +128,21 @@ def mask(secret: str) -> str:
 
 def entropy_allowlisted(rel: str) -> bool:
     """True when `rel` is a known high-entropy-but-harmless location
-    (lockfiles / checksum files / vendored or VCS trees)."""
+    (lockfiles / checksum files / vendored or VCS trees / signed eval evidence)."""
     p = pathlib.PurePosixPath(rel.replace("\\", "/"))
     if p.suffix in ALLOW_SUFFIXES or p.name in ALLOW_BASENAMES:
         return True
-    return any(part in ALLOW_DIR_PARTS for part in p.parts)
+    if any(part in ALLOW_DIR_PARTS for part in p.parts):
+        return True
+    # Compared as path components, not as a string prefix. Every caller here hands in
+    # a repository-relative path produced by git, which never contains `..` — but a
+    # prefix test would also accept `evals/evidence/../elsewhere/x.json`, and proving
+    # that no caller can ever produce one is more expensive, and more fragile, than
+    # not depending on it. Leading `./` and `\` separators fall out for free.
+    parts = tuple(part for part in p.parts if part != ".")
+    if ".." in parts:
+        return False
+    return any(parts[:len(prefix)] == prefix for prefix in ALLOW_PATH_PREFIXES)
 
 
 def _finding(rel: str, lineno: int, kind: str, secret: str) -> dict:
