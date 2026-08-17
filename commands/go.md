@@ -1,6 +1,6 @@
 ---
-description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/review/gc/audit/scan-secrets/scan-injection/digest/stream-checks/stale-refs/scan-destructive/scan-anchors/instincts/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | review <id> --set p=v [--body p=@path] | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | stream-checks [id] [--watch --interval N --max-passes M] | stale-refs [paths…] | scan-destructive [paths…|--diff id] | scan-anchors [paths…|--diff id] | instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview] | gh issue <n> | gh pr <n> review|fix | gh ci"
+description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/confidence/review/gc/audit/scan-secrets/scan-injection/digest/context/stream-checks/stale-refs/scan-destructive/scan-anchors/instincts/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
+argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | confidence [id] | review <id> --set p=v [--body p=@path] | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | context [--since-days N] | stream-checks [id] [--watch --interval N --max-passes M] | stale-refs [paths…] | scan-destructive [paths…|--diff id] | scan-anchors [paths…|--diff id] | instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
 # rig — 統一入口（workbench）
@@ -27,12 +27,14 @@ $ARGUMENTS
 | `board [--all]` | `facets/instructions/workbench-ops`（**全 task を一覧するダッシュボード**。複数タスクを並行で進めているときの単一の確認場所） |
 | `cockpit` | `facets/instructions/workbench-ops`（**board・gate・drill・cost・auditを一画面に集約するMission Control**。read-only。次アクションを案内するのみで accept/discard 自体は実行しない） |
 | `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
+| `confidence [<task_id>]` | `facets/instructions/workbench-ops`（drill 実測の検出率を reviewer 別の**補助情報**として提示。`<task_id>` 指定時は `acceptance.json` の `reviewer_confidence` に記録する。閾値未満は追加レビュアー投入を提案するだけで自動投入はせず、drill 未実施の persona は「未計測」のまま扱い確信度を捏造しない） |
 | `review <task_id> --set <persona>=<verdict> [--body <persona>=@<path>]` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録。`--body` は任意で、その reviewer 本文を `.rig/runs/<task_id>/reviews/<persona>.md` に永続化する＝verdict ラベルが捨てる `file:line` 証拠アンカーを残す） |
 | `gc [--older-than <N>d] [--dry-run]` | `facets/instructions/workbench-ops`（視覚検証成果物（`.rig/runs/*/visual/`・`.rig/visual/adhoc/*`）の age-based 処分。既定14日・`--dry-run` で候補表示のみ） |
 | `audit [--limit N] [--action A] [--since YYYY-MM-DD]` | `facets/instructions/workbench-ops`（`accept --force` 等の恒久監査ログ `.rig/audit.jsonl` の一覧・絞り込み） |
 | `scan-secrets [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論シークレットスキャン。gate 基準 `no_secret_leak` の機械センサーと同一実装。`--diff` で task worktree の差分のみを走査、抜粋は常にマスク済み） |
 | `scan-injection [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論プロンプトインジェクション・マーカースキャン。gate 基準 `no_injection_markers` の機械センサーと同一実装。不可視/bidi Unicode は fail-grade・指示上書きフレーズは warning-grade。引数なしは repo の prose 面（`.claude/rig.md`・knowledge・personas・`.rig/recipes/*.md`）、`--diff` で task worktree の差分＋prose 面を走査） |
 | `digest [--period week\|month] [--out PATH]` | `facets/instructions/workbench-ops`（`.rig/` テレメトリのローリング集計ダイジェスト（runs・gate 合否・force-accept・ゴム印疑い・drill 検出率）を Markdown で出力。既定 week=直近7日） |
+| `context [--since-days N]` | `facets/instructions/workbench-ops`（context-minimal の実測。rig が親セッションへ印字した stdout を invocation 単位で `.rig/context.jsonl` に記録し、コマンド別に集計する＝**rig が観測できる唯一の context 消費**。セッション全体の context・会話・親が自分で読んだファイルは計測対象外で、その旨がレポート自身に明記される。既定は全期間・`--since-days N` で期間を絞る） |
 | `stream-checks [<task_id>] [--watch --interval N --max-passes M]` | `facets/instructions/workbench-ops`（実装中の軽量ストリーミングチェック。secret/injection/destructiveの3センサーをtask worktreeにその場で走らせfindingsをヒント表示。gateをブロックしない・常にexit 0） |
 | `stale-refs [paths…]` | `facets/instructions/workbench-ops`（manifest・知識層の経年劣化検知。バッククォート引用の相対パス参照のうち実在しなくなったものをWARN列挙。exit 0） |
 | `scan-destructive [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の破壊的コマンドスキャン。gate 基準 `no_destructive_operation` の機械センサーと同一実装。fail-grade/warning-gradeの2段階） |
@@ -101,6 +103,8 @@ step を明示しなくてもよい（明示したい場合は `/rig:dev --recip
 /rig:go scan-secrets --diff rig-20260704-153012-login-fix
 /rig:go scan-injection --diff rig-20260704-153012-login-fix
 /rig:go digest --period week
+/rig:go confidence rig-20260704-153012-login-fix
+/rig:go context --since-days 7
 /rig:go gh issue 123
 /rig:go gh pr 45 review
 /rig:go gh pr 45 fix

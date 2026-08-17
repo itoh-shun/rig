@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -305,6 +305,18 @@ python3 scripts/workbench.py digest [--period week|month] [--out <path>]
 
 - **読み取り専用**（集計のみ・状態を変更しない）。出力 Markdown はそのままユーザーに提示してよい（整形の追加は不要）。
 - 集計は `stats` と同じ helper を再利用しており数字が食い違わない。個別の深掘り（`--recipe`/`--verifier` 絞り込み）は `/rig stats`、期間の定点観測は `digest` と使い分ける。`stats` 同様、ゴム印警告が出た場合は必ずそのまま伝える。
+
+## `/rig context [--since-days N]`
+
+```
+python3 scripts/workbench.py context [--since-days N]
+```
+
+`context-minimal` の実測。rig が親セッションへ印字した stdout は tool result としてそのまま親 context に戻るので、**rig の stdout こそが rig の context 消費**——そこだけを invocation 単位で `.rig/context.jsonl`（gitignore 済み・`runs.jsonl` と同格）に記録し、コマンド別に集計して出す。既定は全期間、`--since-days N` で期間を絞る。`RIG_NO_CONTEXT_METER=1` で記録自体を止められる。
+
+- **読み取り専用**（集計のみ）。出力はそのまま提示してよい。
+- **計測していないものを計測したことにしない**：セッション全体の context・会話・親が自分で読んだファイル・「親が本当に subagent に dispatch したか」は rig からは見えない。レポート自身がその旨を明記するので、その断り書きを削って「あなたの context 使用量」として提示しない。
+- 使いどころは「出力を増やす変更（step バナー・flow map 等）の予算を決めるとき」。`digest` が実行の質を、`context` が実行の重さを見る。
 
 ## `/rig instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview]`
 

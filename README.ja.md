@@ -667,9 +667,25 @@ review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorで�
 
 `vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する（エディタを離れず`/rig:rig board`相当を見られる）。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけ——新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲（状態パースロジックはplain Nodeでユニットテスト済み／実際のVS Code Extension Hostでの動作確認はこの環境では未検証）は`vscode-extension/README.md`参照。
 
+### プロンプト評価ゲート（`rig-wb eval`・v2.1.1）
+
+persona・instruction・recipe・facet といったプロンプト面は、rig のうちコンパイラが一切検査しない部分だ。`rig_workbench/eval/` は diff がどのプロンプト面に触れたかを台帳（`evals/prompt-surfaces.json`）と突き合わせ、その変更の裏づけとして承認済み評価ケース（`evals/cases/`）を要求する：
+
+```bash
+rig-wb eval affected --base origin/master --ratchet    # この diff はどのプロンプト面に触れ、カバーされているか
+rig-wb eval capture <task-id>                           # workbench task を未承認 draft として捕捉
+rig-wb eval run <case> / compare / promote              # ケース実行→baseline と比較→裏づけが揃ったら昇格
+rig-wb eval gate --base origin/master --evidence-dir <dir> --ratchet
+rig-wb eval affected-run --base origin/master --head HEAD --ratchet --provider <p> --judge-provider <j> …
+```
+
+`--ratchet` が正直な中間解だ：**カバレッジは上がる方向にしか動かせない。** ケースがまだ無い面は `coverage_debt` として報告され exit 0、既存のカバレッジを**外す**変更と未登録の面種別は従来どおり fail。これが無いとゲートは厳格で、カバー済みの面1つと未カバーの面1つに触れた PR は、どれだけ署名済みの証拠を積んでも落ちる——誰にも通せない検査（#383/#384）になる。証拠検査自体はどちらでも不変で、存在するケースの判定は同一。CI は全 PR でこれを回す（`.github/workflows/validate.yml`）。fork PR の証拠は信頼された maintainer の実行から得る必要がある（fork に provider の資格情報を渡せないため）。
+
 ### セッション横断の継続的instinct学習層（`instincts`・#306）
 
 `workbench.py instincts`が`.rig/instincts.jsonl`を管理する——「このプロジェクトではこう書く」「ここはこう探索すると早い」のような、confidence付きの**未検証**パターンを軽量に蓄積・再注入する層で、`facets/knowledge`の検証済みwikiとは完全に別枠。`--add`はsecret/トークン/ローカル絶対パス/`ENV_VAR=value`風の候補を却下し理由を必ず表示する。`--decay`は30日以上未使用のinstinctのconfidenceを下げ、0.2未満で失効させる——暗黙知は放置すれば腐る、という前提を設計に組み込む。競合解決は推測ではなく明示：`--supersedes <old-id>`でモデルが「この2つは矛盾する」と宣言すると旧instinctがmuteされる。次回注入対象はconfidence>=0.7のみ、合計500字まで（context-minimal）。`hooks/suggest-instincts.sh`（Stop）は「提案を検討してください」と促すのみで抽出自体は行わない——何が本当に有用かの判断はモデルの仕事。`hooks/inject-instincts.sh`（SessionStart）が選定されたinstinctを`additionalContext`として注入する。
+
+tierは2層で、移動は1件ずつ（#418）：`--promote <id>`はinstinctをproject tier（`.rig/instincts.jsonl`）から**host tier**（`~/.rig/instincts.jsonl`・`RIG_USER_HOME`で上書き可）へ引き上げ、1つのリポジトリで学んだパターンを全リポジトリへ届かせる。`--demote <id>`はその逆で、誤った昇格は一方通行にならない。昇格を自動ではなく1件ずつ・人間がidを名指しする形にしているのは意図的だ——instinctの多くは特定のコードベースの話で他所ではノイズにしかならない一方、昇格に値するものはハーネスかマシンの話であり、その判別は本文からコードに推測させない判断だから。書き込み順はhost tierが先・project tierの書き直しが後なので、2つ目の書き込みが失敗しても記録は「両方に残る（見えて直せる）」であって「どちらからも消える」ではない。
 
 正直な検証範囲：意味的な矛盾の自動**検知**は未実装——`--supersedes`で明示宣言された矛盾の機械的な**解決**のみ。パターン抽出自体は完全にモデルの判断に委ねている。
 
@@ -718,6 +734,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
 | ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する） |
 | テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
+| プロンプト面の変更と、その裏づけの承認済み評価ケース | `rig-wb eval affected --ratchet`（正本は `evals/prompt-surfaces.json` ＋ `evals/cases/`。全 PR で CI 強制——ケース未整備の面は `coverage_debt` として報告、既存カバレッジを外す変更は fail） |
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
@@ -827,6 +844,10 @@ recipe と policy は**厳しい方**に合成される（quorum は高い方・
 - [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutralなremote/stdio MCP adapterと安全境界
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — remote adapterをChatGPTへ接続する手順
+- [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence`（実プロジェクトでのRIG-vs-bare実地エビデンス・本番アウトカム網羅率・Quality/Costフロンティア）と`rig-mission-control`（複数リポジトリ横断のfleetガバナンス集計とread-onlyのHTML/JSONダッシュボード）
+- [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — Mission Control v2のlocalhost限定インタラクティブUI（ブラウザ側はacceptance/ガバナンス/承認/queue/providerの規則を一切自前で実装しない）
+- [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — プロンプト評価ゲートの土台となる評価ケースのcapture/実行/比較/昇格の境界
+- [`docs/packs.md`](./docs/packs.md) — packの作り方（`pack.yaml`/`compatibility.yaml`）とinit/validate/doctor/install/testコマンド
 - [README.md](./README.md) — English version
 
 ## License
