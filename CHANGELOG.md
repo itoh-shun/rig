@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+The legacy stdio adapter `scripts/mcp_server.py` now isolates by default, closing its one
+asymmetry with `rig-mcp`: `rig_orchestrate_run` used to run against the main working tree
+unless the caller remembered to pass `isolate: true`, and an absent or null argument fell
+through to writing it. Only an explicit `isolate: false` opts out now. `mcp-scan` reads
+that default out of the adapter's source instead of asserting it, so the overall verdict
+moves MEDIUM → LOW on the evidence, and returns to MEDIUM on its own if the unsafe default
+comes back (#419).
+
 `rig-mcp` adds a package-native, client-neutral MCP adapter for one initialized Rig
 repository. Read tools are the default; isolated run, gated accept, and confirmed
 discard are registered only with explicit write enablement. Streamable HTTP is
