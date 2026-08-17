@@ -9,6 +9,23 @@ import subprocess
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_harness_markers(monkeypatch):
+    """Run these as if no harness had started the process.
+
+    Several tests here assert an exact exit status from the secure runtime. Inside a
+    Claude Code session `CLAUDECODE` and `CLAUDE_CODE_SESSION_ID` are exported, the
+    headless re-entry guard fires first, and five of them fail on a status that is
+    correct for the situation and wrong for what the test is measuring. CI never sets
+    the variables, so the suite is green there and red for whoever runs it from inside
+    the harness this repository is mostly developed in — the least useful place for a
+    false failure to live. `test_caller_contract` already clears exactly these; this is
+    the same fixture, applied where the assertion depends on it.
+    """
+    for name in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "RIG_CALLER"):
+        monkeypatch.delenv(name, raising=False)
+
+
 class _CountingStdin:
     def __init__(self, payload: bytes, *, tty: bool = False, read_error: bool = False):
         self._payload = payload
