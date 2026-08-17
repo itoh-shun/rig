@@ -99,8 +99,16 @@ def _eval_agent_argv(
         del prompt  # Prompt is transported confidentially via stdin exactly once.
         del json_schema  # codex has no structured-output flag; its argv is unchanged.
         del readable_root  # codex reads through `--cd`; its argv must not move.
+        # `--ignore-user-config` is codex's counterpart to `--safe-mode` above, and it was
+        # missing here while `orchestrate.secure_runtime` already passed it. Measured
+        # consequence: an eval run picked up the operator's `~/.codex/config.toml` —
+        # personality, reasoning effort, two MCP servers — and fired their SessionStart,
+        # UserPromptSubmit and Stop hooks. Without it `os-enforced` bought stronger write
+        # isolation than `agent-policy` and *weaker* configuration hygiene, so a case
+        # demanding the higher floor quietly got the dirtier environment (#446).
         return [
-            "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+            "codex", "exec", "--skip-git-repo-check", "--ignore-user-config",
+            "--sandbox", "read-only",
             "--cd", str(repo), "--ephemeral", "-m", model, "-",
         ], "os-enforced"
     raise EvalCaseError("unsupported read-only evaluation adapter")
