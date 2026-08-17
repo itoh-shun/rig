@@ -392,6 +392,25 @@ key outside the repository and never commit it; print it only to copy it into th
 Rig strips attestation environment variables from evaluator and judge child processes.
 Recomputing the public SHA-256 fields cannot forge the attestation.
 
+### Who needs the key, and who cannot have it
+
+The key is symmetric, so it marks a boundary rather than an identity: a result says a
+holder of the trusted key measured it, and nothing about which one. `key_id` identifies the
+key, never the person. Anyone who may touch a covered prompt surface therefore needs the
+same key on their own machine — and `skills/engine/SKILL.md` is covered, so adding one row
+to its §2 catalogue is enough to need it. That set is small on purpose: widening coverage
+widens who must hold the secret, which is a cost of adding a case and worth weighing when
+one is proposed.
+
+A fork contributor cannot hold it, and should not be asked to. If their change touches a
+surface no case covers — nearly all of them today — the structural step passes and nothing
+else is required of them. If it touches a covered one, the job stops with instructions
+addressed to a maintainer, who checks the head out on an origin branch, runs `affected-run`
+against real providers, and pushes the signed evidence onto that branch. The contributor
+does not re-run anything; the evidence lands on the branch under review. Say so when the
+change is proposed rather than when CI refuses it — the message only exists in a failed
+job's log, which is the last place it helps.
+
 Threat model: attestation detects repository or result-file modification by a process that
 does not possess the trusted key. It is not an isolation sandbox against a malicious
 executor running as the same operating-system user: that process may be able to read the
