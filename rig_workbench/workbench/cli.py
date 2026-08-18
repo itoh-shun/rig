@@ -34,6 +34,7 @@ from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_proven
 from .anchors import cmd_scan_anchors
 from .assurance import cmd_receipt
 from .cockpit import cmd_cockpit
+from .contract import cmd_contract
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -42,6 +43,7 @@ from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
+from .import_task import cmd_import
 from .injection import cmd_scan_injection
 from .instincts import (_INSTINCT_CONFIDENCE_THRESHOLD, _INSTINCT_DECAY_DAYS,
                         cmd_instincts)
@@ -83,6 +85,45 @@ def main() -> None:
                         "receipt (#416, #428). This is a declaration; without it rig records only "
                         "what it can infer from the environment, marked as an inference")
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser("import", help="register a change rig did not produce — an external "
+                                      "orchestrator's immutable commit — as an ordinary task, so "
+                                      "rig's isolation / sensors / gate / governance rule on it (#429)")
+    p.add_argument("--head", required=True,
+                   help="the change to verify. A commit SHA names an object that cannot move and "
+                        "is preferred; a branch or tag is accepted and recorded as the movable "
+                        "name it is")
+    p.add_argument("--base", help="base branch the change is measured against (defaults to the current branch)")
+    p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
+    p.add_argument("--producer", required=True,
+                   help="who produced the change (an orchestrator, a CI job, a person). A "
+                        "declaration: rig verifies the commit, never the account of its origin")
+    p.add_argument("--producer-runtime", help="the runtime/model the producer ran on, if stated")
+    p.add_argument("--producer-run-id", help="the producer's own run identifier, kept as provenance")
+    p.add_argument("--producer-url", help="a link back to the producing run, kept as provenance")
+    p.add_argument("--producer-claim", action="append", metavar="NAME=VALUE",
+                   help="something the producer reports about its own work (e.g. tests=passed). "
+                        "Recorded next to rig's verdict and never as part of it — every claim "
+                        "carries gate_effect: none, and no code path leads from one to the gate "
+                        "(repeatable)")
+    p.add_argument("--summary", metavar="FILE",
+                   help="an authored diff summary. Without it rig derives one from the imported "
+                        "commit messages and labels it as derived, because `accept` requires a "
+                        "summary and a headless producer writes none")
+    p.add_argument("--input", help="the task description (defaults to the imported commit's subject)")
+    p.add_argument("--slug", help="short English slug for the task-id (derived from the input if omitted)")
+    p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
+    p.add_argument("--budget-minutes", type=float, help="estimated time in minutes (#281, advisory only)")
+    p.add_argument("--caller", help="name the harness invoking rig (#416, #428)")
+    p.set_defaults(func=cmd_import)
+
+    p = sub.add_parser("contract", help="the machine answer an external orchestrator acts on: "
+                                        "acceptable / not-acceptable / pending / execution-error, "
+                                        "with an exit code per status (#429)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("--json", action="store_true",
+                   help="emit rig.assurance-contract/v1 as JSON")
+    p.set_defaults(func=cmd_contract)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")

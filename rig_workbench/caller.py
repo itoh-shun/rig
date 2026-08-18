@@ -88,11 +88,11 @@ def detect(declared: str | None = None) -> Caller:
     if declared is not None:
         if not isinstance(declared, str):
             raise TypeError(f"--caller must be a string, got {type(declared).__name__}")
-        return Caller(id=_normalise(declared), source="flag", declared=True)
+        return Caller(id=normalise_name(declared), source="flag", declared=True)
 
     from_env = os.environ.get("RIG_CALLER")
     if from_env is not None and from_env.strip():
-        return Caller(id=_normalise(from_env), source="env:RIG_CALLER", declared=True)
+        return Caller(id=normalise_name(from_env), source="env:RIG_CALLER", declared=True)
 
     for variable, harness in _ENV_MARKERS:
         if os.environ.get(variable):
@@ -106,32 +106,54 @@ def detect(declared: str | None = None) -> Caller:
 #: declines, and an unbounded one turns that message into a paste target.
 _MAX_NAME = 64
 
+#: The longest external-provenance string rig will carry. Longer than a harness name
+#: because a producer's run URL is a real URL, and short enough that a receipt cannot
+#: be turned into a payload carrier by whoever calls `import`.
+MAX_PROVENANCE = 300
 
-def _normalise(name: str) -> str:
-    """Lower-case and trim, but never snap an unfamiliar name onto a known one — rig
-    does not know every harness that will ever call it, and silently rewriting a
-    caller's own name for it is how a hint starts lying.
 
-    Two things are refused rather than rewritten. A name carrying zero-width or
+def reject_deceptive(value: str, *, field: str, max_length: int = _MAX_NAME) -> str:
+    """Trim `value`, or refuse it — the shared rule for every externally supplied string
+    rig prints back.
+
+    Two classes are refused rather than rewritten. A value carrying zero-width or
     bidi-control characters is rejected on the same definition `workbench.injection`
-    treats as fail-grade, because this name is printed back to the operator and those
-    code points exist to make printed text lie about itself. Newlines go with them: a
-    caller name is one token, and one that spans lines can forge a second log line.
-    Rejecting is deliberate — quietly stripping them would hand back a name the
-    operator never typed, which is the failure mode this whole module argues against.
+    treats as fail-grade, because these values are printed back to the operator and
+    those code points exist to make printed text lie about itself. Newlines go with
+    them: each of these values is one token, and one that spans lines can forge a
+    second log line. Rejecting is deliberate — quietly stripping them would hand back
+    a value the operator never typed, which is the failure mode this whole module
+    argues against.
+
+    It lives here, rather than beside its newer callers in the BYOO import path
+    (#429), because a second list of "characters that make printed text lie" would
+    diverge from this one, and the divergence would be invisible until the day it
+    mattered.
     """
-    cleaned = name.strip().lower()
+    cleaned = value.strip()
     if not cleaned:
-        raise ValueError("--caller was given an empty value; omit it instead")
-    if len(cleaned) > _MAX_NAME:
+        raise ValueError(f"{field} was given an empty value; omit it instead")
+    if len(cleaned) > max_length:
         raise ValueError(
-            f"--caller must be at most {_MAX_NAME} characters; got {len(cleaned)}"
+            f"{field} must be at most {max_length} characters; got {len(cleaned)}"
         )
     if INVISIBLE_RE.search(cleaned) or any(c in cleaned for c in "\n\r"):
         raise ValueError(
-            "--caller must not contain zero-width, bidi-control or newline characters"
+            f"{field} must not contain zero-width, bidi-control or newline characters"
         )
     return cleaned
+
+
+def normalise_name(name: str, *, field: str = "--caller") -> str:
+    """An identifier: refused on the rules above, then lower-cased and trimmed — but
+    never snapped onto a known name. Rig does not know every harness or orchestrator
+    that will ever call it, and silently rewriting a caller's own name for it is how a
+    hint starts lying.
+    """
+    return reject_deceptive(name, field=field).lower()
+
+
+
 
 
 def would_re_enter(caller_id: str, *, provider: str) -> bool:
