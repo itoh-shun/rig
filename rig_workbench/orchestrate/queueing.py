@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
 from . import config
+from . import dependencies as deps
 from .providers import _build_prompt, run_provider
 
 # ── Task queue (stack up, then GO; tracker integration) ──────────────────────
@@ -27,6 +28,20 @@ QUEUE_LABELS_ACTIVE = ["rig-queue", "rig-running", "rig-failed"]
 # All state labels the queue manages (used to compute which old labels to remove; #223).
 QUEUE_LABELS_ALL = ["rig-queue", "rig-running", "rig-failed", "rig-done"]
 QUEUE_PATH = config.INVOCATION_CWD / ".rig" / "queue.json"
+# Statuses an item can be re-resolved out of. `running` is excluded on purpose: a live
+# provider owns it, and rewriting its status from under that process is the lost-update
+# class of bug this file already carries a lock for.
+RESOLVABLE = ("queued", "waiting", "blocked")
+
+
+def _runs_dir():
+    """Where the workbench keeps its task records.
+
+    Derived from `QUEUE_PATH` rather than from a fresh repo-root lookup, so the queue and
+    the tasks it depends on are always read out of the same `.rig/` — including under the
+    tests that rebind `QUEUE_PATH` to a scratch directory.
+    """
+    return QUEUE_PATH.parent / "runs"
 
 
 def _gh_cli(backend: str) -> str:
@@ -131,15 +146,34 @@ def _local_save(q: dict) -> None:
     os.replace(tmp, QUEUE_PATH)
 
 
-def queue_add(backend: str, task: str, cfg: dict) -> dict:
+def queue_add(backend: str, task: str, cfg: dict, depends_on=None,
+              dependency_policy: str | None = None) -> dict:
+    """Stack one task. `depends_on` makes it wait for another item's *acceptance* (#427).
+
+    Dependencies are local-backend only. The github/gitlab backends carry state in issue
+    labels, which cannot hold an edge list, so a `--depends-on` there is refused rather
+    than silently dropped — dropping it would run the dependent immediately, which is the
+    one outcome the flag exists to prevent.
+    """
+    declared = deps.normalise(depends_on)
+    policy = dependency_policy or (deps.DEFAULT_POLICY if declared else None)
     if backend == "local":
         with _queue_locked():
             q = _local_load()
+            if declared:
+                deps.validate_new(q["items"], declared, policy)
             item = {"id": q["next_id"], "task": task, "status": "queued", "note": ""}
+            if declared:
+                item["depends_on"] = declared
+                item["dependency_policy"] = policy
             q["items"].append(item)
             q["next_id"] += 1
             _local_save(q)
         return item
+    if declared:
+        raise deps.DependencyError(
+            f"--depends-on needs the local queue backend; {backend} tracks state in issue "
+            f"labels, which cannot hold a dependency edge")
     cli = _gh_cli(backend)
     argv = [cli, "issue", "create", "-t", task, "-l", QUEUE_LABEL, "-b", "rig queue task"]
     if cfg.get("repo"):
@@ -224,8 +258,15 @@ def _queue_relabel_args(status: str) -> list[str]:
     return args
 
 
-def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -> bool:
-    """Returns whether the item was found (local) / the update was attempted (gh)."""
+def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict,
+                     task_id: str | None = None) -> bool:
+    """Returns whether the item was found (local) / the update was attempted (gh).
+
+    `task_id` links the item to the workbench task its provider registered. Before #427
+    that link was computed by GO and then thrown away, which left the queue unable to say
+    anything about whether an item's *result* had been accepted — the one question a
+    dependency edge asks.
+    """
     if backend == "local":
         with _queue_locked():
             q = _local_load()
@@ -234,6 +275,15 @@ def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -
                 if str(it["id"]) == str(item_id):
                     it["status"] = status
                     it["note"] = note[:300]
+                    # Set when one is supplied; a transition that could not re-derive
+                    # the id must not erase the one already recorded. Requeueing is the
+                    # exception and the important one: `queue retry` says this item is
+                    # going to produce a *different* result, so keeping the old link
+                    # would let a dependent be released against work being replaced.
+                    if task_id:
+                        it["task_id"] = task_id
+                    elif status == "queued":
+                        it.pop("task_id", None)
                     matched = True
             if matched:
                 _local_save(q)
@@ -253,6 +303,78 @@ def queue_set_status(backend: str, item_id, status: str, note: str, cfg: dict) -
         # failed, i.e. not closed, this effectively does nothing).
         _cli_run([cli, "issue", "reopen", str(item_id)] + R)
     return True
+
+
+def resolve_dependencies() -> tuple[list[dict], list[dict]]:
+    """Re-evaluate every resolvable local item, persist the verdict, and return
+    `(runnable, held)`.
+
+    One locked read-modify-write, like every other mutation in this file. The verdict is
+    written down rather than recomputed on demand for two reasons: it is what survives the
+    restart the acceptance criteria ask about, and `mission_worker` loops while anything is
+    `queued` — a dependent parked at `queued` would spin that worker several times a second
+    with nothing to run.
+
+    An item is never resolved out of `running`: a live provider owns it.
+    """
+    runs = _runs_dir()
+    runnable, held = [], []
+    with _queue_locked():
+        q = _local_load()
+        rows = q["items"]
+        for it in rows:
+            if not isinstance(it, dict) or it.get("status") not in RESOLVABLE:
+                continue
+            verdict = deps.resolve(it, rows, runs)
+            if verdict["state"] == deps.READY:
+                # Items held on a previous GO come back as `queued` so that the store
+                # reads the same whether they waited or never had a dependency at all.
+                it["status"] = "queued"
+                if it.get("dependency_note"):
+                    it.pop("dependency_note")
+                runnable.append(it)
+            else:
+                it["status"] = verdict["state"]
+                it["dependency_note"] = verdict["reason"][:300]
+                held.append({"id": it["id"], "task": it.get("task"),
+                             "state": verdict["state"], "reason": verdict["reason"]})
+        _local_save(q)
+    return runnable, held
+
+
+def dependency_graph() -> dict:
+    """The local queue's dependency graph, for Mission Control and any other client."""
+    return deps.graph(_local_load()["items"], _runs_dir())
+
+
+def queue_claim(backend: str, item_id, cfg: dict) -> bool:
+    """Take ownership of a queued item, or report that someone else already has.
+
+    GO has always marked an item `running` unconditionally at dispatch, which leaves a
+    window where two `queue go` processes both read it as `queued` and both execute it.
+    That predates dependencies, but dependencies raise the cost: the two runs produce two
+    workbench tasks, only one of which ends up linked, so a dependent can be released
+    against a result nobody kept.
+
+    The compare-and-set closes the window to one lock acquisition without changing what
+    happens when GO dies mid-batch — only the items actually claimed are left `running`,
+    exactly as before.
+    """
+    if backend != "local":
+        # Issue-label backends have no read-modify-write to make atomic, and rig is not
+        # inventing a lock over someone else's tracker. Behaviour there is unchanged.
+        queue_set_status(backend, item_id, "running", "", cfg)
+        return True
+    with _queue_locked():
+        q = _local_load()
+        for it in q["items"]:
+            if str(it["id"]) == str(item_id):
+                if it.get("status") != "queued":
+                    return False
+                it["status"] = "running"
+                _local_save(q)
+                return True
+    return False
 
 
 def _build_queue_task_prompt(task: str, provider: str) -> str:
@@ -321,6 +443,12 @@ def cmd_queue(args):
         elif a == "--provider-cmd" and i + 1 < len(rest):
             cfg["provider_cmd"] = rest[i + 1]
             i += 2
+        elif a == "--depends-on" and i + 1 < len(rest):
+            cfg.setdefault("depends_on", []).append(rest[i + 1])
+            i += 2
+        elif a == "--dependency-policy" and i + 1 < len(rest):
+            cfg["dependency_policy"] = rest[i + 1]
+            i += 2
         else:
             free.append(a)
             i += 1
@@ -328,6 +456,10 @@ def cmd_queue(args):
 
     try:
         return _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel)
+    except deps.DependencyError as e:
+        # A refusal, not a crash: the declaration was rejected and nothing was stored.
+        print(f"[ERROR] {e}")
+        sys.exit(1)
     except QueueCorrupt as e:
         # Never "recover" by rewriting an empty store — that is how a backlog disappears (#360).
         print(f"[ERROR] {e}")
@@ -341,9 +473,14 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
         if not free:
             print("[ERROR] queue add \"<task>\"")
             sys.exit(1)
-        it = queue_add(backend, " ".join(free), cfg)
+        it = queue_add(backend, " ".join(free), cfg, cfg.get("depends_on"),
+                       cfg.get("dependency_policy"))
         print(f"queued [{backend}]: #{it['id']} {it['task']}  ({it['status']})"
               + (f" — {it.get('note','')}" if it.get("status") == "error" else ""))
+        if it.get("depends_on"):
+            print(f"  depends on #{', #'.join(it['depends_on'])} "
+                  f"(policy: {it['dependency_policy']} — each must be **accepted**, not "
+                  f"merely finished; accepting is a person's action)")
         return
     if sub == "list":
         items = queue_list(backend, cfg)
@@ -354,6 +491,11 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
             if note:
                 line += f" — {note}"
             print(line)
+            if it.get("depends_on"):
+                print(f"      depends on #{', #'.join(str(d) for d in it['depends_on'])}"
+                      f"  (policy: {it.get('dependency_policy')})")
+            if it.get("dependency_note"):
+                print(f"      {it['dependency_note']}")
         return
     if sub == "done":
         if not free:
@@ -370,19 +512,32 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
         print(f"retry [{backend}]: #{free[0]} → queued")
         return
     # go: run the stacked tasks in one batch (independent tasks in parallel; each task gated)
+    #
+    # Dependencies are resolved first and the verdict is persisted, so what follows is the
+    # batch this file has always run. Only the local backend has edges to resolve.
+    held: list[dict] = []
+    if backend == "local":
+        _, held = resolve_dependencies()
     items = [it for it in queue_list(backend, cfg) if it.get("status") == "queued"]
     if not items:
+        if held:
+            print(f"## rig queue GO [{backend}]  nothing runnable — "
+                  f"{len(held)} item(s) held on dependencies\n")
+            for line in _held_lines(held):
+                print(line)
+            return
         print(f"Queue is empty [{backend}]. Stack tasks with `queue add`.")
         return
-    print(f"## rig queue GO [{backend}]  {len(items)} items / provider={gen} / parallel={max_parallel}\n")
+    print(f"## rig queue GO [{backend}]  {len(items)} items / provider={gen} / parallel={max_parallel}"
+          + (f" / {len(held)} held on dependencies" if held else "") + "\n")
 
-    def _set_status(item_id, status: str, note: str = "") -> None:
+    def _set_status(item_id, status: str, note: str = "", task_id: str = "") -> None:
         """Record a transition, and say so when it did not land (never fail silently; #360).
 
         The return value of queue_set_status used to be discarded, so a lost update was
         invisible: GO printed DONE while the store still said running/queued.
         """
-        if not queue_set_status(backend, item_id, status, note, cfg):
+        if not queue_set_status(backend, item_id, status, note, cfg, task_id or None):
             print(f"  [WARN] #{item_id}: could not record status '{status}' "
                   f"(item not found in the {backend} queue) — reconcile with "
                   f"`queue done {item_id}` or `queue retry {item_id}`")
@@ -390,12 +545,17 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
     def _run_one(it):
         task = it["task"]
         task_id = ""
-        _set_status(it["id"], "running")
+        if not queue_claim(backend, it["id"], cfg):
+            # Another GO process took it between the listing and here.
+            return {"id": it["id"], "task": task, "ok": False, "task_id": "",
+                    "skipped": True}
         try:
             rc, out = run_provider(gen, "generator", _build_queue_task_prompt(task, gen), cfg)
             # The only trace linking this queue item to the workbench task it created:
             # registration happened inside the provider's own session (see
             # workbench.batch for why an unrecoverable id is reported, not guessed).
+            # It is persisted onto the item, because a dependency edge asks whether this
+            # item's *result* was accepted, and without the link there is nothing to ask.
             task_id = _find_task_id(out)
             rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, out), cfg, persona="queue")
             ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
@@ -404,20 +564,51 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
             # ex.map propagates the first exception and discards the other results, which
             # left every remaining item pinned at `running` with no way to tell why (#360).
             ok, note = False, f"❌ rig: {type(e).__name__}: {e}"[:300]
-        _set_status(it["id"], "done" if ok else "failed", note)
+        _set_status(it["id"], "done" if ok else "failed", note, task_id)
         return {"id": it["id"], "task": task, "ok": ok, "task_id": task_id}
 
     with futures.ThreadPoolExecutor(max_workers=max(1, max_parallel)) as ex:
-        results = list(ex.map(_run_one, items))
+        every = list(ex.map(_run_one, items))
+    # An item another process claimed was not this batch's work and is not this batch's
+    # failure. It is reported, and it is not counted.
+    skipped = [r for r in every if r.get("skipped")]
+    results = [r for r in every if not r.get("skipped")]
+    for r in skipped:
+        print(f"  [SKIP] #{r['id']}  {r['task']} — claimed by another `queue go`")
     done = sum(1 for r in results if r["ok"])
     for r in results:
         print(f"  [{'DONE' if r['ok'] else 'FAIL'}] #{r['id']}  {r['task']}")
-    print(f"\n=== GO complete: {done}/{len(results)} done [{backend}] ===")
+    print(f"\n=== GO complete: {done}/{len(results)} done [{backend}] ==="
+          + (f"  ({len(skipped)} claimed elsewhere)" if skipped else ""))
     # `done` counts settled gates, not finished work: every one of those tasks is still
     # sitting in its own worktree waiting for a person to accept or discard it. Say so.
     for line in _batch_lines(results):
         print(line)
+    for line in _held_lines(held):
+        print(line)
+    # The exit code has always meant "did this batch's items succeed", and held items are
+    # not this batch's items — they are work that correctly has not started. Reporting them
+    # as a failure would make every dependency-using queue look broken to CI.
     sys.exit(0 if done == len(results) else 1)
+
+
+def _held_lines(held: list[dict]) -> list[str]:
+    """What did not start, and what would make it start.
+
+    Printed as loudly as the accept reminder, because the state it describes is
+    indistinguishable from "the queue silently skipped my task" if it is not said out
+    loud. A dependent cannot clear inside this GO: the edge is acceptance, and accepting
+    is a person's action.
+    """
+    if not held:
+        return []
+    lines = ["", f"=== {len(held)} item(s) held on dependencies ==="]
+    for row in held:
+        lines.append(f"  [{row['state']:<7}] #{row['id']}  {row['task']}")
+        lines.append(f"            {row['reason']}")
+    lines.append("  These do not run in this batch. Accept what they depend on "
+                 "(`workbench.py board` → `accept`), then run GO again.")
+    return lines
 
 
 def _find_task_id(text: str) -> str:
