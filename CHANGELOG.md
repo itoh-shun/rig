@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+Mission Control shows the shape a run actually took. The steps list says what ran; it
+does not say which steps followed one another, which fanned out to several reviewers at
+once, where the machine gate sits, or which of those still needs a person. The new
+**Resolved workflow** panel is that shape, served as `rig.assurance-graph/v1` and drawn
+by the page from that model alone — nodes carry a `kind` and a `lane`, never a colour or
+a coordinate, so a second client reads the same graph without adopting this page's
+stylesheet.
+
+It is a projection of a projection: structure and step outcomes from the run's own
+`steps.json`, and the gate, approvals and final verdict through the Assurance Receipt,
+which is itself a projection. Nothing here re-decides anything, which is what keeps "no
+second copy of gate/RBAC/approval logic" true by construction.
+
+Whether a step was serial or a fan-out lives in the recipe rather than in run state, so
+it is read from the recipe — the graphed repository's own copy — and only while the step
+ids still match, reported as `recipe-drifted` with `pattern` left null when they do not.
+Where they match, the value is `recipe-as-currently-defined` rather than `recipe`, with a
+`structure_caveat` saying why: a run records a recipe name and never a revision, so an
+in-place edit that kept the ids would otherwise be shown as though it had always been
+that way. The approval node lists decisions and counts them without deciding whether they
+satisfy the rule — that is govern's judgment, made at `accept`, so the node reads
+`passed` only once the task is accepted. The `providers` block always has separate
+`execution` and `verification` slots even though rig records neither for a workbench task
+today, because one merged "provider: unknown" would erase the question the trust boundary
+rests on. A fan-out member shows a reviewer's verdict only when `review.json` holds one, and reads
+it for what it says — `REJECT` renders as a failure, never as the green a bare "a verdict
+was recorded" check would have drawn (#426).
+
 `workbench.py receipt` builds a portable Assurance Receipt — `rig.assurance-receipt/v1`,
 written to `.rig/runs/<task-id>/assurance.json` alongside a Markdown rendering of the same
 model. Everything a reviewer needs was already recorded across six files that each answer a
