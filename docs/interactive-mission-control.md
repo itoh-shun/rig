@@ -52,6 +52,7 @@ The live page polls RIG state every two seconds and shows:
 - active task, gate, token, production-outcome and outcome-coverage metrics;
 - all workbench tasks in the local `.rig/runs/` history;
 - a selected task's workbench steps and acceptance criteria;
+- that task's **resolved workflow graph** and its **Assurance Receipt**;
 - the persistent AI queue and detached worker state;
 - the tail of the worker log;
 - command output when an action succeeds or RIG refuses it.
@@ -133,6 +134,67 @@ Mission Control exposes named providers already understood by RIG:
 - `mock`
 
 The arbitrary `cmd` provider is intentionally not exposed from the browser.
+
+## Resolved workflow graph
+
+The steps list says what ran. It does not say what shape the run had — which steps
+followed one another, which fanned out to several reviewers at once, where the machine
+gate sits, and which of those still needs a person. The **Resolved workflow** panel is
+that shape, served as `rig.assurance-graph/v1` on the task detail endpoint and drawn by
+the page from that model alone.
+
+The model is presentation-neutral: nodes carry a `kind` and a `lane`, never a colour or
+a coordinate. A second client reads the same graph without adopting this page's
+stylesheet.
+
+It is a projection of a projection. Structure and step outcomes come from the run's own
+`steps.json`; the gate, approvals and final verdict arrive through the Assurance Receipt
+(#428), which is itself a projection. Nothing here re-decides anything, which is how
+"no second copy of gate/RBAC/approval logic" stays true rather than merely intended.
+
+Three things it will not do.
+
+**Draw a structure it did not read.** Whether a step was serial or a parallel fan-out
+lives in the recipe, not in the run state, so it is read from the recipe — from the
+graphed repository's own copy, since Mission Control may serve a checkout that is not
+the rig doing the serving. When the recipe's step ids no longer match the recorded ones
+the graph reports `structure_resolved_from: recipe-drifted` and leaves `pattern` null;
+`null` means nobody wrote it down, where `serial` would be a claim about the run.
+
+When they do match, the strongest thing the graph can say is
+`recipe-as-currently-defined`, and it says exactly that. Matching ids show the recipe
+still declares the same steps; they cannot show the step bodies are the ones that ran,
+because a run records a recipe *name* and never a revision. An in-place edit that kept
+the ids — a step switched between serial and `parallel-fanout` — would otherwise be
+shown as though it had always been that way. `structure_caveat` carries that sentence
+next to the value, rather than leaving it in a doc nobody reading the graph will open.
+
+**Adjudicate approvals.** The approval node lists the recorded decisions and counts
+them. It does not decide whether they satisfy the rule — quorum, roles, separation of
+duties, expiry, whether one denial sinks three approvals is `govern`'s judgment, made at
+`accept`. So the node reads `passed` only once the task is accepted, which is the point
+at which govern actually enforced the rule, and `pending` otherwise. A denial is always
+listed, never averaged away.
+
+**Merge the two providers.** `providers` always has an `execution` slot and a
+`verification` slot, even though rig records neither for a workbench task today. One
+merged "provider: unknown" would erase the question the trust boundary rests on — that
+the thing which wrote the change is not the thing which judged it — so each slot says
+separately that it was not recorded, and why.
+
+**Invent a reviewer's verdict.** A fan-out member shows a verdict only when
+`review.json` holds one for that persona. Otherwise it shows the step's own status and
+says that is what it is showing. The gate node references `review.json` directly too, so
+the reviewers' record is reachable without walking the member nodes.
+
+A verdict that *is* recorded is read for what it says: `APPROVE` renders as a pass,
+`REJECT` as a failure, `APPROVE_WITH_CONDITIONS` as a warning, and anything else as
+`pending`. The panel shows a glyph and a colour long before anyone reads the label, so a
+rejecting reviewer drawn in green would be the worst thing this graph could say. Values
+outside `VALID_VERDICT` — which `rig-wb review` refuses to write, so they can only reach
+`review.json` by hand — read as `pending` rather than being normalised, because
+normalising would accept what rig itself rejects. Two verdicts recorded for one persona
+follow the writer's rule, last one wins, and the node says a duplicate was there.
 
 ## Workbench operations
 

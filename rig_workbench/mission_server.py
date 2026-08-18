@@ -30,7 +30,7 @@ from typing import Any
 from . import exitcodes
 from .evidence import find_repo_root
 from .mission_control import build_snapshot
-from .workbench import assurance
+from .workbench import assurance, graph as assurance_graph
 from .mission_jobs import (
     ALLOWED_PROVIDERS,
     assert_retryable,
@@ -83,7 +83,21 @@ def task_detail(root: pathlib.Path, task_id: str) -> dict[str, Any]:
         acceptance["status"] = gate_status(acceptance)
     return {"task": task, "steps": steps, "acceptance": acceptance,
             "review": review, "outcome": outcome,
-            "assurance": _assurance(root, task_id)}
+            "assurance": _assurance(root, task_id),
+            "graph": _graph(root, task_id)}
+
+
+def _graph(root: pathlib.Path, task_id: str) -> dict[str, Any] | None:
+    """The task's resolved execution graph (#426), or None with the reason.
+
+    Same containment as the receipt: a projection failing must cost a panel, never
+    the page. Returned as its own key rather than folded into `assurance` because a
+    client may want one without the other.
+    """
+    try:
+        return assurance_graph.build_graph(root, task_id)
+    except Exception as e:                                     # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}", "nodes": [], "edges": []}
 
 
 def _assurance(root: pathlib.Path, task_id: str) -> dict[str, Any]:

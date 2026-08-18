@@ -736,6 +736,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
 | プロンプト面の変更と、その裏づけの承認済み評価ケース | `rig-wb eval affected --ratchet`（正本は `evals/prompt-surfaces.json` ＋ `evals/cases/`。全 PR で CI 強制——ケース未整備の面は `coverage_debt` として報告、既存カバレッジを外す変更は fail） |
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
+| その run が実際に取った形 | Mission Control の task detail が返す `rig.assurance-graph/v1`（`rig_workbench/workbench/graph.py`）——直列 step・並列レビュー fan-out・機械ゲート・人間の判断を node/edge で区別する。`steps.json` と Assurance Receipt の投影なので、gate/RBAC/承認のロジックを複製しない。run が記録していない構造は recipe から読むが、step id が一致する間だけで、ずれていれば `recipe-drifted` と申告する |
 | この変更を accept してよい理由を1枚で | `workbench.py receipt <task-id>`（`rig.assurance-receipt/v1` → `.rig/runs/<task-id>/assurance.json` と `.md`）——gate・来歴・承認の**投影**であって再判定はしない。rig が記録していないもの（producer の runtime/model、verifier の identity、両者の独立性）は空欄ではなく `{"observed": false, "reason": …}` として出る。`--verify` は投影元の digest を再計算し、変わっていれば `invalidated` を返す |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
