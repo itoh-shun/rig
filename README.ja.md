@@ -1,5 +1,10 @@
 # rig
 
+<p align="center">
+  <img src="./Rig.png" width="640"
+       alt="Rig — Reasoning Integration Gateway。3本の柱: Reasoning（考え、評価し、改善する）、Integration（ツールとAIをつなぐ）、Gateway（開発の入口となる）。">
+</p>
+
 **Claude Code のための AI Quality Operating System。** タスクに応じて必要なハーネスを自動構成し、隔離された worktree で変更を行い、acceptance-gate で検証し、最後にユーザーが差分を accept / discard できる。さらにチーム利用では、**共通ポリシー**を複数リポジトリへ効かせ、権限管理・承認フロー・期限つき例外・改竄検知つき監査台帳でそれを担保する（§17）。
 
 > 🇬🇧 English version: [README.md](./README.md)

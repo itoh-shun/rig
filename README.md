@@ -1,5 +1,10 @@
 # rig
 
+<p align="center">
+  <img src="./Rig.png" width="640"
+       alt="Rig — Reasoning Integration Gateway. Three pillars: Reasoning (think, evaluate, improve), Integration (connect tools and AI), Gateway (the entrance to development).">
+</p>
+
 **An AI Quality Operating System for Claude Code.** It composes the right harness for each task, runs changes in an isolated worktree, checks the result with acceptance gates, and lets you accept or discard the diff safely — and, for teams, carries one common policy across repositories with permissions, approvals, expiring waivers and a tamper-evident audit trail (§17).
 
 > 🇯🇵 日本語版は [README.ja.md](./README.ja.md) を参照。
