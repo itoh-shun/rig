@@ -130,6 +130,63 @@ gate も来歴も承認もすでに決まったものを写すだけで、receip
 それが今も検証できるかを報告するだけ——同じ事実に対する2つ目の署名は、食い違ったときに
 どちらが正かを説明できなくなる。
 
+### Bring Your Own Orchestrator（`import` / `contract`・#429）
+
+```
+python3 scripts/workbench.py import --head <commit|ref> --base <branch> --type <task_type> \
+    --producer <name> [--producer-runtime <name>] [--producer-run-id <id>] [--producer-url <url>] \
+    [--producer-claim <name>=<value>] [--summary <file>]
+python3 scripts/workbench.py contract [<task_id>] [--json]
+```
+
+rig が**作っていない**変更——外部 orchestrator・CI ジョブ・他人のブランチ——を、
+ふつうの workbench task として登録する。仕掛けは1行だけ：**task ブランチを
+imported commit の位置に作る**。以降 `base..branch` が外部の変更そのものになるので、
+`diff` も7本のセンサーも gate も governance も `accept` も署名付き来歴も receipt も、
+何も区別せずに動く。「imported task は検証を省略できない」は方針ではなく**構造**で成り立つ
+——accept の第二経路が存在しないから。
+
+読むときの4点：
+
+- **producer の自己申告はゲートに届かない**。`--producer-claim tests=passed` は task と
+  receipt に `gate_effect: "none"` 付きで記録されるだけで、`acceptance.json` へ至る経路が
+  コード上に無い。自分の仕事を自分で採点した orchestrator は、rig の判定の**隣**に
+  何かを置いただけ。
+- **caller ごとに規則を変えない**。gate/accept/governance のソースに producer 名が
+  出てこないことをテストが構造的に検査する。特定の orchestrator にだけ緩いゲートは
+  ゲートではない。
+- **名前は commit ではない**。`--head refs/heads/foo` は動きうる名前、`--head <sha>` は
+  動かないオブジェクト。両方受けるが、どちらだったかを記録し、`immutable` と
+  陳腐化判定に反映する。**ずれうる ref は2本**——producer の ref（名前を渡した場合）と、
+  rig が持つ task ブランチ（誰かが worktree に commit した場合）。後者の方が危険で、
+  `accept` が squash-merge するのはそちらだから、receipt が名指しした commit と
+  実際に入る commit が食い違う。どちらかが動けば `contract` は `not-acceptable`、
+  `receipt --verify` は stale。digest では検出できない変化なので ref を引き直して判定する。
+  ブランチが消えている場合は `moved: false` ではなく `applicable: false` と理由を返す
+  ——「測っていない」を「動いていない」と書かない。
+- **diff summary は導出だと明記する**。`accept` は diff summary の欠落を
+  **`--force` でも越えられない**構造条件として扱う。headless な producer は書かないので、
+  `import` が commit message から導出し、「**No reviewer wrote this**」と本文に書く。
+  `--summary <file>` で人が書いたものを渡せば `authored` として記録される。
+
+`contract` は外部 caller が分岐するための答えで、**`die()` を一切呼ばない**。
+`die` はタスク ID の誤りでも壊れた state でも未達ゲートでも exit 1 なので、
+exit 1 だけでは「rig が拒否した」と「rig が答えられなかった」を区別できない。
+
+| status | exit | 意味 |
+|---|---|---|
+| `acceptable` | 0 | rig のゲートが通した |
+| `not-acceptable` | 1 | rig が見て、通らなかった |
+| `execution-error` | 2 | rig が答えられなかった（未判定） |
+| `pending` | 3 | まだ決まっていない |
+
+`pending` を隣に畳まないのは意図的：`not-acceptable` に畳むと poller が「実行中」を
+「拒否」と読み、`acceptable` に畳むとゲートが何も言っていない変更をマージする。
+人が failed gate を `--force` で越えた場合は `not-acceptable` ＋
+`final_status: accepted-over-failed-gate`——適用はされたが、rig は保証していない。
+
+詳細と統合例は `docs/byo-orchestrator.md`。
+
 ## 本番アウトカムへのフィードバックループ（`record-commit`/`record-outcome`/`trace-commit`・#289/#300）
 
 acceptance-gateはmerge時点の**予測**にすぎない。以下の3コマンドで、実際に何が起きたかを事後に突き合わせられるようにする：

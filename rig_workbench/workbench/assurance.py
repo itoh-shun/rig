@@ -76,6 +76,17 @@ _FINAL_STATUS = {
 }
 
 
+def final_status_values() -> set[str]:
+    """Every value :func:`_final_status` can emit.
+
+    Published from here rather than restated by whoever consumes it, because a
+    hand-copied vocabulary is what drifts — and the drift shows up as a status silently
+    reported as something familiar. The two additions are the values the fall-through
+    branches emit, which the table alone does not contain.
+    """
+    return set(_FINAL_STATUS.values()) | {"waiting-approval", "in-progress"}
+
+
 def unobserved(reason: str) -> dict:
     """A value rig does not have, and why.
 
@@ -119,6 +130,33 @@ def _commit_exists(root: pathlib.Path, sha: str) -> bool:
 
 
 # ── the sections ─────────────────────────────────────────────────────────────
+def _import_block(task: dict) -> dict | None:
+    """The BYOO import record, or `None` for a task rig produced itself (#429).
+
+    `None` here is not an unmeasured value and deliberately not an :func:`unobserved`
+    block: rig knows perfectly well that this task was not imported. The distinction
+    matters because the rest of this module treats absence as a thing to explain, and
+    explaining this one would suggest a measurement had been attempted and failed.
+    """
+    block = task.get("import")
+    if not isinstance(block, dict) or not block.get("head_commit"):
+        return None
+    return {
+        "producer": block.get("producer"),
+        "producer_runtime": block.get("producer_runtime"),
+        "run_id": block.get("run_id"),
+        "source_url": block.get("source_url"),
+        "head_commit": block.get("head_commit"),
+        "head_requested": block.get("head_requested"),
+        "head_ref": block.get("head_ref"),
+        "head_symbolic": bool(block.get("head_symbolic")),
+        "claims": block.get("claims", []),
+        "claims_gate_effect": "none",
+        "diff_summary": block.get("diff_summary"),
+        "imported_at": block.get("imported_at"),
+    }
+
+
 def _target(root: pathlib.Path, task: dict) -> dict:
     """What was verified, and whether that thing can still be pointed at.
 
@@ -128,15 +166,25 @@ def _target(root: pathlib.Path, task: dict) -> dict:
     """
     base = str(task.get("base_commit") or "")
     effective = str(task.get("base_commit_effective") or base)
+    imported = _import_block(task)
     # `record-commit` writes `commit_sha` (`workbench/feedback.py`). Guessing the
     # field name here cost nothing loudly: the receipt reported "no commit linked"
     # for tasks that had one, which is the false negative this module exists to
     # avoid producing.
+    #
+    # An imported task knows its head from the moment it is registered — that pinned
+    # commit is the identity rig verified — so it is used when nothing has been linked
+    # yet. `source` keeps the two apart: one is the commit that landed after `accept`,
+    # the other is the commit that was handed to rig, and a reader who cannot tell
+    # them apart cannot tell a verified change from a merged one.
     commit = task.get("commit_sha")
+    source = "record-commit"
+    if not commit and imported:
+        commit, source = imported["head_commit"], "import"
     if commit and _commit_exists(root, str(commit)):
-        head = observed(commit=str(commit), resolvable=True)
+        head = observed(commit=str(commit), resolvable=True, source=source)
     elif commit:
-        head = observed(commit=str(commit), resolvable=False)
+        head = observed(commit=str(commit), resolvable=False, source=source)
     else:
         head = unobserved(
             "no commit is linked to this task — `workbench.py record-commit` links the "
@@ -151,6 +199,7 @@ def _target(root: pathlib.Path, task: dict) -> dict:
         "branch": task.get("branch"),
         "head": head,
         "immutable": bool(head.get("observed") and head.get("resolvable")),
+        "import": imported,
     }
 
 
@@ -161,6 +210,11 @@ def _producer(task: dict) -> dict:
     statement, and anything else is rig's own guess from the environment. Collapsing
     the two would let a heuristic be read as a fact, which is the failure that module
     exists to prevent.
+
+    `external` is the same distinction one level out (#429). Every field in it was
+    supplied by whoever ran `import`, so it is reported as a declaration and never as
+    something rig checked — including the producer's own claims, which carry
+    `gate_effect: "none"` in the record rather than in a footnote.
     """
     caller = task.get("caller")
     if isinstance(caller, dict) and caller.get("id"):
@@ -171,39 +225,87 @@ def _producer(task: dict) -> dict:
             "tasks created before #428 carry no `caller` block, and a plain terminal "
             "identifies no harness to record"
         )
+    imported = _import_block(task)
+    if imported:
+        external = observed(
+            name=imported["producer"],
+            run_id=imported["run_id"],
+            source_url=imported["source_url"],
+            claims=imported["claims"],
+            claims_gate_effect="none",
+            declared=True,
+            basis="supplied to `workbench.py import`; rig verified the commit, not the "
+                  "account of who produced it",
+        )
+    else:
+        external = None
+    # The reason a value is missing has to stay true. Saying "rig does not record the
+    # provider/model" on a task whose operator declared one would be the mirror image
+    # of the failure this module guards against: a recorded fact reported as absent.
+    if imported and imported["producer_runtime"]:
+        runtime = observed(id=imported["producer_runtime"], declared=True,
+                           source="--producer-runtime")
+    elif imported:
+        runtime = unobserved(
+            "this task was imported without --producer-runtime, so the runtime that "
+            "produced the change was never stated"
+        )
+    else:
+        runtime = unobserved(
+            "rig does not record the provider/model that produced a workbench task; "
+            "only evaluation runs (`evals/evidence/`) carry an execution identity"
+        )
     return {
         "actor": task.get("actor") or None,
         "harness": harness,
-        "runtime": unobserved(
-            "rig does not record the provider/model that produced a workbench task; "
-            "only evaluation runs (`evals/evidence/`) carry an execution identity"
-        ),
+        "external": external,
+        "runtime": runtime,
     }
 
 
-def _verifier(steps: dict | None) -> dict:
+def _verifier(steps: dict | None, task: dict) -> dict:
     """Who checked it, and how independent that was.
 
-    The independence verdict is `unrecorded`, not `independent`. rig's review step
-    dispatches subagents whose identity never reaches task state, so the honest answer
-    is that nobody wrote it down — and a receipt that guessed `independent` here would
-    be asserting exactly the property the trust boundary exists to establish.
+    For a task rig produced itself the independence verdict is `unrecorded`, not
+    `independent`. rig's review step dispatches subagents whose identity never reaches
+    task state, so the honest answer is that nobody wrote it down — and a receipt that
+    guessed `independent` here would be asserting exactly the property the trust
+    boundary exists to establish.
+
+    An imported task is the one case where something more can be said, and it is still
+    less than `independent`: the change came from outside rig and rig ran its own gate
+    over it, so producer and verifier are structurally different processes. What rig
+    did not do is verify *who* the producer was — that name is a declaration. So the
+    verdict is `declared-separate`, which is a weaker claim wearing its own weakness.
     """
     names = [s.get("name") for s in (steps or {}).get("steps", []) if isinstance(s, dict)]
     review_steps = [n for n in names if n and "review" in n]
+    imported = _import_block(task)
+    if imported:
+        independence = {
+            "verdict": "declared-separate",
+            "basis": (
+                f"the change was produced outside rig by `{imported['producer']}` and "
+                "imported as a fixed commit, so rig's gate ran over work it did not do. "
+                "This rests on the caller's declaration of who produced it, which rig "
+                "did not verify — it is not a measurement of independence"
+            ),
+        }
+    else:
+        independence = {
+            "verdict": "unrecorded",
+            "basis": (
+                "no producer or verifier identity is stored for a workbench task, so "
+                "independence can be neither confirmed nor denied from this record"
+            ),
+        }
     return {
         "identity": unobserved(
             "rig does not record a reviewer identity per task; review steps are "
             "dispatched to subagents and only their verdict returns to task state"
         ),
         "review_steps": review_steps,
-        "independence": {
-            "verdict": "unrecorded",
-            "basis": (
-                "no producer or verifier identity is stored for a workbench task, so "
-                "independence can be neither confirmed nor denied from this record"
-            ),
-        },
+        "independence": independence,
     }
 
 
@@ -406,7 +508,7 @@ def build_receipt(root: pathlib.Path, task_id: str) -> dict:
         },
         "target": _target(root, task),
         "producer": _producer(task),
-        "verifier": _verifier(loaded["steps"]),
+        "verifier": _verifier(loaded["steps"], task),
         "isolation": _isolation(task),
         "gates": gates,
         "approvals": _approvals(loaded["approvals"]),
@@ -414,6 +516,90 @@ def build_receipt(root: pathlib.Path, task_id: str) -> dict:
         "evidence": _evidence(root, run, gates),
         "sources": sources,
         "final_status": _final_status(task, gates, loaded["approvals"]),
+    }
+
+
+def _resolve(root: pathlib.Path, ref: str) -> str | None:
+    return _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}") or None
+
+
+def target_moved(root: pathlib.Path, receipt: dict) -> dict:
+    """Does the change this receipt describes still sit where it did when rig looked?
+
+    A digest cannot answer this. `verify` compares file contents, and a ref moving
+    changes no file — yet it is the change that matters most to an external caller,
+    because the question it asked was "is my branch acceptable?" and the branch may no
+    longer be the thing rig looked at (#429).
+
+    Two refs can drift, and they drift for different reasons, so both are checked and
+    reported separately:
+
+    * the **producer's ref**, when the import named one instead of a commit. It moves
+      when the producing side keeps working after handing rig a branch name.
+    * the **task branch**, which rig owns and an operator can commit into. It moves
+      when someone adds to the worktree after the import — and this is the more
+      dangerous of the two, because it is the branch `accept` squash-merges. Reporting
+      only the first would let a receipt name the commit rig was handed while a
+      different one is what lands, which is the shape of defect this module exists to
+      make impossible.
+
+    Both are measurements, not judgments: refs are re-resolved and SHAs compared. A
+    caller who handed rig an immutable commit and left the worktree alone gets
+    `moved: False` from two checks that both ran, not from two that were skipped.
+    """
+    imported = (receipt.get("target") or {}).get("import")
+    if not isinstance(imported, dict):
+        return {"applicable": False, "moved": False, "checks": [],
+                "reason": "this task's change was produced by rig, so there is no "
+                          "pinned commit for a ref to drift away from"}
+    verified = imported.get("head_commit")
+    checks = []
+
+    ref = imported.get("head_ref")
+    if imported.get("head_symbolic") and ref:
+        now = _resolve(root, ref)
+        checks.append({
+            "kind": "producer-ref", "applicable": True, "ref": ref, "resolves_to": now,
+            "moved": now != verified,
+            "reason": "" if now == verified else
+                      f"`{ref}` no longer resolves in this repository, so what rig "
+                      f"verified can no longer be reached by the name it was given"
+                      if now is None else
+                      f"`{ref}` now points at {now[:12]}, not at the {str(verified)[:12]} "
+                      f"rig verified",
+        })
+    else:
+        checks.append({"kind": "producer-ref", "applicable": False, "moved": False,
+                       "ref": None, "resolves_to": None,
+                       "reason": "the import named an immutable commit, which cannot move"})
+
+    branch = (receipt.get("target") or {}).get("branch")
+    now = _resolve(root, branch) if branch else None
+    if branch and now:
+        checks.append({
+            "kind": "task-branch", "applicable": True, "ref": branch, "resolves_to": now,
+            "moved": now != verified,
+            "reason": "" if now == verified else
+                      f"`{branch}` is at {now[:12]}, not at the {str(verified)[:12]} that "
+                      f"was imported — `accept` applies the branch, so what lands is not "
+                      f"what this receipt describes",
+        })
+    else:
+        checks.append({
+            "kind": "task-branch", "applicable": False, "moved": False, "ref": branch,
+            "resolves_to": None,
+            "reason": f"`{branch}` no longer resolves — `accept` and `discard` remove the "
+                      f"task branch, so there is nothing left to compare"
+                      if branch else "this task has no branch to compare against",
+        })
+
+    moved = [c for c in checks if c["moved"]]
+    return {
+        "applicable": any(c["applicable"] for c in checks),
+        "moved": bool(moved),
+        "verified": verified,
+        "checks": checks,
+        "reason": " / ".join(c["reason"] for c in moved),
     }
 
 
@@ -440,13 +626,19 @@ def verify(root: pathlib.Path, receipt: dict) -> dict:
                 missing.append(rel)
         elif recorded is None or _digest(f) != recorded:
             changed.append(rel)
-    fresh = not changed and not missing
+    # A moved target is kept out of `changed`, which consumers read as a list of file
+    # paths — putting a ref name in it would be an unannounced type change in a field
+    # other tools already parse.
+    moved = target_moved(root, receipt)
+    fresh = not changed and not missing and not moved["moved"]
     return {
         "fresh": fresh,
         "changed": changed,
         "missing": missing,
+        "target_moved": moved,
         "final_status": receipt.get("final_status", {}).get("value") if fresh else "invalidated",
         "reason": "" if fresh else
+                  moved["reason"] if moved["moved"] else
                   "a source this receipt projected has changed since it was built, so "
                   "its final status no longer describes the current record",
     }
@@ -480,17 +672,45 @@ def render_markdown(receipt: dict) -> str:
         "",
         f"- repository: `{target['repository']}`",
         f"- base: `{target['base_branch']}` @ `{(target['base_commit_effective'] or '')[:12]}`",
-        f"- head: {_render_value(target['head'], 'commit', 'resolvable')}",
+        f"- head: {_render_value(target['head'], 'commit', 'resolvable', 'source')}",
         f"- immutable target: {'yes' if target['immutable'] else 'no'}",
+    ]
+    imported = target.get("import")
+    if imported:
+        lines += [
+            f"- imported from `{imported['producer']}` as "
+            + (f"`{imported['head_requested']}` → the name resolved to "
+               f"`{(imported['head_commit'] or '')[:12]}`, and a name can move"
+               if imported["head_symbolic"] else
+               f"`{(imported['head_commit'] or '')[:12]}`, an immutable commit"),
+            f"- diff summary: {imported['diff_summary']}"
+            + (" — restated from the producer's own commit messages, not a review"
+               if imported["diff_summary"] == "derived" else ""),
+        ]
+    lines += [
         "",
         "## Who",
         "",
         f"- producer actor: `{receipt['producer']['actor'] or 'unknown'}`",
         f"- producer harness: {_render_value(receipt['producer']['harness'], 'id', 'source', 'declared')}",
-        f"- producer runtime: {_render_value(receipt['producer']['runtime'])}",
+        f"- producer runtime: {_render_value(receipt['producer']['runtime'], 'id', 'declared', 'source')}",
         f"- verifier identity: {_render_value(receipt['verifier']['identity'])}",
         f"- independence: **{receipt['verifier']['independence']['verdict']}** — "
         f"{receipt['verifier']['independence']['basis']}",
+    ]
+    external = receipt["producer"].get("external")
+    if external:
+        lines.append(
+            f"- external producer: `{external['name']}`"
+            + (f" · run `{external['run_id']}`" if external.get("run_id") else "")
+            + (f" · <{external['source_url']}>" if external.get("source_url") else "")
+            + f" — declared, {external['basis']}")
+        for claim in external.get("claims", []):
+            lines.append(
+                f"  - producer claims `{claim['name']}={claim['value']}` — "
+                f"**gate_effect: {claim['gate_effect']}**, recorded next to rig's "
+                "verdict and never as part of it")
+    lines += [
         "",
         "## Isolation",
         "",
@@ -563,7 +783,9 @@ def cmd_receipt(args: argparse.Namespace) -> None:
                 print(f"  changed since the receipt was built: {rel}")
             for rel in result["missing"]:
                 print(f"  missing: {rel}")
-            if not result["fresh"]:
+            if result["target_moved"]["moved"]:
+                print(f"  target moved: {result['target_moved']['reason']}")
+            elif not result["fresh"]:
                 print(f"  {result['reason']}")
         raise SystemExit(0 if result["fresh"] else 1)
 

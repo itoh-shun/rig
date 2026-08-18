@@ -738,6 +738,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
 | その run が実際に取った形 | Mission Control の task detail が返す `rig.assurance-graph/v1`（`rig_workbench/workbench/graph.py`）——直列 step・並列レビュー fan-out・機械ゲート・人間の判断を node/edge で区別する。`steps.json` と Assurance Receipt の投影なので、gate/RBAC/承認のロジックを複製しない。run が記録していない構造は recipe から読むが、step id が一致する間だけで、ずれていれば `recipe-drifted` と申告する |
 | この変更を accept してよい理由を1枚で | `workbench.py receipt <task-id>`（`rig.assurance-receipt/v1` → `.rig/runs/<task-id>/assurance.json` と `.md`）——gate・来歴・承認の**投影**であって再判定はしない。rig が記録していないもの（producer の runtime/model、verifier の identity、両者の独立性）は空欄ではなく `{"observed": false, "reason": …}` として出る。`--verify` は投影元の digest を再計算し、変わっていれば `invalidated` を返す |
+| rig が作っていない変更が、rig の境界を通るか | `workbench.py import --head <commit> --producer <name>` は外部 orchestrator の変更をふつうの task として登録する——task ブランチを**その commit の位置に**作るので、isolation もセンサーも gate も governance も同じものが効き、accept の第二経路は存在しない。producer 自身の申告（`--producer-claim tests=passed`）は `gate_effect: none` として記録されるだけで、どのゲートにも届かない。`workbench.py contract <task-id> --json`（`rig.assurance-contract/v1`）が機械向けの答えで、`acceptable` / `not-acceptable` / `pending` / `execution-error` にそれぞれ別の exit code を割り当てる——**拒否と障害を取り違えないため**。ブランチ名で検証した対象は、その名前が動いた時点で fresh でなくなる |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 
@@ -885,6 +886,7 @@ rig は人よりも**別のハーネス**から起動されることが増えて
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutralなremote/stdio MCP adapterと安全境界
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — remote adapterをChatGPTへ接続する手順
 - [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence`（実プロジェクトでのRIG-vs-bare実地エビデンス・本番アウトカム網羅率・Quality/Costフロンティア）と`rig-mission-control`（複数リポジトリ横断のfleetガバナンス集計とread-onlyのHTML/JSONダッシュボード）
+- [`docs/byo-orchestrator.md`](./docs/byo-orchestrator.md) — rig が作っていない変更の import と、外部 orchestrator が分岐するための機械契約（`acceptable` / `not-acceptable` / `pending` / `execution-error`）
 - [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — Mission Control v2のlocalhost限定インタラクティブUI（ブラウザ側はacceptance/ガバナンス/承認/queue/providerの規則を一切自前で実装しない）
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — プロンプト評価ゲートの土台となる評価ケースのcapture/実行/比較/昇格の境界
 - [`docs/packs.md`](./docs/packs.md) — packの作り方（`pack.yaml`/`compatibility.yaml`）とinit/validate/doctor/install/testコマンド

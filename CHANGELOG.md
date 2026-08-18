@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+Rig can now be the acceptance boundary for a change it did not produce. `workbench.py
+import --head <commit> --producer <name>` registers an external orchestrator's change — a
+CI job's, another harness's, a colleague's branch — as an ordinary workbench task. The
+mechanism is one line: the task branch is created *at* the imported commit rather than at
+the base, so `base..branch` is the external change and `diff`, every deterministic sensor,
+the gate, governance, `accept`, the signed provenance record and the Assurance Receipt all
+operate unchanged, because there is nothing for them to tell apart. "An imported task
+cannot skip verification" therefore holds by construction: there is no second accept path
+to keep honest, and the test suite reads the accept, gate and governance sources to confirm
+none of them so much as mentions the producer.
+
+The producer's own verdict is recorded and never applied. `--producer-claim tests=passed`
+lands in the task record and in the receipt carrying `gate_effect: "none"` in the claim
+itself rather than in a footnote, and there is no code path from a claim to
+`acceptance.json`. `--producer` / `--producer-runtime` / `--producer-run-id` /
+`--producer-url` are kept as provenance and reported as declarations: the receipt's
+independence verdict reads `declared-separate`, never `independent`, because rig verified
+the commit and not the account of who produced it. Every one of those strings is the first
+externally supplied text to reach the receipt, so they are held to `--caller`'s own rule —
+zero-width, bidi-control and newline characters are refused rather than stripped, from that
+module, so a second and quietly diverging definition cannot come into existence.
+
+`accept` treats a missing diff summary as structural, not overridable even with `--force`,
+and a headless producer writes none — so `import` derives one from the imported commit
+messages and labels it as what it is: "**No reviewer wrote this**: it is the producer's own
+account of its work, restated". `--summary <file>` supplies an authored one, and the receipt
+records which of the two it got.
+
+`workbench.py contract <task-id> --json` is the machine answer an external caller branches
+on — `rig.assurance-contract/v1`, with `acceptable` (exit 0), `not-acceptable` (1),
+`execution-error` (2) and `pending` (3). Four statuses rather than the three the issue names,
+because folding `pending` into `not-acceptable` makes a poller read "still running" as
+"refused", and folding it into `acceptable` merges something no gate has ruled on. The
+separate `execution-error` code is the reason this is a command rather than a flag on
+`receipt`: `die` exits 1 for a bad task id, corrupt state and an unmet gate alike, so a
+caller reading exit 1 cannot tell a refusal from an outage — and both wrong readings are
+costly. `contract` never calls `die`. A change a human accepted over a failed gate reports
+`not-acceptable` with `final_status: accepted-over-failed-gate`: it was applied, and rig did
+not vouch for it. The mapping is checked against the receipt's own vocabulary rather than a
+hand-copy, so a new status fails the suite instead of falling through to a friendly default.
+
+The commit rig verified is pinned at import, and two refs are checked against it: the
+producer's, when the caller named a branch instead of a SHA, and the task branch rig owns —
+the one `accept` actually squash-merges. The second is the dangerous one, because checking
+only the first would let the receipt name the commit rig was handed while a different one is
+what lands. Either drifting makes `contract` read `not-acceptable` and `receipt --verify` read
+stale. No digest can detect this, since a ref moving rewrites no file, so it is checked by
+re-resolving both refs and reported under its own `target_moved` key rather than smuggled into
+the list of changed paths — and a branch that has been removed reports `applicable: false`
+with the reason rather than `moved: false`, because an absence dressed as a measurement is the
+thing the receipt exists to refuse. See `docs/byo-orchestrator.md` (#429).
+
 Mission Control shows the shape a run actually took. The steps list says what ran; it
 does not say which steps followed one another, which fanned out to several reviewers at
 once, where the machine gate sits, or which of those still needs a person. The new
