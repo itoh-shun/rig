@@ -23,6 +23,8 @@ from .state import (_diff_lines, audit_append, build_acceptance,
                     load_json, load_task, now_iso, parse_diff_md, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
                     task_lock, verify_provenance, warn, worktree_dirty)
+from .runtime import WorktreeHandle
+from . import runtime as runtime_mod
 from .telemetry import record_task_run
 
 
@@ -383,9 +385,12 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
     if not args.yes:
         die("Re-run with --yes to confirm (the changes listed above will be lost)")
 
-    wt = pathlib.Path(task["worktree_path"]) if task.get("worktree_path") else None
-    if wt and wt.is_dir():
-        git(["worktree", "remove", "--force", str(wt)], cwd=root)
+    # Disposal goes back to whoever created it (#461). Reading the path and calling
+    # `git worktree remove` on it happens to work while native is the only backend, and
+    # stops being true the moment another runtime owns the directory.
+    handle = WorktreeHandle.from_task(task)
+    if handle:
+        runtime_mod.for_task(task, root).remove(root, handle)
     if task.get("branch"):
         proc = git(["rev-parse", "--verify", task["branch"]], cwd=root, check=False)
         if proc.returncode == 0:
@@ -395,6 +400,7 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
         task["status"] = "discarded"
     task["cleaned_at"] = now_iso()
     task["worktree_path"] = None
+    task["worktree"] = None
     save_task(d, task)
     if discarded_now:
         # Only when this call is what ended the task. Cleaning up after an accept runs

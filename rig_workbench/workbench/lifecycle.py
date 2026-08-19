@@ -20,13 +20,14 @@ from .injection import apply_injection_sensor
 from .flow_view import render_flow, render_transition
 from .progress import from_state as progress_from_state
 from .progress import load_recipe_steps
+from .runtime import WorktreeHandle
+from . import runtime as runtime_mod
 from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
                                 apply_prompt_regression_sensor,
                                 ensure_prompt_criterion)
 from .schema_diff import apply_schema_sensor
 from .secrets import apply_secret_sensor, shared_diff_cache
-from .state import (build_acceptance, current_branch, default_worktree_path,
-                    die, gate_status, git, load_json, load_task, make_slug,
+from .state import (build_acceptance, current_branch, die, gate_status, git, load_json, load_task, make_slug,
                     make_task_id, now_iso, repo_root, resolve_task_id, run_dir,
                     runs_dir, save_json, save_task, task_lock)
 
@@ -156,13 +157,17 @@ def cmd_new(args: argparse.Namespace) -> None:
 
     worktree_path: str | None = None
     branch: str | None = None
+    handle: WorktreeHandle | None = None
     create_worktree = route["worktree"] and not args.no_worktree
     if create_worktree:
-        wt = default_worktree_path(root, task_id)
+        # Where the work lives is chosen here and nowhere else; which model does the work
+        # is chosen by the provider layer, which this does not consult (#461). The name is
+        # passed explicitly as `None` rather than read off `args`: no flag sets it yet, and
+        # #462 adds the flag together with the refusal message a bad value deserves.
+        backend = runtime_mod.select(None, root)
         branch = f"rig/{task_id}"
-        wt.parent.mkdir(parents=True, exist_ok=True)
-        git(["worktree", "add", "-b", branch, str(wt), base_commit], cwd=root)
-        worktree_path = str(wt)
+        handle = backend.create(root, task_id, base_commit, branch)
+        worktree_path = handle.path
 
     task = {
         "task_id": task_id,
@@ -175,6 +180,10 @@ def cmd_new(args: argparse.Namespace) -> None:
         "base_commit": base_commit,
         "branch": branch,
         "worktree_path": worktree_path,
+        # The handle beside the path, not instead of it: `worktree_path` is read by
+        # accept, the sensors, the receipt and the board, and this change is not the place
+        # to move all of them.
+        "worktree": handle.as_state() if handle else None,
         "status": "running",
         "created_at": now_iso(),
         "updated_at": now_iso(),

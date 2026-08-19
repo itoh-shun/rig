@@ -47,7 +47,8 @@ from .config import TASK_TYPES
 from .flow_view import render_flow
 from .lifecycle import ensure_rig_gitignored, find_similar_tasks
 from .progress import load_recipe_steps
-from .state import (build_acceptance, current_branch, default_worktree_path, die,
+from . import runtime as runtime_mod
+from .state import (build_acceptance, current_branch, die,
                     git, make_slug, make_task_id, now_iso, repo_root, runs_dir,
                     save_json)
 
@@ -229,10 +230,10 @@ def cmd_import(args: argparse.Namespace) -> None:
     # The one line that makes the rest of rig work unchanged: the task branch is
     # created *at the imported commit*. `base..branch` is then the external change,
     # and every sensor, the gate, governance and `accept` see an ordinary task.
-    wt = default_worktree_path(root, task_id)
+    backend = runtime_mod.select(None, root)   # see cmd_new: the flag arrives with #462
     branch = f"rig/{task_id}"
-    wt.parent.mkdir(parents=True, exist_ok=True)
-    git(["worktree", "add", "-b", branch, str(wt), head_sha], cwd=root)
+    handle = backend.create(root, task_id, head_sha, branch)
+    wt = pathlib.Path(handle.path)
 
     # Past this point the worktree and branch exist. Anything that fails now leaves
     # state only this command created — the run directory was refused above if it was
@@ -250,6 +251,7 @@ def cmd_import(args: argparse.Namespace) -> None:
             "base_commit": base_sha,
             "branch": branch,
             "worktree_path": str(wt),
+            "worktree": handle.as_state(),
             "status": "running",
             "created_at": now_iso(),
             "updated_at": now_iso(),
@@ -327,7 +329,9 @@ def cmd_import(args: argparse.Namespace) -> None:
                 print(f"  - {t['task_id']} ({t['status']}): {label}")
 
     except BaseException:
-        git(["worktree", "remove", "--force", str(wt)], cwd=root, check=False)
+        # Back through the backend that created it: whichever runtime owns the directory
+        # is the one that knows how to take it away (#461).
+        backend.remove(root, handle, strict=False)
         git(["branch", "-D", branch], cwd=root, check=False)
         shutil.rmtree(d, ignore_errors=True)
         raise
