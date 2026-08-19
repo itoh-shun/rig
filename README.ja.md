@@ -892,6 +892,7 @@ rig は人よりも**別のハーネス**から起動されることが増えて
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutralなremote/stdio MCP adapterと安全境界
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — remote adapterをChatGPTへ接続する手順
 - [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence`（実プロジェクトでのRIG-vs-bare実地エビデンス・本番アウトカム網羅率・Quality/Costフロンティア）と`rig-mission-control`（複数リポジトリ横断のfleetガバナンス集計とread-onlyのHTML/JSONダッシュボード）
+- [`docs/landscape.md`](./docs/landscape.md) — 機能ランドスケープと Architectural Non-goals。rig が意図的に競わない領域と、roadmap の項目を採る前に通す判断基準
 - [`docs/byo-orchestrator.md`](./docs/byo-orchestrator.md) — rig が作っていない変更の import と、外部 orchestrator が分岐するための機械契約（`acceptable` / `not-acceptable` / `pending` / `execution-error`）
 - [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — Mission Control v2のlocalhost限定インタラクティブUI（ブラウザ側はacceptance/ガバナンス/承認/queue/providerの規則を一切自前で実装しない）
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — プロンプト評価ゲートの土台となる評価ケースのcapture/実行/比較/昇格の境界
