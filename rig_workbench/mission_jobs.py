@@ -218,7 +218,10 @@ def assert_retryable(root: pathlib.Path, queue_id: str) -> dict[str, Any]:
     """Do not requeue work that a live provider process still owns."""
     item = queue_item(root, queue_id)
     status = item.get("status")
-    if status not in {"failed", "running"}:
+    # `cancelled` is retryable for the same reason `failed` is: nothing owns it, and
+    # `queue retry` already puts it back. Leaving it out made the CLI and Mission Control
+    # disagree about the same item (#459).
+    if status not in {"failed", "running", "cancelled"}:
         raise ValueError(f"queue #{queue_id} is {status!r}, not retryable from Mission Control")
     worker = worker_state(root)
     if status == "running" and worker.get("status") == "running" and worker.get("alive"):

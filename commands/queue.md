@@ -1,6 +1,6 @@
 ---
-description: "rig/queue — タスクを積んで、まとめて GO。キューを管理ツール(GitHub/GitLab Issue)かローカルで持ち、go で全タスクを並列実行(各タスクをゲート通過)して結果を Issue に書き戻す。"
-argument-hint: "<add \"task\" | list | go | done id | retry id> [--depends-on ID] [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
+description: "rig/queue — タスクを積んで、まとめて GO。cancel で未実行のまま取り消せる。キューを管理ツール(GitHub/GitLab Issue)かローカルで持ち、go で全タスクを並列実行(各タスクをゲート通過)して結果を Issue に書き戻す。"
+argument-hint: "<add \"task\" | list | go | done id | retry id | cancel id> [--depends-on ID] [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
 ---
 
 # rig/queue — タスクキュー（積んで GO） 📋
@@ -21,6 +21,7 @@ orchestrate queue list                    # 確認（失敗理由・完了コメ
 orchestrate queue go --provider rig --max-parallel 3   # まとめて GO
 orchestrate queue done <id>               # 手動で完了に
 orchestrate queue retry <id>              # failed（検証 FAIL）の item を queued に戻して再 GO 対象にする
+orchestrate queue cancel <id>             # 積んだが実行させない（未実行のまま取消・#459）
 orchestrate queue add "<やること>" --depends-on <id> [--depends-on <id> ...]   # 依存を張る（#427）
 ```
 
@@ -28,6 +29,28 @@ orchestrate queue add "<やること>" --depends-on <id> [--depends-on <id> ...]
 - provider は `rig`（各タスクを rig ハーネスで実行・推奨）/ `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock`。
 - **`--provider rig`（既定）は各 item を `/rig:go "<task>"` 経由で dispatch する**——`patterns/isolated-worktree` により各タスクが自動的に専用 worktree へ隔離されるため、**並列実行中の headless プロセス同士が同じファイルを取り合う心配がない**。queue の verifier は「gate まで確定したか」＋「本体の作業ツリーに書き込まず isolated worktree 内で完結したか」を判定するだけで、**accept はしない**（queue は隔離・実行・ゲートの層、反映はユーザーの明示操作）。
 - **`queue list` は done を除くアクティブ item（queued/running/failed）のみ表示する**（`local`/`github`/`gitlab` 共通）。完了済みタスクで一覧が肥大化しない。
+- **`queue cancel <id>` と `queue done <id>` は違う**。`done` は「実行して完了した」の記録で、
+  `cockpit` がスループットとして数える数字に入る。タイポ・重複・「もう不要」で積んだものに
+  `done` を付けると、**捨てた仕事が完了実績として数えられる**。`cancel` は「積んだが実行させない」
+  専用の status で、`queue list` からは `done` と同様に消えるが、`cockpit` は
+  `Nothing pending (3 done, 1 cancelled)` のように**別々に数える**。
+  - **cancel できるのは `queued` / `waiting` / `blocked` / `failed`**。判定と書き込みは
+    **1回のロック内の compare-and-set**で行う。分けると `queue go` の claim が間に割り込み、
+    「queued を見た → claim が入る → cancelled を書く → provider が上書き」で
+    **取消が黙って無効になる**（操作した側は効いたと思う）。
+  - **`running` は拒否**。生きた provider がその item を所有していて、終了時に
+    `done`/`failed` を書き込むので `cancelled` は消える。
+    **`done` も拒否**——実行して完了したものを「一度も実行していない」と書き直すのは過去についての嘘。
+    `failed` は cancel でき、note と出力は「実行はした」と分かる**別の文言**になる
+    ——走ったものに「一度も実行していない」と言えば、この status が守ろうとしている監査そのものが歪む。
+    どちらの文言も「もう戻せない」とは言わない（実際 retry できるので、言えば効く操作を思いとどまらせる）。
+  - **cancelled は retry できる**。`queue retry <id>` でも Mission Control の Retry でも
+    戻せる（片方だけ許すと、同じ item について CLI と画面が食い違う）。
+  - **`cancel` は local backend 専用**（#459 の意図的なスコープ外）。Issue ラベルに
+    「一度も実行していない」を表す状態が無く、`queue_set_status` はラベルも close も
+    せずコメントだけを付けるため、**取消したつもりの item が queued のまま残る**。
+  - 依存（#427）から見ると **cancelled は terminal**。二度と `done` にならないので、
+    依存先が cancel された後続は `waiting` ではなく `blocked` になる。
 - **`queue retry <id>`**＝検証 FAIL で `failed` になった item を `queued` に戻し、次の `queue go` の実行対象に含める。プロバイダの一時的なタイムアウト等で落ちたタスクをタスク文の打ち直し（＝別 id・別 Issue）なしに再試行できる。
 
 ## 依存を張る（acceptance を edge にする・#427）

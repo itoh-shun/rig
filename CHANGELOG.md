@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+`queue cancel <id>` throws away an item that should never run. Until now the only way to
+get a mistyped or no-longer-wanted item out of the listing was `queue done`, which is the
+record of work that *ran and finished* — so a discard was filed under the completion count
+that `cockpit` reads as throughput, and `queue list` could not tell "finished and gone"
+from "cancelled and gone" without opening `queue.json`. `cancelled` is its own status:
+hidden from the listing like `done`, counted apart from it on the dashboard
+(`Nothing pending (3 done, 1 cancelled)`), and terminal for a dependency edge — a cancelled
+item never becomes `done`, so a dependent of one is `blocked` rather than left looking
+temporarily slow forever.
+
+The decision and the write are one locked compare-and-set. Split across an unlocked read
+and a separate write, `queue go` claims the item in the window between them: the check sees
+`queued`, the claim wins, the cancellation is written anyway, and the provider's own final
+write erases it — so the cancellation is silently ineffective while the operator believes
+it took. That is the failure the `running` refusal exists to prevent, and outside the lock
+the refusal cannot see it coming.
+
+Refusals rather than surprises. A `running` item cannot be cancelled, because its provider
+owns it and will overwrite the status. A `done` item cannot either: rewriting work that ran
+and finished as work that never ran is a lie about the past. A `failed` one can, and both its note and the printed line
+say it ran — telling an operator that a failed item never ran distorts the audit the status
+exists to keep honest. Neither wording claims the item cannot come back, because it can. `cancel` is local-backend only — issue labels have no state for work that
+never ran, and the write would post a comment without relabelling or closing, leaving an
+item the operator was told was cancelled still listed as queued. A cancelled item stays
+retryable from both `queue retry` and Mission Control; allowing only one of them left the
+CLI and the page disagreeing about the same item (#459).
+
 The queue can now hold one task back until another task's *result* cleared rig's
 acceptance boundary. `queue add "API implementation" --depends-on 1` records the edge in
 `.rig/queue.json`, and the condition it waits on is deliberately the stronger one: a

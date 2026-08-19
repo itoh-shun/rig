@@ -46,9 +46,15 @@ READY = "ready"
 WAITING = "waiting"
 BLOCKED = "blocked"
 
-#: Queue statuses that mean the item's own work is over and went badly. A dependent of
-#: one of these has nothing left to wait for.
-TERMINAL_FAILURE = ("failed",)
+#: Queue statuses that end an item's work without a result to accept. A dependent of one
+#: of these has nothing left to wait for, and each says so in its own words: `failed` can
+#: be retried, `cancelled` (#459) was work someone decided would never run.
+TERMINAL_UNRESOLVED = {
+    "failed": "queue #{dep} ended as failed; retry it (`queue retry {dep}`) and the block "
+              "clears on the next GO",
+    "cancelled": "queue #{dep} was cancelled — it will not run, so this edge can never be "
+                 "satisfied. Requeue it (`queue retry {dep}`) or drop the dependency",
+}
 
 
 class DependencyError(ValueError):
@@ -196,10 +202,9 @@ def _edge(dep_id: str, item: dict | None, runs_dir: pathlib.Path) -> dict:
                           f"edge (a hand-edited queue store, or an item deleted after it "
                           f"was depended on)"}
     base["queue_status"] = item.get("status")
-    if item.get("status") in TERMINAL_FAILURE:
-        return {**base, "state": BLOCKED,
-                "reason": f"queue #{dep_id} ended as {item.get('status')!r}; retry it "
-                          f"(`queue retry {dep_id}`) and the block clears on the next GO"}
+    terminal = TERMINAL_UNRESOLVED.get(str(item.get("status")))
+    if terminal:
+        return {**base, "state": BLOCKED, "reason": terminal.format(dep=dep_id)}
     # The dependency's *current* run has to be over. Without this, an item that was
     # accepted once and has since been requeued (`queue retry`) still carries the old
     # task id, and its dependent would be released against a result that is being
