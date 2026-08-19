@@ -195,7 +195,11 @@ def queue_list(backend: str, cfg: dict) -> list[dict]:
     if backend == "local":
         # done (equivalent to closed) is excluded (#215: github/gitlab exclude them naturally
         # via --state open; this fixes the asymmetry where local kept them in queue.json forever).
-        return [it for it in _local_load()["items"] if it.get("status") != "done"]
+        # `cancelled` leaves the listing for the same reason and by a different route (#459):
+        # it is settled, but it is settled as work that never ran, which is why it is a status
+        # of its own rather than a second spelling of `done`.
+        return [it for it in _local_load()["items"]
+                if it.get("status") not in ("done", "cancelled")]
     cli = _gh_cli(backend)
     R = (["-R", cfg["repo"]] if cfg.get("repo") else [])
     if backend == "github":
@@ -377,6 +381,59 @@ def queue_claim(backend: str, item_id, cfg: dict) -> bool:
     return False
 
 
+#: Statuses `cancel` may act on, and what each cancellation records and prints. `running`
+#: and `done` are absent deliberately: a live provider owns the first and will overwrite
+#: anything written here, and rewriting a completion as work that never ran is a lie about
+#: the past.
+#:
+#: The two texts differ because the facts do. An item cancelled out of `queued` never ran;
+#: one cancelled out of `failed` did. Neither says the item cannot come back — `queue retry`
+#: and Mission Control both requeue a cancellation, and a note claiming otherwise would talk
+#: an operator out of an action that works.
+_NEVER_RAN = ("cancelled before it ran (never executed)",
+              "cancelled (not done — it never ran)")
+_RAN_AND_FAILED = ("cancelled after a failed run (it ran; not queued for another attempt)",
+                   "cancelled (it ran and failed — not done, and not queued again)")
+CANCELLABLE = {
+    "queued": _NEVER_RAN,
+    "waiting": _NEVER_RAN,
+    "blocked": _NEVER_RAN,
+    "failed": _RAN_AND_FAILED,
+}
+
+
+def queue_cancel(backend: str, item_id, cfg: dict) -> str:
+    """Discard an item that should not run. Returns what happened (#459).
+
+    One locked read-modify-write, like every other mutation here. Checking the status in
+    an unlocked read and writing it in a second call leaves a window where `queue go`
+    claims the item in between: the check sees `queued`, the claim wins, and the provider
+    overwrites `cancelled` with its own result — so the cancellation is silently ineffective
+    while the operator believes it took. That is the failure the `running` refusal exists to
+    prevent, and outside the lock the refusal cannot see it coming.
+
+    Returns `(outcome, message)` where outcome is `"cancelled"`, `"missing"`, or the status
+    that stopped it. The message is the one line to print on success — it comes from here
+    because only this critical section knows which status the item was cancelled out of, and
+    reading that again afterwards would be the unlocked read this function exists to remove.
+    """
+    if backend != "local":
+        return "unsupported-backend", ""
+    with _queue_locked():
+        q = _local_load()
+        for it in q["items"]:
+            if str(it["id"]) == str(item_id):
+                texts = CANCELLABLE.get(str(it.get("status")))
+                if texts is None:
+                    return str(it.get("status")), ""
+                note, message = texts
+                it["status"] = "cancelled"
+                it["note"] = note
+                _local_save(q)
+                return "cancelled", message
+    return "missing", ""
+
+
 def _build_queue_task_prompt(task: str, provider: str) -> str:
     """Generation prompt that dispatches each queue item.
 
@@ -414,8 +471,8 @@ def _build_queue_verify_prompt(task: str, product: str) -> str:
 
 
 def cmd_queue(args):
-    if not args or args[0] not in ("add", "list", "go", "done", "retry"):
-        print("[ERROR] usage: queue <add|list|go|done|retry> [...] "
+    if not args or args[0] not in ("add", "list", "go", "done", "retry", "cancel"):
+        print("[ERROR] usage: queue <add|list|go|done|retry|cancel> [...] "
               "[--backend local|github|gitlab] [--repo owner/repo]")
         sys.exit(1)
     sub, rest = args[0], args[1:]
@@ -511,6 +568,34 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
         queue_set_status(backend, free[0], "queued", "", cfg)
         print(f"retry [{backend}]: #{free[0]} → queued")
         return
+    if sub == "cancel":
+        if not free:
+            print("[ERROR] queue cancel <id>")
+            sys.exit(1)
+        if backend != "local":
+            print(f"[ERROR] queue cancel needs the local backend; {backend} tracks state in "
+                  f"issue labels and has no label for work that never ran. Close the issue "
+                  f"there instead, or move the item to the local queue")
+            sys.exit(1)
+        outcome, message = queue_cancel(backend, free[0], cfg)
+        if outcome == "cancelled":
+            print(f"cancel [{backend}]: #{free[0]} → {message}")
+            print(f"  `queue retry {free[0]}` puts it back if you change your mind")
+            return
+        if outcome == "missing":
+            print(f"[ERROR] queue cancel <id>: no item #{free[0]} in the local queue")
+        elif outcome == "running":
+            print(f"[ERROR] queue cancel <id>: #{free[0]} is running — a live provider owns "
+                  f"it and will overwrite the status when it finishes. Wait for it, then "
+                  f"cancel or `queue done {free[0]}`")
+        elif outcome == "done":
+            print(f"[ERROR] queue cancel <id>: #{free[0]} is done — it ran and finished, and "
+                  f"recording that as work that never ran would be false. Leave it as it is")
+        else:
+            print(f"[ERROR] queue cancel <id>: #{free[0]} is {outcome!r} and cannot be "
+                  f"cancelled")
+        sys.exit(1)
+
     # go: run the stacked tasks in one batch (independent tasks in parallel; each task gated)
     #
     # Dependencies are resolved first and the verdict is persisted, so what follows is the

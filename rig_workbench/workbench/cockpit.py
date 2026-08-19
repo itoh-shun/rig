@@ -67,9 +67,15 @@ def queue_depth_lines(root: pathlib.Path) -> list[str]:
     for item in items:
         if isinstance(item, dict):
             counts[item.get("status") or "?"] = counts.get(item.get("status") or "?", 0) + 1
-    active = {k: v for k, v in counts.items() if k != "done"}
+    # `cancelled` leaves the backlog like `done` does and is counted apart from it (#459).
+    # Folding the two together would report work that was thrown away as work that was
+    # finished — the exact number someone reads off this dashboard to judge throughput.
+    active = {k: v for k, v in counts.items() if k not in ("done", "cancelled")}
     if not active:
-        return [f"Nothing pending ({counts.get('done', 0)} done)."]
+        settled = [f"{counts.get('done', 0)} done"]
+        if counts.get("cancelled"):
+            settled.append(f"{counts['cancelled']} cancelled")
+        return [f"Nothing pending ({', '.join(settled)})."]
     out = ["  ".join(f"{status}={n}" for status, n in sorted(active.items()))]
     failed = [i for i in items if isinstance(i, dict) and i.get("status") == "failed"]
     for item in failed[:3]:
