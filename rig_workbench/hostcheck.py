@@ -184,6 +184,69 @@ def check_state_ignored(root: pathlib.Path) -> dict:
     }
 
 
+def _read_umask() -> int:
+    """The process umask, which can only be read by setting one.
+
+    Two things make that safe, and only one of them is testable.
+
+    The value put down while the real one is in hand is the strict `0o022`, not the
+    permissive `0` that reading a umask is usually written with — so an interruption inside
+    the window leaves the process masking *more* than it was, never less. A test pins that.
+
+    The `finally` is the other one, and nothing can distinguish it from a flat restore on
+    the following line: the block it guards holds a single `return`, so the only way to
+    interrupt it is a signal arriving in that instant, and a test that tried to arrange one
+    would be measuring its own timing rather than this code. It stays because it costs
+    nothing and the failure it forecloses does not: rig creates worktrees in this same
+    process, and a leaked umask would change the permissions of every file made afterwards.
+    """
+    previous = os.umask(0o022)
+    try:
+        return previous
+    finally:
+        os.umask(previous)
+
+
+def check_umask(root: pathlib.Path) -> dict:
+    """Will the files this host creates be readable by rig's attested-material checks?
+
+    rig refuses to read a packaged source that the group or others can write, and `git`
+    creates files as `0666 & ~umask` — so a umask of 002 produces mode 664 on every file
+    of a fresh `git clone` or `git worktree add`, and every attested read in that tree
+    fails. The two trees are byte-identical; only their permissions differ. That was #467:
+    thirty-one tests failing in a worktree, passing in the main checkout of the same
+    commit, with nothing in the diff to explain it and a CI run (umask 022) that stayed
+    green throughout.
+
+    **What this measures is the umask, and only the umask.** It says what the *next*
+    working tree will look like. It does not stat the tree you are standing in, so an OK
+    here is not a statement that the current checkout is clean — a tree created earlier
+    under a laxer umask keeps its 664 after the umask is fixed. `chmod -R go-w` is the
+    repair for that one, and the refusal itself now names the mode it found.
+    """
+    previous = _read_umask()
+    ok = (previous & 0o022) == 0o022
+    return {
+        "id": "umask",
+        "ok": ok,
+        "signals": [{
+            "umask": f"{previous:04o}",
+            "new_file_mode": f"{0o666 & ~previous & 0o777:04o}",
+            "group_or_other_writable": not ok,
+        }],
+        "requirement": (
+            "A working tree whose files the group or others can write is one rig refuses to "
+            "read attested pack material from. Measured here as the umask new files inherit, "
+            "not as the modes of the files already in this tree."
+        ),
+        "remedy": (
+            "`umask 022` before `git clone` / `git worktree add` (put it in the shell rc that "
+            "starts your sessions). For a tree that already carries the bits, `chmod -R go-w` "
+            "on it."
+        ),
+    }
+
+
 # ── gh authentication and token scopes ──────────────────────────────────
 # Derived from what rig actually shells out to `gh` for, not from what a GitHub
 # workflow might plausibly want:
@@ -777,7 +840,7 @@ def _is_inside(path: pathlib.Path, root: pathlib.Path) -> bool:
     return True
 
 
-CHECKS = (check_isolation, check_deny_rules, check_state_ignored,
+CHECKS = (check_isolation, check_deny_rules, check_state_ignored, check_umask,
           check_gh_auth_scopes, check_installed_import)
 
 

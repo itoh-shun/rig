@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import subprocess
 
@@ -113,6 +114,7 @@ def test_run_all_collects_missing_ids(tmp_path):
         "process_isolation",
         "deny_rules",
         "state_ignored",
+        "umask",
         "gh_auth_scopes",
         "installed_import",
     ]
@@ -829,3 +831,76 @@ def test_probe_auth_status_is_bounded(monkeypatch):
     gh_requirement.probe_auth_status()
     assert seen["argv"] == ["gh", "auth", "status"]
     assert seen["timeout"] == gh_requirement.AUTH_PROBE_TIMEOUT_SECONDS
+
+
+# ── umask (#467) ─────────────────────────────────────────────────────────────
+def _umask_result(value, tmp_path):
+    previous = os.umask(value)
+    try:
+        return hostcheck.check_umask(tmp_path)
+    finally:
+        os.umask(previous)
+
+
+def test_a_umask_that_masks_group_and_other_write_is_the_one_rig_needs(tmp_path):
+    result = _umask_result(0o022, tmp_path)
+    assert result["ok"] is True
+    assert result["signals"][0]["new_file_mode"] == "0644"
+
+
+def test_a_group_writable_umask_is_reported_with_the_mode_it_will_produce(tmp_path):
+    """0664 is the mode `git worktree add` gave every file in the tree where #467 was
+    found, and naming it is the point: the operator sees the number the refusal will
+    later quote, before a run has failed."""
+    result = _umask_result(0o002, tmp_path)
+    assert result["ok"] is False
+    assert result["signals"][0]["umask"] == "0002"
+    assert result["signals"][0]["new_file_mode"] == "0664"
+    assert result["signals"][0]["group_or_other_writable"] is True
+
+
+def test_an_other_writable_umask_is_caught_too(tmp_path):
+    """Group and other are separate bits and rig refuses on either. A check that only
+    watched the group bit would pass a tree the world can write."""
+    assert _umask_result(0o020, tmp_path)["ok"] is False
+
+
+def test_reading_the_umask_puts_back_the_one_it_found(tmp_path):
+    """There is no getter, so the check sets a umask to read one. Leaving the process
+    with a different umask than it started with would change the permissions of every
+    file created after `hostcheck` ran — including, in a rig run, the worktree."""
+    os.umask(0o027)
+    try:
+        hostcheck.check_umask(tmp_path)
+        restored = os.umask(0o022)
+        assert restored == 0o027
+    finally:
+        os.umask(0o022)
+
+
+def test_the_umask_check_is_part_of_the_suite_that_runs(tmp_path):
+    assert "umask" in {check(tmp_path)["id"] for check in hostcheck.CHECKS}
+
+
+def test_the_probe_mask_is_the_strict_one_and_the_real_one_goes_back(monkeypatch):
+    """Reading a umask means setting one, and *which* one is set in that window matters.
+
+    Written the usual way — `os.umask(0)` — the window is one where the process masks
+    nothing, so a signal arriving inside it leaves every later file world-writable. With
+    `0o022` the same interruption leaves the process stricter than it was. Neither choice
+    changes what the check reports, so nothing else in this file can tell them apart.
+    """
+    calls = []
+    real = os.umask
+
+    def recording(value):
+        calls.append(value)
+        return real(value)
+
+    monkeypatch.setattr(os, "umask", recording)
+    real(0o007)
+    try:
+        assert hostcheck._read_umask() == 0o007
+    finally:
+        real(0o022)
+    assert calls == [0o022, 0o007]

@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+A refused attested source now says which condition it failed. Four unrelated checks — a
+regular file, owned by the pack owner, one hard link, not writable by group or others —
+shared one sentence, `is not trusted`, and the commonest of them is a permission rather
+than tampering. `git` creates files as `0666 & ~umask`, so a `git clone` or
+`git worktree add` performed under umask 002 gives every file mode 664, and every attested
+read in that tree is refused while the same commit in a tree created under umask 022 passes.
+That shape is hard to see from the message: thirty-one tests failing locally and a green CI,
+in trees whose contents are byte-identical. Finding it took a bisect across three working
+trees and finally a `stat`. The refusal now reads
+
+    Japanese material source '…' is not trusted: its mode 0664 lets the group or others
+    write to it. Run `chmod go-w` on it — and note that a working tree checked out under
+    umask 002 gets mode 664 on every file, so `umask 022` before `git clone` or
+    `git worktree add` is what keeps this from returning
+
+and reports every condition that failed rather than the first, because an operator who
+fixes the permission only to be refused again for the link count learns nothing from the
+second refusal the first could not have told them.
+
+`rig-wb hostcheck` gained a `umask` check for the same reason from the other end: it reports
+the umask this host carries and the file mode it will produce, so the condition is visible
+before a run fails rather than after. It measures the umask and says so — an OK there is a
+statement about the next working tree, not about the one you are standing in, which keeps
+its 664 until something changes them (#467).
+
 Worktree creation and removal moved behind one seam (`rig_workbench/workbench/runtime.py`).
 Rig makes a git worktree because isolation is a precondition for its gate, not because a
 git worktree is the only thing that could hold a task — and until now the three places that
