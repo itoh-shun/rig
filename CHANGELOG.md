@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+The queue can now hold one task back until another task's *result* cleared rig's
+acceptance boundary. `queue add "API implementation" --depends-on 1` records the edge in
+`.rig/queue.json`, and the condition it waits on is deliberately the stronger one: a
+dependency that reached `done` merely had its gate settle — `queue go`'s verifier does not
+accept, and accepting is a person's action — so the dependent keeps waiting until the
+workbench task it produced reads `accepted`. That link is new too; GO computed the task id
+and threw it away, leaving the queue unable to say anything about whether an item's result
+had been applied.
+
+One consequence is worth stating plainly rather than discovering: **a dependent cannot
+become ready inside a single `queue go`**. Acceptance needs a human and GO does not wait for
+one, so GO runs what is ready, records the rest as `waiting` with the reason, prints them as
+loudly as the accept reminder, and exits on the same code it always did — held items are not
+this batch's items, and reporting them as failures would make every dependency-using queue
+look broken to CI.
+
+`waiting` and `blocked` are persisted statuses rather than a filter applied at GO, for two
+reasons: it is what survives a restart, and `mission_worker` loops while anything is
+`queued` — a dependent parked there would spin the detached worker several times a second
+with nothing to run. A dependency that was discarded, failed, points at an id that is not
+there, or sits in a cycle `blocked`s its dependent with the reason and the way out; every
+GO re-resolves, so a block clears itself once the dependency is retried and accepted. An
+`accepted` that overrode a failed gate satisfies the edge — the policy is named `accepted`
+and a forced accept is one — but `forced` and the gate status travel with it rather than
+being flattened away.
+
+Absence is read in two opposite directions, and both are deliberate. No `depends_on` means
+nothing was declared, so the item is ready and its behaviour is byte-identical to before.
+Anything rig tried to read and could not — a malformed edge list, an unknown policy, a
+missing run record, an item that registered no workbench task — holds the dependent and says
+why. The surrounding module returns benign defaults on failure in several places and is
+right to, because the batch has already run by then; here the same reflex would start work
+whose dependency was never accepted.
+
+Two guards keep a stale link from releasing a dependent. `queue retry` drops the item's
+`task_id`, because retrying declares that this item will produce a *different* result; and
+an edge is read only once the dependency's own run is `done`, because the recorded id
+answers "what did this item produce" while only its status answers "and is that still what
+it is producing". Either alone would close the hole, and neither is load-bearing.
+
+Relatedly, `queue go` now claims an item with a compare-and-set instead of marking it
+`running` unconditionally. Two concurrent GO processes could always both execute the same
+queued item — that predates this change — but an edge raises the cost, because two runs
+produce two workbench tasks and only one gets linked, so a dependent can be released
+against a result nobody kept. An item another process claimed is reported as `SKIP` and is
+not counted in the tally; what happens when GO dies mid-batch is unchanged.
+
+Dependencies are local-backend only: issue labels cannot carry an edge list, and dropping
+the flag silently would run the dependent immediately, which is the one outcome it exists to
+prevent. Mission Control can obtain the graph as `rig.queue-dependencies/v1` — nodes and
+edges carrying a state and a reason, no colour, class or coordinate — and shows the edge and
+the held reason on each queue item (#427).
+
 Rig can now be the acceptance boundary for a change it did not produce. `workbench.py
 import --head <commit> --producer <name>` registers an external orchestrator's change — a
 CI job's, another harness's, a colleague's branch — as an ordinary workbench task. The

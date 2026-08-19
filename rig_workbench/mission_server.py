@@ -124,6 +124,24 @@ def _assurance(root: pathlib.Path, task_id: str) -> dict[str, Any]:
     }
 
 
+def _dependency_graph(root: pathlib.Path, items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The queue's dependency edges as data (#427 AC 8).
+
+    Built here rather than through `queueing.dependency_graph`, which reads the queue of
+    the process's own invocation directory — Mission Control serves a repository it was
+    given, and the two are not always the same one.
+
+    Failure-contained for the same reason the assurance panels are: a graph that cannot be
+    built costs a panel, not the page.
+    """
+    try:
+        from .orchestrate import dependencies as deps
+
+        return deps.graph(items, root / ".rig" / "runs")
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def durable_snapshot(root: pathlib.Path) -> dict[str, Any]:
     items, error = queue_items(root)
     counts: dict[str, int] = {}
@@ -134,6 +152,7 @@ def durable_snapshot(root: pathlib.Path) -> dict[str, Any]:
         "queue_error": error,
         "items": list(reversed(items[-40:])),
         "counts": counts,
+        "dependencies": _dependency_graph(root, items),
         "worker": worker_state(root),
         "worker_log_tail": worker_log_tail(root),
         "providers": list(ALLOWED_PROVIDERS),

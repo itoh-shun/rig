@@ -1,6 +1,6 @@
 ---
 description: "rig/queue — タスクを積んで、まとめて GO。キューを管理ツール(GitHub/GitLab Issue)かローカルで持ち、go で全タスクを並列実行(各タスクをゲート通過)して結果を Issue に書き戻す。"
-argument-hint: "<add \"task\" | list | go | done id | retry id> [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
+argument-hint: "<add \"task\" | list | go | done id | retry id> [--depends-on ID] [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
 ---
 
 # rig/queue — タスクキュー（積んで GO） 📋
@@ -21,6 +21,7 @@ orchestrate queue list                    # 確認（失敗理由・完了コメ
 orchestrate queue go --provider rig --max-parallel 3   # まとめて GO
 orchestrate queue done <id>               # 手動で完了に
 orchestrate queue retry <id>              # failed（検証 FAIL）の item を queued に戻して再 GO 対象にする
+orchestrate queue add "<やること>" --depends-on <id> [--depends-on <id> ...]   # 依存を張る（#427）
 ```
 
 - **go**＝積まれた全タスクを実行：独立タスクは**別プロセスで並列**、各タスクは生成→**独立検証（採点者≠生成者）**のゲートを通過、結果を一括レポート。中身は既存の orchestrate（並列・マルチプロバイダ・local LLM）をそのまま GO エンジンに使う。
@@ -28,6 +29,58 @@ orchestrate queue retry <id>              # failed（検証 FAIL）の item を 
 - **`--provider rig`（既定）は各 item を `/rig:go "<task>"` 経由で dispatch する**——`patterns/isolated-worktree` により各タスクが自動的に専用 worktree へ隔離されるため、**並列実行中の headless プロセス同士が同じファイルを取り合う心配がない**。queue の verifier は「gate まで確定したか」＋「本体の作業ツリーに書き込まず isolated worktree 内で完結したか」を判定するだけで、**accept はしない**（queue は隔離・実行・ゲートの層、反映はユーザーの明示操作）。
 - **`queue list` は done を除くアクティブ item（queued/running/failed）のみ表示する**（`local`/`github`/`gitlab` 共通）。完了済みタスクで一覧が肥大化しない。
 - **`queue retry <id>`**＝検証 FAIL で `failed` になった item を `queued` に戻し、次の `queue go` の実行対象に含める。プロバイダの一時的なタイムアウト等で落ちたタスクをタスク文の打ち直し（＝別 id・別 Issue）なしに再試行できる。
+
+## 依存を張る（acceptance を edge にする・#427）
+
+```
+/rig:queue add "DB migration"                              # → #1
+/rig:queue add "API implementation" --depends-on 1         # → #2
+/rig:queue add "Release candidate" --depends-on 2 --depends-on 3
+```
+
+**後続の開始条件は「前の agent が終わったこと」ではなく「前の成果物が rig の
+acceptance boundary を通過したこと」**。ここが唯一にして本質的な違いで、
+queue item が `done` になっても依存は満たされない——`done` は「ゲートが確定した」であって
+「誰かが適用した」ではないから（`queue go` の verifier は accept しない）。
+依存は workbench task の `status` を読む。
+
+そのため **1回の `queue go` の中で後続が ready になることはない**。accept は人の操作で、
+GO はそれを待たない。GO は ready なものを走らせ、残りを理由つきで `waiting` にして
+そう報告する。accept したあと、もう一度 GO を回す。
+
+| 状態 | 意味 |
+|---|---|
+| `queued` | 依存なし、または全依存が accepted。次の GO の対象 |
+| `waiting` | まだ accept されていない依存がある。accept すれば次の GO で解ける |
+| `blocked` | 依存が discarded / failed / 存在しない、または cycle。理由が `queue list` に出る |
+
+`waiting`/`blocked` は**永続する status** であってフィルタではない。理由は2つ：
+再起動をまたいで残ること（AC）と、detached worker が `queued` が尽きるまで回るので、
+依存待ちの item を `queued` に置いたままにすると**worker が秒間数回の空転を続ける**こと。
+
+- **拒否されるもの**（何も保存されない）: 存在しない id への依存 / 自己参照 /
+  未定義の `dependency_policy`。CLI からは cycle を作れない（id は単調増加で、
+  新規 item は既存 id しか参照できない＝辺は必ず過去向き）が、手編集された
+  `.rig/queue.json` の cycle は検出して該当 item を `blocked` にする。
+- **`--depends-on` は `local` backend 専用**。github/gitlab は状態を Issue ラベルで持つので
+  辺のリストを置けない。黙って落とすと依存が無いものとして即実行されるため、**エラーで拒否する**。
+- **policy は `accepted` の1種類だけ**。辺の条件を語彙にすると DAG 言語になり、
+  それは rig の非目標。failed gate を `--force` で越えた accept は**満たす**が、
+  receipt と同じく `forced` / `gate_status` を併記して隠さない。
+- GO の exit code は従来どおり「このバッチの item が成功したか」。held は
+  **このバッチの item ではない**（正しく始まっていない仕事）ので、失敗として数えない。
+- **`queue retry` すると `task_id` の紐付けは切れる**。retry は「この item は**別の**成果物を
+  出す」という宣言なので、古い紐付けを残すと後続が「差し替え中の成果物」に対して解放される。
+  加えて、辺は**依存 item が `done` のときだけ**読む——記録された id は「何を作ったか」に
+  答えるが、「それが今も作っているものか」に答えるのは item 自身の status だけ。
+- **1 item は1回しか claim されない**。GO は従来 dispatch 時に無条件で `running` を書いており、
+  `queue go` を2プロセス同時に起動すると同じ item を二重実行しえた（#427 以前からの性質）。
+  依存があると害が増す——2つの run が2つの workbench task を作り、紐付くのは片方だけなので、
+  誰も残さなかった成果物に対して後続が解放される。compare-and-set にした。
+  GO が途中で死んだときの挙動は変わらない（claim 済みのものだけが `running` で残る）。
+
+Mission Control は `rig.queue-dependencies/v1`（node/edge・色も座標も class も持たない）を
+`durable_snapshot` から取得できる。
 
 ## 複数タスクを並行で進める（ターミナルを増やさず一括把握）
 
