@@ -314,9 +314,9 @@ def test_a_declared_caller_is_recorded_as_a_declaration(fresh_repo, monkeypatch)
     monkeypatch.delenv("CLAUDECODE", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("RIG_CALLER", raising=False)
-    assert _new_task(fresh_repo, "--caller", "takt").returncode == 0
+    assert _new_task(fresh_repo, "--caller", "acme-harness").returncode == 0
     caller = _only_task(fresh_repo)["caller"]
-    assert caller["id"] == "takt"
+    assert caller["id"] == "acme-harness"
     assert caller["declared"] is True
 
 

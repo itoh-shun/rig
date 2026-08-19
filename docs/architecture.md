@@ -89,6 +89,7 @@ python3 scripts/orchestrate.py graph --focus review-gate   # 型付きブリッ�
 - **重い DSL エンジンを持たない。** ブリックは Markdown＋frontmatter、ランナーは単一ファイルの Python（依存は PyYAML のみ）。Claude Code のネイティブ機構（skill / agents / hooks）に寄生し、再発明しない。
 - **全自動を既定にしない。** 書き込み・push・import の確認ゲートは `--autonomous` でも外れない。判定の甘い自己改善ループは「間違いを高速に学習する装置」になるため、昇格（学び→wiki、試用→lock）には必ず人の確認を挟む。
 - **散文とコードが食い違ったら、コード側（selftest）を先に直す。** 一次実装はコード、散文は説明。
+- **競わない領域を先に決める。** agent fleet scheduler / IDE workspace manager / 汎用 swarm platform / multi-model consensus UI / workflow DSL の表現力——このどれも主戦場にしない。境界は「orchestrator は**どう走るか**を決め、rig は**その結果を accept してよいか**を決める」。rig 自身が実行能力を持ってもこの線は動かさない。機能ランドスケープと非目標の全文は [`landscape.md`](./landscape.md)。
 
 ## 5分で試す
 

@@ -994,6 +994,7 @@ Three properties, because a hint that overstates itself is worse than none:
 - [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutral remote/stdio MCP adapter and its safety boundary
 - [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — connecting the remote adapter to ChatGPT
 - [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence` (field RIG-vs-bare evidence, production-outcome coverage, the quality/cost frontier) and `rig-mission-control` (cross-repository fleet governance and its read-only HTML/JSON dashboard)
+- [`docs/landscape.md`](./docs/landscape.md) — the capability landscape and rig's architectural non-goals: what rig deliberately does not compete on, and the test a roadmap item has to pass before it is taken on
 - [`docs/byo-orchestrator.md`](./docs/byo-orchestrator.md) — importing a change rig did not produce, and the machine contract (`acceptable` / `not-acceptable` / `pending` / `execution-error`) an external orchestrator branches on
 - [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — Mission Control v2's localhost-only interactive surface (the browser implements no acceptance, governance, approval, queue, or provider rule of its own)
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — the capture / execution / comparison / promotion boundary behind the prompt evaluation gate

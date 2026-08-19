@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+`docs/landscape.md` writes down what rig deliberately does not compete on. Forty-four
+capability axes across execution, assurance, governance, integration and operations, and
+five architectural non-goals — agent fleet scheduling, IDE workspace management,
+general-purpose swarm platforms, multi-model consensus, and workflow DSL expressiveness.
+The point is not a feature count: it is a test each roadmap item has to pass before it is
+taken on, because "add the thing the other tool has" is how a quality layer grows into
+another orchestrator without anyone deciding to.
+
+Only rig's column is filled, and every row in it names the file or command that backs the
+claim. Every other column reads `unknown`, which is the honest value: nobody here has run
+those tools under these axes, and a landscape filled in from marketing pages would be
+guesses wearing a table's authority — the failure this repository's assurance work exists
+to prevent, pointed outward. Filling a cell has a procedure (evidence, a date, `partial`
+over a bare `native`, and popularity kept out of it), and the maintainers of a compared
+product outrank anything inferred here about their own column (#430).
+
 `queue cancel <id>` throws away an item that should never run. Until now the only way to
 get a mistyped or no-longer-wanted item out of the listing was `queue done`, which is the
 record of work that *ran and finished* — so a discard was filed under the completion count
