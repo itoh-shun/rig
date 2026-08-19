@@ -1325,6 +1325,41 @@ def _generator_facets(step: dict) -> dict[str, list[str]]:
     }
 
 
+
+def _untrusted_source_reasons(info: os.stat_result, owner_uid: int) -> list[str]:
+    """Every condition an attested source failed, not the first one it failed.
+
+    The four conditions below are unrelated failures wearing one sentence. Reported as
+    "is not trusted" and nothing else, the commonest of them — a mode carrying the group
+    write bit — is indistinguishable from a tampered file, and the operator has no reason
+    to suspect a permission. That cost a bisect across three working trees before anyone
+    ran `stat` (#467): thirty-one tests failed in a `git worktree` and passed in the main
+    checkout of the same commit, because `git` creates files as `0666 & ~umask` and the
+    two trees had been created under different umasks.
+
+    The check itself is unchanged. What changes is that it says which condition it was.
+    """
+    reasons: list[str] = []
+    if not _stat.S_ISREG(info.st_mode):
+        reasons.append("it is not a regular file")
+    if info.st_uid != owner_uid:
+        reasons.append(
+            f"it is owned by uid {info.st_uid}, not by the pack owner (uid {owner_uid})"
+        )
+    if info.st_nlink != 1:
+        reasons.append(
+            f"it has {info.st_nlink} hard links and an attested source must have exactly one"
+        )
+    if info.st_mode & 0o022:
+        reasons.append(
+            f"its mode {_stat.S_IMODE(info.st_mode):04o} lets the group or others write to it. "
+            "Run `chmod go-w` on it — and note that a working tree checked out under umask 002 "
+            "gets mode 664 on every file, so `umask 022` before `git clone` or `git worktree add` "
+            "is what keeps this from returning (`rig-wb hostcheck` reports the umask)"
+        )
+    return reasons
+
+
 def resolve_japanese_material(
     step: dict, material_profile: str,
 ) -> tuple[str | None, dict[str, object]]:
@@ -1386,6 +1421,11 @@ def resolve_japanese_material(
         if recipe_source.parent.name != "recipes":
             raise PackError("Japanese material recipe owner root is unavailable")
         owner_root = recipe_source.parent.parent
+    # Read here rather than inside the trust check: that check runs inside a `try` whose
+    # `except OSError` reports "cannot be verified", and a stat failure on the *owner root*
+    # would then be reported as a failure to read the *source*. Taken at the point where
+    # `owner_root` was just resolved, a failure is about the thing it is actually about.
+    owner_uid = owner_root.stat().st_uid
     source_path = owner_root / packaged_source
     try:
         source_fd = os.open(
@@ -1394,13 +1434,12 @@ def resolve_japanese_material(
         )
         try:
             source_info = os.fstat(source_fd)
-            if (
-                not _stat.S_ISREG(source_info.st_mode)
-                or source_info.st_uid != owner_root.stat().st_uid
-                or source_info.st_nlink != 1
-                or source_info.st_mode & 0o022
-            ):
-                raise PackError(f"Japanese material source '{packaged_source}' is not trusted")
+            untrusted = _untrusted_source_reasons(source_info, owner_uid)
+            if untrusted:
+                raise PackError(
+                    f"Japanese material source '{packaged_source}' is not trusted: "
+                    + "; ".join(untrusted)
+                )
             chunks = []
             while chunk := os.read(source_fd, 1024 * 1024):
                 chunks.append(chunk)
