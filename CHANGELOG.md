@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+Worktree creation and removal moved behind one seam (`rig_workbench/workbench/runtime.py`).
+Rig makes a git worktree because isolation is a precondition for its gate, not because a
+git worktree is the only thing that could hold a task — and until now the three places that
+created or removed one each spelled out `git worktree add` themselves, so a tool that
+manages workspaces of its own could not hold a task without touching all three. `create`
+now returns a handle carrying the runtime that made it and a `ref` for identifiers only
+that runtime understands, and `remove` takes the handle back, so the backend that made a
+worktree is the backend that disposes of it. The git commands the default path runs are
+unchanged to the character: `native` is the only runtime this version implements, it is what
+an absent one resolves to, and it runs exactly what the inline code ran, `--force` included.
+A task now records a `worktree` block beside the `worktree_path` it has always had — beside,
+not instead of, because thirty-odd readers still take the path from the older field, and
+where the two disagree that older field is the one disposal follows.
+
+Two lines the seam does not cross. **A runtime is not a provider** — which model writes the
+code and where the code is written are unrelated questions, and folding them together would
+make "run this on Codex" and "run this in another workspace" the same choice, after which
+neither could be made without the other; the suite checks that structurally, by parsing
+both modules and comparing the names their *code* reaches for, so that naming a runtime in
+a comment does not read as depending on one. **The default path gains no dependency** —
+selecting `native` asks no other tool whether it is installed, and a repository without one
+behaves as it did before. A task recorded before this change reads as `native`, which is a
+statement about history rather than a guess: that absence means "written before runtimes
+existed", unlike the absences the assurance receipt refuses to fill in, where nobody
+measured. No flag selects a runtime yet — the seam is the whole change, and the flag arrives
+with the first backend that gives it a second value to take (#461).
+
 `docs/landscape.md` writes down what rig deliberately does not compete on. Forty-four
 capability axes across execution, assurance, governance, integration and operations, and
 five architectural non-goals — agent fleet scheduling, IDE workspace management,
