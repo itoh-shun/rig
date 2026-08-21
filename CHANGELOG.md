@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+rig can tell whether it is running inside an Orca session, and refuses to tell you anything
+more than that. `workbench/orca.py` reads `ORCA_WORKTREE_ID` and `ORCA_WORKSPACE_ID` —
+`<uuid>::<absolute path>` — and starts no process doing it.
+
+The restraint is the feature. On one host, in one shell, at one moment, all three of these
+were true at once: the session variables were set (confirmed by the process tree, where the
+shell running rig was a child of Orca's relay), `orca` was on `PATH`, and every `orca`
+subcommand failed immediately after its handshake because the far side was not servicing
+requests. A detector that answered "available" from either of the first two facts would
+hand `--runtime orca` a backend that dies in `create()` — the mirror image of the failure
+`runtime.select` exists to prevent, refusing to downgrade silently only to upgrade into
+something that cannot do the job.
+
+So the two axes are reported apart, and the second is reported as unmeasured rather than
+guessed: `cli` carries `observed: false` and a reason, never a verdict, because nobody
+looked. Asking `orca` whether it answers is a question with a cost and a failure mode of
+its own, and it belongs to the issue that will act on the answer.
+
+A value it cannot read does not become a value it invents — and that applies to the
+identifier, not only to the path. A relative path, an empty path, a path with no id in front
+of it, and a value with no separator at all all yield no id and no path, while still
+reporting that a session is present: rig is inside something that exported the variable, and
+"I could not read what it said" is a different fact from "there is no session", and
+different again from handing back the unparsed blob as though it were an identity. rig has
+one host's worth of evidence about this format and has never seen a bare id, so treating a
+string that failed to parse as one would be an invention — and the reference shape exists to
+be recorded. An id carrying zero-width, bidi or newline characters is refused by the same
+rule `--caller` is held to, reused rather than restated.
+
+Nothing is registered as a runtime backend — a backend that cannot create a worktree has no
+business being selectable (#472).
+
 A refused attested source now says which condition it failed. Four unrelated checks — a
 regular file, owned by the pack owner, one hard link, not writable by group or others —
 shared one sentence, `is not trusted`, and the commonest of them is a permission rather
