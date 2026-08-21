@@ -18,6 +18,8 @@ try:
 except ImportError:
     fcntl = None  # type: ignore[assignment]  # Windows fallback (locking disabled)
 
+from rig_workbench import gitroot
+
 from .config import GATE_PRESETS, TASK_TYPES
 
 
@@ -42,17 +44,52 @@ def git(args: list[str], cwd: pathlib.Path | None = None, check: bool = True) ->
     return proc
 
 
+def _main_worktree() -> pathlib.Path | None:
+    """Delegated to `rig_workbench.gitroot`, which `orchestrate` asks the same question of.
+
+    Both subsystems needed to know where this repository keeps what it keeps once, and each
+    had grown its own answer — this one asked `--show-toplevel`, the other took the process's
+    initial working directory. One definition is the point (#471).
+    """
+    return gitroot.main_worktree()
+
+
 def repo_root() -> pathlib.Path:
-    proc = git(["rev-parse", "--show-toplevel"], check=False)
-    if proc.returncode != 0:
+    """Where rig's state lives, from anywhere inside the repository — task worktrees included.
+
+    **Per repository, not per working tree.** There is one `.rig/runs/<task_id>/` for a
+    task no matter where that task's work happens to sit. `--show-toplevel`, which this
+    used to ask, answers a different question — *which working tree am I standing in* — and
+    that answer sent `workbench.py status` inside a task's own worktree looking for
+    `<worktree>/.rig/runs/`, where the task it was asking about has never been written
+    (#471). Every gate criterion, `accept`, and every sensor reads that state, so the whole
+    flow had to be driven from the main checkout while the work happened somewhere else.
+    """
+    root = _main_worktree()
+    if root is None:
         die("Run this inside a git repository")
-    return pathlib.Path(proc.stdout.strip())
+    return root
+
+
+def invocation_root() -> pathlib.Path:
+    """The working tree the caller is standing in — which is not where rig's state lives.
+
+    `repo_root()` answers *where does rig keep this repository's state*; this answers *what
+    is the operator looking at*. Both used to be the same call, and separating them is the
+    whole of #471: `HEAD`, the current branch, and "the commit I just made" are per working
+    tree, so answering them from the main checkout would record another tree's branch as
+    this task's base and another tree's HEAD as the commit a task shipped. State is shared;
+    what the caller is looking at is not.
+    """
+    root = gitroot.invocation_worktree()
+    if root is None:
+        die("Run this inside a git repository")
+    return root
 
 
 def maybe_repo_root() -> pathlib.Path | None:
     """Like repo_root(), but returns None outside a git repository instead of dying."""
-    proc = git(["rev-parse", "--show-toplevel"], check=False)
-    return pathlib.Path(proc.stdout.strip()) if proc.returncode == 0 else None
+    return _main_worktree()
 
 
 def current_branch(root: pathlib.Path) -> str:

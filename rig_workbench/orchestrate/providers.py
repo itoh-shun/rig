@@ -1147,7 +1147,8 @@ def _load_persona_brief(persona: str) -> str | None:
     genuine multi-perspective review."""
     from rig_workbench.packs.resolver import resolve_asset
     from rig_workbench.packs.trust import ensure_asset_trusted
-    resolved = resolve_asset("persona", persona, project=config.INVOCATION_CWD)
+    resolved = resolve_asset("persona", persona, project=config.INVOCATION_CWD,
+                             shared=config.STATE_ROOT)
     path = ensure_asset_trusted(resolved) if resolved is not None else config.PERSONAS / f"{persona}.md"
     if not path.is_file():
         return None
@@ -1165,7 +1166,8 @@ def _recipe_pack_owner(source: str) -> str | None:
     from rig_workbench.packs.resolver import resolved_collection
 
     source_path = pathlib.Path(source).resolve()
-    for record in resolved_collection(project=config.INVOCATION_CWD):
+    for record in resolved_collection(project=config.INVOCATION_CWD,
+                                      shared=config.STATE_ROOT):
         root = record.path.resolve()
         if source_path == root or source_path.is_relative_to(root):
             return record.id
@@ -1219,6 +1221,7 @@ def _load_composition_asset(
         for candidate in names:
             resolved = resolve_bound_asset(
                 kind, candidate, recipe_source, project=config.INVOCATION_CWD,
+                shared=config.STATE_ROOT,
             )
             if resolved is not None:
                 break
@@ -1231,6 +1234,7 @@ def _load_composition_asset(
             (asset for candidate in names
              if (asset := resolve_asset(
                  kind, candidate, project=config.INVOCATION_CWD,
+                 shared=config.STATE_ROOT,
              )) is not None),
             None,
         )

@@ -53,6 +53,7 @@ def _pack_entries(project: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
 
 def resolved_collection(
     *, project: pathlib.Path | str | None = None,
+    shared: pathlib.Path | str | None = None,
 ) -> list[ResolvedPack]:
     """Return the one validated, dependency-ordered pack collection in effect.
 
@@ -62,7 +63,8 @@ def resolved_collection(
     """
     from .validation import validate_tiered_collection
 
-    project_root = _project_root(project)
+    # Installed packs are repository state, not per-working-tree state; see `resolve_all`.
+    project_root = _project_root(project if shared is None else shared)
     entries, trust = _pack_entries_with_trust(project_root)
     records = validate_tiered_collection(entries)
     return [
@@ -91,12 +93,40 @@ def _validated_pack_assets(project: pathlib.Path) -> list[ResolvedAsset]:
     return found
 
 
-def _legacy_assets(project: pathlib.Path) -> Iterable[ResolvedAsset]:
+def _legacy_assets(project: pathlib.Path,
+                   shared: pathlib.Path | None = None) -> Iterable[ResolvedAsset]:
+    """Project-tier assets, from whichever tree each kind actually belongs to.
+
+    The four directories are not the same kind of thing. `.rig/recipes` is gitignored —
+    machine-local state that belongs to the repository, and a task worktree that resolved
+    its own empty copy would route differently from the checkout beside it. The three under
+    `.claude/` are tracked, so they are branch content: a branch carrying its own recipe
+    override has to be the tree that is read. `shared` defaults to `project` so every caller
+    that has only one root keeps the behaviour it had (#471).
+    """
+    shared_root = project if shared is None else shared
+
+    def _first_that_exists(*parts: str) -> pathlib.Path:
+        """The working tree's copy when it has one, the repository's otherwise.
+
+        Whether `.claude/` is branch content is a fact about the repository, not about rig:
+        this one gitignores it, and a repository that gitignores it has no copy in a linked
+        worktree at all — resolving per tree there would lose the assets entirely, which is
+        the same defect `.rig/packs` had. Preferring the working tree keeps a branch that
+        does track its own overrides winning, and falling back keeps a repository that does
+        not from losing them.
+        """
+        for root in (project, shared_root):
+            candidate = root.joinpath(*parts)
+            if candidate.is_dir():
+                return candidate
+        return project.joinpath(*parts)
+
     mappings = [
-        ("project", project / ".rig" / "recipes", "recipe"),
-        ("project", project / ".claude" / "rig" / "recipes", "recipe"),
-        ("project", project / ".claude" / "rig" / "personas", "persona"),
-        ("project", project / ".claude" / "rig" / "knowledge", "wiki"),
+        ("project", shared_root / ".rig" / "recipes", "recipe"),
+        ("project", _first_that_exists(".claude", "rig", "recipes"), "recipe"),
+        ("project", _first_that_exists(".claude", "rig", "personas"), "persona"),
+        ("project", _first_that_exists(".claude", "rig", "knowledge"), "wiki"),
     ]
     for tier, directory, kind in mappings:
         if directory.is_dir():
@@ -131,14 +161,25 @@ def _core_assets() -> Iterable[ResolvedAsset]:
                                         "core", f"core:{directory}", "rig-core")
 
 
-def resolve_all(kind: str, name: str, *, project: pathlib.Path | str | None = None) -> list[ResolvedAsset]:
+def resolve_all(kind: str, name: str, *, project: pathlib.Path | str | None = None,
+                shared: pathlib.Path | str | None = None) -> list[ResolvedAsset]:
+    """Every asset matching (kind, name), ranked by tier.
+
+    `project` is the tree whose *tracked* content counts — branch content. `shared` is the
+    repository whose gitignored install state counts: `.rig/packs` and `.rig/recipes` are
+    installed once per machine, and a linked worktree has neither, so resolving them from
+    there would silently route a task differently from the checkout beside it. Omitting
+    `shared` means the two are the same tree, which is what every caller with one root
+    wants and what this did before (#471).
+    """
     if kind not in ASSET_DIRS:
         raise PackError(f"unknown asset kind: {kind}")
     project_root = _project_root(project)
+    shared_root = project_root if shared is None else _project_root(shared)
     candidates: list[ResolvedAsset] = []
-    candidates.extend(item for item in _validated_pack_assets(project_root)
+    candidates.extend(item for item in _validated_pack_assets(shared_root)
                       if item.kind == kind and item.name == name)
-    candidates.extend(item for item in _legacy_assets(project_root)
+    candidates.extend(item for item in _legacy_assets(project_root, shared_root)
                       if item.kind == kind and item.name == name)
     if kind != "eval-case":
         candidates.extend(item for item in _core_assets() if item.kind == kind and item.name == name)
@@ -146,8 +187,9 @@ def resolve_all(kind: str, name: str, *, project: pathlib.Path | str | None = No
     return sorted(candidates, key=lambda item: (rank[item.tier], item.source, str(item.path)))
 
 
-def resolve_asset(kind: str, name: str, *, project: pathlib.Path | str | None = None) -> ResolvedAsset | None:
-    matches = resolve_all(kind, name, project=project)
+def resolve_asset(kind: str, name: str, *, project: pathlib.Path | str | None = None,
+                  shared: pathlib.Path | str | None = None) -> ResolvedAsset | None:
+    matches = resolve_all(kind, name, project=project, shared=shared)
     if not matches:
         return None
     winner = matches[0]
@@ -159,6 +201,7 @@ def resolve_asset(kind: str, name: str, *, project: pathlib.Path | str | None = 
 
 def resolve_owned_asset(
     kind: str, name: str, pack_id: str, *, project: pathlib.Path | str | None = None,
+    shared: pathlib.Path | str | None = None,
 ) -> ResolvedAsset | None:
     """Resolve an asset from its declared owner, without cross-pack shadowing.
 
@@ -169,7 +212,7 @@ def resolve_owned_asset(
         matches = [item for item in _core_assets()
                    if item.kind == kind and item.name == name]
     else:
-        matches = [item for item in resolve_all(kind, name, project=project)
+        matches = [item for item in resolve_all(kind, name, project=project, shared=shared)
                    if item.pack_id == pack_id]
     if not matches and pack_id != "rig-core":
         from .catalog import discover_builtin_packs
@@ -197,6 +240,7 @@ def resolve_owned_asset(
 def resolve_bound_asset(
     kind: str, name: str, source: pathlib.Path | str,
     *, project: pathlib.Path | str | None = None,
+    shared: pathlib.Path | str | None = None,
 ) -> ResolvedAsset | None:
     """Resolve a typed reference declared by the pack owning ``source``.
 
@@ -208,8 +252,11 @@ def resolve_bound_asset(
     from .validation import validate_tiered_collection
 
     project_root = _project_root(project)
+    # Installed packs are one set per repository (#471); a linked worktree has none of its
+    # own, so resolving them from there would silently drop every project-tier owner.
+    shared_root = project_root if shared is None else _project_root(shared)
     source_path = pathlib.Path(source).resolve()
-    entries = _pack_entries(project_root)
+    entries = _pack_entries(shared_root)
     installed_source = any(
         source_path == path.resolve() or source_path.is_relative_to(path.resolve())
         for _tier, path in entries
@@ -240,17 +287,25 @@ def resolve_bound_asset(
             return None
         if len(owners) != 1:
             raise PackError(f"ambiguous typed reference owner: {kind}:{name}")
-        resolved = resolve_owned_asset(kind, name, owners[0], project=project_root)
+        # The owner lookup is the second half of the same question, and it reaches for
+        # the same installed packs. Handed only the working tree it finds none of them
+        # and a typed reference between two repository-installed packs fails as
+        # "owner is unavailable" — from a linked worktree only.
+        resolved = resolve_owned_asset(kind, name, owners[0], project=project_root,
+                                       shared=shared_root)
         if resolved is None:
             raise PackError(f"typed reference owner is unavailable: {owners[0]}:{kind}:{name}")
         return resolved
     return None
 
 
-def catalog(*, project: pathlib.Path | str | None = None) -> list[ResolvedAsset]:
+def catalog(*, project: pathlib.Path | str | None = None,
+            shared: pathlib.Path | str | None = None) -> list[ResolvedAsset]:
     root = _project_root(project)
-    all_items: list[ResolvedAsset] = _validated_pack_assets(root)
-    all_items.extend(_legacy_assets(root))
+    # Installed packs are repository state; see `resolve_all`.
+    shared_root = root if shared is None else _project_root(shared)
+    all_items: list[ResolvedAsset] = _validated_pack_assets(shared_root)
+    all_items.extend(_legacy_assets(root, shared_root))
     all_items.extend(_core_assets())
     return sorted(all_items, key=lambda item: (item.kind, item.name, item.tier, str(item.path)))
 

@@ -352,6 +352,7 @@ def resolve_task_route(
     task_type: str,
     context: Mapping[str, object] | None,
     project: pathlib.Path | str,
+    shared: pathlib.Path | str | None = None,
 ) -> dict:
     """Resolve a task route without installing, downloading, approving, or writing.
 
@@ -369,6 +370,10 @@ def resolve_task_route(
         raise RouteResolutionError("route context must be a mapping")
 
     project_root = pathlib.Path(project).resolve()
+    # `project` is the tree whose tracked content counts; `shared` is the repository whose
+    # gitignored install state does. They differ whenever a caller stands in a worktree,
+    # and collapsing them routes a task by whichever half happened to win (#471).
+    shared_root = project_root if shared is None else pathlib.Path(shared).resolve()
     records = _catalog()
     explicit = _explicit_value(values)
     names = set(_CORE_DEFAULTS.values()) | {
@@ -380,7 +385,7 @@ def resolve_task_route(
     assets: dict[str, ResolvedAsset] = {}
     available: dict[str, LocalRecipe] = {}
     for name in sorted(names):
-        asset = resolve_asset("recipe", name, project=project_root)
+        asset = resolve_asset("recipe", name, project=project_root, shared=shared_root)
         if asset is None:
             continue
         assets[name] = asset

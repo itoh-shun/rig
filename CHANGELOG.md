@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+rig's state is per repository, not per working tree. `workbench.py` asked git
+`--show-toplevel` for where to keep it, which answers *which working tree am I standing
+in* — so inside a task's own worktree it looked for `<worktree>/.rig/runs/`, where that
+task had never been written. `status` reported the task missing, `board` showed none, and
+because the gate, `accept` and every sensor read the same state, the whole flow had to be
+driven from the main checkout while the work happened somewhere else.
+
+That split is why a session could not simply be opened where the work is, and opening one
+there is the point: an agent session is filed under the directory it started in, so every
+task started at the repository root lands in one undifferentiated pile, and `--continue`
+inside a worktree finds nothing because nothing was ever recorded there. `new` now ends by
+naming the directory and the command that puts the session in it.
+
+The root is asked of git rather than derived: `git worktree list --porcelain` names the
+main worktree on its first line and gives the same answer from every working tree of the
+repository. Taking `--git-common-dir`'s parent would have assumed `.git` sits beside the
+checkout root, which `GIT_DIR` and `core.worktree` can both make false.
+
+The line is between what a repository shares and what a branch owns, and it runs through
+more than the run directory. Shared and therefore on the state root: run state, the locks,
+the audit log, `.rig/gates.json`, `.rig/packs` — all gitignored local install state, none
+of it varying by branch. Owned by the branch and therefore read from the tree the caller is
+in: `.claude/rig/recipes`, `.claude/rig/personas`, `.claude/rig/knowledge`, which are
+tracked files, so a worktree carrying its own recipe overrides is the tree that has to be
+read when a task is routed.
+
+Nothing else moves with it. `repo_root()` had been answering two questions with one call —
+*where does rig keep this repository's state* and *what working tree is the caller looking
+at* — and only the first one is shared. `invocation_root()` now answers the second, so the
+base branch a task is measured against, the head an `import` verifies, and the SHA
+`record-commit` records without `--sha` all still come from the tree the operator is
+standing in. Read from the main checkout they would have been a different branch and a
+different commit, both perfectly valid and both about work nobody was looking at (#471).
+
 rig can tell whether it is running inside an Orca session, and refuses to tell you anything
 more than that. `workbench/orca.py` reads `ORCA_WORKTREE_ID` and `ORCA_WORKSPACE_ID` —
 `<uuid>::<absolute path>` — and starts no process doing it.
