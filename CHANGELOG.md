@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+What was asked for now has a shape something can check against. `workbench.py intent <file>`
+validates a `rig.intent-contract/v1` document and reports what it leaves open — exit 0 for a
+contract, 1 for a document that is not one, 2 for a file it could not read.
+
+Ten runs in this repository carry a hand-written `requirements.md`: the goal in the user's
+own words, then the Issue's criteria copied verbatim, each with the thing that satisfies it
+and the test that pins it. Ten times the same artifact, and every one of them a claim nobody
+could check — that the criterion quoted is what the Issue said, that the test named exists,
+that a requirement attributed to the user really came from them. This is that artifact with
+a schema, and the schema's job is to make those claims refusable.
+
+**It does not generate one.** Turning a sentence into requirements is reading, judging and
+deciding, which is an agent's work; a module that called a model to do it would leave nothing
+a gate could check and nothing a mutation could falsify. Generation happens elsewhere and
+arrives here as a payload.
+
+**It does not promote a guess into a request.** Where a requirement came from is recorded on
+it, extending the vocabulary `build_acceptance` already uses for gate criteria rather than
+starting a second one: `policy-required` is its `origin="policy"`, `repository-derived` the
+read-it-from-the-repo case. The two that assert someone else said something — `explicit-user`
+and `policy-required` — are refused unless they say *where*, because an assertion about a
+third party that names no source cannot be checked by anyone, including the person it is
+attributed to. `inferred` and `proposed` are rig's own reading and are never counted as
+declared, which is the distinction `caller.Caller` already draws for callers.
+
+**It does not let an unmeasured thing pass as a measured one, and it does not condemn one
+either.** `status()` takes what was *recorded* about each piece of evidence — `passed`,
+`failed`, or `unobserved` — and copies those decisions rather than deriving them. It took a
+review round to get that right: the first version took a set of ids that had passed, which
+made absence mean both "ran and failed" and "never ran", so a contract whose tests had simply
+not run yet reported its requirements as unsatisfied. A requirement is `unsatisfied` only
+when something checking it is recorded as having failed; evidence merely unobserved leaves it
+`unverifiable`, which is a different answer — a caller that collapses them reads "nobody
+looked" as "it failed", or the other way round. A state outside that vocabulary is refused
+outright rather than read as the nearest one: `unobserved` is itself a claim — that someone
+looked at the ledger and found no entry — and a record saying something unrecognisable has
+made no claim at all.
+
+The command reports structure and not a moment. It runs nothing, so it counts how many
+requirements have anything checking them and how many are still rig's own reading; asking for
+the verdict instead would call every evidenced requirement unverifiable and describe it as
+having nothing to check it. A
+contract with no requirements at all is `unverifiable` too, so a run cannot claim its intent
+was met by never writing one down. An ambiguity is kept as an ambiguity and must say what
+would settle it; one that says nothing is a note, and notes close no questions (#435).
+
 rig's state is per repository, not per working tree. `workbench.py` asked git
 `--show-toplevel` for where to keep it, which answers *which working tree am I standing
 in* — so inside a task's own worktree it looked for `<worktree>/.rig/runs/`, where that

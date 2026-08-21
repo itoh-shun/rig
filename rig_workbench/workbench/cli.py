@@ -35,6 +35,7 @@ from .anchors import cmd_scan_anchors
 from .assurance import cmd_receipt
 from .cockpit import cmd_cockpit
 from .contract import cmd_contract
+from .intent import cmd_intent
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -124,6 +125,12 @@ def main() -> None:
     p.add_argument("--json", action="store_true",
                    help="emit rig.assurance-contract/v1 as JSON")
     p.set_defaults(func=cmd_contract)
+
+    p = sub.add_parser("intent", help="validate an executable intent contract and report what "
+                                      "it leaves unchecked or undeclared (#435)")
+    p.add_argument("file", help="path to a rig.intent-contract/v1 JSON document")
+    p.add_argument("--json", action="store_true", help="emit the summary as JSON")
+    p.set_defaults(func=cmd_intent)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
