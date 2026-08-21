@@ -99,7 +99,13 @@ def _recipe_owner_provenance(source: str) -> dict | None:
         return None
     candidates = [
         (record.id, record.path, record.manifest)
-        for record in resolved_collection(project=config.INVOCATION_CWD)
+        # Installed packs are repository state (#471). Resolved from a linked worktree
+        # this collection is empty, so a repository-installed recipe gets no owner and
+        # no provenance — and the resume-time integrity check has nothing to compare
+        # against. It worked from the main checkout and would have stopped working the
+        # moment a run started anywhere else.
+        for record in resolved_collection(project=config.INVOCATION_CWD,
+                                          shared=config.STATE_ROOT)
     ]
     candidates.extend(
         (pack_id, root, manifest)

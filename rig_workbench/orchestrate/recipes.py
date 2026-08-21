@@ -259,7 +259,8 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
             return chain
         from rig_workbench.packs.resolver import resolve_bound_asset
         bound_parent = resolve_bound_asset(
-            "recipe", parent_name, current_path, project=config.INVOCATION_CWD
+            "recipe", parent_name, current_path, project=config.INVOCATION_CWD,
+            shared=config.STATE_ROOT,
         )
         parent_path = bound_parent.path if bound_parent is not None else None
         fname = f"{parent_name}.md"
@@ -285,7 +286,8 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
                     break
         if bound_parent is None and parent_path is None:
             from rig_workbench.packs.resolver import resolve_asset
-            resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD)
+            resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD,
+                                     shared=config.STATE_ROOT)
             parent_path = resolved.path if resolved is not None else None
         if parent_path is None:
             warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
@@ -296,7 +298,7 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         from rig_workbench.packs.resolver import resolve_asset
         from rig_workbench.packs.trust import ensure_asset_trusted
         resolved_parent = bound_parent or resolve_asset(
-            "recipe", parent_name, project=config.INVOCATION_CWD
+            "recipe", parent_name, project=config.INVOCATION_CWD, shared=config.STATE_ROOT
         )
         if (resolved_parent is not None
                 and resolved_parent.path.resolve() == parent_path.resolve()
@@ -903,7 +905,8 @@ def resolve_recipe(name: str) -> pathlib.Path:
         return ensure_recipe_trusted(p)
     from rig_workbench.packs.resolver import resolve_asset
     from rig_workbench.packs.trust import ensure_asset_trusted
-    resolved = resolve_asset("recipe", name.removesuffix(".md"), project=config.INVOCATION_CWD)
+    resolved = resolve_asset("recipe", name.removesuffix(".md"),
+                             project=config.INVOCATION_CWD, shared=config.STATE_ROOT)
     if resolved is not None:
         return ensure_asset_trusted(resolved)
     fname = name if name.endswith(".md") else f"{name}.md"

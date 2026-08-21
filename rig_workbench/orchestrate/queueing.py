@@ -27,7 +27,16 @@ QUEUE_LABEL = "rig-queue"
 QUEUE_LABELS_ACTIVE = ["rig-queue", "rig-running", "rig-failed"]
 # All state labels the queue manages (used to compute which old labels to remove; #223).
 QUEUE_LABELS_ALL = ["rig-queue", "rig-running", "rig-failed", "rig-done"]
-QUEUE_PATH = config.INVOCATION_CWD / ".rig" / "queue.json"
+# Repository state, not per-working-tree state: a queue that split by directory would let
+# `queue go` from a task worktree run a different backlog than the one `queue add` filled
+# from the main checkout, with neither side able to see the other (#471).
+# Read from `config`, which resolves it against the repository rather than the directory the
+# caller happened to start in (#471) — but bound here rather than resolved on each use,
+# because `tests/conftest.py` and `selftest.py` retarget the queue by assigning to this very
+# attribute, and the fourteen reads below are bare names that a module-level `__getattr__`
+# would never see. Freezing it is what makes that contract work; the comment is here so the
+# inconsistency with `config`'s own lazy attributes is a decision and not an oversight.
+QUEUE_PATH = config.QUEUE_PATH
 # Statuses an item can be re-resolved out of. `running` is excluded on purpose: a live
 # provider owns it, and rewriting its status from under that process is the lost-update
 # class of bug this file already carries a lock for.

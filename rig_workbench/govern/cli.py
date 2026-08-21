@@ -15,6 +15,8 @@ import pathlib
 import subprocess
 import sys
 
+from rig_workbench import gitroot
+
 from . import conformance as conf
 from . import ledger, waiver
 from .approval import evaluate, load_approvals, record_decision
@@ -33,10 +35,22 @@ def _err(msg: str) -> int:
 
 
 def _repo_root() -> pathlib.Path:
-    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
-    if proc.returncode == 0 and proc.stdout.strip():
-        return pathlib.Path(proc.stdout.strip())
-    return pathlib.Path.cwd()
+    """Where governance state lives: the repository, not the working tree in front of you.
+
+    The org binding, the effective policy, recorded approvals and the audit ledger are all
+    under `.rig/`, which is gitignored — one set per repository, not one per branch. Asked
+    with `--show-toplevel` this returned the caller's worktree, so `govern` run from a task
+    worktree read an empty policy and appended to a ledger nobody else would ever read. It
+    took #471 to make that reachable: before it, nothing ran from a worktree.
+
+    Delegated rather than duplicated. This function had its own copy of the porcelain query
+    and therefore its own copy of every property that query needs to have — including the
+    removal of `GIT_DIR` and `GIT_WORK_TREE`, which it did not have, so an inherited routing
+    variable sent governance's ledger and approvals to another repository entirely. One
+    definition was the point of `gitroot`, and a second one that merely looks the same is
+    how the first one stops being true.
+    """
+    return gitroot.main_worktree() or pathlib.Path.cwd()
 
 
 def _head(root: pathlib.Path, task: dict) -> str | None:

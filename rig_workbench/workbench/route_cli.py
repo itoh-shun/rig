@@ -36,10 +36,12 @@ def route_context(args: argparse.Namespace) -> dict:
 
 
 def cmd_route(args: argparse.Namespace) -> None:
-    from .state import repo_root
+    from .state import invocation_root, repo_root
 
     try:
-        route = resolve_task_route(args.type, route_context(args), repo_root())
+        # The preview has to resolve what `new` would resolve, from the same tree (#471).
+        route = resolve_task_route(args.type, route_context(args), invocation_root(),
+                                   shared=repo_root())
     except PackError as exc:
         if args.json:
             print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))

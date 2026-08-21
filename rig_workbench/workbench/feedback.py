@@ -11,15 +11,17 @@ stays a human/GH-tool step.
 
 import argparse
 
-from .state import (die, gate_status, git, load_json, load_task, now_iso,
-                    repo_root, resolve_task_id, runs_dir, save_json, save_task)
+from .state import (die, gate_status, git, invocation_root, load_json, load_task,
+                    now_iso, repo_root, resolve_task_id, runs_dir, save_json, save_task)
 
 
 def cmd_record_commit(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
     d, task = load_task(root, task_id)
-    sha = args.sha or git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
+    # The commit just made lives in the working tree the operator is standing in — which,
+    # for a task, is its own worktree and not the checkout rig keeps state in (#471).
+    sha = args.sha or git(["rev-parse", "HEAD"], cwd=invocation_root()).stdout.strip()
     task["commit_sha"] = sha
     save_task(d, task)
     print(f"Linked {task_id} to commit {sha[:12]}.")

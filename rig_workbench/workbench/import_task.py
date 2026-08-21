@@ -48,8 +48,8 @@ from .flow_view import render_flow
 from .lifecycle import ensure_rig_gitignored, find_similar_tasks
 from .progress import load_recipe_steps
 from . import runtime as runtime_mod
-from .state import (build_acceptance, current_branch, die,
-                    git, make_slug, make_task_id, now_iso, repo_root, runs_dir,
+from .state import (build_acceptance, current_branch, die, git, invocation_root,
+                    make_slug, make_task_id, now_iso, repo_root, runs_dir,
                     save_json)
 
 #: What the import block records under. Kept as a single nested key so that every
@@ -181,10 +181,13 @@ def cmd_import(args: argparse.Namespace) -> None:
         except OSError as exc:
             die(f"--summary {args.summary}: {exc}")
 
-    head_sha, head_symbolic, head_ref = _resolve_head(root, args.head)
+    # Both the head being imported and the base it is measured against are questions about
+    # the working tree the caller is standing in, not about where rig keeps state (#471).
+    here = invocation_root()
+    head_sha, head_symbolic, head_ref = _resolve_head(here, args.head)
 
-    base_branch = args.base or current_branch(root)
-    proc = git(["rev-parse", "--verify", f"{base_branch}^{{commit}}"], cwd=root, check=False)
+    base_branch = args.base or current_branch(here)
+    proc = git(["rev-parse", "--verify", f"{base_branch}^{{commit}}"], cwd=here, check=False)
     base_sha = proc.stdout.strip()
     if proc.returncode != 0 or not base_sha:
         die(f"--base '{base_branch}' does not resolve to a commit")
@@ -200,7 +203,8 @@ def cmd_import(args: argparse.Namespace) -> None:
                "has_diff": True, "diff": None, "read_only": False,
                "implementation_type": None}
     try:
-        route = resolve_task_route(args.type, context, root)
+        # Branch content, so the caller's tree — see cmd_new (#471).
+        route = resolve_task_route(args.type, context, invocation_root(), shared=root)
     except PackError as exc:
         die(str(exc))
     if route["status"] in {"stopped", "trust_required"}:

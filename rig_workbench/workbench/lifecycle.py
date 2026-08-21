@@ -4,6 +4,7 @@
 import argparse
 import pathlib
 import re
+import shlex
 import sys
 
 from rig_workbench import caller
@@ -27,9 +28,17 @@ from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
                                 ensure_prompt_criterion)
 from .schema_diff import apply_schema_sensor
 from .secrets import apply_secret_sensor, shared_diff_cache
-from .state import (build_acceptance, current_branch, die, gate_status, git, load_json, load_task, make_slug,
+from .state import (build_acceptance, current_branch, die, gate_status, git, invocation_root,
+                    load_json, load_task, make_slug,
                     make_task_id, now_iso, repo_root, resolve_task_id, run_dir,
                     runs_dir, save_json, save_task, task_lock)
+
+
+#: How to start a session, per harness rig can actually name one for. `caller.detect` only
+#: recognises a harness from markers rig has measured, and declares the rest through
+#: `--caller`; a harness it cannot name gets the `cd` alone rather than a command guessed on
+#: its behalf, which would send the operator somewhere with an instruction that does not run.
+_SESSION_LAUNCHER = {"claude-code": "claude", "codex": "codex"}
 
 
 def ensure_rig_gitignored(root: pathlib.Path) -> bool:
@@ -117,7 +126,13 @@ def cmd_new(args: argparse.Namespace) -> None:
         "implementation_type": getattr(args, "implementation_type", None),
     }
     try:
-        route = resolve_task_route(args.type, context, root)
+        # Assets are resolved against the tree the caller is standing in, not against the
+        # checkout rig keeps state in. Three of the four legacy asset directories
+        # (`packs/resolver.py::_legacy_assets`) live under `.claude/`, which is tracked —
+        # branch content, so a worktree carrying its own recipe overrides must be the tree
+        # that is read. `.rig/gates.json` and `.rig/packs` are the other kind, gitignored
+        # install state, and they stay on the state root (#471).
+        route = resolve_task_route(args.type, context, invocation_root(), shared=root)
     except PackError as exc:
         die(str(exc))
     if route["status"] in {"stopped", "trust_required"}:
@@ -134,7 +149,12 @@ def cmd_new(args: argparse.Namespace) -> None:
     # before any run dir / worktree is created (no partial state on error).
     acc = build_acceptance(task_id, args.type, root)
 
-    base_branch = args.base or current_branch(root)
+    # The base is a question about the working tree the operator is standing in, not about
+    # where rig keeps its state (#471). Taking it from `root` would fork a task started
+    # inside another task's worktree from the main line silently, and — worse — record a
+    # branch the operator never mentioned as the base every gate range is measured against.
+    here = invocation_root()
+    base_branch = args.base or current_branch(here)
     # `--base <branch>` has to mean it. Recording HEAD here while naming another
     # branch as the base made every later range wrong by construction: the diff
     # and the gate sensors are taken against `base_commit`, so a task started
@@ -144,12 +164,12 @@ def cmd_new(args: argparse.Namespace) -> None:
     # which is exactly the invariant `effective_base` (base drift, #312) assumes.
     # Resolved before anything is written, same reason as the gate above.
     if args.base:
-        proc = git(["rev-parse", "--verify", f"{args.base}^{{commit}}"], cwd=root, check=False)
+        proc = git(["rev-parse", "--verify", f"{args.base}^{{commit}}"], cwd=here, check=False)
         base_commit = proc.stdout.strip()
         if proc.returncode != 0 or not base_commit:
             die(f"--base '{args.base}' does not resolve to a commit")
     else:
-        base_commit = git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
+        base_commit = git(["rev-parse", "HEAD"], cwd=here).stdout.strip()
 
     # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
     if ensure_rig_gitignored(root):
@@ -250,6 +270,19 @@ def cmd_new(args: argparse.Namespace) -> None:
         for t in similar:
             label = t["input"][:50] + ("…" if len(t["input"]) > 50 else "")
             print(f"  - {t['task_id']} ({t['status']}): {label}")
+
+    if worktree_path:
+        # An agent session is filed under the directory it was started in, so one started
+        # at the repository root is filed together with every other task's — and
+        # `--continue` inside the worktree finds nothing, because nothing was ever
+        # recorded there. Said here because this is the moment the directory exists and
+        # the operator is looking at its path (#471).
+        print("\nNext: この worktree の中でセッションを開き直す")
+        launcher = _SESSION_LAUNCHER.get(caller.detect(getattr(args, "caller", None)).id)
+        target = shlex.quote(worktree_path)
+        print(f"  cd {target} && {launcher}" if launcher else f"  cd {target}")
+        print("  セッションの所属は cwd で決まる。ここで開けばこのタスク専用になり、"
+              "同じ場所で再開できる")
 
 
 def cmd_step(args: argparse.Namespace) -> None:

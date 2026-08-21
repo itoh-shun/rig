@@ -200,11 +200,20 @@ def dep_prose_paths(root: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
     return out
 
 
-def scan_task_surfaces(wt: pathlib.Path, base_commit: str) -> list[dict]:
+def scan_task_surfaces(wt: pathlib.Path, base_commit: str,
+                       shared: pathlib.Path | None = None) -> list[dict]:
     """Everything the gate sensor looks at: added diff lines + untracked files
-    (what the task introduced) AND the worktree's prose surfaces in full
-    (what agents will ingest). Deduplicated — a changed prose surface would
-    otherwise be reported twice."""
+    (what the task introduced) AND the prose surfaces in full (what agents will ingest).
+    Deduplicated — a changed prose surface would otherwise be reported twice.
+
+    `shared` is the repository's main checkout, and it is scanned because that is where the
+    prose an agent actually ingests now lives. Installed recipes and packs under `.rig/` are
+    one set per repository (#471), so routing resolves them from there while this sensor was
+    still looking only inside the task's worktree — where a linked checkout has no `.rig/`
+    at all. A shared recipe carrying invisible Unicode or an instruction override would have
+    shaped the session and left `no_injection_markers` with nothing to report. Omitted, the
+    two are the same directory, which is what a `--no-worktree` task wants.
+    """
     findings: list[dict] = []
     for rel, lineno, text in iter_added_lines(worktree_diff_text(wt, base_commit)):
         findings.extend(scan_line(text, rel, lineno))
@@ -212,6 +221,16 @@ def scan_task_surfaces(wt: pathlib.Path, base_commit: str) -> list[dict]:
         findings.extend(scan_file(f, rel))
     for f, rel in prose_surface_paths(wt):
         findings.extend(scan_file(f, rel))
+    if shared is not None and shared.resolve() != wt.resolve():
+        # Only the surfaces the repository is the one answering for. `.claude/rig/*` is
+        # resolved working-tree-first (`packs/resolver.py::_legacy_assets`), so a copy the
+        # worktree already provides shadows the repository's — scanning both would report a
+        # file no agent will ever read. Mirroring the resolver's precedence here is what
+        # keeps the sensor's reach equal to what routing actually loads.
+        provided_here = {rel for _, rel in prose_surface_paths(wt)}
+        for f, rel in prose_surface_paths(shared):
+            if rel not in provided_here:
+                findings.extend(scan_file(f, rel))
     seen: set[tuple] = set()
     unique: list[dict] = []
     for f in findings:
@@ -258,7 +277,7 @@ def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, 
     if not wt.is_dir():
         return []
 
-    findings = scan_task_surfaces(wt, base)
+    findings = scan_task_surfaces(wt, base, shared=root)
     if not findings:
         # Markers gone: clear our state; un-flag only what WE flagged.
         if check.pop("injection_findings", None) is not None:

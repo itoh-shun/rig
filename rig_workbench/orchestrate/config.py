@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+from rig_workbench import gitroot
 
 
 def _env_path(name: str, default: pathlib.Path) -> pathlib.Path:
@@ -56,13 +57,55 @@ SKILL_ROOT = _skill_root(RIG_HOME) or RIG_HOME / "skills" / "engine"
 RECIPES = SKILL_ROOT / "recipes"
 PERSONAS = SKILL_ROOT / "facets" / "personas"
 INVOCATION_CWD = pathlib.Path(os.getcwd()).resolve()
-PROJECT_RECIPES = INVOCATION_CWD / ".rig" / "recipes"  # project overlay
-RUNS_PATH = _env_path("RIG_RUNS_PATH", INVOCATION_CWD / ".rig" / "runs.jsonl")
+#: Where this repository keeps what it keeps once. `INVOCATION_CWD` answers a different
+#: question — which directory the caller started in — and everything gitignored under
+#: `.rig/` is one set per repository, not one per working tree. Bound to the invocation
+#: directory, a `queue go` or an `orchestrate run` from inside a task worktree read and
+#: wrote a queue, a run log and a recipe overlay that nothing else would ever look at
+#: (#471). Outside a repository it is the invocation directory, which is where the rest of
+#: this module already assumes it is.
+#:
+#: Resolved on access rather than frozen at import. It is *derived from* `INVOCATION_CWD`,
+#: and freezing a derived value silently breaks that relationship for anyone who changes
+#: what it derives from — which is precisely what every test that points rig at a temporary
+#: project does. Cached per invocation directory, so the git call happens once.
+_STATE_ROOT_CACHE: dict[pathlib.Path, pathlib.Path] = {}
+
+
+def _state_root() -> pathlib.Path:
+    cwd = INVOCATION_CWD
+    if cwd not in _STATE_ROOT_CACHE:
+        _STATE_ROOT_CACHE[cwd] = gitroot.main_worktree(cwd) or cwd
+    return _STATE_ROOT_CACHE[cwd]
+
+
+#: The paths derived from the state root, resolved the same way it is. Leaving these frozen
+#: while their root moved was an incoherence of my own making: a process or test that rebinds
+#: `INVOCATION_CWD` would get a new state root and these still pointing at the old one, which
+#: is worse than either rule applied consistently. Assigning to any of them still shadows
+#: this, so the environment overrides and the tests that set them directly are untouched.
+_DERIVED = {
+    "PROJECT_RECIPES": lambda: _state_root() / ".rig" / "recipes",
+    "RUNS_PATH": lambda: _env_path("RIG_RUNS_PATH", _state_root() / ".rig" / "runs.jsonl"),
+    "DRILL_PATH": lambda: _state_root() / ".rig" / "drill-results.jsonl",
+    "QUEUE_PATH": lambda: _state_root() / ".rig" / "queue.json",
+}
+
+
+def __getattr__(name: str):
+    # PEP 562. These are not stored attributes, so reading one asks the question again;
+    # assigning to it (as a test does) shadows this and is still honoured.
+    if name == "STATE_ROOT":
+        return _state_root()
+    if name in _DERIVED:
+        return _DERIVED[name]()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 GLOBAL_RUNS_PATH = _env_path(
     "RIG_GLOBAL_RUNS_PATH",
     pathlib.Path.home() / ".rig" / "runs.jsonl",
 )
-DRILL_PATH = INVOCATION_CWD / ".rig" / "drill-results.jsonl"  # measured /rig:drill results (detection rate)
 DEFAULT_K = 2  # default acceptance-gate retry limit (SKILL §3.5)
 
 
