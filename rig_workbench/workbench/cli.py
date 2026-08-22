@@ -36,6 +36,7 @@ from .assurance import cmd_receipt
 from .cockpit import cmd_cockpit
 from .assurance_target import cmd_assurance_target
 from .contract import cmd_contract
+from .synthesis import cmd_synthesis
 from .intent import cmd_intent
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
@@ -140,6 +141,20 @@ def main() -> None:
     p.add_argument("target", help="path to a rig.assurance-target/v1 JSON document")
     p.add_argument("--json", action="store_true", help="emit the comparison as JSON")
     p.set_defaults(func=cmd_assurance_target)
+
+    p = sub.add_parser("synthesise",
+                       help="validate a proposed workflow against the component catalog and "
+                            "the policy floor a planner may not shrink (#432)")
+    p.add_argument("workflow", help="path to a rig.resolved-workflow/v1 JSON document")
+    p.add_argument("catalog", help="path to a JSON array of registered component ids")
+    p.add_argument("--required", help="path to a JSON object mapping a mandatory step id to "
+                                      "why it is required — a string for a policy step, or "
+                                      "{\"source\": ..., \"reason\": ...} to record who "
+                                      "requires it (e.g. operator-requested)")
+    p.add_argument("--json", action="store_true",
+                   help="emit the resolution report as JSON (the workflow is nested under "
+                        "'workflow')")
+    p.set_defaults(func=cmd_synthesis)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
