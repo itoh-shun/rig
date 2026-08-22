@@ -2,6 +2,95 @@
 
 ## Unreleased
 
+A workflow may adapt to the risk; what it is trusted for may not.
+`workbench.py synthesise <workflow> <catalog> --required <floor>` validates a proposed
+workflow against the components that exist and the steps a policy requires, and exits
+non-zero if the proposal went below that floor.
+
+A fixed recipe is either too heavy for a wording change or too light for a change to an
+authentication boundary, and picking one per task is what a planner is for. A planner that
+can also decide which gates apply has been handed the question it was supposed to be
+constrained by.
+
+**It does not classify.** Deciding that a diff touches an authentication boundary is reading,
+judging and concluding — an agent's work, and a module that called a model to do it would
+leave nothing a gate could check and nothing a mutation could falsify. Classification arrives
+as a payload, with its reasons.
+
+**The floor is computed from the policy, never read from the proposal.** `build_acceptance`
+already states the rule for gate criteria: a project file or an org policy may add to a gate
+and never take built-ins away. This is the same rule one level up, about which steps a
+workflow contains. A mandatory
+step the planner left out is restored and the omission reported — and so is the subtler move,
+keeping the step while relabelling it as the planner's own idea: it still runs, and every
+later reader is told it was optional.
+
+**Nothing on a mandatory step is the planner's to author.** Three ways to shrink the floor
+while appearing to hold it turned up in review, one after another: leave the step out; keep it
+under a different source; keep it under the right source and rewrite the reason to something
+weaker than what the policy said. The third passes any check written against a list of fields,
+and the fourth would arrive with whatever field gets added next — so the comparison is the
+whole step against the whole floor entry. Both halves are reported: what the policy requires,
+and what the planner proposed instead, because the judgement a reader is making lives in the
+difference.
+
+**The floor carries who requires each step, not just which.** `operator-requested` counts as
+mandatory too, because a planner deciding a human asked for too much is the same overreach
+wearing a friendlier name — but a floor of bare ids cannot enforce that. Once a step is
+deleted its source goes with it, and "the planner dropped what the operator asked for" reads
+exactly like "nobody asked for it". So the caller builds the floor from the policy and the
+operator's instructions, and each entry keeps its source through to the report: a restored
+step says whether an organisation requires it or a person asked for it, which decides whether
+it can be withdrawn and by whom.
+
+**The floor is the stricter document, not the unchecked one.** A restored step goes straight
+into the resolved workflow, so anything the floor may hold is a way to get a step past
+validation by putting it on the floor instead of in the proposal. So a floor entry is checked
+the way a proposed step is — a registered id, a reason, and a source that can actually require
+something: `policy-required` or `operator-requested`, never one of the three the planner
+reaches on its own. Two authorities requiring the same step is refused rather than resolved by
+argument order, because keying by id would silently keep one of them and decide whether a
+person may withdraw the step on how the caller happened to build the tuple — and **both files are read
+with a hook that refuses a duplicate key**, because JSON allows one and `json.loads` keeps the
+last silently. Two authorities written in the other order gave the other answer before the
+check ever saw them; a step whose `reason` appears twice reaches the comparison saying only
+the last one. Every check here compares what was authored against what is required, and a
+parsed dict has already thrown one of the two away.
+
+**A `floor_held` is about components, not about what a component then checks.** A resolved
+step is an id, a source and a reason; it carries no criteria, no configuration, no arguments.
+What a gate criterion must hold is `build_acceptance`'s to protect, and it protects it there.
+So this command answers "does the workflow contain the mandatory steps, attributed to whoever
+requires them" and stops — claiming more would be vouching for a guarantee it has no way to
+inspect. For the same reason the schema is closed at both levels: a `skip` on a step
+or a `waivable` at the root is refused rather than accepted and dropped, because accepting a
+key and discarding it is the module deciding a planner did not mean what it wrote. And the
+short form of a floor entry is a reason *string*: `{"review-diff": null}` coerced to `"None"`
+would be a floor protecting prose nobody wrote.
+
+**The result is a report about a workflow, not a workflow.** `resolve` returns
+`rig.workflow-resolution/v1` with the resolved workflow nested under `workflow` — labelling
+the whole thing `rig.resolved-workflow/v1` would make its own `corrections` a key that schema
+does not define, and feeding the result back would be refused for a reason the caller could do
+nothing about. `report["workflow"]` round-trips. A command failure answers in
+`rig.workflow-resolution-error/v1` for the same reason: nothing was resolved, and `status` and
+`error` are keys neither of the other two schemas defines.
+
+**Registering a component is an act, not a shape that iterates.** `set(json.loads(...))`
+takes whatever it is given: a JSON object becomes its keys, so `{"run-arbitrary-shell": false}`
+registered the component it looks like it denies, and a JSON string became its characters. The
+catalog is the whole basis for the next paragraph, so it must be an array of component ids or
+the command refuses.
+
+**A component nobody registered is refused.** "The planner invented a step" and "the planner
+selected a step" look identical in a resolved workflow, and only one of them is what
+synthesis is for. So is a step that cannot say why it was selected: a workflow that cannot
+explain its own contents is a list, and the resolved workflow is meant to be evidence.
+
+Restoring the floor is not the same as accepting the proposal. The command corrects what it
+can and still exits non-zero, because a caller told 0 would believe the planner produced
+something runnable as proposed (#432).
+
 What assurance was *asked for* can now be written down and checked against what a task's
 receipt recorded. `workbench.py assurance-target <task> <file>` compares a
 `rig.assurance-target/v1` document against the receipt and exits non-zero unless every axis
