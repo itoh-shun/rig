@@ -34,6 +34,7 @@ from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_proven
 from .anchors import cmd_scan_anchors
 from .assurance import cmd_receipt
 from .cockpit import cmd_cockpit
+from .assurance_target import cmd_assurance_target
 from .contract import cmd_contract
 from .intent import cmd_intent
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
@@ -131,6 +132,14 @@ def main() -> None:
     p.add_argument("file", help="path to a rig.intent-contract/v1 JSON document")
     p.add_argument("--json", action="store_true", help="emit the summary as JSON")
     p.set_defaults(func=cmd_intent)
+
+    p = sub.add_parser("assurance-target",
+                       help="compare a machine-readable assurance target against what a "
+                            "task's receipt recorded; never downgrades quietly (#434)")
+    p.add_argument("task_id")
+    p.add_argument("target", help="path to a rig.assurance-target/v1 JSON document")
+    p.add_argument("--json", action="store_true", help="emit the comparison as JSON")
+    p.set_defaults(func=cmd_assurance_target)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")

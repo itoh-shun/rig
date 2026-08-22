@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+What assurance was *asked for* can now be written down and checked against what a task's
+receipt recorded. `workbench.py assurance-target <task> <file>` compares a
+`rig.assurance-target/v1` document against the receipt and exits non-zero unless every axis
+was met — because a gate that exits 0 on an unmet target is not a gate.
+
+The receipt has always recorded what a task achieved: which tree the work was written to, how
+independent the checker was, whether the accept record still verifies, which approvals were
+taken, how the gate ruled. What it never had was the other half, and without that "the gate
+passed" is a fact about rig's defaults rather than about anyone's requirements.
+
+**A target may only name an axis the receipt can answer.** `_isolation` refuses to borrow the
+evaluation vocabulary's `none/agent-policy/os-enforced` ranking, because a git worktree keeps
+a change off the main tree and stops there — claiming an OS boundary git is not holding would
+be the receipt lying about itself. So `isolation: os-enforced`, the example the issue itself
+uses, is refused: demanding it would demand an answer nothing here can give.
+
+**An axis rig cannot observe is its own outcome.** `unobservable` is not a softer `unmet`.
+`unmet` says rig looked and what it found falls short; `unobservable` says it cannot look, and
+carries the receipt's own reason for not having — "governance is inactive for this
+repository", not a placeholder. A caller folding them together reads "we do not measure that"
+as "we measured it and it was insufficient", and acts on it. And a block that says
+`observed: false` is believed over any value left sitting beside it, so "we did not check the
+gate" cannot become "the gate passed".
+
+Every value a target may name is reachable from a receipt the *producer* can actually write,
+and two tests hold that: one pins each value to a receipt shape that achieves it, and one
+reads `assurance.py` itself, because a hand-written receipt proves the comparison works and
+proves nothing about what rig can ever record. Two values got in that way and neither was
+reachable — `verification: independent`, which `_verifier` never asserts because rig's review
+dispatches subagents whose identity never reaches task state, and `approval: none`. `approval: none` in particular was there and was not:
+`_approvals` reports the absence of decisions as `observed: false` with a reason, so "no
+approvals taken" is something the receipt declines to assert rather than something it
+records — and a target asking for it would have validated and then reported `unobservable`
+forever, from a table whose whole claim is that it mirrors what the receipt can say.
+
+**"production quality" is not a target.** It names a level without naming what it is, and rig
+cannot explain a mapping it did not receive — so it refuses the word by name and says what to
+write instead, rather than inventing a mapping and defending it later. Nothing downgrades
+quietly: there is no nearest-acceptable and no rounding in rig's favour (#434).
+
 What was asked for now has a shape something can check against. `workbench.py intent <file>`
 validates a `rig.intent-contract/v1` document and reports what it leaves open — exit 0 for a
 contract, 1 for a document that is not one, 2 for a file it could not read.
