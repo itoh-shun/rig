@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+Minimise the cost of producing the required assurance, never the requirement itself.
+`workbench.py budget-plan <plans> --budget <file>` chooses among candidate plans that clear the
+assurance floor, and says so rather than picking the closest one when none does.
+
+Applying the heaviest verifier, drill and approval to every change buys quality with money and
+waiting; dropping a mandatory gate to save either buys the money back with something that was
+not ours to spend. What is left is a constrained problem rather than a trade-off.
+
+**It does not estimate, and it does not plan.** What a verifier will cost, how long a runtime
+will take, which plans are worth considering — an agent's work, and a module that called a model
+to do it would leave nothing a gate could check and nothing a mutation could falsify.
+
+**The floor is not the plan's to state, and it has to be stated.** `Budget.required` is built
+by the caller from the policy and the assurance target (#434), and has no default, because "the
+caller did not supply the floor" and "the policy requires nothing" are the same value with one
+and opposite answers without one. `Budget.task` likewise: a budget carries the floor, so one
+prepared for a wording change applied to an authentication change is a weaker floor arriving by
+mispairing, for the reason `synthesise` builds its floor that way
+and `route-team` builds its constraints that way. A plan that does not produce what is required
+is not a cheaper way of doing this; it is a different, smaller thing, and it is excluded before
+anything is ranked.
+
+**And a quantity nobody can hold is not a quantity.** `Infinity` is what Python's JSON decoder
+makes of the token by default: as a limit it disables the constraint, as a price it clears every
+limit, and as an exchange rate it makes every latency worth nothing, silently collapsing
+`balanced` into `cheapest`. `NaN` loses every comparison it is in, including against itself.
+Both are refused at the decoder and again by the field rule.
+
+**An unknown cost is not a low one.** A runtime that cannot report what it charges says
+`unknown`, and `unknown` does not compare — it is not zero, not cheap, and it does not win
+against a plan that measured itself honestly. The same rule one field over: a plan that cannot
+say how long it takes is not the quickest, and it fails a latency budget rather than passing one
+it cannot be compared against.
+
+**Balancing money against time needs the caller's exchange rate.** `balanced` requires
+`seconds_per_unit_cost`, because adding dollars to seconds is a category error and what an hour
+is worth is a judgement about the caller's situation rather than something this module can
+supply.
+
+**Running out of budget is an answer, not a discount.** When nothing affordable clears the
+floor, the result is `exhausted` and names what someone can do about it — block the change,
+raise the budget, use a different runtime, or relax the target. That names the moves allowed to
+follow, not a record of anyone making one — recording who relaxed a target is somebody else's
+job. A closed vocabulary, because "we lowered the target a bit" written as prose in a field
+nobody parses is exactly the silent downgrade the design principle rules out.
+
+**Refusing is not running out.** A record that cannot be read, or a budget that belongs to
+another change, is refused with no moves offered: refusal does not establish that nothing
+affordable clears the floor, and offering "relax the target" to someone whose file was
+malformed would be a fail-open with a helpful tone (#439).
+
 Rig should learn which team works best for this kind of change, without optimisation weakening
 the trust boundary. `workbench.py route-team <routing> --constraints <file>` checks a role
 assignment against the constraints a policy states and exits non-zero if optimisation reached

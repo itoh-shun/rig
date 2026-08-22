@@ -37,6 +37,7 @@ from .cockpit import cmd_cockpit
 from .assurance_target import cmd_assurance_target
 from .contract import cmd_contract
 from .development_loop import cmd_dev_loop
+from .assurance_budget import cmd_budget_plan
 from .synthesis import cmd_synthesis
 from .team_routing import cmd_route_team
 from .intent import cmd_intent
@@ -182,6 +183,18 @@ def main() -> None:
                         "chosen for)")
     p.add_argument("--json", action="store_true", help="emit the check as JSON")
     p.set_defaults(func=cmd_route_team)
+
+    p = sub.add_parser("budget-plan",
+                       help="choose among candidate plans that clear the assurance floor, "
+                            "within a budget (#439)")
+    p.add_argument("plans", help="path to a rig.assurance-budget/v1 JSON document")
+    p.add_argument("--budget", required=True,
+                   help="path to a JSON object stating 'required' (the assurance floor) and "
+                        "'task' (which change it was chosen for), and optionally 'max_cost', "
+                        "'max_latency_seconds', 'optimisation' and 'seconds_per_unit_cost' "
+                        "(needed by, and only by, 'balanced')")
+    p.add_argument("--json", action="store_true", help="emit the choice as JSON")
+    p.set_defaults(func=cmd_budget_plan)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
