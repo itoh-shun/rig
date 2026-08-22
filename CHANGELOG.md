@@ -2,6 +2,84 @@
 
 ## Unreleased
 
+An autonomous developer may decide how to pursue a goal. Not whether its own result is
+trustworthy. `workbench.py dev-loop <task> <cycles>` judges a loop's record against its bounds
+and its handoff against the receipt, and exits non-zero unless the record is about that task,
+the loop declared itself done, it is not observably stuck, and what the receipt points at is a
+fixed object that the record's last cycle also names.
+
+A loop that researches, plans, implements, tests, reviews and repairs is a good way to reach a
+result and a terrible way to judge one: every signal it would judge itself by is a signal it
+produced.
+
+**It does not run the loop.** Choosing what to research, how to repair, what to plan next is
+reading, judging and concluding — an agent's work, and a module that called a model to do it
+would leave nothing a gate could check and nothing a mutation could falsify. Cycles arrive as a
+record of what happened.
+
+**It stops the loop on evidence, not on the loop's account of itself.** An unbounded repair
+loop is a way to spend a budget without reaching a result, and "I am making progress" is
+exactly the judgement a stuck loop gets wrong. So the three bounds are computed from the
+record — how many cycles ran, whether the same failure signature keeps coming back
+consecutively, and whether the work product changed at all — and a caller who said nothing
+about bounds still gets them, because making the caller opt in to being bounded gets the
+failure mode wrong by omission.
+
+**A developer's PASS is not an assurance PASS.** The loop's own `tests passed` is recorded as
+what it is, under `self_reported`, and the schema has no field for a verdict: `gate`,
+`accepted`, `verdict` and their spellings are refused rather than stored. What accepts a change
+is `build_acceptance` and the receipt, and neither of them reads this document. The command
+prints the verdict before the account, because a reader who sees the account first reads the
+verdict as agreeing with it.
+
+**A bound that has been passed stays passed.** The runs are counted anywhere in the record and
+not at the end of it. A loop that ran past a bound and then produced one different cycle did not
+un-run past it, and reading only the trailing run would let it clear the evidence by continuing
+— which is the one move a bound exists to prevent.
+
+**Two of those three bounds are only as good as what the loop can author, and the answer says
+which.** `product` must be spelled like a git object id, which stops a counter standing in for
+work — but 40 hex characters is a spelling, and existence is barely better, because a stuck
+loop can name a different object that was already in the repository every cycle. Ancestry of the delivered
+commit is not enough either — that history has no lower bound, so the loop can reach back past
+the task. So `must_stop` takes a `History` and asks it two things: is this commit **inside this
+task's range** (a descendant of the base the receipt records, an ancestor of the head it points
+at), and does each cycle **build on the one before it**. A borrowed object fails the first; real
+in-range commits reported in no particular order fail the second.
+
+That is a chain inside a range, and it is worth saying exactly what it is evidence of: the
+record describes commits leading from where the task started to what it delivered, in order. It
+does not establish that the loop occupied those states — a loop could build the chain after the
+fact — and nothing here says it did. Without a `History` the bound falls back to the loop's own
+account, and the result carries `products_related` so a reader is told which answer they got.
+
+`failure` cannot be constrained at all: canonicalising a test failure means reading structured
+output this module never sees, so a loop appending a nonce to the same failure defeats that
+bound. It is a backstop against a loop that is honestly stuck, not a control against one that
+is not, and the docstring says so rather than letting a reader assume otherwise.
+
+**The record says which task it is about, and it does not get to restate the goal.** Two loops
+pursuing different goals that end at the same commit are indistinguishable without the task id,
+and reading one as the other's completion would credit a task with work done somewhere else.
+The goal is compared against the task's recorded input for a sharper reason: a loop free to say
+what it was pursuing decides what "done" was measured against, which is the decision this
+boundary exists to reserve.
+
+**A handoff and its record name the same commit, or it is refused.** `immutable` is
+read from the receipt (#428) rather than re-derived, so there is one answer to "what was
+verified" and not two — and the loop's last product must equal that commit, because a record
+paired with some other immutable commit on the same task describes work nobody in it did. That
+the loop *made* it is not something either half establishes.
+Reaching the cycle limit does not block a handoff; spending the budget is a reason to stop, not
+a reason to throw the work away.
+
+**An admissible handoff is a narrow claim, and it is worded as one.** It says the loop declared
+itself done, that it is not observably stuck, and that what it points at is fixed and is what
+the record's last cycle names. It does not say the loop made it, and it does not say the loop
+converged, because "not hitting two stuck-loop
+thresholds" is not convergence and a word this module cannot check is one it should not use
+(#431).
+
 A workflow may adapt to the risk; what it is trusted for may not.
 `workbench.py synthesise <workflow> <catalog> --required <floor>` validates a proposed
 workflow against the components that exist and the steps a policy requires, and exits
