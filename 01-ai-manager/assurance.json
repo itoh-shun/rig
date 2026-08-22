@@ -1,0 +1,119 @@
+{
+  "artifact": "articles/01-ai-manager/final.md",
+  "title": "Claude Codeで楽になるはずが、気づけばAIの面倒を見ていた",
+  "repo_commit": "babdef6",
+  "checked_at": "2026-08-22",
+  "status": "ready",
+  "checks": [
+    {
+      "name": "target_reader_defined",
+      "status": "passed",
+      "detail": "intent.md に固定。Claude Code を使い込んだ中上級エンジニア（CLAUDE.md / Skills / Subagents / worktree / 別AIレビュー / MCP を運用中または検討中）。初心者向け入門は non-goal として明記"
+    },
+    {
+      "name": "single_thesis",
+      "status": "passed",
+      "detail": "「AI で開発が楽になるはずなのに、なぜ人間が AI の管理者になっていくのか」の1問のみ。全機能紹介は non-goal。rig のまとまった説明は『既存の資産は、どこへ行くのか』＋『仕組みにしたら rig になった』の2章に集約し、本文行数比で約31%（目安の30〜40%内）"
+    },
+    {
+      "name": "evidence_grounded",
+      "status": "passed",
+      "detail": "技術的主張はすべて sources.md で README.ja.md / skills/engine/SKILL.md / commands/*.md の file:line に紐付け済み。gate プリセットの一覧は python3 scripts/workbench.py gates の実出力。改稿で追加した章の主張（プリミティブのみで合成 / /rig:init と CLAUDE.md / persona の tier 解決 / --persona / ホスト組み込み skill の補助レーン / /rig:import）も sources.md §10 に追記した"
+    },
+    {
+      "name": "no_invented_experience",
+      "status": "passed",
+      "detail": "本文にある一人称は動機・所感・今後の予定のみ。具体的な事件・エラー文・計測値・効果の断定は無い。rig:docs-reviewer が独立に確認（technical-review.md）"
+    },
+    {
+      "name": "shipped_vs_roadmap_clear",
+      "status": "passed",
+      "detail": "README.ja.md §7 Feature status を正本とし、drill / stats / board を Beta と本文中に明示。数値の自動公開 CI が未実装であることも本文に書いた。Stable のもの（isolated worktree / acceptance-gate / read-only verifier / accept・discard）だけを断定形で記述"
+    },
+    {
+      "name": "commands_verified",
+      "status": "passed",
+      "detail": "実行して出力を確認: workbench.py gates / route --type bugfix --json / context / context --help / --help。ファイル実在を確認: commands/go.md, commands/rig.md, commands/drill.md, commands/dev.md。文字列実在を確認: --allowedTools Read,Grep,Glob, codex --sandbox read-only, .rig/audit.jsonl, .rig/gates.json, .rig/recipes/, /rig:drill --replay"
+    },
+    {
+      "name": "independent_review_done",
+      "status": "passed_with_warnings",
+      "detail": "rig:docs-reviewer（read-only tools のみ・執筆側とは別モデル Sonnet・別プロセス）で2回実施。1回目は初稿に APPROVE（blocking / should-fix 0件）。改稿で新設した章に2回目をかけ APPROVE_WITH_CONDITIONS（should-fix 1件: 手元 Skill についての否定形が過度に一般化）。skills/engine/SKILL.md:634 を自分で確認したうえで本文を差し替え、条件は解消。WARNING: この環境に codex / ollama が存在しないため（which codex ollama が空）、rig 既定のクロスプロバイダ検証は実施できていない。分離は model + process レベルにとどまる"
+    },
+    {
+      "name": "target_reader_reviewed",
+      "status": "passed",
+      "detail": "rig:lazy-senior-reviewer に想定読者像を与えて2周実施。初稿で [必須]3件 / [任意]3件、改稿版の再読で [必須]1件（無根拠な言い切り）。いずれも反映または不反映の理由を reader-review.md に記録。反映しなかった3件は intent 側の判断が優先する箇所"
+    },
+    {
+      "name": "no_ai_smell",
+      "status": "passed",
+      "detail": "scripts/prose_rhythm.py（rig の決定論リズムセンサー）で No rhythm findings （sentences 141 / length-CV 0.653 / burstiness 0.654 / connective-ratio 2%）。太字0・全角ダッシュ0・絵文字0。禁止表現（重要なのは / 本質的に / 正面から / 多角的 / 掘り下げ / つまり / いかがでしたか / してみてはいかがでしょうか / この記事では / まとめると / 見ていきましょう / シームレス / 革命的 / パワフル / することができ / を可能に / に他ならない / が求められる）の出現0。深層マーカー J-P,V を手で照合し、各章末のまとめ段落・箴言オチ・節末の予告が無いことを確認。未解決を2箇所そのまま残した"
+    },
+    {
+      "name": "not_sales_copy",
+      "status": "passed",
+      "detail": "rig が解決しないことを本文に明記（AI を賢くしない / 品質を自動的に生まない / gate を通っても基準が甘ければ甘いまま通る / 速度とトークンを払う / 速く書かせたいだけならモデルに直接頼むほうが速い）。他ツール批判と Skills 不要論は無し。『どれも効きます。捨てる話ではありません』と明示"
+    },
+    {
+      "name": "actionable_cta",
+      "status": "passed",
+      "detail": "Star 依頼ではない。(1) まだ手放せずにいる確認作業を知りたい（決定的に判定できるなら gate 基準に足せる、落とせないなら reviewer 側の仕事だと分かる）(2) バグの種のカタログへの観点提案。いずれも Issue / Contribution に直結する形。リンクは1本のみ"
+    },
+    {
+      "name": "no_secret_leak",
+      "status": "passed",
+      "detail": "python3 scripts/workbench.py scan-secrets articles/01-ai-manager → No potential secrets found"
+    }
+  ],
+  "extra_scans": [
+    {
+      "name": "scan-injection",
+      "status": "passed",
+      "detail": "No injection markers found"
+    },
+    {
+      "name": "scan-destructive",
+      "status": "warning",
+      "detail": "final.md:44 と draft.md:46 が drop_database/fail で発火。本文が『rm -rf や DROP DATABASE のような破壊的なコマンドが差分に書き込まれていないか』という説明のために当該文字列を散文で引用しているための偽陽性。実行されるコマンドではない。rig の運用としては --set no_destructive_operation=passed に相当する人手の確認"
+    }
+  ],
+  "provenance": {
+    "writer": {
+      "personas": [
+        "japanese-writer",
+        "styles/qiita-tech-writer"
+      ],
+      "model": "claude-opus-5"
+    },
+    "technical_review": {
+      "agent": "rig:docs-reviewer",
+      "model": "sonnet",
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash"
+      ],
+      "mode": "read-only",
+      "rounds": 2
+    },
+    "reader_review": {
+      "agent": "rig:lazy-senior-reviewer",
+      "model": "sonnet",
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash"
+      ],
+      "mode": "read-only",
+      "rounds": 2
+    },
+    "de_ai_smell": {
+      "deterministic_sensor": "scripts/prose_rhythm.py",
+      "catalog": "skills/engine/facets/knowledge/ai-writing-smells.md",
+      "note": "de-ai-smell recipe 相当の検査を、決定論センサー＋カタログ照合で実施。ai-smell-reviewer persona の独立 dispatch は行っていない"
+    }
+  }
+}
