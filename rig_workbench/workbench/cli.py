@@ -36,6 +36,7 @@ from .assurance import cmd_receipt
 from .cockpit import cmd_cockpit
 from .assurance_target import cmd_assurance_target
 from .contract import cmd_contract
+from .development_loop import cmd_dev_loop
 from .synthesis import cmd_synthesis
 from .intent import cmd_intent
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
@@ -155,6 +156,19 @@ def main() -> None:
                    help="emit the resolution report as JSON (the workflow is nested under "
                         "'workflow')")
     p.set_defaults(func=cmd_synthesis)
+
+    p = sub.add_parser("dev-loop",
+                       help="judge an autonomous development loop against its bounds and its "
+                            "handoff against the receipt (#431)")
+    p.add_argument("task", nargs="?", help="task id (default: the active one)")
+    p.add_argument("cycles", help="path to a rig.development-cycles/v1 JSON document")
+    p.add_argument("--max-cycles", type=int, help="cycles before the loop must stop")
+    p.add_argument("--repeated-failure", type=int,
+                   help="consecutive identical failures before the loop must stop")
+    p.add_argument("--no-progress", type=int,
+                   help="consecutive cycles ending with the same product before it must stop")
+    p.add_argument("--json", action="store_true", help="emit the handoff judgement as JSON")
+    p.set_defaults(func=cmd_dev_loop)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
