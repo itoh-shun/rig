@@ -2,6 +2,94 @@
 
 ## Unreleased
 
+A trustworthy change should explain not only what changed, but why it exists, what evidence
+supports it, and what happened after it shipped. `workbench.py provenance <graph> <node>` traces
+a node's chain in both directions, with confirmed and inferred relations kept apart.
+
+Git records what changed and a receipt records what a task achieved. Neither records why the
+change was wanted or which requirement it was answering, and a reader reconstructing that from
+six files reconstructs it differently each time.
+
+**It does not infer.** Deciding that this commit implements that requirement is reading two
+things and concluding a third — an agent's work, and a module that called a model to do it would
+leave nothing a gate could check and nothing a mutation could falsify. Edges arrive already
+drawn.
+
+**The partition says whether you can rely on getting here; a flag says why not.** A step that
+was somebody's conclusion, and one whose authority nobody could find, both make everything past
+them unreliable — but "an agent concluded this" and "this names a receipt that is not there" are
+different problems with different fixes, so the answer carries both dimensions rather than one
+that means either — and the reason travels: an edge somebody checked, sitting past one whose
+receipt is missing, is unreliable for *that* reason, and saying the wrong one sends a reader
+looking for an inference that is not there.
+
+**A guess and an observation are not the same edge.** The tempting rendering of "an agent
+thought so" is an edge that looks exactly like one somebody checked, and a reader following a
+chain then has no way to see where it stopped being evidence. Every edge says how it was
+established and who established it; an edge that cannot say either is refused; and a trace
+returns the two kinds apart rather than merged, in both directions, with the basis on every line
+rather than in a heading somebody scrolls past.
+
+**And `confirmed` names a kind of thing somebody could go and look at.** An authority is
+written as `receipt:…`, `git:…`, `person:…`, `policy:…` or `agent:…`, and an `agent:` authority
+cannot be `confirmed` however sure it sounded — a conclusion is not an observation with a
+different adjective. **And a reference nobody could find is not
+confirmation.** `trace` takes a resolver and reports whether every confirmed authority
+it reached was actually looked up. An authority whose reference is missing makes its edge — and
+everything past it — unreliable, because naming a receipt is not the same as there being one.
+The resolver answers `found`, `missing`, or `not-checked` for a kind it cannot check from here:
+a `person:` cannot be looked up on this machine, treating that as "checked and absent" would
+punish the honest answer, and calling it resolution is how a graph full of them comes back
+saying it was verified. A `receipt:` is a run name and not a path, the resolved
+candidate has to land inside the store, and the record there has to be a real file, shaped like a run
+record, saying it belongs to that run — "a file exists here" is not "this receipt exists", and
+neither is an object repeating the directory name. A `git:` authority is an object id and not a
+revision: `git:HEAD` resolves now and names something else later, which is the opposite of what
+an authority in a provenance record is for — otherwise any accessible `task.json`, reached by an
+absolute path, a `..`, or a symlink, would confirm an edge that named it. Resolution reaches the
+invalidation section too — a missing receipt presented as the stale relationship's
+authority, or as the authority claiming it went stale, is the same unchecked assertion wearing
+the same `[confirmed]`, in the section where a reader is deciding what to stop trusting.
+
+**And no name may draw a line.** The report writes one line per edge with its basis on it, so
+an authority containing a newline writes a second line that says whatever it likes — and a
+reader scanning for `[confirmed]` finds one. Control characters, format characters and look-alike
+spaces are refused in every field the report prints, by Unicode category rather than by a list,
+which is a superset of what this repository already calls invisible.
+
+**It gives a second copy of the verdict nowhere to live.** An edge to evidence names the
+receipt and stops. Copying "passed" into the graph would make two places that answer "did this
+verify", and the one that drifts is always the copy — `assurance.py` is the authority (#428). So
+the schema defines no field for a verdict and refuses a document that adds one. What it cannot
+do is police free text: a node labelled `"passed"` validates, because a label is prose for a
+human and nothing here reads it. The guarantee is that no *field* carries a verdict, stated at
+that width rather than one wider.
+
+**Invalidation is a fact the graph carries, not a deletion.** Evidence goes stale: the target
+moved, a later run said otherwise. Removing the edge would leave a chain that reads as though
+nothing had ever supported the change, which is a different and worse claim than "this was
+supported and then stopped being". So an invalidated edge is reported alongside the others and
+not subtracted from them — it was confirmed, and it was invalidated, and a caller deciding what
+to trust needs both. **And an invalidation has a basis of its own**: somebody may have concluded
+the evidence went stale rather than observed it, so what said so is carried with it. Dropping
+that would make a guess about staleness read exactly like a confirmed one, which is the rule
+this module is built on, applied to the one place it applies to itself.
+
+**A chain is followed to the end, and is as good as its weakest link.** A commit that
+implements a requirement that satisfies a goal answers "why does this exist" with the goal;
+stopping at the requirement answers it with a restatement. The traversal is cycle-safe, and the
+list an edge lands in is about **reaching it from the node asked about** rather than about the
+edge alone: once a step was somebody's conclusion, everything further along is reachable only if
+that conclusion holds, however carefully the later steps were checked. Each entry still carries
+the edge's own basis, and the report says when a checked link sits past an inferred one —
+"somebody verified this link" is worth reading, and it is not the same as "you can get here".
+
+**And the answer does not depend on the order the edges were written.** A node reachable by a
+checked route and a concluded one is walked as both, so which arrives first is a fact about the
+file rather than about the answer, and neither route is concealed behind the other. The
+invalidation section carries the path basis too — it is exactly where a reader is deciding what
+to stop trusting (#436).
+
 Minimise the cost of producing the required assurance, never the requirement itself.
 `workbench.py budget-plan <plans> --budget <file>` chooses among candidate plans that clear the
 assurance floor, and says so rather than picking the closest one when none does.

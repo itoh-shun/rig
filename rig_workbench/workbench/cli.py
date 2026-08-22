@@ -38,6 +38,7 @@ from .assurance_target import cmd_assurance_target
 from .contract import cmd_contract
 from .development_loop import cmd_dev_loop
 from .assurance_budget import cmd_budget_plan
+from .provenance_graph import cmd_provenance
 from .synthesis import cmd_synthesis
 from .team_routing import cmd_route_team
 from .intent import cmd_intent
@@ -195,6 +196,19 @@ def main() -> None:
                         "(needed by, and only by, 'balanced')")
     p.add_argument("--json", action="store_true", help="emit the choice as JSON")
     p.set_defaults(func=cmd_budget_plan)
+
+    p = sub.add_parser("provenance",
+                       help="trace why a node exists and what supports it, with confirmed and "
+                            "inferred relations kept apart (#436)")
+    p.add_argument("graph", help="path to a rig.provenance-graph/v1 JSON document")
+    p.add_argument("node", help="the node id to trace from")
+    p.add_argument("--direction", choices=("up", "down", "both"), default="both",
+                   help="follow edges out of the node, into it, or both (default: both)")
+    p.add_argument("--no-resolve", action="store_true",
+                   help="do not look up whether each confirmed authority exists; the answer "
+                        "then says so")
+    p.add_argument("--json", action="store_true", help="emit the trace as JSON")
+    p.set_defaults(func=cmd_provenance)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
