@@ -2,6 +2,90 @@
 
 ## Unreleased
 
+Rig should learn which team works best for this kind of change, without optimisation weakening
+the trust boundary. `workbench.py route-team <routing> --constraints <file>` checks a role
+assignment against the constraints a policy states and exits non-zero if optimisation reached
+past one of them.
+
+Fixing one provider for every role wastes money on wording changes and underspends on
+authentication boundaries, and this repository already holds what it would take to choose
+better. But a router that may also decide which constraints apply has been handed the question
+it was supposed to be constrained by.
+
+**It does not choose.** Deciding a provider is right for an authentication review is reading
+evidence, weighing it and concluding — an agent's work, and a module that called a model to do
+it would leave nothing a gate could check and nothing a mutation could falsify. An assignment
+arrives as a record of what was chosen and why.
+
+**Hard constraints outrank optimisation, and the constraint set is not the record's to state.**
+Approval, capability, independence and required roles are built by the caller from the policy,
+for the reason `synthesise` builds its floor that way: a constraint the thing being checked
+gets to state is not a constraint. Independence is additive — a policy may name more roles that
+must be independent and has no field that could name fewer, because a setting that could shrink
+it would let a policy file turn the developer into the judge. An allowlist that is absent states
+nothing; one that is present and empty names nobody, and the two mean opposite things. And the
+constraints document itself is validated before anything is turned into a set: `frozenset(...)`
+takes whatever iterates, so `{"approved": {"evil/model": false}}` would otherwise approve the
+provider it looks like it denies. The document is **required** rather than defaulted, because a
+caller who forgot it — or whose policy failed to resolve — would otherwise get an admission
+meaning "nothing was enforced". **An assignment cannot be built in a state the document would be refused in**, and
+`Constraints` validates its own contents, so building either directly is not the way around the
+document's schema — four review rounds found the same defect in four places, each time because
+the JSON path was checked and the object was not, so the rule now lives in one function both
+reach: shape is checked where JSON can still be
+seen (a dict becomes its keys, a string its characters) and contents where any caller reaches
+them.
+
+**Two names for one backend are one backend.** Comparing the strings a router wrote would let
+`vendor/model-x` review what `vendor-alias/model-x` implemented, which is one model grading its
+own work under a second name. So the policy states the canonical identity of every provider,
+independence is compared on that, and a name the policy cannot resolve refuses the check rather
+than passing it. Stating `identity: {}` is how a policy says its names are already canonical —
+it has to be said, because silence would mean the check ran on whatever the router called
+things. A backend has to be terminal: with `dev-alias → model`, `judge-alias → backend` and
+`model → backend`, one hop makes two names for one backend look independent while the policy
+itself says otherwise, so the mapping is refused rather than resolved at compare time. And a
+validated `Constraints` copies and freezes what it was given, because `frozen=True` stops the
+fields being replaced and not the sets behind them from being emptied afterwards. Cost and a provider's measured excellence are arguments
+about *which* approved, capable, independent provider to pick, never an argument for picking
+one that is not.
+
+**An unmeasured provider is not a good one, and the router does not get to say it is measured.**
+The tempting rendering of "we have no data" is a blank, a zero or a default, and all three read
+as "fine" next to a measured competitor. So a selection states how well it is known —
+`measured`, `shadow`, `unmeasured` — `evidence_count` is required rather than optional because
+the interesting value is zero, and both `measured` and `shadow` on zero observations are refused
+because whatever either means, both mean something was observed.
+
+But that statement is *reported*, not believed. Which providers count as measured for an
+assurance role is `Constraints.measured`, stated by the policy alongside every other constraint,
+because a record that could assert the fact unlocking its own eligibility is stating its own
+constraint — the pattern this module rejects everywhere else. A role nobody is listed as
+measured for admits nobody, for the reason an empty allowlist names nobody. Shadow evaluation is
+what you do to a provider before trusting it with a verdict; promoting it is somebody's decision,
+recorded in the policy, rather than a word in a routing record.
+
+**Two providers for one role is two answers to who is accountable for it**, and it is refused
+before anything else is computed. Every later check reads a role-to-assignment map, and such a
+map cannot represent two — so a verdict drawn from it would be about whichever of the two the
+map happened to keep, offered next to the structural problem as though it were as reliable.
+
+**A verifier that is the developer is not a verifier.** The same provider on both sides of a
+role whose whole value is being other than what it judges produces a verdict about its own
+work, and no evidence about how good that provider is makes that verdict independent.
+
+An admissible routing does not say the team is a good one — which approved, capable,
+independent provider performs best is a judgement about evidence this module does not have. It
+says optimisation did not reach past the constraints to get its answer. What the record called
+unmeasured is reported either way, named as the router's word rather than a measurement that
+happened, and carrying the role each provider was put in.
+
+**And the constraints have to be the ones chosen for this change.** A router free to label an
+authentication change as a wording change would be picking which constraints apply to it, so
+`Constraints.task` is stated by whoever chose them and compared against what the record says it
+routed. Constraints that name no task check everything else and do not pretend the binding held
+(#438).
+
 An autonomous developer may decide how to pursue a goal. Not whether its own result is
 trustworthy. `workbench.py dev-loop <task> <cycles>` judges a loop's record against its bounds
 and its handoff against the receipt, and exits non-zero unless the record is about that task,

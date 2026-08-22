@@ -38,6 +38,7 @@ from .assurance_target import cmd_assurance_target
 from .contract import cmd_contract
 from .development_loop import cmd_dev_loop
 from .synthesis import cmd_synthesis
+from .team_routing import cmd_route_team
 from .intent import cmd_intent
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
@@ -169,6 +170,18 @@ def main() -> None:
                    help="consecutive cycles ending with the same product before it must stop")
     p.add_argument("--json", action="store_true", help="emit the handoff judgement as JSON")
     p.set_defaults(func=cmd_dev_loop)
+
+    p = sub.add_parser("route-team",
+                       help="check an agent-team routing record against the hard constraints "
+                            "a policy states (#438)")
+    p.add_argument("routing", help="path to a rig.team-routing/v1 JSON document")
+    p.add_argument("--constraints", required=True,
+                   help="path to a JSON object with 'identity' (required) and optionally "
+                        "'approved', 'capable', 'measured' (who may take an assurance role), "
+                        "'also_independent', 'required' and 'task' (which change these were "
+                        "chosen for)")
+    p.add_argument("--json", action="store_true", help="emit the check as JSON")
+    p.set_defaults(func=cmd_route_team)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
