@@ -34,9 +34,11 @@ import datetime as dt
 import hashlib
 import json
 import pathlib
+import re
 import subprocess
+import unicodedata
 
-from . import intent, intent_wiring
+from . import assurance_target, assurance_wiring, intent, intent_wiring
 from .state import (die, load_task, repo_root, resolve_task_id, run_dir,
                     verify_provenance)
 
@@ -52,6 +54,7 @@ _SOURCES = (
     ("steps", "steps.json"),
     ("approvals", "approvals.json"),
     ("intent", "intent.json"),
+    ("assurance_target", "assurance-target.json"),
 )
 
 #: How the authoritative gate status maps onto the receipt's final status. This is a
@@ -126,23 +129,33 @@ def _read_json(path: pathlib.Path) -> dict | None:
 UNREADABLE = object()
 
 
-def _read_contract(path: pathlib.Path):
-    """`intent.json`, `None` if it is absent, `UNREADABLE` if it is there and is not readable.
+def _read_json_document(path: pathlib.Path, reader):
+    """A document, `None` if it is absent, `UNREADABLE` if it is there and is not readable.
 
-    Read with the same duplicate-key refusal `intent-derive` uses. JSON allows a key twice and
-    `json.loads` keeps the last one silently, so a duplicated `origin` would turn an inferred
-    requirement into a declared one — and the receipt would present that parser choice as what
-    the contract recorded. A check on one ingestion path is a check on one ingestion path.
+    `reader` is the module's own parser — `intent.read`, `assurance_target.read` — so that the
+    receipt refuses exactly what the command that writes the document refuses. A check on one
+    ingestion path is a check on one ingestion path: JSON allows a key twice and `json.loads`
+    keeps the last one silently, and a receipt with its own parser would present that choice as
+    what the document recorded.
+
+    Absent and unreadable stay apart. The file's digest is in `sources` either way, and "nobody
+    wrote one" and "one is there and nothing can read it" are different situations with
+    different next steps.
     """
-    from .intent import read
-
     if not path.is_file():
         return None
     try:
-        data = read(path)
+        data = reader(path)
     except (OSError, ValueError):
         return UNREADABLE
     return data if isinstance(data, dict) else UNREADABLE
+
+
+def _read_contract(path: pathlib.Path):
+    """`intent.json`, through the reader `intent-derive` uses."""
+    from .intent import read
+
+    return _read_json_document(path, read)
 
 
 def _git(root: pathlib.Path, *args: str) -> str | None:
@@ -263,7 +276,7 @@ def _producer(task: dict) -> dict:
             claims=imported["claims"],
             claims_gate_effect="none",
             declared=True,
-            basis="supplied to `workbench.py import`; rig verified the commit, not the "
+            basis="supplied to workbench.py import; rig verified the commit, not the "
                   "account of who produced it",
         )
     else:
@@ -499,11 +512,11 @@ def _final_status(task: dict, gates: dict, approvals: dict | None) -> dict:
     gate_status = str(gates.get("status") or "") if gates.get("observed") else ""
     if not gate_status:
         return {"value": "in-progress",
-                "basis": f"task status `{task_status}`; the gate has not ruled"}
+                "basis": f"task status {task_status!r}; the gate has not ruled"}
     key = (task_status, gate_status)
     if key in _FINAL_STATUS:
         value = _FINAL_STATUS[key]
-        basis = f"task status `{task_status}` with gate `{gate_status}`"
+        basis = f"task status {task_status!r} with gate {gate_status!r}"
         # Narrowed deliberately: only a task the table has already placed at
         # `awaiting-acceptance` can be waiting on a person. Applying the overlay
         # first would let a pending signature mask a state that is already settled —
@@ -518,7 +531,7 @@ def _final_status(task: dict, gates: dict, approvals: dict | None) -> dict:
                              f"decision(s), none of them an approval"}
         return {"value": value, "basis": basis}
     return {"value": "in-progress",
-            "basis": f"task status `{task_status}` with gate `{gate_status}` — no "
+            "basis": f"task status {task_status!r} with gate {gate_status!r} — no "
                      f"mapping for this combination, shown as recorded"}
 
 
@@ -526,8 +539,11 @@ def _final_status(task: dict, gates: dict, approvals: dict | None) -> dict:
 def build_receipt(root: pathlib.Path, task_id: str) -> dict:
     """Project one task's recorded state into a receipt. Reads only; decides nothing."""
     run, task = load_task(root, task_id)
-    loaded = {key: _read_json(run / name) for key, name in _SOURCES if key != "intent"}
+    loaded = {key: _read_json(run / name) for key, name in _SOURCES
+              if key not in ("intent", "assurance_target")}
     loaded["intent"] = _read_contract(run / "intent.json")
+    loaded["assurance_target"] = _read_json_document(
+        run / "assurance-target.json", assurance_target.read)
     # Absent sources are recorded with a null digest rather than omitted. A receipt
     # built while a task was still running would otherwise stay `fresh` after `accept`
     # wrote `provenance.json` — the single most material change that can happen to a
@@ -538,7 +554,7 @@ def build_receipt(root: pathlib.Path, task_id: str) -> dict:
         sources.append({"path": str((run / name).relative_to(root)),
                         "sha256": _digest(f) if f.is_file() else None})
     gates = _gates(loaded["acceptance"])
-    return {
+    receipt = {
         "schema": SCHEMA,
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "task": {
@@ -565,6 +581,13 @@ def build_receipt(root: pathlib.Path, task_id: str) -> dict:
         "intent": intent_wiring.projection(loaded["intent"], gates),
         "final_status": _final_status(task, gates, loaded["approvals"]),
     }
+    # Last, and from the receipt rather than from the files: what was asked for is compared
+    # against what these blocks already recorded, so the comparison cannot reach a different
+    # answer from the page it appears on. The one call to `assurance_target.evaluate` in the
+    # repository — every other view copies this block (#479).
+    receipt["assurance_target"] = assurance_wiring.projection(
+        loaded["assurance_target"], receipt)
+    return receipt
 
 
 def _resolve(root: pathlib.Path, ref: str) -> str | None:
@@ -695,8 +718,8 @@ def verify(root: pathlib.Path, receipt: dict) -> dict:
 # ── rendering ────────────────────────────────────────────────────────────────
 def _render_value(block: dict, *keys: str) -> str:
     if not block.get("observed"):
-        return f"not recorded — {block.get('reason', '')}"
-    shown = " · ".join(f"{k}: {block[k]}" for k in keys if block.get(k) is not None)
+        return f"not recorded — {_text(block.get('reason', ''))}"
+    shown = " · ".join(f"{k}: {_text(block[k])}" for k in keys if block.get(k) is not None)
     # An observed block that prints as "" would be indistinguishable from an absent
     # one, which is the exact confusion this module exists to prevent.
     return shown or "recorded, but with none of the fields this line renders"
@@ -753,36 +776,111 @@ if _gap:
     raise RuntimeError(_gap)
 
 
+#: What a value read off disk may not do to a line this page wrote.
+#:
+#: One set, chosen by a rule rather than by remembering: every character that can *begin* an
+#: inline construct in CommonMark or GFM. `\\` escapes, `` ` `` opens a code span, `*` and `_`
+#: open emphasis — `_` is the one a reviewer found missing, because a subset assembled from the
+#: attacks somebody thought of is a subset that is missing the next one — `[` and `]` open a
+#: link, `<` and `>` open raw HTML and an autolink, `|` adds a table column, `~` opens
+#: strikethrough.
+#:
+#: Block constructs are not in the set and do not need to be: a value cannot start a line, so
+#: it cannot become a heading, a list item, a quote or a setext underline. `&` is not in it
+#: either — an entity renders as the character it names, as text, and text is what this page
+#: is reporting.
+#:
+#: What this does *not* stop, said plainly rather than left for a reader to discover: GFM turns
+#: a bare `www.example.com` or `https://…` into a link with no special character involved, and
+#: no escaping prevents that without editing the text. A value that looks like a URL may become
+#: a link. That is the document's own words rendered as what they are; it asserts nothing this
+#: page did not read off disk, and it cannot become a heading, a row, or a verdict.
+_INLINE_OPENERS = "\\`*_[]<>|~"
+_MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in _INLINE_OPENERS})
+
+#: Unicode categories that must not reach the page as themselves: control and formatting
+#: characters, line and paragraph separators, and surrogates. The separators are why — a line
+#: break ends the line the renderer wrote and starts one the document's author did. Surrogates
+#: are here because a lone one decoded from `"\ud800"` cannot be encoded as UTF-8 at all, so a
+#: single poisoned field would stop the receipt being written rather than forge anything.
+_UNRENDERABLE = ("Cc", "Cf", "Cs", "Zl", "Zp")
+
+
+def _flat(value: str) -> str:
+    """Every line break, control character and surrogate as a space.
+
+    Not stripped: removing them would join two words a reader would then see as one, and a page
+    that quietly edits what a document said is misreporting it in its own way.
+    """
+    return "".join(" " if unicodedata.category(ch) in _UNRENDERABLE else ch for ch in value)
+
+
+def _text(value) -> str:
+    """A value off disk, safe in a line of prose this page wrote."""
+    return _flat("" if value is None else str(value)).translate(_MARKDOWN_ESCAPES)
+
+
+def _code(value) -> str:
+    """A value off disk, safe *inside* a code span — delimiter included.
+
+    Separate from `_text` because a backslash escape does nothing inside a code span:
+    CommonMark reads its content literally, so a value escaped for prose would still close the
+    span with its own backtick and let what follows become emphasis, a link, or another line
+    that reads as this page's verdict. The delimiter is chosen longer than the longest run of
+    backticks in the value, which is the construct's own answer to that.
+    """
+    text = _flat("" if value is None else str(value))
+    # An empty code span cannot be written: ```` `` ```` is a two-backtick run, not an opening
+    # and a closing delimiter, and it would reach the page as literal punctuation. A span
+    # holding one space is a real span, and CommonMark keeps an all-space content as it is.
+    if not text:
+        text = " "
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    # A space either side when the value's own edge is a backtick; CommonMark strips one
+    # leading and trailing space from a code span, so this is invisible when unnecessary.
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
 def render_markdown(receipt: dict) -> str:
     """The same model as the JSON, read aloud.
 
     Rendered from the receipt rather than from the files, so the two cannot drift:
     anything this page can say, a consumer of the JSON can also say.
     """
+    # Every value below goes through `_text` or `_code`. Which one is not a judgement call:
+    # `_code` is what a code span takes and `_text` is what prose takes. That this is true of
+    # *every* line is not something to be remembered — it is checked by rendering the page
+    # twice from one receipt, with every string replaced by a harmless value and by an
+    # adversarial one, and requiring the same structure from both. A site that interpolated a
+    # raw value shows up there, and so does one added after this comment was written.
     t, target = receipt["task"], receipt["target"]
     lines = [
-        f"# Assurance Receipt — {t['id']}",
+        f"# Assurance Receipt — {_text(t['id'])}",
         "",
-        f"**{receipt['final_status']['value']}** — {receipt['final_status']['basis']}",
+        f"**{_text(receipt['final_status']['value'])}** — "
+        f"{_text(receipt['final_status']['basis'])}",
         "",
-        f"> {t.get('input') or ''}",
+        f"> {_text(t.get('input') or '')}",
         "",
         "## What was verified",
         "",
-        f"- repository: `{target['repository']}`",
-        f"- base: `{target['base_branch']}` @ `{(target['base_commit_effective'] or '')[:12]}`",
+        f"- repository: {_code(target['repository'])}",
+        f"- base: {_code(target['base_branch'])} @ "
+        f"{_code((target['base_commit_effective'] or '')[:12])}",
         f"- head: {_render_value(target['head'], 'commit', 'resolvable', 'source')}",
         f"- immutable target: {'yes' if target['immutable'] else 'no'}",
     ]
     imported = target.get("import")
     if imported:
         lines += [
-            f"- imported from `{imported['producer']}` as "
-            + (f"`{imported['head_requested']}` → the name resolved to "
-               f"`{(imported['head_commit'] or '')[:12]}`, and a name can move"
+            f"- imported from {_code(imported['producer'])} as "
+            + (f"{_code(imported['head_requested'])} → the name resolved to "
+               f"{_code((imported['head_commit'] or '')[:12])}, and a name can move"
                if imported["head_symbolic"] else
-               f"`{(imported['head_commit'] or '')[:12]}`, an immutable commit"),
-            f"- diff summary: {imported['diff_summary']}"
+               f"{_code((imported['head_commit'] or '')[:12])}, an immutable commit"),
+            f"- diff summary: {_text(imported['diff_summary'])}"
             + (" — restated from the producer's own commit messages, not a review"
                if imported["diff_summary"] == "derived" else ""),
         ]
@@ -790,90 +888,98 @@ def render_markdown(receipt: dict) -> str:
         "",
         "## Who",
         "",
-        f"- producer actor: `{receipt['producer']['actor'] or 'unknown'}`",
+        f"- producer actor: {_code(receipt['producer']['actor'] or 'unknown')}",
         f"- producer harness: {_render_value(receipt['producer']['harness'], 'id', 'source', 'declared')}",
         f"- producer runtime: {_render_value(receipt['producer']['runtime'], 'id', 'declared', 'source')}",
         f"- verifier identity: {_render_value(receipt['verifier']['identity'])}",
-        f"- independence: **{receipt['verifier']['independence']['verdict']}** — "
-        f"{receipt['verifier']['independence']['basis']}",
+        f"- independence: **{_text(receipt['verifier']['independence']['verdict'])}** — "
+        f"{_text(receipt['verifier']['independence']['basis'])}",
     ]
     external = receipt["producer"].get("external")
     if external:
         lines.append(
-            f"- external producer: `{external['name']}`"
-            + (f" · run `{external['run_id']}`" if external.get("run_id") else "")
-            + (f" · <{external['source_url']}>" if external.get("source_url") else "")
-            + f" — declared, {external['basis']}")
+            f"- external producer: {_code(external['name'])}"
+            + (f" · run {_code(external['run_id'])}" if external.get("run_id") else "")
+            # Not `<...>`: a Markdown autolink reads its content literally, so a `>` in the
+            # value would close the construct the renderer opened and let the rest become
+            # structure. A code span cannot be closed by a value `_code` fenced.
+            + (f" · {_code(external['source_url'])}" if external.get("source_url") else "")
+            + f" — declared, {_text(external['basis'])}")
         for claim in external.get("claims", []):
             lines.append(
-                f"  - producer claims `{claim['name']}={claim['value']}` — "
-                f"**gate_effect: {claim['gate_effect']}**, recorded next to rig's "
+                f"  - producer claims {_code(str(claim['name']) + '=' + str(claim['value']))} — "
+                f"**gate_effect: {_text(claim['gate_effect'])}**, recorded next to rig's "
                 "verdict and never as part of it")
     lines += [
         "",
         "## Isolation",
         "",
-        f"- mode: `{receipt['isolation'].get('mode')}`",
-        f"- enforced by: {receipt['isolation'].get('enforced_by') or '—'}",
-        f"- {receipt['isolation'].get('note')}",
+        f"- mode: {_code(receipt['isolation'].get('mode'))}",
+        f"- enforced by: {_text(receipt['isolation'].get('enforced_by') or '—')}",
+        f"- {_text(receipt['isolation'].get('note'))}",
         "",
         "## Gates",
         "",
     ]
     gates = receipt["gates"]
     if not gates.get("observed"):
-        lines.append(f"not evaluated — {gates.get('reason')}")
+        lines.append(f"not evaluated — {_text(gates.get('reason'))}")
     else:
-        counts = " · ".join(f"{v} {k}" for k, v in sorted(gates["counts"].items()))
-        lines += [f"**{gates['status']}** ({counts}) — presets {', '.join(gates['presets'])}", ""]
+        # `_text(k)`: these keys are the gate's recorded statuses, which come off disk like
+        # every other value here. A key is not safer than a value for having been used as one.
+        counts = " · ".join(f"{v} {_text(k)}" for k, v in sorted(gates["counts"].items()))
+        lines += [f"**{_text(gates['status'])}** ({counts}) — "
+                 f"presets {', '.join(_text(x) for x in gates['presets'])}", ""]
         lines += ["| criterion | status | note |", "|---|---|---|"]
         for c in gates["criteria"]:
-            note = c["detail"].replace("|", "\\|")
+            note = _text(c["detail"])
             if c.get("overridden"):
                 note = f"**overridden** — {note}"
-            lines.append(f"| `{c['name']}` | {c['status']} | {note} |")
+            lines.append(f"| {_code(c['name'])} | {_text(c['status'])} | {note} |")
     lines += ["", "## Approvals", ""]
     approvals = receipt["approvals"]
     if not approvals.get("observed"):
-        lines.append(f"none recorded — {approvals.get('reason')}")
+        lines.append(f"none recorded — {_text(approvals.get('reason'))}")
     else:
         for d in approvals["decisions"]:
-            lines.append(f"- `{d['actor']}` **{d['decision']}** ({', '.join(d['roles']) or 'no role'}) {d['note']}")
+            lines.append(f"- {_code(d['actor'])} **{_text(d['decision'])}** "
+                         f"({', '.join(_text(r) for r in d['roles']) or 'no role'}) "
+                         f"{_text(d['note'])}")
     prov = receipt["provenance"]
     lines += ["", "## Provenance", ""]
     if not prov.get("observed"):
-        lines.append(f"unsigned — {prov.get('reason')}")
+        lines.append(f"unsigned — {_text(prov.get('reason'))}")
     else:
         verified = {True: "verifies", False: "DOES NOT VERIFY", None: "could not be checked"}[prov["verified"]]
-        lines.append(f"- {prov['algorithm']} signature {verified} (`{prov['verify_with']}`)")
+        lines.append(f"- {_text(prov['algorithm'])} signature {verified} ({_code(prov['verify_with'])})")
         if prov["forced"]:
             lines.append("- **accepted with --force**")
     lines += ["", "## Intent", ""]
     goal = receipt["intent"]
     if not goal.get("observed"):
-        lines.append(f"not recorded — {goal['reason']}")
+        lines.append(f"not recorded — {_text(goal['reason'])}")
     else:
-        lines += [f"> {goal['goal']}", ""]
+        lines += [f"> {_text(goal['goal'])}", ""]
         for assumption in goal["assumptions"]:
-            lines.append(f"- assuming: {assumption}")
+            lines.append(f"- assuming: {_text(assumption)}")
         for requirement in goal["requirements"]:
             # The origin on every line: "somebody asked for this" and "rig concluded it" are
             # the distinction the contract exists to draw, and a list that read the same for
             # both would erase it here after keeping it everywhere else. The source with it,
             # because the strongest origins are the ones that have to say where.
-            said = f" (per {requirement['source']})" if requirement["source"] else ""
-            lines.append(f"- [{requirement['origin']}] {requirement['text']}{said}")
+            said = f" (per {_text(requirement['source'])})" if requirement["source"] else ""
+            lines.append(f"- \\[{_text(requirement['origin'])}] {_text(requirement['text'])}{said}")
             # Named evidence and gate observations kept apart: a requirement resting on a test
             # nobody wired to this gate and one resting on nothing both had no `checked_by`,
             # and printing only that made them the same requirement on the page.
             if requirement["evidence"]:
-                lines.append(f"  - shown by: {', '.join(requirement['evidence'])}")
+                lines.append(f"  - shown by: {', '.join(_code(e) for e in requirement['evidence'])}")
             else:
                 lines.append("  - names nothing that would show it")
             checked = ", ".join(
-                f"{c['criterion']} (recorded more than once — no single verdict)"
+                f"{_code(c['criterion'])} (recorded more than once — no single verdict)"
                 if c["ambiguous"] else
-                f"{c['criterion']} ({c['status']}"
+                f"{_code(c['criterion'])} ({_text(c['status'])}"
                 + (", overridden" if c["overridden"] else "") + ")"
                 for c in requirement["checked_by"])
             lines.append(f"  - this gate ruled on: {checked}" if checked
@@ -881,29 +987,51 @@ def render_markdown(receipt: dict) -> str:
         for excluded in goal["non_goals"]:
             # A receipt that dropped these could present excluded work as though the contract
             # never excluded it.
-            lines.append(f"- not this: {excluded}")
+            lines.append(f"- not this: {_text(excluded)}")
         for question in goal["ambiguities"]:
             # "would be settled by", not "settled by". `validate` requires `resolved_by` to
             # say what *would* close the question; a page that printed it as though it had
             # been closed would turn an open ambiguity into a decision the contract records
             # nobody making.
-            lines.append(f"- open: {question.get('question')} "
-                         f"(would be settled by {question.get('resolved_by')})")
+            lines.append(f"- open: {_text(question.get('question'))} "
+                         f"(would be settled by {_text(question.get('resolved_by'))})")
         for withheld, why in sorted(_INTENT_WITHHELD.items()):
             # On the page, not only in the source. A reader cannot check a declaration they
             # cannot see, and a page that looks complete while omitting a field the JSON
             # carries is the claim this section makes going false.
-            lines.append(f"- not shown here: {withheld} — {why}")
+            lines.append(f"- not shown here: {_text(withheld)} — {_text(why)}")
         if not goal["requirements"]:
             lines.append("no requirements recorded")
+    lines += ["", "## Assurance asked for", ""]
+    asked = receipt["assurance_target"]
+    if not asked.get("observed"):
+        lines.append(f"not recorded — {_text(asked['reason'])}")
+    else:
+        # The three counts stay three. `unmet` says rig looked and what it found does not
+        # satisfy the target; `unobservable` says it cannot look at that axis at all. A line
+        # that added them would report "we do not measure that" as a shortfall.
+        lines.append(f"**{_text(asked['status'])}** — {asked['met']} met, {asked['unmet']} unmet, "
+                     f"{asked['unobservable']} unobservable")
+        lines.append("")
+        for axis, entry in sorted(asked["axes"].items()):
+            if entry["outcome"] == "met":
+                lines.append(f"- {_text(axis)}: asked for {_code(entry['required'])} — met")
+            elif entry["outcome"] == "unmet":
+                lines.append(f"- {_text(axis)}: asked for {_code(entry['required'])} — recorded "
+                             f"{_code(entry['achieved'])}")
+            else:
+                # The receipt's own reason for not having looked, not a phrase invented here.
+                lines.append(f"- {_text(axis)}: asked for {_code(entry['required'])} — not observed: "
+                             f"{_text(entry.get('reason'))}")
     lines += ["", "## Evidence", ""]
     for e in receipt["evidence"]:
-        lines.append(f"- `{e['path']}` — {e['kind']} (`{(e.get('sha256') or '')[:12]}`)")
+        lines.append(f"- {_code(e['path'])} — {_text(e['kind'])} "
+                     f"({_code((e.get('sha256') or '')[:12])})")
     if not receipt["evidence"]:
         lines.append("none recorded")
     lines += ["", "---", "",
               f"Projected from {len(receipt['sources'])} recorded source(s) at "
-              f"{receipt['generated_at']}. This receipt makes no judgment of its own; "
+              f"{_text(receipt['generated_at'])}. This receipt makes no judgment of its own; "
               "verify it is still current with `workbench.py receipt --verify`.", ""]
     return "\n".join(lines)
 
