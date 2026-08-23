@@ -34,6 +34,17 @@ def _snapshot():
             "matched_case_count": 8,
             "note": "observational evidence only",
         },
+        "assurance": {
+            "counts": {"assurance-complete": 1, "assurance-incomplete": 0,
+                       "assurance-unobservable": 0, "absent": 3, "unreadable": 0,
+                       "invalid": 0},
+            "tasks": [{"task_id": "rig-20260101-000000-example",
+                       "status": "assurance-complete", "met": 1, "unmet": 0,
+                       "unobservable": 0,
+                       "axes": {"gate": {"outcome": "met", "required": "passed",
+                                         "achieved": "passed"}}}],
+            "unreadable_tasks": [],
+        },
         "fleet": {
             "configured": True,
             "projects": 2,
@@ -86,4 +97,9 @@ def test_snapshot_schema_is_presentation_neutral(tmp_path):
     snapshot = mission_control.build_snapshot(tmp_path)
     assert snapshot["schema"] == "rig.mission-control/v1"
     assert snapshot["operations"]["tasks_total"] == 0
+    # A cold start has nothing to compare, and says so with zeros in named states rather
+    # than by leaving the section out — an absent section reads as a page that never looked.
+    assert snapshot["assurance"]["counts"]["assurance-complete"] == 0
+    assert snapshot["assurance"]["counts"]["absent"] == 0
+    assert snapshot["assurance"]["tasks"] == []
     assert snapshot["field_study"]["arms"]["rig"]["n"] == 0

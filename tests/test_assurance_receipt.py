@@ -7,6 +7,7 @@ absence rendered as success, and no isolation claim stronger than what was enfor
 
 import json
 import pathlib
+import re
 
 import pytest
 
@@ -586,9 +587,9 @@ def test_the_markdown_reads_the_intent_block_aloud(task):
     page = assurance.render_markdown(assurance.build_receipt(root, task_id))
     assert "## Intent" in page
     assert "do the thing" in page and "the API is stable" in page
-    assert "[explicit-user] tests pass (per issue #1)" in page
-    assert "shown by: tests_pass_or_explained" in page
-    assert "this gate ruled on: tests_pass_or_explained (passed)" in page
+    assert "\\[explicit-user] tests pass (per issue #1)" in page
+    assert "shown by: `tests_pass_or_explained`" in page
+    assert "this gate ruled on: `tests_pass_or_explained` (passed)" in page
     assert "[inferred] rig guessed this" in page
     assert "names nothing that would show it" in page
     # "would be settled by": `resolved_by` says what *would* close the question, and a
@@ -623,7 +624,7 @@ def test_the_markdown_tells_evidence_apart_from_what_the_gate_ruled_on(task):
                          {"text": "nothing at all", "origin": "explicit-user",
                           "source": "issue #2"}]})
     page = assurance.render_markdown(assurance.build_receipt(root, task_id))
-    assert "shown by: test_login" in page
+    assert "shown by: `test_login`" in page
     assert "names nothing that would show it" in page
     assert page.count("this gate ruled on none of it") == 2
     assert "not this: rewriting the parser" in page
@@ -702,7 +703,7 @@ def test_a_criterion_the_gate_recorded_twice_is_marked_where_the_block_is_built(
     [checked] = receipt["intent"]["requirements"][0]["checked_by"]
     assert checked["ambiguous"] is True and checked["status"] is None
     page = assurance.render_markdown(receipt)
-    assert "tests_pass_or_explained (recorded more than once — no single verdict)" in page
+    assert "`tests_pass_or_explained` (recorded more than once — no single verdict)" in page
 
 
 # ── what round 7 found: the guard's own way out ──────────────────────────────────
@@ -765,3 +766,419 @@ def test_two_identical_rulings_are_still_not_a_verdict(task):
     assert receipt["gates"]["recorded_more_than_once"] == ["tests_pass_or_explained"]
     [checked] = receipt["intent"]["requirements"][0]["checked_by"]
     assert checked["ambiguous"] is True and checked["status"] is None
+
+
+# ── #479: what was asked for, beside what was recorded ──────────────────────────
+def test_the_receipt_records_the_assurance_target_source(task):
+    """Absent sources are recorded with a null digest rather than omitted, so a receipt built
+    before a target was written does not stay `fresh` after one appears."""
+    root, task_id = task
+    receipt = assurance.build_receipt(root, task_id)
+    assert any(s["path"].endswith("assurance-target.json") for s in receipt["sources"])
+
+
+def test_the_receipt_compares_what_was_asked_for(task):
+    root, task_id = task
+    _write(_task_dir(root, task_id), "assurance-target.json",
+           {"schema": "rig.assurance-target/v1", "axes": {"gate": "passed"}})
+    asked = assurance.build_receipt(root, task_id)["assurance_target"]
+    assert asked["observed"] is True and asked["status"] == "assurance-complete"
+    assert asked["axes"]["gate"]["achieved"] == "passed"
+
+
+def test_the_receipt_says_when_nothing_was_asked_for(task):
+    root, task_id = task
+    asked = assurance.build_receipt(root, task_id)["assurance_target"]
+    assert asked["observed"] is False and asked["not_recorded"] == "absent"
+
+
+def test_a_target_naming_one_key_twice_reaches_the_receipt_as_unreadable(task):
+    """The receipt refuses exactly what the command that writes the document refuses. A check
+    on one ingestion path is a check on one ingestion path."""
+    root, task_id = task
+    (_task_dir(root, task_id) / "assurance-target.json").write_text(
+        '{"schema": "rig.assurance-target/v1", "axes": {"gate": "failed", "gate": "passed"}}',
+        encoding="utf-8")
+    asked = assurance.build_receipt(root, task_id)["assurance_target"]
+    assert asked["observed"] is False and asked["not_recorded"] == "unreadable"
+    assert "passed" not in json.dumps(asked), "the duplicate was read rather than refused"
+
+
+def test_the_markdown_reads_the_assurance_target_aloud(task):
+    root, task_id = task
+    _write(_task_dir(root, task_id), "assurance-target.json",
+           {"schema": "rig.assurance-target/v1",
+            "axes": {"gate": "passed", "approval": "recorded"}})
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "## Assurance asked for" in page
+    assert "gate: asked for `passed` — met" in page
+    # The receipt's own reason for not having looked, and never the word for a shortfall.
+    assert "approval: asked for `recorded` — not observed:" in page
+    assert "1 met, 0 unmet, 1 unobservable" in page
+
+
+def test_the_markdown_says_when_nothing_was_asked_for(task):
+    root, task_id = task
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "## Assurance asked for" in page
+    assert "not recorded — no assurance-target.json" in page
+
+
+# ── what rounds 1 and 2 found: the page interpolated what a file said, verbatim ──
+#: Everything a value could use to become structure: a newline to start a line, a backtick to
+#: close the code span it was put inside, `>` to close a construct the renderer opened, and
+#: the inline markers.
+POISON = ("\n## Forged heading\n**FORGED VERDICT** _also forged_ ~struck~ x` `<img src=x> "
+          "| col > ]bracket[ ``double`` *em* ![i](u) &lt;b&gt;\n--- \n1. item\n> quote\n"
+          "\ud800 lone surrogate \\ backslash \\* \\` trailing\\")
+
+
+def _kinds(page: str) -> list:
+    """The page's structure with its words removed.
+
+    A value that became structure changes this; a value that stayed a value cannot. Compared
+    between a clean page and a poisoned one rather than pattern-matched, because the property
+    is not "these characters are absent" — the page reports what the file said — but "what the
+    file said did not become part of the page's own shape".
+    """
+    shape = []
+    for row in page.splitlines():
+        stripped = row.lstrip()
+        kind = ("heading" if stripped.startswith("#")
+                else "row" if stripped.startswith("|")
+                else "quote" if stripped.startswith(">")
+                else "item" if stripped.startswith("- ")
+                else "blank" if not stripped else "prose")
+        # The structural markers a Markdown reader would act on, with code spans removed and
+        # backslash-escaped ones discounted. Not the backtick count and not the span count:
+        # a value that legitimately contains backticks gets a longer delimiter and its own
+        # backticks sit inside the span, and this reader is not a CommonMark parser — both
+        # numbers move without anything having gone wrong. The delimiter rule that keeps a
+        # value inside its span is checked directly instead, in
+        # `test_a_value_cannot_close_the_code_span_it_was_put_inside`.
+        # `_strip_code_spans` already drops escapes, so what is left is what a Markdown
+        # reader acts on.
+        bare, _ = _strip_code_spans(row)
+        markers = tuple(bare.count(ch) for ch in "|*_[]<>~")
+        shape.append((kind, markers))
+    return shape
+
+
+
+
+
+def _strip_code_spans(row: str) -> tuple:
+    """One line with its code spans removed, and how many it had.
+
+    CommonMark's own rule: a run of N backticks closes at the next run of exactly N. Not a full
+    parser — this is the page's structure being compared against itself, and both sides go
+    through the same reading.
+    """
+    i, keep, spans = 0, [], 0
+    while i < len(row):
+        # A backslash escape comes first: `\\`` does not open a code span, and a scanner that
+        # paired backticks before honouring escapes would remove a chunk containing the
+        # escaping backslashes and leave everything after it shifted.
+        if row[i] == chr(92) and i + 1 < len(row):
+            i += 2
+            continue
+        if row[i] == "`":
+            run = len(re.match(r"`+", row[i:]).group())
+            rest = row[i + run:]
+            for match in re.finditer(r"`+", rest):
+                if len(match.group()) == run:
+                    i += run + match.end()
+                    spans += 1
+                    break
+            else:
+                keep.append(row[i])
+                i += 1
+            continue
+        keep.append(row[i])
+        i += 1
+    return "".join(keep), spans
+
+
+def _outside_code_spans(page: str) -> str:
+    """The page with every code span removed, so what is left is what a Markdown reader parses
+    as structure."""
+    return "\n".join(_strip_code_spans(row)[0] for row in page.splitlines())
+
+
+def _write_ascii(d: pathlib.Path, name: str, payload: dict) -> None:
+    """JSON with non-ASCII escaped, which is how a lone surrogate reaches disk at all: it
+    cannot be encoded as UTF-8, so `"\\ud800"` in the file is the only form of it there is."""
+    (d / name).write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
+                          encoding="utf-8")
+
+
+def _poisoned(root, task_id, value: str) -> None:
+    d = _task_dir(root, task_id)
+    _write = _write_ascii
+    _write(d, "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": value,
+        "assumptions": [value], "non_goals": [value],
+        "requirements": [{"text": value, "origin": "explicit-user", "source": value,
+                          "evidence": [value]}],
+        "ambiguities": [{"question": value, "resolved_by": value}]})
+    _write(d, "assurance-target.json", {"schema": "rig.assurance-target/v1",
+                                        "axes": {value: "passed"}})
+    acceptance = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
+    acceptance["checks"] = [{"name": value, "status": "passed", "detail": value}]
+    _write(d, "acceptance.json", acceptance)
+
+
+def _leaves(value, replacement):
+    """The same receipt with every string in it replaced by `replacement`.
+
+    Every leaf, not the ones a test author thought of. The file-level fixture below poisons the
+    documents rig reads, which proves the values travel through the readers; this poisons the
+    *page's* whole input, which is the only way to cover a field nobody remembered — including
+    one added after this test was written.
+
+    Numbers and booleans are left alone so the renderer takes the same branches on both sides,
+    and both sides get an equally non-matching string wherever it compares one, so the two
+    pages differ in what the values *say* and in nothing else.
+    """
+    if isinstance(value, dict):
+        return {key: _leaves(item, replacement) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_leaves(item, replacement) for item in value]
+    return replacement if isinstance(value, str) else value
+
+
+def test_no_rendered_value_at_all_can_become_part_of_the_page(task):
+    """Every string the page renders, whichever file it came from and whether or not anybody
+    remembered it.
+
+    `render_markdown` reaches `_text` or `_code` at each site rather than escaping the receipt
+    once, because a code span and a line of prose need different treatment and no single pass
+    can know which a value is heading for. That makes the rule a distributed one, and this is
+    what stops it being a remembered one: a site that interpolated a raw value would show up
+    here, and so would a field added tomorrow.
+    """
+    root, task_id = task
+    _write(_task_dir(root, task_id), "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "g",
+        "requirements": [{"text": "t", "origin": "explicit-user", "source": "s",
+                          "evidence": ["e"]}],
+        "ambiguities": [{"question": "q", "resolved_by": "r"}]})
+    _write(_task_dir(root, task_id), "assurance-target.json",
+           {"schema": "rig.assurance-target/v1", "axes": {"gate": "passed"}})
+    receipt = assurance.build_receipt(root, task_id)
+
+    clean = assurance.render_markdown(_leaves(receipt, "harmless"))
+    page = assurance.render_markdown(_leaves(receipt, POISON))
+    # The poisoner did something. Without this the comparison passes when `_leaves` returns
+    # the receipt untouched — two identical pages agree about everything, including that
+    # nothing went wrong. That is the shape this whole change kept finding in its own checks,
+    # and it was in the check written to catch it.
+    assert page != clean and "FORGED VERDICT" in page, "the poisoner changed nothing"
+    assert _kinds(page) == _kinds(clean), (
+        "a rendered value changed the page's own structure — some interpolation is not "
+        "reaching _text or _code")
+    assert "<" not in _outside_code_spans(page).replace(chr(92) + "<", "")
+
+
+def test_no_value_off_disk_can_become_part_of_the_page(task):
+    """The newline ends the line the renderer wrote and starts one the document's author did;
+    a backtick closes the code span the value was put inside; `>` closes a construct the
+    renderer opened. All three turn a value into a heading, a row, or a verdict.
+
+    Poisoned everywhere at once and compared against the same page built from a harmless
+    value, so what is under test is the page's shape rather than the fields somebody
+    remembered to escape — the rule eight review rounds of #476 were about.
+    """
+    root, task_id = task
+    _poisoned(root, task_id, "harmless")
+    clean = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    _poisoned(root, task_id, POISON)
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+
+    assert _kinds(page) == _kinds(clean), "a value changed the page's own structure"
+    # Outside a code span, a `<` the renderer did not write is raw HTML. The renderer writes
+    # none: the producer's source URL is a code span rather than a Markdown autolink, because
+    # an autolink reads its content literally and a `>` from disk would close it.
+    assert "<" not in _outside_code_spans(page).replace("\\<", "")
+    # And the text is still there — escaped, not dropped. Silently removing what a document
+    # said would be its own way of misreporting it.
+    assert "Forged heading" in page and "FORGED VERDICT" in page
+    # A value ending in a backslash would otherwise escape the renderer's own closing marker —
+    # the `**` around a verdict, a table's `|`. Its backslashes are escaped, so the character
+    # after them is the renderer's and still means what the renderer meant.
+    assert "trailing" + chr(92) * 2 in page
+
+
+def test_a_value_cannot_close_the_code_span_it_was_put_inside(task):
+    """CommonMark reads a code span's content literally, so a backslash escape does nothing
+    there. The delimiter is chosen longer than the longest run of backticks in the value."""
+    assert assurance._code("a`b") == "``a`b``"
+    assert assurance._code("a``b") == "```a``b```"
+    # A backtick at the edge would touch the delimiter; CommonMark strips one space either
+    # side, so the padding is invisible when it is not needed.
+    assert assurance._code("`edge") == "`` `edge ``"
+    assert assurance._code("plain") == "`plain`"
+    # A value that is nothing but backticks, and an empty one: an empty code span cannot be
+    # written, and ```` `` ```` would reach the page as literal punctuation rather than a span.
+    assert assurance._code("```") == "```` ``` ````"
+    assert assurance._code("") == "` `"
+    assert assurance._code(None) == "` `"
+
+
+def test_the_escaping_does_not_change_the_json(task):
+    """Rendering reads the receipt; it does not edit it. The JSON a caller is holding and the
+    page built from it have to say the same thing."""
+    root, task_id = task
+    _write_ascii(_task_dir(root, task_id), "intent.json",
+                 {"schema": "rig.intent-contract/v1", "goal": POISON,
+                  "requirements": [{"text": "x", "origin": "inferred"}]})
+    receipt = assurance.build_receipt(root, task_id)
+    assurance.render_markdown(receipt)
+    assert receipt["intent"]["goal"] == POISON
+
+
+def test_a_lone_surrogate_does_not_stop_the_receipt_being_written(task, tmp_path):
+    """`"\\ud800"` decodes to a character that cannot be encoded as UTF-8 at all, so one
+    poisoned field would stop the page being written rather than forge anything in it. Not a
+    forged verdict — but a receipt nobody can produce is a receipt nobody can check."""
+    root, task_id = task
+    _poisoned(root, task_id, POISON)
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    out = tmp_path / "receipt.md"
+    out.write_text(page, encoding="utf-8")     # raises if a surrogate survived
+    assert "\ud800" not in page
+
+
+def test_rigs_own_prose_in_the_receipt_is_not_markdown(task):
+    """A receipt's `basis` is read by a JSON consumer, by the CLI and by the page, and only one
+    of those three reads a backtick as markup. Carrying it in the JSON meant the page escaped
+    rig's own formatting and printed the backslashes."""
+    root, task_id = task
+    receipt = assurance.build_receipt(root, task_id)
+    assert "`" not in receipt["final_status"]["basis"]
+    page = assurance.render_markdown(receipt)
+    assert "\\`" not in page.splitlines()[2], "the status line printed escape characters"
+
+
+# ── what round 6 found: a key is not safer than a value for having been a key ────
+def test_a_key_the_receipt_derived_from_disk_cannot_become_structure(task):
+    """`gates["counts"]` is keyed on the statuses the acceptance record recorded, so a status
+    containing a newline puts a disk value where nothing was escaping it. The leaf poisoner
+    could not see it: it replaces a mapping's values and leaves its keys, because most keys
+    here are names the renderer looks up rather than words it prints."""
+    root, task_id = task
+    d = _task_dir(root, task_id)
+    acceptance = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
+    acceptance["checks"] = [{"name": "c", "status": "harmless", "detail": ""}]
+    _write(d, "acceptance.json", acceptance)
+    clean = assurance.render_markdown(assurance.build_receipt(root, task_id))
+
+    acceptance["checks"] = [{"name": "c", "status": POISON, "detail": ""}]
+    _write_ascii(d, "acceptance.json", acceptance)
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert _kinds(page) == _kinds(clean)
+
+
+def _keys_printed_raw(source: str) -> list:
+    """Every mapping key this source prints without passing it through `_text` or `_code`.
+
+    A function taking source rather than a test walking one module, so the guard can be shown
+    an unsafe example and required to object. A check nothing exercises is a check nobody knows
+    still works — and this one's first version matched no loop at all and reported success for
+    six rounds.
+
+    Parsed rather than searched: a text search matches this docstring, and the same mistake was
+    made once already in a check that counted call sites.
+    """
+    import ast
+    import textwrap
+
+    def over_a_mapping(iterator) -> bool:
+        # Anywhere inside the expression, not at its root: these loops are written
+        # `for k, v in sorted(x.items())`, and a check that looked only at the outermost call
+        # found none of them.
+        return any(isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
+                   and inner.func.attr in ("items", "keys")
+                   for inner in ast.walk(iterator))
+
+    def bound_key(target):
+        if isinstance(target, ast.Tuple) and target.elts:
+            first = target.elts[0]
+            return first.id if isinstance(first, ast.Name) else None
+        return target.id if isinstance(target, ast.Name) else None
+
+    tree = ast.parse(textwrap.dedent(source))
+    scopes = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For) and over_a_mapping(node.iter):
+            key = bound_key(node.target)
+            if key:
+                scopes.append((key, node.body))
+        elif isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp, ast.DictComp)):
+            body = ([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt])
+            for generator in node.generators:
+                key = bound_key(generator.target) if over_a_mapping(generator.iter) else None
+                if key:
+                    scopes.append((key, body))
+
+    raw = []
+    for key, body in scopes:
+        for statement in body:
+            for printed in (n for n in ast.walk(statement)
+                            if isinstance(n, ast.FormattedValue)):
+                mentions = {n.id for n in ast.walk(printed.value) if isinstance(n, ast.Name)}
+                if key not in mentions:
+                    continue
+                # Wrapped anywhere in the expression, not only at its root: `{_text(k)}` and
+                # `{", ".join(_text(k) for ...)}` are both safe, and `{k}`, `{f"{k}"}` and
+                # `{k.replace("", "")}` are all the same unsafe thing wearing different shapes.
+                wrapped = any(
+                    isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id in ("_text", "_code")
+                    and any(isinstance(n, ast.Name) and n.id == key for n in ast.walk(call))
+                    for call in ast.walk(printed.value))
+                if not wrapped:
+                    raw.append(key)
+    return sorted(set(raw))
+
+
+#: Unsafe shapes the guard has to object to. Positive controls: without them, narrowing the
+#: guard — or disabling it outright — leaves every test passing, which is the failure this
+#: whole change kept finding in its own checks.
+_RAW_KEY_FORMS = [
+    'for k, v in x.items():\n    lines.append(f"{k}")',
+    'for k, v in sorted(x.items()):\n    lines.append(f"{k}")',
+    'for k, v in sorted(x.items()):\n    lines.append(f\'{f"{k}"}\')',
+    'for k, v in sorted(x.items()):\n    lines.append(f"{k.replace(chr(96), chr(96))}")',
+    'for k, v in sorted(x.items()):\n    lines.append(f"{chr(120) + k}")',
+    'y = " ".join(f"{k}" for k, v in sorted(x.items()))',
+]
+
+
+@pytest.mark.parametrize("source", _RAW_KEY_FORMS)
+def test_the_key_guard_objects_to_an_unsafe_shape(source):
+    """The guard, shown something it must refuse. Its first version matched no loop at all and
+    said everything was fine; nothing in the suite would have noticed."""
+    assert _keys_printed_raw(source) == ["k"], source
+
+
+@pytest.mark.parametrize("source", [
+    'for k, v in sorted(x.items()):\n    lines.append(f"{_text(k)}")',
+    'for k, v in sorted(x.items()):\n    lines.append(f"{v}")',
+    'y = " ".join(f"{v} {_text(k)}" for k, v in sorted(x.items()))',
+    'for k, v in sorted(x.items()):\n    lines.append(f"{\', \'.join(_code(k) for _ in v)}")',
+])
+def test_the_key_guard_accepts_a_safe_shape(source):
+    """And the other direction: a guard that objected to everything would also pass the test
+    above while saying nothing about the renderer."""
+    assert _keys_printed_raw(source) == [], source
+
+
+def test_every_key_the_renderer_prints_is_escaped():
+    """A key that came off disk is a value that happens to have been used as one."""
+    import inspect
+
+    raw = _keys_printed_raw(inspect.getsource(assurance.render_markdown))
+    assert not raw, (
+        f"the renderer prints {raw} straight out of a mapping it iterated; a key is not "
+        f"safer than a value for having been used as one")

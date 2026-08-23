@@ -78,6 +78,14 @@ VAGUE = ("production quality", "production-quality", "production", "high assuran
          "enterprise", "prod")
 
 
+#: The keys a target document may carry. Closed for the reason every other schema in this
+#: package is: a key accepted here and read by nothing would let a target carry `waive: true`
+#: or `axis: "isolation"` all the way to the floor, the receipt and the dashboard while the
+#: field it asserted was discarded — leaving the author believing the target said something no
+#: part of rig ever read.
+TARGET_KEYS = frozenset({"schema", "axes"})
+
+
 def validate(payload: dict) -> list[str]:
     """Every way this payload is not an assurance target, not the first one.
 
@@ -91,6 +99,13 @@ def validate(payload: dict) -> list[str]:
 
     if payload.get("schema") != SCHEMA:
         problems.append(f"schema: expected {SCHEMA!r}, got {payload.get('schema')!r}")
+
+    unknown = sorted(str(key) for key in payload if key not in TARGET_KEYS)
+    if unknown:
+        problems.append(
+            f"unknown key(s) {', '.join(unknown)}: a target carries "
+            f"{', '.join(sorted(TARGET_KEYS))}, and a key nothing reads would be asserted here "
+            f"and answered nowhere")
 
     axes = payload.get("axes")
     if not isinstance(axes, dict):
@@ -122,6 +137,24 @@ def validate(payload: dict) -> list[str]:
             problems.append(f"axes.{axis}: {required!r} is not one of "
                             f"{', '.join(AXES[axis])}")
     return problems
+
+
+def read(path) -> dict:
+    """A target document from disk, refusing what no reader of one should accept.
+
+    The one place a target is parsed. `intent.read` exists for the same reason and was written
+    after a reviewer found three parsers disagreeing: JSON allows a key twice and `json.loads`
+    keeps the last one silently, so `"gate": "failed", "gate": "passed"` would be refused by
+    whichever caller thought to check and accepted as a request for a passing gate by the rest.
+    A rule each caller has to remember is a rule one of them will not.
+    """
+    import json as _json
+    import pathlib as _pathlib
+
+    from .synthesis import _no_duplicate_keys
+
+    return _json.loads(_pathlib.Path(path).read_text(encoding="utf-8"),
+                       object_pairs_hook=_no_duplicate_keys("target"))
 
 
 def _achieved(receipt: dict) -> dict[str, str | None]:
@@ -227,14 +260,13 @@ def cmd_assurance_target(args) -> "NoReturn":  # noqa: F821
     this command exists to remove, which is `cmd_contract`'s reason too.
     """
     import json
-    import pathlib
     import sys
 
     from .assurance import build_receipt
     from .state import repo_root
 
     try:
-        target = json.loads(pathlib.Path(args.target).read_text(encoding="utf-8"))
+        target = read(args.target)
     except Exception as exc:  # noqa: BLE001 — every failure to read is one status
         print(json.dumps({"schema": SCHEMA, "status": "execution-error",
                           "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
@@ -247,14 +279,34 @@ def cmd_assurance_target(args) -> "NoReturn":  # noqa: F821
 
     try:
         receipt = build_receipt(repo_root(), args.task_id)
-        result = evaluate(target, receipt)
+        # Through the projection, not `evaluate` directly. One *implementation* compares a
+        # target against a receipt, and everything that shows a comparison — this command, the
+        # receipt's own block, the Markdown page, Mission Control — reaches it through that
+        # one, so two views cannot come to different answers about the same question.
+        #
+        # Not the same as one comparison happening. The run may have recorded a target of its
+        # own, which the receipt has already compared; the target named on the command line is
+        # a different question with a legitimately different answer. Both are printed, because
+        # a command that showed only one while the other existed would let a reader take the
+        # answer to the question they did not ask.
+        from .assurance_wiring import projection
+
+        result = projection(target, receipt)
+        # `.get`, and then said out loud. Every receipt this repository builds carries the
+        # block; one that does not is a receipt from somewhere else, and printing nothing
+        # about the run's own target would read as the run having recorded none.
+        recorded = receipt.get("assurance_target") or {
+            "observed": False,
+            "reason": "this receipt carries no assurance-target block, so what the run itself "
+                      "asked for is unknown — not absent"}
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"schema": SCHEMA, "status": "execution-error",
                           "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
         sys.exit(EXECUTION_ERROR)
 
     if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        print(json.dumps({"schema": SCHEMA, "asked": result, "recorded": recorded},
+                         ensure_ascii=False, indent=2, sort_keys=True))
     else:
         print(f"assurance target: {result['status']} — {result['met']} met, "
               f"{result['unmet']} unmet, {result['unobservable']} unobservable")
@@ -264,4 +316,10 @@ def cmd_assurance_target(args) -> "NoReturn":  # noqa: F821
             detail = entry.get("reason") or f"recorded {entry['achieved']!r}"
             print(f"  {entry['outcome']:>13}  {axis}: asked for "
                   f"{entry['required']!r} — {detail}")
+        # The run's own target, when it has one. This command answered about the file named on
+        # the command line; the receipt already answered about the file in the run, and a
+        # reader who did not know both existed would take one for the other.
+        print("  the run's own recorded target: "
+              + (recorded["status"] if recorded.get("observed")
+                 else f"none — {recorded['reason']}"))
     sys.exit(COMPLETE if result["status"] == "assurance-complete" else INCOMPLETE)

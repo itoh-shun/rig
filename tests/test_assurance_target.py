@@ -31,6 +31,10 @@ def _receipt(**blocks) -> dict:
         "provenance": {"observed": True, "verified": True},
         "approvals": {"observed": True, "decisions": [{"actor": "a"}]},
         "gates": {"observed": True, "status": "passed"},
+        # The block every real receipt carries (#479). A stub missing it is a stub describing
+        # a receipt shape that no longer exists.
+        "assurance_target": {"observed": False, "reason": "no assurance-target.json",
+                             "not_recorded": "absent"},
     }
     base.update(blocks)
     return base

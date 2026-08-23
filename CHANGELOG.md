@@ -2,6 +2,135 @@
 
 ## Unreleased
 
+An assurance target now reaches the two places that can use it. `workbench.py assurance-derive
+<target> --requires <mapping> --against <catalog>` derives the workflow floor a target needs,
+and the receipt — and Mission Control after it — reports what was asked for beside what was
+recorded.
+
+**The mapping from an outcome to a step is passed in.** A target names outcomes: a tree the
+work was written to, a signature that verifies, a gate that passed. A workflow names steps. The
+claim that *this step is how you get that outcome* is a policy, and it is declared by the
+caller for the same reason `synthesise`'s floor is built by the caller and never read from the
+proposal it is checking.
+
+**An axis nobody said how to reach is refused, not skipped.** The whole failure this could
+produce is a workflow that looks like it satisfies a target while nothing in it does. Silence
+about `provenance: signed-and-verified` means nobody wrote down which step signs — and reading
+it as "no step is needed" would put the target's own guarantee below the floor while reporting
+that the floor held. An *empty* declaration is kept: "reaching this needs no step of its own"
+is a thing a policy can truthfully say, and somebody wrote it. Absence is the shape that means
+nobody has decided.
+
+**And it is keyed on the axis and the value together.** `gate: skipped` is not a weaker
+`gate: passed` and does not inherit its steps. `assurance-derive` also names, before it is
+asked, every axis-value pair a mapping could not plan for — otherwise an operator learns about
+a gap only when they happen to ask for that value.
+
+**The receipt evaluates once, and every other view copies it.** `assurance_target.evaluate` is
+called from one place; the Markdown page and Mission Control read that block rather than the
+files. A dashboard disagreeing with the receipt about whether an assurance held is worse than
+either being wrong alone, and eight review rounds on #476 were that defect found one layer at a
+time. A target is read through the reader that writes it, so a key named twice is refused the
+same way wherever it arrives — `"gate": "failed", "gate": "passed"` was previously read by
+`assurance-target` as a request for a passing gate.
+
+**`unobservable` stays its own outcome all the way to the page.** `unmet` says rig looked and
+what it found falls short; `unobservable` says it cannot look. They are counted separately, get
+separate tiles, and the axis rig cannot answer is never marked as a shortfall. Mission Control
+puts no rate or score on those counts: a number computed by its own rule would be a second
+verdict on a page whose whole claim is that it holds none. A task whose state cannot be read is
+named rather than dropped: the section enumerates run directories rather than parsing every
+`task.json` first, because a row missing from a dashboard reads as a task with nothing to
+report. (The rest of the page still fails on a malformed `task.json` — `read_all_tasks` raises,
+and what a malformed record should mean to the board is a decision of its own.)
+
+**And nothing a file says can become something the page says.** The receipt's Markdown page
+interpolated values read off disk directly, so a newline in a goal, an axis name or a
+validation message ended the line the renderer wrote and started one the document's author did
+— forging a heading, a table row, or a verdict. The renderer reaches an escaping
+function at each site, because prose and a code span need different treatment and no single
+pass over the receipt can know which one a value is heading for. That makes the rule a
+distributed one — the shape eight rounds of #476 were about — so what stops it being a
+*remembered* one is a test rather than a claim: the page is rendered twice from the same
+receipt, once with every string replaced by a harmless value and once with every string
+replaced by an adversarial one, and the two must have the same structure. Every rendered leaf,
+whichever file it came from, whether or not anybody thought of it, including one added
+tomorrow. It found the footer's timestamp, which nothing else had.
+
+A mapping's *keys* are not covered by that, because most of them are names the renderer looks
+up rather than words it prints — but the gate's status counts are keyed on what the acceptance
+record recorded, so one of them was a disk value nothing was escaping. A key is not safer than
+a value for having been used as one. The guard for the next one parses the renderer and refuses
+any key it prints straight out of a mapping it iterated.
+
+Both of those checks are themselves checked. Seven review rounds on this change found the same
+thing five times — not a rule somebody forgot, but *a check that was not looking where it said
+it was looking*: an escape set assembled from remembered attacks, a fixture poisoning the files
+somebody picked, an oracle whose lookbehind could not tell `\*` from `\\*`, a call-site count
+that matched its own comments, and a key guard that matched no loop at all and reported success
+for six rounds. So the key guard is shown six unsafe shapes it must object to and four safe ones
+it must not, the poisoner is required to have changed the page before its comparison means
+anything, and the mutation sweep runs against the tests as well as the code. A check nothing
+exercises is a check nobody knows still works.
+
+One check was deleted rather than fixed. It read the source and refused a second caller of
+`assurance_target.evaluate`, and it was broken four rounds running — it matched the spelling,
+then missed an alias, then the module that defines the function, then `getattr` — with
+`globals()[…]` next. Approximating Python's name binding with `ast` is a thing this repository
+has paid for before. What it was protecting is covered exactly and at run time by the test that
+counts the calls made while the dashboard renders, and the invariant it claimed was stronger
+than the one that matters: *one implementation* compares a target against a receipt, so two
+views cannot come to different answers about the same question. A check that cannot be made
+true is worth less than the one that already is. The values are escaped
+rather than stripped, because silently removing what a document said is its own way of
+misreporting it.
+
+Prose and code spans are escaped differently, because a backslash escape does nothing inside a
+code span: CommonMark reads its content literally, so a value escaped for prose still closes
+the span with its own backtick and lets what follows become emphasis, a link, or another line
+that reads as the receipt's verdict. A value inside a code span gets a delimiter longer than
+the longest run of backticks it contains. The producer's source URL is a code span rather than
+a Markdown autolink for the same reason — an autolink also reads its content literally, and a
+`>` from disk would close the construct the renderer opened. And rig's own prose in the JSON no
+longer carries markup: a receipt's `basis` is read by a JSON consumer, by the CLI and by the
+page, and only one of those three reads a backtick as markup.
+
+The rule is checked by rendering the page twice — once from harmless values, once with every
+field poisoned — and comparing the structure. What is under test is the page's own shape rather
+than the fields somebody remembered to escape.
+
+**And a comparison is made in one place.** `assurance_target.evaluate` has exactly one caller,
+and `assurance-target`, the receipt, the Markdown page and Mission Control all reach it through
+`assurance_wiring.projection`. The command used to evaluate its own target directly beside the
+receipt's, which is two places the same comparison could come to different answers. The
+call-site check parses the source rather than searching it, because a text search matches every
+comment that names the function — which is how it passed while a second caller existed.
+
+**And failing to look is never reported as having looked.** An unreadable runs directory used
+to become zero tasks, which printed "no task has recorded an assurance target yet" — a verdict
+the page did not establish and cannot. A missing directory is still a cold start; anything else
+says the records could not be read, and a page where *every* task failed to open no longer
+prints "no task has recorded an assurance target yet" — a statement about the targets, reached
+without looking at one.
+
+**And the target's own schema is closed.** `validate` accepted every extra root field, so
+`{"schema": ..., "axes": {...}, "waive": true}` reached the floor, the receipt and the
+dashboard with the field it asserted discarded — the author believing the target said something
+no part of rig ever read. The characters escaped in prose are chosen by a rule rather than
+assembled from the attacks somebody thought of: every character that can *begin* an inline
+construct. `_` was missing, which is how a reviewer got `_forged verdict_` onto the page while
+the poison fixture, containing `*em*` and no underscore, agreed nothing was wrong.
+
+Two things the escaping does not do, said here rather than left to be discovered. GFM turns a
+bare `www.example.com` into a link with no special character involved, and no escaping prevents
+that without editing the text — a value that looks like a URL may become one. And *one
+implementation* comparing a target against a receipt is not the same as one comparison
+happening: `assurance-target` answers about the file named on the command line while the
+receipt has already answered about the file in the run. Both are real questions with
+legitimately different answers, so the command prints both — showing one while the other
+existed would let a reader take the answer to the question they did not ask (#479).
+
+
 The intent contract now reaches the three places that can use it. `workbench.py intent-derive
 <contract> --against <file> --floor|--target` derives a workflow floor or an assurance target
 from a contract's declared requirements, and the assurance receipt carries the goal back beside

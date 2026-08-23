@@ -21,6 +21,8 @@ from .workbench.cockpit import _aggregate_token_usage
 from .workbench.confidence import aggregate_drill_confidence
 from .workbench.config import ACTIVE_STATUSES
 from .workbench.reporting import force_bypass_counter, gate_status_counts, read_all_tasks
+from .workbench.assurance import build_receipt
+from .workbench.assurance_wiring import ABSENT, INVALID, UNREADABLE_FILE
 from .workbench.state import _load_audit, runs_dir
 
 
@@ -52,9 +54,80 @@ def _operational_snapshot(root: pathlib.Path) -> dict:
     }
 
 
+#: What a task's assurance comparison can be. The three the receipt reports, and the three
+#: reasons it has nothing to report. Kept apart all the way to the page: `unobservable` is not
+#: a softer `unmet` — one says rig looked and what it found falls short, the other says it
+#: cannot look — and "nobody asked for anything" is not a task that fell short of nothing.
+ASSURANCE_STATES = ("assurance-complete", "assurance-incomplete", "assurance-unobservable",
+                    ABSENT, UNREADABLE_FILE, INVALID)
+
+
+def _assurance_snapshot(root: pathlib.Path) -> dict:
+    """Every task's assurance comparison, copied from its receipt.
+
+    This page decides nothing about assurance. `assurance_target.evaluate` runs once, inside
+    the receipt, and what arrives here is already the answer; a dashboard that read the same
+    files and reached its own would eventually disagree with the receipt about whether an
+    assurance held, which is worse than either of them being wrong alone.
+
+    So there is no rate here and no score. Counting what the receipt returned is reporting;
+    dividing it by something would be this page grading the result, on a page whose whole
+    claim is that it holds no verdicts of its own.
+    """
+    base = runs_dir(root)
+    counts = {state: 0 for state in ASSURANCE_STATES}
+    rows = []
+    unreadable_tasks = []
+    # The run directories themselves, not `read_all_tasks`. That helper parses every
+    # `task.json` before returning, so one malformed file would raise before the guard below
+    # could name it — and a task it silently skipped would be a task this page never mentions.
+    # A directory is a task somebody started, whatever is inside it.
+    unreadable_collection = None
+    try:
+        directories = sorted(d.name for d in base.iterdir() if d.is_dir())
+    except FileNotFoundError:
+        # No runs directory is a cold start, not a failure: nothing has been recorded yet.
+        directories = []
+    except OSError as exc:
+        # Anything else — a permission, a broken mount — is rig failing to look. Reporting it
+        # as zero tasks would print "no task has recorded an assurance target yet", which is a
+        # verdict this page did not establish and cannot.
+        directories = []
+        unreadable_collection = f"{type(exc).__name__}: {exc}"
+    for task_id in directories:
+        try:
+            asked = build_receipt(root, task_id)["assurance_target"]
+        except Exception:  # noqa: BLE001
+            # One task whose state cannot be read must not take the page down with it. The
+            # task is named rather than dropped: a row missing from a dashboard reads as a
+            # task that has nothing to report.
+            unreadable_tasks.append(str(task_id))
+            continue
+        if asked.get("observed"):
+            counts[asked["status"]] = counts.get(asked["status"], 0) + 1
+            rows.append({
+                "task_id": task_id,
+                "status": asked["status"],
+                "met": asked["met"], "unmet": asked["unmet"],
+                "unobservable": asked["unobservable"],
+                "axes": asked["axes"],
+            })
+        else:
+            state = asked.get("not_recorded")
+            counts[state] = counts.get(state, 0) + 1
+            if state != ABSENT:
+                # Absent is the ordinary case and would be most of the list. A target that is
+                # there and cannot be read is the one worth a row.
+                rows.append({"task_id": task_id, "status": state,
+                             "reason": asked.get("reason"), "axes": {}})
+    return {"counts": counts, "tasks": rows, "unreadable_tasks": unreadable_tasks,
+            "unreadable_collection": unreadable_collection}
+
+
 def build_snapshot(root: pathlib.Path, *, since: str | None = None) -> dict:
     result = mission_control_snapshot(root, since=since)
     result["operations"] = _operational_snapshot(root)
+    result["assurance"] = _assurance_snapshot(root)
     return result
 
 
@@ -149,6 +222,92 @@ def _render_reviewers(operations: dict) -> str:
     )
 
 
+#: How an outcome is read aloud. `unobservable` says what it is rather than borrowing a word
+#: that would let it be counted with the shortfalls.
+_OUTCOME_WORDS = {"met": "met", "unmet": "not met", "unobservable": "not observable"}
+
+
+def _render_assurance(snapshot: dict) -> str:
+    """Requested against achieved, per task, copied from each receipt."""
+    section = snapshot["assurance"]
+    counts = section["counts"]
+    asked_for = counts["assurance-complete"] + counts["assurance-incomplete"] + \
+        counts["assurance-unobservable"]
+    tiles = "".join([
+        _metric("assurance complete", counts["assurance-complete"],
+                "everything asked for was recorded"),
+        _metric("assurance incomplete", counts["assurance-incomplete"],
+                "asked for, and the receipt records otherwise"),
+        # Its own tile, never added to the one above. "we do not measure that" read as "we
+        # measured it and it was insufficient" is the confusion `assurance_target` names as
+        # the reason the outcome exists at all.
+        _metric("not observable", counts["assurance-unobservable"],
+                "asked for on an axis rig cannot answer"),
+        _metric("no target recorded", counts[ABSENT],
+                "nobody wrote down what was asked for"),
+        _metric("target unreadable", counts[UNREADABLE_FILE] + counts[INVALID],
+                "a target is there and cannot be read"),
+    ])
+    if section.get("unreadable_collection"):
+        # Not the cold-start line. "Nobody has recorded a target" and "rig could not read the
+        # run records at all" are different facts, and only one of them is about the targets.
+        body = ('<div class="callout"><strong>The run records could not be read.</strong> '
+                'These counts are not a statement about what was asked for — nothing was '
+                f'looked at. {_esc(section["unreadable_collection"])}</div>')
+    elif (not asked_for and not counts[UNREADABLE_FILE] and not counts[INVALID]
+          and not section["unreadable_tasks"]):
+        body = ('<div class="empty">No task has recorded an assurance target yet. Write one to '
+                '<code>.rig/runs/&lt;task&gt;/assurance-target.json</code> and the comparison '
+                'appears here — this page reports what was asked for, and asks for nothing on '
+                'anyone\'s behalf.</div>')
+    else:
+        rows = []
+        for task in section["tasks"]:
+            if not task["axes"]:
+                rows.append(
+                    "<tr>"
+                    f'<td><code>{_esc(task["task_id"])}</code></td>'
+                    f'<td>{_esc(task["status"])}</td>'
+                    f'<td colspan="2">{_esc(task.get("reason") or "")}</td>'
+                    "</tr>")
+                continue
+            for axis, entry in sorted(task["axes"].items()):
+                outcome = entry["outcome"]
+                # `achieved` is `None` on the unobservable path by construction, and printing
+                # the receipt's own reason there is the difference between "rig found this
+                # insufficient" and "rig cannot answer this axis".
+                recorded = (_esc(entry.get("reason") or "") if outcome == "unobservable"
+                            else f'<code>{_esc(entry["achieved"])}</code>')
+                rows.append(
+                    "<tr>"
+                    f'<td><code>{_esc(task["task_id"])}</code></td>'
+                    f'<td>{_esc(axis)}: asked for <code>{_esc(entry["required"])}</code></td>'
+                    f'<td class="{"bad" if outcome == "unmet" else ""}">'
+                    f'{_esc(_OUTCOME_WORDS[outcome])}</td>'
+                    f"<td>{recorded}</td>"
+                    "</tr>")
+        body = ('<div class="card table-wrap"><table><thead><tr><th>task</th><th>asked for'
+                "</th><th>outcome</th><th>recorded</th></tr></thead><tbody>"
+                + "".join(rows) + "</tbody></table></div>")
+    unreadable = section["unreadable_tasks"]
+    if unreadable and not asked_for and not counts[UNREADABLE_FILE] and not counts[INVALID]:
+        # Every task that could have had a target was one this page could not read. Saying
+        # "no task has recorded an assurance target yet" would be a verdict about the targets,
+        # reached without looking at a single one.
+        body = ('<div class="empty">Nothing could be read about what was asked for: every '
+                'task state this page tried to open failed. These counts are not a statement '
+                'about the targets.</div>')
+    note = ""
+    if unreadable:
+        # Named, not dropped. A task missing from this table reads as a task with nothing to
+        # report, which is the one thing an unreadable task is not.
+        note = ('<div class="callout"><strong>State could not be read for '
+                f'{len(unreadable)} task(s):</strong> '
+                + _esc(", ".join(unreadable[:8]))
+                + (" …" if len(unreadable) > 8 else "") + "</div>")
+    return f'<div class="metric-grid">{tiles}</div>{body}{note}'
+
+
 def _render_fleet(snapshot: dict) -> str:
     fleet = snapshot["fleet"]
     if not fleet.get("configured"):
@@ -215,6 +374,8 @@ def render_html(snapshot: dict) -> str:
 <h2>Reviewer confidence · measured, not asserted</h2>{_render_reviewers(ops)}
 
 <h2>Real-project evidence · RIG vs bare</h2>{_render_field(snapshot)}
+
+<h2>Assurance · asked for vs recorded</h2>{_render_assurance(snapshot)}
 
 <h2>Fleet governance · multiple repositories</h2>{_render_fleet(snapshot)}
 

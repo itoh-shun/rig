@@ -35,6 +35,7 @@ from .anchors import cmd_scan_anchors
 from .assurance import cmd_receipt
 from .cockpit import cmd_cockpit
 from .assurance_target import cmd_assurance_target
+from .assurance_wiring import cmd_assurance_derive
 from .contract import cmd_contract
 from .development_loop import cmd_dev_loop
 from .assurance_budget import cmd_budget_plan
@@ -153,6 +154,19 @@ def main() -> None:
                       help="the assurance target declared requirements ask for")
     p.add_argument("--json", action="store_true", help="emit the result as JSON")
     p.set_defaults(func=cmd_derive)
+
+    p = sub.add_parser("assurance-derive",
+                       help="derive the workflow floor an assurance target needs, from a "
+                            "declared axis-value to steps mapping (#479)")
+    p.add_argument("target", help="path to a rig.assurance-target/v1 JSON document")
+    p.add_argument("--requires", required=True,
+                   help="path to a JSON object {axis: {value: [{id, source, reason}, ...]}}: "
+                        "which steps reach each outcome. Declared by you, not by rig — an "
+                        "axis-value pair it does not cover is refused, not skipped")
+    p.add_argument("--against", required=True,
+                   help="path to a JSON array: the component catalog")
+    p.add_argument("--json", action="store_true", help="emit the result as JSON")
+    p.set_defaults(func=cmd_assurance_derive)
 
     p = sub.add_parser("assurance-target",
                        help="compare a machine-readable assurance target against what a "
