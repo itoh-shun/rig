@@ -2,6 +2,96 @@
 
 ## Unreleased
 
+The intent contract now reaches the three places that can use it. `workbench.py intent-derive
+<contract> --against <file> --floor|--target` derives a workflow floor or an assurance target
+from a contract's declared requirements, and the assurance receipt carries the goal back beside
+what the gate ruled on.
+
+#435 gave the goal a shape that can refuse. This is what other parts of rig may read out of it,
+and — more of the work — what they may not.
+
+**A conclusion cannot create a requirement.** `synthesise` refuses a floor built from the
+proposal it is checking; the same rule reaches back one step. A requirement rig *inferred*, or
+one a planner *proposed*, may sit in the contract — recording it is the point — but it does not
+put a step on anybody's floor. Only what somebody declared does, and it arrives carrying which
+somebody: a user's request becomes `operator-requested` and a policy's requirement stays
+`policy-required`, because a person can withdraw what they asked for and a policy requirement is
+not theirs to withdraw. Two declarations wanting one step and disagreeing about who requires it
+is refused rather than resolved by which was written first.
+
+**A contract does not get to name what it cannot see.** Its requirements say what would show
+them true: a test id, a gate criterion, a step. Those names are matched against what exists, and
+a name matching nothing grants nothing rather than inventing it — with one report for the case
+that was *meant* to be a step and is misspelled, since nothing here can tell that from a test id
+and silently dropping both would be worse than naming the candidates.
+
+**And it does not fill in an axis no requirement could speak to.** An assurance target has axes
+for isolation, verification, provenance, approval and the gate; only a gate criterion is a
+statement about assurance. So a contract resting on gate criteria asks for a gate that passed
+and says nothing about the rest — reading "production quality" out of a goal and filling in four
+axes is what `assurance_target.VAGUE` refuses, and generating it here would route around that
+refusal by writing the words for the author. A contract that asks for nothing produces no
+document rather than an empty one, because a target requiring nothing is met by everything.
+
+**And the contract's own schema is closed.** `intent.validate` accepted keys `load` then
+dropped, so a requirement carrying `mandatory: true` or `axis: "isolation"` passed — leaving the
+author believing the contract said something it no longer says, and a receipt claiming to copy
+the contract copying most of it. A contract could look like it spoke to an assurance axis while
+nothing read that. The accepted keys are derived from the records that hold them, so a field
+added to `Requirement` is accepted without anyone remembering to.
+
+**And it is read the same way wherever it is read.** Three entry points read a contract from
+disk — `intent`, `intent-derive` and the receipt — and each had its own parser until a review
+pointed out that a duplicated key was refused by two of them and reported as a valid
+declaration by the third. `intent.read` is the one reader now: a rule each caller has to
+remember is a rule one of them will not. It refuses a duplicate key, JSON allows a key twice and `json.loads` keeps the
+last one silently, so a duplicated `origin` would turn an inferred requirement into a declared
+one and the receipt would present that parser choice as what the contract recorded. A contract
+that is there and unreadable is reported as that, not as no contract — the file's digest is in
+`sources` either way, and the two are different situations with different next steps.
+
+**And the page says it too.** The Markdown receipt gained an Intent section — the goal, the
+assumptions, the non-goals, each requirement with its origin, where it was said, what would show
+it and what the gate actually ruled on, and the open questions. Evidence and gate observations
+are kept apart there: a requirement resting on a test nobody wired to this gate and one resting
+on nothing are different requirements, and a page that printed only the gate's view made them
+the same one. The renderer's claim is that it is the same model as the JSON read aloud, so a
+section the JSON gained and the page did not would be that claim going false.
+
+**The projection copies.** *A derived view re-judges nothing; it copies decisions from the
+records that made them.* The receipt reads the goal and the requirements out of the contract,
+reads each named criterion's status out of the gate block, and stops. Whether the criterion
+passing *satisfies* the requirement is `intent.status`'s question and a human's after that. A
+requirement nothing checked is reported with an empty list rather than omitted — "nothing checks
+this" is the fact `intent.unverifiable` exists to surface, and dropping those rows would make a
+contract look better on that page than it is (#476).
+
+**And nobody has to remember any of it.** Six review rounds found the same defect in six
+different places: a contract field accepted by a schema and dropped by a loader, a parser that
+was not the one parser, a page that never learned about a block, a projection that copied by
+hand. Five of those were fixed by deriving that layer from the dataclass, and the sixth round
+found a layer that had not been. Deriving one more place only moves where the next person
+forgets. So the rule is declared once — `intent._CODEC` says how each contract field is read,
+and the receipt declares which fields its page reads aloud — and both declarations are checked
+against the contract *at import*, not in a test: a field nobody said how to read cannot be read,
+and a field nobody said whether to print cannot be left off without saying so. A test can be
+skipped, deselected, or simply not run by the person adding the field; an import cannot.
+
+Withholding a field from the page is itself a decision that has to be visible. The declaration
+began as a set of names, which was the guard's own way out — adding a name satisfied every check
+and the page said nothing, so a field could still be left off quietly by the mechanism written
+to stop that. It is a field-to-reason mapping now: a reason is required, and the page names each
+withheld field and why. Nothing is withheld today.
+
+**And a criterion recorded twice is not a verdict.** The receipt indexed the gate's criteria by
+name, so a criterion the gate ruled on twice gave the page whichever record came last — a
+verdict that depended on the order two records sat in. Any repeat, not only a disagreeing one:
+a gate that ruled once on one criterion is what this page copies from, and anything else is a
+record it says it cannot read a single verdict out of. Marked where the gate block is built, so
+the section that lists every record and the section that looks one up by name cannot come to
+different conclusions about the same file. An open ambiguity now reads *would be settled by*
+rather than *settled by*, which is what `resolved_by` has always meant (#476).
+
 A trustworthy change should explain not only what changed, but why it exists, what evidence
 supports it, and what happened after it shipped. `workbench.py provenance <graph> <node>` traces
 a node's chain in both directions, with confirmed and inferred relations kept apart.

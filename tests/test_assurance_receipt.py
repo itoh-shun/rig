@@ -73,7 +73,7 @@ def test_every_top_level_section_is_present(task):
     root, task_id = task
     receipt = assurance.build_receipt(root, task_id)
     assert {"task", "target", "producer", "verifier", "isolation", "gates",
-            "approvals", "provenance", "evidence", "sources",
+            "approvals", "provenance", "evidence", "sources", "intent",
             "final_status"} <= set(receipt)
 
 
@@ -524,3 +524,244 @@ def test_a_receipt_failure_does_not_take_the_task_detail_down(task, monkeypatch)
     assert detail["task"]["task_id"] == task_id     # the page still renders
     assert detail["assurance"]["receipt"] is None
     assert "nope" in detail["assurance"]["error"]
+
+
+# ---- the goal, read back beside what the gate ruled on (#476) ---------------
+
+def test_a_task_with_no_contract_says_so_rather_than_looking_like_one_with_no_goal(task):
+    root, task_id = task
+    assert assurance.build_receipt(root, task_id)["intent"]["observed"] is False
+
+
+def test_the_contract_is_projected_beside_what_the_gate_ruled_on(task):
+    """Copied, not judged: the receipt reports what the contract said and what the gate
+    recorded, and never decides whether the one satisfied the other."""
+    root, task_id = task
+    _write(_task_dir(root, task_id), "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "do the thing",
+        "requirements": [{"text": "tests pass", "origin": "explicit-user",
+                          "source": "issue #1",
+                          "evidence": ["tests_pass_or_explained"]}]})
+    block = assurance.build_receipt(root, task_id)["intent"]
+    assert block["observed"] is True
+    assert block["goal"] == "do the thing"
+    [requirement] = block["requirements"]
+    assert requirement["declared"] is True
+    assert [c["criterion"] for c in requirement["checked_by"]] == ["tests_pass_or_explained"]
+    assert "satisfied" not in json.dumps(block), "the receipt makes no verdict here"
+
+
+def test_a_contract_naming_one_key_twice_is_not_read_as_its_last_value(task):
+    """`intent-derive` refuses that, and a receipt reading the same file with a plainer
+    parser would present the parser's choice as what the contract recorded."""
+    root, task_id = task
+    (_task_dir(root, task_id) / "intent.json").write_text(
+        '{"schema": "rig.intent-contract/v1", "goal": "g", "requirements": '
+        '[{"text": "t", "origin": "inferred", "origin": "explicit-user", '
+        '"source": "s", "evidence": []}]}', encoding="utf-8")
+    block = assurance.build_receipt(root, task_id)["intent"]
+    assert block["observed"] is False
+    assert "there and cannot be read" in block["reason"]
+
+
+def test_the_contract_file_is_one_of_the_digested_sources(task):
+    """So a receipt built before the contract was written can be told from one built after,
+    by content rather than by mtime."""
+    root, task_id = task
+    receipt = assurance.build_receipt(root, task_id)
+    assert any(s["path"].endswith("intent.json") for s in receipt["sources"])
+
+
+def test_the_markdown_reads_the_intent_block_aloud(task):
+    """The renderer's claim is that it is the same model as the JSON read aloud, so a section
+    the JSON gained and the page did not is that claim going false."""
+    root, task_id = task
+    _write(_task_dir(root, task_id), "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "do the thing",
+        "assumptions": ["the API is stable"],
+        "requirements": [{"text": "tests pass", "origin": "explicit-user",
+                          "source": "issue #1", "evidence": ["tests_pass_or_explained"]},
+                         {"text": "rig guessed this", "origin": "inferred"}],
+        "ambiguities": [{"question": "which users?", "resolved_by": "asking"}]})
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "## Intent" in page
+    assert "do the thing" in page and "the API is stable" in page
+    assert "[explicit-user] tests pass (per issue #1)" in page
+    assert "shown by: tests_pass_or_explained" in page
+    assert "this gate ruled on: tests_pass_or_explained (passed)" in page
+    assert "[inferred] rig guessed this" in page
+    assert "names nothing that would show it" in page
+    # "would be settled by": `resolved_by` says what *would* close the question, and a
+    # page that read it as though it had been closed would turn an open ambiguity into a
+    # decision nobody is recorded making.
+    assert "open: which users? (would be settled by asking)" in page
+
+
+def test_the_markdown_says_when_no_contract_was_recorded(task):
+    root, task_id = task
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "## Intent" in page and "not recorded" in page
+
+
+def test_the_markdown_says_when_the_contract_cannot_be_read(task):
+    root, task_id = task
+    (_task_dir(root, task_id) / "intent.json").write_text("not json", encoding="utf-8")
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "there and cannot be read" in page
+
+
+def test_the_markdown_tells_evidence_apart_from_what_the_gate_ruled_on(task):
+    """A requirement resting on a test nobody wired to this gate and one resting on nothing
+    are different requirements, and a page that printed only the gate's view made them the
+    same one."""
+    root, task_id = task
+    _write(_task_dir(root, task_id), "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "do the thing",
+        "non_goals": ["rewriting the parser"],
+        "requirements": [{"text": "unwired", "origin": "explicit-user", "source": "issue #1",
+                          "evidence": ["test_login"]},
+                         {"text": "nothing at all", "origin": "explicit-user",
+                          "source": "issue #2"}]})
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "shown by: test_login" in page
+    assert "names nothing that would show it" in page
+    assert page.count("this gate ruled on none of it") == 2
+    assert "not this: rewriting the parser" in page
+
+
+# ── what round 6 found: the page was enumerating the contract's fields again ─────
+#: One distinctive value per rendered field, and the marker it has to leave on the page.
+#: Keyed by field name and checked against `_INTENT_RENDERED` below, so a field added to the
+#: page without a value here — or a value here for a field the page stopped rendering — is a
+#: failure rather than a quiet gap.
+_RENDERS = {
+    "goal": ({"goal": "SENTINEL-GOAL"}, "SENTINEL-GOAL"),
+    "assumptions": ({"assumptions": ["SENTINEL-ASSUMPTION"]}, "SENTINEL-ASSUMPTION"),
+    "requirements": ({"requirements": [{"text": "SENTINEL-REQUIREMENT",
+                                        "origin": "explicit-user", "source": "issue #1"}]},
+                     "SENTINEL-REQUIREMENT"),
+    "non_goals": ({"non_goals": ["SENTINEL-NON-GOAL"]}, "SENTINEL-NON-GOAL"),
+    "ambiguities": ({"ambiguities": [{"question": "SENTINEL-QUESTION",
+                                      "resolved_by": "SENTINEL-RESOLUTION"}]},
+                    "SENTINEL-QUESTION"),
+}
+
+
+def test_the_page_accounts_for_every_field_a_contract_has():
+    """Five rounds derived one layer each and the next round found another. This is the guard
+    that ends that: a field the contract gains is either rendered or explicitly withheld, and
+    the check runs at import so nobody can add one without deciding.
+    """
+    import dataclasses
+
+    from rig_workbench.workbench import intent
+
+    fields = {f.name for f in dataclasses.fields(intent.IntentContract)}
+    assert assurance._unrendered(fields, assurance._INTENT_RENDERED,
+                                 assurance._INTENT_WITHHELD) is None
+    gap = assurance._unrendered(fields | {"deadline"}, assurance._INTENT_RENDERED,
+                                assurance._INTENT_WITHHELD)
+    assert gap is not None and "deadline" in gap and "_INTENT_WITHHELD" in gap
+    assert set(_RENDERS) == set(assurance._INTENT_RENDERED), (
+        "every field the page claims to render needs a value here that proves it does")
+
+
+@pytest.mark.parametrize("field", sorted(_RENDERS))
+def test_each_rendered_contract_field_reaches_the_page(task, field):
+    """Declaring a field rendered is not rendering it. This puts a distinctive value in each
+    one and looks for it on the page, so deleting the line that prints it fails here rather
+    than leaving the declaration true and the page short."""
+    root, task_id = task
+    fragment, marker = _RENDERS[field]
+    _write(_task_dir(root, task_id), "intent.json",
+           {"schema": "rig.intent-contract/v1", "goal": "do the thing",
+            "requirements": [{"text": "tests pass", "origin": "explicit-user",
+                              "source": "issue #1"}],
+            **fragment})
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert marker in page
+
+
+def test_a_criterion_the_gate_recorded_twice_is_marked_where_the_block_is_built(task):
+    """Marked in `_gates`, not by each reader. The Gates section lists every record and the
+    Intent section looks one up by name; a rule written in both places is one the two will
+    eventually disagree about, and this is a page whose only value is that it agrees with
+    itself."""
+    root, task_id = task
+    d = _task_dir(root, task_id)
+    data = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
+    data["checks"].append({"name": "tests_pass_or_explained", "status": "failed",
+                           "detail": "and again"})
+    _write(d, "acceptance.json", data)
+    _write(d, "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "do the thing",
+        "requirements": [{"text": "tests pass", "origin": "explicit-user",
+                          "source": "issue #1", "evidence": ["tests_pass_or_explained"]}]})
+    receipt = assurance.build_receipt(root, task_id)
+    assert receipt["gates"]["recorded_more_than_once"] == ["tests_pass_or_explained"]
+    [checked] = receipt["intent"]["requirements"][0]["checked_by"]
+    assert checked["ambiguous"] is True and checked["status"] is None
+    page = assurance.render_markdown(receipt)
+    assert "tests_pass_or_explained (recorded more than once — no single verdict)" in page
+
+
+# ── what round 7 found: the guard's own way out ──────────────────────────────────
+def test_a_withheld_field_has_to_say_why():
+    """`_INTENT_WITHHELD` was a set. Adding a name to it satisfied every check and the page
+    said nothing — so a field could still be left off quietly, by the mechanism written to
+    stop exactly that."""
+    gap = assurance._unrendered({"goal", "owner"}, assurance._INTENT_RENDERED, {"owner": ""})
+    assert gap is not None and "without saying why" in gap
+    gap = assurance._unrendered({"goal", "owner"}, assurance._INTENT_RENDERED,
+                                {"owner": "   "})
+    assert gap is not None, "a blank reason is not a reason"
+    assert assurance._unrendered({"owner"}, frozenset(),
+                                 {"owner": "an internal id nobody reads"}) is None
+
+
+def test_a_withheld_field_is_named_on_the_page(task, monkeypatch):
+    """The reason belongs where a reader of the receipt is, not only in the source. A page
+    that looks complete while omitting a field the JSON carries is this section's claim going
+    false, whether or not somebody wrote down why."""
+    root, task_id = task
+    _write(_task_dir(root, task_id), "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "do the thing",
+        "requirements": [{"text": "tests pass", "origin": "explicit-user",
+                          "source": "issue #1"}]})
+    monkeypatch.setattr(assurance, "_INTENT_WITHHELD",
+                        {"owner": "an internal id, not part of what was asked for"})
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "not shown here: owner — an internal id, not part of what was asked for" in page
+
+
+def test_nothing_is_withheld_today(task):
+    """And with nothing withheld the page says nothing about withholding — the note is a
+    disclosure, not a fixture."""
+    root, task_id = task
+    _write(_task_dir(root, task_id), "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "do the thing",
+        "requirements": [{"text": "tests pass", "origin": "explicit-user",
+                          "source": "issue #1"}]})
+    assert assurance._INTENT_WITHHELD == {}
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "not shown here" not in page
+
+
+def test_two_identical_rulings_are_still_not_a_verdict(task):
+    """The rule is *any* repetition, and the other duplicate tests use records that disagree —
+    so marking only disagreeing repeats would have left them all passing while two identical
+    records went back to reading as one verdict. A gate that ruled on one criterion twice did
+    not produce a record a single verdict can be read out of, whatever the two rulings say."""
+    root, task_id = task
+    d = _task_dir(root, task_id)
+    data = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
+    data["checks"].append({"name": "tests_pass_or_explained", "status": "passed", "detail": ""})
+    _write(d, "acceptance.json", data)
+    _write(d, "intent.json", {
+        "schema": "rig.intent-contract/v1", "goal": "do the thing",
+        "requirements": [{"text": "tests pass", "origin": "explicit-user",
+                          "source": "issue #1", "evidence": ["tests_pass_or_explained"]}]})
+    receipt = assurance.build_receipt(root, task_id)
+    assert receipt["gates"]["recorded_more_than_once"] == ["tests_pass_or_explained"]
+    [checked] = receipt["intent"]["requirements"][0]["checked_by"]
+    assert checked["ambiguous"] is True and checked["status"] is None

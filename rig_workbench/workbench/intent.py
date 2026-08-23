@@ -31,6 +31,7 @@ records what was measured and marks the rest unobserved, applies to intent too.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 
 SCHEMA = "rig.intent-contract/v1"
 
@@ -93,8 +94,16 @@ class Requirement:
         return self.origin in DECLARED
 
     def as_dict(self) -> dict:
-        return {"text": self.text, "origin": self.origin, "source": self.source,
-                "evidence": list(self.evidence)}
+        """Every field the dataclass has, in the shapes JSON holds.
+
+        Derived rather than spelled out, for the reason `REQUIREMENT_KEYS` and `load` are: a
+        field added here and forgotten in one of the three would be validated, loaded, and
+        then vanish on the way back out.
+        """
+        import dataclasses as _dc
+
+        return {f.name: list(v) if isinstance(v := getattr(self, f.name), tuple) else v
+                for f in _dc.fields(self)}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -115,15 +124,48 @@ class IntentContract:
     ambiguities: tuple[dict, ...] = ()
 
     def as_dict(self) -> dict:
-        return {"schema": SCHEMA, "goal": self.goal,
-                "requirements": [r.as_dict() for r in self.requirements],
-                "non_goals": list(self.non_goals),
-                "assumptions": list(self.assumptions),
-                "ambiguities": [dict(a) for a in self.ambiguities]}
+        """Every field the dataclass has, plus the wire-only `schema`.
+
+        Derived for the reason `Requirement.as_dict` is: a field added here and forgotten in
+        one of `CONTRACT_KEYS`, `load` or the receipt's projection would be refused, dropped
+        or omitted depending on which place was missed.
+        """
+        out: dict = {"schema": SCHEMA}
+        for field in dataclasses.fields(self):
+            value = getattr(self, field.name)
+            out[field.name] = ([v.as_dict() if isinstance(v, Requirement) else dict(v)
+                                if isinstance(v, Mapping) else v for v in value]
+                               if isinstance(value, tuple) else value)
+        return out
 
 
 def _refuse(problems: list[str], where: str, why: str) -> None:
     problems.append(f"{where}: {why}")
+
+
+#: The keys each object in a contract may carry, derived from the records that hold them so a
+#: field added to one is accepted by the other without anyone remembering to. Closed, because a
+#: key this schema does not define would be accepted here, dropped by `load`, and leave the
+#: author believing the contract said something it no longer says — and a consumer copying the
+#: contract onto a receipt copying most of it.
+CONTRACT_KEYS = frozenset({"schema"}) | frozenset(
+    f.name for f in dataclasses.fields(IntentContract))
+REQUIREMENT_KEYS = frozenset(f.name for f in dataclasses.fields(Requirement))
+AMBIGUITY_KEYS = frozenset({"question", "resolved_by"})
+
+
+def _unknown(problems: list[str], where: str, item: dict, allowed: frozenset,
+             what: str) -> None:
+    """Refuse keys this schema does not define, and non-string keys it could not sort."""
+    unreadable = [k for k in item if not isinstance(k, str)]
+    if unreadable:
+        _refuse(problems, where,
+                f"{', '.join(repr(k) for k in unreadable)} is not a key {what} can have")
+    unknown = sorted(set(item) - allowed - set(unreadable), key=str)
+    if unknown:
+        _refuse(problems, where,
+                f"{', '.join(repr(k) for k in unknown)} is not part of {what}. A key this "
+                f"schema does not define would be dropped rather than honoured")
 
 
 def validate(payload: dict) -> list[str]:
@@ -141,6 +183,8 @@ def validate(payload: dict) -> list[str]:
     problems: list[str] = []
     if not isinstance(payload, dict):
         return [f"contract: expected an object, got {type(payload).__name__}"]
+
+    _unknown(problems, "contract", payload, CONTRACT_KEYS, f"a {SCHEMA} document")
 
     schema = payload.get("schema")
     if schema != SCHEMA:
@@ -166,6 +210,7 @@ def validate(payload: dict) -> list[str]:
         if not isinstance(item, dict):
             _refuse(problems, where, f"expected an object, got {type(item).__name__}")
             continue
+        _unknown(problems, where, item, REQUIREMENT_KEYS, "a requirement")
         text = item.get("text")
         if not isinstance(text, str) or not text.strip():
             _refuse(problems, where, "has no text")
@@ -202,6 +247,7 @@ def validate(payload: dict) -> list[str]:
             if not isinstance(item, dict):
                 _refuse(problems, where, f"expected an object, got {type(item).__name__}")
                 continue
+            _unknown(problems, where, item, AMBIGUITY_KEYS, "an ambiguity")
             if not (isinstance(item.get("question"), str) and item["question"].strip()):
                 _refuse(problems, where, "has no question")
             if not (isinstance(item.get("resolved_by"), str)
@@ -218,16 +264,124 @@ def load(payload: dict) -> IntentContract:
     problems = validate(payload)
     if problems:
         raise ValueError("not an intent contract:\n  " + "\n  ".join(problems))
-    return IntentContract(
-        goal=payload["goal"],
-        requirements=tuple(
-            Requirement(text=r["text"], origin=r["origin"], source=r.get("source", ""),
-                        evidence=tuple(r.get("evidence", [])))
-            for r in payload["requirements"]),
-        non_goals=tuple(payload.get("non_goals", [])),
-        assumptions=tuple(payload.get("assumptions", [])),
-        ambiguities=tuple(dict(a) for a in payload.get("ambiguities", [])),
-    )
+    # Every field the dataclass declares, read the way `_CODEC` says to read it. Spelling the
+    # five out here is what five review rounds kept finding one layer at a time: a field is
+    # accepted by `CONTRACT_KEYS` because that is derived, and then dropped here because this
+    # was not, so the document validates and the contract silently does not say it.
+    return IntentContract(**{field.name: _CODEC[field.name](payload[field.name])
+                             for field in dataclasses.fields(IntentContract)
+                             if field.name in payload})
+
+
+def _frozen(mapping: dict):
+    """A read-only view of a copy. What was validated has to be what gets read."""
+    import types as _types
+
+    return _types.MappingProxyType(dict(mapping))
+
+
+def _requirement(raw: dict) -> Requirement:
+    """One requirement from its JSON form, field by field as the dataclass declares them."""
+    import dataclasses as _dc
+
+    values = {}
+    for field in _dc.fields(Requirement):
+        default = () if field.name == "evidence" else field.default
+        value = raw.get(field.name, default)
+        values[field.name] = tuple(value) if isinstance(value, list) else value
+    return Requirement(**values)
+
+
+def _strings(value) -> tuple:
+    """A list of strings as the dataclass holds it. `validate` has already refused anything else."""
+    return tuple(value)
+
+
+def _requirements(value) -> tuple:
+    return tuple(_requirement(r) for r in value)
+
+
+def _ambiguities(value) -> tuple:
+    # Frozen, not merely copied: `frozen=True` protects the tuple and not the dicts inside it,
+    # so a caller could otherwise replace a question with something `validate` would have
+    # refused, after it had been validated.
+    return tuple(_frozen(a) for a in value)
+
+
+def _verbatim(value):
+    """Kept as it was written. A paraphrase is already an interpretation."""
+    return value
+
+
+#: How each field of a contract is read out of its JSON form.
+#:
+#: Declared rather than inferred from the annotations. `from __future__ import annotations`
+#: makes every `dataclasses.fields(...)[i].type` a *string*, so choosing a converter by
+#: declared type would mean matching annotation text — an approximation that needs reinforcing
+#: the first time somebody writes `Sequence[str]`, or `tuple[Requirement, ...] | None`, or
+#: renames an import. This repository has paid for that lesson once already: approximating a
+#: language's own rules is the thing that keeps almost working.
+#:
+#: The point is not the table. The point is the check under it: a field this table does not
+#: mention cannot be read, and saying so at import is the difference between a rule somebody
+#: has to remember and one nobody can forget.
+_CODEC = {
+    "goal": _verbatim,
+    "requirements": _requirements,
+    "non_goals": _strings,
+    "assumptions": _strings,
+    "ambiguities": _ambiguities,
+}
+
+def _codec_gaps(field_names, declared) -> str | None:
+    """Why this codec does not describe that record, or `None` when it does.
+
+    A function rather than the comparison written inline, so a test can hand it a field it has
+    not been told how to read and see the refusal. A check nothing can exercise is a check
+    nobody knows still works.
+    """
+    fields = frozenset(field_names)
+    undeclared = sorted(fields - frozenset(declared))
+    stale = sorted(frozenset(declared) - fields)
+    if not undeclared and not stale:
+        return None
+    return "intent._CODEC does not describe IntentContract: " + "; ".join(filter(None, [
+        f"{', '.join(undeclared)} would be validated and then dropped by load — say how each "
+        f"is read" if undeclared else "",
+        f"{', '.join(stale)} name no field of IntentContract" if stale else ""]))
+
+
+_CONTRACT_FIELDS = frozenset(f.name for f in dataclasses.fields(IntentContract))
+# At import, not in a test. A test can be skipped, deselected, or simply not run by the person
+# adding the field; this fails the first time anything imports the module, which is every path
+# that could read a contract. Both directions: an undeclared field would be validated and then
+# dropped by `load`, and a declared one naming no field is a converter somebody kept for a
+# field they deleted — which is how a table starts describing a shape that no longer exists.
+_gap = _codec_gaps(_CONTRACT_FIELDS, _CODEC)
+if _gap:
+    raise RuntimeError(_gap)
+
+
+def read(path) -> dict:
+    """A contract document from disk, refusing what no reader of one should accept.
+
+    The one place a contract is parsed. Three entry points read them — `intent`,
+    `intent-derive`, and the receipt — and each was written with its own `json.loads` until a
+    reviewer pointed out that a duplicated `origin` was refused by two of them and reported as
+    a valid declaration by the third. A rule each caller has to remember is a rule one of them
+    will not.
+
+    JSON allows a key twice and `json.loads` keeps the last one silently, so
+    `"origin": "inferred", "origin": "explicit-user"` would promote a conclusion into
+    something somebody said.
+    """
+    import json as _json
+    import pathlib as _pathlib
+
+    from .synthesis import _no_duplicate_keys
+
+    return _json.loads(_pathlib.Path(path).read_text(encoding="utf-8"),
+                       object_pairs_hook=_no_duplicate_keys("contract"))
 
 
 def undeclared(contract: IntentContract) -> tuple[Requirement, ...]:
@@ -319,11 +473,10 @@ def cmd_intent(args) -> "NoReturn":  # noqa: F821
     the same ambiguity this command exists to remove, wearing a different hat.
     """
     import json
-    import pathlib
     import sys
 
     try:
-        payload = json.loads(pathlib.Path(args.file).read_text(encoding="utf-8"))
+        payload = read(args.file)
     except Exception as exc:  # noqa: BLE001 — any failure to read is one status, not many
         print(json.dumps({"schema": SCHEMA, "status": "execution-error",
                           "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
