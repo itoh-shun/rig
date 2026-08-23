@@ -29,12 +29,14 @@ any of the judgments.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import hashlib
 import json
 import pathlib
 import subprocess
 
+from . import intent, intent_wiring
 from .state import (die, load_task, repo_root, resolve_task_id, run_dir,
                     verify_provenance)
 
@@ -49,6 +51,7 @@ _SOURCES = (
     ("provenance", "provenance.json"),
     ("steps", "steps.json"),
     ("approvals", "approvals.json"),
+    ("intent", "intent.json"),
 )
 
 #: How the authoritative gate status maps onto the receipt's final status. This is a
@@ -114,6 +117,32 @@ def _read_json(path: pathlib.Path) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+#: What `_read_contract` says when the file is there and cannot be read. Distinct from
+#: `None`, which means the file is not there: a task with no contract and a task whose
+#: contract nobody can parse are different situations with different next steps, and the
+#: digest in `sources` shows a file exists for the second one.
+UNREADABLE = object()
+
+
+def _read_contract(path: pathlib.Path):
+    """`intent.json`, `None` if it is absent, `UNREADABLE` if it is there and is not readable.
+
+    Read with the same duplicate-key refusal `intent-derive` uses. JSON allows a key twice and
+    `json.loads` keeps the last one silently, so a duplicated `origin` would turn an inferred
+    requirement into a declared one — and the receipt would present that parser choice as what
+    the contract recorded. A check on one ingestion path is a check on one ingestion path.
+    """
+    from .intent import read
+
+    if not path.is_file():
+        return None
+    try:
+        data = read(path)
+    except (OSError, ValueError):
+        return UNREADABLE
+    return data if isinstance(data, dict) else UNREADABLE
 
 
 def _git(root: pathlib.Path, *args: str) -> str | None:
@@ -353,6 +382,19 @@ def _gates(acceptance: dict | None) -> dict:
         elif c.get("detail"):
             entry["reason_recorded"] = True
         criteria.append(entry)
+    # A criterion name recorded twice. Marked here, where the gate block is built, rather
+    # than by each reader: the Gates section lists every record and the Intent section looks
+    # one up by name, and a rule written in both places is a rule the two will eventually
+    # disagree about. Any repeat, not only a disagreeing one — a gate that ruled on one
+    # criterion twice did not produce a record this page can read a single verdict out of,
+    # whatever the two rulings say.
+    seen: dict = {}
+    for c in criteria:
+        seen[c["name"]] = seen.get(c["name"], 0) + 1
+    repeated = sorted(name for name, times in seen.items() if times > 1)
+    for c in criteria:
+        if seen[c["name"]] > 1:
+            c["name_recorded_more_than_once"] = True
     counts: dict[str, int] = {}
     for c in criteria:
         counts[str(c["status"])] = counts.get(str(c["status"]), 0) + 1
@@ -363,6 +405,7 @@ def _gates(acceptance: dict | None) -> dict:
         counts=counts,
         criteria=criteria,
         overridden=[c["name"] for c in criteria if c.get("overridden")],
+        recorded_more_than_once=repeated,
     )
 
 
@@ -483,7 +526,8 @@ def _final_status(task: dict, gates: dict, approvals: dict | None) -> dict:
 def build_receipt(root: pathlib.Path, task_id: str) -> dict:
     """Project one task's recorded state into a receipt. Reads only; decides nothing."""
     run, task = load_task(root, task_id)
-    loaded = {key: _read_json(run / name) for key, name in _SOURCES}
+    loaded = {key: _read_json(run / name) for key, name in _SOURCES if key != "intent"}
+    loaded["intent"] = _read_contract(run / "intent.json")
     # Absent sources are recorded with a null digest rather than omitted. A receipt
     # built while a task was still running would otherwise stay `fresh` after `accept`
     # wrote `provenance.json` — the single most material change that can happen to a
@@ -515,6 +559,10 @@ def build_receipt(root: pathlib.Path, task_id: str) -> dict:
         "provenance": _provenance(root, loaded["provenance"]),
         "evidence": _evidence(root, run, gates),
         "sources": sources,
+        # The goal read back beside what the gate ruled on. A projection like every other
+        # block here: it copies what the contract said and what the gate recorded, and does
+        # not decide whether the one satisfied the other (#476).
+        "intent": intent_wiring.projection(loaded["intent"], gates),
         "final_status": _final_status(task, gates, loaded["approvals"]),
     }
 
@@ -654,6 +702,57 @@ def _render_value(block: dict, *keys: str) -> str:
     return shown or "recorded, but with none of the fields this line renders"
 
 
+#: The contract fields this page reads aloud. Declared, and checked against the contract at
+#: import, for the same reason `intent._CODEC` is: the Intent section's whole claim is that it
+#: is the JSON receipt read aloud, and a field that reached the receipt and not the page would
+#: make that claim false quietly — the reader sees a complete-looking contract and never
+#: learns a part of it was left off.
+_INTENT_RENDERED = frozenset({"goal", "assumptions", "requirements", "non_goals",
+                              "ambiguities"})
+#: Fields deliberately left off the page, each with why. Empty today.
+#:
+#: A mapping and not a set, because a set was the guard's own way out: adding a name to it
+#: satisfied every check and the page said nothing, so a field could still be left off quietly
+#: — by the mechanism written to stop exactly that. A reason is required, and the page prints
+#: the decision, so withholding a field is something a reader of the receipt can see was
+#: decided rather than something they cannot know happened.
+_INTENT_WITHHELD: dict = {}
+
+def _unrendered(field_names, rendered, withheld) -> str | None:
+    """Why this page does not account for that contract, or `None` when it does.
+
+    Same shape as `intent._codec_gaps`, and for the same reason: a check a test can run is a
+    check that is known to still work.
+    """
+    reasonless = sorted(name for name, why in dict(withheld).items()
+                        if not isinstance(why, str) or not why.strip())
+    if reasonless:
+        # A field withheld for no stated reason is the same silence this check exists to
+        # break, moved into the declaration that was supposed to break it.
+        return (f"{', '.join(reasonless)} are withheld from the page without saying why — "
+                f"the reason is what makes leaving a field off a decision rather than a gap")
+    both = sorted(frozenset(rendered) & frozenset(withheld))
+    if both:
+        # A field cannot be both printed and deliberately left off. The overlap is the shape
+        # this check takes when somebody silences it: withholding what is still rendered makes
+        # every field accounted for without accounting for anything.
+        return (f"{', '.join(both)} are declared both rendered and withheld — the page cannot "
+                f"be doing both, and a field in both sets is accounted for by neither")
+    missing = sorted(frozenset(field_names) - frozenset(rendered) - frozenset(withheld))
+    if not missing:
+        return None
+    return (f"the receipt's Intent section does not say what to do with "
+            f"{', '.join(missing)}: render it, or add it to _INTENT_WITHHELD with the reason "
+            f"it is left off")
+
+
+_gap = _unrendered(
+    (f.name for f in dataclasses.fields(intent.IntentContract)),
+    _INTENT_RENDERED, _INTENT_WITHHELD)
+if _gap:
+    raise RuntimeError(_gap)
+
+
 def render_markdown(receipt: dict) -> str:
     """The same model as the JSON, read aloud.
 
@@ -749,6 +848,54 @@ def render_markdown(receipt: dict) -> str:
         lines.append(f"- {prov['algorithm']} signature {verified} (`{prov['verify_with']}`)")
         if prov["forced"]:
             lines.append("- **accepted with --force**")
+    lines += ["", "## Intent", ""]
+    goal = receipt["intent"]
+    if not goal.get("observed"):
+        lines.append(f"not recorded — {goal['reason']}")
+    else:
+        lines += [f"> {goal['goal']}", ""]
+        for assumption in goal["assumptions"]:
+            lines.append(f"- assuming: {assumption}")
+        for requirement in goal["requirements"]:
+            # The origin on every line: "somebody asked for this" and "rig concluded it" are
+            # the distinction the contract exists to draw, and a list that read the same for
+            # both would erase it here after keeping it everywhere else. The source with it,
+            # because the strongest origins are the ones that have to say where.
+            said = f" (per {requirement['source']})" if requirement["source"] else ""
+            lines.append(f"- [{requirement['origin']}] {requirement['text']}{said}")
+            # Named evidence and gate observations kept apart: a requirement resting on a test
+            # nobody wired to this gate and one resting on nothing both had no `checked_by`,
+            # and printing only that made them the same requirement on the page.
+            if requirement["evidence"]:
+                lines.append(f"  - shown by: {', '.join(requirement['evidence'])}")
+            else:
+                lines.append("  - names nothing that would show it")
+            checked = ", ".join(
+                f"{c['criterion']} (recorded more than once — no single verdict)"
+                if c["ambiguous"] else
+                f"{c['criterion']} ({c['status']}"
+                + (", overridden" if c["overridden"] else "") + ")"
+                for c in requirement["checked_by"])
+            lines.append(f"  - this gate ruled on: {checked}" if checked
+                         else "  - this gate ruled on none of it")
+        for excluded in goal["non_goals"]:
+            # A receipt that dropped these could present excluded work as though the contract
+            # never excluded it.
+            lines.append(f"- not this: {excluded}")
+        for question in goal["ambiguities"]:
+            # "would be settled by", not "settled by". `validate` requires `resolved_by` to
+            # say what *would* close the question; a page that printed it as though it had
+            # been closed would turn an open ambiguity into a decision the contract records
+            # nobody making.
+            lines.append(f"- open: {question.get('question')} "
+                         f"(would be settled by {question.get('resolved_by')})")
+        for withheld, why in sorted(_INTENT_WITHHELD.items()):
+            # On the page, not only in the source. A reader cannot check a declaration they
+            # cannot see, and a page that looks complete while omitting a field the JSON
+            # carries is the claim this section makes going false.
+            lines.append(f"- not shown here: {withheld} — {why}")
+        if not goal["requirements"]:
+            lines.append("no requirements recorded")
     lines += ["", "## Evidence", ""]
     for e in receipt["evidence"]:
         lines.append(f"- `{e['path']}` — {e['kind']} (`{(e.get('sha256') or '')[:12]}`)")

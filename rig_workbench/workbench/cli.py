@@ -42,6 +42,7 @@ from .provenance_graph import cmd_provenance
 from .synthesis import cmd_synthesis
 from .team_routing import cmd_route_team
 from .intent import cmd_intent
+from .intent_wiring import cmd_derive
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -137,6 +138,21 @@ def main() -> None:
     p.add_argument("file", help="path to a rig.intent-contract/v1 JSON document")
     p.add_argument("--json", action="store_true", help="emit the summary as JSON")
     p.set_defaults(func=cmd_intent)
+
+    p = sub.add_parser("intent-derive",
+                       help="derive a workflow floor or an assurance target from an intent "
+                            "contract's declared requirements (#476)")
+    p.add_argument("file", help="path to a rig.intent-contract/v1 JSON document")
+    p.add_argument("--against", required=True,
+                   help="path to a JSON array: the component catalog for --floor, the gate's "
+                        "criteria for --target")
+    what = p.add_mutually_exclusive_group(required=True)
+    what.add_argument("--floor", action="store_true",
+                      help="the steps declared requirements put on a workflow's floor")
+    what.add_argument("--target", action="store_true",
+                      help="the assurance target declared requirements ask for")
+    p.add_argument("--json", action="store_true", help="emit the result as JSON")
+    p.set_defaults(func=cmd_derive)
 
     p = sub.add_parser("assurance-target",
                        help="compare a machine-readable assurance target against what a "
