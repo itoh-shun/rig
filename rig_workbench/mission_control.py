@@ -311,6 +311,19 @@ def _render_assurance(snapshot: dict) -> str:
     return f'<div class="metric-grid">{tiles}</div>{body}{note}'
 
 
+def _fleet_window(fleet: dict) -> str:
+    """The detail line under the org conformance tile: the window, and what it could not read.
+
+    The tile is one number for a whole fleet, which is the place a lost task record is least
+    visible — it is averaged into a percentage before anyone sees it. `govern rollup` counts
+    those records rather than dropping them (#493), so the tile says how many stand behind
+    the number it shows.
+    """
+    unreadable = fleet.get("unreadable_task_records") or []
+    return (f"window: {fleet.get('since_days', 90)} days"
+            + (f" · {len(unreadable)} task record(s) could not be read" if unreadable else ""))
+
+
 def _render_fleet(snapshot: dict) -> str:
     fleet = snapshot["fleet"]
     if not fleet.get("configured"):
@@ -334,7 +347,7 @@ def _render_fleet(snapshot: dict) -> str:
     return f"""
 <div class="metric-grid compact">
 {_metric('projects', fleet.get('projects', 0))}
-{_metric('org conformance', f"{float(fleet.get('score', 0)):.0%}", f"window: {fleet.get('since_days', 90)} days")}
+{_metric('org conformance', f"{float(fleet.get('score', 0)):.0%}", _fleet_window(fleet))}
 </div>
 <div class="card table-wrap"><table>
 <thead><tr><th>team</th><th>projects</th><th>conformance</th><th>failing projects</th><th>findings</th></tr></thead>

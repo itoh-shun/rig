@@ -260,24 +260,30 @@ _orch_delegates = {
 _WORKBENCH_TERMINAL_STATUSES = frozenset({"accepted", "discarded"})
 
 
-def _unfinished_workbench_tasks(root: pathlib.Path) -> int:
+def _workbench_task_records(root: pathlib.Path):
+    """Every task record under this repo's runs directory, and what could not be read.
+
+    The shared reader (#488), not a fourth walk of `.rig/runs/*/task.json`. This one used to
+    do its own and `continue` past anything it could not parse, so a record that happened to
+    be unfinished simply left the count — and a count that is quietly short is worse here
+    than a count that is missing, because this whole section exists to say what the number
+    does not contain.
+    """
+    from .workbench.reporting import read_all_tasks
+
+    return read_all_tasks(root / ".rig" / "runs")
+
+
+def _unfinished_workbench_tasks(records) -> int:
     """Workbench tasks in this repo that have not reached a terminal state.
 
     They have no run record and cannot have one yet, so they are missing from the count
     above. Saying so is the difference between a number that is incomplete and a number
-    that is quietly wrong.
+    that is quietly wrong. Takes the records rather than the root, so the count and the
+    shortfall reported beside it always come from the same read of the directory.
     """
-    import json as _json
-
-    n = 0
-    for task_file in sorted((root / ".rig" / "runs").glob("*/task.json")):
-        try:
-            status = _json.loads(task_file.read_text(encoding="utf-8")).get("status")
-        except (OSError, _json.JSONDecodeError):
-            continue
-        if status not in _WORKBENCH_TERMINAL_STATUSES:
-            n += 1
-    return n
+    return sum(1 for task in records.tasks
+               if task["status"] not in _WORKBENCH_TERMINAL_STATUSES)
 
 
 def _usage_coverage_lines(root: pathlib.Path | None) -> list[str]:
@@ -286,13 +292,21 @@ def _usage_coverage_lines(root: pathlib.Path | None) -> list[str]:
     The count answers "how much has rig been used", and a reader takes a missing entry
     as absence rather than as a blind spot. This log has two of those. One is countable
     and gets counted; the other cannot be, and gets named.
+
+    A third sits between them: a task record that could not be read at all. Whether it is
+    unfinished is unknown, so it can neither be counted nor left out silently — it is named
+    with the same sentence every other reader of the runs directory uses.
     """
     lines = []
     if root is not None:
-        pending = _unfinished_workbench_tasks(root)
+        records = _workbench_task_records(root)
+        pending = _unfinished_workbench_tasks(records)
         if pending:
             lines.append(f"  - {pending} workbench task(s) here have not reached accept or "
                          "discard, so they have no record yet (`rig-wb wb board`).")
+        if records.note():
+            lines.append(f"  - {records.note().lstrip(' —')} — whether any of them is "
+                         "unfinished is unknown, so the count above does not include them.")
     lines.append("  - A manual or workflow RUN that never went through `/rig:go` appends by "
                  "prose instruction (SKILL.md §6), not by code, so it may be missing entirely.")
     return lines
@@ -394,7 +408,12 @@ def _show_usage(argv: list[str]) -> None:
         if use_global:
             payload["by_project"] = dict(by_project)
         else:
-            payload["unfinished_workbench_tasks"] = _unfinished_workbench_tasks(coverage_root)
+            records = _workbench_task_records(coverage_root)
+            payload["unfinished_workbench_tasks"] = _unfinished_workbench_tasks(records)
+            # The count above is over the records that could be read. A consumer parsing
+            # this is exactly the caller that cannot see the note printed for a human.
+            payload["unreadable_workbench_task_records"] = list(records.unreadable)
+            payload["workbench_task_collection_error"] = records.collection_error
         payload["not_counted"] = [ln.strip(" -") for ln in _usage_coverage_lines(coverage_root)]
         print(_json.dumps(payload, ensure_ascii=False, indent=2))
         return

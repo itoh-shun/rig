@@ -103,6 +103,51 @@ be carried by one of the rows read off the document, and a row dropped for real 
 `test_it_reads_the_repository_it_ships_with` rather than going quiet.
 
 No behaviour changes, and SKILL.md is untouched.
+The governance conformance rate and the `usage` task counter now say how many task records
+they could not read. Both walked `.rig/runs/*/task.json` themselves and `continue`d past
+anything that would not parse. Nothing crashed, and that was the defect: a rate computed from
+52 of 55 records was printed as *the* rate, and the three runs that disappeared were exactly
+the ones nobody could inspect. `--conformance` is a number a project submits upward, so this
+is the least visible way it can be wrong.
+
+Both now read through `read_all_tasks` (#488), which is the one rule for what a usable record
+is and carries what it could not read, so no caller can take the runs without the shortfall.
+Measured against the records that actually ship: 69 of 69 across the two repositories on this
+machine satisfy that rule, so nothing real is newly rejected by it.
+
+**What an unreadable record means to a rate was the decision here.** Putting it in the
+denominator would assert it is non-compliant — a claim about a file nobody read. Dropping it
+is the bug. So it is named beside the total, in the same sentence every other reader of the
+runs directory prints (`TaskRecords.note()`): on the score line, on each of the three checks
+whose verdict is computed from run counts (`required_criteria`, `approvals`, `force_rate`),
+in the rollup's per-team and per-project rate cells, and on Mission Control's org-conformance
+tile — the place a lost record is least visible, because it is averaged into a percentage
+before anyone sees it.
+
+`force_rate` is where a lost record moves the most: 1/1 forced (fail) and 1/2 forced (warn)
+differ by one file the check never opened. Its "no accepted runs in the window" branch carries
+the count too, because that sentence is the fail-open in its purest form.
+
+The count travels in the JSON as well (`task_records` on a report, `unreadable_task_records`
+on a rollup, `unreadable_workbench_task_records` on `usage --json`), since a machine consumer
+cannot see a printed note — and the `conformance-report` output contract now requires the
+figure beside the rate. `task_records: null` means the report stopped before reading any runs;
+it is not a claim that everything was readable.
+
+Unreadable records are not filtered by `--since-days`. A record whose `updated_at` was never
+read cannot be shown to fall outside the window, so the window cannot be the reason it
+vanishes — and the window is applied to a separate tuple rather than folded back into the
+records, because `note()` renders "N of (read + unreadable)" and a narrowed record set would
+have made that attempted total mean "in-window readable plus unreadable". A directory holding
+one in-window record, one older one and one unreadable one would then have printed "1 of 2":
+the same quietly shrunken denominator, inside the sentence added to remove it. `read` and
+`unreadable` in the JSON describe the whole directory; `in_window` is the subset the checks
+counted. Two test fixtures wrote records shorter than any shipped run (`test_govern_ledger`
+omitted `input`, `test_usage_coverage` wrote only `{task_id, status}`) and were writing
+records no reader can use; they now write real ones. The regression control is direct: putting
+the silent-skip implementations back fails 10 of these tests, and every assertion names the
+attempted total ("1 of 2"), so a note that counted only the readable records would not pass
+either.
 
 `adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
 `gate: acceptance-gate` and no `acceptance:` list at all, so the gate

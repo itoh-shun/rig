@@ -526,8 +526,12 @@ def cmd_conformance(args: argparse.Namespace) -> int:
     if report.error:
         print(f"  ✗ {report.error}")
         return EXIT_NONCONFORMANT
+    # The shortfall renders on the same line as the score, not under it: this is the number
+    # that gets quoted upward, and a rate computed from fewer records than the runs directory
+    # holds has to say so where it is read.
     print(f"verdict: {conf.ICON[report.verdict]} {report.verdict}   "
-          f"score: {report.score:.0%} ({report.passed}/{len(report.applicable)} applicable checks)")
+          f"score: {report.score:.0%} ({report.passed}/{len(report.applicable)} applicable "
+          f"checks){report.unreadable_note}")
     if report.policy_layers:
         print(f"policy: {', '.join(report.policy_layers)}")
     print()

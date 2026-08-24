@@ -34,10 +34,19 @@ def _env():
 
 
 def write_task(root: pathlib.Path, task_id: str, status: str) -> None:
+    """A run directory holding a record every reader can use.
+
+    The full record, not `{task_id, status}`: the counter reads runs through
+    `read_all_tasks` (#493), and `REQUIRED_FIELDS` is the one rule for what a usable record
+    is. A fixture writing less than a shipped run does would have made this file measure the
+    unreadable path everywhere it means to measure the readable one.
+    """
     d = root / ".rig" / "runs" / task_id
     d.mkdir(parents=True, exist_ok=True)
-    (d / "task.json").write_text(json.dumps({"task_id": task_id, "status": status}),
-                                 encoding="utf-8")
+    (d / "task.json").write_text(json.dumps(
+        {"task_id": task_id, "status": status, "task_type": "bugfix",
+         "created_at": "2026-08-24T10:00:00+09:00", "input": f"do {task_id}"}),
+        encoding="utf-8")
 
 
 @pytest.fixture
@@ -105,7 +114,36 @@ def test_json_output_carries_the_same_coverage_facts(repo):
     assert any("SKILL.md §6" in line for line in payload["not_counted"])
 
 
+def test_the_json_names_the_records_the_count_could_not_read(repo):
+    """The machine consumer's half of the same fact (#493): it cannot see the printed note,
+    and `unfinished_workbench_tasks` alone would read as a complete count."""
+    write_task(repo, "t1", "running")
+    (repo / ".rig" / "runs" / "broken").mkdir(parents=True)
+    (repo / ".rig" / "runs" / "broken" / "task.json").write_text("{not json", encoding="utf-8")
+
+    payload = json.loads(run_usage(repo, "--json").stdout)
+
+    assert payload["unfinished_workbench_tasks"] == 1
+    assert payload["unreadable_workbench_task_records"] == ["broken"]
+    assert payload["workbench_task_collection_error"] is None
+
+
+def test_the_json_of_a_fully_readable_repository_claims_nothing_unread(repo):
+    write_task(repo, "t1", "running")
+
+    payload = json.loads(run_usage(repo, "--json").stdout)
+
+    assert payload["unreadable_workbench_task_records"] == []
+    assert not any("could not be read" in line for line in payload["not_counted"])
+
+
 def test_an_unreadable_task_file_does_not_break_the_count(repo):
+    """It does not break the count, and it is not silently absent from it either (#493).
+
+    The record that could not be read may have been an unfinished task, so the count above
+    it is a count of what could be read — and this section exists to say what the number
+    does not contain.
+    """
     write_task(repo, "t1", "running")
     (repo / ".rig" / "runs" / "broken").mkdir(parents=True)
     (repo / ".rig" / "runs" / "broken" / "task.json").write_text("{not json", encoding="utf-8")
@@ -114,3 +152,4 @@ def test_an_unreadable_task_file_does_not_break_the_count(repo):
 
     assert r.returncode == 0, r.stdout + r.stderr
     assert "1 workbench task(s)" in r.stdout
+    assert "1 of 2 records could not be read: broken" in r.stdout
