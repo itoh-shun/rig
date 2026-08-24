@@ -44,6 +44,53 @@ recipe, because a helper with no caller passes every unit test written against t
 Those `check_recipe` tests carry a positive control of their own — each asserts the terminal
 `[PASS] recipe <name>: OK`, so a synthetic fixture that stopped parsing as a recipe (an early
 return emits no line mentioning `max_retries`) fails rather than reading as silence.
+A workbench subcommand missing from SKILL.md §2's brick catalog is now reported by
+`--validate` instead of by whoever notices next. §2 is what a session reads to find out what
+rig has, and a surface absent from it does not exist from there. It has gone missing three
+times — #395 lost `rig-evidence` and `rig-mission-control`, #470 lost the receipt, the BYOO
+contract and the run graph, and fixing #470 turned up nine more subcommands shipped in the
+meantime — while `check_catalog_drift` scanned four brick directories and never the CLI.
+
+**One of those three is not covered by this.** The check reads what the `rig-wb wb` parser
+dispatches, which is #470's class; #395's two are separate console scripts
+(`rig_workbench/evidence.py`, `rig_workbench/mission_control.py`, entry points in
+`pyproject.toml`) that §2 spells `rig-evidence` / `rig-mission-control`. A fourth omission of
+*that* shape is still found by hand — enumerating entry points against §2 is a different
+check, and claiming this one covers them would be the kind of prose these checks exist to
+stop.
+
+**The obvious version of this check reports the omission as covered.** §2 is a catalogue of
+packs, so a subcommand's name turns up inside other rows: measured against today's §2 with
+#470's three rows taken back out, asking whether the name appears anywhere in §2 answered
+*yes* for 12 of the 33 user-facing subcommands, among them *yes* for
+`import` (the `/rig:import` pack row) and *yes* for `contract` ("output-contract facet") —
+both while the subcommands were missing. A third source is in the rows #470's fix added:
+`rig_workbench/workbench/{assurance,contract,import_task,graph}.py` names a file, not a
+surface. So the name has to be matched as an invocation — a complete `` `rig-wb wb <name>` ``
+run, or the brace notation §2 already uses to group a surface's subcommands into one — and
+each of those three false passes is a test the check must fail.
+
+**§2 catalogues surfaces, not operations, and the boundary is declared rather than inferred.**
+Of the CLI's 33 user-facing subcommands, 22 are operations on a run — `status`, `diff`,
+`accept`, the scanners, the counters — and §2 carries them as one surface, the `/rig:go`
+workbench pack row; `commands/go.md`'s route table is where each is written down individually,
+and `check_workbench_routing` has checked that since #478. Requiring §2 to name all 33
+individually would have reported 22 today, so `PACK_ROW_ONLY` lists them by name, next to
+`INTERNAL_ONLY` and checked in the same two directions: something on neither list is reported
+until a person decides which side of the line it belongs on, and an entry naming a subcommand
+that no longer exists is reported as an allowlist that stopped applying. The PASS line prints
+all four numbers rather than one, because a check examining 11 of 33 names should not report
+as though it examined 33.
+
+A missing subcommand is a WARN, matching `check_catalog_drift`'s convention for a missed
+listing. A §2 the check cannot locate — headings renamed or duplicated, or a §2 that no longer
+spells these surfaces as invocations at all — is a FAIL: zero omissions out of nothing read is
+the shape having moved, not all clear. That is also what taking #470's three rows back out
+produces, since it leaves §2 with no `rig-wb wb` entry anywhere — the property §2 had when
+#470 was filed. The check cannot tell "every surface was dropped" from "the notation moved",
+so it says so, louder than the eleven warnings would have been.
+
+No behaviour changes, and SKILL.md is untouched.
 
 `adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
 `gate: acceptance-gate` and no `acceptance:` list at all, so the gate

@@ -338,3 +338,130 @@ def check_workbench_routing() -> None:
     if not blind:
         _emit("PASS", f"workbench routing: {len(registered_subcommands(parser))} subcommands "
                       f"/ {len(unrouted)} unrouted / {len(stale)} stale allowlist")
+
+
+# ── workbench subcommand ↔ SKILL.md §2 brick catalog (#491) ──────────────────
+#: The §2 section, by the two headings that bound it. `check_catalog_drift` slices the same
+#: section with `str.index("## 3.")`, which would also land on `## 3.5. Recipe スキーマ` if the
+#: two headings were ever reordered; this check locates both bounds as whole lines that occur
+#: exactly once, so a renamed or duplicated heading makes it go blind instead of reading a
+#: section that is not §2.
+CATALOG_SECTION = ("## 2. ブリック目録", "## 3. PARSE — 起動文字列の解釈")
+
+#: Subcommands §2 catalogues through the `/rig:go` workbench pack row rather than one by one.
+#: They are the operations on a run — show it, diff it, accept it, discard it, scan it, count
+#: it — and §2's rows name *surfaces*: a pack and the bricks it adds. The workbench row is that
+#: surface for all of these, and `commands/go.md`'s route table is where each of them is
+#: written down individually (checked by `check_workbench_routing`, one row per subcommand).
+#:
+#: Declared rather than inferred, because nothing about `accept` distinguishes it from
+#: `receipt` mechanically — both are user-facing subcommands of the same parser. Which side of
+#: the line a new subcommand falls on is a judgement somebody makes, and making it here means
+#: a new run operation is a one-line decision while a new surface (which is what #395 and #470
+#: both were) is reported until §2 names it. Checked in the other direction below, because an
+#: entry naming a subcommand that no longer exists suppresses nothing and hides that it
+#: stopped applying.
+PACK_ROW_ONLY = frozenset({
+    "accept", "audit", "board", "cockpit", "confidence", "context", "diff", "digest",
+    "discard", "gates", "gc", "instincts", "log", "review", "scan-anchors",
+    "scan-destructive", "scan-injection", "scan-secrets", "stale-refs", "stats", "status",
+    "stream-checks",
+})
+
+
+def catalogued_subcommands(section: str) -> list[str]:
+    """Every subcommand §2 names structurally, given §2.
+
+    Structurally means as an invocation — a complete `` `rig-wb wb <name>` `` run, or the
+    brace notation §2 already uses to group a surface's subcommands into one
+    (`` `rig-wb wb {receipt,import,contract}` ``). Not "is the name written somewhere in §2":
+    §2 is a catalogue of packs, and a subcommand's name turns up inside other rows' prose and
+    inside other rows' file lists. Measured against §2 as it stood before #470 was fixed,
+    `import` matched the `/rig:import` pack row and `contract` matched "output-contract
+    facet" — so a check asking whether the name is *mentioned* reports the very omission it
+    exists to catch as covered.
+
+    The name must be the whole of what follows `rig-wb wb` inside the run, so a usage example
+    written with its arguments does not count as the catalogue listing that surface — the same
+    rule `listed_subcommands` applies to the ops instruction's header, for the same reason:
+    one example inside a description is not the document naming what rig has.
+    """
+    names = set()
+    for token in re.findall(r"`rig-wb wb ([A-Za-z0-9{},_-]+)`", section):
+        names.update(_expand_braces(token))
+    return sorted(names)
+
+
+def workbench_catalog(parser, skill_md: str) -> tuple[list, list, list]:
+    """(subcommands §2 does not catalogue, stale allowlist entries, why this cannot answer).
+
+    Returns rather than emits so a test can hand it a catalogue it must object to — including
+    the two catalogues that already fooled the obvious version of this check.
+
+    Takes the whole document and locates §2 itself, so that where it reads is part of what a
+    test can break.
+    """
+    registered = registered_subcommands(parser)
+    section = _section(skill_md, CATALOG_SECTION)
+    catalogued = catalogued_subcommands(section) if section is not None else []
+
+    # A check that found nothing to check has not passed. Each of these means the shape this
+    # check reads has moved — a different parser, a renamed heading, a §2 that stopped
+    # spelling these surfaces as invocations — and reporting zero omissions then would be the
+    # check saying "all clear" about text it never looked at.
+    blind = []
+    if not registered:
+        blind.append("the parser exposes no subcommands: the CLI wiring this check reads has "
+                     "changed shape")
+    if section is None:
+        blind.append(f"skills/engine/SKILL.md does not hold exactly one section bounded by "
+                     f"{CATALOG_SECTION[0]!r} and {CATALOG_SECTION[1]!r} in that order: this "
+                     f"check cannot tell where the brick catalog is")
+    elif not catalogued:
+        blind.append("no `rig-wb wb <name>` entries found in §2: the notation this check "
+                     "reads the catalog by has changed shape")
+
+    uncatalogued = [name for name in registered
+                    if name not in INTERNAL_ONLY
+                    and name not in PACK_ROW_ONLY
+                    and name not in catalogued] if not blind else []
+    stale = sorted(PACK_ROW_ONLY - set(registered)) if registered else []
+    return uncatalogued, stale, blind
+
+
+def check_workbench_catalog() -> None:
+    """`workbench.py`'s user-facing subcommands against SKILL.md §2's brick catalog.
+
+    §2 is what a session reads to find out what rig has, and a surface missing from it does
+    not exist from there. Three times a shipped surface went missing (#395, #470, and the nine
+    subcommands #470's fix found still unlisted), each time noticed by a person rather than by
+    this repository's own checks.
+    """
+    from rig_workbench.workbench.cli import build_parser
+    skill_md = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
+    parser = build_parser()
+    uncatalogued, stale, blind = workbench_catalog(parser, skill_md)
+
+    for why in blind:
+        _emit("FAIL", f"workbench catalog — {why}")
+    for name in uncatalogued:
+        _emit("WARN", f"workbench catalog — `{name}` is a user-facing subcommand of "
+                      f"workbench.py and SKILL.md §2 names no `rig-wb wb {name}`, so a session "
+                      f"reading the brick catalog cannot find out it exists (missed listing "
+                      f"for a new surface?)")
+    for name in stale:
+        _emit("WARN", f"workbench catalog — PACK_ROW_ONLY names `{name}`, which is not a "
+                      f"subcommand any more; an allowlist entry for something that does not "
+                      f"exist suppresses nothing and hides that it stopped applying")
+    if not blind:
+        registered = registered_subcommands(parser)
+        catalogued = set(catalogued_subcommands(_section(skill_md, CATALOG_SECTION)))
+        internal = sum(1 for name in registered if name in INTERNAL_ONLY)
+        by_row = sum(1 for name in registered
+                     if name not in INTERNAL_ONLY and name in PACK_ROW_ONLY)
+        named = sum(1 for name in registered
+                    if name not in INTERNAL_ONLY and name not in PACK_ROW_ONLY
+                    and name in catalogued)
+        _emit("PASS", f"workbench catalog: {len(registered)} subcommands — {internal} "
+                      f"internal / {by_row} covered by the workbench pack row / {named} named "
+                      f"in §2 / {len(uncatalogued)} uncatalogued")

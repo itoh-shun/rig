@@ -81,7 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     Separate from `main` so a check can ask argparse what this CLI dispatches instead of
     reading how the registrations are spelled: `validation.catalog.check_workbench_routing`
     compares `sub.choices` against the route table, and a registration moved into a helper
-    or a loop still shows up there.
+    or a loop still shows up there. `check_workbench_catalog` asks the same question of
+    SKILL.md §2 — whether the brick catalog a session reads names the surface at all.
     """
     parser = argparse.ArgumentParser(description="rig workbench — run-state / worktree / acceptance-gate manager")
     sub = parser.add_subparsers(dest="cmd", required=True)
