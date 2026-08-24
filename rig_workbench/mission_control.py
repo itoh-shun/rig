@@ -16,7 +16,7 @@ import pathlib
 import sys
 
 from . import exitcodes
-from .evidence import find_repo_root, mission_control_snapshot
+from .evidence import find_repo_root, fleet_shortfall, mission_control_snapshot
 from .workbench.cockpit import _aggregate_token_usage
 from .workbench.confidence import aggregate_drill_confidence
 from .workbench.config import ACTIVE_STATUSES
@@ -317,11 +317,10 @@ def _fleet_window(fleet: dict) -> str:
     The tile is one number for a whole fleet, which is the place a lost task record is least
     visible — it is averaged into a percentage before anyone sees it. `govern rollup` counts
     those records rather than dropping them (#493), so the tile says how many stand behind
-    the number it shows.
+    the number it shows, and names the projects whose runs directory it could not list at all
+    — a project measured against no records still contributes a score to this average.
     """
-    unreadable = fleet.get("unreadable_task_records") or []
-    return (f"window: {fleet.get('since_days', 90)} days"
-            + (f" · {len(unreadable)} task record(s) could not be read" if unreadable else ""))
+    return f"window: {fleet.get('since_days', 90)} days" + fleet_shortfall(fleet)
 
 
 def _render_fleet(snapshot: dict) -> str:

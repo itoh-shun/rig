@@ -168,14 +168,28 @@ def _load_tasks(root: pathlib.Path, since_days: int) -> tuple[TaskRecords, tuple
     return records, in_window
 
 
-def _acceptance(root: pathlib.Path, task_id: str) -> dict | None:
+#: Returned by `_acceptance` for a gate record that is there and cannot be read. Absent and
+#: unreadable both used to come back as None, and the caller skipped both — so an accepted run
+#: whose `acceptance.json` was corrupt was scanned for nothing and then counted among the runs
+#: reported clean, with no note anywhere, because its `task.json` had read fine.
+UNREADABLE_ACCEPTANCE = object()
+
+
+def _acceptance(root: pathlib.Path, task_id: str) -> dict | None | object:
+    """The run's gate record, None when it has none, `UNREADABLE_ACCEPTANCE` when it cannot
+    be read. Three answers because the caller owes a different sentence to each.
+
+    `OSError` as well as bad JSON: `_task_record` treats every way a file fails to yield a
+    usable record the same way, and a permission bit is not a smaller obstacle than a
+    truncated write.
+    """
     p = root / ".rig" / "runs" / task_id / "acceptance.json"
     if not p.is_file():
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
+    except (OSError, ValueError):
+        return UNREADABLE_ACCEPTANCE
 
 
 def evaluate_project(root: pathlib.Path, *, since_days: int = 90) -> Report:
@@ -279,10 +293,17 @@ def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: Tas
         return Check("required_criteria", NA, "the policy requires no extra criteria")
     tasks = list(in_window)
     offenders: list[str] = []
+    unreadable_gates: list[str] = []
     for task in tasks:
         if task.get("status") != "accepted":
             continue
         acc = _acceptance(root, task.get("task_id", ""))
+        if acc is UNREADABLE_ACCEPTANCE:
+            # Not an offender: a criterion cannot be shown missing from a record nobody read.
+            # Not a skip either, which is what it was — the run then landed in the count of
+            # runs reported clean.
+            unreadable_gates.append(task.get("task_id", "?"))
+            continue
         if not acc:
             continue
         present = {c.get("name") for c in acc.get("checks", [])}
@@ -291,9 +312,15 @@ def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: Tas
         if missing:
             offenders.append(f"{task.get('task_id')}: missing {', '.join(missing)}")
     total = sum(len(v) for v in required.values())
-    # Every count below is a count of records that could be read. Saying so next to it is
-    # the difference between "no run skipped a criterion" and "no run I could read did".
-    shortfall = records.note()
+    # Two files stand behind this verdict and each gets its own clause. `records.note()`
+    # covers the run records: it is what makes "no run skipped a criterion" read as "no run I
+    # could read did". It says nothing about `acceptance.json`, which is the file this check
+    # actually scans and a separate way to be unreadable — a run whose `task.json` parses and
+    # whose gate record does not is counted by the first clause as read.
+    shortfall = records.note() + (
+        f" — {len(unreadable_gates)} accepted run(s) had an acceptance record that could not "
+        f"be read, so they were not scanned: {', '.join(unreadable_gates[:10])}"
+        if unreadable_gates else "")
     if offenders:
         return Check("required_criteria", FAIL,
                      f"{len(offenders)} accepted run(s) were gated without policy-required "
@@ -434,16 +461,54 @@ class Rollup:
         """
         return [f"{r.project}/{name}" for r in reports if r.tasks for name in r.tasks.unreadable]
 
+    @staticmethod
+    def unlisted_in(reports: list[Report]) -> list[str]:
+        """Every project here whose runs directory could not be listed at all.
+
+        A second list rather than more entries in `unreadable_in`, because the two facts are
+        not the same size and only one of them is a count of records. `unreadable_in` names
+        run directories, so `len()` of it is exactly "how many records could not be read"; a
+        directory that could not be listed yields no names and no total, and folding it in
+        would print a record count nobody measured.
+
+        It has to reach this layer under its own name. `TaskRecords.collection_error` is on
+        the project report, and `read_all_tasks` turns the listing failure into that field
+        instead of raising, so nothing between here and the disk is left to notice it: the
+        three run-derived checks each ran against zero records and passed there, the project
+        renders as fully conformant, and its score is averaged into the org rate — where a
+        vacuous pass moves the fleet number in whichever direction the other projects are
+        worse. This does not rescore that project. An unread record is not evidence of a
+        violation, and a directory nobody could list is not evidence of eight passing checks
+        either; what is available to say is that it was not read, so that is what is said,
+        beside the number it qualifies.
+        """
+        return [r.project for r in reports if r.tasks and r.tasks.collection_error is not None]
+
+    @staticmethod
+    def _qualifier(unread: int, unlisted: int) -> str:
+        """The parenthetical a rate cell carries, or empty when the records were all read.
+
+        One builder for the team cell and the project cell so the two cannot drift, and so
+        the record-only case renders exactly the text it did before `unlisted` existed.
+        """
+        parts = ([f"{unread} unread"] if unread else []) + ([f"{unlisted} unlisted"] if unlisted else [])
+        return f" ({', '.join(parts)})" if parts else ""
+
     def to_dict(self) -> dict:
         return {
             "projects": len(self.reports),
             "score": round(self.score, 4),
             "unreadable_task_records": self.unreadable_in(self.reports),
+            # Separate key, separate meaning: the list above counts records, this one names
+            # projects whose runs directory yielded no count at all. A consumer that added
+            # them would be reporting a number of records that was never measured.
+            "unlisted_runs_directories": self.unlisted_in(self.reports),
             "teams": {
                 team: {
                     "projects": len(rs),
                     "score": round(sum(r.score for r in rs) / len(rs), 4),
                     "unreadable_task_records": self.unreadable_in(rs),
+                    "unlisted_runs_directories": self.unlisted_in(rs),
                     "failing": [r.project for r in rs if r.verdict == FAIL],
                     "findings": sorted({f for r in rs for f in r.findings}),
                 }
@@ -456,10 +521,17 @@ class Rollup:
         orgs = sorted({r.org for r in self.reports if r.org})
         lines = [f"## rig govern rollup: {', '.join(orgs) or '(no org)'}", ""]
         unreadable = self.unreadable_in(self.reports)
+        unlisted = self.unlisted_in(self.reports)
         lines.append(f"projects: {len(self.reports)}  ·  org conformance: {self.score:.0%}"
                      + (f"  ·  {len(unreadable)} task record(s) could not be read "
                         f"({', '.join(unreadable[:10])}), so they are counted neither as "
-                        f"conforming nor as failing" if unreadable else ""))
+                        f"conforming nor as failing" if unreadable else "")
+                     # Not phrased as a record count. Nobody knows how many records are in a
+                     # directory that could not be listed; what is known is that the checks
+                     # which count runs counted none, and still scored.
+                     + (f"  ·  {len(unlisted)} project(s) whose runs directory could not be "
+                        f"listed ({', '.join(unlisted[:10])}), so their run-derived checks "
+                        f"passed against no records" if unlisted else ""))
         lines.append("")
         lines.append("| team | projects | conformance | failing checks |")
         lines.append("|---|---|---|---|")
@@ -468,19 +540,27 @@ class Rollup:
             failing = sorted({f for r in rs for f in r.findings})
             # In the cell, not in a footnote: this column is the number a team is read on,
             # and a rate whose shortfall lives elsewhere on the page is read without it.
-            team_unreadable = len(self.unreadable_in(rs))
             lines.append(f"| {team} | {len(rs)} | {team_score:.0%}"
-                         + (f" ({team_unreadable} unread)" if team_unreadable else "")
+                         + self._qualifier(len(self.unreadable_in(rs)), len(self.unlisted_in(rs)))
                          + f" | {', '.join(failing) if failing else '—'} |")
         lines.append("")
         lines.append("| project | team | verdict | score | worst finding |")
         lines.append("|---|---|---|---|---|")
         for r in sorted(self.reports, key=lambda r: (r.team or "", r.project)):
             worst = sorted(r.checks, key=lambda c: _RANK[c.verdict])
-            note = r.error or (f"{worst[0].id}: {worst[0].detail}" if worst and worst[0].verdict in (FAIL, WARN) else "—")
+            unlisted = r.tasks.collection_error if r.tasks else None
+            # A project whose runs could not be listed has no FAIL or WARN to point at —
+            # every check that would have found one ran against nothing — so "—" is what this
+            # column printed for it. That dash is the whole finding: the worst thing known
+            # about the row is that it was not measured, and this column is where a reader
+            # looks for the worst thing known.
+            note = r.error or (f"{worst[0].id}: {worst[0].detail}"
+                               if worst and worst[0].verdict in (FAIL, WARN)
+                               else (f"runs directory could not be listed ({unlisted})"
+                                     if unlisted else "—"))
             unread = len(r.tasks.unreadable) if r.tasks else 0
             lines.append(f"| {r.project} | {r.team or '—'} | {ICON[r.verdict]} {r.verdict} | "
-                         f"{r.score:.0%}" + (f" ({unread} unread)" if unread else "")
+                         f"{r.score:.0%}" + self._qualifier(unread, 1 if unlisted else 0)
                          + f" | {note} |")
         return "\n".join(lines)
 

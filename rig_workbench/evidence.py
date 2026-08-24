@@ -344,6 +344,29 @@ def fleet_snapshot(root: pathlib.Path) -> dict[str, Any]:
     return {"configured": True, "since_days": since_days, **result}
 
 
+def fleet_shortfall(fleet: dict[str, Any]) -> str:
+    """The clause that goes beside a rendered org conformance rate, or "" when nothing was lost.
+
+    One function for every renderer of a fleet snapshot — this module's two printed summaries
+    and Mission Control's tile — because the rate and the shortfall travelling separately is
+    how the rate gets read alone. `rollup --json` carries both facts; a reader looking at
+    `score=88%` has no way to know either one is there.
+
+    The two clauses are kept apart on purpose. `unreadable_task_records` is a count of
+    records; `unlisted_runs_directories` names projects whose runs directory could not be
+    listed, where the number of records behind the score is not known at all.
+    """
+    parts = []
+    unreadable = fleet.get("unreadable_task_records") or []
+    unlisted = fleet.get("unlisted_runs_directories") or []
+    if unreadable:
+        parts.append(f"{len(unreadable)} task record(s) could not be read")
+    if unlisted:
+        parts.append(f"{len(unlisted)} project(s) whose runs directory could not be listed "
+                     f"({', '.join(unlisted[:5])})")
+    return "".join(f" · {part}" for part in parts)
+
+
 def mission_control_snapshot(root: pathlib.Path, *, since: str | None = None) -> dict[str, Any]:
     rows = field_observations(root, since=since)
     return {
@@ -383,7 +406,8 @@ def _print_summary(snapshot: dict[str, Any]) -> None:
     elif fleet.get("error"):
         print(f"  error: {fleet['error']}")
     else:
-        print(f"  projects={fleet.get('projects', 0)} score={fleet.get('score', 0):.0%}")
+        print(f"  projects={fleet.get('projects', 0)} score={fleet.get('score', 0):.0%}"
+              + fleet_shortfall(fleet))
         for team, info in sorted((fleet.get("teams") or {}).items()):
             print(f"  {team}: {info.get('projects', 0)} project(s), score={info.get('score', 0):.0%}, "
                   f"failing={', '.join(info.get('failing') or []) or '—'}")
@@ -452,7 +476,8 @@ def cmd_evidence(argv: list[str]) -> int:
                 elif result.get("error"):
                     print(f"fleet error: {result['error']}")
                 else:
-                    print(f"projects={result.get('projects', 0)} score={result.get('score', 0):.0%}")
+                    print(f"projects={result.get('projects', 0)} score={result.get('score', 0):.0%}"
+                          + fleet_shortfall(result))
                     for team, info in sorted((result.get("teams") or {}).items()):
                         print(f"{team}: {info.get('projects', 0)} project(s) score={info.get('score', 0):.0%} "
                               f"failing={', '.join(info.get('failing') or []) or '—'}")

@@ -120,9 +120,34 @@ denominator would assert it is non-compliant — a claim about a file nobody rea
 is the bug. So it is named beside the total, in the same sentence every other reader of the
 runs directory prints (`TaskRecords.note()`): on the score line, on each of the three checks
 whose verdict is computed from run counts (`required_criteria`, `approvals`, `force_rate`),
-in the rollup's per-team and per-project rate cells, and on Mission Control's org-conformance
-tile — the place a lost record is least visible, because it is averaged into a percentage
-before anyone sees it.
+in the rollup's per-team and per-project rate cells, on both printed summaries of
+`rig-wb evidence`, and on Mission Control's org-conformance tile — the place a lost record is
+least visible, because it is averaged into a percentage before anyone sees it.
+
+**A runs directory that could not be listed at all is a second fact, counted apart from the
+first.** Before this change it escaped as an exception and `rig-wb evidence fleet` printed
+`error:`; `read_all_tasks` turns it into `TaskRecords.collection_error` instead, so nothing
+above it raises any more — and the three checks computed from run counts then ran against
+zero records, passed there, and the project rendered `✓ pass 100%` into the org average. That
+is a loud failure becoming a silent success, so the rollup carries it under its own name
+(`unlisted_runs_directories` in the JSON; `(1 unlisted)` in the rate cell, with the listing
+error in the project's finding column). It is deliberately not folded into the record count:
+`unreadable_task_records` names run directories, so its length is exactly how many records
+could not be read, while nobody knows how many records a directory that could not be listed
+holds. Printing one as the other would be a figure nobody measured. What is *not* changed is
+the score: a directory nobody could list is no more evidence of eight passing checks than an
+unread record is evidence of a violation, so the rate still moves and is now qualified where
+it is shown, rather than being silently recomputed. `rig-wb evidence fleet` consequently exits
+0 where it used to exit 1 on the escaped exception — the fact is named in the output instead
+of in the exit code.
+
+`required_criteria` reads a second file, and it now says when *that* one could not be read.
+`records.note()` is about `task.json`; this check scans `acceptance.json`, and an accepted run
+whose gate record was corrupt was dropped from the offenders scan and then counted among the
+runs reported clean, with the note empty because its task record had read fine. `_acceptance`
+now distinguishes absent (a run that was never gated — unchanged) from unreadable, and the
+check names the unscanned runs beside its count instead of a comment asserting that every
+count in it came from a record that could be read.
 
 `force_rate` is where a lost record moves the most: 1/1 forced (fail) and 1/2 forced (warn)
 differ by one file the check never opened. Its "no accepted runs in the window" branch carries
@@ -144,10 +169,12 @@ the same quietly shrunken denominator, inside the sentence added to remove it. `
 `unreadable` in the JSON describe the whole directory; `in_window` is the subset the checks
 counted. Two test fixtures wrote records shorter than any shipped run (`test_govern_ledger`
 omitted `input`, `test_usage_coverage` wrote only `{task_id, status}`) and were writing
-records no reader can use; they now write real ones. The regression control is direct: putting
-the silent-skip implementations back fails 10 of these tests, and every assertion names the
-attempted total ("1 of 2"), so a note that counted only the readable records would not pass
-either.
+records no reader can use; they now write real ones. The regression control is direct: dropping
+the shortfall the way the old silent-skip walk did fails 13 tests in
+`tests/test_conformance_unreadable_records.py`, and every assertion names the attempted total
+("1 of 2"), so a note that counted only the readable records would not pass either. The
+unlistable-directory tests use a file where `.rig/runs` belongs rather than `chmod 000`, so
+they raise `NotADirectoryError` for every uid instead of passing by not failing under root.
 
 `adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
 `gate: acceptance-gate` and no `acceptance:` list at all, so the gate
