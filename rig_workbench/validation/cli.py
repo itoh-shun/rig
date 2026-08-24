@@ -16,7 +16,7 @@ import traceback
 
 from . import state
 from .accumulated import check_accumulated
-from .catalog import check_catalog_drift, check_graph, check_wiki
+from .catalog import check_catalog_drift, check_workbench_routing, check_graph, check_wiki
 from .config import RECIPES
 from .drill import (check_corpus_integrity, check_drill_coverage,
                     check_fixture_corpus_integrity)
@@ -66,6 +66,11 @@ def main() -> None:
         check_catalog_drift()
     except Exception:
         _emit("FAIL", f"§2 catalog drift check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_workbench_routing()
+    except Exception:
+        _emit("FAIL", f"workbench routing check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_wiki()
