@@ -83,10 +83,19 @@ def build_digest(root: pathlib.Path, period: str,
 
     # ── workbench tasks (.rig/runs/*/…) ───────────────────────────────────────
     base = runs_dir(root)
-    tasks = [t for t in read_all_tasks(base) if _in_period(t.get("created_at"), cutoff)]
+    records = read_all_tasks(base)
+    # A record whose `created_at` cannot be read cannot be shown to fall outside the period,
+    # so the period filter is not what decides it is absent from the digest.
+    tasks = [t for t in records.tasks if _in_period(t.get("created_at"), cutoff)]
 
-    if not runs and not tasks:
+    if not runs and not tasks and not records.note():
         lines.append(f"No runs in period (last {days} days). Nothing to digest.")
+        return "\n".join(lines) + "\n"
+    if not runs and not tasks:
+        # There is nothing to digest *and* something that could not be read. Saying only the
+        # first would assert emptiness about a record whose date was never legible — the
+        # period filter did not put it outside the period, it was never compared.
+        lines.append(f"No runs in period (last {days} days){records.note()}.")
         return "\n".join(lines) + "\n"
 
     lines.append("## Runs")
@@ -94,7 +103,7 @@ def build_digest(root: pathlib.Path, period: str,
     lines.append(f"- Orchestrate runs (`.rig/runs.jsonl`): {len(runs)}")
     for final, n in Counter(str(r.get("final") or "?") for r in runs).most_common():
         lines.append(f"  - {final}: {n}")
-    lines.append(f"- Workbench tasks (`.rig/runs/`): {len(tasks)}")
+    lines.append(f"- Workbench tasks (`.rig/runs/`): {len(tasks)}{records.note()}")
     for status, n in Counter(t.get("status") or "?" for t in tasks).most_common():
         lines.append(f"  - {status}: {n}")
     lines.append("")

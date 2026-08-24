@@ -162,7 +162,8 @@ def durable_snapshot(root: pathlib.Path) -> dict[str, Any]:
 def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
     snapshot = build_snapshot(root)
     base = runs_dir(root)
-    tasks = read_all_tasks(base)
+    records = read_all_tasks(base)
+    tasks = list(records.tasks)
     tasks.sort(key=lambda item: item.get("updated_at") or item.get("created_at") or "",
                reverse=True)
     index = []

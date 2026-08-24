@@ -28,7 +28,8 @@ from .workbench.state import _load_audit, runs_dir
 
 def _operational_snapshot(root: pathlib.Path) -> dict:
     base = runs_dir(root)
-    tasks = read_all_tasks(base)
+    records = read_all_tasks(base)
+    tasks = list(records.tasks)
     active = [task for task in tasks if task.get("status") in ACTIVE_STATUSES]
     gates = gate_status_counts(base, tasks) if tasks else {}
     raw_confidence = aggregate_drill_confidence(root)
@@ -47,6 +48,14 @@ def _operational_snapshot(root: pathlib.Path) -> dict:
     return {
         "tasks_total": len(tasks),
         "tasks_active": len(active),
+        # Beside the total, never folded into it: a page that renders 52 where 55 records
+        # exist has answered a question nobody asked. The fields are for callers that build
+        # their own text; `tasks_unreadable_note` is the sentence itself, carried in the
+        # snapshot so the static page and the live UI cannot word the same shortfall
+        # differently — neither of them renders a total without it.
+        "tasks_unreadable": list(records.unreadable),
+        "tasks_unreadable_collection": records.collection_error,
+        "tasks_unreadable_note": records.note().lstrip(" —") or None,
         "gate_counts": gates,
         "reviewer_confidence": confidence,
         "token_usage": _aggregate_token_usage(root),
@@ -77,24 +86,18 @@ def _assurance_snapshot(root: pathlib.Path) -> dict:
     base = runs_dir(root)
     counts = {state: 0 for state in ASSURANCE_STATES}
     rows = []
-    unreadable_tasks = []
-    # The run directories themselves, not `read_all_tasks`. That helper parses every
-    # `task.json` before returning, so one malformed file would raise before the guard below
-    # could name it — and a task it silently skipped would be a task this page never mentions.
-    # A directory is a task somebody started, whatever is inside it.
-    unreadable_collection = None
-    try:
-        directories = sorted(d.name for d in base.iterdir() if d.is_dir())
-    except FileNotFoundError:
-        # No runs directory is a cold start, not a failure: nothing has been recorded yet.
-        directories = []
-    except OSError as exc:
-        # Anything else — a permission, a broken mount — is rig failing to look. Reporting it
-        # as zero tasks would print "no task has recorded an assurance target yet", which is a
-        # verdict this page did not establish and cannot.
-        directories = []
-        unreadable_collection = f"{type(exc).__name__}: {exc}"
-    for task_id in directories:
+    # The same list every other reader of the runs directory gets (#488). This section used
+    # to enumerate the directories itself, because `read_all_tasks` raised on one malformed
+    # record and would have died before the guard below could name it. It no longer does, and
+    # a second enumeration here would be a second place for "what counts as a task" to be
+    # decided — and the two could disagree on the page that shows both.
+    records = read_all_tasks(base)
+    unreadable_collection = records.collection_error
+    # A directory whose record cannot be read is a task whose assurance cannot be read. It is
+    # named here for the same reason it is named there: a row missing from a dashboard reads
+    # as a task that has nothing to report.
+    unreadable_tasks = list(records.unreadable)
+    for task_id in [str(task["task_id"]) for task in records.tasks]:
         try:
             asked = build_receipt(root, task_id)["assurance_target"]
         except Exception:  # noqa: BLE001
@@ -364,7 +367,7 @@ def render_html(snapshot: dict) -> str:
 <h2>Core contract</h2>{_render_core(snapshot)}
 
 <h2>Now</h2><div class="metric-grid">
-{_metric('active tasks', ops['tasks_active'], f"{ops['tasks_total']} total")}
+{_metric('active tasks', ops['tasks_active'], f"{ops['tasks_total']} total" + (f" · {ops['tasks_unreadable_note']}" if ops.get('tasks_unreadable_note') else ""))}
 {_metric('gate failures', gate_failed, 'current recorded task history')}
 {_metric('RIG tokens', total_tokens if usage else 'unmeasured', f"{usage.get('calls', 0)} metered calls" if usage else 'CLI providers may be unmetered')}
 {_metric('production incident rate', production_rate, f"{prod['incidents']} incident(s) / {prod['outcomes_recorded']} recorded")}

@@ -96,14 +96,15 @@ def cmd_cockpit(_args: argparse.Namespace) -> None:
     """
     root = repo_root()
     base = runs_dir(root)
-    tasks = read_all_tasks(base)
-    tasks.sort(key=lambda t: t["created_at"])
+    records = read_all_tasks(base)
+    tasks = list(records.tasks)
+    tasks.sort(key=lambda t: t.get("created_at") or "")
     active = [t for t in tasks if t["status"] in ACTIVE_STATUSES]
 
     print("━━━ rig cockpit — Mission Control (read-only) ━━━━━━━━━━━━━━")
 
     # ── Run timeline ──────────────────────────────────────────────────────
-    print(f"\n┌─ Run timeline ({len(active)} active / {len(tasks)} total)")
+    print(f"\n┌─ Run timeline ({len(active)} active / {len(tasks)} total{records.note()})")
     if not active:
         print("│ No active tasks.")
     for t in active:
