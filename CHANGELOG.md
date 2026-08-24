@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+`--validate` now catches a subcommand that was implemented and never wired up. Five issues —
+#261, #262, #327, #417, #473 — were the same omission found one at a time after the fact: a
+user-facing `workbench.py` subcommand missing from the route table `/rig:go` dispatches from,
+so the command existed and could not be reached. `check_workbench_routing` compares what the built parser
+dispatches against both surfaces that make a subcommand reachable — `commands/go.md`'s route
+table and the ops instruction's own list — and reports what is in neither. It found twelve on
+its first run: `gates`, `receipt`, `import` and `contract` (#473), and the eight subcommands
+added while wiring #432/#434/#435 into place. All twelve are wired now.
+
+**Two surfaces, one rule.** #473 was the same four names missing from both, so a check covering
+one of them would have reported that issue half-fixed.
+
+**An allowlist is checked in the other direction too.** The subcommands `/rig:go` never routes
+— the flow calls them itself — are declared rather than inferred, and an entry naming something
+that is no longer a subcommand is reported: it suppresses nothing, and hides that it stopped
+applying.
+
+**It reads argparse, not the source.** What a subcommand is called in `cli.py` is one
+spelling of it; what `/rig:go` can reach is what argparse will match an argv against. The check
+asks the built parser, so a registration moved into a helper or a loop still counts — a regex
+over the source would have lost it, and a subcommand lost silently is indistinguishable from
+one that is wired.
+
+**It reads each list where that list lives.** `go.md` explains the natural-language path below
+its route table and the ops instruction documents every subcommand in its body, so a check
+reading either document whole would count a name written in a sentence as a name the flow
+dispatches — success reported for exactly what the check exists to catch. The route table is
+found by its own header row and read to the first line that is not a row, so a second table
+added beside it is not mistaken for dispatch wiring; the ops list is sliced to the header that
+holds it. Every landmark must locate its list *unambiguously* — be a whole line, appear
+exactly once, and come in order — or the check fails rather than reading whichever copy came
+first: `> | 先頭語 | 委譲先 |` contains the header row and is a blockquote, and a test
+asserting the shipped files have unique landmarks would only cover a run that executes that
+test, while `--validate` could still pass having read the wrong table. And a row routes the
+name its first cell *opens* with, as a backticked run that closes: `` | （廃止: `receipt`） |
+`` annotates a subcommand rather than routing one, and `` | `receipt | `` is a row nobody
+proof-read.
+
+**And a check that found nothing to check has not passed.** No subcommands from the parser, no
+section where the list should be, no rows in it: each is the shape this check reads having
+moved, and reporting zero omissions then would be it saying "all clear" about text it never
+looked at. It fails instead, and reports nothing else while it is blind. The same discipline is
+why the check is a function over documents rather than a walk of the repository — it can be
+shown a wiring it must object to: a name mentioned in a row's *description* rather than routed
+by it, a name in a column no dispatcher reads, a table that lives outside the route-table
+section (#478, #473).
+
+
 An assurance target now reaches the two places that can use it. `workbench.py assurance-derive
 <target> --requires <mapping> --against <catalog>` derives the workflow floor a target needs,
 and the receipt — and Mission Control after it — reports what was asked for beside what was

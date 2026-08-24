@@ -1,5 +1,6 @@
 """validation catalog: §2 catalog drift / wiki hygiene / brick graph checks (split from scripts/validate.py)."""
 
+import argparse
 import json
 import os
 import pathlib
@@ -138,3 +139,202 @@ def check_graph() -> None:
             _emit("WARN", f"graph — {e['from']} references {e['to']} but it cannot be resolved")
     if bad == 0:
         _emit("PASS", f"graph: {len(g['nodes'])} nodes / {len(g['edges'])} edges — no unresolved edges in the typed graph")
+
+
+
+# ── workbench subcommand ↔ go.md route table (#478) ──────────────────────────
+#: Subcommands `/rig:go` never routes to, because the flow calls them itself: the workbench
+#: instruction drives `new`/`route`/`step`/`gate`, `intent` writes a contract during a run, and
+#: the rest are `drill` and provenance plumbing. Declared here rather than inferred, so adding
+#: one is a decision somebody made — and checked in the other direction below, because an entry
+#: naming a subcommand that no longer exists is a silence nobody would notice.
+INTERNAL_ONLY = frozenset({
+    "new", "route", "step", "gate", "intent", "drill-corpus",
+    "record-commit", "record-outcome", "trace-commit", "verify-provenance",
+})
+
+#: Where each surface keeps its list. Both documents say more than they route — `go.md`
+#: explains the natural-language path below the table and gives examples, and the ops
+#: instruction documents every subcommand in its body — so reading either whole would count a
+#: name written in a sentence as a name the flow dispatches. That is the one mistake this check
+#: cannot afford: it would report success for exactly what it exists to catch.
+#:
+#: The route table is found by its own header row rather than by the section around it, so a
+#: second table added beside it is not mistaken for the dispatch table.
+ROUTE_TABLE_HEADER = "| 先頭語 | 委譲先 |"
+OPS_HEADER_SECTION = ("# instruction: workbench-ops", "## 共通ルール")
+
+
+def _sole(document: str, landmark: str) -> int | None:
+    """Which line is `landmark`, if exactly one line of the document is.
+
+    A whole line, because a landmark found as a substring is not a landmark found by
+    structure: `> | 先頭語 | 委譲先 |` contains the route table's header row and *is* a
+    blockquote, and slicing from the `|` inside it would hand back rows that no longer form
+    the table this check says it read.
+
+    Exactly one, because a landmark appearing twice locates nothing: `str.find` takes the
+    first copy, and this check would then read one of them while reporting about the other. A
+    test asserting the shipped files have unique landmarks only protects a run that executes
+    that test — the check has to refuse the ambiguity itself, or `--validate` can pass while
+    looking at the wrong table.
+    """
+    matches = [i for i, line in enumerate(document.splitlines()) if line.strip() == landmark]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _from(document: str, line_no: int | None) -> str | None:
+    """The document from `line_no` on."""
+    return None if line_no is None else "\n".join(document.splitlines()[line_no:])
+
+
+def _section(document: str, bounds: tuple[str, str]) -> str | None:
+    """The slice between two landmarks, or None if either fails to locate the section.
+
+    None rather than the whole document, because a landmark that stopped matching means this
+    check no longer knows where the list is, and falling back to the document would turn that
+    into a quiet answer about the wrong text.
+    """
+    start, end = bounds
+    head = _sole(document, start)
+    stop = _sole(document, end)
+    if head is None or stop is None or stop <= head:
+        return None
+    return "\n".join(document.splitlines()[head:stop])
+
+
+def registered_subcommands(parser) -> list[str]:
+    """Every name the CLI dispatches, asked of argparse rather than read off the source.
+
+    `cli.py` is where a subcommand is registered, but how it is *spelled* there is not the
+    invariant — a registration moved into a helper or a loop dispatches exactly the same and
+    would vanish from any regex over the source. `sub.choices` is what argparse will actually
+    match an argv against, so it cannot disagree with the CLI's behaviour.
+    """
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return sorted(action.choices)
+    return []
+
+
+def route_table(go_md: str) -> str | None:
+    """The rows of the route table itself, found by its header row.
+
+    The contiguous run of rows under that header, not the section it sits in: `go.md` may well
+    grow a second table beside this one — flags, states, examples — and a check that read every
+    row between two headings would take that table's first column for dispatch wiring. A
+    second table under the *same* header is refused rather than guessed at.
+    """
+    below = _from(go_md, _sole(go_md, ROUTE_TABLE_HEADER))
+    if below is None:
+        return None
+    rows = []
+    for row in below.splitlines():
+        if not row.startswith("|"):
+            break
+        rows.append(row)
+    return "\n".join(rows)
+
+
+def routed_subcommands(table_rows: str) -> list[str]:
+    """Every name the route table's first column routes, given that table's rows.
+
+    Takes rows because `route_table` is where what counts as a row is decided; repeating that
+    judgement here would be a second place for it to be wrong, and the two could disagree.
+
+    The first cell is what `/rig:go` matches a leading word against, and it reads
+    `` `<name> [args…]` ``, so the name is the leading word of the cell's opening backticked
+    run — a *complete* run, since an unclosed backtick is a row nobody proof-read rather than
+    a route somebody wrote. A backticked name further along that cell is an annotation on the
+    row — `（廃止: `receipt`）` routes nothing — and a name in a later column is a description.
+
+    Cells are split on unescaped pipes, because several rows carry `\\|` inside their usage
+    string (`--period week\\|month`) and splitting on every pipe would cut those cells in half,
+    leaving a run that never closes.
+    """
+    routed = set()
+    for row in table_rows.splitlines():
+        first = re.split(r"(?<!\\)\|", row.lstrip().lstrip("|"))[0]
+        match = re.match(r"\s*`([a-z0-9][a-z0-9-]*)[^`]*`", first)
+        if match:
+            routed.add(match.group(1))
+    return sorted(routed)
+
+
+def listed_subcommands(ops_header: str) -> list[str]:
+    """Every name the ops instruction's own header lists as `` `/rig <name>` ``."""
+    return sorted(set(re.findall(r"`/rig ([a-z0-9][a-z0-9-]*)`", ops_header)))
+
+
+def workbench_routing(parser, go_md: str, ops_md: str) -> tuple[list, list, list]:
+    """(unrouted subcommands, stale allowlist entries, why this check cannot answer).
+
+    Returns rather than emits so a test can hand it a wiring it must object to. Five issues
+    (#261, #262, #327, #417, #473) were this same omission found one at a time after the fact;
+    a check that cannot be exercised would be the sixth.
+
+    Two surfaces, one rule: `go.md` says what `/rig:go` dispatches and the ops instruction says
+    what it is a procedure for, and #473 was both of them missing the same four names. A check
+    covering one of the two would have reported that issue half-fixed.
+
+    Takes whole documents and locates the two lists itself, so that where it reads is part of
+    what a test can break.
+    """
+    registered = registered_subcommands(parser)
+    table = route_table(go_md)
+    header = _section(ops_md, OPS_HEADER_SECTION)
+    routed = routed_subcommands(table) if table is not None else []
+    listed = listed_subcommands(header) if header is not None else []
+
+    # A check that found nothing to check has not passed. Each of these means the shape this
+    # check reads has moved — a different parser, a relocated table, a rewritten header — and
+    # reporting zero omissions then would be the check saying "all clear" about text it never
+    # looked at.
+    blind = []
+    if not registered:
+        blind.append("the parser exposes no subcommands: the CLI wiring this check reads has "
+                     "changed shape")
+    if table is None:
+        blind.append(f"commands/go.md does not hold exactly one table headed "
+                     f"{ROUTE_TABLE_HEADER!r}: this check cannot tell which table is the "
+                     f"route table")
+    elif not routed:
+        blind.append("no routed names found under the route table's header: the rows this "
+                     "check reads have changed shape")
+    if header is None:
+        blind.append(f"workbench-ops.md does not hold exactly one section bounded by "
+                     f"{OPS_HEADER_SECTION[0]!r} and {OPS_HEADER_SECTION[1]!r} in that order: "
+                     f"this check cannot tell where its header list is")
+    elif not listed:
+        blind.append("no `/rig <name>` entries found in the ops instruction's header: the "
+                     "list this check reads has changed shape")
+
+    unrouted = [name for name in registered
+                if name not in INTERNAL_ONLY
+                and (name not in routed or name not in listed)] if not blind else []
+    stale = sorted(INTERNAL_ONLY - set(registered)) if registered else []
+    return unrouted, stale, blind
+
+
+def check_workbench_routing() -> None:
+    """`workbench.py`'s user-facing subcommands against `commands/go.md`'s route table."""
+    from rig_workbench.workbench.cli import build_parser
+    go_md = (ROOT / "commands" / "go.md").read_text(encoding="utf-8")
+    ops_md = (FACETS / "instructions" / "workbench-ops.md").read_text(encoding="utf-8")
+    parser = build_parser()
+    unrouted, stale, blind = workbench_routing(parser, go_md, ops_md)
+
+    for why in blind:
+        _emit("FAIL", f"workbench routing — {why}")
+    for name in unrouted:
+        _emit("WARN", f"workbench routing — `{name}` is a subcommand of workbench.py and is "
+                      f"missing from commands/go.md's route table or from the ops "
+                      f"instruction's header list, so /rig:go cannot dispatch it or has no "
+                      f"procedure for it")
+    for name in stale:
+        _emit("WARN", f"workbench routing — INTERNAL_ONLY names `{name}`, which is not a "
+                      f"subcommand any more; an allowlist entry for something that does not "
+                      f"exist suppresses nothing and hides that it stopped applying")
+    if not blind:
+        _emit("PASS", f"workbench routing: {len(registered_subcommands(parser))} subcommands "
+                      f"/ {len(unrouted)} unrouted / {len(stale)} stale allowlist")

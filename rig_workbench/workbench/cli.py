@@ -75,7 +75,14 @@ from .route_cli import cmd_route
 _GH_ADVISORY_COMMANDS = {"new"}
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The subcommand wiring, built without parsing anything.
+
+    Separate from `main` so a check can ask argparse what this CLI dispatches instead of
+    reading how the registrations are spelled: `validation.catalog.check_workbench_routing`
+    compares `sub.choices` against the route table, and a registration moved into a helper
+    or a loop still shows up there.
+    """
     parser = argparse.ArgumentParser(description="rig workbench — run-state / worktree / acceptance-gate manager")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -468,7 +475,11 @@ def main() -> None:
     p.add_argument("--since", help="show only entries since YYYY-MM-DD")
     p.set_defaults(func=cmd_audit)
 
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
     # Installed after parsing so `--help` and usage errors, which argparse writes and
     # exits on, are not counted as run output.
     context_meter.install(f"wb {args.cmd}", sys.argv[1:])

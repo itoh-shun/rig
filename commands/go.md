@@ -40,6 +40,18 @@ $ARGUMENTS
 | `scan-destructive [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の破壊的コマンドスキャン。gate 基準 `no_destructive_operation` の機械センサーと同一実装。fail-grade/warning-gradeの2段階） |
 | `scan-anchors [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の証拠アンカー検査。reviewer 本文中の `file:line` が実在する行を指すかを確認。**opt-in** gate 基準 `evidence_anchors_resolve` の機械センサーと同一実装＝既定プリセットには入らない。`--diff` で task の `reviews/*.md` を worktree→base commit の順に解決） |
 | `instincts [--add TEXT --evidence E --confidence C] [--mute ID\|--expire ID\|--decay\|--inject-preview]` | `facets/instructions/workbench-ops`（セッション横断の継続的instinct学習層。未検証パターンをconfidence付きで記録・decay・次回セッション注入プレビュー） |
+| `gates` | `facets/instructions/workbench-ops`（受け入れ基準プリセットの正本を印字。project 独自基準は `.rig/gates.json` で**加算のみ**） |
+| `receipt <task_id> [--verify] [--markdown]` | `facets/instructions/workbench-ops`（**assurance receipt**＝そのタスクが何を達成したかの射影。判定はせず、判定した記録から写す。`--verify` で受領書が今も現行か確認） |
+| `import <url\|path> [--head <ref>]` | `facets/instructions/workbench-ops`（外部で作られた変更を rig の gate に通す。producer が宣言したことと rig が検証したことを混ぜない） |
+| `contract <task_id>` | `facets/instructions/workbench-ops`（BYOO 契約＝rig が検証した head と、それを答えた受領書を名指す。exit code が pending/acceptable を伝える） |
+| `intent-derive <contract> --against <json> --floor\|--target [--json]` | `facets/instructions/workbench-ops`（intent contract の**宣言された**要件から workflow の床 or assurance target を導く。推論された要件は床を作らない） |
+| `assurance-target <task_id> <target> [--json]` | `facets/instructions/workbench-ops`（assurance target を受領書と突き合わせる。`unobservable` は `unmet` に畳まない＝「測っていない」と「測って不足」は別） |
+| `assurance-derive <target> --requires <map> --against <json> [--json]` | `facets/instructions/workbench-ops`（target が必要とする workflow の床を、宣言された軸→step 写像から導く。写像が覆わない軸-値は拒否） |
+| `synthesise <workflow> --against <json> [--floor <json>] [--json]` | `facets/instructions/workbench-ops`（提案された workflow に床を復元し、何を復元したかを報告。床は呼び出し側が組み、検査対象からは読まない） |
+| `dev-loop <cycles> [--limits <json>] [--receipt <json>] [--json]` | `facets/instructions/workbench-ops`（開発ループの停止判定と handoff。止まるべき理由を名指し、進捗の無さを進捗と読まない） |
+| `route-team <evidence> --constraints <json> [--json]` | `facets/instructions/workbench-ops`（証拠から担当を決める。制約は呼び出し側が組み、「言わない」を「強制しない」にしない） |
+| `budget-plan <options> --budget <json> [--json]` | `facets/instructions/workbench-ops`（保証の作り方を安くする。保証そのものは安くしない。予算が尽きたら拒否し、選択肢を提示しない） |
+| `provenance <graph> <node> [--direction both\|back\|forward] [--json]` | `facets/instructions/workbench-ops`（ある節点の鎖を双方向に辿る。確認済みと推測を混ぜず、照会できない種別は「照会していない」と答える） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |
 | `gh pr <n> fix` | `facets/instructions/gh-flow`（PR 指摘を隔離 worktree で修正） |
