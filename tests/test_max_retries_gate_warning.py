@@ -11,6 +11,14 @@ it governs any step whose gate can report a failure. The measured tests below dr
 `compute_next` so the reasoning cannot go stale silently: if the retry path ever stops
 consulting K, or a gateless step starts being able to fail, they fail here rather than
 letting the validator's prose quietly become a lie again.
+
+Two of the tests below assert *presence* rather than absence, because absence gets easier to
+satisfy the less the check does. `test_adaptive_bugfix_targeted_review_still_carries_max_retries`
+parses the recipe's frontmatter and looks the step up by id — a text search for
+`"max_retries: 1"` would still pass with the key deleted from `targeted-review`, since the
+sibling `acceptance` step carries the same literal. And the `check_recipe` tests run the real
+entry point over a synthetic recipe, so removing the `_check_max_retries(...)` call from
+`check_recipe` — which leaves every unit test of the helper green — fails here instead.
 """
 
 import pathlib
@@ -22,6 +30,7 @@ from rig_workbench.orchestrate.gates import RUNTIME_GATES
 from rig_workbench.orchestrate.runstate import compute_next, gate_outcome, new_state
 from rig_workbench.validation import state as validation_state
 from rig_workbench.validation.recipes import _check_max_retries, check_recipe
+from rig_workbench.validation.state import parse_frontmatter
 
 CTX = "recipe demo step targeted-review"
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -112,16 +121,124 @@ def test_a_bad_value_on_a_gateless_step_reports_both_facts():
     assert len(_warns()) == 1
 
 
+# ── the real call site: `check_recipe`, not just the helper ──────────────────
+
+_SYNTHETIC = """\
+---
+name: {name}
+description: a synthetic recipe that exists only to drive check_recipe
+scope: project
+autonomy: interactive
+steps:
+  - id: inert
+    instruction: implement
+{step_keys}---
+
+# {name}
+"""
+
+
+def _synthetic_recipe(tmp_path: pathlib.Path, name: str, **step_keys) -> pathlib.Path:
+    """Write a one-step recipe `check_recipe` otherwise accepts silently.
+
+    Everything but the keys under test is deliberately valid — every key combination used
+    below was run first and emitted nothing but `[PASS] recipe <name>: OK` — so any other
+    line the checker produces is attributable to the step keys this call varies. The
+    callers assert that terminal `[PASS]` too, so an early return cannot masquerade as
+    silence.
+    """
+    body = "".join(f"    {key}: {value}\n" for key, value in step_keys.items())
+    path = tmp_path / f"{name}.md"
+    path.write_text(_SYNTHETIC.format(name=name, step_keys=body), encoding="utf-8")
+    return path
+
+
+def test_check_recipe_warns_on_a_gateless_checkless_step_carrying_max_retries(tmp_path):
+    """Guards the *call site*, not the helper.
+
+    Deleting the `_check_max_retries(step, step_ctx)` line from `check_recipe` leaves the
+    helper and every unit test above it intact and simply stops anything from reaching it.
+    This test runs the real entry point over a real file, so that deletion fails here.
+    """
+    path = _synthetic_recipe(tmp_path, "synthetic-inert", max_retries=3)
+    check_recipe(path)
+    # positive control: the checker ran the step loop to the end, so a silent early
+    # return cannot be mistaken for the WARN below (`pitfall_check_not_looking_where_it_claims`)
+    assert "[PASS] recipe synthetic-inert: OK" in validation_state.results
+    warns = [r for r in _warns() if "max_retries" in r]
+    assert len(warns) == 1, validation_state.results
+    assert "synthetic-inert.inert" in warns[0]
+    assert "has no effect on this step" in warns[0]
+    assert _fails() == []
+
+
+def test_check_recipe_fails_through_the_call_site_on_an_unusable_value(tmp_path):
+    """The FAIL branch shares the same call site, so it is worth the same guard."""
+    path = _synthetic_recipe(tmp_path, "synthetic-badk", gate="review-gate", max_retries=0)
+    check_recipe(path)
+    assert "[PASS] recipe synthetic-badk: OK" in validation_state.results
+    fails = [r for r in _fails() if "max_retries" in r]
+    assert len(fails) == 1, validation_state.results
+    assert "must be an integer ≥1" in fails[0]
+
+
+@pytest.mark.parametrize(
+    "step_keys",
+    [
+        {"gate": "review-gate", "max_retries": 1},
+        {"gate": "acceptance-gate", "acceptance": '["x — y"]', "max_retries": 1},
+        {"checks": '["pytest -q"]', "max_retries": 2},
+    ],
+    ids=["review-gate", "acceptance-gate", "gateless-with-checks"],
+)
+def test_check_recipe_stays_silent_where_k_is_live(tmp_path, step_keys):
+    """The regression itself, driven through `check_recipe` rather than the helper: a
+    review-gate step with `max_retries` must draw no line at all."""
+    path = _synthetic_recipe(tmp_path, "synthetic-live", **step_keys)
+    check_recipe(path)
+    # pinned as the *whole* result set rather than "no line mentions max_retries": a
+    # frontmatter that stopped parsing would return early and satisfy the filtered form
+    assert validation_state.results == ["[PASS] recipe synthetic-live: OK"]
+
+
 # ── the shipped recipe the false WARN was advising against ───────────────────
 
+ADAPTIVE_BUGFIX = REPO_ROOT / "skills" / "engine" / "recipes" / "adaptive-bugfix.md"
 
-def test_adaptive_bugfix_targeted_review_keeps_max_retries_and_draws_no_warning():
-    recipe = REPO_ROOT / "skills" / "engine" / "recipes" / "adaptive-bugfix.md"
+
+def _shipped_step(recipe: pathlib.Path, step_id: str) -> dict:
     assert recipe.is_file(), f"{recipe} moved; this test checks nothing until it is repointed"
-    check_recipe(recipe)
+    fm, raw = parse_frontmatter(recipe)
+    assert fm is not None, f"{recipe} frontmatter no longer parses: {raw[:120]}"
+    by_id = {s.get("id"): s for s in (fm.get("steps") or []) if isinstance(s, dict)}
+    assert step_id in by_id, (
+        f"{recipe.stem} has no step {step_id!r} any more"
+        f" (steps: {sorted(k for k in by_id if k)})"
+    )
+    return by_id[step_id]
+
+
+def test_adaptive_bugfix_targeted_review_still_carries_max_retries():
+    """Acceptance criterion 3, asserted as the *presence* of the key on the named step.
+
+    Searching the file text for `"max_retries: 1"` would not hold this: the sibling
+    `acceptance` step carries the same literal, so deleting the key from `targeted-review`
+    — the exact edit the old WARN advised — leaves such a search satisfied. Parsing the
+    frontmatter and looking the step up by id is what makes that deletion fail.
+    """
+    step = _shipped_step(ADAPTIVE_BUGFIX, "targeted-review")
+    assert step.get("max_retries") == 1
+    assert step.get("gate") == "review-gate"
+    # …and it is that gate, not a checks[] list, that keeps K live on this step,
+    # which is why the old "not acceptance-gate" condition fired on it.
+    assert not step.get("checks")
+
+
+def test_adaptive_bugfix_draws_no_max_retries_line_at_all():
+    """Criterion 1 and 3's other half: with the key still there, the WARN stays silent."""
+    check_recipe(ADAPTIVE_BUGFIX)
+    assert "[PASS] recipe adaptive-bugfix: OK" in validation_state.results
     assert [r for r in validation_state.results if "max_retries" in r] == []
-    text = recipe.read_text(encoding="utf-8")
-    assert "targeted-review" in text and "max_retries: 1" in text
 
 
 # ── measured: what K actually does (drives the state machine) ────────────────

@@ -33,6 +33,18 @@ where it was. `facets/instructions/validate.md`, which is the normative spec for
 carried the same false sentence and now states the measured condition — otherwise the next
 reader of the spec reverts the code.
 
+The tests for it assert presence, not absence. An absence test — "no WARN mentions
+`max_retries`" — gets easier to satisfy the less the check does, so two mutations were run
+against them: deleting `max_retries: 1` from `targeted-review`, and deleting the
+`_check_max_retries(...)` call from `check_recipe`. Both used to leave the suite green. The
+recipe check now parses the frontmatter and looks the step up by id, because a text search
+for `max_retries: 1` is satisfied by the sibling `acceptance` step whatever happens to
+`targeted-review`; and the checker is exercised through `check_recipe` over a synthetic
+recipe, because a helper with no caller passes every unit test written against the helper.
+Those `check_recipe` tests carry a positive control of their own — each asserts the terminal
+`[PASS] recipe <name>: OK`, so a synthetic fixture that stopped parsing as a recipe (an early
+return emits no line mentioning `max_retries`) fails rather than reading as silence.
+
 `adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
 `gate: acceptance-gate` and no `acceptance:` list at all, so the gate
 `patterns/acceptance-gate` calls the core of determinism-by-gate had nothing to converge on —
