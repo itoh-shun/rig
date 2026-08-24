@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+SKILL.md §2's brick catalog now lists the assurance surface. `receipt`, `import` and
+`contract` shipped in #428 and #429 and the run graph in #426, and README's feature table has
+carried them since — but §2, which is what a session reads to find out what rig has, named
+none of them. Nor did it name the eight subcommands added since: `intent`, `intent-derive`,
+`assurance-target`, `assurance-derive`, `synthesise`, `dev-loop`, `route-team`, `budget-plan`
+and `provenance`. Listing only the four #470 was filed about would have left the same hole for
+the other eight the day it merged, so all of them are here, in three rows: the receipt and the
+BYOO contract, the intent contract and the assurance target it derives, and the planning
+commands that restore a floor, stop a loop, route by evidence, plan a budget and walk a chain.
+
+This is the third time a shipped surface has gone missing from §2 (#395, #470), and there is
+still nothing that would catch the fourth: `check_catalog_drift` scans four brick directories
+and never the workbench CLI. A check for it is not this change — filed separately, because the
+obvious version does not work. `import` and `contract` already appeared in §2 as substrings of
+`/rig:import` and "output-contract facet", so a check that asked whether a name is *mentioned*
+would have reported this gap as covered.
+
 `--validate` now catches a subcommand that was implemented and never wired up. Five issues —
 #261, #262, #327, #417, #473 — were the same omission found one at a time after the fact: a
 user-facing `workbench.py` subcommand missing from the route table `/rig:go` dispatches from,
