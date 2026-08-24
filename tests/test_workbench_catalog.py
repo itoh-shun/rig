@@ -26,7 +26,9 @@ from rig_workbench.validation.catalog import (
     CATALOG_SECTION,
     INTERNAL_ONLY,
     PACK_ROW_ONLY,
+    _section,
     catalogued_subcommands,
+    registered_subcommands,
     workbench_catalog,
 )
 from rig_workbench.validation.config import ROOT
@@ -242,62 +244,111 @@ def test_the_landmarks_it_slices_on_are_in_the_shipped_file():
         assert lines.count(landmark) == 1, f"{landmark!r} is not a unique line of SKILL.md"
 
 
-#: The three rows #492 added to §2, and the user-facing names each one carries. Both halves
-#: are written out rather than read off the document, so the expectation cannot shrink when
-#: the document does — and `intent` is absent from the second row's list because the flow
-#: calls it itself, not because anything derived that.
-_SHIPPED_ROWS = [
-    ("{receipt,import,contract}", ["contract", "import", "receipt"]),
-    ("{intent,intent-derive,assurance-target,assurance-derive}",
-     ["assurance-derive", "assurance-target", "intent-derive"]),
-    ("{synthesise,dev-loop,route-team,budget-plan,provenance}",
-     ["budget-plan", "dev-loop", "provenance", "route-team", "synthesise"]),
-]
+# ── the shipped document, measured one row at a time ─────────────────────────
+def _catalog_rows(document):
+    """(line, the subcommands it names) for every §2 line the check reads as an entry.
 
-#: The thirteen §2 was missing when #470 was filed, minus `intent` and minus the run graph,
-#: which is a schema rather than a subcommand. Written out, and checked against the rows
-#: above, so neither list can quietly become the other's shadow.
+    Read off the document with the check's own `_section` and `catalogued_subcommands`, not
+    written out here. A list written out here is a second copy of §2's row shapes, and the
+    edit this check exists to ask for — name a new surface in §2 — changes those shapes: add a
+    subcommand to a grouped row, or add a grouped row, and a pinned copy rejects the document
+    for doing what the check told a maintainer to do. What backstops the derivation shrinking
+    to nothing is below (`test_the_rows_read_off_the_document_carry_every_user_facing_name`)
+    and `test_it_reads_the_repository_it_ships_with`, which fails when a row is dropped for
+    real — this file's per-row cases go quiet then, and that test is what catches it.
+    """
+    section = _section(document, CATALOG_SECTION)
+    assert section is not None, "§2 could not be located in the shipped SKILL.md"
+    return [(line, catalogued_subcommands(line)) for line in section.splitlines()
+            if catalogued_subcommands(line)]
+
+
+def _user_facing():
+    """The subcommands §2 is expected to name one by one, asked of the CLI."""
+    return [name for name in registered_subcommands(build_parser())
+            if name not in INTERNAL_ONLY and name not in PACK_ROW_ONLY]
+
+
+_SHIPPED_ROWS = _catalog_rows(_shipped())
+
+#: The eleven §2 was missing when #470 was filed, minus `intent` (the flow calls it itself)
+#: and minus the run graph (a schema, not a subcommand). A subset rather than an equality:
+#: naming a further surface in §2 is the edit this check asks for, and an equality would
+#: refuse it.
 _MISSING_BEFORE_470 = [
     "assurance-derive", "assurance-target", "budget-plan", "contract", "dev-loop", "import",
     "intent-derive", "provenance", "receipt", "route-team", "synthesise",
 ]
 
 
-def test_the_shipped_rows_carry_exactly_the_names_470_was_missing():
-    assert sorted(n for _, names in _SHIPPED_ROWS for n in names) == _MISSING_BEFORE_470
+def test_the_rows_read_off_the_document_carry_every_user_facing_name():
+    """The positive control on the derivation above: `_catalog_rows` returning nothing would
+    leave the per-row test below with no cases at all, and pytest reports zero cases as a
+    pass. Tied to the parser rather than to a copy of the document, so it answers "did the
+    rows still cover the CLI" and not "is the document what it was"."""
+    carried = {name for _, names in _SHIPPED_ROWS for name in names}
+    assert _SHIPPED_ROWS, "no `rig-wb wb <name>` entry found in §2: nothing below is measured"
+    missing = sorted(set(_user_facing()) - carried)
+    assert not missing, f"§2's rows name no `rig-wb wb <name>` for: {missing}"
 
 
-@pytest.mark.parametrize("braces,carried", _SHIPPED_ROWS)
-def test_dropping_one_shipped_row_reports_exactly_the_names_it_carried(braces, carried):
+def test_every_name_470_was_missing_is_carried_by_a_shipped_row():
+    """#491's premise is #470's omission, so the names that were missing then are the ones
+    this file measures on. Subset, not equality: §2 gaining a row is the fix this check asks
+    for, and only a name going back out of §2 is a regression."""
+    carried = {name for _, names in _SHIPPED_ROWS for name in names}
+    assert set(_MISSING_BEFORE_470) <= carried
+
+
+@pytest.mark.parametrize("row,names", _SHIPPED_ROWS,
+                         ids=["-".join(names) or "no-user-facing-names"
+                              for _, names in _SHIPPED_ROWS])
+def test_dropping_one_shipped_row_reports_exactly_the_names_it_carried(row, names):
     """#491's premise, measured on the document that shipped rather than on a fixture this
     file wrote — where a heading, a stray table, or a row's own notation could each make the
-    same logic answer differently. One row at a time, so a pass cannot come from the three
+    same logic answer differently. One row at a time, so a pass cannot come from the rows
     being read as a block.
 
-    `import` and `contract` are in the first row, and their decoys — the `/rig:import` pack
-    row and "output-contract facet" — are still in the §2 this test hands the check. That is
-    the measurement #470 made: a check asking whether the name is *mentioned* called both of
-    them covered while they were missing."""
+    The expectation is what this row carries and no other row does, minus the names §2 is not
+    asked to spell out one by one — derived from the same functions the check uses, so a row
+    that grows a subcommand or a §2 that grows a row changes what is expected instead of
+    failing. Subtracting the names another row also carries is a no-op against today's §2 and
+    cannot hide a finding: a name a second row still spells is one the check would not report
+    after this row goes.
+
+    `import` and `contract` are carried by one of these rows, and whichever row is dropped,
+    their decoys — the `/rig:import` pack row and "output-contract facet" — stay in the §2
+    handed to the check. That is the measurement #470 made: a check asking whether the name is
+    *mentioned* called both of them covered while they were missing."""
     shipped = _shipped()
-    rows = [line for line in shipped.splitlines() if f"`rig-wb wb {braces}`" in line]
-    assert len(rows) == 1, f"§2 does not hold exactly one row for `{braces}`: {len(rows)}"
-    without = shipped.replace(rows[0] + "\n", "")
+    assert shipped.count(row + "\n") == 1, f"§2 does not hold this row exactly once: {row!r}"
+    elsewhere = {n for other, carried in _SHIPPED_ROWS if other != row for n in carried}
+    expected = sorted(set(names) & set(_user_facing()) - elsewhere)
+
+    without = shipped.replace(row + "\n", "")
     for decoy in ("/rig:import", "output-contract facet"):
         assert decoy in without, f"the {decoy!r} false pass is not in the document under test"
 
     uncatalogued, _, blind = workbench_catalog(build_parser(), without)
     assert blind == [], blind
-    assert uncatalogued == carried, uncatalogued
+    assert uncatalogued == expected, uncatalogued
 
 
 def test_the_document_before_470_was_fixed_is_refused_rather_than_passed():
-    """Strip all three rows and §2 has the property it had when #470 was filed: no `rig-wb wb`
-    entry anywhere in it. The check cannot tell "every surface was dropped" from "the notation
-    moved", so it says so — a FAIL, louder than the eleven WARNs, and not the silence that let
-    this omission ship three times."""
+    """Strip every row §2 names a surface in and it has the property it had when #470 was
+    filed: no `rig-wb wb` entry anywhere in it. The check cannot tell "every surface was
+    dropped" from "the notation moved", so it says so — a FAIL, louder than the WARNs each
+    single row draws, and not the silence that let this omission ship three times.
+
+    Which rows to strip, and how many, is read off the document: the state being reproduced is
+    "§2 names no invocation", so that is what is asserted about the stripped document rather
+    than a count of lines removed from the one that shipped."""
     shipped = _shipped()
-    without = "\n".join(line for line in shipped.splitlines() if "`rig-wb wb {" not in line)
-    assert len(without.splitlines()) == len(shipped.splitlines()) - 3, "the rows have moved"
+    rows = [row for row, _ in _SHIPPED_ROWS]
+    assert rows, "§2 already names no invocation: this test reproduces nothing"
+    without = "\n".join(line for line in shipped.splitlines() if line not in rows)
+    assert catalogued_subcommands(_section(without, CATALOG_SECTION) or "") == [], (
+        "§2 still names an invocation after every entry row was stripped")
 
     uncatalogued, _, blind = workbench_catalog(build_parser(), without)
     assert any("no `rig-wb wb <name>` entries found in §2" in why for why in blind), blind

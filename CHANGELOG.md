@@ -90,6 +90,18 @@ produces, since it leaves §2 with no `rig-wb wb` entry anywhere — the propert
 #470 was filed. The check cannot tell "every surface was dropped" from "the notation moved",
 so it says so, louder than the eleven warnings would have been.
 
+**The tests that measure this against the shipped document read its rows rather than pin
+them.** What the check asks of a maintainer is that §2 name a new surface, and there are two
+natural ways to write that — add a subcommand to a grouped row, or add a grouped row — both of
+which a test holding a copy of today's row shapes rejects. Making the edit the check asked for
+would then have failed CI, which teaches people to delete the check. The per-row cases are now
+derived with `_section` and `catalogued_subcommands`, the same two functions the check reads §2
+with, and the "§2 as it stood when #470 was filed" case asserts that the stripped §2 names no
+invocation instead of counting the lines that went. A derivation can shrink to nothing and take
+its cases with it silently, so it is tied back to the CLI: every user-facing subcommand has to
+be carried by one of the rows read off the document, and a row dropped for real fails that and
+`test_it_reads_the_repository_it_ships_with` rather than going quiet.
+
 No behaviour changes, and SKILL.md is untouched.
 
 `adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
