@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+One malformed task record no longer takes down every reader of the runs directory.
+`read_all_tasks` parsed every `.rig/runs/*/task.json` and returned a list, so a single
+unparseable file raised before any caller could report anything: Mission Control produced no
+page at all rather than a page missing one row.
+
+**Skipping it would have been the other half of the same bug.** A task absent from a board
+reads as a task that does not exist, and a total of 52 where 55 records exist has answered a
+question nobody asked. So a directory that yields no usable record is *named*, and the count
+travels with the records: `read_all_tasks` returns `TaskRecords`, which is deliberately not a
+list. Iterating it raises, so no reader can take the total without the shortfall — the board,
+the cockpit, the digest, Mission Control and its assurance section all render the same
+sentence because they call the same method.
+
+**A record is usable when the readers can read it, not when it is JSON.** `board` and the
+cockpit index `status`, `input` and `task_type`; `stats` parses `created_at` as a date;
+`load_reviews`, `gate_status_counts` and the assurance section join `task_id` onto a path. A
+record that parses without one of those moved the crash a layer down instead of removing it,
+so the fields are declared in one place and a record missing any of them is named like any
+other. Presence is not the whole rule: `created_at` is parsed, not read as text, and a naive
+timestamp raises on comparison with an aware one just as surely as an unparseable string
+does, so a value that is merely non-empty is not enough. Optional fields are checked the same
+way, in the one direction that matters: absent is ordinary — every reader guards them — while
+present with a type no reader can use is not. `board` formats `recipe` to a width and compares
+`budget_minutes` against elapsed minutes; the server sorts `updated_at` against a string. A record whose `task_id` does not name its own directory is named too: that value is
+what every reader joins onto the runs directory, so `run-a` claiming to be `run-b` sends them
+all to another task's artefacts, and `..` sends them out of the runs directory entirely.
+
+**And failing to look is not finding nothing.** An absent runs directory is a cold start; a
+directory that cannot be listed is reported as such, because answering "0 tasks" there would
+be rig reporting on something it never read.
+
+`board`, `log` and Mission Control's assurance section each enumerated the runs directory
+inline — the last precisely because `read_all_tasks` used to raise. All three are gone: one list, one
+rule for what counts as a task, and no way for two views of the same runs directory to
+disagree. The shortfall reaches the rendered page and the live UI as one preformatted note
+carried in the snapshot, so neither can word it differently or leave it out, and `log --json`
+carries it as a field because a consumer parsing that list is exactly the caller who cannot
+see a printed note. And no reader calls the runs directory empty in the same breath as naming
+what is in it: "no readable tasks" is what was found, "`.rig/runs/` is empty" is a claim about
+the directory, and only one of them is true at a time (#488).
+
 SKILL.md §2's brick catalog now lists the assurance surface. `receipt`, `import` and
 `contract` shipped in #428 and #429 and the run graph in #426, and README's feature table has
 carried them since — but §2, which is what a session reads to find out what rig has, named

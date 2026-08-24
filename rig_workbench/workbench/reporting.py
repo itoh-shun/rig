@@ -1,6 +1,7 @@
 """workbench reporting: status/board/log/gates/audit/stats rendering (split from scripts/workbench.py)."""
 
 import argparse
+import dataclasses
 import datetime
 import json
 import pathlib
@@ -93,21 +94,27 @@ def cmd_board(args: argparse.Namespace) -> None:
     """
     root = repo_root()
     base = runs_dir(root)
-    tasks: list[dict] = []
-    if base.is_dir():
-        for p in sorted(base.iterdir()):
-            tj = p / "task.json"
-            if tj.exists():
-                tasks.append(load_json(tj))
+    # The shared reader, not a second enumeration (#488). This one used to parse each
+    # `task.json` inline, so one malformed record took the board down — and a board that
+    # silently listed fewer tasks would be worse, because a task missing from it reads as a
+    # task that does not exist.
+    records = read_all_tasks(base)
+    tasks = list(records.tasks)
 
     if not args.all:
         tasks = [t for t in tasks if t["status"] in ACTIVE_STATUSES]
     tasks.sort(key=lambda t: t["created_at"])
 
     scope = "all tasks" if args.all else "active"
-    print(f"## rig board ({scope}: {len(tasks)})\n")
+    print(f"## rig board ({scope}: {len(tasks)}{records.note()})\n")
     if not tasks:
-        print("No active tasks." if not args.all else "No tasks (.rig/runs/ is empty).")
+        # "`.rig/runs/` is empty" is a claim about the directory, and the line above may have
+        # just named what is in it. When something could not be read, the honest sentence is
+        # about what this found, not about what is there.
+        if records.note():
+            print("No readable active tasks." if not args.all else "No readable tasks.")
+        else:
+            print("No active tasks." if not args.all else "No tasks (.rig/runs/ is empty).")
         print("\nTo start a new task: /rig:rig \"<task>\"")
         return
 
@@ -158,20 +165,22 @@ def cmd_board(args: argparse.Namespace) -> None:
 def cmd_log(args: argparse.Namespace) -> None:
     root = repo_root()
     base = runs_dir(root)
-    entries = []
-    if base.is_dir():
-        for p in sorted(base.iterdir(), reverse=True):
-            tj = p / "task.json"
-            if tj.exists():
-                entries.append(load_json(tj))
-    entries = entries[: args.limit]
+    # The shared reader (#488). This enumerated inline too, so one malformed record made the
+    # whole history unreadable — and `latest N` counted from a list that had silently lost
+    # entries would be a different way of saying something untrue.
+    records = read_all_tasks(base)
+    entries = sorted(records.tasks, key=lambda t: t["task_id"], reverse=True)[: args.limit]
     if args.json:
-        print(json.dumps(entries, ensure_ascii=False, indent=2))
+        # The shortfall travels in the JSON too. A consumer parsing this list is exactly the
+        # caller that cannot see the note printed for a human.
+        print(json.dumps({"entries": entries, "unreadable": list(records.unreadable),
+                          "unreadable_collection": records.collection_error},
+                         ensure_ascii=False, indent=2))
         return
     if not entries:
-        print("No run history (.rig/runs/ is empty)")
+        print("No readable run history" + (records.note() or " (.rig/runs/ is empty)"))
         return
-    print(f"## rig log (latest {len(entries)})\n")
+    print(f"## rig log (latest {len(entries)}{records.note()})\n")
     for t in entries:
         d = base / t["task_id"]
         acc = load_json(d / "acceptance.json", {"checks": [], "presets": []})
@@ -260,15 +269,126 @@ def cmd_audit(args: argparse.Namespace) -> None:
 
 
 # ── stats helpers (shared with digest.py — issue #285: reuse, don't duplicate) ──
-def read_all_tasks(base: pathlib.Path) -> list[dict]:
-    """Load every `.rig/runs/*/task.json` under the runs dir."""
-    tasks: list[dict] = []
-    if base.is_dir():
-        for p in sorted(base.iterdir()):
-            tj = p / "task.json"
-            if tj.exists():
-                tasks.append(load_json(tj))
-    return tasks
+@dataclasses.dataclass(frozen=True)
+class TaskRecords:
+    """Every task record under the runs directory, and what could not be read.
+
+    Deliberately not a list. `read_all_tasks` used to return one, and a caller that got a
+    shorter list than the runs directory had no way to know: a task missing from the board
+    reads as a task that does not exist. Every reader here shows a total, so the count of
+    records that could not be read has to travel with the records — and it has to be
+    impossible to take the one without the other. Iterating this raises `TypeError`.
+
+    `unreadable` and `collection_error` are separate facts. One says some records could not
+    be read; the other says rig could not look at all, which is not the same as finding
+    nothing.
+    """
+
+    tasks: tuple[dict, ...]
+    unreadable: tuple[str, ...] = ()
+    collection_error: str | None = None
+
+    def note(self) -> str:
+        """The clause a rendered total carries, or empty when everything was read.
+
+        One wording for every reader: the board, the digest, the cockpit and Mission Control
+        report the same shortfall the same way because they call the same method, not because
+        somebody remembered to phrase it alike.
+        """
+        parts = []
+        if self.unreadable:
+            attempted = len(self.tasks) + len(self.unreadable)
+            parts.append(f"{len(self.unreadable)} of {attempted} records could not be read: "
+                         f"{', '.join(self.unreadable)}")
+        if self.collection_error is not None:
+            parts.append(f"the runs directory could not be listed "
+                         f"({self.collection_error}); this is not a count of what exists")
+        # Both, when both hold. They are separate facts, and rendering only the stronger one
+        # would drop a shortfall this object knows the names of.
+        return (" — " + "; ".join(parts)) if parts else ""
+
+
+#: The fields every reader of this list indexes without a guard, so a record missing one is a
+#: crash moved a layer down rather than a record that was read. `board` and the cockpit index
+#: `status`, `created_at`, `input` and `task_type`; `stats` parses `created_at` as a date;
+#: `load_reviews`, `gate_status_counts` and the assurance section join `task_id` onto a path.
+#: Declared here, once, because a reader that starts indexing a sixth field and does not add
+#: it here is the same defect with a different name. Presence is not the whole rule: see
+#: `_task_record` for the fields whose *value* has to be usable as well.
+REQUIRED_FIELDS = ("task_id", "status", "created_at", "input", "task_type")
+
+#: Fields a record may omit, but not misstate. Every reader guards these with `.get()`, so an
+#: absent one is ordinary — and then uses the value in a way that has a type: `board` formats
+#: `recipe` to a width and `stats` counts it (a dict is unformattable and unhashable), the
+#: server sorts `updated_at` against `created_at` (a non-string is uncomparable), and
+#: `budget_status` compares `budget_minutes` against elapsed minutes. Absent is not the same
+#: as present-and-wrong, and only the second is a record no reader can use.
+OPTIONAL_FIELDS = {"recipe": str, "updated_at": str, "budget_minutes": (int, float)}
+
+
+def _task_record(directory: pathlib.Path) -> dict | None:
+    """One run directory's task record, or None when it cannot be used as one.
+
+    Every way a directory fails to yield a usable record means the same thing to a caller: no
+    `task.json`, one that cannot be read, one that is not JSON, one that is not an object, one
+    missing a field the readers index, one whose optional fields are present with a type no
+    reader can use, and one whose `task_id` does not name this directory.
+
+    That last check is not tidiness. `task_id` is joined onto the runs directory to find a
+    task's acceptance, steps and receipt, so a record in `run-a` claiming to be `run-b` sends
+    every reader to another task's artefacts — and a value like `..` or an absolute path sends
+    them outside the runs directory altogether. The directory name is the identifier a run is
+    created under; a record that disagrees with it is not a record this can use.
+    """
+    try:
+        raw = (directory / "task.json").read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    try:
+        record = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(record, dict):
+        return None
+    if any(not isinstance(record.get(field), str) or not record[field]
+           for field in REQUIRED_FIELDS):
+        return None
+    # `created_at` is not read as text. `budget_status` and `stats --last` parse it, and
+    # comparing a naive value against an aware one raises, so a string that is merely
+    # non-empty leaves the crash exactly where it was — one reader further down.
+    try:
+        if datetime.datetime.fromisoformat(record["created_at"]).tzinfo is None:
+            return None
+    except ValueError:
+        return None
+    if any(record.get(field) is not None and not isinstance(record[field], expected)
+           for field, expected in OPTIONAL_FIELDS.items()):
+        return None
+    return record if record["task_id"] == directory.name else None
+
+
+def read_all_tasks(base: pathlib.Path) -> TaskRecords:
+    """Every `.rig/runs/*/task.json` under the runs dir, and the directories that yielded none.
+
+    A directory is a task somebody started, whatever is inside it, so one that cannot be read
+    is named rather than dropped. It is named by its directory, which is the task id every run
+    is created under — the only identifier available when the record itself is the thing that
+    cannot be read.
+    """
+    try:
+        directories = sorted(d for d in base.iterdir() if d.is_dir())
+    except FileNotFoundError:
+        # No runs directory is a cold start, not a failure: nothing has been recorded yet.
+        return TaskRecords(tasks=())
+    except OSError as exc:
+        # Anything else — a permission, a broken mount — is rig failing to look. Reporting it
+        # as zero tasks would be this function answering a question it did not get to ask.
+        return TaskRecords(tasks=(), collection_error=f"{type(exc).__name__}: {exc}")
+    tasks, unreadable = [], []
+    for directory in directories:
+        record = _task_record(directory)
+        (tasks.append(record) if record is not None else unreadable.append(directory.name))
+    return TaskRecords(tasks=tuple(tasks), unreadable=tuple(unreadable))
 
 
 def load_reviews(base: pathlib.Path, task_list: list[dict]) -> dict[str, dict]:
@@ -322,7 +442,12 @@ def force_bypass_counter(audit_events: list[dict]) -> tuple[int, Counter]:
 def cmd_stats(args: argparse.Namespace) -> None:
     root = repo_root()
     base = runs_dir(root)
-    tasks = read_all_tasks(base)
+    records = read_all_tasks(base)
+    tasks = list(records.tasks)
+    # Records that could not be read survive every filter below rather than being dropped by
+    # them. A record with no readable `created_at` cannot be shown to fall outside `--last`,
+    # and one with no readable `recipe` cannot be shown not to be the one asked for — so
+    # filtering them out would be this command asserting something it never read.
 
     if args.last:
         m = re.match(r"^(\d+)d$", args.last)
@@ -345,8 +470,14 @@ def cmd_stats(args: argparse.Namespace) -> None:
     # set from before --verifier was applied)
     review_by_task = load_reviews(base, tasks)
 
+    # The shortfall is not a filter result. A record that could not be read was never
+    # compared against `--last`, `--recipe` or `--verifier`, so saying nothing here would let
+    # "no matching runs" stand for "nothing matched" when the truthful answer is that some
+    # records were never evaluated at all.
+    shortfall = records.note()
     if not tasks:
-        print("## rig stats\n\nNo matching runs (check the filters, or run `/rig \"<task>\"`)")
+        print("## rig stats\n\nNo matching runs (check the filters, or run `/rig \"<task>\"`)"
+              + (f"\n{shortfall.lstrip(' —')}" if shortfall else ""))
         return
 
     accepted = sum(1 for t in tasks if t["status"] == "accepted")
@@ -360,7 +491,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
     verifier_stats, verifier_rejects = verifier_counters(review_by_task)
 
     print("## rig stats\n")
-    print(f"Runs: {len(tasks)}")
+    print(f"Runs: {len(tasks)}{shortfall}")
     print(f"Accepted: {accepted}")
     print(f"Discarded: {discarded}")
     print(f"Failed gate: {failed_gate}")

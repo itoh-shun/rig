@@ -212,9 +212,12 @@ def _fixture_repo(tmp_path, target=None) -> tuple[pathlib.Path, str]:
     task_id = "rig-20260101-000000-example"
     run = tmp_path / ".rig" / "runs" / task_id
     run.mkdir(parents=True)
+    # `input` is one of the fields every reader of the runs directory indexes (#488), so a
+    # stub without it describes a record shape no real run has — and `read_all_tasks` is right
+    # to name such a record rather than hand it on.
     (run / "task.json").write_text(json.dumps({
         "task_id": task_id, "task_type": "feature", "status": "accepted",
-        "created_at": "2026-01-01T00:00:00+09:00",
+        "created_at": "2026-01-01T00:00:00+09:00", "input": "an example task",
         "worktree": {"runtime": "native", "path": str(tmp_path / "wt"), "branch": "b"}}),
         encoding="utf-8")
     (run / "acceptance.json").write_text(json.dumps({
@@ -481,9 +484,10 @@ def test_the_command_reads_the_mapping_through_that_reader(tmp_path):
 
 
 def test_a_task_whose_own_record_cannot_be_parsed_is_named(tmp_path):
-    """`read_all_tasks` parses every `task.json` before returning, so one malformed file would
-    raise before the guard could name it — and a task it silently skipped would be a task this
-    page never mentions."""
+    """A task this section cannot read is named rather than skipped: a row missing from a
+    dashboard reads as a task that has nothing to report. `read_all_tasks` now carries such
+    directories alongside the records it did read (#488), and this section reports the ones it
+    hands over together with the tasks whose receipt it could not build."""
     from rig_workbench import mission_control
 
     root, _ = _fixture_repo(tmp_path, _target(gate="passed"))
