@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+The validator no longer tells you to delete a working safety property. `--validate` WARNed
+that `max_retries` on any step whose gate was not `acceptance-gate` had "no effect in this
+context", and the one step in the whole catalogue it fired on was
+`adaptive-bugfix.targeted-review`'s `max_retries: 1` — a review-gate step whose recipe body
+declares that a failed review is a **safe stop**. Obeying the WARN would have raised K to
+`DEFAULT_K` (2) and bought that step a retry the recipe says it does not take.
+
+The claim was measurable and false. K is read on `compute_next`'s generic failure path, not
+inside a gate handler, so driving the state machine with a gate that keeps failing gives the
+same shape for both runtime gates: `review-gate` with K=1 goes `START > AWAIT > ESCALATE`
+with zero retries, K=3 goes `START > AWAIT > RETRY > START > AWAIT > RETRY > START > AWAIT >
+ESCALATE` — identical to `acceptance-gate`, which is what the old condition claimed was
+special.
+
+Measuring the rest of the field also ruled out the obvious replacement. `gate is None` would
+still be wrong: `gate_outcome` judges declared `checks[]` *before* it looks at the gate, so a
+gateless step with checks fails and retries K times like any other. The condition that
+survives measurement is "neither a runtime gate nor `checks[]`" — such a step cannot report a
+failure at all (`gate_outcome` returns `pass` for it even with a failing verdict on the
+record), so the retry budget is never read. A non-runtime gate string with no checks (`—`, a
+custom pattern name) is BLOCKED before the retry path, so it belongs on the same side. The
+check asks `gates.is_runtime_gate` rather than re-deriving the gate set, and the message now
+says which steps K *does* govern instead of denying the one it governs most visibly.
+
+Counted before changing the rule: of 11 shipped steps carrying `max_retries`, 10 are on
+`acceptance-gate` and 1 on `review-gate`; none is gateless. So the fixed check WARNs on zero
+shipped steps and the repo's WARN total drops from 2 to 1, with `max_retries: 1` left exactly
+where it was. `facets/instructions/validate.md`, which is the normative spec for this check,
+carried the same false sentence and now states the measured condition — otherwise the next
+reader of the spec reverts the code.
+
 `adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
 `gate: acceptance-gate` and no `acceptance:` list at all, so the gate
 `patterns/acceptance-gate` calls the core of determinism-by-gate had nothing to converge on —
