@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+`adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
+`gate: acceptance-gate` and no `acceptance:` list at all, so the gate
+`patterns/acceptance-gate` calls the core of determinism-by-gate had nothing to converge on —
+on the newest and most actively developed flagship recipe, the one with its own benchmark
+spec. Its `checks: ["git diff --check"]` is a syntax check; intent, minimality and regression
+coverage were judged by nothing.
+
+**A criterion belongs there when a step of the flow produces the evidence it names.** These
+four steps produce two kinds — the diff, and the deterministic sensors that run on it — so the
+gate asks for the eight a diff and a sensor settle: `task_intent_satisfied`,
+`no_unrelated_diff`, `fix_is_minimal`, `no_unrelated_refactor`, `no_secret_leak`,
+`no_destructive_operation`, `no_injection_markers`, `no_gate_tampering`.
+
+The rest of `standard` + `bugfix` names evidence no step here produces, and the shipped
+precedents show the rule is not invented for this recipe: `bugfix` has `reproduce` and `plan`
+and asks for `bug_cause_identified`, `fast-bugfix` has neither and leaves it out. Both have a
+`test` step and both ask for `existing_behavior_preserved`; this flow has none, so its whole
+two-to-four-call budget can complete without a test ever running — which is why
+`tests_pass_or_explained`, `regression_test_added_or_explained` and
+`existing_behavior_preserved` are absent as well.
+
+Neither precedent lists `no_injection_markers` or `no_gate_tampering`, and they are here
+anyway: the rule is what evidence a step produces, not what a sibling recipe happens to list,
+and both have a deterministic sensor running on this same diff. Following the convention would
+have left two criteria out on no evidential ground at all.
+
+A criterion nothing in the flow can satisfy does not make a gate stricter. It makes it a
+rubber stamp or a deadlock, and either way the gate stops meaning what its name says. Eight
+that the evidence reaches beat thirteen that it does not. Every id comes from
+`scripts/workbench.py gates`; a criterion invented in a recipe is one no sensor measures and
+no other recipe shares.
+
+A test now holds the invariant this was a violation of: a step declaring `acceptance-gate`
+must declare what it gates on. It holds for all 28 shipped recipes. The narrower rule — that
+the ids resolve against the presets — is checked only for the three recipes written in that
+form, because most shipped recipes write their criteria as free prose for a reviewer
+(`4-way review に REJECT が無い`), and a check that assumed the id form everywhere would
+report two thirds of the catalogue as broken (#486).
+
 One malformed task record no longer takes down every reader of the runs directory.
 `read_all_tasks` parsed every `.rig/runs/*/task.json` and returned a list, so a single
 unparseable file raised before any caller could report anything: Mission Control produced no
