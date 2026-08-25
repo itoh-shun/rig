@@ -367,6 +367,21 @@ def fleet_shortfall(fleet: dict[str, Any]) -> str:
     return "".join(f" · {part}" for part in parts)
 
 
+def team_shortfall(info: dict[str, Any]) -> str:
+    """The parenthetical a rendered *per-team* rate carries — `govern rollup`'s own builder.
+
+    The org clause above these lines names the project that lost records, not its team, so a
+    reader of `team-b: 2 project(s) score=94%` could not tell the clause applied to that row.
+    `conformance.rate_qualifier` is what the rollup's team cell already prints, and calling it
+    here is what makes the two renderings of the same dict say the same thing rather than
+    agreeing by hand.
+    """
+    from .govern.conformance import rate_qualifier
+
+    return rate_qualifier(len(info.get("unreadable_task_records") or []),
+                          len(info.get("unlisted_runs_directories") or []))
+
+
 def mission_control_snapshot(root: pathlib.Path, *, since: str | None = None) -> dict[str, Any]:
     rows = field_observations(root, since=since)
     return {
@@ -409,7 +424,8 @@ def _print_summary(snapshot: dict[str, Any]) -> None:
         print(f"  projects={fleet.get('projects', 0)} score={fleet.get('score', 0):.0%}"
               + fleet_shortfall(fleet))
         for team, info in sorted((fleet.get("teams") or {}).items()):
-            print(f"  {team}: {info.get('projects', 0)} project(s), score={info.get('score', 0):.0%}, "
+            print(f"  {team}: {info.get('projects', 0)} project(s), "
+                  f"score={info.get('score', 0):.0%}{team_shortfall(info)}, "
                   f"failing={', '.join(info.get('failing') or []) or '—'}")
 
 
@@ -479,7 +495,8 @@ def cmd_evidence(argv: list[str]) -> int:
                     print(f"projects={result.get('projects', 0)} score={result.get('score', 0):.0%}"
                           + fleet_shortfall(result))
                     for team, info in sorted((result.get("teams") or {}).items()):
-                        print(f"{team}: {info.get('projects', 0)} project(s) score={info.get('score', 0):.0%} "
+                        print(f"{team}: {info.get('projects', 0)} project(s) "
+                              f"score={info.get('score', 0):.0%}{team_shortfall(info)} "
                               f"failing={', '.join(info.get('failing') or []) or '—'}")
             return 1 if result.get("error") else 0
         snapshot = mission_control_snapshot(root, since=args.since)

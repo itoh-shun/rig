@@ -254,10 +254,10 @@ def test_a_project_whose_runs_could_not_be_listed_is_not_a_silent_pass_in_the_ro
 
     `read_all_tasks` turns a listing failure into `collection_error` instead of raising, so
     nothing above it crashes any more. Every run-derived check then ran against zero records
-    and passed, the project renders `✓ pass 100%`, and that score is averaged into the org
-    rate — here it pulls the fleet number *up*, because the project that could be read is
-    worse than the one that could not. A rollup that says nothing about it turns what used to
-    be a loud failure into a silent success.
+    and would have passed, the project rendered `✓ pass 100%`, and that score was averaged into
+    the org rate. The final rule makes the missing listing a failed `runs_listing` check and
+    removes the run-derived checks from the denominator, so the project is no longer a silent
+    pass and the org rate cannot be lifted by missing evidence.
     """
     clean = govern_repo(tmp_path / "clean")
     add_task(clean, "t1")
@@ -269,8 +269,8 @@ def test_a_project_whose_runs_could_not_be_listed_is_not_a_silent_pass_in_the_ro
     payload = result.to_dict()
 
     assert "1 project(s) whose runs directory could not be listed (lossy)" in markdown
-    assert "| team-a | 2 | 94% (1 unlisted) |" in markdown
-    assert "| lossy | team-a | ✓ pass | 100% (1 unlisted) | runs directory could not be listed (NotADirectoryError" in markdown
+    assert "| team-a | 2 | 85% (1 unlisted) |" in markdown
+    assert "| lossy | team-a | ✗ fail | 83% (1 unlisted) | runs_listing: the runs directory could not be listed (NotADirectoryError" in markdown
     assert payload["unlisted_runs_directories"] == ["lossy"]
     assert payload["teams"]["team-a"]["unlisted_runs_directories"] == ["lossy"]
     # It is not folded into the record count. Nobody knows how many records that directory
@@ -292,7 +292,7 @@ def test_the_two_shortfalls_are_counted_apart_in_the_same_rollup(tmp_path):
 
     assert "1 task record(s) could not be read (lossy/broken)" in markdown
     assert "1 project(s) whose runs directory could not be listed (dark)" in markdown
-    assert "| team-a | 2 | 94% (1 unread, 1 unlisted) |" in markdown
+    assert "| team-a | 2 | 85% (1 unread, 1 unlisted) |" in markdown
 
 
 def test_the_rollup_of_listable_projects_adds_no_unlisted_clause(tmp_path):
