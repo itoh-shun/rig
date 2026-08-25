@@ -22,10 +22,11 @@
 #   1. not already inside a stop-hook round-trip
 #   2. the payload parses, and carries a session id and a readable transcript
 #   3. this session actually used rig (the transcript says so)
-#   4. there is a runnable command to suggest
-#   5. we can prove this is the first prompt of this session, by writing a marker
+#   4. the current directory is an adopted, Git-backed rig project
+#   5. there is a runnable command to suggest
+#   6. we can prove this is the first prompt of this session, by writing a marker
 #
-# (5) is the one that used to fail silently: the marker lived under $TMPDIR, so
+# (6) is the one that used to fail silently: the marker lived under $TMPDIR, so
 # any environment handing out a per-invocation temp directory lost the
 # once-per-session guarantee without a word. It now lives under XDG_STATE_HOME,
 # which is stable for the life of a machine, and a marker we cannot write means
@@ -80,6 +81,14 @@ if ! grep -q -e '▸ rig |' -e 'rig-wb ' -e 'workbench.py ' -e '/rig:' \
      "$transcript_path" 2>/dev/null; then
   exit 0
 fi
+
+# Setup and ad-hoc use outside a Git project can mention rig in the transcript,
+# but there is no project-level instinct store for the reminder to update. The
+# Stop hook is a project-learning feature, so do not let it interrupt those
+# sessions. Keep both checks affirmative: a missing `.rig` or an unavailable
+# Git root means this is not an adopted project session.
+[ -d .rig ] || exit 0
+git rev-parse --show-toplevel >/dev/null 2>&1 || exit 0
 
 # The command has to be one the reader can actually run. The previous version
 # hardcoded `python3 scripts/workbench.py`, a repo-relative path that does not
