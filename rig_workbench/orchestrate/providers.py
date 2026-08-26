@@ -912,8 +912,10 @@ def _bounded_review_string(value: object, *, maximum: int) -> bool:
     )
 
 
-def parse_japanese_writing_review(raw: str, *, category: str) -> dict:
-    """Parse the canonical bounded Japanese-writing strict JSON review contract."""
+def parse_japanese_writing_review(
+    raw: str, *, category: str, _accept_unverified: bool = False,
+) -> dict:
+    """Parse a bounded Japanese review; runtime may retain a valid UNVERIFIED result."""
     if len(raw.encode("utf-8")) > JAPANESE_WRITING_REVIEW_BOUNDS["max_output_bytes"]:
         raise ValueError("workflow review contract exceeds its size bound")
     try:
@@ -973,10 +975,13 @@ def parse_japanese_writing_review(raw: str, *, category: str) -> dict:
     ):
         raise ValueError("workflow review contract repair conditions are malformed")
     verdict = payload["verdict"]
-    if verdict == "UNVERIFIED":
-        raise ValueError("workflow review contract verdict is unverified")
-    if not isinstance(verdict, str) or verdict not in {"APPROVE", "REVISE"}:
+    if (
+        not isinstance(verdict, str)
+        or verdict not in JAPANESE_WRITING_REVIEW_VERDICTS
+    ):
         raise ValueError("workflow review contract verdict is invalid")
+    if verdict == "UNVERIFIED" and not _accept_unverified:
+        raise ValueError("workflow review contract verdict is unverified")
     approved = all(
         rows[label]["status"] == "PASS"
         for label in JAPANESE_WRITING_REVIEW_CORE_PASS_ROWS
@@ -1109,18 +1114,26 @@ def _judge_output(out: str) -> tuple[bool, list[dict]]:
 
 def _artifact_review_judgment(
     state: dict, step: dict, output: str,
-) -> tuple[bool, bool, list[dict]]:
-    """Use the strict shipped parser only for its named Japanese output contract."""
+) -> tuple[dict | None, str | None, str | None]:
+    """Return parsed review data, its verdict, and any parser error separately."""
     if step.get("output_contract") != "japanese-writing-verdict":
         ok, criteria = _judge_output(output)
-        return True, ok, criteria
+        return {"criteria": criteria}, "APPROVE" if ok else "REVISE", None
     try:
         parsed = parse_japanese_writing_review(
             output,
             category=str(state.get("review_category") or ""),
+            _accept_unverified=True,
         )
-    except ValueError:
-        return False, False, []
+    except ValueError as error:
+        return None, None, str(error)
+    return parsed, parsed["verdict"], None
+
+
+def _artifact_review_criteria(parsed: dict | None) -> list[dict]:
+    """Project parsed Japanese review rows into the shared verdict criteria shape."""
+    if not parsed or "rows" not in parsed:
+        return list((parsed or {}).get("criteria") or [])
     criteria = [
         {
             "n": index,
@@ -1129,7 +1142,7 @@ def _artifact_review_judgment(
         }
         for index, label in enumerate(JAPANESE_WRITING_REVIEW_ROWS, start=1)
     ]
-    return True, bool(parsed["approved"]), criteria
+    return criteria
 
 
 def _load_persona_brief(persona: str) -> str | None:
@@ -1608,17 +1621,21 @@ def _run_artifact_reviewers(
                 state, provider, "verifier", prompt, cfg,
                 persona=persona, step_id=step["id"],
             )
+            _spool_full_output(out, cfg, f"review-{provider}")
             if rc != 0:
-                valid, parsed_ok, criteria = True, False, []
+                parsed_review, verdict, raw_error = None, None, None
                 break
-            valid, parsed_ok, criteria = _artifact_review_judgment(
+            parsed_review, verdict, raw_error = _artifact_review_judgment(
                 state, step, out,
             )
-            if valid or not strict_japanese:
+            if raw_error is None or not strict_japanese:
                 break
             invalid_attempts += 1
             if invalid_attempts >= JAPANESE_WRITING_REVIEW_MAX_INVALID_ATTEMPTS:
                 break
+        valid = raw_error is None
+        parsed_ok = verdict == "APPROVE"
+        criteria = _artifact_review_criteria(parsed_review)
         ok = rc == 0 and parsed_ok
         if strict_japanese and rc != 0:
             note = f"exit {rc}; review transport failed"
@@ -1642,13 +1659,16 @@ def _run_artifact_reviewers(
         elif strict_japanese and not valid:
             result["review_failure"] = "contract_invalid_exhausted"
             result["invalid_attempts"] = invalid_attempts
+            result["raw_error"] = raw_error
+        elif strict_japanese and verdict == "UNVERIFIED":
+            result["review_failure"] = "unverified"
+            result["repair_conditions"] = list(
+                parsed_review["repair_conditions"]
+            )
         elif strict_japanese and not parsed_ok:
             # Keep verified repair data transient: the caller reduces it to the
             # bounded correction contract before any verdict/state persistence.
-            result["_parsed_review"] = parse_japanese_writing_review(
-                out,
-                category=str(state.get("review_category") or ""),
-            )
+            result["_parsed_review"] = parsed_review
         return result
 
     if len(tasks) == 1:
@@ -2879,11 +2899,19 @@ def _execute_artifact_review(
         None,
     )
     if review_failure is not None:
-        reason = (
-            "Japanese review contract remained parser-invalid after 3 attempts"
-            if review_failure == "contract_invalid_exhausted"
-            else "Japanese review provider transport failed"
-        )
+        if review_failure == "contract_invalid_exhausted":
+            reason = "Japanese review contract remained parser-invalid after 3 attempts"
+        elif review_failure == "unverified":
+            unverified = next(
+                result for result in results
+                if result.get("review_failure") == "unverified"
+            )
+            reason = (
+                "Japanese review verdict UNVERIFIED; repair conditions: "
+                + "; ".join(unverified["repair_conditions"])
+            )
+        else:
+            reason = "Japanese review provider transport failed"
         state["stopped"] = {
             "reason": reason,
             "kind": "BLOCKED",

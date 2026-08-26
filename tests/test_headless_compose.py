@@ -3,6 +3,7 @@
 import json
 import pathlib
 import hashlib
+import stat
 
 import pytest
 
@@ -571,7 +572,56 @@ def test_japanese_runtime_exhausts_only_invalid_reviews_without_writer_rewrite(
     assert calls.count(("verifier", "review")) == 3
     assert state["step_state"]["write"]["retries"] == 0
     assert "not-json" not in json.dumps(state, ensure_ascii=False)
-    assert "parser-invalid after 3 attempts" in state["stopped"]["reason"]
+    assert state["stopped"] == {
+        "reason": "Japanese review contract remained parser-invalid after 3 attempts",
+        "kind": "BLOCKED",
+        "at": "review",
+    }
+    review_path = tmp_path / "step-outputs" / "review-reviewer.txt"
+    assert review_path.read_text(encoding="utf-8") == "not-json"
+    assert stat.S_IMODE(review_path.stat().st_mode) == 0o600
+
+
+def test_japanese_runtime_blocks_once_on_unverified_and_preserves_review(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    raw_review = _japanese_review_json(verdict="UNVERIFIED", fact="UNKNOWN")
+    calls = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        calls.append((role, step_id))
+        return (0, "初稿") if role == "generator" else (0, raw_review)
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state("japanese-writing", load_steps(resolved), "一般向け告知を書く")
+    state["review_category"] = "general"
+    state_path = tmp_path / "run-state.json"
+
+    final = providers.run_loop(
+        state, state_path, "writer", "reviewer",
+        {"secure_runtime": True}, 10, quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert calls == [("generator", "write"), ("verifier", "review")]
+    assert state["stopped"] == {
+        "reason": (
+            "Japanese review verdict UNVERIFIED; repair conditions: "
+            "事実保持を修正する"
+        ),
+        "kind": "BLOCKED",
+        "at": "review",
+    }
+    review_path = tmp_path / "step-outputs" / "review-reviewer.txt"
+    assert review_path.read_text(encoding="utf-8") == raw_review
+    assert stat.S_IMODE(review_path.stat().st_mode) == 0o600
 
 
 def test_japanese_runtime_mixed_invalid_then_transport_aborts_without_rewrite(
