@@ -43,6 +43,7 @@ from .production_outcome import cmd_production_outcome
 from .provenance_graph import cmd_provenance
 from .synthesis import cmd_synthesis
 from .team_routing import cmd_route_team
+from .workflow_effectiveness import cmd_workflow_effectiveness
 from .intent import cmd_intent
 from .intent_wiring import cmd_derive
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
@@ -273,6 +274,14 @@ def build_parser() -> argparse.ArgumentParser:
                                   "record the comparison under the run")
     p.add_argument("--json", action="store_true", help="emit the comparison as JSON")
     p.set_defaults(func=cmd_production_outcome)
+
+    p = sub.add_parser("effectiveness",
+                       help="derive only recorded workflow metrics and caller-bounded failure "
+                            "patterns (#433 §1–2)")
+    p.add_argument("--query", required=True,
+                   help="closed JSON query defining recurrence, lateness, and repair limits")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_workflow_effectiveness)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")
