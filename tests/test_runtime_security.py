@@ -1221,9 +1221,12 @@ def test_japanese_artifact_review_uses_canonical_strict_json_parser_only(monkeyp
     state = {"review_category": "support_reply"}
     step = {"output_contract": "japanese-writing-verdict"}
 
-    valid, ok, criteria = providers._artifact_review_judgment(state, step, approved)
-    assert valid is True
-    assert ok is True
+    parsed, verdict, raw_error = providers._artifact_review_judgment(
+        state, step, approved,
+    )
+    assert verdict == "APPROVE"
+    assert raw_error is None
+    criteria = providers._artifact_review_criteria(parsed)
     assert [row["verdict"] for row in criteria] == [
         "PASS", "PASS", "PASS", "PASS", "PASS", "N/A", "PASS",
     ]
@@ -1234,20 +1237,35 @@ def test_japanese_artifact_review_uses_canonical_strict_json_parser_only(monkeyp
     revised["verdict"] = "REVISE"
     assert providers._artifact_review_judgment(
         state, step, json.dumps(revised)
-    )[1] is False
-    assert providers._artifact_review_judgment(
-        state, step, "VERDICT: PASS"
-    ) == (False, False, [])
+    )[1] == "REVISE"
+    malformed = providers._artifact_review_judgment(state, step, "VERDICT: PASS")
+    assert malformed[0] is None
+    assert malformed[1] is None
+    assert malformed[2] == "workflow review contract is malformed JSON"
     safety_na = json.loads(approved)
     safety_na["checks"]["incident_support_safety"]["status"] = "N/A"
     safety_na_json = json.dumps(safety_na)
-    assert providers._artifact_review_judgment(
-        state, step, safety_na_json
-    ) == (False, False, [])
+    invalid_safety = providers._artifact_review_judgment(state, step, safety_na_json)
+    assert invalid_safety[0] is None
+    assert invalid_safety[1] is None
+    assert invalid_safety[2] == (
+        "workflow review contract approval has blocking rows"
+    )
     general_state = {"review_category": "general"}
     assert providers._artifact_review_judgment(
         general_state, step, safety_na_json
-    )[1] is True
+    )[1] == "APPROVE"
+
+    unverified = json.loads(approved)
+    unverified["checks"]["fact_preservation"]["status"] = "UNKNOWN"
+    unverified["repair_conditions"] = ["事実を確認する"]
+    unverified["verdict"] = "UNVERIFIED"
+    parsed, verdict, raw_error = providers._artifact_review_judgment(
+        state, step, json.dumps(unverified),
+    )
+    assert parsed["repair_conditions"] == ["事実を確認する"]
+    assert verdict == "UNVERIFIED"
+    assert raw_error is None
 
     runtime_step = {
         "id": "review",
@@ -1277,7 +1295,7 @@ def test_non_japanese_artifact_review_keeps_legacy_verdict_parser():
     step = {"output_contract": "review-verdict"}
     assert providers._artifact_review_judgment(
         state, step, "reason\nVERDICT: PASS"
-    )[1] is True
+    )[1] == "APPROVE"
     assert providers._artifact_review_judgment(
         state, step, "reason\nVERDICT: FAIL"
-    )[1] is False
+    )[1] == "REVISE"
