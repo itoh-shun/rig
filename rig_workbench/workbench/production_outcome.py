@@ -11,9 +11,26 @@ in — an expectation somebody declared *before* the change shipped, and observa
 wrote *after* — and one comparison goes out.
 
 **The caller supplies the bar; the observation never states it.** `target`, `baseline`,
-`limit`, `direction`, `window`, `role` and `status` are refused **by name** on the observation
-document and on every entry in it, with that reason attached. A telemetry adapter — or an
-agent writing one — does not get to name the bar its own numbers are measured against.
+`at_most`, `at_least`, `limit`, `direction`, `window`, `role` and `status` are refused **by
+name** on the observation document and on every entry in it, with that reason attached. A
+telemetry adapter — or an agent writing one — does not get to name the bar its own numbers
+are measured against.
+
+**Each role names its own bar, and neither role reads the other's field.** An objective
+declares `baseline`, `target` and the `direction` improvement runs in: `decrease` means the
+number is meant to fall, so the target is reached at or below it. A guardrail declares one
+bound and has no direction at all — `at_most` is a ceiling the value must not exceed,
+`at_least` a floor it must not fall below.
+
+It said `direction` + `limit` until a reviewer read that pair two ways. On an objective a
+direction is where *improvement* lies; on a guardrail the same field had to mean where *harm*
+lies, so `{direction: decrease, limit: 0.5}` — written by an author who meant "lower is
+better, stay under 0.5" — was a floor to the code, and an error rate of 100.0 pct reported
+`achieved`. No test could object: both branches are correct by construction, so neither is
+the mutation. The bound's **name** is what closed that, not a sentence about it: `at_most:
+0.5` observed at 100.0 is `regressed` and cannot be read the other way, `value <= at_most`
+turned around is a mutation the suite catches, and a guardrail still carrying `direction` or
+`limit` is refused by name with what to write instead.
 
 **A conclusion cannot create a requirement.** `declared_by` admits `intent.DECLARED` and
 nothing else, imported from `intent.py` rather than restated, so the rule has one home. And
@@ -80,6 +97,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 
+from .assurance_wiring import INVALID, UNREADABLE_FILE
 from .intent import DECLARED
 from .provenance_graph import OBJECT_ID
 
@@ -141,8 +159,15 @@ if _gaps := _vocabulary_gaps():  # pragma: no cover - import-time invariant
 OBJECTIVE, GUARDRAIL = "objective", "guardrail"
 ROLES = (OBJECTIVE, GUARDRAIL)
 
+#: Where improvement lies, on an objective. Not a field of a guardrail: see `ROLE_KEYS`.
 DECREASE, INCREASE = "decrease", "increase"
 DIRECTIONS = (DECREASE, INCREASE)
+
+#: The two sides a guardrail can be bounded on, named after what each one constrains. Exactly
+#: one per guardrail: a metric bounded on neither side constrains nothing, and one bounded on
+#: both is two bars for one number, which `validate_expectation` refuses to guess between.
+AT_MOST, AT_LEAST = "at_most", "at_least"
+BOUNDS = (AT_MOST, AT_LEAST)
 
 MEASURED, REPORTED, ESTIMATED = "measured", "reported", "estimated"
 KINDS = (MEASURED, REPORTED, ESTIMATED)
@@ -160,10 +185,27 @@ WINDOW_KEYS = frozenset({"opens", "closes"})
 #: than ignored, because a field accepted and never read is a field its author believes says
 #: something — and `partially-achieved` is then structurally impossible for a guardrail (there
 #: is no baseline to be partway from) rather than suppressed by a comment somebody can delete.
+#:
+#: `direction` is an **objective's** field and appears on no guardrail. It says where
+#: improvement lies, and a guardrail has nowhere for improvement to lie: it says how far the
+#: number may go, on the side its bound is named after. Sharing one field between "where the
+#: good direction is" and "which way harm runs" is what let an inverted guardrail read as
+#: `achieved`, so the two ideas do not share a name here.
 ROLE_KEYS = {
     OBJECTIVE: frozenset({"id", "role", "unit", "direction", "baseline", "target"}),
-    GUARDRAIL: frozenset({"id", "role", "unit", "direction", "limit"}),
+    GUARDRAIL: frozenset({"id", "role", "unit", AT_MOST, AT_LEAST}),
 }
+
+#: The shape a guardrail used to have, and the one an author reaching for `direction` will
+#: write. Refused by name **with what to write instead**, for the reason `BAR_KEYS` carries
+#: its own: the bare closure sentence says the key is not read and leaves the author to guess
+#: that the whole idea moved, rather than that they misspelled something.
+SUPERSEDED_GUARDRAIL_KEYS = frozenset({"direction", "limit"})
+
+_BOUND_REASON = ("a guardrail names the side it bounds and nothing else: `at_most: 0.5` is a "
+                 "ceiling and `at_least: 99.9` is a floor. `direction` says where improvement "
+                 "lies and belongs to an objective; read on a guardrail it would have to mean "
+                 "where harm runs, and one field meaning both is a bar nothing can check")
 
 ENTRY_KEYS = frozenset({"metric", "value", "unit", "observed_at", "kind", "source"})
 
@@ -176,11 +218,14 @@ ENTRY_KEYS = frozenset({"metric", "value", "unit", "observed_at", "kind", "sourc
 #: alone: they belong to the expectation, but an adapter that wrote one was confused about
 #: which document owns a declaration rather than about who names the bar, and giving both
 #: mistakes the same sentence would explain one of them wrongly.
-BAR_KEYS = frozenset({"target", "baseline", "limit", "direction", "role", "window", "status"})
+BAR_KEYS = frozenset({"target", "baseline", AT_MOST, AT_LEAST, "limit", "direction", "role",
+                      "window", "status"})
 
 _BAR_REASON = ("an observation states a value, not the bar it is measured against nor the "
-               "verdict that follows from it: target, baseline, limit, direction, role and "
-               "window are the expectation's to declare, and status is the report's")
+               "verdict that follows from it: target, baseline, at_most, at_least, direction, "
+               "role and window are the expectation's to declare, and status is the report's. "
+               "limit is refused by that name too — it was a guardrail's bound before the "
+               "bound was named after the side it holds")
 
 
 def _refuse(problems: list[str], where: str, why: str) -> None:
@@ -220,13 +265,26 @@ def _text(value: object) -> bool:
 
 
 def _unknown(problems: list[str], where: str, item: dict, allowed: frozenset[str],
-             what: str, bar_reason: str = "") -> None:
+             what: str, explain: tuple[tuple[frozenset[str], str], ...] = ()) -> None:
+    """Keys nothing reads, refused by name — and each *kind* of them in its own sentence.
+
+    One message per reason, never one message carrying a reason true of only some of the keys
+    it names. An observation carrying both `target` and `declared_by` is two different
+    mistakes: the first named a bar the observation does not get to set, and the second put a
+    declaration in the document that records what was seen. Joining them under the bar
+    sentence explains the second one wrongly — which is what `BAR_KEYS` says must not happen,
+    and what it did until a reviewer wrote both keys on one document.
+    """
     unknown = sorted(str(key) for key in item if key not in allowed)
     if not unknown:
         return
-    bars = [key for key in unknown if key in BAR_KEYS] if bar_reason else []
-    reason = f" — {bar_reason}" if bars else ""
-    _refuse(problems, where, f"{', '.join(unknown)} is not part of {what}{reason}")
+    for keys, why in explain:
+        named = [key for key in unknown if key in keys]
+        if named:
+            _refuse(problems, where, f"{', '.join(named)} is not part of {what} — {why}")
+            unknown = [key for key in unknown if key not in keys]
+    if unknown:
+        _refuse(problems, where, f"{', '.join(unknown)} is not part of {what}")
 
 
 def _object_id(problems: list[str], where: str, value: object, what: str) -> None:
@@ -245,6 +303,32 @@ def _object_id(problems: list[str], where: str, value: object, what: str) -> Non
                 f"sha-256). An expectation about a branch name is an expectation about "
                 f"whatever that name points at today, and an abbreviation is not the object "
                 f"rig can compare a receipt against")
+
+
+def _bound(problems: list[str], where: str, metric: dict) -> None:
+    """Exactly one of `at_most` / `at_least`, and a finite number.
+
+    All four ways a bound can fail to be one are refusals, none of them silence: **neither**
+    named (a guardrail that constrains nothing would hold against every value), **both**
+    (two bars for one number, and rig does not pick), a **non-finite** value, and — through
+    `ROLE_KEYS` — the superseded `direction`/`limit` pair, refused by name with what to write.
+    `_compare_one` branches on the same `at_most in metric` this guarantees, so there is no
+    fifth case where the comparison reads a key nothing checked.
+    """
+    named = [bound for bound in BOUNDS if bound in metric]
+    if len(named) != 1:
+        # Self-contained, and *not* `_BOUND_REASON` again: a guardrail carrying the
+        # superseded pair collects both refusals, and repeating one sentence inside the other
+        # is how a refusal stops being read.
+        _refuse(problems, where,
+                f"a guardrail states exactly one of {', '.join(BOUNDS)}, and this one states "
+                f"{', '.join(named) if named else 'neither'}: `at_most` is a ceiling the "
+                f"value must not exceed and `at_least` a floor it must not fall below. "
+                f"Bounded on no side it holds against every value; bounded on both it is two "
+                f"bars for one number, and rig does not pick between them")
+    for bound in named:
+        if not _number(metric.get(bound)):
+            _refuse(problems, where, f"{bound} {metric.get(bound)!r} is not a finite number")
 
 
 def validate_expectation(payload: object) -> list[str]:
@@ -336,19 +420,25 @@ def validate_expectation(payload: object) -> list[str]:
             _refuse(problems, where,
                     f"role {role!r} is not one of {', '.join(ROLES)}")
         else:
-            _unknown(problems, where, metric, ROLE_KEYS[role], f"a {role} metric")
+            _unknown(problems, where, metric, ROLE_KEYS[role], f"a {role} metric",
+                     ((SUPERSEDED_GUARDRAIL_KEYS, _BOUND_REASON),) if role == GUARDRAIL else ())
 
-        # Only the *closure* check needs a role — everything below is true of a metric
-        # whatever it turns out to be, so a bad `role` no longer hides four other problems
-        # from an author who is about to fix it and be refused again.
+        if not _text(metric.get("unit")):
+            _refuse(problems, where,
+                    "has no unit, and a number without one cannot be compared to another")
+
+        # A guardrail is bounded on one named side; everything else is judged as an objective
+        # is — including a metric whose `role` is not a role at all, so that a bad `role` does
+        # not hide four other problems from an author who is about to fix it and be refused
+        # again.
+        if role == GUARDRAIL:
+            _bound(problems, where, metric)
+            continue
         if metric.get("direction") not in DIRECTIONS:
             _refuse(problems, where,
                     f"direction {metric.get('direction')!r} is not one of "
                     f"{', '.join(DIRECTIONS)}")
-        if not _text(metric.get("unit")):
-            _refuse(problems, where,
-                    "has no unit, and a number without one cannot be compared to another")
-        needed = ("baseline", "target") if role != GUARDRAIL else ("limit",)
+        needed = ("baseline", "target")
         for field in needed:
             if not _number(metric.get(field)):
                 _refuse(problems, where, f"{field} {metric.get(field)!r} is not a finite number")
@@ -384,7 +474,7 @@ def validate_observation(payload: object) -> list[str]:
         return [f"observation: expected an object, got {type(payload).__name__}"]
 
     _unknown(problems, "observation", payload, OBSERVATION_KEYS,
-             f"a {OBSERVATION} document", _BAR_REASON)
+             f"a {OBSERVATION} document", ((BAR_KEYS, _BAR_REASON),))
     if payload.get("schema") != OBSERVATION:
         _refuse(problems, "schema", f"expected {OBSERVATION!r}, got {payload.get('schema')!r}")
     _object_id(problems, "change", payload.get("change"),
@@ -399,7 +489,8 @@ def validate_observation(payload: object) -> list[str]:
         if not isinstance(entry, dict):
             _refuse(problems, where, f"expected an object, got {type(entry).__name__}")
             continue
-        _unknown(problems, where, entry, ENTRY_KEYS, "an observation", _BAR_REASON)
+        _unknown(problems, where, entry, ENTRY_KEYS, "an observation",
+                 ((BAR_KEYS, _BAR_REASON),))
         if not _text(entry.get("metric")):
             _refuse(problems, where, "names no metric")
         if not _number(entry.get("value")):
@@ -439,16 +530,27 @@ def read(path, what: str) -> dict:
 def _compare_one(metric: dict, value: float) -> str:
     """One value against one declared bar. Total, and it invents no threshold.
 
-    Reaching the number exactly counts as reaching it, on both roles and in both directions.
+    What each role's bar means, written out because the two roles do not read one field two
+    ways:
+
+    * a **guardrail** is bounded on the side its bound is named after. `at_most` is a ceiling:
+      the value holds while `value <= at_most`, and exceeding it is `regressed`. `at_least` is
+      a floor: it holds while `value >= at_least`. Nothing about a direction enters, and
+      turning either comparison around is a mutation that fails the suite — which is the whole
+      of why the bound is named rather than derived from a shared `direction`.
+    * an **objective** declares `baseline`, `target` and the `direction` improvement runs in.
+      `decrease` means the number is meant to fall, so `value <= target` is the target reached
+      and a value above `baseline` is `regressed`; `increase` is the same sentence mirrored.
+
+    Reaching the number exactly counts as reaching it, on either role and on either bound.
     rig does not decide what "meaningful movement" is: a 0.4 % improvement is
     `partially-achieved` with both numbers printed, and any threshold rig picked would be rig
     choosing the bar.
     """
-    direction = metric["direction"]
     if metric["role"] == GUARDRAIL:
-        held = (value <= metric["limit"] if direction == INCREASE
-                else value >= metric["limit"])
+        held = (value <= metric[AT_MOST] if AT_MOST in metric else value >= metric[AT_LEAST])
         return ACHIEVED if held else REGRESSED
+    direction = metric["direction"]
     baseline, target = metric["baseline"], metric["target"]
     if (value <= target) if direction == DECREASE else (value >= target):
         return ACHIEVED
@@ -492,9 +594,11 @@ def compare(expectation: dict, observation: dict, as_of: str) -> dict:
     metrics: dict[str, dict] = {}
     for identifier, metric in sorted(declared.items()):
         entry = {"role": metric["role"], "unit": metric["unit"],
-                 "direction": metric["direction"],
-                 **{key: metric[key] for key in ("baseline", "target", "limit")
-                    if key in metric},
+                 # Whichever bar this role declared, and only that one: a guardrail has no
+                 # `direction`, and copying one onto the report would put the field back that
+                 # a reader could invert the meaning of.
+                 **{key: metric[key] for key in ("direction", "baseline", "target",
+                                                 AT_MOST, AT_LEAST) if key in metric},
                  "carried_estimates": 0, "discarded_out_of_window": 0,
                  "discarded_sources": []}
         metrics[identifier] = entry
@@ -503,11 +607,6 @@ def compare(expectation: dict, observation: dict, as_of: str) -> dict:
             entry.update(outcome=UNMEASURED, value=None,
                          reason="no observation names this metric")
             continue
-        mismatched = [e for e in seen if e["unit"] != metric["unit"]]
-        if mismatched:
-            raise ValueError(f"{identifier}: observed in {mismatched[0]['unit']!r}, declared "
-                             f"in {metric['unit']!r} — rig does not convert units")
-
         inside, outside = [], []
         for observed in seen:
             # Partitioned by position rather than by value: two entries can be equal dicts —
@@ -521,6 +620,18 @@ def compare(expectation: dict, observation: dict, as_of: str) -> dict:
         # "one measurement" from "one measurement and four that disagree".
         entry["discarded_out_of_window"] = len(outside)
         entry["discarded_sources"] = sorted({e["source"] for e in outside})
+
+        # Over the in-window observations alone, and after the partition rather than before
+        # it. An observation outside the window settles nothing — this module says so
+        # everywhere else, counting it and reading it no further — so letting one refuse the
+        # whole comparison would say the opposite: an adapter exporting history across a
+        # seconds → milliseconds migration would make a comparison every in-window number can
+        # answer unrunnable. Inside the window a unit rig would have to convert is still a
+        # refusal, on the metric it was about.
+        mismatched = [e for e in inside if e["unit"] != metric["unit"]]
+        if mismatched:
+            raise ValueError(f"{identifier}: observed in {mismatched[0]['unit']!r}, declared "
+                             f"in {metric['unit']!r} — rig does not convert units")
 
         settling = [e for e in inside if e["kind"] in SETTLING]
         estimates = [e for e in inside if e["kind"] == ESTIMATED]
@@ -659,25 +770,58 @@ def projection(expectation: dict, observation: dict, as_of: str, *,
 def recorded(run: "pathlib.Path") -> dict | None:  # noqa: F821
     """The comparison recorded for a run, for a view that must not make its own.
 
-    `None` when nothing was recorded — which is a different fact from a comparison that says
-    nothing was achieved, and a caller that defaulted one to the other would report a run
-    nobody measured as a run that failed.
-    """
-    import json as _json
+    Three facts, not two, in the three words `assurance_wiring` already gives this exact
+    question at this layer — imported from it, and used to mean what they mean there:
 
+    * **absent** — `None`. Nothing was recorded, which is a different fact from a comparison
+      that says nothing was achieved; a caller defaulting one to the other reports a run
+      nobody measured as a run that failed.
+    * **unreadable** — a file that is there and will not parse: not JSON, naming one key
+      twice, or not readable at all. `assurance_wiring._target` uses the word for that same
+      set, and `build_receipt` reaches it for a target naming one key twice.
+    * **invalid** — a file that parsed and is not this comparison.
+
+    The last two come back as a dict carrying `not_recorded` and the reason, because "one is
+    there and cannot be read" is not "nobody recorded one": the next step is to look at the
+    file, not to make the comparison for the first time.
+
+    Read through :func:`read`, the one parser both input documents already go through, so a
+    record with a key written twice is *refused* rather than silently resolved to the last
+    one — `{"status": "regressed", "status": "achieved"}` handed a bare `json.loads` the
+    stronger of the two words, and this is the record a dashboard shows.
+
+    A marker carries no `status` and no `schema`, so a caller that used one as a report fails
+    loudly instead of rendering a verdict no record holds.
+    """
     path = run / RECORD_NAME
     if not path.is_file():
         return None
     try:
-        return _json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+        report = read(path, RECORD_NAME)
+    except (OSError, ValueError) as exc:
+        return {"not_recorded": UNREADABLE_FILE, "path": str(path),
+                "reason": f"{RECORD_NAME} is there and cannot be read — not JSON, naming one "
+                          f"key twice, or not readable at all: {exc}"}
+    if not isinstance(report, dict) or report.get("schema") != SCHEMA:
+        found = report.get("schema") if isinstance(report, dict) else type(report).__name__
+        return {"not_recorded": INVALID, "path": str(path),
+                "reason": f"{RECORD_NAME} parsed and is not a {SCHEMA} comparison "
+                          f"({found!r}), so nothing here can be copied instead of recomputed"}
+    return report
 
 
 #: What `expected-outcome` returns. `1` covers an invalid document and a shortfall alike:
 #: to a caller deciding whether to proceed, both mean the declared outcome has not been shown.
 #: The JSON says which. `0` needs `status == achieved` **and** a closed window — an `achieved`
 #: reading taken on day three of a fourteen-day window is an interim reading, not a result.
+#:
+#: `2` is every way the comparison could not be *set up*, and the command has to work to keep
+#: that: the state helpers report failure by calling `die()`, which raises `SystemExit` and is
+#: not an `Exception`. An unknown `--task` and a working directory outside any repository
+#: therefore left by the door marked "looked and came up short" — this module's own
+#: *unobservable is not unmet* rule, broken at the process boundary. The root is asked for
+#: with the non-dying `maybe_repo_root`, the run directory is checked here, and a `die()`
+#: deeper in is caught and turned into this code rather than allowed past.
 SHOWN, NOT_SHOWN, EXECUTION_ERROR = 0, 1, 2
 
 
@@ -705,8 +849,12 @@ def _render(report: dict) -> None:
     print(f"  change {report['change']} — declared {report['declared_at']} "
           f"by {report['declared_by']} ({report['declared_source']})")
     for identifier, entry in sorted(report["metrics"].items()):
-        bar = (f"baseline {entry['baseline']} → target {entry['target']}"
-               if entry["role"] == OBJECTIVE else f"limit {entry['limit']}")
+        # The whole bar, direction included. A verdict line a reader cannot check the
+        # comparison against is a verdict they have to trust.
+        bar = (f"baseline {entry['baseline']} → target {entry['target']} "
+               f"({entry['direction']})" if entry["role"] == OBJECTIVE else
+               f"at most {entry[AT_MOST]}" if AT_MOST in entry else
+               f"at least {entry[AT_LEAST]}")
         value = "no value" if entry.get("value") is None else f"value {entry['value']}"
         print(f"  {entry['outcome']:>19}  {identifier} ({entry['role']}, {entry['unit']}) "
               f"{value} — {bar}")
@@ -750,18 +898,18 @@ def cmd_production_outcome(args) -> "NoReturn":  # noqa: F821
     import json
     import sys
 
-    from .state import load_json, repo_root, run_dir, save_json
+    from .state import load_json, maybe_repo_root, runs_dir, save_json
 
-    def stop(exc: Exception) -> "NoReturn":  # noqa: F821
-        print(json.dumps({"schema": SCHEMA, "status": "execution-error",
-                          "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
+    def stop(error: str) -> "NoReturn":  # noqa: F821
+        print(json.dumps({"schema": SCHEMA, "status": "execution-error", "error": error},
+                         ensure_ascii=False))
         sys.exit(EXECUTION_ERROR)
 
     try:
         expectation = read(args.expected, "expectation")
         observation = read(args.observed, "observation")
     except Exception as exc:  # noqa: BLE001 — every failure to read is one status
-        stop(exc)
+        stop(f"{type(exc).__name__}: {exc}")
 
     problems = validate_expectation(expectation) + validate_observation(observation)
     if problems:
@@ -772,12 +920,26 @@ def cmd_production_outcome(args) -> "NoReturn":  # noqa: F821
     outcome = None
     run = None
     try:
-        root = repo_root()
+        root = maybe_repo_root()
+        if root is None:
+            raise ValueError(
+                "this working directory is not inside a git repository, and the change an "
+                "expectation names is resolved as a git object before anything is compared. "
+                "Nothing was measured and nothing fell short: the comparison could not be "
+                "set up")
         _resolve_change(root, expectation["change"])
         if args.task:
             from .assurance import build_receipt
 
-            run = run_dir(root, args.task)
+            # `run_dir` answers this by calling `die()`, and a `SystemExit` would leave here
+            # as exit 1 — the code that means the outcome was not shown — with no JSON to say
+            # otherwise. The same question, asked so that the answer is a value.
+            run = runs_dir(root) / args.task
+            if not run.is_dir():
+                raise ValueError(
+                    f"task {args.task!r} has no run directory ({run.relative_to(root)}), so "
+                    f"there is no receipt to cross-check the change against and nowhere to "
+                    f"record the comparison. List tasks with `workbench.py log`")
             receipt = build_receipt(root, args.task)
             recorded_file = run / "outcome.json"
             if recorded_file.is_file():
@@ -791,8 +953,11 @@ def cmd_production_outcome(args) -> "NoReturn":  # noqa: F821
             # second one from the same two files. Written only under `--task`, because without
             # a run there is nowhere that belongs to.
             save_json(run / RECORD_NAME, report)
+    except SystemExit as exc:  # a `die()` deeper in: still a setup failure, not a shortfall
+        stop(f"a step of the setup exited with status {exc.code} instead of returning; its "
+             f"reason was printed above. The comparison was never made")
     except Exception as exc:  # noqa: BLE001 — every failure to set the comparison up is one
-        stop(exc)
+        stop(f"{type(exc).__name__}: {exc}")
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))

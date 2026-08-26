@@ -9,12 +9,29 @@ assurance requirements; it does not prove the real-world goal was achieved, and 
 shape in which to write the difference down.
 
 `workbench.py expected-outcome <expected> --observed <file> --as-of <ts> [--task <id>]` is
-that shape. An expectation declares the metrics, their baselines, targets, guardrail limits,
+that shape. An expectation declares the metrics, their baselines, targets, guardrail bounds,
 units and observation window, who declared it and **when**; observations arrive as a separate
-document that states values and may not state bars. `target`, `baseline`, `limit`, `status`,
-`role`, `direction` and `window` are refused by name on the observation document *and* on
-every entry in it, with the reason attached — a telemetry adapter does not get to name the bar
-its own numbers are measured against.
+document that states values and may not state bars. `target`, `baseline`, `at_most`,
+`at_least`, `limit`, `status`, `role`, `direction` and `window` are refused by name on the
+observation document *and* on every entry in it — a telemetry adapter does not get to name the
+bar its own numbers are measured against. Each *kind* of refused key gets its own sentence:
+`target` and `declared_by` on one document are two different mistakes, and one message
+carrying the bar reason would explain the second one wrongly.
+
+**Each role names its own bar, and the two roles share no field.** An objective declares
+`baseline`, `target` and the `direction` improvement runs in — `decrease` means the number is
+meant to fall. A guardrail declares one bound and no direction at all: `at_most: 0.5` is a
+ceiling, `at_least: 99.9` a floor. They cannot share `direction`, because on an objective it
+says where *improvement* lies and on a guardrail it would have to say where *harm* runs:
+`{role: guardrail, direction: decrease, limit: 0.5}` — written by an author who meant "error
+rate, lower is better, stay under 0.5" — was read as a floor, and an error rate observed at
+100.0 pct reported `achieved` and exit 0. No test could have objected, because both readings
+are correct by construction and neither is the mutation. Naming the bound is what makes the
+mistake refusable rather than documented: a guardrail carrying `direction` or `limit` is a
+schema error that says what to write instead, one bounded on neither side or on both is
+refused, and turning `value <= at_most` around is now a mutation the suite fails on. The
+verdict line prints the bar it used (`at most 0.5`, `baseline 820.0 → target 574.0
+(decrease)`), so a reader can check the word against the numbers.
 
 Two rules the schema enforces rather than asks for. `declared_by` is `intent.DECLARED`
 imported, not restated: only `explicit-user` or `policy-required`, because a conclusion cannot
@@ -64,8 +81,22 @@ status and never combined with it: an `ok` run whose objective regressed prints 
 
 `final` is a separate field from `status`. An `achieved` read taken on day three of a
 fourteen-day window is an interim reading and exits 1; exit 0 needs the target reached *and*
-the window closed. Exit 1 covers an invalid document and a shortfall alike, 2 the things that
-make the comparison impossible to set up.
+the window closed. Exit 1 covers an invalid document and a shortfall alike, 2 **every** way
+the comparison could not be set up — including the two ordinary ones, an unknown `--task` and
+a working directory outside any repository. Those left by exit 1 with no JSON while the state
+helpers reported failure by calling `die()`, which raises `SystemExit` and is not an
+`Exception`: a comparison that could never be set up was reported with the code that means
+"looked and came up short", which is this module's own *unobservable is not unmet* rule broken
+at the process boundary.
+
+Two more places where "cannot look" had been folded into an answer. A unit rig would have to
+convert is refused **on the in-window observations only** — a reading outside the window
+settles nothing, so an adapter exporting history across a seconds → milliseconds migration no
+longer vetoes a comparison every in-window number can answer. And the recorded report is read
+back three ways rather than two: absent (nothing was recorded), `unreadable`, and `invalid` —
+the split `assurance_wiring` already keeps at this layer, with its words imported rather than
+respelled. It goes through the same parser both input documents do, so a record with `status`
+written twice is refused instead of silently resolving to the second, stronger word.
 
 Three things this deliberately leaves undone, said plainly rather than implied.
 

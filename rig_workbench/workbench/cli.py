@@ -253,12 +253,16 @@ def build_parser() -> argparse.ArgumentParser:
                        help="compare a declared expected production outcome against measured "
                             "observations: `record-outcome` records the ok/incident flag, "
                             "this judges a declared metric against its baseline, target and "
-                            "window (#437)")
+                            "window (#437). An objective declares baseline/target and the "
+                            "'direction' improvement runs in; a guardrail declares one bound "
+                            "named after the side it holds — 'at_most' is a ceiling, "
+                            "'at_least' a floor — and has no direction")
     p.add_argument("expected", help="path to a rig.expected-outcome/v1 JSON document")
     p.add_argument("--observed", required=True,
                    help="path to a rig.production-observation/v1 JSON document. It states "
                         "values, never targets: the bar is declared in the expectation, and "
-                        "'target'/'baseline'/'limit'/'status' are refused by name here")
+                        "'target'/'baseline'/'at_most'/'at_least'/'status' are refused by "
+                        "name here")
     p.add_argument("--as-of", required=True,
                    help="ISO 8601 timestamp with an offset: when the window is judged. "
                         "Required, because defaulting to now would silently declare every "

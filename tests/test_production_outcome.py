@@ -29,10 +29,11 @@ import pytest
 
 from rig_workbench.workbench import intent, provenance_graph
 from rig_workbench.workbench.production_outcome import (
-    ACHIEVED, CONFIRMED, DECLARED, ESTIMATED, EXPECTATION, GUARDRAIL, INCONCLUSIVE,
-    MEASURED, NOT_ACHIEVED, OBJECTIVE, OBSERVATION, OUTCOMES, PARTIALLY_ACHIEVED, PRECEDENCE,
-    RECORD_NAME, REGRESSED, ROLE_KEYS, SCHEMA, UNMEASURED, UNOBSERVABLE, _compare_one,
-    _vocabulary_gaps, change_cross_check, compare, recorded, validate_expectation,
+    ACHIEVED, AT_LEAST, AT_MOST, CONFIRMED, DECLARED, ESTIMATED, EXPECTATION, GUARDRAIL,
+    INCONCLUSIVE, INVALID, MEASURED, NOT_ACHIEVED, OBJECTIVE, OBSERVATION, OUTCOMES,
+    PARTIALLY_ACHIEVED, PRECEDENCE, RECORD_NAME, REGRESSED, ROLE_KEYS, SCHEMA, UNMEASURED,
+    UNOBSERVABLE, UNREADABLE_FILE, _compare_one, _render, _vocabulary_gaps,
+    change_cross_check, compare, projection, recorded, validate_expectation,
     validate_observation)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -56,8 +57,7 @@ def _expectation(**over) -> dict:
         "metrics": [
             {"id": "p95_latency_ms", "role": OBJECTIVE, "unit": "ms",
              "direction": "decrease", "baseline": 820.0, "target": 574.0},
-            {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct",
-             "direction": "increase", "limit": 0.5},
+            {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct", "at_most": 0.5},
         ],
     }
     payload.update(over)
@@ -158,19 +158,29 @@ def test_an_unmeasured_objective_is_not_carried_to_green_by_a_guardrail_that_hel
 def test_role_keys_are_closed_per_role_and_written_out_by_hand():
     assert ROLE_KEYS == {
         "objective": frozenset({"id", "role", "unit", "direction", "baseline", "target"}),
-        "guardrail": frozenset({"id", "role", "unit", "direction", "limit"}),
+        "guardrail": frozenset({"id", "role", "unit", "at_most", "at_least"}),
     }
     # `partially-achieved` is structurally impossible for a guardrail: there is no baseline
     # to be partway from, and the schema is what makes that true rather than a comment.
     assert "baseline" not in ROLE_KEYS[GUARDRAIL]
+    # And `direction` is an objective's field alone. Shared, it meant "where improvement
+    # lies" on one role and "where harm runs" on the other, and an author writing the first
+    # sense on a guardrail got a floor where they wrote a ceiling — with no check able to
+    # object, because both readings are correct by construction. The bound's name is the
+    # check; a schema that let the two share a field is the defect.
+    assert "direction" not in ROLE_KEYS[GUARDRAIL]
+    assert {AT_MOST, AT_LEAST} <= ROLE_KEYS[GUARDRAIL]
+    assert not ({AT_MOST, AT_LEAST} & ROLE_KEYS[OBJECTIVE])
 
 
 # ── the comparison ───────────────────────────────────────────────────────────
 
 DECREASING = {"role": OBJECTIVE, "direction": "decrease", "baseline": 820.0, "target": 574.0}
 INCREASING = {"role": OBJECTIVE, "direction": "increase", "baseline": 100.0, "target": 140.0}
-HARM_UP = {"role": GUARDRAIL, "direction": "increase", "limit": 0.5}
-HARM_DOWN = {"role": GUARDRAIL, "direction": "decrease", "limit": 99.9}
+#: Written the way an author writes one: the field says which side it holds, so neither of
+#: these can be read as the other.
+CEILING = {"role": GUARDRAIL, AT_MOST: 0.5}
+FLOOR = {"role": GUARDRAIL, AT_LEAST: 99.9}
 
 
 @pytest.mark.parametrize("metric,value,expected", [
@@ -186,15 +196,62 @@ HARM_DOWN = {"role": GUARDRAIL, "direction": "decrease", "limit": 99.9}
     (INCREASING, 139.9, PARTIALLY_ACHIEVED),
     (INCREASING, 100.0, NOT_ACHIEVED),
     (INCREASING, 99.0, REGRESSED),
-    (HARM_UP, 0.1, ACHIEVED),
-    (HARM_UP, 0.5, ACHIEVED),
-    (HARM_UP, 0.500001, REGRESSED),
-    (HARM_DOWN, 99.99, ACHIEVED),
-    (HARM_DOWN, 99.9, ACHIEVED),
-    (HARM_DOWN, 99.8, REGRESSED),
+    (CEILING, 0.1, ACHIEVED),
+    (CEILING, 0.5, ACHIEVED),            # the bound itself is not exceeded
+    (CEILING, 0.500001, REGRESSED),
+    (CEILING, 100.0, REGRESSED),         # 200x the ceiling, and it used to read `achieved`
+    (FLOOR, 99.99, ACHIEVED),
+    (FLOOR, 99.9, ACHIEVED),
+    (FLOOR, 99.8, REGRESSED),
+    (FLOOR, 0.0, REGRESSED),
 ])
 def test_the_comparison_table_including_both_boundary_values(metric, value, expected):
     assert _compare_one(metric, value) == expected
+
+
+def test_a_guardrail_holds_the_side_its_field_is_named_after():
+    """The finding this schema exists to close, asserted the way an author writes it.
+
+    `{role: guardrail, unit: pct, at_most: 0.5}` is "error rate: stay under 0.5". Observed at
+    100.0 pct — two hundred times the bound — it is `regressed` and the report is not green.
+    It used to be `achieved` and exit 0: the guardrail carried `direction: decrease` (the
+    author saying "lower is better") and the comparison read that field as the direction of
+    *harm*, making the bound a floor. Turning either comparison below around now fails this
+    test, which is what a named bound buys and a shared `direction` could not.
+    """
+    guardrail = {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct", AT_MOST: 0.5}
+    report = compare(_expectation(metrics=[_metric(), guardrail]),
+                     _observation(observations=[
+                         _entry(value=500.0),
+                         _entry(metric="error_rate_pct", value=100.0, unit="pct")]),
+                     AS_OF_CLOSED)
+    assert report["metrics"]["error_rate_pct"]["outcome"] == REGRESSED
+    assert report["status"] == REGRESSED
+
+    floor = {"id": "uptime_pct", "role": GUARDRAIL, "unit": "pct", AT_LEAST: 99.9}
+    held = compare(_expectation(metrics=[_metric(), floor]),
+                   _observation(observations=[
+                       _entry(value=500.0),
+                       _entry(metric="uptime_pct", value=99.95, unit="pct")]), AS_OF_CLOSED)
+    assert held["metrics"]["uptime_pct"]["outcome"] == ACHIEVED
+    assert held["status"] == ACHIEVED
+
+
+def test_the_report_carries_the_bound_it_used_and_no_direction_on_a_guardrail():
+    report = compare(_expectation(), _observation(), AS_OF_CLOSED)
+    guardrail = report["metrics"]["error_rate_pct"]
+    assert guardrail[AT_MOST] == 0.5
+    assert "direction" not in guardrail and "limit" not in guardrail
+    assert report["metrics"]["p95_latency_ms"]["direction"] == "decrease"
+
+
+def test_the_verdict_line_prints_the_whole_bar_it_compared_against(capsys):
+    """A verdict a reader cannot check is a verdict they have to trust. `limit 0.5` printed
+    without the field that decided which side of it held was exactly that."""
+    _render(projection(_expectation(), _observation(), AS_OF_CLOSED))
+    printed = capsys.readouterr().out
+    assert "at most 0.5" in printed
+    assert "baseline 820.0 → target 574.0 (decrease)" in printed
 
 
 def test_final_is_a_separate_field_from_status():
@@ -288,6 +345,31 @@ def test_a_unit_the_module_would_have_to_convert_is_refused():
         compare(_expectation(), _observation(observations=[_entry(unit="s", value=0.787)]),
                 AS_OF_CLOSED)
     assert "rig does not convert units" in str(exc.value)
+
+
+def test_an_observation_outside_the_window_does_not_veto_the_comparison_over_units():
+    """A discarded observation settles nothing — including whether the comparison can run.
+
+    An adapter exporting history across a seconds → milliseconds migration carries readings
+    in the old unit outside the window. Those are counted and named, as every out-of-window
+    reading is; refusing the whole comparison over one would let a reading this module says
+    settles nothing decide the exit code.
+    """
+    report = compare(_expectation(), _observation(observations=[
+        _entry(value=500.0, source="apm-ms"),
+        _entry(value=0.82, unit="s", observed_at="2026-07-20T00:00:00+00:00",
+               source="apm-legacy-seconds"),
+        _entry(metric="error_rate_pct", value=0.22, unit="pct")]), AS_OF_CLOSED)
+    entry = report["metrics"]["p95_latency_ms"]
+    assert report["status"] == ACHIEVED
+    assert entry["discarded_out_of_window"] == 1
+    assert entry["discarded_sources"] == ["apm-legacy-seconds"]
+
+    # Inside the window it is still a refusal, on the metric it was about.
+    with pytest.raises(ValueError) as exc:
+        compare(_expectation(), _observation(observations=[
+            _entry(value=0.5, unit="s", source="apm-legacy-seconds")]), AS_OF_CLOSED)
+    assert "p95_latency_ms: observed in 's', declared in 'ms'" in str(exc.value)
 
 
 def test_observations_about_a_different_change_are_evidence_about_something_else():
@@ -396,8 +478,7 @@ def test_an_expectation_that_requires_nothing_is_met_by_everything():
 
 def test_an_expectation_of_only_guardrails_declares_nothing_that_had_to_move():
     problems = validate_expectation(_expectation(metrics=[
-        {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct", "direction": "increase",
-         "limit": 0.5}]))
+        {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct", AT_MOST: 0.5}]))
     assert _reasons(problems, "declares no objective")
     assert _reasons(problems, "'achieved' would mean only that nothing got worse")
 
@@ -421,9 +502,45 @@ def test_a_role_outside_the_vocabulary_does_not_hide_the_rest_of_the_metric():
 def test_a_key_that_belongs_to_the_other_role_is_refused_by_name():
     problems = validate_expectation(_expectation(metrics=[
         _metric(),
-        {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct", "direction": "increase",
-         "limit": 0.5, "baseline": 0.2}]))
+        {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct", AT_MOST: 0.5,
+         "baseline": 0.2}]))
     assert _reasons(problems, "baseline is not part of a guardrail metric")
+
+
+def test_the_superseded_guardrail_shape_is_a_schema_error_that_says_what_to_write():
+    """`{direction: decrease, limit: 0.5}` is the document the old schema accepted and read
+    backwards. It is now refused **by name**, carrying what to write instead — the same
+    treatment `BAR_KEYS` gets, and for the same reason: the bare closure sentence says the
+    key is not read and leaves the author to guess that the whole idea moved."""
+    problems = validate_expectation(_expectation(metrics=[
+        _metric(),
+        {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct",
+         "direction": "decrease", "limit": 0.5}]))
+    assert _reasons(problems, "direction, limit is not part of a guardrail metric")
+    assert _reasons(problems, "at_most: 0.5` is a ceiling")
+    assert _reasons(problems, "one field meaning both is a bar nothing can check")
+    # …and the bound it now needs is missing, said in its own sentence.
+    assert _reasons(problems, "a guardrail states exactly one of at_most, at_least")
+
+
+@pytest.mark.parametrize("metric,states", [
+    ({"id": "e", "role": GUARDRAIL, "unit": "pct"}, "neither"),
+    ({"id": "e", "role": GUARDRAIL, "unit": "pct", AT_MOST: 0.5, AT_LEAST: 0.1},
+     "at_most, at_least"),
+])
+def test_a_guardrail_states_exactly_one_bound(metric, states):
+    """Absence must not mean unenforced. A guardrail bounded on no side holds against every
+    value, and one bounded on both is two bars for one number that rig will not pick between.
+    """
+    problems = validate_expectation(_expectation(metrics=[_metric(), metric]))
+    assert _reasons(problems, f"exactly one of at_most, at_least, and this one states {states}")
+
+
+@pytest.mark.parametrize("value", [True, None, "0.5", float("nan"), float("inf"), []])
+def test_a_bound_that_is_not_a_finite_number(value):
+    problems = validate_expectation(_expectation(metrics=[
+        _metric(), {"id": "e", "role": GUARDRAIL, "unit": "pct", AT_MOST: value}]))
+    assert _reasons(problems, f"at_most {value!r} is not a finite number")
 
 
 @pytest.mark.parametrize("value", [True, False, None, "820", float("nan"), float("inf"), []])
@@ -467,6 +584,20 @@ def test_a_declaration_key_on_an_observation_is_refused_without_the_bar_reason()
     problems = validate_observation(_observation(declared_at="2026-08-01T00:00:00+00:00"))
     assert _reasons(problems, "declared_at is not part of a rig.production-observation/v1")
     assert not _reasons(problems, "not the bar it is measured")
+
+
+def test_two_different_mistakes_on_one_document_get_two_sentences():
+    """`BAR_KEYS` says giving both mistakes the same sentence would explain one of them
+    wrongly. One joined message did exactly that: `target` and `declared_by` came back as a
+    single problem whose reason was the bar sentence, applied to `declared_by` too."""
+    problems = validate_observation(_observation(target=574.0,
+                                                 declared_by="explicit-user"))
+    bar = _reasons(problems, "not the bar it is measured")
+    assert len(bar) == 1
+    assert "target is not part of" in bar[0] and "declared_by" not in bar[0]
+    closure = [p for p in problems if p not in bar]
+    assert closure == ["observation: declared_by is not part of a rig.production-observation/"
+                       "v1 document"]
 
 
 def test_observations_have_to_name_the_change_as_an_object():
@@ -569,12 +700,55 @@ def test_the_comparison_is_made_in_exactly_one_place():
     assert body.count("= compare(") == 1
 
 
-def test_recorded_is_none_when_nothing_was_recorded(tmp_path):
-    """`None` and "nothing was achieved" are different facts, and a caller that defaulted one
-    to the other would report a run nobody measured as a run that failed."""
+def test_recorded_keeps_absent_unreadable_and_invalid_apart(tmp_path):
+    """Three facts, not two.
+
+    `None` and "nothing was achieved" are different facts — a caller defaulting one to the
+    other reports a run nobody measured as a run that failed. And "one is there and cannot be
+    read" is a third: the next step is to look at the file, not to make the comparison for
+    the first time. `assurance_wiring` already splits exactly these at this layer, and the
+    words are imported from it rather than spelled again.
+    """
+    from rig_workbench.workbench import assurance_wiring
+
+    assert (UNREADABLE_FILE, INVALID) == (assurance_wiring.UNREADABLE_FILE,
+                                          assurance_wiring.INVALID)
     assert recorded(tmp_path) is None
+
     (tmp_path / RECORD_NAME).write_text("{not json", encoding="utf-8")
-    assert recorded(tmp_path) is None
+    marker = recorded(tmp_path)
+    assert marker["not_recorded"] == UNREADABLE_FILE
+    assert RECORD_NAME in marker["reason"]
+    # Not a report: a view that used the marker as one fails loudly rather than showing a
+    # verdict no record holds.
+    assert "status" not in marker and "schema" not in marker
+
+    # Parsed, and not this comparison — `assurance_wiring`'s third word, meaning there what
+    # it means here.
+    (tmp_path / RECORD_NAME).write_text('{"schema": "rig.production-observation/v1"}',
+                                        encoding="utf-8")
+    assert recorded(tmp_path)["not_recorded"] == INVALID
+
+    (tmp_path / RECORD_NAME).write_text(json.dumps(
+        compare(_expectation(), _observation(), AS_OF_CLOSED)), encoding="utf-8")
+    assert recorded(tmp_path)["status"] == PARTIALLY_ACHIEVED
+
+
+def test_a_recorded_report_with_a_key_written_twice_is_refused_not_resolved(tmp_path):
+    """The duplicate-key rule is the *reader's*, not each caller's.
+
+    `json.loads` keeps the last of two keys, silently — so a record saying `regressed` and
+    then `achieved` handed a dashboard the stronger word. `read` is the one parser both
+    documents already go through, and the recorded comparison goes through it too.
+    """
+    (tmp_path / RECORD_NAME).write_text(
+        '{"schema": "rig.production-outcome/v1", "status": "regressed", '
+        '"status": "achieved"}', encoding="utf-8")
+    marker = recorded(tmp_path)
+    # `unreadable`, the word `assurance_wiring` gives a document naming one key twice, rather
+    # than a second vocabulary for the same situation one layer over.
+    assert marker["not_recorded"] == UNREADABLE_FILE
+    assert "names 'status' twice" in marker["reason"]
 
 
 # ── exit codes, through the real CLI ─────────────────────────────────────────
@@ -729,3 +903,99 @@ def test_the_receipt_is_read_and_never_written(git_repo, head_sha):
     receipt = json.loads(_run_cli(["receipt", task, "--json"], git_repo).stdout)
     assert "production_outcome" not in receipt
     assert not [s for s in receipt["sources"] if RECORD_NAME in s["path"]]
+
+
+def test_a_guardrail_written_the_way_an_author_writes_one_is_not_green(git_repo, head_sha):
+    """The reproduction, through the CLI that reported it green.
+
+    `{id: error_rate_pct, role: guardrail, unit: pct, at_most: 0.5}` observed at 100.0 pct
+    exits 1 and prints the bound it compared against. Under the superseded schema the same
+    intent — written `direction: decrease, limit: 0.5` — exited 0 saying `achieved`.
+    """
+    result = _invoke(git_repo, _expectation(change=head_sha),
+                     _observation(change=head_sha, observations=[
+                         _entry(value=500.0),
+                         _entry(metric="error_rate_pct", value=100.0, unit="pct")]))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "regressed" in result.stdout
+    assert "value 100.0 — at most 0.5" in result.stdout
+
+
+def test_the_superseded_guardrail_shape_is_refused_by_the_cli_rather_than_read(git_repo,
+                                                                               head_sha):
+    """An inverted document is a schema error now, not a silent green."""
+    expectation = _expectation(change=head_sha, metrics=[
+        _metric(),
+        {"id": "error_rate_pct", "role": GUARDRAIL, "unit": "pct",
+         "direction": "decrease", "limit": 0.5}])
+    result = _invoke(git_repo, expectation, _observation(change=head_sha, observations=[
+        _entry(value=500.0),
+        _entry(metric="error_rate_pct", value=100.0, unit="pct")]))
+    assert result.returncode == 1
+    assert "[REJECTED]" in result.stderr
+    assert "direction, limit is not part of a guardrail metric" in result.stderr
+    assert "at_most: 0.5` is a ceiling" in result.stderr
+
+
+def test_a_task_that_does_not_exist_could_not_be_set_up_rather_than_falling_short(git_repo,
+                                                                                  head_sha):
+    """`run_dir` reports failure with `die()` — a `SystemExit`, which `except Exception`
+    cannot catch — so this left by exit 1, the code that means "looked and came up short",
+    with no JSON to say otherwise even under `--json`. Nothing was looked at.
+
+    The assertion on `error` is load-bearing, not decoration: with the `SystemExit` handler in
+    place, restoring `run_dir()` here still exits 2 — what it loses is the *reason*, which
+    lands on stderr and not in the JSON a caller reads.
+    """
+    result = _invoke(git_repo, _expectation(change=head_sha), _observation(change=head_sha),
+                     "--task", "not-a-task", "--json")
+    assert result.returncode == 2, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "execution-error"
+    assert "not-a-task" in payload["error"] and "run directory" in payload["error"]
+
+
+def test_a_working_directory_outside_any_repository_could_not_be_set_up(tmp_path):
+    """The other `die()` on this path, `repo_root`'s. Same three-code rule.
+
+    `tmp_path` alone: asking for the `git_repo` fixture too would hand this the same
+    directory, already a repository. The assertion on `error` is load-bearing for the same
+    reason as the test above: the handler keeps the exit code either way, and only asking for
+    the reason distinguishes a value from a `die()` that was merely caught.
+    """
+    args = _files(tmp_path, _expectation(), _observation())
+    result = _run_cli(["expected-outcome", args[0], "--observed", args[2],
+                       "--as-of", AS_OF_CLOSED, "--json"], tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "execution-error"
+    assert "not inside a git repository" in payload["error"]
+
+
+def test_a_die_deeper_in_the_setup_is_caught_rather_than_allowed_past(git_repo, head_sha,
+                                                                      monkeypatch, capsys):
+    """The guard the two tests above do not reach.
+
+    They exercise the paths that now *return a value* — `maybe_repo_root() is None` and the
+    `is_dir()` check. `build_receipt` and what it calls can still `die()`, and a `SystemExit`
+    leaving this frame is exit 1 with no JSON: the same defect one call deeper. So the handler
+    is exercised here with a `die()` planted in the setup, and the claim in
+    `SHOWN, NOT_SHOWN, EXECUTION_ERROR`'s comment is one the suite holds.
+    """
+    from types import SimpleNamespace
+
+    from rig_workbench.workbench import state
+    from rig_workbench.workbench.production_outcome import cmd_production_outcome
+
+    monkeypatch.chdir(git_repo)
+    args = _files(git_repo, _expectation(change=head_sha), _observation(change=head_sha))
+    monkeypatch.setattr(state, "runs_dir", lambda root: state.die("planted: cannot look"))
+
+    with pytest.raises(SystemExit) as exit_code:
+        cmd_production_outcome(SimpleNamespace(expected=args[0], observed=args[2],
+                                               as_of=AS_OF_CLOSED, task="t-1", json=True))
+    assert exit_code.value.code == 2
+    printed = capsys.readouterr()
+    assert json.loads(printed.out)["status"] == "execution-error"
+    assert "exited with status 1" in json.loads(printed.out)["error"]
+    assert "planted: cannot look" in printed.err
