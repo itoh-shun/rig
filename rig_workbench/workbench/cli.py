@@ -39,6 +39,7 @@ from .assurance_wiring import cmd_assurance_derive
 from .contract import cmd_contract
 from .development_loop import cmd_dev_loop
 from .assurance_budget import cmd_budget_plan
+from .production_outcome import cmd_production_outcome
 from .provenance_graph import cmd_provenance
 from .synthesis import cmd_synthesis
 from .team_routing import cmd_route_team
@@ -247,6 +248,31 @@ def build_parser() -> argparse.ArgumentParser:
                         "then says so")
     p.add_argument("--json", action="store_true", help="emit the trace as JSON")
     p.set_defaults(func=cmd_provenance)
+
+    p = sub.add_parser("expected-outcome",
+                       help="compare a declared expected production outcome against measured "
+                            "observations: `record-outcome` records the ok/incident flag, "
+                            "this judges a declared metric against its baseline, target and "
+                            "window (#437). An objective declares baseline/target and the "
+                            "'direction' improvement runs in; a guardrail declares one bound "
+                            "named after the side it holds — 'at_most' is a ceiling, "
+                            "'at_least' a floor — and has no direction")
+    p.add_argument("expected", help="path to a rig.expected-outcome/v1 JSON document")
+    p.add_argument("--observed", required=True,
+                   help="path to a rig.production-observation/v1 JSON document. It states "
+                        "values, never targets: the bar is declared in the expectation, and "
+                        "'target'/'baseline'/'at_most'/'at_least'/'status' are refused by "
+                        "name here")
+    p.add_argument("--as-of", required=True,
+                   help="ISO 8601 timestamp with an offset: when the window is judged. "
+                        "Required, because defaulting to now would silently declare every "
+                        "observation window closed")
+    p.add_argument("--task", help="run id: cross-check the change against the receipt, print "
+                                  "the assurance status and the recorded ok/incident flag "
+                                  "beside the production one (never combined with it), and "
+                                  "record the comparison under the run")
+    p.add_argument("--json", action="store_true", help="emit the comparison as JSON")
+    p.set_defaults(func=cmd_production_outcome)
 
     p = sub.add_parser("route", help="resolve a task capability without installing or writing")
     p.add_argument("--type", required=True, help=f"task_type ({', '.join(TASK_TYPES)})")

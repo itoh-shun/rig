@@ -2,6 +2,137 @@
 
 ## Unreleased
 
+The unit-mismatch refusal now runs over the settling observations alone. Moving it past the
+window partition stopped an out-of-window reading from vetoing a comparison it takes no part
+in; an estimate inside the window is the same case one notch narrower. `SETTLING` excludes
+`ESTIMATED` because an estimate is carried and never settles, and its only mark on the report
+is `carried_estimates`, a count that never reads the unit — so refusing over an estimate's unit
+cost a comparison every settling number could answer and bought nothing that comparison would
+have used. An in-window *measurement* rig would have to convert is still a refusal, and the
+positive control for that sits beside the new case.
+
+`record-outcome` has answered one question since #289: did anything go wrong after this
+landed, `ok` or `incident`. It is a flag, and a flag cannot say that p95 was supposed to fall
+from 820 ms to 574 ms and reached 787. Passing the development gate proves the change met its
+assurance requirements; it does not prove the real-world goal was achieved, and rig had no
+shape in which to write the difference down.
+
+`workbench.py expected-outcome <expected> --observed <file> --as-of <ts> [--task <id>]` is
+that shape. An expectation declares the metrics, their baselines, targets, guardrail bounds,
+units and observation window, who declared it and **when**; observations arrive as a separate
+document that states values and may not state bars. `target`, `baseline`, `at_most`,
+`at_least`, `limit`, `status`, `role`, `direction` and `window` are refused by name on the
+observation document *and* on every entry in it — a telemetry adapter does not get to name the
+bar its own numbers are measured against. Each *kind* of refused key gets its own sentence:
+`target` and `declared_by` on one document are two different mistakes, and one message
+carrying the bar reason would explain the second one wrongly.
+
+**Each role names its own bar, and the two roles share no field.** An objective declares
+`baseline`, `target` and the `direction` improvement runs in — `decrease` means the number is
+meant to fall. A guardrail declares one bound and no direction at all: `at_most: 0.5` is a
+ceiling, `at_least: 99.9` a floor. They cannot share `direction`, because on an objective it
+says where *improvement* lies and on a guardrail it would have to say where *harm* runs:
+`{role: guardrail, direction: decrease, limit: 0.5}` — written by an author who meant "error
+rate, lower is better, stay under 0.5" — was read as a floor, and an error rate observed at
+100.0 pct reported `achieved` and exit 0. No test could have objected, because both readings
+are correct by construction and neither is the mutation. Naming the bound is what makes the
+mistake refusable rather than documented: a guardrail carrying `direction` or `limit` is a
+schema error that says what to write instead, one bounded on neither side or on both is
+refused, and turning `value <= at_most` around is now a mutation the suite fails on. The
+verdict line prints the bar it used (`at most 0.5`, `baseline 820.0 → target 574.0
+(decrease)`), so a reader can check the word against the numbers.
+
+Two rules the schema enforces rather than asks for. `declared_by` is `intent.DECLARED`
+imported, not restated: only `explicit-user` or `policy-required`, because a conclusion cannot
+create a requirement and a *proposed* expectation already has a home in the intent contract.
+And `declared_at` is required and has to be at or before the window opens — without it, an
+expectation written once the dashboard was in is byte-identical to one declared before the
+change shipped, and "this is a floor, not a conclusion" is a claim about ordering that a
+document with no time in it cannot support.
+
+`change` is a git object on both documents — `provenance_graph.OBJECT_ID` imported, then
+resolved with `git cat-file -e` before anything is compared. An expectation about a branch
+name is an expectation about whatever that name points at today, and an abbreviation is not
+something a receipt's full sha can be compared against.
+
+What it does not do is most of it. It fetches nothing — no telemetry client, no monitoring
+integration; rig does not become a monitoring platform by having no code that could. It
+estimates nothing: a metric with no settling observation is `unmeasured`, one that cannot be
+settled is `inconclusive`, and neither is ever `achieved`, so a guardrail that held cannot
+carry an unmeasured objective to a green result. An expectation of *only* guardrails is
+refused outright for the same reason `metrics: []` is: a document that requires nothing to
+move must not reach the strongest word in the vocabulary. It attributes no cause — every
+report carries `observational-not-causal`. It picks no threshold for "meaningful", so a 0.4 %
+improvement is `partially-achieved` with both numbers printed. It refuses two settling
+measurements of one metric instead of averaging them. And it never reads the clock: `--as-of`
+is required, because defaulting to now would declare every observation window closed.
+
+An observation outside the window still settles nothing — and is now **counted, with its
+sources named**, on the metric it was about. A run where one in-window reading of 500 sits
+beside three measured readings of 1500, 1600 and 1700 outside it reports `achieved` with
+`discarded_out_of_window: 3`; without that field it was byte-for-byte identical to a run with
+one clean measurement and nothing disagreeing. In-window estimates are carried separately
+(`carried_estimates`) and never settle anything.
+
+`PRECEDENCE` ranks the six outcome words once, in the order both siblings already use for the
+same pair of ideas: a measured negative outranks a cannot-look, as `intent.py` ranks
+`unsatisfied` above `unverifiable` and `assurance_target.evaluate` ranks `unmet` above
+`unobservable`. A measured shortfall beside an unmeasured metric reports `not-achieved`, not
+`unmeasured` — otherwise a learner told to discard `unmeasured` reports would discard a real
+failure.
+
+`--task` reads the run's receipt and refuses on exactly one of its branches: when the receipt
+verified a **different** full object id. No commit linked (the ordinary case — nothing in the
+flow runs `record-commit`), an abbreviation, or a commit git cannot resolve are reported as
+`change_cross_check: unobservable` carrying the receipt's own reason, and the metrics still
+decide the exit code. `final_status` and `outcome.json` are copied beside the production
+status and never combined with it: an `ok` run whose objective regressed prints both words.
+
+`final` is a separate field from `status`. An `achieved` read taken on day three of a
+fourteen-day window is an interim reading and exits 1; exit 0 needs the target reached *and*
+the window closed. Exit 1 covers an invalid document and a shortfall alike, 2 **every** way
+the comparison could not be set up — including the two ordinary ones, an unknown `--task` and
+a working directory outside any repository. Those left by exit 1 with no JSON while the state
+helpers reported failure by calling `die()`, which raises `SystemExit` and is not an
+`Exception`: a comparison that could never be set up was reported with the code that means
+"looked and came up short", which is this module's own *unobservable is not unmet* rule broken
+at the process boundary.
+
+Two more places where "cannot look" had been folded into an answer. A unit rig would have to
+convert is refused **on the in-window observations only** — a reading outside the window
+settles nothing, so an adapter exporting history across a seconds → milliseconds migration no
+longer vetoes a comparison every in-window number can answer. And the recorded report is read
+back three ways rather than two: absent (nothing was recorded), `unreadable`, and `invalid` —
+the split `assurance_wiring` already keeps at this layer, with its words imported rather than
+respelled. It goes through the same parser both input documents do, so a record with `status`
+written twice is refused instead of silently resolving to the second, stronger word.
+
+Three things this deliberately leaves undone, said plainly rather than implied.
+
+**The comparison is pure; the command is not.** `compare()` is a function of the expectation,
+the observations and `--as-of` only. The command resolves `change` through git, and with
+`--task` builds the receipt, which stamps its own generation time and shells out to git
+itself. With `--task` the report is written to `.rig/runs/<id>/production-outcome.json` so the
+next reader copies this comparison instead of making a second one from the same two files;
+that is the only run state it writes. Nothing renders it yet — the assurance receipt carries
+no `production_outcome` block and is not in `_SOURCES`, Mission Control does not read the
+file, and #436 hangs no node off it.
+
+**The subcommand is `expected-outcome`, not `production-outcome`, because that phrase is
+taken.** `feedback.py` is the "production outcome feedback loop", `cli.py`'s `record-outcome`
+help says "record a production outcome", and `evidence.py::production_outcomes` computes
+`outcome_coverage_pct` from `outcome.json` — the number Mission Control renders as "production
+outcome rate and outcome coverage". **That coverage number is about the ok/incident flag and
+nothing else**; it does not count expectations, and this change leaves its arithmetic exactly
+as it was.
+
+**`declared_at` is checked against the window, not against every observation.** The stronger
+rule — declared at or before every `observed_at` — is either implied by the window rule (an
+in-window observation is necessarily after a declaration that predates the window) or refuses
+the honest case, since a *pre*-window reading is usually where the baseline came from. So the
+module can tell a bar declared before the window from one written after it opened; it cannot
+tell anything finer, and nothing here judges whether the metric was worth moving.
+
 The validator no longer tells you to delete a working safety property. `--validate` WARNed
 that `max_retries` on any step whose gate was not `acceptance-gate` had "no effect in this
 context", and the one step in the whole catalogue it fired on was
