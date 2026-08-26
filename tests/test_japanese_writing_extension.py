@@ -269,6 +269,8 @@ def test_draft_revision_command_documents_no_clobber_private_file_transport():
         'getattr(os, "O_NOFOLLOW", 0)',
         'raise FileExistsError("output already exists")',
         "os.link(",
+        "pack install domain:japanese-writing --scope project --allow-unverified",
+        "RIG_ALLOW_PROJECT_PACKS=1 rig-wb pack invoke",
     ):
         assert required in command
     assert command.count("source_fd = os.open(") == 1
@@ -303,6 +305,11 @@ def test_draft_revision_command_transports_stdin_and_never_clobbers_source(tmp_p
     fake = fake_bin / "rig-wb"
     fake.write_text(
         "#!/bin/sh\n"
+        "case \" ${CLAUDECODE:+$*} \" in\n"
+        "  *' --allow-headless-in-cc '*) ;;\n"
+        "  *) printf '%s\\n' '[BLOCKED] headless Claude requires explicit consent' "
+        ">&2; exit 2 ;;\n"
+        "esac\n"
         "printf '%s\\n' \"$*\" >> \"$RIG_FAKE_ARGS\"\n"
         "sha256sum | awk '{print $1}' > \"$RIG_FAKE_STDIN_SHA\"\n"
         "printf '%s\\n' '修正版'\n",
@@ -314,6 +321,7 @@ def test_draft_revision_command_transports_stdin_and_never_clobbers_source(tmp_p
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "RIG_FAKE_ARGS": str(fake_args),
         "RIG_FAKE_STDIN_SHA": str(fake_stdin_sha),
+        "CLAUDECODE": "1",
     }
 
     before = hashlib.sha256(draft.read_bytes()).hexdigest()
@@ -337,6 +345,7 @@ def test_draft_revision_command_transports_stdin_and_never_clobbers_source(tmp_p
     assert fake_stdin_sha.read_text().strip() == before
     child_argv = fake_args.read_text(encoding="utf-8")
     assert "--goal-stdin" in child_argv
+    assert "--allow-headless-in-cc" in child_argv
     assert "--review-category support_reply" in child_argv
     assert "--material-profile conversation" in child_argv
     assert "DO_NOT_LOG" not in child_argv
@@ -1044,12 +1053,14 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
 def test_docs_show_install_use_and_cross_model_review():
     command = (PACK / "commands/japanese-writing.md").read_text(encoding="utf-8")
     assert "rig-wb pack install domain:japanese-writing" in command
+    assert "RIG_ALLOW_PROJECT_PACKS=1" in command
     assert "$rig --recipe japanese-writing" in command
     assert "--provider claude" in command
     assert "--verifier-provider codex" in command
     assert '--secure-provider-config "$PWD/.rig/provider-pins.json"' in command
     assert "--goal-stdin" in command
-    assert '--goal-stdin < "$PWD/.rig/japanese-goal.txt"' in command
+    assert "--allow-headless-in-cc" in command
+    assert '--allow-headless-in-cc < "$PWD/.rig/japanese-goal.txt"' in command
     assert "--review-category incident_report" in command
     for category in ("general", "incident_report", "support_reply"):
         assert f"`{category}`" in command
