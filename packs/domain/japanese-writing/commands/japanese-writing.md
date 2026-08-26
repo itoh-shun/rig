@@ -26,6 +26,9 @@ Claude を生成役にする headless 実行例です。最終判定を同じモ
 reviewer には別 provider を指定します。headless 実行では PATH 上の名前を信用せず、利用者が
 内容と所有者・mode を確認した executable の絶対 path と SHA-256 を local pin config に
 記録します。script の場合は shebang interpreter も同様に pin してください。
+Claude Code session 内では、この例は外側とは別の Claude subprocess を起動し、利用状況によっては
+別の課金枠を消費し得ます。意図した headless 実行であることを確認したうえで、下記の
+`--allow-headless-in-cc` を明示してください。
 
 `.rig/` は gitignore 対象です。`mkdir -p .rig && chmod 700 .rig` で local directory を
 owner-only にしてから、次の schema だけを参考に、実機で確認した値を
@@ -69,7 +72,8 @@ rig-wb run japanese-writing \
   --secure-provider-config "$PWD/.rig/provider-pins.json" \
   --review-category incident_report \
   --material-profile none \
-  --goal-stdin < "$PWD/.rig/japanese-goal.txt"
+  --goal-stdin \
+  --allow-headless-in-cc < "$PWD/.rig/japanese-goal.txt"
 ```
 
 `--review-category` は必須です。通常文は `general`、障害報告は

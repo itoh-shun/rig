@@ -17,6 +17,14 @@ pack catalog上の実際の解決は次の呼び出しです。
 rig-wb pack invoke japanese-writing:japanese-writing-revision-command -- <absolute-draft-path> <absolute-output-path> --review-category general --material-profile none
 ```
 
+repo checkout 外の cwd から shipped pack を使う場合は、先に内容を確認した checkout 内の
+pack path を project scope へ導入し、初回実行時にも明示的に trust を承認します。
+
+```console
+rig-wb pack install domain:japanese-writing --scope project --allow-unverified
+RIG_ALLOW_PROJECT_PACKS=1 rig-wb pack invoke japanese-writing:japanese-writing-revision-command -- <absolute-draft-path> <absolute-output-path> --review-category general --material-profile none
+```
+
 このコマンドのstdoutは、検証済みasset path、引数、`mode: manual-command`、`status: ready`を含む
 manual-command metadataです。`pack invoke` 自体はwrapperもproviderも実行しません。catalog検証を通った
 metadataのasset pathを受け取った trusted command host だけが、そのresolved asset内の次のwrapperを
@@ -26,6 +34,9 @@ metadataのasset pathを受け取った trusted command host だけが、そのr
 保存しません。secure run-stateには hashだけが残ります。stdout の最終完成稿は同じ private directory の一時ファイルへ受け、
 成功後にhard-linkを使って未作成のoutput名を原子的に確保します。
 wrapper内部では `rig-wb run japanese-writing-revision` に検証済みsource FDをstdinとして直接渡します。
+Claude Code session 内でも意図した headless Claude を起動するため、wrapper は
+`--allow-headless-in-cc` を明示します。これは外側の session とは別 subprocess を起動し、利用状況に
+よっては別の課金枠を消費し得るため、実行する trusted command host はこの選択を利用者へ示してください。
 
 ```sh
 set -eu
@@ -183,6 +194,7 @@ def run():
                 "--review-category", category,
                 "--material-profile", material_profile,
                 "--goal-stdin",
+                "--allow-headless-in-cc",
             ],
             stdin=source_fd,
             stdout=temporary_fd,
