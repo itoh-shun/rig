@@ -19,7 +19,7 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
 from .providers import (JAPANESE_MATERIAL_PROFILES, JAPANESE_WRITING_REVIEW_CATEGORIES,
-                        resolve_japanese_material, parse_step_model_spec,
+                        record_verdicts, resolve_japanese_material, parse_step_model_spec,
                         read_result_artifact, run_loop, unknown_step_model_ids)
 from ..packs.model import PackError
 from .isolate import setup_isolation, teardown_isolation
@@ -371,9 +371,18 @@ def cmd_verdict(args):
         print("[ERROR] no running step.")
         sys.exit(1)
     by, ok, note = None, None, ""
+    criteria = []
+    seen_criteria = set()
+
+    def reject(message):
+        print(f"[ERROR] {message}")
+        sys.exit(1)
+
     i = 1
     while i < len(args):
-        if args[i] == "--by" and i + 1 < len(args):
+        if args[i] == "--by":
+            if i + 1 >= len(args) or args[i + 1].startswith("--"):
+                reject("--by requires a verifier name.")
             by = args[i + 1]
             i += 2
         elif args[i] == "--pass":
@@ -382,15 +391,39 @@ def cmd_verdict(args):
         elif args[i] == "--fail":
             ok = False
             i += 1
-        elif args[i] == "--note" and i + 1 < len(args):
+        elif args[i] == "--note":
+            if i + 1 >= len(args) or args[i + 1].startswith("--"):
+                reject("--note requires text.")
             note = args[i + 1]
             i += 2
+        elif args[i] == "--criterion":
+            if i + 1 >= len(args) or args[i + 1].startswith("--"):
+                reject("--criterion requires <integer>=PASS|FAIL|UNKNOWN.")
+            answer = args[i + 1]
+            if "=" not in answer:
+                reject("--criterion requires <integer>=PASS|FAIL|UNKNOWN.")
+            raw_n, raw_verdict = answer.split("=", 1)
+            if not raw_n.isascii() or not raw_n.isdecimal():
+                reject(f"criterion number must be an integer: {raw_n!r}.")
+            n = int(raw_n)
+            verdict = raw_verdict.upper()
+            if verdict not in ("PASS", "FAIL", "UNKNOWN"):
+                reject(f"criterion {n} answer must be PASS, FAIL, or UNKNOWN.")
+            declared = step.get("acceptance") or []
+            if not 1 <= n <= len(declared):
+                reject(f"criterion {n} is out of range; step declares 1..{len(declared)}.")
+            if n in seen_criteria:
+                reject(f"duplicate criterion {n}.")
+            seen_criteria.add(n)
+            criteria.append({"n": n, "verdict": verdict, "anchor": ""})
+            i += 2
         else:
-            i += 1
+            reject(f"unknown verdict argument: {args[i]}")
     if by is None or ok is None:
         print("[ERROR] --by <verifier-name> and --pass|--fail are required.")
         sys.exit(1)
-    st["verdicts"].append({"by": by, "ok": ok, "note": note})
+    record_verdicts(step, st, [{"by": by, "ok": ok, "note": note,
+                                "criteria": criteria}])
     save_state(state, sp)
     guard = " (independent)" if by.lower() not in ("self", "generator", "producer") else " (⚠ generator itself = invalid)"
     print(f"verdict recorded: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}. Proceed with `next`.")

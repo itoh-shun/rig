@@ -18,7 +18,8 @@ The model does each step's "work", but this runner decides "what happens next":
                                      engine calls it during RESOLVE)
   init   <recipe.md> [--goal G]      Create the run-state and print the first action
   check  <state.json>                Run the current step's checks: (shell) and record pass/fail (machine sensor)
-  verdict<state.json> --by N --pass  Record an independent verifier's judgment (enforces grader != generator)
+  verdict <state.json> --by N --pass|--fail [--criterion N=PASS|FAIL|UNKNOWN]...
+                                     Record an independent judgment; declared acceptance criteria must be answered explicitly
   approve <step-id> [state.json]     Cast a human-gate decision on a step declaring `human_gate:` (or covered by the
     [--deny] [--note "..."]           org policy's `stage:<id>` rule). Quorum, qualifying roles, separation of duties
                                      and freshness come from the governance layer; the record lands in the run-state

@@ -25,8 +25,8 @@ resume  <run-state.json>         verify-first 再開：ダイジェスト表示 
                                  以前 pass していた check が今 fail するなら「世界がドリフトした」として前進を拒否（exit≠0）、
                                  無事なら `next` と同じ遷移を出す。run-state の mtime が 1h 以上前なら compaction 手がかりを表示
 check   <run-state.json>         現 step の checks:（shell）を実行し pass/fail 記録（計算的センサー）
-verdict <run-state.json> --by <名> --pass|--fail [--note ...]
-                                 独立検証者の推論的判定を記録（採点者≠生成者）
+verdict <run-state.json> --by <名> --pass|--fail [--criterion N=PASS|FAIL|UNKNOWN]... [--note ...]
+                                 独立検証者の推論的判定を記録（採点者≠生成者）。acceptance: 宣言時は、実際に照合した各基準を番号で明示する
 status  <run-state.json>         現在の状態
 selftest                         決定論の自己検証
 ```
@@ -37,7 +37,7 @@ selftest                         決定論の自己検証
 2. ランナーが `START step X` を出す → モデルは X の作業を**委譲**（context-minimal・engine 規則どおり）。
 3. ゲートのある step：
    - 機械検証があれば `check`（lint/test/build 等を実行＝**計算的センサー一次**）。
-   - 観点検証が要れば、**生成者と別の reviewer** が `verdict --by <reviewer> --pass|--fail`（採点者≠生成者）。
+   - 観点検証が要れば、**生成者と別の reviewer** が `verdict --by <reviewer> --pass|--fail`（採点者≠生成者）。`acceptance:` がある step は、照合した各基準を `--criterion 1=PASS` のように反復指定する。回答なしの PASS は未回答としてゲートを通らない。
 4. `next` を呼ぶ → ランナーが決定論的に遷移を返す：
    - `ADVANCE`（合格）/ `RETRY`（未達・try n/K）/ `AWAIT`（check/verdict 待ち）/ `BLOCKED`（自己採点）/ `ESCALATE`（K 回未達→停止）/ `DONE`。
 5. `ESCALATE`/`BLOCKED` は**進めない**（無限ループ禁止・自己採点禁止）。`DONE` まで 2〜4 を繰り返す。
