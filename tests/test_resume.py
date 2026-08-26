@@ -43,12 +43,20 @@ def test_digest_reports_machine_tokens(tmp_path, step_factory, capsys):
 
 
 def test_rerun_pass_advances(tmp_path, step_factory, capsys):
-    """A running step whose recorded checks still pass re-verifies then ADVANCEs (exit 0)."""
+    """A running step whose recorded checks still pass AND whose verdict is on record
+    re-verifies then ADVANCEs (exit 0).
+
+    The recorded verdict is new here, and it changes what `resume` does for an operator:
+    since #496 the checks are a precondition for the verdict, not a substitute, so a
+    resumed acceptance-gate step with checks alone AWAITs instead of advancing. That case
+    is `test_rerun_without_a_verdict_awaits` below.
+    """
     steps = [step_factory(id="verify", gate="acceptance-gate", checks=["true"]),
              step_factory(id="review", gate="review-gate")]
     path = _write_state(
         tmp_path, steps,
-        verify={"status": "running", "checks": [{"cmd": "true", "ok": True}]})
+        verify={"status": "running", "checks": [{"cmd": "true", "ok": True}],
+                "verdicts": [{"by": "reviewer", "ok": True, "note": ""}]})
     cmd_resume([str(path)])  # ADVANCE does not raise SystemExit
     out = capsys.readouterr().out
     assert "re-verify" in out
@@ -58,6 +66,25 @@ def test_rerun_pass_advances(tmp_path, step_factory, capsys):
     state = load_state(path)
     assert state["step_state"]["verify"]["status"] == "passed"
     assert state["cursor"] == 1
+
+
+def test_rerun_without_a_verdict_awaits(tmp_path, step_factory, capsys):
+    """Positive control for the case above: strip the verdict and the same resume, with the
+    same still-passing checks, must not advance."""
+    steps = [step_factory(id="verify", gate="acceptance-gate", checks=["true"]),
+             step_factory(id="review", gate="review-gate")]
+    path = _write_state(
+        tmp_path, steps,
+        verify={"status": "running", "checks": [{"cmd": "true", "ok": True}]})
+    cmd_resume([str(path)])
+    out = capsys.readouterr().out
+    assert "re-verify" in out
+    assert "world still matches" in out
+    assert "▶ AWAIT" in out
+    assert "▶ ADVANCE" not in out
+    state = load_state(path)
+    assert state["step_state"]["verify"]["status"] == "running"
+    assert state["cursor"] == 0
 
 
 def test_rerun_fail_refuses(tmp_path, step_factory, capsys):

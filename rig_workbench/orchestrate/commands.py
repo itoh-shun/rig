@@ -714,7 +714,11 @@ def cmd_run(args):
     if cli_checks:
         cfg["checks"] = list(cli_checks)
         for step in steps:
-            if step.get("executor") == "checks-only" and step.get("gate") == "acceptance-gate":
+            # Was `executor == "checks-only" and gate == "acceptance-gate"`. That pair is now
+            # refused before the run starts (a verdict-less executor cannot carry a runtime
+            # gate), so the old condition matched nothing and `--check` would have been
+            # accepted, echoed, and silently dropped on the floor.
+            if step.get("executor") == "checks-only":
                 step["checks"].extend(cli_checks)
     # Unknown step ids abort the run before anything executes (no silent ignores; #293)
     unknown = unknown_step_model_ids(step_models, steps)

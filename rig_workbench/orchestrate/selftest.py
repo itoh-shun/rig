@@ -55,19 +55,39 @@ def cmd_selftest(_args):
                 "acceptance": [], "checks": k.get("checks", []),
                 "max_retries": k.get("max_retries", DEFAULT_K), "output_contract": None}
 
-    # Scenario A: happy path (no-gate → checks pass → verdict pass → DONE)
+    # Scenario A: happy path (no-gate → checks pass AND verdict pass → verdict pass → DONE)
+    # Since #496 the `verify` step's passing checks are a PRECONDITION for its verdict, not a
+    # substitute for it: this script used to ADVANCE on ("check", True) alone, and that golden
+    # was the shipped runner asserting that a gate named "acceptance" could pass with nobody
+    # having judged anything. A2 below is the positive control for the new refusal.
     stepsA = [s(id="design"),
               s(id="verify", gate="acceptance-gate", checks=["true"]),
               s(id="review", gate="review-gate")]
     scriptA = [("next", None),                       # START design
                ("next", None),                       # design no-gate → ADVANCE verify
                ("next", None),                       # START verify
-               ("check", True), ("next", None),      # verify checks ok → ADVANCE review
+               ("check", True),                      # checks ok = precondition met, not a pass
+               ("verdict", ("reviewer", True)), ("next", None),  # + verdict → ADVANCE review
                ("next", None),                       # START review
                ("verdict", ("reviewer", True)), ("next", None)]  # review pass → DONE
     expectA = ["START", "ADVANCE", "START", "ADVANCE", "START", "DONE"]
     tA1, stA1 = _drive(stepsA, scriptA)
     tA2, stA2 = _drive(stepsA, scriptA)
+
+    # Scenario A2 (positive control for A): the SAME step with the SAME passing checks and no
+    # verdict must NOT pass. Without it nothing in the shipped runner objects to the shape
+    # `gate_outcome` exists to refuse, and a broken guard would keep reporting success.
+    scriptA2 = [("next", None), ("next", None), ("next", None),
+                ("check", True), ("next", None)]
+    expectA2 = ["START", "ADVANCE", "START", "AWAIT"]
+    tA2c, _stA2c = _drive(stepsA, scriptA2)
+
+    # Scenario A3 (positive control for the rubber-stamp guard): a step that declares criteria
+    # and receives a PASSING verdict answering none of them must fail, not pass.
+    stepsA3 = [{**s(id="verify", gate="acceptance-gate", max_retries=1),
+                "acceptance": ["task_intent_satisfied — x", "no_unrelated_diff — y"]}]
+    scriptA3 = [("next", None), ("verdict", ("reviewer", True)), ("next", None)]
+    tA3, _stA3 = _drive(stepsA3, scriptA3)
 
     # Scenario B: failure path (checks fail → retry → re-START → fail → ESCALATE)
     stepsB = [s(id="verify", gate="acceptance-gate", checks=["false"], max_retries=2)]
@@ -146,6 +166,10 @@ def cmd_selftest(_args):
     report("A repeat run is identical (determinism)", tA2, tA1, "same input → same transitions")
     report("A final states are identical", json.dumps(stA1, sort_keys=True), json.dumps(stA2, sort_keys=True))
     report("A done=True", stA1["done"], True)
+    report("A2 acceptance-gate + passing checks + NO verdict does not pass (#496)",
+           tA2c, expectA2, "checks[] are a precondition for the verdict, not a substitute")
+    report("A3 a passing verdict answering none of the declared criteria is not a pass",
+           tA3, ["START", "ESCALATE"], "rubber stamp → FAIL (max_retries=1 → ESCALATE), not PASS")
     report("B fail → retry → escalate", tB, expectB)
     report("C self-grading blocked", tC, expectC)
     report("D external runner self-drives to DONE", finalD, "DONE")
@@ -520,6 +544,11 @@ def cmd_selftest(_args):
                                        s(id="review", gate="review-gate")], None)
     stateAA1["step_state"]["verify"]["status"] = "running"
     stateAA1["step_state"]["verify"]["checks"] = [{"cmd": "true", "ok": True}]
+    # The recorded verdict is new here, and it changes what `resume` does for an operator:
+    # since #496 a resumed acceptance-gate step whose record holds passing checks and no
+    # verdict re-verifies the checks and then AWAITs (scenario AA3 below) instead of
+    # advancing. Advancing is now reserved for a step whose independent judgment exists.
+    stateAA1["step_state"]["verify"]["verdicts"] = [{"by": "reviewer", "ok": True}]
     outAA1, codeAA1 = _run_resume(stateAA1)
     stateAA2 = new_state("resume-drift", [s(id="verify", gate="acceptance-gate", checks=["false"])], None)
     stateAA2["step_state"]["verify"]["status"] = "running"
@@ -531,6 +560,15 @@ def cmd_selftest(_args):
     report("AA resume: world-drift (recorded pass now fails) refuses to advance (exit≠0)",
            ("WORLD DRIFTED" in outAA2 and "▶ ADVANCE" not in outAA2, codeAA2 != 0),
            (True, True))
+    # Positive control for AA1: strip the verdict and the same resume must NOT advance.
+    stateAA3 = new_state("resume-no-verdict",
+                         [s(id="verify", gate="acceptance-gate", checks=["true"]),
+                          s(id="review", gate="review-gate")], None)
+    stateAA3["step_state"]["verify"]["status"] = "running"
+    stateAA3["step_state"]["verify"]["checks"] = [{"cmd": "true", "ok": True}]
+    outAA3, codeAA3 = _run_resume(stateAA3)
+    report("AA3 resume: passing checks with no verdict AWAITs instead of advancing (#496)",
+           ("▶ AWAIT" in outAA3 and "▶ ADVANCE" not in outAA3, codeAA3), (True, 0))
 
     # ── Scenario FM: failure-mode taxonomy (deterministic classification from state) ──
     # classify_failure gives a reproducible MAST-style code from run-state alone:

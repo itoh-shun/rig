@@ -4,9 +4,73 @@ import pathlib
 import re
 
 from rig_workbench.orchestrate.gates import is_runtime_gate, validate_executable_recipe
+from rig_workbench.workbench.config import GATE_PRESETS
 
 from .config import AGENTS, FACETS, PATTERNS, RECIPES, ROOT
 from .state import _emit, parse_frontmatter
+
+#: Every criterion id any preset can put on a task's gate. Derived from `GATE_PRESETS`, never
+#: re-typed here: a second copy of the vocabulary is a copy that drifts (and the one in
+#: `facets/instructions/acceptance-check.md` already had, by eleven criteria, before it was
+#: replaced with an instruction to read the task's gate).
+PRESET_CRITERION_IDS = frozenset(
+    criterion for preset in GATE_PRESETS.values() for criterion in preset
+)
+
+#: An `acceptance[]` entry in id-form: `criterion_id — 説明`. The ` — ` separator is the
+#: convention `facets/instructions/acceptance-check.md` states; anything else is prose-form,
+#: which carries no vocabulary constraint at all (two thirds of the shipped catalogue is
+#: prose-form, and a rule demanding ids everywhere would have rejected all of it).
+_ACCEPTANCE_ID_FORM = re.compile(r"^\s*([a-z][a-z0-9_]*)\s+\u2014\s")  # \u2014 is the em dash of the ` — ` separator
+
+
+def _check_acceptance_forms(step: dict, step_ctx: str) -> None:
+    """A step's `acceptance[]` is entirely id-form or entirely prose-form (#497 C3).
+
+    The list is a WORK LIST — the criteria this flow's own steps produce evidence for —
+    never the condition for acceptance. What the form governs is vocabulary: an id-form
+    entry claims a criterion that `build_acceptance()` will actually put on the task's
+    gate, so a misspelled or invented id is a claim nothing can ever record. Prose-form
+    entries name work no preset knows about and are left alone.
+    """
+    entries = step.get("acceptance")
+    if entries is None:
+        return
+    if not isinstance(entries, list):
+        _emit("FAIL", f"{step_ctx} — acceptance value is not a list ({entries!r})."
+                      " Specify acceptance as an array of strings")
+        return
+    forms: list[str] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, str) or not entry.strip():
+            _emit("FAIL", f"{step_ctx} — acceptance[{index}] is not a non-empty string"
+                          f" ({entry!r})")
+            continue
+        match = _ACCEPTANCE_ID_FORM.match(entry)
+        if match is None:
+            forms.append("prose")
+            continue
+        forms.append("id")
+        criterion_id = match.group(1)
+        if criterion_id not in PRESET_CRITERION_IDS:
+            _emit(
+                "FAIL",
+                f"{step_ctx} — acceptance[{index}] declares criterion id"
+                f" `{criterion_id}`, which no gate preset defines. `wb gate --set` rejects"
+                " any name not already on the task's gate, so this id can never be"
+                " recorded. Use an id from `rig-wb wb gates`, or write the entry as prose"
+                " (no `id — ` prefix) if it names work no preset knows about.",
+            )
+    if len(set(forms)) > 1:
+        ids = [entries[i] for i, f in enumerate(forms) if f == "id"]
+        _emit(
+            "FAIL",
+            f"{step_ctx} — acceptance[] mixes id-form and prose-form entries"
+            f" ({forms.count('id')} id-form, {forms.count('prose')} prose-form; first"
+            f" id-form: {ids[0]!r}). A step's list is entirely one form or entirely the"
+            " other — the form decides whether the entries are checked against the gate"
+            " vocabulary, and a mixed list is checked as neither.",
+        )
 
 
 # ── reference resolution helpers ─────────────────────────────────────────────
@@ -415,11 +479,23 @@ def check_recipe(path: pathlib.Path) -> None:
         # max_retries type / value range / effective context (§3.5)
         _check_max_retries(step, step_ctx)
 
-        # acceptance-gate + acceptance[] presence recommended
+        # acceptance[] form/vocabulary (#497 C3)
+        _check_acceptance_forms(step, step_ctx)
+
+        # acceptance-gate + acceptance[] presence recommended.
+        # The old wording was "(the gate may always pass)". That stopped being true with
+        # #496: a runtime-gated step with no verdict now returns `incomplete`, so an empty
+        # acceptance[] does not buy a free pass — it buys a verifier that is asked to judge
+        # a step against nothing in particular.
         if step.get("gate") == "acceptance-gate" and not step.get("acceptance"):
             _emit(
                 "WARN",
-                f"{step_ctx} — gate: acceptance-gate but acceptance[] is undefined (the gate may always pass)",
+                f"{step_ctx} — gate: acceptance-gate but acceptance[] is undefined"
+                " (the verifier is given no criteria to answer, and the run record will"
+                " name nothing it judged). acceptance[] is this flow's WORK LIST — the"
+                " criteria its own steps produce evidence for — not the condition for"
+                " acceptance: that is the task's gate, built from the presets by"
+                " `build_acceptance()`, which never reads a recipe.",
             )
 
         # match child step IDs against extends parent (#41)

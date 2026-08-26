@@ -61,7 +61,6 @@ steps:
       - "regression_test_added_or_explained — 回帰テストを追加したか、不要な理由を説明した"
       - "existing_behavior_preserved — 既存の正常系挙動を壊していない"
       - "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない"
-    personas: [implementer]
 ---
 
 # max-bugfix
@@ -75,7 +74,13 @@ steps:
 - `implement`: diff と `git diff --check` を強制
 - `test`: `pytest` を強制
 - `review-diff`: 通常の bugfix と同じ 4-way review
-- `acceptance`: 13 基準を維持しつつ、diff/whitespace/test を機械チェックして `max_retries: 2`
+- `acceptance`: diff/whitespace/test を機械チェックしたうえで、独立した verifier に判定させて `max_retries: 2`
+
+## acceptance の一覧は要求ではなく作業一覧
+
+`acceptance:` に並ぶのは**このフローの step が証拠を作る基準**であって、accept に必要な条件ではない。タスクのゲートは `build_acceptance()` が `standard` + `bugfix` preset から組む15件で、recipe は一切参照されない。`rig-wb wb accept` はその15件のいずれかが `pending`/`failed` の間は拒否する——この一覧を全部埋めても残りは `pending` のままで、`accept` はそれを名指しで断る。
+
+この step は `personas:` を宣言しない。宣言すると diff を書いた `implementer` がそのまま自分の diff を判定することになり、`gate: acceptance-gate` が約束する「独立した判定」が名前だけになる。既定の `independent` に落ちる。
 
 ## 使い分け
 

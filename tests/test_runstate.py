@@ -29,6 +29,14 @@ def test_save_load_roundtrip(tmp_path, step_factory):
 
 
 def test_gate_outcome_checks(step_factory):
+    """checks[] are a PRECONDITION for a runtime gate's verdict, never a substitute (#496).
+
+    The last assertion used to read `== "pass"` on all-checks-ok with `verdicts: []`. That
+    was the deterministic runner asserting that a step named `acceptance-gate` could pass
+    with nobody having judged it — the rubber stamp #496 reported, in golden form. Failing
+    checks still short-circuit to "fail" before any verdict is consulted, so a step whose
+    machine evidence is bad never reaches (or spends a call on) the verifier.
+    """
     step = step_factory(id="v", gate="acceptance-gate", checks=["true", "true"])
     st = {"status": "running", "retries": 0, "checks": [], "verdicts": []}
     assert gate_outcome(step, st) == "incomplete"                 # nothing ran yet
@@ -37,7 +45,34 @@ def test_gate_outcome_checks(step_factory):
     st["checks"] = [{"cmd": "true", "ok": True}, {"cmd": "true", "ok": False}]
     assert gate_outcome(step, st) == "fail"
     st["checks"] = [{"cmd": "true", "ok": True}, {"cmd": "true", "ok": True}]
+    assert gate_outcome(step, st) == "incomplete"                 # checks ok, verdict owed
+    st["verdicts"] = [{"by": "reviewer", "ok": True, "note": ""}]
     assert gate_outcome(step, st) == "pass"
+
+
+def test_gate_outcome_refuses_a_verdict_that_answered_no_declared_criterion(step_factory):
+    """Positive control for the rubber-stamp guard: passing checks + a passing verdict that
+    names none of the step's declared criteria is not a pass.
+
+    `_judge_output`'s all-UNKNOWN guard cannot see this case — it reads
+    `if ok and criteria and all(UNKNOWN)`, so an empty criteria list skips it entirely, and
+    answering one criterion UNKNOWN used to be strictly stricter than answering nothing.
+    """
+    step = step_factory(id="v", gate="acceptance-gate", checks=["true"],
+                        acceptance=["task_intent_satisfied — x", "no_unrelated_diff — y"])
+    st = {"status": "running", "retries": 0,
+          "checks": [{"cmd": "true", "ok": True}],
+          "verdicts": [{"by": "reviewer", "ok": True, "note": ""}]}
+    assert gate_outcome(step, st) == "unanswered"
+    # A verdict that answers even one of them clears this particular guard. That is the
+    # floor the guard actually holds — it is not arity; see the note in `gate_outcome`.
+    st["verdicts"][0]["criteria"] = [{"n": 1, "verdict": "PASS", "anchor": "f.py:1"}]
+    assert gate_outcome(step, st) == "pass"
+    # A step that declares nothing is untouched by the guard (no criteria = nothing owed).
+    bare = step_factory(id="v", gate="acceptance-gate", checks=["true"])
+    assert gate_outcome(bare, {"status": "running", "retries": 0,
+                               "checks": [{"cmd": "true", "ok": True}],
+                               "verdicts": [{"by": "reviewer", "ok": True}]}) == "pass"
 
 
 def test_gate_outcome_verdicts(step_factory):
@@ -83,17 +118,34 @@ def _drive(state, script):
 
 
 def test_compute_next_happy_path(step_factory):
+    """The `verify` step now needs BOTH its checks and a verdict (#496): the script gained
+    a ("verdict", …) between the check and the `next` that advances. The old script — check
+    then next — is kept as its own positive control in
+    `test_compute_next_awaits_a_verdict_when_only_the_checks_passed`."""
     steps = [step_factory(id="design"),
              step_factory(id="verify", gate="acceptance-gate", checks=["true"]),
              step_factory(id="review", gate="review-gate")]
     state = new_state("t", steps, None)
     trace = _drive(state, [("next", None), ("next", None), ("next", None),
-                           ("check", True), ("next", None), ("next", None),
+                           ("check", True), ("verdict", ("reviewer", True)),
+                           ("next", None), ("next", None),
                            ("verdict", ("reviewer", True)), ("next", None)])
     assert trace == ["START", "ADVANCE", "START", "ADVANCE", "START", "DONE"]
     assert state["done"] is True
     assert all(st["status"] == "passed" for st in state["step_state"].values())
     assert [h["action"] for h in state["history"]].count("PASS") == 3
+
+
+def test_compute_next_awaits_a_verdict_when_only_the_checks_passed(step_factory):
+    """Positive control for the happy path above: the exact old script — run the checks,
+    then `next` — must NOT advance an acceptance-gate step any more."""
+    steps = [step_factory(id="verify", gate="acceptance-gate", checks=["true"]),
+             step_factory(id="review", gate="review-gate")]
+    state = new_state("t", steps, None)
+    trace = _drive(state, [("next", None), ("check", True), ("next", None)])
+    assert trace == ["START", "AWAIT"]
+    assert state["step_state"]["verify"]["status"] == "running"
+    assert state["cursor"] == 0
 
 
 def test_compute_next_await_before_gate(step_factory):

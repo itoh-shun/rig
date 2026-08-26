@@ -214,6 +214,10 @@ def cmd_gates(_args: argparse.Namespace) -> None:
         })
         return
     print("## acceptance-gate presets (source of truth)\n")
+    print("These are what `wb accept` requires: build_acceptance() composes a task's gate")
+    print("from them and never reads a recipe. A recipe's `acceptance:` is that flow's work")
+    print("list — the criteria its own steps produce evidence for — and cannot add to or")
+    print("remove from the set below (#497).\n")
     for name, criteria in GATE_PRESETS.items():
         print(f"### {name}")
         for c in criteria:

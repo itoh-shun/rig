@@ -186,7 +186,10 @@ def test_check_recipe_fails_through_the_call_site_on_an_unusable_value(tmp_path)
     "step_keys",
     [
         {"gate": "review-gate", "max_retries": 1},
-        {"gate": "acceptance-gate", "acceptance": '["x — y"]', "max_retries": 1},
+        # `task_intent_satisfied`, not the old placeholder `x`: an id-form acceptance entry
+        # must name a criterion a gate preset actually defines (#497 C3), and `x` does not.
+        {"gate": "acceptance-gate",
+         "acceptance": '["task_intent_satisfied — y"]', "max_retries": 1},
         {"checks": '["pytest -q"]', "max_retries": 2},
     ],
     ids=["review-gate", "acceptance-gate", "gateless-with-checks"],
