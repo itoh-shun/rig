@@ -857,6 +857,188 @@ def test_release_metadata_accepts_japanese_pack_060_on_engine_230():
     assert japanese_pack_release_errors(root, "2.3.1") == []
 
 
+def test_secure_runtime_support_check_fails_closed_with_structured_diagnostics(
+    monkeypatch,
+):
+    from rig_workbench.orchestrate import secure_runtime
+
+    class LibcWithoutMemfd:
+        pass
+
+    monkeypatch.delattr(secure_runtime.os, "memfd_create", raising=False)
+    monkeypatch.setattr(secure_runtime.ctypes, "CDLL", lambda *_args, **_kwargs: LibcWithoutMemfd())
+    monkeypatch.setattr(secure_runtime.platform, "machine", lambda: "mystery-cpu")
+
+    with pytest.raises(secure_runtime.SecureRuntimeError) as rejected:
+        secure_runtime.check_secure_runtime_support()
+
+    error = rejected.value
+    assert [(check.name, check.available) for check in error.checks] == [
+        ("interpreter os.memfd_create", False),
+        ("libc memfd_create", False),
+        ("direct memfd_create syscall", False),
+        ("kernel memfd sealing", False),
+        ("/proc/self/fd", os.path.isdir("/proc/self/fd")),
+    ]
+    assert error.checks[2].detail == (
+        "architecture 'mystery-cpu' is not allowlisted; syscall number not guessed"
+    )
+    assert error.executable == secure_runtime.sys.executable
+    assert error.version == secure_runtime.sys.version
+    assert error.remediation == (
+        "run rig-wb with a system CPython that exposes os.memfd_create; "
+        "also repair any separately failed kernel or /proc prerequisite named above"
+    )
+    rendered_checks = "; ".join(
+        f"{check.name}: "
+        f"{'available' if check.available else 'unavailable' if check.available is False else 'not inspected'}"
+        f" ({check.detail})"
+        for check in error.checks
+    )
+    assert str(error) == (
+        "secure runtime prerequisites were rejected; "
+        f"checks: {rendered_checks}; sys.executable={error.executable!r}; "
+        f"sys.version={error.version!r}; workaround: {error.remediation}"
+    )
+
+
+def test_ctypes_memfd_fallback_creates_an_actually_sealed_descriptor(monkeypatch):
+    from rig_workbench.orchestrate import secure_runtime
+
+    monkeypatch.delattr(secure_runtime.os, "memfd_create", raising=False)
+
+    descriptor, checks = secure_runtime._create_memfd("rig-ctypes-fallback-test")
+    try:
+        secure_runtime._seal_descriptor(descriptor)
+        required = secure_runtime._required_seals()
+        actual = secure_runtime.fcntl.fcntl(descriptor, secure_runtime.fcntl.F_GET_SEALS)
+        assert actual & required == required
+        assert [(check.name, check.available) for check in checks] == [
+            ("interpreter os.memfd_create", False),
+            ("libc memfd_create", True),
+            ("direct memfd_create syscall", None),
+        ]
+    finally:
+        os.close(descriptor)
+
+
+def test_linux_fcntl_constant_fallback_creates_an_actually_sealed_copy(
+    tmp_path, monkeypatch,
+):
+    from rig_workbench.orchestrate import secure_runtime
+
+    for name in secure_runtime._LINUX_FCNTL_SEAL_CONSTANTS:
+        monkeypatch.delattr(secure_runtime.fcntl, name, raising=False)
+    monkeypatch.setattr(secure_runtime.sys, "platform", "linux")
+    source_path = tmp_path / "source"
+    source_path.write_bytes(b"sealed payload")
+    source = os.open(source_path, os.O_RDONLY)
+    descriptor = None
+    try:
+        descriptor = secure_runtime._sealed_copy(source, "test", "payload")
+        constants, detail = secure_runtime._seal_constants()
+        actual = secure_runtime.fcntl.fcntl(
+            descriptor, constants["F_GET_SEALS"]
+        )
+        assert actual & secure_runtime._required_seals() == secure_runtime._required_seals()
+        assert detail.startswith("module Linux sealing constants were used")
+    finally:
+        os.close(source)
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def test_fcntl_constant_fallback_is_rejected_off_linux(monkeypatch):
+    from rig_workbench.orchestrate import secure_runtime
+
+    for name in secure_runtime._LINUX_FCNTL_SEAL_CONSTANTS:
+        monkeypatch.delattr(secure_runtime.fcntl, name, raising=False)
+    monkeypatch.setattr(secure_runtime.sys, "platform", "darwin")
+
+    with pytest.raises(secure_runtime.SecureRuntimeError, match="not used on platform"):
+        secure_runtime._seal_constants()
+
+
+def test_wrong_linux_fcntl_fallback_constant_fails_seal_verification(monkeypatch):
+    from rig_workbench.orchestrate import secure_runtime
+
+    for name in secure_runtime._LINUX_FCNTL_SEAL_CONSTANTS:
+        monkeypatch.delattr(secure_runtime.fcntl, name, raising=False)
+    monkeypatch.setattr(secure_runtime.sys, "platform", "linux")
+    monkeypatch.setitem(secure_runtime._LINUX_FCNTL_SEAL_CONSTANTS, "F_GET_SEALS", 1035)
+    descriptor, _checks = secure_runtime._create_memfd("rig-wrong-seal-constant-test")
+    try:
+        with pytest.raises((OSError, secure_runtime.SecureRuntimeError)):
+            secure_runtime._seal_descriptor(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_secure_runtime_support_reports_fcntl_constant_source(monkeypatch):
+    from rig_workbench.orchestrate import secure_runtime
+
+    for name in secure_runtime._LINUX_FCNTL_SEAL_CONSTANTS:
+        monkeypatch.delattr(secure_runtime.fcntl, name, raising=False)
+    monkeypatch.setattr(secure_runtime.sys, "platform", "linux")
+
+    checks = secure_runtime.check_secure_runtime_support()
+    sealing = next(check for check in checks if check.name == "kernel memfd sealing")
+    assert sealing.available is True
+    assert "module Linux sealing constants were used" in sealing.detail
+
+
+def test_ctypes_fallback_uses_allowlisted_direct_syscall_when_libc_wrapper_is_absent(
+    monkeypatch,
+):
+    from rig_workbench.orchestrate import secure_runtime
+
+    architecture = secure_runtime.platform.machine().lower()
+    if architecture not in secure_runtime._MEMFD_SYSCALLS:
+        pytest.skip("direct syscall is intentionally unsupported on this architecture")
+    real_libc = secure_runtime.ctypes.CDLL(None, use_errno=True)
+
+    class LibcWithOnlySyscall:
+        syscall = real_libc.syscall
+
+    monkeypatch.delattr(secure_runtime.os, "memfd_create", raising=False)
+    monkeypatch.setattr(
+        secure_runtime.ctypes,
+        "CDLL",
+        lambda *_args, **_kwargs: LibcWithOnlySyscall(),
+    )
+
+    descriptor, checks = secure_runtime._create_memfd("rig-syscall-fallback-test")
+    try:
+        secure_runtime._seal_descriptor(descriptor)
+        assert [(check.name, check.available) for check in checks] == [
+            ("interpreter os.memfd_create", False),
+            ("libc memfd_create", False),
+            ("direct memfd_create syscall", True),
+        ]
+    finally:
+        os.close(descriptor)
+
+
+def test_secure_runtime_support_check_does_not_accept_an_unsealed_memfd(monkeypatch):
+    from rig_workbench.orchestrate import secure_runtime
+
+    monkeypatch.setattr(
+        secure_runtime,
+        "_seal_descriptor",
+        lambda _descriptor: (_ for _ in ()).throw(OSError("synthetic seal refusal")),
+    )
+
+    with pytest.raises(secure_runtime.SecureRuntimeError) as rejected:
+        secure_runtime.check_secure_runtime_support()
+
+    facts = {check.name: check for check in rejected.value.checks}
+    assert facts["kernel memfd sealing"].available is False
+    assert facts["kernel memfd sealing"].detail == (
+        "F_ADD_SEALS/F_GET_SEALS failed: synthetic seal refusal"
+    )
+    assert facts["/proc/self/fd"].available is True
+
+
 def test_sealed_launcher_uses_verified_bytes_after_executable_path_swap(tmp_path):
     from rig_workbench.orchestrate.secure_runtime import (
         close_secure_launchers,

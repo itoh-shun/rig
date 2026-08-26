@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import pathlib
+import platform
 import re
 import shlex
 import stat
 import subprocess
+import sys
 import tempfile
 from typing import Callable
 
@@ -27,8 +31,28 @@ _PROVIDER_ENV = {
 }
 
 
+@dataclass(frozen=True)
+class PrerequisiteCheck:
+    name: str
+    available: bool | None
+    detail: str
+
+
 class SecureRuntimeError(ValueError):
     """A secure independent run could not establish its trust boundary."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        checks: tuple[PrerequisiteCheck, ...] = (),
+        remediation: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.checks = checks
+        self.executable = sys.executable
+        self.version = sys.version
+        self.remediation = remediation
 
 
 @dataclass(frozen=True)
@@ -75,13 +99,227 @@ def _write_all(descriptor: int, payload: bytes) -> None:
         view = view[written:]
 
 
-def _sealed_copy(source: int, role: str, kind: str) -> int:
-    if not hasattr(os, "memfd_create") or not pathlib.Path("/proc/self/fd").is_dir():
-        raise SecureRuntimeError("verified descriptor execution is unavailable")
-    descriptor = os.memfd_create(
-        f"rig-{role}-{kind}",
-        os.MFD_CLOEXEC | getattr(os, "MFD_ALLOW_SEALING", 0),
+_MFD_CLOEXEC = 0x0001
+_MFD_ALLOW_SEALING = 0x0002
+_LINUX_FCNTL_SEAL_CONSTANTS = {
+    "F_ADD_SEALS": 1033,
+    "F_GET_SEALS": 1034,
+    "F_SEAL_SEAL": 0x0001,
+    "F_SEAL_SHRINK": 0x0002,
+    "F_SEAL_GROW": 0x0004,
+    "F_SEAL_WRITE": 0x0008,
+}
+_MEMFD_SYSCALLS = {
+    "x86_64": 319,
+    "amd64": 319,
+    "aarch64": 279,
+    "arm64": 279,
+}
+
+
+def _call_libc_memfd(function, *args: object) -> int:
+    function.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    descriptor = function(*args)
+    if descriptor < 0:
+        error_number = ctypes.get_errno() or errno.ENOSYS
+        raise OSError(error_number, os.strerror(error_number))
+    return descriptor
+
+
+def _create_memfd(name: str) -> tuple[int, tuple[PrerequisiteCheck, ...]]:
+    flags = _MFD_CLOEXEC | _MFD_ALLOW_SEALING
+    os_create = getattr(os, "memfd_create", None)
+    if callable(os_create):
+        try:
+            descriptor = os_create(name, flags)
+        except OSError as error:
+            checks = [PrerequisiteCheck(
+                "interpreter os.memfd_create", False, f"call failed: {error}"
+            )]
+        else:
+            return descriptor, (
+                PrerequisiteCheck("interpreter os.memfd_create", True, "call succeeded"),
+                PrerequisiteCheck(
+                    "libc memfd_create", None, "not inspected; interpreter wrapper succeeded"
+                ),
+                PrerequisiteCheck(
+                    "direct memfd_create syscall",
+                    None,
+                    "not inspected; interpreter wrapper succeeded",
+                ),
+            )
+    else:
+        checks = [PrerequisiteCheck(
+            "interpreter os.memfd_create", False, "attribute is absent"
+        )]
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc_create = getattr(libc, "memfd_create", None)
+    if libc_create is not None:
+        try:
+            descriptor = _call_libc_memfd(
+                libc_create, name.encode("utf-8"), ctypes.c_uint(flags)
+            )
+        except OSError as error:
+            checks.append(
+                PrerequisiteCheck("libc memfd_create", False, f"call failed: {error}")
+            )
+        else:
+            checks.extend((
+                PrerequisiteCheck("libc memfd_create", True, "call succeeded"),
+                PrerequisiteCheck(
+                    "direct memfd_create syscall", None, "not inspected; libc wrapper succeeded"
+                ),
+            ))
+            return descriptor, tuple(checks)
+    else:
+        checks.append(PrerequisiteCheck("libc memfd_create", False, "symbol is absent"))
+
+    architecture = platform.machine().lower()
+    syscall_number = _MEMFD_SYSCALLS.get(architecture)
+    syscall = getattr(libc, "syscall", None)
+    if syscall_number is None:
+        checks.append(PrerequisiteCheck(
+            "direct memfd_create syscall",
+            False,
+            f"architecture {architecture or '<empty>'!r} is not allowlisted; syscall number not guessed",
+        ))
+    elif syscall is None:
+        checks.append(PrerequisiteCheck(
+            "direct memfd_create syscall", False, "libc syscall symbol is absent"
+        ))
+    else:
+        try:
+            descriptor = _call_libc_memfd(
+                syscall,
+                ctypes.c_long(syscall_number),
+                name.encode("utf-8"),
+                ctypes.c_uint(flags),
+            )
+        except OSError as error:
+            checks.append(PrerequisiteCheck(
+                "direct memfd_create syscall", False, f"call failed: {error}"
+            ))
+        else:
+            checks.append(PrerequisiteCheck(
+                "direct memfd_create syscall", True, "call succeeded"
+            ))
+            return descriptor, tuple(checks)
+
+    raise SecureRuntimeError(
+        "no safe memfd creation mechanism is available",
+        checks=tuple(checks),
     )
+
+
+def _seal_constants() -> tuple[dict[str, int], str]:
+    names = tuple(_LINUX_FCNTL_SEAL_CONSTANTS)
+    missing = [name for name in names if not hasattr(fcntl, name)]
+    if not missing:
+        return (
+            {name: getattr(fcntl, name) for name in names},
+            "interpreter fcntl sealing constants were used",
+        )
+    if sys.platform != "linux":
+        raise SecureRuntimeError(
+            "Python fcntl sealing constants are absent and Linux constants were not "
+            f"used on platform {sys.platform!r}: {', '.join(missing)}"
+        )
+    return (
+        {
+            name: getattr(fcntl, name, fallback)
+            for name, fallback in _LINUX_FCNTL_SEAL_CONSTANTS.items()
+        },
+        "module Linux sealing constants were used for absent interpreter constants: "
+        f"{', '.join(missing)}",
+    )
+
+
+def _required_seals() -> int:
+    constants, _detail = _seal_constants()
+    return sum(
+        constants[name]
+        for name in ("F_SEAL_WRITE", "F_SEAL_GROW", "F_SEAL_SHRINK", "F_SEAL_SEAL")
+    )
+
+
+def _seal_descriptor(descriptor: int) -> str:
+    constants, detail = _seal_constants()
+    required = sum(
+        constants[name]
+        for name in ("F_SEAL_WRITE", "F_SEAL_GROW", "F_SEAL_SHRINK", "F_SEAL_SEAL")
+    )
+    fcntl.fcntl(descriptor, constants["F_ADD_SEALS"], required)
+    if fcntl.fcntl(descriptor, constants["F_GET_SEALS"]) & required != required:
+        raise SecureRuntimeError("verified executable descriptor could not be sealed")
+    return detail
+
+
+def _support_error(checks: list[PrerequisiteCheck]) -> SecureRuntimeError:
+    remediation = (
+        "run rig-wb with a system CPython that exposes os.memfd_create; "
+        "also repair any separately failed kernel or /proc prerequisite named above"
+    )
+    rendered = "; ".join(
+        f"{check.name}: "
+        f"{'available' if check.available else 'unavailable' if check.available is False else 'not inspected'}"
+        f" ({check.detail})"
+        for check in checks
+    )
+    return SecureRuntimeError(
+        "secure runtime prerequisites were rejected; "
+        f"checks: {rendered}; sys.executable={sys.executable!r}; "
+        f"sys.version={sys.version!r}; workaround: {remediation}",
+        checks=tuple(checks),
+        remediation=remediation,
+    )
+
+
+def check_secure_runtime_support() -> tuple[PrerequisiteCheck, ...]:
+    """Fail early unless sealed memfd execution through procfs is available."""
+    checks: list[PrerequisiteCheck]
+    descriptor = None
+    try:
+        descriptor, creation_checks = _create_memfd("rig-secure-runtime-probe")
+        checks = list(creation_checks)
+    except SecureRuntimeError as error:
+        checks = list(error.checks)
+    if descriptor is None:
+        checks.append(PrerequisiteCheck(
+            "kernel memfd sealing", False, "not testable because memfd creation failed"
+        ))
+    else:
+        try:
+            seal_detail = _seal_descriptor(descriptor)
+        except (OSError, SecureRuntimeError) as error:
+            checks.append(PrerequisiteCheck(
+                "kernel memfd sealing", False, f"F_ADD_SEALS/F_GET_SEALS failed: {error}"
+            ))
+        else:
+            checks.append(PrerequisiteCheck(
+                "kernel memfd sealing",
+                True,
+                f"all required seals were verified; {seal_detail}",
+            ))
+        finally:
+            os.close(descriptor)
+    proc_available = pathlib.Path("/proc/self/fd").is_dir()
+    checks.append(PrerequisiteCheck(
+        "/proc/self/fd",
+        proc_available,
+        "directory is available" if proc_available else "directory is absent",
+    ))
+    if any(check.available is False for check in checks[-2:]):
+        raise _support_error(checks)
+    return tuple(checks)
+
+
+def _sealed_copy(source: int, role: str, kind: str) -> int:
+    if not pathlib.Path("/proc/self/fd").is_dir():
+        raise _support_error([
+            PrerequisiteCheck("/proc/self/fd", False, "directory is absent")
+        ])
+    descriptor, _checks = _create_memfd(f"rig-{role}-{kind}")
     try:
         offset = 0
         while True:
@@ -91,15 +329,7 @@ def _sealed_copy(source: int, role: str, kind: str) -> int:
             _write_all(descriptor, chunk)
             offset += len(chunk)
         os.fchmod(descriptor, 0o500)
-        required = (
-            fcntl.F_SEAL_WRITE
-            | fcntl.F_SEAL_GROW
-            | fcntl.F_SEAL_SHRINK
-            | fcntl.F_SEAL_SEAL
-        )
-        fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, required)
-        if fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) & required != required:
-            raise SecureRuntimeError("verified executable descriptor could not be sealed")
+        _seal_descriptor(descriptor)
         return descriptor
     except Exception:
         os.close(descriptor)
@@ -223,6 +453,7 @@ def preflight_secure_runtime(
         raise SecureRuntimeError(
             "independent runtime requires one explicitly pinned verifier provider"
         )
+    check_secure_runtime_support()
     pins = cfg.get("secure_pins")
     if not isinstance(pins, dict):
         raise SecureRuntimeError(
