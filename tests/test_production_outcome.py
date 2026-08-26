@@ -999,3 +999,28 @@ def test_a_die_deeper_in_the_setup_is_caught_rather_than_allowed_past(git_repo, 
     assert json.loads(printed.out)["status"] == "execution-error"
     assert "exited with status 1" in json.loads(printed.out)["error"]
     assert "planted: cannot look" in printed.err
+
+
+def test_an_estimate_in_another_unit_does_not_veto_a_comparison_it_settles_nothing_in():
+    """The window partition stopped an out-of-window reading from refusing a comparison it
+    takes no part in. An estimate inside the window is the same case one notch narrower:
+    `SETTLING` excludes it because an estimate is carried and never settles, and its only mark
+    on the report is `carried_estimates`, a count that never reads the unit. Refusing over its
+    unit costs a comparison every settling number can answer and buys nothing."""
+    report = compare(_expectation(), _observation(observations=[
+        _entry(value=500.0),
+        _entry(value=0.48, unit="s", kind=ESTIMATED, source="capacity-forecast"),
+        _entry(metric="error_rate_pct", value=0.22, unit="pct")]), AS_OF_CLOSED)
+    entry = report["metrics"]["p95_latency_ms"]
+    assert report["status"] == ACHIEVED
+    assert (entry["carried_estimates"], entry["value"]) == (1, 500.0)
+
+
+def test_a_settling_observation_in_another_unit_still_refuses():
+    """The positive control for the line above. Moving the check past the settling filter
+    must not stop it refusing the case it exists for — an in-window measurement rig would
+    have to convert."""
+    with pytest.raises(ValueError, match="rig does not convert units"):
+        compare(_expectation(), _observation(observations=[
+            _entry(value=0.5, unit="s"),
+            _entry(metric="error_rate_pct", value=0.22, unit="pct")]), AS_OF_CLOSED)

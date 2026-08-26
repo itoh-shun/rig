@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+The unit-mismatch refusal now runs over the settling observations alone. Moving it past the
+window partition stopped an out-of-window reading from vetoing a comparison it takes no part
+in; an estimate inside the window is the same case one notch narrower. `SETTLING` excludes
+`ESTIMATED` because an estimate is carried and never settles, and its only mark on the report
+is `carried_estimates`, a count that never reads the unit — so refusing over an estimate's unit
+cost a comparison every settling number could answer and bought nothing that comparison would
+have used. An in-window *measurement* rig would have to convert is still a refusal, and the
+positive control for that sits beside the new case.
+
 `record-outcome` has answered one question since #289: did anything go wrong after this
 landed, `ok` or `incident`. It is a flag, and a flag cannot say that p95 was supposed to fall
 from 820 ms to 574 ms and reached 787. Passing the development gate proves the change met its

@@ -628,13 +628,21 @@ def compare(expectation: dict, observation: dict, as_of: str) -> dict:
         # seconds → milliseconds migration would make a comparison every in-window number can
         # answer unrunnable. Inside the window a unit rig would have to convert is still a
         # refusal, on the metric it was about.
-        mismatched = [e for e in inside if e["unit"] != metric["unit"]]
+        settling = [e for e in inside if e["kind"] in SETTLING]
+        estimates = [e for e in inside if e["kind"] == ESTIMATED]
+
+        # Over the settling observations alone. The partition above already stopped an
+        # out-of-window reading from vetoing a comparison it takes no part in; an estimate is
+        # the same case one notch narrower. `SETTLING` excludes `ESTIMATED` because an
+        # estimate is carried and never settles, and its only mark on the report is the
+        # `carried_estimates` count — which never reads the unit. So refusing over an
+        # estimate's unit costs a comparison every settling number can answer, and buys
+        # nothing that comparison would have used.
+        mismatched = [e for e in settling if e["unit"] != metric["unit"]]
         if mismatched:
             raise ValueError(f"{identifier}: observed in {mismatched[0]['unit']!r}, declared "
                              f"in {metric['unit']!r} — rig does not convert units")
 
-        settling = [e for e in inside if e["kind"] in SETTLING]
-        estimates = [e for e in inside if e["kind"] == ESTIMATED]
         entry["carried_estimates"] = len(estimates)
         if len(settling) > 1:
             raise ValueError(
