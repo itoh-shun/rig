@@ -158,9 +158,17 @@ def govern_repo(tmp_path, **policy_overrides):
 
 
 def add_task(tmp_path, task_id, **fields):
+    """A run directory holding a record every reader can use.
+
+    `input` is here because conformance now reads runs through `read_all_tasks`
+    (#493), whose `REQUIRED_FIELDS` is the one rule for a usable record. Without it these
+    fixtures wrote a record no shipped run looks like, and the checks below would have
+    measured an empty task list while still reporting PASS.
+    """
     d = tmp_path / ".rig" / "runs" / task_id
     d.mkdir(parents=True, exist_ok=True)
     task = {"task_id": task_id, "task_type": "feature", "status": "accepted",
+            "input": f"do {task_id}",
             "actor": "alice", "created_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "updated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
     task.update(fields)

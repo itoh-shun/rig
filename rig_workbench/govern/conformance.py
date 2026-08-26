@@ -23,6 +23,7 @@ import datetime
 import json
 import pathlib
 
+from ..workbench.reporting import TaskRecords, read_all_tasks
 from . import ledger, waiver
 from .approval import evaluate, load_approvals
 from .identity import load_org_binding
@@ -52,6 +53,23 @@ class Report:
     policy_layers: list[str]
     checks: list[Check]
     error: str | None = None
+    #: Every record under the runs directory and what could not be read there — not the
+    #: window-filtered subset, so the shortfall stays a statement about the directory. None
+    #: for a report that stopped before reading any runs: that and "nothing unreadable" are
+    #: different answers, and only the second is a claim about what is there.
+    tasks: TaskRecords | None = None
+    #: How many of those records fell inside `--since-days`, which is what the run-derived
+    #: checks counted. Kept beside the total rather than replacing it.
+    runs_in_window: int | None = None
+
+    @property
+    def unreadable_note(self) -> str:
+        """The clause every rendered rate carries, or empty when everything was read.
+
+        `TaskRecords.note()` and not a second wording: the board, the digest and this report
+        say the same shortfall the same way because they call the same method.
+        """
+        return self.tasks.note() if self.tasks else ""
 
     @property
     def applicable(self) -> list[Check]:
@@ -72,7 +90,20 @@ class Report:
         Zero when the policy itself does not load or the repository is unbound.
         Those reports stop after one or two checks, and scoring the fraction that
         ran would say "100%" about a project whose policy is broken — the single
-        most misleading number this report could produce."""
+        most misleading number this report could produce.
+
+        The rule that follows from it, stated once here because three checks obey it: **a
+        check with zero evidence is `NA`, and being unable to read the evidence is itself a
+        failed check.** A check that had nothing to read is not a pass, so it leaves this
+        denominator rather than adding to the numerator; and the reason it had nothing —
+        `.rig/runs` could not be listed — is an observed fact about the repository, so
+        `runs_listing` states it as a FAIL the way `_check_ledger` states an unverifiable
+        ledger. Without both halves, a `chmod 000 .rig/runs` scored 7/7 = 100%, identical to a
+        project with no runs at all, and that vacuous 100% was averaged into the org rate.
+
+        Partial loss is the other case and keeps a real verdict: a check that read some
+        records is stating something about the records it read, and names beside it how many
+        it could not (`TaskRecords.note()`). Zero evidence is not a small amount of it."""
         if self.error:
             return 0.0
         total = len(self.applicable)
@@ -104,38 +135,74 @@ class Report:
             "passed": self.passed,
             "applicable": len(self.applicable),
             "error": self.error,
+            # The score above is computed from checks whose run counts came from the records
+            # that could be read, and a machine consumer cannot see the note printed beside
+            # it. `null` means this report stopped before reading any runs — not that every
+            # record was readable.
+            "task_records": None if self.tasks is None else {
+                # `read` and `unreadable` describe the whole runs directory, so a consumer
+                # can add them for the number of records that were attempted. `in_window` is
+                # the subset the checks above actually counted.
+                "read": len(self.tasks.tasks),
+                "in_window": self.runs_in_window,
+                "unreadable": list(self.tasks.unreadable),
+                "collection_error": self.tasks.collection_error,
+            },
             "checks": [dataclasses.asdict(c) for c in self.checks],
         }
 
 
-def _load_tasks(root: pathlib.Path, since_days: int) -> list[dict]:
-    base = root / ".rig" / "runs"
-    if not base.is_dir():
-        return []
+def _load_tasks(root: pathlib.Path, since_days: int) -> tuple[TaskRecords, tuple[dict, ...]]:
+    """Everything under the runs directory, and the subset of it inside the window.
+
+    Two values, not a narrowed `TaskRecords`. This function used to walk
+    `.rig/runs/*/task.json` itself and `continue` past anything it could not parse, so a
+    report built from 52 of 55 records was presented as the conformance rate — the least
+    visible way this report can be wrong, because the number it prints is the number an org
+    acts on. `read_all_tasks` (#488) is the single rule for what a usable record is, and it
+    carries what it could not read, so no check below can take the runs without the shortfall.
+
+    The window is applied to a separate tuple and never folded back into the records, because
+    `TaskRecords.note()` renders "N of <tasks + unreadable>" — replacing its tasks with the
+    in-window ones would make that total mean "in-window readable plus unreadable" and print
+    a smaller attempted count than the directory holds. That is the same class of quietly
+    shrunken denominator this change exists to remove. `cmd_stats` filters a local list for
+    the same reason.
+
+    Records that could not be read are in neither set's exclusion: a record whose
+    `updated_at` was never read cannot be shown to fall outside `--since-days`, so the window
+    is not allowed to be the reason it disappears.
+    """
+    records = read_all_tasks(root / ".rig" / "runs")
     cutoff = (datetime.datetime.now().astimezone()
               - datetime.timedelta(days=since_days)).isoformat(timespec="seconds")
-    out: list[dict] = []
-    for d in sorted(base.iterdir()):
-        tj = d / "task.json"
-        if not tj.is_file():
-            continue
-        try:
-            task = json.loads(tj.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        if (task.get("updated_at") or task.get("created_at") or "") >= cutoff:
-            out.append(task)
-    return out
+    in_window = tuple(task for task in records.tasks
+                      if (task.get("updated_at") or task.get("created_at") or "") >= cutoff)
+    return records, in_window
 
 
-def _acceptance(root: pathlib.Path, task_id: str) -> dict | None:
+#: Returned by `_acceptance` for a gate record that is there and cannot be read. Absent and
+#: unreadable both used to come back as None, and the caller skipped both — so an accepted run
+#: whose `acceptance.json` was corrupt was scanned for nothing and then counted among the runs
+#: reported clean, with no note anywhere, because its `task.json` had read fine.
+UNREADABLE_ACCEPTANCE = object()
+
+
+def _acceptance(root: pathlib.Path, task_id: str) -> dict | None | object:
+    """The run's gate record, None when it has none, `UNREADABLE_ACCEPTANCE` when it cannot
+    be read. Three answers because the caller owes a different sentence to each.
+
+    `OSError` as well as bad JSON: `_task_record` treats every way a file fails to yield a
+    usable record the same way, and a permission bit is not a smaller obstacle than a
+    truncated write.
+    """
     p = root / ".rig" / "runs" / task_id / "acceptance.json"
     if not p.is_file():
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
+    except (OSError, ValueError):
+        return UNREADABLE_ACCEPTANCE
 
 
 def evaluate_project(root: pathlib.Path, *, since_days: int = 90) -> Report:
@@ -174,16 +241,24 @@ def evaluate_project(root: pathlib.Path, *, since_days: int = 90) -> Report:
                             "no org-scope layer — this project's policy is local, so there is no "
                             "common bar to compare it against", layer_labels))
 
+    # Read once and hand the same records to every check that measures runs, so the three
+    # of them cannot disagree about how many records there were or which could not be read.
+    records, in_window = _load_tasks(root, since_days)
+
     checks.append(_check_roles(eff))
     checks.append(_check_permission_holders(eff))
-    checks.append(_check_criteria_wired(root, eff, since_days))
-    checks.append(_check_approvals(root, eff, since_days))
+    # Before the three checks it decides the applicability of, so it is also the FAIL the
+    # rollup's "worst finding" column reaches first for a project whose runs never opened.
+    checks.append(_check_runs_listing(records))
+    checks.append(_check_criteria_wired(root, eff, records, in_window))
+    checks.append(_check_approvals(root, eff, records, in_window))
     checks.append(_check_waivers(root, eff))
-    checks.append(_check_force_rate(root, since_days))
+    checks.append(_check_force_rate(records, in_window, since_days))
     checks.append(_check_ledger(root, eff))
     checks.append(_check_legacy_access(root, eff))
 
-    return Report(root, project, binding.org, eff.team or binding.team, layer_labels, checks)
+    return Report(root, project, binding.org, eff.team or binding.team, layer_labels, checks,
+                  tasks=records, runs_in_window=len(in_window))
 
 
 def _check_roles(eff: EffectivePolicy) -> Check:
@@ -223,7 +298,57 @@ def _check_permission_holders(eff: EffectivePolicy) -> Check:
                  + (f" (unheld: {', '.join(unheld)})" if unheld else ""))
 
 
-def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, since_days: int) -> Check:
+#: The one sentence the three run-derived checks say when there is nothing behind them. They
+#: are `NA` and not `PASS` in that case, so they leave the score's denominator instead of
+#: adding a pass to its numerator — see `_check_runs_listing` for why this is the zero-evidence
+#: case and a partly-unreadable directory is not.
+UNLISTED = "the runs directory could not be listed, so this check had no record to read"
+
+
+def _check_runs_listing(records: TaskRecords) -> Check:
+    """Whether this project's run evidence could be listed at all — a check, not a footnote.
+
+    This is an observation, not an inference about the records. `read_all_tasks` returned a
+    real `PermissionError`/`NotADirectoryError`; what could not be established is anything
+    about the runs, and *that* is what this check states. Earlier rounds rejected touching the
+    score on the grounds that a WARN "would assert non-compliance about something never read".
+    That conflates two claims: this one is about the directory, which was read, and says
+    nothing about the records inside it.
+
+    `_check_ledger` already holds the rule. A ledger line that is not valid JSON is not
+    evidence that any policy was violated either, and it is a FAIL — because an audit trail
+    that cannot be verified fails the audit, whatever it would have said. Run records are the
+    same kind of evidence, so an audit that could not open them does not pass.
+
+    Measured, this is what the disclosure-only version left standing: a project with
+    `chmod 000 .rig/runs` produced exactly the checks and exactly the 1.0 score of a project
+    with no runs at all — `required_criteria` and `approvals` passing against zero records,
+    `force_rate` already NA — so the score could not tell "no runs happened" from "nobody
+    could look", and a note beside it could not either, because the number is what gets
+    averaged. With this check, the same project scores 5/6 rather than 7/7, and its verdict
+    turns FAIL on its own: `Report.verdict` needed no special case, because the state finally
+    has a Check to point at.
+
+    NA and not PASS when the listing worked, so the healthy path keeps the denominator it has
+    (`legacy_access` and `audit_ledger` take the same shape) — a project that reads fine must
+    score exactly what it scored before.
+
+    Deliberately silent about individually unreadable records. Those are the partial-loss case:
+    the checks did read evidence, their verdicts are statements about it, and the count of what
+    they could not read is already named in each of their details. Zero evidence is not a small
+    amount of evidence.
+    """
+    if records.collection_error is None:
+        return Check("runs_listing", NA, "the runs directory was readable")
+    return Check("runs_listing", FAIL,
+                 f"the runs directory could not be listed ({records.collection_error}) — no "
+                 f"run-derived check had a record to read, so nothing about this project's "
+                 f"runs was measured",
+                 ["make .rig/runs readable, then re-run `rig-wb govern conformance`"])
+
+
+def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: TaskRecords,
+                          in_window: tuple[dict, ...]) -> Check:
     """Policy-required criteria are injected into every new gate by
     `workbench.state.build_acceptance`. This check catches the runs that predate
     the requirement, or were built while a layer was missing — they are the ones
@@ -231,12 +356,21 @@ def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, since_days: 
     required = {t: c for t, c in eff.require_criteria.items() if c}
     if not required:
         return Check("required_criteria", NA, "the policy requires no extra criteria")
-    tasks = _load_tasks(root, since_days)
+    if records.collection_error is not None:
+        return Check("required_criteria", NA, UNLISTED)
+    tasks = list(in_window)
     offenders: list[str] = []
+    unreadable_gates: list[str] = []
     for task in tasks:
         if task.get("status") != "accepted":
             continue
         acc = _acceptance(root, task.get("task_id", ""))
+        if acc is UNREADABLE_ACCEPTANCE:
+            # Not an offender: a criterion cannot be shown missing from a record nobody read.
+            # Not a skip either, which is what it was — the run then landed in the count of
+            # runs reported clean.
+            unreadable_gates.append(task.get("task_id", "?"))
+            continue
         if not acc:
             continue
         present = {c.get("name") for c in acc.get("checks", [])}
@@ -245,22 +379,34 @@ def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, since_days: 
         if missing:
             offenders.append(f"{task.get('task_id')}: missing {', '.join(missing)}")
     total = sum(len(v) for v in required.values())
+    # Two files stand behind this verdict and each gets its own clause. `records.note()`
+    # covers the run records: it is what makes "no run skipped a criterion" read as "no run I
+    # could read did". It says nothing about `acceptance.json`, which is the file this check
+    # actually scans and a separate way to be unreadable — a run whose `task.json` parses and
+    # whose gate record does not is counted by the first clause as read.
+    shortfall = records.note() + (
+        f" — {len(unreadable_gates)} accepted run(s) had an acceptance record that could not "
+        f"be read, so they were not scanned: {', '.join(unreadable_gates[:10])}"
+        if unreadable_gates else "")
     if offenders:
         return Check("required_criteria", FAIL,
-                     f"{len(offenders)} accepted run(s) were gated without policy-required criteria",
-                     offenders[:10])
+                     f"{len(offenders)} accepted run(s) were gated without policy-required "
+                     f"criteria{shortfall}", offenders[:10])
     return Check("required_criteria", PASS,
                  f"{total} policy-required criterion/criteria wired into the gate; "
-                 f"{len(tasks)} run(s) in the window are clean")
+                 f"{len(tasks)} run(s) in the window are clean{shortfall}")
 
 
-def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, since_days: int) -> Check:
+def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: TaskRecords,
+                     in_window: tuple[dict, ...]) -> Check:
     quorums = {t: r for t, r in eff.approvals.items() if (r.get("quorum") or 0) > 0}
     if not quorums:
         return Check("approvals", NA, "the policy requires no approvals")
+    if records.collection_error is not None:
+        return Check("approvals", NA, UNLISTED)
     offenders: list[str] = []
     checked = 0
-    for task in _load_tasks(root, since_days):
+    for task in in_window:
         if task.get("status") != "accepted":
             continue
         rule = eff.approval_rule(task.get("task_type") or "")
@@ -271,12 +417,14 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, since_days: int) 
         if not status.satisfied:
             offenders.append(f"{task.get('task_id')} ({task.get('task_type')}): "
                              f"{status.counted}/{status.required} approvals")
+    shortfall = records.note()
     if offenders:
         return Check("approvals", FAIL,
-                     f"{len(offenders)} of {checked} accepted run(s) were applied without their approvals",
-                     offenders[:10])
+                     f"{len(offenders)} of {checked} accepted run(s) were applied without "
+                     f"their approvals{shortfall}", offenders[:10])
     rules = ", ".join(f"{t}≥{r['quorum']}" for t, r in sorted(quorums.items()))
-    return Check("approvals", PASS, f"required ({rules}); {checked} accepted run(s) in the window satisfied it")
+    return Check("approvals", PASS, f"required ({rules}); {checked} accepted run(s) in the "
+                                    f"window satisfied it{shortfall}")
 
 
 def _check_waivers(root: pathlib.Path, eff: EffectivePolicy) -> Check:
@@ -299,22 +447,36 @@ def _check_waivers(root: pathlib.Path, eff: EffectivePolicy) -> Check:
     return Check("waivers", PASS, f"no live waivers ({len(expired)} lapsed, kept for the record)")
 
 
-def _check_force_rate(root: pathlib.Path, since_days: int) -> Check:
+def _check_force_rate(records: TaskRecords, in_window: tuple[dict, ...],
+                      since_days: int) -> Check:
     """The single most informative number in the whole report: how often the gate
-    was overridden rather than met."""
-    tasks = _load_tasks(root, since_days)
-    accepted = [t for t in tasks if t.get("status") == "accepted"]
+    was overridden rather than met.
+
+    It is also the one a lost record moves the most. A record that could not be read may
+    have been an accepted, forced run, so 1/1 (fail) and 1/2 (warn) differ by a file this
+    function never opened — which is why the count of what could not be read is stated
+    beside the rate in every branch, including the one that reports no accepted runs at all.
+    """
+    if records.collection_error is not None:
+        # Not "no accepted runs in the last N days" with a note appended. That branch is a
+        # statement about the window; nobody looked at the window here.
+        return Check("force_rate", NA, UNLISTED)
+    accepted = [t for t in in_window if t.get("status") == "accepted"]
+    shortfall = records.note()
     if not accepted:
-        return Check("force_rate", NA, f"no accepted runs in the last {since_days} days")
+        return Check("force_rate", NA,
+                     f"no accepted runs in the last {since_days} days{shortfall}")
     forced = [t for t in accepted if t.get("forced")]
     rate = len(forced) / len(accepted)
-    detail = f"{len(forced)}/{len(accepted)} accepted runs were forced ({rate:.0%})"
+    counted = f"{len(forced)}/{len(accepted)} accepted runs were forced ({rate:.0%})"
     if rate >= 0.25:
-        return Check("force_rate", FAIL, detail + " — the gate is being routed around, not met",
+        return Check("force_rate", FAIL,
+                     f"{counted} — the gate is being routed around, not met{shortfall}",
                      [t.get("task_id", "?") for t in forced[:10]])
     if forced:
-        return Check("force_rate", WARN, detail, [t.get("task_id", "?") for t in forced[:10]])
-    return Check("force_rate", PASS, detail)
+        return Check("force_rate", WARN, counted + shortfall,
+                     [t.get("task_id", "?") for t in forced[:10]])
+    return Check("force_rate", PASS, counted + shortfall)
 
 
 def _check_ledger(root: pathlib.Path, eff: EffectivePolicy) -> Check:
@@ -347,6 +509,21 @@ def _check_legacy_access(root: pathlib.Path, eff: EffectivePolicy) -> Check:
 
 
 # ── org rollup ───────────────────────────────────────────────────────────────
+def rate_qualifier(unread: int, unlisted: int) -> str:
+    """The parenthetical a rendered conformance rate carries, or "" when nothing was lost.
+
+    Module level, not a `Rollup` helper, because `rig-wb evidence` prints per-team rates from
+    the same dicts and printed them bare: `govern rollup` said `94% (1 unread, 1 unlisted)`
+    for a team while `evidence fleet` said `score=94%` for that same team from that same dict,
+    and the org clause above it named the project without naming its team, so the two numbers
+    could not be joined by a reader. A rate whose shortfall lives elsewhere on the page is
+    read without it — which is the rule the team cell was already written to, one renderer
+    short. One builder, so a third caller cannot invent a fourth wording.
+    """
+    parts = ([f"{unread} unread"] if unread else []) + ([f"{unlisted} unlisted"] if unlisted else [])
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 @dataclasses.dataclass
 class Rollup:
     reports: list[Report]
@@ -362,14 +539,50 @@ class Rollup:
     def score(self) -> float:
         return (sum(r.score for r in self.reports) / len(self.reports)) if self.reports else 0.0
 
+    @staticmethod
+    def unreadable_in(reports: list[Report]) -> list[str]:
+        """`<project>/<run directory>` for every record these reports could not read.
+
+        The aggregate is where a lost record is hardest to notice — one project's shortfall
+        is averaged into a fleet number — so it travels up with the scores rather than
+        stopping at the project report that found it.
+        """
+        return [f"{r.project}/{name}" for r in reports if r.tasks for name in r.tasks.unreadable]
+
+    @staticmethod
+    def unlisted_in(reports: list[Report]) -> list[str]:
+        """Every project here whose runs directory could not be listed at all.
+
+        A second list rather than more entries in `unreadable_in`, because the two facts are
+        not the same size and only one of them is a count of records. `unreadable_in` names
+        run directories, so `len()` of it is exactly "how many records could not be read"; a
+        directory that could not be listed yields no names and no total, and folding it in
+        would print a record count nobody measured.
+
+        It has to reach this layer under its own name even though the score now moves.
+        `runs_listing` makes such a project FAIL and drops its three run-derived checks out of
+        the denominator, so it scores 5/6 instead of 7/7 and no longer lifts the org rate by
+        being unmeasurable. What that arithmetic still cannot say is *which* project, or how
+        many: a fleet number is one figure, and "85%" does not tell a reader that one of the
+        two projects behind it was never read. So the names travel up beside the rate as well.
+        """
+        return [r.project for r in reports if r.tasks and r.tasks.collection_error is not None]
+
     def to_dict(self) -> dict:
         return {
             "projects": len(self.reports),
             "score": round(self.score, 4),
+            "unreadable_task_records": self.unreadable_in(self.reports),
+            # Separate key, separate meaning: the list above counts records, this one names
+            # projects whose runs directory yielded no count at all. A consumer that added
+            # them would be reporting a number of records that was never measured.
+            "unlisted_runs_directories": self.unlisted_in(self.reports),
             "teams": {
                 team: {
                     "projects": len(rs),
                     "score": round(sum(r.score for r in rs) / len(rs), 4),
+                    "unreadable_task_records": self.unreadable_in(rs),
+                    "unlisted_runs_directories": self.unlisted_in(rs),
                     "failing": [r.project for r in rs if r.verdict == FAIL],
                     "findings": sorted({f for r in rs for f in r.findings}),
                 }
@@ -381,23 +594,46 @@ class Rollup:
     def markdown(self) -> str:
         orgs = sorted({r.org for r in self.reports if r.org})
         lines = [f"## rig govern rollup: {', '.join(orgs) or '(no org)'}", ""]
-        lines.append(f"projects: {len(self.reports)}  ·  org conformance: {self.score:.0%}")
+        unreadable = self.unreadable_in(self.reports)
+        unlisted = self.unlisted_in(self.reports)
+        lines.append(f"projects: {len(self.reports)}  ·  org conformance: {self.score:.0%}"
+                     + (f"  ·  {len(unreadable)} task record(s) could not be read "
+                        f"({', '.join(unreadable[:10])}), so they are counted neither as "
+                        f"conforming nor as failing" if unreadable else "")
+                     # Not phrased as a record count. Nobody knows how many records are in a
+                     # directory that could not be listed; what is known is that the checks
+                     # which count runs had nothing to count.
+                     + (f"  ·  {len(unlisted)} project(s) whose runs directory could not be "
+                        f"listed ({', '.join(unlisted[:10])}), so their run-derived checks are "
+                        f"not applicable and each fails runs_listing" if unlisted else ""))
         lines.append("")
         lines.append("| team | projects | conformance | failing checks |")
         lines.append("|---|---|---|---|")
         for team, rs in sorted(self.teams.items()):
             team_score = sum(r.score for r in rs) / len(rs)
             failing = sorted({f for r in rs for f in r.findings})
-            lines.append(f"| {team} | {len(rs)} | {team_score:.0%} | "
-                         f"{', '.join(failing) if failing else '—'} |")
+            # In the cell, not in a footnote: this column is the number a team is read on,
+            # and a rate whose shortfall lives elsewhere on the page is read without it.
+            lines.append(f"| {team} | {len(rs)} | {team_score:.0%}"
+                         + rate_qualifier(len(self.unreadable_in(rs)), len(self.unlisted_in(rs)))
+                         + f" | {', '.join(failing) if failing else '—'} |")
         lines.append("")
         lines.append("| project | team | verdict | score | worst finding |")
         lines.append("|---|---|---|---|---|")
         for r in sorted(self.reports, key=lambda r: (r.team or "", r.project)):
             worst = sorted(r.checks, key=lambda c: _RANK[c.verdict])
-            note = r.error or (f"{worst[0].id}: {worst[0].detail}" if worst and worst[0].verdict in (FAIL, WARN) else "—")
+            unlisted = r.tasks.collection_error if r.tasks else None
+            # No special case for the unlisted project any more. It used to need one: every
+            # check that could have found something ran against nothing and passed, so this
+            # column had no FAIL or WARN to point at and printed "—" for the row a reader most
+            # needed to look at. `runs_listing` is that FAIL, and it is ordered ahead of the
+            # checks whose applicability it decides, so the ordinary path below reaches it.
+            note = r.error or (f"{worst[0].id}: {worst[0].detail}"
+                               if worst and worst[0].verdict in (FAIL, WARN) else "—")
+            unread = len(r.tasks.unreadable) if r.tasks else 0
             lines.append(f"| {r.project} | {r.team or '—'} | {ICON[r.verdict]} {r.verdict} | "
-                         f"{r.score:.0%} | {note} |")
+                         f"{r.score:.0%}" + rate_qualifier(unread, 1 if unlisted else 0)
+                         + f" | {note} |")
         return "\n".join(lines)
 
 

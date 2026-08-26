@@ -2,6 +2,180 @@
 
 ## Unreleased
 
+The validator no longer tells you to delete a working safety property. `--validate` WARNed
+that `max_retries` on any step whose gate was not `acceptance-gate` had "no effect in this
+context", and the one step in the whole catalogue it fired on was
+`adaptive-bugfix.targeted-review`'s `max_retries: 1` — a review-gate step whose recipe body
+declares that a failed review is a **safe stop**. Obeying the WARN would have raised K to
+`DEFAULT_K` (2) and bought that step a retry the recipe says it does not take.
+
+The claim was measurable and false. K is read on `compute_next`'s generic failure path, not
+inside a gate handler, so driving the state machine with a gate that keeps failing gives the
+same shape for both runtime gates: `review-gate` with K=1 goes `START > AWAIT > ESCALATE`
+with zero retries, K=3 goes `START > AWAIT > RETRY > START > AWAIT > RETRY > START > AWAIT >
+ESCALATE` — identical to `acceptance-gate`, which is what the old condition claimed was
+special.
+
+Measuring the rest of the field also ruled out the obvious replacement. `gate is None` would
+still be wrong: `gate_outcome` judges declared `checks[]` *before* it looks at the gate, so a
+gateless step with checks fails and retries K times like any other. The condition that
+survives measurement is "neither a runtime gate nor `checks[]`" — such a step cannot report a
+failure at all (`gate_outcome` returns `pass` for it even with a failing verdict on the
+record), so the retry budget is never read. A non-runtime gate string with no checks (`—`, a
+custom pattern name) is BLOCKED before the retry path, so it belongs on the same side. The
+check asks `gates.is_runtime_gate` rather than re-deriving the gate set, and the message now
+says which steps K *does* govern instead of denying the one it governs most visibly.
+
+Counted before changing the rule: of 11 shipped steps carrying `max_retries`, 10 are on
+`acceptance-gate` and 1 on `review-gate`; none is gateless. So the fixed check WARNs on zero
+shipped steps and the repo's WARN total drops from 2 to 1, with `max_retries: 1` left exactly
+where it was. `facets/instructions/validate.md`, which is the normative spec for this check,
+carried the same false sentence and now states the measured condition — otherwise the next
+reader of the spec reverts the code.
+
+The tests for it assert presence, not absence. An absence test — "no WARN mentions
+`max_retries`" — gets easier to satisfy the less the check does, so two mutations were run
+against them: deleting `max_retries: 1` from `targeted-review`, and deleting the
+`_check_max_retries(...)` call from `check_recipe`. Both used to leave the suite green. The
+recipe check now parses the frontmatter and looks the step up by id, because a text search
+for `max_retries: 1` is satisfied by the sibling `acceptance` step whatever happens to
+`targeted-review`; and the checker is exercised through `check_recipe` over a synthetic
+recipe, because a helper with no caller passes every unit test written against the helper.
+Those `check_recipe` tests carry a positive control of their own — each asserts the terminal
+`[PASS] recipe <name>: OK`, so a synthetic fixture that stopped parsing as a recipe (an early
+return emits no line mentioning `max_retries`) fails rather than reading as silence.
+A workbench subcommand missing from SKILL.md §2's brick catalog is now reported by
+`--validate` instead of by whoever notices next. §2 is what a session reads to find out what
+rig has, and a surface absent from it does not exist from there. It has gone missing three
+times — #395 lost `rig-evidence` and `rig-mission-control`, #470 lost the receipt, the BYOO
+contract and the run graph, and fixing #470 turned up nine more subcommands shipped in the
+meantime — while `check_catalog_drift` scanned four brick directories and never the CLI.
+
+**One of those three is not covered by this.** The check reads what the `rig-wb wb` parser
+dispatches, which is #470's class; #395's two are separate console scripts
+(`rig_workbench/evidence.py`, `rig_workbench/mission_control.py`, entry points in
+`pyproject.toml`) that §2 spells `rig-evidence` / `rig-mission-control`. A fourth omission of
+*that* shape is still found by hand — enumerating entry points against §2 is a different
+check, and claiming this one covers them would be the kind of prose these checks exist to
+stop.
+
+**The obvious version of this check reports the omission as covered.** §2 is a catalogue of
+packs, so a subcommand's name turns up inside other rows: measured against today's §2 with
+#470's three rows taken back out, asking whether the name appears anywhere in §2 answered
+*yes* for 12 of the 33 user-facing subcommands, among them *yes* for
+`import` (the `/rig:import` pack row) and *yes* for `contract` ("output-contract facet") —
+both while the subcommands were missing. A third source is in the rows #470's fix added:
+`rig_workbench/workbench/{assurance,contract,import_task,graph}.py` names a file, not a
+surface. So the name has to be matched as an invocation — a complete `` `rig-wb wb <name>` ``
+run, or the brace notation §2 already uses to group a surface's subcommands into one — and
+each of those three false passes is a test the check must fail.
+
+**§2 catalogues surfaces, not operations, and the boundary is declared rather than inferred.**
+Of the CLI's 33 user-facing subcommands, 22 are operations on a run — `status`, `diff`,
+`accept`, the scanners, the counters — and §2 carries them as one surface, the `/rig:go`
+workbench pack row; `commands/go.md`'s route table is where each is written down individually,
+and `check_workbench_routing` has checked that since #478. Requiring §2 to name all 33
+individually would have reported 22 today, so `PACK_ROW_ONLY` lists them by name, next to
+`INTERNAL_ONLY` and checked in the same two directions: something on neither list is reported
+until a person decides which side of the line it belongs on, and an entry naming a subcommand
+that no longer exists is reported as an allowlist that stopped applying. The PASS line prints
+all four numbers rather than one, because a check examining 11 of 33 names should not report
+as though it examined 33.
+
+A missing subcommand is a WARN, matching `check_catalog_drift`'s convention for a missed
+listing. A §2 the check cannot locate — headings renamed or duplicated, or a §2 that no longer
+spells these surfaces as invocations at all — is a FAIL: zero omissions out of nothing read is
+the shape having moved, not all clear. That is also what taking #470's three rows back out
+produces, since it leaves §2 with no `rig-wb wb` entry anywhere — the property §2 had when
+#470 was filed. The check cannot tell "every surface was dropped" from "the notation moved",
+so it says so, louder than the eleven warnings would have been.
+
+**The tests that measure this against the shipped document read its rows rather than pin
+them.** What the check asks of a maintainer is that §2 name a new surface, and there are two
+natural ways to write that — add a subcommand to a grouped row, or add a grouped row — both of
+which a test holding a copy of today's row shapes rejects. Making the edit the check asked for
+would then have failed CI, which teaches people to delete the check. The per-row cases are now
+derived with `_section` and `catalogued_subcommands`, the same two functions the check reads §2
+with, and the "§2 as it stood when #470 was filed" case asserts that the stripped §2 names no
+invocation instead of counting the lines that went. A derivation can shrink to nothing and take
+its cases with it silently, so it is tied back to the CLI: every user-facing subcommand has to
+be carried by one of the rows read off the document, and a row dropped for real fails that and
+`test_it_reads_the_repository_it_ships_with` rather than going quiet.
+
+No behaviour changes, and SKILL.md is untouched.
+The governance conformance rate and the `usage` task counter now say how many task records
+they could not read. Both walked `.rig/runs/*/task.json` themselves and `continue`d past
+anything that would not parse. Nothing crashed, and that was the defect: a rate computed from
+52 of 55 records was printed as *the* rate, and the three runs that disappeared were exactly
+the ones nobody could inspect. `--conformance` is a number a project submits upward, so this
+is the least visible way it can be wrong.
+
+Both now read through `read_all_tasks` (#488), which is the one rule for what a usable record
+is and carries what it could not read, so no caller can take the runs without the shortfall.
+Measured against the records that actually ship: 69 of 69 across the two repositories on this
+machine satisfy that rule, so nothing real is newly rejected by it.
+
+**What an unreadable record means to a rate was the decision here.** Putting it in the
+denominator would assert it is non-compliant — a claim about a file nobody read. Dropping it
+is the bug. So it is named beside the total, in the same sentence every other reader of the
+runs directory prints (`TaskRecords.note()`): on the score line, on each of the three checks
+whose verdict is computed from run counts (`required_criteria`, `approvals`, `force_rate`),
+in the rollup's per-team and per-project rate cells, on both printed summaries of
+`rig-wb evidence`, and on Mission Control's org-conformance tile — the place a lost record is
+least visible, because it is averaged into a percentage before anyone sees it.
+
+**A runs directory that could not be listed at all is a second fact, counted apart from the
+first.** Before this change it escaped as an exception and `rig-wb evidence fleet` printed
+`error:`; `read_all_tasks` turns it into `TaskRecords.collection_error` instead, so nothing
+above it raises any more — and the three checks computed from run counts then ran against
+zero records, passed there, and the project rendered `✓ pass 100%` into the org average. That
+is a loud failure becoming a silent success, so the rollup carries it under its own name
+(`unlisted_runs_directories` in the JSON; `(1 unlisted)` in the rate cell, with the listing
+error in the project's finding column). It is deliberately not folded into the record count:
+`unreadable_task_records` names run directories, so its length is exactly how many records
+could not be read, while nobody knows how many records a directory that could not be listed
+holds. Printing one as the other would be a figure nobody measured. What is *not* changed is
+the score: a directory nobody could list is no more evidence of eight passing checks than an
+unread record is evidence of a violation, so the rate still moves and is now qualified where
+it is shown, rather than being silently recomputed. `rig-wb evidence fleet` consequently exits
+0 where it used to exit 1 on the escaped exception — the fact is named in the output instead
+of in the exit code.
+
+`required_criteria` reads a second file, and it now says when *that* one could not be read.
+`records.note()` is about `task.json`; this check scans `acceptance.json`, and an accepted run
+whose gate record was corrupt was dropped from the offenders scan and then counted among the
+runs reported clean, with the note empty because its task record had read fine. `_acceptance`
+now distinguishes absent (a run that was never gated — unchanged) from unreadable, and the
+check names the unscanned runs beside its count instead of a comment asserting that every
+count in it came from a record that could be read.
+
+`force_rate` is where a lost record moves the most: 1/1 forced (fail) and 1/2 forced (warn)
+differ by one file the check never opened. Its "no accepted runs in the window" branch carries
+the count too, because that sentence is the fail-open in its purest form.
+
+The count travels in the JSON as well (`task_records` on a report, `unreadable_task_records`
+on a rollup, `unreadable_workbench_task_records` on `usage --json`), since a machine consumer
+cannot see a printed note — and the `conformance-report` output contract now requires the
+figure beside the rate. `task_records: null` means the report stopped before reading any runs;
+it is not a claim that everything was readable.
+
+Unreadable records are not filtered by `--since-days`. A record whose `updated_at` was never
+read cannot be shown to fall outside the window, so the window cannot be the reason it
+vanishes — and the window is applied to a separate tuple rather than folded back into the
+records, because `note()` renders "N of (read + unreadable)" and a narrowed record set would
+have made that attempted total mean "in-window readable plus unreadable". A directory holding
+one in-window record, one older one and one unreadable one would then have printed "1 of 2":
+the same quietly shrunken denominator, inside the sentence added to remove it. `read` and
+`unreadable` in the JSON describe the whole directory; `in_window` is the subset the checks
+counted. Two test fixtures wrote records shorter than any shipped run (`test_govern_ledger`
+omitted `input`, `test_usage_coverage` wrote only `{task_id, status}`) and were writing
+records no reader can use; they now write real ones. The regression control is direct: dropping
+the shortfall the way the old silent-skip walk did fails 13 tests in
+`tests/test_conformance_unreadable_records.py`, and every assertion names the attempted total
+("1 of 2"), so a note that counted only the readable records would not pass either. The
+unlistable-directory tests use a file where `.rig/runs` belongs rather than `chmod 000`, so
+they raise `NotADirectoryError` for every uid instead of passing by not failing under root.
+
 `adaptive-bugfix`'s acceptance gate now says what it judges. The recipe declared
 `gate: acceptance-gate` and no `acceptance:` list at all, so the gate
 `patterns/acceptance-gate` calls the core of determinism-by-gate had nothing to converge on —

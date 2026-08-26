@@ -3,7 +3,7 @@
 import pathlib
 import re
 
-from rig_workbench.orchestrate.gates import validate_executable_recipe
+from rig_workbench.orchestrate.gates import is_runtime_gate, validate_executable_recipe
 
 from .config import AGENTS, FACETS, PATTERNS, RECIPES, ROOT
 from .state import _emit, parse_frontmatter
@@ -176,6 +176,42 @@ def _check_stage_governance(step: dict, ctx: str) -> None:
         _emit("WARN",
               f"{ctx} — actor `{actor}` is declared but the step has no human_gate, so the "
               "ownership is documentation only (nothing asks that role to sign off)")
+
+
+def _check_max_retries(step: dict, ctx: str) -> None:
+    """`max_retries` — the retry budget K the runner spends before escalating (§3.5).
+
+    K is read on the *generic* failure path of `runstate.compute_next`, not inside
+    any one gate handler, so it governs every step whose gate can report a failure.
+    Measured by driving `compute_next` with a gate that keeps failing:
+
+        gate=acceptance-gate  K=1 → 1 retry then ESCALATE / K=3 → 3
+        gate=review-gate      K=1 → 1 retry then ESCALATE / K=3 → 3
+        gate=none, checks=[]  K=1 → DONE / K=3 → DONE      (0 retries either way)
+        gate=none, checks=[…] K=1 → 1 retry then ESCALATE / K=3 → 3
+
+    So the only step where K is dead weight is one that can never produce a
+    failure at all: no runtime gate *and* no checks. `gate_outcome` returns
+    "pass" for such a step even with a failing verdict recorded, and a
+    non-runtime gate string ("—", a custom pattern name) returns "unsupported",
+    which BLOCKs before the retry path is reached. Warning on "not
+    acceptance-gate" instead would advise deleting a working safety property —
+    `adaptive-bugfix.targeted-review` carries `max_retries: 1` on a review-gate
+    step precisely so a failed review stops rather than retries.
+    """
+    max_retries = step.get("max_retries")
+    if max_retries is None:
+        return
+    if not isinstance(max_retries, int) or max_retries < 1:
+        _emit("FAIL", f"{ctx} — max_retries must be an integer ≥1 (value: {max_retries!r})")
+    if not is_runtime_gate(step.get("gate")) and not step.get("checks"):
+        _emit(
+            "WARN",
+            f"{ctx} — max_retries has no effect on this step: it declares neither a runtime"
+            " gate (acceptance-gate/review-gate) nor checks[], so nothing can report a gate"
+            " failure and the retry budget is never read. K does apply to any gated step"
+            " (review-gate included) and to any step with checks[]",
+        )
 
 
 def check_recipe(path: pathlib.Path) -> None:
@@ -376,19 +412,8 @@ def check_recipe(path: pathlib.Path) -> None:
         # actor / human_gate — the v2.1 stage-governance fields (§3.5)
         _check_stage_governance(step, step_ctx)
 
-        # max_retries type / value range (§3.5)
-        max_retries = step.get("max_retries")
-        if max_retries is not None:
-            if not isinstance(max_retries, int) or max_retries < 1:
-                _emit(
-                    "FAIL",
-                    f"{step_ctx} — max_retries must be an integer ≥1 (value: {max_retries!r})",
-                )
-            if step.get("gate") != "acceptance-gate":
-                _emit(
-                    "WARN",
-                    f"{step_ctx} — max_retries is set on a step without gate: acceptance-gate (no effect in this context)",
-                )
+        # max_retries type / value range / effective context (§3.5)
+        _check_max_retries(step, step_ctx)
 
         # acceptance-gate + acceptance[] presence recommended
         if step.get("gate") == "acceptance-gate" and not step.get("acceptance"):
