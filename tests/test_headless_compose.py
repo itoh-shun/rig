@@ -476,6 +476,107 @@ def test_japanese_material_profile_is_bounded_to_write_knowledge_only():
     assert "今日のテーマ、これです" not in review_prompt
 
 
+@pytest.mark.parametrize(
+    ("source_value", "bound_text", "reason_code"),
+    [
+        pytest.param(None, "下書き", "source_draft_missing", id="missing"),
+        ("", "", "source_draft_empty"),
+        (123, "下書き", "source_draft_wrong_type"),
+        ("別の下書き", "下書き", "source_draft_unresolved"),
+    ],
+)
+def test_secure_revision_refuses_unverifiable_source_draft(
+    tmp_path, monkeypatch, source_value, bound_text, reason_code,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing-revision.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    calls = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        calls.append(role)
+        return 0, "修正稿"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state(resolved["name"], load_steps(resolved), None)
+    state["review_category"] = "general"
+    state["secure_runtime"] = {
+        "goal_sha256": hashlib.sha256(bound_text.encode()).hexdigest(),
+    }
+    cfg = {"secure_runtime": True}
+    if reason_code != "source_draft_missing":
+        cfg["_source_draft"] = source_value
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer", "reviewer", cfg,
+        10, quiet=True,
+    )
+
+    assert final == "BLOCKED"
+    assert calls == ["generator"]
+    assert state["stopped"] == {
+        "reason": (
+            "independent review cannot verify source-dependent acceptance "
+            "without the bound in-memory source draft"
+        ),
+        "reason_code": reason_code,
+        "kind": "BLOCKED",
+        "at": "review",
+    }
+
+    with pytest.raises(ValueError) as refusal:
+        providers.compose_artifact_review_prompt(
+            state, state["steps"][1], "japanese-writing-reviewer", "修正稿",
+        )
+    assert refusal.value.args == (
+        "revision review requires an explicitly supplied source draft",
+    )
+
+
+def test_secure_revision_review_receives_source_draft_only_from_process_memory(
+    tmp_path, monkeypatch,
+):
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "packs/domain/japanese-writing/recipes/japanese-writing-revision.md"
+    )
+    resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
+    source_draft = "顧客名A。開始は10:30。原因は未確認。"
+    prompts = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None,
+    ):
+        prompts.append((role, prompt))
+        if role == "generator":
+            return 0, "顧客名A。10:30開始。原因は未確認です。"
+        return 0, _japanese_review_json()
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    state = new_state(resolved["name"], load_steps(resolved), None)
+    state["review_category"] = "general"
+    state["secure_runtime"] = {
+        "goal_sha256": hashlib.sha256(source_draft.encode()).hexdigest(),
+    }
+
+    final = providers.run_loop(
+        state, tmp_path / "run-state.json", "writer", "reviewer",
+        {"secure_runtime": True, "_source_draft": source_draft},
+        10, quiet=True,
+    )
+
+    assert final == "DONE"
+    review_prompt = next(prompt for role, prompt in prompts if role == "verifier")
+    assert providers.wrap_untrusted(source_draft, "source draft") in review_prompt
+    assert "goal: (none)" not in review_prompt
+    persisted = (tmp_path / "run-state.json").read_text(encoding="utf-8")
+    assert source_draft not in persisted
+
+
 @pytest.mark.parametrize("attack", ["oversize", "provenance"])
 def test_japanese_material_profile_fails_closed_on_asset_contract_drift(
     monkeypatch, attack,

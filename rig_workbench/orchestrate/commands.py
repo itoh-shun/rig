@@ -838,6 +838,8 @@ def cmd_run(args):
             diagnostic(f"[BLOCKED] {error}")
             raise SystemExit(2) from error
         cfg["secure_runtime"] = True
+        if path.stem == "japanese-writing-revision":
+            cfg["_source_draft"] = goal
     state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
     if secure_required and fm.get("name", path.stem) == "japanese-writing":
         state["review_category"] = review_category
@@ -852,6 +854,8 @@ def cmd_run(args):
         state["secure_runtime"] = {
             "policy_version": 1,
             "prompt_transport": "stdin",
+            **({"goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest()}
+               if isinstance(goal, str) else {}),
             **({"review_category": review_category}
                if state.get("recipe") == "japanese-writing" else {}),
             **({"material_profile": material_profile,
