@@ -394,11 +394,11 @@ def run_http_provider(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
     except urllib.error.HTTPError as error:
         category = "authentication failure" if error.code in {401, 403} else "endpoint failure"
         return 1, f"[provider {category}: HTTP {error.code} @ {url}]"
-    except TimeoutError as error:
-        return 1, f"[provider timeout: {error} @ {url}]"
+    except TimeoutError:
+        return 124, f"[provider timed out after {cfg.get('timeout', 600)} seconds]"
     except urllib.error.URLError as error:
         if isinstance(error.reason, TimeoutError):
-            return 1, f"[provider timeout: {error} @ {url}]"
+            return 124, f"[provider timed out after {cfg.get('timeout', 600)} seconds]"
         return 1, f"[provider endpoint failure: {error} @ {url}]"
     except OSError as error:
         return 1, f"[provider endpoint failure: {error} @ {url}]"
@@ -461,6 +461,10 @@ def run_anthropic_provider(prompt: str, cfg: dict, state: dict | None = None,
     try:
         with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:
             data = json.loads(r.read().decode("utf-8"))
+    except (TimeoutError, urllib.error.URLError) as e:
+        if isinstance(e, TimeoutError) or isinstance(e.reason, TimeoutError):
+            return 124, f"[provider timed out after {cfg.get('timeout', 600)} seconds]"
+        return 1, f"[anthropic error: {e} @ {url}]"
     except Exception as e:
         return 1, f"[anthropic error: {e} @ {url}]"
 
@@ -624,7 +628,7 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
     except FileNotFoundError:
         return 127, f"[provider not found: {provider}]"
     except subprocess.TimeoutExpired:
-        return 124, "[provider timeout]"
+        return 124, f"[provider timed out after {cfg.get('timeout', 600)} seconds]"
     out = r.stdout or ""
     if r.returncode != 0 and r.stderr:
         out = (out + "\n" + r.stderr).strip()
@@ -3368,9 +3372,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
             })
         state["stopped"] = {
             "reason": (
-                f"adaptive generator failed (exit {generator_rc})"
-                if _uses_adaptive_executors(state)
-                else f"generator failed (exit {generator_rc})"
+                f"provider timed out after {cfg.get('timeout', 600)} seconds"
+                if generator_rc == 124
+                else (
+                    f"adaptive generator failed (exit {generator_rc})"
+                    if _uses_adaptive_executors(state)
+                    else f"generator failed (exit {generator_rc})"
+                )
             ),
             "kind": "BLOCKED", "at": step["id"],
         }

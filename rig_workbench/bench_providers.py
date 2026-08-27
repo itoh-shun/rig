@@ -463,7 +463,11 @@ def _rig_infra_error(stdout: str, stderr: str, state: dict) -> str | None:
     detail = f"{stdout}\n{stderr}\n{json.dumps(state, ensure_ascii=True)}".casefold()
     if "provider not found" in detail or "no such file or directory" in detail:
         return "missing_executable: provider executable was not found"
-    if "provider timeout" in detail or "generator failed (exit 124)" in detail:
+    if (
+        "provider timed out" in detail
+        or "provider timeout" in detail
+        or "generator failed (exit 124)" in detail
+    ):
         return "timeout: provider call timed out"
     if any(
         marker in detail
