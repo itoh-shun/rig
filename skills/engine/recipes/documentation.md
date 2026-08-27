@@ -42,7 +42,7 @@ steps:
 
 ## 使う場面
 
-`/rig "<ドキュメント整備の依頼>"` から `task_type: documentation` として自動選択される workbench 既定 recipe。README・CHANGELOG・docs/*.md の新規作成・改稿に使う。他の workbench recipe（bugfix/feature/refactor）と異なり task_type 別プリセット（`bugfix`/`feature`/`refactor` 等コード実装前提の基準）は上乗せしない——`standard` preset の8基準のみ。
+`/rig "<ドキュメント整備の依頼>"` から `task_type: documentation` として自動選択される workbench 既定 recipe。README・CHANGELOG・docs/*.md の新規作成・改稿に使う。他の workbench recipe（bugfix/feature/refactor）と異なり task_type 別プリセット（`bugfix`/`feature`/`refactor` 等コード実装前提の基準）は上乗せしない——`standard` preset のみ。
 
 ## 展開手順
 
@@ -50,7 +50,7 @@ steps:
 2. **identify-audience** — 新規ユーザー / 既存ユーザー / コントリビューターのどれに向けて書くかを確定する（`facets/instructions/identify-audience`）。
 3. **draft** — 対象ドキュメントを起草・改稿する（`facets/instructions/docs-draft`）。「最初の成功体験」を機能一覧より先に見せる・AI 特有の定型表現を避ける、を意識する。
 4. **verify-commands** — 本文中のコマンド例・コードブロックを実行確認する（`facets/instructions/verify-commands`）。「READMEのコマンド例が動かなくなる変更」（drill の種カタログにも載る典型的ドキュメント虚偽化）をここで機械的に防ぐ。
-5. **acceptance** — standard 8基準の acceptance-check。
+5. **acceptance** — acceptance-check。この step の `acceptance:` はこのフローが証拠を作る作業一覧で、accept の条件ではない。要求の正本は `standard` preset から組まれるタスクのゲートで、`rig-wb wb accept` はそちらが埋まるまで拒否する。
 
 ## review-diff を持たない理由
 

@@ -67,7 +67,7 @@ steps:
 4. **implement** — 内部構造を変更する。
 5. **test** — build/lint/test を実行する。
 6. **compare-behavior** — ②の境界リストと実装後の挙動を突き合わせ、意図しない差異がないか確認する（`facets/instructions/compare-behavior`）。
-7. **acceptance** — 13基準（standard 8 + refactor 5）の acceptance-check。`no_unintended_behavior_change`/`tests_confirm_behavior_preserved` は「境界を守りつつ目的を達成したか」で判定する。
+7. **acceptance** — acceptance-check。`no_unintended_behavior_change`/`tests_confirm_behavior_preserved` は「境界を守りつつ目的を達成したか」で判定する。この step の `acceptance:` の13件はこのフローが証拠を作る作業一覧で、accept の条件ではない。要求の正本は `standard` + `refactor` preset から組まれるタスクのゲート。
 
 ## review-diff を持たない理由
 

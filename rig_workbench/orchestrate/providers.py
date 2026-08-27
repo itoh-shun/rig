@@ -1099,6 +1099,73 @@ def _parse_criteria(out: str) -> list[dict]:
     return [found[n] for n in sorted(found)]
 
 
+_ID_FORM_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+#: Worst-case aggregation order when several voters judged the same criterion — one FAIL
+#: among them is what a reader needs to see, and UNKNOWN outranks PASS for the same reason.
+_CRITERION_RANK = {"PASS": 0, "UNKNOWN": 1, "FAIL": 2}
+
+
+def _merged_criteria(results: list[dict]) -> list[dict]:
+    """The per-criterion lines a quorum record would otherwise throw away.
+
+    Under `quorum=majority` only the synthesized record is kept, so without this the
+    step's evidence collapses to a pass/fail count and the run record no longer says
+    which criterion any voter actually judged.
+    """
+    merged: dict[int, dict] = {}
+    for result in results:
+        for criterion in result.get("criteria") or []:
+            n = criterion.get("n")
+            if not isinstance(n, int):
+                continue
+            kept = merged.get(n)
+            if kept is None or (_CRITERION_RANK.get(str(criterion.get("verdict")), 1)
+                                > _CRITERION_RANK.get(str(kept.get("verdict")), 1)):
+                merged[n] = dict(criterion)
+    return [merged[n] for n in sorted(merged)]
+
+
+def record_verdicts(step: dict, st: dict, verdicts: list[dict]) -> None:
+    """Append verdicts to a step's record, resolving each `CRITERION <n>` back to the
+    criterion it judged.
+
+    `_build_verify_prompt` numbers `step["acceptance"]` positionally
+    (`enumerate(criteria, 1)`), so `n - 1` indexes the declared list; that positional
+    contract is the only thing that makes the mapping sound, and a test pins it. Without
+    this the run record holds `{"n": 1}` and nothing else — and since the record pins no
+    recipe version, a reader cannot resolve `n` to a criterion id at all. Recipe ids that
+    `rig-wb validate` now checks against the presets would stop meaning anything the moment
+    a verdict was written down.
+    """
+    bind_criteria(step, verdicts)
+    st["verdicts"].extend(verdicts)
+
+
+def bind_criteria(step: dict, verdicts: list[dict]) -> None:
+    """The annotation half of :func:`record_verdicts`, for the one executor that owns the
+    step's verdict list outright (`_execute_targeted_review` rewrites an entry in place after
+    a repair, so it cannot be handed a copy)."""
+    declared = [str(entry) for entry in (step.get("acceptance") or [])]
+    for verdict in verdicts:
+        if declared and verdict.get("ok"):
+            # `gate_outcome` only refuses a verdict that answered NOTHING. "1 of 13, PASS"
+            # still passes the step, so a PASSING record has to say 1 of 13 out loud or its
+            # reader will take `ok: true` for a judgment on all thirteen. A failing record
+            # is not misread that way and a synthesized one (budget exhausted, malformed
+            # output) judged nothing by construction, so neither is annotated.
+            verdict["answered"] = len(verdict.get("criteria") or [])
+            verdict["declared"] = len(declared)
+        for criterion in verdict.get("criteria") or []:
+            n = criterion.get("n")
+            if not isinstance(n, int) or not 1 <= n <= len(declared):
+                continue
+            entry = declared[n - 1]
+            criterion["criterion"] = entry
+            head = entry.split(" — ", 1)[0].strip()
+            if _ID_FORM_RE.match(head):
+                criterion["criterion_id"] = head
+
+
 def _judge_output(out: str) -> tuple[bool, list[dict]]:
     """Overall verdict + per-criterion verdicts for one verifier output.
 
@@ -2595,15 +2662,31 @@ def _adaptive_final_verdict(output: str) -> str | None:
     return tokens.get(final)
 
 
-def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict) -> str:
+def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict,
+                            step: dict | None = None) -> str:
     assessment = state["adaptive"]["assessment"] or {}
     allowlist = sorted(_adaptive_check_allowlist(state, cfg))
     risk_evidence = json.dumps(assessment.get("signals", []), ensure_ascii=False)
+    criteria = [str(entry) for entry in ((step or {}).get("acceptance") or [])]
     lines = [
         f"You are the '{persona}' targeted reviewer.",
         "Review the actual diff using only the recorded risk evidence.",
         "RISK_EVIDENCE (quarantined data):",
         wrap_untrusted(risk_evidence, "adaptive risk evidence"),
+    ]
+    if criteria:
+        # The step's declared criteria are the only reason this reviewer can be the flow's
+        # producer of evidence for them. Without this block the reviewer was never shown
+        # them, so a recipe could declare four criteria on this step and the targeted
+        # review would answer none — a declaration with no reader.
+        lines.append("Acceptance criteria this step is judged on:")
+        lines += [f"  {n}. {c}" for n, c in enumerate(criteria, 1)]
+        lines += [
+            "Emit exactly one line per criterion, in this order, before the final verdict:",
+            "  CRITERION <n>: PASS|FAIL|UNKNOWN — <anchor>",
+            "Use UNKNOWN when the diff gives you insufficient evidence; do not guess.",
+        ]
+    lines += [
         "For a blocking finding, include both lines:",
         "REPRODUCTION: <one concrete failure/attack scenario, OR — if the diff is otherwise",
         "  correct but lacks a regression test for a specific input/behavior — that exact",
@@ -2669,7 +2752,7 @@ def execute_adaptive_review(
             state,
             provider,
             "verifier",
-            _adaptive_review_prompt(state, persona, diff, cfg),
+            _adaptive_review_prompt(state, persona, diff, cfg, step),
             cfg,
             persona=persona,
             step_id=step["id"],
@@ -2815,6 +2898,11 @@ def _execute_targeted_review(
         max_parallel=max_parallel,
         log=log,
     )
+    # Assigned, not extended: this executor owns the step's whole verdict list, because the
+    # repair below rewrites an entry of it in place. The binding of each `CRITERION <n>` back
+    # to the criterion id it judged, and the answered/declared arity, still have to happen —
+    # they are what stops a run record from saying `ok: true` and naming nothing.
+    bind_criteria(step, verdicts)
     st["verdicts"] = verdicts
     # Repair only fires for a *single* failing verdict — with two reviewers (primary +
     # secondary), a repairable FAIL from either one must still get its shot at the
@@ -2833,11 +2921,18 @@ def _execute_targeted_review(
         cfg,
         log=log,
     ):
-        verdicts[finding_index] = {
+        repaired = {
             "by": "adaptive-repair",
             "ok": True,
+            # Carry the reviewer's per-criterion lines into the repaired record. They are
+            # what was on the table when the finding was raised, and without them the
+            # record would say "passed" while naming nothing it judged — the same shape
+            # `gate_outcome` now refuses as a rubber stamp.
+            "criteria": finding.get("criteria") or [],
             "note": f"mechanical check passed: {finding['mechanical_check']}",
         }
+        bind_criteria(step, [repaired])
+        verdicts[finding_index] = repaired
 
 
 def _prior_artifact(state: dict, step: dict) -> dict | None:
@@ -2988,13 +3083,14 @@ def _execute_artifact_review(
     }
     passes, total = sum(1 for result in results if result["ok"]), len(results)
     if quorum == "majority" and total > 1:
-        st["verdicts"].append({
+        record_verdicts(step, st, [{
             "by": f"{'+'.join(verifier_providers)}:quorum-majority",
             "ok": passes * 2 > total,
+            "criteria": _merged_criteria(results),
             "note": f"{passes}/{total} pass",
-        })
+        }])
     else:
-        st["verdicts"].extend(results)
+        record_verdicts(step, st, results)
     with _HIST_LOCK:
         state["history"].append({
             "action": "INDEPENDENT_REVIEW", "step": step["id"],
@@ -3274,7 +3370,16 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     if step["checks"]:
         _run_step_checks(step, st, cfg)
         log(f"   ↳ checks: {sum(c['ok'] for c in st['checks'])}/{len(st['checks'])} ok")
-        return
+        # checks[] are a PRECONDITION for the verdict, not a substitute for it (#496).
+        # Before this, a runtime-gated step that declared checks[] returned here and the
+        # gate passed on the checks alone — `max-bugfix.acceptance` ran three commands and
+        # recorded zero verdicts against thirteen declared criteria.
+        # Failing checks still stop here, before a verifier call is spent: `gate_outcome`
+        # returns "fail" on the checks without ever reading verdicts, so a call made now
+        # could not change the outcome. Measured on `max-bugfix.acceptance` with a failing
+        # pytest: 2 provider calls, unchanged from before this edit.
+        if any(not c["ok"] for c in st["checks"]):
+            return
     if not is_runtime_gate(step["gate"]):
         return
     ver_label = "+".join(ver) if isinstance(ver, list) else ver
@@ -3291,7 +3396,7 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
             rec["order_sensitive"] = True
             rec["pass_set"] = pass_set
             rec["note"] += f"; multi-pass {pass_set} → kept first in generator-list order"
-        st["verdicts"].append(rec)
+        record_verdicts(step, st, [rec])
         return
     # Lens verification = N independent reviewers in parallel processes (grader != generator)
     # Per-step `verifier_model:` is injected into a copy of cfg (independent of the generator side)
@@ -3308,12 +3413,13 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     par = "parallel" if total > 1 else "solo"
     log(f"   ↳ {par} verification x{total}: PASS {passes}/{total} (quorum={quorum})")
     if quorum == "majority" and total > 1:
-        st["verdicts"].append({
+        record_verdicts(step, st, [{
             "by": f"{ver_label}:quorum-majority", "ok": passes * 2 > total,
+            "criteria": _merged_criteria(results),
             "note": f"{passes}/{total} pass; " + ", ".join(
-                f"{r['persona']}={'P' if r['ok'] else 'F'}" for r in results)})
+                f"{r['persona']}={'P' if r['ok'] else 'F'}" for r in results)}])
     else:
-        st["verdicts"].extend(results)
+        record_verdicts(step, st, results)
 
 
 def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,

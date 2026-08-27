@@ -133,6 +133,111 @@ the honest case, since a *pre*-window reading is usually where the baseline came
 module can tell a bar declared before the window from one written after it opened; it cannot
 tell anything finer, and nothing here judges whether the metric was worth moving.
 
+**A recipe's `acceptance:` is a work list; the presets are the requirement.** Acceptance had
+two sources of truth and nothing said which one bound (#497). `build_acceptance()` composes a
+task's gate from `GATE_PRESETS` and never reads a recipe; `facets/instructions/acceptance-check`
+told the judging step to read *its own step's* `acceptance[]`. Measured across the shipped
+catalogue, answering exactly what a recipe declares leaves the rest `pending` on every one of
+them — `bugfix` 13 of 15, `fast-bugfix` 6 of 15, `documentation` 8 of 10.
+
+That divergence is now the contract rather than a defect: a recipe's list names the criteria
+*this flow's own steps produce evidence for* (#486's rule) and cannot add to or remove from
+the task's gate, which is what `wb accept` refuses on. Padding a list out to the full preset
+was rejected as the fix — it would declare criteria the flow cannot satisfy, which buys a
+rubber stamp or a deadlock. `acceptance-check`, `patterns/acceptance-gate`, the `--validate`
+WARN and `wb gate`'s own output now each say which of the two lists is the requirement, and
+the recipe bodies that stated a count *of the gate* — `13基準（standard 8 + bugfix 5）` on a
+fifteen-criterion gate, and `documentation.md`'s `standard preset の8基準のみ`, a false claim
+about `GATE_PRESETS` itself rather than about the work list — no longer do. Counts do remain
+in four bodies, describing the step's own work list (and, in `max-bugfix`, the gate that work
+list is not); a count in prose is a copy of a number that lives somewhere else, so the repair
+is to delete it or to check it, and a test now computes both numbers from the frontmatter and
+the presets and refuses any other. Stating "the bodies no longer state a count" would have
+been the same defect this change is about.
+
+**What this does not do: it does not make an acceptance step answer all fifteen.** Nothing at
+step level does. The id-form → `wb gate --set` path is prose in an instruction facet, and
+`orchestrate run` never calls `wb gate` at all — there is no bridge in either direction, and
+a test now asserts that rather than leaving it as a comment. `wb accept`'s refusal is the only
+thing holding this, and it is a terminal backstop on the workbench path, not a step-level
+check. `orchestrate run` reaching `DONE` is not acceptance.
+
+**`checks[]` are a precondition for an acceptance gate's verdict, never a substitute** (#496).
+A runtime-gated step that declared `checks[]` used to return before the verification block and
+pass on the checks alone: `max-bugfix.acceptance` ran three commands and recorded zero
+verdicts against thirteen declared criteria, with the DEFAULT executor — so the defect was
+`checks[]`-shaped, not `executor: checks-only`-shaped, and all three options #496 listed would
+have left it in place. Failing checks still stop the step before a verifier call is spent
+(measured on `max-bugfix.acceptance` with a failing check: 2 provider calls, unchanged; with
+checks passing: 2 calls, and a real verdict answering 13 of 13). Blast radius over all 41
+recipe files in the repository: exactly one step.
+
+A passing verdict that answered *none* of a step's declared criteria is now refused as a
+rubber stamp. **What that guard is not: it is not arity.** A verdict answering 1 of 13 and
+saying PASS still passes. Tightening it to full arity was measured and deliberately not taken
+here — the shipped mock provider emits exactly one `CRITERION 1:` line whatever a step
+declares, so it would turn every mock-driven bench/eval run of a 13-criterion acceptance step
+from DONE into ESCALATE, which is re-baselining the eval harness rather than enforcing the
+contract. Instead the arity a verdict actually reached is recorded (`answered`/`declared` on
+each passing verdict), and each `CRITERION <n>` is bound back to the criterion **id** it
+judged: an index alone is unresolvable from a run record, which pins no recipe version.
+
+**A step whose executor cannot produce a verdict declares no runtime gate and no
+`acceptance[]`.** `checks-only` and `risk-assess` return without ever calling a provider. That
+pair is now refused at **load time**, not only by `rig-wb validate` — the linter globs
+`skills/engine/recipes/*.md` alone while `resolve_recipe` searches `<cwd>/.rig/recipes/`
+first, so a project-tier recipe carrying the shape would otherwise have parked in `AWAIT`
+forever with nothing able to warn about it. The set of verdict-less executors is declared once
+in `orchestrate/gates.py` and read by the preflight, the validator and the tests. No new gate
+name was invented and `RUNTIME_GATES` is unchanged. `--check` was routed to a step that was
+both `checks-only` and `acceptance-gate`; since that combination is now impossible, it is
+routed to the `checks-only` step, which is where it was always going.
+
+`adaptive-bugfix` is the one recipe that had to change. Its four diff-settled criteria moved
+to `targeted-review` — the step that actually judges — and are now carried into that
+reviewer's prompt, which never read the step at all before. Its four sensor-backed criteria
+were dropped: the sensors report through `wb gate`, which this orchestrate-only flow never
+reaches, so under its own runner nothing produces their evidence. They stay binding on the
+task's gate; what changed is only that no step of the flow claims to answer them.
+
+`facets/instructions/acceptance-check` §③ carried a third copy of the criterion catalogue and
+had already drifted from `GATE_PRESETS` by eleven criteria — including `no_gate_tampering` and
+`no_injection_markers`, the two #497 measured as never set on any bugfix task. It is no longer
+grouped by preset (the shape that drifted); it points the judge at `rig-wb wb gate <task_id>`
+for the list and gives a judging method for all 34 ids, which a test now compares against
+`GATE_PRESETS`. "The sensors cover them" was not an answer: sensors only fail or warn, never
+write `passed`, so a criterion with no method there stays `pending` forever.
+
+**Two shipped goldens asserted the opposite of this and were rewritten deliberately, not
+tidied.** `orchestrate selftest` scenario A drove an acceptance-gate step to `ADVANCE` on
+passing checks with no verdict, and scenario AA did the same through `resume`; both now
+require the verdict, and each gained a positive control that pins the refusal. This changes
+what `rig-wb resume` does for an operator: a resumed acceptance-gate step whose record holds
+passing checks and no verdict now re-verifies and AWAITs instead of advancing.
+`EXECUTION_POLICY_VERSION` is bumped to 2, so **a run started before this upgrade has to be
+restarted** — its steps were admitted under a rule that no longer holds, and reading the old
+record as agreement would be worse than saying so.
+
+`rig-wb validate` totals are unchanged at 46 PASS / 1 WARN / 0 FAIL: the three new FAIL rules
+add zero findings over all 41 recipe files, which is why their positive controls are synthetic
+recipes carrying the forbidden shapes. A suite that only ran the catalogue would report these
+guards as passing while checking nothing.
+
+The two `--validate` rules #496 asks about do not contradict, and the exact statement is not
+that they are disjoint — measured, both fire on one step: a `checks-only` step declaring
+`gate: acceptance-gate` and no list draws the WARN ("declare `acceptance[]`") and the new FAIL
+("drop the gate") together. They do not contradict because the FAIL's remedy clears the WARN's
+precondition — drop the gate and the step is no longer an acceptance-gate step, so neither
+rule has anything left to say — while following the WARN instead would leave the FAIL
+standing. That is why the FAIL's message names dropping the gate rather than adding criteria,
+and no valid step reaches both rules.
+
+Two things this leaves open and does not claim to fix. `review-only` on the `security_review`
+route is handed ten binding criteria by a one-step flow that declares none, so C2's "an empty
+work list is expected" reads as vacuous there; that is a route-level gap, not a recipe-level
+one, and the per-route obligation it needs is not written. And `orchestrate run` still writes
+no task record, so on that path nothing refuses at the end — the two runners remain unbridged.
+
 The validator no longer tells you to delete a working safety property. `--validate` WARNed
 that `max_retries` on any step whose gate was not `acceptance-gate` had "no effect in this
 context", and the one step in the whole catalogue it fired on was

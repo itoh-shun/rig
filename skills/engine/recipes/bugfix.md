@@ -75,7 +75,9 @@ steps:
 4. **implement** — 最小限の修正を実施する。
 5. **test** — build/lint/test を実行する。
 6. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー（`review-gate`）。
-7. **acceptance** — `facets/instructions/acceptance-check` が13基準（standard 8 + bugfix 5）を判定し `scripts/workbench.py gate` に記録する。`failed` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
+7. **acceptance** — `facets/instructions/acceptance-check` がタスクのゲートを判定し `rig-wb wb gate` に記録する。`failed` があれば `max_retries: 2` まで収束、超えたら user へエスカレーション。
+
+   この step の `acceptance:` に並ぶ13件は**このフローが自分で証拠を作る作業一覧**であって、accept に必要な条件ではない。要求の正本は `build_acceptance()` が `standard` + `bugfix` preset から組むタスクのゲートで、recipe は参照されない。13件を全部埋めても残りは `pending` のままで、`rig-wb wb accept` はそれを名指しで拒否する。
 
 ## isolated worktree との関係
 

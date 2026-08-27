@@ -24,7 +24,15 @@ ALL_RECIPES = sorted(RECIPES.glob("*.md"))
 #: `関連テスト green`), which is a different and equally valid form — a check that assumed the
 #: id form everywhere would report two thirds of the catalogue as broken. Deriving the list by
 #: "entries that happen to parse as an id" would be the check picking its own coverage.
-_RECIPES_USING_CRITERION_IDS = ("bugfix", "fast-bugfix", "adaptive-bugfix")
+#:
+#: It was three names while only three were being looked at. Measured over all 41 recipe files
+#: in the repository, the id form is used by exactly these seven (29 acceptance lists in all:
+#: 7 id-form, 22 prose-form, 0 mixed); `feature`, `refactor`, `documentation` and `max-bugfix`
+#: were spelling criterion ids and nothing was checking them.
+_RECIPES_USING_CRITERION_IDS = (
+    "bugfix", "fast-bugfix", "adaptive-bugfix", "max-bugfix",
+    "feature", "refactor", "documentation",
+)
 
 KNOWN = {criterion for preset in GATE_PRESETS.values() for criterion in preset}
 
@@ -117,18 +125,20 @@ _ADAPTIVE_BUGFIX_EVIDENCE = {
     "no_unrelated_diff": "diff",
     "fix_is_minimal": "diff",
     "no_unrelated_refactor": "diff",
-    "no_secret_leak": "sensor",
-    "no_destructive_operation": "sensor",
-    "no_injection_markers": "sensor",
-    "no_gate_tampering": "sensor",
 }
 
 #: Why each of the rest is absent, named individually so that adding one back has to come with
 #: a step that produces its evidence. `test-step` criteria all need a test run and this flow
 #: has none; `written-artifact` ones need prose from a step that writes it. Every reason here
 #: names evidence the flow does not produce — "a sibling recipe leaves it out" is not one of
-#: them, and was removed as a reason when it turned out to be the only ground for omitting two
-#: sensor-backed criteria.
+#: them.
+#:
+#: `no-sensor-under-orchestrate` is the reason added by #497. The four criteria under it ARE
+#: settled by deterministic sensors — but the sensors report through `rig-wb wb gate`, and
+#: `orchestrate run`, the only runner this orchestrate-only flow has, never calls `wb gate`.
+#: Under this runner nothing in the flow produces their evidence, which is the same rule the
+#: rest of the table applies. They stay binding on the task's gate; what changes is only that
+#: no step of this flow claims to answer them.
 _ADAPTIVE_BUGFIX_OMITTED = {
     "diff_summary_written": "written-artifact",
     "risk_summary_written": "written-artifact",
@@ -137,15 +147,29 @@ _ADAPTIVE_BUGFIX_OMITTED = {
     "tests_pass_or_explained": "test-step",
     "regression_test_added_or_explained": "test-step",
     "existing_behavior_preserved": "test-step",
+    "no_secret_leak": "no-sensor-under-orchestrate",
+    "no_destructive_operation": "no-sensor-under-orchestrate",
+    "no_injection_markers": "no-sensor-under-orchestrate",
+    "no_gate_tampering": "no-sensor-under-orchestrate",
 }
 
 
 def test_adaptive_bugfix_gates_on_exactly_what_its_evidence_reaches():
     """#486. Both directions: nothing asked for that the flow cannot settle, and nothing the
     flow can settle left out. A criterion nothing satisfies does not make a gate stricter —
-    it makes it a rubber stamp or a deadlock."""
+    it makes it a rubber stamp or a deadlock.
+
+    The list is read from `targeted-review`, not from `acceptance`. #497/#496: `acceptance`
+    has `executor: checks-only`, which runs its commands and returns without ever calling a
+    provider, so it cannot produce the verdict its old `gate: acceptance-gate` promised.
+    `targeted-review` is the step of this flow that actually judges the diff, so it is the
+    step that can carry — and answer — the four diff-settled criteria.
+    """
     steps = {step["id"]: step for step in _steps(RECIPES / "adaptive-bugfix.md")}
-    assert _named_ids(steps["acceptance"]) == set(_ADAPTIVE_BUGFIX_EVIDENCE)
+    assert _named_ids(steps["targeted-review"]) == set(_ADAPTIVE_BUGFIX_EVIDENCE)
+    # And the verdict-less step carries neither a runtime gate nor a list to answer.
+    assert steps["acceptance"].get("gate") is None
+    assert not steps["acceptance"].get("acceptance")
 
 
 def test_the_evidence_table_accounts_for_every_criterion_of_its_presets():
@@ -167,6 +191,8 @@ def test_the_flow_has_no_step_that_runs_tests_or_reproduces_the_bug():
 
     # The acceptance step runs mechanical checks only, and the one it declares is a syntax
     # check — no test command reaches the flow unless a caller supplies one via `--check`.
+    # (`--check` is routed to the `checks-only` step; it used to be routed to a step that
+    # was both `checks-only` and `acceptance-gate`, a pair that is now refused.)
     assert steps["acceptance"]["executor"] == "checks-only"
     assert steps["acceptance"]["checks"] == ["git diff --check"]
     assert not any("test" in str(step.get("checks") or []) for step in steps.values()), (
@@ -174,11 +200,29 @@ def test_the_flow_has_no_step_that_runs_tests_or_reproduces_the_bug():
 
 
 def test_every_omission_names_evidence_the_flow_does_not_produce():
-    """A criterion is omitted because no step settles it, never because a sibling recipe
-    leaves it out. Two sensor-backed criteria were once omitted on exactly that ground; this
-    is what makes the reason itself checkable rather than a comment."""
+    """A criterion is omitted because no step of THIS flow settles it under the runner this
+    flow has, never because a sibling recipe leaves it out. This is what makes the reason
+    itself checkable rather than a comment."""
     assert set(_ADAPTIVE_BUGFIX_OMITTED.values()) == {
-        "written-artifact", "type-check-step", "reproduce-or-plan-step", "test-step"}
+        "written-artifact", "type-check-step", "reproduce-or-plan-step", "test-step",
+        "no-sensor-under-orchestrate"}
+
+
+def test_the_sensor_reason_names_a_bridge_that_does_not_exist():
+    """The ground for `no-sensor-under-orchestrate`, asserted rather than assumed: the
+    workbench gate and the orchestrate runner do not read each other. If a bridge is ever
+    built, this fails and the four criteria have to be reconsidered."""
+    workbench = pathlib.Path(__file__).resolve().parent.parent / "rig_workbench" / "workbench"
+    orchestrate = (pathlib.Path(__file__).resolve().parent.parent
+                   / "rig_workbench" / "orchestrate")
+    workbench_text = "\n".join(p.read_text(encoding="utf-8")
+                               for p in sorted(workbench.rglob("*.py")))
+    orchestrate_text = "\n".join(p.read_text(encoding="utf-8")
+                                 for p in sorted(orchestrate.rglob("*.py")))
+    assert "run_state" not in workbench_text and "run-state.json" not in workbench_text, (
+        "the workbench now reads orchestrate run-state — re-derive the omission reason")
+    assert "build_acceptance" not in orchestrate_text, (
+        "orchestrate now builds a task gate — re-derive the omission reason")
 
 
 def test_the_precedents_ask_for_what_their_extra_steps_settle():
@@ -201,21 +245,30 @@ def test_the_precedents_ask_for_what_their_extra_steps_settle():
     assert "test" in step_ids("fast-bugfix")
     assert "existing_behavior_preserved" in criteria("fast-bugfix")
 
-    # And the divergence, asserted rather than left implicit: neither precedent lists the two
-    # sensor-backed criteria this recipe does, because the rule here is evidence rather than
-    # convention. If a precedent adopts them the divergence disappears and this says so.
+    # And the sensor-backed pair, asserted rather than left implicit: no bugfix-family
+    # recipe lists them. The interactive flows leave them to the sensors that report through
+    # `rig-wb wb gate`; `adaptive-bugfix` cannot list them because it never reaches that
+    # command at all. Either way they stay binding on the task's gate and unclaimed by a step.
     assert not ({"no_injection_markers", "no_gate_tampering"}
-                & (criteria("bugfix") | criteria("fast-bugfix")))
+                & (criteria("bugfix") | criteria("fast-bugfix")
+                   | criteria("adaptive-bugfix")))
 
 
-# ── what the list does not narrow (#497) ─────────────────────────────────────
+# ── the work list vs the requirement list (#497) ─────────────────────────────
 def _criteria(name):
     return {criterion for step in _steps(RECIPES / f"{name}.md") for criterion in _named_ids(step)}
 
 
-@pytest.mark.parametrize("recipe,task_type", [
-    ("adaptive-bugfix", "bugfix"), ("bugfix", "bugfix"), ("fast-bugfix", "bugfix"),
-])
+#: Every id-form recipe with the task_type whose gate it runs under, so the two invariants
+#: below are asserted over the whole surface rather than over the three that were looked at.
+_ID_FORM_ROUTES = [
+    ("bugfix", "bugfix"), ("fast-bugfix", "bugfix"), ("adaptive-bugfix", "bugfix"),
+    ("max-bugfix", "bugfix"), ("feature", "feature"), ("refactor", "refactor"),
+    ("documentation", "documentation"),
+]
+
+
+@pytest.mark.parametrize("recipe,task_type", _ID_FORM_ROUTES)
 def test_a_recipes_list_is_a_subset_of_the_gate_it_runs_under(recipe, task_type):
     """`build_acceptance` seeds a task's gate from the presets and never reads a recipe, so a
     recipe naming a criterion outside them would declare something the gate has no slot for —
@@ -224,22 +277,34 @@ def test_a_recipes_list_is_a_subset_of_the_gate_it_runs_under(recipe, task_type)
     assert _criteria(recipe) <= gate, sorted(_criteria(recipe) - gate)
 
 
-@pytest.mark.parametrize("recipe,task_type", [
-    ("adaptive-bugfix", "bugfix"), ("bugfix", "bugfix"), ("fast-bugfix", "bugfix"),
-])
+@pytest.mark.parametrize("recipe,task_type", _ID_FORM_ROUTES)
 def test_declaring_a_recipes_criteria_does_not_by_itself_pass_the_gate(recipe, task_type):
-    """Measured, and true of every shipped recipe rather than of this one: answering exactly
-    what a recipe declares leaves the rest of the preset pending, so the gate reads `pending`.
-    Asserted here so nobody reads a recipe's list as the condition for acceptance — and so
-    that if #497 aligns the two sources of truth, this fails and says where to look."""
+    """This is the contract, not a defect awaiting repair — and #497 landing is the reason
+    the wording changed rather than the test.
+
+    A recipe's `acceptance[]` is a WORK LIST: the criteria this flow's own steps produce
+    evidence for. The requirement list is the task's gate, which `build_acceptance()` builds
+    from the presets without ever reading a recipe. The two are deliberately not aligned, so
+    answering exactly what a recipe declares is EXPECTED to leave the rest `pending` and
+    `rig-wb wb accept` then refuses and names what is missing.
+
+    What this test therefore pins is that the gap stays visible. It would fail if someone
+    made `build_acceptance` read a recipe (the presets would stop being a floor) or padded a
+    recipe's list out to the full preset (which #486's rule forbids: a criterion belongs on a
+    step's list only when a step of that flow produces the evidence it names, and listing one
+    nothing can satisfy buys a rubber stamp or a deadlock).
+    """
     acceptance = build_acceptance("t", task_type)
     declared = _criteria(recipe)
+    assert declared, f"{recipe} declares no id-form criteria; this asserts nothing"
     for check in acceptance["checks"]:
         if check["name"] in declared:
             check["status"] = "passed"
     assert gate_status(acceptance) == "pending", (
-        f"{recipe} now passes its gate from its own list alone — #497 may have landed; "
-        f"re-read what the two sources of truth mean before deleting this")
+        f"{recipe}'s own list now passes the task's gate by itself. That is the two lists "
+        f"being made one — either `build_acceptance` started reading recipes, or this "
+        f"recipe was padded to the full preset. Re-read C1/C2 in "
+        f"skills/engine/facets/instructions/acceptance-check.md before changing this")
 
     for check in acceptance["checks"]:
         check["status"] = "passed"

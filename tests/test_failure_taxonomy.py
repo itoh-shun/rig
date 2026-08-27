@@ -62,7 +62,8 @@ def test_classify_successful_run_is_none(step_factory):
              step_factory(id="review", gate="review-gate")]
     state = _drive(new_state("t", steps, None),
                    [("next", None), ("next", None), ("next", None),
-                    ("check", True), ("next", None), ("next", None),
+                    ("check", True), ("verdict", ("reviewer", True)),
+                    ("next", None), ("next", None),
                     ("verdict", ("reviewer", True)), ("next", None)])  # DONE
     assert state["done"] is True
     assert classify_failure(state) is None

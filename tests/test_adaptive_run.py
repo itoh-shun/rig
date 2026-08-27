@@ -15,14 +15,54 @@ def _pass_step_checks(step, st, cfg):
     st["last_failure"] = None
 
 
+#: The criteria `adaptive-bugfix.targeted-review` declares (kept in step with the recipe).
+_ADAPTIVE_DECLARED = [
+    "task_intent_satisfied — 依頼の意図が満たされている",
+    "no_unrelated_diff — 依頼と無関係な差分が含まれていない",
+    "fix_is_minimal — 修正が最小限である",
+    "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない",
+]
+
+#: The per-criterion record a run keeps for a reviewer that answered all four: each answer is
+#: bound back to the criterion id it judged, because `CRITERION 3` alone is unresolvable from
+#: a run record — the record pins no recipe version.
+_ADAPTIVE_RECORDED = [
+    {"n": n, "verdict": "PASS", "anchor": "diff:1",
+     "criterion": entry, "criterion_id": entry.split(" — ", 1)[0]}
+    for n, entry in enumerate(_ADAPTIVE_DECLARED, 1)
+]
+
+#: The four `CRITERION <n>:` lines a targeted reviewer must emit to have judged the four
+#: criteria `_adaptive_steps` declares on that step. Since #496 a PASSING verdict that
+#: answered none of a step's declared criteria is a rubber stamp the gate refuses, so a
+#: reviewer fake that means to let the flow through has to say what it looked at — exactly
+#: what a real reviewer has to do. Prepended rather than replacing the fakes' own text so
+#: each test still exercises the parse path it was written for.
+_ADAPTIVE_ANSWERS = "".join(
+    f"CRITERION {n}: PASS — diff:1\n" for n in range(1, 5)
+)
+
+
 def _adaptive_steps(step_factory):
+    """The shipped `adaptive-bugfix` shape, kept in step with the recipe.
+
+    The `acceptance` step used to be built here as `gate="acceptance-gate"` with
+    `executor="checks-only"`. That pair is refused before a run starts now (#496/#497 C5):
+    a `checks-only` step returns after running its commands and never calls a provider, so
+    it cannot produce the independent verdict its gate name promises. The criteria moved
+    to `targeted-review`, which is the step of this flow that actually judges the diff.
+    """
     steps = [
         step_factory(id="implement"),
         step_factory(id="assess"),
-        step_factory(id="targeted-review", gate="review-gate", max_retries=1),
+        step_factory(
+            id="targeted-review",
+            gate="review-gate",
+            max_retries=1,
+            acceptance=list(_ADAPTIVE_DECLARED),
+        ),
         step_factory(
             id="acceptance",
-            gate="acceptance-gate",
             checks=["git diff --check"],
             max_retries=1,
         ),
@@ -52,6 +92,24 @@ def _assert_marker_is_quarantined(prompt, marker):
     closing_at = prompt.find("<<END-UNTRUSTED-", marker_at)
     assert opening_at > prior_close_at
     assert closing_at > marker_at
+
+
+def test_the_python_fixture_matches_the_shipped_recipe():
+    """`_adaptive_steps` is hand-built, so it can go on asserting a shape the recipe no
+    longer has — which is exactly what happened to the `checks-only` + `acceptance-gate`
+    pair: the recipe was fixed and this fixture kept driving the forbidden combination."""
+    from rig_workbench.orchestrate.recipes import resolve_effective
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    resolved = resolve_effective(
+        root / "skills" / "engine" / "recipes" / "adaptive-bugfix.md", [], diff_lines=50)
+    shipped = {step["id"]: step for step in resolved["steps"]}
+    assert shipped["targeted-review"]["acceptance"] == _ADAPTIVE_DECLARED
+    assert shipped["acceptance"]["gate"] is None
+    assert not shipped["acceptance"]["acceptance"]
+    assert [step["id"] for step in shipped.values()] == [
+        step["id"] for step in _adaptive_steps(
+            lambda **k: {"id": k["id"], "acceptance": [], "checks": [], "gate": None})]
 
 
 def test_new_state_initializes_adaptive_budget(step_factory):
@@ -303,7 +361,6 @@ steps:
   - id: acceptance
     instruction: acceptance-check
     executor: checks-only
-    gate: acceptance-gate
     checks:
       - "git diff --check"
 ---
@@ -430,7 +487,7 @@ def test_normal_path_uses_one_generator_and_one_targeted_reviewer(
     ):
         calls.append({"role": role, "persona": persona, "prompt": prompt})
         if role == "verifier":
-            return 0, "No blocking defect found.\nVERDICT: PASS"
+            return 0, _ADAPTIVE_ANSWERS + "No blocking defect found.\nVERDICT: PASS"
         return 0, "STATUS: done"
 
     monkeypatch.setattr(providers, "run_provider", fake_run_provider)
@@ -475,7 +532,7 @@ def test_two_high_risk_domains_add_a_secondary_reviewer(
     ):
         calls.append({"role": role, "persona": persona, "prompt": prompt})
         if role == "verifier":
-            return 0, "No blocking defect found.\nVERDICT: PASS"
+            return 0, _ADAPTIVE_ANSWERS + "No blocking defect found.\nVERDICT: PASS"
         return 0, "STATUS: done"
 
     monkeypatch.setattr(providers, "run_provider", fake_run_provider)
@@ -520,10 +577,11 @@ def test_secondary_reviewer_repairable_fail_still_gets_repaired(
     ):
         calls.append({"role": role, "persona": persona, "prompt": prompt})
         if role == "verifier" and persona == "design-reviewer":
-            return 0, "No blocking defect found.\nVERDICT: PASS"
+            return 0, _ADAPTIVE_ANSWERS + "No blocking defect found.\nVERDICT: PASS"
         if role == "verifier" and persona == "security-reviewer":
             return 0, (
-                "Missing authorization check reproduces on this input.\n"
+                _ADAPTIVE_ANSWERS
+                + "Missing authorization check reproduces on this input.\n"
                 f"REPRODUCTION: unauthenticated request reaches the handler\n"
                 f"MECHANICAL_CHECK: {allowed_check}\n"
                 "VERDICT: FAIL"
@@ -570,6 +628,14 @@ def test_secondary_reviewer_repairable_fail_still_gets_repaired(
     assert verdicts[1] == {
         "by": "adaptive-repair",
         "ok": True,
+        # The repaired record carries the reviewer's own per-criterion lines forward.
+        # Without them it would say "passed" while naming nothing it judged — the
+        # shape `gate_outcome` refuses as a rubber stamp (#496).
+        "criteria": _ADAPTIVE_RECORDED,
+        # A passing record says how many of the declared criteria it answered, so
+        # `ok: true` cannot be read as a judgment on all of them.
+        "answered": 4,
+        "declared": 4,
         "note": f"mechanical check passed: {allowed_check}",
     }
 
@@ -892,7 +958,10 @@ def test_pass_with_conditions_is_declared_in_adaptive_reviewer_prompt(
     ):
         if role == "verifier":
             reviewer_prompts.append(prompt)
-            return 0, "Non-blocking follow-up noted.\nVERDICT: PASS_WITH_CONDITIONS"
+            return 0, (
+                _ADAPTIVE_ANSWERS
+                + "Non-blocking follow-up noted.\nVERDICT: PASS_WITH_CONDITIONS"
+            )
         return 0, "STATUS: done"
 
     monkeypatch.setattr(providers, "run_provider", fake_run_provider)
@@ -912,6 +981,82 @@ def test_pass_with_conditions_is_declared_in_adaptive_reviewer_prompt(
     assert final == "DONE"
     assert len(reviewer_prompts) == 1
     assert "VERDICT: PASS_WITH_CONDITIONS" in reviewer_prompts[0]
+
+
+def test_the_targeted_reviewer_is_shown_the_criteria_its_step_declares(
+    step_factory, monkeypatch, tmp_path
+):
+    """#497/#496 moved `adaptive-bugfix`'s four diff-settled criteria onto `targeted-review`.
+    The targeted-review prompt is built by `_adaptive_review_prompt`, which did not read the
+    step at all — so without this the relocation delivers a declaration with no reader: four
+    criteria on the step, zero of them in front of the reviewer, and a run record that names
+    nothing it judged.
+
+    The counted record is asserted alongside the prompt, so a prompt that lists them while
+    nothing parses the answers back cannot pass this.
+    """
+    reviewer_prompts = []
+
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        if role == "verifier":
+            reviewer_prompts.append(prompt)
+            return 0, _ADAPTIVE_ANSWERS + "No blocking defect.\nVERDICT: PASS"
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    monkeypatch.setattr(providers, "_run_step_checks", _pass_step_checks)
+    steps = _adaptive_steps(step_factory)
+    declared = steps[2]["acceptance"]
+    state = new_state("adaptive-bugfix", steps, "fix")
+
+    final = run_loop(
+        state, None, "mock", "mock", {"cwd": str(tmp_path)}, 20, quiet=True,
+    )
+
+    assert final == "DONE"
+    assert len(reviewer_prompts) == 1
+    for n, criterion in enumerate(declared, 1):
+        assert criterion in reviewer_prompts[0]
+        assert f"  {n}. {criterion}" in reviewer_prompts[0]
+    assert "CRITERION <n>: PASS|FAIL|UNKNOWN" in reviewer_prompts[0]
+
+    verdict = state["step_state"]["targeted-review"]["verdicts"][0]
+    assert verdict["answered"] == verdict["declared"] == len(declared)
+    # Each answer is bound back to the criterion id it judged: `CRITERION 3` alone is
+    # unresolvable from a run record, which pins no recipe version.
+    assert [c["criterion_id"] for c in verdict["criteria"]] == [
+        entry.split(" — ", 1)[0] for entry in declared]
+
+
+def test_a_targeted_review_that_answers_no_declared_criterion_does_not_pass(
+    step_factory, monkeypatch, tmp_path
+):
+    """Positive control for the test above: the same flow, the same PASS, with the four
+    CRITERION lines removed. Without this, a `_adaptive_review_prompt` that silently stopped
+    carrying the criteria would still show green here."""
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        if role == "verifier":
+            return 0, "No blocking defect.\nVERDICT: PASS"
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    monkeypatch.setattr(providers, "_run_step_checks", _pass_step_checks)
+    state = new_state("adaptive-bugfix", _adaptive_steps(step_factory), "fix")
+
+    final = run_loop(
+        state, None, "mock", "mock", {"cwd": str(tmp_path)}, 20, quiet=True,
+    )
+
+    assert final != "DONE"
+    failures = [h for h in state["history"] if h.get("action") == "FAIL"]
+    assert failures and failures[0]["outcome"] == "unanswered"
+    # The retry is not blind: the record says what was missing even though every verdict
+    # in it reports ok, so `_distill_failures` alone would have found nothing to report.
+    assert "without answering any of its" in failures[0]["findings"]
 
 
 def test_unknown_executor_stops_without_provider_call(
@@ -1094,7 +1239,8 @@ def test_codex_style_backtick_wrapped_mechanical_check_still_gets_repaired(
         calls.append({"role": role, "persona": persona, "prompt": prompt})
         if role == "verifier":
             return 0, (
-                "Blocking finding: the diff is correct but untested.\n"
+                _ADAPTIVE_ANSWERS
+                + "Blocking finding: the diff is correct but untested.\n"
                 "REPRODUCTION: `Ledger().transfer(\"alice\", \"bob\", -10)` should raise.\n"
                 f"MECHANICAL_CHECK: `{allowed_check}`\n"
                 "VERDICT: FAIL"
@@ -1132,6 +1278,14 @@ def test_codex_style_backtick_wrapped_mechanical_check_still_gets_repaired(
     assert state["step_state"]["targeted-review"]["verdicts"] == [{
         "by": "adaptive-repair",
         "ok": True,
+        # The repaired record carries the reviewer's own per-criterion lines forward.
+        # Without them it would say "passed" while naming nothing it judged — the
+        # shape `gate_outcome` refuses as a rubber stamp (#496).
+        "criteria": _ADAPTIVE_RECORDED,
+        # A passing record says how many of the declared criteria it answered, so
+        # `ok: true` cannot be read as a judgment on all of them.
+        "answered": 4,
+        "declared": 4,
         "note": f"mechanical check passed: {allowed_check}",
     }]
 
@@ -1151,7 +1305,8 @@ def test_allowlisted_blocking_finding_gets_one_informed_repair(
         calls.append({"role": role, "persona": persona, "prompt": prompt})
         if role == "verifier":
             return 0, (
-                "The regression is reproducible.\n"
+                _ADAPTIVE_ANSWERS
+                + "The regression is reproducible.\n"
                 f"REPRODUCTION: {reproduction}\n"
                 f"MECHANICAL_CHECK: {allowed_check}\n"
                 "VERDICT: FAIL"
@@ -1200,6 +1355,14 @@ def test_allowlisted_blocking_finding_gets_one_informed_repair(
     assert state["step_state"]["targeted-review"]["verdicts"] == [{
         "by": "adaptive-repair",
         "ok": True,
+        # The repaired record carries the reviewer's own per-criterion lines forward.
+        # Without them it would say "passed" while naming nothing it judged — the
+        # shape `gate_outcome` refuses as a rubber stamp (#496).
+        "criteria": _ADAPTIVE_RECORDED,
+        # A passing record says how many of the declared criteria it answered, so
+        # `ok: true` cannot be read as a judgment on all of them.
+        "answered": 4,
+        "declared": 4,
         "note": f"mechanical check passed: {allowed_check}",
     }]
     repair = next(item for item in state["history"] if item["action"] == "INFORMED_REPAIR")
@@ -1232,7 +1395,8 @@ def test_informed_repair_detects_diff_via_invocation_cwd_without_explicit_cfg_cw
         calls.append({"role": role, "persona": persona})
         if role == "verifier":
             return 0, (
-                "REPRODUCTION: the sibling-write path has no test pinning it\n"
+                _ADAPTIVE_ANSWERS
+                + "REPRODUCTION: the sibling-write path has no test pinning it\n"
                 f"MECHANICAL_CHECK: {allowed_check}\n"
                 "VERDICT: FAIL"
             )

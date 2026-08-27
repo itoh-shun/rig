@@ -245,7 +245,11 @@ def test_write_artifact_is_persisted_handed_to_actual_reviewer_and_returned(
         calls.append((provider, role, persona, prompt))
         if role == "generator":
             return 0, artifact
-        return 0, "根拠: artifact reviewed\n判定: APPROVE"
+        # `CRITERION 1:` is required, not decorative: the review step declares one criterion,
+        # and since #496 a PASSING verdict that answers none of a step's declared criteria is
+        # a rubber stamp the gate refuses. A reviewer that means to approve has to say what
+        # it judged.
+        return 0, "根拠: artifact reviewed\nCRITERION 1: PASS — artifact:1\n判定: APPROVE"
 
     monkeypatch.setattr(providers, "run_provider", fake_run_provider)
     steps = load_steps({"steps": [

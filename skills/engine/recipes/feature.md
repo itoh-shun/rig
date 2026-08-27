@@ -75,7 +75,7 @@ steps:
 5. **test** — build/lint/test を実行する。
 6. **update-docs-if-needed** — 公開挙動・API・設定を変えた場合のみドキュメントを更新する（無関係なら skip・`no_unrelated_diff` を守る）。
 7. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー。
-8. **acceptance** — 13基準（standard 8 + feature 5）の acceptance-check（`max_retries: 2`）。
+8. **acceptance** — acceptance-check（`max_retries: 2`）。この step の `acceptance:` の13件はこのフローが証拠を作る作業一覧で、accept の条件ではない。要求の正本は `standard` + `feature` preset から組まれるタスクのゲート——`rig-wb wb accept` はそちらが埋まるまで拒否する。
 
 ## bugfix との違い
 

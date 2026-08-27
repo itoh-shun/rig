@@ -392,6 +392,19 @@ def cmd_gate(args: argparse.Namespace) -> None:
             print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}")
         for note in sensor_notes:
             print(note)
+        # #497: a reader who has just run a recipe sees a shorter `acceptance:` list in the
+        # recipe than the list above and concludes one of the two is wrong. Neither is. The
+        # list above is what `accept` requires; a recipe's list is what that flow's own steps
+        # produce evidence for, and it is expected to be a subset.
+        pending = [c["name"] for c in acc["checks"] if c["status"] == "pending"]
+        if pending:
+            print(f"\n{len(pending)} criteria still pending: {', '.join(pending)}")
+            print("  This list — built by build_acceptance() from the presets, never from a "
+                  "recipe — is what `wb accept` requires.")
+            print("  A recipe's `acceptance:` is that flow's WORK LIST (the criteria its own "
+                  "steps produce evidence for), not the condition for acceptance,")
+            print("  so answering it exactly is expected to leave the rest pending. Record "
+                  "them with `--set`, or `warning:未確認` when you cannot judge.")
         if acc["status"] == "failed":
             sys.exit(1)
 

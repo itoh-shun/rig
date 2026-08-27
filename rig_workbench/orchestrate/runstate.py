@@ -11,10 +11,17 @@ from . import config
 from .gates import is_runtime_gate, validate_executable_steps
 from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
 
-EXECUTION_POLICY_VERSION = 1
+# Bumped to 2 when the preflight gained the verdict-less-executor rule (#496/#497).
+# A run-state written under version 1 carries a six-field `execution` record, which
+# no longer matches what the current policy computes; rather than silently reading
+# the old record as agreement, `_state_no_orchestrate` refuses it by version and the
+# run stops with that reason named. An in-flight run started before the upgrade has
+# to be restarted, which is the honest outcome — its steps were admitted under a
+# rule that no longer holds.
+EXECUTION_POLICY_VERSION = 2
 _EXECUTION_FIELDS = (
     "structurally_valid", "orchestratable", "manual_only",
-    "unsupported_gates", "errors", "reason",
+    "unsupported_gates", "verdictless_gates", "errors", "reason",
 )
 _EXECUTION_STATE_FIELDS = frozenset({
     "execution_policy_version", "no_orchestrate", "execution",
@@ -78,8 +85,10 @@ def enforce_executable_state(state: dict) -> dict:
     state["execution"] = execution
     if execution["orchestratable"]:
         return execution
-    first = execution["unsupported_gates"][0] if execution["unsupported_gates"] else None
-    at = first["step"] if first else "—"
+    # Name the step, not just the reason: "computationally nonexecutable" with `at: —`
+    # sends the reader hunting through the whole recipe for the one step that is wrong.
+    offenders = [*execution.get("verdictless_gates", []), *execution["unsupported_gates"]]
+    at = offenders[0]["step"] if offenders else "—"
     state["stopped"] = {
         "reason": f"computationally nonexecutable: {execution['reason']}",
         "kind": "BLOCKED",
@@ -572,7 +581,7 @@ def _distill_failures(st: dict) -> str | None:
 # ── Gate evaluation (deterministic, pure functions) ──────────────────────────
 def gate_outcome(step: dict, st: dict) -> str:
     """Deterministically judge the current step's pass/fail.
-    Returns: pass | fail | incomplete | self-graded
+    Returns: pass | fail | incomplete | self-graded | unsupported | unanswered
     """
     declared = step["checks"]
     ran = st["checks"]
@@ -585,19 +594,41 @@ def gate_outcome(step: dict, st: dict) -> str:
         if any(not c["ok"] for c in ran):
             return "fail"
 
-    # Inferential verification (verdict) — acceptance-gate/review-gate require an independent judgment (when no checks declared).
+    # Inferential verification (verdict). acceptance-gate/review-gate mean an independent
+    # judgment decides the step; checks[] are a precondition for that judgment, never a
+    # substitute for it. Until #496 a runtime-gated step that also declared checks[] passed
+    # on the checks alone with `verdicts: []` — the gate's name promised a judgment that
+    # nobody had made.
     gate = step["gate"]
     if not gate:
         return "pass"  # gate-less steps pass through (when checks are empty)
     if gate and not is_runtime_gate(gate):
         return "unsupported"
-    needs_verdict = is_runtime_gate(gate) and not declared
-    if needs_verdict and not verdicts:
+    if is_runtime_gate(gate) and not verdicts:
         return "incomplete"            # awaiting the independent verifier's judgment
 
     # Enforce grader != generator (prevents self-grading bias; policies/independent-verification)
     if any(str(v.get("by", "")).lower() in ("", "self", "generator", "producer") for v in verdicts):
         return "self-graded"
+
+    # A passing verdict that answered none of the step's declared criteria is a rubber
+    # stamp, and the all-UNKNOWN guard in `_judge_output` cannot see it: that guard reads
+    # `if ok and criteria and all(UNKNOWN)`, so an empty criteria list is vacuously
+    # all-UNKNOWN and skips the check. The result was non-monotonic — answering one
+    # criterion UNKNOWN failed the step while answering nothing at all passed it.
+    #
+    # What this does NOT hold, stated so nobody reads more into it: it is a floor of one,
+    # not arity. A verdict that answers 1 of 13 declared criteria and says PASS still
+    # passes here. Tightening it to `len(criteria) < len(step["acceptance"])` was measured
+    # and deliberately not taken in this change: the shipped mock provider emits exactly
+    # one `CRITERION 1:` line whatever a step declares, so full arity would turn every
+    # mock-driven bench/eval run of a 13-criterion `bugfix` acceptance step from DONE into
+    # ESCALATE — re-baselining the eval harness rather than enforcing the contract. The
+    # arity a verdict actually reached is recorded per verdict (`answered`/`declared` in
+    # `providers.record_verdicts`) so a reader of the record is not misled about it.
+    if step.get("acceptance") and any(v.get("ok") and not (v.get("criteria") or [])
+                                      for v in verdicts):
+        return "unanswered"
     if any(not v["ok"] for v in verdicts):
         return "fail"
 
@@ -700,7 +731,11 @@ def compute_next(state: dict) -> tuple[str, str]:
         need = []
         if step["checks"]:
             need.append(f"check ({len(step['checks'])} machine checks)")
-        if step["gate"] in ("acceptance-gate", "review-gate") and not step["checks"]:
+        if is_runtime_gate(step["gate"]):
+            # Not "…and not step['checks']": since #496 checks[] are a precondition for the
+            # verdict, never a substitute, so a runtime-gated step needs the verdict either
+            # way. The old wording told the operator a step with checks needed no verdict —
+            # which is exactly the state the gate now refuses to pass.
             need.append("verdict (independent verifier judgment; grader != generator)")
         if step.get("human_gate"):
             need.append("human sign-off (`orchestrate approve`)")
@@ -759,7 +794,18 @@ def compute_next(state: dict) -> tuple[str, str]:
     # Distill BEFORE the reset below (or an ESCALATE too) wipes checks/verdicts — reviewer
     # findings must survive the record reset or the retry is blind (#333).
     findings = _distill_failures(st)
-    fail_entry = {"action": "FAIL", "step": sid, "try": st["retries"]}
+    # Record which kind of failure this was. "unanswered" in particular is invisible in the
+    # verdict records themselves — every verdict there says ok — so without this the reader
+    # of a run record sees a step that failed with nothing that failed.
+    fail_entry = {"action": "FAIL", "step": sid, "try": st["retries"], "outcome": outcome}
+    if outcome == "unanswered" and findings is None:
+        # Every verdict on an "unanswered" step says ok, so _distill_failures finds nothing
+        # and the retry would be blind — it would see "failed" with no statement of what.
+        findings = (
+            f"the verdict passed step `{sid}` without answering any of its "
+            f"{len(step.get('acceptance') or [])} declared criteria. Emit one "
+            "`CRITERION <n>: PASS|FAIL|UNKNOWN — <anchor>` line per criterion."
+        )
     if findings is not None:
         fail_entry["findings"] = findings
     state["history"].append(fail_entry)

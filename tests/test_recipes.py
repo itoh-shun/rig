@@ -190,14 +190,36 @@ def test_adaptive_bugfix_graph_references_are_resolved():
 
 
 def test_existing_bugfix_recipe_bytes_are_unchanged():
+    """`bugfix.md`'s hash was re-pinned once, deliberately, by #497: its body claimed the
+    acceptance step judged "13基準（standard 8 + bugfix 5）" while `build_acceptance` builds
+    fifteen, and that sentence was replaced with a statement of which of the two lists is the
+    requirement. Its `steps:` frontmatter is untouched — the point of this pin is that a
+    change aimed at another recipe does not quietly alter these two, and re-pinning it here
+    with a reason is how that stays true rather than becoming a habit."""
     expected = {
-        "bugfix.md": "929fb2104bbda259a9cc351a2bf723a73aa290aa0c1ba540e5d0ea444c182798",
+        "bugfix.md": "1ca64e5d31ca051e453f9397c0c3f33357f17b59d7cc7ec718d4e7e4a460fe0b",
         "fast-bugfix.md": "a922f07ff1e94805d43b8589f7cb08a3e3d51277fc50e739a576c7ba584b345d",
     }
     actual = {
         name: hashlib.sha256((config.RECIPES / name).read_bytes()).hexdigest() for name in expected
     }
     assert actual == expected
+
+    # "Its frontmatter is untouched" is a claim, so it is checked rather than asserted in
+    # prose: the executable half of both files is pinned separately from the body, and it is
+    # this pin — not the whole-file one above — that a behaviour change would break.
+    frontmatter = {
+        name: hashlib.sha256(
+            (config.RECIPES / name).read_text(encoding="utf-8").split("---\n", 2)[1]
+            .encode("utf-8")
+        ).hexdigest()
+        for name in expected
+    }
+    assert frontmatter == {
+        # Both unchanged from before #497 (verified against `git show HEAD:<file>`).
+        "bugfix.md": "aa354ed37966e42135295b629d0feb0ad5e20fa5494715eaad47f722009f6767",
+        "fast-bugfix.md": "96d40a5ddffeee1ac9f8d045316ca7cbe191572e890a592f922e3288d358bafb",
+    }
 
 
 def test_parse_frontmatter_missing_or_unterminated(tmp_path):

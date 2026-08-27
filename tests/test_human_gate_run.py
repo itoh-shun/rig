@@ -74,6 +74,7 @@ def run(repo, *args, actor="alice"):
     env = dict(os.environ)
     env.update({"RIG_ACTOR": actor, "RIG_HOME": str(REPO_ROOT),
                 "RIG_ALLOW_PROJECT_RECIPES": "1", "RIG_SKIP_GH_CHECK": "1",
+                "RIG_TRUST_STORE": str(repo / ".rig" / "trusted-recipes.json"),
                 "PYTHONPATH": str(REPO_ROOT)})
     return subprocess.run([sys.executable, str(ORCHESTRATE), *args],
                           capture_output=True, text=True, cwd=repo, timeout=120, env=env)
@@ -83,13 +84,103 @@ def out(result):
     return result.stdout + result.stderr
 
 
+def verify(repo, actor="alice"):
+    """Satisfy both halves of an acceptance gate: checks, then independent verdict."""
+    checked = run(repo, "check", actor=actor)
+    assert checked.returncode == 0, out(checked)
+    judged = run(repo, "verdict", "run-state.json", "--by", "test-verifier", "--pass",
+                 "--criterion", "1=PASS", actor=actor)
+    assert judged.returncode == 0, out(judged)
+
+
+def _init_checked(repo):
+    assert run(repo, "init", ".rig/recipes/staged.md").returncode == 0
+    checked = run(repo, "check")
+    assert checked.returncode == 0, out(checked)
+
+
+def test_verdict_records_the_declared_criterion_in_the_automatic_shape(repo):
+    _init_checked(repo)
+    result = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                 "--criterion", "1=PASS")
+    assert result.returncode == 0, out(result)
+    state = json.loads((repo / "run-state.json").read_text(encoding="utf-8"))
+    assert state["step_state"]["implement"]["verdicts"] == [{
+        "by": "reviewer", "ok": True, "note": "",
+        "criteria": [{"n": 1, "verdict": "PASS", "anchor": "",
+                      "criterion": "it builds"}],
+        "answered": 1, "declared": 1,
+    }]
+
+
+@pytest.mark.parametrize("criterion", ["2=PASS", "0=PASS"])
+def test_verdict_rejects_an_out_of_range_criterion_but_accepts_a_declared_one(repo, criterion):
+    _init_checked(repo)
+    rejected = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                   "--criterion", criterion)
+    assert rejected.returncode == 1
+    assert "out of range" in out(rejected)
+    accepted = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                   "--criterion", "1=PASS")
+    assert accepted.returncode == 0, out(accepted)
+
+
+def test_verdict_rejects_a_duplicate_criterion_but_accepts_distinct_ones(repo):
+    recipe = RECIPE.replace('acceptance: ["it builds"]',
+                            'acceptance: ["it builds", "tests pass"]', 1)
+    (repo / ".rig" / "recipes" / "staged.md").write_text(recipe, encoding="utf-8")
+    _init_checked(repo)
+    rejected = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                   "--criterion", "1=PASS", "--criterion", "1=PASS")
+    assert rejected.returncode == 1
+    assert "duplicate" in out(rejected)
+    accepted = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                   "--criterion", "1=PASS", "--criterion", "2=UNKNOWN")
+    assert accepted.returncode == 0, out(accepted)
+
+
+@pytest.mark.parametrize("criterion", ["1.0=PASS", "one=PASS"])
+def test_verdict_rejects_a_non_integer_criterion_but_accepts_an_integer(repo, criterion):
+    _init_checked(repo)
+    rejected = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                   "--criterion", criterion)
+    assert rejected.returncode == 1
+    assert "integer" in out(rejected)
+    accepted = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                   "--criterion", "1=PASS")
+    assert accepted.returncode == 0, out(accepted)
+
+
+@pytest.mark.parametrize("args", [["--criterion"], ["--criterion", "1"],
+                                   ["--criterion", "1=MAYBE"]])
+def test_verdict_rejects_missing_or_unparseable_answers_but_accepts_a_complete_one(repo, args):
+    _init_checked(repo)
+    rejected = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass", *args)
+    assert rejected.returncode == 1
+    assert "criterion" in out(rejected).lower()
+    accepted = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass",
+                   "--criterion", "1=PASS")
+    assert accepted.returncode == 0, out(accepted)
+
+
+def test_passing_without_criterion_answers_remains_unanswered(repo):
+    _init_checked(repo)
+    recorded = run(repo, "verdict", "run-state.json", "--by", "reviewer", "--pass")
+    assert recorded.returncode == 0, out(recorded)
+    blocked = run(repo, "next")
+    assert "RETRY" in out(blocked)
+    state = json.loads((repo / "run-state.json").read_text(encoding="utf-8"))
+    assert state["cursor"] == 0
+    assert state["history"][-1]["outcome"] == "unanswered"
+
+
 def drive_to_gate(repo, actor="alice"):
-    """init → clear step 1 → start step 2 → clear its machine checks."""
+    """init → verify step 1 → start step 2 → verify it → human gate."""
     assert run(repo, "init", ".rig/recipes/staged.md", actor=actor).returncode == 0
-    run(repo, "check", actor=actor)
+    verify(repo, actor=actor)
     run(repo, "next", actor=actor)          # implement passes
     run(repo, "next", actor=actor)          # architecture_review starts
-    run(repo, "check", actor=actor)
+    verify(repo, actor=actor)
     return run(repo, "next", actor=actor)   # → parks
 
 
@@ -191,7 +282,7 @@ def test_running_a_stage_outside_its_owning_role_warns_but_proceeds(repo):
     verify that a human architect typed anything, only that one signed."""
     govern(repo)
     run(repo, "init", ".rig/recipes/staged.md")
-    run(repo, "check")
+    verify(repo)
     run(repo, "next")
     started = run(repo, "next")                    # alice starts the architect's stage
     assert started.returncode == 0
@@ -209,10 +300,10 @@ def test_a_policy_stage_rule_gates_an_ungated_recipe(repo):
     govern(repo, {**POLICY, "approvals": {"stage:architecture_review": {
         "quorum": 1, "roles": ["architect"]}}})
     assert run(repo, "init", ".rig/recipes/plain.md").returncode == 0
-    run(repo, "check")
+    verify(repo)
     run(repo, "next")
     run(repo, "next")
-    run(repo, "check")
+    verify(repo)
     parked = run(repo, "next")
     assert parked.returncode == 3
     assert "awaits human sign-off" in parked.stdout
@@ -225,10 +316,10 @@ def test_a_recipe_without_a_human_gate_runs_straight_through(repo):
                                                                        "name: plain"),
                                                         encoding="utf-8")
     run(repo, "init", ".rig/recipes/plain.md")
-    run(repo, "check")
+    verify(repo)
     run(repo, "next")
     run(repo, "next")
-    run(repo, "check")
+    verify(repo)
     done = run(repo, "next")
     assert done.returncode == 0
     assert "DONE" in done.stdout

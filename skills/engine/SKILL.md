@@ -118,7 +118,7 @@ command asset は install だけでホストの slash command に自動登録さ
 | `--save-recipe <name>` | 今回合成したハーネスを recipe として保存。既定は project 層、`--user` 併用で user 層（§4.3.2） |
 | `--description "<text>"` | `--save-recipe` と併用し保存 recipe の `description` を指定テキストにする。単独指定は `[WARN] --description は --save-recipe と組み合わせて使用してください（無視します）` |
 | `--workflow` | 実行バックエンドを **workflow**（ultracode Workflow ツール）に切り替える。既定は **manual**（`patterns/workflow-backend`） |
-| `--orchestrate` | **計算的オーケストレーション**を ON＝step 遷移・ゲート判定・リトライ・停止条件・状態保持を散文でなく `scripts/orchestrate.py`（決定論ランナー）に強制させる。半自動＝`init`→`next`/`check`/`verdict`（長い中断からは `resume`＝verify-first 再開）、全自動＝`run`（各 step を別プロセス・マルチプロバイダで実行し検証は別プロバイダ＝構造的に採点者≠生成者）。**自動 ON の条件は §4.3**。`patterns/computational-orchestration` が正本 |
+| `--orchestrate` | **計算的オーケストレーション**を ON＝step 遷移・ゲート判定・リトライ・停止条件・状態保持を散文でなく `scripts/orchestrate.py`（決定論ランナー）に強制させる。半自動＝`init`→`next`/`check`/`verdict`（`acceptance:` 宣言時の verdict は `--criterion N=PASS|FAIL|UNKNOWN` を反復。無回答 PASS は未回答）、長い中断からは `resume`＝verify-first 再開。全自動＝`run`（各 step を別プロセス・マルチプロバイダで実行し検証は別プロバイダ＝構造的に採点者≠生成者）。**自動 ON の条件は §4.3**。`patterns/computational-orchestration` が正本 |
 | `--no-orchestrate` | 自動有効化を**この run だけ打ち消す**＝従来の散文エンジンで回す |
 | （横断 CLI） | `orchestrate install-shim` で `~/.local/bin/rig` を 1 回張れば任意 cwd から `rig <subcommand>` で起動できる。`$RIG_HOME` 上書き可、`<cwd>/.rig/recipes/<name>.md` が同名 built-in を**プロジェクト overlay**として上書き、`checks:` の実行 cwd は呼び出し元（rig リポジトリではない） |
 | `--capture` / `--no-capture` | capture を承認ダイアログなしで実行 / 完全にスキップ。同時指定は `--no-capture` 優先＋WARN（§7.3） |
