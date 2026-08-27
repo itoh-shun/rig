@@ -19,6 +19,7 @@ $ARGUMENTS
 
 | 先頭語 | 委譲先 |
 |---|---|
+| `compose-options --type <task_type> [--diff <n>] [--json]` | `facets/instructions/workbench-ops`（対話用の候補・推薦・根拠を決定論的に取得） |
 | `status [<task_id>]` | `facets/instructions/workbench-ops`（実行状態表示） |
 | `diff [<task_id>]` | `facets/instructions/workbench-ops`（差分表示） |
 | `accept [<task_id>] [--force]` | `facets/instructions/workbench-ops`（メイン作業ツリーへ反映） |

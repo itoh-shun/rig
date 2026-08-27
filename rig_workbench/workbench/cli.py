@@ -50,6 +50,7 @@ from .knowledge_candidate import cmd_knowledge_candidate
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
+from .compose_options import cmd_compose_options, non_negative_diff
 from .context_report import cmd_context
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
@@ -298,6 +299,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_route_context_arguments(p)
     p.add_argument("--json", action="store_true", help="emit the exact route record")
     p.set_defaults(func=cmd_route)
+
+    p = sub.add_parser("compose-options", help="derive the five deterministic choices for interactive composition")
+    p.add_argument("--type", required=True, choices=tuple(TASK_TYPES), help="classified task type")
+    p.add_argument("--diff", type=non_negative_diff,
+                   help="non-negative added plus removed lines; omit when unobservable")
+    p.add_argument("--json", action="store_true", help="emit rig.compose-options/v1")
+    p.set_defaults(func=cmd_compose_options)
 
     p = sub.add_parser("step", help="record step progress")
     p.add_argument("task_id", nargs="?")
