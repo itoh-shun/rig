@@ -30,6 +30,131 @@ _CORE_DEFAULTS = {
     "release_support": "release-flow",
 }
 
+# Route-level evidence ownership.  This is deliberately separate from recipe
+# ``acceptance[]``: recipes name work they perform, while these records account
+# for every criterion the selected task type puts on the binding gate.  A
+# manual owner is data, not a fallback used by the validator.
+_STANDARD_PRODUCERS = {
+    name: {"kind": "manual", "name": "operator"} for name in (
+        "task_intent_satisfied", "no_unrelated_diff", "diff_summary_written",
+        "risk_summary_written", "tests_pass_or_explained",
+        "no_type_errors_or_explained", "no_secret_leak", "no_gate_tampering",
+        "no_injection_markers", "no_destructive_operation",
+    )
+}
+_STANDARD_PRODUCERS.update({
+    "no_secret_leak": {"kind": "sensor", "name": "scan-secrets"},
+    "no_gate_tampering": {"kind": "sensor", "name": "anti-tamper"},
+    "no_injection_markers": {"kind": "sensor", "name": "scan-injection"},
+    "no_destructive_operation": {"kind": "sensor", "name": "scan-destructive"},
+})
+_TASK_MANUAL = {
+    "bugfix": {**_STANDARD_PRODUCERS, **{
+        name: {"kind": "manual", "name": "operator"} for name in (
+            "bug_cause_identified", "fix_is_minimal",
+            "regression_test_added_or_explained", "existing_behavior_preserved",
+            "no_unrelated_refactor",
+        )}},
+    "feature": {**_STANDARD_PRODUCERS, **{
+        name: {"kind": "manual", "name": "operator"} for name in (
+            "requirement_summary_written", "implementation_matches_requirement",
+            "tests_added_or_explained", "public_api_changes_documented",
+            "migration_or_backward_compatibility_considered",
+        )}},
+    "refactor": {**_STANDARD_PRODUCERS, **{
+        name: {"kind": "manual", "name": "operator"} for name in (
+            "behavior_boundaries_identified", "no_unintended_behavior_change",
+            "tests_confirm_behavior_preserved", "no_unrelated_refactor",
+            "public_api_changes_documented_if_any",
+        )}},
+    "standard": _STANDARD_PRODUCERS,
+    "review": {name: {"kind": "manual", "name": "operator"} for name in (
+        "findings_are_concrete", "severity_labeled", "file_references_included",
+        "blocking_and_non_blocking_separated", "false_positive_risk_considered",
+    )},
+    "security_review": {name: {"kind": "manual", "name": "operator"} for name in (
+        "findings_are_concrete", "severity_labeled", "file_references_included",
+        "blocking_and_non_blocking_separated", "false_positive_risk_considered",
+        "authn_authz_impact_checked", "user_input_flow_checked",
+        "secret_exposure_checked", "unsafe_eval_or_shell_checked",
+        "dependency_risk_checked",
+    )},
+}
+
+
+def _step_owned(base, step, criteria):
+    producers = dict(base)
+    for criterion in criteria:
+        if producers[criterion]["kind"] != "sensor":
+            producers[criterion] = {"kind": "step", "name": step}
+    return producers
+
+
+_STANDARD_STEP_CRITERIA = (
+    "task_intent_satisfied", "no_unrelated_diff", "diff_summary_written",
+    "risk_summary_written", "tests_pass_or_explained", "no_type_errors_or_explained",
+)
+_BUGFIX_FLOW = _step_owned(
+    _TASK_MANUAL["bugfix"], "acceptance", _STANDARD_STEP_CRITERIA + (
+        "bug_cause_identified", "fix_is_minimal", "regression_test_added_or_explained",
+        "existing_behavior_preserved", "no_unrelated_refactor",
+    ),
+)
+_FEATURE_FLOW = _step_owned(
+    _TASK_MANUAL["feature"], "acceptance", _STANDARD_STEP_CRITERIA + (
+        "requirement_summary_written", "implementation_matches_requirement",
+        "tests_added_or_explained", "public_api_changes_documented",
+        "migration_or_backward_compatibility_considered",
+    ),
+)
+_REFACTOR_FLOW = _step_owned(
+    _TASK_MANUAL["refactor"], "acceptance", _STANDARD_STEP_CRITERIA + (
+        "behavior_boundaries_identified", "no_unintended_behavior_change",
+        "tests_confirm_behavior_preserved", "no_unrelated_refactor",
+        "public_api_changes_documented_if_any",
+    ),
+)
+_DOCUMENTATION_FLOW = _step_owned(
+    _TASK_MANUAL["standard"], "acceptance", _STANDARD_STEP_CRITERIA,
+)
+_BUGFIX_AS_TEST = _step_owned(
+    _TASK_MANUAL["feature"], "acceptance", _STANDARD_STEP_CRITERIA,
+)
+
+
+def _route(task_type, recipe, capability, context, profile, producers):
+    return {
+        "task_type": task_type, "recipe": recipe, "capability": capability,
+        "context": context, "profile": profile, "producers": producers,
+    }
+
+# Closed-schema records consumed by ``scripts/validate.py``.  ``capabilities``
+# is the routing authority, so keeping ownership beside the routes makes route
+# additions visible in the same review.  Multiple capabilities may share a
+# truthful ownership map; they remain distinct records and are validated
+# independently.
+ROUTE_PRODUCERS = (
+    _route("bugfix", "bugfix", "bugfix", {}, "core", _BUGFIX_FLOW),
+    _route("performance", "bugfix", "performance", {}, "core", _BUGFIX_FLOW),
+    _route("feature", "feature", "feature", {}, "core", _FEATURE_FLOW),
+    _route("refactor", "refactor", "refactor", {}, "core", _REFACTOR_FLOW),
+    _route("documentation", "documentation", "documentation", {}, "core", _DOCUMENTATION_FLOW),
+    _route("investigation", "debug", "investigation", {}, "core", _TASK_MANUAL["standard"]),
+    _route("release_support", "release-flow", "release_support", {}, "core", _TASK_MANUAL["standard"]),
+    _route("design", "design-first", "generic-design", {}, "core", _TASK_MANUAL["standard"]),
+    _route("design", "design", "design", {}, "preferred-design", _TASK_MANUAL["standard"]),
+    _route("test", "test-design", "test", {}, "preferred-test", _TASK_MANUAL["feature"]),
+    _route("test", "feature", "test-implementation", {}, "core", _FEATURE_FLOW),
+    _route("test", "bugfix", "test-implementation", {"implementation_type": "bugfix"}, "core", _BUGFIX_AS_TEST),
+    _route("test", "review-only", "test-review", {"read_only": True}, "core", _TASK_MANUAL["feature"]),
+    _route("review", "review-only", "review", {}, "core", _TASK_MANUAL["review"]),
+    _route("review", "review-only", "diff-review", {"remote_pr": True, "has_diff": True}, "core", _TASK_MANUAL["review"]),
+    _route("review", "pr-review", "remote_pr", {"remote_pr": True}, "preferred-pr", _TASK_MANUAL["review"]),
+    _route("security_review", "review-only", "security-review", {}, "core", _TASK_MANUAL["security_review"]),
+    _route("security_review", "review-only", "diff-review", {"remote_pr": True, "has_diff": True}, "core", _TASK_MANUAL["security_review"]),
+    _route("security_review", "pr-review", "remote_pr", {"remote_pr": True}, "preferred-pr", _TASK_MANUAL["security_review"]),
+)
+
 
 class RouteResolutionError(PackError):
     """An explicitly requested route cannot be resolved safely."""
