@@ -27,7 +27,7 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 | **agent**（native 委譲先・優先） | read-only reviewer。専用 context・tool 制限つきで起動 | `agents/security-reviewer` `agents/design-reviewer` `agents/test-reviewer` `agents/behavioral-correctness-reviewer` `agents/performance-reviewer` `agents/observability-reviewer` `agents/api-compat-reviewer` `agents/migration-reviewer` `agents/docs-reviewer` `agents/finding-verifier` `agents/lazy-senior-reviewer` `agents/cognitive-economist-reviewer` |
 | **persona facet**（agent フォールバック） | reviewer 人格。agent が無い時 subagent prompt の System に合成 | `facets/personas/security-reviewer` `facets/personas/design-reviewer` `facets/personas/test-reviewer` `facets/personas/behavioral-correctness-reviewer` `facets/personas/performance-reviewer` `facets/personas/observability-reviewer` `facets/personas/api-compat-reviewer` `facets/personas/migration-reviewer` `facets/personas/docs-reviewer` `facets/personas/finding-verifier` `facets/personas/orchestrator` `facets/personas/implementer` `facets/personas/debugger` `facets/personas/lazy-senior` `facets/personas/cognitive-economist` `facets/personas/cross-llm-reviewer` |
 | **文体 persona facet**（styles シリーズ） | 書き手の語り口だけを担う shipped persona。事実・敬語・納品形式を持つ書き手 persona と同 step に置き、語り口側だけを差し替える | `facets/personas/styles/{qiita-tech-writer,dialogue-tech-explainer}` |
-| **instruction facet**（薄い委譲） | 手順の routing。既存 skill/command/agent に委譲する thin な指示 | `facets/instructions/parallel-review` `facets/instructions/intake` `facets/instructions/design` `facets/instructions/implement` `facets/instructions/verify` `facets/instructions/visual-verify` `facets/instructions/pr` `facets/instructions/merge` `facets/instructions/adversarial-review` `facets/instructions/adaptive-assess` |
+| **instruction facet**（薄い委譲） | 手順の routing。既存 skill/command/agent に委譲する thin な指示 | `facets/instructions/parallel-review` `facets/instructions/intake` `facets/instructions/design` `facets/instructions/implement` `facets/instructions/verify` `facets/instructions/visual-verify` `facets/instructions/pr` `facets/instructions/merge` `facets/instructions/adversarial-review` `facets/instructions/adaptive-assess` `facets/instructions/compose` |
 | **output-contract facet** | subagent 出力の機械抽出可能フォーマット定義 | `facets/output-contracts/review-verdict`（着手判断の集約用・既定） `facets/output-contracts/review-findings`（severity・file:line・Blocking/Non-blocking を明示する詳細版。`/rig:drill` と厳しめレビュー依頼で使用） `facets/output-contracts/conformance-report`（ガバナンス適合性＝総合行〔force 率必須〕・層の到達・チーム別スコア表・乖離） |
 | **policy facet** | 末尾注入のガードレール | `facets/policies/pr-hygiene` `facets/policies/pre-push-review` `facets/policies/ci-cost` `facets/policies/branch-strategy` `facets/policies/risk-based-testing` `facets/policies/cross-llm-legibility` `facets/policies/suppression-memory`（レビュー却下学習＝`.rig/review-suppressions.jsonl`。REFUTED/却下所見を記録し再指摘を抑止・UPHELD には負ける） `facets/policies/comment-policy`（`--comment` の投稿統制＝severity マッピング・nit 上限5・Pre-existing note・再レビュー収束） `facets/policies/org-policy`（組織ポリシーが効くリポジトリでのガードレール＝層の緩和・封印ロールへの自己登録・台帳編集・無記名 force の禁止。ポリシー未設定なら不活性） |
 | **knowledge facet** | subagent prompt に注入する知識層ブリック | `facets/knowledge/orchestration-patterns` `facets/knowledge/harness-engineering` `facets/knowledge/quality-operating-system`（組織で品質を担保する観点＝個人ハーネスを組織に載せると壊れる4点と、一級概念化で直る6概念） `facets/knowledge/_layer` |
@@ -51,7 +51,7 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 > | **task-plan**（`/rig:tasks`） | 依頼を検証可能な小タスクへ割ってから実装 | `facets/personas/planner` `facets/instructions/task-plan` `facets/output-contracts/task-plan` `recipes/task-plan` |
 > | **brainstorm**（`/rig:brainstorm`） | 設計の壁打ち。`design-brief` に収束し tasks→dev へ繋ぐ | `facets/personas/brainstormer` `facets/instructions/brainstorm` `facets/output-contracts/design-brief` `recipes/brainstorm` |
 > | **pr-review**（`/rig:pr`） | PR レビュー（reviewer agent・persona・`review-verdict` は dev 共用） | `facets/instructions/pr-review` `recipes/pr-review` |
-> | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | 自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定。**受け入れ基準 ID の正本は `scripts/workbench.py gates`**（project 独自基準は `.rig/gates.json` で**加算のみ**）。基準を裏付ける機械センサーは7本（OpenAPI schema-diff / secret scan / anti-tamper / injection-marker / destructive-command / prompt-regression〔prompt 面に触れた diff でのみ自動追加〕/ evidence-anchor〔`evidence_anchors_resolve`＝**opt-in**・既定プリセットには入らない〕）。RUN の前段⓪でホスト側前提を1回だけ確認する（`rig-wb hostcheck`・**ブロックしない**） | `patterns/isolated-worktree` `patterns/visual-artifacts` `patterns/computational-orchestration` `scripts/workbench.py` `rig_workbench/hostcheck.py` `facets/instructions/workbench` `facets/instructions/workbench-ops` `facets/instructions/gh-flow` `facets/instructions/acceptance-check` `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` `recipes/{bugfix,feature,refactor,documentation}` |
+> | **workbench**（`/rig:go`・品質保証つき統一入口。`/rig:rig` は互換エイリアス） | 自然文→task_type 分類→recipe 自動選択→隔離 worktree RUN→gate 判定。対話 composition の5軸は `rig-wb wb compose-options` が候補・推薦・根拠を返す。**受け入れ基準 ID の正本は `scripts/workbench.py gates`**（project 独自基準は `.rig/gates.json` で**加算のみ**）。基準を裏付ける機械センサーは7本（OpenAPI schema-diff / secret scan / anti-tamper / injection-marker / destructive-command / prompt-regression〔prompt 面に触れた diff でのみ自動追加〕/ evidence-anchor〔`evidence_anchors_resolve`＝**opt-in**・既定プリセットには入らない〕）。RUN の前段⓪でホスト側前提を1回だけ確認する（`rig-wb hostcheck`・**ブロックしない**） | `patterns/isolated-worktree` `patterns/visual-artifacts` `patterns/computational-orchestration` `scripts/workbench.py` `rig_workbench/hostcheck.py` `facets/instructions/workbench` `facets/instructions/workbench-ops` `facets/instructions/gh-flow` `facets/instructions/acceptance-check` `facets/instructions/{identify-behavior-boundaries,compare-behavior,identify-audience,docs-draft,verify-commands,update-docs}` `recipes/{bugfix,feature,refactor,documentation}` |
 > | **de-ai-smell**（`/rig:dev --recipe de-ai-smell`） | 散文の AI 臭除去（深層マーカー＋5観点スコア定量ゲート＋語彙ブラックリスト） | `facets/personas/ai-smell-reviewer` `facets/instructions/de-ai-smell` `facets/knowledge/ai-writing-smells` `recipes/de-ai-smell` |
 > | **drill**（`/rig:drill`・measurement） | reviewer 検出率の実測（合成 diff にバグの種を注入→6指標スコアボード）。`--replay` でペルソナの snapshot テスト | `facets/personas/strict-senior-engineer` `facets/output-contracts/review-findings` `facets/instructions/drill` `recipes/drill` |
 > | **design**（`/rig:design`） | UI/UX・a11y の作成＋URL 監査（`--ppt`/`--claudedesign`/Playwright は MCP 委譲） | `facets/personas/design/{ui-ux-designer,ux-reviewer,a11y-reviewer}` `facets/instructions/{design-draft,design-vet,design-audit}` `facets/output-contracts/design-verdict` `facets/knowledge/{a11y-wcag,ui-ux-heuristics}` `recipes/{design,design-audit}` |
@@ -111,6 +111,7 @@ command asset は install だけでホストの slash command に自動登録さ
 | `--visual` | verify を `visual-verify`（スクリーンショット等の視覚確認）へ委譲する |
 | `--tdd` | implement を TDD（red-green-refactor）で行う |
 | `--autonomous` | step ゲートを省き自律実行（既定は各 step で確認＝step ゲート ON）。acceptance-gate は維持（§4.5） |
+| `--compose` | RUN 前に5軸（RECIPE / STEP / GATE / BACKEND / MODE）を一度に選ぶ。候補・推薦・根拠は `rig-wb wb compose-options` が返し、提示後は `--plan` 正準形式で確認する。`--autonomous` 併用時は対話せず無視 |
 | `--plan` | COMPOSE まで実行し、合成ハーネスを人間可読で提示して**停止**（実行しない）（§5） |
 | `--save-plan <path>` | `--plan` と併用し、同一内容を `<path>` にも Markdown で書き出す。`--plan` なしなら `[WARN] --save-plan は --plan と組み合わせて使用してください（無視します）` を出して無視。既存ファイルは上書き確認あり（`--autonomous` 時は自動上書き） |
 | `--only <step>` / `--from <step>` / `--to <step>` | 実行範囲のスライス（1つだけ / ここから最後まで / 先頭からここまで）。`--from A --to B` で範囲指定（§4.3.1） |
@@ -143,13 +144,12 @@ command asset は install だけでホストの slash command に自動登録さ
 
 **`--validate` 指定時** → ブリック整合チェック（doctor）。結果を提示して**停止**（`--list` と同じく副作用なしの点検モード）。**検査項目・severity・エラーフォーマットの正本は `facets/instructions/validate`**（① recipe→facet 参照切れ／② manifest 参照・値検証／③ frontmatter スキーマ／③-b persona スキーマ／④ §2 目録ドリフト／⑤ wiki 衛生／⑥ ai-quirks 二相ペア〔--global〕／⑦ accumulated スキーマ）— `--validate` 実行時は必ずこれを読んで従う。CI 用サブセットは `scripts/validate.py`。**`--global` 併用時**は tier 横断で点検する（全 tier の orphan・リンク切れ・参照欠落・重複）。
 
-### 引数なし / 曖昧な場合 → 対話 composition
+### `--compose` / 引数なし / 曖昧な場合 → 対話 composition
 
-1. **何を**したいかを訊く（実装着手 / レビュー / PR 完了 等）。
-2. 目録から該当**ブリックを提案**する。
-3. user に**選択**させる（既定は軽量側、§5 参照）。
-4. 合成した**ハーネスを提示**する。
-5. **確認**を取ってから RUN へ進む。
+`--autonomous` でなければ `facets/instructions/compose` に従う。task_type 確定後、
+`rig-wb wb compose-options --type <task_type> [--diff <n>] --json` が返す5軸の候補・推薦・根拠を
+一度に提示して選ばせる。instruction facet は判定を再実装しない。合成結果は
+`facets/instructions/plan` の `--plan` 正準形式で提示し、確認後 RUN する。
 
 ## 3.5. Recipe スキーマ（正規定義）
 
