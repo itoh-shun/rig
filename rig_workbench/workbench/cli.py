@@ -48,6 +48,7 @@ from .intent import cmd_intent
 from .intent_wiring import cmd_derive
 from .knowledge_candidate import cmd_knowledge_candidate
 from .change_graph import cmd_change_graph
+from .anomaly_trigger import cmd_anomaly_trigger
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -210,6 +211,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit the rig.change-graph-assessment/v1 result")
     p.set_defaults(func=cmd_change_graph)
+
+    p = sub.add_parser(
+        "anomaly-trigger",
+        help="check whether an external anomaly event declares enough supported material to "
+             "start investigation (#442)")
+    p.add_argument("event", help="path to a rig.production-anomaly-event/v1 JSON document")
+    p.add_argument("--json", action="store_true",
+                   help="emit the rig.production-anomaly-trigger-assessment/v1 result")
+    p.set_defaults(func=cmd_anomaly_trigger)
 
     p = sub.add_parser("synthesise",
                        help="validate a proposed workflow against the component catalog and "
