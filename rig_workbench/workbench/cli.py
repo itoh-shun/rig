@@ -47,6 +47,7 @@ from .workflow_effectiveness import cmd_workflow_effectiveness
 from .intent import cmd_intent
 from .intent_wiring import cmd_derive
 from .knowledge_candidate import cmd_knowledge_candidate
+from .change_graph import cmd_change_graph
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -200,6 +201,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit the rig.knowledge-candidate-assessment/v1 result")
     p.set_defaults(func=cmd_knowledge_candidate)
+
+    p = sub.add_parser(
+        "change-graph",
+        help="check whether a caller-authored cross-repository change graph admits an "
+             "execution order under its declared dependencies (#441)")
+    p.add_argument("graph", help="path to a rig.change-graph/v1 JSON document")
+    p.add_argument("--json", action="store_true",
+                   help="emit the rig.change-graph-assessment/v1 result")
+    p.set_defaults(func=cmd_change_graph)
 
     p = sub.add_parser("synthesise",
                        help="validate a proposed workflow against the component catalog and "
