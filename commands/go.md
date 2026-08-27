@@ -46,6 +46,7 @@ $ARGUMENTS
 | `contract <task_id>` | `facets/instructions/workbench-ops`（BYOO 契約＝rig が検証した head と、それを答えた受領書を名指す。exit code が pending/acceptable を伝える） |
 | `intent-derive <contract> --against <json> --floor\|--target [--json]` | `facets/instructions/workbench-ops`（intent contract の**宣言された**要件から workflow の床 or assurance target を導く。推論された要件は床を作らない） |
 | `assurance-target <task_id> <target> [--json]` | `facets/instructions/workbench-ops`（assurance target を受領書と突き合わせる。`unobservable` は `unmet` に畳まない＝「測っていない」と「測って不足」は別） |
+| `knowledge-candidate <candidate> [--json]` | `facets/instructions/workbench-ops`（提出された知見候補が引用記録に明示的に支えられているかだけを判定。読めない証拠は `unobservable`、読めて不支持は `unsupported`） |
 | `assurance-derive <target> --requires <map> --against <json> [--json]` | `facets/instructions/workbench-ops`（target が必要とする workflow の床を、宣言された軸→step 写像から導く。写像が覆わない軸-値は拒否） |
 | `synthesise <workflow> --against <json> [--floor <json>] [--json]` | `facets/instructions/workbench-ops`（提案された workflow に床を復元し、何を復元したかを報告。床は呼び出し側が組み、検査対象からは読まない） |
 | `dev-loop <cycles> [--limits <json>] [--receipt <json>] [--json]` | `facets/instructions/workbench-ops`（開発ループの停止判定と handoff。止まるべき理由を名指し、進捗の無さを進捗と読まない） |
