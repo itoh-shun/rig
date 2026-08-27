@@ -609,7 +609,7 @@ def cmd_run(args):
               "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
               "[--review-category general|incident_report|support_reply] "
               "[--material-profile none|technical|conversation] "
-              "[--out f] [--isolate] [--auto-route] "
+              "[--out f] [--timeout seconds] [--isolate] [--auto-route] "
               "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     path = resolve_recipe(args[0])
@@ -679,6 +679,20 @@ def cmd_run(args):
             i += 2
         elif a == "--base-url" and i + 1 < len(args):
             cfg["base_url"] = args[i + 1]
+            i += 2
+        elif a == "--timeout":
+            if i + 1 >= len(args):
+                diagnostic("[ERROR] --timeout requires a positive integer number of seconds")
+                raise SystemExit(1)
+            try:
+                timeout = int(args[i + 1])
+            except ValueError:
+                diagnostic("[ERROR] --timeout requires a positive integer number of seconds")
+                raise SystemExit(1)
+            if timeout <= 0:
+                diagnostic("[ERROR] --timeout requires a positive integer number of seconds")
+                raise SystemExit(1)
+            cfg["timeout"] = timeout
             i += 2
         elif a in ("--auto-model", "--auto-model-setting"):
             cfg["auto_model"] = True
