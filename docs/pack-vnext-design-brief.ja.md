@@ -1,7 +1,8 @@
 # Pack vNext — 設計ブリーフ（#523）
 
 対象 Issue: [#523](https://github.com/itoh-shun/rig/issues/523)
-状態: **設計案（未承認）**。実装スライスの順序と、着手前に人が決めるべき問いを確定させるための文書。
+状態: **S1 実装済み・S2 以降は設計案**。実装スライスの順序と、着手前に人が決めるべき問いを確定させるための文書。
+§5 の4つの問いは推奨どおり（①git-only v1 ②S5 で lock 読みへ ③vendoring を正規運用 ④`type` 無しは拒否）に決定して着手した。
 
 ---
 
@@ -70,14 +71,28 @@ Issue の「JoyPla のナレッジを追加しただけなのに任意コード�
 | type | 持てる asset | 実行 |
 |---|---|---|
 | `knowledge` | `facets/knowledge/**` `resources/**` | 不可（`commands/` `checks:` を持てない） |
-| `skill` | ＋ `facets/instructions` `facets/personas` `recipes/**` | provider 呼び出しのみ |
-| `workflow` | ＋ orchestration 定義 | provider 呼び出しのみ |
+| `skill` | ＋ `facets/instructions` `facets/personas` `recipes/**` `commands/**` `agents/**` | provider 呼び出しのみ |
+| `workflow` | **`skill` と同一**（差は宣言された意図であって権限ではない） | provider 呼び出しのみ |
 | `policy` | `facets/policies/**` | 不可 |
 | `reviewer` | `facets/personas/**` `facets/output-contracts/**` | 不可 |
 | `tool` | ＋ 実行可能 entrypoint | **可**。署名必須＋明示承認 |
 
-**この検査は `validate` だけでなく install の中でも走らせる。** validate 時のみの検査は、
-manifest を手で書き換えれば抜けられる——つまり検査ではなく助言になる。
+**〔S1 実装時の訂正〕** この文書は当初「validate 時のみの検査は manifest を手で書き換えれば
+抜けられるので install 側にも重複させる」と書いていた。実装して分かったのは、**重複は要らないし、
+そもそも防御はそこではなかった**という2点である。
+
+* `install_pack` は `validate_pack` を呼んでいる。install 経路は最初から同じ検査を通る。
+* manifest を書き換えて `commands/` の宣言を消しても抜けられない。`validate_pack` は
+  **宣言に無いファイルの存在を drift として拒否**し、宣言した全ファイルのハッシュを照合する。
+  つまり `assets` は pack の内容の全量であり、隠した瞬間に別の理由で落ちる。
+
+守っているのは「検査を2箇所に置いたこと」ではなく「宣言が全量であること」である。前者だけを
+足して後者が無ければ、2箇所とも同じ嘘を読むだけになる。
+
+**manifest が宣言できないものは1つある——recipe の `checks:`（orchestrator がホストで実行する
+シェルコマンド）。** これだけは recipe ファイル本文（frontmatter ブロックのみ）を読んで判定し、
+`tool` 以外の type では拒否する。散文中の `checks:` で落とすと、規則を回避する動機を作るだけなので
+frontmatter に限定する。
 
 ### D3. source contract = (scheme, source_id, revision, digest)
 
@@ -133,7 +148,7 @@ pack は他に `video-storytelling` がある。
 
 | S | 内容 | 依存 | 出荷判定 |
 |---|---|---|---|
-| **S1** | `type` フィールド追加、type→asset 表、`validate` ＋ install 双方で強制 | なし | 既存 pack 4つが自分の type で validate を通り、knowledge pack が `commands/` を持てないことがテストで落ちる |
+| ~~**S1**~~ **完了** | `type` フィールド追加（`pack_schema_version` 2）、type→asset 表、recipe `checks:` の type 制限、`pack init --type` 必須化 | なし | 同梱4 pack が `type: skill` で validate を通り、knowledge pack の `commands/` と skill pack の `checks:` がテストで落ちる |
 | **S2** | source contract、`.rig/sources.json`、`git+ssh`/`git+https` install、revision/digest lock、D5 のエラー分類 | S1 | private git repo から install でき、7つの失敗理由が別々に報告される |
 | **S3** | CLI surface `info` / `list` / `outdated` / `update` / `explain` / `source add\|list\|remove` | S2 | install 済み Pack の source / version / integrity を CLI が説明できる（AC 7） |
 | **S4** | dependency を source 横断で解決し lock に確定させる | S2 | AC 12 |

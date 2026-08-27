@@ -8,8 +8,8 @@ import sys
 from rig_workbench import __version__
 
 from .doctor import diagnose
-from .manifest import canonical
-from .model import ASSET_DIRS, PackError
+from .manifest import PACK_SCHEMA_VERSION, canonical
+from .model import ASSET_DIRS, PACK_TYPES, PackError
 from .resolver import pack_roots
 from .validation import validate_pack, validate_tiered_collection
 
@@ -20,6 +20,7 @@ def _parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init")
     init.add_argument("id")
     init.add_argument("--kind", choices=["core", "official", "domain", "project"], default="project")
+    init.add_argument("--type", dest="type_", choices=list(PACK_TYPES), required=True)
     init.add_argument("--root", default=".rig/packs")
     validate = sub.add_parser("validate")
     validate.add_argument("path", nargs="?")
@@ -68,8 +69,13 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def init_pack(pack_id: str, *, kind: str, root: pathlib.Path | str) -> pathlib.Path:
+def init_pack(pack_id: str, *, kind: str, type_: str,
+              root: pathlib.Path | str) -> pathlib.Path:
+    """Scaffold a pack. `type_` has no default on purpose — it decides what the pack may
+    carry and run, and a default would hand that decision to whoever forgot to make it."""
     from .manifest import PACK_ID, RESERVED_PACK_IDS
+    if type_ not in PACK_TYPES:
+        raise PackError(f"pack type must be one of {', '.join(PACK_TYPES)}")
     if not PACK_ID.fullmatch(pack_id):
         raise PackError("pack id is invalid")
     if pack_id in RESERVED_PACK_IDS:
@@ -83,7 +89,8 @@ def init_pack(pack_id: str, *, kind: str, root: pathlib.Path | str) -> pathlib.P
             (destination / directory).mkdir(parents=True, exist_ok=True)
         now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
         manifest = {
-            "pack_schema_version": 1, "id": pack_id, "version": "0.1.0", "kind": kind,
+            "pack_schema_version": PACK_SCHEMA_VERSION, "id": pack_id, "type": type_,
+            "version": "0.1.0", "kind": kind,
             "engine": f">={__version__}", "dependencies": [],
             "assets": {kind_: [] for kind_ in ASSET_DIRS}, "hashes": {},
             "display_name": pack_id, "description": "New Rig pack",
@@ -177,7 +184,7 @@ def cmd_pack(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "init":
-            print(init_pack(args.id, kind=args.kind, root=args.root))
+            print(init_pack(args.id, kind=args.kind, type_=args.type_, root=args.root))
             return 0
         if args.command == "validate":
             if args.global_:

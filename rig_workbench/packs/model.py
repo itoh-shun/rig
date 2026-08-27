@@ -25,6 +25,42 @@ ASSET_DIRS = {
 PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case", "eval-result", "resource"})
 TIERS = ("project", "user", "org", "official", "core")
 
+#: What a pack *is*, which decides what it may carry and run. Distinct from `kind`
+#: (core/official/domain/project), which decides only where it resolves in the tier order —
+#: a tier is not a permission, and folding the two together would make every installed lock
+#: unreadable the moment a new value appeared.
+PACK_TYPES = ("knowledge", "policy", "reviewer", "skill", "workflow", "tool")
+
+#: Asset kinds any pack may carry whatever its type: inert data that is read, never run.
+_INERT_KINDS = frozenset({"wiki", "resource", "eval-case", "eval-result"})
+#: Prompt material — text a provider is shown. Carrying it is not executing anything.
+_PROMPT_KINDS = _INERT_KINDS | {
+    "policy", "persona", "output-contract", "instruction", "recipe", "pattern",
+    "command", "agent",
+}
+
+#: type → the asset kinds it may declare. A pack that declares a kind outside its type's set
+#: is refused; `validate_pack` separately refuses any file the manifest does not declare, so
+#: this set is the pack's whole contents and not just what it admits to.
+#:
+#: `skill` and `workflow` carry the same kinds on purpose — the difference between them is
+#: declared intent, not permission, and pretending otherwise would sell a restriction that
+#: does not exist. What actually separates `tool` from both is RECIPE_CHECKS_TYPES below.
+TYPE_ASSETS = {
+    "knowledge": _INERT_KINDS,
+    "policy": _INERT_KINDS | {"policy"},
+    "reviewer": _INERT_KINDS | {"persona", "output-contract"},
+    "skill": _PROMPT_KINDS,
+    "workflow": _PROMPT_KINDS,
+    "tool": frozenset(ASSET_DIRS),
+}
+
+#: The types whose recipes may declare `checks:` — shell commands the orchestrator runs on
+#: the host. This is the line the issue draws: adding somebody's domain knowledge must not
+#: hand them arbitrary command execution. Every other type ships prompt text, which a
+#: provider reads; only `tool` ships something the machine runs.
+RECIPE_CHECKS_TYPES = frozenset({"tool"})
+
 
 @dataclasses.dataclass(frozen=True)
 class ResolvedAsset:

@@ -12,8 +12,50 @@ from rig_workbench.workbench.injection import scan_file as injection_scan_file
 
 from .manifest import (canonical, digest, parse_frontmatter_subset, read_json_yaml, safe_relative,
                        validate_compatibility, validate_manifest_shape)
-from .model import ASSET_DIRS, PROMPT_KINDS, PackError
+from .model import ASSET_DIRS, PROMPT_KINDS, RECIPE_CHECKS_TYPES, PackError
 from .resources import validate_resource
+
+
+_CHECKS_KEY = re.compile(r"^(\s*)checks:(.*)$")
+
+
+def declares_recipe_checks(path: pathlib.Path) -> bool:
+    """Whether a recipe's frontmatter declares a non-empty `checks:` list.
+
+    `checks:` entries are shell commands the orchestrator runs on the host, so this is the
+    one thing in a pack that executes rather than being read. Only the frontmatter block is
+    scanned — the word appears in recipe prose, and refusing a pack over a sentence would
+    teach people to route around the check.
+
+    Deliberately textual rather than parsed: `parse_frontmatter_subset` handles scalars and
+    flat lists, not the list-of-mappings a recipe's `steps:` is, and a parser that cannot
+    represent the shape it is asked about answers "no checks" for the wrong reason.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise PackError(f"cannot read recipe frontmatter: {path.name}") from exc
+    if not text.startswith("---\n"):
+        return False
+    end = text.find("\n---", 4)
+    if end < 0:
+        raise PackError(f"unterminated frontmatter: {path.name}")
+    lines = text[4:end].splitlines()
+    for index, line in enumerate(lines):
+        match = _CHECKS_KEY.match(line)
+        if match is None:
+            continue
+        indent, inline = match.group(1), match.group(2).strip()
+        if inline:
+            if inline != "[]":
+                return True
+            continue
+        for following in lines[index + 1:]:
+            if not following.strip():
+                continue
+            deeper = len(following) - len(following.lstrip()) > len(indent)
+            return deeper and following.lstrip().startswith("- ")
+    return False
 
 
 def _version(value: str) -> tuple[int, int, int]:
@@ -124,6 +166,11 @@ def validate_pack(path: pathlib.Path | str) -> dict:
                 raise PackError(f"asset extension is invalid for {kind}: {item}")
             if digest(asset) != manifest["hashes"][item]:
                 raise PackError(f"asset hash mismatch: {item}")
+            if (kind == "recipe" and manifest["type"] not in RECIPE_CHECKS_TYPES
+                    and declares_recipe_checks(asset)):
+                raise PackError(
+                    f"a {manifest['type']} pack may not ship a recipe declaring `checks:` "
+                    f"(host commands the orchestrator runs): {item}")
             name = str(rel.relative_to(prefix).with_suffix(""))
             if kind == "eval-case" and name.endswith("/case"):
                 name = name[:-5]

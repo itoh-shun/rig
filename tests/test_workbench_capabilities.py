@@ -62,7 +62,7 @@ def _official_recipe_pack(root: pathlib.Path, pack_id: str, recipe_name: str) ->
     assets["recipe"] = [f"recipes/{recipe_name}.md"]
     assets["eval-case"] = [f"evals/cases/{case['id']}/case.json"]
     manifest = {
-        "pack_schema_version": 1, "id": pack_id, "version": "1.0.0",
+        "pack_schema_version": 2, "id": pack_id, "type": "skill", "version": "1.0.0",
         "kind": "official", "engine": f">={__version__}", "dependencies": [],
         "assets": assets,
         "hashes": {item: digest(pack / item) for paths in assets.values() for item in paths},

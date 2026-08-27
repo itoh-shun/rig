@@ -4,6 +4,25 @@
 
 ### Breaking
 
+**A pack manifest now declares a `type`, and the type decides what the pack may carry and
+run** (`pack_schema_version` 2). `knowledge` / `policy` / `reviewer` / `skill` / `workflow` /
+`tool`, checked against the asset kinds the manifest declares; only a `tool` pack may ship a
+recipe declaring `checks:`, the shell commands the orchestrator runs on the host. Everything
+else a pack carries is text a provider reads. This is the line the addon platform needs:
+installing a team's domain knowledge must not also install command execution (#523).
+
+A manifest with no `type` is refused rather than defaulted. Guessing the type is guessing a
+permission — the safe-looking guess breaks working packs and the permissive one hands out
+reach nobody granted, and there is no third answer that is not one of those two in disguise.
+`rig-wb pack init` now requires `--type` for the same reason. The four shipped packs declare
+`type: skill`, which is what they measured as: prompt material, and not one recipe declaring
+`checks:`.
+
+Editing a manifest to hide an asset does not get it past the type rule. Validation already
+refuses any file the manifest does not declare and hashes every file it does, so the
+declaration is the pack's whole contents — hiding `commands/` trades one refusal for another.
+That pairing, not a duplicated check, is what makes a manifest-level rule enforceable.
+
 **An `acceptance-gate` step now refuses a passing verdict that has not answered every
 criterion it declared.** It used to refuse only a verdict that answered *none* of them, which
 was a floor of one and not arity: `1 of 13, VERDICT PASS` passed the step, while answering a

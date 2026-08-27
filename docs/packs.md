@@ -7,7 +7,7 @@ compact separators, and one trailing newline. Parsing therefore stays standard-l
 and never evaluates YAML tags.
 
 ```console
-rig-wb pack init my-domain --kind domain --root .rig/packs
+rig-wb pack init my-domain --type skill --kind domain --root .rig/packs
 rig-wb pack validate .rig/packs/my-domain
 rig-wb pack validate --global
 rig-wb pack doctor .rig/packs/my-domain --json
@@ -24,6 +24,33 @@ approved evaluation case. Validation rejects unknown manifest fields, undeclared
 ownership crossover, path traversal, symlinks, broken references, incompatible engine or
 dependency ranges, cycles, collisions, unsafe secrets, invisible injection markers, and
 unambiguous destructive content.
+
+## Pack type — what a pack may carry and run
+
+`type` is required and has no default: it decides the pack's permissions, and a default
+would hand that decision to whoever did not make it. It is separate from `kind`
+(`core`/`official`/`domain`/`project`), which decides only where the pack resolves in the
+tier order — a tier is not a permission.
+
+| `type` | may declare | may run host commands |
+|---|---|---|
+| `knowledge` | wiki, resource, evaluation cases and results | no |
+| `policy` | the above ＋ policies | no |
+| `reviewer` | the above ＋ personas, output contracts | no |
+| `skill` | every prompt kind (instructions, recipes, patterns, commands, agents) | no |
+| `workflow` | the same as `skill` | no |
+| `tool` | every asset kind | **yes** |
+
+`skill` and `workflow` carry the same kinds; the difference between them is declared intent,
+not permission. What separates `tool` from both is that only a `tool` pack may ship a recipe
+declaring `checks:` — shell commands the orchestrator runs on the host. Everything else in a
+pack is text a provider reads. That is the line the type model exists to draw: adding a
+team's domain knowledge must not also hand them command execution.
+
+The declared asset kinds are checked against the type, and the recipe files are read for
+`checks:` because a manifest cannot declare them. Editing the manifest to hide an asset does
+not get it installed — validation separately refuses any file the manifest does not declare
+and hashes every file it does, so the declaration is the pack's whole contents.
 
 All prompt assets use one precedence order:
 
