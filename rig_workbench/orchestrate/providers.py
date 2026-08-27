@@ -74,6 +74,15 @@ _JAPANESE_MATERIAL_ATTESTATIONS = {
 # Verification runs on a "different provider / different process" = grader != generator by construction.
 # No default provider (must be explicit). Real claude/codex are wiring only; tests use mock.
 
+#: The one landmark a prompt uses to introduce its numbered acceptance criteria. Two
+#: composers spell their own heading — `_build_verify_prompt` and `_adaptive_review_prompt`
+#: — and a reader that hard-codes either one sees the other's list as no list at all. That
+#: is what happened: the mock provider counted only the first spelling, so an
+#: `adaptive-bugfix` run answered none of `targeted-review`'s declared criteria and the
+#: gate escalated. Declared once here; both composers build their heading from it and
+#: `test_every_criteria_heading_is_built_from_the_shared_landmark` refuses a third spelling.
+CRITERIA_HEADING = "Acceptance criteria"
+
 MOCK_SRC = (
     "import sys\n"
     "import os\n"
@@ -151,11 +160,24 @@ MOCK_SRC = (
     "            shutil.copy2(source, destination)\n"
     "    return True\n"
     "def acceptance_count(text):\n"
-    "    marker = 'Acceptance criteria:'\n"
-    "    if marker not in text:\n"
+    # Anchored on the shared landmark and on the shape of the list itself: the items are
+    # the run of `  <n>. ` lines directly under the heading. Splitting on a terminator
+    # phrase read only one composer's prompt; the other's list ended at a different
+    # sentence and counted as zero.
+    "    lines = text.splitlines()\n"
+    "    heading = None\n"
+    "    for index, line in enumerate(lines):\n"
+    "        if line.startswith(" + repr(CRITERIA_HEADING) + ") and line.endswith(':'):\n"
+    "            heading = index\n"
+    "            break\n"
+    "    if heading is None:\n"
     "        return 0\n"
-    "    section = text.split(marker, 1)[1].split('Output format (strict):', 1)[0]\n"
-    "    numbers = [int(value) for value in re.findall(r'^  (\\d+)\\. ', section, re.MULTILINE)]\n"
+    "    numbers = []\n"
+    "    for line in lines[heading + 1:]:\n"
+    "        match = re.match(r'^  (\\d+)\\. ', line)\n"
+    "        if match is None:\n"
+    "            break\n"
+    "        numbers.append(int(match.group(1)))\n"
     "    if not numbers or numbers != list(range(1, len(numbers) + 1)):\n"
     "        return None\n"
     "    return len(numbers)\n"
@@ -2357,7 +2379,7 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
         f"Judge whether the product of step '{step['id']}' meets the acceptance criteria.",
     ]
     if criteria:
-        lines.append("Acceptance criteria:")
+        lines.append(f"{CRITERIA_HEADING}:")
         lines += [f"  {n}. {c}" for n, c in enumerate(criteria, 1)]
     lines += [
         "Output format (strict):",
@@ -2694,7 +2716,7 @@ def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict,
         # producer of evidence for them. Without this block the reviewer was never shown
         # them, so a recipe could declare four criteria on this step and the targeted
         # review would answer none — a declaration with no reader.
-        lines.append("Acceptance criteria this step is judged on:")
+        lines.append(f"{CRITERIA_HEADING} this step is judged on:")
         lines += [f"  {n}. {c}" for n, c in enumerate(criteria, 1)]
         lines += [
             "Emit exactly one line per criterion, in this order, before the final verdict:",

@@ -10,6 +10,10 @@ samples of one question, not 3 distinct lenses. Fixed by prefixing each
 verifier's prompt with its facets/personas/<name>.md brief when one resolves.
 """
 
+import pathlib
+
+import pytest
+
 from rig_workbench.orchestrate import providers
 
 
@@ -160,3 +164,61 @@ def test_run_verifiers_parallel_returns_an_ordinary_verdict_after_provider_outpu
         ],
         "note": "exit 0; CRITERION 1: PASS — ordinary evidence VERDICT: PASS",
     }]
+
+
+def test_every_criteria_heading_is_built_from_the_shared_landmark():
+    """A third spelling of the heading would be invisible to the mock's counter.
+
+    Two composers introduce a numbered criteria list, each with its own sentence, and
+    the mock reads the list by finding that heading. When it hard-coded one spelling it
+    saw the other composer's list as no list at all, so an `adaptive-bugfix` run answered
+    none of `targeted-review`'s four declared criteria and the gate escalated. Deriving
+    each layer's own landmark does not converge; the rule is declared once and checked
+    here.
+    """
+    import re
+
+    from rig_workbench.orchestrate import providers
+
+    source = pathlib.Path(providers.__file__).read_text(encoding="utf-8")
+    literal = re.compile(r'"(Acceptance criteria[^"]*)"')
+    spelled_out = [match for match in literal.findall(source)
+                   if not match.startswith("Acceptance criteria this step")]
+    assert spelled_out == [providers.CRITERIA_HEADING], (
+        "a criteria heading is written as a literal instead of built from "
+        f"CRITERIA_HEADING: {spelled_out}")
+
+
+@pytest.mark.parametrize("compose", ["verify", "adaptive-review"])
+def test_the_mock_counts_the_criteria_each_composer_actually_writes(compose):
+    """The counter is measured against the real prompts, not against a fixture of them.
+
+    This is the control the heading check above cannot be: a spelling could match the
+    landmark and still lay the list out in a shape the counter does not read.
+    """
+    from rig_workbench.orchestrate import providers
+
+    step = {"id": "s", "instruction": "x", "gate": "acceptance-gate", "pattern": None,
+            "personas": ["design-reviewer"], "needs": [], "checks": [],
+            "acceptance": ["the change holds", "nothing unrelated moved", "no secret leaks"],
+            "max_retries": 1, "output_contract": None}
+    state = {"recipe": "r", "goal": None, "steps": [step], "step_state": {},
+             "adaptive": {"assessment": {"signals": []}}}
+    if compose == "verify":
+        prompt = providers._build_verify_prompt(state, step, "design-reviewer")
+    else:
+        prompt = providers._adaptive_review_prompt(state, "design-reviewer", "diff", {},
+                                                   step=step)
+
+    namespace = {}
+    exec(compile(_MOCK_COUNTER_SOURCE(providers.MOCK_SRC), "<mock>", "exec"), namespace)
+    assert namespace["acceptance_count"](prompt) == 3, prompt
+
+
+def _MOCK_COUNTER_SOURCE(mock_source):
+    """Lift `acceptance_count` out of the mock program so the real one is measured."""
+    lines = mock_source.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("def acceptance_count"))
+    end = next(i for i, line in enumerate(lines[start + 1:], start + 1)
+               if line and not line.startswith(" "))
+    return "import re\n" + "\n".join(lines[start:end])
