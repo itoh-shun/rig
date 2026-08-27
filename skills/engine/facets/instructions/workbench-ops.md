@@ -1,11 +1,26 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
 - サブコマンドの引数に `task_id` が省略された場合、`workbench.py` は `.rig/runs/` 内の**最新 task**を自動選択する。複数 task が並行している可能性がある場合（`workbench.py log --limit 5` で確認）は、曖昧さを避けるため task_id を明示するようユーザーに促す。
 - どのサブコマンドも**親 context に長い diff 本文を引き込まない**（context-minimal）。`workbench.py diff` の出力（ファイル一覧＋shortstat）はそのまま見せてよいが、個々のコード片の要約は `diff.md`（RUN 中にモデルが書いた散文）を参照する。
+
+## `/rig knowledge-candidate <candidate> [--json]`
+
+```
+python3 scripts/workbench.py knowledge-candidate <candidate> [--json]
+```
+
+呼び出し側が書いた `rig.knowledge-candidate/v1` を、その `triggering_evidence` が指す
+`rig.knowledge-candidate-evidence/v1` の記録と突き合わせる。候補を生成・補完しない。
+rule と expected benefit は各引用記録に明記され、context と scope は各記録の範囲内でなければ
+`unsupported`。記録を読めない／record id を解決できない場合は `unobservable` とし、両者を
+混ぜない。`confidence` は候補の自己申告なので、出力でも `claimed` と `verified: null` を並べる。
+
+この判定が保証するのは「引用記録が実在し、候補が主張する範囲を明示的に支える」ことだけ。
+候補の正しさ、因果性、完全性、一般適用可能性、将来の効果は保証しない。
 
 ## MCPサーバ経由での操作（`scripts/mcp_server.py`・#263）
 

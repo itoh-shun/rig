@@ -46,6 +46,7 @@ from .team_routing import cmd_route_team
 from .workflow_effectiveness import cmd_workflow_effectiveness
 from .intent import cmd_intent
 from .intent_wiring import cmd_derive
+from .knowledge_candidate import cmd_knowledge_candidate
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
@@ -185,6 +186,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("target", help="path to a rig.assurance-target/v1 JSON document")
     p.add_argument("--json", action="store_true", help="emit the comparison as JSON")
     p.set_defaults(func=cmd_assurance_target)
+
+    p = sub.add_parser(
+        "knowledge-candidate",
+        help="check whether a submitted knowledge candidate is explicitly supported by every "
+             "record it cites (#440)")
+    p.add_argument("candidate", help="path to a rig.knowledge-candidate/v1 JSON document")
+    p.add_argument("--json", action="store_true",
+                   help="emit the rig.knowledge-candidate-assessment/v1 result")
+    p.set_defaults(func=cmd_knowledge_candidate)
 
     p = sub.add_parser("synthesise",
                        help="validate a proposed workflow against the component catalog and "
