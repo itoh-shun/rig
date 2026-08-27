@@ -579,6 +579,18 @@ def _distill_failures(st: dict) -> str | None:
 
 
 # ── Gate evaluation (deterministic, pure functions) ──────────────────────────
+def answered_criteria(declared: list, verdict: dict) -> set:
+    """Which of the step's declared criteria this verdict actually answered.
+
+    `_build_verify_prompt` numbers `step["acceptance"]` positionally, so a `CRITERION <n>`
+    line answers a declared criterion only when `n` indexes that list. Counting the parsed
+    lines instead would let thirteen lines numbered 20..32 satisfy an arity rule while
+    answering nothing declared, and would double-count a criterion answered twice.
+    """
+    return {c["n"] for c in (verdict.get("criteria") or [])
+            if isinstance(c.get("n"), int) and 1 <= c["n"] <= len(declared)}
+
+
 def gate_outcome(step: dict, st: dict) -> str:
     """Deterministically judge the current step's pass/fail.
     Returns: pass | fail | incomplete | self-graded | unsupported | unanswered
@@ -611,23 +623,29 @@ def gate_outcome(step: dict, st: dict) -> str:
     if any(str(v.get("by", "")).lower() in ("", "self", "generator", "producer") for v in verdicts):
         return "self-graded"
 
-    # A passing verdict that answered none of the step's declared criteria is a rubber
-    # stamp, and the all-UNKNOWN guard in `_judge_output` cannot see it: that guard reads
-    # `if ok and criteria and all(UNKNOWN)`, so an empty criteria list is vacuously
-    # all-UNKNOWN and skips the check. The result was non-monotonic — answering one
-    # criterion UNKNOWN failed the step while answering nothing at all passed it.
+    # A passing verdict has to answer every criterion the step declared. `_judge_output`'s
+    # all-UNKNOWN guard cannot hold this line: it reads `if ok and criteria and
+    # all(UNKNOWN)`, so an empty criteria list is vacuously all-UNKNOWN and skips the
+    # check — which made the gate non-monotonic, answering one criterion UNKNOWN failing a
+    # step that answering nothing at all passed.
     #
-    # What this does NOT hold, stated so nobody reads more into it: it is a floor of one,
-    # not arity. A verdict that answers 1 of 13 declared criteria and says PASS still
-    # passes here. Tightening it to `len(criteria) < len(step["acceptance"])` was measured
-    # and deliberately not taken in this change: the shipped mock provider emits exactly
-    # one `CRITERION 1:` line whatever a step declares, so full arity would turn every
+    # The rule is arity, not a floor of one: 1 of 13 with VERDICT PASS is `unanswered` too.
+    # An earlier pass stopped at the floor because the shipped mock provider emitted a
+    # single `CRITERION 1:` line whatever a step declared, so arity would have turned every
     # mock-driven bench/eval run of a 13-criterion `bugfix` acceptance step from DONE into
-    # ESCALATE — re-baselining the eval harness rather than enforcing the contract. The
-    # arity a verdict actually reached is recorded per verdict (`answered`/`declared` in
-    # `providers.record_verdicts`) so a reader of the record is not misled about it.
-    if step.get("acceptance") and any(v.get("ok") and not (v.get("criteria") or [])
-                                      for v in verdicts):
+    # ESCALATE — re-baselining the eval harness instead of enforcing the contract. #519
+    # removed that: mock now emits one line per declared criterion, measured here on
+    # `bugfix` (13/13) and `adaptive-bugfix` (4/4), both still DONE.
+    #
+    # What this does NOT judge is the answers themselves. A verdict that answers all
+    # thirteen and marks some UNKNOWN satisfies arity; whether that is a pass is
+    # `_judge_output`'s question, and the two are kept apart on purpose — conflating them
+    # would let a judge buy its way past arity with UNKNOWN, or fail a step for a shape
+    # that is exactly what the contract asked for.
+    declared_criteria = step.get("acceptance") or []
+    if declared_criteria and any(
+            v.get("ok") and len(answered_criteria(declared_criteria, v)) < len(declared_criteria)
+            for v in verdicts):
         return "unanswered"
     if any(not v["ok"] for v in verdicts):
         return "fail"
@@ -801,10 +819,18 @@ def compute_next(state: dict) -> tuple[str, str]:
     if outcome == "unanswered" and findings is None:
         # Every verdict on an "unanswered" step says ok, so _distill_failures finds nothing
         # and the retry would be blind — it would see "failed" with no statement of what.
+        # Name the shortfall and the criteria still owed: "answer them all" is not actionable
+        # to a verifier that believes it already did, and the numbers are what it re-emits.
+        declared_criteria = step.get("acceptance") or []
+        owed = sorted(set(range(1, len(declared_criteria) + 1)).difference(
+            *(answered_criteria(declared_criteria, v) for v in st["verdicts"] if v.get("ok"))
+        )) if declared_criteria else []
+        reached = len(declared_criteria) - len(owed)
         findings = (
-            f"the verdict passed step `{sid}` without answering any of its "
-            f"{len(step.get('acceptance') or [])} declared criteria. Emit one "
-            "`CRITERION <n>: PASS|FAIL|UNKNOWN — <anchor>` line per criterion."
+            f"the verdict passed step `{sid}` answering {reached} of its "
+            f"{len(declared_criteria)} declared criteria. Emit one "
+            "`CRITERION <n>: PASS|FAIL|UNKNOWN — <anchor>` line per criterion"
+            + (f"; still unanswered: {', '.join(str(n) for n in owed)}." if owed else ".")
         )
     if findings is not None:
         fail_entry["findings"] = findings

@@ -23,7 +23,7 @@ from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
-from .runstate import (compute_next, enforce_executable_state, gate_outcome, save_state,
+from .runstate import (answered_criteria, compute_next, enforce_executable_state, gate_outcome, save_state,
                        stage_gate_status, telemetry_append)
 from .secure_runtime import (
     SecureRuntimeError,
@@ -1129,8 +1129,10 @@ _CRITERION_RE = re.compile(
 
 
 def _parse_criteria(out: str) -> list[dict]:
-    """Tolerant parse of per-criterion verdict lines. Missing lines = empty list (old-format
-    tolerance = old behavior). Later duplicates win; result sorted by criterion number (pure)."""
+    """Tolerant parse of per-criterion verdict lines. Missing lines = empty list; the parser
+    stays tolerant so a malformed output is still readable, and `gate_outcome` is what refuses
+    a verdict that did not answer every declared criterion — parsing and judging are separate
+    jobs. Later duplicates win; result sorted by criterion number (pure)."""
     found: dict[int, dict] = {}
     for line in (out or "").splitlines():
         m = _CRITERION_RE.match(line)
@@ -1189,12 +1191,13 @@ def bind_criteria(step: dict, verdicts: list[dict]) -> None:
     declared = [str(entry) for entry in (step.get("acceptance") or [])]
     for verdict in verdicts:
         if declared and verdict.get("ok"):
-            # `gate_outcome` only refuses a verdict that answered NOTHING. "1 of 13, PASS"
-            # still passes the step, so a PASSING record has to say 1 of 13 out loud or its
-            # reader will take `ok: true` for a judgment on all thirteen. A failing record
-            # is not misread that way and a synthesized one (budget exhausted, malformed
-            # output) judged nothing by construction, so neither is annotated.
-            verdict["answered"] = len(verdict.get("criteria") or [])
+            # What arity this verdict reached, in the same terms `gate_outcome` judges it
+            # by — declared criteria actually answered, not lines parsed. A record that
+            # counted its own out-of-range or duplicated lines would disagree with the gate
+            # that read it. A failing record is not misread as a full judgment and a
+            # synthesized one (budget exhausted, malformed output) judged nothing by
+            # construction, so neither is annotated.
+            verdict["answered"] = len(answered_criteria(declared, verdict))
             verdict["declared"] = len(declared)
         for criterion in verdict.get("criteria") or []:
             n = criterion.get("n")

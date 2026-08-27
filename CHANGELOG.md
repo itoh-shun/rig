@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Breaking
+
+**An `acceptance-gate` step now refuses a passing verdict that has not answered every
+criterion it declared.** It used to refuse only a verdict that answered *none* of them, which
+was a floor of one and not arity: `1 of 13, VERDICT PASS` passed the step, while answering a
+single criterion UNKNOWN failed it — a gate that got stricter the more the judge said. The
+rule is now every declared criterion, counted as declared criteria answered rather than
+CRITERION lines parsed, so out-of-range numbers and a criterion answered twice no longer buy
+arity. A shortfall fails as `unanswered` and the retry is told how many of how many were
+reached and which numbers are still owed. Arity is judged apart from the answers: all
+answered with some UNKNOWN satisfies it, and whether that is a pass stays the rubber-stamp
+guard's question (#503).
+
+This was measured before it was taken. The reason it was not taken earlier — the shipped
+mock provider emitting a single `CRITERION 1:` line whatever a step declared — was removed by
+#519; `bugfix` (13/13) and `adaptive-bugfix` (4/4) both still finish DONE under mock. Two
+assertions in the suite pinned the old floor and were re-based; nothing else moved. A recipe
+of your own whose verifier under-answers will now spend a retry being told which criteria it
+skipped, and escalate if it keeps skipping them.
+
+The record format did not change and needs no migration — `criteria[].n` is what both the old
+and the new rule read, and the `criterion` / `criterion_id` binding added in #522 is still
+what resolves an answer back to what it judged. One case does change under an in-flight run:
+`resume` and `next` judge the *current* step from its stored verdicts, so a run parked at a
+gate whose verdict under-answered now retries there instead of advancing. Steps already
+recorded `passed` are not re-judged — nothing re-opens a run that finished under the old rule.
+
 ## [2.7.0] - 2026-08-27
 
 ### Breaking

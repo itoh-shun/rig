@@ -50,11 +50,11 @@ def test_gate_outcome_checks(step_factory):
     assert gate_outcome(step, st) == "pass"
 
 
-def test_gate_outcome_refuses_a_verdict_that_answered_no_declared_criterion(step_factory):
-    """Positive control for the rubber-stamp guard: passing checks + a passing verdict that
-    names none of the step's declared criteria is not a pass.
+def test_gate_outcome_requires_a_verdict_to_answer_every_declared_criterion(step_factory):
+    """Positive control for the arity rule: a passing verdict has to answer every criterion
+    the step declared, not one of them.
 
-    `_judge_output`'s all-UNKNOWN guard cannot see this case — it reads
+    `_judge_output`'s all-UNKNOWN guard cannot hold this line — it reads
     `if ok and criteria and all(UNKNOWN)`, so an empty criteria list skips it entirely, and
     answering one criterion UNKNOWN used to be strictly stricter than answering nothing.
     """
@@ -64,15 +64,50 @@ def test_gate_outcome_refuses_a_verdict_that_answered_no_declared_criterion(step
           "checks": [{"cmd": "true", "ok": True}],
           "verdicts": [{"by": "reviewer", "ok": True, "note": ""}]}
     assert gate_outcome(step, st) == "unanswered"
-    # A verdict that answers even one of them clears this particular guard. That is the
-    # floor the guard actually holds — it is not arity; see the note in `gate_outcome`.
+    # Answering one of two is the case the old floor-of-one guard let through.
     st["verdicts"][0]["criteria"] = [{"n": 1, "verdict": "PASS", "anchor": "f.py:1"}]
+    assert gate_outcome(step, st) == "unanswered"
+    # Answering both is the pass.
+    st["verdicts"][0]["criteria"].append({"n": 2, "verdict": "PASS", "anchor": "f.py:2"})
     assert gate_outcome(step, st) == "pass"
-    # A step that declares nothing is untouched by the guard (no criteria = nothing owed).
+    # A step that declares nothing is untouched by the rule (no criteria = nothing owed).
     bare = step_factory(id="v", gate="acceptance-gate", checks=["true"])
     assert gate_outcome(bare, {"status": "running", "retries": 0,
                                "checks": [{"cmd": "true", "ok": True}],
                                "verdicts": [{"by": "reviewer", "ok": True}]}) == "pass"
+
+
+def test_arity_counts_declared_criteria_answered_not_lines_parsed(step_factory):
+    """Thirteen CRITERION lines that index nothing the step declared answer nothing, and a
+    criterion answered twice is answered once. Counting parsed lines would pass both."""
+    step = step_factory(id="v", gate="acceptance-gate", checks=["true"],
+                        acceptance=["a — x", "b — y", "c — z"])
+    st = {"status": "running", "retries": 0, "checks": [{"cmd": "true", "ok": True}],
+          "verdicts": [{"by": "reviewer", "ok": True, "criteria": [
+              {"n": 20, "verdict": "PASS"}, {"n": 21, "verdict": "PASS"},
+              {"n": 22, "verdict": "PASS"}]}]}
+    assert gate_outcome(step, st) == "unanswered"          # out of range answers nothing
+    st["verdicts"][0]["criteria"] = [{"n": 1, "verdict": "PASS"}, {"n": 1, "verdict": "PASS"},
+                                     {"n": 2, "verdict": "PASS"}]
+    assert gate_outcome(step, st) == "unanswered"          # 3 lines, 2 criteria answered
+    st["verdicts"][0]["criteria"].append({"n": 3, "verdict": "PASS"})
+    assert gate_outcome(step, st) == "pass"
+
+
+def test_arity_is_judged_apart_from_the_answers_themselves(step_factory):
+    """A verdict that answers all of them and marks some UNKNOWN satisfies arity. Whether
+    that is a pass is `_judge_output`'s question — the gate must not conflate the two, or a
+    judge could buy its way past arity with UNKNOWN, or be failed for the exact shape the
+    contract asked for."""
+    step = step_factory(id="v", gate="acceptance-gate", checks=["true"],
+                        acceptance=["a — x", "b — y"])
+    st = {"status": "running", "retries": 0, "checks": [{"cmd": "true", "ok": True}],
+          "verdicts": [{"by": "reviewer", "ok": True, "criteria": [
+              {"n": 1, "verdict": "PASS"}, {"n": 2, "verdict": "UNKNOWN"}]}]}
+    assert gate_outcome(step, st) == "pass"
+    # A verifier whose own judgment was FAIL fails as a judgment, not as arity.
+    st["verdicts"][0]["ok"] = False
+    assert gate_outcome(step, st) == "fail"
 
 
 def test_gate_outcome_verdicts(step_factory):

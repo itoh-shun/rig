@@ -60,7 +60,9 @@ producer の結論が正しいことは保証しない。
 * **落ちた check はその場で step を落とす。** 判定の呼び出しは走らない（呼んでも結果は変わらないので、call を捨てない）。
 * **通った check は step を通さないし、判定の呼び出しを省略もしない。** #496 まではここで return していて、`max-bugfix` の acceptance step は3つのコマンドを走らせ、13件の宣言に対して verdict ゼロで通っていた。
 * **判定を出せない executor はこのゲートを名乗れない。** `checks-only` / `risk-assess` は provider を一度も呼ばずに return するので、verdict を作れない。この組み合わせは run が始まる前に `BLOCKED` で拒否される（`rig-wb validate` だけでなく実行時の preflight でも。project 層の recipe も同じ扱い）。そういう step は **gate を宣言せず `checks[]` だけを持つ**——`fast-bugfix.implement` / `fast-bugfix.test` / `max-bugfix.implement` / `max-bugfix.test` が既に使っている形。
-* 宣言した criterion を1件も答えていない PASS verdict はゴム印として扱い、step を通さない。
+* **PASS verdict は宣言した criterion を全件答えていなければ step を通さない（#503）。** 判定の件数が宣言数に届かなければ `unanswered` で落ち、retry には「N件中M件」と**答えていない番号**が渡る。1件も答えない PASS だけを弾いていた頃は、これが下限1件でしかなく「13件中1件だけ答えた PASS」が通っていた——しかも1件を UNKNOWN と答えるほうが厳しいという非単調な状態だった。
+* **数えるのは「宣言された criterion のうち答えられた数」であって、解析できた行数ではない。** 範囲外の番号（宣言3件に対する `CRITERION 20`）は何も答えていないし、同じ番号を2回答えても1件である。
+* **arity と判定内容は別問題として扱う。** 全件答えたうえで一部が UNKNOWN なら arity は満たしている（それが合格かどうかは判定側＝全件 UNKNOWN の PASS を落とすゴム印ガードの領分）。混ぜると、UNKNOWN で arity を買えるか、契約どおりの形を落とすかのどちらかになる。
 
 ## K（再試行上限）の目安
 
