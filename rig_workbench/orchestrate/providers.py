@@ -74,6 +74,15 @@ _JAPANESE_MATERIAL_ATTESTATIONS = {
 # Verification runs on a "different provider / different process" = grader != generator by construction.
 # No default provider (must be explicit). Real claude/codex are wiring only; tests use mock.
 
+#: The one landmark a prompt uses to introduce its numbered acceptance criteria. Two
+#: composers spell their own heading — `_build_verify_prompt` and `_adaptive_review_prompt`
+#: — and a reader that hard-codes either one sees the other's list as no list at all. That
+#: is what happened: the mock provider counted only the first spelling, so an
+#: `adaptive-bugfix` run answered none of `targeted-review`'s declared criteria and the
+#: gate escalated. Declared once here; both composers build their heading from it and
+#: `test_every_criteria_heading_is_built_from_the_shared_landmark` refuses a third spelling.
+CRITERIA_HEADING = "Acceptance criteria"
+
 MOCK_SRC = (
     "import sys\n"
     "import os\n"
@@ -150,11 +159,39 @@ MOCK_SRC = (
     "            destination.parent.mkdir(parents=True, exist_ok=True)\n"
     "            shutil.copy2(source, destination)\n"
     "    return True\n"
+    "def acceptance_count(text):\n"
+    # Anchored on the shared landmark and on the shape of the list itself: the items are
+    # the run of `  <n>. ` lines directly under the heading. Splitting on a terminator
+    # phrase read only one composer's prompt; the other's list ended at a different
+    # sentence and counted as zero.
+    "    lines = text.splitlines()\n"
+    "    heading = None\n"
+    "    for index, line in enumerate(lines):\n"
+    "        if line.startswith(" + repr(CRITERIA_HEADING) + ") and line.endswith(':'):\n"
+    "            heading = index\n"
+    "            break\n"
+    "    if heading is None:\n"
+    "        return 0\n"
+    "    numbers = []\n"
+    "    for line in lines[heading + 1:]:\n"
+    "        match = re.match(r'^  (\\d+)\\. ', line)\n"
+    "        if match is None:\n"
+    "            break\n"
+    "        numbers.append(int(match.group(1)))\n"
+    "    if not numbers or numbers != list(range(1, len(numbers) + 1)):\n"
+    "        return None\n"
+    "    return len(numbers)\n"
     "if role == 'verifier':\n"
+    "    count = acceptance_count(prompt)\n"
+    "    failed = 'fail' in persona or count is None\n"
     "    print('independent verification (mock): ' + persona)\n"
-    "    print('evidence: mock inspection of the product - mock.py:1')\n"
-    "    print('CRITERION 1: ' + ('FAIL' if 'fail' in persona else 'PASS') + ' - mock.py:1')\n"
-    "    print('VERDICT: ' + ('FAIL' if 'fail' in persona else 'PASS'))\n"
+    "    if count is None:\n"
+    "        print('evidence: malformed acceptance criteria list - mock.py:1')\n"
+    "    else:\n"
+    "        print('evidence: mock inspection of the product - mock.py:1')\n"
+    "        for number in range(1, count + 1):\n"
+    "            print('CRITERION ' + str(number) + ': ' + ('FAIL' if failed else 'PASS') + ' - mock.py:1')\n"
+    "    print('VERDICT: ' + ('FAIL' if failed else 'PASS'))\n"
     "else:\n"
     "    if step_id == 'implement' and not apply_benchmark_canonical() and target_file:\n"
     "        fix = fix_for(prompt)\n"
@@ -2342,7 +2379,7 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
         f"Judge whether the product of step '{step['id']}' meets the acceptance criteria.",
     ]
     if criteria:
-        lines.append("Acceptance criteria:")
+        lines.append(f"{CRITERIA_HEADING}:")
         lines += [f"  {n}. {c}" for n, c in enumerate(criteria, 1)]
     lines += [
         "Output format (strict):",
@@ -2679,7 +2716,7 @@ def _adaptive_review_prompt(state: dict, persona: str, diff: str, cfg: dict,
         # producer of evidence for them. Without this block the reviewer was never shown
         # them, so a recipe could declare four criteria on this step and the targeted
         # review would answer none — a declaration with no reader.
-        lines.append("Acceptance criteria this step is judged on:")
+        lines.append(f"{CRITERIA_HEADING} this step is judged on:")
         lines += [f"  {n}. {c}" for n, c in enumerate(criteria, 1)]
         lines += [
             "Emit exactly one line per criterion, in this order, before the final verdict:",

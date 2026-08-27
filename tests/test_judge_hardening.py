@@ -104,7 +104,9 @@ def test_all_unknown_pass_fails_closed_but_partial_unknown_does_not():
 
 
 def test_criteria_recorded_in_state_and_telemetry(step_factory, tmp_telemetry):
-    steps = [step_factory(id="review", gate="review-gate")]
+    steps = [step_factory(
+        id="review", gate="review-gate", acceptance=["review criterion"],
+    )]
     state = new_state("judge-harden", steps, None)
     final = run_loop(state, None, "mock", "mock", {}, 20, quiet=True)
     assert final == "DONE"
@@ -183,7 +185,9 @@ def test_verify_prompt_offers_pass_with_conditions_and_blocking_only_fail():
 # ── 4. order effects: judge panel evaluates all candidates ────────────────────
 
 def test_multi_pass_panel_records_pass_set_and_stays_deterministic(step_factory, tmp_telemetry):
-    steps = [step_factory(id="impl", gate="acceptance-gate")]
+    steps = [step_factory(
+        id="impl", gate="acceptance-gate", acceptance=["implementation criterion"],
+    )]
     finals, states = [], []
     for _ in range(2):
         st = new_state("panel", steps, None)

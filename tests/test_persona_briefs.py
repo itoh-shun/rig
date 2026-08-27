@@ -10,7 +10,15 @@ samples of one question, not 3 distinct lenses. Fixed by prefixing each
 verifier's prompt with its facets/personas/<name>.md brief when one resolves.
 """
 
+import pathlib
+
+import pytest
+
 from rig_workbench.orchestrate import providers
+
+
+def _run_mock_verifier(prompt, persona="independent"):
+    return providers.run_provider("mock", "verifier", prompt, {}, persona=persona)[1]
 
 
 def test_load_persona_brief_strips_frontmatter_and_returns_body():
@@ -85,16 +93,50 @@ def test_run_verifiers_parallel_injects_distinct_briefs_per_persona(monkeypatch)
     assert captured["independent"] == "generic verify prompt"
 
 
-def test_run_verifiers_parallel_mock_provider_is_unaffected_by_prompt_content():
-    # MOCK_SRC's verifier branch reads argv (role/persona), never the prompt —
-    # confirms the persona-brief injection cannot change mock's deterministic
-    # pass/fail behavior (mock fails when 'fail' is IN the persona name).
-    results = providers.run_verifiers_parallel(
-        "mock", "irrelevant prompt text", ["security-reviewer", "some-fail-persona"], {}, max_parallel=2,
+def test_mock_verifier_without_acceptance_criteria_emits_no_criterion_lines():
+    output = _run_mock_verifier("Output format (strict):\nFinally, emit a verdict.")
+
+    assert "CRITERION " not in output
+
+
+def test_mock_verifier_emits_one_line_per_declared_acceptance_criterion():
+    prompt = providers._build_verify_prompt(
+        {},
+        {"id": "verify", "acceptance": ["first", "second", "third"]},
+        "product",
     )
-    by_persona = {r["persona"]: r["ok"] for r in results}
-    assert by_persona["security-reviewer"] is True
-    assert by_persona["some-fail-persona"] is False
+
+    output = _run_mock_verifier(prompt)
+
+    assert [line.split(":", 1)[0] for line in output.splitlines()
+            if line.startswith("CRITERION ")] == [
+        "CRITERION 1", "CRITERION 2", "CRITERION 3",
+    ]
+
+
+def test_mock_verifier_distinguishes_malformed_list_from_no_declared_criteria():
+    absent = _run_mock_verifier("Output format (strict):\nFinally, emit a verdict.")
+    malformed = _run_mock_verifier(
+        "Acceptance criteria:\n  not-a-number. broken\nOutput format (strict):"
+    )
+
+    assert absent.endswith("VERDICT: PASS\n")
+    assert malformed.endswith("VERDICT: FAIL\n")
+    assert "malformed acceptance criteria list" in malformed
+    assert "CRITERION " not in malformed
+
+
+def test_mock_verifier_fail_persona_still_fails_every_declared_criterion():
+    prompt = providers._build_verify_prompt(
+        {}, {"id": "verify", "acceptance": ["first", "second"]}, "product",
+    )
+    passing = _run_mock_verifier(prompt, persona="security-reviewer")
+    failing = _run_mock_verifier(prompt, persona="some-fail-persona")
+
+    assert passing.count(": PASS - mock.py:1") == 2
+    assert failing.count(": FAIL - mock.py:1") == 2
+    assert passing.endswith("VERDICT: PASS\n")
+    assert failing.endswith("VERDICT: FAIL\n")
 
 
 def test_run_verifiers_parallel_returns_an_ordinary_verdict_after_provider_output(
@@ -122,3 +164,61 @@ def test_run_verifiers_parallel_returns_an_ordinary_verdict_after_provider_outpu
         ],
         "note": "exit 0; CRITERION 1: PASS — ordinary evidence VERDICT: PASS",
     }]
+
+
+def test_every_criteria_heading_is_built_from_the_shared_landmark():
+    """A third spelling of the heading would be invisible to the mock's counter.
+
+    Two composers introduce a numbered criteria list, each with its own sentence, and
+    the mock reads the list by finding that heading. When it hard-coded one spelling it
+    saw the other composer's list as no list at all, so an `adaptive-bugfix` run answered
+    none of `targeted-review`'s four declared criteria and the gate escalated. Deriving
+    each layer's own landmark does not converge; the rule is declared once and checked
+    here.
+    """
+    import re
+
+    from rig_workbench.orchestrate import providers
+
+    source = pathlib.Path(providers.__file__).read_text(encoding="utf-8")
+    literal = re.compile(r'"(Acceptance criteria[^"]*)"')
+    spelled_out = [match for match in literal.findall(source)
+                   if not match.startswith("Acceptance criteria this step")]
+    assert spelled_out == [providers.CRITERIA_HEADING], (
+        "a criteria heading is written as a literal instead of built from "
+        f"CRITERIA_HEADING: {spelled_out}")
+
+
+@pytest.mark.parametrize("compose", ["verify", "adaptive-review"])
+def test_the_mock_counts_the_criteria_each_composer_actually_writes(compose):
+    """The counter is measured against the real prompts, not against a fixture of them.
+
+    This is the control the heading check above cannot be: a spelling could match the
+    landmark and still lay the list out in a shape the counter does not read.
+    """
+    from rig_workbench.orchestrate import providers
+
+    step = {"id": "s", "instruction": "x", "gate": "acceptance-gate", "pattern": None,
+            "personas": ["design-reviewer"], "needs": [], "checks": [],
+            "acceptance": ["the change holds", "nothing unrelated moved", "no secret leaks"],
+            "max_retries": 1, "output_contract": None}
+    state = {"recipe": "r", "goal": None, "steps": [step], "step_state": {},
+             "adaptive": {"assessment": {"signals": []}}}
+    if compose == "verify":
+        prompt = providers._build_verify_prompt(state, step, "design-reviewer")
+    else:
+        prompt = providers._adaptive_review_prompt(state, "design-reviewer", "diff", {},
+                                                   step=step)
+
+    namespace = {}
+    exec(compile(_MOCK_COUNTER_SOURCE(providers.MOCK_SRC), "<mock>", "exec"), namespace)
+    assert namespace["acceptance_count"](prompt) == 3, prompt
+
+
+def _MOCK_COUNTER_SOURCE(mock_source):
+    """Lift `acceptance_count` out of the mock program so the real one is measured."""
+    lines = mock_source.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("def acceptance_count"))
+    end = next(i for i, line in enumerate(lines[start + 1:], start + 1)
+               if line and not line.startswith(" "))
+    return "import re\n" + "\n".join(lines[start:end])

@@ -52,7 +52,7 @@ def cmd_selftest(_args):
         return {"id": k["id"], "instruction": "x", "gate": k.get("gate"),
                 "pattern": k.get("pattern"), "personas": k.get("personas", []),
                 "needs": k.get("needs", []),
-                "acceptance": [], "checks": k.get("checks", []),
+                "acceptance": k.get("acceptance", []), "checks": k.get("checks", []),
                 "max_retries": k.get("max_retries", DEFAULT_K), "output_contract": None}
 
     # Scenario A: happy path (no-gate → checks pass AND verdict pass → verdict pass → DONE)
@@ -505,7 +505,14 @@ def cmd_selftest(_args):
     # records order_sensitive + the pass-set (all candidates judged; first-in-list wins).
     config.RUNS_PATH = pathlib.Path(tempfile.gettempdir()) / "rig_runs_judge_selftest.jsonl"
     config.RUNS_PATH.unlink(missing_ok=True)
-    stepsY = [s(id="review", gate="review-gate")]
+    # The step has to declare a criterion for there to be one to record. Until the mock
+    # provider emitted one line per declared criterion it emitted `CRITERION 1` whatever
+    # the step said, so this case passed against a step declaring nothing — it was not
+    # measuring what its name claims. `Y empty parse helper` below covers the no-criteria
+    # side. Two, not one: against a single criterion a provider that emits one
+    # line whatever it is told is indistinguishable from one that counts.
+    stepsY = [s(id="review", gate="review-gate",
+                acceptance=["the change holds", "nothing unrelated moved"])]
     stateY = new_state("judge-harden", stepsY, None)
     finalY = run_loop(stateY, None, "mock", "mock", {}, 20, quiet=True)
     vY = stateY["step_state"]["review"]["verdicts"][0]
@@ -517,7 +524,8 @@ def cmd_selftest(_args):
     config.RUNS_PATH.unlink(missing_ok=True)
     config.RUNS_PATH = _orig_runs
     report("Y mock verifier's criteria are recorded in the verdict",
-           (finalY, [c["verdict"] for c in vY.get("criteria", [])]), ("DONE", ["PASS"]))
+           (finalY, [c["verdict"] for c in vY.get("criteria", [])]),
+           ("DONE", ["PASS", "PASS"]))
     report("Y multi-PASS panel records order_sensitive + pass-set (deterministic winner)",
            (finalY2, vY2.get("order_sensitive"), vY2.get("pass_set")),
            ("DONE", True, ["mock", "mock"]))
