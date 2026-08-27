@@ -42,6 +42,15 @@ acceptance-gate はこれらを「**生成（非決定的）→ 検証 → 未�
 * step の `acceptance[]` は、そのうち**このフローの step が自分で証拠を作る分**だけを並べたもの（#486 の規則）。宣言どおりに埋めても残りは `pending` で残るのが期待される状態で、`accept` はそのとき何が足りないかを名指しで断る。
 * だから一覧を preset 全件に広げるのは解決ではない。フローが証拠を作れない基準を宣言することになり、ゴム印か行き止まりを買う。
 
+これと逆向きの route 契約もある。自動 route が recipe と task type を選んだ時、
+拘束ゲートの全 criterion は `ROUTE_PRODUCERS` で `step` / `sensor` / `manual` の
+いずれかと producer 名を明示する。手作業は暗黙の fallback ではなく
+`manual: operator` という宣言である。`rig-wb validate` は各宣言の context/profile で
+route selector を再実行し、宣言した分岐が実在することを確認してから、
+対応の不在・空・型違い・解決不能と未知キーを FAIL にする。この検査が保証するのは
+名前の付いた owner が全件に存在することだけで、step や人が実際に良い証拠を作ること、
+producer の結論が正しいことは保証しない。
+
 **`orchestrate run` が最終 step まで到達して `DONE` を出しても、それは accept ではない。** その runner はタスクのレコードを書かず `wb gate` を呼ばないので、15件のゲートには触れていない。accept は workbench タスクに対する `rig-wb wb accept` であり、そこが唯一この集合を守っている（step 単位でこれを強制するものは無い——これはフロー末端の backstop であって step レベルの検査ではない）。
 
 ## `checks[]` は前提条件であって代替ではない（#496）

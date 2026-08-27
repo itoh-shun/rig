@@ -26,6 +26,7 @@ from .mcp_scan import check_mcp_scan
 from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
 from .release import check_release_metadata, check_skills_lock
+from .routes import check_route_producers
 from .selftest import run_selftest
 from .stale_refs import check_stale_refs
 from .state import _emit
@@ -47,6 +48,11 @@ def main() -> None:
             check_recipe(recipe_path)
         except Exception:
             _emit("FAIL", f"recipe {recipe_path.stem} — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_route_producers()
+    except Exception:
+        _emit("FAIL", f"route producer check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_personas()

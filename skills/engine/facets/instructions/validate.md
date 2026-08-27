@@ -351,6 +351,25 @@ wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowled
 
 ## レポート形式
 
+### route → 拘束 criterion producer 対応（#508）
+
+各 route 宣言が持つ selector context と availability profile を使って
+`capabilities.select_task_route` を実際に再実行し、宣言した recipe/capability が
+再現することを確かめた上で、各
+`(task_type, recipe)` について `TASK_TYPES` → `GATE_PRESETS` が作る拘束 criterion
+全件に producer があるか検査する。宣言の正本は route 解決と同じ
+`rig_workbench/workbench/capabilities.py` の `ROUTE_PRODUCERS`。
+
+producer は閉じた `{kind, name}` スキーマで、`kind` は `step` / `sensor` /
+`manual` のみ。step は選択 recipe の実在 step id、sensor は登録済みセンサー、
+manual は登録済み owner（現在は `operator`）へ解決できなければならない。
+手作業は `manual` と明記し、宣言の不在を手作業と推測しない。
+対応が無い・空・型違い・解決不能・未知キー・自動 route 自体の宣言漏れはすべて
+**FAIL** とする。
+
+この検査は各拘束 criterion に名前の付いた producer があることだけを保証する。
+producer が十分に良い証拠を作ることや、その結論の正しさは保証しない。
+
 機械抽出しやすい構造で、合否を1行ずつ出す。
 
 ```
