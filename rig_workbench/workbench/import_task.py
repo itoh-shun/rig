@@ -234,9 +234,13 @@ def cmd_import(args: argparse.Namespace) -> None:
     # The one line that makes the rest of rig work unchanged: the task branch is
     # created *at the imported commit*. `base..branch` is then the external change,
     # and every sensor, the gate, governance and `accept` see an ordinary task.
-    backend = runtime_mod.select(None, root)   # see cmd_new: the flag arrives with #462
+    # Direct Python callers predating the CLI flag have no `runtime` attribute; those are
+    # the same legacy/default-native path #461 promised to preserve. The public parser
+    # always supplies `auto`, so the actual command still performs #462 detection.
+    backend = runtime_mod.select(getattr(args, "runtime", runtime_mod.NATIVE), root)
     branch = f"rig/{task_id}"
     handle = backend.create(root, task_id, head_sha, branch)
+    branch = handle.branch
     wt = pathlib.Path(handle.path)
 
     # Past this point the worktree and branch exist. Anything that fails now leaves

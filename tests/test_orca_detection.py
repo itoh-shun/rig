@@ -10,6 +10,8 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
+
 from rig_workbench.workbench import orca
 from rig_workbench.workbench.orca import WORKSPACE_VAR, WORKTREE_VAR, detect, report
 
@@ -303,12 +305,9 @@ def test_detection_depends_on_nothing_it_should_not():
     assert imports <= _ALLOWED_IMPORTS, imports - _ALLOWED_IMPORTS
 
 
-def test_the_default_runtime_path_still_knows_nothing_about_this_module():
-    """#461 holds `runtime.py` to gaining no dependency on another runtime. Detection living
-    beside it rather than inside it is what keeps that true, so it is checked here too —
-    the moment this module is imported there, the guarantee is gone."""
+def test_native_runtime_selection_does_not_consult_session_detection(monkeypatch, tmp_path):
+    """#462 permits auto to consult detection; explicit native must remain isolated."""
     from rig_workbench.workbench import runtime
 
-    source = pathlib.Path(runtime.__file__).read_text(encoding="utf-8")
-    assert "import orca" not in source
-    assert "from .orca" not in source
+    monkeypatch.setattr(orca, "detect", lambda: pytest.fail("session was inspected"))
+    assert runtime.select("native", tmp_path).name == "native"

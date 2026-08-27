@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Workbench task creation and import now accept `--runtime auto|native|orca`. An active Orca
+session can create and remove Orca-managed worktrees through structured CLI output while Rig
+persists Orca's full worktree id. Auto reports a native fallback; explicit Orca refuses
+missing, nonresponding, malformed, or identity-less CLI results (#462).
+
 The unit-mismatch refusal now runs over the settling observations alone. Moving it past the
 window partition stopped an out-of-window reading from vetoing a comparison it takes no part
 in; an estimate inside the window is the same case one notch narrower. `SETTLING` excludes

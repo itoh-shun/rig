@@ -13,7 +13,7 @@ Note (#304): Cursor's skill discovery also scans `.agents/skills/` for legacy Cl
 
 ## Task workflow (workbench.py)
 
-1. **Start a task**: `python3 scripts/workbench.py new "<task in plain language>" --type <bugfix|feature|refactor|test|performance|documentation|design|investigation|release_support|review|security_review>`
+1. **Start a task**: `python3 scripts/workbench.py new "<task in plain language>" --type <bugfix|feature|refactor|test|performance|documentation|design|investigation|release_support|review|security_review> [--runtime auto|native|orca]`. Auto uses Orca only when both an active Orca context and a responding JSON CLI are observed; otherwise it reports a native fallback. Explicit Orca never silently downgrades.
    This creates an isolated git worktree and prints the task_id, worktree path, and acceptance-gate checklist.
 2. **Do the work** inside the printed worktree path (or main tree if `--no-worktree` was used for a read-only review task).
 3. **Write `.rig/runs/<task_id>/diff.md`** with `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` sections before trying to accept — this is a structural precondition (`diff_summary_generated`), not optional.
