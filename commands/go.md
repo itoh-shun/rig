@@ -53,6 +53,7 @@ $ARGUMENTS
 | `budget-plan <options> --budget <json> [--json]` | `facets/instructions/workbench-ops`（保証の作り方を安くする。保証そのものは安くしない。予算が尽きたら拒否し、選択肢を提示しない） |
 | `provenance <graph> <node> [--direction both\|back\|forward] [--json]` | `facets/instructions/workbench-ops`（ある節点の鎖を双方向に辿る。確認済みと推測を混ぜず、照会できない種別は「照会していない」と答える） |
 | `expected-outcome <expected> --observed <file> --as-of <ts> [--task <id>] [--json]` | `facets/instructions/workbench-ops`（宣言された期待 outcome を本番の観測値と突き合わせる。観測側は基準を宣言できず、`unmeasured`/`inconclusive` を成功にせず、窓が閉じるまで final にしない。objective は `baseline`/`target` と改善方向 `direction`、guardrail は守る側を名前にした境界 `at_most`（上限）/`at_least`（下限）を1つだけ宣言する＝guardrail に `direction` は無い） |
+| `effectiveness --query <json> [--json]` | `facets/instructions/workbench-ops`（実在する run 記録から workflow 指標と、呼び出し側が閾値・late step を定義した failure pattern だけを導出。未計測を 0 にせず、候補生成・評価・昇格は行わない） |
 | `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
 | `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |
 | `gh pr <n> fix` | `facets/instructions/gh-flow`（PR 指摘を隔離 worktree で修正） |

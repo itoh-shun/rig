@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -409,6 +409,39 @@ python3 scripts/workbench.py context [--since-days N]
 - **読み取り専用**（集計のみ）。出力はそのまま提示してよい。
 - **計測していないものを計測したことにしない**：セッション全体の context・会話・親が自分で読んだファイル・「親が本当に subagent に dispatch したか」は rig からは見えない。レポート自身がその旨を明記するので、その断り書きを削って「あなたの context 使用量」として提示しない。
 - 使いどころは「出力を増やす変更（step バナー・flow map 等）の予算を決めるとき」。`digest` が実行の質を、`context` が実行の重さを見る。
+
+## `/rig effectiveness --query <json> [--json]`
+
+```
+python3 scripts/workbench.py effectiveness --query <query.json> [--json]
+```
+
+`.rig/runs.jsonl` と `.rig/runs/*/{task,acceptance}.json` を読み、記録済みの repair
+cycle、停止 step、task type 別 gate 状態、成功 gate までの時間、実測 token だけを集計する。
+pattern は query が定義したものだけを数える。query は閉じた
+`rig.workflow-effectiveness-query/v1` で、例は次の通り：
+
+```json
+{
+  "schema": "rig.workflow-effectiveness-query/v1",
+  "patterns": [
+    {"kind": "late-stage-failure", "minimum_occurrences": 3,
+     "late_steps": ["review", "acceptance"]},
+    {"kind": "excessive-repair-loops", "minimum_occurrences": 2,
+     "repair_cycles_above": 1},
+    {"kind": "task-gate-failure", "minimum_occurrences": 2,
+     "gate_statuses": ["failed"]}
+  ]
+}
+```
+
+- `minimum_occurrences` と各 kind の `late_steps`、`repair_cycles_above`、`gate_statuses` は必須。省略・空・型違い・
+  未対応 kind は拒否し、コマンドが「後段」「反復」「過剰」の基準を発明しない。
+- 空の `token_usage` は 0 token ではなく未計測。finding 件数/棄却、drill、cost、run
+  runtime、production rework、risk class は現行の入力記録から答えられないため
+  `unobservable` とする。読めない記録は件数から黙って落とさずパスを列挙する。
+- 出力は記録の view であり、失敗原因の判定、改善候補の生成、replay/offline evaluation、
+  policy 判定、promotion、rollback を行わない。pattern が出ても workflow を変更しない。
 
 ## `/rig instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview]`
 
