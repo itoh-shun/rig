@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## [2.7.0] - 2026-08-27
+
+### Breaking
+
+Three things that used to pass now refuse. Each was a defect being fixed, but code that
+depended on the old behaviour will stop.
+
+**An `acceptance-gate` step with non-empty `checks[]` now requires a verdict.** It used to
+pass on the checks alone, so the gate's name promised a judgment nobody had made — two of
+the twenty-four gated steps in the shipped catalogue were passing that way. A recipe of your
+own with that shape will now wait for a verdict instead of advancing. Answering criteria by
+hand is `verdict --criterion N=PASS|FAIL|UNKNOWN`, repeatable; a passing verdict that answers
+none of a step's declared criteria is `unanswered`, not a pass (#497, #496).
+
+**`japanese-writing-revision` refuses to review without the source draft.** The reviewer was
+never shown the draft it was asked to check facts against, so the recipe's first acceptance
+criterion could not be met under the secure runtime at all. The draft now reaches the
+reviewer in process memory, and a run whose draft is absent, empty, mistyped, or no longer
+matching its hash is BLOCKED before any provider starts (#504).
+
+**The mock provider emits one `CRITERION <n>` line per declared criterion.** It used to emit
+exactly one whatever the step declared. Anything asserting on a fixed count of one from a
+mock-driven run will see the real count instead (#503 prerequisite).
+
 Workbench task creation and import now accept `--runtime auto|native|orca`. An active Orca
 session can create and remove Orca-managed worktrees through structured CLI output while Rig
 persists Orca's full worktree id. Auto reports a native fallback; explicit Orca refuses
