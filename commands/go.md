@@ -15,6 +15,11 @@ $ARGUMENTS
 
 ## 経路分岐
 
+自然文 task は `--runtime auto|native|orca` を受け取る。`auto` は active Orca session
+と応答する structured CLI の両方を観測したときだけ Orca backend を使い、それ以外は
+理由を表示して native に落ちる。明示 `orca` は黙って downgrade しない。この選択は
+provider とは独立で、`import` にも同じ flag を渡せる。
+
 ### ① サブコマンド（先頭語が一致する場合）
 
 | 先頭語 | 委譲先 |

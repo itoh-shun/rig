@@ -22,6 +22,10 @@ Codex では `$rig` が Claude Code の `/rig:go` に相当する入口。slash 
 
 ## 2. ブリック目録
 
+workbench task の作成・import は `--runtime auto|native|orca` を受け取る。auto は active
+Orca context と応答する JSON CLI の両方があるときだけ Orca を選び、理由つきで native
+fallback する。明示 Orca は fallback せず拒否する。runtime は provider と独立である。
+
 | 種別 | 役割 | 現在の在庫 |
 |---|---|---|
 | **agent**（native 委譲先・優先） | read-only reviewer。専用 context・tool 制限つきで起動 | `agents/security-reviewer` `agents/design-reviewer` `agents/test-reviewer` `agents/behavioral-correctness-reviewer` `agents/performance-reviewer` `agents/observability-reviewer` `agents/api-compat-reviewer` `agents/migration-reviewer` `agents/docs-reviewer` `agents/finding-verifier` `agents/lazy-senior-reviewer` `agents/cognitive-economist-reviewer` |

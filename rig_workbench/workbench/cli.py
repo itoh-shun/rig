@@ -99,6 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_route_context_arguments(p)
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
+    p.add_argument("--runtime", choices=("auto", "native", "orca"), default="auto",
+                   help="worktree runtime (default: auto; explicit orca never downgrades)")
     p.add_argument("--budget-minutes", type=float,
                    help="estimated time in minutes; going over is flagged in status/board (#281, advisory only)")
     p.add_argument("--caller",
@@ -136,6 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
     p.add_argument("--budget-minutes", type=float, help="estimated time in minutes (#281, advisory only)")
     p.add_argument("--caller", help="name the harness invoking rig (#416, #428)")
+    p.add_argument("--runtime", choices=("auto", "native", "orca"), default="auto",
+                   help="worktree runtime (default: auto; explicit orca never downgrades)")
     p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("contract", help="the machine answer an external orchestrator acts on: "

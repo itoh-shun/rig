@@ -4,6 +4,10 @@
 
 ## 共通ルール
 
+- task 作成時の `--runtime auto|native|orca` は worktree backend の選択であり provider
+  選択ではない。`auto` の native fallback は理由を表示する。明示 `orca` は CLI が応答
+  しなければ停止し、path を Orca identity の代用にしない。`import` も同じ flag を持つ。
+
 - サブコマンドの引数に `task_id` が省略された場合、`workbench.py` は `.rig/runs/` 内の**最新 task**を自動選択する。複数 task が並行している可能性がある場合（`workbench.py log --limit 5` で確認）は、曖昧さを避けるため task_id を明示するようユーザーに促す。
 - どのサブコマンドも**親 context に長い diff 本文を引き込まない**（context-minimal）。`workbench.py diff` の出力（ファイル一覧＋shortstat）はそのまま見せてよいが、個々のコード片の要約は `diff.md`（RUN 中にモデルが書いた散文）を参照する。
 

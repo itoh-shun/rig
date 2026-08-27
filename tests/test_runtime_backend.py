@@ -118,8 +118,9 @@ def test_the_default_is_native_and_asks_nothing_else_whether_it_is_installed(rep
 
 def test_an_unknown_runtime_is_refused_and_names_what_exists(repo):
     with pytest.raises(RuntimeError_) as exc:
-        runtime.select("orca", repo)
+        runtime.select("elsewhere", repo)
     assert "native" in str(exc.value)
+    assert "orca" in str(exc.value)
 
 
 def test_a_named_runtime_that_is_unavailable_never_falls_back(repo, monkeypatch):
@@ -262,13 +263,8 @@ def test_the_provider_layer_knows_nothing_about_runtimes():
         assert token not in source
 
 
-def test_the_default_path_gains_no_dependency_on_another_runtime():
-    """`native` must be reachable without importing, invoking or probing anything else.
-
-    Checked against what the code imports and calls, not against the words in the file:
-    the module deliberately explains in prose which runtime it was extracted for, and
-    saying so is not the same as reaching for it.
-    """
-    identifiers = _code_identifiers(runtime)
-    for token in ("orca", "Orca", "subprocess", "shutil", "which", "run"):
-        assert token not in identifiers, token
+def test_explicit_native_does_not_probe_orca(repo, monkeypatch):
+    """The new auto mode may probe Orca; an explicit native choice never may."""
+    monkeypatch.setattr(runtime.BACKENDS["orca"], "available",
+                        lambda _root: pytest.fail("Orca was probed"))
+    assert runtime.select("native", repo).name == "native"

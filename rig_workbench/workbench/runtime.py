@@ -1,4 +1,4 @@
-"""Where a task's work lives, behind one seam (#461).
+"""Where a task's work lives, behind one seam (#461, #462).
 
 Rig creates a git worktree because isolation is a precondition for its gate, not because
 git worktrees are the only thing that could hold a task. A tool that manages workspaces of
@@ -16,9 +16,10 @@ the same kind of choice, and then neither could be made without the other. Nothi
 mentions a provider, and `providers.py` mentions no runtime; the test suite checks that
 structurally rather than trusting this paragraph.
 
-**The default path gains no dependency.** `native` is selected without asking any other
-tool whether it is installed, and it is what an absent runtime resolves to. A repository
-with no such tool behaves byte-identically to before this change.
+**Auto-detection is bounded.** Only an environment already identified as an Orca session
+is allowed to probe Orca. The probe is `orca status --json`; a binary on PATH, an exported
+session variable, a zero exit, and structured create output are four different facts. Auto
+falls back to native and says so when any required fact is absent. Explicit Orca refuses.
 
 **A handle is not a path.** `create` returns a :class:`WorktreeHandle` carrying the runtime
 that made it and a `ref` for identifiers only that runtime understands. Native leaves `ref`
@@ -27,13 +28,24 @@ record one without a state-shape migration later. `remove` takes the handle back
 backend that created a worktree is the backend that disposes of it — reading a path out of
 task state and calling `git worktree remove` on it would work today and be wrong the moment
 something else owns the directory.
+
+This module does not prove that Orca's checkout is a sandbox, that setup hooks completed,
+or that a provider process started. It creates/removes the checkout and returns its cwd;
+the existing provider layer remains responsible for processes. Nor does a successful
+status probe guarantee a later mutation will succeed: every CLI call is checked separately.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
+import shutil
+import subprocess
+import sys
 
+from . import orca
+from .injection import INVISIBLE_RE
 from .state import default_worktree_path, git
 
 #: The runtime rig uses when nothing says otherwise, and the only one this version
@@ -45,6 +57,7 @@ NATIVE = "native"
 #: day a second backend exists, the resolution rule is a change to this function and not a
 #: discovery about what `auto` quietly did.
 AUTO = "auto"
+ORCA = "orca"
 
 
 class RuntimeError_(RuntimeError):
@@ -154,10 +167,108 @@ class NativeGitWorktreeBackend(WorktreeBackend):
             git(["worktree", "remove", "--force", str(wt)], cwd=root, check=strict)
 
 
+class OrcaWorktreeBackend(WorktreeBackend):
+    """An Orca-owned checkout addressed by the full id Orca returned.
+
+    The public CLI currently has no separate branch-name flag: `--name` chooses it. Rig
+    therefore records `worktree.branch` from the response rather than claiming the
+    `rig/<task-id>` requested by the native interface was created.
+    """
+
+    name = ORCA
+
+    def __init__(self) -> None:
+        self.unavailable_reason = "Orca CLI has not been probed"
+
+    def _executable(self) -> str:
+        executable = shutil.which("orca")
+        if not executable:
+            raise RuntimeError_("Orca CLI executable 'orca' was not found on PATH")
+        return executable
+
+    def _json(self, args: list[str], root: pathlib.Path, *, timeout: int = 30) -> dict:
+        command = [self._executable(), *args, "--json"]
+        try:
+            proc = subprocess.run(command, cwd=root, capture_output=True, text=True,
+                                  timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError_(f"Orca CLI {' '.join(args)} did not respond: {exc}") from exc
+        if proc.returncode:
+            detail = proc.stderr.strip() or proc.stdout.strip() or "no diagnostic"
+            raise RuntimeError_(f"Orca CLI {' '.join(args)} failed with exit "
+                                f"{proc.returncode}: {detail}")
+        try:
+            value = json.loads(proc.stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise RuntimeError_(f"Orca CLI {' '.join(args)} did not return valid JSON") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError_(f"Orca CLI {' '.join(args)} returned JSON, but not an object")
+        return value
+
+    def available(self, root: pathlib.Path) -> bool:
+        try:
+            status = self._json(["status"], root)
+        except RuntimeError_ as exc:
+            self.unavailable_reason = str(exc)
+            return False
+        runtime = status.get("result", {}).get("runtime")
+        if (status.get("ok") is not True or not isinstance(runtime, dict)
+                or runtime.get("state") != "ready" or runtime.get("reachable") is not True):
+            self.unavailable_reason = (
+                "Orca CLI status JSON did not report a ready, reachable runtime")
+            return False
+        self.unavailable_reason = ""
+        return True
+
+    @staticmethod
+    def _safe(value: object) -> bool:
+        return (isinstance(value, str) and bool(value)
+                and not INVISIBLE_RE.search(value) and not any(c in value for c in "\n\r"))
+
+    def create(self, root: pathlib.Path, task_id: str, base_commit: str,
+               branch: str) -> WorktreeHandle:
+        result = self._json(["worktree", "create", "--name", task_id,
+                             "--base-branch", base_commit, "--setup", "skip"], root,
+                            timeout=600)
+        worktree = result.get("worktree")
+        if not isinstance(worktree, dict):
+            raise RuntimeError_("Orca worktree create returned no structured worktree object")
+        identity = worktree.get("id")
+        path = worktree.get("path")
+        actual_branch = worktree.get("branch")
+        if not self._safe(identity):
+            raise RuntimeError_("Orca worktree create returned no safe stable worktree id; "
+                                "Rig will not invent one from its path")
+        if not self._safe(path) or not pathlib.Path(path).is_absolute():
+            raise RuntimeError_("Orca worktree create returned no safe absolute worktree path")
+        if not self._safe(actual_branch):
+            raise RuntimeError_("Orca worktree create returned no safe branch name")
+        return WorktreeHandle(runtime=self.name, path=path, branch=actual_branch,
+                              ref={"orca_worktree_id": identity})
+
+    def remove(self, root: pathlib.Path, handle: WorktreeHandle, *,
+               strict: bool = True) -> None:
+        identity = handle.ref.get("orca_worktree_id")
+        if not self._safe(identity):
+            if strict:
+                raise RuntimeError_("Orca task state has no safe stable worktree id; refusing "
+                                    "to substitute its filesystem path")
+            return
+        try:
+            self._json(["worktree", "rm", "--worktree", f"id:{identity}", "--force"],
+                       root, timeout=60)
+        except RuntimeError_:
+            if strict:
+                raise
+
+
 #: Every runtime rig can select, by name. A registry rather than an if-chain so that the
 #: set of runtimes is one readable list, and so a caller can ask what exists without
 #: knowing what is implemented.
-BACKENDS: dict[str, WorktreeBackend] = {NATIVE: NativeGitWorktreeBackend()}
+BACKENDS: dict[str, WorktreeBackend] = {
+    NATIVE: NativeGitWorktreeBackend(),
+    ORCA: OrcaWorktreeBackend(),
+}
 
 
 def names() -> list[str]:
@@ -173,18 +284,22 @@ def select(name: str | None, root: pathlib.Path) -> WorktreeBackend:
     not check, which is the failure mode that makes an opt-in runtime worth having at all.
     """
     if name in (None, "", AUTO):
-        for candidate in names():
-            backend = BACKENDS[candidate]
-            if backend.available(root):
-                return backend
-        raise RuntimeError_("no worktree runtime is available in this environment")
+        session = orca.detect()
+        backend = BACKENDS[ORCA]
+        if session is not None and backend.available(root):
+            return backend
+        reason = ("no active Orca session was detected" if session is None
+                  else getattr(backend, "unavailable_reason", "Orca CLI is unusable"))
+        print(f"◇ runtime auto: {reason}; falling back to native", file=sys.stderr)
+        return BACKENDS[NATIVE]
     backend = BACKENDS.get(name)
     if backend is None:
         raise RuntimeError_(
             f"unknown runtime {name!r}; available: {', '.join(names())}")
     if not backend.available(root):
+        detail = getattr(backend, "unavailable_reason", "runtime probe failed")
         raise RuntimeError_(
-            f"runtime {name!r} is not available here. Rig will not quietly fall back to "
+            f"runtime {name!r} is not available here: {detail}. Rig will not quietly fall back to "
             f"another one — re-run with --runtime auto if that is what you want")
     return backend
 

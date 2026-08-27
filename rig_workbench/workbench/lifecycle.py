@@ -184,9 +184,10 @@ def cmd_new(args: argparse.Namespace) -> None:
         # is chosen by the provider layer, which this does not consult (#461). The name is
         # passed explicitly as `None` rather than read off `args`: no flag sets it yet, and
         # #462 adds the flag together with the refusal message a bad value deserves.
-        backend = runtime_mod.select(None, root)
+        backend = runtime_mod.select(getattr(args, "runtime", runtime_mod.NATIVE), root)
         branch = f"rig/{task_id}"
         handle = backend.create(root, task_id, base_commit, branch)
+        branch = handle.branch
         worktree_path = handle.path
 
     task = {
