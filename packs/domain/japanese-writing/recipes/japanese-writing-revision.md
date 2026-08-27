@@ -33,9 +33,10 @@ autonomy: interactive
 既存の日本語下書きを opt-in で修正する recipe です。通常の会話や通常の
 `japanese-writing` recipe の挙動は変更しません。
 
-下書き本文は `--goal-stdin` から一度だけ渡し、生成 provider の stdin へ canonical composer が
-untrusted data として囲って渡します。修正版は元ファイルと異なる owner-only output に保存します。
-category と material profile は本文から推測せず、呼び出し時に明示します。
+下書き本文は `--goal-stdin` から一度だけ読み、run-state へ永続化せず、生成 provider と
+review provider の stdin へ各 canonical composer が untrusted data として囲って渡します。
+review は下書きと修正版を照合して事実保持と推測なしを検査します。修正版は元ファイルと異なる
+owner-only output に保存します。category と material profile は本文から推測せず、呼び出し時に明示します。
 
 書き手は既存の `japanese-writer`、検証は既存の strict JSON contract を使う
 `japanese-writing-reviewer` です。semantic rewrite は最大一回で、二度目の `REVISE`、parser invalid

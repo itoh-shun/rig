@@ -1605,6 +1605,7 @@ def run_verifiers_parallel(ver, prompt: str, personas: list[str],
 
 def _run_artifact_reviewers(
     ver, state: dict, step: dict, artifact: str, cfg: dict, max_parallel: int,
+    *, source_draft: str | None = None,
 ) -> list[dict]:
     """Run recipe-composed personas as the actual independent verifiers."""
     vers = ver if isinstance(ver, list) else [ver]
@@ -1613,7 +1614,9 @@ def _run_artifact_reviewers(
 
     def _one(task):
         provider, persona = task
-        prompt = compose_artifact_review_prompt(state, step, persona, artifact)
+        prompt = compose_artifact_review_prompt(
+            state, step, persona, artifact, source_draft=source_draft,
+        )
         strict_japanese = step.get("output_contract") == "japanese-writing-verdict"
         invalid_attempts = 0
         while True:
@@ -1947,16 +1950,29 @@ def compose_artifact_review_prompt(
     artifact: str,
     *,
     facets: dict[str, list[str]] | None = None,
+    source_draft: str | None = None,
 ) -> str:
     """Compose the canonical runtime artifact-review prompt as a pure function."""
+    if _requires_source_draft(state) and source_draft is None:
+        raise ValueError(
+            "revision review requires an explicitly supplied source draft"
+        )
     persona_step = {**step, "personas": [persona]}
     goal = state.get("goal")
     task_lines = [
         "Act only as an independent reviewer; do not rewrite the artifact.",
         f"recipe: {state['recipe']}",
         f"step: {step['id']}",
-        f"goal: {wrap_untrusted(goal, 'task text') if goal else '(none)'}",
     ]
+    if source_draft is not None:
+        task_lines.extend([
+            "source_draft:",
+            wrap_untrusted(source_draft, "source draft"),
+        ])
+    else:
+        task_lines.append(
+            f"goal: {wrap_untrusted(goal, 'task text') if goal else '(none)'}"
+        )
     if step.get("acceptance"):
         task_lines.append("acceptance_criteria:")
         task_lines.extend(f"- {criterion}" for criterion in step["acceptance"])
@@ -2839,11 +2855,53 @@ def _has_prior_step(state: dict, step: dict) -> bool:
     return bool(state.get("steps") and state["steps"][0].get("id") != step.get("id"))
 
 
+def _requires_source_draft(state: dict) -> bool:
+    """Identify the opt-in revision contract without relying on its shared recipe name."""
+    steps = state.get("steps")
+    return bool(
+        isinstance(steps, list)
+        and steps
+        and isinstance(steps[0], dict)
+        and steps[0].get("instruction") == "japanese-revise-draft"
+    )
+
+
+def _review_source_draft(state: dict, cfg: dict) -> tuple[str | None, str | None]:
+    """Resolve a revision source from process memory, or return a stable refusal code."""
+    if not _requires_source_draft(state):
+        return None, None
+    if "_source_draft" not in cfg:
+        return None, "source_draft_missing"
+    source = cfg["_source_draft"]
+    if not isinstance(source, str):
+        return None, "source_draft_wrong_type"
+    if not source:
+        return None, "source_draft_empty"
+    bound_hash = (state.get("secure_runtime") or {}).get("goal_sha256")
+    if not isinstance(bound_hash, str) or hashlib.sha256(
+        source.encode("utf-8")
+    ).hexdigest() != bound_hash:
+        return None, "source_draft_unresolved"
+    return source, None
+
+
 def _execute_artifact_review(
     state: dict, step: dict, st: dict, artifact_record: dict,
     ver, cfg: dict, max_parallel: int, quorum: str, log,
 ) -> bool:
     """Execute an independent-verification step directly against the prior artifact."""
+    source_draft, source_error = _review_source_draft(state, cfg)
+    if source_error is not None:
+        state["stopped"] = {
+            "reason": (
+                "independent review cannot verify source-dependent acceptance "
+                "without the bound in-memory source draft"
+            ),
+            "reason_code": source_error,
+            "kind": "BLOCKED",
+            "at": step["id"],
+        }
+        return True
     artifact = _read_artifact(artifact_record, cfg)
     if artifact is None:
         state["stopped"] = {
@@ -2892,6 +2950,7 @@ def _execute_artifact_review(
     review_cfg = {**cfg, "model": verifier_model} if verifier_model else cfg
     results = _run_artifact_reviewers(
         ver, state, step, artifact, review_cfg, max_parallel,
+        source_draft=source_draft,
     )
     review_failure = next(
         (result.get("review_failure") for result in results

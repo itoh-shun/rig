@@ -838,6 +838,13 @@ def cmd_run(args):
             diagnostic(f"[BLOCKED] {error}")
             raise SystemExit(2) from error
         cfg["secure_runtime"] = True
+        # Same signal the reviewer's requirement is derived from. Keying the supply
+        # off the file's name while the requirement reads the step's instruction
+        # made a project overlay under another filename require a draft it could
+        # never be handed — fail-closed, but on a mismatch nobody would look for.
+        if steps and isinstance(steps[0], dict) \
+                and steps[0].get("instruction") == "japanese-revise-draft":
+            cfg["_source_draft"] = goal
     state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
     if secure_required and fm.get("name", path.stem) == "japanese-writing":
         state["review_category"] = review_category
@@ -852,6 +859,8 @@ def cmd_run(args):
         state["secure_runtime"] = {
             "policy_version": 1,
             "prompt_transport": "stdin",
+            **({"goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest()}
+               if isinstance(goal, str) else {}),
             **({"review_category": review_category}
                if state.get("recipe") == "japanese-writing" else {}),
             **({"material_profile": material_profile,
