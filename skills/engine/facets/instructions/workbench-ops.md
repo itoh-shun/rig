@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -31,6 +31,27 @@ rule と expected benefit は各引用記録に明記され、context と scope 
 `python3 scripts/workbench.py compose-options --type <task_type> [--diff <n>] --json` を呼ぶ。
 5軸の候補・推薦・根拠を返す read-only コマンドであり、描画と質問は
 `facets/instructions/compose`、合成後の表示は `facets/instructions/plan` に委ねる。
+
+## `/rig change-graph <graph> [--json]`
+
+```
+python3 scripts/workbench.py change-graph <graph> [--json]
+```
+
+呼び出し側が書いた閉じた `rig.change-graph/v1` を検査する。各 node は repository / component、
+immutable な `base` / `target`、required change、assurance target、status を持つ。各 dependency は
+`must-accept-before` / `migration-before` / `blocks`（先行→後続）、`deploy-together`（同一 stage）、
+`compatible-with`（順序を増やさない互換制約）のいずれかと、必須の `compatibility` を持つ。
+compatibility は呼び出し側が書いた `requirement`、`satisfied` / `unmet` / `unobservable` の status、
+判定済みなら evidence reference を要求する。status だけで requirement を作ることはできない。
+
+存在しない endpoint は解決不能な文書として拒否する。endpoint は存在するが compatibility をまだ
+判定できない場合は `unobservable`（exit 2）、判定して満たさない場合は `unmet` を伴う
+`not-executable`（exit 1）であり、両者を混ぜない。循環は `cycles` に列挙して拒否する。
+
+このコマンドが保証するのは、宣言された依存と satisfied な互換制約が許す execution stage が
+存在することだけ。その順序での実行が安全であること、影響 repository の網羅、変更の生成・実行、
+各 node の正しさ、cross-repo integration verification、feature assurance は保証しない。
 
 ## MCPサーバ経由での操作（`scripts/mcp_server.py`・#263）
 
