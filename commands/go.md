@@ -54,6 +54,7 @@ provider とは独立で、`import` にも同じ flag を渡せる。
 | `assurance-target <task_id> <target> [--json]` | `facets/instructions/workbench-ops`（assurance target を受領書と突き合わせる。`unobservable` は `unmet` に畳まない＝「測っていない」と「測って不足」は別） |
 | `knowledge-candidate <candidate> [--json]` | `facets/instructions/workbench-ops`（提出された知見候補が引用記録に明示的に支えられているかだけを判定。読めない証拠は `unobservable`、読めて不支持は `unsupported`） |
 | `change-graph <graph> [--json]` | `facets/instructions/workbench-ops`（呼び出し側が書いた cross-repo change graph に、宣言された依存と互換制約を満たす実行 stage が存在するかだけを判定。graph の発見・生成・実行はしない） |
+| `anomaly-trigger <event> [--json]` | `facets/instructions/workbench-ops`（外部 source が提出した anomaly event が調査開始材料を宣言し、引用記録が明示的に支えるかだけを判定。anomaly 自体は検出・確認しない） |
 | `assurance-derive <target> --requires <map> --against <json> [--json]` | `facets/instructions/workbench-ops`（target が必要とする workflow の床を、宣言された軸→step 写像から導く。写像が覆わない軸-値は拒否） |
 | `synthesise <workflow> --against <json> [--floor <json>] [--json]` | `facets/instructions/workbench-ops`（提案された workflow に床を復元し、何を復元したかを報告。床は呼び出し側が組み、検査対象からは読まない） |
 | `dev-loop <cycles> [--limits <json>] [--receipt <json>] [--json]` | `facets/instructions/workbench-ops`（開発ループの停止判定と handoff。止まるべき理由を名指し、進捗の無さを進捗と読まない） |

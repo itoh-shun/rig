@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -25,6 +25,22 @@ rule と expected benefit は各引用記録に明記され、context と scope 
 
 この判定が保証するのは「引用記録が実在し、候補が主張する範囲を明示的に支える」ことだけ。
 候補の正しさ、因果性、完全性、一般適用可能性、将来の効果は保証しない。
+
+## `/rig anomaly-trigger <event> [--json]`
+
+```
+python3 scripts/workbench.py anomaly-trigger <event> [--json]
+```
+
+外部 monitoring / incident source が書いた `rig.production-anomaly-event/v1` を、その
+`evidence` が指す `rig.production-anomaly-evidence/v1` の記録と突き合わせる。event を生成・補完
+せず、anomaly を検出しない。全引用が source、時間窓、observation、comparison、environment、
+components を明示的に支えた場合だけ `ready`。読めた不一致は `unmet`、読めない／不正／record id
+を exact-once で解決できない引用は `unobservable` とし、併存時も両理由を残す。
+
+`signal.kind`、`severity`、`confidence` は外部 source の claim であり、出力では
+`claimed` と `verified: null` を分ける。この判定は、その event が本物の anomaly / regression
+であること、因果、repository / change との相関、再現可能性、fix の存在を保証しない。
 
 ## `/rig compose-options --type <task_type> [--diff <n>] [--json]`
 
