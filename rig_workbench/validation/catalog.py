@@ -57,14 +57,22 @@ def check_catalog_drift() -> None:
     # bricks registered via brace notation ({a,b}-reviewer etc.) are also matched against expanded tokens
     expanded_stems = {pathlib.Path(tok).stem for tok, _ in tokens}
     missing = 0
-    # patterns/ was missing from this loop until #364, so a wired-in pattern
-    # could stay off the §2 catalog with nothing to detect it.
-    for sub in ("recipes", "facets/instructions", "facets/personas", "patterns"):
-        for f in sorted((SKILLS / sub).rglob("*.md")):
+    # Facet kinds are the direct children of facets/.  Derive them instead of
+    # keeping a second category list here: a newly added kind must be checked
+    # from its first file.  recipes/ and patterns/ are the two non-facet brick
+    # collections in the engine layout.
+    brick_roots = [SKILLS / "recipes", SKILLS / "patterns"]
+    brick_roots.extend(sorted(path for path in FACETS.iterdir() if path.is_dir()))
+    wiki = FACETS / "knowledge" / "wiki"
+    for brick_root in brick_roots:
+        for f in sorted(brick_root.rglob("*.md")):
             if f.stem.startswith("_"):
                 continue
+            if wiki in f.parents:
+                continue
             if f.stem not in skill and f.stem not in expanded_stems:
-                _emit("WARN", f"§2 catalog — {sub}/{f.relative_to(SKILLS / sub)} is not listed in SKILL.md (missed listing for a pack addition?)")
+                relative = f.relative_to(SKILLS)
+                _emit("WARN", f"§2 catalog — {relative} is not listed in SKILL.md (missed listing for a pack addition?)")
                 missing += 1
     _emit("PASS", f"§2 catalog drift: {len(tokens)} references ({ghosts} ghosts) / {missing} suspected missing listings")
 

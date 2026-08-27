@@ -266,12 +266,12 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 ### ④ §2 目録ドリフト
 
-> **CI 用機械実装**：`scripts/validate.py` の `check_catalog_drift` が本節のサブセットを実装 — §2 のバッククォート・ブリック参照（brace 記法 `{a,b}-reviewer` 展開対応）→実ファイル（幽霊エントリ＝FAIL）、shipped の recipe/instruction/persona 実ファイル→SKILL.md 記載（追記漏れ疑い＝WARN）。
+> **CI 用機械実装**：`scripts/validate.py` の `check_catalog_drift` が本節のサブセットを実装 — §2 のバッククォート・ブリック参照（brace 記法 `{a,b}-reviewer` 展開対応）→実ファイル（幽霊エントリ＝FAIL）、shipped の `recipes/`・`patterns/`・`facets/` 直下の全カテゴリの実ファイル→SKILL.md 記載（追記漏れ疑い＝WARN）。facet カテゴリはディレクトリ構成から導出するため、新カテゴリも自動的に対象となる。`facets/knowledge/wiki/` は本検査から除外し、独立した⑤ wiki 衛生検査のみが扱う。
 
 §2 ブリック目録（dev-core 行＋pack 追加分の表）と**実ファイル**を突き合わせる。
 
 - 目録に載っているが**実ファイルが無い**もの（幽霊エントリ）→ error。
-- 実ファイルが在るが**目録に載っていない**もの → pack 追加分への追記漏れの可能性として warning（dev-core は安定前提なので especially recipe/instruction/persona を見る）。
+- 実ファイルが在るが**目録に載っていない**もの → pack 追加分への追記漏れの可能性として warning（`_` 始まりと `facets/knowledge/wiki/` は除外）。
 - README.md / README.ja.md の recipe / instruction / persona 一覧表も同様に実ファイルと突き合わせ、抜け・古い記載を warning する。
 
 ### ④-b commands / agents frontmatter（実バグ class の再発防止）

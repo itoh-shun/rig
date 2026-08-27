@@ -133,12 +133,87 @@ def test_every_shipped_pattern_is_listed_in_the_skill_catalog():
     assert missing == []
 
 
-def test_catalog_drift_scans_the_patterns_directory():
+def _catalog_tree(tmp_path, monkeypatch):
     from rig_workbench.validation import catalog
-    import inspect
 
-    source = inspect.getsource(catalog.check_catalog_drift)
-    assert '"patterns"' in source
+    skills = tmp_path / "skills" / "engine"
+    facets = skills / "facets"
+    for directory in (
+        skills / "recipes", skills / "patterns", facets / "instructions",
+        facets / "personas", facets / "output-contracts", facets / "policies",
+        facets / "knowledge" / "wiki",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    (skills / "SKILL.md").write_text(
+        "## 2. ブリック目録\n\n## 3. PARSE\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(catalog, "SKILLS", skills)
+    monkeypatch.setattr(catalog, "FACETS", facets)
+    return catalog, skills
+
+
+@pytest.mark.parametrize("relative", [
+    "patterns/unlisted.md",
+    "facets/output-contracts/unlisted.md",
+    "facets/policies/unlisted.md",
+    "facets/knowledge/unlisted.md",
+])
+def test_catalog_drift_warns_for_an_unlisted_brick(relative, tmp_path, monkeypatch):
+    catalog, skills = _catalog_tree(tmp_path, monkeypatch)
+    (skills / relative).write_text("unlisted", encoding="utf-8")
+
+    catalog.check_catalog_drift()
+
+    assert validation_state._warn == 1
+    assert relative in validation_state.results[0]
+
+
+@pytest.mark.parametrize("relative", [
+    "patterns/listed.md",
+    "facets/output-contracts/listed.md",
+    "facets/policies/listed.md",
+    "facets/knowledge/listed.md",
+])
+def test_catalog_drift_accepts_a_listed_brick(relative, tmp_path, monkeypatch):
+    catalog, skills = _catalog_tree(tmp_path, monkeypatch)
+    (skills / relative).write_text("listed", encoding="utf-8")
+    (skills / "SKILL.md").write_text(
+        f"## 2. ブリック目録\n`{relative.removesuffix('.md')}`\n\n## 3. PARSE\n",
+        encoding="utf-8",
+    )
+
+    catalog.check_catalog_drift()
+
+    assert validation_state._warn == 0
+    assert validation_state._fail == 0
+
+
+def test_catalog_drift_derives_new_facet_collections(tmp_path, monkeypatch):
+    """A fourth omitted facet kind must become covered without editing a tuple."""
+    catalog, skills = _catalog_tree(tmp_path, monkeypatch)
+    future = skills / "facets" / "future-contracts" / "unlisted.md"
+    future.parent.mkdir()
+    future.write_text("unlisted", encoding="utf-8")
+
+    catalog.check_catalog_drift()
+
+    assert validation_state._warn == 1
+    assert "facets/future-contracts/unlisted.md" in validation_state.results[0]
+
+
+@pytest.mark.parametrize("relative", [
+    "facets/knowledge/wiki/unlisted.md",
+    "facets/knowledge/_schema.md",
+])
+def test_catalog_drift_accepts_files_owned_by_another_rule_or_private(
+    relative, tmp_path, monkeypatch
+):
+    catalog, skills = _catalog_tree(tmp_path, monkeypatch)
+    (skills / relative).write_text("not a §2 listing", encoding="utf-8")
+
+    catalog.check_catalog_drift()
+
+    assert validation_state._warn == 0
 
 
 # ── accumulated/ schema (#365) ──────────────────────────────────────────
