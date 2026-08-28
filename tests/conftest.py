@@ -57,7 +57,14 @@ if str(REPO_ROOT) not in sys.path:
 # Six keeps ~3x headroom over the slowest run CI has actually shown us.
 #
 # The default has to be the safe value on its own: .github/workflows/validate.yml
-# runs bare `pytest -q` and sets no environment, so CI always takes this number.
+# runs `pytest -q -n auto` and sets no environment, so CI always takes this number
+# — and takes it under 4-way contention rather than serially, which eats into the
+# headroom the factor was originally cut against. Measured rather than assumed:
+# forcing the factor to 2 binds exactly one call site (the 30s floor below covers
+# every measurement under 15s), and that site is the jp-workflow dry-run this
+# comment was written about. Under `-n 4` at factor 2 the suite still passed with
+# no timeout among its failures, so contended cost stays inside 2x measured and 6
+# keeps roughly 3x headroom in parallel too.
 # The override exists for the opposite case — a machine slower still, or a
 # developer deliberately tightening the budget to hunt a hang.
 CI_TIMEOUT_FACTOR = float(os.environ.get("RIG_TEST_TIMEOUT_FACTOR", "6"))

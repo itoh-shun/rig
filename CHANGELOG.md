@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Changed
+
+**CI runs the test suite in parallel, for detection before speed.** A serial run is
+structurally blind to a class of defect this repository keeps producing. #502's overhead
+accounting subtracted concurrent provider spans from wall clock and went negative — the module
+written to refuse fabricated figures manufacturing one by its own arithmetic — and it was
+reproducible under `-n 4` and invisible on an idle serial machine, because nothing was competing
+for the CPU and the spans never actually overlapped enough to matter. Every timing-sensitive
+assertion in the suite has that shape. Contention is not a side effect of parallelising; it is
+the measurement, and CI had never taken it.
+
+Speed is the second reason and still worth naming: the serial job measured 32m22s (3.12) and
+34m44s (3.10) on the commit this was cut against. That is the pull-request feedback loop, twice
+over.
+
+The one thing that could have made this unsafe was measured rather than assumed. `conftest.py`'s
+`CI_TIMEOUT_FACTOR` of 6 was sized for a serial CI run and says so in its own comment, and 4-way
+contention eats into that headroom. Forcing the factor to 2 binds exactly one call site — the
+30s floor covers every measurement under 15s, and the site left is the jp-workflow dry-run the
+comment was written about, the one that historically blew its budget on this runner. Under
+`-n 4` at factor 2 the only failures were the two a root development container always produces,
+and neither is a timeout — so contended cost stays inside 2x measured, and 6 keeps roughly 3x
+headroom in parallel too. The factor is deliberately left alone.
+
+Also corrected while it was under the pen: both READMEs described this suite as "54 tests". It
+collects 4765.
+
 ## [2.8.0] - 2026-08-28
 
 ### Added
