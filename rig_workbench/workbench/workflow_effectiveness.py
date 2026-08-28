@@ -11,9 +11,16 @@ in a closed query document.  Missing, empty, wrong-typed and unsupported constra
 refused; absence is never permission to choose a convenient default.
 
 **Unobservable is not zero.**  These records do not contain finding counts, dismissals,
-cost, run start time, step redundancy, or a production repair link.  Their report entries say
+cost, step redundancy, or a production repair link.  Their report entries say
 ``unobservable`` and carry no numeric substitute.  An empty token-usage object likewise
 means no token count was measured, not that the run used zero tokens.
+
+Elapsed time was in that list until #502 began writing a ``perf`` block into the same
+``runs.jsonl`` this module reads.  It is now reported from what was measured, with rig's own
+share separated from its providers' — the only half a workflow change can move.  A run whose
+``perf`` withheld that subtraction (one untimed provider call is enough) counts as unmeasured
+here rather than as zero overhead, because reading an absent field as zero downstream would
+reintroduce exactly the fabrication ``perf`` refused upstream.
 
 **Patterns are views, not new verdicts.**  A late-failure finding is only a count of stopped
 runs whose recorded step is in the caller's list.  An excessive-loop finding is only a count
@@ -203,6 +210,63 @@ def _time_to_assurance(tasks: list[dict]) -> dict:
                "reason": "no task has both a successful gate and usable creation/check times"})}
 
 
+def _runtime(runs: list[dict]) -> dict:
+    """How long runs took, and how much of it was rig's own (#433 §1, from #502's `perf`).
+
+    This was reported as unobservable, on the grounds that `runs.jsonl` carries a finish
+    timestamp and no start. That stopped being true when #502 began recording a `perf` block
+    into the same records this module already reads, and a metric that keeps saying "cannot be
+    measured" while the measurement sits in the file it is reading is worse than one that was
+    never offered.
+
+    The split is the point rather than a detail. #433 exists to improve the *process*, and the
+    only half a workflow change can move is rig's own — a run that got slower because a
+    provider had a bad afternoon says nothing about whether the workflow is any good.
+
+    `perf`'s own refusals are carried through rather than papered over. It withholds
+    `rig_overhead_ms` whenever a provider call went untimed, because overhead is a subtraction
+    and one missed call would silently become rig's time; a run in that state counts towards
+    `unmeasured_overhead_runs` here and contributes nothing to the total. Reading the field as
+    absent-means-zero would reintroduce downstream exactly the fabrication `perf` refuses.
+    """
+    total_ms = 0.0
+    overhead_ms = 0.0
+    measured = 0
+    measured_overhead = 0
+    for run in runs:
+        perf = run.get("perf")
+        if not isinstance(perf, dict):
+            continue
+        elapsed = perf.get("total_ms")
+        if not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool) or elapsed < 0:
+            continue
+        total_ms += float(elapsed)
+        measured += 1
+        overhead = perf.get("rig_overhead_ms")
+        if isinstance(overhead, (int, float)) and not isinstance(overhead, bool) and overhead >= 0:
+            overhead_ms += float(overhead)
+            measured_overhead += 1
+    if not runs:
+        return _unobservable("no orchestrate run records were found")
+    if not measured:
+        return {**_unobservable("no run record carries a perf block with a usable total_ms"),
+                "measured_runs": 0, "unmeasured_runs": len(runs)}
+    report = {"status": "observed", "measured_runs": measured,
+              "unmeasured_runs": len(runs) - measured,
+              "total_ms": round(total_ms, 3)}
+    if measured_overhead:
+        report["rig_overhead_ms"] = round(overhead_ms, 3)
+        report["measured_overhead_runs"] = measured_overhead
+        report["unmeasured_overhead_runs"] = measured - measured_overhead
+    else:
+        # Elapsed time is known and rig's share is not. Said outright, because a reader who saw
+        # only `total_ms` would reasonably assume the split was available and simply omitted.
+        report["rig_overhead"] = _unobservable(
+            "no measured run separated rig's time from its providers' "
+            "(perf withholds the subtraction when a provider call went untimed)")
+    return report
+
+
 def _token_usage(runs: list[dict]) -> dict:
     totals = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}
     measured = 0
@@ -264,7 +328,7 @@ def _metrics(runs: list[dict], tasks: list[dict]) -> dict:
         "production_rework": _unobservable(
             "outcome records do not link an accepted task to a later repair"),
         "cost": _unobservable("the run records contain no monetary cost field"),
-        "runtime": _unobservable("runs.jsonl records a finish timestamp but no start timestamp"),
+        "runtime": _runtime(runs),
     }
 
 

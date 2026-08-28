@@ -310,6 +310,51 @@ def for_task(task: dict, root: pathlib.Path) -> WorktreeBackend:
     Disposal goes back to whoever created it. Looking at a recorded path and calling
     `git worktree remove` on it happens to work while native is the only backend, and
     stops being true the moment something else owns the directory.
+
+    Raises when that backend is not usable here. Callers that have to keep working anyway —
+    disposal is the one that matters — should ask :func:`reconnect` instead, which answers
+    the same question without making "the runtime is gone" unrepresentable.
     """
     handle = WorktreeHandle.from_task(task)
     return select(handle.runtime if handle else NATIVE, root)
+
+
+#: Every way an existing task's worktree can stand in relation to the runtime that made it.
+#: Named so the four are distinguishable at a glance, and so nothing has to infer them from
+#: whether some call raised (#463).
+READY = "ready"                              #: runtime usable, worktree present
+WORKTREE_MISSING = "worktree-missing"        #: runtime usable, the directory is gone
+RUNTIME_UNAVAILABLE = "runtime-unavailable"  #: the runtime that owns it cannot be used here
+NO_WORKTREE = "no-worktree"                  #: the task never had one
+
+
+def reconnect(task: dict, root: pathlib.Path) -> dict:
+    """How an existing task's worktree stands, without raising and without changing it.
+
+    Resuming a task means picking up a workspace somebody else's tool may own, and the
+    honest answers are more than two. A caller that only learns "this raised" cannot tell a
+    missing directory from an uninstalled CLI, and those need opposite responses: one is
+    state loss to report, the other is a machine that simply is not set up.
+
+    Read-only, and it never substitutes a backend. Silently answering with native because
+    Orca is absent would be the implicit migration #463 forbids — it would send disposal at a
+    directory rig no longer owns and report success.
+    """
+    handle = WorktreeHandle.from_task(task)
+    if handle is None:
+        return {"state": NO_WORKTREE, "runtime": None, "handle": None,
+                "detail": "this task has no worktree recorded"}
+
+    backend = BACKENDS.get(handle.runtime)
+    if backend is None:
+        return {"state": RUNTIME_UNAVAILABLE, "runtime": handle.runtime, "handle": handle,
+                "detail": f"unknown runtime {handle.runtime!r}; this rig knows: "
+                          f"{', '.join(names())}"}
+    if not backend.available(root):
+        return {"state": RUNTIME_UNAVAILABLE, "runtime": handle.runtime, "handle": handle,
+                "detail": getattr(backend, "unavailable_reason", "runtime probe failed")}
+
+    present = pathlib.Path(handle.path).is_dir()
+    return {"state": READY if present else WORKTREE_MISSING,
+            "runtime": handle.runtime, "handle": handle, "backend": backend,
+            "detail": "" if present else f"no directory at {handle.path}"}

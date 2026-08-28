@@ -1,41 +1,41 @@
 ---
-description: "rig/catalog — 横断レジストリ(統合管理)。全 tier(shipped＋global＋project)を走査し domain×pack×persona×wiki×recipe の地図を表示。「誰がどこで何してるか」を取り戻す。読み取り専用。"
+description: "rig/catalog — the cross-tier registry. Walks every tier (shipped, global, project) and shows the map of domain x pack x persona x wiki x recipe, so you can see again who is doing what where. Read-only."
 argument-hint: "[--domain <tag>] [--json] [--graph [--focus <name>]]"
 ---
 
-# rig/catalog — 横断レジストリ（統合管理ハーネス）
+# rig/catalog — the cross-tier registry
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・tier 解決・知識層）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/catalog` にある（重複定義しない）。`--list --global` と同等。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, tier resolution, the knowledge layer). This command is only the entry point; the procedure lives in `facets/instructions/catalog` and is not repeated here. It is equivalent to `--list --global`.
 
-起動後、`facets/instructions/catalog` に従って全 tier を走査し地図を出す:
+Then follow `facets/instructions/catalog` to walk every tier and print the map:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-shipped＋user(global)＋project(`<repo>`) を走査して、**domain ごとに pack / persona（→inject する wiki）/ wiki ページ / recipe** を、**tier（どこに居るか）**つきで地図表示する。レジストリは手で持たず**毎回走査して派生**（ドリフトしない）。**読み取り専用・副作用なし**。
+Walks shipped, user (global), and project (`<repo>`), and maps **the packs, personas (and the wiki pages they inject), wiki pages, and recipes of each domain**, each labelled with **the tier it lives in**. The registry is never stored by hand: it is **derived by walking, every time**, so it cannot drift. **Read-only, no side effects.**
 
-domain/プロダクトが増えて「誰がどこで何をしているか把握できない」状態を解消するための統合管理ビュー。
+This is the view for when domains and products have multiplied and nobody can say who is doing what where any more.
 
-## flag
+## Flags
 
-- `--domain <tag>` … 当該 domain だけ表示。
-- `--json` … 機械可読 JSON で出力（将来のグラフ可視化用。既定は Markdown の地図）。
-- `--graph` … **型付きブリック・グラフ**を表示（一次実装は `scripts/orchestrate.py graph`）。injects / extends / uses-* / gated-by / mirrors 等11種の関係を frontmatter・steps: から**導出**する（手で書かない＝腐らない）。`--focus <name>` で1ホップ近傍（そのブリックが何を使い・誰に使われるか）、`--json` 併用で機械可読。
+- `--domain <tag>` — show only that domain.
+- `--json` — machine-readable output, for later graph visualisation. The default is a Markdown map.
+- `--graph` — show the **typed brick graph** (implemented by `scripts/orchestrate.py graph`). Eleven kinds of relation — injects, extends, uses-*, gated-by, mirrors and the rest — are **derived** from frontmatter and `steps:` rather than written by hand, so they cannot rot. `--focus <name>` shows one hop around a brick (what it uses and who uses it); add `--json` for machine-readable output.
 
-## 関連
+## Related
 
-- `/rig:dev --validate --global` … tier 横断の衛生点検（orphan・リンク切れ・参照欠落・重複）。
-- `/rig:persona` / `/rig:knowledge` … 地図に並ぶ persona / wiki を増やすジェネレータ。
+- `/rig:dev --validate --global` — cross-tier hygiene (orphans, broken links, missing references, duplicates).
+- `/rig:persona` and `/rig:knowledge` — the generators that add the personas and wiki pages this map lists.
 
-## 例
+## Examples
 
 ```
-/rig:catalog                 # 全 domain の地図
-/rig:catalog --domain music  # music ドメインだけ
-/rig:catalog --json          # 機械可読
-/rig:catalog --graph                          # 型付きグラフの全体サマリ
-/rig:catalog --graph --focus security-reviewer  # 1ホップ近傍（誰に使われ何を注入するか）
+/rig:catalog                 # the map of every domain
+/rig:catalog --domain music  # only the music domain
+/rig:catalog --json          # machine-readable
+/rig:catalog --graph                            # a summary of the typed graph
+/rig:catalog --graph --focus security-reviewer  # one hop: who uses it, what it injects
 ```

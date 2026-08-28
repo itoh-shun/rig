@@ -1,121 +1,110 @@
 ---
-description: "rig — 統一入口。自然文のタスクを渡すと分類→recipe選択→隔離worktreeでの実装/レビュー→acceptance-gate→結果サマリまで自動で駆動する。status/diff/accept/discard/log/board/cockpit/stats/confidence/review/gc/audit/scan-secrets/scan-injection/digest/context/stream-checks/stale-refs/scan-destructive/scan-anchors/instincts/gh のサブコマンドで実行状態を操作する。複数タスクを並行で進めても `board`/`cockpit` 一枚で全体像を見失わない。"
-argument-hint: "\"<自然文タスク>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | confidence [id] | review <id> --set p=v [--body p=@path] | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | context [--since-days N] | stream-checks [id] [--watch --interval N --max-passes M] | stale-refs [paths…] | scan-destructive [paths…|--diff id] | scan-anchors [paths…|--diff id] | instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview] | gh issue <n> | gh pr <n> review|fix | gh ci"
+description: "rig — the unified entry point. Give it a task in plain language and it drives the whole thing: classify, choose a recipe, implement and review in an isolated worktree, judge at the acceptance gate, and report. The status, diff, accept, discard, log, board, cockpit, stats, confidence, review, gc, audit, scan-secrets, scan-injection, digest, context, stream-checks, stale-refs, scan-destructive, scan-anchors, instincts, and gh subcommands operate on that state. Run several tasks at once and `board` or `cockpit` still holds the whole picture on one screen."
+argument-hint: "\"<task in plain language>\" | status [id] | diff [id] | accept [id] [--force] | discard <id> --yes | log [--limit N] | board [--all] | cockpit | stats [--recipe R] [--verifier P] [--last Nd] | confidence [id] | review <id> --set p=v [--body p=@path] | gc [--older-than Nd] [--dry-run] | audit [--limit N] [--action A] [--since YYYY-MM-DD] | scan-secrets [paths…|--diff id] | scan-injection [paths…|--diff id] | digest [--period week|month] [--out PATH] | context [--since-days N] | stream-checks [id] [--watch --interval N --max-passes M] | stale-refs [paths…] | scan-destructive [paths…|--diff id] | scan-anchors [paths…|--diff id] | instincts [--add TEXT --evidence E --confidence C] [--mute ID|--expire ID|--decay|--inject-preview] | gh issue <n> | gh pr <n> review|fix | gh ci"
 ---
 
-# rig — 統一入口（workbench）
+# rig — the unified entry point (the workbench)
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・recipe スキーマ・知識層注入）に厳密に従うこと。** そのうえで本コマンドは `$ARGUMENTS` の先頭語で2つの経路に分岐する。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md strictly** — PARSE → RESOLVE → COMPOSE → RUN, context-minimal, facet ordering, the recipe schema, knowledge-layer injection. On top of that, this command branches two ways on the first word of `$ARGUMENTS`.
 
-> **初回のみ**: `rig-wb` CLI が入っていないと Claude Code 外の provider（Codex / Cursor / plain terminal）から同じ workbench を叩けない。**`/rig:setup`** で pipx / uv / pip 経由で自動導入できる（`--yes` で確認省略・`--check` で検出のみ）。Claude Code の中だけで完結するなら不要——scripts/*.py が直接呼ばれるので `rig-wb` 無しでも動く。
+> **The first time only**: without the `rig-wb` CLI, a provider outside Claude Code (Codex, Cursor, a plain terminal) cannot reach the same workbench. **`/rig:setup`** installs it through pipx, uv, or pip (`--yes` skips the prompt, `--check` only detects). If everything you do happens inside Claude Code you do not need it — `scripts/*.py` are called directly and it works without `rig-wb`.
 
 ```
 $ARGUMENTS
 ```
 
-## 経路分岐
+## The two branches
 
-自然文 task は `--runtime auto|native|orca` を受け取る。`auto` は active Orca session
-と応答する structured CLI の両方を観測したときだけ Orca backend を使い、それ以外は
-理由を表示して native に落ちる。明示 `orca` は黙って downgrade しない。この選択は
-provider とは独立で、`import` にも同じ flag を渡せる。
+A plain-language task accepts `--runtime auto|native|orca`. `auto` uses the Orca backend only when it observes both an active Orca session and a structured CLI that answers; otherwise it says why and falls back to native. An explicit `orca` never downgrades silently. The choice is independent of the provider, and `import` takes the same flag.
 
-### ① サブコマンド（先頭語が一致する場合）
+### 1. A subcommand (when the first word matches)
 
-| 先頭語 | 委譲先 |
+| First word | Delegates to |
 |---|---|
-| `compose-options --type <task_type> [--diff <n>] [--json]` | `facets/instructions/workbench-ops`（対話用の候補・推薦・根拠を決定論的に取得） |
-| `status [<task_id>]` | `facets/instructions/workbench-ops`（実行状態表示） |
-| `diff [<task_id>]` | `facets/instructions/workbench-ops`（差分表示） |
-| `accept [<task_id>] [--force]` | `facets/instructions/workbench-ops`（メイン作業ツリーへ反映） |
-| `discard <task_id> [--yes]` | `facets/instructions/workbench-ops`（worktree/branch 破棄） |
-| `log [--limit N] [--json]` | `facets/instructions/workbench-ops`（実行ログ一覧） |
-| `board [--all]` | `facets/instructions/workbench-ops`（**全 task を一覧するダッシュボード**。複数タスクを並行で進めているときの単一の確認場所） |
-| `cockpit` | `facets/instructions/workbench-ops`（**board・gate・drill・cost・auditを一画面に集約するMission Control**。read-only。次アクションを案内するのみで accept/discard 自体は実行しない） |
-| `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops`（過去 run の集計・reviewer のゴム印検知） |
-| `confidence [<task_id>]` | `facets/instructions/workbench-ops`（drill 実測の検出率を reviewer 別の**補助情報**として提示。`<task_id>` 指定時は `acceptance.json` の `reviewer_confidence` に記録する。閾値未満は追加レビュアー投入を提案するだけで自動投入はせず、drill 未実施の persona は「未計測」のまま扱い確信度を捏造しない） |
-| `review <task_id> --set <persona>=<verdict> [--body <persona>=@<path>]` | `facets/instructions/workbench-ops`（review 系タスクの persona 別 verdict 記録。`--body` は任意で、その reviewer 本文を `.rig/runs/<task_id>/reviews/<persona>.md` に永続化する＝verdict ラベルが捨てる `file:line` 証拠アンカーを残す） |
-| `gc [--older-than <N>d] [--dry-run]` | `facets/instructions/workbench-ops`（視覚検証成果物（`.rig/runs/*/visual/`・`.rig/visual/adhoc/*`）の age-based 処分。既定14日・`--dry-run` で候補表示のみ） |
-| `audit [--limit N] [--action A] [--since YYYY-MM-DD]` | `facets/instructions/workbench-ops`（`accept --force` 等の恒久監査ログ `.rig/audit.jsonl` の一覧・絞り込み） |
-| `scan-secrets [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論シークレットスキャン。gate 基準 `no_secret_leak` の機械センサーと同一実装。`--diff` で task worktree の差分のみを走査、抜粋は常にマスク済み） |
-| `scan-injection [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論プロンプトインジェクション・マーカースキャン。gate 基準 `no_injection_markers` の機械センサーと同一実装。不可視/bidi Unicode は fail-grade・指示上書きフレーズは warning-grade。引数なしは repo の prose 面（`.claude/rig.md`・knowledge・personas・`.rig/recipes/*.md`）、`--diff` で task worktree の差分＋prose 面を走査） |
-| `digest [--period week\|month] [--out PATH]` | `facets/instructions/workbench-ops`（`.rig/` テレメトリのローリング集計ダイジェスト（runs・gate 合否・force-accept・ゴム印疑い・drill 検出率）を Markdown で出力。既定 week=直近7日） |
-| `context [--since-days N]` | `facets/instructions/workbench-ops`（context-minimal の実測。rig が親セッションへ印字した stdout を invocation 単位で `.rig/context.jsonl` に記録し、コマンド別に集計する＝**rig が観測できる唯一の context 消費**。セッション全体の context・会話・親が自分で読んだファイルは計測対象外で、その旨がレポート自身に明記される。既定は全期間・`--since-days N` で期間を絞る） |
-| `stream-checks [<task_id>] [--watch --interval N --max-passes M]` | `facets/instructions/workbench-ops`（実装中の軽量ストリーミングチェック。secret/injection/destructiveの3センサーをtask worktreeにその場で走らせfindingsをヒント表示。gateをブロックしない・常にexit 0） |
-| `stale-refs [paths…]` | `facets/instructions/workbench-ops`（manifest・知識層の経年劣化検知。バッククォート引用の相対パス参照のうち実在しなくなったものをWARN列挙。exit 0） |
-| `scan-destructive [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の破壊的コマンドスキャン。gate 基準 `no_destructive_operation` の機械センサーと同一実装。fail-grade/warning-gradeの2段階） |
-| `scan-anchors [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops`（決定論の証拠アンカー検査。reviewer 本文中の `file:line` が実在する行を指すかを確認。**opt-in** gate 基準 `evidence_anchors_resolve` の機械センサーと同一実装＝既定プリセットには入らない。`--diff` で task の `reviews/*.md` を worktree→base commit の順に解決） |
-| `instincts [--add TEXT --evidence E --confidence C] [--mute ID\|--expire ID\|--decay\|--inject-preview]` | `facets/instructions/workbench-ops`（セッション横断の継続的instinct学習層。未検証パターンをconfidence付きで記録・decay・次回セッション注入プレビュー） |
-| `gates` | `facets/instructions/workbench-ops`（受け入れ基準プリセットの正本を印字。project 独自基準は `.rig/gates.json` で**加算のみ**） |
-| `receipt <task_id> [--verify] [--markdown]` | `facets/instructions/workbench-ops`（**assurance receipt**＝そのタスクが何を達成したかの射影。判定はせず、判定した記録から写す。`--verify` で受領書が今も現行か確認） |
-| `import <url\|path> [--head <ref>]` | `facets/instructions/workbench-ops`（外部で作られた変更を rig の gate に通す。producer が宣言したことと rig が検証したことを混ぜない） |
-| `contract <task_id>` | `facets/instructions/workbench-ops`（BYOO 契約＝rig が検証した head と、それを答えた受領書を名指す。exit code が pending/acceptable を伝える） |
-| `intent-derive <contract> --against <json> --floor\|--target [--json]` | `facets/instructions/workbench-ops`（intent contract の**宣言された**要件から workflow の床 or assurance target を導く。推論された要件は床を作らない） |
-| `assurance-target <task_id> <target> [--json]` | `facets/instructions/workbench-ops`（assurance target を受領書と突き合わせる。`unobservable` は `unmet` に畳まない＝「測っていない」と「測って不足」は別） |
-| `knowledge-candidate <candidate> [--json]` | `facets/instructions/workbench-ops`（提出された知見候補が引用記録に明示的に支えられているかだけを判定。読めない証拠は `unobservable`、読めて不支持は `unsupported`） |
-| `change-graph <graph> [--json]` | `facets/instructions/workbench-ops`（呼び出し側が書いた cross-repo change graph に、宣言された依存と互換制約を満たす実行 stage が存在するかだけを判定。graph の発見・生成・実行はしない） |
-| `anomaly-trigger <event> [--json]` | `facets/instructions/workbench-ops`（外部 source が提出した anomaly event が調査開始材料を宣言し、引用記録が明示的に支えるかだけを判定。anomaly 自体は検出・確認しない） |
-| `assurance-derive <target> --requires <map> --against <json> [--json]` | `facets/instructions/workbench-ops`（target が必要とする workflow の床を、宣言された軸→step 写像から導く。写像が覆わない軸-値は拒否） |
-| `synthesise <workflow> --against <json> [--floor <json>] [--json]` | `facets/instructions/workbench-ops`（提案された workflow に床を復元し、何を復元したかを報告。床は呼び出し側が組み、検査対象からは読まない） |
-| `dev-loop <cycles> [--limits <json>] [--receipt <json>] [--json]` | `facets/instructions/workbench-ops`（開発ループの停止判定と handoff。止まるべき理由を名指し、進捗の無さを進捗と読まない） |
-| `route-team <evidence> --constraints <json> [--json]` | `facets/instructions/workbench-ops`（証拠から担当を決める。制約は呼び出し側が組み、「言わない」を「強制しない」にしない） |
-| `budget-plan <options> --budget <json> [--json]` | `facets/instructions/workbench-ops`（保証の作り方を安くする。保証そのものは安くしない。予算が尽きたら拒否し、選択肢を提示しない） |
-| `provenance <graph> <node> [--direction both\|back\|forward] [--json]` | `facets/instructions/workbench-ops`（ある節点の鎖を双方向に辿る。確認済みと推測を混ぜず、照会できない種別は「照会していない」と答える） |
-| `expected-outcome <expected> --observed <file> --as-of <ts> [--task <id>] [--json]` | `facets/instructions/workbench-ops`（宣言された期待 outcome を本番の観測値と突き合わせる。観測側は基準を宣言できず、`unmeasured`/`inconclusive` を成功にせず、窓が閉じるまで final にしない。objective は `baseline`/`target` と改善方向 `direction`、guardrail は守る側を名前にした境界 `at_most`（上限）/`at_least`（下限）を1つだけ宣言する＝guardrail に `direction` は無い） |
-| `effectiveness --query <json> [--json]` | `facets/instructions/workbench-ops`（実在する run 記録から workflow 指標と、呼び出し側が閾値・late step を定義した failure pattern だけを導出。未計測を 0 にせず、候補生成・評価・昇格は行わない） |
-| `gh issue <n>` | `facets/instructions/gh-flow`（Issue を読んで分類→workbench へ） |
-| `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow`（`/rig:pr` 相当。既存 `recipes/pr-review` に委譲） |
-| `gh pr <n> fix` | `facets/instructions/gh-flow`（PR 指摘を隔離 worktree で修正） |
-| `gh ci` | `facets/instructions/gh-flow`（CI 状態確認） |
+| `compose-options --type <task_type> [--diff <n>] [--json]` | `facets/instructions/workbench-ops` — the candidates, the recommendation, and the grounds for each, fetched deterministically for a conversation |
+| `status [<task_id>]` | `facets/instructions/workbench-ops` — show run state |
+| `diff [<task_id>]` | `facets/instructions/workbench-ops` — show the diff |
+| `accept [<task_id>] [--force]` | `facets/instructions/workbench-ops` — land it in the main working tree |
+| `discard <task_id> [--yes]` | `facets/instructions/workbench-ops` — destroy the worktree and branch |
+| `log [--limit N] [--json]` | `facets/instructions/workbench-ops` — list past runs |
+| `board [--all]` | `facets/instructions/workbench-ops` — **the dashboard of every task**, the one place to look when several are in flight |
+| `cockpit` | `facets/instructions/workbench-ops` — **Mission Control: board, gate, drill, cost, and audit on one screen.** Read-only; it points at the next action and never accepts or discards anything itself |
+| `stats [--recipe R] [--verifier P] [--last Nd]` | `facets/instructions/workbench-ops` — aggregate past runs, and detect a reviewer who is rubber-stamping |
+| `confidence [<task_id>]` | `facets/instructions/workbench-ops` — present drill's measured detection rates per reviewer as **supporting information**. With a `<task_id>` it records them in `acceptance.json` under `reviewer_confidence`. Below the threshold it only proposes adding a reviewer, never adds one, and a persona with no drill run stays "not measured" rather than having a confidence invented for it |
+| `review <task_id> --set <persona>=<verdict> [--body <persona>=@<path>]` | `facets/instructions/workbench-ops` — record a per-persona verdict for a review task. `--body` is optional and persists that reviewer's text to `.rig/runs/<task_id>/reviews/<persona>.md`, keeping the `file:line` evidence anchors a verdict label throws away |
+| `gc [--older-than <N>d] [--dry-run]` | `facets/instructions/workbench-ops` — age out visual-verification artefacts (`.rig/runs/*/visual/`, `.rig/visual/adhoc/*`). 14 days by default; `--dry-run` lists candidates only |
+| `audit [--limit N] [--action A] [--since YYYY-MM-DD]` | `facets/instructions/workbench-ops` — list and filter the permanent audit log `.rig/audit.jsonl`, where `accept --force` and its kin are recorded |
+| `scan-secrets [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops` — the deterministic secret scan, the same implementation as the machine sensor behind the `no_secret_leak` criterion. `--diff` scans only a task worktree's diff, and excerpts are always masked |
+| `scan-injection [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops` — the deterministic prompt-injection marker scan, the same implementation as the sensor behind `no_injection_markers`. Invisible and bidi Unicode are fail-grade; instruction-override phrasing is warning-grade. With no arguments it scans the repository's prose surface (`.claude/rig.md`, knowledge, personas, `.rig/recipes/*.md`); `--diff` scans a task worktree's diff plus that prose surface |
+| `digest [--period week\|month] [--out PATH]` | `facets/instructions/workbench-ops` — a rolling digest of `.rig/` telemetry (runs, gate outcomes, force-accepts, suspected rubber stamps, drill detection rates) as Markdown. `week` is the default, meaning the last seven days |
+| `context [--since-days N]` | `facets/instructions/workbench-ops` — measure context-minimal. Every byte rig printed to the parent session is recorded per invocation in `.rig/context.jsonl` and aggregated by command: **the only context consumption rig can observe.** The whole session's context, the conversation, and files the parent read itself are outside it, and the report says so. All time by default; `--since-days N` narrows it |
+| `stream-checks [<task_id>] [--watch --interval N --max-passes M]` | `facets/instructions/workbench-ops` — light streaming checks during implementation. Runs the secret, injection, and destructive sensors against the task worktree there and then and shows the findings as hints. Never blocks the gate; always exits 0 |
+| `stale-refs [paths…]` | `facets/instructions/workbench-ops` — detect rot in the manifest and knowledge layer. WARNs on backtick-quoted relative paths that no longer exist. Exits 0 |
+| `scan-destructive [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops` — the deterministic destructive-command scan, the same implementation as the sensor behind `no_destructive_operation`, in two grades: fail and warning |
+| `scan-anchors [paths…] [--diff <task_id>]` | `facets/instructions/workbench-ops` — the deterministic evidence-anchor check: does each `file:line` in a reviewer's text point at a line that exists? The same implementation as the sensor behind the **opt-in** `evidence_anchors_resolve` criterion, which is **not** in the default presets. `--diff` resolves a task's `reviews/*.md` against the worktree first and then the base commit |
+| `instincts [--add TEXT --evidence E --confidence C] [--mute ID\|--expire ID\|--decay\|--inject-preview]` | `facets/instructions/workbench-ops` — the cross-session instinct layer: record an unverified pattern with a confidence, decay it, and preview what would be injected next session |
+| `gates` | `facets/instructions/workbench-ops` — print the canonical acceptance-criteria presets. A project's own criteria go in `.rig/gates.json` and are **additive only** |
+| `receipt <task_id> [--verify] [--markdown]` | `facets/instructions/workbench-ops` — the **assurance receipt**: a projection of what this task achieved. It judges nothing; it copies from the records of what was judged. `--verify` checks whether the receipt is still current |
+| `import <url\|path> [--head <ref>]` | `facets/instructions/workbench-ops` — put a change made elsewhere through rig's gate, without mixing what the producer claimed with what rig verified |
+| `contract <task_id>` | `facets/instructions/workbench-ops` — the BYOO contract: names the head rig verified and the receipt that answered for it. The exit code carries pending or acceptable |
+| `intent-derive <contract> --against <json> --floor\|--target [--json]` | `facets/instructions/workbench-ops` — derive a workflow floor or an assurance target from an intent contract's **declared** requirements. An inferred requirement never creates a floor |
+| `assurance-target <task_id> <target> [--json]` | `facets/instructions/workbench-ops` — check an assurance target against the receipt. `unobservable` is never folded into `unmet`: "not measured" and "measured and short" are different answers |
+| `knowledge-candidate <candidate> [--json]` | `facets/instructions/workbench-ops` — judge only whether a submitted knowledge candidate is explicitly supported by cited records. Evidence that cannot be read is `unobservable`; evidence that reads and does not support is `unsupported` |
+| `change-graph <graph> [--json]` | `facets/instructions/workbench-ops` — judge only whether a cross-repository change graph the caller wrote admits an execution order satisfying its declared dependencies and compatibility constraints. It does not discover, generate, or execute the graph |
+| `anomaly-trigger <event> [--json]` | `facets/instructions/workbench-ops` — judge only whether an anomaly event submitted by an external source declares grounds to start an investigation and whether cited records explicitly support them. It does not detect or confirm the anomaly itself |
+| `assurance-derive <target> --requires <map> --against <json> [--json]` | `facets/instructions/workbench-ops` — derive the workflow floor a target requires, from a declared axis-to-step mapping. An axis-value the mapping does not cover is refused |
+| `synthesise <workflow> --against <json> [--floor <json>] [--json]` | `facets/instructions/workbench-ops` — restore the floor into a proposed workflow and report what was restored. The floor is assembled by the caller and never read from the thing under inspection |
+| `dev-loop <cycles> [--limits <json>] [--receipt <json>] [--json]` | `facets/instructions/workbench-ops` — the stopping decision and handoff for a development loop. It names the reason to stop, and never reads an absence of progress as progress |
+| `route-team <evidence> --constraints <json> [--json]` | `facets/instructions/workbench-ops` — decide who takes it, from evidence. The constraints are assembled by the caller, and saying nothing is never turned into requiring nothing |
+| `budget-plan <options> --budget <json> [--json]` | `facets/instructions/workbench-ops` — make assurance cheaper to produce, never make the assurance cheaper. When the budget runs out it refuses rather than offering an option |
+| `provenance <graph> <node> [--direction both\|back\|forward] [--json]` | `facets/instructions/workbench-ops` — walk a node's chain in both directions, never mixing the confirmed with the inferred, and answering "not queried" for a kind it cannot query |
+| `expected-outcome <expected> --observed <file> --as-of <ts> [--task <id>] [--json]` | `facets/instructions/workbench-ops` — check a declared expected outcome against what production observed. The observing side cannot declare the criteria, `unmeasured` and `inconclusive` are never successes, and nothing is final until the window closes. An objective declares `baseline`, `target`, and a `direction` of improvement; a guardrail declares exactly one boundary named for the side it protects — `at_most` (a ceiling) or `at_least` (a floor) — and therefore has no `direction` |
+| `effectiveness --query <json> [--json]` | `facets/instructions/workbench-ops` — derive workflow measures from run records that exist, plus only the failure patterns whose thresholds and late steps the caller defined. It never turns "not measured" into zero, and it does not generate, evaluate, or promote candidates |
+| `gh issue <n>` | `facets/instructions/gh-flow` — read an issue, classify it, and take it to the workbench |
+| `gh pr <n> review [--adversarial] [--comment]` | `facets/instructions/gh-flow` — the equivalent of `/rig:pr`; delegates to the existing `recipes/pr-review` |
+| `gh pr <n> fix` | `facets/instructions/gh-flow` — fix a PR's review comments in an isolated worktree |
+| `gh ci` | `facets/instructions/gh-flow` — check CI state |
 
-### ② 自然文タスク（上記のいずれにも一致しない場合）
+### 2. A task in plain language (when nothing above matches)
 
-`facets/instructions/workbench` に従い、⓪ホスト前提の確認（`rig-wb hostcheck`）→①タスク分類
-（task_type）→②`rig-wb wb route --type <type> --json` の capability authority による recipe 解決
-→③`patterns/isolated-worktree` に従った隔離 worktree での RUN →④
-`scripts/workbench.py gate` による acceptance-gate 判定→⑤結果サマリを駆動する。
-route は読み取り専用で、自動 install・network・trust 承認を行わない。ユーザーが recipe や
-step を明示しなくてもよい（明示したい場合は `/rig:dev --recipe <name> ...` を使う）。
+Follow `facets/instructions/workbench`: (0) check the host's prerequisites (`rig-wb hostcheck`), (1) classify the task type, (2) resolve a recipe through the capability authority of `rig-wb wb route --type <type> --json`, (3) RUN in an isolated worktree per `patterns/isolated-worktree`, (4) judge at the acceptance gate through `scripts/workbench.py gate`, and (5) report. Route is read-only: it never installs, reaches the network, or approves trust. The user does not have to name a recipe or a step — when they want to, that is what `/rig:dev --recipe <name> ...` is for.
 
-**⓪はブロックしない**——`--strict` は付けず、exit 3 でもタスクを止めない。欠けている前提だけを
-1行ずつ報告して①へ進む（手順の正本は `facets/instructions/workbench` ⓪）。`gh auth status` を
-含むので毎回数秒かかる。**「セッション初回だけ」ではなく毎回走る**——それを保証する状態を rig は
-どこにも持っていないので、書いても実装が無い約束になる。
+**Step 0 does not block.** Do not pass `--strict`; even at exit 3, the task continues. Report the missing prerequisites one line each and move to step 1 (`facets/instructions/workbench` §0 is the source of truth). It includes `gh auth status`, so it takes a few seconds every time. It runs **every time, not once per session** — rig holds no state that would guarantee "once", and writing that it does would be a promise with no implementation behind it.
 
-## `/rig:dev` との使い分け
+## When to use this and when to use `/rig:dev`
 
-- **`/rig:go "<task>"`**（本コマンド）— 自然文だけで完結させたいとき。分類・recipe 選択・worktree 隔離・gate 判定を全自動で行う。
-- **`/rig:dev --recipe <name> --only <step> ...`** — recipe・step・flag を自分で明示的に組み合わせたいとき（既存の PARSE 全 flag が使える）。
+- **`/rig:go "<task>"`** (this command) — when you want plain language to be enough. Classification, recipe selection, worktree isolation, and the gate all happen for you.
+- **`/rig:dev --recipe <name> --only <step> ...`** — when you want to combine recipe, step, and flags yourself. Every PARSE flag is available.
 
-内部エンジンは共通（SKILL.md 一本）。本コマンドは workbench 経路（隔離 worktree ＋ 状態永続化 ＋ machine-gate）を既定にした入口という違いだけ。
+The engine is the same, one SKILL.md. The only difference is that this command defaults to the workbench route: an isolated worktree, persisted state, and a machine gate.
 
-## 複数タスクを並行で進める（ターミナルを増やさない）
+## Running several tasks at once, without opening more terminals
 
-1タスクずつ `/rig:go "<task>"` を打つ代わりに、**まとめて積んで並列実行**したいときは `/rig:queue`（別ターミナル不要・headless プロセスの並列実行エンジン）に積む：
+Instead of typing `/rig:go "<task>"` one at a time, **stack them and run them in parallel** with `/rig:queue` — no extra terminal, a parallel engine of headless processes:
 
 ```
-/rig:queue add "ログイン画面のバグを直して"
-/rig:queue add "在庫一覧に検索機能を追加して"
-/rig:queue add "READMEをわかりやすくして"
+/rig:queue add "fix the bug on the login screen"
+/rig:queue add "add search to the inventory list"
+/rig:queue add "make the README clearer"
 /rig:queue go --provider rig --max-parallel 3
 ```
 
-`go --provider rig` は各 item を `/rig:go "<task>"` 経由で dispatch するため、**各タスクは自動的に自分専用の isolated worktree に隔離される**（並列実行中のプロセス同士がファイルを取り合う心配がない）。積んだ側は accept しない（queue の verifier は「gate まで確定したか」を判定するだけ）——完了後は:
+`go --provider rig` dispatches each item through `/rig:go "<task>"`, so **every task is isolated in its own worktree automatically** and parallel processes never fight over files. The side that stacked them does not accept (the queue's verifier only judges whether the gate settled). Afterwards:
 
 ```
-/rig:go board          # 今どのタスクがどこまで進んだか、1コマンドで一覧
-/rig:go diff <id>      # 個別に差分確認
-/rig:go accept <id>    # 個別に反映（他のタスクとぶつからない）
+/rig:go board          # where every task has got to, in one command
+/rig:go diff <id>      # check one diff
+/rig:go accept <id>    # land one, without colliding with the others
 ```
 
-複数のターミナルを開いて「どれが何をしていたか忘れる」問題は、この `board` が単一の真実の情報源になることで解消する——実行がどこ（headless プロセス／このセッション）で起きていても、状態は必ず `.rig/runs/` に集約される。
+The problem of opening several terminals and forgetting which was doing what goes away because `board` is the single source of truth — wherever execution happened, in a headless process or in this session, the state always collects in `.rig/runs/`.
 
-## 例
+## Examples
 
 ```
-/rig:go "ログイン画面のバグを直して"
-/rig:go "このIssueを読んで実装して"          # 曖昧な場合は gh issue <n> を1問だけ確認
-/rig:go "このPRを厳しめにレビューして"        # 対象 PR 番号を確認して gh pr <n> review --adversarial 相当へ
+/rig:go "fix the bug on the login screen"
+/rig:go "read this issue and implement it"      # if it is ambiguous, confirm the issue number once with gh issue <n>
+/rig:go "review this PR, strictly"              # confirm the PR number, then the equivalent of gh pr <n> review --adversarial
 /rig:go status
 /rig:go diff
 /rig:go accept
@@ -134,16 +123,16 @@ step を明示しなくてもよい（明示したい場合は `/rig:dev --recip
 /rig:go gh ci
 ```
 
-## 安全側の原則
+## Safety, by default
 
-- AI の変更は **accept されるまで本体の作業ツリーに触れない**（`patterns/isolated-worktree`）。
-- **acceptance-gate が fail/pending の間 accept はコードが拒否する**（`scripts/workbench.py accept`。「できました」の自己申告だけでは完了扱いにしない）。
-- **discard は task-id 明示 ＋ 変更ファイル一覧の提示 ＋ `--yes` 確認**の三段。run log は消えない。
-- GitHub への write（PR 作成・コメント投稿・push）は常に明示操作を経る（read は即応）。
+- The AI's changes **never touch the main working tree until they are accepted** (`patterns/isolated-worktree`).
+- **While the acceptance gate is failed or pending, the code refuses to accept** (`scripts/workbench.py accept`). Saying "it is done" is not treated as done.
+- **discard needs three things**: an explicit task id, the list of changed files, and `--yes`. The run log survives it.
+- Writing to GitHub — opening a PR, posting a comment, pushing — always goes through an explicit action. Reads answer immediately.
 
-## run-continuity（SKILL.md §6）
+## run-continuity (SKILL.md §6)
 
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | task: <task_id> | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending [(try N/K)]|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

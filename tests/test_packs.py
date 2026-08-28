@@ -29,7 +29,8 @@ def _write_pack(root: pathlib.Path, pack_id: str = "demo-pack", *, recipe: bool 
         assets["eval-case"] = ["evals/cases/hello-case/case.json"]
     hashes = {item: digest(pack / item) for paths in assets.values() for item in paths}
     manifest = {
-        "pack_schema_version": 1, "id": pack_id, "version": "1.0.0", "kind": "domain",
+        "pack_schema_version": 2, "id": pack_id, "type": "skill", "version": "1.0.0",
+        "kind": "domain",
         "engine": f">={__version__}", "dependencies": dependency or [],
         "assets": assets, "hashes": hashes,
         "provenance": {"source": "test", "created_at": "2026-08-05T00:00:00+00:00"},
@@ -49,19 +50,19 @@ def test_pack_init_is_canonical_non_overwriting_and_valid(tmp_path):
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.validation import validate_pack
 
-    pack = init_pack("my-pack", kind="project", root=tmp_path)
+    pack = init_pack("my-pack", kind="project", type_="skill", root=tmp_path)
     raw, value = read_json_yaml(pack / "pack.yaml")
     assert raw == canonical(value)
     assert validate_pack(pack)["id"] == "my-pack"
     with pytest.raises(PackError, match="already exists"):
-        init_pack("my-pack", kind="project", root=tmp_path)
+        init_pack("my-pack", kind="project", type_="skill", root=tmp_path)
 
 
 def test_pack_cli_init_validate_and_doctor_json(tmp_path, monkeypatch, capsys):
     from rig_workbench.packs.cli import cmd_pack
 
     root = tmp_path / "packs"
-    assert cmd_pack(["init", "cli-pack", "--root", str(root)]) == 0
+    assert cmd_pack(["init", "cli-pack", "--type", "skill", "--root", str(root)]) == 0
     assert cmd_pack(["validate", str(root / "cli-pack")]) == 0
     monkeypatch.chdir(tmp_path)
     assert cmd_pack(["doctor", str(root / "cli-pack"), "--json"]) == 0

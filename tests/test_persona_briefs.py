@@ -25,7 +25,10 @@ def test_load_persona_brief_strips_frontmatter_and_returns_body():
     brief = providers._load_persona_brief("security-reviewer")
     assert brief is not None
     assert not brief.startswith("---")
-    assert "権限" in brief  # authorization is axis #1 of the security-reviewer brief
+    # Authorization is axis #1 of the security-reviewer brief. Asserting on that word rather
+    # than on a heading pins that the body arrived, not just the file — a frontmatter-only
+    # read would still satisfy a check for the persona name.
+    assert "authorization" in brief.casefold()
 
 
 def test_load_persona_brief_resolves_nested_path():
@@ -55,7 +58,7 @@ def test_dialogue_style_composes_with_an_existing_specialist_persona():
 
     assert len(facets["persona"]) == 2
     assert any("質問役" in body for body in facets["persona"])
-    assert any("権限" in body for body in facets["persona"])
+    assert any("authorization" in body.casefold() for body in facets["persona"])
     assert len(facets["knowledge"]) == 2
     assert any("理解の遷移" in body for body in facets["knowledge"])
     assert any("認証" in body for body in facets["knowledge"])
@@ -86,7 +89,7 @@ def test_run_verifiers_parallel_injects_distinct_briefs_per_persona(monkeypatch)
     )
     # Each resolvable persona gets its OWN brief prefixed — not the same text.
     assert captured["security-reviewer"] != captured["design-reviewer"]
-    assert "権限" in captured["security-reviewer"]
+    assert "authorization" in captured["security-reviewer"].casefold()
     assert captured["security-reviewer"].endswith("generic verify prompt")
     assert captured["design-reviewer"].endswith("generic verify prompt")
     # No persona file -> unchanged generic prompt (no silent injection of nothing).

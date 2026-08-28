@@ -2,6 +2,267 @@
 
 ## Unreleased
 
+### Added
+
+**Workflow effectiveness can now measure how long runs took, and how much of it was rig's
+own** (#433 §1). It reported `runtime` as unobservable, on the grounds that `runs.jsonl` carries
+a finish timestamp and no start. That stopped being true in this same release: #502 writes a
+`perf` block into the very records this module already reads. A metric that keeps saying "cannot
+be measured" while the measurement sits in the file it is reading is worse than one that was
+never offered.
+
+The rig-versus-provider split is the point rather than a detail. #433 exists to improve the
+*process*, and the only half a workflow change can move is rig's own — a run that got slower
+because a provider had a bad afternoon says nothing about whether the workflow is any good.
+
+`perf`'s refusals are carried through rather than papered over: it withholds `rig_overhead_ms`
+whenever a provider call went untimed, and such a run counts as unmeasured here instead of
+contributing zero overhead. Reading an absent field as zero downstream would reintroduce exactly
+the fabrication `perf` refused upstream. A run with an elapsed time but no split says so
+outright, since a reader seeing only `total_ms` would reasonably assume the split existed and
+had been omitted.
+
+**Orca's runtime integration is documented** (#464, `docs/orca.md`). It shipped with a
+backend, detection, structured-output refusals and a full test suite — and not one word in any
+README or doc. The first line of the new page is the one that matters: **Orca is a runtime, not
+a provider.** A provider decides who writes the code; a runtime decides where the work lives.
+Folding them together would make "run this on Codex" and "run this in an Orca workspace" the
+same kind of choice, and then neither could be made without the other.
+
+The page covers the `Orca → Claude → Rig → Orca CLI → worktree` flow, what `auto` actually
+requires (five separate facts, any one of which sends it back to native, with the reason on
+stderr), why an explicit `--runtime orca` refuses to downgrade, a troubleshooting table whose
+messages are quoted from the code rather than paraphrased, discarding a task after Orca is gone,
+what rig persists and what it deliberately does not claim, and IntelliJ coexistence — Orca as
+the AI work cockpit, not a full IDE replacement.
+
+The required scenarios were already covered by the existing suites; the gap was one behavioural
+check, now added: provider argv is byte-identical whatever runtime the task uses. The existing
+test proves the provider module never *names* a runtime by parsing its AST, which a provider
+reading one out of a shared dict would satisfy while still coupling the two. It matters most for
+the verifier — one that lost its read-only enforcement because the work moved into an Orca
+workspace would be weaker for a reason that has nothing to do with verification.
+
+**An Orca-backed task can be discarded on a machine where Orca is gone** (#463). It could
+not before: `wb discard` resolved the owning backend through a function that *raises* when that
+runtime is unusable, so the operator got a Python traceback, advice naming `--runtime auto` —
+a flag `discard` does not have — and a task that could never be cleaned up. Reproduced through
+the real CLI before being changed.
+
+`runtime.reconnect()` answers the same question without raising, and distinguishes the four
+states a resumed task can actually be in: the runtime is usable and the worktree is there, the
+runtime is usable and the directory is gone, the runtime cannot be used here, or the task never
+had a worktree. A caller that only learns "this raised" cannot tell state loss from a machine
+that is simply not set up, and those need opposite responses.
+
+Disposal still goes to whoever created the worktree, and **no backend is ever substituted
+silently** — answering "native" because Orca is absent would delete a directory rig no longer
+owns and report success. A task nobody can discard is its own failure, so there is a way out:
+`--local-cleanup` removes the checkout with git at the operator's explicit request and records
+on the task that its runtime never saw the disposal, because an audit that cannot distinguish
+an orderly teardown from one that stranded workspace state elsewhere is not an audit. A worktree
+that is already absent reports that instead of erroring on a path that is gone. The run log
+survives discard exactly as before, and the native path is unchanged.
+
+**`--reuse-session` lets a CLI generator carry its conversation across steps** (#326, opt-in).
+Every step starts its CLI provider from nothing today, so a run pays the startup cost once per
+step and re-injects prior context into each prompt. Where the CLI can carry a conversation
+forward, it no longer has to.
+
+Three constraints shape it. **Opt-in, never the default** — statelessness is not only a cost,
+it is what keeps steps independent and keeps "the grader is not the generator" true in practice
+rather than by assertion. **Never the verifier** — a checker that inherited the generator's
+conversation has already read its reasoning and will agree with it more often, whatever its
+prompt says; there is no code path that can produce a verifier session. **The CLI decides, not
+a table in rig** — session support is strongly version-dependent, so the capability is read out
+of the tool's own `--help` at runtime; a hardcoded list would be a claim about versions this
+code has never seen and would go quietly wrong as the tools change. A provider that cannot do
+it falls back to stateless with a `SESSION_REUSE_FALLBACK` line in the run history, recorded
+once per provider: a fallback nobody wrote down is indistinguishable from a feature that was
+never switched on.
+
+**What is verified and what is not.** Detection is checked against the `claude` CLI actually
+installed (2.1.248, which advertises `--session-id` and `--resume`), and a test asserts rig's
+answer matches what that CLI says about itself. **Whether a resumed session actually carries
+context between steps is not verified** — that needs real generation calls, and #326 says in as
+many words not to claim it from mocks. The issue stays open for that half.
+
+**`rig-wb otel` projects recorded runs to OpenTelemetry** (#501). Local evidence stays the
+source of truth — this re-judges nothing, and a failed export changes no verdict, no gate and
+no exit code, because a monitoring backend being down must not be able to change what rig
+decided. OTLP/HTTP with JSON bodies over `urllib`: rig has three runtime dependencies and no
+monitoring vendor belongs among them. Enabled by `--endpoint` or `[observability]` in the
+manifest, off on anything ambiguous — telemetry that started flowing because a file was
+mistyped would be a data-egress incident.
+
+The projection is an **allowlist**, which is the whole redaction story. Nothing is copied and
+then filtered, because a filter has to be right about every field that will ever exist. A
+verdict in `runs.jsonl` carries an `anchor` — text a model wrote, which routinely holds a file
+path — and a denylist would have to know that. So no prompt, response body, diff, path, verdict
+prose, step id or model name is exported, and a new field in the record is absent from
+telemetry until somebody decides it is safe.
+
+Phase spans come from intervals a run actually recorded, so `perf` now persists them (#502).
+A phase with a duration but no interval becomes a metric rather than a span: laying aggregates
+end-to-end to draw a tree would invent an ordering nobody observed. Cached tokens, cost, TTFT
+and tokens/sec are absent entirely — nothing measures them, and a zero would be a claim.
+`rig_overhead_ms` that `perf` withheld is not reinvented as a metric downstream. Span ids come
+from each record's content, so re-exporting a log does not turn one run into two.
+
+**Runs now record where their time went, by phase, and a budget can be declared against
+it** (#502). A run has always been one elapsed number, and one number cannot answer the only
+question a performance report is asked: did rig get slower, or did the provider? Those want
+opposite responses — the first is a regression to fix, the second is weather. `.rig/runs.jsonl`
+now carries a `perf` block with per-phase timings (`risk_assess`, `auto_route`,
+`provider_generator`, `provider_verifier`, `checks`, `gate`, `artifact`), the bytes of prompt
+the run emitted, and `rig_overhead_ms` — the total minus the time spent waiting on providers.
+
+`rig-wb perf` reports that across recent runs; `rig-wb perf --check` is the gate, exiting
+non-zero when a phase grew past its baseline or a declared budget broke. The budget lives in
+the manifest (`perf_budget:` in `.claude/rig.md`) rather than a generated file, because a
+budget has to be committed to be a gate and `.rig/` is gitignored. Breaking it during a run
+warns and nothing more: a perf budget failing a bugfix would teach people to delete the
+budget, so `--check` is the only place it costs anything.
+
+Three things it deliberately refuses to do. **Provider latency is reported but never gated** —
+a gate that failed on somebody else's network would be switched off within a month, taking the
+phases rig can actually answer for with it. **An unmeasured phase is never rendered as zero**,
+and a phase that stopped being measured fails the gate rather than reading as an improvement
+in every total it used to be part of. **A budget naming a figure the runs could not measure is
+reported as unenforced, not as a pass** — a limit nobody could test is not a limit that held,
+and a green light for one is how a gate stops gating without anybody noticing. Baselines are
+the median of recent runs, not the mean, so a laptop that slept cannot set the bar that every
+later run is judged against.
+
+Provider time is the **wall-clock window** the run spent waiting, not the sum of the calls.
+Verifiers run concurrently, so four reviewers taking 300ms each inside one 320ms window sum to
+1.2s; subtracting that from the run total goes negative, and the first cut of this clamped it
+to zero — reporting that rig took no time at all whenever the fan-out was wide enough. The
+overlapping spans are collapsed instead, and `provider_work_ms` reports the sum beside the wall
+figure so the fan-out's benefit stays visible. Provider time still exceeding the total now
+means the clock moved, and withholds the number rather than clamping it.
+
+**`rig-wb pack export` writes a bundled pack out as its own repository** (#523), and a pack
+repository can now have a README. Those are one change: a pack directory may contain nothing
+it has not declared — the property the type rules rest on — so a repository whose purpose is
+to distribute one pack could not put it at the root, because its own README would be an
+undeclared file. The pack now sits one level down and the repository's furniture stays above
+it; installing takes the pack directory only, so nothing of the repository reaches a consumer.
+A source holding two pack roots is refused rather than guessed at, and one holding none says
+so.
+
+`export` stops at the tree and prints the commands that finish the job — which forge, public
+or private, who may read it are the owner's calls, and a tool that made them would be guessing
+at exactly what a migration exists to hand over. `docs/pack-migration.md` walks both sides.
+
+An end-to-end test exports a pack that ships in this repository today, makes a git repository
+of it, tags it, and installs it back through a named source. Each half of that can look right
+while the seam between them does not work, and the seam is where the README problem was found.
+
+**The lock records what satisfied each dependency, not only what would have been acceptable**
+(#523, `pack.lock.json` schema 4). Entries already copied the declared `dependencies` — the
+ranges — and a range is not a resolution: `>=2.1.0` stays satisfied after somebody swaps
+2.1.0 for 3.0.0 underneath, and nothing in the lock could say the pack had been installed
+against something else. `dependency_resolution` records the version and tier that answered
+each range, on install and on update alike, and `pack info` reports it. A pack with no
+dependencies records an empty list rather than omitting the field, so a reader never has to
+tell "none" apart from "nobody wrote it down".
+
+**The pack inventory is readable**: `rig-wb pack list` / `info` / `explain` / `outdated` /
+`update` (#523). The lock has recorded every pack's source, version, and integrity since long
+before packs came from anywhere but a local directory — nothing read it back, which is the
+whole of what "explain an installed pack" was missing.
+
+`list`, `info`, and `explain` answer from the lock and the installed manifest and are always
+cheap; `outdated` makes one network round trip per pinned pack and reports an unreadable
+source on that pack's row rather than failing the listing, exiting non-zero when any row is
+not `ok`. `info` reads the pack's `type` from disk rather than the lock, which never carried
+one, so the answer stays true for packs installed before that field existed.
+
+`explain` is not a longer `info`: it asks whether the pack's assets actually win at their
+tier, which only the resolver knows. A pack can be installed, valid, and entirely shadowed,
+and that is the state somebody is looking for when an override did nothing.
+
+`update` moves a git-pinned pack to another version in place — staged and validated first,
+directory and lock swapped last, so a failure leaves the old version installed rather than
+stranding the project with neither. It refuses a pack installed from a directory or archive
+(no source to ask for a version) and a tag whose manifest declares a different version than
+the tag names.
+
+**Packs install from named sources, pinned to a commit** (#523). A project declares where
+packs come from in `.rig/sources.json` (`rig-wb pack source add|list|remove`), and
+`rig-wb pack install product:northwind@1.4.0` reaches a private repository over `git+ssh`,
+`git+https`, or `git+file`. The spec names the source, not an address: welding a pack's
+contents to its distribution path would make a fork, a mirror, or a move to private each a
+content change.
+
+Rig holds no credential. It runs `git` and lets git answer for authentication out of whatever
+is already configured — SSH agent, credential helper, `gh auth`, OS keychain, CI secret — and
+a source URL that embeds one is refused. The lock records the source's name and the commit,
+never the URL. That is enforced at the one place that writes: the lock writer runs the same
+sensor as `wb scan-secrets` and refuses a credential-shaped payload, because a rule that
+depends on every caller being careful is a wish.
+
+`@1.4.0` resolves tag → commit → tree digest and the lock keeps all three; the fetch re-checks
+the commit it was given, so a tag moved mid-install is a refusal rather than a different pack
+under the pinned version. `rig-wb pack verify-sources` re-checks locked pins later and exits
+non-zero when one no longer holds.
+
+Refusals now arrive apart instead of collapsing into one error: `source-unreachable`,
+`auth-failed`, `revision-not-found`, `digest-mismatch`, `capability-refused`,
+`engine-incompatible`, `unverified-signature`. The distinction earns its keep — `gh auth
+login` fixes one of these and does nothing for the next. Unrecognised git failures stay
+`source-unreachable`, the answer that does not claim to know.
+
+`pack.lock.json` moves to schema 3 for the git source shape (`source_id` and `revision`
+alongside the existing type/path/sha256).
+
+### Breaking
+
+**A pack manifest now declares a `type`, and the type decides what the pack may carry and
+run** (`pack_schema_version` 2). `knowledge` / `policy` / `reviewer` / `skill` / `workflow` /
+`tool`, checked against the asset kinds the manifest declares; only a `tool` pack may ship a
+recipe declaring `checks:`, the shell commands the orchestrator runs on the host. Everything
+else a pack carries is text a provider reads. This is the line the addon platform needs:
+installing a team's domain knowledge must not also install command execution (#523).
+
+A manifest with no `type` is refused rather than defaulted. Guessing the type is guessing a
+permission — the safe-looking guess breaks working packs and the permissive one hands out
+reach nobody granted, and there is no third answer that is not one of those two in disguise.
+`rig-wb pack init` now requires `--type` for the same reason. The four shipped packs declare
+`type: skill`, which is what they measured as: prompt material, and not one recipe declaring
+`checks:`.
+
+Editing a manifest to hide an asset does not get it past the type rule. Validation already
+refuses any file the manifest does not declare and hashes every file it does, so the
+declaration is the pack's whole contents — hiding `commands/` trades one refusal for another.
+That pairing, not a duplicated check, is what makes a manifest-level rule enforceable.
+
+**An `acceptance-gate` step now refuses a passing verdict that has not answered every
+criterion it declared.** It used to refuse only a verdict that answered *none* of them, which
+was a floor of one and not arity: `1 of 13, VERDICT PASS` passed the step, while answering a
+single criterion UNKNOWN failed it — a gate that got stricter the more the judge said. The
+rule is now every declared criterion, counted as declared criteria answered rather than
+CRITERION lines parsed, so out-of-range numbers and a criterion answered twice no longer buy
+arity. A shortfall fails as `unanswered` and the retry is told how many of how many were
+reached and which numbers are still owed. Arity is judged apart from the answers: all
+answered with some UNKNOWN satisfies it, and whether that is a pass stays the rubber-stamp
+guard's question (#503).
+
+This was measured before it was taken. The reason it was not taken earlier — the shipped
+mock provider emitting a single `CRITERION 1:` line whatever a step declared — was removed by
+#519; `bugfix` (13/13) and `adaptive-bugfix` (4/4) both still finish DONE under mock. Two
+assertions in the suite pinned the old floor and were re-based; nothing else moved. A recipe
+of your own whose verifier under-answers will now spend a retry being told which criteria it
+skipped, and escalate if it keeps skipping them.
+
+The record format did not change and needs no migration — `criteria[].n` is what both the old
+and the new rule read, and the `criterion` / `criterion_id` binding added in #522 is still
+what resolves an answer back to what it judged. One case does change under an in-flight run:
+`resume` and `next` judge the *current* step from its stored verdicts, so a run parked at a
+gate whose verdict under-answered now retries there instead of advancing. Steps already
+recorded `passed` are not re-judged — nothing re-opens a run that finished under the old rule.
+
 ## [2.7.0] - 2026-08-27
 
 ### Breaking

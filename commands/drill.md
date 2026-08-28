@@ -1,41 +1,40 @@
 ---
-description: "rig/drill — reviewer 検出率の実測（ミューテーション・ドリル）。既知のバグの種を worktree に注入して review fan-out を走らせ、どの reviewer が何を検出したかをスコアボード化。--replay でペルソナ編集後の回帰リプレイ（過去 diff への再実行で verdict 差分）。ペルソナ品質を意見でなく数字にする。"
+description: "rig/drill — measure what reviewers actually catch, by mutation drill. Seeds known bugs into a worktree, runs the review fan-out, and scores which reviewer caught what. --replay re-runs an edited persona over archived diffs and diffs the verdicts. Turns persona quality from an opinion into a number."
 argument-hint: "[--seeds <n>] [--clean] [--personas <a,b,…>] [--verify-findings] [--replay [<persona>]] [--ablate]"
 ---
 
-# rig/drill — reviewer 検出率の実測 🎯
+# rig/drill — measuring reviewer detection 🎯
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/drill` にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, context-minimal). This command is only the entry point; the procedure lives in `facets/instructions/drill` and is not repeated here.
 
-起動後、`facets/instructions/drill` に従ってドリルを実行する:
+Then follow `facets/instructions/drill` to run the drill:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-- **実測**：観点対応の**バグの種**（CWE/ODC に紐づくカタログ＝認可漏れ/XSS/パストラバーサル/N+1/TOCTOU/破壊的変更/片道 migration/テスト欠落…）を一時 worktree の合成 diff に注入 → **種の妥当性ゲート**（`finding-verifier` が「文脈上無害」と反証した種は分母から除外＝equivalent-mutant 対策）→ review fan-out（`output-contracts/review-findings` で severity・file:line・Blocking/Non-blocking を強制）→ 答案キーと突き合わせて **検出/見逃し/誤検出＋clean FP率＋severity精度＋blocking精度＋説明品質の7指標スコアボード**（n<10 の検出率は Wilson 95% 区間つき）。`runs --personas` の間接指標を直接測定に格上げ。persona 単位の `Drill Result`（Score / Missed Issues / False Positives / 固定4カテゴリの Recommended Persona Updates——発動は `.rig/drill-results.jsonl` の履歴通算判定）も出力。
-- **`--clean`**：クリーン・コントロール専用モード。バグゼロの no-bug diff（リファクタ/リネーム形）だけを fan-out にかけ、そこへの REJECT・finding を全部誤検出として per-persona `clean_fp_rate` を実測。省略時（既定）はミックス＝種入り diff にクリーン diff を1本混ぜる。
-- **`--verify-findings`**：反証者も同時採点（正しい種を REFUTED したら失点）。
-- **`--replay <persona>`**：ペルソナ編集後、アーカイブ済み過去 diff へ再実行して**新旧 verdict の差分表**＝ペルソナ開発の snapshot テスト。
-- **`--ablate`**：**指摘の因果性テスト**。reviewer が名指しした欠陥だけを diff から除去して再判定し、verdict が翻るかを見る。翻らない指摘は判定を動かしていない＝装飾。帰無対照（無改変の再判定）を先に取る。
-- 本物のコードは触らない（worktree・終了時破棄）。結果は `.rig/drill-results.jsonl` に蓄積。
+- **Measurement**: seed **known bugs** — a catalogue tied to CWE and ODC covering missing authorization, XSS, path traversal, N+1, TOCTOU, breaking changes, one-way migrations, absent tests — into a synthetic diff in a temporary worktree; put each seed through a **validity gate** (a seed the `finding-verifier` refutes as harmless in context is dropped from the denominator, which is the equivalent-mutant problem); run the review fan-out (with `output-contracts/review-findings` forcing severity, `file:line`, and blocking or not); and score against the answer key across **seven measures — caught, missed, false positives, the clean false-positive rate, severity accuracy, blocking accuracy, and explanation quality** (a detection rate under n=10 carries a Wilson 95% interval). It promotes `runs --personas`, an indirect signal, into direct measurement. It also prints a per-persona `Drill Result`: score, missed issues, false positives, and recommended persona updates in four fixed categories, triggered by the running history in `.rig/drill-results.jsonl`.
+- **`--clean`**: the clean-control mode. Runs the fan-out over no-bug diffs only — refactors and renames — and counts every REJECT and every finding against them as a false positive, measuring each persona's `clean_fp_rate`. Without it, the default is a mix: one clean diff among the seeded ones.
+- **`--verify-findings`**: score the refuter too — refuting a genuine seed loses points.
+- **`--replay <persona>`**: after editing a persona, re-run it over archived diffs and produce a table of old versus new verdicts. A snapshot test for persona development.
+- **`--ablate`**: **a causality test for findings.** Remove only the defect a reviewer named, re-judge, and see whether the verdict flips. A finding that does not flip it was not moving the decision — it was decoration. Take the null control, a re-judgement with nothing changed, first.
+- Real code is never touched: a worktree, discarded at the end. Results accumulate in `.rig/drill-results.jsonl`.
 
-## 例
+## Examples
 
 ```
-/rig:drill                                  # 種5つ＋クリーン1本（ミックス）・既定 reviewer 集合で実測
-/rig:drill --seeds 10 --verify-findings     # 反証者込みの本気の較正
-/rig:drill --clean                          # no-bug diff だけで clean_fp_rate を較正
-/rig:drill --replay security-reviewer       # 観点を尖らせた後の回帰確認
-/rig:drill --ablate                         # 指摘が verdict の原因か装飾かを分ける
+/rig:drill                                  # five seeds plus one clean diff, default reviewer set
+/rig:drill --seeds 10 --verify-findings     # serious calibration, refuter included
+/rig:drill --clean                          # calibrate clean_fp_rate on no-bug diffs alone
+/rig:drill --replay security-reviewer       # regression check after sharpening a lens
+/rig:drill --ablate                         # separate findings that caused the verdict from decoration
 ```
 
+## run-continuity (SKILL.md §6)
 
-## run-continuity（SKILL.md §6）
-
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

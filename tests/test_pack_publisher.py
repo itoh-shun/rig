@@ -433,7 +433,11 @@ def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
     entries = validate_lock_root(project / ".rig/packs")
     assert entries[0]["publisher_key_id"] == "test-2026"
     assert entries[0]["signed_digest"] == verified["signed_digest"]
-    assert read_lock(project / ".rig/packs")["pack_lock_schema_version"] == 2
+    # A literal, not the constant: a lock format change is a migration question for every
+    # installed project, and this assertion is the canary that makes somebody answer it. The
+    # version moved 2 -> 3 when a git source gained `source_id` and `revision` (#523 S2), and
+    # 3 -> 4 when entries began recording which version satisfied each dependency (S4).
+    assert read_lock(project / ".rig/packs")["pack_lock_schema_version"] == 4
     assert diagnose(project=project)["status"] == "ok"
     installed_signature = result.path / "pack.sig.json"
     tampered = json.loads(installed_signature.read_text(encoding="utf-8"))

@@ -18,12 +18,14 @@ from dataclasses import dataclass
 from .. import bench_providers as _bench_provider_patches
 from ..packs.model import PackError
 from . import config
+from . import perf
+from . import sessions
 from .gates import is_runtime_gate
 from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
-from .runstate import (compute_next, enforce_executable_state, gate_outcome, save_state,
+from .runstate import (answered_criteria, compute_next, enforce_executable_state, gate_outcome, save_state,
                        stage_gate_status, telemetry_append)
 from .secure_runtime import (
     SecureRuntimeError,
@@ -245,7 +247,14 @@ def _effective_provider_backend(provider: str) -> str:
     return "claude-cli" if provider in ("rig", "claude") else provider
 
 
-def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
+def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
+               state: dict | None = None) -> list[str]:
+    """The argv for one provider call.
+
+    `sessions.session_argv` is consulted for the generator only (#326) and returns `[]` for
+    every case that is not an opted-in, CLI-confirmed generator call — so a stateless run
+    builds exactly the argv it built before that feature existed.
+    """
     if provider == "mock":
         return [sys.executable, "-c", MOCK_SRC, role, persona]
     if provider == "rig":
@@ -256,6 +265,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
             argv += ["--model", cfg["model"]]              # per-step model support
         if cfg.get("claude_no_session_persistence"):
             argv.append("--no-session-persistence")
+        argv += sessions.session_argv(provider, role, cfg, state)
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "claude":
         # Headless. In production the user can tune permission modes etc. via --provider-cmd.
@@ -264,6 +274,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
             argv += ["--model", cfg["model"]]              # per-step model support
         if cfg.get("claude_no_session_persistence"):
             argv.append("--no-session-persistence")
+        argv += sessions.session_argv(provider, role, cfg, state)
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "codex":
         # --skip-git-repo-check: keep codex from refusing to start in non-git directories
@@ -272,6 +283,10 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv += ["--sandbox", "workspace-write" if role == "generator" else "read-only"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
+        # Consulted even though the answer is always `[]`: codex has no session flags this
+        # repository can point at, and a caller who asked for reuse has to learn that from the
+        # run history rather than from measuring no improvement and guessing why.
+        argv += sessions.session_argv(provider, role, cfg, state)
         return argv + [prompt]
     if provider == "grok":
         # grok-build headless (`grok -p`, claude-CLI-shaped syntax;
@@ -286,12 +301,16 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv = ["grok", "-p", prompt, "--output-format", "plain"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
-        return argv
+        return argv + sessions.session_argv(provider, role, cfg, state)
     if provider == "cmd":
         tmpl = cfg.get("provider_cmd") or ""
         if not tmpl:
             raise SystemExit("[ERROR] --provider cmd requires --provider-cmd \"... {prompt} ...\"")
         # shlex respects quoting and whitespace (wrappers for real codex etc. pass through safely)
+        # Reuse cannot be added to somebody's own command template — rig does not know where a
+        # session flag would go in it, and appending one could change what the template means.
+        # Recorded as a fallback rather than attempted.
+        sessions.session_argv(provider, role, cfg, state)
         return [a.replace("{prompt}", prompt).replace("{role}", role).replace("{persona}", persona)
                 for a in shlex.split(tmpl)]
     raise SystemExit(f"[ERROR] unknown provider: {provider}")
@@ -587,8 +606,33 @@ def _record_benchmark_provider_call(
     return None
 
 
+#: provider role -> the phase its latency belongs to (#502). A role outside this map is
+#: still somebody else's latency, but nobody's phase, so it is counted as untimed rather than
+#: quietly folded into rig's own overhead.
+_ROLE_PHASES = {"generator": "provider_generator", "verifier": "provider_verifier"}
+
+
 def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
                  state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
+    """Call a provider, timing the wait as the phase its role belongs to (#502).
+
+    Wrapping here rather than at each call site is deliberate: every path to a provider —
+    the generator, the parallel verifiers, the judge panel, the queue runner — arrives
+    through this function, so one wrapper is the difference between "every provider call is
+    accounted for" and "the ones somebody remembered". `rig_overhead_ms` is a subtraction
+    from the total, and a single missed call would silently become rig's own time.
+    """
+    perf.record_context_bytes(cfg, prompt)
+    phase = _ROLE_PHASES.get(role)
+    if phase is None:
+        perf.record_untimed(cfg)
+        return _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+    with perf.timed(cfg, phase):
+        return _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+
+
+def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
+                       state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
     journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
     if journal_error is not None:
         return 126, f"[benchmark call counter error: {journal_error}]"
@@ -620,7 +664,7 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
             return run_secure_provider(launcher, prompt, cfg)
         except SecureRuntimeError as error:
             return 126, f"[secure provider refused: {error}]"
-    argv = build_argv(provider, role, prompt, cfg, persona)
+    argv = build_argv(provider, role, prompt, cfg, persona, state)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600),
@@ -1129,8 +1173,10 @@ _CRITERION_RE = re.compile(
 
 
 def _parse_criteria(out: str) -> list[dict]:
-    """Tolerant parse of per-criterion verdict lines. Missing lines = empty list (old-format
-    tolerance = old behavior). Later duplicates win; result sorted by criterion number (pure)."""
+    """Tolerant parse of per-criterion verdict lines. Missing lines = empty list; the parser
+    stays tolerant so a malformed output is still readable, and `gate_outcome` is what refuses
+    a verdict that did not answer every declared criterion — parsing and judging are separate
+    jobs. Later duplicates win; result sorted by criterion number (pure)."""
     found: dict[int, dict] = {}
     for line in (out or "").splitlines():
         m = _CRITERION_RE.match(line)
@@ -1189,12 +1235,13 @@ def bind_criteria(step: dict, verdicts: list[dict]) -> None:
     declared = [str(entry) for entry in (step.get("acceptance") or [])]
     for verdict in verdicts:
         if declared and verdict.get("ok"):
-            # `gate_outcome` only refuses a verdict that answered NOTHING. "1 of 13, PASS"
-            # still passes the step, so a PASSING record has to say 1 of 13 out loud or its
-            # reader will take `ok: true` for a judgment on all thirteen. A failing record
-            # is not misread that way and a synthesized one (budget exhausted, malformed
-            # output) judged nothing by construction, so neither is annotated.
-            verdict["answered"] = len(verdict.get("criteria") or [])
+            # What arity this verdict reached, in the same terms `gate_outcome` judges it
+            # by — declared criteria actually answered, not lines parsed. A record that
+            # counted its own out-of-range or duplicated lines would disagree with the gate
+            # that read it. A failing record is not misread as a full judgment and a
+            # synthesized one (budget exhausted, malformed output) judged nothing by
+            # construction, so neither is annotated.
+            verdict["answered"] = len(answered_criteria(declared, verdict))
             verdict["declared"] = len(declared)
         for criterion in verdict.get("criteria") or []:
             n = criterion.get("n")
@@ -2432,8 +2479,9 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
     st["checks"] = []
     cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
     for cmd in step["checks"]:
-        r = subprocess.run(cmd, shell=True, cwd=cwd,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with perf.timed(cfg or {}, "checks"):
+            r = subprocess.run(cmd, shell=True, cwd=cwd,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         st["checks"].append({"cmd": cmd, "ok": r.returncode == 0})
     failed = [c["cmd"] for c in st["checks"] if not c["ok"]]
     st["last_failure"] = None if not failed else "checks failed: " + "; ".join(failed)
@@ -3276,7 +3324,8 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         }
         return
     if executor == "risk-assess":
-        assessment = analyze_diff(_git_diff_evidence(cfg) or "", _git_changed_files(cfg))
+        with perf.timed(cfg, "risk_assess"):
+            assessment = analyze_diff(_git_diff_evidence(cfg) or "", _git_changed_files(cfg))
         state["adaptive"]["assessment"] = assessment.to_dict()
         state["adaptive"]["invocation_limit"] = invocation_limit(assessment)
         state["history"].append({
@@ -3317,6 +3366,10 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     # --model default).
     if (cfg.get("auto_route") and step.get("auto_route") and not step.get("model")
             and not (cfg.get("step_models") or {}).get(step["id"])):
+        # Timed explicitly rather than under `perf.timed` so this block keeps its shape: it
+        # shells out to git and may read the whole of runs.jsonl, which is rig's own time and
+        # has been mistaken for provider latency before.
+        route_started = time.monotonic()
         size = size_class(git_diff_lines(), load_manifest().get("size_thresholds"))
         routed_model, reason = resolve_auto_route(step, size)
         applied_model, applied_reason = routed_model, reason  # #264's static pick (default/fallback)
@@ -3351,6 +3404,7 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
                 state["history"].append({"action": "AUTO_ROUTE", "step": step["id"],
                                          "model": applied_model, "reason": applied_reason})
             log(f"   ↳ auto-route: {applied_model} ({applied_reason})")
+        perf.record(cfg, "auto_route", time.monotonic() - route_started)
     gen_model, ver_model = effective_step_models(effective_step, cfg)
     if gen_model:
         st["model"] = gen_model                     # actually-used generator model (run-state/telemetry attribution)
@@ -3389,10 +3443,11 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     else:
         artifact_index = gen_list.index(artifact_provider) + 1
         artifact_label = f"{step['id']}-{artifact_provider}-cand{artifact_index}"
-    artifact = _artifact_record(
-        cfg, artifact_label, provider=artifact_provider, model=gen_model,
-        step=step["id"],
-    )
+    with perf.timed(cfg, "artifact"):
+        artifact = _artifact_record(
+            cfg, artifact_label, provider=artifact_provider, model=gen_model,
+            step=step["id"],
+        )
     if artifact is not None:
         st["artifact"] = artifact
         state["result_artifact"] = artifact
@@ -3449,8 +3504,9 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
     personas = step["personas"] or ["independent"]
     verify_prompt = _build_verify_prompt(state, step, out, _git_diff_evidence(cfg))
     if cfg.get("parallel_backend") == "managed-agents":  # #295: opt-in experimental backend
-        results = run_managed_agents_fanout(verify_prompt, personas, v_cfg,
-                                            state=state, step_id=step["id"])
+        with perf.timed(v_cfg, "provider_verifier"):
+            results = run_managed_agents_fanout(verify_prompt, personas, v_cfg,
+                                                state=state, step_id=step["id"])
     else:
         results = run_verifiers_parallel(ver, verify_prompt,
                                          personas, v_cfg, max_parallel, state=state, step_id=step["id"])
@@ -3467,6 +3523,30 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
         record_verdicts(step, st, results)
 
 
+def _seal_run_accounting(state: dict, cfg: dict, started: float, log=None) -> None:
+    """Move the per-run accumulators off `cfg` and onto `state`, where telemetry reads them.
+
+    The wall clock is taken here rather than by the caller because this is the last moment at
+    which the run is still the run: `rig_overhead_ms` is this total minus provider time, so a
+    total measured anywhere else would attribute somebody else's work to rig.
+    """
+    state["token_usage"] = cfg.get("_token_usage") or {}
+    measured = perf.summary(cfg, total_ms=(time.monotonic() - started) * 1000.0,
+                            token_usage=state["token_usage"])
+    if measured is None:
+        return
+    state["perf"] = measured
+    broken = perf.check_budget(measured, cfg.get("perf_budget") or {})
+    if not broken:
+        return
+    # A warning, never a verdict. A perf budget failing a bugfix would make people stop
+    # declaring budgets; `rig-wb perf --check` is where it costs something. Recorded on the
+    # state so the telemetry carries it and the gate can see it after the fact.
+    state["perf_budget_broken"] = broken
+    for line in broken:
+        (log or (lambda *a: None))(f"   \u26a0 perf budget: {line}")
+
+
 def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
              cfg: dict, max_steps: int, quiet: bool = False,
              max_parallel: int = 4, quorum: str = "all",
@@ -3474,6 +3554,12 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
+    # A fresh timing accumulator per run, on a copy of cfg: run_loop owns its own lifetime so
+    # no caller has to remember to provide one, and a cfg reused across two runs cannot blend
+    # their timings. `_token_usage` stays the caller's object — that one is read back by
+    # `orchestrate` after the loop returns.
+    started = time.monotonic()
+    cfg = {**cfg, "_perf": perf.accumulator()}
     if (
         cfg.get("secure_runtime")
         and state.get("recipe") == "japanese-writing"
@@ -3516,7 +3602,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         }
     execution = enforce_executable_state(state)
     if not execution["orchestratable"]:
-        state["token_usage"] = cfg.get("_token_usage") or {}
+        _seal_run_accounting(state, cfg, started, log)
         return "BLOCKED"
     if sp is not None:      # run dir = where the run-state lives; full over-budget outputs spool there
         cfg = {**cfg, "run_dir": cfg.get("run_dir") or str(pathlib.Path(sp).resolve().parent)}
@@ -3526,7 +3612,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
             )
     if any(s["needs"] for s in state["steps"]):
         final = run_dag(state, sp, gen_list, ver, cfg, max_steps, quiet, max_parallel, quorum)
-        state["token_usage"] = cfg.get("_token_usage") or {}
+        _seal_run_accounting(state, cfg, started, log)
         telemetry_append(state, final)
         return final
     iters, last = 0, "—"
@@ -3535,7 +3621,8 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         if not enforce_executable_state(state)["orchestratable"]:
             last = "BLOCKED"
             break
-        action, msg = compute_next(state)
+        with perf.timed(cfg, "gate"):
+            action, msg = compute_next(state)
         last = action
         log(f"▶ {action}: {msg}")
         if action == "START":
@@ -3556,7 +3643,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         last = state["stopped"].get("kind", "ESCALATE")
     if sp:
         save_state(state, sp)
-    state["token_usage"] = cfg.get("_token_usage") or {}
+    _seal_run_accounting(state, cfg, started, log)
     telemetry_append(state, last)
     return last
 
@@ -3612,7 +3699,8 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
         awaiting: list[str] = []
         for s in ready:                       # apply gate evaluation in id order (deterministic)
             st = ss[s["id"]]
-            outcome = gate_outcome(s, st)
+            with perf.timed(cfg, "gate"):
+                outcome = gate_outcome(s, st)
             if outcome == "pass":
                 # A human gate parks the step without failing it: the machine is
                 # satisfied, a person is not yet. Other branches of the DAG keep going.

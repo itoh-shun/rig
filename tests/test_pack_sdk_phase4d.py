@@ -28,7 +28,8 @@ def _resource_pack(root: pathlib.Path, pack_id: str = "resource-pack", *, kind="
     assets["resource"] = [relative]
     checksum = digest(resource)
     manifest = {
-        "pack_schema_version": 1, "id": pack_id, "version": "1.0.0", "kind": kind,
+        "pack_schema_version": 2, "id": pack_id, "type": "skill", "version": "1.0.0",
+        "kind": kind,
         "engine": f">={__version__}", "dependencies": [], "assets": assets,
         "hashes": {relative: checksum}, "display_name": "Resource Pack",
         "description": "Inert documentation resources.", "capabilities": ["resource"],
@@ -87,7 +88,8 @@ def _typed_dependency_pack(root: pathlib.Path, pack_id: str, *, dependency=None,
     refs.sort(key=lambda item: (item["pack"], item["kind"], item["id"]))
     hashes = {item: digest(pack / item) for paths in assets.values() for item in paths}
     manifest = {
-        "pack_schema_version": 1, "id": pack_id, "version": "1.0.0", "kind": "project",
+        "pack_schema_version": 2, "id": pack_id, "type": "skill", "version": "1.0.0",
+        "kind": "project",
         "engine": f">={__version__}", "dependencies": dependency or [], "assets": assets,
         "hashes": hashes, "display_name": pack_id, "description": "Dependency fixture",
         "capabilities": ["evaluation", "recipe"], "references": refs, "resources": {},
@@ -172,7 +174,7 @@ def test_rig_core_pack_id_is_reserved_in_manifest_and_init(tmp_path):
     with pytest.raises(PackError, match="pack id is reserved: rig-core"):
         validate_pack(pack)
     with pytest.raises(PackError, match="pack id is reserved: rig-core"):
-        init_pack("rig-core", kind="project", root=tmp_path / "initialized")
+        init_pack("rig-core", kind="project", type_="skill", root=tmp_path / "initialized")
     assert not (tmp_path / "initialized/rig-core").exists()
 
 

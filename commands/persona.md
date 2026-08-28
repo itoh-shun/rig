@@ -1,44 +1,44 @@
 ---
-description: "rig/persona — 説明文から reviewer/persona を自動生成。product 単位(project 層・既定)か global(user 層・--user)に保存し、--persona <name> で review に投入できる。例 \"80年代の音楽を理解しているレビュアー\"。"
-argument-hint: "[\"<どんなレビュアーか説明>\"] [--user] [--name <id>]"
+description: "rig/persona — generate a reviewer persona from a description. Saves it per product (the project layer, the default) or globally (the user layer, --user), after which --persona <name> puts it into a review. For example, \"a reviewer who understands eighties music\"."
+argument-hint: "[\"<what kind of reviewer>\"] [--user] [--name <id>]"
 ---
 
-# rig/persona — persona ジェネレータ
+# rig/persona — the persona generator
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・facet 配置順・persona の tier 解決＝§5）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/persona-gen` にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, facet ordering, persona tier resolution in §5). This command is only the entry point; the procedure itself lives in `facets/instructions/persona-gen` and is not repeated here.
 
-起動後、`facets/instructions/persona-gen` に従って persona を生成する:
+Then follow `facets/instructions/persona-gen` to generate the persona:
 
 ```
 $ARGUMENTS
 ```
 
-説明が空なら「どんなレビュアーが欲しいか」を一言促す（捏造しない）。
+When the description is empty, ask in one line what kind of reviewer they want. Do not invent one.
 
-## やること
+## What it does
 
-説明文から reviewer/persona facet を起草 → 保存先とドラフトを提示 → **確認の上**で書き込む。
+Drafts a reviewer persona facet from the description, shows the draft and where it would go, and writes it **once confirmed**.
 
-- **保存先**：既定 `<repo>/.claude/rig/personas/<name>.md`（project／product 単位）。`--user` で `~/.claude/rig/personas/<name>.md`（global・全プロジェクト共有）。
-- **名前**：`--name` 省略時は説明から slug を提案（例「80年代の音楽…」→ `music-era-80s-reviewer`）。
-- 生成した persona は **`--persona <name>`** で review に投入できる（tier 解決で名前から使える）。
+- **Where it goes**: `<repo>/.claude/rig/personas/<name>.md` by default (per project, per product). `--user` puts it in `~/.claude/rig/personas/<name>.md` — global, shared by every project.
+- **The name**: without `--name`, propose a slug from the description ("eighties music…" → `music-era-80s-reviewer`).
+- The generated persona can be put into a review with **`--persona <name>`**; tier resolution finds it by name.
 
-## flag
+## Flags
 
-- `--user` … global（user 層）に保存。既定は project。
-- `--name <id>` … 保存名／persona 名を明示。
+- `--user` — save globally, in the user layer. The default is the project.
+- `--name <id>` — set the filename and persona name explicitly.
 
-## 規則
+## Rules
 
-- **書き込みは確認必須・冪等（既存は上書きしない）・捏造禁止。** global 書き込みは「全プロジェクトに影響」と明示してから。`--autonomous` でも書き込み確認は解除されない。
-- 生成するのは persona facet のみ（native agent は作らない）。
+- **Writes are confirmed, idempotent (never overwriting), and never invented.** Say plainly that a global write affects every project before making one. `--autonomous` does not lift the write confirmation.
+- It generates a persona facet only. It does not create a native agent.
 
-## 例
+## Examples
 
 ```
-/rig:persona "80年代の音楽を理解しているレビュアー"            # → project に生成
-/rig:persona "セキュリティに厳しいシニア" --user               # → global に生成
-/rig:persona "UXコピーの審美に厳しい人" --name ux-copy-taste
-# 使う:
+/rig:persona "a reviewer who understands eighties music"      # → generated in the project
+/rig:persona "a senior who is strict about security" --user   # → generated globally
+/rig:persona "someone with taste in UX copy" --name ux-copy-taste
+# then use it:
 /rig:dev --only review --persona music-era-80s-reviewer
 ```

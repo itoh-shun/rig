@@ -502,6 +502,130 @@ recipeのstepは`auto_route.candidates`（`{model, cost_tier, max_size}`の列�
 
 `--auto-route-learn`はこれをさらに発展させ、`.rig/runs.jsonl`自身の実績（どのrecipe/stepでどのmodelが実際に使われ、gateを通過したか）から頻度ベース（MLモデル不要）で学習する。**既定はshadow mode**：予測は常に記録される（`steps[].learned_route`）が、`--auto-route-mode active`を指定するまでは実際の選択に影響しない（段階導入）。参照run数が不足しているか、pass_rateが低い場合は静的な`--auto-route`の選択にフォールバックし、棄却した候補とその理由（counterfactual）を必ず記録する——ブラックボックス化しない。`--exploration-pct N`を指定すると、一定割合のrunだけ次点候補を試す（乱数ではなく`--exploration-date`＋recipe/stepのハッシュで決定論的に判定するため、結果は再現可能）。安く選んだことが節約だったのか偽の経済だったのかは、`rig-wb runs --auto-route-regret`が事後に答える。ルーティングされたstepごとに候補モデル別の試行数とpass rateを表示し、選ばれたモデルが品質基準を下回っていて、かつ十分なサンプルを持つより高価な候補の方が通過率が高い場合に**possible regret**として明示する。`.rig/runs.jsonl`を読むだけの読み取り専用で、ルーティング自体は変更しない。
 
+### 性能バジェットと回帰ゲート（`rig-wb perf`、#502）
+
+RUN の計測はこれまで所要時間ひとつだけで、性能レポートに本当に問われる問い——**遅くなったの
+は rig か、プロバイダか**——に答えられなかった。前者は直すべき回帰、後者は天気で、必要な対応
+が正反対になる。いまは各 RUN が `perf` を `.rig/runs.jsonl` に記録する：フェーズ別の所要時間
+（`risk_assess` / `auto_route` / `provider_generator` / `provider_verifier` / `checks` /
+`gate` / `artifact`）、送出したプロンプトのバイト数、そして `rig_overhead_ms`（総時間から
+プロバイダ待ちを引いた、rig 自身の取り分）。
+
+```console
+rig-wb perf --recipe bugfix                          # 直近 RUN のフェーズ別中央値(ms)
+rig-wb perf --recipe bugfix --save-baseline perf.json
+rig-wb perf --recipe bugfix --check --baseline perf.json   # 回帰なら exit 1
+```
+
+バジェットは生成物ではなくマニフェストに宣言する。ゲートである以上コミットされている必要が
+あり、`.rig/` は gitignore 対象だから：
+
+```yaml
+perf_budget:
+  max_rig_overhead_ms: 5000
+  max_context_bytes: 400000
+```
+
+RUN 中に超過しても警告を出すだけで判定は変えない。性能バジェットが bugfix を落とすようになれ
+ば、人はバジェットのほうを消す。実際に痛みを伴うのは CI の `rig-wb perf --check` だけにする。
+
+**やらないこと**が設計そのもの：
+
+- **プロバイダ遅延は報告するがゲートしない。** 他人のネットワークで落ちるゲートは一月で無効化
+  され、rig 自身が責任を負えるフェーズまで道連れになる。「どちらが遅くなったか」が要点なので、
+  比較自体は別枠で表示する。
+- **未計測のフェーズを `0ms` として描かない。** 計測されなくなったフェーズはゲート失敗として
+  扱う——それを含んでいた総和すべてが「改善」に見えてしまうから。
+- **RUN が計測できなかった値を指すバジェットは「合格」ではなく「未執行」と報告する。** 誰にも
+  検証できない上限は守られた上限ではなく、そこに青信号を出すのがゲートが黙って機能しなくなる
+  経路そのもの。
+- **ベースラインは平均ではなく中央値。** スリープしたラップトップやコールドキャッシュの 1 回
+  が、以降すべての基準を決めてしまわないように。
+- **並列したプロバイダ呼び出しは二重に数えない。** 320ms の窓の中で 300ms のレビュアーが 4 本
+  走っても、RUN が待ったのは 1.2 秒ではなく 320ms。総和は `provider_work_ms` として併記する
+  ので、並列ファンアウトが無駄に見えることもない。
+
+決定論的なスイートは既存のものをそのまま使う。`rig-wb bench --provider mock` はベンチマーク
+コーパスを実際のオーケストレータに mock プロバイダで通し、各 RUN のテレメトリを専用の成果物
+ディレクトリに向ける。つまり CI ゲートはこの 2 コマンドの組で、どこにもライブネットワークが
+入らない：
+
+```console
+rig-wb bench --provider mock --out artifacts/
+RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
+```
+
+### Orca ランタイム（`--runtime`、#460〜#464、任意）
+
+**Orca は provider ではなく runtime です。** provider が決めるのは*誰がコードを書くか*（claude /
+codex / ollama）、runtime が決めるのは*作業がどこに置かれるか*（native の git worktree か、Orca
+管理の worktree か）。これを混ぜると「Codex で走らせる」と「Orca のワークスペースで走らせる」が
+同じ種類の選択になり、片方だけを選べなくなります。この分離はテストが**両モジュールの AST を
+解析して構造的に**確認しています。
+
+```text
+Orca → Claude Code → Rig → Orca CLI → Orca 管理の worktree
+                                        ↓
+       claude（生成）/ codex（読み取り専用の検証）/ テスト / acceptance gate
+```
+
+> どこで作業が見えるかは Orca が決める。どう行いそれが受け入れ可能かは rig が決める。
+
+```console
+rig-wb wb new "ログインのリダイレクトを直す"                  # auto（既定）
+rig-wb wb new "ログインのリダイレクトを直す" --runtime orca   # 決して降格しない
+```
+
+`auto` が Orca を使うのは、Orca セッションが環境変数として露出しており**かつ** CLI が ready で
+reachable な runtime を報告したときだけで、そうでなければ理由を出して native に戻ります。検出は
+環境変数を読んで返すだけでサブプロセスを起動しません——既定を選ぶ経路が、他のツールに「入って
+いますか」と尋ねずに済むように。明示した `--runtime orca` が満たせない場合は**フォールバック
+せず失敗**します：黙った降格は、あなたが指定も確認もしていない場所でタスクを走らせることだから。
+
+Orca が無いマシンでは以前とまったく同じに動作し、それがテストの最初の確認項目です。セットアップ・
+トラブルシュート・Orca が消えた後の discard 経路・IntelliJ との併用は
+**[docs/orca.md](docs/orca.md)** にあります。
+
+### OpenTelemetry エクスポート（`rig-wb otel`、#501）
+
+rig のローカル証跡——`.rig/runs.jsonl`、監査ログ、assurance receipt——が真実の源のまま。
+OTel はその**投影**であって、ここで何も再判定しないし、エクスポートが失敗しても verdict も
+gate も exit code も変わらない。監視バックエンドが落ちていることで rig の判断が変わってはなら
+ない。
+
+```console
+rig-wb otel --dry-run                        # 何がマシンの外に出るのかをそのまま表示
+rig-wb otel --endpoint http://localhost:4318 # OTLP/HTTP で任意のコレクタへ
+```
+
+```yaml
+observability:
+  enabled: true
+  otlp_endpoint: http://localhost:4318
+  service_name: rig
+```
+
+**SDK を入れない。** rig のランタイム依存は3つだけなので、OTLP/HTTP を JSON ボディで
+`urllib` から話す——モデルのエンドポイントに話しかけているのと同じ経路。どのコレクタも
+`/v1/traces` と `/v1/metrics` で受け取る。
+
+**投影は allowlist で、それが redaction のすべて。** 丸ごとコピーしてから濾すことはしない。
+フィルタは「これから存在しうる全フィールド」について正しくあり続けなければならず、何も考えず
+に追加された最初の1つが既定で流出する。具体的に：`runs.jsonl` の verdict は `anchor`——モデル
+が書いた自由テキストで、ファイルパスが入るのが普通——を持つ。denylist はそれを知っていなけれ
+ばならないが、allowlist はそもそも要求しない。よって prompt・応答本文・diff・パス・verdict の
+散文・step id・モデル名はどれも出ていかないし、**レコードに新しいフィールドが増えても、誰かが
+安全だと判断するまでテレメトリには現れない**。
+
+**span になるのは実測された時間だけ。** フェーズ span は RUN が実際に記録した区間から作る
+（#502）。所要時間はあるが区間が無いフェーズは span ではなく metric として出す——集計値を端から
+並べて木を描けば、誰も観測していない順序を捏造することになる。キャッシュトークン・コスト・
+TTFT・tokens/sec は**まるごと欠落**させる：rig はどれも測っていないので、0 は測定値ではなく
+主張になってしまう。
+
+span id は各レコードの内容から導くので、同じログに対してエクスポータを再実行しても、1つの RUN
+が2つに増えたりしない。
+
 ## 12. GitHub 連携
 
 | コマンド | read/write |
@@ -743,6 +867,8 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
 | その run が実際に取った形 | Mission Control の task detail が返す `rig.assurance-graph/v1`（`rig_workbench/workbench/graph.py`）——直列 step・並列レビュー fan-out・機械ゲート・人間の判断を node/edge で区別する。`steps.json` と Assurance Receipt の投影なので、gate/RBAC/承認のロジックを複製しない。run が記録していない構造は recipe から読むが、step id が一致する間だけで、ずれていれば `recipe-drifted` と申告する |
 | この変更を accept してよい理由を1枚で | `workbench.py receipt <task-id>`（`rig.assurance-receipt/v1` → `.rig/runs/<task-id>/assurance.json` と `.md`）——gate・来歴・承認の**投影**であって再判定はしない。rig が記録していないもの（producer の runtime/model、verifier の identity、両者の独立性）は空欄ではなく `{"observed": false, "reason": …}` として出る。`--verify` は投影元の digest を再計算し、変わっていれば `invalidated` を返す |
+| 何を頼まれたのかを、機械が突き合わせられる形で | `rig-wb wb intent <file>`（`rig.intent-contract/v1`）——ゴール、その要件、そして各要件を**何が検証するか**。生成はしない：文章を要件に落とすのは読解と判断であり、それは別の場所でやってペイロードとしてここに届く。rig が自分で導いた要件がユーザーの要求として記録されることはなく、突き合わせる先が無い基準は `unsatisfied` ではなく `unverifiable`（**見て満たされていない**と**見られない**は別の答え）。`rig-wb wb intent-derive <file> --against <catalog> --floor\|--target` は宣言された要件から、必要なワークフローの下限、または要求している assurance target を導く |
+| 要求した保証水準と、receipt が記録した実績の差 | `rig-wb wb assurance-target <task-id> <target>`（`rig.assurance-target/v1`）——receipt の「要求する側」の半分で、軸は `isolation` / `verification` / `provenance` / `approval` / `gate`。target が名指せるのは receipt が答えられる軸だけで、rig が観測できない軸は弱い `unmet` ではなく `unobservable`（`unmet` は「見た」、`unobservable` は「見られない」）。「プロダクション品質」は、渡されていない対応付けを rig が発明しないために**拒否**される。黙った格下げも無い——近似的な合格も、部分点も付けない。`rig-wb wb assurance-derive <target> --requires <map> --against <catalog>` は、あなたが宣言した対応表から target が必要とするワークフロー下限を導く。表が覆っていない軸と値の組は、飛ばさず拒否する |
 | rig が作っていない変更が、rig の境界を通るか | `workbench.py import --head <commit> --producer <name>` は外部 orchestrator の変更をふつうの task として登録する——task ブランチを**その commit の位置に**作るので、isolation もセンサーも gate も governance も同じものが効き、accept の第二経路は存在しない。producer 自身の申告（`--producer-claim tests=passed`）は `gate_effect: none` として記録されるだけで、どのゲートにも届かない。`workbench.py contract <task-id> --json`（`rig.assurance-contract/v1`）が機械向けの答えで、`acceptable` / `not-acceptable` / `pending` / `execution-error` にそれぞれ別の exit code を割り当てる——**拒否と障害を取り違えないため**。ブランチ名で検証した対象は、その名前が動いた時点で fresh でなくなる |
 | 次の queue タスクを始めてよいか | `queue add "…" --depends-on <id>`（`rig.queue-dependencies/v1`）——辺は**完了ではなく acceptance**。`done` になった依存は「ゲートが確定した」だけで「誰かが適用した」ではないので、workbench task が `accepted` を読むまで後続は待つ。保留は `waiting` / `blocked` として理由つきで**永続する**（フィルタにすると、`queued` が尽きるまで回る detached worker が空転する）。discarded / failed / 存在しない / cycle の依存は解放せず block する。**local backend 専用**——Issue ラベルに辺は置けず、黙って落とせば依存が無いものとして即実行されてしまう |
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
