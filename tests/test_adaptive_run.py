@@ -1030,6 +1030,39 @@ def test_the_targeted_reviewer_is_shown_the_criteria_its_step_declares(
         entry.split(" — ", 1)[0] for entry in declared]
 
 
+def test_a_targeted_review_that_answers_all_but_one_criterion_does_not_pass(
+    step_factory, monkeypatch, tmp_path
+):
+    """The case the old floor-of-one guard passed, end to end: a PASS that answers three of
+    four declared criteria. Zero answers already failed; this pins that the rule is arity,
+    so the gate cannot be cleared by answering the easy ones."""
+    def fake_run_provider(
+        provider, role, prompt, cfg, persona="", state=None, step_id=None
+    ):
+        if role == "verifier":
+            short = "\n".join(_ADAPTIVE_ANSWERS.splitlines()[:-1])
+            return 0, short + "\nNo blocking defect.\nVERDICT: PASS"
+        return 0, "STATUS: done"
+
+    monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    monkeypatch.setattr(providers, "_run_step_checks", _pass_step_checks)
+    steps = _adaptive_steps(step_factory)
+    declared = steps[2]["acceptance"]
+    state = new_state("adaptive-bugfix", steps, "fix")
+
+    final = run_loop(
+        state, None, "mock", "mock", {"cwd": str(tmp_path)}, 20, quiet=True,
+    )
+
+    assert final != "DONE"
+    failures = [h for h in state["history"] if h.get("action") == "FAIL"]
+    assert failures and failures[0]["outcome"] == "unanswered"
+    # The one criterion still owed is named, not just the count.
+    assert f"answering {len(declared) - 1} of its {len(declared)} declared criteria" \
+        in failures[0]["findings"]
+    assert f"still unanswered: {len(declared)}" in failures[0]["findings"]
+
+
 def test_a_targeted_review_that_answers_no_declared_criterion_does_not_pass(
     step_factory, monkeypatch, tmp_path
 ):
@@ -1054,9 +1087,12 @@ def test_a_targeted_review_that_answers_no_declared_criterion_does_not_pass(
     assert final != "DONE"
     failures = [h for h in state["history"] if h.get("action") == "FAIL"]
     assert failures and failures[0]["outcome"] == "unanswered"
-    # The retry is not blind: the record says what was missing even though every verdict
-    # in it reports ok, so `_distill_failures` alone would have found nothing to report.
-    assert "without answering any of its" in failures[0]["findings"]
+    # The retry is not blind: the record says how far short the verdict fell and which
+    # criteria are still owed, even though every verdict in it reports ok — so
+    # `_distill_failures` alone would have found nothing to report. "Answer them all" is
+    # not actionable to a verifier that believes it already did; the numbers are.
+    assert "answering 0 of its 4 declared criteria" in failures[0]["findings"]
+    assert "still unanswered: 1, 2, 3, 4" in failures[0]["findings"]
 
 
 def test_unknown_executor_stops_without_provider_call(

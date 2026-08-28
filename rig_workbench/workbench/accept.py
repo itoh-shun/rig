@@ -23,7 +23,6 @@ from .state import (_diff_lines, audit_append, build_acceptance,
                     load_json, load_task, now_iso, parse_diff_md, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
                     task_lock, verify_provenance, warn, worktree_dirty)
-from .runtime import WorktreeHandle
 from . import runtime as runtime_mod
 from .telemetry import record_task_run
 
@@ -388,9 +387,36 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
     # Disposal goes back to whoever created it (#461). Reading the path and calling
     # `git worktree remove` on it happens to work while native is the only backend, and
     # stops being true the moment another runtime owns the directory.
-    handle = WorktreeHandle.from_task(task)
-    if handle:
-        runtime_mod.for_task(task, root).remove(root, handle)
+    #
+    # Asked through `reconnect` rather than `for_task` (#463): `for_task` raises when the
+    # owning runtime is not usable here, and a raise leaves the operator with a traceback,
+    # advice naming a flag this command does not have, and a task that can never be cleaned
+    # up. "The runtime is gone" is a state to report, not a crash.
+    state = runtime_mod.reconnect(task, root)
+    handle = state["handle"]
+    cleanup_note = None
+    if state["state"] == runtime_mod.RUNTIME_UNAVAILABLE:
+        if not getattr(args, "local_cleanup", False):
+            die(f"this task's worktree belongs to the {state['runtime']!r} runtime, which is "
+                f"not usable here: {state['detail']}\n"
+                f"  Rig will not quietly dispose of it with a different runtime — that would "
+                f"delete a directory it no longer owns and report success.\n"
+                f"  Restore {state['runtime']!r} and re-run, or pass --local-cleanup to remove "
+                f"the checkout with git and record that its runtime never saw it.")
+        # Explicit, and written down. The audit has to show that this worktree was disposed
+        # of by something other than its owner, or a later reader cannot tell an orderly
+        # teardown from one that left workspace state stranded in another tool.
+        cleanup_note = (f"runtime {state['runtime']!r} was unavailable ({state['detail']}); "
+                        f"removed locally with git at the operator's explicit request")
+        print(f"◇ {cleanup_note}")
+        runtime_mod.BACKENDS[runtime_mod.NATIVE].remove(root, handle, strict=False)
+    elif state["state"] == runtime_mod.WORKTREE_MISSING:
+        # Nothing to remove, and saying so beats a backend error about a path that is
+        # already gone — the outcome the operator wanted is the one they already have.
+        cleanup_note = f"worktree was already absent ({state['detail']})"
+        print(f"◇ {cleanup_note}")
+    elif handle:
+        state["backend"].remove(root, handle)
     if task.get("branch"):
         proc = git(["rev-parse", "--verify", task["branch"]], cwd=root, check=False)
         if proc.returncode == 0:
@@ -399,6 +425,8 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
     if discarded_now:
         task["status"] = "discarded"
     task["cleaned_at"] = now_iso()
+    if cleanup_note:
+        task["cleanup_note"] = cleanup_note
     task["worktree_path"] = None
     task["worktree"] = None
     save_task(d, task)

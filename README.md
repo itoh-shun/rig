@@ -593,6 +593,163 @@ Recipe steps can declare `auto_route.candidates` (a list of `{model, cost_tier, 
 
 `--auto-route-learn` builds on that with a frequency-based (no ML model) read of `.rig/runs.jsonl`'s own track record — which model actually got used for a given recipe/step, and did the step pass. **Defaults to shadow mode**: predictions are always recorded (`steps[].learned_route`) but don't change what runs until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static `--auto-route` choice when there aren't enough reference runs or the pass rate is too low, always recording the rejected candidates and why (counterfactuals, so it stays auditable rather than a black box). `--exploration-pct N` lets a deterministic fraction of runs try the next-cheapest candidate instead (hashed from `--exploration-date` + recipe/step — never randomness, so results stay reproducible). Whether a cheap pick was a saving or a false economy is answered after the fact by `rig-wb runs --auto-route-regret`: per routed step it prints each candidate model's attempts and pass rate, and flags a **possible regret** when the chosen model is below the quality bar and a pricier candidate with enough observations passes more often. Read-only over `.rig/runs.jsonl` — it reports, it does not re-route.
 
+### Orca runtime (`--runtime`, #460–#464, optional)
+
+**Orca is a runtime, not a provider.** A provider decides *who writes the code* (claude, codex,
+ollama); a runtime decides *where the work lives* (native git worktrees, Orca-managed ones).
+Folding them together would make "run this on Codex" and "run this in an Orca workspace" the
+same kind of choice, and then neither could be made without the other. The test suite checks
+that separation structurally, by parsing both modules' ASTs.
+
+```text
+Orca → Claude Code → Rig → Orca CLI → Orca-managed worktree
+                                        ↓
+        claude (generator) / codex (read-only verifier) / tests / acceptance gate
+```
+
+> Orca decides where the work is visible. Rig decides how the work is done and whether it is
+> acceptable.
+
+```console
+rig-wb wb new "fix the login redirect"                  # auto (default)
+rig-wb wb new "fix the login redirect" --runtime orca   # never downgrades
+```
+
+`auto` uses Orca only when an Orca session is exported into the environment **and** the CLI
+reports a ready, reachable runtime — and prints why it fell back when it does not. Detection
+reads environment variables and returns; it starts no subprocess, so choosing the default never
+asks another tool whether it is installed. An explicit `--runtime orca` that cannot be honoured
+**fails rather than falling back**, because a silent downgrade would run the task somewhere you
+did not ask for and did not check.
+
+Rig runs exactly as before on a machine with no Orca, and that is the first thing its tests
+check. Full setup, troubleshooting, the discard-when-Orca-is-gone path, and IntelliJ coexistence
+are in **[docs/orca.md](docs/orca.md)**.
+
+### CLI session reuse (`--reuse-session`, #326, opt-in)
+
+Every step starts its CLI provider from nothing, so a run pays the startup cost once per step
+and re-injects the prior context into each prompt. `--reuse-session` lets a CLI that can carry
+a conversation forward do so.
+
+```console
+rig-wb run bugfix --provider claude --reuse-session
+```
+
+- **Opt-in, never the default.** Statelessness is not only a cost — each step starting clean is
+  what keeps steps independent and keeps *grader ≠ generator* true in practice rather than by
+  assertion.
+- **Never the verifier.** A checker that inherited the generator's conversation has already
+  read its reasoning and will agree with it more often, whatever its prompt says. No code path
+  can produce a verifier session.
+- **The CLI decides, not a table in rig.** Session support is strongly version-dependent, so
+  the capability is read out of the tool's own `--help` at runtime.
+- **A fallback is recorded, never silent.** A provider that cannot do it drops to stateless and
+  writes `SESSION_REUSE_FALLBACK` (with the reason) into the run history — otherwise somebody
+  measures no improvement and cannot tell whether the feature failed or was never active.
+
+Supported where the flags are documented and the CLI confirms them: `claude` and `grok`.
+`codex` has no session flags this repository can point at, so it falls back with that reason
+rather than rig guessing an argv that could mean something else.
+
+**Honest gap:** detection is verified against a real CLI; *whether a resumed session actually
+carries context between steps* is not, because that needs real generation calls. #326 stays
+open for it.
+
+### Performance budgets and regression gates (`rig-wb perf`, #502)
+
+A run used to be one elapsed number, which cannot answer the question a performance report is
+actually asked: **did rig get slower, or did the provider?** Those want opposite responses —
+the first is a regression to fix, the second is weather. Every run now records `perf` into
+`.rig/runs.jsonl`: per-phase timings (`risk_assess`, `auto_route`, `provider_generator`,
+`provider_verifier`, `checks`, `gate`, `artifact`), the bytes of prompt it emitted, and
+`rig_overhead_ms` — the total minus the time spent waiting on providers.
+
+```console
+rig-wb perf --recipe bugfix                          # median ms per phase over recent runs
+rig-wb perf --recipe bugfix --save-baseline perf.json
+rig-wb perf --recipe bugfix --check --baseline perf.json   # exit 1 on a regression
+```
+
+The budget is declared in the manifest, not in a generated file — a budget has to be committed
+to be a gate, and `.rig/` is gitignored:
+
+```yaml
+perf_budget:
+  max_rig_overhead_ms: 5000
+  max_context_bytes: 400000
+```
+
+Breaking it during a run prints a warning and nothing more. A perf budget that failed a bugfix
+would teach people to delete the budget, so `rig-wb perf --check` in CI is the only place it
+costs anything.
+
+What it refuses to do is the design:
+
+- **Provider latency is reported but never gated.** A gate that failed on somebody else's
+  network would be switched off within a month, taking the phases rig can answer for with it.
+  It is still compared, under its own heading, because "which half got slower" is the point.
+- **An unmeasured phase is never rendered as `0ms`,** and a phase that *stopped* being measured
+  fails the gate rather than reading as an improvement in every total it used to be part of.
+- **A budget naming a figure the runs could not measure is reported as unenforced, not as a
+  pass.** A limit nobody could test is not a limit that held, and a green light for one is how
+  a gate quietly stops gating.
+- **Baselines are the median of recent runs, not the mean,** so one cold cache or one laptop
+  that slept cannot set the bar everything afterwards is judged against.
+- **Concurrent provider calls are counted once.** Four reviewers taking 300ms each inside one
+  320ms window cost the run 320ms of waiting, not 1.2s. `provider_work_ms` reports the sum
+  beside it, so a parallel fan-out does not read as waste.
+
+The deterministic suite is the one that already ships: `rig-wb bench --provider mock` runs the
+benchmark corpus through the real orchestrator with a mock provider and points each run's
+telemetry at its own artifacts directory. So the CI gate is the two commands together, with no
+live network anywhere in it:
+
+```console
+rig-wb bench --provider mock --out artifacts/
+RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
+```
+
+### OpenTelemetry export (`rig-wb otel`, #501)
+
+Rig's local evidence — `.rig/runs.jsonl`, the audit log, the assurance receipts — stays the
+source of truth. OTel is a **projection over it**, so nothing here re-judges anything and a
+failed export changes no verdict, no gate and no exit code. A monitoring backend being down
+must not be able to change what rig decided.
+
+```console
+rig-wb otel --dry-run                        # exactly what would leave the machine
+rig-wb otel --endpoint http://localhost:4318 # OTLP/HTTP to any collector
+```
+
+```yaml
+observability:
+  enabled: true
+  otlp_endpoint: http://localhost:4318
+  service_name: rig
+```
+
+**No SDK.** Rig has three runtime dependencies, so this speaks OTLP/HTTP with JSON bodies over
+`urllib` — the same way it already talks to model endpoints. Any collector accepts it at
+`/v1/traces` and `/v1/metrics`.
+
+**The projection is an allowlist, and that is the whole redaction story.** Nothing is copied
+wholesale and then filtered, because a filter has to be right about every field that will ever
+exist and the first one added without thinking ships by default. Concretely: a verdict in
+`runs.jsonl` carries an `anchor` — free text a model wrote, which routinely holds a file path.
+A denylist would have to know that; an allowlist never asks for it. So no prompt, response
+body, diff, path, verdict prose, step id or model name is exported, and **a new field in the
+record is absent from telemetry until somebody decides it is safe**.
+
+**Only measured timings become spans.** Phase spans come from intervals the run actually
+recorded (#502); a phase with a duration but no interval is exported as a metric, because
+laying aggregates end-to-end to draw a tree would invent an ordering nobody observed. Cached
+tokens, cost, TTFT and tokens/sec are absent entirely — nothing in rig measures them, and a
+zero would be a claim rather than a measurement.
+
+Span ids are derived from each record's own content, so re-running the exporter over the same
+log produces the same trace instead of a second copy of the same run.
+
 ## 12. GitHub integration
 
 | command | read/write |
@@ -845,6 +1002,8 @@ What backs the claims above, concretely — this table exists so "documented" an
 | ASVS chapters vs. the inspection surface rig has | `rig-wb asvs` (source of truth: `evals/asvs-map.json`; `--check` verifies every cited mechanism exists and runs in CI, and **blind chapters are stated, not omitted**) |
 | The shape a run actually took | `rig.assurance-graph/v1` on Mission Control's task detail (`rig_workbench/workbench/graph.py`) — nodes and edges distinguishing serial steps, parallel review fan-out, the machine gate and the human decision, projected from `steps.json` plus the Assurance Receipt so no gate, RBAC or approval logic is duplicated. Structure the run did not record is read from the recipe only while its step ids still match, and reported as `recipe-drifted` when they do not |
 | Why a given change was acceptable, on one page | `workbench.py receipt <task-id>` (`rig.assurance-receipt/v1` → `.rig/runs/<task-id>/assurance.json` + `.md`) — a projection of the gate, provenance and approvals that re-judges nothing. What rig does not record — producer runtime/model, verifier identity, their independence — is carried as `{"observed": false, "reason": …}` rather than as a blank; `--verify` recomputes the digests of everything it projected and reports `invalidated` when a source has moved on |
+| What was actually asked for, in a shape something can check | `rig-wb wb intent <file>` (`rig.intent-contract/v1`) — the goal, its requirements, and what each one is checked by. It does not generate: turning a sentence into requirements is reading and judging, so that happens elsewhere and arrives here as a payload. A requirement rig concluded on its own is never recorded as one the user asked for, and a criterion with nothing to check it against is `unverifiable` — a different answer from `unsatisfied`. `rig-wb wb intent-derive <file> --against <catalog> --floor\|--target` reads the declared requirements back out as the workflow floor they imply, or the assurance target they ask for |
+| What assurance was asked for vs. what the receipt recorded | `rig-wb wb assurance-target <task-id> <target>` (`rig.assurance-target/v1`) — the asking half of the receipt, across `isolation` / `verification` / `provenance` / `approval` / `gate`. A target may only name an axis the receipt can answer, so an axis rig cannot observe is `unobservable`, never a softer `unmet`: `unmet` says rig looked, `unobservable` says it cannot. "Production quality" is refused rather than mapped to a level rig was not given, and nothing downgrades quietly — no nearest-acceptable, no partial credit. `rig-wb wb assurance-derive <target> --requires <map> --against <catalog>` derives the workflow floor a target needs, from a mapping you declare; an axis-value pair it does not cover is refused, not skipped |
 | Whether a change rig did not produce clears its boundary | `workbench.py import --head <commit> --producer <name>` registers an external orchestrator's change as an ordinary task — the task branch is created *at* that commit, so the same isolation, sensors, gate and governance rule on it and there is no second accept path. The producer's own claims (`--producer-claim tests=passed`) are recorded with `gate_effect: none` and reach no gate. `workbench.py contract <task-id> --json` (`rig.assurance-contract/v1`) is the machine answer: `acceptable` / `not-acceptable` / `pending` / `execution-error`, one exit code each, so a caller can tell a refusal from an outage. A change verified through a branch name stops being fresh once that name moves |
 | Whether the next queued task may start yet | `queue add "…" --depends-on <id>` (`rig.queue-dependencies/v1`) — the edge is *acceptance*, not completion: a dependency that reached `done` had its gate settle, which is not the same as anyone applying it, so the dependent keeps waiting until the workbench task reads `accepted`. Held items persist as `waiting`/`blocked` with the reason (a filter would spin the detached worker, which loops while anything is `queued`), and a discarded, failed, dangling or cyclic dependency blocks rather than releasing. Local backend only — issue labels cannot hold an edge, and dropping one silently would run the dependent |
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |

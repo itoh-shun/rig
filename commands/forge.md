@@ -1,43 +1,43 @@
 ---
-description: "rig/forge — 説明文から rig のブリック/パック（recipe・instruction・persona・output-contract・command）を自作して検証・保存する自己拡張メタ能力。「こういうフロー/レビュー観点/モードが欲しい」→ rig 規約で生成し validate まで。engine 不変・pack 上乗せ。"
-argument-hint: "[\"<欲しい機能の説明>\"] [--type recipe|persona|knowledge|pack] [--name <id>] [--user]"
+description: "rig/forge — build rig's own bricks and packs from a description: recipes, instructions, personas, output contracts, commands. Self-extension. \"I want a flow / a review lens / a mode like this\" becomes something generated to rig's conventions and validated. The engine does not change; packs go on top."
+argument-hint: "[\"<what you want>\"] [--type recipe|persona|knowledge|pack] [--name <id>] [--user]"
 ---
 
-# rig/forge — スキル自作（writing-skills） 🧱✨
+# rig/forge — writing skills 🧱✨
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・§3.5 recipe スキーマ・§5 tier 解決・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-author` にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the §2 brick inventory, the §3.5 recipe schema, §5 tier resolution, context-minimal). This command is only the entry point; the procedure lives in `facets/instructions/skill-author` and is not repeated here.
 
-起動後、`facets/instructions/skill-author` に従って rig のブリック/パックを生成する:
+Then follow `facets/instructions/skill-author` to generate the brick or pack:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-rig が**自分自身を拡張する**。説明文を受け取り、必要なブリックを判定して rig 規約どおりに生成し、検証して保存する。
+rig **extends itself**. It takes a description, works out which bricks are needed, generates them to rig's conventions, validates them, and saves them.
 
-- **何を作るか判定**：レビュー観点→`/rig:persona` へ委譲、ドメイン知識→`/rig:knowledge` へ委譲、新しいフロー/モード→recipe＋instruction を本コマンドで、まとまった機能→pack 一式。
-- **pack の定石**：persona＝判断／knowledge＝観点カタログ／instruction＝routing（Native-first）／recipe＝step の束（gate つき）／output-contract＝出力フォーマット／command＝入口。
-- **engine 不変・pack 上乗せ**：新しい制御機構を発明せず、既存 pattern（acceptance-gate / review-gate / parallel-fanout / autonomous-loop）と facet 型を組むだけで成立させる。
-- **検証込みで完結**：生成後に rig の `--validate`（rig 本体なら `python3 scripts/validate.py`）で参照切れ・スキーマ逸脱が無いか確認し、FAIL を直してから完了（壊れた brick を残さない）。
-- **書き込みは確認必須・冪等**。既存 brick を黙って上書きしない。
+- **Deciding what to build**: a review lens goes to `/rig:persona`; domain knowledge goes to `/rig:knowledge`; a new flow or mode is a recipe plus an instruction, built here; a whole capability is a pack.
+- **The shape of a pack**: a persona is judgement; knowledge is a catalogue of what to look at; an instruction is routing (native-first); a recipe is a bundle of steps with gates; an output contract is the output format; a command is the way in.
+- **The engine does not change; packs go on top**: do not invent new control machinery. Compose the existing patterns — acceptance-gate, review-gate, parallel-fanout, autonomous-loop — and the existing facet types.
+- **Finished means validated**: after generating, run rig's `--validate` (`python3 scripts/validate.py` inside rig itself) to check for broken references and schema drift, and fix every FAIL before finishing. Do not leave a broken brick behind.
+- **Writes are confirmed and idempotent.** Never silently overwrite an existing brick.
 
-## 保存先（tier）
+## Where things are saved (tier)
 
-| スコープ | パス |
+| Scope | Path |
 |---|---|
-| project（既定・product 単位） | `<repo>/.claude/rig/...` |
-| user（`--user`・global） | `~/.claude/rig/...` |
-| shipped（rig 本体作業時・`--shipped`） | `skills/engine/...`＋SKILL.md §2 目録 |
+| project (the default, per product) | `<repo>/.claude/rig/...` |
+| user (`--user`, global) | `~/.claude/rig/...` |
+| shipped (working on rig itself, `--shipped`) | `skills/engine/...` plus the SKILL.md §2 inventory |
 
-## 例
+## Examples
 
 ```
-/rig:forge "コミットメッセージを規約準拠に直すフロー"            # 新フロー(recipe)を生成
-/rig:forge --type pack "短歌を5観点で評価するモード"            # pack 一式を生成
-/rig:forge "アクセシビリティ専門のレビュアー"                   # → /rig:persona へ委譲
-/rig:forge --user "個人用のリリース前チェックリスト"            # user 層に保存
+/rig:forge "a flow that brings commit messages in line with our convention"
+/rig:forge --type pack "a mode that judges tanka on five lenses"
+/rig:forge "a reviewer specialising in accessibility"            # → delegated to /rig:persona
+/rig:forge --user "my own pre-release checklist"                 # saved in the user layer
 ```
 
-生成した brick は project/user なら `--list` / `/rig:catalog` に出る。`/rig:dev --recipe <name>` 等で即使える。
+A generated brick in the project or user layer shows up in `--list` and `/rig:catalog`, and is usable immediately through `/rig:dev --recipe <name>` and friends.

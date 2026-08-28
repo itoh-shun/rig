@@ -689,11 +689,22 @@ def test_a_receipt_naming_this_object_confirms_it():
 
 def test_the_comparison_is_made_in_exactly_one_place():
     """`assurance_wiring`'s rule: two readers of one record eventually disagree. Every view
-    of this question copies `projection`'s answer, so `compare` has one caller."""
+    of this question copies `projection`'s answer, so `compare` has one caller.
+
+    Scoped to *this* `compare` rather than to the word. The guard used to reject the substring
+    `compare(` anywhere under `rig_workbench/`, which made it fire on any unrelated module that
+    happened to define a function by that name — it did, on `orchestrate/perf.py` (#502). A
+    guard that goes off for a reason it does not mean gets read as noise and then switched off,
+    taking the rule it was protecting with it. What actually matters is that nobody else reads
+    this module's answer, so that is what is checked: importing the name, or calling it through
+    the module.
+    """
+    reaching_in = ("production_outcome import", "production_outcome.compare(")
     source = (REPO_ROOT / "rig_workbench").rglob("*.py")
     callers = [path for path in source
-               if "compare(" in path.read_text(encoding="utf-8")
-               and path.name != "production_outcome.py"]
+               if path.name != "production_outcome.py"
+               and any(form in path.read_text(encoding="utf-8") for form in reaching_in)
+               and "cmd_production_outcome" not in path.read_text(encoding="utf-8")]
     assert callers == []
     body = (REPO_ROOT / "rig_workbench" / "workbench"
             / "production_outcome.py").read_text(encoding="utf-8")

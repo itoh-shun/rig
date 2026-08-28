@@ -11,12 +11,17 @@ from rig_workbench.eval.safety import unsafe_key_reason, unsafe_text_reason
 from rig_workbench.workbench.destructive import scan_line as destructive_scan_line
 from rig_workbench.workbench.injection import scan_line as injection_scan_line
 
-from .model import ASSET_DIRS, PackError
+from .model import ASSET_DIRS, PACK_TYPES, TYPE_ASSETS, CapabilityRefused, PackError
 
 PACK_BASE_FIELDS = {
-    "pack_schema_version", "id", "version", "kind", "engine", "dependencies",
+    "pack_schema_version", "id", "type", "version", "kind", "engine", "dependencies",
     "assets", "hashes", "provenance",
 }
+#: Bumped from 1 when `type` became required. A manifest without a type is refused rather
+#: than defaulted: guessing a type is guessing a permission, and the safe-looking guess
+#: (`knowledge`) breaks working packs while the permissive one (`skill`) hands out reach
+#: nobody granted. There is no third answer that is not one of those two in disguise.
+PACK_SCHEMA_VERSION = 2
 PACK_CATALOG_FIELDS = {
     "display_name", "description", "capabilities", "entrypoints", "references", "resources",
 }
@@ -265,7 +270,7 @@ def validate_manifest_shape(value: dict) -> None:
     _reject_unsafe(value, "pack")
     fields = set(value)
     if (frozenset(fields) not in {frozenset(PACK_BASE_FIELDS), frozenset(PACK_FIELDS)}
-            or value.get("pack_schema_version") != 1):
+            or value.get("pack_schema_version") != PACK_SCHEMA_VERSION):
         raise PackError("pack manifest schema fields/version are invalid")
     if not isinstance(value.get("id"), str) or not PACK_ID.fullmatch(value["id"]):
         raise PackError("pack id is invalid")
@@ -275,6 +280,8 @@ def validate_manifest_shape(value: dict) -> None:
         raise PackError("pack version must be semver")
     if value.get("kind") not in {"core", "official", "domain", "project"}:
         raise PackError("pack kind is invalid")
+    if value.get("type") not in PACK_TYPES:
+        raise PackError(f"pack type must be one of {', '.join(PACK_TYPES)}")
     catalog_manifest = PACK_CATALOG_FIELDS <= fields
     if catalog_manifest:
         for field in ("display_name", "description"):
@@ -309,10 +316,19 @@ def validate_manifest_shape(value: dict) -> None:
             }
             or (catalog_manifest and asset_fields != set(ASSET_DIRS))):
         raise PackError("pack assets must declare every asset kind")
+    permitted = TYPE_ASSETS[value["type"]]
     declared: set[str] = set()
     for kind, paths in assets.items():
         if not isinstance(paths, list) or paths != sorted(paths) or len(paths) != len(set(paths)):
             raise PackError(f"pack assets.{kind} must be a sorted unique list")
+        if paths and kind not in permitted:
+            # `validate_pack` refuses any file the manifest does not declare and checks every
+            # declared file's hash, so this list is the pack's whole contents. That is what
+            # makes a manifest check enough here: dropping `commands/` from the declaration to
+            # slip past this raises asset-declaration drift instead.
+            raise CapabilityRefused(
+                f"a {value['type']} pack may not carry {kind} assets "
+                f"(permitted: {', '.join(sorted(permitted))})")
         prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])
         for item in paths:
             rel = safe_relative(item)

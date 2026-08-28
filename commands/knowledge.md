@@ -1,46 +1,46 @@
 ---
-description: "rig/knowledge — ドメイン知識を LLM-wiki ページとして自動生成。説明文 or --auto(repo 解析)から 1概念=1正準ページを起草し global(既定・全プロダクト共有)/project overlay(--project)に保存。persona は inject: [[slug]] で参照する。"
-argument-hint: "[--research \"<トピック>\"] [--graph] [\"<説明>\" | --auto] [--project] [--name <slug>]"
+description: "rig/knowledge — generate domain knowledge as LLM-wiki pages. Drafts one canonical page per concept, from a description or from --auto (analysing the repo), and saves it globally (the default, shared by every product) or as a project overlay (--project). Personas reference them with inject: [[slug]]."
+argument-hint: "[--research \"<topic>\"] [--graph] [\"<description>\" | --auto] [--project] [--name <slug>]"
 ---
 
-# rig/knowledge — ドメイン知識ジェネレータ（wiki）
+# rig/knowledge — the domain-knowledge generator (wiki)
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層注入＝§5・`facets/knowledge/_wiki`）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/knowledge-gen` にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, knowledge-layer injection in §5, `facets/knowledge/_wiki`). This command is only the entry point; the procedure lives in `facets/instructions/knowledge-gen` and is not repeated here.
 
-起動後、`facets/instructions/knowledge-gen` に従って wiki ページを生成する:
+Then follow `facets/instructions/knowledge-gen` to generate the wiki page:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-ドメイン知識を **wiki ページ**（1概念=1正準ページ・相互リンク `[[slug]]`）として起草 → 提案 → **確認の上**で書き込み → `INDEX.md` 更新。
+Drafts domain knowledge as a **wiki page** — one canonical page per concept, cross-linked with `[[slug]]` — proposes it, writes it **once confirmed**, and updates `INDEX.md`.
 
-- **モード**：`"<説明>"` から起草／`--auto` で repo を解析して自動蒸留（ユビキタス言語・ドメインモデル・規約・ADR 風決定）／`--graph` で repo の**型付き知識グラフ**（entities＋relations: calls/depends-on/part-of/is-a/stores-in/emits/reads-from）を wiki ページ `[[codebase-graph]]` に蒸留（既定で project overlay・entities≤40/relations≤80 の context-minimal 上限）／`--research` で web 調査から合成。
-- **保存先**：既定 `~/.claude/rig/knowledge/wiki/<slug>.md`（**global・全プロダクト共有**）。`--project` で `<repo>/.claude/rig/knowledge/wiki/<slug>.md`（overlay）。
-- 生成ページは persona から **`inject: ["[[<slug>]]"]`** で参照する（事実を埋め込まない＝暗黙知化させない）。
+- **Modes**: draft from `"<description>"`; `--auto` analyses the repo and distils it (ubiquitous language, the domain model, conventions, ADR-shaped decisions); `--graph` distils the repo's **typed knowledge graph** (entities plus relations: calls, depends-on, part-of, is-a, stores-in, emits, reads-from) into the wiki page `[[codebase-graph]]` (a project overlay by default, capped context-minimal at 40 entities and 80 relations); `--research` synthesises from web research.
+- **Where it goes**: `~/.claude/rig/knowledge/wiki/<slug>.md` by default — **global, shared by every product**. `--project` writes `<repo>/.claude/rig/knowledge/wiki/<slug>.md` as an overlay.
+- A persona references the generated page with **`inject: ["[[<slug>]]"]`** rather than embedding the facts, so the knowledge does not become tacit.
 
-## flag
+## Flags
 
-- `--auto` … repo を解析してドメイン知識を自動生成（実コード/docs 準拠・捏造禁止）。
-- `--graph` … repo の型付き知識グラフを `[[codebase-graph]]` に蒸留。reviewer への `inject:` を提案（関係を辿れる＝丸読みしない）。rig 自身のブリック網は `/rig:catalog --graph`（導出・手書きしない）。
-- `--project` … project overlay に保存。既定は global。
-- `--name <slug>` … 単一ページの slug を明示。
+- `--auto` — analyse the repo and generate domain knowledge from it, grounded in the real code and docs. Nothing invented.
+- `--graph` — distil the repo's typed knowledge graph into `[[codebase-graph]]`, and propose the `inject:` for reviewers, so relations can be traced instead of the whole thing being read. For rig's own network of bricks, use `/rig:catalog --graph`, which derives it rather than writing it by hand.
+- `--project` — save as a project overlay. The default is global.
+- `--name <slug>` — set the slug for a single page explicitly.
 
-## 規則
+## Rules
 
-- **書き込みは確認必須・冪等（同 slug は上書きしない）・捏造禁止（`sources` に根拠）。** global は「全プロダクトに影響」と明示。`--autonomous` でも確認は解除されない。
-- 1概念=1正準ページ。同義の既存ページがあれば追補/リンクし、重複を作らない。
+- **Writes are confirmed, idempotent (an existing slug is never overwritten), and never invented — grounds go in `sources`.** Say plainly that a global write affects every product. `--autonomous` does not lift the confirmation.
+- One concept, one canonical page. Where a page for the same idea exists, add to it or link it; do not create a duplicate.
 
-## 例
+## Examples
 
 ```
-/rig:knowledge "90年代ハウスの音作りの型と不変条件"          # global に正準ページ生成
-/rig:knowledge --auto                                      # この repo のドメイン知識を自動生成
-/rig:knowledge "決済の境界づけられたコンテキスト" --project  # このプロダクト固有の overlay
-/rig:knowledge --graph                                     # 型付き知識グラフ → [[codebase-graph]]（project）
-# 使う（persona から参照）:
+/rig:knowledge "the forms and invariants of nineties house production"
+/rig:knowledge --auto                                          # this repo's domain knowledge
+/rig:knowledge "the bounded context around payments" --project  # an overlay for this product
+/rig:knowledge --graph                                         # typed knowledge graph -> [[codebase-graph]]
+# then reference it from a persona:
 #   # persona: house-authenticity
 #   inject: ["[[genre-house]]", "[[music-era-90s]]"]
 ```

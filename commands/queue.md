@@ -1,59 +1,43 @@
 ---
-description: "rig/queue — タスクを積んで、まとめて GO。cancel で未実行のまま取り消せる。キューを管理ツール(GitHub/GitLab Issue)かローカルで持ち、go で全タスクを並列実行(各タスクをゲート通過)して結果を Issue に書き戻す。"
+description: "rig/queue — stack tasks up and GO on all of them. cancel takes one back before it ever runs. The queue lives in an issue tracker (GitHub or GitLab) or locally; go runs every task in parallel, each through its gate, and writes the results back to the issue."
 argument-hint: "<add \"task\" | list | go | done id | retry id | cancel id> [--depends-on ID] [--backend local|github|gitlab] [--repo owner/repo] [--provider rig] [--max-parallel N]"
 ---
 
-# rig/queue — タスクキュー（積んで GO） 📋
+# rig/queue — a task queue: stack them up, then GO 📋
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・計算的オーケストレーション §4.3）に従うこと。** キューの実体は `scripts/orchestrate.py queue`（決定論ランナー＝GO エンジン）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, computational orchestration in §4.3). The queue itself is `scripts/orchestrate.py queue`, the deterministic runner that is the GO engine.
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-「1依頼ずつ流す」から「**溜めて一括**」へ。タスクを積み、まとめて並列実行する。
+Moves you from "one request at a time" to **stack them up and run the lot**.
 
 ```
-orchestrate queue add "<やること>"        # 積む
-orchestrate queue list                    # 確認（失敗理由・完了コメントは note として行末に表示）
-orchestrate queue go --provider rig --max-parallel 3   # まとめて GO
-orchestrate queue done <id>               # 手動で完了に
-orchestrate queue retry <id>              # failed（検証 FAIL）の item を queued に戻して再 GO 対象にする
-orchestrate queue cancel <id>             # 積んだが実行させない（未実行のまま取消・#459）
-orchestrate queue add "<やること>" --depends-on <id> [--depends-on <id> ...]   # 依存を張る（#427）
+orchestrate queue add "<what to do>"      # stack one
+orchestrate queue list                    # check (failure reasons and completion comments show as a note at the end of the line)
+orchestrate queue go --provider rig --max-parallel 3   # GO on all of them
+orchestrate queue done <id>               # mark one complete by hand
+orchestrate queue retry <id>              # put a failed item (one that failed verification) back to queued for the next GO
+orchestrate queue cancel <id>             # stacked but never run: take it back unrun (#459)
+orchestrate queue add "<what to do>" --depends-on <id> [--depends-on <id> ...]   # add a dependency (#427)
 ```
 
-- **go**＝積まれた全タスクを実行：独立タスクは**別プロセスで並列**、各タスクは生成→**独立検証（採点者≠生成者）**のゲートを通過、結果を一括レポート。中身は既存の orchestrate（並列・マルチプロバイダ・local LLM）をそのまま GO エンジンに使う。
-- provider は `rig`（各タスクを rig ハーネスで実行・推奨）/ `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock`。
-- **`--provider rig`（既定）は各 item を `/rig:go "<task>"` 経由で dispatch する**——`patterns/isolated-worktree` により各タスクが自動的に専用 worktree へ隔離されるため、**並列実行中の headless プロセス同士が同じファイルを取り合う心配がない**。queue の verifier は「gate まで確定したか」＋「本体の作業ツリーに書き込まず isolated worktree 内で完結したか」を判定するだけで、**accept はしない**（queue は隔離・実行・ゲートの層、反映はユーザーの明示操作）。
-- **`queue list` は done を除くアクティブ item（queued/running/failed）のみ表示する**（`local`/`github`/`gitlab` 共通）。完了済みタスクで一覧が肥大化しない。
-- **`queue cancel <id>` と `queue done <id>` は違う**。`done` は「実行して完了した」の記録で、
-  `cockpit` がスループットとして数える数字に入る。タイポ・重複・「もう不要」で積んだものに
-  `done` を付けると、**捨てた仕事が完了実績として数えられる**。`cancel` は「積んだが実行させない」
-  専用の status で、`queue list` からは `done` と同様に消えるが、`cockpit` は
-  `Nothing pending (3 done, 1 cancelled)` のように**別々に数える**。
-  - **cancel できるのは `queued` / `waiting` / `blocked` / `failed`**。判定と書き込みは
-    **1回のロック内の compare-and-set**で行う。分けると `queue go` の claim が間に割り込み、
-    「queued を見た → claim が入る → cancelled を書く → provider が上書き」で
-    **取消が黙って無効になる**（操作した側は効いたと思う）。
-  - **`running` は拒否**。生きた provider がその item を所有していて、終了時に
-    `done`/`failed` を書き込むので `cancelled` は消える。
-    **`done` も拒否**——実行して完了したものを「一度も実行していない」と書き直すのは過去についての嘘。
-    `failed` は cancel でき、note と出力は「実行はした」と分かる**別の文言**になる
-    ——走ったものに「一度も実行していない」と言えば、この status が守ろうとしている監査そのものが歪む。
-    どちらの文言も「もう戻せない」とは言わない（実際 retry できるので、言えば効く操作を思いとどまらせる）。
-  - **cancelled は retry できる**。`queue retry <id>` でも Mission Control の Retry でも
-    戻せる（片方だけ許すと、同じ item について CLI と画面が食い違う）。
-  - **`cancel` は local backend 専用**（#459 の意図的なスコープ外）。Issue ラベルに
-    「一度も実行していない」を表す状態が無く、`queue_set_status` はラベルも close も
-    せずコメントだけを付けるため、**取消したつもりの item が queued のまま残る**。
-  - 依存（#427）から見ると **cancelled は terminal**。二度と `done` にならないので、
-    依存先が cancel された後続は `waiting` ではなく `blocked` になる。
-- **`queue retry <id>`**＝検証 FAIL で `failed` になった item を `queued` に戻し、次の `queue go` の実行対象に含める。プロバイダの一時的なタイムアウト等で落ちたタスクをタスク文の打ち直し（＝別 id・別 Issue）なしに再試行できる。
+- **go** runs every stacked task: independent ones **in parallel, in separate processes**, each through the gate of generation then **independent verification (grader ≠ generator)**, with one report at the end. Underneath it is the existing orchestrate — parallel, multi-provider, local LLMs — used as the GO engine.
+- Providers are `rig` (each task through the rig harness; recommended), `claude`, `codex`, `ollama`, `lmstudio`, `cmd`, and `mock`.
+- **`--provider rig` (the default) dispatches each item through `/rig:go "<task>"`** — `patterns/isolated-worktree` puts every task in its own worktree, so **parallel headless processes never fight over the same files**. The queue's verifier only judges whether the gate was reached and whether the work stayed inside the isolated worktree instead of writing to the main tree; it **does not accept** (the queue is the layer of isolation, execution, and gating; landing the change is your explicit move).
+- **`queue list` shows only active items — queued, running, failed — never done** (on `local`, `github`, and `gitlab` alike), so finished work does not bloat the listing.
+- **`queue cancel <id>` and `queue done <id>` are different things.** `done` records "this ran and finished", and it counts towards the throughput `cockpit` reports. Marking a typo, a duplicate, or something you no longer want as `done` means **work you threw away is counted as work you completed**. `cancel` is a status for "stacked, never run": it disappears from `queue list` like `done`, but `cockpit` **counts them separately**, as in `Nothing pending (3 done, 1 cancelled)`.
+  - **Only `queued`, `waiting`, `blocked`, and `failed` can be cancelled.** The check and the write are a **compare-and-set inside one lock**. Split them and a `queue go` claim slips between: it sees queued, claims, the cancel writes `cancelled`, the provider overwrites it, and **the cancellation silently did nothing** while the person who asked for it believes it took.
+  - **`running` is refused**: a live provider owns that item and will write `done` or `failed` when it ends, erasing the `cancelled`. **`done` is refused too** — rewriting something that ran and finished as "never run" is a lie about the past. `failed` can be cancelled, and its note and output use **different wording** that makes clear it did run: telling an audit that something which ran was never run corrupts the very thing this status exists to protect. Neither wording says "this cannot be undone", because it can be retried, and saying so would talk somebody out of an operation that works.
+  - **A cancelled item can be retried**, through `queue retry <id>` or Mission Control's Retry. Allow only one and the CLI and the screen disagree about the same item.
+  - **`cancel` is local-backend only** — deliberately out of scope in #459. An issue label has no state meaning "never run", and `queue_set_status` neither labels nor closes but only comments, so **an item you meant to cancel would stay queued**.
+  - To a dependency (#427), **cancelled is terminal**. It will never become `done`, so anything downstream of a cancelled item is `blocked`, not `waiting`.
+- **`queue retry <id>`** returns an item that `failed` verification to `queued` so the next `queue go` picks it up — a way to retry a task that fell over on, say, a provider timeout, without retyping the task and getting a new id and a new issue.
 
-## 依存を張る（acceptance を edge にする・#427）
+## Dependencies: making acceptance the edge (#427)
 
 ```
 /rig:queue add "DB migration"                              # → #1
@@ -61,93 +45,69 @@ orchestrate queue add "<やること>" --depends-on <id> [--depends-on <id> ...]
 /rig:queue add "Release candidate" --depends-on 2 --depends-on 3
 ```
 
-**後続の開始条件は「前の agent が終わったこと」ではなく「前の成果物が rig の
-acceptance boundary を通過したこと」**。ここが唯一にして本質的な違いで、
-queue item が `done` になっても依存は満たされない——`done` は「ゲートが確定した」であって
-「誰かが適用した」ではないから（`queue go` の verifier は accept しない）。
-依存は workbench task の `status` を読む。
+**What starts the next item is not "the previous agent finished" but "the previous output crossed rig's acceptance boundary".** That is the one essential difference, and it is why a queue item reaching `done` does not satisfy a dependency: `done` means the gate settled, not that anybody applied it (`queue go`'s verifier does not accept). Dependencies read the workbench task's `status`.
 
-そのため **1回の `queue go` の中で後続が ready になることはない**。accept は人の操作で、
-GO はそれを待たない。GO は ready なものを走らせ、残りを理由つきで `waiting` にして
-そう報告する。accept したあと、もう一度 GO を回す。
+So **nothing downstream becomes ready inside a single `queue go`**. Accept is a human action and GO does not wait for it. GO runs what is ready, leaves the rest `waiting` with a reason, and says so. You accept, then run GO again.
 
-| 状態 | 意味 |
+| State | Meaning |
 |---|---|
-| `queued` | 依存なし、または全依存が accepted。次の GO の対象 |
-| `waiting` | まだ accept されていない依存がある。accept すれば次の GO で解ける |
-| `blocked` | 依存が discarded / failed / 存在しない、または cycle。理由が `queue list` に出る |
+| `queued` | no dependencies, or all of them accepted. In scope for the next GO |
+| `waiting` | a dependency is not accepted yet. Accepting it frees this at the next GO |
+| `blocked` | a dependency was discarded, failed, or does not exist, or there is a cycle. `queue list` gives the reason |
 
-`waiting`/`blocked` は**永続する status** であってフィルタではない。理由は2つ：
-再起動をまたいで残ること（AC）と、detached worker が `queued` が尽きるまで回るので、
-依存待ちの item を `queued` に置いたままにすると**worker が秒間数回の空転を続ける**こと。
+`waiting` and `blocked` are **persisted statuses, not a filter**, for two reasons: they have to survive a restart, and a detached worker spins until `queued` is empty — leaving a dependency-blocked item in `queued` would have **the worker busy-looping several times a second**.
 
-- **拒否されるもの**（何も保存されない）: 存在しない id への依存 / 自己参照 /
-  未定義の `dependency_policy`。CLI からは cycle を作れない（id は単調増加で、
-  新規 item は既存 id しか参照できない＝辺は必ず過去向き）が、手編集された
-  `.rig/queue.json` の cycle は検出して該当 item を `blocked` にする。
-- **`--depends-on` は `local` backend 専用**。github/gitlab は状態を Issue ラベルで持つので
-  辺のリストを置けない。黙って落とすと依存が無いものとして即実行されるため、**エラーで拒否する**。
-- **policy は `accepted` の1種類だけ**。辺の条件を語彙にすると DAG 言語になり、
-  それは rig の非目標。failed gate を `--force` で越えた accept は**満たす**が、
-  receipt と同じく `forced` / `gate_status` を併記して隠さない。
-- GO の exit code は従来どおり「このバッチの item が成功したか」。held は
-  **このバッチの item ではない**（正しく始まっていない仕事）ので、失敗として数えない。
-- **`queue retry` すると `task_id` の紐付けは切れる**。retry は「この item は**別の**成果物を
-  出す」という宣言なので、古い紐付けを残すと後続が「差し替え中の成果物」に対して解放される。
-  加えて、辺は**依存 item が `done` のときだけ**読む——記録された id は「何を作ったか」に
-  答えるが、「それが今も作っているものか」に答えるのは item 自身の status だけ。
-- **1 item は1回しか claim されない**。GO は従来 dispatch 時に無条件で `running` を書いており、
-  `queue go` を2プロセス同時に起動すると同じ item を二重実行しえた（#427 以前からの性質）。
-  依存があると害が増す——2つの run が2つの workbench task を作り、紐付くのは片方だけなので、
-  誰も残さなかった成果物に対して後続が解放される。compare-and-set にした。
-  GO が途中で死んだときの挙動は変わらない（claim 済みのものだけが `running` で残る）。
+- **Refused outright** (nothing is saved): a dependency on an id that does not exist, a self-reference, an undefined `dependency_policy`. The CLI cannot create a cycle — ids increase monotonically and a new item can only reference existing ones, so every edge points backwards — but a cycle in a hand-edited `.rig/queue.json` is detected and the item is `blocked`.
+- **`--depends-on` is local-backend only.** GitHub and GitLab hold state in issue labels, which cannot carry a list of edges. Dropping it silently would run the item immediately as though it had no dependency, so it is **refused with an error**.
+- **There is exactly one policy, `accepted`.** Turning edge conditions into a vocabulary makes a DAG language, and that is a non-goal for rig. An accept that crossed a failed gate with `--force` **does satisfy** the dependency, but — as on the receipt — `forced` and `gate_status` are recorded alongside rather than hidden.
+- GO's exit code still means "did this batch's items succeed". Held items are **not this batch's items** — they are work that never properly started — so they do not count as failures.
+- **`queue retry` breaks the `task_id` link.** A retry declares that this item will produce **a different** output, so keeping the old link would release downstream items against an output that is being replaced. On top of that, an edge is only read **while the dependency item is `done`**: a recorded id answers what was produced, but only the item's own status answers whether it is still producing it.
+- **An item is claimed exactly once.** GO used to write `running` unconditionally at dispatch, so two concurrent `queue go` processes could run the same item twice — a property that predates #427. Dependencies make the damage worse: two runs create two workbench tasks, only one of which is linked, so downstream items are released against an output nobody kept. It is a compare-and-set now. Behaviour when GO dies mid-run is unchanged: only what was claimed stays `running`.
 
-Mission Control は `rig.queue-dependencies/v1`（node/edge・色も座標も class も持たない）を
-`durable_snapshot` から取得できる。
+Mission Control can fetch `rig.queue-dependencies/v1` (nodes and edges, carrying no colours, coordinates, or classes) from `durable_snapshot`.
 
-## 複数タスクを並行で進める（ターミナルを増やさず一括把握）
+## Running several tasks at once without opening more terminals
 
 ```
-/rig:queue add "ログイン画面のバグを直して"
-/rig:queue add "在庫一覧に検索機能を追加して"
-/rig:queue go --provider rig --max-parallel 3   # 3タスクを並列 dispatch（各々 isolated worktree）
+/rig:queue add "fix the bug on the login screen"
+/rig:queue add "add search to the inventory list"
+/rig:queue go --provider rig --max-parallel 3   # three dispatched in parallel, each in its own worktree
 
-/rig:go board       # 今どのタスクがどこまで進んだか、1コマンドで一覧
-/rig:go diff <id>   # 個別に差分確認 → /rig:go accept <id> で個別に反映
+/rig:go board       # where every task has got to, in one command
+/rig:go diff <id>   # check one diff, then /rig:go accept <id> to land it
 ```
 
-複数のターミナルを開いて「どれが何をしていたか忘れる」問題は、`/rig:go board` が単一の真実の情報源になることで解消する。
+The problem of opening several terminals and losing track of which was doing what goes away because `/rig:go board` is the single source of truth.
 
-## バックエンド（キューをどこで持つか）
+## Backends (where the queue lives)
 
-| backend | 実体 | 状態管理 |
+| backend | What it is | How state is held |
 |---|---|---|
-| `local`（既定） | `<repo>/.rig/queue.json` | json の status |
-| `github` | GitHub Issues（`gh` CLI） | ラベル `rig-queue→rig-running→rig-done`／コメントに結果／完了で close |
-| `gitlab` | GitLab Issues（`glab` CLI） | 同上 |
+| `local` (the default) | `<repo>/.rig/queue.json` | a status in the JSON |
+| `github` | GitHub Issues (the `gh` CLI) | labels `rig-queue` → `rig-running` → `rig-done`, results in comments, closed when done |
+| `gitlab` | GitLab Issues (the `glab` CLI) | the same |
 
-`--backend github --repo owner/repo` で Issue 連携。**チームで共有・永続する backlog** になり、rig がそこから引いて実行・結果を Issue に書き戻す。要：`gh`/`glab` CLI が認証済み（未インストールでも crash せず error 表示）。
+`--backend github --repo owner/repo` connects it to issues, which makes the queue **a backlog the team shares and that persists**; rig pulls from it, runs, and writes results back. It needs an authenticated `gh` or `glab` (a missing CLI produces an error, not a crash).
 
-> **`local` の同時更新（#360）**：`queue.json` の更新は **flock（プロセス間）＋ threading.Lock（`queue go` のスレッド間）で直列化**し、書き込みは tmp＋`os.replace` で atomic に行う。`queue go` は既定 `--max-parallel 3` で並列に status を書くため、これが無いと更新が取りこぼされ「GO は DONE と言うのに `queue list` では `running` のまま残る」「`queued` に巻き戻った item が次の GO で二重実行される」が起きる。status の記録に失敗した場合は `[WARN] #<id>: could not record status ...` を出して**黙って捨てない**。`queue.json` が壊れて読めないときは**空で作り直さずエラー停止**する（空書き戻しは backlog の消失そのもの）。`github`/`gitlab` は状態を Issue label に持つのでこの経路とは無関係。
+> **Concurrent updates on `local` (#360)**: updates to `queue.json` are **serialised by flock across processes and a threading.Lock across `queue go`'s threads**, and written atomically through a temporary file and `os.replace`. `queue go` writes statuses in parallel at the default `--max-parallel 3`, and without this, updates are lost: "GO says DONE but `queue list` still shows running", and "an item that rolled back to `queued` runs twice at the next GO". When a status cannot be recorded it prints `[WARN] #<id>: could not record status ...` rather than **dropping it silently**. When `queue.json` is corrupt and unreadable it **stops with an error instead of recreating it empty** — writing back an empty file is the loss of the backlog itself. `github` and `gitlab` hold state in issue labels and are unaffected.
 
-## 他フローとの連結
+## How it joins the other flows
 
-- `/rig:brainstorm` → `/rig:tasks` で割った各タスクを **queue add** で積む → `queue go` で一括実行。
-- 「終わりのある仕事」を溜めて回す＝`/rig:goal`（達成収束）・`/rig:loop`（繰り返し）と別軸。
+- `/rig:brainstorm` → `/rig:tasks` splits the work, each task goes in with **queue add**, then `queue go` runs the lot.
+- Stacking up **work that finishes** is a different axis from `/rig:goal` (converge on an outcome) and `/rig:loop` (repeat).
 
-## 例
+## Examples
 
 ```
-/rig:queue add "JWT リフレッシュを追加"
-/rig:queue add "検索の N+1 を直す"
+/rig:queue add "add JWT refresh"
+/rig:queue add "fix the N+1 in search"
 /rig:queue go --provider rig --max-parallel 3
-/rig:queue go --backend github --repo itoh-shun/rig    # Issue から引いて実行・書き戻し
+/rig:queue go --backend github --repo itoh-shun/rig    # pull from issues, run, write back
 ```
 
+## run-continuity (SKILL.md §6)
 
-## run-continuity（SKILL.md §6）
-
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

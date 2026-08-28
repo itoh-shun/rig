@@ -206,3 +206,108 @@ def test_a_query_the_validator_accepts_still_reaches_a_report(recorded_repo, tmp
         cmd_workflow_effectiveness(SimpleNamespace(query=str(query_path), json=True))
     assert stopped.value.code == 0
     assert "unobservable_patterns" in capsys.readouterr().out
+
+
+# ── runtime, from the perf block #502 records (#433 §1) ──────────────────────
+def _with_perf(*perfs):
+    """Run records carrying the perf blocks given, plus one that carries none."""
+    runs = [{"recipe": "bugfix", "final": "DONE", "retries": 0, **({"perf": p} if p else {})}
+            for p in perfs]
+    return runs
+
+
+def test_runtime_is_measured_from_the_perf_block(tmp_path):
+    """It used to say 'runs.jsonl records a finish timestamp but no start timestamp'. #502 put
+    a measured total in the same records this module reads, and a metric that keeps claiming it
+    cannot be measured while the measurement sits in the file it is reading is worse than one
+    that was never offered."""
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    report = we._runtime(_with_perf({"total_ms": 100.0, "rig_overhead_ms": 40.0},
+                                    {"total_ms": 200.0, "rig_overhead_ms": 60.0}))
+    assert report["status"] == "observed"
+    assert report["total_ms"] == 300.0
+    assert report["rig_overhead_ms"] == 100.0
+    assert report["measured_runs"] == 2 and report["unmeasured_runs"] == 0
+
+
+def test_a_run_without_a_perf_block_is_unmeasured_not_zero(tmp_path):
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    report = we._runtime(_with_perf({"total_ms": 100.0, "rig_overhead_ms": 40.0}, None))
+    assert report["measured_runs"] == 1 and report["unmeasured_runs"] == 1
+    assert report["total_ms"] == 100.0
+
+
+def test_overhead_that_perf_withheld_is_not_counted_as_measured():
+    """perf withholds `rig_overhead_ms` whenever a provider call went untimed, because overhead
+    is a subtraction and one missed call would silently become rig's time. Reading the absence
+    as zero here would reintroduce downstream exactly the fabrication perf refuses."""
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    report = we._runtime(_with_perf(
+        {"total_ms": 100.0, "rig_overhead_ms": 40.0},
+        {"total_ms": 200.0, "rig_overhead_unmeasured": "1 provider call(s) were not timed"}))
+    assert report["rig_overhead_ms"] == 40.0
+    assert report["measured_overhead_runs"] == 1
+    assert report["unmeasured_overhead_runs"] == 1
+    assert report["total_ms"] == 300.0, "elapsed is still known for both runs"
+
+
+def test_elapsed_known_but_no_split_says_so_rather_than_omitting_it():
+    """A reader who saw only `total_ms` would reasonably assume the split was available and
+    simply left out."""
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    report = we._runtime(_with_perf({"total_ms": 100.0}))
+    assert report["status"] == "observed"
+    assert "rig_overhead_ms" not in report
+    assert report["rig_overhead"]["status"] == "unobservable"
+    assert "untimed" in report["rig_overhead"]["reason"]
+
+
+def test_no_perf_anywhere_is_unobservable_with_the_counts():
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    report = we._runtime(_with_perf(None, None))
+    assert report["status"] == "unobservable" and report["value"] is None
+    assert report["measured_runs"] == 0 and report["unmeasured_runs"] == 2
+
+
+def test_no_runs_at_all_says_that_instead():
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    assert we._runtime([])["reason"] == "no orchestrate run records were found"
+
+
+@pytest.mark.parametrize("bad", [
+    {"total_ms": "100"}, {"total_ms": None}, {"total_ms": -5.0}, {"total_ms": True}, {},
+])
+def test_a_perf_block_with_an_unusable_total_is_not_read(bad):
+    """A boolean is an int in Python, and `True` would otherwise contribute 1ms of pure
+    fiction to the total."""
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    assert we._runtime(_with_perf(bad))["measured_runs"] == 0
+
+
+def test_the_metric_reaches_the_report_a_caller_actually_reads(tmp_path):
+    """Through `analyse`, not just the helper: a metric wired to nothing would pass every test
+    above."""
+    import json
+
+    from rig_workbench.workbench import workflow_effectiveness as we
+
+    rig = tmp_path / ".rig"
+    rig.mkdir()
+    (rig / "runs.jsonl").write_text(json.dumps(
+        {"recipe": "bugfix", "final": "DONE", "retries": 0,
+         "perf": {"total_ms": 150.0, "rig_overhead_ms": 50.0}}) + "\n", encoding="utf-8")
+    # A real constraint, because the module refuses an empty pattern list on purpose: an empty
+    # query gives the detector no caller-supplied boundary. The metric under test is not the
+    # pattern, but the query still has to be one this module would accept.
+    report = we.analyse(tmp_path, {"schema": we.QUERY_SCHEMA, "patterns": [
+        {"kind": "excessive-repair-loops", "minimum_occurrences": 1, "repair_cycles_above": 2}]})
+    runtime_metric = report["metrics"]["runtime"]
+    assert runtime_metric["status"] == "observed"
+    assert runtime_metric["total_ms"] == 150.0 and runtime_metric["rig_overhead_ms"] == 50.0

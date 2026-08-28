@@ -14,9 +14,10 @@ from rig_workbench.eval.gate import quality_result_failures
 from rig_workbench.eval.compare import validate_result
 
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
-                   validate_lock_root, write_lock)
+                   make_source, resolve_dependencies, validate_lock_root, write_lock)
 from .manifest import read_json_yaml
-from .model import PROMPT_KINDS, PackError
+from .model import PROMPT_KINDS, PackError, UnverifiedSignature
+from .sources import fetch_revision, parse_spec, read_sources, resolve_revision
 from .resolver import pack_roots
 from .validation import validate_pack, validate_tiered_collection
 
@@ -219,13 +220,28 @@ def _source_to_staging(source: pathlib.Path, content: pathlib.Path) -> tuple[str
 
 
 def _pack_root(content: pathlib.Path) -> pathlib.Path:
+    """The one directory inside `content` that is the pack.
+
+    A pack directory may hold nothing it has not declared — that is what makes the type rules
+    enforceable rather than advisory — so a repository whose whole point is to distribute one
+    pack cannot put the pack at its root: a README, a licence, or a CI workflow would each be
+    an undeclared file. The pack sits one level down and the repository's own furniture stays
+    at the root, which is why files beside the pack directory are allowed here.
+
+    Ambiguity still is not. Two candidate directories mean two packs or a mistake, and either
+    way installing "the first one" would be a guess.
+    """
     if (content / "pack.yaml").is_file():
         return content
-    children = [item for item in content.iterdir() if item.is_dir()]
-    files = [item for item in content.iterdir() if item.is_file()]
-    if len(children) == 1 and not files and (children[0] / "pack.yaml").is_file():
-        return children[0]
-    raise PackError("archive must contain one pack root")
+    candidates = [item for item in sorted(content.iterdir())
+                  if item.is_dir() and (item / "pack.yaml").is_file()]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise PackError("source contains no pack root (no pack.yaml)")
+    raise PackError(
+        f"source contains {len(candidates)} pack roots; it must distribute exactly one: "
+        f"{', '.join(item.name for item in candidates)}")
 
 
 def local_quality_status(
@@ -285,7 +301,16 @@ def verification_status(pack: pathlib.Path, manifest: dict) -> tuple[str, dict |
 
 
 def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
-                        scope: str, destination_root: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+                        scope: str, destination_root: pathlib.Path,
+                        *, replacing: pathlib.Path | None = None) -> list[tuple[str, pathlib.Path]]:
+    """Every pack the runtime would see, with the staged one standing in for its own copy.
+
+    `replacing` is the directory the staged pack is about to take over from. An update has to
+    exclude it: leaving it in would present the same pack twice and the collection would
+    refuse itself as a duplicate id rather than judging the new version against its
+    neighbours.
+    """
+    excluded = replacing.resolve() if replacing is not None else None
     entries: list[tuple[str, pathlib.Path]] = []
     seen_roots: set[pathlib.Path] = set()
     for tier, root in pack_roots(project):
@@ -293,10 +318,12 @@ def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
         seen_roots.add(resolved)
         if root.is_dir():
             entries.extend((tier, item) for item in sorted(root.iterdir()) if item.is_dir()
-                           and not item.name.startswith((".", "_")))
+                           and not item.name.startswith((".", "_"))
+                           and item.resolve() != excluded)
     if destination_root.resolve() not in seen_roots and destination_root.is_dir():
         entries.extend((scope, item) for item in sorted(destination_root.iterdir()) if item.is_dir()
-                       and not item.name.startswith((".", "_")))
+                       and not item.name.startswith((".", "_"))
+                       and item.resolve() != excluded)
     entries.append((scope, staging_pack))
     return entries
 
@@ -306,7 +333,27 @@ def install_pack(
     root: pathlib.Path | str | None = None, allow_unverified: bool = False,
 ) -> InstallResult:
     project_path = pathlib.Path(project).resolve()
-    source_path, source_label = _resolve_source(source)
+    # A named-source spec (`product:joypla@1.4.0`) is resolved to a commit before anything is
+    # staged: `resolve_revision` is the only step that talks to the remote's refs, and doing
+    # it up front means a source that cannot be read fails before a staging directory exists.
+    spec = parse_spec(str(source))
+    plan: dict | None = None
+    source_path: pathlib.Path | None = None
+    if spec is None:
+        source_path, source_label = _resolve_source(source)
+    else:
+        source_id, pack_name, version = spec
+        declared = read_sources(project_path)
+        if source_id not in declared:
+            raise PackError(
+                f"source `{source_id}` is not declared in .rig/sources.json "
+                f"(declared: {', '.join(sorted(declared)) or 'none'})")
+        plan = {
+            "source_id": source_id, "source": declared[source_id], "pack": pack_name,
+            "version": version,
+            "revision": resolve_revision(declared[source_id], pack_name, version),
+        }
+        source_label = f"{source_id}:{pack_name}@{version}"
     if allow_unverified and scope != "project":
         raise PackError("--allow-unverified is restricted to project scope")
     destination_root = scope_root(
@@ -325,18 +372,28 @@ def install_pack(
     installed: pathlib.Path | None = None
     try:
         content = staging / "content"
-        source_type, source_hash = _source_to_staging(source_path, content)
+        if plan is None:
+            assert source_path is not None
+            source_type, source_hash = _source_to_staging(source_path, content)
+            source_block = make_source(source_type, source_label, source_hash)
+        else:
+            fetch_revision(plan["source"], plan["pack"], plan["version"], plan["revision"],
+                           content)
+            source_block = make_source(
+                "git", source_label, tree_hash(content),
+                source_id=plan["source_id"], revision=plan["revision"])
         pack = _pack_root(content)
         manifest = validate_pack(pack)
         destination = destination_root / manifest["id"]
         if destination.exists():
             raise PackError(f"pack target already exists: {destination}")
-        validate_tiered_collection(
-            _collection_entries(project_path, pack, scope, destination_root)
+        records = validate_tiered_collection(
+            _collection_entries(project_path, pack, scope, destination_root,
+                                replacing=destination)
         )
         status, publisher = verification_status(pack, manifest)
         if status != "verified-publisher" and not allow_unverified:
-            raise PackError(
+            raise UnverifiedSignature(
                 "unsigned packs require project --allow-unverified; local evaluation quality "
                 "does not establish publisher trust"
             )
@@ -344,9 +401,9 @@ def install_pack(
         if any(item["id"] == manifest["id"] for item in lock["packs"]):
             raise PackError(f"pack is already lock-owned: {manifest['id']}")
         entry = make_entry(
-            pack, manifest, scope=scope, source_type=source_type,
-            source_path=source_label, source_hash=source_hash,
+            pack, manifest, scope=scope, source=source_block,
             verification_status=status,
+            dependency_resolution=resolve_dependencies(manifest, records),
             publisher_key_id=publisher["key_id"] if publisher else None,
             signed_digest=publisher["signed_digest"] if publisher else None,
         )
@@ -366,3 +423,102 @@ def install_pack(
     finally:
         if installed is None or installed.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def update_pack(
+    pack_id: str, *, to: str, scope: str, project: pathlib.Path | str,
+    root: pathlib.Path | str | None = None, allow_unverified: bool = False,
+) -> InstallResult:
+    """Move a git-pinned pack to another version, in place.
+
+    Not remove-then-install: that leaves a window where the pack is gone and a failure in the
+    second half strands the project with neither version. The new content is staged and
+    validated first, and the directory swap and the lock write are the last two steps, with
+    the old directory kept until both have happened.
+
+    Only a git-sourced pack can be updated. A pack installed from a local directory or an
+    archive has no version to ask a source about — pointing this at one would mean guessing
+    where the newer copy lives, and the honest answer is to install it again from wherever it
+    actually came from.
+    """
+    project_path = pathlib.Path(project).resolve()
+    destination_root = scope_root(
+        scope, project=project_path,
+        root=pathlib.Path(root) if root is not None else None,
+    )
+    lock = read_lock(destination_root)
+    current = next((item for item in lock["packs"] if item["id"] == pack_id), None)
+    if current is None:
+        raise PackError(f"pack is not owned by this scope lock: {pack_id}")
+    if current["source"]["type"] != "git":
+        raise PackError(
+            f"{pack_id} was installed from {current['source']['type']}, which has no version "
+            f"to resolve; reinstall it from its source instead")
+    if current["version"] == to:
+        raise PackError(f"{pack_id} is already at {to}")
+    source_id = current["source"]["source_id"]
+    declared = read_sources(project_path)
+    if source_id not in declared:
+        raise PackError(
+            f"source `{source_id}` is not declared in .rig/sources.json "
+            f"(declared: {', '.join(sorted(declared)) or 'none'})")
+    source = declared[source_id]
+    name = current["source"]["path"].split(":", 1)[1].split("@", 1)[0]
+    revision = resolve_revision(source, name, to)
+
+    destination = destination_root / current["path"]
+    staging = pathlib.Path(tempfile.mkdtemp(prefix=".pack-stage-", dir=destination_root))
+    retired = staging / "retired"
+    swapped = False
+    try:
+        content = staging / "content"
+        fetch_revision(source, name, to, revision, content)
+        pack = _pack_root(content)
+        manifest = validate_pack(pack)
+        if manifest["id"] != pack_id:
+            raise PackError(
+                f"source served {manifest['id']} where {pack_id} was expected")
+        if manifest["version"] != to:
+            raise PackError(
+                f"{name}@{to} contains version {manifest['version']}; the tag and the "
+                f"manifest disagree")
+        records = validate_tiered_collection(
+            _collection_entries(project_path, pack, scope, destination_root,
+                                replacing=destination)
+        )
+        status, publisher = verification_status(pack, manifest)
+        if status != "verified-publisher" and not allow_unverified:
+            raise UnverifiedSignature(
+                "unsigned packs require project --allow-unverified; local evaluation quality "
+                "does not establish publisher trust"
+            )
+        entry = make_entry(
+            pack, manifest, scope=scope,
+            source=make_source("git", f"{source_id}:{name}@{to}", tree_hash(pack),
+                               source_id=source_id, revision=revision),
+            verification_status=status,
+            dependency_resolution=resolve_dependencies(manifest, records),
+            publisher_key_id=publisher["key_id"] if publisher else None,
+            signed_digest=publisher["signed_digest"] if publisher else None,
+        )
+        os.replace(destination, retired)
+        swapped = True
+        os.replace(pack, destination)
+        try:
+            write_lock(destination_root, replace_entry(lock, entry))
+        except Exception:
+            os.replace(destination, pack)
+            os.replace(retired, destination)
+            swapped = False
+            raise
+        return InstallResult(destination, manifest, status)
+    except PackError:
+        if swapped and not destination.exists():
+            os.replace(retired, destination)
+        raise
+    except OSError as exc:
+        if swapped and not destination.exists():
+            os.replace(retired, destination)
+        raise PackError(f"pack update transaction failed: {exc}") from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)

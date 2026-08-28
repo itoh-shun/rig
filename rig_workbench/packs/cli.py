@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import datetime as dt
 import pathlib
 import sys
@@ -8,9 +9,10 @@ import sys
 from rig_workbench import __version__
 
 from .doctor import diagnose
-from .manifest import canonical
-from .model import ASSET_DIRS, PackError
+from .manifest import PACK_SCHEMA_VERSION, canonical
+from .model import ASSET_DIRS, PACK_TYPES, PackError
 from .resolver import pack_roots
+from .sources import SOURCE_SCHEMES, read_sources, verify_pin, write_sources
 from .validation import validate_pack, validate_tiered_collection
 
 
@@ -20,6 +22,7 @@ def _parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init")
     init.add_argument("id")
     init.add_argument("--kind", choices=["core", "official", "domain", "project"], default="project")
+    init.add_argument("--type", dest="type_", choices=list(PACK_TYPES), required=True)
     init.add_argument("--root", default=".rig/packs")
     validate = sub.add_parser("validate")
     validate.add_argument("path", nargs="?")
@@ -27,6 +30,39 @@ def _parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor")
     doctor.add_argument("path", nargs="?")
     doctor.add_argument("--json", action="store_true")
+    source = sub.add_parser("source")
+    source_sub = source.add_subparsers(dest="source_command", required=True)
+    source_sub.add_parser("list")
+    source_add = source_sub.add_parser("add")
+    source_add.add_argument("name")
+    source_add.add_argument("--scheme", choices=list(SOURCE_SCHEMES), required=True)
+    source_add.add_argument("--url", required=True,
+                            help="URL template containing {pack}")
+    source_remove = source_sub.add_parser("remove")
+    source_remove.add_argument("name")
+    export = sub.add_parser("export")
+    export.add_argument("path")
+    export.add_argument("--to", required=True)
+    verify_sources = sub.add_parser("verify-sources")
+    verify_sources.add_argument("--scope", choices=["project", "user", "org"],
+                                default="project")
+    verify_sources.add_argument("--root")
+    for name in ("list", "outdated"):
+        parser_ = sub.add_parser(name)
+        parser_.add_argument("--scope", choices=["project", "user", "org"], default="project")
+        parser_.add_argument("--root")
+    for name in ("info", "explain"):
+        parser_ = sub.add_parser(name)
+        parser_.add_argument("pack")
+        parser_.add_argument("--scope", choices=["project", "user", "org"], default="project")
+        parser_.add_argument("--root")
+        parser_.add_argument("--json", action="store_true")
+    update = sub.add_parser("update")
+    update.add_argument("pack")
+    update.add_argument("--to", required=True)
+    update.add_argument("--scope", choices=["project", "user", "org"], default="project")
+    update.add_argument("--root")
+    update.add_argument("--allow-unverified", action="store_true")
     install = sub.add_parser("install")
     install.add_argument("source")
     install.add_argument("--scope", choices=["project", "user", "org"], default="project")
@@ -68,8 +104,13 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def init_pack(pack_id: str, *, kind: str, root: pathlib.Path | str) -> pathlib.Path:
+def init_pack(pack_id: str, *, kind: str, type_: str,
+              root: pathlib.Path | str) -> pathlib.Path:
+    """Scaffold a pack. `type_` has no default on purpose — it decides what the pack may
+    carry and run, and a default would hand that decision to whoever forgot to make it."""
     from .manifest import PACK_ID, RESERVED_PACK_IDS
+    if type_ not in PACK_TYPES:
+        raise PackError(f"pack type must be one of {', '.join(PACK_TYPES)}")
     if not PACK_ID.fullmatch(pack_id):
         raise PackError("pack id is invalid")
     if pack_id in RESERVED_PACK_IDS:
@@ -83,7 +124,8 @@ def init_pack(pack_id: str, *, kind: str, root: pathlib.Path | str) -> pathlib.P
             (destination / directory).mkdir(parents=True, exist_ok=True)
         now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
         manifest = {
-            "pack_schema_version": 1, "id": pack_id, "version": "0.1.0", "kind": kind,
+            "pack_schema_version": PACK_SCHEMA_VERSION, "id": pack_id, "type": type_,
+            "version": "0.1.0", "kind": kind,
             "engine": f">={__version__}", "dependencies": [],
             "assets": {kind_: [] for kind_ in ASSET_DIRS}, "hashes": {},
             "display_name": pack_id, "description": "New Rig pack",
@@ -177,7 +219,7 @@ def cmd_pack(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "init":
-            print(init_pack(args.id, kind=args.kind, root=args.root))
+            print(init_pack(args.id, kind=args.kind, type_=args.type_, root=args.root))
             return 0
         if args.command == "validate":
             if args.global_:
@@ -187,6 +229,115 @@ def cmd_pack(argv: list[str]) -> int:
                 path = pathlib.Path(args.path or ".")
                 manifest = validate_pack(path)
                 print(f"valid: {manifest['id']}@{manifest['version']}")
+            return 0
+        if args.command == "export":
+            from .exporter import export_pack
+            exported = export_pack(args.path, to=args.to)
+            print(f"exported: {exported['id']}@{exported['version']} "
+                  f"[{exported['type']}] -> {exported['pack_path']}")
+            print("next:")
+            print(f"  cd {exported['path']} && git init && git add -A && "
+                  f"git commit -m '{exported['id']} {exported['version']}'")
+            print("  git remote add origin <your repository URL> && git push -u origin main")
+            print(f"  git tag {exported['tag']} && git push origin {exported['tag']}")
+            return 0
+        if args.command == "source":
+            project = pathlib.Path.cwd()
+            declared = read_sources(project)
+            if args.source_command == "list":
+                for name in sorted(declared):
+                    print(f"{name}\t{declared[name]['scheme']}\t{declared[name]['url']}")
+                if not declared:
+                    print("no sources declared")
+                return 0
+            if args.source_command == "add":
+                if args.name in declared:
+                    raise PackError(f"source already declared: {args.name}")
+                declared[args.name] = {"scheme": args.scheme, "url": args.url}
+                write_sources(project, declared)
+                print(f"declared source: {args.name}")
+                return 0
+            if args.name not in declared:
+                raise PackError(f"source is not declared: {args.name}")
+            del declared[args.name]
+            write_sources(project, declared)
+            print(f"removed source: {args.name}")
+            return 0
+        if args.command == "verify-sources":
+            from .installer import scope_root
+            from .lock import read_lock
+            project = pathlib.Path.cwd()
+            declared = read_sources(project)
+            root = scope_root(args.scope, project=project,
+                              root=pathlib.Path(args.root) if args.root else None)
+            pinned = [item for item in read_lock(root)["packs"]
+                      if item["source"]["type"] == "git"]
+            if not pinned:
+                print("no git-sourced packs are locked in this scope")
+                return 0
+            worst = 0
+            for entry in sorted(pinned, key=lambda item: item["id"]):
+                source_id = entry["source"]["source_id"]
+                if source_id not in declared:
+                    reason, worst = "source-undeclared", 1
+                else:
+                    reason = verify_pin(declared[source_id], entry)
+                    worst = max(worst, 0 if reason == "ok" else 1)
+                print(f"{entry['id']}\t{entry['source']['path']}\t{reason}")
+            return worst
+        if args.command in {"list", "info", "explain", "outdated", "update"}:
+            from .installer import scope_root, update_pack
+            from .inventory import explain as explain_pack
+            from .inventory import info as pack_info
+            from .inventory import list_rows, outdated
+            project = pathlib.Path.cwd()
+            root = scope_root(args.scope, project=project,
+                              root=pathlib.Path(args.root) if args.root else None)
+            if args.command == "list":
+                rows = list_rows(root)
+                if not rows:
+                    print("no packs installed in this scope")
+                    return 0
+                for row in rows:
+                    print(f"{row['id']}@{row['version']}\t{row['type']}\t{row['kind']}"
+                          f"\t{row['origin']}\t{row['verification']}")
+                return 0
+            if args.command == "info":
+                detail = pack_info(root, args.pack)
+                if args.json:
+                    print(json.dumps(detail, ensure_ascii=False, sort_keys=True, indent=2))
+                else:
+                    for key, value in detail.items():
+                        print(f"{key}\t{value}")
+                return 0
+            if args.command == "explain":
+                rows = explain_pack(project, root, args.pack)
+                if args.json:
+                    print(json.dumps(rows, ensure_ascii=False, sort_keys=True, indent=2))
+                    return 0
+                if not rows:
+                    print(f"{args.pack} provides no prompt surfaces")
+                    return 0
+                for row in rows:
+                    state = "effective" if row["effective"] else (
+                        f"shadowed by {row['provided_by']} [{row['tier']}]")
+                    print(f"{row['kind']}:{row['name']}\t{state}")
+                return 0
+            if args.command == "outdated":
+                rows = outdated(project, root)
+                if not rows:
+                    print("no git-sourced packs are locked in this scope")
+                    return 0
+                for row in rows:
+                    print(f"{row['id']}\t{row['current']}\t{row['latest'] or '-'}"
+                          f"\t{row['reason']}")
+                return 1 if any(row["reason"] != "ok" for row in rows) else 0
+            result = update_pack(
+                args.pack, to=args.to, scope=args.scope, project=project,
+                root=args.root, allow_unverified=args.allow_unverified,
+            )
+            print(f"updated: {result.manifest['id']}@{result.manifest['version']} "
+                  f"[{result.verification_status}] -> {result.path}")
             return 0
         if args.command == "install":
             from .installer import install_pack

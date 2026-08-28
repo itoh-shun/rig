@@ -1,46 +1,34 @@
 ---
-description: "rig/setup — rig-wb CLI（pip 版）を pipx / uv / pip で自動導入する。skill として rig を使い始めるときの初回セットアップ。他のプロバイダ (Codex / Cursor / Copilot) からも同じ CLI に委譲するための共通土台。"
-argument-hint: "[--yes 確認省略] [--force 再インストール] [--check 検出のみ] [--uninstall] [--ref <branch|tag|sha>]"
+description: "rig/setup — install the rig-wb CLI (the pip package) through pipx, uv, or pip. The first-time setup when you start using rig as a skill, and the common ground that lets other providers (Codex, Cursor, Copilot) delegate to the same CLI."
+argument-hint: "[--yes skip prompts] [--force reinstall] [--check detect only] [--uninstall] [--ref <branch|tag|sha>]"
 ---
 
-# rig/setup — rig-wb CLI インストーラ
+# rig/setup — the rig-wb CLI installer
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層・§6 run-continuity）に従うこと。** このコマンドは入口であり、実処理は `scripts/install.sh` にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, the knowledge layer, §6 run-continuity). This command is only the entry point; the work is done by `scripts/install.sh` and is not repeated here.
 
-起動後、次の引数を PARSE して installer に渡す:
+Then PARSE the following arguments and pass them to the installer:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-`scripts/install.sh` を **Bash ツール経由**で実行する。installer は以下を順に行う:
+Runs `scripts/install.sh` **through the Bash tool**. The installer, in order:
 
-1. **GitHub CLI（任意）の確認**: `gh` 本体があるか / `github/gh-stack` 拡張が入っているか。
-   拡張が無ければ導入を**提案**する（`--yes` で確認省略、`--force` で再導入、`--check` は検知のみ）。
-   断っても、`gh` 本体が無くても、install はそのまま続く——**必須ではない**。`gh` 本体は system
-   パッケージなので勝手には入れない。**認証も要件ではない**——状態を表示するだけで、
-   `gh auth login` を実行することも要求することもしない。
-2. **環境検知**: `pipx` / `uv` / `pip` のいずれが使えるか（優先順は pipx > uv > pip）。
-3. **既存インストールの照合**: 「入っているか」ではなく **「この checkout と一致しているか」** を見る。
-   `rig-wb version` の値を `rig_workbench/__init__.py` の `__version__` と比較し、一致すれば skip。
-   食い違っていれば**両方のバージョンを表示して更新するか尋ねる**（`--yes` で確認省略、`--force` は常に再インストール、
-   `--check` は表示のみ）。黙って入れ替えることはしない。
-4. **確認**: どの方法で何を入れるか user に見せてから続行（`--yes`、および 3 で更新に同意済みなら省略）。
-5. **インストール**: git+URL 経由で `github.com/itoh-shun/rig.git` から取得。
-6. **検証**: `rig-wb version` が返ればOK、PATH に無ければ `pipx ensurepath` / `~/.local/bin` の追加を案内。
+1. **Checks the GitHub CLI (optional)**: whether `gh` itself is present and whether the `github/gh-stack` extension is installed. If the extension is missing it **offers** to install it (`--yes` skips the prompt, `--force` reinstalls, `--check` only detects). Declining changes nothing, and neither does not having `gh` at all — **it is not required**. `gh` itself is a system package, so it is never installed behind your back. **Authentication is not a requirement either**: the state is displayed, and `gh auth login` is neither run nor demanded.
+2. **Detects the environment**: which of `pipx`, `uv`, or `pip` is usable, preferred in that order.
+3. **Compares against what is installed**: not "is it there" but **"does it match this checkout"**. It compares `rig-wb version` against `__version__` in `rig_workbench/__init__.py` and skips when they agree. When they disagree it **shows both versions and asks whether to update** (`--yes` skips the prompt, `--force` always reinstalls, `--check` only displays). It never swaps one for the other silently.
+4. **Confirms**: shows what will be installed and how before continuing (skipped under `--yes`, or once you agreed to the update in step 3).
+5. **Installs**: from `github.com/itoh-shun/rig.git` over git+URL.
+6. **Verifies**: `rig-wb version` answering is enough. If it is not on PATH, it points at `pipx ensurepath` or adding `~/.local/bin`.
 
-## gh + gh-stack は任意（必須ではない）
+## gh and gh-stack are optional
 
-**`gh` 本体も `github/gh-stack` 拡張も rig の必須要件ではない。** 無くても
-`workbench new` / `orchestrate run|init|ab` / `queue go` はそのまま動く。無いときは
-stderr に**一行の案内**が出るだけで、止まらない。
+**Neither `gh` nor the `github/gh-stack` extension is a requirement.** `workbench new`, `orchestrate run|init|ab`, and `queue go` all work without them. When they are absent you get **one line on stderr**, and nothing stops.
 
-かつては必須にしていたが、その根拠（stacked branch の cascade rebase を `gh stack` に委譲する）は
-実測で崩れた。`gh stack` はブランチ切り替えを checkout で行うが、git は**他の worktree が握っている
-ブランチの checkout を拒否する**。rig はタスクごとに worktree を作るため、対象ブランチは常に
-worktree に握られている:
+They used to be required, and the reason for that collapsed under measurement. The reason was delegating the cascade rebase of a stacked branch to `gh stack` — but `gh stack` switches branches by checking them out, and git **refuses to check out a branch another worktree is holding**. rig creates a worktree per task, so the target branch is always held:
 
 ```
 $ gh stack rebase --no-trunk
@@ -48,68 +36,56 @@ $ gh stack rebase --no-trunk
   fatal: 'task2' is already used by worktree at '.../wt2'
 ```
 
-worktree 隔離は rig の安全性の中核で譲れないので、必須にした当の操作ができない側を降ろした。
-cascade は各 worktree の中で素の git（`git -C <child> rebase --onto ...`）で行う。
-`gh stack` に今も価値があるのは**公開側**（stack の宣言・`submit` / `push`）で、PR を作らない
-運用にはそもそも不要——だから「一行の案内」であって「ゲート」ではない。
+Worktree isolation is the core of rig's safety and does not move, so the side that could not do the operation it was required for was the side that got dropped. The cascade happens inside each worktree with plain git (`git -C <child> rebase --onto ...`). Where `gh stack` still earns its place is **the publishing side** — declaring a stack, `submit`, `push` — which a workflow that opens no PRs does not need at all. Hence one line of guidance rather than a gate.
 
-**認証と remote も当然必須ではない。** `gh stack` のローカル操作は未認証・remote 無しで動き、
-GitHub に触るのは `push` / `submit` / `sync` だけ。認証状態は `gh-check` が**表示するだけ**。
+**Authentication and a remote are just as optional.** `gh stack`'s local operations work unauthenticated and with no remote; only `push`, `submit`, and `sync` touch GitHub. `gh-check` **only displays** the authentication state.
 
-現在の状態はいつでも次で確認できる（これは明示的な問い合わせなので、答えは常に全部出る）:
+You can ask for the current state at any time — and because that is an explicit question, the answer is always complete:
 
 ```
-rig-wb gh-check           # exit 0=OK / 3=gh 未導入 / 5=gh-stack 未導入（認証状態は表示のみ）
+rig-wb gh-check           # exit 0=ok / 3=no gh / 5=no gh-stack (auth state shown, never enforced)
 rig-wb gh-check --json
 ```
 
-一行の案内が不要なら `RIG_SKIP_GH_CHECK=1` で黙らせる（黙るだけ——止めるものは元々無い。
-`gh-check` と `/rig:setup` は「環境を教えろ」という明示の要求なので、この変数では黙らない）。
-実装は `rig_workbench/gh_requirement.py`（single source of truth、install.sh は同じ状態名を
-bash で再現）。
+`RIG_SKIP_GH_CHECK=1` silences the one-line notice — silences, not unblocks, because nothing was blocking. `gh-check` and `/rig:setup` are explicit requests to be told about the environment, so that variable does not silence them. The implementation is `rig_workbench/gh_requirement.py` (the single source of truth; install.sh reproduces the same state names in bash).
 
-## なぜこれが要るか
+## Why this exists
 
-rig は **Claude Code 内の skill として動く**（`/rig:go`）だけでなく、`pip install rig-workbench` で入る **`rig-wb` CLI としても動く**。他プロバイダ（Codex plugin / Cursor rules / Copilot extension）の skill も同じ `rig-wb` を叩けば同一の workbench（recipe / gate / accept / dashboard）が使える。**「AI コーディングツールを乗り換えず、その中に skill として住む」** ための土台。
+rig runs **as a skill inside Claude Code** (`/rig:go`) and **as the `rig-wb` CLI** you get from `pip install rig-workbench`. A skill in another provider — a Codex plugin, Cursor rules, a Copilot extension — that calls the same `rig-wb` gets the same workbench: the same recipes, gates, accept, and dashboard. It is the ground that lets rig **live inside whichever AI coding tool you use, instead of asking you to switch**.
 
-## flag
+## Flags
 
-- `--yes` — 対話プロンプトを省略して install（skill の中で自動実行するときに使う）。gh-stack の導入確認も省略。
-  ただし**黙って置き換えることはない**: 更新するときは「何を何に、どこから」を必ず1行出す。
-  導入済みの版が checkout より**新しい**場合は downgrade になるので `--yes` でも実行しない（逃げ道は `--force` だけ）。
-- `--force` — 既にインストール済でも再インストール（gh-stack も `--force` で入れ直す）。版の前後関係も無視する。
-- `--check` — 検出だけして終了。exit 0 = install 方法がある、exit 1 = 無い。gh / gh-stack の状態と
-  バージョン不一致は **表示するだけで exit code には影響しない**（prompt も install もしない）。
-- `--uninstall` — `rig-workbench` を外す（pipx / uv / pip の入れ方に合わせて自動判定）。
-- `--ref <ref>` — GitHub からその branch / tag / commit を入れる。**既定は ref ではなく install.sh 自身の
-  checkout**（比較する物と入れる物を同一にしないと、更新に同意しても不一致が消えず prompt が再発する）。
-  `--ref` 明示時はその版をローカルで知りようがないので、版比較も更新の提案も行わない（presence-only に退避）。
+- `--yes` — install without the interactive prompts (what a skill uses when it runs this itself), including the gh-stack confirmation. It still **never swaps silently**: an update always prints one line saying what is being replaced with what, from where. When the installed version is **newer** than the checkout, the change would be a downgrade and `--yes` will not do it; `--force` is the only way through.
+- `--force` — reinstall even when it is already installed (and reinstall gh-stack), ignoring which version is newer.
+- `--check` — detect and exit. 0 means there is a way to install, 1 means there is not. The gh and gh-stack state and any version mismatch are **displayed without affecting the exit code**, and neither prompts nor installs.
+- `--uninstall` — remove `rig-workbench`, working out from how it was installed (pipx, uv, or pip).
+- `--ref <ref>` — install that branch, tag, or commit from GitHub. **The default is install.sh's own checkout rather than a ref**: unless what is compared and what is installed are the same thing, agreeing to an update leaves the mismatch in place and the prompt comes back. With an explicit `--ref` there is no way to know that version locally, so no version comparison and no update offer happen — it falls back to presence only.
 
-## 例
+## Examples
 
 ```
-/rig:setup                 # 対話で install（初回の推奨）
-/rig:setup --yes           # 確認なしで install
-/rig:setup --check         # 現環境で install できるかだけ調べる
-/rig:setup --force         # 既に入っていても（新しくても）この checkout を入れ直す
-/rig:setup --uninstall     # 外す
-/rig:setup --ref v1.3.0    # GitHub の特定タグで pin（版比較はしない）
+/rig:setup                 # install interactively (recommended the first time)
+/rig:setup --yes           # install without prompts
+/rig:setup --check         # only find out whether this environment can install it
+/rig:setup --force         # reinstall this checkout even over a newer version
+/rig:setup --uninstall     # remove it
+/rig:setup --ref v1.3.0    # pin to a GitHub tag (no version comparison)
 ```
 
-## 実行後にできること
+## What you can do afterwards
 
 ```
-rig-wb --help                  # サブコマンド一覧
-rig-wb wb board                # workbench の状態
-rig-wb plan bugfix             # プラン提示
-rig-wb runs --html /tmp/x.html # HTML dashboard
+rig-wb --help                  # the subcommands
+rig-wb wb board                # the workbench's state
+rig-wb plan bugfix             # show a plan
+rig-wb runs --html /tmp/x.html # an HTML dashboard
 ```
 
-これで **Claude Code の外側**からも同じ workbench を叩けるようになる（Codex CLI / Cursor / plain terminal などから `rig-wb ...`）。
+That is what lets the same workbench be driven **from outside Claude Code** — `rig-wb ...` from the Codex CLI, Cursor, or a plain terminal.
 
-## run-continuity（SKILL.md §6）
+## run-continuity (SKILL.md §6)
 
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

@@ -382,7 +382,7 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     outside.mkdir()
     source_root = outside / "sources"
     initialized = subprocess.run(
-        [str(python), "-m", "rig_workbench.cli", "pack", "init", "wheel-pack",
+        [str(python), "-m", "rig_workbench.cli", "pack", "init", "wheel-pack", "--type", "skill",
          "--root", str(source_root)], cwd=outside, capture_output=True, text=True,
         env=_isolated_env(), timeout=60,
     )

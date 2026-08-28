@@ -403,6 +403,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("discard", help="discard the worktree and branch (keeps the run log)")
     p.add_argument("task_id", nargs="?")
     p.add_argument("--yes", action="store_true", help="final confirmation for discarding")
+    p.add_argument("--local-cleanup", action="store_true",
+                   help="the worktree belongs to a runtime that is not usable here (#463): "
+                        "remove the checkout with git anyway, and record on the task that its "
+                        "runtime never saw the disposal. Never automatic — dropping to a "
+                        "different runtime silently would delete a directory rig no longer "
+                        "owns and report success")
     p.set_defaults(func=cmd_discard)
 
     p = sub.add_parser("status", help="show the run state of the current (or given) task")

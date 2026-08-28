@@ -1,62 +1,61 @@
 ---
-description: "rig/design — UI/UX・a11y を内蔵したデザイン作成ハーネス。説明文から仕様書/コンポーネント仕様/ワイヤー/a11y 計画を生成し UI/UX・WCAG で検閲(design)。URL を渡すと Playwright で実装画面を取得し監査(design-audit)。--ppt/--claudedesign で追加出力。"
-argument-hint: "[機能の説明 or 画面URL] [--url <url>] [--a11y-level A|AA|AAA] [--ppt] [--claudedesign] [--plan] [--persona <name>]"
+description: "rig/design — a design harness with UI/UX and accessibility built in. From a description it produces a specification, component specs, wireframes, and an accessibility plan, then vets them against UI/UX heuristics and WCAG. Given a URL it fetches the running screen with Playwright and audits it. --ppt and --claudedesign add output formats."
+argument-hint: "[a description, or a screen URL] [--url <url>] [--a11y-level A|AA|AAA] [--ppt] [--claudedesign] [--plan] [--persona <name>]"
 ---
 
-# rig/design — デザイン作成・監査ハーネス 🎨
+# rig/design — designing and auditing 🎨
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。dev と同じ engine を design ドメインで使う。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, context-minimal, facet ordering, knowledge-layer injection). This command is only the entry point; the engine lives in the skill and is not repeated here. It is the same engine dev uses, pointed at the design domain.
 
-## モード（2 系統・URL 有無で分岐）
+## Two modes, chosen by whether there is a URL
 
-| 指定 | recipe | 何をする |
+| What you pass | recipe | What happens |
 |---|---|---|
-| （既定・説明文を渡す） | `design` | デザイン成果物を生成 → UI/UX・a11y 並列検閲 |
-| 引数に URL / `--url <url>` | `design-audit` | 実装画面を Playwright で取得 → UI/UX・a11y 監査 |
+| a description (the default) | `design` | produce the design artefacts, then vet them for UI/UX and accessibility in parallel |
+| a URL, or `--url <url>` | `design-audit` | fetch the running screen with Playwright, then audit it for UI/UX and accessibility |
 
-引数に URL（`http(s)://…`）が含まれるか `--url` があれば**監査モード**（`design-audit`）、無ければ**作成モード**（`design`）。
+A `http(s)://…` in the arguments, or `--url`, means **audit mode** (`design-audit`); anything else means **create mode** (`design`).
 
-起動後、次の引数を PARSE する:
+Then PARSE the following arguments:
 
 ```
 $ARGUMENTS
 ```
 
-引数が無ければ「何を設計するか（機能・対象ユーザー・必要な成果物）／または監査する画面 URL」を一言確認する（捏造しない）。
+With no arguments, ask in one line what is being designed — the feature, who it is for, which artefacts are needed — or which screen URL to audit. Do not invent it.
 
-## やること
+## What it does
 
-- **作成（既定）**: 引数（機能の説明・対象・成果物種別）を `design` recipe に渡す。手順本体（要件確定 → 成果物生成 → 出力バックエンド → 並列検閲）は `facets/instructions/{design-draft,design-vet}` に従う。成果物はデザイン仕様書／コンポーネント仕様／ワイヤー・モックアップ／a11y 計画。a11y は設計時点で内蔵し、`ux-reviewer`（ユーザビリティ）・`a11y-reviewer`（WCAG 2.2）で検閲して `acceptance-gate` で収束。**実在前提・誇張禁止・不明は `[要記入]`**。
-- **監査（URL）**: 引数の URL を `design-audit` recipe に渡す。手順本体（Playwright で SS/DOM/axe 取得 → 並列レビュー）は `facets/instructions/{design-audit,design-vet}` に従う。read のみ・副作用なし。
+- **Create (the default)**: hands the description, audience, and artefact types to the `design` recipe. The procedure — settle the requirements, produce the artefacts, choose the output backend, vet in parallel — is in `facets/instructions/design-draft` and `design-vet`. The artefacts are a design specification, component specs, wireframes or mockups, and an accessibility plan. Accessibility is built in at design time rather than added later, vetted by `ux-reviewer` (usability) and `a11y-reviewer` (WCAG 2.2), and converged at the acceptance gate. **Ground everything in what exists, claim nothing extra, and mark what is unknown `[to be filled in]`.**
+- **Audit (a URL)**: hands the URL to the `design-audit` recipe. The procedure — screenshot, DOM, and axe results through Playwright, then a parallel review — is in `facets/instructions/design-audit` and `design-vet`. Read-only, no side effects.
 
-## 出力バックエンド（作成モード・併用可）
+## Output backends (create mode; they combine)
 
-- 既定: Markdown 設計ドキュメント。
-- `--ppt`: `powerpoint-server` MCP でスライド化（追加出力）。
-- `--claudedesign`: claude.ai デザイン機能（`claude_design` MCP）で生成（追加出力）。MCP 未接続なら報告して Markdown のみで続行。
+- Default: a Markdown design document.
+- `--ppt`: slides through the `powerpoint-server` MCP server, in addition.
+- `--claudedesign`: generated through claude.ai's design feature (the `claude_design` MCP server), in addition. When that server is not connected, say so and continue with Markdown alone.
 
-## flag
+## Flags
 
-- `--url <url>` … 監査モードを明示（bare な URL 引数でも自動検出）。
-- `--a11y-level A|AA|AAA` … 目標 WCAG レベル（既定 AA）。
-- `--ppt` / `--claudedesign` … 出力バックエンド追加（作成モード）。
-- `--persona <name>` … 検閲 fan-out にカスタム reviewer を追加（engine 共通）。
-- `--plan` … 合成ハーネスを提示して停止（engine 共通・ドライラン）。
+- `--url <url>` — audit mode explicitly (a bare URL argument is detected anyway).
+- `--a11y-level A|AA|AAA` — the WCAG level to aim at. AA by default.
+- `--ppt` / `--claudedesign` — extra output backends, in create mode.
+- `--persona <name>` — add a custom reviewer to the vetting fan-out (as everywhere in the engine).
+- `--plan` — present the composed harness and stop (as everywhere in the engine). A dry run.
 
-## 例
+## Examples
 
 ```
-/rig:design ログイン画面・一般ユーザー向け・仕様書とコンポーネント仕様   # 作成
-/rig:design 設定ページのワイヤーと a11y 計画 --a11y-level AA --ppt        # 作成＋PPT
-/rig:design https://example.com/login                                     # URL 監査
-/rig:design --url https://staging.example.com/signup --a11y-level AAA     # 監査・AAA
-/rig:design ダッシュボードの設計 --plan                                   # ドライラン
+/rig:design a login screen for general users, with a spec and component specs
+/rig:design wireframes and an accessibility plan for the settings page --a11y-level AA --ppt
+/rig:design https://example.com/login                                      # audit a URL
+/rig:design --url https://staging.example.com/signup --a11y-level AAA
+/rig:design the dashboard --plan                                           # dry run
 ```
 
+## run-continuity (SKILL.md §6)
 
-## run-continuity（SKILL.md §6）
-
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
