@@ -4,6 +4,15 @@
 
 ### Added
 
+**The lock records what satisfied each dependency, not only what would have been acceptable**
+(#523, `pack.lock.json` schema 4). Entries already copied the declared `dependencies` — the
+ranges — and a range is not a resolution: `>=2.1.0` stays satisfied after somebody swaps
+2.1.0 for 3.0.0 underneath, and nothing in the lock could say the pack had been installed
+against something else. `dependency_resolution` records the version and tier that answered
+each range, on install and on update alike, and `pack info` reports it. A pack with no
+dependencies records an empty list rather than omitting the field, so a reader never has to
+tell "none" apart from "nobody wrote it down".
+
 **The pack inventory is readable**: `rig-wb pack list` / `info` / `explain` / `outdated` /
 `update` (#523). The lock has recorded every pack's source, version, and integrity since long
 before packs came from anywhere but a local directory — nothing read it back, which is the

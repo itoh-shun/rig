@@ -14,7 +14,7 @@ from rig_workbench.eval.gate import quality_result_failures
 from rig_workbench.eval.compare import validate_result
 
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
-                   make_source, validate_lock_root, write_lock)
+                   make_source, resolve_dependencies, validate_lock_root, write_lock)
 from .manifest import read_json_yaml
 from .model import PROMPT_KINDS, PackError, UnverifiedSignature
 from .sources import fetch_revision, parse_spec, read_sources, resolve_revision
@@ -286,7 +286,16 @@ def verification_status(pack: pathlib.Path, manifest: dict) -> tuple[str, dict |
 
 
 def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
-                        scope: str, destination_root: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+                        scope: str, destination_root: pathlib.Path,
+                        *, replacing: pathlib.Path | None = None) -> list[tuple[str, pathlib.Path]]:
+    """Every pack the runtime would see, with the staged one standing in for its own copy.
+
+    `replacing` is the directory the staged pack is about to take over from. An update has to
+    exclude it: leaving it in would present the same pack twice and the collection would
+    refuse itself as a duplicate id rather than judging the new version against its
+    neighbours.
+    """
+    excluded = replacing.resolve() if replacing is not None else None
     entries: list[tuple[str, pathlib.Path]] = []
     seen_roots: set[pathlib.Path] = set()
     for tier, root in pack_roots(project):
@@ -294,10 +303,12 @@ def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
         seen_roots.add(resolved)
         if root.is_dir():
             entries.extend((tier, item) for item in sorted(root.iterdir()) if item.is_dir()
-                           and not item.name.startswith((".", "_")))
+                           and not item.name.startswith((".", "_"))
+                           and item.resolve() != excluded)
     if destination_root.resolve() not in seen_roots and destination_root.is_dir():
         entries.extend((scope, item) for item in sorted(destination_root.iterdir()) if item.is_dir()
-                       and not item.name.startswith((".", "_")))
+                       and not item.name.startswith((".", "_"))
+                       and item.resolve() != excluded)
     entries.append((scope, staging_pack))
     return entries
 
@@ -361,8 +372,9 @@ def install_pack(
         destination = destination_root / manifest["id"]
         if destination.exists():
             raise PackError(f"pack target already exists: {destination}")
-        validate_tiered_collection(
-            _collection_entries(project_path, pack, scope, destination_root)
+        records = validate_tiered_collection(
+            _collection_entries(project_path, pack, scope, destination_root,
+                                replacing=destination)
         )
         status, publisher = verification_status(pack, manifest)
         if status != "verified-publisher" and not allow_unverified:
@@ -376,6 +388,7 @@ def install_pack(
         entry = make_entry(
             pack, manifest, scope=scope, source=source_block,
             verification_status=status,
+            dependency_resolution=resolve_dependencies(manifest, records),
             publisher_key_id=publisher["key_id"] if publisher else None,
             signed_digest=publisher["signed_digest"] if publisher else None,
         )
@@ -454,6 +467,10 @@ def update_pack(
             raise PackError(
                 f"{name}@{to} contains version {manifest['version']}; the tag and the "
                 f"manifest disagree")
+        records = validate_tiered_collection(
+            _collection_entries(project_path, pack, scope, destination_root,
+                                replacing=destination)
+        )
         status, publisher = verification_status(pack, manifest)
         if status != "verified-publisher" and not allow_unverified:
             raise UnverifiedSignature(
@@ -465,6 +482,7 @@ def update_pack(
             source=make_source("git", f"{source_id}:{name}@{to}", tree_hash(pack),
                                source_id=source_id, revision=revision),
             verification_status=status,
+            dependency_resolution=resolve_dependencies(manifest, records),
             publisher_key_id=publisher["key_id"] if publisher else None,
             signed_digest=publisher["signed_digest"] if publisher else None,
         )

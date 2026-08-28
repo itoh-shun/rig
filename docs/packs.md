@@ -97,6 +97,10 @@ installed; remove-then-install would strand the project with neither. It refuses
 installed from a directory or an archive, which has no source to ask for a version, and
 refuses a tag whose manifest declares a different version than the tag names.
 
+The lock also records what satisfied each declared dependency — the version and tier that
+answered the range, not just the range — because a range stays satisfied after the pack that
+answered it is swapped underneath. `pack info` reports it.
+
 A digest pins content, not provenance: it says the bytes are the same ones, never who put
 them there. Signatures and trust roots are what answer that, and `private` is not a substitute
 for either — a pack from a private repository goes through the same manifest validation,

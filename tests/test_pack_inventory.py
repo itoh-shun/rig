@@ -32,19 +32,24 @@ def _git(repo: pathlib.Path, *args: str) -> str:
                           check=True).stdout.strip()
 
 
-def _write_pack(pack: pathlib.Path, pack_id: str, version: str) -> None:
+def _write_pack(pack: pathlib.Path, pack_id: str, version: str,
+                slug: str = "hello") -> None:
+    """A minimal valid pack. `slug` names its assets: two packs installed into the same tier
+    may not both own `recipe:hello`, and a fixture that ignored that would fail as a
+    collision instead of exercising what it meant to."""
     for directory in ASSET_DIRS.values():
         (pack / directory).mkdir(parents=True, exist_ok=True)
-    (pack / "recipes" / "hello.md").write_text(RECIPE, encoding="utf-8")
+    (pack / "recipes" / f"{slug}.md").write_text(
+        RECIPE.replace("name: hello", f"name: {slug}"), encoding="utf-8")
     case = copy.deepcopy(valid_case())
-    case["id"] = "hello-case"
-    case["prompt_surfaces"] = ["recipe:hello"]
-    case_path = pack / "evals" / "cases" / "hello-case" / "case.json"
+    case["id"] = f"{slug}-case"
+    case["prompt_surfaces"] = [f"recipe:{slug}"]
+    case_path = pack / "evals" / "cases" / f"{slug}-case" / "case.json"
     case_path.parent.mkdir(parents=True, exist_ok=True)
     case_path.write_text(canonical(case), encoding="utf-8")
     assets = {kind: [] for kind in ASSET_DIRS}
-    assets["recipe"] = ["recipes/hello.md"]
-    assets["eval-case"] = ["evals/cases/hello-case/case.json"]
+    assets["recipe"] = [f"recipes/{slug}.md"]
+    assets["eval-case"] = [f"evals/cases/{slug}-case/case.json"]
     (pack / "pack.yaml").write_text(canonical({
         "pack_schema_version": PACK_SCHEMA_VERSION, "id": pack_id, "type": "skill",
         "version": version, "kind": "project", "engine": "*", "dependencies": [],
@@ -223,3 +228,50 @@ def test_inventory_cli_round_trip(installed, monkeypatch, capsys):
     assert cmd_pack(["outdated"]) == 1
     assert cmd_pack(["update", "joypla", "--to", "1.5.0", "--allow-unverified"]) == 0
     assert cmd_pack(["outdated"]) == 0
+
+
+def _write_pack_with_dependency(pack: pathlib.Path, pack_id: str, version: str,
+                                dependency: dict) -> None:
+    _write_pack(pack, pack_id, version)
+    import json
+    manifest = json.loads((pack / "pack.yaml").read_text())
+    manifest["dependencies"] = [dependency]
+    (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
+
+
+def test_the_lock_records_what_satisfied_each_dependency_not_only_the_range(tmp_path):
+    """A range says what would be acceptable; it does not say what was used. `>=1.0.0` stays
+    satisfied after 1.0.0 is swapped for 2.0.0 underneath, and the declared range alone cannot
+    tell that the pack was installed against something else."""
+    project = tmp_path / "project"
+    project.mkdir()
+    base = tmp_path / "base-pack"
+    base.mkdir()
+    _write_pack(base, "company", "2.1.0", slug="company-policy")
+    install_pack(base, scope="project", project=project, allow_unverified=True)
+
+    dependent = tmp_path / "dependent-pack"
+    dependent.mkdir()
+    _write_pack_with_dependency(dependent, "joypla", "1.4.0",
+                                {"id": "company", "range": ">=2.0.0"})
+    result = install_pack(dependent, scope="project", project=project,
+                          allow_unverified=True)
+
+    entry = next(item for item in read_lock(result.path.parent)["packs"]
+                 if item["id"] == "joypla")
+    assert entry["dependencies"] == [{"id": "company", "range": ">=2.0.0"}]
+    assert entry["dependency_resolution"] == [
+        {"id": "company", "range": ">=2.0.0", "version": "2.1.0", "tier": "project"}
+    ]
+    assert info(result.path.parent, "joypla")["dependency_resolution"] == [
+        "company>=2.0.0 -> 2.1.0 [project]"
+    ]
+
+
+def test_a_pack_with_no_dependencies_records_an_empty_resolution(installed):
+    """The resolution list is not optional metadata that appears only sometimes — a reader
+    should not have to tell "no dependencies" apart from "nobody recorded them"."""
+    _project, root = installed
+    entry, = read_lock(root)["packs"]
+    assert entry["dependencies"] == []
+    assert entry["dependency_resolution"] == []

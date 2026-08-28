@@ -86,6 +86,14 @@ def info(root: pathlib.Path, pack_id: str) -> dict:
         "verification": entry["verification_status"],
         "publisher_key_id": entry["publisher_key_id"],
         "dependencies": [f"{item['id']}{item['range']}" for item in entry["dependencies"]],
+        # What answered each range at install time, not just what would have been acceptable:
+        # `>=2.1.0` stays satisfied after somebody swaps 2.1.0 for 3.0.0 underneath, and the
+        # declared range alone cannot say the pack was installed against something else.
+        "dependency_resolution": [
+            f"{item['id']}{item['range']} -> "
+            f"{item['version'] or 'unresolved'} [{item['tier'] or '-'}]"
+            for item in entry["dependency_resolution"]
+        ],
         "assets": {kind: len(paths) for kind, paths in sorted(manifest["assets"].items())
                    if paths},
         "eval_cases": len(entry["eval_case_hashes"]),

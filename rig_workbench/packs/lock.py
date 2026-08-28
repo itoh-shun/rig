@@ -16,7 +16,7 @@ from .model import PackError
 from .validation import validate_pack
 
 LOCK_NAME = "pack.lock.json"
-LOCK_SCHEMA_VERSION = 3
+LOCK_SCHEMA_VERSION = 4
 
 
 def tree_hash(root: pathlib.Path) -> str:
@@ -144,9 +144,29 @@ def make_source(source_type: str, source_path: str, source_hash: str, *,
     return source
 
 
+def resolve_dependencies(manifest: dict, records: list[tuple[str, Any, dict]]) -> list[dict]:
+    """What actually satisfied each declared dependency, at install time.
+
+    The entry already copies the declared `dependencies` — ranges, which say what would be
+    acceptable. That is not a resolution: `>=2.1.0` is still satisfied after somebody swaps
+    2.1.0 for 3.0.0 underneath, and the lock cannot tell that the pack was installed against
+    something else. Recording the version and tier that answered the range is what makes the
+    resolution reproducible rather than merely permitted.
+    """
+    installed = {item["id"]: (tier, item["version"]) for tier, _path, item in records}
+    resolution = []
+    for dependency in manifest["dependencies"]:
+        tier, version = installed.get(dependency["id"], (None, None))
+        resolution.append({
+            "id": dependency["id"], "range": dependency["range"],
+            "version": version, "tier": tier,
+        })
+    return sorted(resolution, key=lambda item: item["id"])
+
+
 def make_entry(
     pack: pathlib.Path, manifest: dict, *, scope: str, source: dict[str, Any],
-    verification_status: str,
+    verification_status: str, dependency_resolution: list[dict] | None = None,
     publisher_key_id: str | None, signed_digest: str | None,
     installed_at: dt.datetime | None = None,
 ) -> dict[str, Any]:
@@ -159,6 +179,7 @@ def make_entry(
         "asset_hashes": dict(sorted(manifest["hashes"].items())),
         "engine_version": __version__, "installed_at": timestamp,
         "dependencies": manifest["dependencies"],
+        "dependency_resolution": dependency_resolution or [],
         "eval_case_hashes": {
             item: manifest["hashes"][item] for item in manifest["assets"]["eval-case"]
         },
@@ -197,7 +218,7 @@ def validate_lock_root(
         "id", "version", "kind", "scope", "path", "source", "manifest_sha256",
         "asset_hashes", "engine_version", "installed_at", "dependencies",
         "eval_case_hashes", "verification_status",
-        "publisher_key_id", "signed_digest",
+        "publisher_key_id", "signed_digest", "dependency_resolution",
     }
     for entry in lock["packs"]:
         if set(entry) != required or entry["path"] != entry["id"]:
@@ -216,6 +237,17 @@ def validate_lock_root(
                     "verified-publisher", "verified-local", "unverified",
                 }
                 or not isinstance(entry["dependencies"], list)
+                or not isinstance(entry["dependency_resolution"], list)
+                or len(entry["dependency_resolution"]) != len(entry["dependencies"])
+                or any(not isinstance(item, dict)
+                       or set(item) != {"id", "range", "version", "tier"}
+                       or not isinstance(item["id"], str)
+                       or not isinstance(item["range"], str)
+                       or not (item["version"] is None or isinstance(item["version"], str))
+                       or not (item["tier"] is None or isinstance(item["tier"], str))
+                       for item in entry["dependency_resolution"])
+                or {item["id"] for item in entry["dependency_resolution"]}
+                != {item["id"] for item in entry["dependencies"]}
                 or not isinstance(entry["asset_hashes"], dict)
                 or not isinstance(entry["eval_case_hashes"], dict)
                 or not isinstance(entry["manifest_sha256"], str)

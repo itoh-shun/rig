@@ -1,7 +1,7 @@
 # Pack vNext — 設計ブリーフ（#523）
 
 対象 Issue: [#523](https://github.com/itoh-shun/rig/issues/523)
-状態: **S1・S2・S3 実装済み・S4 以降は設計案**。実装スライスの順序と、着手前に人が決めるべき問いを確定させるための文書。
+状態: **S1〜S4 実装済み・S5/S6 は設計案**。実装スライスの順序と、着手前に人が決めるべき問いを確定させるための文書。
 §5 の4つの問いは推奨どおり（①git-only v1 ②S5 で lock 読みへ ③vendoring を正規運用 ④`type` 無しは拒否）に決定して着手した。
 
 ---
@@ -155,9 +155,17 @@ pack は他に `video-storytelling` がある。
 | ~~**S1**~~ **完了** | `type` フィールド追加（`pack_schema_version` 2）、type→asset 表、recipe `checks:` の type 制限、`pack init --type` 必須化 | なし | 同梱4 pack が `type: skill` で validate を通り、knowledge pack の `commands/` と skill pack の `checks:` がテストで落ちる |
 | ~~**S2**~~ **完了** | source contract、`.rig/sources.json`、`git+ssh`/`git+https`/**`git+file`** install、tag→commit→digest の lock（schema 3）、D5 のエラー分類、lock writer の credential 拒否、`pack source add\|list\|remove` と `pack verify-sources` | S1 | 実 git リポジトリを source にした install が commit に固定され、tag 移動・未認証・到達不能・digest 不一致が別々の理由で報告される |
 | ~~**S3**~~ **完了** | `pack list` / `info` / `explain` / `outdated` / `update`（`source add\|list\|remove` は S2 で先行実装） | S2 | `info` が source / revision / digest / engine / 依存を一度に答え、`outdated` が行ごとに理由を報告し、`update` の失敗が旧版を残す |
-| **S4** | dependency を source 横断で解決し lock に確定させる | S2 | AC 12 |
+| ~~**S4**~~ **完了** | 依存の**解決結果**（range を満たした version と tier）を lock に記録（schema 4）し `pack info` で報告 | S2 | AC 12 |
 | **S5** | `japanese-writing` を独立 repo へ。git fixture から install する integration test。migration guide | S2 | AC 3 / 14 |
 | **S6** | 残る domain pack の外部化と `packs/` からの削除 | S5 | AC 13 |
+
+**〔S4 実装時の訂正〕** 当初は「source 横断で依存を自動取得する」と書いていたが、実装前に測ってやめた。
+**依存の欠落・range 不一致・循環は install 時に既に拒否されている**（`validate_tiered_collection`）。
+欠けていたのは取得ではなく**記録**で、AC 12 の文言（「解決結果を lock できる」）もそう読める。
+自動取得を足すなら「`{id, range}` だけの依存がどの source から来るのか」を決める必要があり、候補は
+(a) 全 source を探索＝2つが同じ id を持った瞬間に曖昧、(b) 依存に source を書く＝D3 の
+「配布経路を内容に溶接しない」に反する、のどちらかになる。**依存は明示 install で pin する**方が、
+どちらの筋の悪さも買わずに済む。
 
 **S1 を先頭に置く理由**: remote から取れるようになる前に権限モデルを固めておかないと、
 「private repo から任意コード実行 pack を入れられる」窓が S2 と S1 の間に開く。順序が安全性を決める。
