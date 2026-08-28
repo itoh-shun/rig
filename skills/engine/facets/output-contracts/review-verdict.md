@@ -2,39 +2,65 @@
 
 ## output-contract: review-verdict
 
-レビュー担当（security / design / test ほか、本 contract を指定する全 reviewer）が共通で遵守する出力構造。**evidence-first**：証拠アンカー付きの根拠を先に書き、判定は最後に置く（判定を先に出すと理由付けの前に結論へコミットするため）。機械抽出は**末尾**の `判定:` / `確信度:` 行から行う。前置き・挨拶・補足説明は禁止する。
+The output structure every reviewer that names this contract obeys — security, design, test, and
+the rest. **Evidence-first**: the grounds, each with an anchor, come first and the verdict comes
+last, because writing the verdict first commits to a conclusion before the reasoning that should
+produce it. Machine extraction reads the `判定:` and `確信度:` lines at the **end**. No preamble,
+no greeting, no closing remarks.
 
-### 形式
+### A note on the field labels
+
+`根拠:`, `条件:`, `残債:`, `判定:`, and `確信度:` are **wire tokens, not prose**. Deterministic code
+parses them — the anchor sensor, `extract_anchors`, the orchestrator's checker, and golden
+outputs in the selftest all match those exact strings. Do not translate them. Changing a label
+is a change to the review pipeline's behaviour, and it belongs in a change that migrates the
+parsers and their goldens together, not in a pass over the surrounding prose. Everything around
+them is documentation and reads in whatever language the reviewer writes.
+
+### Form
 
 ```
 根拠:
-1. （根拠1 — `path/to/file.ts:42`）
-2. （根拠2 — `path/to/other.py:10-18`）
-3. （根拠3 — 該当箇所の短い引用）
+1. (first ground — `path/to/file.ts:42`)
+2. (second ground — `path/to/other.py:10-18`)
+3. (third ground — a short quotation of the passage)
 
 条件:
 【マージ前必須】
-- （必須対応事項。なければ省略）
+- (what must be addressed before merge; omit the block if there is none)
 【フォローアップ可】
-- （任意・後続対応事項。なければ省略）
+- (what can follow later; omit the block if there is none)
 
 残債:
-- （本タスク外で検知した技術的負債・懸念。なければ省略）
+- (debt or concern noticed outside this task; omit if there is none)
 
 判定: <APPROVE|REJECT|APPROVE_WITH_CONDITIONS>
 確信度: <高|中|低>
 ```
 
-### ルール
+### Rules
 
-- **根拠を最初に出力する**（evidence-first）。判定より前に、証拠アンカー付きの根拠を必ず書く。判定から書き始めてはならない。
-- **判定は末尾に必ず出力する**（`判定:` で始まる行。最終2行の1行目）。根拠の本文中で他の判定行を引用してもよいが、機械抽出は**最後に現れる** `判定:` 行を採用する。
-- 判定語は `APPROVE` / `REJECT` / `APPROVE_WITH_CONDITIONS` のいずれか（従来と同一の語彙・意味）。
-- **確信度を最終行に必ず出力する**（`確信度:` で始まる行。`判定:` の直後）。`高`＝証拠を直接確認した ／ `中`＝状況証拠・間接確認 ／ `低`＝情報不足を含む。
-- **確信度 `低` の `REJECT` は禁止**（false-positive 制御）。低確信の懸念は `APPROVE_WITH_CONDITIONS` の条件か残債に回し、確認できない項目は推測で断じず**情報不足**と明示する。
-- 根拠は必ず **3点**。過不足禁止。
-- **各根拠には対象を一意に特定できる証拠アンカーを付ける** — コードなら `file:line`（範囲可）、散文・記録なら該当箇所の短い引用。アンカーを示せない一般論・印象は根拠にしない（アンカーは字数制限に含めない）。
-- 条件は「マージ前必須」と「フォローアップ可」を分けて箇条書きにする。いずれも該当なしの場合はブロックごと省略してよい。
-- 各サブブロック（`【マージ前必須】` / `【フォローアップ可】`）は個別に省略可能。該当事項がないサブブロックはヘッダーごと出力しない。両方とも省略する場合は `条件:` ブロック全体を省略する。
-- 残債は本タスクのスコープ外で検知したもののみ記載する。なければ省略。
-- **全体 200–400字**（日本語換算）。冗長な前置き・感想・締め挨拶は禁止。
+- **Write the grounds first** (evidence-first). Anchored grounds always precede the verdict. Never
+  open with the verdict.
+- **Always end with the verdict** (a line beginning `判定:`, the first of the final two lines). You
+  may quote another verdict line inside the body of your grounds; extraction takes the **last**
+  `判定:` line.
+- The verdict word is one of `APPROVE`, `REJECT`, `APPROVE_WITH_CONDITIONS` — the same vocabulary
+  and the same meanings as before.
+- **Always end with the confidence** (a line beginning `確信度:`, directly after `判定:`). `高` means
+  you confirmed the evidence directly; `中` means circumstantial or indirect confirmation; `低`
+  includes not having enough information.
+- **`REJECT` at `確信度: 低` is forbidden** (false-positive control). Send a low-confidence concern
+  to a condition under `APPROVE_WITH_CONDITIONS` or to debt, and say **not enough information**
+  rather than deciding by guess.
+- Exactly **three** grounds. Never more, never fewer.
+- **Each ground carries an anchor that identifies its subject uniquely** — `file:line` (a range is
+  fine) for code, a short quotation for prose or a record. An impression or a generality you
+  cannot anchor is not a ground. Anchors do not count against the length limit.
+- Split conditions into "required before merge" and "follow-up" as bullet lists. Omit either block
+  when it is empty.
+- Each sub-block (`【マージ前必須】`, `【フォローアップ可】`) is independently optional: do not print the
+  header of a sub-block with nothing under it. When both are empty, omit the whole `条件:` block.
+- Record under `残債:` only what you noticed outside this task's scope. Omit it when there is none.
+- **120–250 words in total** (200–400 characters when writing in Japanese). No padding, no
+  impressions, no sign-off.
