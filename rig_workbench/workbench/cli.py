@@ -104,7 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--runtime", choices=("auto", "native", "orca"), default="auto",
                    help="worktree runtime (default: auto; explicit orca never downgrades)")
     p.add_argument("--budget-minutes", type=float,
-                   help="estimated time in minutes; going over is flagged in status/board (#281, advisory only)")
+                   help="estimated time in minutes. NOT a limit: nothing stops or fails when a "
+                        "task goes over — status/board flag it and the run continues (#281). The "
+                        "word 'budget' reads as a cap, so this says outright that it is not one")
     p.add_argument("--caller",
                    help="name the harness invoking rig, recorded on the task for its assurance "
                         "receipt (#416, #428). This is a declaration; without it rig records only "
@@ -138,7 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input", help="the task description (defaults to the imported commit's subject)")
     p.add_argument("--slug", help="short English slug for the task-id (derived from the input if omitted)")
     p.add_argument("--reason", help="reason for the recipe choice (for the banner and log)")
-    p.add_argument("--budget-minutes", type=float, help="estimated time in minutes (#281, advisory only)")
+    p.add_argument("--budget-minutes", type=float,
+                   help="estimated time in minutes. NOT a limit — going over is flagged, never "
+                        "stopped (#281)")
     p.add_argument("--caller", help="name the harness invoking rig (#416, #428)")
     p.add_argument("--runtime", choices=("auto", "native", "orca"), default="auto",
                    help="worktree runtime (default: auto; explicit orca never downgrades)")

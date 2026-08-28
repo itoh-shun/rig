@@ -20,6 +20,7 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
+from .providers import metering_note
 from .providers import (JAPANESE_MATERIAL_PROFILES, JAPANESE_WRITING_REVIEW_CATEGORIES,
                         record_verdicts, resolve_japanese_material, parse_step_model_spec,
                         read_result_artifact, run_loop, unknown_step_model_ids)
@@ -953,7 +954,11 @@ def cmd_run(args):
     overrides = ("\nStep-model overrides: "
                  + ", ".join(f"{k}={v}" for k, v in step_models.items())) if step_models else ""
     diagnostic(f"\nAutonomous run: provider={gen} / verifier={'+'.join(ver) if isinstance(ver, list) else ver} / "
-               f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}{overrides}\n")
+               f"max-steps={max_steps} / parallel={max_parallel} / quorum={quorum}{panel}{dag}{overrides}")
+    # Whether this run's spend will be measured, said where somebody decides to start it (#532).
+    # Rig could always answer this, but only if you went and asked `runs --cost` afterwards.
+    diagnostic(metering_note([*(generators or [gen]), *(ver if isinstance(ver, list) else [ver])])
+               + "\n")
     try:
         final = run_loop(state, out, gen, ver, cfg, max_steps,
                          max_parallel=max_parallel, quorum=quorum,
@@ -969,6 +974,10 @@ def cmd_run(args):
             }[outcome]
             diagnostic(f"◈ Isolated run outcome: {label}")
         diagnostic(f"\n=== Finished: {final} ===  run-state: {out}")
+        # Repeated on the way out rather than assumed remembered: the run that just spent the
+        # money is the one whose report gets read.
+        diagnostic(metering_note([*(generators or [gen]),
+                                  *(ver if isinstance(ver, list) else [ver])]))
         artifact = state.get("result_artifact")
         if final == "DONE" and isinstance(artifact, dict) and artifact.get("path"):
             diagnostic(f"deliverable: {artifact['path']}")

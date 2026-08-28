@@ -555,6 +555,37 @@ rig-wb bench --provider mock --out artifacts/
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
 
+### RUN の支出を見る（#532）
+
+rig は**投入**を絞るレバー（`--budget low|mid`、manifest の `default_budget`）を持つが、支出が
+**計測**されるのは provider が構造化された `usage` を返すときだけ。`claude` / `codex` を CLI
+provider として使う構成では、`rig-wb runs --cost` は「unmeasured」と答え続ける。
+
+これは欠陥ではなく設計。文字数からのトークン推定は rig が明示的に拒否している種類の数字で、
+もっともらしい推定値を実測値の隣に置くのは、「計測していない」と言い続けるより悪い。
+
+**どちらの状態かを毎回 RUN が言うようになった。** 開始行と完了レポートの両方——人が支出を判断
+するのはその2箇所だから：
+
+```text
+cost: unmeasured (claude — CLI providers expose no structured usage; ...)
+cost: metered (anthropic report usage)
+cost: partly metered (anthropic) — claude unmeasured
+```
+
+**計測された支出が見たいなら、どれかの役割を HTTP provider に向ける。** `anthropic` /
+`ollama` / `lmstudio` は `usage` フィールドから自動計測される：
+
+```console
+rig-wb run bugfix --provider claude --verifier-provider anthropic
+```
+
+CLI provider の実支出は Anthropic の Usage & Cost Admin API 側にあり、rig が正直に再構成できる
+場所には無い。
+
+**`--budget-minutes` は上限ではない。** 見積もりを記録するだけで、超過は `status`/`board` に
+出るが何も止まらない（#281）。名前が上限に読めるので、help にそう明記した。
+
 ### Orca ランタイム（`--runtime`、#460〜#464、任意）
 
 **Orca は provider ではなく runtime です。** provider が決めるのは*誰がコードを書くか*（claude /
