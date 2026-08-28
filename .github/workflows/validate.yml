@@ -34,7 +34,7 @@ jobs:
           node-version: '22.18.0'
 
       - name: Install dependencies
-        run: pip install -e '.[mcp]' 'ruff==0.15.8' setuptools wheel 'tomli; python_version < "3.11"'
+        run: pip install -e '.[mcp]' 'ruff==0.15.8' 'pytest-xdist>=3.5' setuptools wheel 'tomli; python_version < "3.11"'
 
       - name: Lint (ruff)
         run: ruff check scripts rig_workbench tests
@@ -54,14 +54,54 @@ jobs:
       - name: Run computational orchestrator selftest (determinism)
         run: python3 scripts/orchestrate.py selftest
 
+      # `-n auto`, for detection before speed.
+      #
+      # A serial run is structurally blind to a whole class of defect here. #502's
+      # overhead accounting subtracted concurrent provider spans from wall clock
+      # and went negative — the module written to refuse fabricated figures
+      # manufacturing one by its own arithmetic — and it was reproducible under
+      # `-n 4` and invisible on an idle serial machine, because nothing was
+      # competing for the CPU and the spans never actually overlapped. Every
+      # timing-sensitive assertion in this suite has that shape. Contention is not
+      # a side effect of parallelising; it is the measurement.
+      #
+      # It did exactly that on its first run: two latent defects failed here that
+      # had never failed serially — a `--json` payload with a warning printed in
+      # front of it (hidden because the warning fires once per process, so in one
+      # process whatever ran first absorbed it), and an rmtree error handler that
+      # raised on an entry git had already deleted under it.
+      #
+      # Speed is the second reason, and the honest version of it is a range rather
+      # than a figure. Against a serial baseline of 34m44s (3.10) and 32m22s
+      # (3.12), three parallel runs of this branch came in between 19m33s and
+      # 25m15s on 3.10, and between 26m45s and 29m04s on 3.12 — every one of them
+      # a win, none of them repeatable to better than several minutes. `--dist load` scatters tests
+      # differently every run and the job ends when its slowest worker does, so
+      # that spread is the normal behaviour of this setup, not noise around a true
+      # value waiting to be measured more carefully.
+      #
+      # What made this safe to do: conftest's CI_TIMEOUT_FACTOR of 6 was sized for
+      # a serial CI run and says so, and 4-way contention eats into it. So it was
+      # measured, not assumed. Re-run locally at `RIG_TEST_TIMEOUT_FACTOR=2` under
+      # `-n 4` — a factor of 2 binds exactly one call site, since the 30s floor
+      # covers every measurement under 15s, and that site is the jp-workflow
+      # dry-run that historically blew its budget on this runner — the only
+      # failures were the two a root development container always produces, and
+      # neither is a timeout. Contended cost therefore stays inside 2x measured,
+      # so 6 keeps ~3x headroom in parallel too and is deliberately left alone.
+      #
       # Raising a per-subprocess budget buys stability at the cost of slower hang
       # detection, and those `timeout=` values were the only bound on a wedged
       # child here — without a step budget the fallback is Actions' 6-hour job
-      # default. The observed suite is ~1950s, so 90 minutes keeps ~2.8x headroom
-      # while still failing a genuine hang in minutes rather than hours.
+      # default. 90 minutes was cut against the ~1950s serial suite for ~2.8x
+      # headroom, and stays there. A hang budget has to clear the slowest worker's
+      # tail, and the samples above say that tail moves by minutes between runs of
+      # the same suite. Cutting close to any one of those numbers buys flakes, not
+      # faster hang detection. Re-cut it when master has enough runs to bound the
+      # spread rather than sample it.
       - name: Run pytest suite
         timeout-minutes: 90
-        run: pytest -q
+        run: pytest -q -n auto
 
   prompt-evaluation:
     name: prompt evaluation gate

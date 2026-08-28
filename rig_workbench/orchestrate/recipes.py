@@ -146,6 +146,17 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
     Exception: `require=True` (for command paths where the user explicitly
     asked for manifest-driven behavior) exits 2 with the full consent
     instructions, like the recipe gate.
+
+    Every line this gate prints goes to stderr. It used to go to stdout, where
+    the one-line warning landed in front of the payload of any `--json` command
+    run in a repository whose manifest has not been consented to yet — the first
+    `rig-wb compose-options --json | jq` in a fresh clone, and every one after it
+    until somebody consents. The bug was invisible for as long as it was, because
+    `_warned_manifests` fires once per process: whatever ran first absorbed the
+    line, so a serial test suite always had it spent by the time it reached a
+    `--json` assertion. Parallel workers do not share that set, and the failure
+    became reproducible immediately. stdout is the data channel; a diagnostic on
+    it is a defect whether or not a test happens to notice.
     """
     import hashlib
     resolved = path.resolve()
@@ -156,7 +167,7 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
                or os.environ.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
     if allowed:
         _record_trust(resolved, digest)
-        print(f"[trust] project manifest allowed and recorded: {resolved}")
+        print(f"[trust] project manifest allowed and recorded: {resolved}", file=sys.stderr)
         return True
     if require:
         print(f"[ERROR] untrusted project manifest: {resolved}\n"
@@ -166,13 +177,14 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
               f"    re-run with --allow-project-manifest   (records a content hash; silent next time)\n"
               f"    or set RIG_ALLOW_PROJECT_MANIFEST=1\n"
               f"  Review the file first: {resolved}\n"
-              f"  Trust store: {_trust_store_path()}")
+              f"  Trust store: {_trust_store_path()}", file=sys.stderr)
         sys.exit(2)
     key = (str(resolved), digest)
     if key not in _warned_manifests:
         _warned_manifests.add(key)
         print(f"[WARN] untrusted project manifest ignored: {resolved} "
-              f"(consent: --allow-project-manifest or RIG_ALLOW_PROJECT_MANIFEST=1)")
+              f"(consent: --allow-project-manifest or RIG_ALLOW_PROJECT_MANIFEST=1)",
+              file=sys.stderr)
     return False
 
 

@@ -30,9 +30,16 @@ REPO_ROOT = Path(__file__).parents[1]
 
 
 def _remove_tree(path: Path) -> None:
+    # Deliberately a copy of bench_tasks._remove_tree rather than a call to it: this file
+    # tests that module, and cleanup that depends on the code under test cannot be trusted
+    # to run when that code is what broke. It carries the same FileNotFoundError guard for
+    # the same reason — see the comment there.
     def make_writable(function: object, blocked: str, _error: object) -> None:
-        os.chmod(blocked, stat.S_IWRITE)
-        function(blocked)
+        try:
+            os.chmod(blocked, stat.S_IWRITE)
+            function(blocked)
+        except FileNotFoundError:
+            pass
 
     shutil.rmtree(path, onerror=make_writable)
 
@@ -601,3 +608,17 @@ def test_typescript_task_variant_contracts(task_id: str) -> None:
     assert not narrow.hidden_passed, narrow.hidden_output
     assert canonical.public_passed, canonical.public_output
     assert canonical.hidden_passed, canonical.hidden_output
+
+
+def test_removal_tolerates_an_entry_that_is_already_gone(tmp_path: Path) -> None:
+    """`_remove_tree`'s error handler used to chmod whatever path rmtree handed it, which
+    raises FileNotFoundError straight back out when that path is no longer there — and
+    rmtree hands it exactly that when an entry disappears between the scandir that named
+    it and the unlink that reaches it. git does this to its own workspaces: background
+    maintenance writes and deletes `.git/objects/maintenance.lock` under the tree being
+    removed. Only a loaded machine loses the race, so the suite hit it first when CI
+    started running in parallel, but the race predates that. Removing something already
+    absent is the outcome this helper wants, not an error."""
+    from rig_workbench import bench_tasks
+
+    bench_tasks._remove_tree(tmp_path / "gone-before-we-looked")

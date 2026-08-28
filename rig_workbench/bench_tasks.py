@@ -217,8 +217,19 @@ def load_tasks(root: pathlib.Path | None = None) -> dict[str, BenchTask]:
 
 def _remove_tree(path: pathlib.Path) -> None:
     def make_writable(function, blocked, _error):
-        os.chmod(blocked, stat.S_IWRITE)
-        function(blocked)
+        # rmtree calls this for every failure it hits, and "the entry is already gone"
+        # is one of them: git runs background maintenance inside the workspaces this
+        # removes, writing and deleting `.git/objects/maintenance.lock` under the very
+        # tree being walked, so scandir can name a file that unlink no longer finds.
+        # chmod on a vanished path raises straight out of the handler and takes the
+        # whole rmtree with it — turning the outcome this function wants into an error.
+        # Only a busy machine loses that race, which is why it took a parallel test run
+        # to see it; the race was always there.
+        try:
+            os.chmod(blocked, stat.S_IWRITE)
+            function(blocked)
+        except FileNotFoundError:
+            pass
 
     shutil.rmtree(path, onerror=make_writable)
 

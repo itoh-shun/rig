@@ -103,14 +103,25 @@ def project_manifest(tmp_path, monkeypatch):
 def test_untrusted_manifest_degrades_to_empty(project_manifest, capsys):
     """Soft-degrade: no exit on hot paths — {} as if no manifest exists, plus a warning."""
     assert recipes.load_manifest() == {}
-    assert "untrusted project manifest" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "untrusted project manifest" in captured.err
+    assert captured.out == ""
+
+
+def test_the_warning_never_touches_stdout(project_manifest, capsys):
+    """stdout is the data channel. This line used to be printed there, and it landed in
+    front of the payload of every `--json` command run in a not-yet-consented repository —
+    the first `compose-options --json | jq` in a fresh clone. It stayed hidden because the
+    warning fires once per process, so in a serial suite whatever ran first absorbed it."""
+    assert recipes.load_manifest() == {}
+    assert capsys.readouterr().out == ""
 
 
 def test_untrusted_manifest_warns_only_once_per_content(project_manifest, capsys):
     recipes.load_manifest()
     capsys.readouterr()
     assert recipes.load_manifest() == {}  # hot path: second call stays quiet
-    assert "untrusted project manifest" not in capsys.readouterr().out
+    assert "untrusted project manifest" not in capsys.readouterr().err
 
 
 def test_manifest_env_consent_allows_and_records(project_manifest, monkeypatch, tmp_path):
@@ -148,7 +159,10 @@ def test_missing_manifest_is_silent_empty(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(config, "INVOCATION_CWD", tmp_path)
     monkeypatch.setenv("RIG_TRUST_STORE", str(tmp_path / "trusted.json"))
     assert recipes.load_manifest() == {}
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    # Both streams: stdout carries the data, and now that the gate's diagnostics live on
+    # stderr, checking only stdout would let a spurious warning through unnoticed.
+    assert (captured.out, captured.err) == ("", "")
 
 
 # ── concurrent trust recording (#329) ─────────────────────────────────────
