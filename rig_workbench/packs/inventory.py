@@ -97,6 +97,74 @@ def info(root: pathlib.Path, pack_id: str) -> dict:
         "assets": {kind: len(paths) for kind, paths in sorted(manifest["assets"].items())
                    if paths},
         "eval_cases": len(entry["eval_case_hashes"]),
+        # Absent rather than empty when the pack declares none: `{}` here would read as "this
+        # pack says it is about nothing", which is a different claim from "this pack does not
+        # say what it is about".
+        **({"knowledge": manifest["knowledge"]} if "knowledge" in manifest else {}),
+    }
+
+
+def _scope_matches(declared: str, requested: str) -> bool:
+    """A request for a bare dimension matches every value under it; a valued request is exact.
+
+    `--scope product` finding `product:northwind-one` is the case that makes this worth spelling
+    out: somebody narrowing a question to "the product, whichever one" should not have to know
+    the product's slug to do it. The reverse does not hold — `--scope product:northwind-one` must
+    not match a pack that only claims `product` in general, or a per-product answer would be
+    sourced from something that never claimed to be about that product.
+    """
+    return declared == requested or declared.startswith(f"{requested}:")
+
+
+def knowledge_rows(root: pathlib.Path, *, topics: tuple[str, ...] = (),
+                   scopes: tuple[str, ...] = ()) -> dict:
+    """Which installed packs declare knowledge for this question — and whether that settles it.
+
+    This selects; it does not answer, and it deliberately does not choose. When candidates
+    turn out to span more than one scope, "which scope did you mean" is a question about the
+    asker's intent, and no amount of reading the packs can recover it: the issue's own example
+    is a checklist asking "do you take backups?", which is a different answer for the company,
+    for one product, and for the infrastructure underneath both. What this returns instead is
+    the fact that the question is open and the exact set of alternatives, so the layer that
+    can hold a conversation has something to ask rather than something to guess.
+
+    `ambiguous` is about scopes, not about counts. Two company packs both matching is not an
+    ambiguity — they are two sources for one scope and an answer should rest on both. One
+    company pack and one product pack matching is, because merging them produces an answer to
+    a question nobody asked.
+    """
+    candidates: list[dict] = []
+    for entry in _entries(root):
+        try:
+            manifest = validate_pack(root / entry["path"])
+        except PackError:
+            # An unreadable pack is `?` in `list` and skipped here on purpose: this feeds an
+            # answer, and half-reading a pack whose contents failed validation would put
+            # unverified material behind a citation.
+            continue
+        knowledge = manifest.get("knowledge")
+        if not knowledge:
+            continue
+        matched_scopes = sorted(
+            declared for declared in knowledge["scope"]
+            if not scopes or any(_scope_matches(declared, want) for want in scopes)
+        )
+        matched_topics = sorted(set(knowledge["topics"]) & set(topics)) if topics else []
+        if not matched_scopes or (topics and not matched_topics):
+            continue
+        candidates.append({
+            "id": entry["id"], "version": entry["version"], "type": manifest["type"],
+            "scope": knowledge["scope"], "matched_scope": matched_scopes,
+            "topics": knowledge["topics"], "matched_topics": matched_topics,
+            "owner": knowledge["owner"], "evidence": knowledge["evidence"],
+            "reviewed_at": knowledge["reviewed_at"],
+        })
+    distinct = sorted({scope for row in candidates for scope in row["matched_scope"]})
+    return {
+        "query": {"topics": sorted(topics), "scopes": sorted(scopes)},
+        "candidates": candidates,
+        "scopes": distinct,
+        "ambiguous": len(distinct) > 1,
     }
 
 

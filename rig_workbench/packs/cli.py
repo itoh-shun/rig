@@ -57,6 +57,16 @@ def _parser() -> argparse.ArgumentParser:
         parser_.add_argument("--scope", choices=["project", "user", "org"], default="project")
         parser_.add_argument("--root")
         parser_.add_argument("--json", action="store_true")
+    knowledge = sub.add_parser("knowledge")
+    knowledge.add_argument("--topic", action="append", default=[], dest="topics",
+                           help="repeatable; a pack matches if it declares any of them")
+    knowledge.add_argument("--scope", action="append", default=[], dest="scopes",
+                           help="repeatable; a bare dimension (`product`) matches every "
+                                "value under it, a valued one (`product:x`) is exact")
+    knowledge.add_argument("--scope-filter", choices=["project", "user", "org"],
+                           default="project", dest="scope")
+    knowledge.add_argument("--root")
+    knowledge.add_argument("--json", action="store_true")
     update = sub.add_parser("update")
     update.add_argument("pack")
     update.add_argument("--to", required=True)
@@ -285,6 +295,30 @@ def cmd_pack(argv: list[str]) -> int:
                     worst = max(worst, 0 if reason == "ok" else 1)
                 print(f"{entry['id']}\t{entry['source']['path']}\t{reason}")
             return worst
+        if args.command == "knowledge":
+            from .installer import scope_root
+            from .inventory import knowledge_rows
+            root = scope_root(args.scope, project=pathlib.Path.cwd(),
+                              root=pathlib.Path(args.root) if args.root else None)
+            report = knowledge_rows(root, topics=tuple(args.topics),
+                                    scopes=tuple(args.scopes))
+            if args.json:
+                print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+                return 0
+            if not report["candidates"]:
+                print("no installed pack declares knowledge matching that")
+                return 0
+            for row in report["candidates"]:
+                print(f"{row['id']}@{row['version']}\t{'/'.join(row['matched_scope'])}"
+                      f"\t{row['owner']}\treviewed {row['reviewed_at']}")
+                print(f"  topics: {', '.join(row['topics'])}")
+                print(f"  evidence: {', '.join(row['evidence'])}")
+            if report["ambiguous"]:
+                # Named, not resolved. Which scope was meant is a fact about the asker that
+                # no pack contains, so this says what has to be settled and stops there.
+                print(f"scope is ambiguous: {', '.join(report['scopes'])} — "
+                      f"narrow with --scope before treating any of these as the answer")
+            return 0
         if args.command in {"list", "info", "explain", "outdated", "update"}:
             from .installer import scope_root, update_pack
             from .inventory import explain as explain_pack
