@@ -555,6 +555,37 @@ rig-wb bench --provider mock --out artifacts/
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
 
+### 組織知識への昇格（`rig-wb wb org-knowledge`、#440）
+
+`knowledge-candidate` は「引用記録がこの主張を明示的に支えるか」だけを答え、支持された候補も
+**まだ承認でも組織知識でもない**と明言します。その間の距離がこれで、中身は仕組みというより
+**拒否の集合**です。
+
+```console
+rig-wb wb org-knowledge register --candidate lesson.json
+rig-wb wb org-knowledge promote <id> --to evaluated
+rig-wb wb org-knowledge promote <id> --to approved --actor itoh --reason "drill で確認"
+rig-wb wb org-knowledge promote <id> --to active   --actor itoh --reason "全 repo へ適用"
+rig-wb wb org-knowledge list --active-only
+```
+
+- **instinct とは別層。** instinct は放置すると減衰する未検証のヒントで、*間違っていても安い*
+  ことが価値。組織知識は evidence 裏付けありで減衰しない。片方をもう片方に書き込むと、
+  行き先が持っていなかった性質のほうが壊れます——instinct が「無視できない主張」を運び始めるか、
+  検証済みの知見が30日で静かに失効するか
+- **`active` には全状態を通らないと到達しない。** `candidate → evaluated → approved → active`。
+  「1回の失敗を即 organization policy にしない」は #440 の非目標の筆頭で、通らなくてよい
+  ライフサイクルは制御ではありません
+- **承認は記名された人間の行為。** `approved` 以降は actor と reason が必須で、それを自動で
+  生む経路はコード上に存在しません。LLM は候補を起草してよく、`evaluated` まで進めてよく、
+  **承認はできません**
+- **衝突は提示するだけで解消しない。** 同一 scope に active な同一 rule があれば両方の id を
+  挙げて拒否します。検出するのは**構造的な事実**（同一 rule 文字列 × scope 重複）だけで、
+  文言の違う2つの rule を読んで矛盾かどうかを rig が決めることはしません——そこは人間の判断です
+
+台帳は append-only なので、rollback しても「昇格して、やめた」履歴が残ります。書き換えられる
+知識は「なぜ始めて、なぜやめたのか」に答えられず、それこそがこの機能の存在理由です。
+
 ### Orca ランタイム（`--runtime`、#460〜#464、任意）
 
 **Orca は provider ではなく runtime です。** provider が決めるのは*誰がコードを書くか*（claude /

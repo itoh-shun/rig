@@ -47,6 +47,7 @@ from .workflow_effectiveness import cmd_workflow_effectiveness
 from .intent import cmd_intent
 from .intent_wiring import cmd_derive
 from .knowledge_candidate import cmd_knowledge_candidate
+from .org_knowledge import cmd_org_knowledge
 from .change_graph import cmd_change_graph
 from .anomaly_trigger import cmd_anomaly_trigger
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
@@ -202,6 +203,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="emit the rig.knowledge-candidate-assessment/v1 result")
     p.set_defaults(func=cmd_knowledge_candidate)
+
+    p = sub.add_parser(
+        "org-knowledge",
+        help="promote an evidence-backed candidate into versioned organizational knowledge "
+             "(#440). Separate from instincts on purpose: instincts are unverified hints that "
+             "decay, this does not. Nothing reaches `active` without passing through every "
+             "state before it, approval needs an actor and a reason, and a rule already active "
+             "at an overlapping scope is refused rather than overwritten")
+    p.add_argument("action", choices=("register", "promote", "list", "history"))
+    p.add_argument("id", nargs="?", help="knowledge id, for promote and history")
+    p.add_argument("--candidate", help="path to a rig.knowledge-candidate/v1 document "
+                                       "(register); it must assess as supported")
+    p.add_argument("--to", choices=("evaluated", "approved", "active", "deprecated",
+                                    "rolled_back"),
+                   help="the next state (promote). One step only — rig will not walk several")
+    p.add_argument("--actor", help="who is making this transition; required from `approved` on")
+    p.add_argument("--reason", help="why; required from `approved` on")
+    p.add_argument("--scope", nargs="*", help="filter `list` to knowledge covering this scope")
+    p.add_argument("--active-only", action="store_true",
+                   help="only knowledge a workflow may rely on; an approved-but-not-activated "
+                        "rule is a decision made and not yet applied")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_org_knowledge)
 
     p = sub.add_parser(
         "change-graph",

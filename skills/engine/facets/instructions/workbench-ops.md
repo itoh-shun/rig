@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger` / `/rig org-knowledge`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -10,6 +10,28 @@
 
 - サブコマンドの引数に `task_id` が省略された場合、`workbench.py` は `.rig/runs/` 内の**最新 task**を自動選択する。複数 task が並行している可能性がある場合（`workbench.py log --limit 5` で確認）は、曖昧さを避けるため task_id を明示するようユーザーに促す。
 - どのサブコマンドも**親 context に長い diff 本文を引き込まない**（context-minimal）。`workbench.py diff` の出力（ファイル一覧＋shortstat）はそのまま見せてよいが、個々のコード片の要約は `diff.md`（RUN 中にモデルが書いた散文）を参照する。
+
+## `/rig org-knowledge <action> [id] [...]`
+
+```bash
+python3 scripts/workbench.py org-knowledge register --candidate <path>
+python3 scripts/workbench.py org-knowledge promote <id> --to <state> [--actor A --reason R]
+python3 scripts/workbench.py org-knowledge list [--active-only] [--scope ...] [--json]
+python3 scripts/workbench.py org-knowledge history <id>
+```
+
+evidence に支えられた知見候補を versioned な組織知識へ昇格させる台帳（#440）。**instinct とは別層**：
+instinct は減衰する未検証のヒント、こちらは evidence 裏付けありで減衰しない。
+
+**この手順で絶対にやらないこと**：
+
+- **`approved` への昇格を代行しない。** actor と reason が必須で、それは人間の記名承認を指す。
+  候補の起草と `evaluated` までは委譲してよいが、承認は利用者に出させる
+- **状態を飛ばさない。** `candidate → evaluated → approved → active` を1段ずつ。CLI 側が拒否する
+- **衝突を解消しない。** 同一 scope に active な同一 rule があれば拒否される。どちらを残すかは
+  利用者の判断で、旧版を明示的に `deprecated` にしてもらう
+
+出力はそのまま提示する。判定を言い換えて強めない。
 
 ## `/rig knowledge-candidate <candidate> [--json]`
 
