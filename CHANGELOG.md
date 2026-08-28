@@ -4,38 +4,6 @@
 
 ### Added
 
-**Evidence-backed lessons can be promoted into versioned organizational knowledge**
-(#440, `rig-wb wb org-knowledge`). `knowledge_candidate` already answered "do the cited records
-support this claim?" and said in as many words that a supported candidate is still not
-"approved, or organizational knowledge". This is the distance between those two, and it is made
-of refusals rather than machinery.
-
-**A separate layer from instincts, deliberately.** Instincts are light, unverified hints that
-decay when nothing refreshes them — their whole value is that they cost nothing to be wrong.
-Organizational knowledge is evidence-backed and does not decay. Writing one into the other
-would destroy whichever property the destination lacked: instincts would start carrying claims
-nobody may ignore, or verified lessons would quietly expire after thirty days. A test checks
-that separation by AST, since this module's own prose names instincts to explain why it keeps
-away from them.
-
-**Nothing reaches `active` without walking every state before it** — `candidate → evaluated →
-approved → active`, then `deprecated` or `rolled_back`. "A single failure must not become
-organization policy" is the first non-goal #440 lists, and a lifecycle nobody has to pass
-through is not a control. **Approval requires an actor and a reason**, and no code path
-produces that transition on its own: an LLM may draft a candidate and may evaluate it, it may
-not approve it. **Conflicts are shown, never resolved** — a rule already active at an
-overlapping scope is refused with both versions named, and the way through is to deprecate the
-old one explicitly. What is detected is structural (same rule text, overlapping scope) and the
-module says so: rig does not read two differently-worded rules and decide whether they
-contradict, which is the judgement a human is here to make.
-
-The store is append-only, so a rolled-back promotion leaves the record that it happened.
-Knowledge whose history can be rewritten cannot answer "why did we start doing this, and why
-did we stop?" — the question the feature exists to serve. Citations travel with the knowledge
-so provenance (#436) can reach the records, not only the conclusion drawn from them, and the
-candidate's confidence stays labelled as the author's claim rather than becoming something rig
-measured.
-
 **Workflow effectiveness can now measure how long runs took, and how much of it was rig's
 own** (#433 §1). It reported `runtime` as unobservable, on the grounds that `runs.jsonl` carries
 a finish timestamp and no start. That stopped being true in this same release: #502 writes a
