@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Added
+
+**Two registries nobody was checking are now checked** (#421, #392, #395, #385, #410 —
+salvaged from the stalled #420). The same defect has been filed at least ten times in the same
+shape: something is implemented, tested, documented in its own file, and reachable from nowhere
+a reader would look. Every repair was correct and every repair held. What recurred is that
+nothing was watching — and #395 says so outright, that `rig-evidence` and `rig-mission-control`
+are entry points rather than bricks, so `--validate`'s catalogue-drift check cannot see them at
+all.
+
+`tests/test_docs_registry.py` watches `docs/` against both READMEs and `[project.scripts]`
+against the engine's inventory. `tests/test_first_report_contract.py` holds the first-report
+contract across all four fan-out instructions — before dispatch, a five-call ceiling, and
+retractable, the last clause being the one that matters: a preview that cannot be withdrawn is
+a verdict, and a verdict published before the reviewers read anything is one its author then
+defends.
+
+It found three live gaps on its first run, which is the argument for it:
+
+- `docs/pack-migration.md` was one link deep, reachable only through `packs.md`. Taking a pack
+  out to its own repository is a distinct task somebody goes looking for, so it is in the index
+  now.
+- `docs/pack-vnext-design-brief.ja.md` was referenced from nowhere at all. Writing a route into
+  the exemption list would have been precisely the lie the sensor exists to catch, so it was
+  given a real one: `packs.md` now links it as the rationale behind the pack model.
+- **`rig-mission-control-live` is installed by `pyproject.toml` and appeared in no inventory and
+  neither README** — a command findable only by listing your PATH. Both READMEs name it now.
+
+The inventory half ships as a ratchet rather than an assertion, in the same shape as the prompt
+coverage gate. `skills/engine/SKILL.md` §2 still omits `rig-mcp` and `rig-mission-control-live`,
+and closing that means editing a covered prompt surface, which re-opens the evaluation gate and
+wants freshly signed evidence — a maintainer task with the attestation key. So the debt is named
+in `SKILL_INVENTORY_DEBT`, growth fails, and a name that gets fixed must leave the list or the
+staleness check objects. Both directions were verified by breaking them on purpose. A debt
+somebody decided to carry is a different thing from a gap nobody knew about, and the second is
+the whole complaint in #395.
+
+
 ## [2.9.0] - 2026-08-28
 
 ### Added

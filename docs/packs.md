@@ -62,6 +62,10 @@ is refused rather than guessed at.
 private, and who may read it are the owner's decisions. The full walkthrough for both sides of
 a migration is in [pack-migration.md](pack-migration.md).
 
+Why the pack model is shaped this way — the type/permission split, the source contract, and
+which slices were taken in what order — is recorded in
+[pack-vnext-design-brief.ja.md](pack-vnext-design-brief.ja.md) (Japanese).
+
 ## Seeing what is installed
 
 ```console
