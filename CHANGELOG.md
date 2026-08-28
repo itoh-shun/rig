@@ -4,6 +4,32 @@
 
 ### Added
 
+**A knowledge candidate now hands over the documents, not just the pack name** (#533, second
+slice). `pack knowledge` reported which packs could answer a question and what they cite;
+finding the actual files was left to the caller, which meant either reimplementing tier
+resolution or citing the wrong copy of a document. Each candidate now carries its knowledge
+material addressed as `pack://<scope>/<id>/<relative>` — never a filesystem path, which the
+pack model already required of any projection somebody else consumes.
+
+The shadowing is the part worth spelling out. A `wiki` resolves by name across the tier order,
+so a project pack's `backup-policy` overrides a user pack's and only the winner's text ever
+reaches a prompt. Listing the loser as though it were in force would produce a citation
+pointing at a document nobody reads — wrong in the one way a citation must never be — while
+dropping it silently leaves somebody hunting for a file that has not gone anywhere. So it is
+listed and labelled, with `effective` and the id of whatever won.
+
+Two things were learned by building the fixture rather than by reading the code, and both are
+now documented. Shadowing is always *across* tiers: two packs in one scope may not both carry
+`wiki:backup-policy`, because the collection validator refuses a same-tier collision outright.
+And a `wiki` is prompt material, which puts a knowledge pack under rules that predate this
+work — it must ship an evaluation case, bound by `prompt_surfaces` to its own surfaces. A
+company's knowledge documents are governed like any other prompt surface. That is the intended
+behaviour rather than an accident of packaging, and it is better known before writing the pack
+than discovered at install time.
+
+
+### Added
+
 **A pack can declare what its contents are about, and rig can name the candidates for a
 question without choosing between them** (#533, first slice). `type` already said what a pack
 may carry; the optional `knowledge:` block says what it is *about* — `scope`, `topics`,

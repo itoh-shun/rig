@@ -12,6 +12,8 @@ that quietly returns the first match would pass any test that only asserted "som
 back". Every ambiguity case below therefore asserts on what the selector *refused* to do.
 """
 
+import copy
+import hashlib
 import json
 import pathlib
 
@@ -21,6 +23,7 @@ from rig_workbench.packs.inventory import knowledge_rows
 from rig_workbench.packs.manifest import (KNOWLEDGE_FIELDS, PACK_SCHEMA_VERSION, canonical,
                                           validate_manifest_shape)
 from rig_workbench.packs.model import ASSET_DIRS, PackError
+from test_eval_cases import valid_case
 
 COMPANY = {
     "scope": ["company"],
@@ -50,13 +53,22 @@ def _manifest(pack_id: str, knowledge: dict | None = None) -> dict:
     return manifest
 
 
-def _scope(tmp_path: pathlib.Path, packs: dict[str, dict | None]) -> pathlib.Path:
+def _scope(tmp_path: pathlib.Path, packs: dict[str, dict | None],
+           wikis: dict[str, list[str]] | None = None,
+           scope: str = "project") -> pathlib.Path:
     """A scope root whose lock owns `packs`, each written to disk as a valid manifest.
 
-    `knowledge_rows` reads the manifest on disk rather than the lock, exactly as `pack list`
-    reads `type` from disk, so the pack directory is the part that has to be real.
+    Built at `<project>/.rig`, which is where a real project scope lives, rather than at some
+    convenient scratch path. That matters for the document rows and not only for tidiness:
+    whether a wiki is shadowed is decided by the tier resolver reading `.rig/packs`, so a
+    fixture placed anywhere else would report every document as shadowed by nothing and the
+    shadowing tests below would pass without exercising the thing they name.
+
+    `knowledge_rows` reads each manifest from disk rather than from the lock, exactly as
+    `pack list` reads `type` from disk, so the pack directory is the part that has to be real.
     """
-    root = tmp_path / "scope"
+    wikis = wikis or {}
+    root = tmp_path / ".rig"
     entries = []
     # Sorted, because the lock refuses unsorted entries. Building the fixture through that
     # rule rather than around it keeps these tests reading a lock a real install could write.
@@ -64,14 +76,38 @@ def _scope(tmp_path: pathlib.Path, packs: dict[str, dict | None]) -> pathlib.Pat
         knowledge = packs[pack_id]
         directory = root / "packs" / pack_id
         directory.mkdir(parents=True)
-        (directory / "pack.yaml").write_text(canonical(_manifest(pack_id, knowledge)),
-                                             encoding="utf-8")
+        manifest = _manifest(pack_id, knowledge)
+        for name in wikis.get(pack_id, []):
+            relative = f"facets/knowledge/{name}.md"
+            target = directory / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"# {name}\n", encoding="utf-8")
+            manifest["assets"]["wiki"].append(relative)
+            manifest["hashes"][relative] = hashlib.sha256(
+                target.read_bytes()).hexdigest()
+        if manifest["assets"]["wiki"]:
+            # A wiki is prompt material, so two older rules apply to a knowledge pack exactly
+            # as they do to any other: it must ship an evaluation case, and that case must be
+            # bound by `prompt_surfaces` to the pack's own prompt assets. Built through those
+            # rules rather than around them — a fixture that dodged them would be testing a
+            # pack no install would accept, and the coupling is worth knowing about, since it
+            # means a company's knowledge documents sit under the prompt-evaluation ratchet.
+            case = copy.deepcopy(valid_case())
+            case["id"] = f"{pack_id}-case"
+            case["prompt_surfaces"] = sorted(f"wiki:{name}" for name in wikis[pack_id])
+            relative = f"evals/cases/{pack_id}-case/case.json"
+            target = directory / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(canonical(case), encoding="utf-8")
+            manifest["assets"]["eval-case"] = [relative]
+            manifest["hashes"][relative] = hashlib.sha256(target.read_bytes()).hexdigest()
+        (directory / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
         (directory / "compatibility.yaml").write_text(canonical({
             "compatibility_schema_version": 1, "pack_id": pack_id, "pack_version": "1.0.0",
             "engine": "*", "platforms": ["any"],
         }), encoding="utf-8")
         entries.append({
-            "id": pack_id, "version": "1.0.0", "kind": "project", "scope": "project",
+            "id": pack_id, "version": "1.0.0", "kind": "project", "scope": scope,
             "path": f"packs/{pack_id}", "installed_at": "2026-08-27T00:00:00+00:00",
             "engine_version": "2.8.0", "verification_status": "verified-local",
             "publisher_key_id": None, "manifest_sha256": "0" * 64,
@@ -174,7 +210,7 @@ def test_the_issue_example_returns_both_candidates_and_refuses_to_pick(tmp_path)
     not rank them, and it does not return the first."""
     root = _scope(tmp_path, {"company-security": COMPANY, "product-security": PRODUCT})
 
-    report = knowledge_rows(root, topics=("backup",))
+    report = knowledge_rows(tmp_path, root, topics=("backup",))
 
     assert [row["id"] for row in report["candidates"]] == [
         "company-security", "product-security"]
@@ -185,7 +221,7 @@ def test_the_issue_example_returns_both_candidates_and_refuses_to_pick(tmp_path)
 def test_naming_the_scope_settles_it(tmp_path):
     root = _scope(tmp_path, {"company-security": COMPANY, "product-security": PRODUCT})
 
-    report = knowledge_rows(root, topics=("backup",), scopes=("company",))
+    report = knowledge_rows(tmp_path, root, topics=("backup",), scopes=("company",))
 
     assert [row["id"] for row in report["candidates"]] == ["company-security"]
     assert not report["ambiguous"]
@@ -195,7 +231,7 @@ def test_a_bare_dimension_matches_every_value_under_it(tmp_path):
     """Somebody narrowing to "the product, whichever one" should not have to know its slug."""
     root = _scope(tmp_path, {"company-security": COMPANY, "product-security": PRODUCT})
 
-    report = knowledge_rows(root, scopes=("product",))
+    report = knowledge_rows(tmp_path, root, scopes=("product",))
 
     assert [row["id"] for row in report["candidates"]] == ["product-security"]
 
@@ -206,7 +242,7 @@ def test_a_valued_scope_does_not_match_a_pack_claiming_only_the_dimension(tmp_pa
     generic = {**PRODUCT, "scope": ["product"]}
     root = _scope(tmp_path, {"product-security": generic})
 
-    assert knowledge_rows(root, scopes=("product:joypla-one",))["candidates"] == []
+    assert knowledge_rows(tmp_path, root, scopes=("product:joypla-one",))["candidates"] == []
 
 
 def test_two_packs_at_one_scope_are_not_an_ambiguity(tmp_path):
@@ -215,7 +251,7 @@ def test_two_packs_at_one_scope_are_not_an_ambiguity(tmp_path):
     people back a prompt with nothing to choose between."""
     root = _scope(tmp_path, {"corp-a": COMPANY, "corp-b": {**COMPANY, "owner": "Legal"}})
 
-    report = knowledge_rows(root, topics=("backup",))
+    report = knowledge_rows(tmp_path, root, topics=("backup",))
 
     assert len(report["candidates"]) == 2
     assert not report["ambiguous"]
@@ -226,7 +262,7 @@ def test_a_pack_with_no_declaration_is_never_a_candidate(tmp_path):
     not be read into an answer."""
     root = _scope(tmp_path, {"company-security": COMPANY, "silent": None})
 
-    assert [row["id"] for row in knowledge_rows(root)["candidates"]] == ["company-security"]
+    assert [row["id"] for row in knowledge_rows(tmp_path, root)["candidates"]] == ["company-security"]
 
 
 def test_a_topic_nobody_claims_returns_nothing_rather_than_everything(tmp_path):
@@ -234,7 +270,7 @@ def test_a_topic_nobody_claims_returns_nothing_rather_than_everything(tmp_path):
     it hands the answering side material about something else and calls it evidence."""
     root = _scope(tmp_path, {"company-security": COMPANY, "product-security": PRODUCT})
 
-    report = knowledge_rows(root, topics=("payroll",))
+    report = knowledge_rows(tmp_path, root, topics=("payroll",))
 
     assert report["candidates"] == []
     assert not report["ambiguous"]
@@ -246,7 +282,7 @@ def test_every_candidate_carries_its_evidence_and_owner(tmp_path):
     them."""
     root = _scope(tmp_path, {"company-security": COMPANY})
 
-    row = knowledge_rows(root, topics=("backup",))["candidates"][0]
+    row = knowledge_rows(tmp_path, root, topics=("backup",))["candidates"][0]
 
     assert row["evidence"] == COMPANY["evidence"]
     assert (row["owner"], row["reviewed_at"]) == (COMPANY["owner"], COMPANY["reviewed_at"])
@@ -258,4 +294,105 @@ def test_an_unreadable_pack_is_skipped_rather_than_half_read(tmp_path):
     root = _scope(tmp_path, {"company-security": COMPANY, "broken": PRODUCT})
     (root / "packs" / "broken" / "pack.yaml").write_text("{not json", encoding="utf-8")
 
-    assert [row["id"] for row in knowledge_rows(root)["candidates"]] == ["company-security"]
+    assert [row["id"] for row in knowledge_rows(tmp_path, root)["candidates"]] == ["company-security"]
+
+
+# ── handing the documents over ────────────────────────────────────────────────
+
+
+def test_a_candidate_carries_the_documents_and_not_just_the_pack_name(tmp_path):
+    """Without this, the answering side is told which pack to read and left to find the files
+    itself — which means reimplementing tier resolution, or citing the wrong copy."""
+    root = _scope(tmp_path, {"company-security": COMPANY},
+                  wikis={"company-security": ["backup-policy"]})
+
+    documents = knowledge_rows(tmp_path, root, topics=("backup",))["candidates"][0]["documents"]
+
+    assert [(d["kind"], d["name"]) for d in documents] == [("wiki", "backup-policy")]
+
+
+def test_a_document_is_addressed_by_uri_and_never_by_filesystem_path(tmp_path):
+    """The pack model's own rule: `path` is an internal handle, and anything anybody else
+    consumes gets the stable `pack://` form. A projection that leaked absolute paths would
+    also leak the machine's directory layout into whatever quotes it."""
+    root = _scope(tmp_path, {"company-security": COMPANY},
+                  wikis={"company-security": ["backup-policy"]})
+
+    document = knowledge_rows(tmp_path, root)["candidates"][0]["documents"][0]
+
+    assert document["uri"] == (
+        "pack://project/company-security/facets/knowledge/backup-policy.md")
+    assert str(tmp_path) not in document["uri"]
+
+
+def test_a_shadowed_document_says_so_and_names_the_winner(tmp_path, monkeypatch):
+    """Shadowing is across tiers, never within one: two packs in the same scope may not both
+    carry `wiki:backup-policy` — the collection validator calls that a same-tier collision and
+    refuses the install. So the case that matters is a user-scope pack whose document a
+    project pack overrides. Only the winner's text reaches a prompt, and reporting the loser
+    as effective would put an answer behind a document nobody reads — a citation wrong in the
+    one way a citation must never be."""
+    user_home = tmp_path / "home"
+    monkeypatch.setenv("RIG_USER_HOME", str(user_home))
+    _scope(user_home, {"company-security": COMPANY},
+           wikis={"company-security": ["backup-policy"]}, scope="user")
+    _scope(tmp_path, {"product-security": PRODUCT},
+           wikis={"product-security": ["backup-policy"]})
+
+    report = knowledge_rows(tmp_path, user_home / ".rig", topics=("backup",))
+    document = report["candidates"][0]["documents"][0]
+
+    assert not document["effective"]
+    assert document["provided_by"] == "product-security"
+
+
+def test_a_shadowed_document_is_still_listed_rather_than_dropped(tmp_path, monkeypatch):
+    """Hiding it would leave somebody asking where their file went; citing it silently would
+    put an answer behind text nobody reads. The two failures are opposite, and this reports
+    its way between them: listed, and labelled."""
+    user_home = tmp_path / "home"
+    monkeypatch.setenv("RIG_USER_HOME", str(user_home))
+    _scope(user_home, {"company-security": COMPANY},
+           wikis={"company-security": ["backup-policy"]}, scope="user")
+    _scope(tmp_path, {"product-security": PRODUCT},
+           wikis={"product-security": ["backup-policy"]})
+
+    report = knowledge_rows(tmp_path, user_home / ".rig", topics=("backup",))
+
+    assert len(report["candidates"][0]["documents"]) == 1
+
+
+def test_a_document_nothing_else_claims_is_effective(tmp_path):
+    """The other half of the flag. Without this, `effective` could be hard-wired False and
+    the shadowing test above would still pass."""
+    root = _scope(tmp_path, {"company-security": COMPANY},
+                  wikis={"company-security": ["backup-policy"]})
+
+    document = knowledge_rows(tmp_path, root, topics=("backup",))["candidates"][0]["documents"][0]
+
+    assert document["effective"]
+    assert document["provided_by"] == "company-security"
+
+
+def test_a_pack_carrying_no_documents_reports_an_empty_list(tmp_path):
+    """A declaration without material is a real state — a pack whose knowledge lives in an
+    external source it has not wired up yet — and it should read as "nothing here", not as a
+    missing key the caller has to guess at."""
+    root = _scope(tmp_path, {"company-security": COMPANY})
+
+    assert knowledge_rows(tmp_path, root)["candidates"][0]["documents"] == []
+
+
+def test_the_uri_names_the_scope_the_pack_is_actually_installed_in(tmp_path, monkeypatch):
+    """The tier segment comes from the lock, which is the record of where the pack was
+    installed. A user-scope pack that announced itself as `pack://project/...` would be a
+    public identifier pointing at a tier it is not in, and anything resolving it would look
+    in the wrong place."""
+    user_home = tmp_path / "home"
+    monkeypatch.setenv("RIG_USER_HOME", str(user_home))
+    _scope(user_home, {"company-security": COMPANY},
+           wikis={"company-security": ["backup-policy"]}, scope="user")
+
+    document = knowledge_rows(tmp_path, user_home / ".rig")["candidates"][0]["documents"][0]
+
+    assert document["uri"].startswith("pack://user/company-security/")
