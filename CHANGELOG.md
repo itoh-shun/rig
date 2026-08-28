@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Changed
+
+**A declared dependency that will not import now fails, instead of turning its tests into
+skips.** Fourteen `importorskip` guards named `cryptography` and `pyyaml` — both of them
+`[project] dependencies`, so both present in any working install. Guarding a required
+dependency does not make the suite more portable; it makes a broken install quiet.
+
+That cost an hour to learn. `cryptography` imported fine at the top level while its
+`_cffi_backend` was missing, so the eleven publisher tests behind the guard became eleven
+skips and the run reported green. Nothing said the signing path had gone unexercised: a
+failure count of zero reads as success even when the passing count has quietly dropped, and a
+skip is the one result nobody scans a log for.
+
+The guards are gone, and `tests/test_declared_dependencies.py` holds the rule so the next
+dependency is covered the moment it is declared rather than when somebody remembers. It reads
+`pyproject.toml`, imports each name, and refuses any `importorskip` naming one of them. It
+also exercises Ed25519 rather than only importing `cryptography` — the original failure passed
+a plain import, and an import check would have called that broken install healthy.
+
+The scan parses rather than pattern-matches, which was not a precaution: the first version was
+a regex and it failed on the sentence in its own docstring naming the guard it forbids. A
+check that cannot tell an example from an occurrence reports the thing it exists to catch,
+so there is a test for that distinction too.
+
+`mcp` keeps its guard, correctly — it is an optional extra, absent by design in a plain
+install. An extra cannot be covered the same way without ceasing to be optional, so CI now
+asserts `import mcp` right after the step that claims to install it. Without that, a
+`pip install .[mcp]` resolving to nothing would turn five checks into skips and leave the run
+green, which is the same silence one level up.
+
+
 ### Added
 
 **A knowledge candidate now hands over the documents, not just the pack name** (#533, second

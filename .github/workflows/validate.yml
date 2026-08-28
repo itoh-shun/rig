@@ -36,6 +36,16 @@ jobs:
       - name: Install dependencies
         run: pip install -e '.[mcp]' 'ruff==0.15.8' 'pytest-xdist>=3.5' setuptools wheel 'tomli; python_version < "3.11"'
 
+      # The install line above claims an extra; this is the only place that checks it arrived.
+      # `mcp` is genuinely optional, so the tests that use it are guarded by `importorskip` —
+      # correctly — which means a `pip install .[mcp]` that resolved to nothing would turn
+      # five checks into skips and leave the run green. Declared dependencies are covered by
+      # tests/test_declared_dependencies.py, which fails outright; an extra cannot be covered
+      # that way without making it non-optional, so it is asserted here, where the promise to
+      # install it is made.
+      - name: The optional extra this job installs is actually importable
+        run: python3 -c "import mcp"
+
       - name: Lint (ruff)
         run: ruff check scripts rig_workbench tests
 

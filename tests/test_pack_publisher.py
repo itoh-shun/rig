@@ -10,6 +10,13 @@ import zipfile
 
 import pytest
 
+# There is deliberately no `importorskip("cryptography")` in this file. It signs and verifies
+# publisher material, so cryptography is not optional to it — and cryptography is a *declared*
+# dependency of the package, meaning its absence is a broken install rather than an absent
+# option. The guard used to be on every test here, and it cost: an install whose cryptography
+# imported but whose `_cffi_backend` did not turned all eleven of these into skips, and a skip
+# is the one result nobody scans a log for. A broken install must be loud.
+
 from test_pack_sdk_phase4d import _resource_pack
 from test_pack_lifecycle import _quality_pack
 from test_packs import _write_pack
@@ -190,8 +197,6 @@ def test_signing_and_keygen_without_cryptography_fail_closed(
 def test_keygen_keeps_private_external_and_registers_only_public_material(
     tmp_path, monkeypatch, capsys,
 ):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs.cli import cmd_pack
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
@@ -255,8 +260,6 @@ def test_keygen_keeps_private_external_and_registers_only_public_material(
 def test_keygen_detects_trust_root_replacement_and_rolls_back_private_key(
     tmp_path, monkeypatch,
 ):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs import publisher
@@ -296,8 +299,6 @@ def test_keygen_detects_trust_root_replacement_and_rolls_back_private_key(
 
 
 def test_keygen_detects_transaction_file_substitution(tmp_path, monkeypatch):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs import publisher
@@ -333,8 +334,6 @@ def test_keygen_detects_transaction_file_substitution(tmp_path, monkeypatch):
 
 
 def test_keygen_descriptor_walk_rejects_ancestor_substitution(tmp_path, monkeypatch):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs import publisher
@@ -405,8 +404,6 @@ def _write_signature(pack, manifest, private, *, issued_at, engine_release=None)
 
 
 def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs import publisher
     from rig_workbench.packs.doctor import diagnose
     from rig_workbench.packs.installer import install_pack
@@ -454,8 +451,6 @@ def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
 def test_signature_rejects_unknown_revoked_future_invalid_and_replay(
     tmp_path, monkeypatch,
 ):
-    pytest.importorskip("cryptography")
-
     from rig_workbench import __version__
     from rig_workbench.packs import publisher
     from rig_workbench.packs.manifest import canonical, read_json_yaml
@@ -504,8 +499,6 @@ def test_signature_rejects_unknown_revoked_future_invalid_and_replay(
 
 
 def test_manifest_asset_version_and_compatibility_tamper_are_bound(tmp_path):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import verify_publisher_signature
@@ -538,8 +531,6 @@ def test_manifest_asset_version_and_compatibility_tamper_are_bound(tmp_path):
 
 
 def test_signing_refuses_dirty_source_and_non_green_quality(tmp_path, monkeypatch):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs import installer
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import sign_pack
@@ -568,8 +559,6 @@ def test_signing_refuses_dirty_source_and_non_green_quality(tmp_path, monkeypatc
 def test_valid_publisher_signature_cannot_upgrade_mock_or_non_green_quality(
     tmp_path, monkeypatch,
 ):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs import installer, publisher
     from rig_workbench.packs.manifest import read_json_yaml
     from rig_workbench.packs.model import PackError
@@ -590,8 +579,6 @@ def test_valid_publisher_signature_cannot_upgrade_mock_or_non_green_quality(
 
 
 def test_signing_refuses_legacy_prompt_case_without_composition_or_durable_evidence(tmp_path):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import sign_pack
 
@@ -609,8 +596,6 @@ def test_signing_refuses_legacy_prompt_case_without_composition_or_durable_evide
 def test_prompt_pack_with_composition_distinct_expectations_and_green_evidence_signs(
     tmp_path, monkeypatch,
 ):
-    pytest.importorskip("cryptography")
-
     from rig_workbench.packs import installer, publisher
     from rig_workbench.packs.manifest import read_json_yaml
 
