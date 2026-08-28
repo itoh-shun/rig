@@ -11,7 +11,7 @@ from rig_workbench.eval.safety import unsafe_key_reason, unsafe_text_reason
 from rig_workbench.workbench.destructive import scan_line as destructive_scan_line
 from rig_workbench.workbench.injection import scan_line as injection_scan_line
 
-from .model import ASSET_DIRS, PACK_TYPES, TYPE_ASSETS, PackError
+from .model import ASSET_DIRS, PACK_TYPES, TYPE_ASSETS, CapabilityRefused, PackError
 
 PACK_BASE_FIELDS = {
     "pack_schema_version", "id", "type", "version", "kind", "engine", "dependencies",
@@ -326,7 +326,7 @@ def validate_manifest_shape(value: dict) -> None:
             # declared file's hash, so this list is the pack's whole contents. That is what
             # makes a manifest check enough here: dropping `commands/` from the declaration to
             # slip past this raises asset-declaration drift instead.
-            raise PackError(
+            raise CapabilityRefused(
                 f"a {value['type']} pack may not carry {kind} assets "
                 f"(permitted: {', '.join(sorted(permitted))})")
         prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])

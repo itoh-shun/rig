@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added
+
+**Packs install from named sources, pinned to a commit** (#523). A project declares where
+packs come from in `.rig/sources.json` (`rig-wb pack source add|list|remove`), and
+`rig-wb pack install product:joypla@1.4.0` reaches a private repository over `git+ssh`,
+`git+https`, or `git+file`. The spec names the source, not an address: welding a pack's
+contents to its distribution path would make a fork, a mirror, or a move to private each a
+content change.
+
+Rig holds no credential. It runs `git` and lets git answer for authentication out of whatever
+is already configured — SSH agent, credential helper, `gh auth`, OS keychain, CI secret — and
+a source URL that embeds one is refused. The lock records the source's name and the commit,
+never the URL. That is enforced at the one place that writes: the lock writer runs the same
+sensor as `wb scan-secrets` and refuses a credential-shaped payload, because a rule that
+depends on every caller being careful is a wish.
+
+`@1.4.0` resolves tag → commit → tree digest and the lock keeps all three; the fetch re-checks
+the commit it was given, so a tag moved mid-install is a refusal rather than a different pack
+under the pinned version. `rig-wb pack verify-sources` re-checks locked pins later and exits
+non-zero when one no longer holds.
+
+Refusals now arrive apart instead of collapsing into one error: `source-unreachable`,
+`auth-failed`, `revision-not-found`, `digest-mismatch`, `capability-refused`,
+`engine-incompatible`, `unverified-signature`. The distinction earns its keep — `gh auth
+login` fixes one of these and does nothing for the next. Unrecognised git failures stay
+`source-unreachable`, the answer that does not claim to know.
+
+`pack.lock.json` moves to schema 3 for the git source shape (`source_id` and `revision`
+alongside the existing type/path/sha256).
+
 ### Breaking
 
 **A pack manifest now declares a `type`, and the type decides what the pack may carry and

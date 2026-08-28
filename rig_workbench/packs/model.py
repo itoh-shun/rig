@@ -5,7 +5,64 @@ import pathlib
 
 
 class PackError(ValueError):
-    """A pack is malformed, unsafe, incompatible, or ambiguous."""
+    """A pack is malformed, unsafe, incompatible, or ambiguous.
+
+    `reason` is a stable machine-readable label. Every refusal used to arrive as this one
+    class, which reads the same to a caller whether the host was unreachable or the person
+    was not logged in — and those want opposite responses: `gh auth login` fixes one and
+    does nothing for the other. The subclasses below name the cases a caller can act on
+    differently; everything else keeps the base reason, so nothing has to be classified
+    before it can be raised.
+    """
+
+    reason = "invalid-pack"
+
+
+class SourceUnreachable(PackError):
+    """The source could not be reached at all — no network, unknown host, dead remote."""
+
+    reason = "source-unreachable"
+
+
+class AuthFailed(PackError):
+    """The source answered and refused the credentials (or there were none to offer)."""
+
+    reason = "auth-failed"
+
+
+class RevisionNotFound(PackError):
+    """The source was read but does not carry the requested tag or commit."""
+
+    reason = "revision-not-found"
+
+
+class DigestMismatch(PackError):
+    """The revision resolved but its content is not what the lock recorded.
+
+    This is what makes `@1.4.0` mean one thing forever. It does not mean the supply chain is
+    safe — a mismatch says the bytes changed, not who changed them; that is the signature's
+    question, not the digest's.
+    """
+
+    reason = "digest-mismatch"
+
+
+class CapabilityRefused(PackError):
+    """The pack declares something its type may not carry or run."""
+
+    reason = "capability-refused"
+
+
+class EngineIncompatible(PackError):
+    """The pack's engine range excludes the running engine."""
+
+    reason = "engine-incompatible"
+
+
+class UnverifiedSignature(PackError):
+    """The pack carries no publisher signature that verifies against a trust root."""
+
+    reason = "unverified-signature"
 
 
 ASSET_DIRS = {

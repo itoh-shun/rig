@@ -11,6 +11,7 @@ from .doctor import diagnose
 from .manifest import PACK_SCHEMA_VERSION, canonical
 from .model import ASSET_DIRS, PACK_TYPES, PackError
 from .resolver import pack_roots
+from .sources import SOURCE_SCHEMES, read_sources, verify_pin, write_sources
 from .validation import validate_pack, validate_tiered_collection
 
 
@@ -28,6 +29,20 @@ def _parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor")
     doctor.add_argument("path", nargs="?")
     doctor.add_argument("--json", action="store_true")
+    source = sub.add_parser("source")
+    source_sub = source.add_subparsers(dest="source_command", required=True)
+    source_sub.add_parser("list")
+    source_add = source_sub.add_parser("add")
+    source_add.add_argument("name")
+    source_add.add_argument("--scheme", choices=list(SOURCE_SCHEMES), required=True)
+    source_add.add_argument("--url", required=True,
+                            help="URL template containing {pack}")
+    source_remove = source_sub.add_parser("remove")
+    source_remove.add_argument("name")
+    verify_sources = sub.add_parser("verify-sources")
+    verify_sources.add_argument("--scope", choices=["project", "user", "org"],
+                                default="project")
+    verify_sources.add_argument("--root")
     install = sub.add_parser("install")
     install.add_argument("source")
     install.add_argument("--scope", choices=["project", "user", "org"], default="project")
@@ -195,6 +210,50 @@ def cmd_pack(argv: list[str]) -> int:
                 manifest = validate_pack(path)
                 print(f"valid: {manifest['id']}@{manifest['version']}")
             return 0
+        if args.command == "source":
+            project = pathlib.Path.cwd()
+            declared = read_sources(project)
+            if args.source_command == "list":
+                for name in sorted(declared):
+                    print(f"{name}\t{declared[name]['scheme']}\t{declared[name]['url']}")
+                if not declared:
+                    print("no sources declared")
+                return 0
+            if args.source_command == "add":
+                if args.name in declared:
+                    raise PackError(f"source already declared: {args.name}")
+                declared[args.name] = {"scheme": args.scheme, "url": args.url}
+                write_sources(project, declared)
+                print(f"declared source: {args.name}")
+                return 0
+            if args.name not in declared:
+                raise PackError(f"source is not declared: {args.name}")
+            del declared[args.name]
+            write_sources(project, declared)
+            print(f"removed source: {args.name}")
+            return 0
+        if args.command == "verify-sources":
+            from .installer import scope_root
+            from .lock import read_lock
+            project = pathlib.Path.cwd()
+            declared = read_sources(project)
+            root = scope_root(args.scope, project=project,
+                              root=pathlib.Path(args.root) if args.root else None)
+            pinned = [item for item in read_lock(root)["packs"]
+                      if item["source"]["type"] == "git"]
+            if not pinned:
+                print("no git-sourced packs are locked in this scope")
+                return 0
+            worst = 0
+            for entry in sorted(pinned, key=lambda item: item["id"]):
+                source_id = entry["source"]["source_id"]
+                if source_id not in declared:
+                    reason, worst = "source-undeclared", 1
+                else:
+                    reason = verify_pin(declared[source_id], entry)
+                    worst = max(worst, 0 if reason == "ok" else 1)
+                print(f"{entry['id']}\t{entry['source']['path']}\t{reason}")
+            return worst
         if args.command == "install":
             from .installer import install_pack
             result = install_pack(

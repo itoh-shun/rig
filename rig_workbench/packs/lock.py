@@ -16,7 +16,7 @@ from .model import PackError
 from .validation import validate_pack
 
 LOCK_NAME = "pack.lock.json"
-LOCK_SCHEMA_VERSION = 2
+LOCK_SCHEMA_VERSION = 3
 
 
 def tree_hash(root: pathlib.Path) -> str:
@@ -67,8 +67,35 @@ def write_lock(root: pathlib.Path, value: dict[str, Any]) -> None:
     write_lock_bytes(root, canonical(value).encode("utf-8"))
 
 
+def refuse_credentials(payload: bytes, *, where: str) -> None:
+    """Refuse to persist anything credential-shaped.
+
+    The rule that rig never stores a credential is enforced at the one place that writes,
+    not by asking every caller to be careful. A caller can be careful and still be wrong —
+    a source URL that carried userinfo, a path with a token in it, a future field nobody
+    thought about — and a rule that depends on nobody making that mistake is a wish. The
+    sensor is the same one `rig-wb wb scan-secrets` runs, so what the gate refuses and what
+    the scanner reports cannot drift apart.
+    """
+    from rig_workbench.workbench.secrets import scan_line
+
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeError:
+        return
+    for number, line in enumerate(text.splitlines(), 1):
+        findings = scan_line(line, where, number, skip_entropy=True)
+        if findings:
+            kinds = sorted({str(item.get("kind")) for item in findings})
+            # The finding itself is not echoed: reporting a secret to complain about it
+            # writes it somewhere new.
+            raise PackError(
+                f"refusing to write {where}: it would persist a credential ({', '.join(kinds)})")
+
+
 def write_lock_bytes(root: pathlib.Path, payload: bytes) -> None:
     """Atomically replace the lock with exact bytes (used by transaction rollback)."""
+    refuse_credentials(payload, where=LOCK_NAME)
     root.mkdir(parents=True, exist_ok=True)
     temporary: pathlib.Path | None = None
     descriptor = -1
@@ -101,9 +128,25 @@ def write_lock_bytes(root: pathlib.Path, payload: bytes) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def make_source(source_type: str, source_path: str, source_hash: str, *,
+                source_id: str | None = None, revision: str | None = None) -> dict[str, Any]:
+    """The `source` block of a lock entry.
+
+    A git source records the source's *name* and the commit, never the URL: the URL lives in
+    `.rig/sources.json`, so a lock cannot carry an embedded credential no matter how the
+    remote was addressed, and moving a pack between forges does not rewrite every lock that
+    installed it.
+    """
+    source: dict[str, Any] = {"type": source_type, "path": source_path, "sha256": source_hash}
+    if source_type == "git":
+        source["source_id"] = source_id
+        source["revision"] = revision
+    return source
+
+
 def make_entry(
-    pack: pathlib.Path, manifest: dict, *, scope: str, source_type: str,
-    source_path: str, source_hash: str, verification_status: str,
+    pack: pathlib.Path, manifest: dict, *, scope: str, source: dict[str, Any],
+    verification_status: str,
     publisher_key_id: str | None, signed_digest: str | None,
     installed_at: dt.datetime | None = None,
 ) -> dict[str, Any]:
@@ -111,7 +154,7 @@ def make_entry(
     return {
         "id": manifest["id"], "version": manifest["version"], "kind": manifest["kind"],
         "scope": scope, "path": manifest["id"],
-        "source": {"type": source_type, "path": source_path, "sha256": source_hash},
+        "source": source,
         "manifest_sha256": digest(pack / "pack.yaml"),
         "asset_hashes": dict(sorted(manifest["hashes"].items())),
         "engine_version": __version__, "installed_at": timestamp,
@@ -199,12 +242,20 @@ def validate_lock_root(
         if installed.tzinfo is None:
             raise PackError(f"pack lock drift: invalid timestamp for {entry['id']}")
         source = entry["source"]
-        if (not isinstance(source, dict) or set(source) != {"type", "path", "sha256"}
-                or source["type"] not in {"directory", "zip", "tar"}
+        local_shape = {"type", "path", "sha256"}
+        git_shape = local_shape | {"source_id", "revision"}
+        if (not isinstance(source, dict)
+                or set(source) != (git_shape if source.get("type") == "git" else local_shape)
+                or source["type"] not in {"directory", "zip", "tar", "git"}
                 or not isinstance(source["path"], str) or not source["path"]
                 or not isinstance(source["sha256"], str)
                 or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])):
             raise PackError(f"pack lock drift: invalid source for {entry['id']}")
+        if source["type"] == "git" and (
+                not isinstance(source["source_id"], str) or not source["source_id"]
+                or not isinstance(source["revision"], str)
+                or not re.fullmatch(r"[0-9a-f]{40}", source["revision"])):
+            raise PackError(f"pack lock drift: invalid git source for {entry['id']}")
         pack = root / entry["path"]
         if not pack.is_dir():
             raise PackError(f"pack lock drift: missing pack {entry['id']}")

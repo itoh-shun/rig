@@ -25,6 +25,54 @@ ownership crossover, path traversal, symlinks, broken references, incompatible e
 dependency ranges, cycles, collisions, unsafe secrets, invisible injection markers, and
 unambiguous destructive content.
 
+## Named sources — installing from a private repository
+
+A project declares where packs come from in `.rig/sources.json`, and a spec names the source
+rather than an address:
+
+```console
+rig-wb pack source add product --scheme git+ssh --url git@github.com:acme/rig-pack-{pack}.git
+rig-wb pack source list
+rig-wb pack install product:joypla@1.4.0 --scope project
+rig-wb pack verify-sources --scope project
+rig-wb pack source remove product
+```
+
+Schemes are `git+ssh`, `git+https`, and `git+file` (a local or mounted repository — for
+development and for the offline case where nothing can reach a forge). The URL is a template
+containing `{pack}`.
+
+**Rig never holds a credential.** It runs `git`, and git answers for authentication out of
+whatever is already configured — an SSH agent, a credential helper, `gh auth`, the OS
+keychain, a CI secret. Rig does not read tokens, does not prompt for them, and a source URL
+that embeds one is refused. The lock records the source's *name* and the commit, never the
+URL, so nothing rig writes can carry a credential and moving a pack between forges does not
+rewrite every lock that installed it. That rule is enforced where the bytes are written: the
+lock writer runs the same sensor as `rig-wb wb scan-secrets` and refuses a credential-shaped
+payload rather than asking each caller to be careful.
+
+`@1.4.0` resolves tag → commit → tree digest, and all three go in the lock. The fetch
+re-checks the commit it was given, so a tag moved in between is a refusal rather than a
+different pack installed under the version somebody pinned. `verify-sources` re-checks every
+locked git pack later and exits non-zero if any pin no longer holds.
+
+Failures arrive apart, because they want opposite responses:
+
+| reason | meaning |
+|---|---|
+| `source-unreachable` | the source could not be read at all (also what a private repo says to someone who cannot see it) |
+| `auth-failed` | the source answered and refused the credentials on this machine |
+| `revision-not-found` | the source was read but has no such tag, or the tag moved mid-install |
+| `digest-mismatch` | the pin no longer resolves to the recorded commit |
+| `capability-refused` | the pack declares something its type may not carry or run |
+| `engine-incompatible` | the pack's engine range excludes this engine |
+| `unverified-signature` | no publisher signature verifies against a trust root |
+
+A digest pins content, not provenance: it says the bytes are the same ones, never who put
+them there. Signatures and trust roots are what answer that, and `private` is not a substitute
+for either — a pack from a private repository goes through the same manifest validation,
+digest check, type check, and secret scan as a public one.
+
 ## Pack type — what a pack may carry and run
 
 `type` is required and has no default: it decides the pack's permissions, and a default

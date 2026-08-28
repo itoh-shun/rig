@@ -14,9 +14,10 @@ from rig_workbench.eval.gate import quality_result_failures
 from rig_workbench.eval.compare import validate_result
 
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
-                   validate_lock_root, write_lock)
+                   make_source, validate_lock_root, write_lock)
 from .manifest import read_json_yaml
-from .model import PROMPT_KINDS, PackError
+from .model import PROMPT_KINDS, PackError, UnverifiedSignature
+from .sources import fetch_revision, parse_spec, read_sources, resolve_revision
 from .resolver import pack_roots
 from .validation import validate_pack, validate_tiered_collection
 
@@ -306,7 +307,27 @@ def install_pack(
     root: pathlib.Path | str | None = None, allow_unverified: bool = False,
 ) -> InstallResult:
     project_path = pathlib.Path(project).resolve()
-    source_path, source_label = _resolve_source(source)
+    # A named-source spec (`product:joypla@1.4.0`) is resolved to a commit before anything is
+    # staged: `resolve_revision` is the only step that talks to the remote's refs, and doing
+    # it up front means a source that cannot be read fails before a staging directory exists.
+    spec = parse_spec(str(source))
+    plan: dict | None = None
+    source_path: pathlib.Path | None = None
+    if spec is None:
+        source_path, source_label = _resolve_source(source)
+    else:
+        source_id, pack_name, version = spec
+        declared = read_sources(project_path)
+        if source_id not in declared:
+            raise PackError(
+                f"source `{source_id}` is not declared in .rig/sources.json "
+                f"(declared: {', '.join(sorted(declared)) or 'none'})")
+        plan = {
+            "source_id": source_id, "source": declared[source_id], "pack": pack_name,
+            "version": version,
+            "revision": resolve_revision(declared[source_id], pack_name, version),
+        }
+        source_label = f"{source_id}:{pack_name}@{version}"
     if allow_unverified and scope != "project":
         raise PackError("--allow-unverified is restricted to project scope")
     destination_root = scope_root(
@@ -325,7 +346,16 @@ def install_pack(
     installed: pathlib.Path | None = None
     try:
         content = staging / "content"
-        source_type, source_hash = _source_to_staging(source_path, content)
+        if plan is None:
+            assert source_path is not None
+            source_type, source_hash = _source_to_staging(source_path, content)
+            source_block = make_source(source_type, source_label, source_hash)
+        else:
+            fetch_revision(plan["source"], plan["pack"], plan["version"], plan["revision"],
+                           content)
+            source_block = make_source(
+                "git", source_label, tree_hash(content),
+                source_id=plan["source_id"], revision=plan["revision"])
         pack = _pack_root(content)
         manifest = validate_pack(pack)
         destination = destination_root / manifest["id"]
@@ -336,7 +366,7 @@ def install_pack(
         )
         status, publisher = verification_status(pack, manifest)
         if status != "verified-publisher" and not allow_unverified:
-            raise PackError(
+            raise UnverifiedSignature(
                 "unsigned packs require project --allow-unverified; local evaluation quality "
                 "does not establish publisher trust"
             )
@@ -344,8 +374,7 @@ def install_pack(
         if any(item["id"] == manifest["id"] for item in lock["packs"]):
             raise PackError(f"pack is already lock-owned: {manifest['id']}")
         entry = make_entry(
-            pack, manifest, scope=scope, source_type=source_type,
-            source_path=source_label, source_hash=source_hash,
+            pack, manifest, scope=scope, source=source_block,
             verification_status=status,
             publisher_key_id=publisher["key_id"] if publisher else None,
             signed_digest=publisher["signed_digest"] if publisher else None,

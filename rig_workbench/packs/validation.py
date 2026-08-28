@@ -12,7 +12,8 @@ from rig_workbench.workbench.injection import scan_file as injection_scan_file
 
 from .manifest import (canonical, digest, parse_frontmatter_subset, read_json_yaml, safe_relative,
                        validate_compatibility, validate_manifest_shape)
-from .model import ASSET_DIRS, PROMPT_KINDS, RECIPE_CHECKS_TYPES, PackError
+from .model import (ASSET_DIRS, PROMPT_KINDS, RECIPE_CHECKS_TYPES, CapabilityRefused,
+                    EngineIncompatible, PackError)
 from .resources import validate_resource
 
 
@@ -138,7 +139,7 @@ def validate_pack(path: pathlib.Path | str) -> dict:
     if compat_raw != canonical(compatibility):
         raise PackError("compatibility.yaml is not canonical")
     if not _compatible(manifest["engine"]):
-        raise PackError(f"pack is incompatible with engine {__version__}")
+        raise EngineIncompatible(f"pack is incompatible with engine {__version__}")
     declared = {item for paths in manifest["assets"].values() for item in paths}
     actual = {
         asset.relative_to(root).as_posix() for asset in root.rglob("*")
@@ -168,7 +169,7 @@ def validate_pack(path: pathlib.Path | str) -> dict:
                 raise PackError(f"asset hash mismatch: {item}")
             if (kind == "recipe" and manifest["type"] not in RECIPE_CHECKS_TYPES
                     and declares_recipe_checks(asset)):
-                raise PackError(
+                raise CapabilityRefused(
                     f"a {manifest['type']} pack may not ship a recipe declaring `checks:` "
                     f"(host commands the orchestrator runs): {item}")
             name = str(rel.relative_to(prefix).with_suffix(""))
