@@ -215,3 +215,37 @@ def test_a_handle_written_before_runtimes_existed_still_reconnects(repo):
     state = runtime.reconnect({"worktree_path": str(worktree)}, repo)
     assert state["state"] == runtime.READY and state["runtime"] == runtime.NATIVE
     assert WorktreeHandle.from_task({"worktree_path": str(worktree)}).runtime == runtime.NATIVE
+
+
+# ── the runtime does not reach the provider ──────────────────────────────────
+@pytest.mark.parametrize("provider", ["claude", "codex", "grok", "rig"])
+@pytest.mark.parametrize("role", ["generator", "verifier"])
+def test_provider_argv_is_identical_whatever_runtime_the_task_uses(provider, role):
+    """Behavioural counterpart to the AST check in `test_runtime_backend.py`.
+
+    That test proves the provider module never *names* a runtime. This one proves the argv does
+    not change when a runtime is present in cfg anyway — a provider that read one out of some
+    shared dict would satisfy the structural test and still couple the two. What must stay
+    constant is the read-only enforcement in particular: a verifier that lost `--allowedTools`
+    because the work moved into an Orca workspace would be a weaker verifier for a reason that
+    has nothing to do with verification.
+    """
+    from rig_workbench.orchestrate import providers
+
+    native = providers.build_argv(provider, role, "work",
+                                  {"provider_cmd": "echo {prompt}"})
+    orca = providers.build_argv(provider, role, "work",
+                                {"provider_cmd": "echo {prompt}",
+                                 "runtime": "orca", "worktree": {"runtime": "orca"},
+                                 "orca_worktree_id": "w-1"})
+    assert native == orca
+
+
+def test_where_the_work_runs_is_decided_without_asking_who_writes_it(repo, monkeypatch):
+    """`select` must reach no provider name at all — the seam is only worth having while the
+    two questions stay answerable apart."""
+    monkeypatch.setitem(runtime.BACKENDS, "orca", _Present())
+    chosen = runtime.select("orca", repo)
+    assert chosen.name == "orca"
+    # ...and the native default asks nothing about Orca at all.
+    assert runtime.select(runtime.NATIVE, repo).name == runtime.NATIVE

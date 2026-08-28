@@ -593,6 +593,39 @@ Recipe steps can declare `auto_route.candidates` (a list of `{model, cost_tier, 
 
 `--auto-route-learn` builds on that with a frequency-based (no ML model) read of `.rig/runs.jsonl`'s own track record — which model actually got used for a given recipe/step, and did the step pass. **Defaults to shadow mode**: predictions are always recorded (`steps[].learned_route`) but don't change what runs until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static `--auto-route` choice when there aren't enough reference runs or the pass rate is too low, always recording the rejected candidates and why (counterfactuals, so it stays auditable rather than a black box). `--exploration-pct N` lets a deterministic fraction of runs try the next-cheapest candidate instead (hashed from `--exploration-date` + recipe/step — never randomness, so results stay reproducible). Whether a cheap pick was a saving or a false economy is answered after the fact by `rig-wb runs --auto-route-regret`: per routed step it prints each candidate model's attempts and pass rate, and flags a **possible regret** when the chosen model is below the quality bar and a pricier candidate with enough observations passes more often. Read-only over `.rig/runs.jsonl` — it reports, it does not re-route.
 
+### Orca runtime (`--runtime`, #460–#464, optional)
+
+**Orca is a runtime, not a provider.** A provider decides *who writes the code* (claude, codex,
+ollama); a runtime decides *where the work lives* (native git worktrees, Orca-managed ones).
+Folding them together would make "run this on Codex" and "run this in an Orca workspace" the
+same kind of choice, and then neither could be made without the other. The test suite checks
+that separation structurally, by parsing both modules' ASTs.
+
+```text
+Orca → Claude Code → Rig → Orca CLI → Orca-managed worktree
+                                        ↓
+        claude (generator) / codex (read-only verifier) / tests / acceptance gate
+```
+
+> Orca decides where the work is visible. Rig decides how the work is done and whether it is
+> acceptable.
+
+```console
+rig-wb wb new "fix the login redirect"                  # auto (default)
+rig-wb wb new "fix the login redirect" --runtime orca   # never downgrades
+```
+
+`auto` uses Orca only when an Orca session is exported into the environment **and** the CLI
+reports a ready, reachable runtime — and prints why it fell back when it does not. Detection
+reads environment variables and returns; it starts no subprocess, so choosing the default never
+asks another tool whether it is installed. An explicit `--runtime orca` that cannot be honoured
+**fails rather than falling back**, because a silent downgrade would run the task somewhere you
+did not ask for and did not check.
+
+Rig runs exactly as before on a machine with no Orca, and that is the first thing its tests
+check. Full setup, troubleshooting, the discard-when-Orca-is-gone path, and IntelliJ coexistence
+are in **[docs/orca.md](docs/orca.md)**.
+
 ### CLI session reuse (`--reuse-session`, #326, opt-in)
 
 Every step starts its CLI provider from nothing, so a run pays the startup cost once per step

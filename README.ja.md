@@ -555,6 +555,37 @@ rig-wb bench --provider mock --out artifacts/
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
 
+### Orca ランタイム（`--runtime`、#460〜#464、任意）
+
+**Orca は provider ではなく runtime です。** provider が決めるのは*誰がコードを書くか*（claude /
+codex / ollama）、runtime が決めるのは*作業がどこに置かれるか*（native の git worktree か、Orca
+管理の worktree か）。これを混ぜると「Codex で走らせる」と「Orca のワークスペースで走らせる」が
+同じ種類の選択になり、片方だけを選べなくなります。この分離はテストが**両モジュールの AST を
+解析して構造的に**確認しています。
+
+```text
+Orca → Claude Code → Rig → Orca CLI → Orca 管理の worktree
+                                        ↓
+       claude（生成）/ codex（読み取り専用の検証）/ テスト / acceptance gate
+```
+
+> どこで作業が見えるかは Orca が決める。どう行いそれが受け入れ可能かは rig が決める。
+
+```console
+rig-wb wb new "ログインのリダイレクトを直す"                  # auto（既定）
+rig-wb wb new "ログインのリダイレクトを直す" --runtime orca   # 決して降格しない
+```
+
+`auto` が Orca を使うのは、Orca セッションが環境変数として露出しており**かつ** CLI が ready で
+reachable な runtime を報告したときだけで、そうでなければ理由を出して native に戻ります。検出は
+環境変数を読んで返すだけでサブプロセスを起動しません——既定を選ぶ経路が、他のツールに「入って
+いますか」と尋ねずに済むように。明示した `--runtime orca` が満たせない場合は**フォールバック
+せず失敗**します：黙った降格は、あなたが指定も確認もしていない場所でタスクを走らせることだから。
+
+Orca が無いマシンでは以前とまったく同じに動作し、それがテストの最初の確認項目です。セットアップ・
+トラブルシュート・Orca が消えた後の discard 経路・IntelliJ との併用は
+**[docs/orca.md](docs/orca.md)** にあります。
+
 ### OpenTelemetry エクスポート（`rig-wb otel`、#501）
 
 rig のローカル証跡——`.rig/runs.jsonl`、監査ログ、assurance receipt——が真実の源のまま。

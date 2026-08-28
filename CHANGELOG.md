@@ -4,6 +4,27 @@
 
 ### Added
 
+**Orca's runtime integration is documented** (#464, `docs/orca.md`). It shipped with a
+backend, detection, structured-output refusals and a full test suite — and not one word in any
+README or doc. The first line of the new page is the one that matters: **Orca is a runtime, not
+a provider.** A provider decides who writes the code; a runtime decides where the work lives.
+Folding them together would make "run this on Codex" and "run this in an Orca workspace" the
+same kind of choice, and then neither could be made without the other.
+
+The page covers the `Orca → Claude → Rig → Orca CLI → worktree` flow, what `auto` actually
+requires (five separate facts, any one of which sends it back to native, with the reason on
+stderr), why an explicit `--runtime orca` refuses to downgrade, a troubleshooting table whose
+messages are quoted from the code rather than paraphrased, discarding a task after Orca is gone,
+what rig persists and what it deliberately does not claim, and IntelliJ coexistence — Orca as
+the AI work cockpit, not a full IDE replacement.
+
+The required scenarios were already covered by the existing suites; the gap was one behavioural
+check, now added: provider argv is byte-identical whatever runtime the task uses. The existing
+test proves the provider module never *names* a runtime by parsing its AST, which a provider
+reading one out of a shared dict would satisfy while still coupling the two. It matters most for
+the verifier — one that lost its read-only enforcement because the work moved into an Orca
+workspace would be weaker for a reason that has nothing to do with verification.
+
 **An Orca-backed task can be discarded on a machine where Orca is gone** (#463). It could
 not before: `wb discard` resolved the owning backend through a function that *raises* when that
 runtime is unusable, so the operator got a Python traceback, advice naming `--runtime auto` —
