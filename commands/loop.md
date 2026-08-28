@@ -1,61 +1,60 @@
 ---
-description: "rig/loop — 一定間隔 or 自己ペースで対象（コマンド/rig フロー/タスク）を繰り返す recurring driver。停止条件（--until/--times/明示）と安全上限つき。goal（達成まで収束）の対極＝見張り・ポーリング・定期実行。"
-argument-hint: "[\"繰り返す対象（コマンド/タスク）\"] [--every <dur>] [--until \"<check>\"] [--times N] [--plan]"
+description: "rig/loop — a recurring driver that repeats something (a command, a rig flow, a task) on an interval or at its own pace, with a stopping condition (--until, --times, or an explicit stop) and a safety ceiling. The opposite of goal, which converges on an outcome: this watches, polls, and runs on a schedule."
+argument-hint: "[\"what to repeat (a command or a task)\"] [--every <dur>] [--until \"<check>\"] [--times N] [--plan]"
 ---
 
-# rig/loop — 繰り返し・監視ループ 🔁
+# rig/loop — repeating and watching 🔁
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。スケジューリングは既存の `patterns/autonomous-loop`（`ScheduleWakeup`）を再利用する。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, context-minimal). This command is only the entry point; the engine lives in the skill and is not repeated here. Scheduling reuses the existing `patterns/autonomous-loop` (`ScheduleWakeup`).
 
-起動後、`--recipe loop` を既定として次の引数を PARSE する:
+Then PARSE the following arguments with `--recipe loop` as the default:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-対象を `loop` recipe に渡す。手順本体（①対象・間隔・停止条件の確定 →②1 tick 実行 →③停止判定 →④次 tick 予約/終了）は `facets/instructions/loop-driver` に従う。
+Hands the target to the `loop` recipe. The procedure — fix the target, the interval, and the stopping condition; run one tick; decide whether to stop; schedule the next tick or finish — is in `facets/instructions/loop-driver`.
 
-- **繰り返す対象**: `/rig:dev`・`/rig:pr` 等の rig フロー、または任意コマンド（CI 確認・集計等）。
-- **いつまた回すか**: `--every <dur>`（時間駆動・例 `10m`）／省略時は自己ペース（合図やイベントで次へ）。
-- **どこで止まるか（必須）**: `--until "<check>"`（機械検証で停止条件）／`--times N`（回数）／明示停止（この場合は安全上限を確認）。停止条件も上限も無いまま無限監視に入らない。
-- 各 tick を**報告**する。書込/push/merge を伴う対象は tick ごとに委譲先の step ゲートで確認。
+- **What it repeats**: a rig flow such as `/rig:dev` or `/rig:pr`, or any command (checking CI, aggregating something).
+- **When it goes again**: `--every <dur>` drives it by time (`10m`); without it, it paces itself, moving on a signal or an event.
+- **Where it stops (required)**: `--until "<check>"` is a mechanically verified condition; `--times N` is a count; an explicit stop needs the safety ceiling confirmed. Never enter an unbounded watch with neither a condition nor a ceiling.
+- Every tick is **reported**. Where a tick writes, pushes, or merges, the step gate of whatever it delegates to confirms it, each time.
 
-## goal との違い（重ねて使える）
+## How it differs from goal (they compose)
 
-- `/rig:goal`＝**達成まで収束**（終端＝受け入れ基準）。終わりのある仕事。
-- `/rig:loop`＝**繰り返す/見張る**（終端＝停止条件・回数）。終わりのない仕事。
-- `/rig:loop --every 1h /rig:goal "…"` のように、loop で goal を定期キックできる（loop が外側のスケジューラ、goal が中身の収束）。
+- `/rig:goal` — **converge until achieved**; the end is the acceptance criteria. Work that finishes.
+- `/rig:loop` — **repeat and watch**; the end is a stopping condition or a count. Work that does not.
+- `/rig:loop --every 1h /rig:goal "…"` kicks a goal on a schedule: loop is the outer scheduler, goal is the convergence inside it.
 
-## flag
+## Flags
 
-- `--every <dur>` … 時間駆動の間隔（例 `5m`/`1h`）。`ScheduleWakeup` 規約（270/1200・**300 禁忌**）に従う。省略時は自己ペース。
-- `--until "<check>"` … 停止条件（shell exit 0 / GitHub MCP status / grep 等で「終わったか」を判定）。
-- `--times <N>` … N 回で終了。
-- `--plan` … 対象・間隔・停止条件を提示して停止（ドライラン）。
+- `--every <dur>` — the time-driven interval (`5m`, `1h`), following the `ScheduleWakeup` conventions (270 and 1200; **never 300**). Without it, self-paced.
+- `--until "<check>"` — the stopping condition, decided mechanically: a shell exit code of 0, a GitHub MCP status, a grep.
+- `--times <N>` — finish after N runs.
+- `--plan` — present the target, interval, and stopping condition, then stop. A dry run.
 
-## 例
-
-```
-/rig:loop --every 10m --until "CI が green" /rig:pr 1234     # PR の CI を緑になるまで見張る
-/rig:loop --times 3 /rig:dev --only review                  # レビューを3回回す
-/rig:loop --every 1h /rig:goal "Issue を review 通過まで"     # goal を1時間ごとに定期キック
-/rig:loop "毎朝レポートを集計"                                # 自己ペースの定期チョア
-/rig:loop --plan --every 10m --until "デプロイ成功" ...        # 構成だけ先に確認
-```
-
-## 代表的な合成例
+## Examples
 
 ```
-/rig:loop --until "PR #123 が MERGED または CLOSED" "/rig:pr 123"   # PR 常駐（babysit）
-/rig:loop --every 7d "/rig:import --check-updates"                  # skill-dependabot（上流差分の定期検知）
+/rig:loop --every 10m --until "CI is green" /rig:pr 1234    # watch a PR's CI until it goes green
+/rig:loop --times 3 /rig:dev --only review                  # run the review three times
+/rig:loop --every 1h /rig:goal "get the issue through review"
+/rig:loop "aggregate the report each morning"               # a self-paced recurring chore
+/rig:loop --plan --every 10m --until "the deploy succeeded" ...
 ```
 
+## Two compositions worth knowing
 
-## run-continuity（SKILL.md §6）
+```
+/rig:loop --until "PR #123 is MERGED or CLOSED" "/rig:pr 123"   # babysitting a PR
+/rig:loop --every 7d "/rig:import --check-updates"              # a dependabot for skills
+```
 
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+## run-continuity (SKILL.md §6)
+
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

@@ -1,34 +1,34 @@
 ---
-description: "rig/init — リポジトリを rig 向けに初期化。manifest(.claude/rig.md)・知識層ディレクトリ・CLAUDE.md の \"Compact Instructions\" 節を雛形生成する。書き込みは確認必須・冪等(既存は上書きしない)。"
-argument-hint: "[--autonomous は無効(init の書き込みは常に確認)]"
+description: "rig/init — set a repository up for rig. Scaffolds the manifest (.claude/rig.md), the knowledge-layer directories, and the \"Compact Instructions\" section of CLAUDE.md. Every write is confirmed first, and it is idempotent (it never overwrites what is already there)."
+argument-hint: "[--autonomous has no effect: init always confirms before writing]"
 ---
 
-# rig/init — リポジトリ初期化（scaffold）
+# rig/init — scaffold a repository
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（context-minimal・知識層・§6 run-continuity）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/init` にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, the knowledge layer, §6 run-continuity). This command is only the entry point; the procedure itself lives in `facets/instructions/init` and is not repeated here.
 
-起動後、`facets/instructions/init` に従って次を**雛形生成**する:
+Then follow `facets/instructions/init` to **scaffold**:
 
 ```
 $ARGUMENTS
 ```
 
-## やること（すべて確認の上で書き込み）
+## What it creates (each written only after confirmation)
 
-1. **manifest** `<repo>/.claude/rig.md` — `manifests/_template` を基に build/lint/test・default branch を検出して埋める。
-2. **知識層ディレクトリ** `<repo>/.claude/rig/knowledge/{domain,accumulated}/` — ドメイン知識と capture 蓄積の置き場。
-3. **CLAUDE.md "Compact Instructions" 節** — 圧縮時に rig の run-state を要約へ残す保全文（§6 run-continuity ④ の PreCompact フックと同じ内容の第2経路。毎回の圧縮に自動適用）。
+1. **The manifest**, `<repo>/.claude/rig.md` — built from `manifests/_template`, with build, lint, test, and the default branch detected and filled in.
+2. **The knowledge-layer directories**, `<repo>/.claude/rig/knowledge/{domain,accumulated}/` — where domain knowledge and captured learnings live.
+3. **The "Compact Instructions" section of CLAUDE.md** — the text that keeps rig's run state in the summary when the context is compacted. It says the same thing as the PreCompact hook in §6 run-continuity ④, by a second route that applies on every compaction.
 
-## 規則
+## Rules
 
-- **書き込み＝影響あるアクション。必ず提案（何をどこに）を提示して確認を取ってから書く。`--autonomous` でも init の確認は解除されない。**
-- **冪等・非破壊**：既存ファイルは上書きせず、不足分のみ作成/追記。
-- init は scaffold のみ。実装/レビューは回さない（それは `/rig:dev` 等の役割）。
+- **A write is a consequential action. Always show the proposal — what goes where — and get confirmation before writing. `--autonomous` does not lift that confirmation for init.**
+- **Idempotent and non-destructive**: existing files are never overwritten; only what is missing is created or appended.
+- init only scaffolds. It does not run an implementation or a review — that is what `/rig:dev` and its siblings are for.
 
-## 例
+## Example
 
 ```
-/rig:init            # manifest・知識層・Compact Instructions を提案→確認→生成
+/rig:init            # propose the manifest, knowledge layer, and Compact Instructions, then confirm and write
 ```
 
-初期化後は `/rig:dev` で着手、`/rig:dev --validate` でブリック整合を点検できる。
+Afterwards, `/rig:dev` starts work and `/rig:dev --validate` checks the bricks for consistency.

@@ -1,77 +1,77 @@
 ---
-description: "rig/orchestrate — 計算的オーケストレーション。recipe のステップ遷移・ゲート・リトライ・停止・状態保持を決定論ランナー(scripts/orchestrate.py)がコードで強制。run で各 step を別プロセスの rig ハーネスとして自走実行（並列検証・マルチプロバイダ）。"
-argument-hint: "[recipe（省略時は現在の合成ハーネス）] [--run] [--provider rig|claude|mock] [--isolate] [--auto-route] [--max-parallel N] [--quorum all|majority] [--plan]"
+description: "rig/orchestrate — computational orchestration. A deterministic runner (scripts/orchestrate.py) enforces a recipe's step transitions, gates, retries, stopping, and state in code. `run` executes each step as a rig harness in its own process, with parallel verification across providers."
+argument-hint: "[recipe (defaults to the currently composed harness)] [--run] [--provider rig|claude|mock] [--isolate] [--auto-route] [--max-parallel N] [--quorum all|majority] [--plan]"
 ---
 
-# rig/orchestrate — 計算的オーケストレーション 🧭⚙️
+# rig/orchestrate — computational orchestration 🧭⚙️
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md に従うこと。** このコマンドは `--orchestrate` の入口＝**舵をコードが握る**モード。制御ループ（次の step・ゲート合否・リトライ・停止条件・状態保持）を散文でなく **`scripts/orchestrate.py`（決定論ランナー）** に強制させる。手順・契約は `patterns/computational-orchestration` に従う。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md.** This command is the way into `--orchestrate`: the mode where **code holds the wheel**. The control loop — which step is next, whether a gate passed, retries, stopping conditions, keeping state — is enforced by **`scripts/orchestrate.py`, a deterministic runner**, rather than by prose. `patterns/computational-orchestration` holds the procedure and the contracts.
 
 ```
 $ARGUMENTS
 ```
 
-## 2つの使い方
+## Two ways to use it
 
-**① 半自動（モデルが各 step の作業をする）**
-ランナーが遷移を決め、モデルが各 step を委譲実行する：
+**1. Semi-automatic (the model does each step's work)**
+The runner decides the transitions; the model executes each step by delegation:
 ```
-orchestrate plan   <recipe>            # ステップ状態機械を算出（--plan 相当・モデル不要）
-orchestrate init   <recipe> [--goal G] # run-state を作り最初のアクション
-orchestrate next   run-state.json      # 次の遷移を決定論的に計算（START/ADVANCE/RETRY/AWAIT/BLOCKED/ESCALATE/DONE）
-orchestrate check  run-state.json      # step の checks:（lint/test 等）を実行＝計算的センサー
-orchestrate verdict run-state.json --by <reviewer> --pass|--fail   # 独立検証者の判定（採点者≠生成者）
+orchestrate plan   <recipe>            # compute the step state machine (the equivalent of --plan; no model needed)
+orchestrate init   <recipe> [--goal G] # create the run-state and the first action
+orchestrate next   run-state.json      # compute the next transition deterministically (START/ADVANCE/RETRY/AWAIT/BLOCKED/ESCALATE/DONE)
+orchestrate check  run-state.json      # run the step's checks: (lint, tests) — the computational sensors
+orchestrate verdict run-state.json --by <reviewer> --pass|--fail   # an independent verifier's judgement (grader != generator)
 ```
 
-**② 全自動（各 step を別プロセスの rig ハーネスで実行）**
+**2. Fully automatic (each step runs as a rig harness in its own process)**
 ```
-orchestrate run <recipe> --provider rig --isolate \  # worktree 隔離（green だけ ff 合流）
+orchestrate run <recipe> --provider rig --isolate \  # worktree isolation; only green fast-forwards back
     [--verifier-provider rig] [--max-parallel N] [--quorum all|majority] [--goal G]
 ```
-- **`--provider rig`**：各 step を **`rig:engine` skill で起動した別プロセス**として実行（rig を名前で呼ぶ＝再帰 rig ハーネス）。他に `claude` / `codex` / **`grok`（grok-build headless。`grok -p`。read-only/sandboxフラグ未文書のため検証者のread-only強制はプロンプト契約のみ・#328）** / **`ollama`・`lmstudio`（ローカル LLM・OpenAI 互換）** / **`anthropic`（Anthropic Messages API 直叩き。Fable 5 refusal-classifier→フォールバック検知・#297。⑤参照）** / `cmd`（任意 CLI）/ `mock` も選べる。ローカル LLM は `--model <name>`（ollama 既定 `llama3.1`）・`--base-url <url>` で調整、要サーバ起動。
-- **`--auto-route`**（#264）：step の `auto_route.candidates`（`{model, cost_tier, max_size}` の列。安い順に宣言する）を、現在の diff size（`--diff-git` と同じ自動測定）に応じて決定論的に選ぶ。`auto_route` を宣言していない step には影響しない（既存の `model:` / `--model` が優先されたまま）。選択理由は run-state の `history`（`action: AUTO_ROUTE`）と `runs.jsonl` の `steps[].auto_route` に記録される。
-- **`--auto-route-learn`**（#305）：`--auto-route`をさらに発展させ、`.rig/runs.jsonl`の実績（recipe/step別のmodel使用実績とgate通過率）から頻度ベースで学習する。既定は**shadow mode**（予測は`steps[].learned_route`に記録するのみで実際の選択には使わない）。`--auto-route-mode active`で初めて予測を適用する。参照run不足・低pass_rate時は静的`--auto-route`にフォールバックし、棄却理由（counterfactual）を必ず記録する。`--exploration-pct N` [--exploration-date D]で、一定割合のrunだけ次点候補を試す（`--exploration-date`＋recipe/stepのハッシュで決定論的に判定、乱数は使わない）。
+- **`--provider rig`**: each step runs as **a separate process started through the `rig:engine` skill** — rig calling rig by name, a recursive harness. The alternatives are `claude`, `codex`, **`grok`** (grok-build headless, `grok -p`; its read-only and sandbox flags are undocumented, so a verifier's read-only constraint is a prompt contract only — #328), **`ollama` and `lmstudio`** (local, OpenAI-compatible), **`anthropic`** (the Anthropic Messages API over HTTP; detects Fable 5's refusal classifier and the fallback — #297, see 5 below), `cmd` (any CLI), and `mock`. Local models take `--model <name>` (ollama defaults to `llama3.1`) and `--base-url <url>`, and need the server running.
+- **`--auto-route`** (#264): choose deterministically among a step's `auto_route.candidates` — a list of `{model, cost_tier, max_size}` declared cheapest first — according to the current diff size, measured the same way `--diff-git` measures it. A step that declares no `auto_route` is untouched, and its existing `model:` or `--model` still wins. The reason for each choice is recorded in the run-state's `history` (`action: AUTO_ROUTE`) and in `runs.jsonl` under `steps[].auto_route`.
+- **`--auto-route-learn`** (#305): takes `--auto-route` further by learning from `.rig/runs.jsonl` — which models were used per recipe and step, and how often they passed the gate — on frequency. It runs in **shadow mode** by default: the prediction is recorded in `steps[].learned_route` and does not affect the choice. `--auto-route-mode active` is what applies it. With too few reference runs or a low pass rate it falls back to static `--auto-route` and always records the counterfactual — why the prediction was rejected. `--exploration-pct N [--exploration-date D]` tries the runner-up on a fraction of runs, decided deterministically from `--exploration-date` and a hash of the recipe and step. No randomness.
 
-**③ 動的モデル探索（利用可能なものを自動設定）**
+**3. Discovering models dynamically (configure what is actually available)**
 ```
-orchestrate models [--save] [--json]   # 起動中の LLM サーバ/CLI を探索して一覧
-orchestrate run <recipe> --provider ollama --auto-model   # 実機から動的にモデルを選ぶ
+orchestrate models [--save] [--json]   # discover the running LLM servers and CLIs
+orchestrate run <recipe> --provider ollama --auto-model   # pick a model from what is really there
 ```
-- `models`：`ollama`/`lmstudio` の `/v1/models` を叩いて**利用可能モデルを動的取得**、`claude`/`codex`/`rig` は CLI 有無を表示。`--save` で `~/.claude/rig/models.json` に保存（次回 `--auto-model` が参照）。
-- **`--auto-model`（`--auto-model-setting` も可）**：`--model` 未指定時、保存設定→実機の `/v1/models` 先頭→既定 の順でモデルを自動解決。サーバ不在でも crash せず既定にフォールバック。
+- `models` calls `/v1/models` on `ollama` and `lmstudio` to **fetch the available models live**, and reports whether the `claude`, `codex`, and `rig` CLIs are present. `--save` writes `~/.claude/rig/models.json`, which `--auto-model` reads next time.
+- **`--auto-model`** (also `--auto-model-setting`): with no `--model`, resolve one from the saved settings, then the first entry from a live `/v1/models`, then the default. A missing server falls back to the default rather than crashing.
 
-**④ プロバイダ疎通テスト（`probe`）**
+**4. Testing a provider end to end (`probe`)**
 ```
-orchestrate probe --provider codex                 # 検証ロールで1回叩く（VERDICT を確認）
+orchestrate probe --provider codex                 # one call in the verifier role, checking for a VERDICT
 orchestrate probe --provider codex --role generator
 orchestrate probe --provider ollama --model llama3.1
 ```
-プロバイダを**1回だけ**実行し、(1) 実際に投げるコマンド/エンドポイント、(2) 終了コード、(3) 生出力、(4) 契約（`VERDICT`/`STATUS`）がパースできるか を表示。exit 0＝rig から使える。`✗` のときは `--provider-cmd "codex exec --... {prompt}"`（cmd プロバイダ）で実コマンド/フラグを合わせる。
-- **並列検証**：gated step の `personas` を同時プロセスでファンアウト（`--max-parallel`）。集約は決定論（`--quorum all`＝全員一致／`majority`＝過半数）。
-- **judge-panel**：`--generators rig,claude,codex`＝複数モデルに同じ step を並列生成させ、judge が最初に PASS した候補（列の順＝決定論）を勝者に選ぶ。
-- **step-DAG 並列**：recipe step に `needs: [id…]` があれば、依存を満たした独立 step を同一 wave で同時プロセス実行（intake → {design,test 並走} → merge）。
-- **構造的に採点者≠生成者**：検証は別プロセス（別プロバイダ可）の rig 検証者が `VERDICT: PASS|FAIL` を返す。
+Runs the provider **exactly once** and shows (1) the command or endpoint actually used, (2) the exit code, (3) the raw output, and (4) whether the contract (`VERDICT` or `STATUS`) parses. Exit 0 means rig can use it. On a `✗`, match the real command and flags with `--provider-cmd "codex exec --... {prompt}"` (the cmd provider).
+- **Parallel verification**: a gated step's `personas` fan out into concurrent processes (`--max-parallel`). Aggregation is deterministic (`--quorum all` for unanimity, `majority` for a majority).
+- **judge-panel**: `--generators rig,claude,codex` has several models generate the same step in parallel, and the judge picks the first candidate to PASS — in list order, so it is deterministic.
+- **Step-DAG parallelism**: when recipe steps carry `needs: [id…]`, independent steps whose dependencies are met run concurrently in the same wave (intake → design and test together → merge).
+- **Grader ≠ generator, structurally**: verification is a rig verifier in a separate process — a separate provider if you like — returning `VERDICT: PASS|FAIL`.
 
-**⑤ Fable 5 refusal-classifier→フォールバック（`--provider anthropic`・#297）**
+**5. Fable 5's refusal classifier and the fallback (`--provider anthropic`, #297)**
 ```
 orchestrate run <recipe> --provider anthropic --model claude-fable-5 --step-model <id>=<model>
 ```
-`--provider anthropic`はAnthropic Messages APIを直接HTTPで叩く（`claude`/`rig`のCLI経由providerではない——CLIは`--output-format text`のため構造化された`stop_reason`を持たない）。`cfg`に`fallback_model`（例: `claude-opus-4-8`）を設定すると、`anthropic-beta: server-side-fallback-2026-06-01`を要求し、Fable 5のrefusal-classifier（cyber/bio/reasoning_extractionの3分類）が発火した場合にサーバー側で透過的にOpus 4.8へフォールバックする。
-- **フォールバック成功**：`state["history"]`に`FABLE_FALLBACK`（from/to model）を記録し、**gateを止めず通常のstep成果として処理を継続する**（#297の要求通り）。
-- **フォールバック未設定/尽きた直接拒否**：`FABLE_REFUSAL`（category/explanation）を記録し、rc=1でstepに伝える（silent失敗にしない）。
-- **コスト**：`usage.input_tokens`/`usage.output_tokens`/`usage.cache_read_input_tokens`（フォールバック済みprefixの10%課金対象）を`runs --cost`の`anthropic`行に集計する。`fallback`/`refusal`の発生件数もサマリ末尾に表示される。
+`--provider anthropic` calls the Anthropic Messages API directly over HTTP rather than through the `claude` or `rig` CLI providers — a CLI runs with `--output-format text` and so has no structured `stop_reason`. Setting `fallback_model` in `cfg` (`claude-opus-4-8`, say) requests `anthropic-beta: server-side-fallback-2026-06-01`, and when Fable 5's refusal classifier fires (cyber, bio, or reasoning_extraction) the server falls back to Opus 4.8 transparently.
+- **The fallback worked**: `FABLE_FALLBACK` (from and to model) goes into `state["history"]` and **the gate is not stopped — the step's result is handled as usual**, which is what #297 asked for.
+- **No fallback configured, or a direct refusal after it was exhausted**: `FABLE_REFUSAL` (category and explanation) is recorded and the step is told through rc=1. Never a silent failure.
+- **Cost**: `usage.input_tokens`, `usage.output_tokens`, and `usage.cache_read_input_tokens` (the fallen-back prefix is billed at 10%) are aggregated into `runs --cost`'s `anthropic` row, and the counts of fallbacks and refusals appear at the end of the summary.
 
-`security-reviewer`等、攻撃手法の議論が本業のpersonaにFable 5を`--step-model`で割り当てる場合は、`fallback_model`を必ず設定すること（`agents/security-reviewer.md`参照）。
+If you assign Fable 5 with `--step-model` to a persona whose job is discussing attack techniques — `security-reviewer` and its kin — always set `fallback_model` (see `agents/security-reviewer.md`).
 
-**正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。実際のAnthropic APIへは接続していない（課金・実運用リスクを避けるため）——実モデルでの`stop_reason: refusal`発火・実際のfallback課金は未検証。
+**What was actually verified**: a mock HTTP server reproducing the Anthropic Messages API's response shapes confirmed all three paths — direct refusal, server-side fallback, ordinary success. It has never been pointed at the real Anthropic API, to avoid the cost and the production risk, so a real model actually returning `stop_reason: refusal`, and the real billing of a fallback, remain unverified.
 
-**⑥ A/Bレシピ実験（`ab`・#291）**
+**6. A/B experiments between recipes (`ab`, #291)**
 
 ```
 orchestrate ab <recipe1> <recipe2> [...] --provider mock --goal "<goal>" [--verifier-provider V] [--max-steps N]
 ```
 
-同一タスクを複数recipeバリアントで**真に並走**実行し、速度(elapsed)・リトライ回数・最終状態を比較する。各variantは`--isolate`と同じ隔離worktreeで独立実行される（ファイル競合なし）ため、`ThreadPoolExecutor`で安全に並列化できる。比較したいのは「recipeの違い」であって「model/providerの違い」ではない前提——providerは全variant共通で1つ指定する。
+Runs the same task through several recipe variants **genuinely in parallel** and compares elapsed time, retry count, and final state. Each variant runs independently in an isolated worktree, exactly as under `--isolate`, so there is no file contention and a `ThreadPoolExecutor` is safe. The premise is that you are comparing **recipes, not models or providers** — one provider is given, shared by every variant.
 
 ```
 ## rig ab — recipes/bugfix.md vs recipes/hotfix.md
@@ -81,64 +81,63 @@ bugfix               DONE       42.3         0        -
 hotfix               DONE       18.7         1        -
 ```
 
-未達/dirtyのvariantはworktreeが保全される（`--isolate`と同じ規則）。後片付けは`git worktree remove --force <dir>`。
+A variant that did not finish, or whose tree is dirty, keeps its worktree (the same rule as `--isolate`). Clean up with `git worktree remove --force <dir>`.
 
-**ルールA/B（manifest差分・#317）**：同一recipeを、manifestだけ差し替えた2条件で並走させる——「ルールに足す変更」は静的に評価できず、実タスクを走らせて比較するしかない、という運用知見への対応。
+**A/B on rules (differing manifests, #317)**: run one recipe under two conditions that differ only in the manifest. This answers a practical finding — a change that adds a rule cannot be evaluated statically; the only way to compare is to run real tasks.
 
 ```
 orchestrate ab <recipe> --manifest-a <path> --manifest-b <path> --provider mock --goal "<goal>"
 ```
 
-各variantのworktree内に指定manifestを`.claude/rig.md`として書き込み（メイン作業ツリーは触らない）、content hashを信頼ストアに記録する（**CLIで明示的に渡した＝同意**。`--allow-project-manifest`と同じ同意モデル）。比較表の行ラベルは`A(<stem>)`/`B(<stem>)`でどちらのmanifestか明示される。**正直なスコープ**：variantのmanifestが効くのは**worktree内をcwdとして走る入れ子provider呼び出し**（cwd基準でmanifestを解決するため）。親orchestrateプロセス自身の`load_manifest()`（--auto-routeのサイズ分類等）は呼び出し元repoのmanifestを読み続ける。recipe/provider/modelは全variant共通——測っているのは「ルールの違い」だけ。
+Each variant gets its manifest written as `.claude/rig.md` inside its own worktree (the main working tree is never touched), and its content hash is recorded in the trust store — **passing it explicitly on the CLI is the consent**, the same consent model as `--allow-project-manifest`. Rows in the comparison are labelled `A(<stem>)` and `B(<stem>)` so it is clear which manifest each was. **The honest scope**: a variant's manifest takes effect in **the nested provider calls that run with the worktree as their cwd**, because that is how a manifest is resolved. The parent orchestrate process's own `load_manifest()` — the size classification behind `--auto-route`, for instance — keeps reading the calling repository's manifest. Recipe, provider, and model are shared by every variant: what is being measured is only the difference in the rules.
 
-**⑦ ギャップ処方箋のforge下書き化（`runs`・#268）**
+**7. Turning gap prescriptions into a forge draft (`runs`, #268)**
 
 ```
 orchestrate runs
 ```
 
-同一(recipe, step)で2回以上エスカレーションしていると、「## Gap prescriptions」に**具体的な`/rig:forge`下書き依頼コマンド**を表示する（該当stepでREJECTしたreviewer上位3件を検証票（`steps[].verdicts`）から特定し、説明文に埋め込む）。orchestrate.py自身はforgeを呼ばない（LLMが要る処理のため）——生成するのは「コピペで使えるforgeプロンプト」まで。下書き確認・確定は人/AIが行い、`/rig:drill --replay`で改善を再測定する運用。
+Where the same (recipe, step) pair has escalated twice or more, "## Gap prescriptions" prints **a concrete `/rig:forge` draft request** — identifying the three reviewers that REJECTed at that step most often from the verdict records (`steps[].verdicts`) and writing them into the description. orchestrate.py never calls forge itself, since that needs a model; what it produces is a forge prompt you can paste. A person or an AI reviews and settles the draft, and `/rig:drill --replay` measures whether it improved anything.
 
-**⑧ Managed Agents API委譲（review-gate並列fan-out・実験的opt-in・#295）**
+**8. Delegating to the Managed Agents API (the review-gate fan-out; experimental, opt-in, #295)**
 
 ```python
 cfg["parallel_backend"] = "managed-agents"
-cfg["environment_id"] = "<Managed Agentsのホスト環境ID>"  # 必須
+cfg["environment_id"] = "<the Managed Agents host environment id>"  # required
 ```
 
-`_execute_step`のreview-gate並列検証は既定で`run_verifiers_parallel`（subprocess + ThreadPoolExecutor）を使う。`cfg["parallel_backend"] == "managed-agents"`のときのみ、`run_managed_agents_fanout`がAnthropic Managed Agents API（coordinator/worker構成のbeta・`managed-agents-2026-04-01`）へ委譲する——**既定経路は完全に無変更**。persona 1つにつきworker agentを1つ作成し、判断のみのcoordinatorが束ねる。`threads.list`をポーリングし、全workerが揃うか`managed_agents_max_polls`（既定30・`managed_agents_poll_interval`既定2秒）に達したら打ち切る。戻り値の形は`run_verifiers_parallel`と同じ（`{by, persona, provider, ok, note}`の列）なので`_execute_step`のpass/fail判定ロジックは変更不要。
+`_execute_step`'s parallel review-gate verification uses `run_verifiers_parallel` (subprocesses and a ThreadPoolExecutor) by default. Only when `cfg["parallel_backend"] == "managed-agents"` does `run_managed_agents_fanout` delegate to the Anthropic Managed Agents API — the coordinator-and-worker beta, `managed-agents-2026-04-01`. **The default path is completely unchanged.** One worker agent is created per persona, and a coordinator that only judges gathers them. It polls `threads.list` and stops when every worker has reported or `managed_agents_max_polls` is reached (30 by default, `managed_agents_poll_interval` 2 seconds). The return shape matches `run_verifiers_parallel` — a list of `{by, persona, provider, ok, note}` — so `_execute_step`'s pass and fail logic needs no change.
 
-- **必須**: `cfg["environment_id"]`（Managed Agentsのホスト環境）。未設定なら即座にエラー票を返す（silent失敗にしない）。
-- **未報告worker**: `max_polls`尽きても揃わなかったworkerは`timeout`票として明示（黙って欠落させない）。
-- **トークン計測**: workerスレッドの`usage`を`cfg["_token_usage"]["managed-agents"]`に集計（`runs --cost`と同じ集計経路）。
-- **history**: `MANAGED_AGENTS_SESSION`アクション（session_id・worker数）を`state["history"]`に記録。event-stream自体のrun-continuityヘッダ統合は未実装。
+- **Required**: `cfg["environment_id"]`, the Managed Agents host environment. Unset, it returns an error verdict immediately rather than failing silently.
+- **A worker that never reported**: any worker still missing when `max_polls` runs out is recorded explicitly as a `timeout` verdict, never quietly dropped.
+- **Token accounting**: each worker thread's `usage` is aggregated into `cfg["_token_usage"]["managed-agents"]`, the same path `runs --cost` reads.
+- **history**: a `MANAGED_AGENTS_SESSION` action (session id, worker count) is recorded in `state["history"]`. Integrating the event stream itself with the run-continuity header is not implemented.
 
-**正直な検証範囲**：REST エンドポイントパス（`/v1/agents`等）は公式Python SDKのメソッド名（`client.beta.agents.create`等、`anthropics/claude-cookbooks`の`managed_agents/CMA_plan_big_execute_small.ipynb`参照）からの推測であり、公式RESTリファレンスから直接確認したものではない。モックHTTPサーバで全呼び出し順序（worker/coordinator作成・session作成・event送信・threadsポーリング・集計・environment_id未設定のエラー経路）を検証済みだが、**実際のAPIには未接続**。worker/coordinator間のコンテキスト分離はAnthropicサーバ側の性質でありクライアントコードからは検証できない——ここで検証したのは「rig側のコードが生のworker出力を要求／転送せず、APIの返した最終結果のみを読む」ことのみ。
+**What was actually verified**: the REST endpoint paths (`/v1/agents` and the rest) are inferred from the official Python SDK's method names (`client.beta.agents.create` and so on; see `managed_agents/CMA_plan_big_execute_small.ipynb` in `anthropics/claude-cookbooks`) rather than read from an official REST reference. A mock HTTP server verified the whole call order — creating workers and the coordinator, creating the session, sending events, polling threads, aggregating, and the error path when `environment_id` is unset — but **it has never been connected to the real API**. Context isolation between workers and the coordinator is a property of Anthropic's server and cannot be verified from client code; what was verified here is only that rig's own code never requests or forwards raw worker output and reads only the final result the API returned.
 
-## 自動有効化（明示しなくても通る）
+## Automatic activation (it applies without being asked for)
 
-`--orchestrate` を明示しなくても、次のとき自動で orchestrate を通る（§4.3）：
-- **recipe が `checks:` か `needs:` を宣言**＝決定論で回す意図のある recipe（機械検証 or DAG 並列）。
-- **manifest `default_orchestrate: true`**＝プロジェクト全体の既定。
+Even without an explicit `--orchestrate`, a run goes through orchestrate when (§4.3):
+- **the recipe declares `checks:` or `needs:`** — a recipe that means to be run deterministically, through machine verification or DAG parallelism; or
+- **the manifest sets `default_orchestrate: true`** — a project-wide default.
 
-`--no-orchestrate` でその run だけ従来の散文エンジンに戻せる。単発生成コマンド（`/rig:persona` 等）には作用しない。`plan` 出力に `自動 orchestrate: auto ON/off` が出る。
+`--no-orchestrate` returns that one run to the prose engine. It does not affect single-shot generators such as `/rig:persona`. The `plan` output says `auto orchestrate: auto ON/off`.
 
-## 効く所
+## Where it earns its place
 
-- **prose の制御ループ ≪ コードの強制**（`harness-taxonomy`）。遷移・停止・リトライをコードが握る。
-- **状態は `run-state.json` に永続**＝圧縮・再起動を跨いで同じ状態機械を再開（run-continuity の計算版）。
-- **opt-in＝engine 不変**。各 step の中身は従来の rig が回す（Thin Harness, Fat Skills）。
+- **A control loop in prose is weaker than one enforced in code** (`harness-taxonomy`). Transitions, stopping, and retries are held by code.
+- **State persists in `run-state.json`**, so the same state machine resumes across compaction and restarts — the computational version of run-continuity.
+- **Opt-in, engine unchanged.** The inside of each step is still run by ordinary rig: thin harness, fat skills.
 
-## 注意
+## Things to watch
 
-- `--provider rig`/`claude` は**入れ子で claude が起動**＝コスト・再帰に注意。設計確認は `--provider mock`（別プロセスだが即返す決定論ダミー）。
-- ゲート未達 K 回で `ESCALATE`（無限ループ禁止）、自己採点（by=self）は `BLOCKED`。
-- 決定論は `orchestrate selftest` で検証できる。
+- `--provider rig` and `claude` **start claude nested** — mind the cost and the recursion. Check a design with `--provider mock`, a separate process that returns a deterministic dummy immediately.
+- K failures at a gate means `ESCALATE` (no infinite loops), and self-grading (`by=self`) means `BLOCKED`.
+- The determinism can be checked with `orchestrate selftest`.
 
+## run-continuity (SKILL.md §6)
 
-## run-continuity（SKILL.md §6）
-
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

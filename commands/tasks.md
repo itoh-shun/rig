@@ -1,51 +1,50 @@
 ---
-description: "rig/tasks — 依頼を細粒度の検証可能タスクに割ってから実装する。plan(各タスクに検証つき)→implement(タスク順・--tdd可)→verify→review。大きく曖昧に実装せず「小さく割って・確かめながら・順に潰す」。承認を取ってから実行。"
-argument-hint: "[\"<やりたいこと>\"] [--plan] [--tdd] [--orchestrate]"
+description: "rig/tasks — split a request into small, verifiable tasks before implementing it. plan (each task with its own verification) → implement (in order, --tdd available) → verify → review. Instead of building something large and vague: split small, check as you go, clear them in order. Runs only after approval."
+argument-hint: "[\"<what you want done>\"] [--plan] [--tdd] [--orchestrate]"
 ---
 
-# rig/tasks — 細粒度プランニング 🧩
+# rig/tasks — fine-grained planning 🧩
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・acceptance-gate）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, context-minimal, acceptance-gate). This command is only the entry point; the engine lives in the skill and is not repeated here.
 
-起動後、`--recipe task-plan` を既定として次の引数を PARSE する:
+Then PARSE the following arguments with `--recipe task-plan` as the default:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-依頼を `task-plan` recipe に渡す。手順本体（①分解 →②実行 →③レビュー →④収束）は `facets/instructions/task-plan`、分解の作法は `facets/personas/planner` に従う。
+Hands the request to the `task-plan` recipe. The procedure — decompose, execute, review, converge — is in `facets/instructions/task-plan`, and how to decompose is in `facets/personas/planner`.
 
-- **細粒度に割る**: 1タスク＝数分・少数ファイル。曖昧な大タスクを作らない。
-- **各タスクに検証**: 「どうなったら完了か」をコマンド/テスト/grep/観察で（検証の無いタスクは作らない）。
-- **未確定は先出し**: 仕様の穴・前提不明は捏造でタスク化せず「要調査」に出して先に潰す。
-- **承認してから実行**: 計画を提示し、OK をもらってから実装に移る（大きく作ってからの方針転換を避ける）。
-- **上から潰す**: 依存順に実装→各タスクの検証→次へ。独立タスクは `--orchestrate` で並列可。
+- **Split small**: one task is minutes and a few files. Do not create a large vague task.
+- **Every task carries its verification**: what "done" looks like, as a command, a test, a grep, or an observation. A task with no verification is not a task.
+- **Surface the unknowns first**: a hole in the spec or an unstated assumption does not become an invented task — it becomes "needs investigation" and gets cleared first.
+- **Approve, then execute**: present the plan and move to implementation once it is agreed, so nothing large is built before the direction changes.
+- **Clear them from the top**: implement in dependency order, verify each, move on. Independent tasks can run in parallel with `--orchestrate`.
 
-## goal との違い
+## How it differs from goal
 
-- `/rig:tasks`＝**事前に全タスクを見渡す計画**（段取りして潰す）。
-- `/rig:goal`＝**反応的に次の一手**（達成まで収束）。
+- `/rig:tasks` — **see every task up front and plan** (arrange, then clear).
+- `/rig:goal` — **decide the next move reactively** (converge until achieved).
 
-## flag
+## Flags
 
-- `--plan` … 計画（タスク表＋未確定）を提示して停止（実行しない）。
-- `--tdd` … 各タスクを red-green-refactor で実装。
-- `--orchestrate` … 独立タスクを別プロセスで並列実行（DAG）。
+- `--plan` — present the plan (the task table plus the unknowns) and stop without executing.
+- `--tdd` — implement each task red-green-refactor.
+- `--orchestrate` — run independent tasks in parallel processes (a DAG).
 
-## 例
+## Examples
 
 ```
-/rig:tasks "JWT のリフレッシュを追加"            # 細粒度に割って実装まで
-/rig:tasks --plan "決済画面のリファクタ"          # 計画だけ先に確認
-/rig:tasks --tdd "バリデーションを strict に"     # 各タスクを TDD で
+/rig:tasks "add JWT refresh"                     # split small, through to implementation
+/rig:tasks --plan "refactor the payment screen"  # see the plan first
+/rig:tasks --tdd "make validation strict"        # each task under TDD
 ```
 
+## run-continuity (SKILL.md §6)
 
-## run-continuity（SKILL.md §6）
-
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

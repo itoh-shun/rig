@@ -1,50 +1,49 @@
 ---
-description: "rig/qa — テストケース設計。固定の7観点（初見/ベテラン/悪意/整合性/移行/回帰/仕様疑義）を取りこぼさず洗い、根拠(Test Basis)必須・未確認は「※要確認」・要件カバレッジで仕様ギャップを可視化。--migration で移行トラック、--review で既存ケースの指摘。AIはテスト設計者（実行・合否・修正は人間）。"
-argument-hint: "[対象（課題/機能/diff/仕様）] [--migration] [--review <path>] [--plan]"
+description: "rig/qa — designing test cases. Sweeps seven fixed lenses (first-time user, veteran, malicious actor, data-integrity auditor, migration, regression, spec sceptic) without dropping any, requires a Test Basis for each case, marks the unverified as \"needs checking\", and makes spec gaps visible through requirement coverage. --migration switches to the migration track, --review critiques existing cases. The AI is a test designer; running, judging, and fixing stay with people."
+argument-hint: "[target (an issue, a feature, a diff, a spec)] [--migration] [--review <path>] [--plan]"
 ---
 
-# rig/qa — テスト設計 🧪
+# rig/qa — test design 🧪
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。既存 recipe と同じ engine を「テスト観点の設計」に使う。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, context-minimal, facet ordering, knowledge-layer injection). This command is only the entry point; the engine lives in the skill and is not repeated here. It is the same engine the other recipes use, pointed at designing test coverage.
 
-起動後、`--recipe test-design` を既定として次の引数を対象に PARSE する:
+Then PARSE the following as the target, with `--recipe test-design` as the default:
 
 ```
 $ARGUMENTS
 ```
 
-引数が無ければ現在の作業ツリーの変更（`git diff`）を対象にする。
+With no argument, the target is the current working tree's changes (`git diff`).
 
-## やること
+## What it does
 
-対象（課題 / 機能 / diff / 仕様）を `test-design` recipe に渡す。手順本体（①対象とトラック確定 →② `qa-test-lenses` 注入 →③7観点を一巡 →④根拠と正直さ →⑤ `test-cases` で構造化）は `facets/instructions/test-design` に従う。
+Hands the target — an issue, a feature, a diff, a spec — to the `test-design` recipe. The procedure (fix the target and the track, inject `qa-test-lenses`, sweep the seven lenses, hold to grounds and honesty, structure the result as `test-cases`) is in `facets/instructions/test-design`.
 
-- **7観点を取りこぼさない**: 初見ユーザー / 現場ベテラン / 悪意ある操作者 / データ整合性監査役 / 移行担当者 / 回帰デグレ番人 / 仕様懐疑者。各観点が**最低1ケース**（出なければ「該当なし＋理由」）。正常系に偏らせない。
-- **根拠と正直さ**: 各ケースに **Test Basis（一次情報）** を紐づけ、コード未確認・仕様未確定は `※要確認（未実施）` と書く（断定しない）。テスト可/保留/不可に分類し、**仕様ギャップを差し戻す**（捏造で埋めない）。
-- **トラック分化**: 既定は新機能（要件を満たすか）。`--migration` は移行（現行どおり動くか＋要件カバレッジ表）。
-- **AI はテスト設計者であってテスターではない**: テストの実行・合否判定・既存ケースの修正はしない（`--review` は**指摘のみ**）。機密（実データ）は素通ししない。
-- 実作業（読解・設計）は subagent が回す（context-minimal）。ケースの実装/自動化は `/rig:dev` へ委譲。
+- **Drop none of the seven lenses**: first-time user, veteran on the floor, malicious actor, data-integrity auditor, migration operator, regression watchdog, spec sceptic. **At least one case per lens** — and where there is none, say "not applicable" with the reason. Do not let it drift towards the happy path.
+- **Grounds and honesty**: tie every case to a **Test Basis** — a primary source. Where the code is unread or the spec unsettled, write `needs checking (not done)` rather than asserting. Sort cases into testable, on hold, and untestable, and **send spec gaps back** rather than filling them with invention.
+- **Two tracks**: the default is a new feature (does it meet the requirement). `--migration` is migration (does it still behave as it did) plus a requirement-coverage table.
+- **The AI is a test designer, not a tester**: it does not run tests, judge pass or fail, or edit existing cases (`--review` **only critiques**). Confidential material — real data — does not pass through unexamined.
+- The actual work, reading and designing, is done by subagents (context-minimal). Implementing or automating the cases goes to `/rig:dev`.
 
-## flag
+## Flags
 
-- `--migration` … 移行トラック（仕様の起点を現行ヘルプ・現行挙動に切替・要件カバレッジ表を付与）。
-- `--review <path>` … 既存テストケースのレビュー（**指摘のみ・修正なし**）。7観点で抜けを洗う。
-- `--plan` … 構成（トラック・観点・対象）を提示して停止（ドライラン）。
+- `--migration` — the migration track: the spec's starting point becomes the current help text and current behaviour, and a requirement-coverage table is added.
+- `--review <path>` — review existing test cases (**critique only, no edits**), sweeping the seven lenses for what is missing.
+- `--plan` — present the composition (track, lenses, target) and stop. A dry run.
 
-## 例
+## Examples
 
 ```
-/rig:qa                              # 現在の変更のテストケースを設計
-/rig:qa 課題#123 のログイン機能       # 特定機能のケース設計（新機能トラック）
-/rig:qa --migration ヘルプ§決済        # 移行トラック（現行どおり動くか）
-/rig:qa --review ./tests/cases.csv    # 既存ケースの観点抜けをレビュー（指摘のみ）
-/rig:qa --plan                        # 構成だけ先に確認
+/rig:qa                                  # design cases for the current changes
+/rig:qa the login feature in issue #123  # cases for one feature, new-feature track
+/rig:qa --migration help section: billing  # migration track: does it still behave as before
+/rig:qa --review ./tests/cases.csv       # review existing cases for missing lenses
+/rig:qa --plan                           # see the composition first
 ```
 
+## run-continuity (SKILL.md §6)
 
-## run-continuity（SKILL.md §6）
-
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない（可視化＝駆動の証拠）:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

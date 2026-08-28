@@ -13,7 +13,7 @@ import pytest
 from rig_workbench.validation.catalog import (
     INTERNAL_ONLY,
     OPS_HEADER_SECTION,
-    ROUTE_TABLE_HEADER,
+    ROUTE_TABLE_HEADERS,
     listed_subcommands,
     registered_subcommands,
     route_table,
@@ -35,7 +35,7 @@ def parser_for(*names):
 
 CLI = parser_for("status", "receipt")
 
-_ROWS = f"{ROUTE_TABLE_HEADER}\n|---|---|\n| `status [<id>]` | `x` |\n"
+_ROWS = f"{ROUTE_TABLE_HEADERS[0]}\n|---|---|\n| `status [<id>]` | `x` |\n"
 
 
 def go(table_rows=_ROWS, before="", after=""):
@@ -137,7 +137,7 @@ def test_a_header_row_that_is_not_a_line_of_its_own_is_not_the_route_table():
     a substring is not a landmark found by structure, and slicing from the pipe inside it
     hands back rows that no longer form the table this check says it read."""
     for prefix in ("> ", "例: "):
-        quoted = go().replace(ROUTE_TABLE_HEADER, prefix + ROUTE_TABLE_HEADER)
+        quoted = go().replace(ROUTE_TABLE_HEADERS[0], prefix + ROUTE_TABLE_HEADERS[0])
         unrouted, _, blind = workbench_routing(CLI, quoted, ops(LISTED))
         assert any("exactly one table headed" in why for why in blind), (prefix, blind)
         assert unrouted == []
@@ -249,7 +249,7 @@ def test_an_ops_section_whose_end_landmark_moved_is_not_the_whole_document():
 
 
 @pytest.mark.parametrize("go_md,ops_md,says", [
-    (go(_ROWS + f"\n{ROUTE_TABLE_HEADER}\n|---|---|\n| `receipt [<id>]` | `x` |\n"),
+    (go(_ROWS + f"\n{ROUTE_TABLE_HEADERS[0]}\n|---|---|\n| `receipt [<id>]` | `x` |\n"),
      None, "exactly one table headed"),
     (None, (f"{OPS_HEADER_SECTION[0]}\n\n{LISTED}\n\n{OPS_HEADER_SECTION[1]}\n\n"
             f"{OPS_HEADER_SECTION[0]}\n\n{LISTED}\n\n{OPS_HEADER_SECTION[1]}\n"),
@@ -276,7 +276,7 @@ def test_a_landmark_that_does_not_locate_a_section_is_refused(go_md, ops_md, say
 @pytest.mark.parametrize("parser,go_md,ops_md,says", [
     (argparse.ArgumentParser(), go(ROUTED), ops(LISTED), "parser exposes no subcommands"),
     (CLI, "# rig\n\nno table here\n", ops(LISTED), "exactly one table headed"),
-    (CLI, go(f"{ROUTE_TABLE_HEADER}\n|---|---|\n| （廃止） | `x` |\n"), ops(LISTED),
+    (CLI, go(f"{ROUTE_TABLE_HEADERS[0]}\n|---|---|\n| （廃止） | `x` |\n"), ops(LISTED),
      "no routed names found"),
     (CLI, go(ROUTED), "# something else\n\nno landmarks\n", "exactly one section bounded by"),
     (CLI, go(ROUTED), ops("手順の説明はここにはない。"), "no `/rig <name>` entries"),
@@ -339,6 +339,24 @@ def test_the_landmarks_it_slices_on_are_in_the_shipped_files():
     go_md = (ROOT / "commands" / "go.md").read_text(encoding="utf-8")
     ops_md = (ROOT / "skills" / "engine" / "facets" / "instructions"
               / "workbench-ops.md").read_text(encoding="utf-8")
-    assert go_md.count(ROUTE_TABLE_HEADER) == 1, "the route table's header row is not unique"
+    # Across every accepted spelling, not per spelling: a file carrying one table under each
+    # holds two route tables, and this check would read one while reporting on the other.
+    assert sum(go_md.count(header) for header in ROUTE_TABLE_HEADERS) == 1, \
+        "the route table's header row is not unique"
     for landmark in OPS_HEADER_SECTION:
         assert ops_md.count(landmark) == 1, f"{landmark!r} is not unique in workbench-ops.md"
+
+
+def test_two_spellings_of_the_header_are_as_ambiguous_as_two_of_one():
+    """Accepting a second spelling of the header must not accept a second route table.
+
+    While the command layer is being translated, `go.md` could carry an English table and a
+    Japanese one at once. Counting per spelling would find exactly one of each and report
+    success, while the check read one table and answered about the other — which is the
+    failure the uniqueness rule exists to prevent, arriving through the door opened to let
+    the translation in.
+    """
+    english, japanese = ROUTE_TABLE_HEADERS[0], ROUTE_TABLE_HEADERS[1]
+    both = go(f"{english}\n|---|---|\n| `status [<id>]` | `x` |\n"
+              f"\n{japanese}\n|---|---|\n| `receipt [<id>]` | `x` |\n")
+    assert route_table(both) is None

@@ -1,32 +1,32 @@
 ---
-description: "rig/export — rig で育てたブリック（persona/recipe/pack）を独立した Claude Code skill として書き出す還元機構。rig 依存を除去して self-contained 化し、出所とライセンスを継承。import（吸収）の対＝ネットに返す。"
-argument-hint: "[--persona <name> | --recipe <name> | --pack <名前>] [--to <dir>] [--dry-run]"
+description: "rig/export — give back what rig grew: write a persona, recipe, or pack out as a standalone Claude Code skill. Strips rig's own vocabulary so the result is self-contained, and carries provenance and licence with it. The counterpart to import: this returns things to the network."
+argument-hint: "[--persona <name> | --recipe <name> | --pack <name>] [--to <dir>] [--dry-run]"
 ---
 
-# rig/export — ブリックを skill として書き出す 📤
+# rig/export — write a brick out as a skill 📤
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・§2 ブリック目録・context-minimal）に従うこと。** このコマンドは入口であり、手順本体は `facets/instructions/skill-export` にある（重複定義しない）。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the §2 brick inventory, context-minimal). This command is only the entry point; the procedure itself lives in `facets/instructions/skill-export` and is not repeated here.
 
-起動後、`facets/instructions/skill-export` に従ってブリックを書き出す:
+Then follow `facets/instructions/skill-export` to write the brick out:
 
 ```
 $ARGUMENTS
 ```
 
-## やること
+## What it does
 
-`/rig:import`（吸収）の対＝**還元**。rig で育てた persona / recipe / pack を、**rig を知らない人がそのまま使える** Claude Code skill リポジトリ構成（SKILL.md + README + references/ + LICENSE）に変換する。
+The counterpart to `/rig:import`. It converts a persona, recipe, or pack that rig grew into a Claude Code skill repository — SKILL.md, README, `references/`, LICENSE — that **somebody who has never heard of rig can use as it is**.
 
-- **self-contained 化**：output-contract はインライン展開・wiki `inject:` は同梱ファイル化・gate は散文に翻訳＝rig 固有の語彙と参照を残さない。
-- **出所の連鎖を切らない**：import 由来の再 export は上流の出所とライセンス継承義務を確認（再配布不可なら中止して報告）。
-- **export → import の輪**：書き出した skill を GitHub に置けば、他の rig ユーザーは `/rig:import <owner>/<repo>` で取り込める。
-- 書き込みは確認必須・冪等・`--dry-run` でプレビューのみ。
+- **Made self-contained**: output contracts are expanded inline, wiki `inject:` targets ship as files, gates are translated into prose. No rig-specific vocabulary or reference is left behind.
+- **The chain of provenance is not broken**: re-exporting something that came in through import checks the upstream provenance and its licence obligations first, and stops with a report when redistribution is not allowed.
+- **The export-import loop**: put the written skill on GitHub and another rig user can take it with `/rig:import <owner>/<repo>`.
+- Writes are confirmed and idempotent; `--dry-run` previews without writing.
 
-## 例
+## Examples
 
 ```
-/rig:export --persona house-authenticity --dry-run   # 構成プレビューのみ
-/rig:export --persona house-authenticity             # 1ペルソナを skill 化
-/rig:export --recipe strict-tdd --to ~/skills-out    # 育てた recipe を書き出す
-/rig:export --pack my-domain                         # pack 一式を skill 化
+/rig:export --persona house-authenticity --dry-run   # preview the layout only
+/rig:export --persona house-authenticity             # one persona as a skill
+/rig:export --recipe strict-tdd --to ~/skills-out    # a recipe you grew
+/rig:export --pack my-domain                         # a whole pack as a skill
 ```

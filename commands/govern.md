@@ -1,128 +1,128 @@
 ---
-description: "rig/govern — 組織ガバナンス pack。共通ポリシー（org→team→project の単調強化）・権限管理・承認フロー・例外（waiver）・改竄検知つき監査台帳を一級概念として扱い、チーム横断の適合性を実測する。判定の正本は `rig-wb govern`。"
-argument-hint: "[audit|init|policy|approve|waiver] [対象パス/task-id] [--all <dir>] [--plan]"
+description: "rig/govern — the organisational governance pack. Treats a common policy (org -> team -> project, tightening only), permissions, an approval flow, waivers, and a tamper-evident audit ledger as first-class concepts, and measures conformance across teams. `rig-wb govern` is the source of truth for every judgement."
+argument-hint: "[audit|init|policy|approve|waiver] [a path or task-id] [--all <dir>] [--plan]"
 ---
 
-# rig/govern — 組織ガバナンス（AI Quality Operating System の org 層）🏛️📋
+# rig/govern — organisational governance, the org layer of the AI Quality Operating System 🏛️📋
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal・facet 配置順・知識層注入）に従うこと。** このコマンドは入口であり、エンジン本体は skill 側にある（重複定義しない）。既存 engine を「1リポジトリの品質」から「**組織の品質**」へ広げる govern pack。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, context-minimal, facet ordering, knowledge-layer injection). This command is only the entry point; the engine lives in the skill and is not repeated here. This is the govern pack: the same engine, widened from the quality of one repository to **the quality of an organisation**.
 
 ```
 $ARGUMENTS
 ```
 
-## この層が解く問題
+## What this layer is for
 
-rig v1 の資産（acceptance-gate・隔離 worktree・独立検証・force-proof accept）は**1人1リポジトリでは完成している**。壊れるのは同じものをチーム A・B・C に配ったときだけ：**基準が同期しない**（`.rig/gates.json` はリポジトリごとに独立）、**権限が二値しかない**（accept できる人の名簿）、**承認が会話で記録でない**、**監査ログが編集できる**。v2 はこの4つを一級概念にする。
+rig v1's assets — the acceptance gate, isolated worktrees, independent verification, force-proof accept — are **complete for one person and one repository**. They break only when the same thing is handed to teams A, B, and C: **criteria stop being in sync** (each repository's `.rig/gates.json` is its own), **permission is binary** (a list of who may accept), **approval is a conversation rather than a record**, and **the audit log can be edited**. v2 makes those four first-class.
 
 ```
-チーム A ─┐
-チーム B ─┼─→ 共通ポリシー ─→ 権限管理 → 承認フロー → 例外 → 監査
-チーム C ─┘        （単調強化＝下位は締められるだけ）
+team A ─┐
+team B ─┼─→ common policy ─→ permissions → approvals → exceptions → audit
+team C ─┘        (tightening only: a lower layer can never loosen)
 ```
 
-## サブモード
+## Sub-modes
 
-| 引数 | 何をするか |
+| Argument | What it does |
 |---|---|
-| `audit`（既定） | 適合性を実測（`govern-audit` recipe）。`--all <dir>` でチーム横断。read-only |
-| `init` | org/team を束ね、共通ポリシーの雛形を作る（既存 `.rig/access.json`/`.rig/gates.json` があれば `migrate` を先に提案） |
-| `policy` | 効いているポリシーの提示・lint（層が上位を緩めていないか）・改定の相談 |
-| `approve` | 承認の付与/却下・状態表示 |
-| `waiver` | 例外の発行/一覧/取消 |
+| `audit` (the default) | Measure conformance (the `govern-audit` recipe). `--all <dir>` goes across teams. Read-only. |
+| `init` | Bind the repository into an org and team and scaffold the common policy (with `migrate` offered first when `.rig/access.json` or `.rig/gates.json` already exist) |
+| `policy` | Show the policy in effect, lint it (has a layer loosened what is above it?), and discuss amendments |
+| `approve` | Grant or deny an approval, and show its state |
+| `waiver` | Issue, list, or revoke an exception |
 
-引数の先頭が該当語ならそれを、無ければ `audit` を既定に、残りを対象として PARSE する。
+If the arguments begin with one of those words, use it; otherwise default to `audit` and PARSE the rest as the target.
 
-## やること
+## What it does
 
-対象を `govern-audit` recipe に渡す。手順本体は `facets/instructions/govern` が正本、観点は `facets/knowledge/quality-operating-system`、出力は `facets/output-contracts/conformance-report`。
+Hands the target to the `govern-audit` recipe. `facets/instructions/govern` is the source of truth for the procedure, `facets/knowledge/quality-operating-system` for the lenses, and `facets/output-contracts/conformance-report` for the output.
 
-- **rig は判定しない＝`rig-wb govern` の出力を読む**。散文で「適合しています」と宣言しない（数字が無い観点は「未計測」）。
-- **実作業は subagent が回す**（context-minimal）。長いポリシー JSON・台帳を親に引き込まない。
-- **read-only**。ポリシー・権限・台帳を勝手に書き換えない（変更コマンドは人間に提示して実行させる）。
+- **rig does not judge; it reads what `rig-wb govern` returns.** Never declare conformance in prose. A lens with no number is "not measured".
+- **The real work is done by subagents** (context-minimal). Long policy JSON and ledgers never reach the parent.
+- **Read-only.** Never rewrite a policy, a permission, or the ledger. Present the command that would change it and let a person run it.
 
-## 決定論ランナー（判定と記録の正本）
+## The deterministic runner (the source of truth for judgements and records)
 
 ```
-rig-wb govern init --org acme --team team-a       # リポジトリを org/team に束ね、雛形ポリシーを作る
-rig-wb govern migrate --org acme                  # v1 の access.json / gates.json をポリシー層へ畳む
-rig-wb govern policy show|lint                    # 効いている層の提示 / 緩め検査（exit 3 = 緩めている）
-rig-wb govern whoami                              # 自分のロールと権限
-rig-wb govern can accept.force                    # 単一権限の確認（exit 3 = 拒否）
-rig-wb govern approve status|grant|deny <task-id> # 承認フロー（著者本人の承認は数えない）
+rig-wb govern init --org acme --team team-a       # bind the repository to an org and team, scaffold a policy
+rig-wb govern migrate --org acme                  # fold v1's access.json and gates.json into the policy layer
+rig-wb govern policy show|lint                    # show the layers in effect / check for loosening (exit 3 = loosened)
+rig-wb govern whoami                              # your role and permissions
+rig-wb govern can accept.force                    # check one permission (exit 3 = denied)
+rig-wb govern approve status|grant|deny <task-id> # the approval flow (the author's own approval never counts)
 rig-wb govern waiver grant <id> --criterion <c> --reason "..." --expires YYYY-MM-DD
-rig-wb govern audit log|verify|export --format csv   # 台帳の閲覧 / 連鎖検証 / 監査提出
-rig-wb govern conformance [--json]                # 1リポジトリの適合性（exit 3 = FAIL あり）
-rig-wb govern rollup --scan <dir> [--json]        # チーム横断（team A/B/C → 共通ポリシー の表）
+rig-wb govern audit log|verify|export --format csv   # read the ledger / verify the chain / export for audit
+rig-wb govern conformance [--json]                # one repository's conformance (exit 3 = something FAILed)
+rig-wb govern rollup --scan <dir> [--json]        # across teams: A, B, C against the common policy
 ```
 
-**既定で不活性**：`.rig/org.json` が無いリポジトリでは、これらは「未統治」と答えるだけで rig の挙動を一切変えない（個人開発は v1 と同一）。
+**Inert by default**: in a repository with no `.rig/org.json`, these answer "ungoverned" and change nothing about how rig behaves. Solo development is identical to v1.
 
-## 共通ポリシーの唯一の設計制約：単調強化
+## The one design constraint on a common policy: it only tightens
 
-org → team → project の順に重なり、**下位層は上位層を締めることしかできない**。
+The layers stack org → team → project, and **a lower layer can only tighten what is above it**.
 
-| 可 | 不可（`policy lint` が層とフィールドを名指して落とす） |
+| Allowed | Refused (`policy lint` names the layer and the field) |
 |---|---|
-| criterion の追加 | 上位が要求する criterion の削除（省略しても継承する） |
-| quorum の引き上げ | quorum の引き下げ |
-| 承認期限・waiver 期限の短縮 | 延長 |
-| role の権限を絞る | role に権限を足す・org が委譲していない権限で新ロールを作る |
-| `non_waivable` の追加 | `required_for_force` / `audit.chain_required` の無効化 |
-| 封印されていない role の付与 | `sealed_roles` への自己登録 |
+| adding a criterion | removing a criterion an upper layer requires (omitting it inherits it) |
+| raising a quorum | lowering a quorum |
+| shortening an approval or waiver expiry | extending one |
+| narrowing a role's permissions | adding a permission to a role, or creating a role with a permission the org never delegated |
+| adding to `non_waivable` | disabling `required_for_force` or `audit.chain_required` |
+| granting an unsealed role | adding yourself to `sealed_roles` |
 
-**壊れたポリシーは fail-closed**：v1 の `.rig/access.json` は壊れていたら「無制限」に落ちたが（1人なら安全側）、ポリシー層は accept を**止める**。カンマ1個で組織の規則が静かに消えるのが、この層で唯一許されない失敗。
+**A broken policy fails closed**: v1's `.rig/access.json` fell back to "unrestricted" when it was broken, which is the safe side for one person. The policy layer **stops accept** instead. An organisation's rules disappearing quietly over one misplaced comma is the one failure this layer does not permit.
 
-## ステージ・ガバナンス（v2.1）
+## Stage governance (v2.1)
 
-承認は accept だけの話ではない。recipe の step が所有ロールと人間承認を宣言できる：
+Approval is not only about accept. A recipe's step can declare its owning role and a human gate:
 
 ```yaml
 steps:
   - id: architecture_review
-    actor: architect          # このステージを所有する組織ロール（LLM ペルソナとは別物）
-    human_gate: true          # 資格者が署名するまで駐機。{quorum, roles, separation_of_duties, expires_hours} でも書ける
+    actor: architect          # the organisational role that owns this stage (not an LLM persona)
+    human_gate: true          # park until somebody qualified signs. Also writable as {quorum, roles, separation_of_duties, expires_hours}
 ```
 
 ```
-rig-wb orchestrate next                                  # → AWAIT_APPROVAL / exit 3（失敗でなく人待ち）
-rig-wb orchestrate approve architecture_review --note "境界は妥当"
-rig-wb orchestrate approve architecture_review --deny --note "ADR が無い"
+rig-wb orchestrate next                                  # → AWAIT_APPROVAL, exit 3 (waiting on a person, not a failure)
+rig-wb orchestrate approve architecture_review --note "the boundary is sound"
+rig-wb orchestrate approve architecture_review --deny --note "there is no ADR"
 ```
 
-- 機械ゲートが pass した後も承認が揃うまで **`awaiting_approval` で駐機**（run-state に永続＝プロセス・セッション・日を跨ぐ）。
-- 承認の算術は accept と**同一実装**：quorum・資格ロール・**職務分離**（そのステージを実行した本人は署名できない）・**鮮度**（承認したコミットに束縛）。
-- org policy は `approvals` の **`stage:<step-id>`** で、recipe が要求していない step にも承認を課せる。recipe と policy は**厳しい方に合成**（quorum は高い方・ロールは和集合・期限は短い方）＝recipe は org を値切れない。
-- 決定は run-state の `step_state[].approvals` と ledger の `stage.approve`/`stage.deny` の両方に残る。
-- **`actor` は実行をブロックしない。** rig が保証できるのは「所有ロールが**署名した**」ことであって「所有ロールが**打鍵した**」ことではない。実行を拒んでも安全性は上がらず CI が壊れるだけなので、所有ロール外の実行は WARN と history に記録し、強制はゲート側に置いた。
+- Even after the machine gate passes, the run **parks in `awaiting_approval`** until the approvals are in. That state persists in the run-state, across processes, sessions, and days.
+- The arithmetic of approval is **the same implementation** as accept's: quorum, qualified roles, **separation of duties** (whoever ran the stage cannot sign for it), and **freshness** (bound to the commit that was approved).
+- An org policy can impose approval on a step the recipe never asked for, through **`stage:<step-id>`** under `approvals`. Recipe and policy **compose to whichever is stricter** — the higher quorum, the union of roles, the shorter expiry — so a recipe cannot negotiate the org down.
+- The decision lands in both the run-state's `step_state[].approvals` and the ledger's `stage.approve` and `stage.deny`.
+- **`actor` does not block execution.** What rig can attest is that the owning role **signed**, not that the owning role **typed**. Refusing to execute would not make anything safer, only break CI, so execution outside the owning role is recorded as a WARN and in the history, and the enforcement lives at the gate.
 
-## accept との関係（チョークポイントは増やさない）
+## How this relates to accept (no second chokepoint)
 
-承認は acceptance-gate の**上乗せであって代替ではない**。ポリシーがあるとき `accept` は①accept 権限 ②承認 quorum（**職務分離**＝著者の承認は数えない／**鮮度**＝ブランチが動いたら失効）③`--force` 権限 ④例外の有効性 を通ってから squash merge に入る。関門は accept ただ1つのまま（2つ作れば片方だけ通る抜け道が生まれる）。
+Approval **adds to the acceptance gate; it does not replace it**. Where a policy exists, `accept` passes through the accept permission, the approval quorum (**separation of duties**: the author's approval does not count; **freshness**: it lapses when the branch moves), the `--force` permission, and the validity of any exception, before it reaches the squash merge. There is still exactly one chokepoint, accept — build a second and you have built a way around the first.
 
-## flag
+## Flags
 
-- `--all <dir>` … その直下のリポジトリ群を横断監査（`govern rollup --scan`）。チーム比較はこちら。
-- `--plan` … 監査構成を提示して停止（ドライラン）。
+- `--all <dir>` — audit every repository directly under that directory (`govern rollup --scan`). This is how teams are compared.
+- `--plan` — present the audit composition and stop. A dry run.
 
-## 例
+## Examples
 
 ```
-/rig:govern                          # このリポジトリの適合性を実測
-/rig:govern audit --all ~/work/acme  # チーム A/B/C 横断でスコア表を出す
-/rig:govern init                     # org/team を束ねて共通ポリシーの雛形を作る
-/rig:govern policy                   # 効いている層と、緩めている層がないかを見る
-/rig:govern approve rig-20260807-...  # 承認の状態を見る／付ける
-/rig:govern waiver                   # 生きている例外の一覧（恒久化していないか）
+/rig:govern                          # measure this repository's conformance
+/rig:govern audit --all ~/work/acme  # a score table across teams A, B, and C
+/rig:govern init                     # bind an org and team and scaffold the common policy
+/rig:govern policy                   # what is in effect, and whether any layer is loosening it
+/rig:govern approve rig-20260807-... # see or grant an approval
+/rig:govern waiver                   # the live exceptions — has one become permanent?
 ```
 
-## 差別化（rig を通す価値）
+## Why route this through rig
 
-素の AI に「ガバナンスを整えて」と頼むと、ポリシー文書の**雛形**が返る。文書は主張であって測定ではない。govern pack は共通ポリシーを**単調強化が保証された実行可能な層**にし、権限・承認・例外を accept の内側で機械的に問い、監査台帳を**編集が検出される形**にして、最後に「主張どおり効いているか」を **force 率・到達率・必須基準の実装率**という数字で返す。ポリシーを書くことと、ポリシーが効いていることの差が、この pack の全部。
+Ask a bare model to "set up governance" and what comes back is a **template policy document**. A document is a claim, not a measurement. The govern pack turns the common policy into **an executable layer with tightening guaranteed**, asks about permissions, approvals, and exceptions mechanically inside accept, makes the audit ledger **one where edits are detectable**, and finally answers whether any of it is working with numbers: the force rate, how far the layers reach, and how many required criteria are actually implemented. The gap between writing a policy and a policy having effect is the whole of this pack.
 
-## run-continuity（SKILL.md §6）
+## run-continuity (SKILL.md §6)
 
-RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output:
 
 ```
 ▸ rig | recipe: govern-audit | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>

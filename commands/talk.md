@@ -1,46 +1,46 @@
 ---
-description: "rig/talk — 話しかけると意図を汲んで利用可能な rig フローへ橋渡しする JARVIS 的な会話モード。多ターン対話・短い話し言葉・影響あるアクションは確認。"
-argument-hint: "[話しかける内容（省略可）] [--autonomous]"
+description: "rig/talk — a conversational mode that takes what you say, works out what you meant, and bridges it to whichever rig flow can do it. Multi-turn, short spoken replies, and confirmation before anything consequential."
+argument-hint: "[what you want to say (optional)] [--autonomous]"
 ---
 
-# rig/talk — 会話モード
+# rig/talk — conversational mode
 
-**まず `rig:engine` skill を Skill ツールで起動し、その SKILL.md（PARSE → RESOLVE → COMPOSE → RUN・context-minimal）に従うこと。** このコマンドは会話の入口であり、エンジン本体は skill 側にある（重複定義しない）。talk は engine の前段（自然言語→構造化された rig 起動）と会話の継続だけを担う。
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, context-minimal). This command is the way into a conversation; the engine itself lives in the skill and is not repeated here. talk handles only the front half — turning natural language into a structured rig invocation — and keeping the conversation going.
 
-起動後、`talk-assistant` 人格と `talk-loop` instruction に従って会話する。発話:
+Then converse in the `talk-assistant` voice, following the `talk-loop` instruction. What was said:
 
 ```
 $ARGUMENTS
 ```
 
-引数が空なら「ご用件は?」と短く促して開始する。
+With no argument, open with a short "what do you need?".
 
-## やること
+## What it does
 
-発話を `facets/instructions/talk-loop` に従って処理する: 雑談/質問はそのまま短く答え、rig アクション要求は正規化 → 利用可能な `/rig:*` を動的列挙して分類 → 一言で確認 → 該当コマンド経由で engine に委譲 → 短い話し言葉で報告。**書き込み・push・merge・capture など影響あるアクションは確認必須**、情報取得・`--plan` 等の低リスクは即応。「もういい / exit / やめて」で終了。
+Handle what was said per `facets/instructions/talk-loop`: answer chat and questions briefly and directly; for a request that means a rig action, normalise it, enumerate the available `/rig:*` commands to classify it, confirm in one line, delegate to that command through the engine, and report back in short spoken sentences. **Anything consequential — a write, a push, a merge, a capture — is confirmed first**; low-risk things like reading state or `--plan` happen immediately. "that's enough", "exit", or "stop" ends it.
 
-## flag
+## Flags
 
-- `--autonomous` … 低リスクアクションの確認を省いて滑らかに進める（書き込み/push/merge/capture の確認は解除されない）。
+- `--autonomous` — skip confirmation for low-risk actions so it flows. Confirmation for writes, pushes, merges, and captures is not lifted.
 
-## 例
+## Examples
 
 ```
-/rig:talk 今の変更、軽くレビューだけして
-/rig:talk installed recipe でこの資料を評価して ./notes/input.md
-/rig:talk                                   # 引数なし → 「ご用件は?」で開始
+/rig:talk just review what I changed, lightly
+/rig:talk evaluate this document with the installed recipe ./notes/input.md
+/rig:talk                                   # no argument -> opens with "what do you need?"
 ```
 
-## 将来（v1 非スコープ）
+## Not in v1
 
-音声 I/O（TTS/STT・**ユーザーが選べる差し替え式**）とハンズフリー・ループは将来層。v1 はテキスト会話のみ（詳細は spec）。
+Voice I/O (TTS and STT, **swappable so the user can choose**) and a hands-free loop are a later layer. v1 is text conversation only; see the spec.
 
-## run-continuity（SKILL.md §6）
+## run-continuity (SKILL.md §6)
 
-talk が委譲した先のフロー RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲すること。中断・質疑・tool 出力の直後でも省かない:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
 ```
 
-**例外**: talk 自身の地の会話ターン（フローに委譲していない短い雑談）にはヘッダを出さない（短い話し言葉を保つ）。
+**One exception**: talk's own conversational turns — short chat that has not been delegated to a flow — carry no header, so the spoken register survives.

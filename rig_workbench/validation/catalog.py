@@ -169,8 +169,24 @@ INTERNAL_ONLY = frozenset({
 #:
 #: The route table is found by its own header row rather than by the section around it, so a
 #: second table added beside it is not mistaken for the dispatch table.
-ROUTE_TABLE_HEADER = "| 先頭語 | 委譲先 |"
+#: Both spellings are accepted while the command layer is being translated to English, and
+#: exactly one line of the document may match any of them. Accepting a second spelling is not
+#: the same as accepting a second table: two headers present at once is still the ambiguity
+#: this check refuses, because it would read one table while reporting about the other.
+ROUTE_TABLE_HEADERS = ("| First word | Delegates to |", "| 先頭語 | 委譲先 |")
 OPS_HEADER_SECTION = ("# instruction: workbench-ops", "## 共通ルール")
+
+
+def _sole_of(document: str, landmarks: tuple[str, ...]) -> int | None:
+    """Which line is one of `landmarks`, if exactly one line of the document is any of them.
+
+    Counted across all of them together rather than per spelling: a document carrying one
+    table under each spelling holds two route tables, which is precisely the ambiguity
+    `_sole` exists to refuse.
+    """
+    matches = [i for i, line in enumerate(document.splitlines())
+               if line.strip() in landmarks]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _sole(document: str, landmark: str) -> int | None:
@@ -233,7 +249,7 @@ def route_table(go_md: str) -> str | None:
     row between two headings would take that table's first column for dispatch wiring. A
     second table under the *same* header is refused rather than guessed at.
     """
-    below = _from(go_md, _sole(go_md, ROUTE_TABLE_HEADER))
+    below = _from(go_md, _sole_of(go_md, ROUTE_TABLE_HEADERS))
     if below is None:
         return None
     rows = []
@@ -303,8 +319,8 @@ def workbench_routing(parser, go_md: str, ops_md: str) -> tuple[list, list, list
         blind.append("the parser exposes no subcommands: the CLI wiring this check reads has "
                      "changed shape")
     if table is None:
-        blind.append(f"commands/go.md does not hold exactly one table headed "
-                     f"{ROUTE_TABLE_HEADER!r}: this check cannot tell which table is the "
+        blind.append(f"commands/go.md does not hold exactly one table headed one of "
+                     f"{ROUTE_TABLE_HEADERS!r}: this check cannot tell which table is the "
                      f"route table")
     elif not routed:
         blind.append("no routed names found under the route table's header: the rows this "
