@@ -2,62 +2,7 @@
 
 ## Unreleased
 
-### Changed
-
-**A declared dependency that will not import now fails, instead of turning its tests into
-skips.** Fourteen `importorskip` guards named `cryptography` and `pyyaml` — both of them
-`[project] dependencies`, so both present in any working install. Guarding a required
-dependency does not make the suite more portable; it makes a broken install quiet.
-
-That cost an hour to learn. `cryptography` imported fine at the top level while its
-`_cffi_backend` was missing, so the eleven publisher tests behind the guard became eleven
-skips and the run reported green. Nothing said the signing path had gone unexercised: a
-failure count of zero reads as success even when the passing count has quietly dropped, and a
-skip is the one result nobody scans a log for.
-
-The guards are gone, and `tests/test_declared_dependencies.py` holds the rule so the next
-dependency is covered the moment it is declared rather than when somebody remembers. It reads
-`pyproject.toml`, imports each name, and refuses any `importorskip` naming one of them. It
-also exercises Ed25519 rather than only importing `cryptography` — the original failure passed
-a plain import, and an import check would have called that broken install healthy.
-
-The scan parses rather than pattern-matches, which was not a precaution: the first version was
-a regex and it failed on the sentence in its own docstring naming the guard it forbids. A
-check that cannot tell an example from an occurrence reports the thing it exists to catch,
-so there is a test for that distinction too.
-
-`mcp` keeps its guard, correctly — it is an optional extra, absent by design in a plain
-install. An extra cannot be covered the same way without ceasing to be optional, so CI now
-asserts `import mcp` right after the step that claims to install it. Without that, a
-`pip install .[mcp]` resolving to nothing would turn five checks into skips and leave the run
-green, which is the same silence one level up.
-
-
-### Added
-
-**A knowledge candidate now hands over the documents, not just the pack name** (#533, second
-slice). `pack knowledge` reported which packs could answer a question and what they cite;
-finding the actual files was left to the caller, which meant either reimplementing tier
-resolution or citing the wrong copy of a document. Each candidate now carries its knowledge
-material addressed as `pack://<scope>/<id>/<relative>` — never a filesystem path, which the
-pack model already required of any projection somebody else consumes.
-
-The shadowing is the part worth spelling out. A `wiki` resolves by name across the tier order,
-so a project pack's `backup-policy` overrides a user pack's and only the winner's text ever
-reaches a prompt. Listing the loser as though it were in force would produce a citation
-pointing at a document nobody reads — wrong in the one way a citation must never be — while
-dropping it silently leaves somebody hunting for a file that has not gone anywhere. So it is
-listed and labelled, with `effective` and the id of whatever won.
-
-Two things were learned by building the fixture rather than by reading the code, and both are
-now documented. Shadowing is always *across* tiers: two packs in one scope may not both carry
-`wiki:backup-policy`, because the collection validator refuses a same-tier collision outright.
-And a `wiki` is prompt material, which puts a knowledge pack under rules that predate this
-work — it must ship an evaluation case, bound by `prompt_surfaces` to its own surfaces. A
-company's knowledge documents are governed like any other prompt surface. That is the intended
-behaviour rather than an accident of packaging, and it is better known before writing the pack
-than discovered at install time.
-
+## [2.9.0] - 2026-08-28
 
 ### Added
 
@@ -101,6 +46,60 @@ and the issue's own acceptance criterion writes "source/evidence".
 Not in this slice: the conversation itself. Resolving an ambiguous scope by asking, and
 re-selecting on the answer, belong to the engine's dialogue layer rather than to the pack
 model, and this leaves them a machine-readable question to work from.
+
+**A knowledge candidate now hands over the documents, not just the pack name** (#533, second
+slice). `pack knowledge` reported which packs could answer a question and what they cite;
+finding the actual files was left to the caller, which meant either reimplementing tier
+resolution or citing the wrong copy of a document. Each candidate now carries its knowledge
+material addressed as `pack://<scope>/<id>/<relative>` — never a filesystem path, which the
+pack model already required of any projection somebody else consumes.
+
+The shadowing is the part worth spelling out. A `wiki` resolves by name across the tier order,
+so a project pack's `backup-policy` overrides a user pack's and only the winner's text ever
+reaches a prompt. Listing the loser as though it were in force would produce a citation
+pointing at a document nobody reads — wrong in the one way a citation must never be — while
+dropping it silently leaves somebody hunting for a file that has not gone anywhere. So it is
+listed and labelled, with `effective` and the id of whatever won.
+
+Two things were learned by building the fixture rather than by reading the code, and both are
+now documented. Shadowing is always *across* tiers: two packs in one scope may not both carry
+`wiki:backup-policy`, because the collection validator refuses a same-tier collision outright.
+And a `wiki` is prompt material, which puts a knowledge pack under rules that predate this
+work — it must ship an evaluation case, bound by `prompt_surfaces` to its own surfaces. A
+company's knowledge documents are governed like any other prompt surface. That is the intended
+behaviour rather than an accident of packaging, and it is better known before writing the pack
+than discovered at install time.
+
+**A run now says whether its spend is measured, where spend is decided** (#532). `runs --cost`
+answered "unmeasured" across 9582 runs, and that was correct: only HTTP providers return a
+structured `usage` payload, and rig refuses to estimate tokens from character counts. But the
+answer reached only somebody who went and asked for it afterwards. The two moments a person
+weighs cost are before starting a run and just after one finishes, and neither said a word.
+
+Both now do, through one helper rather than two spellings that could drift:
+
+```
+cost: unmeasured (claude — CLI providers expose no structured usage; ...)
+cost: metered (anthropic report usage)
+cost: partly metered (anthropic) — claude unmeasured
+```
+
+The mixed case is the one a single word gets wrong: the totals are real and cover part of the
+work, so naming which side is which is the whole value of the line. Still no number anywhere —
+a plausible estimate sitting beside real measurements is worse than saying the measurement
+does not exist.
+
+`--budget-minutes` now says in its help that it is **not** a limit. It records an estimate and
+flags an overrun in status and board; nothing stops. A flag whose name promises more than it
+does is a defect in the interface even when the code behind it is right.
+
+Also added: `.claude/rig.md`, this repository's own manifest. Three of that issue's premises
+turned out not to hold, each found by running it rather than reading it — the file could not
+be committed at all (git does not walk into an ignored directory, so a `!` exception cannot
+rescue a file inside one), placing it does not make it take effect (the trust gate refuses an
+unconsented manifest, so the file documents the consent it needs), and the format was wrong
+(`parse_frontmatter` reads only a leading `---` block, while the template is a document
+*about* the manifest).
 
 ### Changed
 
@@ -149,6 +148,34 @@ headroom in parallel too. The factor is deliberately left alone.
 
 Also corrected while it was under the pen: both READMEs described this suite as "54 tests". It
 collects 4765.
+
+**A declared dependency that will not import now fails, instead of turning its tests into
+skips.** Fourteen `importorskip` guards named `cryptography` and `pyyaml` — both of them
+`[project] dependencies`, so both present in any working install. Guarding a required
+dependency does not make the suite more portable; it makes a broken install quiet.
+
+That cost an hour to learn. `cryptography` imported fine at the top level while its
+`_cffi_backend` was missing, so the eleven publisher tests behind the guard became eleven
+skips and the run reported green. Nothing said the signing path had gone unexercised: a
+failure count of zero reads as success even when the passing count has quietly dropped, and a
+skip is the one result nobody scans a log for.
+
+The guards are gone, and `tests/test_declared_dependencies.py` holds the rule so the next
+dependency is covered the moment it is declared rather than when somebody remembers. It reads
+`pyproject.toml`, imports each name, and refuses any `importorskip` naming one of them. It
+also exercises Ed25519 rather than only importing `cryptography` — the original failure passed
+a plain import, and an import check would have called that broken install healthy.
+
+The scan parses rather than pattern-matches, which was not a precaution: the first version was
+a regex and it failed on the sentence in its own docstring naming the guard it forbids. A
+check that cannot tell an example from an occurrence reports the thing it exists to catch,
+so there is a test for that distinction too.
+
+`mcp` keeps its guard, correctly — it is an optional extra, absent by design in a plain
+install. An extra cannot be covered the same way without ceasing to be optional, so CI now
+asserts `import mcp` right after the step that claims to install it. Without that, a
+`pip install .[mcp]` resolving to nothing would turn five checks into skips and leave the run
+green, which is the same silence one level up.
 
 ## [2.8.0] - 2026-08-28
 
