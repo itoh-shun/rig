@@ -4,6 +4,24 @@
 
 ### Added
 
+**Workflow effectiveness can now measure how long runs took, and how much of it was rig's
+own** (#433 §1). It reported `runtime` as unobservable, on the grounds that `runs.jsonl` carries
+a finish timestamp and no start. That stopped being true in this same release: #502 writes a
+`perf` block into the very records this module already reads. A metric that keeps saying "cannot
+be measured" while the measurement sits in the file it is reading is worse than one that was
+never offered.
+
+The rig-versus-provider split is the point rather than a detail. #433 exists to improve the
+*process*, and the only half a workflow change can move is rig's own — a run that got slower
+because a provider had a bad afternoon says nothing about whether the workflow is any good.
+
+`perf`'s refusals are carried through rather than papered over: it withholds `rig_overhead_ms`
+whenever a provider call went untimed, and such a run counts as unmeasured here instead of
+contributing zero overhead. Reading an absent field as zero downstream would reintroduce exactly
+the fabrication `perf` refused upstream. A run with an elapsed time but no split says so
+outright, since a reader seeing only `total_ms` would reasonably assume the split existed and
+had been omitted.
+
 **Orca's runtime integration is documented** (#464, `docs/orca.md`). It shipped with a
 backend, detection, structured-output refusals and a full test suite — and not one word in any
 README or doc. The first line of the new page is the one that matters: **Orca is a runtime, not
