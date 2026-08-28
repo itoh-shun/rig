@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [2.8.0] - 2026-08-28
+
 ### Added
 
 **Workflow effectiveness can now measure how long runs took, and how much of it was rig's
