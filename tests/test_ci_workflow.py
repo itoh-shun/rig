@@ -6,14 +6,18 @@ check that quietly stops being wired.
 """
 import pathlib
 
-import pytest
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/validate.yml"
 
 
 def _workflow() -> dict:
-    yaml = pytest.importorskip("yaml", reason="pyyaml is a declared dependency")
+    # Imported, not `importorskip`-ed. pyyaml is a *declared* dependency, so it is absent
+    # only when the install is broken — and a broken install must fail here rather than turn
+    # this file into a row of skips. That is not hypothetical: a `cryptography` whose
+    # `_cffi_backend` was missing once turned eleven checks into skips, and a skip is the one
+    # result nobody reads.
+    import yaml
+
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 

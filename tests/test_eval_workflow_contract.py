@@ -237,7 +237,6 @@ def test_the_base_resolution_step_finds_the_live_tip_in_an_actions_checkout(tmp_
     base this step cannot resolve must stop the job, because every value it could
     fall back to is one the branch under review can influence.
     """
-    pytest.importorskip("yaml")
     root = pathlib.Path(__file__).resolve().parent.parent
     script = tmp_path / "resolve.sh"
     script.write_text(_resolve_step(root), encoding="utf-8")
@@ -322,7 +321,6 @@ def test_the_base_the_workflow_resolves_is_the_one_that_refuses_a_replay(tmp_pat
     of the M1/revert/replay fixture would drift, and the point is that this is the
     *same* attack that suite already refuses, run through the workflow's own shell.
     """
-    pytest.importorskip("yaml")
     import test_eval_evidence_verification as verification
     from rig_workbench.eval.gate import evaluate_gate
 

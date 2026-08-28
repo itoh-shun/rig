@@ -7,15 +7,17 @@ agrees with its consumer — hostcheck's env marker, and the inputs action.yml d
 import json
 import pathlib
 
-import pytest
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEVCONTAINER = ROOT / "docs/templates/devcontainer.json"
 SCHEDULED = ROOT / "docs/templates/rig-scheduled.yml"
 
 
 def _yaml():
-    return pytest.importorskip("yaml", reason="pyyaml is a CI dependency")
+    # A declared dependency, so its absence is a broken install rather than an absent option;
+    # see the note in test_ci_workflow.py. Skipping here would hide exactly that.
+    import yaml
+
+    return yaml
 
 
 def test_devcontainer_template_is_valid_json_with_an_image():
