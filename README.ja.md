@@ -555,6 +555,46 @@ rig-wb bench --provider mock --out artifacts/
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
 
+### OpenTelemetry エクスポート（`rig-wb otel`、#501）
+
+rig のローカル証跡——`.rig/runs.jsonl`、監査ログ、assurance receipt——が真実の源のまま。
+OTel はその**投影**であって、ここで何も再判定しないし、エクスポートが失敗しても verdict も
+gate も exit code も変わらない。監視バックエンドが落ちていることで rig の判断が変わってはなら
+ない。
+
+```console
+rig-wb otel --dry-run                        # 何がマシンの外に出るのかをそのまま表示
+rig-wb otel --endpoint http://localhost:4318 # OTLP/HTTP で任意のコレクタへ
+```
+
+```yaml
+observability:
+  enabled: true
+  otlp_endpoint: http://localhost:4318
+  service_name: rig
+```
+
+**SDK を入れない。** rig のランタイム依存は3つだけなので、OTLP/HTTP を JSON ボディで
+`urllib` から話す——モデルのエンドポイントに話しかけているのと同じ経路。どのコレクタも
+`/v1/traces` と `/v1/metrics` で受け取る。
+
+**投影は allowlist で、それが redaction のすべて。** 丸ごとコピーしてから濾すことはしない。
+フィルタは「これから存在しうる全フィールド」について正しくあり続けなければならず、何も考えず
+に追加された最初の1つが既定で流出する。具体的に：`runs.jsonl` の verdict は `anchor`——モデル
+が書いた自由テキストで、ファイルパスが入るのが普通——を持つ。denylist はそれを知っていなけれ
+ばならないが、allowlist はそもそも要求しない。よって prompt・応答本文・diff・パス・verdict の
+散文・step id・モデル名はどれも出ていかないし、**レコードに新しいフィールドが増えても、誰かが
+安全だと判断するまでテレメトリには現れない**。
+
+**span になるのは実測された時間だけ。** フェーズ span は RUN が実際に記録した区間から作る
+（#502）。所要時間はあるが区間が無いフェーズは span ではなく metric として出す——集計値を端から
+並べて木を描けば、誰も観測していない順序を捏造することになる。キャッシュトークン・コスト・
+TTFT・tokens/sec は**まるごと欠落**させる：rig はどれも測っていないので、0 は測定値ではなく
+主張になってしまう。
+
+span id は各レコードの内容から導くので、同じログに対してエクスポータを再実行しても、1つの RUN
+が2つに増えたりしない。
+
 ## 12. GitHub 連携
 
 | コマンド | read/write |

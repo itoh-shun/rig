@@ -647,6 +647,46 @@ rig-wb bench --provider mock --out artifacts/
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
 
+### OpenTelemetry export (`rig-wb otel`, #501)
+
+Rig's local evidence — `.rig/runs.jsonl`, the audit log, the assurance receipts — stays the
+source of truth. OTel is a **projection over it**, so nothing here re-judges anything and a
+failed export changes no verdict, no gate and no exit code. A monitoring backend being down
+must not be able to change what rig decided.
+
+```console
+rig-wb otel --dry-run                        # exactly what would leave the machine
+rig-wb otel --endpoint http://localhost:4318 # OTLP/HTTP to any collector
+```
+
+```yaml
+observability:
+  enabled: true
+  otlp_endpoint: http://localhost:4318
+  service_name: rig
+```
+
+**No SDK.** Rig has three runtime dependencies, so this speaks OTLP/HTTP with JSON bodies over
+`urllib` — the same way it already talks to model endpoints. Any collector accepts it at
+`/v1/traces` and `/v1/metrics`.
+
+**The projection is an allowlist, and that is the whole redaction story.** Nothing is copied
+wholesale and then filtered, because a filter has to be right about every field that will ever
+exist and the first one added without thinking ships by default. Concretely: a verdict in
+`runs.jsonl` carries an `anchor` — free text a model wrote, which routinely holds a file path.
+A denylist would have to know that; an allowlist never asks for it. So no prompt, response
+body, diff, path, verdict prose, step id or model name is exported, and **a new field in the
+record is absent from telemetry until somebody decides it is safe**.
+
+**Only measured timings become spans.** Phase spans come from intervals the run actually
+recorded (#502); a phase with a duration but no interval is exported as a metric, because
+laying aggregates end-to-end to draw a tree would invent an ordering nobody observed. Cached
+tokens, cost, TTFT and tokens/sec are absent entirely — nothing in rig measures them, and a
+zero would be a claim rather than a measurement.
+
+Span ids are derived from each record's own content, so re-running the exporter over the same
+log produces the same trace instead of a second copy of the same run.
+
 ## 12. GitHub integration
 
 | command | read/write |

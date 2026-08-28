@@ -14,6 +14,7 @@ from functools import wraps
 
 from .. import repo_paths
 from . import config
+from . import otel
 from . import perf
 from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_manifest,
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
@@ -1523,6 +1524,86 @@ def cmd_perf(args):
             print(f"[perf] FAIL {line}")
         sys.exit(1)
     print("\n[perf] within budget")
+
+
+# ── OpenTelemetry export (#501) ─────────────────────────────────────────────────
+def cmd_otel(args):
+    """Project recorded runs to OpenTelemetry and send them (#501).
+
+        otel [--recipe R] [--limit N] [--dry-run]
+             [--endpoint URL] [--service-name NAME] [--traces-only | --metrics-only]
+
+    A projection over `.rig/runs.jsonl`, which stays the source of truth: nothing here
+    re-judges anything, and a failed export changes no verdict and no exit code beyond this
+    command's own. `--dry-run` prints the payloads instead of sending them, which is also how
+    you check what would leave the machine before pointing it anywhere.
+
+    Off unless asked: the endpoint comes from `--endpoint` or from `[observability]` in the
+    manifest with `enabled = true`. Telemetry that started flowing because a file was mistyped
+    would be a data-egress incident, so anything ambiguous sends nothing.
+    """
+    recipe = endpoint = service = None
+    limit, dry_run, traces, metrics = 50, False, True, True
+    i = 0
+    while i < len(args):
+        if args[i] == "--recipe" and i + 1 < len(args):
+            recipe, i = args[i + 1], i + 2
+        elif args[i] == "--limit" and i + 1 < len(args):
+            limit, i = int(args[i + 1]), i + 2
+        elif args[i] == "--endpoint" and i + 1 < len(args):
+            endpoint, i = args[i + 1], i + 2
+        elif args[i] == "--service-name" and i + 1 < len(args):
+            service, i = args[i + 1], i + 2
+        elif args[i] == "--dry-run":
+            dry_run, i = True, i + 1
+        elif args[i] == "--traces-only":
+            metrics, i = False, i + 1
+        elif args[i] == "--metrics-only":
+            traces, i = False, i + 1
+        else:
+            i += 1
+
+    configured = otel.settings(load_manifest())
+    if endpoint is None:
+        if not configured["enabled"] and not dry_run:
+            reason = configured.get("reason") or "observability.enabled is not true"
+            print(f"[otel] nothing sent: {reason} (and no --endpoint given)")
+            sys.exit(0)
+        endpoint = configured.get("otlp_endpoint")
+        traces = traces and configured.get("export_traces", True)
+        metrics = metrics and configured.get("export_metrics", True)
+    service = service or configured.get("service_name") or "rig"
+
+    rows = [row for row in _read_jsonl(config.RUNS_PATH)
+            if recipe is None or row.get("recipe") == recipe][-limit:]
+    if not rows:
+        print(f"[otel] no runs in {config.RUNS_PATH}"
+              + (f" for recipe {recipe}" if recipe else ""))
+        sys.exit(0)
+
+    payloads = []
+    if traces:
+        payloads.append(("traces", otel.project_traces(rows, service_name=service)))
+    if metrics:
+        payloads.append(("metrics", otel.project_metrics(rows, service_name=service)))
+
+    if dry_run or not endpoint:
+        for signal, payload in payloads:
+            print(f"--- {signal} ---")
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+
+    failures = []
+    for signal, payload in payloads:
+        error = otel.export(payload, endpoint, signal)
+        if error:
+            failures.append(f"{signal}: {error}")
+        else:
+            print(f"[otel] {signal} sent to {endpoint} ({len(rows)} run(s))")
+    for line in failures:
+        # A warning, never a raise. Every path that reaches an exporter has already decided the
+        # run, and telemetry that could fail a task would eventually fail one for no reason.
+        print(f"[otel] WARN export failed — {line}")
 
 
 def cmd_runs(args):

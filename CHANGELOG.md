@@ -4,6 +4,28 @@
 
 ### Added
 
+**`rig-wb otel` projects recorded runs to OpenTelemetry** (#501). Local evidence stays the
+source of truth — this re-judges nothing, and a failed export changes no verdict, no gate and
+no exit code, because a monitoring backend being down must not be able to change what rig
+decided. OTLP/HTTP with JSON bodies over `urllib`: rig has three runtime dependencies and no
+monitoring vendor belongs among them. Enabled by `--endpoint` or `[observability]` in the
+manifest, off on anything ambiguous — telemetry that started flowing because a file was
+mistyped would be a data-egress incident.
+
+The projection is an **allowlist**, which is the whole redaction story. Nothing is copied and
+then filtered, because a filter has to be right about every field that will ever exist. A
+verdict in `runs.jsonl` carries an `anchor` — text a model wrote, which routinely holds a file
+path — and a denylist would have to know that. So no prompt, response body, diff, path, verdict
+prose, step id or model name is exported, and a new field in the record is absent from
+telemetry until somebody decides it is safe.
+
+Phase spans come from intervals a run actually recorded, so `perf` now persists them (#502).
+A phase with a duration but no interval becomes a metric rather than a span: laying aggregates
+end-to-end to draw a tree would invent an ordering nobody observed. Cached tokens, cost, TTFT
+and tokens/sec are absent entirely — nothing measures them, and a zero would be a claim.
+`rig_overhead_ms` that `perf` withheld is not reinvented as a metric downstream. Span ids come
+from each record's content, so re-exporting a log does not turn one run into two.
+
 **Runs now record where their time went, by phase, and a budget can be declared against
 it** (#502). A run has always been one elapsed number, and one number cannot answer the only
 question a performance report is asked: did rig get slower, or did the provider? Those want

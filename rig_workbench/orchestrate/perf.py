@@ -59,24 +59,37 @@ _LOCK = threading.Lock()
 def accumulator() -> dict:
     """A fresh per-run accumulator, to be placed on `cfg` under `_perf`."""
     return {"phases": {}, "untimed_calls": 0, "context_bytes": 0, "context_calls": 0,
-            "provider_spans": []}
+            "spans": [], "origin": time.monotonic(), "spans_dropped": 0}
+
+
+#: How many intervals one run may keep. A wide fan-out over many steps could otherwise put
+#: thousands of them in a telemetry record. Reaching it is reported (`spans_truncated`), never
+#: silent — a span tree that quietly stopped covering the run would be read as a run that
+#: stopped doing things.
+SPAN_CAP = 500
 
 
 def record_span(cfg: dict, phase: str, start: float, end: float) -> None:
-    """Remember *when* a provider call happened, not only how long it took.
+    """Remember *when* something happened, not only how long it took.
 
-    Verifiers run concurrently, so their durations add up to more than the clock: four
-    reviewers taking 300ms each inside one 320ms wall-clock window sum to 1.2s. Subtracting
-    that sum from the run's total gives a negative overhead, and the first version of this
-    module clamped it to zero — which is to say it reported "rig took no time at all" whenever
-    the fan-out was wide enough. That is precisely the fabricated figure the rest of this file
-    exists to refuse, so the spans are kept and the overlap is collapsed in `summary`.
+    Two things need this. Overlap: verifiers run concurrently, so their durations add up to
+    more than the clock — four reviewers taking 300ms each inside one 320ms window sum to
+    1.2s. Subtracting that sum from the run total goes negative, and the first version of this
+    module clamped it to zero, which is to say it reported "rig took no time at all" whenever
+    the fan-out was wide enough. The spans are kept and the overlap collapsed in `summary`.
+
+    And shape: a trace's child spans need a start and an end (#501). Laying aggregates out
+    end-to-end to draw a tree would invent an ordering nobody measured, so what is exported is
+    what was recorded here, and a phase with no interval is a metric rather than a span.
     """
     acc = cfg.get("_perf") if isinstance(cfg, dict) else None
-    if acc is None or phase not in PROVIDER_PHASES:
+    if acc is None or phase not in PHASES:
         return
     with _LOCK:
-        acc["provider_spans"].append((start, end))
+        if len(acc["spans"]) >= SPAN_CAP:
+            acc["spans_dropped"] += 1
+            return
+        acc["spans"].append((phase, start, end))
 
 
 def _union_ms(spans: list[tuple[float, float]]) -> float:
@@ -177,7 +190,8 @@ def summary(cfg: dict, total_ms: float | None = None,
                   for name, entry in sorted(acc["phases"].items())}
         untimed = acc["untimed_calls"]
         context_bytes, context_calls = acc["context_bytes"], acc["context_calls"]
-        provider_spans = list(acc["provider_spans"])
+        spans = list(acc["spans"])
+        origin, dropped = acc["origin"], acc["spans_dropped"]
     out: dict = {
         "phases": phases,
         "unmeasured": [name for name in PHASES if name not in phases],
@@ -193,7 +207,17 @@ def summary(cfg: dict, total_ms: float | None = None,
     provider_calls = sum(phases[name]["calls"] for name in PROVIDER_PHASES if name in phases)
     out.update(_token_totals(token_usage or {}, provider_calls + untimed))
 
-    provider_ms = _union_ms(provider_spans)
+    if spans:
+        # Offsets from the run's own start, in milliseconds. Relative on purpose: an absolute
+        # timestamp would pin the record to a wall clock it was never measured against, and
+        # `ts` on the enclosing record already says when the run happened.
+        out["spans"] = [{"phase": phase, "start_ms": round((start - origin) * 1000.0, 3),
+                         "end_ms": round((end - origin) * 1000.0, 3)}
+                        for phase, start, end in spans]
+        if dropped:
+            out["spans_truncated"] = f"{dropped} interval(s) past the {SPAN_CAP} cap"
+    provider_ms = _union_ms([(start, end) for phase, start, end in spans
+                             if phase in PROVIDER_PHASES])
     provider_work_ms = sum(phases[name]["ms"] for name in PROVIDER_PHASES if name in phases)
     if untimed:
         # Overhead is total minus provider time. An untimed provider call is time that would
