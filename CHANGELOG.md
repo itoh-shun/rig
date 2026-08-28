@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### Changed
+
+**CI runs the test suite in parallel, for detection before speed.** A serial run is
+structurally blind to a class of defect this repository keeps producing. #502's overhead
+accounting subtracted concurrent provider spans from wall clock and went negative — the module
+written to refuse fabricated figures manufacturing one by its own arithmetic — and it was
+reproducible under `-n 4` and invisible on an idle serial machine, because nothing was competing
+for the CPU and the spans never actually overlapped enough to matter. Every timing-sensitive
+assertion in the suite has that shape. Contention is not a side effect of parallelising; it is
+the measurement, and CI had never taken it.
+
+It earned that on its first run. Two defects failed in CI that had never failed serially, both
+of them real and neither of them about parallelism:
+
+- `rig-wb <anything> --json` printed the untrusted-manifest warning **on stdout**, in front of the
+  payload, in any repository whose manifest has not been consented to yet. So the first
+  `compose-options --json | jq` in a fresh clone returns a parse error, and every one after it
+  until somebody consents. It stayed hidden because the warning fires once per process: in one
+  process, whatever ran first absorbed it, and the `--json` assertion downstream saw a clean
+  stream. Separate workers do not share that set. The gate's diagnostics now go to stderr, where
+  diagnostics belong, and a test pins stdout empty.
+- `bench_tasks._remove_tree`'s error handler chmod-ed whatever path `rmtree` handed it. `rmtree`
+  hands it entries that have gone missing between the scandir that named them and the unlink that
+  reached them — and git does exactly that to these workspaces, writing and deleting
+  `.git/objects/maintenance.lock` under the tree being removed. The handler raised
+  `FileNotFoundError` out of the removal it was supposed to be rescuing. Only a loaded machine
+  loses that race. The race predates this change by as long as the helper has existed.
+
+Speed is the second reason, and the honest version of it is a range rather than a figure. Against
+a serial baseline of 34m44s (3.10) and 32m22s (3.12), three parallel runs of the same branch came
+in between 19m33s and 25m15s on 3.10, and between 26m45s and 29m04s on 3.12. Every one is a win;
+none is repeatable to better than several minutes. `--dist load` scatters tests differently each run and the
+job ends when its slowest worker does, so the spread is how this setup behaves, not noise around a
+truer number waiting to be measured more carefully. It is also why `timeout-minutes` stays at 90:
+a hang budget has to clear that slowest tail, and the tail is the part that moves.
+
+The one thing that could have made this unsafe was measured rather than assumed. `conftest.py`'s
+`CI_TIMEOUT_FACTOR` of 6 was sized for a serial CI run and says so in its own comment, and 4-way
+contention eats into that headroom. Forcing the factor to 2 binds exactly one call site — the
+30s floor covers every measurement under 15s, and the site left is the jp-workflow dry-run the
+comment was written about, the one that historically blew its budget on this runner. Under
+`-n 4` at factor 2 the only failures were the two a root development container always produces,
+and neither is a timeout — so contended cost stays inside 2x measured, and 6 keeps roughly 3x
+headroom in parallel too. The factor is deliberately left alone.
+
+Also corrected while it was under the pen: both READMEs described this suite as "54 tests". It
+collects 4765.
+
 ## [2.8.0] - 2026-08-28
 
 ### Added

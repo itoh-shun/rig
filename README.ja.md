@@ -889,7 +889,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | read-only verifier のサンドボックス強制（プロバイダ別 CLI flag） | `scripts/orchestrate.py probe` / `selftest`（probe 区分） |
 | queue の dispatch・状態遷移 | `scripts/orchestrate.py selftest`（queue 区分） |
 | recipe/persona/command のスキーマ、ブリック目録ドリフト、バージョン同期 | `scripts/validate.py` ＋ `scripts/validate.py selftest`（全 PR で CI 強制） |
-| オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q` — `tests/` 配下の54テストスイート。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
+| オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q -n auto` — `tests/` 配下のスイート。CPU 競合下でしか落ちないアサーションが落ちられるよう並列で回す。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
 | 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
 | ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する） |
