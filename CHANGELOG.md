@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Added
+
+**A pack can declare what its contents are about, and rig can name the candidates for a
+question without choosing between them** (#533, first slice). `type` already said what a pack
+may carry; the optional `knowledge:` block says what it is *about* — `scope`, `topics`,
+`owner`, `evidence`, `reviewed_at` — and `rig-wb pack knowledge --topic backup --scope product`
+selects against it.
+
+The refusal is the feature. The issue's example is a security questionnaire asking "do you
+take backups?", which has a different correct answer for the company, for one product, and for
+the infrastructure underneath both — and an asker who frequently has not decided which they
+meant. So when the candidates span more than one scope, the command says so and names them
+rather than ranking or picking. Which scope was meant is a fact about the asker that no pack
+contains; no amount of reading them recovers it. What comes back instead is that the question
+is open plus the exact set of alternatives, which is what a layer that can hold a conversation
+needs in order to ask. Ambiguity is about scopes and not counts: two company packs matching is
+not a question to put to anybody, it is two sources for one scope.
+
+A pack with no declaration is never a candidate — silence is not a claim to every scope — and
+a pack whose contents fail validation is skipped rather than half-read, because this feeds a
+citation and a citation should not rest on something that did not verify.
+
+The block is optional; a half-filled one is not. `reviewed_at` is why all five keys are
+required once you opt in: a knowledge declaration with no review date is precisely the one
+that goes stale unnoticed, and it is the field that would be dropped first. Any `type` may
+declare the block, because this is description rather than permission — refusing it on a
+`reviewer` pack would only teach people to mislabel `type`, which *is* a permission.
+
+Two deliberate departures, both from running it rather than reading it. `evidence` is not
+required to be sorted, unlike every other list in the manifest: those are slugs where order
+carries nothing, while these are document titles a person wrote, and codepoint order over
+prose is not an order any author can predict — `運用設計書` sorts after `情報セキュリティ規程`
+for a reason nobody reading either would guess. The order is also information, since a
+citation list leads with the document the answer chiefly rests on. Duplicates stay refused.
+And the block spells it `evidence` rather than the issue's `sources`, because `sources`
+already means *where a pack is installed from* across `pack source add`, `verify-sources`, and
+the lock — one word with two meanings in one CLI is a defect to decline rather than inherit,
+and the issue's own acceptance criterion writes "source/evidence".
+
+Not in this slice: the conversation itself. Resolving an ambiguous scope by asking, and
+re-selecting on the answer, belong to the engine's dialogue layer rather than to the pack
+model, and this leaves them a machine-readable question to work from.
+
 ### Changed
 
 **CI runs the test suite in parallel, for detection before speed.** A serial run is

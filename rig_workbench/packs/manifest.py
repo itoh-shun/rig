@@ -26,6 +26,32 @@ PACK_CATALOG_FIELDS = {
     "display_name", "description", "capabilities", "entrypoints", "references", "resources",
 }
 PACK_FIELDS = PACK_BASE_FIELDS | PACK_CATALOG_FIELDS
+
+#: The knowledge declaration (#533): what a pack's contents are *about*, as opposed to what
+#: they are. Optional, and permitted on any type — this is description, not permission, and
+#: `type` vs `kind` already records what folding those two together costs. A `reviewer` pack
+#: whose personas encode a product's domain has the same thing to declare as a `knowledge`
+#: one, and refusing it there would only teach people to mislabel their type to get the field.
+PACK_KNOWLEDGE_FIELDS = {"knowledge"}
+#: The four manifest shapes. The field set is exact rather than a minimum, which is what makes
+#: a typo'd key a refusal instead of a silently ignored line; an optional block therefore costs
+#: a shape rather than a default.
+PACK_SHAPES = frozenset({
+    frozenset(PACK_BASE_FIELDS),
+    frozenset(PACK_BASE_FIELDS | PACK_KNOWLEDGE_FIELDS),
+    frozenset(PACK_FIELDS),
+    frozenset(PACK_FIELDS | PACK_KNOWLEDGE_FIELDS),
+})
+#: Every key the knowledge block carries, all of them required once the block is present. The
+#: block is what is optional; a half-filled one is not. `reviewed_at` is the key that argues
+#: for this: a knowledge declaration with no review date is exactly the one that goes stale
+#: without anybody noticing, and it would be the first field dropped if dropping were allowed.
+KNOWLEDGE_FIELDS = {"scope", "topics", "owner", "evidence", "reviewed_at"}
+#: A scope is a bare dimension (`company`) or a dimension with a value (`product:joypla-one`).
+#: Selection compares the dimension, so the split has to be in the syntax rather than left to
+#: whoever reads the string.
+KNOWLEDGE_SCOPE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}(?::[a-z0-9][a-z0-9-]{0,63})?$")
+KNOWLEDGE_TOPIC = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 COMPAT_FIELDS = {"compatibility_schema_version", "pack_id", "pack_version", "engine", "platforms"}
 PACK_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 RESERVED_PACK_IDS = frozenset({"rig-core"})
@@ -266,12 +292,64 @@ def parse_frontmatter_subset(path: pathlib.Path) -> dict:
     return _parse_frontmatter_yaml(block, path)
 
 
+def _validate_knowledge(value: dict) -> None:
+    """The `knowledge:` block: what this pack's contents are about (#533).
+
+    Every list is sorted and unique for the same reason the asset lists are — two manifests
+    describing the same pack must be the same bytes, or the digest stops meaning anything.
+
+    `evidence` is deliberately not spelled `sources`, which the issue proposing this block
+    used. `sources` already means *where a pack is installed from* across `pack source
+    add/list/remove`, `verify-sources`, and the lock's `source` entries, and one word with two
+    meanings in one CLI is a defect to introduce rather than inherit. The issue's own
+    acceptance criterion writes "source/evidence", so the other half of its vocabulary is
+    used here. These are human labels for the documents an answer rests on — "運用設計書" —
+    not paths and not URLs; nothing resolves them, and this refuses to imply otherwise.
+    """
+    knowledge = value["knowledge"]
+    if not isinstance(knowledge, dict) or set(knowledge) != KNOWLEDGE_FIELDS:
+        raise PackError(
+            f"pack knowledge must declare exactly {', '.join(sorted(KNOWLEDGE_FIELDS))}")
+    for field, pattern in (("scope", KNOWLEDGE_SCOPE), ("topics", KNOWLEDGE_TOPIC)):
+        items = knowledge[field]
+        if (not isinstance(items, list) or not items or items != sorted(set(items))
+                or any(not isinstance(item, str) or not pattern.fullmatch(item)
+                       for item in items)):
+            raise PackError(f"pack knowledge {field} must be a sorted unique slug list")
+    if not isinstance(knowledge["owner"], str) or not knowledge["owner"].strip():
+        raise PackError("pack knowledge owner is invalid")
+    evidence = knowledge["evidence"]
+    # Unique, but deliberately *not* sorted, unlike every other list in this file. Those are
+    # slugs, where order carries nothing and leaving it free would only admit undetectable
+    # noise. These are the titles of documents a person wrote, in whatever language they
+    # wrote them, and two things follow. Codepoint order over prose is not an order any
+    # author can predict — "運用設計書" sorts after "情報セキュリティ規程" for a reason no
+    # human reading either would guess — so the rule could only be obeyed by trial and error.
+    # And the order is information: a citation list puts the document the answer chiefly
+    # rests on first, and sorting would throw that away to buy nothing.
+    if (not isinstance(evidence, list) or not evidence
+            or len(evidence) != len(set(evidence))
+            or any(not isinstance(item, str) or not item.strip() for item in evidence)):
+        raise PackError("pack knowledge evidence must be a non-empty list of distinct labels")
+    reviewed_at = knowledge["reviewed_at"]
+    if not isinstance(reviewed_at, str):
+        raise PackError("pack knowledge reviewed_at is invalid")
+    try:
+        timestamp = dt.datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PackError("pack knowledge reviewed_at is invalid") from exc
+    if timestamp.tzinfo is None:
+        raise PackError("pack knowledge reviewed_at requires timezone")
+
+
 def validate_manifest_shape(value: dict) -> None:
     _reject_unsafe(value, "pack")
     fields = set(value)
-    if (frozenset(fields) not in {frozenset(PACK_BASE_FIELDS), frozenset(PACK_FIELDS)}
+    if (frozenset(fields) not in PACK_SHAPES
             or value.get("pack_schema_version") != PACK_SCHEMA_VERSION):
         raise PackError("pack manifest schema fields/version are invalid")
+    if "knowledge" in fields:
+        _validate_knowledge(value)
     if not isinstance(value.get("id"), str) or not PACK_ID.fullmatch(value["id"]):
         raise PackError("pack id is invalid")
     if value["id"] in RESERVED_PACK_IDS:
