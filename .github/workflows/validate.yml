@@ -71,12 +71,14 @@ jobs:
       # process whatever ran first absorbed it), and an rmtree error handler that
       # raised on an entry git had already deleted under it.
       #
-      # Speed is the second reason, and the two matrix legs disagree about how much
-      # of it there is: the job went 34m44s -> 21m37s on 3.10 and 32m22s -> 26m51s
-      # on 3.12, with the pytest step itself at 1257s and 1584s against a ~1950s
-      # serial baseline. Both are wins and neither is the number; a 25% spread
-      # between two runs of the same suite is what a scattering scheduler on a
-      # shared runner looks like.
+      # Speed is the second reason, and the honest version of it is a range rather
+      # than a figure. Against a serial baseline of 34m44s (3.10) and 32m22s
+      # (3.12), two parallel runs of this branch came in at 21m37s and 25m15s on
+      # 3.10, and 26m51s and 29m04s on 3.12 — every one of them a win, none of
+      # them repeatable to better than a few minutes. `--dist load` scatters tests
+      # differently every run and the job ends when its slowest worker does, so
+      # that spread is the normal behaviour of this setup, not noise around a true
+      # value waiting to be measured more carefully.
       #
       # What made this safe to do: conftest's CI_TIMEOUT_FACTOR of 6 was sized for
       # a serial CI run and says so, and 4-way contention eats into it. So it was
@@ -92,13 +94,11 @@ jobs:
       # detection, and those `timeout=` values were the only bound on a wedged
       # child here — without a step budget the fallback is Actions' 6-hour job
       # default. 90 minutes was cut against the ~1950s serial suite for ~2.8x
-      # headroom, and stays there. The two parallel samples above are 1257s and
-      # 1584s — 26% apart, on the same suite, on the same commit — because
-      # `--dist load` scatters tests differently each run and the job is only as
-      # fast as its slowest worker's tail. That tail is exactly the quantity two
-      # observations are worst at pinning, and cutting a hang budget close to a
-      # number that moves that much buys flakes, not detection. Re-cut it once
-      # master has enough runs to see the spread.
+      # headroom, and stays there. A hang budget has to clear the slowest worker's
+      # tail, and the samples above say that tail moves by minutes between runs of
+      # the same suite. Cutting close to any one of those numbers buys flakes, not
+      # faster hang detection. Re-cut it when master has enough runs to bound the
+      # spread rather than sample it.
       - name: Run pytest suite
         timeout-minutes: 90
         run: pytest -q -n auto

@@ -30,12 +30,13 @@ of them real and neither of them about parallelism:
   `FileNotFoundError` out of the removal it was supposed to be rescuing. Only a loaded machine
   loses that race. The race predates this change by as long as the helper has existed.
 
-Speed is the second reason and still worth naming, though the two matrix legs disagree about how
-much of it there is: the job went 34m44s to 21m37s on 3.10 and 32m22s to 26m51s on 3.12, with the
-pytest step at 1257s and 1584s against a ~1950s serial baseline. Both are wins and neither is
-"the" number — a 26% spread between two runs of the same suite on the same commit is what a
-scattering scheduler on a shared runner looks like, and it is also why `timeout-minutes` stays at
-90 rather than being re-cut against a figure that moves that much.
+Speed is the second reason, and the honest version of it is a range rather than a figure. Against
+a serial baseline of 34m44s (3.10) and 32m22s (3.12), two parallel runs of the same branch came in
+at 21m37s and 25m15s on 3.10, and 26m51s and 29m04s on 3.12. Every one is a win; none is
+repeatable to better than a few minutes. `--dist load` scatters tests differently each run and the
+job ends when its slowest worker does, so the spread is how this setup behaves, not noise around a
+truer number waiting to be measured more carefully. It is also why `timeout-minutes` stays at 90:
+a hang budget has to clear that slowest tail, and the tail is the part that moves.
 
 The one thing that could have made this unsafe was measured rather than assumed. `conftest.py`'s
 `CI_TIMEOUT_FACTOR` of 6 was sized for a serial CI run and says so in its own comment, and 4-way
