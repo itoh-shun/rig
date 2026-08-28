@@ -31,9 +31,9 @@ of them real and neither of them about parallelism:
   loses that race. The race predates this change by as long as the helper has existed.
 
 Speed is the second reason, and the honest version of it is a range rather than a figure. Against
-a serial baseline of 34m44s (3.10) and 32m22s (3.12), two parallel runs of the same branch came in
-at 21m37s and 25m15s on 3.10, and 26m51s and 29m04s on 3.12. Every one is a win; none is
-repeatable to better than a few minutes. `--dist load` scatters tests differently each run and the
+a serial baseline of 34m44s (3.10) and 32m22s (3.12), three parallel runs of the same branch came
+in between 19m33s and 25m15s on 3.10, and between 26m45s and 29m04s on 3.12. Every one is a win;
+none is repeatable to better than several minutes. `--dist load` scatters tests differently each run and the
 job ends when its slowest worker does, so the spread is how this setup behaves, not noise around a
 truer number waiting to be measured more carefully. It is also why `timeout-minutes` stays at 90:
 a hang budget has to clear that slowest tail, and the tail is the part that moves.
