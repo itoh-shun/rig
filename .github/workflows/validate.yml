@@ -65,9 +65,15 @@ jobs:
       # timing-sensitive assertion in this suite has that shape. Contention is not
       # a side effect of parallelising; it is the measurement.
       #
+      # It did exactly that on its first run: two latent defects failed here that
+      # had never failed serially — a `--json` payload with a warning printed in
+      # front of it (hidden because the warning fires once per process, so in one
+      # process whatever ran first absorbed it), and an rmtree error handler that
+      # raised on an entry git had already deleted under it.
+      #
       # Speed is the second reason: the serial job measured 32m22s (3.12) and
-      # 34m44s (3.10) on the commit before this one, and that is the PR feedback
-      # loop, twice over.
+      # 34m44s (3.10); parallel, the pytest step went 1950s -> 1257s and the job
+      # 34m44s -> 21m35s.
       #
       # What made this safe to do: conftest's CI_TIMEOUT_FACTOR of 6 was sized for
       # a serial CI run and says so, and 4-way contention eats into it. So it was
@@ -83,9 +89,12 @@ jobs:
       # detection, and those `timeout=` values were the only bound on a wedged
       # child here — without a step budget the fallback is Actions' 6-hour job
       # default. 90 minutes was cut against the ~1950s serial suite for ~2.8x
-      # headroom; it is left where it is until a parallel run has reported its own
-      # number, because re-cutting a hang budget against a time nobody has
-      # observed yet is the guess this comment exists to avoid.
+      # headroom; against the measured 1257s parallel suite the same 90 minutes is
+      # ~4.3x, which is more slack than a hang budget wants. It stays at 90 for now
+      # regardless: one parallel run is one sample, and `--dist load` scatters tests
+      # differently each time, so the slowest worker's tail is exactly the number a
+      # single observation is worst at pinning. Re-cut it once master has a few runs
+      # to cut against.
       - name: Run pytest suite
         timeout-minutes: 90
         run: pytest -q -n auto

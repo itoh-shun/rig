@@ -13,9 +13,26 @@ for the CPU and the spans never actually overlapped enough to matter. Every timi
 assertion in the suite has that shape. Contention is not a side effect of parallelising; it is
 the measurement, and CI had never taken it.
 
+It earned that on its first run. Two defects failed in CI that had never failed serially, both
+of them real and neither of them about parallelism:
+
+- `rig-wb <anything> --json` printed the untrusted-manifest warning **on stdout**, in front of the
+  payload, in any repository whose manifest has not been consented to yet. So the first
+  `compose-options --json | jq` in a fresh clone returns a parse error, and every one after it
+  until somebody consents. It stayed hidden because the warning fires once per process: in one
+  process, whatever ran first absorbed it, and the `--json` assertion downstream saw a clean
+  stream. Separate workers do not share that set. The gate's diagnostics now go to stderr, where
+  diagnostics belong, and a test pins stdout empty.
+- `bench_tasks._remove_tree`'s error handler chmod-ed whatever path `rmtree` handed it. `rmtree`
+  hands it entries that have gone missing between the scandir that named them and the unlink that
+  reached them — and git does exactly that to these workspaces, writing and deleting
+  `.git/objects/maintenance.lock` under the tree being removed. The handler raised
+  `FileNotFoundError` out of the removal it was supposed to be rescuing. Only a loaded machine
+  loses that race. The race predates this change by as long as the helper has existed.
+
 Speed is the second reason and still worth naming: the serial job measured 32m22s (3.12) and
-34m44s (3.10) on the commit this was cut against. That is the pull-request feedback loop, twice
-over.
+34m44s (3.10) on the commit this was cut against. Parallel, the pytest step went 1950s to 1257s
+and the job 34m44s to 21m35s.
 
 The one thing that could have made this unsafe was measured rather than assumed. `conftest.py`'s
 `CI_TIMEOUT_FACTOR` of 6 was sized for a serial CI run and says so in its own comment, and 4-way
