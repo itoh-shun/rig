@@ -255,6 +255,48 @@ cites the pack that supplied the material rather than reconstructing it. A pack 
 no `knowledge` block is never a candidate — silence is not a claim to every scope — and a pack
 whose contents fail validation is skipped rather than half-read, because this feeds a citation.
 
+### The documents, not just the pack name
+
+Each candidate also carries the knowledge material the pack ships, addressed as
+`pack://<scope>/<id>/<relative>`:
+
+```console
+company-security@0.2.0	company	Corp IT	reviewed 2026-08-01T00:00:00+00:00
+  topics: access-control, backup, encryption
+  evidence: 情報セキュリティ規程, 運用設計書
+  wiki: pack://project/company-security/facets/knowledge/backup-policy.md
+```
+
+Without this the answering side is told which pack to read and left to find the files itself,
+which means either reimplementing tier resolution or citing the wrong copy of a document.
+
+A `wiki` is resolved by name across the tier order, so a project pack's `backup-policy`
+overrides a user pack's and only the winner's text ever reaches a prompt. Documents therefore
+carry `effective` and `provided_by`, and a shadowed one is **listed and labelled** rather than
+either hidden or quietly cited:
+
+```console
+  wiki: pack://user/company-security/facets/knowledge/backup-policy.md  [shadowed by product-security]
+```
+
+Hiding it leaves somebody wondering where their file went; citing it silently puts an answer
+behind text nobody reads. Two packs in one scope cannot collide this way at all — the
+collection validator refuses a same-tier `wiki:backup-policy` — so shadowing is always across
+tiers. A `resource` is addressed inside its own pack and nothing can shadow it.
+
+Paths are never serialised here. `pack://` is the stable form the pack model requires for any
+projection somebody else consumes; the filesystem path is an internal handle.
+
+### Wikis put a knowledge pack under the evaluation ratchet
+
+A `wiki` is prompt material — text a provider is shown — so a pack carrying one is subject to
+two rules that predate this block: it must ship at least one evaluation case, and that case
+must bind to the pack's own prompt surfaces (`wiki:<name>`). A knowledge pack whose documents
+are pure `resource` files is not affected.
+
+This is worth knowing before writing a company knowledge pack: the documents are governed like
+any other prompt surface, which is the intended behaviour rather than an accident of packaging.
+
 ## Install, lock, test, and remove
 
 `pack install` accepts a local directory, ZIP, or tar archive. URL installation is not

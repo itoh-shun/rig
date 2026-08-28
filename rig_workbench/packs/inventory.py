@@ -116,8 +116,41 @@ def _scope_matches(declared: str, requested: str) -> bool:
     return declared == requested or declared.startswith(f"{requested}:")
 
 
-def knowledge_rows(root: pathlib.Path, *, topics: tuple[str, ...] = (),
-                   scopes: tuple[str, ...] = ()) -> dict:
+def _documents(project: pathlib.Path, entry: dict, manifest: dict) -> list[dict]:
+    """The knowledge material this pack carries, addressed so a caller can read and cite it.
+
+    Two kinds, and they differ in a way that matters to a citation. A `wiki` is resolved by
+    name across the tier order, so a project pack's `backup-policy` shadows a user pack's:
+    listing this pack's copy without saying which one wins would produce a citation pointing
+    at a document that is not the one in force, which is a worse failure than no citation.
+    A `resource` is addressed inside its own pack and nothing can shadow it.
+
+    Addressed as `pack://<tier>/<id>/<relative>` rather than as a filesystem path, per the
+    rule `ResolvedPack` states: the path is an internal handle, and a projection anybody else
+    consumes gets the stable URI.
+    """
+    documents: list[dict] = []
+    for kind in ("wiki", "resource"):
+        for item in manifest["assets"].get(kind, []):
+            uri = f"pack://{entry['scope']}/{entry['id']}/{item}"
+            name = _asset_name(kind, item)
+            if name is None:   # `resource`: per-pack, never name-resolved, never shadowed
+                documents.append({"kind": kind, "name": pathlib.PurePosixPath(item).name,
+                                  "uri": uri, "effective": True,
+                                  "provided_by": entry["id"]})
+                continue
+            winner = resolve_all(kind, name, project=project)
+            top = winner[0] if winner else None
+            documents.append({
+                "kind": kind, "name": name, "uri": uri,
+                "effective": bool(top is not None and top.pack_id == entry["id"]),
+                "provided_by": top.pack_id if top is not None else None,
+            })
+    return documents
+
+
+def knowledge_rows(project: pathlib.Path, root: pathlib.Path, *,
+                   topics: tuple[str, ...] = (), scopes: tuple[str, ...] = ()) -> dict:
     """Which installed packs declare knowledge for this question — and whether that settles it.
 
     This selects; it does not answer, and it deliberately does not choose. When candidates
@@ -158,6 +191,7 @@ def knowledge_rows(root: pathlib.Path, *, topics: tuple[str, ...] = (),
             "topics": knowledge["topics"], "matched_topics": matched_topics,
             "owner": knowledge["owner"], "evidence": knowledge["evidence"],
             "reviewed_at": knowledge["reviewed_at"],
+            "documents": _documents(project, entry, manifest),
         })
     distinct = sorted({scope for row in candidates for scope in row["matched_scope"]})
     return {

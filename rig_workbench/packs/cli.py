@@ -298,9 +298,10 @@ def cmd_pack(argv: list[str]) -> int:
         if args.command == "knowledge":
             from .installer import scope_root
             from .inventory import knowledge_rows
-            root = scope_root(args.scope, project=pathlib.Path.cwd(),
+            project = pathlib.Path.cwd()
+            root = scope_root(args.scope, project=project,
                               root=pathlib.Path(args.root) if args.root else None)
-            report = knowledge_rows(root, topics=tuple(args.topics),
+            report = knowledge_rows(project, root, topics=tuple(args.topics),
                                     scopes=tuple(args.scopes))
             if args.json:
                 print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
@@ -313,6 +314,13 @@ def cmd_pack(argv: list[str]) -> int:
                       f"\t{row['owner']}\treviewed {row['reviewed_at']}")
                 print(f"  topics: {', '.join(row['topics'])}")
                 print(f"  evidence: {', '.join(row['evidence'])}")
+                for document in row["documents"]:
+                    # A shadowed document is listed rather than hidden, and says who won.
+                    # Dropping it would leave a person wondering where their file went; citing
+                    # it silently would put an answer behind text that never gets read.
+                    state = "" if document["effective"] else (
+                        f"  [shadowed by {document['provided_by'] or 'nothing'}]")
+                    print(f"  {document['kind']}: {document['uri']}{state}")
             if report["ambiguous"]:
                 # Named, not resolved. Which scope was meant is a fact about the asker that
                 # no pack contains, so this says what has to be settled and stops there.
