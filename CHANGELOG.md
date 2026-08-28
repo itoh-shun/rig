@@ -4,6 +4,23 @@
 
 ### Added
 
+**`rig-wb pack export` writes a bundled pack out as its own repository** (#523), and a pack
+repository can now have a README. Those are one change: a pack directory may contain nothing
+it has not declared — the property the type rules rest on — so a repository whose purpose is
+to distribute one pack could not put it at the root, because its own README would be an
+undeclared file. The pack now sits one level down and the repository's furniture stays above
+it; installing takes the pack directory only, so nothing of the repository reaches a consumer.
+A source holding two pack roots is refused rather than guessed at, and one holding none says
+so.
+
+`export` stops at the tree and prints the commands that finish the job — which forge, public
+or private, who may read it are the owner's calls, and a tool that made them would be guessing
+at exactly what a migration exists to hand over. `docs/pack-migration.md` walks both sides.
+
+An end-to-end test exports a pack that ships in this repository today, makes a git repository
+of it, tags it, and installs it back through a named source. Each half of that can look right
+while the seam between them does not work, and the seam is where the README problem was found.
+
 **The lock records what satisfied each dependency, not only what would have been acceptable**
 (#523, `pack.lock.json` schema 4). Entries already copied the declared `dependencies` — the
 ranges — and a range is not a resolution: `>=2.1.0` stays satisfied after somebody swaps

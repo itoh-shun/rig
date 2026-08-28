@@ -220,13 +220,28 @@ def _source_to_staging(source: pathlib.Path, content: pathlib.Path) -> tuple[str
 
 
 def _pack_root(content: pathlib.Path) -> pathlib.Path:
+    """The one directory inside `content` that is the pack.
+
+    A pack directory may hold nothing it has not declared — that is what makes the type rules
+    enforceable rather than advisory — so a repository whose whole point is to distribute one
+    pack cannot put the pack at its root: a README, a licence, or a CI workflow would each be
+    an undeclared file. The pack sits one level down and the repository's own furniture stays
+    at the root, which is why files beside the pack directory are allowed here.
+
+    Ambiguity still is not. Two candidate directories mean two packs or a mistake, and either
+    way installing "the first one" would be a guess.
+    """
     if (content / "pack.yaml").is_file():
         return content
-    children = [item for item in content.iterdir() if item.is_dir()]
-    files = [item for item in content.iterdir() if item.is_file()]
-    if len(children) == 1 and not files and (children[0] / "pack.yaml").is_file():
-        return children[0]
-    raise PackError("archive must contain one pack root")
+    candidates = [item for item in sorted(content.iterdir())
+                  if item.is_dir() and (item / "pack.yaml").is_file()]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise PackError("source contains no pack root (no pack.yaml)")
+    raise PackError(
+        f"source contains {len(candidates)} pack roots; it must distribute exactly one: "
+        f"{', '.join(item.name for item in candidates)}")
 
 
 def local_quality_status(

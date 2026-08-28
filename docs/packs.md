@@ -38,6 +38,30 @@ rig-wb pack verify-sources --scope project
 rig-wb pack source remove product
 ```
 
+## Taking a pack out to its own repository
+
+```console
+rig-wb pack export packs/domain/japanese-writing --to ../rig-pack-japanese-writing
+```
+
+The pack lands one level down, with the repository's own files at the root:
+
+```text
+rig-pack-japanese-writing/
+├─ README.md
+└─ japanese-writing/pack.yaml, recipes/, facets/, ...
+```
+
+That nesting is required, not stylistic. A pack directory may contain nothing it has not
+declared — that is what makes the type rules enforceable rather than advisory — so a README,
+a licence, or a CI workflow cannot sit beside `pack.yaml`. Installing takes the pack directory
+only, so a repository's own files never reach a consumer. A repository holding two pack roots
+is refused rather than guessed at.
+
+`export` stops at the tree and prints the commands that finish the job. Which forge, public or
+private, and who may read it are the owner's decisions. The full walkthrough for both sides of
+a migration is in [pack-migration.md](pack-migration.md).
+
 ## Seeing what is installed
 
 ```console

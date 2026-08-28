@@ -1,7 +1,7 @@
 # Pack vNext — 設計ブリーフ（#523）
 
 対象 Issue: [#523](https://github.com/itoh-shun/rig/issues/523)
-状態: **S1〜S4 実装済み・S5/S6 は設計案**。実装スライスの順序と、着手前に人が決めるべき問いを確定させるための文書。
+状態: **S1〜S4 実装済み・S5 は道具立てまで完了（リポジトリ作成は owner 判断）・S6 は未着手**。実装スライスの順序と、着手前に人が決めるべき問いを確定させるための文書。
 §5 の4つの問いは推奨どおり（①git-only v1 ②S5 で lock 読みへ ③vendoring を正規運用 ④`type` 無しは拒否）に決定して着手した。
 
 ---
@@ -156,7 +156,14 @@ pack は他に `video-storytelling` がある。
 | ~~**S2**~~ **完了** | source contract、`.rig/sources.json`、`git+ssh`/`git+https`/**`git+file`** install、tag→commit→digest の lock（schema 3）、D5 のエラー分類、lock writer の credential 拒否、`pack source add\|list\|remove` と `pack verify-sources` | S1 | 実 git リポジトリを source にした install が commit に固定され、tag 移動・未認証・到達不能・digest 不一致が別々の理由で報告される |
 | ~~**S3**~~ **完了** | `pack list` / `info` / `explain` / `outdated` / `update`（`source add\|list\|remove` は S2 で先行実装） | S2 | `info` が source / revision / digest / engine / 依存を一度に答え、`outdated` が行ごとに理由を報告し、`update` の失敗が旧版を残す |
 | ~~**S4**~~ **完了** | 依存の**解決結果**（range を満たした version と tier）を lock に記録（schema 4）し `pack info` で報告 | S2 | AC 12 |
-| **S5** | `japanese-writing` を独立 repo へ。git fixture から install する integration test。migration guide | S2 | AC 3 / 14 |
+| **S5**（部分完了） | `pack export`・移行ガイド（`docs/pack-migration.md`）・同梱 pack を export→git 化→tag→install する統合テスト | S2 | AC 14 は達成。AC 3 は**リポジトリ作成が owner 判断**のため保留 |
+
+**〔S5 実装時に見つかったブロッカー〕** `_pack_root` が「ルートにファイルが1つでもあると拒否」していたため、
+**README を持つ pack リポジトリが作れなかった**。pack ディレクトリは宣言外のファイルを持てない（S1 の
+権限モデルはこの性質に乗っている）ので、pack をリポジトリのルートに置くと README 自体が宣言外ファイルになる。
+解決は **pack を1階層下に置き、リポジトリの持ち物をその上に置く**こと。install が持っていくのは pack
+ディレクトリだけなので、リポジトリ側のファイルは利用者に届かない。pack root が2つあるリポジトリは
+「最初の1つ」を選ばず拒否する。
 | **S6** | 残る domain pack の外部化と `packs/` からの削除 | S5 | AC 13 |
 
 **〔S4 実装時の訂正〕** 当初は「source 横断で依存を自動取得する」と書いていたが、実装前に測ってやめた。

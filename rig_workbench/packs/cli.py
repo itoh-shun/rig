@@ -40,6 +40,9 @@ def _parser() -> argparse.ArgumentParser:
                             help="URL template containing {pack}")
     source_remove = source_sub.add_parser("remove")
     source_remove.add_argument("name")
+    export = sub.add_parser("export")
+    export.add_argument("path")
+    export.add_argument("--to", required=True)
     verify_sources = sub.add_parser("verify-sources")
     verify_sources.add_argument("--scope", choices=["project", "user", "org"],
                                 default="project")
@@ -226,6 +229,17 @@ def cmd_pack(argv: list[str]) -> int:
                 path = pathlib.Path(args.path or ".")
                 manifest = validate_pack(path)
                 print(f"valid: {manifest['id']}@{manifest['version']}")
+            return 0
+        if args.command == "export":
+            from .exporter import export_pack
+            exported = export_pack(args.path, to=args.to)
+            print(f"exported: {exported['id']}@{exported['version']} "
+                  f"[{exported['type']}] -> {exported['pack_path']}")
+            print("next:")
+            print(f"  cd {exported['path']} && git init && git add -A && "
+                  f"git commit -m '{exported['id']} {exported['version']}'")
+            print("  git remote add origin <your repository URL> && git push -u origin main")
+            print(f"  git tag {exported['tag']} && git push origin {exported['tag']}")
             return 0
         if args.command == "source":
             project = pathlib.Path.cwd()
