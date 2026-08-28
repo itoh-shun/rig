@@ -633,6 +633,19 @@ What it refuses to do is the design:
   a gate quietly stops gating.
 - **Baselines are the median of recent runs, not the mean,** so one cold cache or one laptop
   that slept cannot set the bar everything afterwards is judged against.
+- **Concurrent provider calls are counted once.** Four reviewers taking 300ms each inside one
+  320ms window cost the run 320ms of waiting, not 1.2s. `provider_work_ms` reports the sum
+  beside it, so a parallel fan-out does not read as waste.
+
+The deterministic suite is the one that already ships: `rig-wb bench --provider mock` runs the
+benchmark corpus through the real orchestrator with a mock provider and points each run's
+telemetry at its own artifacts directory. So the CI gate is the two commands together, with no
+live network anywhere in it:
+
+```console
+rig-wb bench --provider mock --out artifacts/
+RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
+```
 
 ## 12. GitHub integration
 

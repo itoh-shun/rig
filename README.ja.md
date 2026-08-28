@@ -541,6 +541,19 @@ RUN 中に超過しても警告を出すだけで判定は変えない。性能�
   経路そのもの。
 - **ベースラインは平均ではなく中央値。** スリープしたラップトップやコールドキャッシュの 1 回
   が、以降すべての基準を決めてしまわないように。
+- **並列したプロバイダ呼び出しは二重に数えない。** 320ms の窓の中で 300ms のレビュアーが 4 本
+  走っても、RUN が待ったのは 1.2 秒ではなく 320ms。総和は `provider_work_ms` として併記する
+  ので、並列ファンアウトが無駄に見えることもない。
+
+決定論的なスイートは既存のものをそのまま使う。`rig-wb bench --provider mock` はベンチマーク
+コーパスを実際のオーケストレータに mock プロバイダで通し、各 RUN のテレメトリを専用の成果物
+ディレクトリに向ける。つまり CI ゲートはこの 2 コマンドの組で、どこにもライブネットワークが
+入らない：
+
+```console
+rig-wb bench --provider mock --out artifacts/
+RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
+```
 
 ## 12. GitHub 連携
 

@@ -58,7 +58,44 @@ _LOCK = threading.Lock()
 
 def accumulator() -> dict:
     """A fresh per-run accumulator, to be placed on `cfg` under `_perf`."""
-    return {"phases": {}, "untimed_calls": 0, "context_bytes": 0, "context_calls": 0}
+    return {"phases": {}, "untimed_calls": 0, "context_bytes": 0, "context_calls": 0,
+            "provider_spans": []}
+
+
+def record_span(cfg: dict, phase: str, start: float, end: float) -> None:
+    """Remember *when* a provider call happened, not only how long it took.
+
+    Verifiers run concurrently, so their durations add up to more than the clock: four
+    reviewers taking 300ms each inside one 320ms wall-clock window sum to 1.2s. Subtracting
+    that sum from the run's total gives a negative overhead, and the first version of this
+    module clamped it to zero — which is to say it reported "rig took no time at all" whenever
+    the fan-out was wide enough. That is precisely the fabricated figure the rest of this file
+    exists to refuse, so the spans are kept and the overlap is collapsed in `summary`.
+    """
+    acc = cfg.get("_perf") if isinstance(cfg, dict) else None
+    if acc is None or phase not in PROVIDER_PHASES:
+        return
+    with _LOCK:
+        acc["provider_spans"].append((start, end))
+
+
+def _union_ms(spans: list[tuple[float, float]]) -> float:
+    """Wall-clock milliseconds covered by at least one span. Overlaps count once.
+
+    This is the number that means "time the run spent waiting on a provider": the run was not
+    doing its own work during any of it, and it was not waiting twice over during the parts
+    where two calls overlapped.
+    """
+    total = 0.0
+    end_so_far = None
+    for start, end in sorted(spans):
+        if end_so_far is None or start > end_so_far:
+            total += end - start
+            end_so_far = end
+        elif end > end_so_far:
+            total += end - end_so_far
+            end_so_far = end
+    return total * 1000.0
 
 
 def record(cfg: dict, phase: str, seconds: float) -> None:
@@ -117,7 +154,9 @@ def timed(cfg: dict, phase: str):
     try:
         yield
     finally:
-        record(cfg, phase, time.monotonic() - start)
+        end = time.monotonic()
+        record(cfg, phase, end - start)
+        record_span(cfg, phase, start, end)
 
 
 def summary(cfg: dict, total_ms: float | None = None,
@@ -138,6 +177,7 @@ def summary(cfg: dict, total_ms: float | None = None,
                   for name, entry in sorted(acc["phases"].items())}
         untimed = acc["untimed_calls"]
         context_bytes, context_calls = acc["context_bytes"], acc["context_calls"]
+        provider_spans = list(acc["provider_spans"])
     out: dict = {
         "phases": phases,
         "unmeasured": [name for name in PHASES if name not in phases],
@@ -152,7 +192,9 @@ def summary(cfg: dict, total_ms: float | None = None,
         out["context_calls"] = context_calls
     provider_calls = sum(phases[name]["calls"] for name in PROVIDER_PHASES if name in phases)
     out.update(_token_totals(token_usage or {}, provider_calls + untimed))
-    provider_ms = sum(phases[name]["ms"] for name in PROVIDER_PHASES if name in phases)
+
+    provider_ms = _union_ms(provider_spans)
+    provider_work_ms = sum(phases[name]["ms"] for name in PROVIDER_PHASES if name in phases)
     if untimed:
         # Overhead is total minus provider time. An untimed provider call is time that would
         # land in overhead without belonging to it, so the subtraction is refused and the
@@ -160,7 +202,19 @@ def summary(cfg: dict, total_ms: float | None = None,
         out["rig_overhead_unmeasured"] = f"{untimed} provider call(s) were not timed"
     elif total_ms is not None:
         out["provider_ms"] = round(provider_ms, 3)
-        out["rig_overhead_ms"] = round(max(total_ms - provider_ms, 0.0), 3)
+        # What the providers cost in total, which exceeds the wall clock whenever verifiers ran
+        # in parallel. Reported beside the wall figure because the gap between them is the
+        # fan-out's whole benefit, and hiding it would make a parallel run look wasteful.
+        out["provider_work_ms"] = round(provider_work_ms, 3)
+        if provider_ms > total_ms:
+            # Cannot happen from concurrency any more — the union is bounded by the window it
+            # was measured in — so this is a clock that moved. Withheld rather than clamped to
+            # zero: "rig took no time" is a claim, and this one would be false.
+            out["rig_overhead_unmeasured"] = (
+                f"provider time ({round(provider_ms, 3)}ms) exceeds the run total "
+                f"({round(total_ms, 3)}ms)")
+        else:
+            out["rig_overhead_ms"] = round(total_ms - provider_ms, 3)
     return out
 
 

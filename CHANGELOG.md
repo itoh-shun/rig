@@ -29,6 +29,14 @@ and a green light for one is how a gate stops gating without anybody noticing. B
 the median of recent runs, not the mean, so a laptop that slept cannot set the bar that every
 later run is judged against.
 
+Provider time is the **wall-clock window** the run spent waiting, not the sum of the calls.
+Verifiers run concurrently, so four reviewers taking 300ms each inside one 320ms window sum to
+1.2s; subtracting that from the run total goes negative, and the first cut of this clamped it
+to zero — reporting that rig took no time at all whenever the fan-out was wide enough. The
+overlapping spans are collapsed instead, and `provider_work_ms` reports the sum beside the wall
+figure so the fan-out's benefit stays visible. Provider time still exceeding the total now
+means the clock moved, and withholds the number rather than clamping it.
+
 **`rig-wb pack export` writes a bundled pack out as its own repository** (#523), and a pack
 repository can now have a README. Those are one change: a pack directory may contain nothing
 it has not declared — the property the type rules rest on — so a repository whose purpose is

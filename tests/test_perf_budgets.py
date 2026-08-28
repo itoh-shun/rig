@@ -24,10 +24,18 @@ from rig_workbench.orchestrate.runstate import new_state
 
 @pytest.fixture
 def runs_log(tmp_path, monkeypatch):
-    """A per-test `.rig/runs.jsonl`. The suite leaves `RIG_RUNS_PATH` alone on purpose (see
-    tests/test_suite_isolation.py), so a test that reads it back has to pin its own."""
+    """A per-test `.rig/runs.jsonl`.
+
+    Pinned with `setattr` rather than by setting `RIG_RUNS_PATH`, which is what the rest of the
+    suite does and is the only form that survives its neighbours. `config.RUNS_PATH` resolves
+    through PEP 562 `__getattr__`, so it reads the environment on every access — until some
+    other test does `monkeypatch.setattr(config, "RUNS_PATH", ...)`. That creates a real module
+    attribute, and undoing it puts the *computed* value back rather than removing it, leaving
+    the name frozen for the rest of that worker. Under `-n 4` these tests then read whichever
+    path the frozen value points at, which is how they passed alone and failed in the suite.
+    """
     path = tmp_path / "runs.jsonl"
-    monkeypatch.setenv("RIG_RUNS_PATH", str(path))
+    monkeypatch.setattr(config, "RUNS_PATH", path)
     return path
 
 
@@ -53,6 +61,9 @@ def test_a_run_records_where_its_time_went(tmp_path, runs_log):
     assert measured["total_ms"] >= measured["provider_ms"]
     assert measured["rig_overhead_ms"] == pytest.approx(
         measured["total_ms"] - measured["provider_ms"], abs=0.01)
+    # ...and it subtracted wall time, not summed work: the two differ once anything ran in
+    # parallel, and only the first is time the run was actually blocked.
+    assert measured["provider_work_ms"] >= measured["provider_ms"]
 
     written = json.loads(runs_log.read_text(encoding="utf-8").splitlines()[-1])
     assert written["perf"]["phases"] == measured["phases"]
@@ -182,7 +193,10 @@ def test_a_budget_that_holds_says_nothing():
 def test_breaking_a_budget_warns_but_does_not_change_the_verdict(tmp_path, runs_log, capsys):
     """A perf budget failing a bugfix would make people stop declaring budgets.
     `rig-wb perf --check` is where it costs something."""
-    state, final = _run(tmp_path, {"perf_budget": {"max_rig_overhead_ms": 0}}, quiet=False)
+    # Breached on context bytes, not on milliseconds: a timing-based limit makes the test a
+    # statement about how fast this machine is, and the behaviour under test is that a breach
+    # of *any* kind only warns.
+    state, final = _run(tmp_path, {"perf_budget": {"max_context_bytes": 1}}, quiet=False)
     assert final == "DONE"
     assert state["perf_budget_broken"]
     # Through `log`, so `--artifact-stdout` (which runs quiet) keeps its stdout contract: the
@@ -267,15 +281,15 @@ def test_the_budget_comes_from_the_manifest_when_no_file_is_given(tmp_path, runs
     the manifest, not a generated file."""
     _run(tmp_path)
     monkeypatch.setattr(commands, "load_manifest",
-                        lambda *a, **k: {"perf_budget": {"max_rig_overhead_ms": 0}})
+                        lambda *a, **k: {"perf_budget": {"max_context_bytes": 1}})
     with pytest.raises(SystemExit) as exit_:
         commands.cmd_perf(["--recipe", "bugfix", "--check"])
     assert exit_.value.code == 1
 
 
 def test_the_run_log_path_is_the_one_the_command_reads(tmp_path, runs_log):
-    """Guards the fixture itself: if `RIG_RUNS_PATH` stopped being honoured, every test above
-    would read some other repository's history and pass for the wrong reason."""
+    """Guards the fixture itself: if the pin stopped holding, every test above would read some
+    other repository's history and pass for the wrong reason."""
     _run(tmp_path)
     assert config.RUNS_PATH == runs_log
     assert runs_log.exists()
@@ -354,3 +368,50 @@ def test_a_percentage_limit_declared_without_a_baseline_is_reported(tmp_path, ru
 
 def test_a_percentage_limit_is_not_mistaken_for_an_unknown_key():
     assert perf.check_budget({"rig_overhead_ms": 1.0}, {"max_token_regression_pct": 20}) == []
+
+
+# ── concurrency ──────────────────────────────────────────────────────────────
+def test_parallel_provider_calls_are_not_counted_twice():
+    """Four reviewers taking 300ms each inside one 320ms window cost the run 320ms of waiting,
+    not 1.2s. The first version of this module summed them, went negative against the total,
+    and clamped to zero — reporting that rig took no time at all whenever the fan-out was wide
+    enough."""
+    cfg = {"_perf": perf.accumulator()}
+    base = 1000.0
+    for _ in range(4):
+        perf.record(cfg, "provider_verifier", 0.300)
+        perf.record_span(cfg, "provider_verifier", base, base + 0.300)
+
+    measured = perf.summary(cfg, total_ms=500.0)
+    assert measured["provider_work_ms"] == pytest.approx(1200.0)
+    assert measured["provider_ms"] == pytest.approx(300.0)
+    assert measured["rig_overhead_ms"] == pytest.approx(200.0)
+
+
+def test_sequential_provider_calls_still_add_up():
+    cfg = {"_perf": perf.accumulator()}
+    for start in (1000.0, 1001.0):
+        perf.record(cfg, "provider_generator", 0.500)
+        perf.record_span(cfg, "provider_generator", start, start + 0.500)
+    measured = perf.summary(cfg, total_ms=3000.0)
+    assert measured["provider_ms"] == pytest.approx(1000.0)
+    assert measured["rig_overhead_ms"] == pytest.approx(2000.0)
+
+
+def test_partly_overlapping_calls_count_the_covered_window_once():
+    cfg = {"_perf": perf.accumulator()}
+    for start, end in ((1000.0, 1000.6), (1000.4, 1001.0)):
+        perf.record(cfg, "provider_verifier", end - start)
+        perf.record_span(cfg, "provider_verifier", start, end)
+    assert perf.summary(cfg, total_ms=2000.0)["provider_ms"] == pytest.approx(1000.0)
+
+
+def test_provider_time_beyond_the_run_total_withholds_overhead():
+    """Concurrency can no longer produce this, so it means the clock moved — and a clamp to
+    zero would answer a question nobody could answer."""
+    cfg = {"_perf": perf.accumulator()}
+    perf.record(cfg, "provider_generator", 5.0)
+    perf.record_span(cfg, "provider_generator", 1000.0, 1005.0)
+    measured = perf.summary(cfg, total_ms=1000.0)
+    assert "rig_overhead_ms" not in measured
+    assert "exceeds the run total" in measured["rig_overhead_unmeasured"]
