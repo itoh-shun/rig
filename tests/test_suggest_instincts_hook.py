@@ -35,11 +35,33 @@ def transcript(tmp_path):
     return path
 
 
+def _adopt(directory: Path) -> Path:
+    """Make `directory` the kind of place the hook agrees to speak in.
+
+    The hook is a project-learning feature and now refuses to fire outside an adopted,
+    Git-backed project. Every test that expects it to fire therefore needs a cwd that is
+    one, and saying so here is what keeps them honest: before this, they inherited pytest's
+    own working directory and passed because a developer's checkout happens to contain
+    `.rig`. That directory is gitignored, so no fresh checkout has it — CI included — and
+    the same tests would have failed there for a reason that has nothing to do with what
+    they are about.
+    """
+    (directory / ".rig").mkdir(exist_ok=True)
+    if not (directory / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=directory, check=True)
+    return directory
+
+
 def _run(payload: dict, state_home: Path | None = None,
          cwd: Path | None = None) -> subprocess.CompletedProcess:
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin"}
     if state_home is not None:
         env["XDG_STATE_HOME"] = str(state_home)
+    # A scratch directory that is both the project and its state is what a real invocation
+    # looks like. Tests that mean to exercise the project guard itself pass `cwd`
+    # explicitly, and are left alone.
+    if cwd is None and state_home is not None:
+        cwd = _adopt(state_home)
     return subprocess.run([str(HOOK)], input=json.dumps(payload), text=True,
                           capture_output=True, check=True, env=env, cwd=cwd)
 
