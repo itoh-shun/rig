@@ -593,6 +593,36 @@ Recipe steps can declare `auto_route.candidates` (a list of `{model, cost_tier, 
 
 `--auto-route-learn` builds on that with a frequency-based (no ML model) read of `.rig/runs.jsonl`'s own track record — which model actually got used for a given recipe/step, and did the step pass. **Defaults to shadow mode**: predictions are always recorded (`steps[].learned_route`) but don't change what runs until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static `--auto-route` choice when there aren't enough reference runs or the pass rate is too low, always recording the rejected candidates and why (counterfactuals, so it stays auditable rather than a black box). `--exploration-pct N` lets a deterministic fraction of runs try the next-cheapest candidate instead (hashed from `--exploration-date` + recipe/step — never randomness, so results stay reproducible). Whether a cheap pick was a saving or a false economy is answered after the fact by `rig-wb runs --auto-route-regret`: per routed step it prints each candidate model's attempts and pass rate, and flags a **possible regret** when the chosen model is below the quality bar and a pricier candidate with enough observations passes more often. Read-only over `.rig/runs.jsonl` — it reports, it does not re-route.
 
+### CLI session reuse (`--reuse-session`, #326, opt-in)
+
+Every step starts its CLI provider from nothing, so a run pays the startup cost once per step
+and re-injects the prior context into each prompt. `--reuse-session` lets a CLI that can carry
+a conversation forward do so.
+
+```console
+rig-wb run bugfix --provider claude --reuse-session
+```
+
+- **Opt-in, never the default.** Statelessness is not only a cost — each step starting clean is
+  what keeps steps independent and keeps *grader ≠ generator* true in practice rather than by
+  assertion.
+- **Never the verifier.** A checker that inherited the generator's conversation has already
+  read its reasoning and will agree with it more often, whatever its prompt says. No code path
+  can produce a verifier session.
+- **The CLI decides, not a table in rig.** Session support is strongly version-dependent, so
+  the capability is read out of the tool's own `--help` at runtime.
+- **A fallback is recorded, never silent.** A provider that cannot do it drops to stateless and
+  writes `SESSION_REUSE_FALLBACK` (with the reason) into the run history — otherwise somebody
+  measures no improvement and cannot tell whether the feature failed or was never active.
+
+Supported where the flags are documented and the CLI confirms them: `claude` and `grok`.
+`codex` has no session flags this repository can point at, so it falls back with that reason
+rather than rig guessing an argv that could mean something else.
+
+**Honest gap:** detection is verified against a real CLI; *whether a resumed session actually
+carries context between steps* is not, because that needs real generation calls. #326 stays
+open for it.
+
 ### Performance budgets and regression gates (`rig-wb perf`, #502)
 
 A run used to be one elapsed number, which cannot answer the question a performance report is

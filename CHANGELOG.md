@@ -4,6 +4,29 @@
 
 ### Added
 
+**`--reuse-session` lets a CLI generator carry its conversation across steps** (#326, opt-in).
+Every step starts its CLI provider from nothing today, so a run pays the startup cost once per
+step and re-injects prior context into each prompt. Where the CLI can carry a conversation
+forward, it no longer has to.
+
+Three constraints shape it. **Opt-in, never the default** — statelessness is not only a cost,
+it is what keeps steps independent and keeps "the grader is not the generator" true in practice
+rather than by assertion. **Never the verifier** — a checker that inherited the generator's
+conversation has already read its reasoning and will agree with it more often, whatever its
+prompt says; there is no code path that can produce a verifier session. **The CLI decides, not
+a table in rig** — session support is strongly version-dependent, so the capability is read out
+of the tool's own `--help` at runtime; a hardcoded list would be a claim about versions this
+code has never seen and would go quietly wrong as the tools change. A provider that cannot do
+it falls back to stateless with a `SESSION_REUSE_FALLBACK` line in the run history, recorded
+once per provider: a fallback nobody wrote down is indistinguishable from a feature that was
+never switched on.
+
+**What is verified and what is not.** Detection is checked against the `claude` CLI actually
+installed (2.1.248, which advertises `--session-id` and `--resume`), and a test asserts rig's
+answer matches what that CLI says about itself. **Whether a resumed session actually carries
+context between steps is not verified** — that needs real generation calls, and #326 says in as
+many words not to claim it from mocks. The issue stays open for that half.
+
 **`rig-wb otel` projects recorded runs to OpenTelemetry** (#501). Local evidence stays the
 source of truth — this re-judges nothing, and a failed export changes no verdict, no gate and
 no exit code, because a monitoring backend being down must not be able to change what rig

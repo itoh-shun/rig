@@ -19,6 +19,7 @@ from .. import bench_providers as _bench_provider_patches
 from ..packs.model import PackError
 from . import config
 from . import perf
+from . import sessions
 from .gates import is_runtime_gate
 from .adaptive import analyze_diff, invocation_limit
 from .quarantine import wrap_untrusted
@@ -246,7 +247,14 @@ def _effective_provider_backend(provider: str) -> str:
     return "claude-cli" if provider in ("rig", "claude") else provider
 
 
-def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "") -> list[str]:
+def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
+               state: dict | None = None) -> list[str]:
+    """The argv for one provider call.
+
+    `sessions.session_argv` is consulted for the generator only (#326) and returns `[]` for
+    every case that is not an opted-in, CLI-confirmed generator call — so a stateless run
+    builds exactly the argv it built before that feature existed.
+    """
     if provider == "mock":
         return [sys.executable, "-c", MOCK_SRC, role, persona]
     if provider == "rig":
@@ -257,6 +265,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
             argv += ["--model", cfg["model"]]              # per-step model support
         if cfg.get("claude_no_session_persistence"):
             argv.append("--no-session-persistence")
+        argv += sessions.session_argv(provider, role, cfg, state)
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "claude":
         # Headless. In production the user can tune permission modes etc. via --provider-cmd.
@@ -265,6 +274,7 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
             argv += ["--model", cfg["model"]]              # per-step model support
         if cfg.get("claude_no_session_persistence"):
             argv.append("--no-session-persistence")
+        argv += sessions.session_argv(provider, role, cfg, state)
         return argv + (_READONLY_ENFCE["claude"] if role == "verifier" else _GENERATOR_EDIT_ENFCE["claude"])
     if provider == "codex":
         # --skip-git-repo-check: keep codex from refusing to start in non-git directories
@@ -273,6 +283,10 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv += ["--sandbox", "workspace-write" if role == "generator" else "read-only"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
+        # Consulted even though the answer is always `[]`: codex has no session flags this
+        # repository can point at, and a caller who asked for reuse has to learn that from the
+        # run history rather than from measuring no improvement and guessing why.
+        argv += sessions.session_argv(provider, role, cfg, state)
         return argv + [prompt]
     if provider == "grok":
         # grok-build headless (`grok -p`, claude-CLI-shaped syntax;
@@ -287,12 +301,16 @@ def build_argv(provider: str, role: str, prompt: str, cfg: dict, persona: str = 
         argv = ["grok", "-p", prompt, "--output-format", "plain"]
         if cfg.get("model"):
             argv += ["-m", cfg["model"]]                   # per-step model support
-        return argv
+        return argv + sessions.session_argv(provider, role, cfg, state)
     if provider == "cmd":
         tmpl = cfg.get("provider_cmd") or ""
         if not tmpl:
             raise SystemExit("[ERROR] --provider cmd requires --provider-cmd \"... {prompt} ...\"")
         # shlex respects quoting and whitespace (wrappers for real codex etc. pass through safely)
+        # Reuse cannot be added to somebody's own command template — rig does not know where a
+        # session flag would go in it, and appending one could change what the template means.
+        # Recorded as a fallback rather than attempted.
+        sessions.session_argv(provider, role, cfg, state)
         return [a.replace("{prompt}", prompt).replace("{role}", role).replace("{persona}", persona)
                 for a in shlex.split(tmpl)]
     raise SystemExit(f"[ERROR] unknown provider: {provider}")
@@ -646,7 +664,7 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
             return run_secure_provider(launcher, prompt, cfg)
         except SecureRuntimeError as error:
             return 126, f"[secure provider refused: {error}]"
-    argv = build_argv(provider, role, prompt, cfg, persona)
+    argv = build_argv(provider, role, prompt, cfg, persona, state)
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600),

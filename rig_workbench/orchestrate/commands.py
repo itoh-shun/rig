@@ -746,6 +746,9 @@ def cmd_run(args):
         elif a == "--auto-route":
             cfg["auto_route"] = True
             i += 1
+        elif a == "--reuse-session":       # #326: generator-only CLI conversation reuse (opt-in)
+            cfg["reuse_session"] = True
+            i += 1
         elif a == "--auto-route-learn":     # #305: learned route from historical data (default shadow mode)
             cfg["auto_route_learn"] = True
             i += 1

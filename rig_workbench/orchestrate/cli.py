@@ -42,6 +42,12 @@ The model does each step's "work", but this runner decides "what happens next":
                                        leave the machine. The projection is an allowlist: no prompt, response, diff,
                                        path or verdict prose is exported, and a new record field is absent until
                                        somebody decides it is safe
+  run ... --reuse-session            Opt-in: let a CLI provider carry its conversation across steps instead of
+                                     starting cold each time (#326). **Generator only** — a checker that inherited the
+                                     generator's conversation is not an independent checker. The capability is read out
+                                     of the CLI's own --help at runtime (session support is version-dependent), and a
+                                     provider that cannot do it falls back to stateless with a SESSION_REUSE_FALLBACK
+                                     line in the run history, never silently
   run ... --verifier-providers a,b,c Mixed-model quorum: run the same verification persona across different providers (votes are provider:persona)
   run ... --isolate                  Run isolated in a disposable git worktree. Only gate-green commits ff-merge back into the
                                      original branch; unmet/dirty/non-ff runs preserve the worktree and branch
