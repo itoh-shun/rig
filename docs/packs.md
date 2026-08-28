@@ -173,6 +173,88 @@ project pack, retain the existing explicit content-hash trust gate.
 incompatibility, shadows, invalid/evaluation-drifted packs, and coexistence with legacy
 overlays without modifying either representation.
 
+## Knowledge — what a pack is *about*
+
+`type` says what a pack may carry. The optional `knowledge:` block says what its contents are
+about, so that a question can find the packs that could answer it.
+
+```yaml
+knowledge:
+  scope: ["company"]
+  topics: ["access-control", "backup", "encryption"]
+  owner: "Corp IT"
+  evidence: ["情報セキュリティ規程", "運用設計書"]
+  reviewed_at: "2026-08-01T00:00:00+00:00"
+```
+
+The block is optional; a half-filled one is not. Once it is present all five keys are
+required, and `reviewed_at` is the reason: a knowledge declaration with no review date is
+exactly the one that goes stale without anybody noticing, and it is the field that would be
+dropped first if dropping were allowed.
+
+Any `type` may declare it. This is description, not permission — a `reviewer` pack whose
+personas encode a product's domain has the same thing to say as a `knowledge` one, and
+refusing it there would only teach people to mislabel `type`, which *is* a permission.
+
+A `scope` is a bare dimension (`company`) or a dimension with a value (`product:joypla-one`).
+`topics` are slugs. Both are sorted and unique, because order carries nothing there and
+leaving it free would let two manifests describing the same pack differ.
+
+`evidence` is the exception, and deliberately: it is **not** required to be sorted. These are
+the titles of documents a person wrote, in the language they wrote them, and codepoint order
+over prose is not an order any author can predict — `運用設計書` sorts after
+`情報セキュリティ規程` for a reason nobody reading either would guess. The order also carries
+meaning: a citation list leads with the document the answer chiefly rests on. Duplicates are
+still refused; the same document cited twice inflates how well-sourced an answer looks.
+
+It is spelled `evidence` rather than `sources` because `sources` already means *where a pack
+is installed from* — `pack source add`, `verify-sources`, and the lock's `source` entries. One
+word with two meanings in one CLI is a defect worth not introducing.
+
+### Finding the packs that could answer
+
+```console
+rig-wb pack knowledge                              # every declaration in this scope
+rig-wb pack knowledge --topic backup
+rig-wb pack knowledge --topic backup --scope product
+rig-wb pack knowledge --topic backup --json
+```
+
+`--topic` and `--scope` are repeatable. A bare dimension matches every value under it, so
+`--scope product` finds `product:joypla-one` without your having to know the slug. A valued
+scope is exact, and that half is the one that matters: an answer about one product must not
+be sourced from a pack that only ever claimed to be about products in general.
+
+**This selects; it does not choose.** The issue behind it gives the case — a security
+questionnaire asking "do you take backups?", which has a different correct answer for the
+company, for one product, and for the infrastructure underneath both, and an asker who often
+has not decided which they meant. When the candidates span more than one scope, the command
+says so and names them:
+
+```console
+$ rig-wb pack knowledge --topic backup
+company-security@0.1.0	company	Corp IT	reviewed 2026-08-01T00:00:00+00:00
+  topics: access-control, backup, encryption
+  evidence: 情報セキュリティ規程, 運用設計書
+product-security@0.1.0	product:joypla-one	JoyPla ONE Team	reviewed 2026-07-15T00:00:00+00:00
+  topics: backup, sla
+  evidence: サービス仕様書
+scope is ambiguous: company, product:joypla-one — narrow with --scope before treating any of these as the answer
+```
+
+Which scope was meant is a fact about the asker that no pack contains, so no amount of reading
+them recovers it. What this produces instead is the fact that the question is open and the
+exact set of alternatives — the material a layer that can hold a conversation needs in order
+to ask, rather than guess.
+
+Ambiguity is about scopes, not counts. Two company packs both matching is not ambiguous: they
+are two sources for one scope and an answer should rest on both.
+
+Every candidate carries its `evidence`, `owner`, and `reviewed_at`, so the answering side
+cites the pack that supplied the material rather than reconstructing it. A pack that declares
+no `knowledge` block is never a candidate — silence is not a claim to every scope — and a pack
+whose contents fail validation is skipped rather than half-read, because this feeds a citation.
+
 ## Install, lock, test, and remove
 
 `pack install` accepts a local directory, ZIP, or tar archive. URL installation is not
