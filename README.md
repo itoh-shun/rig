@@ -656,6 +656,40 @@ rather than rig guessing an argv that could mean something else.
 carries context between steps* is not, because that needs real generation calls. #326 stays
 open for it.
 
+### Seeing what a run cost (#532)
+
+Rig has levers to narrow *input* — `--budget low|mid`, `default_budget` in the manifest — but
+spend is only **measured** when the provider returns a structured `usage` payload. With
+`claude` or `codex` as CLI providers, `rig-wb runs --cost` answers `unmeasured` and always
+will.
+
+That is the design, not a gap: estimating tokens from character counts is the one kind of
+figure rig refuses to invent, and a plausible estimate sitting next to real measurements is
+worse than saying the measurement does not exist.
+
+**Every run now says which case it is**, on the line that starts it and again in the finish
+report — the two moments a person weighs cost:
+
+```text
+cost: unmeasured (claude — CLI providers expose no structured usage; ...)
+cost: metered (anthropic report usage)
+cost: partly metered (anthropic) — claude unmeasured
+```
+
+**If you want measured spend, point a role at an HTTP provider.** `anthropic`, `ollama` and
+`lmstudio` are metered from their `usage` field:
+
+```console
+rig-wb run bugfix --provider claude --verifier-provider anthropic
+```
+
+For CLI providers, real spend lives in Anthropic's Usage & Cost Admin API rather than anywhere
+rig could honestly reconstruct it.
+
+**`--budget-minutes` is not a cap.** It records an estimate; going over is flagged in
+`status`/`board` and nothing stops (#281). The word reads like a limit, so the help now says
+outright that it is not one.
+
 ### Performance budgets and regression gates (`rig-wb perf`, #502)
 
 A run used to be one elapsed number, which cannot answer the question a performance report is

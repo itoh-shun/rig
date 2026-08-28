@@ -325,6 +325,35 @@ _OPENAI_BASE = {
     "ollama":   "http://localhost:11434/v1",    # ollama serve (OpenAI-compatible)
 }
 _DEFAULT_MODEL = {"lmstudio": "local-model", "ollama": "llama3.1"}
+
+#: Providers whose responses carry a structured `usage` payload, which is the only thing
+#: `_record_token_usage` can roll up. Everything else is a CLI that prints prose (#532).
+METERED_PROVIDERS = frozenset(_OPENAI_BASE) | {"anthropic"}
+
+
+def metering_note(providers: list[str] | str) -> str:
+    """One line saying whether this run's spend will be measured, for the places that decide it.
+
+    Rig has always been able to answer this — `runs --cost` and the cockpit say `unmeasured`
+    when nothing was metered — but only when somebody went and asked. The two moments a person
+    weighs cost are before a run and just after one, and neither said a word (#532).
+
+    Deliberately not a number. Estimating tokens from character counts is the one kind of
+    figure this repository refuses to invent, and a plausible estimate presented next to real
+    measurements is worse than saying the measurement does not exist.
+    """
+    names = [providers] if isinstance(providers, str) else list(providers)
+    metered = sorted({p for p in names if p in METERED_PROVIDERS})
+    unmetered = sorted({p for p in names if p not in METERED_PROVIDERS})
+    if not unmetered:
+        return f"cost: metered ({', '.join(metered)} report usage)"
+    if not metered:
+        return (f"cost: unmeasured ({', '.join(unmetered)} — CLI providers expose no structured "
+                f"usage; see Anthropic's Usage & Cost Admin API)")
+    # A mixed run is the case a single word gets wrong: the totals are real and cover part of
+    # the work, so naming which side is which is the whole value of the line.
+    return (f"cost: partly metered ({', '.join(metered)}) — "
+            f"{', '.join(unmetered)} unmeasured")
 _MODELS_CACHE_PATH = pathlib.Path(os.path.expanduser("~/.claude/rig/models.json"))
 
 
