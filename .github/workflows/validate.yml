@@ -71,9 +71,12 @@ jobs:
       # process whatever ran first absorbed it), and an rmtree error handler that
       # raised on an entry git had already deleted under it.
       #
-      # Speed is the second reason: the serial job measured 32m22s (3.12) and
-      # 34m44s (3.10); parallel, the pytest step went 1950s -> 1257s and the job
-      # 34m44s -> 21m35s.
+      # Speed is the second reason, and the two matrix legs disagree about how much
+      # of it there is: the job went 34m44s -> 21m37s on 3.10 and 32m22s -> 26m51s
+      # on 3.12, with the pytest step itself at 1257s and 1584s against a ~1950s
+      # serial baseline. Both are wins and neither is the number; a 25% spread
+      # between two runs of the same suite is what a scattering scheduler on a
+      # shared runner looks like.
       #
       # What made this safe to do: conftest's CI_TIMEOUT_FACTOR of 6 was sized for
       # a serial CI run and says so, and 4-way contention eats into it. So it was
@@ -89,12 +92,13 @@ jobs:
       # detection, and those `timeout=` values were the only bound on a wedged
       # child here — without a step budget the fallback is Actions' 6-hour job
       # default. 90 minutes was cut against the ~1950s serial suite for ~2.8x
-      # headroom; against the measured 1257s parallel suite the same 90 minutes is
-      # ~4.3x, which is more slack than a hang budget wants. It stays at 90 for now
-      # regardless: one parallel run is one sample, and `--dist load` scatters tests
-      # differently each time, so the slowest worker's tail is exactly the number a
-      # single observation is worst at pinning. Re-cut it once master has a few runs
-      # to cut against.
+      # headroom, and stays there. The two parallel samples above are 1257s and
+      # 1584s — 26% apart, on the same suite, on the same commit — because
+      # `--dist load` scatters tests differently each run and the job is only as
+      # fast as its slowest worker's tail. That tail is exactly the quantity two
+      # observations are worst at pinning, and cutting a hang budget close to a
+      # number that moves that much buys flakes, not detection. Re-cut it once
+      # master has enough runs to see the spread.
       - name: Run pytest suite
         timeout-minutes: 90
         run: pytest -q -n auto

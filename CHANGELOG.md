@@ -30,9 +30,12 @@ of them real and neither of them about parallelism:
   `FileNotFoundError` out of the removal it was supposed to be rescuing. Only a loaded machine
   loses that race. The race predates this change by as long as the helper has existed.
 
-Speed is the second reason and still worth naming: the serial job measured 32m22s (3.12) and
-34m44s (3.10) on the commit this was cut against. Parallel, the pytest step went 1950s to 1257s
-and the job 34m44s to 21m35s.
+Speed is the second reason and still worth naming, though the two matrix legs disagree about how
+much of it there is: the job went 34m44s to 21m37s on 3.10 and 32m22s to 26m51s on 3.12, with the
+pytest step at 1257s and 1584s against a ~1950s serial baseline. Both are wins and neither is
+"the" number — a 26% spread between two runs of the same suite on the same commit is what a
+scattering scheduler on a shared runner looks like, and it is also why `timeout-minutes` stays at
+90 rather than being re-cut against a figure that moves that much.
 
 The one thing that could have made this unsafe was measured rather than assumed. `conftest.py`'s
 `CI_TIMEOUT_FACTOR` of 6 was sized for a serial CI run and says so in its own comment, and 4-way
