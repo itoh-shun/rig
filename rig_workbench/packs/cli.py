@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import datetime as dt
 import pathlib
 import sys
@@ -43,6 +44,22 @@ def _parser() -> argparse.ArgumentParser:
     verify_sources.add_argument("--scope", choices=["project", "user", "org"],
                                 default="project")
     verify_sources.add_argument("--root")
+    for name in ("list", "outdated"):
+        parser_ = sub.add_parser(name)
+        parser_.add_argument("--scope", choices=["project", "user", "org"], default="project")
+        parser_.add_argument("--root")
+    for name in ("info", "explain"):
+        parser_ = sub.add_parser(name)
+        parser_.add_argument("pack")
+        parser_.add_argument("--scope", choices=["project", "user", "org"], default="project")
+        parser_.add_argument("--root")
+        parser_.add_argument("--json", action="store_true")
+    update = sub.add_parser("update")
+    update.add_argument("pack")
+    update.add_argument("--to", required=True)
+    update.add_argument("--scope", choices=["project", "user", "org"], default="project")
+    update.add_argument("--root")
+    update.add_argument("--allow-unverified", action="store_true")
     install = sub.add_parser("install")
     install.add_argument("source")
     install.add_argument("--scope", choices=["project", "user", "org"], default="project")
@@ -254,6 +271,60 @@ def cmd_pack(argv: list[str]) -> int:
                     worst = max(worst, 0 if reason == "ok" else 1)
                 print(f"{entry['id']}\t{entry['source']['path']}\t{reason}")
             return worst
+        if args.command in {"list", "info", "explain", "outdated", "update"}:
+            from .installer import scope_root, update_pack
+            from .inventory import explain as explain_pack
+            from .inventory import info as pack_info
+            from .inventory import list_rows, outdated
+            project = pathlib.Path.cwd()
+            root = scope_root(args.scope, project=project,
+                              root=pathlib.Path(args.root) if args.root else None)
+            if args.command == "list":
+                rows = list_rows(root)
+                if not rows:
+                    print("no packs installed in this scope")
+                    return 0
+                for row in rows:
+                    print(f"{row['id']}@{row['version']}\t{row['type']}\t{row['kind']}"
+                          f"\t{row['origin']}\t{row['verification']}")
+                return 0
+            if args.command == "info":
+                detail = pack_info(root, args.pack)
+                if args.json:
+                    print(json.dumps(detail, ensure_ascii=False, sort_keys=True, indent=2))
+                else:
+                    for key, value in detail.items():
+                        print(f"{key}\t{value}")
+                return 0
+            if args.command == "explain":
+                rows = explain_pack(project, root, args.pack)
+                if args.json:
+                    print(json.dumps(rows, ensure_ascii=False, sort_keys=True, indent=2))
+                    return 0
+                if not rows:
+                    print(f"{args.pack} provides no prompt surfaces")
+                    return 0
+                for row in rows:
+                    state = "effective" if row["effective"] else (
+                        f"shadowed by {row['provided_by']} [{row['tier']}]")
+                    print(f"{row['kind']}:{row['name']}\t{state}")
+                return 0
+            if args.command == "outdated":
+                rows = outdated(project, root)
+                if not rows:
+                    print("no git-sourced packs are locked in this scope")
+                    return 0
+                for row in rows:
+                    print(f"{row['id']}\t{row['current']}\t{row['latest'] or '-'}"
+                          f"\t{row['reason']}")
+                return 1 if any(row["reason"] != "ok" for row in rows) else 0
+            result = update_pack(
+                args.pack, to=args.to, scope=args.scope, project=project,
+                root=args.root, allow_unverified=args.allow_unverified,
+            )
+            print(f"updated: {result.manifest['id']}@{result.manifest['version']} "
+                  f"[{result.verification_status}] -> {result.path}")
+            return 0
         if args.command == "install":
             from .installer import install_pack
             result = install_pack(

@@ -4,6 +4,27 @@
 
 ### Added
 
+**The pack inventory is readable**: `rig-wb pack list` / `info` / `explain` / `outdated` /
+`update` (#523). The lock has recorded every pack's source, version, and integrity since long
+before packs came from anywhere but a local directory — nothing read it back, which is the
+whole of what "explain an installed pack" was missing.
+
+`list`, `info`, and `explain` answer from the lock and the installed manifest and are always
+cheap; `outdated` makes one network round trip per pinned pack and reports an unreadable
+source on that pack's row rather than failing the listing, exiting non-zero when any row is
+not `ok`. `info` reads the pack's `type` from disk rather than the lock, which never carried
+one, so the answer stays true for packs installed before that field existed.
+
+`explain` is not a longer `info`: it asks whether the pack's assets actually win at their
+tier, which only the resolver knows. A pack can be installed, valid, and entirely shadowed,
+and that is the state somebody is looking for when an override did nothing.
+
+`update` moves a git-pinned pack to another version in place — staged and validated first,
+directory and lock swapped last, so a failure leaves the old version installed rather than
+stranding the project with neither. It refuses a pack installed from a directory or archive
+(no source to ask for a version) and a tag whose manifest declares a different version than
+the tag names.
+
 **Packs install from named sources, pinned to a commit** (#523). A project declares where
 packs come from in `.rig/sources.json` (`rig-wb pack source add|list|remove`), and
 `rig-wb pack install product:joypla@1.4.0` reaches a private repository over `git+ssh`,

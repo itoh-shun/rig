@@ -38,6 +38,17 @@ rig-wb pack verify-sources --scope project
 rig-wb pack source remove product
 ```
 
+## Seeing what is installed
+
+```console
+rig-wb pack list                       # id@version, type, kind, origin, verification
+rig-wb pack info joypla                # source, revision, digests, engine, dependencies
+rig-wb pack info joypla --json
+rig-wb pack explain joypla             # which of its assets actually reach a prompt
+rig-wb pack outdated                   # asks each source what it publishes (network)
+rig-wb pack update joypla --to 1.5.0
+```
+
 Schemes are `git+ssh`, `git+https`, and `git+file` (a local or mounted repository — for
 development and for the offline case where nothing can reach a forge). The URL is a template
 containing `{pack}`.
@@ -67,6 +78,24 @@ Failures arrive apart, because they want opposite responses:
 | `capability-refused` | the pack declares something its type may not carry or run |
 | `engine-incompatible` | the pack's engine range excludes this engine |
 | `unverified-signature` | no publisher signature verifies against a trust root |
+
+`list`, `info`, and `explain` answer from the lock and the installed manifest, so they are
+always cheap. `outdated` makes one network round trip per pinned pack, and reports a source
+it cannot read on that pack's row rather than failing the whole listing — one unreachable
+remote should not hide the rest of the inventory. It exits non-zero when any row is not `ok`,
+so it works as a check and not only as a listing.
+
+`info` and `explain` answer different questions and neither substitutes for the other: `info`
+is identity and provenance, which the lock knows; `explain` is whether any of the pack's
+assets actually win at their tier, which only the resolver knows. A pack can be installed,
+valid, and entirely shadowed — that is the state somebody is looking for when an override did
+nothing.
+
+`update` moves a git-pinned pack to another version in place. It stages and validates the new
+content first and swaps the directory and the lock last, so a failure leaves the old version
+installed; remove-then-install would strand the project with neither. It refuses a pack
+installed from a directory or an archive, which has no source to ask for a version, and
+refuses a tag whose manifest declares a different version than the tag names.
 
 A digest pins content, not provenance: it says the bytes are the same ones, never who put
 them there. Signatures and trust roots are what answer that, and `private` is not a substitute

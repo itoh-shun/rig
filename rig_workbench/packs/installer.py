@@ -395,3 +395,97 @@ def install_pack(
     finally:
         if installed is None or installed.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def update_pack(
+    pack_id: str, *, to: str, scope: str, project: pathlib.Path | str,
+    root: pathlib.Path | str | None = None, allow_unverified: bool = False,
+) -> InstallResult:
+    """Move a git-pinned pack to another version, in place.
+
+    Not remove-then-install: that leaves a window where the pack is gone and a failure in the
+    second half strands the project with neither version. The new content is staged and
+    validated first, and the directory swap and the lock write are the last two steps, with
+    the old directory kept until both have happened.
+
+    Only a git-sourced pack can be updated. A pack installed from a local directory or an
+    archive has no version to ask a source about — pointing this at one would mean guessing
+    where the newer copy lives, and the honest answer is to install it again from wherever it
+    actually came from.
+    """
+    project_path = pathlib.Path(project).resolve()
+    destination_root = scope_root(
+        scope, project=project_path,
+        root=pathlib.Path(root) if root is not None else None,
+    )
+    lock = read_lock(destination_root)
+    current = next((item for item in lock["packs"] if item["id"] == pack_id), None)
+    if current is None:
+        raise PackError(f"pack is not owned by this scope lock: {pack_id}")
+    if current["source"]["type"] != "git":
+        raise PackError(
+            f"{pack_id} was installed from {current['source']['type']}, which has no version "
+            f"to resolve; reinstall it from its source instead")
+    if current["version"] == to:
+        raise PackError(f"{pack_id} is already at {to}")
+    source_id = current["source"]["source_id"]
+    declared = read_sources(project_path)
+    if source_id not in declared:
+        raise PackError(
+            f"source `{source_id}` is not declared in .rig/sources.json "
+            f"(declared: {', '.join(sorted(declared)) or 'none'})")
+    source = declared[source_id]
+    name = current["source"]["path"].split(":", 1)[1].split("@", 1)[0]
+    revision = resolve_revision(source, name, to)
+
+    destination = destination_root / current["path"]
+    staging = pathlib.Path(tempfile.mkdtemp(prefix=".pack-stage-", dir=destination_root))
+    retired = staging / "retired"
+    swapped = False
+    try:
+        content = staging / "content"
+        fetch_revision(source, name, to, revision, content)
+        pack = _pack_root(content)
+        manifest = validate_pack(pack)
+        if manifest["id"] != pack_id:
+            raise PackError(
+                f"source served {manifest['id']} where {pack_id} was expected")
+        if manifest["version"] != to:
+            raise PackError(
+                f"{name}@{to} contains version {manifest['version']}; the tag and the "
+                f"manifest disagree")
+        status, publisher = verification_status(pack, manifest)
+        if status != "verified-publisher" and not allow_unverified:
+            raise UnverifiedSignature(
+                "unsigned packs require project --allow-unverified; local evaluation quality "
+                "does not establish publisher trust"
+            )
+        entry = make_entry(
+            pack, manifest, scope=scope,
+            source=make_source("git", f"{source_id}:{name}@{to}", tree_hash(pack),
+                               source_id=source_id, revision=revision),
+            verification_status=status,
+            publisher_key_id=publisher["key_id"] if publisher else None,
+            signed_digest=publisher["signed_digest"] if publisher else None,
+        )
+        os.replace(destination, retired)
+        swapped = True
+        os.replace(pack, destination)
+        try:
+            write_lock(destination_root, replace_entry(lock, entry))
+        except Exception:
+            os.replace(destination, pack)
+            os.replace(retired, destination)
+            swapped = False
+            raise
+        return InstallResult(destination, manifest, status)
+    except PackError:
+        if swapped and not destination.exists():
+            os.replace(retired, destination)
+        raise
+    except OSError as exc:
+        if swapped and not destination.exists():
+            os.replace(retired, destination)
+        raise PackError(f"pack update transaction failed: {exc}") from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
