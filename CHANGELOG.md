@@ -4,6 +4,31 @@
 
 ### Added
 
+**Runs now record where their time went, by phase, and a budget can be declared against
+it** (#502). A run has always been one elapsed number, and one number cannot answer the only
+question a performance report is asked: did rig get slower, or did the provider? Those want
+opposite responses — the first is a regression to fix, the second is weather. `.rig/runs.jsonl`
+now carries a `perf` block with per-phase timings (`risk_assess`, `auto_route`,
+`provider_generator`, `provider_verifier`, `checks`, `gate`, `artifact`), the bytes of prompt
+the run emitted, and `rig_overhead_ms` — the total minus the time spent waiting on providers.
+
+`rig-wb perf` reports that across recent runs; `rig-wb perf --check` is the gate, exiting
+non-zero when a phase grew past its baseline or a declared budget broke. The budget lives in
+the manifest (`perf_budget:` in `.claude/rig.md`) rather than a generated file, because a
+budget has to be committed to be a gate and `.rig/` is gitignored. Breaking it during a run
+warns and nothing more: a perf budget failing a bugfix would teach people to delete the
+budget, so `--check` is the only place it costs anything.
+
+Three things it deliberately refuses to do. **Provider latency is reported but never gated** —
+a gate that failed on somebody else's network would be switched off within a month, taking the
+phases rig can actually answer for with it. **An unmeasured phase is never rendered as zero**,
+and a phase that stopped being measured fails the gate rather than reading as an improvement
+in every total it used to be part of. **A budget naming a figure the runs could not measure is
+reported as unenforced, not as a pass** — a limit nobody could test is not a limit that held,
+and a green light for one is how a gate stops gating without anybody noticing. Baselines are
+the median of recent runs, not the mean, so a laptop that slept cannot set the bar that every
+later run is judged against.
+
 **`rig-wb pack export` writes a bundled pack out as its own repository** (#523), and a pack
 repository can now have a README. Those are one change: a pack directory may contain nothing
 it has not declared — the property the type rules rest on — so a repository whose purpose is

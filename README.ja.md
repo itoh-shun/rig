@@ -502,6 +502,46 @@ recipeのstepは`auto_route.candidates`（`{model, cost_tier, max_size}`の列�
 
 `--auto-route-learn`はこれをさらに発展させ、`.rig/runs.jsonl`自身の実績（どのrecipe/stepでどのmodelが実際に使われ、gateを通過したか）から頻度ベース（MLモデル不要）で学習する。**既定はshadow mode**：予測は常に記録される（`steps[].learned_route`）が、`--auto-route-mode active`を指定するまでは実際の選択に影響しない（段階導入）。参照run数が不足しているか、pass_rateが低い場合は静的な`--auto-route`の選択にフォールバックし、棄却した候補とその理由（counterfactual）を必ず記録する——ブラックボックス化しない。`--exploration-pct N`を指定すると、一定割合のrunだけ次点候補を試す（乱数ではなく`--exploration-date`＋recipe/stepのハッシュで決定論的に判定するため、結果は再現可能）。安く選んだことが節約だったのか偽の経済だったのかは、`rig-wb runs --auto-route-regret`が事後に答える。ルーティングされたstepごとに候補モデル別の試行数とpass rateを表示し、選ばれたモデルが品質基準を下回っていて、かつ十分なサンプルを持つより高価な候補の方が通過率が高い場合に**possible regret**として明示する。`.rig/runs.jsonl`を読むだけの読み取り専用で、ルーティング自体は変更しない。
 
+### 性能バジェットと回帰ゲート（`rig-wb perf`、#502）
+
+RUN の計測はこれまで所要時間ひとつだけで、性能レポートに本当に問われる問い——**遅くなったの
+は rig か、プロバイダか**——に答えられなかった。前者は直すべき回帰、後者は天気で、必要な対応
+が正反対になる。いまは各 RUN が `perf` を `.rig/runs.jsonl` に記録する：フェーズ別の所要時間
+（`risk_assess` / `auto_route` / `provider_generator` / `provider_verifier` / `checks` /
+`gate` / `artifact`）、送出したプロンプトのバイト数、そして `rig_overhead_ms`（総時間から
+プロバイダ待ちを引いた、rig 自身の取り分）。
+
+```console
+rig-wb perf --recipe bugfix                          # 直近 RUN のフェーズ別中央値(ms)
+rig-wb perf --recipe bugfix --save-baseline perf.json
+rig-wb perf --recipe bugfix --check --baseline perf.json   # 回帰なら exit 1
+```
+
+バジェットは生成物ではなくマニフェストに宣言する。ゲートである以上コミットされている必要が
+あり、`.rig/` は gitignore 対象だから：
+
+```yaml
+perf_budget:
+  max_rig_overhead_ms: 5000
+  max_context_bytes: 400000
+```
+
+RUN 中に超過しても警告を出すだけで判定は変えない。性能バジェットが bugfix を落とすようになれ
+ば、人はバジェットのほうを消す。実際に痛みを伴うのは CI の `rig-wb perf --check` だけにする。
+
+**やらないこと**が設計そのもの：
+
+- **プロバイダ遅延は報告するがゲートしない。** 他人のネットワークで落ちるゲートは一月で無効化
+  され、rig 自身が責任を負えるフェーズまで道連れになる。「どちらが遅くなったか」が要点なので、
+  比較自体は別枠で表示する。
+- **未計測のフェーズを `0ms` として描かない。** 計測されなくなったフェーズはゲート失敗として
+  扱う——それを含んでいた総和すべてが「改善」に見えてしまうから。
+- **RUN が計測できなかった値を指すバジェットは「合格」ではなく「未執行」と報告する。** 誰にも
+  検証できない上限は守られた上限ではなく、そこに青信号を出すのがゲートが黙って機能しなくなる
+  経路そのもの。
+- **ベースラインは平均ではなく中央値。** スリープしたラップトップやコールドキャッシュの 1 回
+  が、以降すべての基準を決めてしまわないように。
+
 ## 12. GitHub 連携
 
 | コマンド | read/write |

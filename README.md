@@ -593,6 +593,47 @@ Recipe steps can declare `auto_route.candidates` (a list of `{model, cost_tier, 
 
 `--auto-route-learn` builds on that with a frequency-based (no ML model) read of `.rig/runs.jsonl`'s own track record — which model actually got used for a given recipe/step, and did the step pass. **Defaults to shadow mode**: predictions are always recorded (`steps[].learned_route`) but don't change what runs until `--auto-route-mode active` is set, matching a staged rollout. Falls back to the static `--auto-route` choice when there aren't enough reference runs or the pass rate is too low, always recording the rejected candidates and why (counterfactuals, so it stays auditable rather than a black box). `--exploration-pct N` lets a deterministic fraction of runs try the next-cheapest candidate instead (hashed from `--exploration-date` + recipe/step — never randomness, so results stay reproducible). Whether a cheap pick was a saving or a false economy is answered after the fact by `rig-wb runs --auto-route-regret`: per routed step it prints each candidate model's attempts and pass rate, and flags a **possible regret** when the chosen model is below the quality bar and a pricier candidate with enough observations passes more often. Read-only over `.rig/runs.jsonl` — it reports, it does not re-route.
 
+### Performance budgets and regression gates (`rig-wb perf`, #502)
+
+A run used to be one elapsed number, which cannot answer the question a performance report is
+actually asked: **did rig get slower, or did the provider?** Those want opposite responses —
+the first is a regression to fix, the second is weather. Every run now records `perf` into
+`.rig/runs.jsonl`: per-phase timings (`risk_assess`, `auto_route`, `provider_generator`,
+`provider_verifier`, `checks`, `gate`, `artifact`), the bytes of prompt it emitted, and
+`rig_overhead_ms` — the total minus the time spent waiting on providers.
+
+```console
+rig-wb perf --recipe bugfix                          # median ms per phase over recent runs
+rig-wb perf --recipe bugfix --save-baseline perf.json
+rig-wb perf --recipe bugfix --check --baseline perf.json   # exit 1 on a regression
+```
+
+The budget is declared in the manifest, not in a generated file — a budget has to be committed
+to be a gate, and `.rig/` is gitignored:
+
+```yaml
+perf_budget:
+  max_rig_overhead_ms: 5000
+  max_context_bytes: 400000
+```
+
+Breaking it during a run prints a warning and nothing more. A perf budget that failed a bugfix
+would teach people to delete the budget, so `rig-wb perf --check` in CI is the only place it
+costs anything.
+
+What it refuses to do is the design:
+
+- **Provider latency is reported but never gated.** A gate that failed on somebody else's
+  network would be switched off within a month, taking the phases rig can answer for with it.
+  It is still compared, under its own heading, because "which half got slower" is the point.
+- **An unmeasured phase is never rendered as `0ms`,** and a phase that *stopped* being measured
+  fails the gate rather than reading as an improvement in every total it used to be part of.
+- **A budget naming a figure the runs could not measure is reported as unenforced, not as a
+  pass.** A limit nobody could test is not a limit that held, and a green light for one is how
+  a gate quietly stops gating.
+- **Baselines are the median of recent runs, not the mean,** so one cold cache or one laptop
+  that slept cannot set the bar everything afterwards is judged against.
+
 ## 12. GitHub integration
 
 | command | read/write |

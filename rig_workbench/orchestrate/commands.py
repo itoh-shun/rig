@@ -14,6 +14,7 @@ from functools import wraps
 
 from .. import repo_paths
 from . import config
+from . import perf
 from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_manifest,
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
@@ -934,6 +935,12 @@ def cmd_run(args):
         cfg["cwd"] = iso["dir"]
         state["isolation"] = iso
         diagnostic(f"◈ Isolated run: worktree={iso['dir']} / branch={iso['branch']}")
+    # A declared perf budget (#502) rides on cfg so run_loop can warn the moment a run breaks
+    # it. Read from the manifest rather than a flag: a budget is a property of the project, and
+    # one that had to be passed on the command line would only ever be checked deliberately.
+    manifest_budget = load_manifest().get("perf_budget")
+    if isinstance(manifest_budget, dict):
+        cfg["perf_budget"] = manifest_budget
     diagnostic(render_plan(state["recipe"], steps, execution))
     panel = f" / judge-panel={','.join(generators)}" if len(generators) > 1 else ""
     if isinstance(ver, list):
@@ -1381,6 +1388,141 @@ def _verifier_kind(by: str) -> str:
     if by.startswith(_FIXTURE_PREFIXES):
         return "fixture"
     return "reviewer"
+
+
+# ── Performance budgets and regression gates (#502) ─────────────────────────────
+def _perf_summaries(rows: list[dict], recipe: str | None, limit: int) -> list[dict]:
+    """The `perf` blocks of the most recent runs, newest first.
+
+    Filtered by recipe on purpose, and by default not at all: phase timings are only
+    comparable within a recipe (a seven-step bugfix and a one-step review share no shape), so
+    a caller that means to compare has to say which recipe it means.
+    """
+    picked = [row["perf"] for row in rows
+              if isinstance(row.get("perf"), dict)
+              and (recipe is None or row.get("recipe") == recipe)]
+    return picked[-limit:][::-1]
+
+
+def _perf_budget(explicit: str | None) -> dict:
+    """The declared budget: an explicit JSON file, else `perf_budget:` in the manifest.
+
+    The manifest is the default home because a budget has to be committed to be a gate, and
+    `.rig/` is gitignored — a budget living there would pass on every machine that had never
+    seen it.
+    """
+    if explicit:
+        return json.loads(pathlib.Path(explicit).read_text(encoding="utf-8"))
+    budget = load_manifest().get("perf_budget")
+    return budget if isinstance(budget, dict) else {}
+
+
+def cmd_perf(args):
+    """Where runs spend their time, and whether that is still within budget (#502).
+
+        perf [--recipe R] [--limit N]                 phase breakdown of recent runs
+        perf --save-baseline <path> [--recipe R]      record the current shape as a baseline
+        perf --check [--baseline <path>] [--budget <path>] [--tolerance-pct P]
+
+    `--check` is the regression gate: exit 1 when a phase grew past the tolerance against the
+    baseline, or when a declared budget was broken. It reports an unenforceable limit as a
+    failure rather than a pass — a budget naming a figure the runs did not measure is not a
+    limit that held, and letting it read green is how a gate quietly stops gating.
+
+    Provider latency is reported but never gated. A gate that failed on somebody else's
+    network would be deleted within a month, and it would deserve to be.
+    """
+    recipe = baseline_path = save_path = budget_path = None
+    limit, tolerance, check = 20, 20.0, False
+    i = 0
+    while i < len(args):
+        if args[i] == "--recipe" and i + 1 < len(args):
+            recipe, i = args[i + 1], i + 2
+        elif args[i] == "--limit" and i + 1 < len(args):
+            limit, i = int(args[i + 1]), i + 2
+        elif args[i] == "--baseline" and i + 1 < len(args):
+            baseline_path, i = args[i + 1], i + 2
+        elif args[i] == "--save-baseline" and i + 1 < len(args):
+            save_path, i = args[i + 1], i + 2
+        elif args[i] == "--budget" and i + 1 < len(args):
+            budget_path, i = args[i + 1], i + 2
+        elif args[i] == "--tolerance-pct" and i + 1 < len(args):
+            tolerance, i = float(args[i + 1]), i + 2
+        elif args[i] == "--check":
+            check, i = True, i + 1
+        else:
+            i += 1
+
+    summaries = _perf_summaries(_read_jsonl(config.RUNS_PATH), recipe, limit)
+    current = perf.aggregate(summaries)
+    if current is None:
+        # Not an error on its own — but never a silent pass under --check: a gate with no
+        # measurements to judge has not judged anything.
+        print(f"[perf] no timed runs in {config.RUNS_PATH}"
+              + (f" for recipe {recipe}" if recipe else ""))
+        sys.exit(1 if check else 0)
+
+    if save_path:
+        pathlib.Path(save_path).write_text(
+            json.dumps({"recipe": recipe, "tolerance_pct": tolerance, **current},
+                       indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"[perf] baseline written: {save_path} ({current['runs']} run(s))")
+        return
+
+    print(f"[perf] {current['runs']} run(s)"
+          + (f", recipe={recipe}" if recipe else "") + "  — median ms per phase")
+    for name, entry in current["phases"].items():
+        thin = "" if entry["runs"] == current["runs"] else f"  ({entry['runs']} of {current['runs']} runs)"
+        # Three decimals, not one: a phase that really took 19 microseconds should not print as
+        # `0.0` beside the ones this module says are never rendered as zero.
+        gated = "" if name in perf.PROVIDER_PHASES else "  *"
+        print(f"  {name:<20} {entry['ms']:>12.3f}{gated}{thin}")
+    print("  (* = rig's own time, what --check gates on; the rest is provider latency)")
+    if current["unmeasured"]:
+        print("  not measured in any run: " + ", ".join(current["unmeasured"]))
+    for key in perf.SCALARS:
+        if current.get(key) is not None:
+            value = current[key]
+            shown = (f"{value:,.0f}" if key.endswith("_bytes_emitted") or key.endswith("_tokens")
+                     else f"{value:.3f}")
+            print(f"  {key:<20} {shown:>12}  ({current[f'{key}_runs']} run(s))")
+
+    if not check:
+        return
+
+    failures: list[str] = []
+    budget = _perf_budget(budget_path)
+    if budget:
+        failures += perf.check_budget(current, budget)
+    if baseline_path:
+        baseline = json.loads(pathlib.Path(baseline_path).read_text(encoding="utf-8"))
+        comparison = perf.compare(baseline, current,
+                                  tolerance_pct=baseline.get("tolerance_pct", tolerance))
+        print("")
+        for line in perf.render(comparison):
+            print(line)
+        failures += [f"{item['phase']}: +{item['delta_pct']}% over baseline "
+                     f"({item['baseline_ms']}ms → {item['current_ms']}ms)"
+                     for item in comparison["regressed"]]
+        # A phase that stopped being timed is a gate failure, not a note. Whatever it used to
+        # cost has not gone anywhere; only the measurement has, and every total that included
+        # it now reads as an improvement.
+        failures += [f"{name}: no longer measured" for name in comparison.get("stopped_being_measured", [])]
+        failures += perf.check_regression(comparison, budget)
+    elif any(key in budget for key in perf.REGRESSION_LIMITS):
+        # A percentage limit is a statement about a change, and there is nothing here to have
+        # changed from. Saying so beats letting the declaration sit in the manifest unchecked.
+        failures += [f"{key}={budget[key]} needs --baseline to mean anything"
+                     for key in perf.REGRESSION_LIMITS if key in budget]
+    if not budget and not baseline_path:
+        failures.append("--check with no budget and no --baseline: nothing to check against")
+
+    if failures:
+        print("")
+        for line in failures:
+            print(f"[perf] FAIL {line}")
+        sys.exit(1)
+    print("\n[perf] within budget")
 
 
 def cmd_runs(args):

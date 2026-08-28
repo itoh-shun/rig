@@ -331,6 +331,11 @@ def telemetry_append(state: dict, final: str) -> None:
             "retries": sum(st.get("retries", 0) for st in ss.values()),
             "escalated_at": (state.get("stopped") or {}).get("at") if state.get("stopped") else None,
             "token_usage": state.get("token_usage") or {},  # #271/#296: provider -> {prompt/completion_tokens, calls}
+            # #502: where the time went, by phase. Absent when nothing was timed — a record
+            # carrying `"perf": {}` would read as "measured, and it was nothing".
+            **({"perf": state["perf"]} if state.get("perf") else {}),
+            **({"perf_budget_broken": state["perf_budget_broken"]}
+               if state.get("perf_budget_broken") else {}),
             "steps": [{"id": s["id"], "status": ss[s["id"]].get("status"),
                        "retries": ss[s["id"]].get("retries", 0),
                        "model": ss[s["id"]].get("model"),  # actually-used generator model (#293; None = provider default)

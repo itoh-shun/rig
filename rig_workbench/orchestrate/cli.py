@@ -31,6 +31,10 @@ The model does each step's "work", but this runner decides "what happens next":
   runs   [--limit N] [--recipe R] [--personas] [--cost]  Run telemetry (.rig/runs.jsonl): listing, per-recipe aggregates,
                                      per-verifier vote tallies, and (--cost) per-recipe/provider token rollups for
                                      HTTP providers (ollama/lmstudio; claude/codex have no structured usage — #271/#296)
+  perf   [--recipe R] [--limit N]    Where runs spend their time, by phase (#502). `--save-baseline <path>` records the
+         [--check] [--baseline P]    current shape; `--check` is the regression gate (exit 1 past the tolerance, or on a
+         [--budget P]                broken `perf_budget:` from the manifest). Provider latency is reported, never gated —
+                                     a gate that failed on somebody else's network would be switched off within a month
   run ... --verifier-providers a,b,c Mixed-model quorum: run the same verification persona across different providers (votes are provider:persona)
   run ... --isolate                  Run isolated in a disposable git worktree. Only gate-green commits ff-merge back into the
                                      original branch; unmet/dirty/non-ff runs preserve the worktree and branch
@@ -77,7 +81,7 @@ import sys
 from .. import context_meter
 from ..gh_requirement import advise_gh
 from .commands import (cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
-                       cmd_next, cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status,
+                       cmd_next, cmd_perf, cmd_plan, cmd_resume, cmd_run, cmd_runs, cmd_status,
                        cmd_verdict)
 from .providers import cmd_models, cmd_probe
 from .queueing import cmd_queue
@@ -91,7 +95,7 @@ COMMANDS = {
     "verdict": cmd_verdict, "approve": cmd_approve, "next": cmd_next, "status": cmd_status,
     "run": cmd_run, "models": cmd_models, "probe": cmd_probe, "queue": cmd_queue,
     "resume": cmd_resume,
-    "runs": cmd_runs, "graph": cmd_graph,
+    "runs": cmd_runs, "graph": cmd_graph, "perf": cmd_perf,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest,
     "mcp-scan": cmd_mcp_scan, "ab": cmd_ab, "fleet": cmd_fleet,
 }
