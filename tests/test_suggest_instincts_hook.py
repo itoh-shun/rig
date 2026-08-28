@@ -35,12 +35,35 @@ def transcript(tmp_path):
     return path
 
 
-def _run(payload: dict, state_home: Path | None = None) -> subprocess.CompletedProcess:
+def _adopt(directory: Path) -> Path:
+    """Make `directory` the kind of place the hook agrees to speak in.
+
+    The hook is a project-learning feature and now refuses to fire outside an adopted,
+    Git-backed project. Every test that expects it to fire therefore needs a cwd that is
+    one, and saying so here is what keeps them honest: before this, they inherited pytest's
+    own working directory and passed because a developer's checkout happens to contain
+    `.rig`. That directory is gitignored, so no fresh checkout has it — CI included — and
+    the same tests would have failed there for a reason that has nothing to do with what
+    they are about.
+    """
+    (directory / ".rig").mkdir(exist_ok=True)
+    if not (directory / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=directory, check=True)
+    return directory
+
+
+def _run(payload: dict, state_home: Path | None = None,
+         cwd: Path | None = None) -> subprocess.CompletedProcess:
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin"}
     if state_home is not None:
         env["XDG_STATE_HOME"] = str(state_home)
+    # A scratch directory that is both the project and its state is what a real invocation
+    # looks like. Tests that mean to exercise the project guard itself pass `cwd`
+    # explicitly, and are left alone.
+    if cwd is None and state_home is not None:
+        cwd = _adopt(state_home)
     return subprocess.run([str(HOOK)], input=json.dumps(payload), text=True,
-                          capture_output=True, check=True, env=env)
+                          capture_output=True, check=True, env=env, cwd=cwd)
 
 
 def _payload(transcript, session_id="session_abc123", **extra) -> dict:
@@ -123,6 +146,23 @@ def test_a_session_that_never_touched_rig_is_left_alone(tmp_path):
     transcript.write_text('{"role":"user","text":"fix the CSS on the header"}\n',
                           encoding="utf-8")
     assert _run(_payload(transcript), tmp_path).stdout == ""
+
+
+def test_setup_in_a_git_directory_without_rig_state_is_left_alone(tmp_path):
+    """The setup command may mention rig before a project adopts `.rig`."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text('{"role":"assistant","text":"/rig:setup"}\n',
+                          encoding="utf-8")
+    assert _run(_payload(transcript), tmp_path, cwd=tmp_path).stdout == ""
+
+
+def test_rig_in_a_non_git_directory_is_left_alone(tmp_path):
+    """A non-Git working directory must not be interrupted by a project hook."""
+    (tmp_path / ".rig").mkdir()
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(RIG_TRANSCRIPT_LINE, encoding="utf-8")
+    assert _run(_payload(transcript), tmp_path, cwd=tmp_path).stdout == ""
 
 
 def test_without_a_session_id_it_stays_silent(tmp_path, transcript):
