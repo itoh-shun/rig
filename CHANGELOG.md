@@ -4,6 +4,27 @@
 
 ### Added
 
+**An Orca-backed task can be discarded on a machine where Orca is gone** (#463). It could
+not before: `wb discard` resolved the owning backend through a function that *raises* when that
+runtime is unusable, so the operator got a Python traceback, advice naming `--runtime auto` —
+a flag `discard` does not have — and a task that could never be cleaned up. Reproduced through
+the real CLI before being changed.
+
+`runtime.reconnect()` answers the same question without raising, and distinguishes the four
+states a resumed task can actually be in: the runtime is usable and the worktree is there, the
+runtime is usable and the directory is gone, the runtime cannot be used here, or the task never
+had a worktree. A caller that only learns "this raised" cannot tell state loss from a machine
+that is simply not set up, and those need opposite responses.
+
+Disposal still goes to whoever created the worktree, and **no backend is ever substituted
+silently** — answering "native" because Orca is absent would delete a directory rig no longer
+owns and report success. A task nobody can discard is its own failure, so there is a way out:
+`--local-cleanup` removes the checkout with git at the operator's explicit request and records
+on the task that its runtime never saw the disposal, because an audit that cannot distinguish
+an orderly teardown from one that stranded workspace state elsewhere is not an audit. A worktree
+that is already absent reports that instead of erroring on a path that is gone. The run log
+survives discard exactly as before, and the native path is unchanged.
+
 **`--reuse-session` lets a CLI generator carry its conversation across steps** (#326, opt-in).
 Every step starts its CLI provider from nothing today, so a run pays the startup cost once per
 step and re-injects prior context into each prompt. Where the CLI can carry a conversation
