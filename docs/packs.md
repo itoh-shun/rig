@@ -27,6 +27,37 @@ ownership crossover, path traversal, symlinks, broken references, incompatible e
 dependency ranges, cycles, collisions, unsafe secrets, invisible injection markers, and
 unambiguous destructive content.
 
+## Starting a pack
+
+`pack init` scaffolds the directory and then tells you the rest of the road:
+
+```
+$ rig-wb pack init my-domain --type skill --kind domain --root .rig/packs
+initialized: .rig/packs/my-domain
+
+next:
+  1. write an asset          my-domain/facets/personas/<name>.md
+  2. rig-wb pack sync .rig/packs/my-domain
+  3. rig-wb pack validate .rig/packs/my-domain
+```
+
+The suggested asset directory depends on the pack's type, because `TYPE_ASSETS` refuses a
+recipe inside a `knowledge` pack and proposing one would walk you into a refusal that is
+correct and reads as arbitrary.
+
+A scaffolded pack satisfies the schema while carrying nothing, so `validate` reports `valid`
+— which is true and easy to misread as finished. `doctor` names that state:
+
+```
+$ rig-wb pack doctor .rig/packs/my-domain
+pack doctor: warning
+- empty_pack: .rig/packs/my-domain
+```
+
+That is a warning, not a failure, and `doctor` exits 0 for it. The exit code follows the
+report's own distinction: `failed` means something is wrong, `warning` means something is
+worth saying. Only the first is an error.
+
 ## Adding an asset
 
 `pack.yaml` declares every asset by path and by sha256, and `pack validate` byte-compares the

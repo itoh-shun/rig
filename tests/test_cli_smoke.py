@@ -493,7 +493,13 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
         + sales_removed.stderr + video_installed.stderr + video_resolved.stderr
         + video_tested.stderr + video_removed.stderr
     )
-    assert json.loads(doctor.stdout)["status"] == "ok"
+    # The pack this scaffolds is empty, and `doctor` now says so rather than reporting `ok`
+    # on a pack that carries nothing. It stays exit 0 — asserted above with the other
+    # return codes — because an empty scaffold is the expected state after `init`, not a
+    # failure. The finding is the point of the assertion, not the status word.
+    doctor_report = json.loads(doctor.stdout)
+    assert doctor_report["status"] == "warning"
+    assert [item["code"] for item in doctor_report["findings"]] == ["empty_pack"]
     assert json.loads(tested.stdout)["status"] == "structural_only"
     assert builtin_resolved.stdout.strip() == "decision-humor"
     assert json.loads(builtin_tested.stdout)["status"] == "structural_only"
