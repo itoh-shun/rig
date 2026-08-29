@@ -11,19 +11,169 @@ rig-wb pack init my-domain --type skill --kind domain --root .rig/packs
 rig-wb pack validate .rig/packs/my-domain
 rig-wb pack validate --global
 rig-wb pack doctor .rig/packs/my-domain --json
-rig-wb pack install ./dist/my-domain.zip --scope project
+rig-wb pack sync .rig/packs/my-domain              # after adding or deleting an asset file
+rig-wb pack bundle .rig/packs/my-domain               # -> dist/my-domain-0.1.0.zip
+rig-wb pack install ./dist/my-domain-0.1.0.zip --scope project
+rig-wb eval promote <case-id> --baseline ... --current ... --repo . --into .rig/packs/my-domain
 rig-wb pack test my-domain                         # structural-only, not quality evidence
 rig-wb pack test my-domain --provider codex --model gpt-5 --judge-provider codex --judge-model gpt-5
 rig-wb pack remove my-domain --scope project       # dry-run
 rig-wb pack remove my-domain --scope project --yes
 ```
 
-`pack init` refuses overwrites and creates every standard directory. Add assets to the
-manifest, record their SHA-256 hashes, and bind each prompt-bearing pack to at least one
-approved evaluation case. Validation rejects unknown manifest fields, undeclared files,
-ownership crossover, path traversal, symlinks, broken references, incompatible engine or
-dependency ranges, cycles, collisions, unsafe secrets, invisible injection markers, and
-unambiguous destructive content.
+The four sections below are one walkthrough in order — scaffold a pack, add an asset,
+produce the evidence a prompt-bearing pack needs, hand someone the zip.
+
+`pack init` refuses overwrites and creates every standard directory. Assets are declared and
+hashed by `pack sync`, not by hand: `pack.yaml` is canonical and byte-compared, so it is
+generated. Every prompt-bearing pack must still bind to at least one approved evaluation
+case, which `eval promote` produces from evidence that passed. Validation rejects unknown
+manifest fields, undeclared files, ownership crossover, path traversal, symlinks, broken
+references, incompatible engine or dependency ranges, cycles, collisions, unsafe secrets,
+invisible injection markers, and unambiguous destructive content.
+
+## Starting a pack
+
+`pack init` scaffolds the directory and then tells you the rest of the road:
+
+```
+$ rig-wb pack init my-domain --type skill --kind domain --root .rig/packs
+initialized: .rig/packs/my-domain
+
+next:
+  1. write an asset          my-domain/facets/personas/<name>.md
+  2. rig-wb pack sync .rig/packs/my-domain
+  3. rig-wb pack validate .rig/packs/my-domain
+```
+
+The suggested asset directory depends on the pack's type, because `TYPE_ASSETS` refuses a
+recipe inside a `knowledge` pack and proposing one would walk you into a refusal that is
+correct and reads as arbitrary.
+
+A scaffolded pack satisfies the schema while carrying nothing, so `validate` reports `valid`
+— which is true and easy to misread as finished. `doctor` names that state:
+
+```
+$ rig-wb pack doctor .rig/packs/my-domain
+pack doctor: warning
+- empty_pack: .rig/packs/my-domain
+```
+
+That is a warning, not a failure, and `doctor` exits 0 for it. The exit code follows the
+report's own distinction: `failed` means something is wrong, `warning` means something is
+worth saying. Only the first is an error.
+
+## Adding an asset
+
+`pack.yaml` declares every asset by path and by sha256, and `pack validate` byte-compares the
+file against its canonical form — sorted keys, no separators, one trailing newline. That form
+is what makes a manifest hashable and signable, and it is deliberately the JSON subset so a
+manifest cannot execute a YAML tag.
+
+It is therefore not a file to edit by hand. Write the asset, then let the tool declare it:
+
+```
+$ vi .rig/packs/my-domain/facets/personas/reviewer.md
+$ rig-wb pack sync .rig/packs/my-domain
+  + facets/personas/reviewer.md
+pack sync: 1 asset(s) declared and hashed
+```
+
+Sync mirrors the directory: a deleted file leaves the manifest too, so a stale declaration
+never sends you looking for something you removed. It rewrites `assets` and `hashes` and
+nothing else — version, description, capabilities and entrypoints are yours.
+
+It refuses in two cases rather than proceeding quietly. A file sitting outside every asset
+directory is named, because declaring nothing about it would leave a file inside the pack that
+no hash covers. And a signed pack is refused outright, because rewriting the manifest
+invalidates `pack.sig.json`; remove the signature, sync, then re-sign with your key.
+
+A resource file needs a third derived field — `{media_type, size, sha256}` under
+`resources` — and sync writes that too, deriving the media type from the extension rather
+than asking for it. The pairing between the two is checked, so a hand-written declaration
+could only ever agree with the derivation or be wrong. An extension with no supported media
+type is named, and an executable extension is refused here exactly as `validate` refuses it,
+because sync writes the declaration and would otherwise be the one place that rule could be
+walked around.
+
+That makes one authoring path complete today: a `knowledge` pack of pure `resource` files
+carries no prompt material, so the evaluation gate does not apply and
+`init` → add a file → `sync` → `validate` finishes.
+
+Note what `sync` does not do. A pack carrying prompt material — a persona, an instruction, a
+recipe, a wiki page — still needs at least one **approved** evaluation case before `validate`
+will pass it. Sync clears the bookkeeping; it does not clear the evidence gate, and it is not
+meant to. Producing that evidence is the next section.
+
+## Evidence for a prompt-bearing pack
+
+A pack that carries prompt material needs an **approved** evaluation case before `validate`
+passes it. That gate is the point of the design: it makes an installed pack's quality a
+measurement rather than a claim. Approval is not a flag you set — `eval promote` refuses a
+draft whose evidence does not pass its red/green/clean thresholds, and refuses one whose
+semantic rubric was never judged. Results are attested, so an edited result fails at the
+signature before the thresholds are consulted.
+
+The draft lives in the **project**, not in the pack. A pack may hold nothing it has not
+declared, so a draft staged inside one is refused by `pack validate` and `pack sync` alike.
+`--into` moves only the destination of the approved case:
+
+```
+$ vi .rig/packs/my-domain/facets/personas/hello.md
+$ rig-wb pack sync .rig/packs/my-domain
+$ rig-wb pack validate .rig/packs/my-domain
+[ERROR] prompt-bearing pack requires at least one evaluation case
+
+# write .rig/evals/drafts/<case-id>/case.json, naming the pack's surfaces in
+# prompt_surfaces (e.g. ["persona:hello"]), then measure it:
+$ rig-wb eval run <case-id> --repo . --phase baseline --provider ... --model ...
+$ rig-wb eval run <case-id> --repo . --phase current  --provider ... --model ...
+$ rig-wb eval compare --baseline <baseline.json> --current <current.json> --repo .
+
+$ rig-wb eval promote <case-id> --baseline <baseline.json> --current <current.json> \
+      --repo . --into .rig/packs/my-domain
+.rig/packs/my-domain/evals/cases/<case-id>/case.json
+next: rig-wb pack sync .rig/packs/my-domain   # declare the new case
+
+$ rig-wb pack sync .rig/packs/my-domain
+$ rig-wb pack validate .rig/packs/my-domain
+valid: my-domain@0.1.0
+```
+
+`--into` refuses a directory with no `pack.yaml`. A mistyped path would otherwise put an
+approved case somewhere nothing reads it, and the next `pack validate` would report the case
+as missing rather than misplaced.
+
+Every gate stays where it was. `--into` changes the destination and nothing else, so a pack's
+evidence is held to exactly the standard the repository's own evidence is.
+
+## Handing someone a zip
+
+`pack install` takes a directory, a zip, or a tar. `pack bundle` writes the zip:
+
+```
+$ rig-wb pack bundle .rig/packs/my-domain
+bundled: my-domain@0.1.0 (3 file(s)) -> /home/you/dist/my-domain-0.1.0.zip
+  sha256: 7ef9b1a3...
+next:
+  rig-wb pack install /home/you/dist/my-domain-0.1.0.zip --scope project
+```
+
+The pack is validated first — an archive built from a pack that does not validate can only
+produce the same failure, one machine away from whoever could fix it. A signature travels
+with the pack it signs.
+
+The bytes are reproducible: entries are sorted, dated to the zip epoch, and given fixed
+permissions. That matters because `install` records the archive's sha256 and `pack.lock.json`
+pins it, so a bundle that differed on every rebuild would report a change every time and
+therefore report nothing. Two bundles of an unchanged pack are byte-identical even from a
+fresh clone, where every file has a new mtime.
+
+An existing output file is never overwritten. A released artifact's published digest should
+not change with nothing said.
+
+Use `export` instead when the destination is a git repository of its own — that writes a
+repository tree with the pack one level down, not an archive.
 
 ## Named sources — installing from a private repository
 

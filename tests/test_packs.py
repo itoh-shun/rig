@@ -65,9 +65,13 @@ def test_pack_cli_init_validate_and_doctor_json(tmp_path, monkeypatch, capsys):
     assert cmd_pack(["init", "cli-pack", "--type", "skill", "--root", str(root)]) == 0
     assert cmd_pack(["validate", str(root / "cli-pack")]) == 0
     monkeypatch.chdir(tmp_path)
+    # Exit 0 on a warning: a scaffolded pack carries nothing, which `doctor` now says out
+    # loud rather than reporting `ok`, but it is the expected state after `init` and not a
+    # failure. `empty_pack` is the finding; the exit code stays clear for `failed`.
     assert cmd_pack(["doctor", str(root / "cli-pack"), "--json"]) == 0
     output = capsys.readouterr().out
     assert '"pack_doctor_schema_version":1' in output
+    assert '"empty_pack"' in output
 
 
 def test_pack_validate_prompt_eval_hash_ref_compat_and_malicious(tmp_path):

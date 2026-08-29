@@ -314,6 +314,14 @@ class MissionControlHTTPServer(ThreadingHTTPServer):
         self.csrf_token = csrf_token
         _host, port = self.server_address[:2]
         self.allowed_origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
+        # The names this server can legitimately be reached by. It binds loopback, so these
+        # are the only ones a browser or a client could have resolved to get here — anything
+        # else in the Host header means the request was addressed to somebody else's domain
+        # that happens to point at 127.0.0.1, which is what DNS rebinding is.
+        self.allowed_hosts = {
+            f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}",
+            "127.0.0.1", "localhost", "[::1]",
+        }
 
 
 class MissionControlHandler(BaseHTTPRequestHandler):
@@ -364,6 +372,27 @@ class MissionControlHandler(BaseHTTPRequestHandler):
             raise ValueError("request body must be a JSON object")
         return value
 
+    def _authorize_host(self) -> bool:
+        """Refuse a request addressed to a name this server does not answer to.
+
+        Binding loopback stops a remote client from connecting; it does not stop a browser
+        from being told that `evil.example` resolves to 127.0.0.1 and then talking to this
+        server on a malicious page's behalf. In that attack the socket is local and the CSRF
+        token is readable — the page is same-origin with us as far as the browser is
+        concerned — so neither of those defends the read side. What the attack cannot forge
+        is the Host header: it necessarily carries the name the victim's browser was sent to.
+
+        Checked before routing, so it covers GET as well as POST. Origin cannot do this job
+        alone: browsers omit it on same-origin GETs, which is exactly the shape of a
+        rebinding read.
+        """
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host in self.server.allowed_hosts:
+            return True
+        self._json(403, {"error": "this Mission Control answers only to localhost; "
+                                  f"the request was addressed to {host or '(no Host header)'}"})
+        return False
+
     def _authorize_post(self) -> bool:
         supplied = self.headers.get("X-RIG-CSRF", "")
         if not secrets.compare_digest(supplied, self.server.csrf_token):
@@ -376,6 +405,8 @@ class MissionControlHandler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._authorize_host():
+            return
         path = urllib.parse.urlsplit(self.path).path
         try:
             if path == "/":
@@ -399,7 +430,7 @@ class MissionControlHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
 
     def do_POST(self) -> None:  # noqa: N802
-        if not self._authorize_post():
+        if not self._authorize_host() or not self._authorize_post():
             return
         path = urllib.parse.urlsplit(self.path).path
         try:

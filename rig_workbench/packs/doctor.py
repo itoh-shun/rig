@@ -49,6 +49,15 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
                     raise ValueError("publisher signature disappeared during verification")
             manifests[manifest["id"]] = manifest
             entries.append((tier_by_path.get(root.resolve(), "selected"), root))
+            # A scaffolded pack satisfies the schema while carrying nothing, and `validate`
+            # correctly says so: `valid`. Reporting `ok` here as well told an author they were
+            # finished before they had started — three green checks on a pack that cannot be
+            # invoked. It is a legitimate intermediate state, so this is a warning and not a
+            # failure; what it must not be is silent.
+            if not any(manifest["assets"].values()):
+                findings.append({"code": "empty_pack", "path": str(root),
+                                 "detail": "no assets declared; add one, then `pack sync`",
+                                 "severity": "warning"})
         except Exception as exc:
             findings.append({"code": "invalid_pack", "path": str(root), "detail": str(exc)})
     if not any(item.get("severity", "error") != "warning" for item in findings):

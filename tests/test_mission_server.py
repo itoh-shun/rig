@@ -1,6 +1,8 @@
 """Interactive Mission Control: browser actions must stay behind RIG Core."""
 
+import http.client
 import json
+import threading
 
 import pytest
 
@@ -122,3 +124,84 @@ def test_interactive_html_contains_live_and_durable_controls_but_no_force():
 
 def test_body_limit_is_bounded():
     assert mission_server.MAX_BODY_BYTES <= 64 * 1024
+
+
+# ── DNS rebinding: the read side needed a Host check ─────────────────────────
+
+
+@pytest.fixture
+def live_server(tmp_path):
+    """A real Mission Control on a real socket.
+
+    Driven over HTTP rather than by calling the handler, because the defect this covers lived
+    between the socket and the router: every unit-level test of this module passed while
+    `GET /api/snapshot` answered any caller that could reach the port.
+    """
+    server = mission_server.MissionControlHTTPServer(("127.0.0.1", 0), tmp_path, "test-token")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _request(server, method, path, host=None, headers=None):
+    port = server.server_address[1]
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+        if host is not None:
+            connection.putheader("Host", host)
+        for key, value in (headers or {}).items():
+            connection.putheader(key, value)
+        connection.putheader("Content-Length", "0")
+        connection.endheaders()
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("path", ["/", "/api/snapshot"])
+def test_a_loopback_request_is_served(live_server, path):
+    """The positive control, and it earns its place: a Host check that refused everything
+    would satisfy the rebinding test below while breaking the tool for its only real user."""
+    port = live_server.server_address[1]
+    status, _ = _request(live_server, "GET", path, host=f"127.0.0.1:{port}")
+    assert status == 200
+
+
+def test_the_hostname_alias_is_served_too(live_server):
+    port = live_server.server_address[1]
+    status, _ = _request(live_server, "GET", "/", host=f"localhost:{port}")
+    assert status == 200
+
+
+@pytest.mark.parametrize("path", ["/", "/api/snapshot"])
+def test_a_request_addressed_to_somebody_elses_domain_is_refused(live_server, path):
+    """DNS rebinding. Binding loopback stops a remote client from connecting; it does not stop
+    a browser being told that `evil.example` resolves to 127.0.0.1. In that attack the socket
+    is local and the page is same-origin with us as far as the browser is concerned, so the
+    CSRF token is readable and Origin is absent on a GET — neither defends the read side.
+    The Host header is what the attack cannot forge: it carries the name the victim's browser
+    was sent to."""
+    status, body = _request(live_server, "GET", path, host="evil.example")
+    assert status == 403
+    assert b"localhost" in body
+
+
+def test_a_request_with_no_host_header_is_refused(live_server):
+    """An HTTP/1.0 client may omit it. Absent is not loopback, and treating a missing header
+    as permission is how a check ends up applying to everybody who bothers to set it."""
+    status, _ = _request(live_server, "GET", "/", host=None)
+    assert status == 403
+
+
+def test_the_write_side_still_needs_its_token(live_server):
+    """The Host check is added in front of the CSRF check, not in place of it."""
+    port = live_server.server_address[1]
+    status, _ = _request(live_server, "POST", "/api/jobs", host=f"127.0.0.1:{port}")
+    assert status == 403

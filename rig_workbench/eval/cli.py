@@ -66,6 +66,9 @@ def _parser() -> argparse.ArgumentParser:
     promote.add_argument("--baseline", required=True)
     promote.add_argument("--current", required=True)
     promote.add_argument("--repo", default=".")
+    promote.add_argument("--into", metavar="PACK",
+                         help="write the approved case into this pack instead of the "
+                              "repository; run `rig-wb pack sync` afterwards to declare it")
     affected = sub.add_parser("affected", help="map a git diff to prompt cases")
     affected.add_argument("--base", required=True)
     affected.add_argument("--head", default="working")
@@ -372,9 +375,11 @@ def cmd_eval(argv: list[str]) -> int:
             baseline = _read_result(args.baseline)
             current = _read_result(args.current)
             output, _case = promote_case(
-                args.repo, args.draft_id, baseline, current
+                args.repo, args.draft_id, baseline, current, into=args.into
             )
             print(output)
+            if args.into is not None:
+                print(f"next: rig-wb pack sync {args.into}   # declare the new case")
             return 0
         if args.command == "affected":
             report = analyze_affected(

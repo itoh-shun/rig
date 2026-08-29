@@ -26,6 +26,46 @@ SIGNATURES = {
 }
 
 
+#: Extensions whose MIME `mimetypes.guess_type` gets wrong or does not know. Kept here, in
+#: the module that checks the pairing, so the writer and the checker read the same table —
+#: a second copy is how a resource comes to be declared with a type its validator rejects.
+MIME_ALIASES = {".md": "text/markdown", ".svg": "image/svg+xml"}
+
+
+def media_type_of(path: pathlib.Path) -> str:
+    """The MIME `validate_resource` will expect for `path`, or raise naming the extension.
+
+    Deriving it rather than asking the author is the point: the pairing between extension
+    and declared type is checked, so a hand-written declaration can only ever agree with
+    this or be wrong.
+    """
+    guessed, _encoding = mimetypes.guess_type(path.name)
+    media_type = MIME_ALIASES.get(path.suffix.casefold(), guessed)
+    if media_type is None:
+        raise PackError(
+            f"resource extension has no known media type: {path.name} "
+            f"(supported: {', '.join(sorted(ALLOWED_MIME))})")
+    if media_type not in ALLOWED_MIME:
+        raise PackError(f"resource MIME is forbidden or unsupported: {path.name}")
+    return media_type
+
+
+def describe_resource(root: pathlib.Path, relative: str) -> dict[str, object]:
+    """The `{media_type, size, sha256}` triple for one resource file, derived from the file.
+
+    Every field is mechanically determined, which is why this can be generated at all — and
+    why leaving it to the author was never a decision they were making, only a transcription
+    they could get wrong.
+    """
+    path = root / safe_relative(relative)
+    if path.suffix.casefold() in EXECUTABLE_SUFFIXES:
+        raise PackError(f"executable resource extension is forbidden: {relative}")
+    size = path.stat().st_size
+    if size > MAX_RESOURCE_BYTES:
+        raise PackError(f"resource size is invalid: {relative}")
+    return {"media_type": media_type_of(path), "size": size, "sha256": digest(path)}
+
+
 def _looks_like_html(data: bytes) -> bool:
     head = data[:1024].lstrip().lower()
     return head.startswith((b"<!doctype html", b"<html", b"<!--"))
@@ -60,8 +100,7 @@ def validate_resource(root: pathlib.Path, relative: str, metadata: object) -> No
     if digest(path) != sha256:
         raise PackError(f"resource hash mismatch: {relative}")
     guessed, _encoding = mimetypes.guess_type(path.name)
-    aliases = {".md": "text/markdown", ".svg": "image/svg+xml"}
-    expected = aliases.get(path.suffix.casefold(), guessed)
+    expected = MIME_ALIASES.get(path.suffix.casefold(), guessed)
     if expected != media_type:
         raise PackError(f"resource MIME/extension mismatch: {relative}")
     signatures = SIGNATURES.get(media_type)
