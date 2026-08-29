@@ -32,6 +32,7 @@ import pathlib
 
 from .manifest import canonical, digest, read_json_yaml
 from .model import ASSET_DIRS, PackError, TYPE_ASSETS
+from .resources import describe_resource
 
 #: Files that belong to the pack but are not assets: the manifest pair the assets are
 #: declared in, and the signature over them.
@@ -89,9 +90,15 @@ def scan_assets(root: pathlib.Path) -> dict[str, list[str]]:
 def sync_manifest(root: pathlib.Path | str) -> dict[str, object]:
     """Rewrite `pack.yaml` so its `assets` and `hashes` describe the files that are there.
 
-    Returns what changed, so the caller can print it. Nothing else in the manifest is
-    touched: version, description, entrypoints and capabilities are the author's, and a sync
-    that edited them would be making decisions it has no basis for.
+    Three fields are derived, because all three describe the directory rather than the
+    author's intent: `assets` (what is there), `hashes` (its bytes) and, for resource files,
+    the `{media_type, size, sha256}` triple `validate_pack` demands under `resources`. The
+    media type is derived rather than asked for — the pairing between extension and declared
+    type is checked, so a hand-written declaration could only agree with the derivation or be
+    wrong.
+
+    Everything else is untouched: version, description, entrypoints and capabilities are the
+    author's, and a sync that edited them would be making decisions it has no basis for.
     """
     root = pathlib.Path(root).resolve()
     if (root / "pack.sig.json").exists():
@@ -114,6 +121,11 @@ def sync_manifest(root: pathlib.Path | str) -> dict[str, object]:
     after = {item for paths in grouped.values() for item in paths}
     manifest["assets"] = grouped
     manifest["hashes"] = {item: digest(root / item) for item in sorted(after)}
+    # A resource carries a third derived field. `validate_pack` requires `resources` to cover
+    # the resource assets exactly, so deriving two of the three and stopping would leave the
+    # pack unvalidatable — which is what the first version of this function did.
+    manifest["resources"] = {item: describe_resource(root, item)
+                             for item in grouped["resource"]}
     (root / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     return {
         "added": sorted(after - before),

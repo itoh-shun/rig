@@ -167,3 +167,71 @@ def test_sync_does_not_touch_what_the_author_owns(tmp_path):
 
     assert {k: v for k, v in after.items() if k not in {"assets", "hashes"}} == \
            {k: v for k, v in before.items() if k not in {"assets", "hashes"}}
+
+
+def test_a_resource_pack_validates_end_to_end_after_sync(tmp_path):
+    """The whole authoring path, for the one pack shape that needs no evidence. A pack of
+    pure `resource` files carries no prompt material, so the evaluation gate does not apply
+    and `init` → add a file → `sync` → `validate` can actually complete. Nothing else in the
+    CLI could reach this state before."""
+    from rig_workbench.packs.validation import validate_pack
+
+    pack = init_pack("res-pack", kind="project", type_="knowledge", root=tmp_path)
+    (pack / "resources/note.md").write_text("# note\n", encoding="utf-8")
+
+    sync_manifest(pack)
+
+    assert validate_pack(pack)["id"] == "res-pack"
+
+
+def test_resource_metadata_is_derived_and_not_left_to_the_author(tmp_path):
+    """`validate_pack` requires `resources` to cover the resource assets exactly. Deriving
+    `assets` and `hashes` and stopping there — which is what the first version of sync did —
+    left the pack failing on `pack resources must exactly cover resource assets`, one error
+    further along and no more fixable by hand than the last one."""
+    pack = init_pack("res-pack", kind="project", type_="knowledge", root=tmp_path)
+    (pack / "resources/note.md").write_text("# note\n", encoding="utf-8")
+
+    sync_manifest(pack)
+
+    entry = _manifest(pack)["resources"]["resources/note.md"]
+    assert entry["media_type"] == "text/markdown"
+    assert entry["size"] == len("# note\n")
+    assert entry["sha256"] == _manifest(pack)["hashes"]["resources/note.md"]
+
+
+def test_a_deleted_resource_leaves_the_resources_table_too(tmp_path):
+    """Same mirror rule as `assets`. A stale `resources` entry fails validation just as
+    loudly as a stale declaration, and would be just as confusing."""
+    pack = init_pack("res-pack", kind="project", type_="knowledge", root=tmp_path)
+    asset = pack / "resources/note.md"
+    asset.write_text("# note\n", encoding="utf-8")
+    sync_manifest(pack)
+    assert _manifest(pack)["resources"], "precondition: the entry was written in the first place"
+
+    asset.unlink()
+    sync_manifest(pack)
+
+    assert _manifest(pack)["resources"] == {}
+
+
+def test_a_resource_extension_with_no_known_media_type_is_named(tmp_path):
+    """`validate_resource` refuses a MIME outside the allowlist, so guessing one here would
+    only move the failure. The extension is named instead, with what is supported."""
+    pack = init_pack("res-pack", kind="project", type_="knowledge", root=tmp_path)
+    (pack / "resources/data.xyz").write_text("?\n", encoding="utf-8")
+
+    with pytest.raises(PackError, match="media type|MIME"):
+        sync_manifest(pack)
+
+
+def test_an_executable_resource_extension_is_refused_by_sync_as_well(tmp_path):
+    """The check exists in `validate_resource`; it has to exist here too. Sync writes the
+    declaration, so a sync that happily described `payload.sh` would be the one place the
+    rule could be walked around — declare it, and the pack ships an executable it claims is
+    inert data."""
+    pack = init_pack("res-pack", kind="project", type_="knowledge", root=tmp_path)
+    (pack / "resources/payload.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    with pytest.raises(PackError, match="executable"):
+        sync_manifest(pack)

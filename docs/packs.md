@@ -51,6 +51,18 @@ directory is named, because declaring nothing about it would leave a file inside
 no hash covers. And a signed pack is refused outright, because rewriting the manifest
 invalidates `pack.sig.json`; remove the signature, sync, then re-sign with your key.
 
+A resource file needs a third derived field — `{media_type, size, sha256}` under
+`resources` — and sync writes that too, deriving the media type from the extension rather
+than asking for it. The pairing between the two is checked, so a hand-written declaration
+could only ever agree with the derivation or be wrong. An extension with no supported media
+type is named, and an executable extension is refused here exactly as `validate` refuses it,
+because sync writes the declaration and would otherwise be the one place that rule could be
+walked around.
+
+That makes one authoring path complete today: a `knowledge` pack of pure `resource` files
+carries no prompt material, so the evaluation gate does not apply and
+`init` → add a file → `sync` → `validate` finishes.
+
 Note what `sync` does not do. A pack carrying prompt material — a persona, an instruction, a
 recipe, a wiki page — still needs at least one **approved** evaluation case before `validate`
 will pass it. Sync clears the bookkeeping; it does not clear the evidence gate, and it is not
