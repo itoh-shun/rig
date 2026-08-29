@@ -5,7 +5,7 @@
        alt="Rig — Reasoning Integration Gateway。3本の柱: Reasoning（考え、評価し、改善する）、Integration（ツールとAIをつなぐ）、Gateway（開発の入口となる）。">
 </p>
 
-**Claude Code のための AI Quality Operating System。** タスクに応じて必要なハーネスを自動構成し、隔離された worktree で変更を行い、acceptance-gate で検証し、最後にユーザーが差分を accept / discard できる。さらにチーム利用では、**共通ポリシー**を複数リポジトリへ効かせ、権限管理・承認フロー・期限つき例外・改竄検知つき監査台帳でそれを担保する（§17）。
+**Claude Code のための AI Quality Operating System。** タスクに応じて必要なハーネスを自動構成し、隔離された worktree で変更を行い、acceptance-gate で検証し、最後にユーザーが差分を accept / discard できる。さらにチーム利用では、**共通ポリシー**を複数リポジトリへ効かせ、権限管理・承認フロー・期限つき例外・改竄検知つき監査台帳でそれを担保する（§18）。
 
 > 🇬🇧 English version: [README.md](./README.md)
 
@@ -20,20 +20,50 @@ rig の本当の価値は、AI を動かすこと自体ではない。AI に作�
 安全性の核が「documented だけで実装が伴わない」状態にならないよう、3 つの性質を配線に組み込んでいる:
 
 - **Force-proof な accept 前提条件** — `accept` は構造的前提（worktree の存在・base branch の記録・diff サマリの作成）が欠けていると `--force` でも通らない。`--force` が上書きできるのは soft な gate 未達だけで、そのときは `.rig/audit.jsonl` に記録が残る（`workbench.py audit`）。checkpoint はフラグで外せない場所に置く。
-- **クロスプロバイダを前提にした設計** — 生成役と検証役は別プロセスで走り、それぞれ LLM を選べる：`claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / さらに `rig` ハーネスをネスト。Claude で実装して Codex で検証する（あるいは逆）が既定の流し方で、同じクラスのモデルが自分の成果物をレビューする状況を構造的に避ける。`orchestrate.py probe` が「read-only サンドボックスは configuration だけでなく実装として発動している」ことを provider ごとに確認する（§5・§12）。
+- **クロスプロバイダを前提にした設計** — 生成役と検証役は別プロセスで走り、それぞれ LLM を選べる：`claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / さらに `rig` ハーネスをネスト。Claude で実装して Codex で検証する（あるいは逆）が既定の流し方で、同じクラスのモデルが自分の成果物をレビューする状況を構造的に避ける。`orchestrate.py probe` が「read-only サンドボックスは configuration だけでなく実装として発動している」ことを provider ごとに確認する（§6・§13）。
 - **Claude Code plugin として動く** — `/rig:go` は普段の作業と同じ session に住む。別ツールに切り替える文脈スイッチではなく、隔離・ゲート・accept まで一続きのキー操作でできる。
 
-**rig の現在地：** 安全性の核——task 分類・隔離・acceptance-gate・明示的な accept/discard——は実装済みで、このリポジトリ自身のテストスイート（§15）で裏付けが取れている。その上に乗る品質・観測系のツール（drill・board・stats・GitHub 連携）は実用可能だが発展中。用途特化のワークフローは既定core目録に混ぜず、明示installするdomain extensionとして提供する。§7 でこれを名指しで区分けする。
+**rig の現在地：** 安全性の核——task 分類・隔離・acceptance-gate・明示的な accept/discard——は実装済みで、このリポジトリ自身のテストスイート（§16）で裏付けが取れている。その上に乗る品質・観測系のツール（drill・board・stats・GitHub 連携）は実用可能だが発展中。用途特化のワークフローは既定core目録に混ぜず、明示installするdomain extensionとして提供する。§8 でこれを名指しで区分けする。
 
 ### ポジショニング
 
 rig は意図的に、独自 DSL を持つ重量級の外部エンジン**ではない**。Claude Code のセッション内では、Claude Code 自身のプリミティブ——slash command（`commands/`）・skill（`skills/engine`）・subagent（`agents/`）・hook（`hooks/`）——だけで合成された薄い品質・安全レイヤーとして動く。隔離・ゲート・accept は、いま作業しているセッションにそのまま規律として乗るのであって、別ツールへの乗り換えを要求しない。
 
-同じ設計にはもう一つの顔がある：このレイヤーの背後にある決定論エンジン（`scripts/orchestrate.py`。`rig_workbench/` としてパッケージ化され、pip の `rig-wb` CLI としても導入できる）は、**外部制御プレーン**を兼ねる。CI・別セッション・別ツール（Codex / Cursor 等）から、まったく同じ recipe・ゲート・read-only verifier をセッションの外から駆動できる——§13「横断利用（CLI として）」を参照。package-nativeなremote/SDK MCP経路は`rig-mcp`として提供する（[`docs/remote-mcp.md`](docs/remote-mcp.md)）。従来の`scripts/mcp_server.py`（#263）は異なるtool contractを持つstdlib-onlyのlocal stdio adapterとして残る——§7を参照。
+同じ設計にはもう一つの顔がある：このレイヤーの背後にある決定論エンジン（`scripts/orchestrate.py`。`rig_workbench/` としてパッケージ化され、pip の `rig-wb` CLI としても導入できる）は、**外部制御プレーン**を兼ねる。CI・別セッション・別ツール（Codex / Cursor 等）から、まったく同じ recipe・ゲート・read-only verifier をセッションの外から駆動できる——§14「横断利用（CLI として）」を参照。package-nativeなremote/SDK MCP経路は`rig-mcp`として提供する（[`docs/remote-mcp.md`](docs/remote-mcp.md)）。従来の`scripts/mcp_server.py`（#263）は異なるtool contractを持つstdlib-onlyのlocal stdio adapterとして残る——§8を参照。
 
-そして「品質ゲートがあります」という他所の売り文句との差別化点：rig のゲートとレビュアーは主張されるだけでなく**実測される**。`/rig:drill`（§11）は既知バグの注入に対する各 reviewer persona の実際の検出率をスコア化し、`/rig:go stats`（§10）は実 run 履歴からラバースタンプ化したレビュアーや頻繁に落ちるゲートを炙り出す。測れないゲートは願望にすぎない——rig はゲートの実効性をデータとして扱う。
+そして「品質ゲートがあります」という他所の売り文句との差別化点：rig のゲートとレビュアーは主張されるだけでなく**実測される**。`/rig:drill`（§12）は既知バグの注入に対する各 reviewer persona の実際の検出率をスコア化し、`/rig:go stats`（§11）は実 run 履歴からラバースタンプ化したレビュアーや頻繁に落ちるゲートを炙り出す。測れないゲートは願望にすぎない——rig はゲートの実効性をデータとして扱う。
 
-## 2. 30秒で使う
+## 2. インストール
+
+入口は2つあり、用途が違います。多くの場合は1つ目です。
+
+**Claude Code の中では、プラグイン。** `/rig:go` をはじめとするスラッシュコマンドはここから来ます。
+
+```bash
+/plugin marketplace add itoh-shun/sito-plugins
+/plugin install rig@sito-plugins
+```
+
+**それ以外の場所では、`rig-wb` CLI。** 同じ決定論エンジンを Claude Code のセッション外から
+動かすためのものです——CI、スクリプト、あるいは別のアシスタント（Codex / Cursor / Copilot）。
+`/rig:setup` が入れてくれるのもこれで、プラグインが計算的経路で委譲する先もこれです。
+
+```bash
+pipx install git+https://github.com/itoh-shun/rig.git     # uv tool install / pip install でも可
+rig-wb version
+```
+
+既に Claude Code の中にいるなら `/rig:setup` が同じことをして、方法も選んでくれます——
+`pipx` → `uv` → `pip` の順に優先し、「入っているか」ではなく**このチェックアウトと一致するか**を
+比べ、黙って入れ替えることはしません。`/rig:setup --check` は何も入れずに検出だけします。
+
+両方は要りません。プラグインだけで安全フローは一通り動き、CLI だけで CI から回せます。
+2つ目が要るのは、Claude Code の外にあるものが同じ recipe とゲートに届く必要があるときです。
+
+その他の導入経路——このリポジトリ自身の marketplace から、ダウンロードから、開発用の
+`--plugin-dir`、Codex、MCP アダプタ——は §16 にあります。
+
+## 3. 30秒で使う
 
 ```bash
 /rig:go "ログインバグを直して"
@@ -58,7 +88,7 @@ rig は意図的に、独自 DSL を持つ重量級の外部エンジン**では
 | レビューの質 | 不明 | `/rig:drill` が各 reviewer の検出率を実測 |
 | 何が起きたか | チャットログ | run log・監査証跡・署名付き来歴 |
 
-## 3. メイン入口
+## 4. メイン入口
 
 主入口は次のコマンドです。
 
@@ -76,7 +106,7 @@ rig は意図的に、独自 DSL を持つ重量級の外部エンジン**では
 
 フルの品質保証ワークベンチフローには `/rig:go` を使う。同じエンジンへの会話的な入口が欲しいときは `/rig:talk` を使う。
 
-## 4. 安全な基本フロー
+## 5. 安全な基本フロー
 
 ```
 自然文のタスク
@@ -113,9 +143,9 @@ mode: isolated worktree
 gate: standard + bugfix
 ```
 
-②で recipe がどう合成されるかは §8、③〜⑤を支える仕組みは §5 を参照。
+②で recipe がどう合成されるかは §9、③〜⑤を支える仕組みは §6 を参照。
 
-## 5. なぜ安全か
+## 6. なぜ安全か
 
 ### isolated worktree
 
@@ -143,7 +173,7 @@ gate: standard + bugfix
 /rig:queue go --provider rig --max-parallel 3   # 独立した headless プロセスを3つ並列実行
 ```
 
-`--provider rig` は各 queue item を `/rig:go "<task>"` 経由で dispatch するため、直接 `/rig:go` を打ったときと同じように各タスクが自動的に隔離される——並列実行中のプロセス同士がファイルを取り合う心配がない。queue 自身の verifier は「gate が確定したか」「isolated worktree 内で完結し本体に書き込んでいないか」を確認するだけで、**ユーザーの代わりに accept はしない**。完了後は `/rig:go board`（§10）が唯一の確認場所になる——どの端末・プロセスが実行したかに関わらず。
+`--provider rig` は各 queue item を `/rig:go "<task>"` 経由で dispatch するため、直接 `/rig:go` を打ったときと同じように各タスクが自動的に隔離される——並列実行中のプロセス同士がファイルを取り合う心配がない。queue 自身の verifier は「gate が確定したか」「isolated worktree 内で完結し本体に書き込んでいないか」を確認するだけで、**ユーザーの代わりに accept はしない**。完了後は `/rig:go board`（§11）が唯一の確認場所になる——どの端末・プロセスが実行したかに関わらず。
 
 **視覚検証のスクリーンショット。** `visual-verify`（UI diff 確認）と `design-audit`（Playwright での画面取得）はいずれもスクリーンショットを生成する。これらは判断のための使い捨て証拠であって成果物ではない——結論は常に散文（`diff.md`）に残る：
 
@@ -207,7 +237,7 @@ reviewer/verifier subagent はツールアクセスを制限して起動する�
 
 ### 明示的な accept / discard
 
-`accept` はまず `accept_requirements` チェックリストを表示する——`worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**であり `--force` でも上書きできない。そのうえで **staged**（未コミット）として反映する——コミットは常に人が行う。`discard` は task-id の明示と `--yes` 確認を必須とし、常に破棄対象の変更ファイル一覧を先に見せる。完全な例つきの解説は §9。
+`accept` はまず `accept_requirements` チェックリストを表示する——`worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**であり `--force` でも上書きできない。そのうえで **staged**（未コミット）として反映する——コミットは常に人が行う。`discard` は task-id の明示と `--yes` 確認を必須とし、常に破棄対象の変更ファイル一覧を先に見せる。完全な例つきの解説は §10。
 
 ### 実行履歴
 
@@ -221,47 +251,47 @@ reviewer/verifier subagent はツールアクセスを制限して起動する�
 
 中断（脱線質問・tool 呼び出し・長い間）があっても次のターンは必ずこのヘッダに再アンカーする——静かに素の直接作業へ切り替えることはない。**コンテキスト圧縮も生き延びる**：同梱の `PreCompact` フックが run-state の保全指示を注入し、`/rig:init` は同じ保全文を CLAUDE.md "Compact Instructions" にも置ける。
 
-## 6. Core commands
+## 7. Core commands
 
 Core commands は既定の安全フローそのもの：タスクを振り分け、隔離して作業し、検証し、diff を確認し、accept か discard する。
 
 | コマンド | 内容 |
 |---|---|
 | `/rig:go "<タスク>"` | 分類 → recipe 選択 → 隔離 worktree での実行 → acceptance-gate → サマリ |
-| `/rig:talk "<タスク>"` | 同じエンジンへの会話的入口（§3） |
-| `/rig:dev ...` | 同じエンジンをすべて明示（recipe/step/flag）— 上級者向け入口、§13 |
-| `/rig:orchestrate` | 同じエンジンの step 単位の計算的オーケストレーション — §13 |
+| `/rig:talk "<タスク>"` | 同じエンジンへの会話的入口（§4） |
+| `/rig:dev ...` | 同じエンジンをすべて明示（recipe/step/flag）— 上級者向け入口、§14 |
+| `/rig:orchestrate` | 同じエンジンの step 単位の計算的オーケストレーション — §14 |
 | `/rig:go status [id]` | 現在（または最新）の task：Steps チェックリスト・Gate チェックリスト・未反映差分・次アクション |
-| `/rig:go diff [id]` | 変更ファイル一覧＋Summary/Risk/Tests/Unrelated diff/Recommended（§9） |
-| `/rig:go accept [id] [--force]` | 作業ツリーへ反映（staged）——gate が pass していないと拒否される（§9） |
-| `/rig:go discard <id> --yes` | worktree/branch を削除（run log は残る）（§9） |
+| `/rig:go diff [id]` | 変更ファイル一覧＋Summary/Risk/Tests/Unrelated diff/Recommended（§10） |
+| `/rig:go accept [id] [--force]` | 作業ツリーへ反映（staged）——gate が pass していないと拒否される（§10） |
+| `/rig:go discard <id> --yes` | worktree/branch を削除（run log は残る）（§10） |
 | `/rig:go log [--limit N]` | 過去 task の履歴（入力・recipe・gate 結果） |
 
-## 7. Feature status
+## 8. Feature status
 
 | 領域 | Status | 補足 |
 |---|---:|---|
-| 自然文タスクルーティング | Stable | `/rig:go "<task>"` がタスクを recipe に振り分ける（§4, §8） |
-| isolated worktree | Stable | 危険な作業は既定で隔離される（§5） |
-| acceptance gate | Stable | `failed`/`pending` の gate は accept を止める（§5） |
-| diff / accept / discard | Stable | 明示的な staged 反映フロー（§9） |
-| read-only verifier | Stable | reviewer は成果物を書き換えられない（§5）。プロバイダごとに強制 |
-| 実行履歴 / run-continuity | Stable | run log は保持され、中断やコンテキスト圧縮を跨いで状態が生き残る（§5） |
+| 自然文タスクルーティング | Stable | `/rig:go "<task>"` がタスクを recipe に振り分ける（§5, §9） |
+| isolated worktree | Stable | 危険な作業は既定で隔離される（§6） |
+| acceptance gate | Stable | `failed`/`pending` の gate は accept を止める（§6） |
+| diff / accept / discard | Stable | 明示的な staged 反映フロー（§10） |
+| read-only verifier | Stable | reviewer は成果物を書き換えられない（§6）。プロバイダごとに強制 |
+| 実行履歴 / run-continuity | Stable | run log は保持され、中断やコンテキスト圧縮を跨いで状態が生き残る（§6） |
 | `--validate`（構造 doctor） | Stable | ブリック目録自体の構造検証。CI で強制 |
-| board / stats | Beta | 複数 run の観測に有用。出力形式は発展中（§10） |
-| reviewer drill | Beta | 注入した issue で reviewer 品質を測定（§11） |
-| GitHub 連携 | Beta | Issue/PR/CI フローは今後変わりうる（§12） |
-| queue（並列 dispatch） | Beta | 隔離により構造的には安全。UX は発展中（§5） |
-| knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§13） |
-| planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§13） |
-| 組織ガバナンス（`rig-wb govern`・`/rig:govern`） | Beta | 共通ポリシー（org→team→project・締める方向のみ）・権限管理・承認フロー・waiver・改竄検知つき台帳・適合性ロールアップ。リポジトリを束ねるまで完全に不活性（§17） |
-| ステージ・ガバナンス（`actor` / `human_gate`） | Beta | recipe の step を人間の承認で止められる。org は `stage:<id>` で強制でき、駐機した run は永続して再開する（§17） |
+| board / stats | Beta | 複数 run の観測に有用。出力形式は発展中（§11） |
+| reviewer drill | Beta | 注入した issue で reviewer 品質を測定（§12） |
+| GitHub 連携 | Beta | Issue/PR/CI フローは今後変わりうる（§13） |
+| queue（並列 dispatch） | Beta | 隔離により構造的には安全。UX は発展中（§6） |
+| knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§14） |
+| planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§14） |
+| 組織ガバナンス（`rig-wb govern`・`/rig:govern`） | Beta | 共通ポリシー（org→team→project・締める方向のみ）・権限管理・承認フロー・waiver・改竄検知つき台帳・適合性ロールアップ。リポジトリを束ねるまで完全に不活性（§18） |
+| ステージ・ガバナンス（`actor` / `human_gate`） | Beta | recipe の step を人間の承認で止められる。org は `stage:<id>` で強制でき、駐機した run は永続して再開する（§18） |
 
 この表に "Planned" 行はない——未出荷の機能をここに書く方針は取らない。提案は GitHub issue として存在する。表に載っていないコマンドはまだ出荷されていない。
 
-## 8. task routing と recipes
+## 9. task routing と recipes
 
-エンジン（`skills/engine/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティング（§4 の①）は4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
+エンジン（`skills/engine/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティング（§5 の①）は4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
 
 | recipe | 内容 |
 |---|---|
@@ -279,7 +309,7 @@ Core commands は既定の安全フローそのもの：タスクを振り分け
 
 `/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。core flow と明示的に導入した extension は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。opt-in domain pack は `skills/engine/SKILL.md` の Extension Catalog を参照。project pack は内容を確認し、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定してasset trustを記録してから `$rig --recipe <installed-name>` で起動する。installだけでcommand assetがホストのslash commandへ自動登録されるわけではない。
 
-## 9. diff / accept / discard
+## 10. diff / accept / discard
 
 **`/rig:go diff`** は `diff.md` の `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` 見出しを構造化して表示し、末尾に **コードが gate 状態から算出する** `Recommended:` 行を付す（モデルが書く行ではないので希望的観測が入らない）。Modifiedな`*.py`ファイルには`ast`モジュールによるセマンティックdiff（シグネチャ変更／本体変更／意味的変更なしを区別、#280）も自動で挿入される：
 
@@ -317,7 +347,7 @@ Recommended:
 
 **`/rig:go discard <id> --yes`** は常に変更ファイル一覧を先に表示する（`--yes` なしは削除しないプレビュー）。worktree/branch を削除するが run log（`.rig/runs/<task-id>/`）は残る。
 
-## 10. run board と stats
+## 11. run board と stats
 
 ### Run board
 
@@ -382,7 +412,7 @@ product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.
 
 失敗しやすい recipe、まったく reject しない reviewer、accept を止めがちな gate、accept/discard の比率などが見える。`/rig:go review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` で記録した verdict がここに集計される——review タスクの結果が確定するたびに記録しておくと、何でも通す reviewer を rig が検知してくれる。既存の `.rig/runs.jsonl`（`scripts/orchestrate.py runs` が読むエンジン全体の実行テレメトリ）とは別物——`workbench.py stats` は workbench task のライフサイクル（accept/discard/gate 結果）専用。
 
-## 11. reviewer drill
+## 12. reviewer drill
 
 reviewer persona は単なるプロンプトではない。rig では、それをテストできる。
 
@@ -417,9 +447,9 @@ rig は reviewer を動かすだけではない。reviewer を測定する。
 同じ測定はrig自身の開発にも適用できる。fork/カスタム運用のメンテナーは、既出のコマンドだけで現在の数値を出せる（専用ツール不要）：
 
 ```bash
-python3 scripts/workbench.py digest --period month   # §10 — 落ちがちなgate・drill検出率・ゴム印警告
-python3 scripts/workbench.py stats                    # §10 — 同じ集計を期間指定なしで
-/rig:drill --replay                                   # §11 — reviewer persona自体の回帰確認
+python3 scripts/workbench.py digest --period month   # §11 — 落ちがちなgate・drill検出率・ゴム印警告
+python3 scripts/workbench.py stats                    # §11 — 同じ集計を期間指定なしで
+/rig:drill --replay                                   # §12 — reviewer persona自体の回帰確認
 ```
 
 **正直なスコープ注記**：このリポジトリは現状、これらの数値を自動公開する仕組み（マージ毎にbadgeやdocsページを再生成するCIジョブ等）を持たない——それは今後の課題であり、本リリースでは未実装。現時点の「dogfooding」は、メンテナーが上記をローカルで実行しPR説明やリリースノートに貼り付ける運用を指し、継続更新される公開スコアではない。
@@ -434,7 +464,7 @@ python3 scripts/workbench.py stats                    # §10 — 同じ集計を
 python3 -m rig_workbench.cli sensor-bench     # または: rig-wb sensor-bench
 ```
 
-現在のコーパスでの結果：既知の悪パターン10/10を捕捉、安全な近似パターンでの誤検知0/7。重要なのは具体的な数値そのものではなく、素の`claude -p`ループには**この数値自体が存在しない**という点——何かがそれらのチェックを配線しない限り実行されないため、このコーパスに対する保証捕捉率は構造的に0%になる。これは床であって天井ではない——判断を要する欠陥（設計上の欠陥・誤った業務ロジック）については何も証明しない。それは`/rig:drill`（上記§11）と主張Bの領分。
+現在のコーパスでの結果：既知の悪パターン10/10を捕捉、安全な近似パターンでの誤検知0/7。重要なのは具体的な数値そのものではなく、素の`claude -p`ループには**この数値自体が存在しない**という点——何かがそれらのチェックを配線しない限り実行されないため、このコーパスに対する保証捕捉率は構造的に0%になる。これは床であって天井ではない——判断を要する欠陥（設計上の欠陥・誤った業務ロジック）については何も証明しない。それは`/rig:drill`（上記§12）と主張Bの領分。
 
 **主張B——同じモデルでも、rig経由の出力の方が測定可能なレベルで優れている。** これには実LLMと実際の課金が必要になる。`rig-wb bench`は、Python/TypeScriptのリポジトリ型タスク10件以上を公平なペアで実行する。**bare**側は書き込み可能なエージェント呼び出しを1回だけ行い、**rig**側は明示的に選択した`adaptive-bugfix`を使う。両側でprovider、具体的なmodel、goal、開始tree、公開checkを同一にし、どちらかを実行する前に別々のworkspaceを作る。隠しcheckは両workspaceの外に置き、モデルには公開しない。採点はprovider/modelの組み合わせごとに分離し、混ぜて集計しない。
 
@@ -657,7 +687,7 @@ TTFT・tokens/sec は**まるごと欠落**させる：rig はどれも測って
 span id は各レコードの内容から導くので、同じログに対してエクスポータを再実行しても、1つの RUN
 が2つに増えたりしない。
 
-## 12. GitHub 連携
+## 13. GitHub 連携
 
 | コマンド | read/write |
 |---|---|
@@ -686,7 +716,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 
 **正直な検証範囲**: `run`ステップ(タスク実行・gate判定・worktree隔離/クリーンアップ)は`--provider mock`でローカルにend-to-end確認済み。`open-pr`ステップ(branch push + `gh pr create`)は、この環境から実際のGitHub Actionsランナーに対して実行検証できませんでした——`gh`の公開されたCLIインターフェース(GitHub-hostedランナーにプリインストール済み)に基づいて実装していますが、実運用では未検証です。実際のワークフロー実行で確認されるまでは「レビュー済み・未ライブ検証」として扱ってください。
 
-## 13. Advanced commands
+## 14. Advanced commands
 
 ### コマンド分類
 
@@ -696,7 +726,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 
-いずれも安全な基本フロー（§4〜§6）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 を参照。（`/rig:queue` は §5、`/rig:init` は FAQ、opt-in extension は §14 で扱っている。）
+いずれも安全な基本フロー（§5〜§7）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 を参照。（`/rig:queue` は §6、`/rig:init` は FAQ、opt-in extension は §15 で扱っている。）
 
 ### install
 
@@ -874,11 +904,11 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 
 プロジェクト manifest `.claude/rig.md` も同じ trust store の背後にあり、専用の同意スイッチ（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`）を持つ。manifest は既定値を供給するだけなので、未同意でも recipe のようにハード拒否せず **soft degrade** する——警告1行を出して「manifest が無い」場合と同じ挙動に落ちる。同梱の git hook は manifest の lint/build/test コマンドを eval する前に記録済みハッシュを検証し、`rig-wb githooks install` がそのハッシュを記録する：hook のインストール＝その時点の manifest への同意であり、以後ファイルを編集すると再同意が必要になる。
 
-## 14. opt-in extension
+## 15. opt-in extension
 
 用途特化ワークフローは既定カタログの外で配布する。Extension Catalog から内容を確認した pack だけを導入すること。project pack の trust は内容ハッシュに紐づき、asset が変わると再同意が必要になる。command asset は明示登録を扱える host 向けの資料であり、install だけで slash command として登録されることはない。
 
-## 15. Implementation notes
+## 16. Implementation notes
 
 上記の主張の裏付けを具体的に示す——「書いてあること」と「検証されていること」が静かに乖離しないための表：
 
@@ -905,7 +935,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 | 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
 | 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
 
-## 16. FAQ
+## 17. FAQ
 
 **`/rig:go` は `/rig:dev` を置き換えるの？** いいえ——`/rig:go` は自動分類する既定の入口、`/rig:dev` は recipe/step/flag を明示したいときの同じエンジン。
 
@@ -921,11 +951,11 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 
 **複数タスクを同時に走らせたら？** それぞれ専用の worktree と branch（`rig/<task-id>`）を持つので衝突しない。`accept` はメイン作業ツリーに対して行うため、1つ accept してコミットしてから次を accept する（作業ツリーがクリーンでないと accept 自体が拒否されるので、この順序は安全側に強制される）。
 
-**ターミナルをいくつも開かずに、1セッションで複数タスクを並行開発できる？** できる——§5「isolated worktree → 複数タスクを並行で進める」を参照。`/rig:queue add` で積んで `/rig:queue go --provider rig --max-parallel N` で並列実行（各タスクは自動的に隔離される）、そのうえで `/rig:go board`（§10）を見れば、N個のターミナルの状態を頭の中で追う代わりに一箇所で全体を確認できる。
+**ターミナルをいくつも開かずに、1セッションで複数タスクを並行開発できる？** できる——§6「isolated worktree → 複数タスクを並行で進める」を参照。`/rig:queue add` で積んで `/rig:queue go --provider rig --max-parallel N` で並列実行（各タスクは自動的に隔離される）、そのうえで `/rig:go board`（§11）を見れば、N個のターミナルの状態を頭の中で追う代わりに一箇所で全体を確認できる。
 
-**チームが複数ある。同じ品質基準をどう共有する？** §17。
+**チームが複数ある。同じ品質基準をどう共有する？** §18。
 
-## 17. 組織ガバナンス（v2）
+## 18. 組織ガバナンス（v2）
 
 ここまでの全ては1人1リポジトリ向けに作られていて、その形では完成している。壊れるのは、同じものをチーム A・B・C に配った瞬間だけ。その4つが、運用の慣習ではなく**一級概念**になった。
 
@@ -959,7 +989,7 @@ rig-wb govern rollup --scan ~/work/acme       # チーム A/B/C の表
 
 ポリシーは**コピーを配らず、1つを共有する**。共有チェックアウトを `$RIG_POLICY_HOME` に置き、各リポジトリの `.rig/org.json` には同じ相対パスを書く。コピーは必ずドリフトするが、参照はドリフトしない。
 
-強制点は**増えない**。作業ツリーへの唯一の入口は元から `accept` だったので、squash merge の前に問いが4つ増えるだけ——accept 権限があるか、承認 quorum は満たされたか、force 権限はあるか、回避する各基準は生きた waiver に覆われているか。拒否されたとき作業ツリーは無傷のまま。承認は acceptance-gate の**上乗せであって代替ではない**（人間の承認で機械の検証を置き換えたら §5 の意味が消える）。
+強制点は**増えない**。作業ツリーへの唯一の入口は元から `accept` だったので、squash merge の前に問いが4つ増えるだけ——accept 権限があるか、承認 quorum は満たされたか、force 権限はあるか、回避する各基準は生きた waiver に覆われているか。拒否されたとき作業ツリーは無傷のまま。承認は acceptance-gate の**上乗せであって代替ではない**（人間の承認で機械の検証を置き換えたら §6 の意味が消える）。
 
 **個人開発は何も変わらない。** `.rig/org.json` が無ければこの層は完全に不活性——出力も検査もファイル生成も無い。`.rig/access.json` と `.rig/gates.json` はそのまま動き、ポリシーと**併存**する（置き換えではない）。準備ができたら `rig-wb govern migrate` がポリシー層へ畳む（原本は残る）。意図的に違うのは1点だけ：壊れた `.rig/access.json` は「無制限」に落ちる（1人なら安全側）が、**パースできないポリシー層は accept を止める**。カンマ1個で組織の規則が静かに消えるのが、この層で唯一許されない失敗だから。
 
@@ -1002,7 +1032,7 @@ recipe と policy は**厳しい方**に合成される（quorum は高い方・
 
 意図的に**実装しなかった**ことが1つある：`actor` は実行をブロックしない。rig が保証できるのは「アーキテクトが署名した」ことであって「アーキテクトが打鍵した」ことではないし、実行を拒めば安全性は上がらないまま CI のパイプラインだけが壊れる。所有ロール外の実行は WARN と履歴に残し、強制はゲート側に置いた。
 
-## 18. 終了コード
+## 19. 終了コード
 
 rig のコマンドを呼ぶのは、散文を読めないもの——CI のステップ・Makefile・別のエージェント——です。呼んだ側が受け取るのは終了コードが全部なので、次の3つのどれかを意味します。
 
@@ -1016,7 +1046,7 @@ rig のコマンドを呼ぶのは、散文を読めないもの——CI のス�
 
 `124` / `126` / `127` / `128+N` には rig の意味を一切与えません。GNU `timeout`・シェル・シグナル終了が既に所有しており、rig の provider 層自身が 124 と 127 をその意味のまま返しています。`timeout 60 rig-wb ...` を曖昧にしないためです。
 
-## 19. JSON 出力
+## 20. JSON 出力
 
 終了コードは「rig が答えに到達したか」を、`--json` は「その答えが何だったか」を伝えます。新しい JSON 出力は**自分が何であるかを名乗る** envelope です。
 
@@ -1024,11 +1054,11 @@ rig のコマンドを呼ぶのは、散文を読めないもの——CI のス�
 {"schema": "rig.gates/v1", "status": "ok", "data": {"presets": {"standard": ["build_succeeds", "…"]}}}
 ```
 
-`schema` はバージョンを自分の名前に含むので、payload がコピーされても包み直されても一緒に付いていきます——兄弟フィールドの `version` は、消費側が最初に落とすものです。`/v2` を知らない読み手は、半分だけ理解する代わりに**拒否できます**。`status` は `ok` / `rejected` / `error` の3つで、終了コード（§18）と同じ表から引くため、stdout と `$?` が食い違えません。
+`schema` はバージョンを自分の名前に含むので、payload がコピーされても包み直されても一緒に付いていきます——兄弟フィールドの `version` は、消費側が最初に落とすものです。`/v2` を知らない読み手は、半分だけ理解する代わりに**拒否できます**。`status` は `ok` / `rejected` / `error` の3つで、終了コード（§19）と同じ表から引くため、stdout と `$?` が食い違えません。
 
 **既存の `--json` は書き換えません。** それらには消費者がいます——このリポジトリ自身のテスト・`rig-mission-control`・`plan --json` を読む MCP アダプタ——契約を綺麗にするためにそれを壊すのは、実在するコストと見た目のコストを取り違えることです。`rig_workbench/jsonio.py` が独自形のままのコマンドを一覧し、テストがその**個数に上限**を持ちます（下げることしかできない＝prompt カバレッジのラチェットと同じ仕掛け）。最初の採用先は `rig-wb wb gates --json`——JSON 出力を**そもそも持っていなかった**ので、誰も壊しようがないためです。
 
-## 20. rig を呼んだのは誰か
+## 21. rig を呼んだのは誰か
 
 rig は人よりも**別のハーネス**から起動されることが増えています。Claude Code セッションの中から headless Claude を起動すると同じハーネスに再入し、外側が既に抱えている問いに答えるためだけに1セッションを使い切ります。rig は呼び出し元を識別してこれを断ります（`rig_workbench/caller.py`。逃げ道は従来どおり `--allow-headless-in-cc`）。
 

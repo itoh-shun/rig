@@ -5,7 +5,7 @@
        alt="Rig — Reasoning Integration Gateway. Three pillars: Reasoning (think, evaluate, improve), Integration (connect tools and AI), Gateway (the entrance to development).">
 </p>
 
-**An AI Quality Operating System for Claude Code.** It composes the right harness for each task, runs changes in an isolated worktree, checks the result with acceptance gates, and lets you accept or discard the diff safely — and, for teams, carries one common policy across repositories with permissions, approvals, expiring waivers and a tamper-evident audit trail (§17).
+**An AI Quality Operating System for Claude Code.** It composes the right harness for each task, runs changes in an isolated worktree, checks the result with acceptance gates, and lets you accept or discard the diff safely — and, for teams, carries one common policy across repositories with permissions, approvals, expiring waivers and a tamper-evident audit trail (§18).
 
 > 🇯🇵 日本語版は [README.ja.md](./README.ja.md) を参照。
 
@@ -20,20 +20,53 @@ Put precisely: **rig does not automatically produce quality — it makes the AI 
 Three properties keep the safety flow real (not just documented):
 
 - **Force-proof accept requirements.** `accept` blocks landing when structural prerequisites are missing (worktree, base branch, diff summary). `--force` overrides *soft* gate failures (recorded to `.rig/audit.jsonl`), but cannot bypass the *hard* prerequisites — the checkpoints live where a flag can't remove them.
-- **Cross-provider by design.** The generator and the verifier are separate roles run as separate processes, and each role can pick its own LLM: `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / a nested `rig` harness. The default flow can implement with Claude and verify with Codex (or vice versa) — one class of model does not review its own artifacts. `orchestrate.py probe` proves the read-only sandbox is actually applied per provider, not just wired in the config (§5 & §12).
+- **Cross-provider by design.** The generator and the verifier are separate roles run as separate processes, and each role can pick its own LLM: `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / a nested `rig` harness. The default flow can implement with Claude and verify with Codex (or vice versa) — one class of model does not review its own artifacts. `orchestrate.py probe` proves the read-only sandbox is actually applied per provider, not just wired in the config (§6 & §13).
 - **Runs as a Claude Code plugin, not an outside CLI.** `/rig:go` lives in the same session as your regular work; the isolation, the gate, and the accept step are all a keystroke away rather than a context switch to a separate tool.
 
-**Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§15). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. Optional domain extensions add specialized workflows without entering the default core catalog. §7 breaks all of this down by name.
+**Where rig stands today:** the core safety flow — routing, isolation, the acceptance-gate, and explicit accept/discard — is implemented and exercised by this repo's own test suite (§16). A layer of quality/observability tooling (drill, board, stats, GitHub integration) sits on top of that and is actively evolving. Optional domain extensions add specialized workflows without entering the default core catalog. §8 breaks all of this down by name.
 
 ### Positioning
 
 rig is deliberately **not** a heavyweight external engine with its own DSL. Inside a Claude Code session it is a thin quality/safety layer composed from Claude Code's own primitives — slash commands (`commands/`), the skill (`skills/engine`), subagents (`agents/`), and hooks (`hooks/`). The isolation, the gate, and the accept step add discipline to the session you already work in; they don't replace it with another tool.
 
-The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §13 "Standalone CLI". The package-native remote/SDK MCP path ships as `rig-mcp`; see [`docs/remote-mcp.md`](docs/remote-mcp.md). The historical stdlib-only local stdio adapter remains `scripts/mcp_server.py` (#263) with a different, non-interchangeable tool contract — see §7.
+The same design has a second face: the deterministic engine behind that layer (`scripts/orchestrate.py`, packaged as `rig_workbench/` and installable via pip as the `rig-wb` CLI) doubles as an **external control plane**. CI, another session, or another tool (Codex, Cursor, …) can drive the exact same recipes, gates, and read-only verifiers from outside a Claude Code session — see §14 "Standalone CLI". The package-native remote/SDK MCP path ships as `rig-mcp`; see [`docs/remote-mcp.md`](docs/remote-mcp.md). The historical stdlib-only local stdio adapter remains `scripts/mcp_server.py` (#263) with a different, non-interchangeable tool contract — see §8.
 
-And the differentiator over "we have quality gates" framings: rig's gates and reviewers are **measured, not asserted**. `/rig:drill` (§11) scores each reviewer persona's actual detection rate against injected known bugs, and `/rig:go stats` (§10) flags rubber-stamp reviewers and frequently-failing gates from real run history. A gate you can't measure is a hope; rig treats gate efficacy as data.
+And the differentiator over "we have quality gates" framings: rig's gates and reviewers are **measured, not asserted**. `/rig:drill` (§12) scores each reviewer persona's actual detection rate against injected known bugs, and `/rig:go stats` (§11) flags rubber-stamp reviewers and frequently-failing gates from real run history. A gate you can't measure is a hope; rig treats gate efficacy as data.
 
-## 2. 30-second start
+## 2. Install
+
+Two entry points, for two different jobs. Most people want the first one.
+
+**In Claude Code — the plugin.** This is what `/rig:go` and every other slash command come
+from.
+
+```bash
+/plugin marketplace add itoh-shun/sito-plugins
+/plugin install rig@sito-plugins
+```
+
+**Everywhere else — the `rig-wb` CLI.** The same deterministic engine, driven from outside a
+Claude Code session: CI, a script, or another assistant (Codex, Cursor, Copilot). It is what
+`/rig:setup` installs for you, and what the plugin delegates to for the computational path.
+
+```bash
+pipx install git+https://github.com/itoh-shun/rig.git     # or: uv tool install / pip install
+rig-wb version
+```
+
+Already inside Claude Code, `/rig:setup` does the same thing and picks the method for you —
+it prefers `pipx`, then `uv`, then `pip`, compares what is installed against this checkout
+rather than merely checking that something is there, and never swaps one for the other
+silently. `/rig:setup --check` detects and reports without installing anything.
+
+You do not need both. The plugin alone runs the whole safety flow; the CLI alone drives it
+from CI. Install the second when something outside Claude Code has to reach the same recipes
+and gates.
+
+Other install routes — installing directly from this repo's own marketplace, from a
+download, `--plugin-dir` for development, Codex, and the MCP adapters — are in §16.
+
+## 3. 30-second start
 
 ```bash
 /rig:go "fix the login bug"
@@ -58,7 +91,7 @@ What actually changes versus asking the model directly:
 | review quality | unknown | measured — `/rig:drill` scores each reviewer's real detection rate |
 | what happened | a chat log | run log, audit trail, signed provenance |
 
-## 3. Main entrypoint
+## 4. Main entrypoint
 
 The main command is:
 
@@ -76,7 +109,7 @@ The main command is:
 
 Use `/rig:go` for the full gated workbench flow. Use `/rig:talk` when you want a conversational entrypoint into the same underlying engine.
 
-## 4. Core safety flow
+## 5. Core safety flow
 
 ```
 natural-language task
@@ -113,9 +146,9 @@ mode: isolated worktree
 gate: standard + bugfix
 ```
 
-See §8 for how the recipe behind step ② actually gets composed, and §5 for what backs steps ③–⑤.
+See §9 for how the recipe behind step ② actually gets composed, and §6 for what backs steps ③–⑤.
 
-## 5. Why it is safe
+## 6. Why it is safe
 
 ### Isolated worktree
 
@@ -143,7 +176,7 @@ Read-only tasks (a review, an investigation that hasn't decided to change anythi
 /rig:queue go --provider rig --max-parallel 3   # dispatches 3 independent headless processes
 ```
 
-`--provider rig` routes each queued item through `/rig:go "<task>"`, so each one is isolated the same way a task you typed directly would be — no risk of the parallel processes fighting over the same files. Queue's own verifier only confirms the gate resolved and the task stayed isolated; it never accepts on your behalf. Once they're done, `/rig:go board` (§10) is the single place to check every task regardless of how many terminals or queue items are behind them.
+`--provider rig` routes each queued item through `/rig:go "<task>"`, so each one is isolated the same way a task you typed directly would be — no risk of the parallel processes fighting over the same files. Queue's own verifier only confirms the gate resolved and the task stayed isolated; it never accepts on your behalf. Once they're done, `/rig:go board` (§11) is the single place to check every task regardless of how many terminals or queue items are behind them.
 
 **Visual verification screenshots.** `visual-verify` (UI diff checks) and `design-audit` (Playwright screen capture) both produce screenshots. These are disposable evidence, not the deliverable — the conclusion lives in prose (`diff.md`), not the pixels:
 
@@ -207,7 +240,7 @@ Verifier/reviewer subagents run with restricted tool access (`claude --allowedTo
 
 ### Explicit accept / discard
 
-`accept` first prints an `accept_requirements` checklist — `worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural prerequisites that even `--force` cannot bypass**. It then lands the change as a **staged** diff (never an auto-commit) — you still commit. `discard` requires the task-id spelled out and a `--yes` confirmation, and always shows what you're about to lose first. Full walkthrough with example output in §9.
+`accept` first prints an `accept_requirements` checklist — `worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural prerequisites that even `--force` cannot bypass**. It then lands the change as a **staged** diff (never an auto-commit) — you still commit. `discard` requires the task-id spelled out and a `--yes` confirmation, and always shows what you're about to lose first. Full walkthrough with example output in §10.
 
 ### Run history
 
@@ -221,48 +254,48 @@ This survives more than `discard`: a mid-flow interruption (a side question, a t
 
 The next turn re-anchors on this header rather than sliding into direct, un-gated work. It even survives **context compaction**: a shipped `PreCompact` hook injects instructions to preserve the run-state, and `/rig:init` can mirror them into your CLAUDE.md "Compact Instructions."
 
-## 6. Core commands
+## 7. Core commands
 
 Core commands are the default safety workflow: route task, isolate work, verify, inspect diff, accept or discard.
 
 | command | what it does |
 |---|---|
 | `/rig:go "<task>"` | classify → pick a recipe → isolated-worktree run → acceptance-gate → summary |
-| `/rig:talk "<task>"` | same engine, conversational entrypoint (§3) |
-| `/rig:dev ...` | same engine, everything explicit (recipe/steps/flags) — power-user entry, §13 |
-| `/rig:orchestrate` | same engine, step-level computational orchestration — §13 |
+| `/rig:talk "<task>"` | same engine, conversational entrypoint (§4) |
+| `/rig:dev ...` | same engine, everything explicit (recipe/steps/flags) — power-user entry, §14 |
+| `/rig:orchestrate` | same engine, step-level computational orchestration — §14 |
 | `/rig:go status [id]` | current/most-recent task: step checklist, gate checklist, pending diff, next action |
-| `/rig:go diff [id]` | changed files + Summary/Risk/Tests/Unrelated-diff/Recommended (§9) |
-| `/rig:go accept [id] [--force]` | land the diff into your working tree (staged) — blocked unless the gate passed (§9) |
-| `/rig:go discard <id> --yes` | delete the worktree/branch; run log stays (§9) |
+| `/rig:go diff [id]` | changed files + Summary/Risk/Tests/Unrelated-diff/Recommended (§10) |
+| `/rig:go accept [id] [--force]` | land the diff into your working tree (staged) — blocked unless the gate passed (§10) |
+| `/rig:go discard <id> --yes` | delete the worktree/branch; run log stays (§10) |
 | `/rig:go log [--limit N]` | history of past tasks: input, recipe, gate result |
 
-## 7. Feature status
+## 8. Feature status
 
 | Area | Status | Notes |
 |---|---:|---|
-| Natural task routing | Stable | `/rig:go "<task>"` routes task to recipe (§4, §8) |
-| Isolated worktree | Stable | risky changes are isolated by default (§5) |
-| Acceptance gate | Stable | `failed`/`pending` gates block accept (§5) |
-| Diff / accept / discard | Stable | explicit, staged hand-off flow (§9) |
-| Read-only verifier | Stable | reviewers cannot mutate artifacts (§5), enforced per-provider |
-| Run history / run-continuity | Stable | run logs persist; state survives interruption and context compaction (§5) |
+| Natural task routing | Stable | `/rig:go "<task>"` routes task to recipe (§5, §9) |
+| Isolated worktree | Stable | risky changes are isolated by default (§6) |
+| Acceptance gate | Stable | `failed`/`pending` gates block accept (§6) |
+| Diff / accept / discard | Stable | explicit, staged hand-off flow (§10) |
+| Read-only verifier | Stable | reviewers cannot mutate artifacts (§6), enforced per-provider |
+| Run history / run-continuity | Stable | run logs persist; state survives interruption and context compaction (§6) |
 | Validation (`--validate`) | Stable | structural doctor for the brick catalog itself, CI-enforced |
-| Board / stats | Beta | useful for observing multiple runs; output format still evolving (§10) |
-| Reviewer drill | Beta | measures reviewer quality with injected issues (§11) |
-| GitHub integration | Beta | Issue/PR/CI flow may evolve (§12) |
-| Queue (parallel dispatch) | Beta | safe by construction (isolation), UX still evolving (§5) |
-| Knowledge import/export/persona/catalog/forge | Beta | useful but not on the core safety path (§13) |
-| Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§13) |
-| Security pack (`/rig:sec` audit/fix/monitor) | Beta | attacker-perspective audit, PoC-verified gated fix, scan-only monitor; static + local only, DAST out of scope (§8) |
-| Team governance (`rig-wb govern`, `/rig:govern`) | Beta | common policy (org→team→project, tightening-only), permissions, approvals, waivers, tamper-evident ledger, conformance rollup; inert until a repo is bound (§17) |
-| Stage governance (`actor` / `human_gate`) | Beta | a recipe step can halt until a qualified person signs off; the org can require it via `stage:<id>`; parked runs persist and resume (§17) |
+| Board / stats | Beta | useful for observing multiple runs; output format still evolving (§11) |
+| Reviewer drill | Beta | measures reviewer quality with injected issues (§12) |
+| GitHub integration | Beta | Issue/PR/CI flow may evolve (§13) |
+| Queue (parallel dispatch) | Beta | safe by construction (isolation), UX still evolving (§6) |
+| Knowledge import/export/persona/catalog/forge | Beta | useful but not on the core safety path (§14) |
+| Planning commands (goal/design/brainstorm/tasks/loop/harness/qa) | Beta | real, gated flows; less battle-tested than Core (§14) |
+| Security pack (`/rig:sec` audit/fix/monitor) | Beta | attacker-perspective audit, PoC-verified gated fix, scan-only monitor; static + local only, DAST out of scope (§9) |
+| Team governance (`rig-wb govern`, `/rig:govern`) | Beta | common policy (org→team→project, tightening-only), permissions, approvals, waivers, tamper-evident ledger, conformance rollup; inert until a repo is bound (§18) |
+| Stage governance (`actor` / `human_gate`) | Beta | a recipe step can halt until a qualified person signs off; the org can require it via `stage:<id>`; parked runs persist and resume (§18) |
 
 Nothing in this table is aspirational — there's no "Planned" row because we don't document unshipped features here; proposals live as GitHub issues. If a command isn't listed, it isn't shipped yet.
 
-## 8. Task routing and recipes
+## 9. Task routing and recipes
 
-The engine (`skills/engine/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing (step ① in §4) uses four shipped recipes plus native delegation to the rest. This table is illustrative, not exhaustive — see `/rig:dev --list` or `/rig:catalog` for the full current set:
+The engine (`skills/engine/SKILL.md`) composes four brick kinds at invocation time: **persona** (who's judging), **instruction** (what to do), **pattern** (how it's dispatched/gated), **recipe** (a named bundle of steps). Task-type auto-routing (step ① in §5) uses four shipped recipes plus native delegation to the rest. This table is illustrative, not exhaustive — see `/rig:dev --list` or `/rig:catalog` for the full current set:
 
 | recipe | what |
 |---|---|
@@ -281,7 +314,7 @@ The engine (`skills/engine/SKILL.md`) composes four brick kinds at invocation ti
 
 `/rig:dev --list` shows every recipe (shipped + your project + your user tier) with badges; `/rig:catalog` (`--list --global`) maps `domain × pack × persona × wiki × recipe` across all tiers. Core flows and explicitly installed extensions both bolt onto the same domain-agnostic engine — a persona + a thin instruction (+ recipe), engine untouched. See the Extension Catalog in `skills/engine/SKILL.md` for opt-in domain packs. Review an installed project pack, set `RIG_ALLOW_PROJECT_PACKS=1` on its first run to record asset trust, then invoke it with `$rig --recipe <installed-name>`; installation alone does not register its command asset as a host slash command.
 
-## 9. Diff / accept / discard
+## 10. Diff / accept / discard
 
 **`/rig:go diff`** parses `diff.md`'s `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` headings and prints them structured, plus a `Recommended:` line the *code* computes from gate state (not something the model writes, so it can't be wishful). Modified `*.py` files also get an automatic semantic-diff line (AST-based signature/body-change/no-semantic-change distinction, #280):
 
@@ -319,7 +352,7 @@ Recommended:
 
 **`/rig:go discard <id> --yes`** always shows the changed-files list first; without `--yes` it's a dry-run preview. It deletes the worktree/branch — the run log (`.rig/runs/<task-id>/`) stays.
 
-## 10. Run board and stats
+## 11. Run board and stats
 
 ### Run board
 
@@ -470,7 +503,7 @@ product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.
 
 It can reveal frequently-failing recipes, reviewers that never reject, gate types that often block accept, and the accept-vs-discard ratio. Reviewer verdicts feed this from `/rig:go review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` — record them as review tasks resolve, and rig will flag a reviewer that never says no. This is separate from `.rig/runs.jsonl` (the engine-wide execution telemetry `scripts/orchestrate.py runs` reads) — `workbench.py stats` is specifically the workbench task lifecycle (accepted/discarded/gate outcomes).
 
-## 11. Reviewer drill
+## 12. Reviewer drill
 
 Reviewer personas are not just prompts. rig can test them.
 
@@ -505,9 +538,9 @@ rig does not just run reviewers. It measures them.
 The same measurement applies to rig's own development. Anyone maintaining a fork or a heavily-customized instance can generate the current numbers with the commands already covered above — no separate tooling needed:
 
 ```bash
-python3 scripts/workbench.py digest --period month   # §10 — failing gates, drill detection rate, rubber-stamp warnings
-python3 scripts/workbench.py stats                    # §10 — the same aggregation, unscoped by time
-/rig:drill --replay                                   # §11 — regression-test the reviewer personas themselves
+python3 scripts/workbench.py digest --period month   # §11 — failing gates, drill detection rate, rubber-stamp warnings
+python3 scripts/workbench.py stats                    # §11 — the same aggregation, unscoped by time
+/rig:drill --replay                                   # §12 — regression-test the reviewer personas themselves
 ```
 
 **Honest scope note:** this repo does not currently auto-publish those numbers (e.g. a CI job that regenerates a badge or a docs page on every merge) — that's tracked as follow-up work, not implemented here. Today, "dogfooding" means the maintainer can run the above locally and paste the output into a PR description or release notes; it is not yet a live, continuously-updated public score.
@@ -522,7 +555,7 @@ python3 scripts/workbench.py stats                    # §10 — the same aggreg
 python3 -m rig_workbench.cli sensor-bench     # or: rig-wb sensor-bench
 ```
 
-Current corpus: 10/10 known-bad lines caught, 0/7 false positives on the safe near-misses. The point isn't the specific number — it's that a bare `claude -p` loop has **no number here at all**: nothing runs these checks unless something is wired to run them, so its guaranteed catch rate on this exact corpus is 0% by construction. This is a floor, not a ceiling — it proves nothing about judgment-requiring defects (design flaws, wrong business logic); that's what `/rig:drill` (§11 above) and Claim B measure.
+Current corpus: 10/10 known-bad lines caught, 0/7 false positives on the safe near-misses. The point isn't the specific number — it's that a bare `claude -p` loop has **no number here at all**: nothing runs these checks unless something is wired to run them, so its guaranteed catch rate on this exact corpus is 0% by construction. This is a floor, not a ceiling — it proves nothing about judgment-requiring defects (design flaws, wrong business logic); that's what `/rig:drill` (§12 above) and Claim B measure.
 
 **Claim B — same model, rig-mediated output is measurably better.** This one needs a real LLM and therefore real billing. `rig-wb bench` now runs at least 10 repository-shaped Python and TypeScript tasks as fair pairs: the **bare** arm gets one writable agent invocation, while the **rig** arm uses the opt-in `adaptive-bugfix` recipe. Both arms use the same provider, concrete model, goal, starting tree, and public checks in separate workspaces created before either arm runs. Hidden checks remain outside both workspaces and are never exposed to the model. Results are scored separately for every provider/model combination; they are never pooled.
 
@@ -784,7 +817,7 @@ zero would be a claim rather than a measurement.
 Span ids are derived from each record's own content, so re-running the exporter over the same
 log produces the same trace instead of a second copy of the same run.
 
-## 12. GitHub integration
+## 13. GitHub integration
 
 | command | read/write |
 |---|---|
@@ -813,7 +846,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 
 **Honest verification note:** the `run` step (task execution, gate evaluation, worktree isolation/cleanup) was verified end-to-end locally with `--provider mock`. The `open-pr` step (branch push + `gh pr create`) could not be exercised against a real GitHub Actions runner from this environment — it's implemented against `gh`'s documented CLI interface (pre-installed on GitHub-hosted runners) but hasn't been run live. Treat it as reviewed-but-not-live-tested until it's exercised in an actual workflow run.
 
-## 13. Advanced commands
+## 14. Advanced commands
 
 ### Command map
 
@@ -823,7 +856,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
 
-These are useful after you understand the core safety flow (§4–§6) — see [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §5, `/rig:init` in the FAQ, and opt-in extensions in §14.)
+These are useful after you understand the core safety flow (§5–§7) — see [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §6, `/rig:init` in the FAQ, and opt-in extensions in §15.)
 
 ### Install
 
@@ -1012,11 +1045,11 @@ rig-wb wb digest --period week                       # Markdown telemetry digest
 
 The project manifest `.claude/rig.md` sits behind the same trust store with its own consent switch (`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`). Because the manifest only supplies defaults, an untrusted one degrades **soft** — a one-line warning, then rig behaves as if no manifest existed — instead of refusing hard the way recipes do. The shipped git hooks verify the manifest's recorded hash before eval'ing its lint/build/test commands, and `rig-wb githooks install` records that hash: installing the hooks is consent for the manifest as it exists right then, and any later edit to the file re-requires consent.
 
-## 14. Opt-in extensions
+## 15. Opt-in extensions
 
 Specialized workflows are distributed outside the default catalog. Install only the packs you have reviewed from the Extension Catalog; project-pack trust is content-addressed and must be renewed after an asset changes. Command assets are documentation for hosts that support explicit command registration and are never registered as slash commands by installation alone.
 
-## 15. Implementation notes
+## 16. Implementation notes
 
 What backs the claims above, concretely — this table exists so "documented" and "verified" don't quietly drift apart:
 
@@ -1043,7 +1076,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Run telemetry | `.rig/runs.jsonl` (`scripts/orchestrate.py runs`) and `.rig/runs/<task-id>/*.json` (workbench run state) |
 | Failure-mode classification | escalated/blocked runs record a `failure_mode` (a MAST-style taxonomy code from `classify_failure`) in `.rig/runs.jsonl`; the code→gate/brick mapping and dashboard panel live in `skills/engine/patterns/failure-taxonomy.md` |
 
-## 16. FAQ
+## 17. FAQ
 
 **Does `/rig:go` replace `/rig:dev`?** No — `/rig:go` auto-classifies and is the recommended default; `/rig:dev` is the same engine with recipe/step/flags spelled out explicitly, for when you want that control.
 
@@ -1059,11 +1092,11 @@ What backs the claims above, concretely — this table exists so "documented" an
 
 **What if two tasks run at once?** Each gets its own worktree and branch (`rig/<task-id>`) — they don't collide. `accept` operates on your main working tree, so accept one task's diff, commit it, and only then accept the next (accept refuses if your working tree isn't clean, precisely to keep this safe).
 
-**Can I work on several tasks in one session instead of juggling terminals?** Yes — see §5 "Isolated worktree → Running several tasks at once." Queue them with `/rig:queue add` + `/rig:queue go --provider rig --max-parallel N` (each dispatched task is isolated automatically), then check `/rig:go board` (§10) for a single combined view instead of tracking N terminal windows in your head.
+**Can I work on several tasks in one session instead of juggling terminals?** Yes — see §6 "Isolated worktree → Running several tasks at once." Queue them with `/rig:queue add` + `/rig:queue go --provider rig --max-parallel N` (each dispatched task is isolated automatically), then check `/rig:go board` (§11) for a single combined view instead of tracking N terminal windows in your head.
 
-**We're several teams. How do we share one quality bar?** §17.
+**We're several teams. How do we share one quality bar?** §18.
 
-## 17. Team governance (v2)
+## 18. Team governance (v2)
 
 Everything above is built for one person and one repository, and in that shape it works. Four things break the moment the same setup is handed to teams A, B and C — and each is now a first-class concept rather than a convention.
 
@@ -1097,7 +1130,7 @@ rig-wb govern rollup --scan ~/work/acme       # the team A / B / C table
 
 Share one policy rather than copies: put the org document in one checkout, point `$RIG_POLICY_HOME` at it, and let every repository's `.rig/org.json` list the same relative path. Copies drift; a shared reference cannot.
 
-Enforcement adds **no new choke point**. `accept` was already the only way into your working tree, so it now asks four more questions before the squash merge — may this actor accept, is the approval requirement met, may they force, is every bypassed criterion covered by a live waiver — and a refusal leaves the tree untouched. Approvals sit *on top of* the acceptance gate, never in place of it: replacing machine verification with human sign-off would give up the thing §5 is about.
+Enforcement adds **no new choke point**. `accept` was already the only way into your working tree, so it now asks four more questions before the squash merge — may this actor accept, is the approval requirement met, may they force, is every bypassed criterion covered by a live waiver — and a refusal leaves the tree untouched. Approvals sit *on top of* the acceptance gate, never in place of it: replacing machine verification with human sign-off would give up the thing §6 is about.
 
 **Solo use is unchanged.** With no `.rig/org.json` the whole layer is inert — no output, no checks, no new files. `.rig/access.json` and `.rig/gates.json` keep working and are honoured *alongside* a policy; `rig-wb govern migrate` folds them into one when you're ready, leaving the originals in place. One deliberate difference: a malformed `.rig/access.json` falls back to unrestricted (the safe side for one person), while a policy layer that doesn't parse **blocks accept** — a stray comma silently costing an org its rules is the one failure this layer can't have.
 
@@ -1140,7 +1173,7 @@ Recipe and policy merge to the **stricter** rule (higher quorum, union of roles,
 
 One deliberate non-feature: `actor` does **not** block execution. rig cannot verify that a human architect typed anything — only that one signed — and refusing to run would break every CI-driven pipeline for no safety gain. Running a stage outside its owning role warns and is recorded; the enforcement lives at the gate.
 
-## 18. Exit status
+## 19. Exit status
 
 Every rig command is called by something that cannot read prose — a CI step, a Makefile, another agent. Its exit status is the whole of what that caller gets, so it says one of three things:
 
@@ -1154,7 +1187,7 @@ Every rig command is called by something that cannot read prose — a CI step, a
 
 `124`, `126`, `127` and `128+N` are never given a rig meaning. GNU `timeout`, the shell and signal termination already own them — rig's own provider layer returns 124 and 127 with exactly those meanings — so `timeout 60 rig-wb ...` stays unambiguous.
 
-## 19. JSON output
+## 20. JSON output
 
 The exit status says whether rig reached an answer; `--json` says what the answer was. New JSON output is an envelope that identifies itself:
 
@@ -1162,11 +1195,11 @@ The exit status says whether rig reached an answer; `--json` says what the answe
 {"schema": "rig.gates/v1", "status": "ok", "data": {"presets": {"standard": ["build_succeeds", "…"]}}}
 ```
 
-`schema` carries its own version, so it stays attached to the payload wherever it is copied or re-wrapped — a sibling `version` field is the first thing a consumer drops — and a reader that does not know `/v2` can refuse it instead of half-understanding it. `status` is one of `ok` / `rejected` / `error`, drawn from the same table as the exit status (§18) so stdout and `$?` cannot disagree.
+`schema` carries its own version, so it stays attached to the payload wherever it is copied or re-wrapped — a sibling `version` field is the first thing a consumer drops — and a reader that does not know `/v2` can refuse it instead of half-understanding it. `status` is one of `ok` / `rejected` / `error`, drawn from the same table as the exit status (§19) so stdout and `$?` cannot disagree.
 
 **Older `--json` outputs are not rewritten.** They have consumers — this repo's own tests, `rig-mission-control`, the MCP adapter that reads `plan --json` — and breaking those to tidy a contract trades a real cost for a tidy one. `rig_workbench/jsonio.py` lists every command still on its own shape, and the suite caps that list at a number that may only be lowered: the same monotonic device the prompt-coverage ratchet uses. `rig-wb wb gates --json` is the first adopter, chosen because it had no JSON output at all and so could break nobody.
 
-## 20. Who called rig
+## 21. Who called rig
 
 Rig is increasingly started by another harness rather than by a person. Launching headless Claude from inside a Claude Code session re-enters the same harness and spends a whole session answering a question the outer one is already holding, so rig identifies its caller and declines to do that (`rig_workbench/caller.py`; the escape hatch is still `--allow-headless-in-cc`).
 
