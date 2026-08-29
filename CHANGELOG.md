@@ -25,6 +25,28 @@ orchestrate run creates no directory.
 
 First slice of #548.
 
+**Mission Control's snapshot reads the cross-project run log.** rig keeps two run stores and
+the board opened one of them. `.rig/runs/<task_id>/` is rich and scoped to the project the
+board was started in; `~/.rig/runs.jsonl` is the append-only mirror every backend writes,
+carrying `project` on every record — and until now only `rig-wb usage` had ever read it. The
+single-repository view was less a missing feature than an unopened file.
+
+`snapshot["fleet"]` is a projection over that log: one row per run, newest first, across every
+project that has recorded one. Four refusals are built into it. A run that stopped and resumed
+appends twice under one id, so rows collapse by `run_id` and report `attempts` rather than
+showing one run as two or hiding that it took two goes. Records from before run ids existed
+are never collapsed — two id-less records sharing a recipe are not evidence of one run.
+Timestamps are compared as instants and not as text, because they are written with the writing
+machine's local offset and a cross-project log is exactly where offsets meet. And an
+unreadable line is counted rather than dropped: every writer of this log swallows its own
+failures by design, so a half-written final line is normal, and a board that quietly showed
+nine of ten runs would be worse than one that showed nine and said so.
+
+Only the log's tail is read, and `truncated` says when the view is a tail. The board polls and
+the log never shrinks.
+
+Second slice of #548.
+
 ### Fixed
 
 **`rig-wb perf` and `rig-wb otel` did not exist.** Both features shipped in 2.8.0, both work,

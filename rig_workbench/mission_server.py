@@ -44,6 +44,7 @@ from .mission_jobs import (
 )
 from .mission_ui import interactive_html
 from .workbench.config import TASK_TYPES
+from .workbench.fleet import fleet_rows
 from .workbench.reporting import read_all_tasks
 from .workbench.state import gate_status, load_json, runs_dir
 
@@ -189,6 +190,12 @@ def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
         "force_available": False,
     }
     snapshot["jobs"] = durable_snapshot(root)
+    # The other run store. Everything above is this project's `.rig/runs/`; this is the
+    # append-only mirror every backend writes, which carries `project` on each record and
+    # which nothing but `rig-wb usage` had ever opened. It is a projection and never a
+    # command surface: rows are read, and the only actions the board offers stay bound to
+    # the local tasks it can actually reach.
+    snapshot["fleet"] = fleet_rows()
     return snapshot
 
 
