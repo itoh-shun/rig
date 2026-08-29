@@ -143,3 +143,46 @@ def test_the_prompt_evaluation_gate_is_documented_where_the_other_evidence_is(re
     coverage`, `rig-wb asvs`) are listed; it was not."""
     text = readme.read_text(encoding="utf-8")
     assert "eval affected" in text and "--ratchet" in text
+
+
+# ── a documented command has to be a command ────────────────────────────────
+
+
+def documented_rig_wb_subcommands() -> set[str]:
+    """Every `rig-wb <sub>` a reader is told to type, across the READMEs and docs/."""
+    names: set[str] = set()
+    sources = [README_EN, README_JA, SKILL_MD, *sorted((REPO_ROOT / "docs").glob("*.md"))]
+    for path in sources:
+        names |= set(re.findall(r"rig-wb\s+([a-z][a-z0-9-]*)",
+                                path.read_text(encoding="utf-8")))
+    return names
+
+
+def test_every_documented_subcommand_is_one_rig_wb_will_accept():
+    """`rig-wb perf` and `rig-wb otel` shipped in 2.8.0, were written up in the READMEs
+    eighteen times between them — including a line meant to be pasted into a CI job — and
+    answered "Unknown sub-command" every time. Both features worked; neither name was on the
+    delegation list, and nothing compared the two.
+
+    Documentation drift is usually a stale sentence. This is the sharper kind: instructions
+    that fail the moment somebody follows them, on the release's own headline features.
+    """
+    from rig_workbench.cli import _orch_delegates  # noqa: PLC2701 - the list under test
+
+    accepted = set(_orch_delegates) | _own_subcommands()
+    missing = sorted(name for name in documented_rig_wb_subcommands()
+                     if name not in accepted)
+    assert not missing, (
+        f"the docs tell a reader to run `rig-wb {missing}`, which rig-wb does not accept — "
+        "either route the subcommand or stop documenting it in that form."
+    )
+
+
+def _own_subcommands() -> set[str]:
+    """The names `rig-wb` handles itself, rather than delegating to the orchestrator.
+
+    Read from its own dispatch rather than listed here, so a command that moves between the
+    two halves does not turn into a false report from this file.
+    """
+    text = (REPO_ROOT / "rig_workbench" / "cli.py").read_text(encoding="utf-8")
+    return set(re.findall(r'^\s*(?:elif|if)\s+sub\s*==\s*"([a-z][a-z0-9-]*)"', text, re.M))

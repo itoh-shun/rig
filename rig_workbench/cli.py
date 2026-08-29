@@ -251,6 +251,18 @@ _orch_delegates = {
     "probe",
     "install-shim",
     "review",
+    # #501 and #502 shipped in 2.8.0 and the READMEs document them as `rig-wb otel` and
+    # `rig-wb perf` — twelve times for perf, including a line meant to be pasted into CI.
+    # Neither was on this list, so every one of those invocations answered "Unknown
+    # sub-command". The features themselves worked the whole time through
+    # `scripts/orchestrate.py`; what was missing was the two names below.
+    "otel",
+    "perf",
+    # The human-approval flow the READMEs walk through — `next` parks a run on a person and
+    # `approve` releases it. Both were documented as `rig-wb orchestrate <cmd>`, a spelling
+    # with no subcommand behind it at all, so the whole governance example errored.
+    "approve",
+    "next",
 }
 
 
