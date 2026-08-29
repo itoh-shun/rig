@@ -12,7 +12,8 @@ rig-wb pack validate .rig/packs/my-domain
 rig-wb pack validate --global
 rig-wb pack doctor .rig/packs/my-domain --json
 rig-wb pack sync .rig/packs/my-domain              # after adding or deleting an asset file
-rig-wb pack install ./dist/my-domain.zip --scope project
+rig-wb pack bundle .rig/packs/my-domain               # -> dist/my-domain-0.1.0.zip
+rig-wb pack install ./dist/my-domain-0.1.0.zip --scope project
 rig-wb pack test my-domain                         # structural-only, not quality evidence
 rig-wb pack test my-domain --provider codex --model gpt-5 --judge-provider codex --judge-model gpt-5
 rig-wb pack remove my-domain --scope project       # dry-run
@@ -67,6 +68,34 @@ Note what `sync` does not do. A pack carrying prompt material — a persona, an 
 recipe, a wiki page — still needs at least one **approved** evaluation case before `validate`
 will pass it. Sync clears the bookkeeping; it does not clear the evidence gate, and it is not
 meant to.
+
+## Handing someone a zip
+
+`pack install` takes a directory, a zip, or a tar. `pack bundle` writes the zip:
+
+```
+$ rig-wb pack bundle .rig/packs/my-domain
+bundled: my-domain@0.1.0 (3 file(s)) -> /home/you/dist/my-domain-0.1.0.zip
+  sha256: 7ef9b1a3...
+next:
+  rig-wb pack install /home/you/dist/my-domain-0.1.0.zip --scope project
+```
+
+The pack is validated first — an archive built from a pack that does not validate can only
+produce the same failure, one machine away from whoever could fix it. A signature travels
+with the pack it signs.
+
+The bytes are reproducible: entries are sorted, dated to the zip epoch, and given fixed
+permissions. That matters because `install` records the archive's sha256 and `pack.lock.json`
+pins it, so a bundle that differed on every rebuild would report a change every time and
+therefore report nothing. Two bundles of an unchanged pack are byte-identical even from a
+fresh clone, where every file has a new mtime.
+
+An existing output file is never overwritten. A released artifact's published digest should
+not change with nothing said.
+
+Use `export` instead when the destination is a git repository of its own — that writes a
+repository tree with the pack one level down, not an archive.
 
 ## Named sources — installing from a private repository
 

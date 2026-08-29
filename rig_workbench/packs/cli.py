@@ -45,6 +45,9 @@ def _parser() -> argparse.ArgumentParser:
     export = sub.add_parser("export")
     export.add_argument("path")
     export.add_argument("--to", required=True)
+    bundle = sub.add_parser("bundle")
+    bundle.add_argument("path")
+    bundle.add_argument("--to", help="output zip (default: dist/<id>-<version>.zip)")
     verify_sources = sub.add_parser("verify-sources")
     verify_sources.add_argument("--scope", choices=["project", "user", "org"],
                                 default="project")
@@ -250,6 +253,15 @@ def cmd_pack(argv: list[str]) -> int:
             for item in result["removed"]:
                 print(f"  - {item}")
             print(f"pack sync: {result['total']} asset(s) declared and hashed")
+            return 0
+        if args.command == "bundle":
+            from .bundler import bundle_pack
+            built = bundle_pack(args.path, to=args.to)
+            print(f"bundled: {built['id']}@{built['version']} "
+                  f"({built['members']} file(s)) -> {built['path']}")
+            print(f"  sha256: {built['sha256']}")
+            print("next:")
+            print(f"  rig-wb pack install {built['path']} --scope project")
             return 0
         if args.command == "export":
             from .exporter import export_pack
