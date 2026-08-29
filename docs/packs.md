@@ -98,7 +98,49 @@ carries no prompt material, so the evaluation gate does not apply and
 Note what `sync` does not do. A pack carrying prompt material — a persona, an instruction, a
 recipe, a wiki page — still needs at least one **approved** evaluation case before `validate`
 will pass it. Sync clears the bookkeeping; it does not clear the evidence gate, and it is not
-meant to.
+meant to. Producing that evidence is the next section.
+
+## Evidence for a prompt-bearing pack
+
+A pack that carries prompt material needs an **approved** evaluation case before `validate`
+passes it. That gate is the point of the design: it makes an installed pack's quality a
+measurement rather than a claim. Approval is not a flag you set — `eval promote` refuses a
+draft whose evidence does not pass its red/green/clean thresholds, and refuses one whose
+semantic rubric was never judged. Results are attested, so an edited result fails at the
+signature before the thresholds are consulted.
+
+The draft lives in the **project**, not in the pack. A pack may hold nothing it has not
+declared, so a draft staged inside one is refused by `pack validate` and `pack sync` alike.
+`--into` moves only the destination of the approved case:
+
+```
+$ vi .rig/packs/my-domain/facets/personas/hello.md
+$ rig-wb pack sync .rig/packs/my-domain
+$ rig-wb pack validate .rig/packs/my-domain
+[ERROR] prompt-bearing pack requires at least one evaluation case
+
+# write .rig/evals/drafts/<case-id>/case.json, naming the pack's surfaces in
+# prompt_surfaces (e.g. ["persona:hello"]), then measure it:
+$ rig-wb eval run <case-id> --repo . --phase baseline --provider ... --model ...
+$ rig-wb eval run <case-id> --repo . --phase current  --provider ... --model ...
+$ rig-wb eval compare --baseline <baseline.json> --current <current.json> --repo .
+
+$ rig-wb eval promote <case-id> --baseline <baseline.json> --current <current.json> \
+      --repo . --into .rig/packs/my-domain
+.rig/packs/my-domain/evals/cases/<case-id>/case.json
+next: rig-wb pack sync .rig/packs/my-domain   # declare the new case
+
+$ rig-wb pack sync .rig/packs/my-domain
+$ rig-wb pack validate .rig/packs/my-domain
+valid: my-domain@0.1.0
+```
+
+`--into` refuses a directory with no `pack.yaml`. A mistyped path would otherwise put an
+approved case somewhere nothing reads it, and the next `pack validate` would report the case
+as missing rather than misplaced.
+
+Every gate stays where it was. `--into` changes the destination and nothing else, so a pack's
+evidence is held to exactly the standard the repository's own evidence is.
 
 ## Handing someone a zip
 

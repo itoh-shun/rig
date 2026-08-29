@@ -84,10 +84,51 @@ def _atomic_create(path: pathlib.Path, value: dict) -> None:
                 pass
 
 
+def _pack_case_dir(into: pathlib.Path | str) -> pathlib.Path:
+    """`<pack>/evals/cases`, after checking that `into` is in fact a pack.
+
+    Without the check, a mistyped path writes an approved case into an ordinary directory
+    where nothing will ever read it, and the author's next `pack validate` reports the case as
+    missing rather than misplaced — a wrong answer to the question they would be asking.
+
+    What is deliberately *not* checked here is whether the pack owns the prompt surfaces the
+    case names. `validate_pack` already refuses a case not bound to the pack's own prompt
+    assets, and re-implementing that rule would put a second copy of it one import away from
+    the first, free to drift. This function's job is to know where the file goes.
+    """
+    # Deferred: `rig_workbench.packs` imports this package at module level, so a top-level
+    # import here would close the cycle. Same pattern as `affected.py` and orchestrate.
+    from rig_workbench.packs.model import ASSET_DIRS
+
+    try:
+        pack = pathlib.Path(into).resolve()
+        is_pack = (pack / "pack.yaml").is_file()
+    except OSError as exc:
+        raise EvalCaseError(f"filesystem error resolving pack: {exc}") from exc
+    if not is_pack:
+        raise EvalCaseError(f"not a pack directory (no pack.yaml): {pack}")
+    return pack / ASSET_DIRS["eval-case"]
+
+
 def promote_case(
     repo: pathlib.Path | str, case_id: str, baseline: dict, current: dict,
-    *, now: dt.datetime | None = None,
+    *, now: dt.datetime | None = None, into: pathlib.Path | str | None = None,
 ) -> tuple[pathlib.Path, dict]:
+    """Promote a draft to an approved case, in this repository or into a pack.
+
+    `into` moves the destination and nothing else. The draft still comes from the repository's
+    own `.rig/evals/drafts/`, which is where it belongs and where it is nobody's undeclared
+    file — a pack may hold nothing it has not declared, so a draft staged inside one is
+    refused by `pack validate` and by `pack sync` alike. Both refusals are correct, and
+    together they meant no prompt-bearing pack could be authored from scratch: the evidence a
+    pack requires had nowhere to be produced.
+
+    Every gate stays exactly where it was. The safety property here is `compare_results`
+    refusing evidence that does not pass, and the rubric check below refusing a judgement that
+    was never measured; neither has anything to do with which directory the result is written
+    to. The pack owner then runs `pack sync` to declare the new case, which is the flow that
+    already exists.
+    """
     try:
         root = pathlib.Path(repo).resolve()
     except OSError as exc:
@@ -109,6 +150,7 @@ def promote_case(
         now or dt.datetime.now(dt.timezone.utc)
     ).astimezone(dt.timezone.utc).isoformat(timespec="seconds")
     validate_case(promoted)
-    destination = root / "evals" / "cases" / case_id / "case.json"
+    case_dir = _pack_case_dir(into) if into is not None else root / "evals" / "cases"
+    destination = case_dir / case_id / "case.json"
     _atomic_create(destination, promoted)
     return destination, promoted
