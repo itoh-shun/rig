@@ -79,6 +79,28 @@ explicit multi-repository comparison of per-persona detection rate
 `evidence.fleet_snapshot` reads from `.rig/fleet.json` — which already owns the `fleet` key in
 the snapshot this is attached to, and which a first version of this quietly replaced.
 
+**`fleet` can find your projects instead of asking you to remember them.**
+`fleet --repos a,b,c` compares repositories on per-persona detection rate and has always
+required the caller to name them, so it could only ever show you projects you already
+remembered. rig has been recording where it ran the whole time. `fleet --discovered` takes the
+repository list from `~/.rig/runs.jsonl`, the log every backend already mirrors — on the
+machine this was written on, eleven repositories that `--repos` would have needed spelling out.
+
+This is the extension the cross-project work should have been from the start: discovery is a
+flag on the command that already owned this idea, and the projection over the global log is
+the shared data layer beneath both it and the board.
+
+It is still not the auto-discovery this command has always refused: nothing is scanned and no
+network is touched — rig reads where it has actually been, and a filesystem walk would have
+turned a rollup of rig's own work into a survey of the disk. Discovery stays opt-in because
+the two answer different questions (`--repos` says "compare these", `--discovered` says "show
+me everywhere I have run"), and passing both is refused rather than unioned, which would make
+the report's scope depend on which flag the reader noticed first.
+
+`fleet` is also reachable from `rig-wb` now. It was routed only through
+`scripts/orchestrate.py`, the historical entrypoint rather than the installed one — the same
+gap #544 closed for `perf`, `otel`, `orchestrate next` and `orchestrate approve`.
+
 ### Fixed
 
 **`rig-wb perf` and `rig-wb otel` did not exist.** Both features shipped in 2.8.0, both work,
