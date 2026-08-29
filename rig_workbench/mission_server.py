@@ -44,7 +44,7 @@ from .mission_jobs import (
 )
 from .mission_ui import interactive_html
 from .workbench.config import TASK_TYPES
-from .workbench.fleet import fleet_rows
+from .workbench.run_index import run_index
 from .workbench.reporting import read_all_tasks
 from .workbench.state import gate_status, load_json, runs_dir
 
@@ -195,7 +195,12 @@ def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
     # which nothing but `rig-wb usage` had ever opened. It is a projection and never a
     # command surface: rows are read, and the only actions the board offers stay bound to
     # the local tasks it can actually reach.
-    snapshot["fleet"] = fleet_rows()
+    #
+    # Not `snapshot["fleet"]`: `build_snapshot` already puts the governance conformance
+    # rollup there and `mission_control._render_fleet` reads it, so writing runs into that
+    # key replaced one measurement with an unrelated one of the same name. Caught by
+    # noticing the key was taken, not by a test — so a test guards it now.
+    snapshot["run_index"] = run_index()
     return snapshot
 
 

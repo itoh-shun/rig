@@ -1,5 +1,13 @@
 """Read the cross-project run log — the half of rig's telemetry the board never opened.
 
+Named `run_index` and not `fleet`, because `fleet` already means two other things here and a
+third would make all three unreadable. `orchestrate fleet --repos a,b` (#272) compares
+explicitly-named repositories on per-persona detection rate, and `evidence.fleet_snapshot`
+reads `.rig/fleet.json` for a multi-repository governance conformance rollup — which already
+owns the `fleet` key in the snapshot this projection is attached to. What this is is narrower
+than either: an index of runs, keyed by run, derived from the one log every backend already
+mirrors.
+
 Two run stores exist and Mission Control read only one. `.rig/runs/<task_id>/` is rich and
 scoped to the current project; `~/.rig/runs.jsonl` is the append-only mirror every backend
 writes, carrying `project` on each record, and until now only `rig-wb usage` ever read it. The
@@ -199,7 +207,7 @@ def _by_verifier(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     return total
 
 
-def fleet_rows(*, limit: int = DEFAULT_LIMIT,
+def run_index(*, limit: int = DEFAULT_LIMIT,
                path: pathlib.Path | None = None,
                tail_bytes: int | None = None) -> dict[str, Any]:
     """One row per run, newest first, across every project that has recorded one.

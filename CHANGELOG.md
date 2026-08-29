@@ -31,7 +31,7 @@ board was started in; `~/.rig/runs.jsonl` is the append-only mirror every backen
 carrying `project` on every record — and until now only `rig-wb usage` had ever read it. The
 single-repository view was less a missing feature than an unopened file.
 
-`snapshot["fleet"]` is a projection over that log: one row per run, newest first, across every
+`snapshot["run_index"]` is a projection over that log: one row per run, newest first, across every
 project that has recorded one. Four refusals are built into it. A run that stopped and resumed
 appends twice under one id, so rows collapse by `run_id` and report `attempts` rather than
 showing one run as two or hiding that it took two goes. Records from before run ids existed
@@ -72,6 +72,12 @@ and rendering it as a blank cell would read as "none", so unrecorded models are 
 the board can say how much of the generator side it cannot see.
 
 Third slice of #548.
+
+The projection is `run_index` and not `fleet`. `fleet` already means two other things: an
+explicit multi-repository comparison of per-persona detection rate
+(`orchestrate fleet --repos a,b`, #272) and the governance conformance rollup
+`evidence.fleet_snapshot` reads from `.rig/fleet.json` — which already owns the `fleet` key in
+the snapshot this is attached to, and which a first version of this quietly replaced.
 
 ### Fixed
 

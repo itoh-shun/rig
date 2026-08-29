@@ -207,7 +207,7 @@ def test_the_write_side_still_needs_its_token(live_server):
     assert status == 403
 
 
-def test_the_snapshot_carries_the_cross_project_fleet(tmp_path, monkeypatch):
+def test_the_snapshot_carries_the_cross_project_run_index(tmp_path, monkeypatch):
     """Mission Control read `.rig/runs/` and nothing else, so its view ended at the repository
     it was started in. `~/.rig/runs.jsonl` has carried `project` on every record the whole
     time; this is the snapshot finally opening it."""
@@ -225,10 +225,10 @@ def test_the_snapshot_carries_the_cross_project_fleet(tmp_path, monkeypatch):
     )), encoding="utf-8")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", log)
 
-    fleet = mission_server.live_snapshot(tmp_path)["fleet"]
+    index = mission_server.live_snapshot(tmp_path)["run_index"]
 
-    assert fleet["projects"] == ["/another", "/elsewhere"]
-    assert [row["run_id"] for row in fleet["rows"]] == ["orc-b", "orc-a"]
+    assert index["projects"] == ["/another", "/elsewhere"]
+    assert [row["run_id"] for row in index["rows"]] == ["orc-b", "orc-a"]
 
 
 def test_a_machine_with_no_global_log_still_renders(tmp_path, monkeypatch):
@@ -239,6 +239,28 @@ def test_a_machine_with_no_global_log_still_renders(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "nothing-here.jsonl")
 
-    fleet = mission_server.live_snapshot(tmp_path)["fleet"]
+    index = mission_server.live_snapshot(tmp_path)["run_index"]
 
-    assert fleet["exists"] is False and fleet["rows"] == []
+    assert index["exists"] is False and index["rows"] == []
+
+
+def test_the_run_index_does_not_take_the_governance_fleet_key(tmp_path, monkeypatch):
+    """The sensor for a mistake already made. `build_snapshot` puts the multi-repository
+    governance conformance rollup under `fleet`, and `mission_control._render_fleet` reads it
+    from there. A first version of the cross-project run index was written to that same key,
+    silently replacing one measurement with an unrelated one that happened to be about several
+    projects too.
+
+    Nothing caught it: the new tests asserted the new shape and found it, and no existing test
+    covered what `live_snapshot` leaves in `fleet`. This asserts both keys, so the two
+    meanings cannot merge again."""
+    from rig_workbench import mission_server
+    from rig_workbench.orchestrate import config
+
+    monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "none.jsonl")
+
+    snapshot = mission_server.live_snapshot(tmp_path)
+
+    assert set(snapshot["fleet"]) >= {"configured"}          # the governance rollup, intact
+    assert "rows" not in snapshot["fleet"]
+    assert set(snapshot["run_index"]) >= {"rows", "projects"}
