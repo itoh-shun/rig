@@ -30,6 +30,8 @@ def _parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor")
     doctor.add_argument("path", nargs="?")
     doctor.add_argument("--json", action="store_true")
+    sync = sub.add_parser("sync")
+    sync.add_argument("path", nargs="?")
     source = sub.add_parser("source")
     source_sub = source.add_subparsers(dest="source_command", required=True)
     source_sub.add_parser("list")
@@ -43,6 +45,9 @@ def _parser() -> argparse.ArgumentParser:
     export = sub.add_parser("export")
     export.add_argument("path")
     export.add_argument("--to", required=True)
+    bundle = sub.add_parser("bundle")
+    bundle.add_argument("path")
+    bundle.add_argument("--to", help="output zip (default: dist/<id>-<version>.zip)")
     verify_sources = sub.add_parser("verify-sources")
     verify_sources.add_argument("--scope", choices=["project", "user", "org"],
                                 default="project")
@@ -154,6 +159,49 @@ def init_pack(pack_id: str, *, kind: str, type_: str,
     return destination
 
 
+def init_next_steps(destination: pathlib.Path, *, type_: str) -> list[str]:
+    """What to do next, said where the author is standing.
+
+    `init` used to print a path and stop, and three hard errors followed — one for the
+    manifest the author could not hand-edit, one for the evaluation case they did not know
+    was required, and, before that, three green checks on a pack that did nothing. None of
+    the three messages mentioned the next. This is the road, stated once, up front.
+
+    The example asset is chosen from what this pack's type may carry, because suggesting a
+    recipe to the author of a `knowledge` pack would send them straight into a refusal that
+    is correct and looks arbitrary.
+    """
+    from .model import TYPE_ASSETS
+    allowed = TYPE_ASSETS[type_]
+    # Preference order, most illustrative first; every entry is checked against the type.
+    example = next((ASSET_DIRS[kind] for kind in
+                    ("persona", "instruction", "policy", "wiki", "resource")
+                    if kind in allowed), ASSET_DIRS["resource"])
+    lines = [
+        "",
+        "next:",
+        f"  1. write an asset          {destination.name}/{example}/<name>.md",
+        f"  2. rig-wb pack sync {destination}",
+        "     declares it in pack.yaml — that file is canonical and byte-compared,",
+        "     so it is generated rather than edited",
+        f"  3. rig-wb pack validate {destination}",
+    ]
+    # Said for every type, because every type can reach the gate. `wiki` is listed in both
+    # `_INERT_KINDS` and `PROMPT_KINDS`, and every type admits the inert kinds — so a
+    # `knowledge` pack of wiki pages is prompt-bearing exactly as a `skill` pack is. A first
+    # version of this made the note conditional on `TYPE_ASSETS[type_] & PROMPT_KINDS`, which
+    # is never empty; the branch could not be false and the test for it could not fail.
+    lines += [
+        "",
+        "  A pack carrying prompt material — which every type may, a wiki page included —",
+        "  also needs an approved evaluation case before `validate` passes it. That gate is",
+        "  deliberate: it is what makes an installed pack's quality a measurement rather",
+        "  than a claim. Only a pack of pure `resource` files avoids it.",
+    ]
+    lines += ["", f"  then: rig-wb pack bundle {destination}   # an installable zip"]
+    return lines
+
+
 def _global_dirs(project: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
     return [(tier, item) for tier, root in pack_roots(project) if root.is_dir()
             for item in sorted(root.iterdir()) if item.is_dir()
@@ -229,7 +277,10 @@ def cmd_pack(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "init":
-            print(init_pack(args.id, kind=args.kind, type_=args.type_, root=args.root))
+            destination = init_pack(args.id, kind=args.kind, type_=args.type_, root=args.root)
+            print(f"initialized: {destination}")
+            for line in init_next_steps(destination, type_=args.type_):
+                print(line)
             return 0
         if args.command == "validate":
             if args.global_:
@@ -239,6 +290,24 @@ def cmd_pack(argv: list[str]) -> int:
                 path = pathlib.Path(args.path or ".")
                 manifest = validate_pack(path)
                 print(f"valid: {manifest['id']}@{manifest['version']}")
+            return 0
+        if args.command == "sync":
+            from .sync import sync_manifest
+            result = sync_manifest(args.path or ".")
+            for item in result["added"]:
+                print(f"  + {item}")
+            for item in result["removed"]:
+                print(f"  - {item}")
+            print(f"pack sync: {result['total']} asset(s) declared and hashed")
+            return 0
+        if args.command == "bundle":
+            from .bundler import bundle_pack
+            built = bundle_pack(args.path, to=args.to)
+            print(f"bundled: {built['id']}@{built['version']} "
+                  f"({built['members']} file(s)) -> {built['path']}")
+            print(f"  sha256: {built['sha256']}")
+            print("next:")
+            print(f"  rig-wb pack install {built['path']} --scope project")
             return 0
         if args.command == "export":
             from .exporter import export_pack
@@ -457,7 +526,13 @@ def cmd_pack(argv: list[str]) -> int:
             print(f"pack doctor: {report['status']}")
             for finding in report["findings"]:
                 print(f"- {finding['code']}: {finding.get('path', finding.get('asset', finding.get('pack', '')))}")
-        return 0 if report["status"] == "ok" else 1
+        # The report distinguishes three states and the exit code used to collapse two of
+        # them, so every warning read as a failure. That was tolerable while the only warning
+        # was a migration hint; it stopped being so once `empty_pack` made a freshly
+        # scaffolded pack — the expected state after `pack init` — exit non-zero. `failed`
+        # means something is wrong; `warning` means something is worth saying. Only the first
+        # is an error.
+        return 1 if report["status"] == "failed" else 0
     except PackError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 2

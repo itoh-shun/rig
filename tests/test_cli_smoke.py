@@ -493,7 +493,13 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
         + sales_removed.stderr + video_installed.stderr + video_resolved.stderr
         + video_tested.stderr + video_removed.stderr
     )
-    assert json.loads(doctor.stdout)["status"] == "ok"
+    # The pack this scaffolds is empty, and `doctor` now says so rather than reporting `ok`
+    # on a pack that carries nothing. It stays exit 0 — asserted above with the other
+    # return codes — because an empty scaffold is the expected state after `init`, not a
+    # failure. The finding is the point of the assertion, not the status word.
+    doctor_report = json.loads(doctor.stdout)
+    assert doctor_report["status"] == "warning"
+    assert [item["code"] for item in doctor_report["findings"]] == ["empty_pack"]
     assert json.loads(tested.stdout)["status"] == "structural_only"
     assert builtin_resolved.stdout.strip() == "decision-humor"
     assert json.loads(builtin_tested.stdout)["status"] == "structural_only"
@@ -1025,3 +1031,49 @@ def test_no_args_prints_usage_and_exits_zero(tmp_path):
     r = run_cli([], tmp_path)
     assert r.returncode == 0
     assert r.stdout.strip()  # usage text emitted (wording not asserted)
+
+
+# ── `--help` has to answer, on every command ─────────────────────────────────
+
+
+def _orchestrator_commands():
+    from rig_workbench.orchestrate.cli import COMMANDS
+
+    return sorted(COMMANDS)
+
+
+@pytest.mark.parametrize("command", _orchestrator_commands())
+def test_help_answers_instead_of_dying_on_a_filename(command, tmp_path):
+    """Four commands take a bare state-file path and parse no flags, so `--help` arrived as
+    one: `verdict --help` tried to open `./--help` and died with a FileNotFoundError naming a
+    path nobody typed. There was no way to see their usage short of reading the source.
+
+    Parametrised over the dispatch table rather than over a list written here, so a command
+    added tomorrow is covered without anybody remembering to add it.
+    """
+    result = run_cli([command, "--help"], tmp_path)
+
+    assert "Traceback" not in result.stderr, result.stderr
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip(), "--help printed nothing"
+
+
+@pytest.mark.parametrize("command", ["verdict", "approve", "next", "check"])
+def test_help_prints_that_command_and_not_the_whole_manual(command, tmp_path):
+    """Sliced out of the module docstring, which is the only place this usage is written. A
+    second copy would be a second thing to keep true — and the reason `--help` was worth
+    fixing is that nobody had checked the first copy against the code."""
+    result = run_cli([command, "--help"], tmp_path)
+
+    assert result.stdout.lstrip().startswith(command)
+    assert "computational orchestrator" not in result.stdout
+
+
+def test_the_same_help_comes_back_through_rig_wb(tmp_path):
+    """Both entry points reach one dispatcher; a fix in only one of them would leave the
+    documented spelling broken for whoever used the other."""
+    through_shim = run_cli(["verdict", "--help"], tmp_path).stdout
+    through_package = run_rig_wb(["verdict", "--help"], tmp_path).stdout
+
+    assert through_shim.strip() == through_package.strip()
+    assert through_shim.strip()

@@ -130,11 +130,42 @@ def _advises_gh(cmd: str, rest: list[str]) -> bool:
     return cmd == "queue" and bool(rest) and rest[0] == "go"
 
 
+def _usage_for(cmd: str) -> str | None:
+    """The command's own lines out of this module's docstring, which is the only usage text.
+
+    Sliced rather than restated. A second copy would be a second thing to keep true, and the
+    reason `--help` needed writing at all is that nobody had checked the first copy against
+    the code.
+    """
+    lines, block, indent = __doc__.splitlines(), [], None
+    for line in lines:
+        stripped = line.lstrip()
+        if block and (not stripped or len(line) - len(stripped) <= indent):
+            if stripped and len(line) - len(stripped) <= indent:
+                break
+            continue
+        if not block and stripped.startswith(f"{cmd} ") or (not block and stripped == cmd):
+            indent, block = len(line) - len(stripped), [line]
+            continue
+        if block:
+            block.append(line)
+    return "\n".join(block).rstrip() if block else None
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         print(__doc__)
         sys.exit(0 if len(sys.argv) < 2 else 1)
     cmd, rest = sys.argv[1], sys.argv[2:]
+    # Several commands take a bare state-file path and parse no flags at all, so `--help`
+    # reached them as a filename: `verdict --help` tried to open `./--help` and died with a
+    # FileNotFoundError naming a path nobody typed. Answered here, once, for every command —
+    # a command that does parse `--help` itself never gets here, because it is not in `rest`
+    # by the time it matters.
+    if rest and rest[0] in ("-h", "--help"):
+        usage = _usage_for(cmd)
+        print(usage if usage else __doc__)
+        sys.exit(0)
     # Count what this invocation prints at the parent session. context-minimal is
     # called a hard rule and was never measured; see rig_workbench/context_meter.
     context_meter.install(f"orchestrate {cmd}", rest)
