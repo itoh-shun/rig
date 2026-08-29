@@ -47,6 +47,32 @@ the log never shrinks.
 
 Second slice of #548.
 
+**The board can see which provider verified what.** rig's central claim is that the generator
+and the verifier are separate roles that can run on different providers — and until now there
+was nowhere that claim could be seen. The data had been accumulating the whole time:
+`verdicts[].by` is written as `provider:persona` on every reviewed step.
+
+Each fleet row now carries verdict outcomes per verifier provider, and the snapshot carries
+`by_verifier` totalled across the rows shown. Counts, never a rate: a ratio hides its
+denominator, and one verdict at 1.0 and a hundred verdicts at 1.0 are not the same
+measurement. `ok`, `not_ok` and `unknown` are three separate counters, because a verdict whose
+outcome was never recorded is an absence rather than a failure, and folding the two would make
+a provider look worse for a defect in the record instead of in its judgement.
+
+**No quality score, and a test that keeps it that way.** `/rig:drill` measures reviewer
+detection by injecting known-bad code and counting what each persona catches. A verdict pass
+rate over live runs is a different quantity — it moves with what was submitted, not only with
+who judged it — and publishing it under a name the drill's number has earned would be the
+substitution this project refuses everywhere else.
+
+The generator side is reported as the asymmetry it is. `steps[].model` is null for 368 of the
+432 steps in the log this was written against: the field means the provider's default was used
+and which model that was is not known here (#293). Rendering that as a name would invent one
+and rendering it as a blank cell would read as "none", so unrecorded models are counted, and
+the board can say how much of the generator side it cannot see.
+
+Third slice of #548.
+
 ### Fixed
 
 **`rig-wb perf` and `rig-wb otel` did not exist.** Both features shipped in 2.8.0, both work,

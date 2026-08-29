@@ -168,3 +168,117 @@ def test_the_default_limit_is_applied(tmp_path):
                             for n in range(DEFAULT_LIMIT + 5)])
 
     assert fleet_rows(path=path)["shown"] == DEFAULT_LIMIT
+
+
+def _verdict(by: object, ok: object = True) -> dict:
+    return {"by": by, "ok": ok}
+
+
+def test_the_verifier_provider_is_the_part_before_the_first_colon(tmp_path):
+    """`by` is written as `provider:persona`, and a persona is free text that may contain a
+    colon of its own. Splitting on the last, or on all of them, would attribute a verdict to a
+    provider nobody ran."""
+    path = _log(tmp_path, _record(steps=[{"verdicts": [
+        _verdict("codex:security-reviewer"),
+        _verdict("claude:styles/qiita:tech-writer"),
+    ]}]))
+
+    verifiers = fleet_rows(path=path)["rows"][0]["verifiers"]
+
+    assert sorted(verifiers) == ["claude", "codex"]
+
+
+def test_a_verdict_with_no_attributable_provider_is_kept_and_labelled(tmp_path):
+    """Dropping it would quietly shrink the denominator of every provider it sat beside —
+    the board would show fewer verdicts than were cast and say nothing about the difference."""
+    path = _log(tmp_path, _record(steps=[{"verdicts": [
+        _verdict("codex:security"), _verdict("no-colon-here"), _verdict(None),
+    ]}]))
+
+    verifiers = fleet_rows(path=path)["rows"][0]["verifiers"]
+
+    assert verifiers["(unattributed)"]["ok"] == 2
+    assert verifiers["codex"]["ok"] == 1
+
+
+def test_an_unrecorded_outcome_is_not_a_failure(tmp_path):
+    """`unknown` is a third counter, not a bucket folded into `not_ok`. A verdict whose result
+    was never recorded is an absence, and reporting an absence as a failure would make a
+    provider look worse for a defect in the record rather than in its judgement."""
+    path = _log(tmp_path, _record(steps=[{"verdicts": [
+        _verdict("codex:a", True), _verdict("codex:b", False),
+        _verdict("codex:c", None), _verdict("codex:d", "yes"),
+    ]}]))
+
+    counts = fleet_rows(path=path)["rows"][0]["verifiers"]["codex"]
+
+    assert counts == {"ok": 1, "not_ok": 1, "unknown": 2}
+
+
+def test_no_rate_or_score_is_computed_anywhere(tmp_path):
+    """The refusal, pinned so a later convenience cannot quietly add it.
+
+    `/rig:drill` measures reviewer detection by injecting known-bad code and counting what each
+    persona catches. A verdict pass rate over live runs is a different quantity — it moves with
+    what was submitted, not only with who judged it — and publishing it under a name the
+    drill's number has earned would be the substitution this project refuses elsewhere.
+
+    Counts also keep their denominator: one verdict at 1.0 and a hundred verdicts at 1.0 are
+    not the same measurement, and a bare ratio cannot tell them apart."""
+    path = _log(tmp_path, _record(steps=[{"verdicts": [_verdict("codex:a")]}]))
+
+    result = fleet_rows(path=path)
+    forbidden = {"rate", "pass_rate", "score", "quality", "accuracy", "success_rate"}
+
+    assert set(result["by_verifier"]["codex"]) == {"ok", "not_ok", "unknown", "runs"}
+    assert not forbidden & set(result["by_verifier"]["codex"])
+    assert not forbidden & set(result["rows"][0]["verifiers"]["codex"])
+
+
+def test_a_generator_model_that_was_not_recorded_is_counted_as_unmeasured(tmp_path):
+    """`model: null` means the provider's default was used and which model that was is not
+    known here (#293) — and it is the common case: 368 of 432 steps in the log this was written
+    against. Rendering it as a name would invent one; rendering it as a blank cell would read
+    as 'none'. It is counted, so the board can say how much of the generator side it cannot
+    see."""
+    path = _log(tmp_path, _record(steps=[
+        {"model": "sonnet", "verdicts": []},
+        {"model": None, "verdicts": []},
+        {"model": "", "verdicts": []},
+        {"verdicts": []},
+    ]))
+
+    generator = fleet_rows(path=path)["rows"][0]["generator"]
+
+    assert generator == {"models": ["sonnet"], "unmeasured": 3}
+
+
+def test_verdicts_are_totalled_across_runs_and_projects(tmp_path):
+    """The axis the board exists for: rig's claim is that the generator and the verifier are
+    separate roles on separate providers, and this is the first place that claim is visible
+    rather than asserted."""
+    path = _log(tmp_path,
+                _record(run_id="orc-1", project="/a",
+                        steps=[{"verdicts": [_verdict("codex:x"), _verdict("claude:y", False)]}]),
+                _record(run_id="orc-2", project="/b",
+                        steps=[{"verdicts": [_verdict("codex:z")]}]))
+
+    by_verifier = fleet_rows(path=path)["by_verifier"]
+
+    assert by_verifier["codex"] == {"ok": 2, "not_ok": 0, "unknown": 0, "runs": 2}
+    assert by_verifier["claude"] == {"ok": 0, "not_ok": 1, "unknown": 0, "runs": 1}
+
+
+def test_the_aggregate_describes_the_rows_shown_and_not_the_whole_log(tmp_path):
+    """`limit` bounds the rows, and the totals are computed over those rows. Summing the whole
+    tail while showing a page of it would put a number on screen that no visible row accounts
+    for — the reader would have no way to reconcile the two."""
+    path = _log(tmp_path, *[
+        _record(run_id=f"orc-{n}", ts=f"2026-08-29T00:00:{n:02d}+00:00",
+                steps=[{"verdicts": [_verdict("codex:x")]}])
+        for n in range(10)])
+
+    result = fleet_rows(path=path, limit=3)
+
+    assert result["shown"] == 3
+    assert result["by_verifier"]["codex"]["runs"] == 3

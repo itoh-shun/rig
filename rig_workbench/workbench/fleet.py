@@ -70,10 +70,66 @@ def _tail_lines(path: pathlib.Path, *,
     return lines, truncated
 
 
+def _verifiers(steps: list[Any]) -> dict[str, dict[str, int]]:
+    """Verdict outcomes per verifier provider, as counts.
+
+    `by` is written as `provider:persona`, so the provider is everything before the first
+    colon — split on the first, because a persona is free text and may contain one.
+
+    Deliberately counts rather than a rate. A ratio hides its denominator, and one verdict at
+    1.0 and a hundred verdicts at 1.0 are not the same measurement; the consumer that wants a
+    rate can divide and will still have the denominator to show beside it.
+
+    `unknown` is separate from `not_ok` on the same principle: a verdict whose outcome was not
+    recorded is not a verdict that failed, and folding the two would report an absence as a
+    result.
+    """
+    tally: dict[str, dict[str, int]] = {}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        for verdict in step.get("verdicts") or []:
+            if not isinstance(verdict, dict):
+                continue
+            by = verdict.get("by")
+            provider = by.split(":", 1)[0] if isinstance(by, str) and ":" in by else None
+            key = provider or "(unattributed)"
+            counts = tally.setdefault(key, {"ok": 0, "not_ok": 0, "unknown": 0})
+            outcome = verdict.get("ok")
+            counts["ok" if outcome is True else
+                   "not_ok" if outcome is False else "unknown"] += 1
+    return tally
+
+
+def _generators(steps: list[Any]) -> dict[str, Any]:
+    """Which generator models a run actually used, and how often that was not recorded.
+
+    The asymmetry here is the finding, not a gap to paper over: across the log this was
+    written against, 368 of 432 steps carry `model: null` — the field means "the provider's
+    default was used and which model that was is not known here" (#293). Rendering that as a
+    model name, or as a blank cell, would both read as knowledge. `unmeasured` is a count so
+    the board can say how much of the generator side it cannot see.
+    """
+    models: set[str] = set()
+    unmeasured = 0
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        model = step.get("model")
+        if isinstance(model, str) and model:
+            models.add(model)
+        else:
+            unmeasured += 1
+    return {"models": sorted(models), "unmeasured": unmeasured}
+
+
 def _row(record: dict[str, Any]) -> dict[str, Any]:
     steps = record.get("steps")
     steps = steps if isinstance(steps, list) else []
+    verifiers = _verifiers(steps)
     return {
+        "verifiers": verifiers,
+        "generator": _generators(steps),
         "run_id": record.get("run_id"),
         "ts": record.get("ts"),
         "project": record.get("project"),
@@ -116,6 +172,31 @@ def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for _key, row in sorted(
         ((_sort_key(row, position), row) for position, row in enumerate(rows)),
         key=lambda pair: pair[0], reverse=True)]
+
+
+def _by_verifier(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Verdict outcomes per verifier provider across the rows being shown.
+
+    This is the axis the whole issue is about: rig's central claim is that the generator and
+    the verifier are separate roles that can run on different providers, and until the board
+    read this log there was nowhere that claim could be *seen*. The data has been accumulating
+    the whole time.
+
+    What this is not, and must not be presented as, is a quality score. `/rig:drill` measures
+    reviewer detection by injecting known-bad code and counting what each persona catches;
+    that is a measurement of whether a reviewer finds things. A verdict pass rate over live
+    runs is a different quantity — it moves with what was submitted, not only with who judged
+    it — and giving it the name the drill's number has earned would be the exact substitution
+    this project refuses everywhere else. It is counts of verdicts, labelled as verdicts.
+    """
+    total: dict[str, dict[str, int]] = {}
+    for row in rows:
+        for provider, counts in (row.get("verifiers") or {}).items():
+            running = total.setdefault(provider, {"ok": 0, "not_ok": 0, "unknown": 0, "runs": 0})
+            running["runs"] += 1
+            for outcome in ("ok", "not_ok", "unknown"):
+                running[outcome] += counts.get(outcome, 0)
+    return total
 
 
 def fleet_rows(*, limit: int = DEFAULT_LIMIT,
@@ -162,6 +243,7 @@ def fleet_rows(*, limit: int = DEFAULT_LIMIT,
 
     rows = _newest_first(ordered)[:limit]
     return {
+        "by_verifier": _by_verifier(rows),
         "path": str(target),
         "exists": target.exists(),
         "rows": rows,
