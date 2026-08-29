@@ -14,18 +14,23 @@ rig-wb pack doctor .rig/packs/my-domain --json
 rig-wb pack sync .rig/packs/my-domain              # after adding or deleting an asset file
 rig-wb pack bundle .rig/packs/my-domain               # -> dist/my-domain-0.1.0.zip
 rig-wb pack install ./dist/my-domain-0.1.0.zip --scope project
+rig-wb eval promote <case-id> --baseline ... --current ... --repo . --into .rig/packs/my-domain
 rig-wb pack test my-domain                         # structural-only, not quality evidence
 rig-wb pack test my-domain --provider codex --model gpt-5 --judge-provider codex --judge-model gpt-5
 rig-wb pack remove my-domain --scope project       # dry-run
 rig-wb pack remove my-domain --scope project --yes
 ```
 
-`pack init` refuses overwrites and creates every standard directory. Add assets to the
-manifest, record their SHA-256 hashes, and bind each prompt-bearing pack to at least one
-approved evaluation case. Validation rejects unknown manifest fields, undeclared files,
-ownership crossover, path traversal, symlinks, broken references, incompatible engine or
-dependency ranges, cycles, collisions, unsafe secrets, invisible injection markers, and
-unambiguous destructive content.
+The four sections below are one walkthrough in order — scaffold a pack, add an asset,
+produce the evidence a prompt-bearing pack needs, hand someone the zip.
+
+`pack init` refuses overwrites and creates every standard directory. Assets are declared and
+hashed by `pack sync`, not by hand: `pack.yaml` is canonical and byte-compared, so it is
+generated. Every prompt-bearing pack must still bind to at least one approved evaluation
+case, which `eval promote` produces from evidence that passed. Validation rejects unknown
+manifest fields, undeclared files, ownership crossover, path traversal, symlinks, broken
+references, incompatible engine or dependency ranges, cycles, collisions, unsafe secrets,
+invisible injection markers, and unambiguous destructive content.
 
 ## Starting a pack
 
