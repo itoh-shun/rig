@@ -4,11 +4,12 @@ import hashlib
 import pathlib
 
 from rig_workbench.eval.runner import make_judge_adapter, read_only_workspace, run_case
+from rig_workbench.eval.cases import validate_case
 from rig_workbench.eval.gate import quality_result_failures
 
 from .manifest import canonical, read_json_yaml
 from .lock import tree_hash
-from .model import PROMPT_KINDS, PackError
+from .model import ASSET_DIRS, PROMPT_KINDS, PackError
 from .resolver import pack_roots
 from .validation import validate_pack
 
@@ -90,17 +91,56 @@ def resolve_pack(value: pathlib.Path | str, *, project: pathlib.Path) -> pathlib
     return matches[0].resolve()
 
 
+def _cases_to_run(pack: pathlib.Path, manifest: dict, case_paths: list[str],
+                  project: pathlib.Path, draft: str | None) -> list[dict]:
+    """The cases this run measures: the pack's approved ones, or the one named draft.
+
+    A draft lives in the *project*, at `.rig/evals/drafts/<id>/case.json`, and not in the pack
+    — a pack may hold nothing it has not declared, so a draft staged inside one is refused by
+    `pack validate` and `pack sync` alike.
+
+    It must still name surfaces this pack owns. Without that check the bootstrap would happily
+    measure some other pack's prompt and write evidence that looks like it belongs here, which
+    is worse than the circle it exists to break.
+    """
+    if draft is None:
+        return [read_json_yaml(pack / rel)[1] for rel in case_paths]
+
+    path = project / ".rig" / "evals" / "drafts" / draft / "case.json"
+    if not path.is_file():
+        raise PackError(f"evaluation draft not found: {path}")
+    _raw, case = read_json_yaml(path)
+    validate_case(case)
+    if case["status"] != "draft":
+        raise PackError(f"pack test --draft takes a draft; {draft} is {case['status']!r}")
+    owned = {
+        f"{'contract' if kind == 'output-contract' else kind}:"
+        f"{pathlib.PurePosixPath(item).relative_to(ASSET_DIRS[kind]).with_suffix('')}"
+        for kind, paths in manifest["assets"].items() if kind in PROMPT_KINDS
+        for item in paths
+    }
+    bound = set(case.get("prompt_surfaces") or [])
+    if not bound or not bound <= owned:
+        raise PackError(
+            f"draft {draft} is not bound to surfaces this pack owns "
+            f"(declared: {sorted(bound)}; owned: {sorted(owned)})")
+    return [case]
+
+
 def test_pack(
     value: pathlib.Path | str, *, project: pathlib.Path | str,
     provider: str | None = None, model: str | None = None,
     judge_provider: str | None = None, judge_model: str | None = None,
     command: str | None = None, judge_command: str | None = None,
     timeout: float = 30, result_dir: pathlib.Path | str | None = None,
-    allow_paid_provider: bool = False,
+    allow_paid_provider: bool = False, draft: str | None = None,
 ) -> tuple[dict, int]:
     project_path = pathlib.Path(project).resolve()
     pack = resolve_pack(value, project=project_path)
-    manifest = validate_pack(pack)
+    # A draft run is the one caller allowed to skip the approved-case rule, because it exists
+    # to produce the evidence that rule waits for. Everything else about the pack is still
+    # validated, and no other entry point passes this.
+    manifest = validate_pack(pack, require_evaluation=draft is None)
     case_paths = manifest["assets"]["eval-case"]
     if provider is None:
         return ({"pack_test_schema_version": 1, "pack": manifest["id"],
@@ -138,8 +178,7 @@ def test_pack(
             ) if judge_provider and judge_model else None
             results: list[dict] = []
             result_paths: list[str] = []
-            for rel in case_paths:
-                _raw, case = read_json_yaml(pack / rel)
+            for case in _cases_to_run(pack, manifest, case_paths, project_path, draft):
                 prompt = compose_case_prompt(pack, manifest, case, project=project_path)
                 binding = prompt_binding_sha256(manifest, case, prompt)
                 result_path, result = run_case(
