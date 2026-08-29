@@ -11,6 +11,7 @@ rig-wb pack init my-domain --type skill --kind domain --root .rig/packs
 rig-wb pack validate .rig/packs/my-domain
 rig-wb pack validate --global
 rig-wb pack doctor .rig/packs/my-domain --json
+rig-wb pack sync .rig/packs/my-domain              # after adding or deleting an asset file
 rig-wb pack install ./dist/my-domain.zip --scope project
 rig-wb pack test my-domain                         # structural-only, not quality evidence
 rig-wb pack test my-domain --provider codex --model gpt-5 --judge-provider codex --judge-model gpt-5
@@ -24,6 +25,36 @@ approved evaluation case. Validation rejects unknown manifest fields, undeclared
 ownership crossover, path traversal, symlinks, broken references, incompatible engine or
 dependency ranges, cycles, collisions, unsafe secrets, invisible injection markers, and
 unambiguous destructive content.
+
+## Adding an asset
+
+`pack.yaml` declares every asset by path and by sha256, and `pack validate` byte-compares the
+file against its canonical form — sorted keys, no separators, one trailing newline. That form
+is what makes a manifest hashable and signable, and it is deliberately the JSON subset so a
+manifest cannot execute a YAML tag.
+
+It is therefore not a file to edit by hand. Write the asset, then let the tool declare it:
+
+```
+$ vi .rig/packs/my-domain/facets/personas/reviewer.md
+$ rig-wb pack sync .rig/packs/my-domain
+  + facets/personas/reviewer.md
+pack sync: 1 asset(s) declared and hashed
+```
+
+Sync mirrors the directory: a deleted file leaves the manifest too, so a stale declaration
+never sends you looking for something you removed. It rewrites `assets` and `hashes` and
+nothing else — version, description, capabilities and entrypoints are yours.
+
+It refuses in two cases rather than proceeding quietly. A file sitting outside every asset
+directory is named, because declaring nothing about it would leave a file inside the pack that
+no hash covers. And a signed pack is refused outright, because rewriting the manifest
+invalidates `pack.sig.json`; remove the signature, sync, then re-sign with your key.
+
+Note what `sync` does not do. A pack carrying prompt material — a persona, an instruction, a
+recipe, a wiki page — still needs at least one **approved** evaluation case before `validate`
+will pass it. Sync clears the bookkeeping; it does not clear the evidence gate, and it is not
+meant to.
 
 ## Named sources — installing from a private repository
 

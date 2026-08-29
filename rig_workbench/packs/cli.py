@@ -30,6 +30,8 @@ def _parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor")
     doctor.add_argument("path", nargs="?")
     doctor.add_argument("--json", action="store_true")
+    sync = sub.add_parser("sync")
+    sync.add_argument("path", nargs="?")
     source = sub.add_parser("source")
     source_sub = source.add_subparsers(dest="source_command", required=True)
     source_sub.add_parser("list")
@@ -239,6 +241,15 @@ def cmd_pack(argv: list[str]) -> int:
                 path = pathlib.Path(args.path or ".")
                 manifest = validate_pack(path)
                 print(f"valid: {manifest['id']}@{manifest['version']}")
+            return 0
+        if args.command == "sync":
+            from .sync import sync_manifest
+            result = sync_manifest(args.path or ".")
+            for item in result["added"]:
+                print(f"  + {item}")
+            for item in result["removed"]:
+                print(f"  - {item}")
+            print(f"pack sync: {result['total']} asset(s) declared and hashed")
             return 0
         if args.command == "export":
             from .exporter import export_pack
