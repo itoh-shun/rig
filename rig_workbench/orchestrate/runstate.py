@@ -5,6 +5,8 @@ import json
 import datetime
 import pathlib
 import hashlib
+import re
+import secrets
 import stat
 
 from . import config
@@ -18,6 +20,29 @@ from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as rea
 # run stops with that reason named. An in-flight run started before the upgrade has
 # to be restarted, which is the honest outcome — its steps were admitted under a
 # rule that no longer holds.
+#: An orchestrate run had no identity of any kind. The state carried recipe, goal, steps and
+#: cursor; the telemetry record identified a run by timestamp, recipe and project. Two things
+#: followed. A board row could not point at the run behind it, because there was nothing to
+#: point with. And two runs of the same recipe starting in the same second were one record's
+#: worth of identity between them — not a theoretical case, since the queue dispatches items
+#: in parallel by design.
+#:
+#: `orc-` rather than `rig-` on purpose: a workbench task and an orchestrate run are different
+#: execution models, and a joined board should not have to guess which kind of thing a row is.
+#: The random suffix is what makes this an identity rather than a label — `make_task_id` can
+#: omit one because creating the task directory surfaces a collision, and an orchestrate run
+#: creates no directory, so a collision here would silently merge two runs in the log.
+RUN_ID_RE = re.compile(r"^orc-\d{8}-\d{6}-[a-z0-9-]{1,32}-[0-9a-f]{6}$")
+
+
+def make_run_id(recipe: str) -> str:
+    """A stable, sortable, collision-resistant id for one orchestrate run."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    words = re.findall(r"[A-Za-z0-9]+", recipe or "")
+    slug = "-".join(word.lower() for word in words)[:32].strip("-") or "run"
+    return f"orc-{stamp}-{slug}-{secrets.token_hex(3)}"
+
+
 EXECUTION_POLICY_VERSION = 2
 _EXECUTION_FIELDS = (
     "structurally_valid", "orchestratable", "manual_only",
@@ -158,6 +183,9 @@ def new_state(
         bound_steps.append(step)
     steps = bound_steps
     state = {
+        # Created once, here, and carried through `save_state`/`load_state` unchanged — a
+        # resumed run is the same run, and a second id would split its telemetry in two.
+        "run_id": make_run_id(recipe),
         "recipe": recipe,
         "goal": goal,
         "steps": steps,
@@ -322,6 +350,10 @@ def telemetry_append(state: dict, final: str) -> None:
                     {"kind": "refusal" if h["action"] == "FABLE_REFUSAL" else "fallback"})  # #297
         rec = {
             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            # Absent, not null, for a state written before run ids existed: this log is read
+            # by aggregation that treats a present key as a measured fact, and `None` would
+            # claim the run was identified as nothing.
+            **({"run_id": state["run_id"]} if state.get("run_id") else {}),
             "recipe": state["recipe"],
             "backend": "orchestrate",
             "invoker": os.environ.get("RIG_INVOKER") or "direct",

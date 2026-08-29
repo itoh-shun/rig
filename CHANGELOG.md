@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+**An orchestrate run now has an identity.** It had none: the state carried `recipe`, `goal`,
+`steps` and `cursor`, and the telemetry record in `.rig/runs.jsonl` identified a run by
+timestamp, recipe and project. So a board row could not point at the run behind it — there
+was nothing to point with — and two runs of the same recipe starting in the same second had
+one record's worth of identity between them. That is not a theoretical case: the queue
+dispatches items in parallel by design.
+
+`run_id` is minted once in `new_state` as `orc-<YYYYMMDD>-<HHMMSS>-<recipe>-<6 hex>` and
+carried through `save_state`/`load_state`, so a run that stops and resumes stays one run. It
+is written into both the per-project log and the global mirror, and it is absent rather than
+null for a state written before it existed — this log is read by aggregation that treats a
+present key as a measured fact.
+
+`orc-` rather than `rig-` because a workbench task and an orchestrate run are different
+execution models, and a joined cross-project board should not have to guess which kind of
+thing a row is. The random suffix is what makes this an identity rather than a label:
+`make_task_id` can omit one because creating the task directory surfaces a collision, and an
+orchestrate run creates no directory.
+
+First slice of #548.
+
 ### Fixed
 
 **`rig-wb perf` and `rig-wb otel` did not exist.** Both features shipped in 2.8.0, both work,
