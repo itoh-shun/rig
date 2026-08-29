@@ -1179,10 +1179,18 @@ def cmd_fleet(args):
 
     Read-only, no side effects — no repository's `.rig/` data is ever written to. Meant for
     orgs/consultancies with multiple projects/clients, to compare per-persona detection power
-    across repositories. Repository paths are explicit only (no auto-discovery reaching out
-    over a network for anything).
+    across repositories.
+
+    Repositories are named explicitly with `--repos`, or discovered with `--discovered` from
+    `~/.rig/runs.jsonl` — the log every backend already mirrors, which records the project of
+    every run. That is still not auto-discovery in the sense this command has always refused:
+    nothing is scanned and no network is touched; rig is reading where it has actually been.
+    Discovery stays opt-in because the two produce different answers — `--repos` says "compare
+    these", `--discovered` says "show me everywhere I have run", and a default that silently
+    became the second would change what an existing invocation means.
     """
     repos_arg = None
+    discovered = False
     anonymize = False
     as_json = False
     i = 0
@@ -1191,6 +1199,9 @@ def cmd_fleet(args):
         if a == "--repos" and i + 1 < len(args):
             repos_arg = args[i + 1]
             i += 2
+        elif a == "--discovered":
+            discovered = True
+            i += 1
         elif a == "--anonymize":
             anonymize = True
             i += 1
@@ -1199,13 +1210,28 @@ def cmd_fleet(args):
             i += 1
         else:
             i += 1
-    if not repos_arg:
-        print("[ERROR] usage: fleet --repos <path1>,<path2>,... [--anonymize] [--json]")
+    if repos_arg and discovered:
+        # Silently unioning them would make the report's scope depend on which flag the reader
+        # noticed first, and there is no answer here that is not a guess at what was meant.
+        print("[ERROR] fleet: --repos and --discovered choose the repository list two "
+              "different ways; pass one")
+        sys.exit(1)
+    if not repos_arg and not discovered:
+        # Keeps the existing usage line's opening intact — an added option is no reason to
+        # change what an existing message says, and a test has been pinning this text.
+        print("[ERROR] usage: fleet --repos <path1>,<path2>,... | fleet --discovered  "
+              "[--anonymize] [--json]")
         sys.exit(1)
 
-    repo_paths = [pathlib.Path(p).expanduser().resolve() for p in repos_arg.split(",") if p.strip()]
+    if discovered:
+        from ..workbench.run_index import known_projects
+        names = known_projects()
+    else:
+        names = [p for p in repos_arg.split(",") if p.strip()]
+    repo_paths = [pathlib.Path(p).expanduser().resolve() for p in names]
     if not repo_paths:
-        print("[ERROR] --repos has no valid paths")
+        source = "no project has recorded a run yet" if discovered else "--repos has no valid paths"
+        print(f"[ERROR] fleet: nothing to report ({source})")
         sys.exit(1)
 
     per_repo = []

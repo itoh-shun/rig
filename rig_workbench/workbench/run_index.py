@@ -207,7 +207,28 @@ def _by_verifier(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     return total
 
 
-def run_index(*, limit: int = DEFAULT_LIMIT,
+def known_projects(*, path: pathlib.Path | None = None,
+                   tail_bytes: int | None = None) -> list[str]:
+    """Every project rig has recorded a run in, newest activity first.
+
+    This is what `orchestrate fleet` was missing. That command compares repositories on
+    per-persona detection rate and has always required the caller to name them — `--repos
+    a,b,c` — so it could only ever show you projects you already remembered. rig has been
+    recording where it ran the whole time; this reads that.
+
+    It is discovery from rig's own log and nothing else: no directory is scanned and no
+    network is touched, which is the property `cmd_fleet`'s docstring states and which a
+    filesystem walk would have quietly given up.
+    """
+    seen: dict[str, None] = {}
+    for row in run_index(limit=None, path=path, tail_bytes=tail_bytes)["rows"]:
+        project = row.get("project")
+        if isinstance(project, str) and project:
+            seen.setdefault(project, None)
+    return list(seen)
+
+
+def run_index(*, limit: int | None = DEFAULT_LIMIT,
                path: pathlib.Path | None = None,
                tail_bytes: int | None = None) -> dict[str, Any]:
     """One row per run, newest first, across every project that has recorded one.
@@ -249,7 +270,8 @@ def run_index(*, limit: int = DEFAULT_LIMIT,
             previous.update({k: v for k, v in row.items() if k != "attempts"})
             previous["attempts"] += 1
 
-    rows = _newest_first(ordered)[:limit]
+    sorted_rows = _newest_first(ordered)
+    rows = sorted_rows if limit is None else sorted_rows[:limit]
     return {
         "by_verifier": _by_verifier(rows),
         "path": str(target),
