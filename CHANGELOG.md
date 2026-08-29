@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Fixed
+
+**`rig-wb perf` and `rig-wb otel` did not exist.** Both features shipped in 2.8.0, both work,
+and both were written up in the READMEs — twelve times for `perf`, six for `otel`, including a
+line meant to be pasted straight into a CI job:
+
+```
+RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
+```
+
+Every one of those invocations answered `[ERROR] Unknown sub-command`. `rig-wb` forwards
+orchestrator subcommands through an allowlist and neither name was on it, so the features were
+reachable only as `scripts/orchestrate.py perf`. The release notes announced a command line
+that errors, on the release's own headline features.
+
+Two more of the same shape came out once something was actually checking. The governance
+walkthrough taught `rig-wb orchestrate next` and `rig-wb orchestrate approve` — a spelling with
+no subcommand behind it at all, so the whole human-approval example errored; `next` and
+`approve` are routed now and the prose says so. And `rig-wb context` is really `rig-wb wb
+context`, in both languages.
+
+This is the sharper kind of documentation drift. A stale sentence misleads a reader; these fail
+the moment somebody follows them, and they had been failing since release.
+
+`tests/test_docs_registry.py` now reads every `rig-wb <sub>` the docs teach and checks that
+`rig-wb` will accept it. Verified by deleting the routing again and watching it object — a
+sensor that would not have caught the defect it was written for is not a sensor. Nothing had
+ever compared the two lists, which is why four broken instructions accumulated.
+
+
 ### Added
 
 **Two registries nobody was checking are now checked** (#421, #392, #395, #385, #410 —

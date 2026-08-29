@@ -1118,13 +1118,13 @@ steps:
 ```
 
 ```console
-$ rig-wb orchestrate next
+$ rig-wb next
 ▶ AWAIT_APPROVAL: step `architecture_review` passed its gate and awaits human
   sign-off (0/1, from architect). Approve with `orchestrate approve architecture_review`.
 $ echo $?
 3                                    # parked on a person — not a failure, not a success
 
-$ RIG_ACTOR=olivia rig-wb orchestrate approve architecture_review --note "boundaries ok"
+$ RIG_ACTOR=olivia rig-wb approve architecture_review --note "boundaries ok"
 ▶ DONE: step `architecture_review` passed. All steps complete.
 ```
 
@@ -1174,7 +1174,7 @@ Three properties, because a hint that overstates itself is worse than none:
 
 - **A declaration beats a guess, and says which it was.** `--caller` / `RIG_CALLER` is what the operator stated; the environment is what rig inferred. The result carries both `source` and `declared`, so a consumer can weigh them differently instead of trusting an inference as far as a statement.
 - **Only Claude Code is detected.** Its variables are documented from measurement (§ context metering, verified against Claude Code 2.1.224 and 2.1.227). No marker is guessed for any other harness: one that fires on the wrong session is bad, and one that silently never fires while looking like coverage is worse. Those callers say so explicitly.
-- **Depth is not answered.** Claude Code hands a subagent's shell the same variables as the parent's, so rig can say *which* harness invoked it and not *at what depth*. There is no field for one, for the same reason `rig-wb context` reports no dispatch rate.
+- **Depth is not answered.** Claude Code hands a subagent's shell the same variables as the parent's, so rig can say *which* harness invoked it and not *at what depth*. There is no field for one, for the same reason `rig-wb wb context` reports no dispatch rate.
 
 **It is a hint.** It may inform runtime and reviewer selection; it never branches the quality rules. A gate that softens for one harness is not a gate, and it would soften exactly where nobody is watching — so the test suite checks structurally that no gate or acceptance path reads it.
 

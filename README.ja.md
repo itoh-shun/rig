@@ -980,13 +980,13 @@ steps:
 ```
 
 ```console
-$ rig-wb orchestrate next
+$ rig-wb next
 ▶ AWAIT_APPROVAL: step `architecture_review` passed its gate and awaits human
   sign-off (0/1, from architect). Approve with `orchestrate approve architecture_review`.
 $ echo $?
 3                                    # 人待ち＝失敗でも成功でもない
 
-$ RIG_ACTOR=olivia rig-wb orchestrate approve architecture_review --note "境界は妥当"
+$ RIG_ACTOR=olivia rig-wb approve architecture_review --note "境界は妥当"
 ▶ DONE: step `architecture_review` passed. All steps complete.
 ```
 
@@ -1036,7 +1036,7 @@ rig は人よりも**別のハーネス**から起動されることが増えて
 
 - **宣言は推測に勝ち、そのどちらだったかを伝える** — `--caller` / `RIG_CALLER` は操作者が述べたこと、環境変数は rig が推測したこと。結果は `source` と `declared` の両方を持つので、消費側は重み付けを変えられます。区別できない消費者は、推測を宣言と同じだけ信じてしまいます
 - **検出するのは Claude Code だけ** — その変数は実測から文書化されています（§ context 計測。Claude Code 2.1.224 / 2.1.227 で検証）。他のハーネスのマーカーは**推測しません**。誤ったセッションで発火するマーカーは悪く、カバレッジがあるように見えて黙って一度も発火しないマーカーはもっと悪い。そちらの呼び出し元は明示的に名乗ります
-- **深さには答えません** — Claude Code は subagent のシェルに親と同じ変数を渡すため、rig は「どのハーネスが呼んだか」は言えても「どの深さから呼んだか」は言えません。フィールド自体を置いていません。`rig-wb context` が dispatch 率を報告しないのと同じ理由です
+- **深さには答えません** — Claude Code は subagent のシェルに親と同じ変数を渡すため、rig は「どのハーネスが呼んだか」は言えても「どの深さから呼んだか」は言えません。フィールド自体を置いていません。`rig-wb wb context` が dispatch 率を報告しないのと同じ理由です
 
 **これは hint です。** runtime と reviewer の選択には使ってよく、**品質ルールを分岐させることは決してありません**。あるハーネスに対してだけ緩むゲートはゲートではなく、しかも誰も見ていない場所で緩みます。ゲートや acceptance の経路がこれを読んでいないことを、テストが構造的に検査します。
 
