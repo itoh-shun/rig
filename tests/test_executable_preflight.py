@@ -129,7 +129,7 @@ def test_tampered_resume_state_blocks_before_provider_and_without_retry(
     monkeypatch.setattr(
         providers,
         "telemetry_append",
-        lambda *_args: pytest.fail("blocked preflight wrote telemetry"),
+        lambda *_args, **_kwargs: pytest.fail("blocked preflight wrote telemetry"),
     )
     final = providers.run_loop(loaded, None, "mock", "mock", {}, 4)
     assert final == "BLOCKED" and calls == []
@@ -178,7 +178,9 @@ def test_manual_only_provenance_blocks_known_gate_new_load_resume_and_run_loop(
         providers, "_execute_step", lambda *_args: pytest.fail("provider was called"),
     )
     monkeypatch.setattr(
-        providers, "telemetry_append", lambda *_args: pytest.fail("telemetry was written"),
+        providers,
+        "telemetry_append",
+        lambda *_args, **_kwargs: pytest.fail("telemetry was written"),
     )
     assert providers.run_loop(loaded, None, "mock", "mock", {}, 4) == "BLOCKED"
     assert not marker.exists()
@@ -297,7 +299,7 @@ def test_dag_rechecks_before_later_wave_and_never_runs_newly_unsupported_step(
             state_arg["steps"][1]["gate"] = "custom-vote"
 
     monkeypatch.setattr(providers, "_execute_step", execute)
-    monkeypatch.setattr(providers, "telemetry_append", lambda *_args: None)
+    monkeypatch.setattr(providers, "telemetry_append", lambda *_args, **_kwargs: None)
     final = providers.run_loop(state, None, "mock", "mock", {}, 4)
     assert final == "BLOCKED"
     assert calls == ["first"]
