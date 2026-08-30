@@ -118,5 +118,9 @@ def _record_task_run(root: pathlib.Path, task: dict, status: str) -> None:
         # `perf` and `run_id` already follow — a null here would put every run without a
         # declared issue into a group of its own.
         **({"issue": task["issue"]} if isinstance(task.get("issue"), dict) else {}),
+        # Same absent-not-null rule, and the same reason the issue block follows it. The log
+        # carried no caller at all before this: measured across 370 records here, `caller`
+        # appeared in none, so a board column for who invoked a run had nothing to read.
+        **({"caller": task["caller"]} if isinstance(task.get("caller"), dict) else {}),
         "steps": steps,
     })
