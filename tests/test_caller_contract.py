@@ -208,3 +208,71 @@ def test_an_ordinary_name_still_passes_untouched():
     above while breaking the feature."""
     assert caller.detect(declared="Some-Harness_2").id == "some-harness_2"
     assert caller.detect(declared="  codex  ").id == "codex"
+
+
+def test_the_session_id_is_kept_as_a_value_not_only_as_a_marker(monkeypatch):
+    """`CLAUDE_CODE_SESSION_ID` was consulted only for whether it was set — the harness was
+    named and the identity thrown away (#548, slice 4). A board asking which session is
+    against which issue needs the value, and it has been in the environment all along."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-abc123")
+    monkeypatch.delenv("RIG_CALLER", raising=False)
+
+    detected = caller.detect()
+
+    assert detected.id == "claude-code"
+    assert detected.session == "s-abc123"
+
+
+def test_a_session_is_recorded_even_when_the_caller_was_declared(monkeypatch):
+    """`declared` is about who is calling. Which session the process sits in is an
+    observation about the environment either way, and losing it because an operator named
+    their harness would make the column depend on an unrelated flag."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-abc123")
+
+    assert caller.detect("my-harness").session == "s-abc123"
+    assert caller.detect("my-harness").declared is True
+
+
+def test_no_session_outside_a_harness(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    monkeypatch.delenv("RIG_CALLER", raising=False)
+
+    assert caller.detect().session is None
+    assert "session" not in caller.detect().as_record()
+
+
+@pytest.mark.parametrize("value", ["a\nb", "a\rb", "x" * 129, "  ", "a​b"])
+def test_a_session_id_that_would_lie_in_the_log_is_dropped_not_raised(monkeypatch, value):
+    """Nobody typed this. Failing a run because the surrounding harness exported something
+    malformed would punish the operator for something they did not do — but it is echoed
+    into a board, so it is not carried either. Absent and wrong are different things."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", value)
+
+    detected = caller.detect()
+
+    assert detected.session is None
+    assert detected.id == "claude-code", "the marker still names the harness"
+
+
+def test_the_record_omits_the_session_rather_than_writing_null(monkeypatch):
+    """This block is mirrored into a log read by aggregation that treats a present key as a
+    recorded fact. A null would make "not in a harness" a session of its own."""
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    monkeypatch.delenv("RIG_CALLER", raising=False)
+
+    assert caller.detect().as_record() == {"id": "unknown", "source": "none",
+                                           "declared": False}
+
+
+def test_the_record_has_nowhere_to_put_a_session_hierarchy(monkeypatch):
+    """The same refusal as `depth`, one level out. A session column is a fact; a session tree
+    drawn from the same variables would be a drawing."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-abc123")
+    monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
+
+    record = caller.detect().as_record()
+
+    assert set(record) == {"id", "source", "declared", "session"}
+    assert not {"parent", "parent_session", "depth", "children"} & set(record)

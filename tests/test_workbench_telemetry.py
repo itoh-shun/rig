@@ -300,3 +300,32 @@ def test_a_missing_run_directory_does_not_propagate(tmp_path, global_mirror):
     record_task_run(tmp_path, task(), "accepted")
 
     assert read_runs(tmp_path) == []
+
+
+def test_the_declared_issue_is_mirrored_into_the_log(task_repo):
+    """The join the issue axis needs (#548). The task record is per-project; the log is the
+    only store that spans projects, so a reference that stops at `task.json` cannot be
+    grouped on by anything looking across repositories."""
+    record_task_run(task_repo, task(issue={"ref": "owner/repo#7", "source": "flag",
+                                           "declared": True}), "accepted")
+
+    assert read_runs(task_repo)[0]["issue"] == {"ref": "owner/repo#7", "source": "flag",
+                                                "declared": True}
+
+
+def test_a_task_with_no_issue_leaves_the_key_out_entirely(task_repo):
+    """Absent, not null. This log is read by aggregation that treats a present key as a
+    recorded fact — the rule `perf` and `run_id` already follow — and a null would make every
+    run without a declared issue a group of its own."""
+    record_task_run(task_repo, task(), "accepted")
+
+    assert "issue" not in read_runs(task_repo)[0]
+
+
+@pytest.mark.parametrize("value", ["owner/repo#7", 7, [], None])
+def test_only_the_block_shape_is_mirrored(task_repo, value):
+    """`task.json` is a file on disk that a person can edit. Mirroring whatever it holds
+    would put a shape the reader cannot interpret into the log that several tools join on."""
+    record_task_run(task_repo, task(issue=value), "accepted")
+
+    assert "issue" not in read_runs(task_repo)[0]
