@@ -89,6 +89,21 @@ def subprocess_timeout(measured_seconds: float) -> float:
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolate_ambient_worktree_runtime(monkeypatch):
+    """Keep runtime selection independent of the developer's host session.
+
+    Tests that exercise Orca set these variables themselves after this fixture runs, while
+    every other test — including subprocesses spawned from it — gets the native default.
+    Import the names from the detector so the suite follows the production environment
+    contract instead of maintaining a second hard-coded list.
+    """
+    from rig_workbench.workbench import orca
+
+    for name in (orca.WORKTREE_VAR, orca.WORKSPACE_VAR):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def step_factory():
     """Build a minimal step dict with the full key set new_state/compute_next expect."""
