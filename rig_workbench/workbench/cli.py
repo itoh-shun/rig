@@ -111,6 +111,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="name the harness invoking rig, recorded on the task for its assurance "
                         "receipt (#416, #428). This is a declaration; without it rig records only "
                         "what it can infer from the environment, marked as an inference")
+    p.add_argument("--issue", metavar="REF",
+                   help="the issue this run is against (#123, or owner/repo#123), recorded on "
+                        "the task and mirrored into the cross-project log so the board can group "
+                        "runs by issue (#548). A declaration: rig never reads a reference out of "
+                        "the task text, because mentioning an issue is not working on one")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("import", help="register a change rig did not produce — an external "

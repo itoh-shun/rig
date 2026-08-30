@@ -131,6 +131,20 @@ def _generators(steps: list[Any]) -> dict[str, Any]:
     return {"models": sorted(models), "unmeasured": unmeasured}
 
 
+def _issue_ref(block: Any) -> str | None:
+    """The declared reference, or `None`.
+
+    Only a block rig itself wrote is read, and only its `ref`. The log is append-only text
+    that several writers touch, so a record carrying an `issue` of some other shape is a
+    record this cannot interpret — reporting `None` says that, where coercing it to a string
+    would invent a group with a name nobody chose.
+    """
+    if not isinstance(block, dict):
+        return None
+    ref = block.get("ref")
+    return ref if isinstance(ref, str) and ref else None
+
+
 def _row(record: dict[str, Any]) -> dict[str, Any]:
     steps = record.get("steps")
     steps = steps if isinstance(steps, list) else []
@@ -145,6 +159,7 @@ def _row(record: dict[str, Any]) -> dict[str, Any]:
         "backend": record.get("backend"),
         "final": record.get("final"),
         "task_id": record.get("task_id"),
+        "issue": _issue_ref(record.get("issue")),
         "steps_total": record.get("steps_total"),
         "steps_passed": record.get("steps_passed"),
         "failure_mode": record.get("failure_mode"),
@@ -205,6 +220,43 @@ def _by_verifier(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
             for outcome in ("ok", "not_ok", "unknown"):
                 running[outcome] += counts.get(outcome, 0)
     return total
+
+
+def _by_issue(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Runs grouped by the issue they declared, in the past tense and only the past tense.
+
+    The question this exists for — "which session is working on issue #N" — is a claim about
+    the present, and this log cannot support one. A run that crashed or was abandoned leaves
+    a record saying `RUNNING` forever, so a cell rendered as "in progress" would be asserting
+    something nobody observed. Every key here is therefore about what was last *recorded*:
+    `last_final` is the outcome of the newest record for the issue and `last_ts` is when that
+    record was written, and neither becomes "active" no matter how recent it is. Whether that
+    is recent enough to act on is the reader's call, which is why the timestamp is handed over
+    instead of a freshness verdict computed from it.
+
+    Rows arrive newest first, so the first row seen for an issue is its newest.
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        ref = row.get("issue")
+        if not isinstance(ref, str) or not ref:
+            continue
+        entry = grouped.get(ref)
+        if entry is None:
+            grouped[ref] = {
+                "runs": 1,
+                "last_final": row.get("final"),
+                "last_ts": row.get("ts"),
+                "last_run_id": row.get("run_id"),
+                "projects": [row["project"]] if isinstance(row.get("project"), str) else [],
+            }
+            continue
+        entry["runs"] += 1
+        if isinstance(row.get("project"), str) and row["project"] not in entry["projects"]:
+            entry["projects"].append(row["project"])
+    for entry in grouped.values():
+        entry["projects"].sort()
+    return grouped
 
 
 def known_projects(*, path: pathlib.Path | None = None,
@@ -273,6 +325,7 @@ def run_index(*, limit: int | None = DEFAULT_LIMIT,
     sorted_rows = _newest_first(ordered)
     rows = sorted_rows if limit is None else sorted_rows[:limit]
     return {
+        "by_issue": _by_issue(rows),
         "by_verifier": _by_verifier(rows),
         "path": str(target),
         "exists": target.exists(),
