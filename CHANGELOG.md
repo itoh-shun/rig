@@ -2,6 +2,105 @@
 
 ## Unreleased
 
+### Added
+
+**An orchestrate run now has an identity.** It had none: the state carried `recipe`, `goal`,
+`steps` and `cursor`, and the telemetry record in `.rig/runs.jsonl` identified a run by
+timestamp, recipe and project. So a board row could not point at the run behind it — there
+was nothing to point with — and two runs of the same recipe starting in the same second had
+one record's worth of identity between them. That is not a theoretical case: the queue
+dispatches items in parallel by design.
+
+`run_id` is minted once in `new_state` as `orc-<YYYYMMDD>-<HHMMSS>-<recipe>-<6 hex>` and
+carried through `save_state`/`load_state`, so a run that stops and resumes stays one run. It
+is written into both the per-project log and the global mirror, and it is absent rather than
+null for a state written before it existed — this log is read by aggregation that treats a
+present key as a measured fact.
+
+`orc-` rather than `rig-` because a workbench task and an orchestrate run are different
+execution models, and a joined cross-project board should not have to guess which kind of
+thing a row is. The random suffix is what makes this an identity rather than a label:
+`make_task_id` can omit one because creating the task directory surfaces a collision, and an
+orchestrate run creates no directory.
+
+First slice of #548.
+
+**Mission Control's snapshot reads the cross-project run log.** rig keeps two run stores and
+the board opened one of them. `.rig/runs/<task_id>/` is rich and scoped to the project the
+board was started in; `~/.rig/runs.jsonl` is the append-only mirror every backend writes,
+carrying `project` on every record — and until now only `rig-wb usage` had ever read it. The
+single-repository view was less a missing feature than an unopened file.
+
+`snapshot["run_index"]` is a projection over that log: one row per run, newest first, across every
+project that has recorded one. Four refusals are built into it. A run that stopped and resumed
+appends twice under one id, so rows collapse by `run_id` and report `attempts` rather than
+showing one run as two or hiding that it took two goes. Records from before run ids existed
+are never collapsed — two id-less records sharing a recipe are not evidence of one run.
+Timestamps are compared as instants and not as text, because they are written with the writing
+machine's local offset and a cross-project log is exactly where offsets meet. And an
+unreadable line is counted rather than dropped: every writer of this log swallows its own
+failures by design, so a half-written final line is normal, and a board that quietly showed
+nine of ten runs would be worse than one that showed nine and said so.
+
+Only the log's tail is read, and `truncated` says when the view is a tail. The board polls and
+the log never shrinks.
+
+Second slice of #548.
+
+**The board can see which provider verified what.** rig's central claim is that the generator
+and the verifier are separate roles that can run on different providers — and until now there
+was nowhere that claim could be seen. The data had been accumulating the whole time:
+`verdicts[].by` is written as `provider:persona` on every reviewed step.
+
+Each fleet row now carries verdict outcomes per verifier provider, and the snapshot carries
+`by_verifier` totalled across the rows shown. Counts, never a rate: a ratio hides its
+denominator, and one verdict at 1.0 and a hundred verdicts at 1.0 are not the same
+measurement. `ok`, `not_ok` and `unknown` are three separate counters, because a verdict whose
+outcome was never recorded is an absence rather than a failure, and folding the two would make
+a provider look worse for a defect in the record instead of in its judgement.
+
+**No quality score, and a test that keeps it that way.** `/rig:drill` measures reviewer
+detection by injecting known-bad code and counting what each persona catches. A verdict pass
+rate over live runs is a different quantity — it moves with what was submitted, not only with
+who judged it — and publishing it under a name the drill's number has earned would be the
+substitution this project refuses everywhere else.
+
+The generator side is reported as the asymmetry it is. `steps[].model` is null for 368 of the
+432 steps in the log this was written against: the field means the provider's default was used
+and which model that was is not known here (#293). Rendering that as a name would invent one
+and rendering it as a blank cell would read as "none", so unrecorded models are counted, and
+the board can say how much of the generator side it cannot see.
+
+Third slice of #548.
+
+The projection is `run_index` and not `fleet`. `fleet` already means two other things: an
+explicit multi-repository comparison of per-persona detection rate
+(`orchestrate fleet --repos a,b`, #272) and the governance conformance rollup
+`evidence.fleet_snapshot` reads from `.rig/fleet.json` — which already owns the `fleet` key in
+the snapshot this is attached to, and which a first version of this quietly replaced.
+
+**`fleet` can find your projects instead of asking you to remember them.**
+`fleet --repos a,b,c` compares repositories on per-persona detection rate and has always
+required the caller to name them, so it could only ever show you projects you already
+remembered. rig has been recording where it ran the whole time. `fleet --discovered` takes the
+repository list from `~/.rig/runs.jsonl`, the log every backend already mirrors — on the
+machine this was written on, eleven repositories that `--repos` would have needed spelling out.
+
+This is the extension the cross-project work should have been from the start: discovery is a
+flag on the command that already owned this idea, and the projection over the global log is
+the shared data layer beneath both it and the board.
+
+It is still not the auto-discovery this command has always refused: nothing is scanned and no
+network is touched — rig reads where it has actually been, and a filesystem walk would have
+turned a rollup of rig's own work into a survey of the disk. Discovery stays opt-in because
+the two answer different questions (`--repos` says "compare these", `--discovered` says "show
+me everywhere I have run"), and passing both is refused rather than unioned, which would make
+the report's scope depend on which flag the reader noticed first.
+
+`fleet` is also reachable from `rig-wb` now. It was routed only through
+`scripts/orchestrate.py`, the historical entrypoint rather than the installed one — the same
+gap #544 closed for `perf`, `otel`, `orchestrate next` and `orchestrate approve`.
+
 ### Fixed
 
 **`rig-wb perf` and `rig-wb otel` did not exist.** Both features shipped in 2.8.0, both work,

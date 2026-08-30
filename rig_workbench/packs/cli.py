@@ -92,6 +92,10 @@ def _parser() -> argparse.ArgumentParser:
     test.add_argument("--command", dest="provider_command")
     test.add_argument("--judge-command")
     test.add_argument("--timeout", type=float, default=30)
+    test.add_argument("--draft", metavar="CASE_ID",
+                      help="measure a draft case from .rig/evals/drafts/ against this pack's "
+                           "composed prompt, before the pack has an approved case; the "
+                           "evidence it writes is what `eval promote --into` then needs")
     test.add_argument("--result-dir")
     test.add_argument("--allow-paid-provider", action="store_true")
     test.add_argument("--json", action="store_true")
@@ -473,7 +477,7 @@ def cmd_pack(argv: list[str]) -> int:
                 judge_model=args.judge_model, command=args.provider_command,
                 judge_command=args.judge_command, timeout=args.timeout,
                 result_dir=args.result_dir,
-                allow_paid_provider=args.allow_paid_provider,
+                allow_paid_provider=args.allow_paid_provider, draft=args.draft,
             )
             if args.json:
                 print(canonical(report), end="")
