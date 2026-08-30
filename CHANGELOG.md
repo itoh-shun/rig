@@ -4,6 +4,34 @@
 
 ### Added
 
+**A run can say which issue it is against (#548, slice 3).** Nothing linked a run to an
+issue. The queue came closest and only in the other direction — `queue_set_status(...,
+task_id=...)` writes the link onto the *item* — and its `gh` branch, the backend this axis
+is about, relabels, comments and closes the issue while dropping the task id entirely. So a
+board grouping runs by issue had nothing to group on.
+
+`rig-wb wb new --issue <ref>` records `{"ref", "source", "declared"}` on the task and mirrors
+it into `~/.rig/runs.jsonl`, where `run_index` projects it onto the row and groups by it.
+Absent, not null, when nothing was declared: this log is read by aggregation that treats a
+present key as a recorded fact, the rule `perf` and `run_id` already follow.
+
+Only `#123` and `owner/repo#123` are accepted, and the reference is resolved before a
+worktree exists so a bad one fails without leaving anything behind. A pasted URL is refused
+with a message naming the two forms rather than being converted: deriving `owner/repo#n`
+from a URL means deciding which hosts map to that shape, and a wrong mapping produces a
+reference that resolves to somebody else's issue.
+
+**The reference is never read out of the task's text.** A task that says "like we discussed
+in #12" is not a task against #12, and a column headed by an issue number would be reporting
+an inference. Same split `caller` keeps between what an operator declared and what rig
+guessed.
+
+**And the grouping speaks only in the past tense.** "Which session is working on #N" is a
+claim about the present that this log cannot support: a run that crashed or was abandoned
+leaves a record saying `RUNNING` for as long as the log survives. So `by_issue` carries
+`runs`, `last_final`, `last_ts`, `last_run_id` and `projects` — what was last recorded and
+when — and never an `active` or `in_progress`. A test pins the key set.
+
 **An orchestrate run now has an identity.** It had none: the state carried `recipe`, `goal`,
 `steps` and `cursor`, and the telemetry record in `.rig/runs.jsonl` identified a run by
 timestamp, recipe and project. So a board row could not point at the run behind it — there
