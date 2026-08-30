@@ -286,10 +286,17 @@ def _pid_is_running(pid: int) -> bool:
 @pytest.mark.skipif(os.name != "posix", reason="process-group cancellation requires POSIX")
 def test_cancellation_terminates_parent_and_complete_process_group(tmp_path):
     pid_file = tmp_path / "pids"
+    # The pids are published by rename, not by writing in place. The poller below waits on
+    # the file existing, and `write_text` creates it empty before it writes — so an in-place
+    # write lets the read land on a truncated file and fail with an unpacking error that
+    # says nothing about cancellation, which is what this test is for. `os.replace` is
+    # atomic within a filesystem, so the file exists only once it is complete.
     parent_code = (
         "import os, pathlib, subprocess, sys, time; "
         "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
-        "pathlib.Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}'); "
+        "path=pathlib.Path(sys.argv[1]); staged=path.with_name(path.name + '.partial'); "
+        "staged.write_text(f'{os.getpid()} {child.pid}'); "
+        "os.replace(staged, path); "
         "time.sleep(60)"
     )
 
