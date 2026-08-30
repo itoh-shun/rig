@@ -165,6 +165,7 @@ def test_pack(
     if bool(judge_provider) != bool(judge_model):
         raise PackError("judge provider and judge model must be specified together")
     try:
+        cases_to_run = _cases_to_run(pack, manifest, case_paths, project_path, draft)
         # The same 0555 workspace the eval harness builds, cleanup and "not inside the
         # measured tree" check included, rather than a second hand-rolled one. Unlike
         # `eval`, pack evaluation runs *both* adapters from it and never routes through
@@ -178,7 +179,7 @@ def test_pack(
             ) if judge_provider and judge_model else None
             results: list[dict] = []
             result_paths: list[str] = []
-            for case in _cases_to_run(pack, manifest, case_paths, project_path, draft):
+            for case in cases_to_run:
                 prompt = compose_case_prompt(pack, manifest, case, project=project_path)
                 binding = prompt_binding_sha256(manifest, case, prompt)
                 result_path, result = run_case(
@@ -208,10 +209,7 @@ def test_pack(
         status, code = "non_quality_mock", 0
         failures = []
     else:
-        by_id = {}
-        for rel in case_paths:
-            _raw, case = read_json_yaml(pack / rel)
-            by_id[case["id"]] = case
+        by_id = {case["id"]: case for case in cases_to_run}
         failures = sorted({failure for result in results
                            for failure in quality_result_failures(
                                result, by_id[result["case_id"]], provider=provider,
