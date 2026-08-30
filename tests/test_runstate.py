@@ -223,4 +223,11 @@ def test_compute_next_deterministic(step_factory):
     t1, s1 = run()
     t2, s2 = run()
     assert t1 == t2 == ["START", "ADVANCE", "START", "DONE"]
-    assert s1 == s2
+    # Identity is excluded, and its absence is asserted separately below rather than dropped:
+    # `run_id` is deliberately *not* deterministic — two runs of one recipe in the same second
+    # must be told apart, which is what its random suffix is for. What this test is about is
+    # that the state machine's own output is reproducible, so it compares everything the
+    # machine decides and nothing about which run happened to make the decisions.
+    assert {k: v for k, v in s1.items() if k != "run_id"} == \
+           {k: v for k, v in s2.items() if k != "run_id"}
+    assert s1["run_id"] != s2["run_id"]

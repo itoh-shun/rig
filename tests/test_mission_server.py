@@ -205,3 +205,62 @@ def test_the_write_side_still_needs_its_token(live_server):
     port = live_server.server_address[1]
     status, _ = _request(live_server, "POST", "/api/jobs", host=f"127.0.0.1:{port}")
     assert status == 403
+
+
+def test_the_snapshot_carries_the_cross_project_run_index(tmp_path, monkeypatch):
+    """Mission Control read `.rig/runs/` and nothing else, so its view ended at the repository
+    it was started in. `~/.rig/runs.jsonl` has carried `project` on every record the whole
+    time; this is the snapshot finally opening it."""
+    import json
+
+    from rig_workbench import mission_server
+    from rig_workbench.orchestrate import config
+
+    log = tmp_path / "global-runs.jsonl"
+    log.write_text("".join(json.dumps(record) + "\n" for record in (
+        {"run_id": "orc-a", "ts": "2026-08-29T00:00:00+00:00", "recipe": "bugfix",
+         "backend": "orchestrate", "final": "DONE", "project": "/elsewhere", "steps": []},
+        {"run_id": "orc-b", "ts": "2026-08-29T01:00:00+00:00", "recipe": "review-only",
+         "backend": "workbench", "final": "DONE", "project": "/another", "steps": []},
+    )), encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", log)
+
+    index = mission_server.live_snapshot(tmp_path)["run_index"]
+
+    assert index["projects"] == ["/another", "/elsewhere"]
+    assert [row["run_id"] for row in index["rows"]] == ["orc-b", "orc-a"]
+
+
+def test_a_machine_with_no_global_log_still_renders(tmp_path, monkeypatch):
+    """The board must open on a machine that has never finished a run — the empty state is a
+    thing to draw, not an exception to raise inside a request handler."""
+    from rig_workbench import mission_server
+    from rig_workbench.orchestrate import config
+
+    monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "nothing-here.jsonl")
+
+    index = mission_server.live_snapshot(tmp_path)["run_index"]
+
+    assert index["exists"] is False and index["rows"] == []
+
+
+def test_the_run_index_does_not_take_the_governance_fleet_key(tmp_path, monkeypatch):
+    """The sensor for a mistake already made. `build_snapshot` puts the multi-repository
+    governance conformance rollup under `fleet`, and `mission_control._render_fleet` reads it
+    from there. A first version of the cross-project run index was written to that same key,
+    silently replacing one measurement with an unrelated one that happened to be about several
+    projects too.
+
+    Nothing caught it: the new tests asserted the new shape and found it, and no existing test
+    covered what `live_snapshot` leaves in `fleet`. This asserts both keys, so the two
+    meanings cannot merge again."""
+    from rig_workbench import mission_server
+    from rig_workbench.orchestrate import config
+
+    monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "none.jsonl")
+
+    snapshot = mission_server.live_snapshot(tmp_path)
+
+    assert set(snapshot["fleet"]) >= {"configured"}          # the governance rollup, intact
+    assert "rows" not in snapshot["fleet"]
+    assert set(snapshot["run_index"]) >= {"rows", "projects"}

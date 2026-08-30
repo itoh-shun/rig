@@ -236,6 +236,10 @@ def _run_bench(argv: list[str]) -> None:
 # `_orch_delegates` and passed straight to orchestrate's COMMANDS
 # (a thin wrapper is enough).
 _orch_delegates = {
+    # Cross-project rollup. It was reachable only through `scripts/orchestrate.py`, which is
+    # the historical entrypoint rather than the installed one — so the command that answers
+    # "how are my projects doing" could not be run from the CLI people install.
+    "fleet",
     "run",
     "plan",
     "runs",

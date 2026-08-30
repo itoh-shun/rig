@@ -120,7 +120,21 @@ def _core_reference_ids() -> set[tuple[str, str]]:
             if asset.kind in PROMPT_KINDS}
 
 
-def validate_pack(path: pathlib.Path | str) -> dict:
+def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) -> dict:
+    """Validate a pack. `require_evaluation=False` drops exactly one rule, for exactly one
+    caller.
+
+    A prompt-bearing pack must carry an approved evaluation case, and approving a case needs
+    evidence, and evidence bound to *this pack's prompt* comes only from `pack test` — which
+    validates first. A new pack therefore could not be measured with its own prompt before it
+    was approved, or approved without being measured.
+
+    The bootstrap breaks that circle at its narrowest point: `pack test --draft` runs a draft
+    case against the composed prompt on a pack that is structurally sound but has no approved
+    case yet. Every other rule still applies, and every other caller still requires the case —
+    install, publish, invoke and plain `validate` are unchanged, so nothing reaches a user
+    through this door.
+    """
     supplied = pathlib.Path(path)
     if supplied.is_symlink():
         raise PackError("pack root symlink is forbidden")
@@ -198,7 +212,8 @@ def validate_pack(path: pathlib.Path | str) -> dict:
             if destructive_scan_file(asset, item):
                 raise PackError(f"destructive content in asset: {item}")
     if prompt_ids and not manifest["assets"]["eval-case"]:
-        raise PackError("prompt-bearing pack requires at least one evaluation case")
+        if require_evaluation:
+            raise PackError("prompt-bearing pack requires at least one evaluation case")
     core_ids = _core_reference_ids()
     available = ids | core_ids
     parsed_references: set[tuple[str, str]] = set()
@@ -251,7 +266,12 @@ def validate_pack(path: pathlib.Path | str) -> dict:
                 f"entrypoint target is not owned: {entrypoint['id']}->{target[0]}:{target[1]}"
             )
         surface_kind = "contract" if target[0] == "output-contract" else target[0]
-        if f"{surface_kind}:{target[1]}" not in eval_surfaces:
+        # Relaxed by the same flag and for the same reason: with no approved case,
+        # `eval_surfaces` is empty, so every entrypoint fails coverage. Both rules say "this
+        # pack has no approved evaluation case yet" in different words, and a bootstrap that
+        # cleared only the first would still be unable to compose a prompt — which is the
+        # whole point of the run.
+        if require_evaluation and f"{surface_kind}:{target[1]}" not in eval_surfaces:
             raise PackError(f"entrypoint lacks evaluation coverage: {entrypoint['id']}")
     return manifest
 

@@ -44,6 +44,7 @@ from .mission_jobs import (
 )
 from .mission_ui import interactive_html
 from .workbench.config import TASK_TYPES
+from .workbench.run_index import run_index
 from .workbench.reporting import read_all_tasks
 from .workbench.state import gate_status, load_json, runs_dir
 
@@ -189,6 +190,17 @@ def live_snapshot(root: pathlib.Path) -> dict[str, Any]:
         "force_available": False,
     }
     snapshot["jobs"] = durable_snapshot(root)
+    # The other run store. Everything above is this project's `.rig/runs/`; this is the
+    # append-only mirror every backend writes, which carries `project` on each record and
+    # which nothing but `rig-wb usage` had ever opened. It is a projection and never a
+    # command surface: rows are read, and the only actions the board offers stay bound to
+    # the local tasks it can actually reach.
+    #
+    # Not `snapshot["fleet"]`: `build_snapshot` already puts the governance conformance
+    # rollup there and `mission_control._render_fleet` reads it, so writing runs into that
+    # key replaced one measurement with an unrelated one of the same name. Caught by
+    # noticing the key was taken, not by a test — so a test guards it now.
+    snapshot["run_index"] = run_index()
     return snapshot
 
 

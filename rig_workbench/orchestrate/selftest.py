@@ -155,6 +155,9 @@ def cmd_selftest(_args):
     j_waves = stateJ.get("waves")
 
     ok = True
+    def _without_run_id(state):
+        return {k: v for k, v in state.items() if k != "run_id"}
+
     def report(name, got, exp, det=""):
         nonlocal ok
         good = (got == exp)
@@ -164,7 +167,17 @@ def cmd_selftest(_args):
     print("## orchestrate selftest (proof of determinism)")
     report("A happy-path transition trace", tA1, expectA)
     report("A repeat run is identical (determinism)", tA2, tA1, "same input → same transitions")
-    report("A final states are identical", json.dumps(stA1, sort_keys=True), json.dumps(stA2, sort_keys=True))
+    # `run_id` is excluded, and its difference is asserted on the next line rather than
+    # dropped. What this scenario proves is that the *state machine* is reproducible — same
+    # input, same decisions — and a run's identity is deliberately not reproducible: two runs
+    # of one recipe starting in the same second have to be tellable apart, which is what its
+    # random suffix is for. Comparing the whole dict would make the proof of determinism fail
+    # on the one field that must never be deterministic.
+    report("A final states are identical (identity excluded)",
+           json.dumps(_without_run_id(stA1), sort_keys=True),
+           json.dumps(_without_run_id(stA2), sort_keys=True))
+    report("A the two runs are still distinguishable", stA1["run_id"] != stA2["run_id"], True,
+           "identity is not part of what determinism promises")
     report("A done=True", stA1["done"], True)
     report("A2 acceptance-gate + passing checks + NO verdict does not pass (#496)",
            tA2c, expectA2, "checks[] are a precondition for the verdict, not a substitute")
