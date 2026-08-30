@@ -3642,7 +3642,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     if any(s["needs"] for s in state["steps"]):
         final = run_dag(state, sp, gen_list, ver, cfg, max_steps, quiet, max_parallel, quorum)
         _seal_run_accounting(state, cfg, started, log)
-        telemetry_append(state, final)
+        telemetry_append(state, final, caller_record=_caller_record())
         return final
     iters, last = 0, "—"
     while iters < max_steps:
@@ -3673,8 +3673,26 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     if sp:
         save_state(state, sp)
     _seal_run_accounting(state, cfg, started, log)
-    telemetry_append(state, last)
+    telemetry_append(state, last, caller_record=_caller_record())
     return last
+
+
+def _caller_record() -> dict:
+    """Who invoked rig, resolved here and handed to the telemetry writer (#548, slice 4).
+
+    Here rather than in `runstate`, which holds gate evaluation and which
+    `test_caller_contract` forbids from mentioning the caller at all — a gate that can see
+    who called it is a gate that can soften for one harness. This is the driver: it already
+    decides what to run and with which provider, and resolving an attribution here keeps the
+    decision and the gate in different files.
+
+    Imported late for the same reason the rest of this module defers: `rig_workbench.caller`
+    pulls in `workbench.injection` for the shared list of characters that make printed text
+    lie, and the orchestrator should not need the workbench package to start.
+    """
+    from rig_workbench import caller as caller_mod
+
+    return caller_mod.detect().as_record()
 
 
 def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,

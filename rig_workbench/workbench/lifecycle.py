@@ -231,8 +231,7 @@ def cmd_new(args: argparse.Namespace) -> None:
     # so the receipt can keep an operator's statement apart from rig's own guess —
     # flattening them is how a heuristic becomes a fact (`rig_workbench/caller.py`).
     _caller = caller.detect(getattr(args, "caller", None))
-    task["caller"] = {"id": _caller.id, "source": _caller.source,
-                      "declared": _caller.declared}
+    task["caller"] = _caller.as_record()
     if _issue is not None:
         task["issue"] = _issue
     _binding = govern_identity.load_org_binding(root)

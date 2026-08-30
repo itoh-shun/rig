@@ -145,6 +145,29 @@ def _issue_ref(block: Any) -> str | None:
     return ref if isinstance(ref, str) and ref else None
 
 
+def _caller_id(block: Any) -> str | None:
+    """Which harness invoked the run, or `None` when the record predates the field."""
+    if not isinstance(block, dict):
+        return None
+    value = block.get("id")
+    return value if isinstance(value, str) and value else None
+
+
+def _session_id(block: Any) -> str | None:
+    """The harness session, or `None`.
+
+    Flat, and there is nowhere here to put anything else. Claude Code hands a subagent's
+    shell the same variables it hands the parent's, so nothing in this log distinguishes a
+    child session from the session that dispatched it. A session column is a fact; a session
+    *tree* drawn from the same evidence would be a drawing. `context_meter` refuses to publish
+    a dispatch rate on exactly this ground.
+    """
+    if not isinstance(block, dict):
+        return None
+    value = block.get("session")
+    return value if isinstance(value, str) and value else None
+
+
 def _row(record: dict[str, Any]) -> dict[str, Any]:
     steps = record.get("steps")
     steps = steps if isinstance(steps, list) else []
@@ -160,6 +183,8 @@ def _row(record: dict[str, Any]) -> dict[str, Any]:
         "final": record.get("final"),
         "task_id": record.get("task_id"),
         "issue": _issue_ref(record.get("issue")),
+        "caller": _caller_id(record.get("caller")),
+        "session": _session_id(record.get("caller")),
         "steps_total": record.get("steps_total"),
         "steps_passed": record.get("steps_passed"),
         "failure_mode": record.get("failure_mode"),
@@ -249,13 +274,21 @@ def _by_issue(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                 "last_ts": row.get("ts"),
                 "last_run_id": row.get("run_id"),
                 "projects": [row["project"]] if isinstance(row.get("project"), str) else [],
+                "sessions": [row["session"]] if isinstance(row.get("session"), str) else [],
             }
             continue
         entry["runs"] += 1
-        if isinstance(row.get("project"), str) and row["project"] not in entry["projects"]:
-            entry["projects"].append(row["project"])
+        for key in ("project", "session"):
+            value = row.get(key)
+            bucket = entry[key + "s"]
+            if isinstance(value, str) and value not in bucket:
+                bucket.append(value)
     for entry in grouped.values():
         entry["projects"].sort()
+        # Sorted, not ordered by appearance: the order rows arrive in is newest-first, and a
+        # list that looked chronological while being deduplicated by first sighting would
+        # invite reading the first entry as "the one working on it now".
+        entry["sessions"].sort()
     return grouped
 
 
