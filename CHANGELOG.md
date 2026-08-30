@@ -4,6 +4,40 @@
 
 ### Added
 
+**A run records the session it ran in (#548, slice 4).** `caller.py` has read
+`CLAUDE_CODE_SESSION_ID` since #416 and used it only as a marker — presence named the
+harness and the value was discarded, so rig knew the *kind* of caller and never the
+identity. `Caller` keeps it now, and `Caller.as_record()` replaces the block both `wb new`
+and `wb import` were assembling separately, which is how one of them ends up a field behind.
+
+The cross-project log carried no caller at all: measured across 370 records here, `caller`
+appeared in none, so a session column had nothing to read. Both producers write it now.
+Absent, not null, when the harness names no session.
+
+**Flat, and there is nowhere to put anything else.** Claude Code hands a subagent's shell
+the same variables as its parent's — verified against 2.1.224 and 2.1.227 in `context_meter`,
+which refuses to publish a dispatch rate on exactly this evidence — so nothing here
+distinguishes a child session from the one that dispatched it. A session column is a fact; a
+session tree drawn from the same variables would be a drawing. Tests pin the key sets on both
+the record and the row against `parent`, `depth` and `children`.
+
+A session id that would lie in a log — zero-width, bidi-control, newline, over-long — is
+dropped rather than raised on. Nobody typed it, so failing a run would punish the operator
+for what the surrounding harness exported; but it is echoed into a board, so it is not
+carried either.
+
+`by_issue` gains the sessions that recorded runs against each issue, sorted rather than left
+in sighting order so nobody reads the first entry as "the one working on it now". Together
+with slice 3 that answers the question the axis was asked for — which session, against which
+issue — in the past tense it can actually support.
+
+**The gate module decides nothing about the caller.** `runstate.py` holds gate evaluation,
+and `test_caller_contract` forbids it from mentioning the caller at file granularity: a gate
+that can see who called it is a gate that can soften for one harness. The first version of
+this change resolved the caller there and that test caught it. `telemetry_append` now takes
+the block as data and the driver in `providers.py` resolves it, so the decision and the gate
+live in different files.
+
 **A run can say which issue it is against (#548, slice 3).** Nothing linked a run to an
 issue. The queue came closest and only in the other direction — `queue_set_status(...,
 task_id=...)` writes the link onto the *item* — and its `gh` branch, the backend this axis

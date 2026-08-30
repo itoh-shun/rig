@@ -87,12 +87,14 @@ def _log(tmp_path: pathlib.Path, records: list[dict]) -> pathlib.Path:
     return path
 
 
-def _record(run_id: str, *, issue=None, final="DONE", ts="2026-08-30T10:00:00+00:00",
-            project="/repo/a"):
+def _record(run_id: str, *, issue=None, caller=None, final="DONE",
+            ts="2026-08-30T10:00:00+00:00", project="/repo/a"):
     record = {"run_id": run_id, "ts": ts, "project": project, "recipe": "dev",
               "backend": "workbench", "final": final, "steps": []}
     if issue is not None:
         record["issue"] = issue
+    if caller is not None:
+        record["caller"] = caller
     return record
 
 
@@ -167,7 +169,90 @@ def test_the_grouping_never_claims_a_run_is_still_going(tmp_path):
                                                    "declared": True}, final="RUNNING")])
     entry = run_index.run_index(path=path)["by_issue"]["#7"]
 
-    assert set(entry) == {"runs", "last_final", "last_ts", "last_run_id", "projects"}
+    assert set(entry) == {"runs", "last_final", "last_ts", "last_run_id", "projects",
+                          "sessions"}
     assert entry["last_final"] == "RUNNING", "the recorded value is reported as recorded"
     assert not {"active", "in_progress", "working", "current", "live", "stale",
                 "is_running"} & set(entry)
+
+
+def test_the_sessions_that_worked_an_issue_are_listed_flat(tmp_path):
+    """The join the whole axis was asked for: which session against which issue (#548,
+    slice 4). Listed, deduplicated, and sorted — never nested. Claude Code hands a subagent's
+    shell the same variables as its parent's, so this log cannot tell a child session from
+    the one that dispatched it, and a tree drawn from it would be a drawing."""
+    issue = {"ref": "#7", "source": "flag", "declared": True}
+    path = _log(tmp_path, [
+        _record("orc-1", issue=issue, ts="2026-08-30T09:00:00+00:00",
+                caller={"id": "claude-code", "source": "env:CLAUDECODE", "declared": False,
+                        "session": "s-aaa"}),
+        _record("orc-2", issue=issue, ts="2026-08-30T10:00:00+00:00",
+                caller={"id": "claude-code", "source": "env:CLAUDECODE", "declared": False,
+                        "session": "s-bbb"}),
+        _record("orc-3", issue=issue, ts="2026-08-30T11:00:00+00:00",
+                caller={"id": "claude-code", "source": "env:CLAUDECODE", "declared": False,
+                        "session": "s-bbb"}),
+    ])
+    entry = run_index.run_index(path=path)["by_issue"]["#7"]
+    # Rows arrive newest first, so first sighting would give ["s-bbb", "s-aaa"]. Sorted, so
+    # nobody reads the first entry as "the one working on it now".
+    assert entry["sessions"] == ["s-aaa", "s-bbb"]
+    assert entry["runs"] == 3
+
+
+def test_a_run_outside_a_harness_contributes_no_session(tmp_path):
+    """A plain terminal names no session, and `unknown` is a recorded caller rather than a
+    session of its own."""
+    path = _log(tmp_path, [
+        _record("orc-1", issue={"ref": "#7", "source": "flag", "declared": True},
+                caller={"id": "unknown", "source": "none", "declared": False}),
+    ])
+    index = run_index.run_index(path=path)
+    assert index["rows"][0]["caller"] == "unknown"
+    assert index["rows"][0]["session"] is None
+    assert index["by_issue"]["#7"]["sessions"] == []
+
+
+def test_a_record_written_before_the_caller_field_reads_as_absent(tmp_path):
+    """370 records on this machine predate it. They must read as "not recorded", not as a
+    caller named None."""
+    path = _log(tmp_path, [_record("orc-1")])
+    row = run_index.run_index(path=path)["rows"][0]
+    assert (row["caller"], row["session"]) == (None, None)
+
+
+def test_the_row_has_nowhere_to_put_a_session_hierarchy(tmp_path):
+    """The refusal slice 4 exists to encode, pinned as a key set. `context_meter` already
+    declines to publish a dispatch rate on this same evidence."""
+    path = _log(tmp_path, [
+        _record("orc-1", caller={"id": "claude-code", "source": "env:CLAUDECODE",
+                                 "declared": False, "session": "s-1"}),
+    ])
+    row = run_index.run_index(path=path)["rows"][0]
+    assert not {"parent_session", "session_parent", "depth", "session_depth",
+                "children", "session_tree"} & set(row)
+
+
+def test_the_gate_module_records_a_caller_only_when_handed_one(tmp_path, monkeypatch):
+    """`runstate` holds gate evaluation, and `test_caller_contract` forbids it from mentioning
+    the caller — at file granularity, because a gate that can see who called it is a gate that
+    can soften for one harness. So it takes the value as data and decides nothing: handed
+    nothing, it writes nothing, no matter what the environment says."""
+    from rig_workbench.orchestrate import config, runstate
+
+    local = tmp_path / "runs.jsonl"
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-should-not-appear")
+    monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global.jsonl")
+    monkeypatch.setattr(config, "RUNS_PATH", local)
+    state = {"run_id": "orc-1", "recipe": "dev", "steps": [], "step_state": {},
+             "token_usage": {}}
+
+    runstate.telemetry_append(state, "DONE")
+    runstate.telemetry_append(state, "DONE", caller_record={"id": "claude-code",
+                                                           "source": "env:CLAUDECODE",
+                                                           "declared": False,
+                                                           "session": "s-given"})
+
+    rows = [json.loads(ln) for ln in local.read_text().splitlines() if ln.strip()]
+    assert "caller" not in rows[0], "no caller was handed in, so none is recorded"
+    assert rows[1]["caller"]["session"] == "s-given"

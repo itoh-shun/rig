@@ -326,12 +326,19 @@ def classify_failure(state: dict) -> str | None:
     return "unclassified"
 
 
-def telemetry_append(state: dict, final: str) -> None:
+def telemetry_append(state: dict, final: str, *, caller_record: dict | None = None) -> None:
     """Append a one-line JSON summary of a single RUN to .rig/runs.jsonl (run telemetry).
 
     An execution log on par with run-state.json, not the knowledge layer (no approval needed;
     .rig/ is already gitignored). Aggregation is the `runs` subcommand. A write failure must
     not break the RUN result (best-effort).
+
+    `caller_record` is handed in rather than looked up. This module holds gate evaluation,
+    and `test_caller_contract` refuses any mention of the caller in it — deliberately, at file
+    granularity, because a gate that can see who called it is a gate that can soften for one
+    harness. Recording the value is not branching on it, but the way to keep that true is for
+    the decision to be made outside this file and the value to arrive as data. `None` records
+    nothing, which is what every existing caller of this function gets.
     """
     try:
         ss = state["step_state"]
@@ -357,6 +364,13 @@ def telemetry_append(state: dict, final: str) -> None:
             "recipe": state["recipe"],
             "backend": "orchestrate",
             "invoker": os.environ.get("RIG_INVOKER") or "direct",
+            # Who invoked rig, alongside `invoker`, which is what launched the process — the
+            # two answer different questions once another agent is the one typing. Absent
+            # when nothing identifies a caller, same rule as `run_id` and `perf` above. The
+            # workbench producer has recorded this on the task since #428; this log carried
+            # it from neither side until now, so a session or caller column had no source.
+            # Absent when the driver handed nothing, same rule as `run_id` and `perf`.
+            **({"caller": caller_record} if isinstance(caller_record, dict) else {}),
             "final": final,
             "steps_total": len(state["steps"]),
             "steps_passed": sum(1 for st in ss.values() if st.get("status") == "passed"),
