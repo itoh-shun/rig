@@ -1,0 +1,77 @@
+{
+  "case_schema_version": 1,
+  "clean_controls": {
+    "document": "# 次期基盤の投資判断について\n\n読み手：非エンジニアの経営層\n目的：次期基盤への投資可否の判断を得る\n\n現行の基盤は、利用者の待ち時間が目標を超える頻度が上期の許容量を使い切りました。\n許容量とは「この程度の遅さなら許容する」と社内で定めた上限で、上期はそれを超えました。\n\n設定の調整では吸収できないところまで来ており、基盤そのものの更改が必要です。更改中は\n一部のデータを持つ処理を一時的に止める必要があり、その停止時間の設計も併せて要ります。\n\n投資額は3,000万円、判断期限は10月末です。\n"
+  },
+  "clean_expectations": [
+    "regex:\"lens\"\\s*:\\s*\"audience\"",
+    "regex:\"verdict\"\\s*:\\s*\"APPROVE\""
+  ],
+  "created_at": "2026-08-30T00:00:00+09:00",
+  "deterministic_checks": [
+    "regex:\"lens\"\\s*:\\s*\"audience\"",
+    "regex:\"verdict\"\\s*:\\s*\"REVISE\""
+  ],
+  "green_thresholds": {
+    "min_success_rate": 1.0
+  },
+  "id": "document-review-audience-undeclared-terms",
+  "incident": false,
+  "missing_requirements": [],
+  "prompt_composition": [
+    "persona:document-audience-reviewer",
+    "contract:document-review-verdict"
+  ],
+  "prompt_entrypoint": "audience-review",
+  "prompt_surfaces": [
+    "persona:document-audience-reviewer",
+    "contract:document-review-verdict"
+  ],
+  "provenance": {
+    "captured_at": "2026-08-30T00:00:00+09:00",
+    "source_commit": "0000000000000000000000000000000000000000",
+    "source_hashes": {
+      "task.json": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "source_task_id": "document-review-pack-bootstrap"
+  },
+  "provider_policy": {
+    "allowed": [],
+    "mode": "any"
+  },
+  "red_thresholds": {
+    "max_success_rate": 0.0
+  },
+  "repeat": 3,
+  "semantic_rubric": [
+    {
+      "description": "Judges against the reader the document declares, and names the specific terms that reader cannot be assumed to hold.",
+      "id": "measures_against_declared_reader",
+      "weight": 1.0
+    },
+    {
+      "description": "Does not fault the document merely for being technical; the fault is the gap between the declared reader and the terms used.",
+      "id": "not_plainness",
+      "weight": 1.0
+    }
+  ],
+  "status": "draft",
+  "suite": "extension",
+  "surfaces": [
+    "cli"
+  ],
+  "tags": [
+    "document-review",
+    "audience"
+  ],
+  "target_expectations": [
+    "regex:\"lens\"\\s*:\\s*\"audience\"",
+    "regex:\"verdict\"\\s*:\\s*\"REVISE\""
+  ],
+  "target_inputs": {
+    "document": "# 次期基盤の投資判断について\n\n読み手：非エンジニアの経営層\n目的：次期基盤への投資可否の判断を得る\n\n現行基盤はp95レイテンシが劣化しており、SLOのエラーバジェットを上期で消化しました。\nオートスケールの閾値調整とHPAのチューニングでは吸収できず、コントロールプレーンの\n更改が必要です。ステートフルワークロードの退避には別途PDBの見直しが要ります。\n\n投資額は3,000万円、判断期限は10月末です。\n"
+  },
+  "title": "Internal metrics vocabulary aimed at a declared non-technical reader",
+  "updated_at": "2026-08-30T00:00:00+09:00",
+  "version": 1
+}
