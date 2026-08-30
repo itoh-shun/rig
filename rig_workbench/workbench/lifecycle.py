@@ -18,6 +18,8 @@ from .capabilities import resolve_task_route
 from .destructive import apply_destructive_sensor
 from .hardening import apply_tamper_sensor
 from .injection import apply_injection_sensor
+from .issue_link import IssueRefError
+from . import issue_link
 from .flow_view import render_flow, render_transition
 from .progress import from_state as progress_from_state
 from .progress import load_recipe_steps
@@ -171,6 +173,14 @@ def cmd_new(args: argparse.Namespace) -> None:
     else:
         base_commit = git(["rev-parse", "HEAD"], cwd=here).stdout.strip()
 
+    # What this run is against (#548). Resolved here for the same reason `--base` is: a
+    # reference rig cannot resolve must fail before a worktree exists, not after. Absent
+    # unless declared — see `issue_link` for why one is never read out of the task text.
+    try:
+        _issue = issue_link.declared(getattr(args, "issue", None))
+    except IssueRefError as exc:
+        die(str(exc))
+
     # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
     if ensure_rig_gitignored(root):
         print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
@@ -221,8 +231,9 @@ def cmd_new(args: argparse.Namespace) -> None:
     # so the receipt can keep an operator's statement apart from rig's own guess —
     # flattening them is how a heuristic becomes a fact (`rig_workbench/caller.py`).
     _caller = caller.detect(getattr(args, "caller", None))
-    task["caller"] = {"id": _caller.id, "source": _caller.source,
-                      "declared": _caller.declared}
+    task["caller"] = _caller.as_record()
+    if _issue is not None:
+        task["issue"] = _issue
     _binding = govern_identity.load_org_binding(root)
     if _binding.bound:
         task["org"] = _binding.org

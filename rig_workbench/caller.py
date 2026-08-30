@@ -76,6 +76,51 @@ class Caller:
     source: str
     #: True when a human or a calling harness said so, rather than rig inferring it.
     declared: bool
+    #: The harness session this process is in, when the harness names one (#548, slice 4).
+    #: `None` when it does not, which is the ordinary case outside a harness.
+    #:
+    #: Flat, and only ever flat. It says *which* session, never where in a tree — the same
+    #: variables reach a subagent's shell and its parent's, so a parent/child relation drawn
+    #: from this would be invented. There is no field for one here for the same reason there
+    #: is no depth field above.
+    session: str | None = None
+
+    def as_record(self) -> dict:
+        """What gets written onto a task.
+
+        Here rather than at the call sites because there are two of them — `wb new` and
+        `wb import` — and they were maintaining the same literal separately, which is how one
+        of them ends up a field behind.
+
+        `session` is omitted when there is none rather than written as null: this block is
+        mirrored into a log read by aggregation that treats a present key as a recorded fact,
+        and a null would make "not in a harness" a session of its own.
+        """
+        record = {"id": self.id, "source": self.source, "declared": self.declared}
+        if self.session is not None:
+            record["session"] = self.session
+        return record
+
+
+def _session() -> str | None:
+    """The harness session id, read as a value rather than as a marker.
+
+    `CLAUDE_CODE_SESSION_ID` is already consulted above, and until now only for whether it
+    was set: the harness was named and the identity thrown away. A board asking which session
+    is against which issue needs the value, and it has been in the environment the whole time.
+
+    A value that does not survive `reject_deceptive` is dropped rather than raised on. Nobody
+    typed this — failing a run because the surrounding harness exported something malformed
+    would punish the operator for something they did not do — but it is echoed into a board,
+    so it is not carried either. Absent and wrong are different, and this reports the first.
+    """
+    raw = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not raw:
+        return None
+    try:
+        return reject_deceptive(raw, field="CLAUDE_CODE_SESSION_ID", max_length=_MAX_SESSION)
+    except ValueError:
+        return None
 
 
 def detect(declared: str | None = None) -> Caller:
@@ -88,23 +133,31 @@ def detect(declared: str | None = None) -> Caller:
     if declared is not None:
         if not isinstance(declared, str):
             raise TypeError(f"--caller must be a string, got {type(declared).__name__}")
-        return Caller(id=normalise_name(declared), source="flag", declared=True)
+        return Caller(id=normalise_name(declared), source="flag", declared=True,
+                      session=_session())
 
     from_env = os.environ.get("RIG_CALLER")
     if from_env is not None and from_env.strip():
-        return Caller(id=normalise_name(from_env), source="env:RIG_CALLER", declared=True)
+        return Caller(id=normalise_name(from_env), source="env:RIG_CALLER", declared=True,
+                      session=_session())
 
     for variable, harness in _ENV_MARKERS:
         if os.environ.get(variable):
-            return Caller(id=harness, source=f"env:{variable}", declared=False)
+            return Caller(id=harness, source=f"env:{variable}", declared=False,
+                          session=_session())
 
-    return Caller(id=UNKNOWN, source="none", declared=False)
+    return Caller(id=UNKNOWN, source="none", declared=False, session=_session())
 
 
 #: The longest caller name rig will carry. Harness names are short by nature; the
 #: bound exists because this value is echoed into stderr when the re-entry guard
 #: declines, and an unbounded one turns that message into a paste target.
 _MAX_NAME = 64
+
+#: The longest session id rig will carry. Longer than a harness name because these are
+#: opaque identifiers rather than words, and bounded for the same reason: the value is
+#: printed back and grouped on.
+_MAX_SESSION = 128
 
 #: The longest external-provenance string rig will carry. Longer than a harness name
 #: because a producer's run URL is a real URL, and short enough that a receipt cannot
