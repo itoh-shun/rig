@@ -311,6 +311,14 @@ The declared asset kinds are checked against the type, and the recipe files are 
 not get it installed — validation separately refuses any file the manifest does not declare
 and hashes every file it does, so the declaration is the pack's whole contents.
 
+An `entrypoint` names the surface a consumer reaches for. Its `kind` may be any prompt kind
+the type is allowed to own — a `recipe` or a `command` for the types that have them, a
+`persona` for a `reviewer`, a `wiki` for a `knowledge` pack — and its `target` must be an
+asset the pack actually declares. Declaring one is not permission to run it: only a `command`
+or a `recipe` is invokable, and `pack invoke` refuses the rest. The distinction matters
+because an entrypoint is what `pack test` composes a prompt around, so a pack that declares
+none can be validated but never measured.
+
 All prompt assets use one precedence order:
 
 1. project `.rig/packs` and legacy `.rig` / `.claude/rig` overlays;
@@ -450,6 +458,21 @@ are pure `resource` files is not affected.
 
 This is worth knowing before writing a company knowledge pack: the documents are governed like
 any other prompt surface, which is the intended behaviour rather than an accident of packaging.
+
+Those two rules make the case mandatory; one more makes it *runnable*. The case's
+`prompt_entrypoint` must name an entrypoint the manifest declares, because that is what
+`pack test` composes the prompt around. For a knowledge pack the entrypoint is the page
+itself:
+
+```yaml
+entrypoints:
+  - id: backup-policy
+    kind: wiki
+    target: backup-policy
+```
+
+Leave it out and `pack validate` still passes while `pack test` reports `structural_only`:
+the case ships with the pack, is hashed into the manifest, and nothing ever runs it.
 
 ## Install, lock, test, and remove
 

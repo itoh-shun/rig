@@ -11,7 +11,8 @@ from rig_workbench.eval.safety import unsafe_key_reason, unsafe_text_reason
 from rig_workbench.workbench.destructive import scan_line as destructive_scan_line
 from rig_workbench.workbench.injection import scan_line as injection_scan_line
 
-from .model import ASSET_DIRS, PACK_TYPES, TYPE_ASSETS, CapabilityRefused, PackError
+from .model import (ASSET_DIRS, PACK_TYPES, PROMPT_KINDS, TYPE_ASSETS, CapabilityRefused,
+                    PackError)
 
 PACK_BASE_FIELDS = {
     "pack_schema_version", "id", "type", "version", "kind", "engine", "dependencies",
@@ -456,10 +457,20 @@ def validate_manifest_shape(value: dict) -> None:
         raise PackError("pack entrypoints must be a list")
     entry_ids: list[str] = []
     for entrypoint in entrypoints:
+        # Any prompt kind, not only the two that can be *invoked*. An entrypoint names what
+        # a consumer reaches for, and `TYPE_ASSETS` forbids `knowledge`, `policy` and
+        # `reviewer` from owning a command or a recipe — so restricting this to those two
+        # left them unable to declare an entrypoint at all, and every rule downstream that
+        # anchors on one (evaluation coverage, `compose_case_prompt`, publisher signing) was
+        # therefore unreachable for them: a reviewer pack could be required to carry an
+        # approved evaluation case and never be able to run it. Nothing here grants reach:
+        # `validate_pack` still requires the target be an asset this pack owns, `TYPE_ASSETS`
+        # still decides what that may be, and `invoke_pack` refuses to run a kind that is not
+        # a command or a recipe.
         if (not isinstance(entrypoint, dict) or set(entrypoint) != {"id", "kind", "target"}
                 or not isinstance(entrypoint.get("id"), str)
                 or not PACK_ID.fullmatch(entrypoint["id"])
-                or entrypoint.get("kind") not in {"command", "recipe"}
+                or entrypoint.get("kind") not in PROMPT_KINDS
                 or not isinstance(entrypoint.get("target"), str)
                 or not REFERENCE_ID.fullmatch(entrypoint["target"])):
             raise PackError("pack entrypoint is invalid")

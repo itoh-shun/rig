@@ -103,6 +103,29 @@ gap #544 closed for `perf`, `otel`, `orchestrate next` and `orchestrate approve`
 
 ### Fixed
 
+**Three of six pack types were required to ship an evaluation case they could never run.**
+`TYPE_ASSETS` forbids `knowledge`, `policy` and `reviewer` from owning a command or a recipe,
+and an entrypoint's `kind` had to be one of exactly those two — so those three types could not
+declare an entrypoint at all. Every rule that anchors on one was therefore unreachable for
+them: `validate_pack`'s evaluation-coverage loop ran over nothing, `compose_case_prompt`
+refused every case for want of a `prompt_entrypoint`, and `sign_pack` requires each case to
+name one.
+
+They are prompt-bearing by definition — `PROMPT_KINDS` covers `wiki`, `policy`, `persona` and
+`output-contract` — so validation *required* each of them to carry an approved, rubric-bearing
+evaluation case, hashed into `pack.yaml` and shipped with the pack, whose only reachable
+outcome was `pack test` reporting `structural_only`. A signed artifact that existed to satisfy
+a check about itself.
+
+An entrypoint's `kind` may now be any prompt kind. It says what a consumer reaches for, not
+what may be run, and nothing about reach changes: the target must still be an asset the pack
+owns, `TYPE_ASSETS` still decides what that may be, and `pack invoke` still refuses a kind
+that is not a command or a recipe — a guard it has always carried and that no manifest could
+reach until now. A `reviewer` pack declaring `persona:<name>` and a `knowledge` pack declaring
+`wiki:<name>` now compose a prompt, run their case, and write evidence bound to it.
+
+All four shipped packs are `type: skill`, which is why nothing caught this.
+
 **`rig-wb perf` and `rig-wb otel` did not exist.** Both features shipped in 2.8.0, both work,
 and both were written up in the READMEs — twelve times for `perf`, six for `otel`, including a
 line meant to be pasted straight into a CI job:
