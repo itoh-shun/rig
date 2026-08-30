@@ -284,8 +284,7 @@ def cmd_import(args: argparse.Namespace) -> None:
         }
         task["actor"] = govern_identity.current_actor(root)
         _caller = caller_mod.detect(getattr(args, "caller", None))
-        task["caller"] = {"id": _caller.id, "source": _caller.source,
-                          "declared": _caller.declared}
+        task["caller"] = _caller.as_record()
         _binding = govern_identity.load_org_binding(root)
         if _binding.bound:
             task["org"] = _binding.org
