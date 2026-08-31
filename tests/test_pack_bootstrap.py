@@ -139,6 +139,41 @@ def test_an_approved_case_is_not_a_draft(tmp_path):
         _cases_to_run(pack, manifest, [], project, "already")
 
 
+def test_a_real_provider_draft_run_summarizes_the_case_it_ran(tmp_path, monkeypatch):
+    """A draft has no approved-case path, but the real-provider summary still uses it."""
+    from rig_workbench.packs.manifest import canonical, read_json_yaml
+    from rig_workbench.packs.tester import test_pack
+
+    pack = _prompt_pack(tmp_path)
+    _raw, manifest = read_json_yaml(pack / "pack.yaml")
+    manifest["entrypoints"] = [
+        {"id": "x", "kind": "persona", "target": "demo-reviewer"},
+    ]
+    (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
+    project = tmp_path / "project"
+    case_id = "first-evidence"
+    _write_draft(project, case_id, surfaces=["persona:demo-reviewer"])
+    calls = []
+
+    def execute(**kwargs):
+        calls.append((kwargs["kind"], kwargs["index"]))
+        return 0, "x", "", None
+
+    monkeypatch.setattr("rig_workbench.eval.runner._execute", execute)
+    monkeypatch.setenv("RIG_EVAL_ATTESTATION_KEY", "c" * 64)
+
+    summary, code = test_pack(
+        pack, project=project, provider="codex", model="fixture",
+        result_dir=tmp_path / "results", allow_paid_provider=True, draft=case_id,
+    )
+
+    assert calls == [(kind, index) for kind in ("target", "clean") for index in range(1, 4)]
+    assert code == 1 and summary["status"] == "quality_failed"
+    assert summary["cases"] == [case_id]
+    assert len(summary["result_paths"]) == 1
+    assert pathlib.Path(summary["result_paths"][0]).is_file()
+
+
 def test_evidence_from_eval_run_is_bound_to_nothing():
     """The fact that makes the bootstrap necessary rather than convenient, pinned so it cannot
     be forgotten: `eval run` composes no prompt, so its binding is the digest of the empty
