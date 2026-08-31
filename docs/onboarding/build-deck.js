@@ -173,14 +173,14 @@ function table(slide, o) {
 {
   const s = dark(
     "rig 入門",
-    "AI に仕事を任せるための、隔離と検証の層。\nゼロから知り、自分のドメインを教え込むまで。",
+    "AI に仕事を任せるときの、隔離と検証のしくみ。\nはじめて触る人から、自分のドメインを教え込む人まで。",
     "典拠：README.ja.md ／ docs/packs.md ／ skills/engine/SKILL.md"
   );
   s.addText("第一部　rig を知る　　|　　第二部　pack で知識層を拡張する", {
     x: M + 0.35, y: 5.5, w: 11, h: 0.4, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 13, color: "9AA39C",
   });
-  s.addNotes("rig をまったく知らない人向け。前半で安全フローの仕組み、後半で pack による知識層の拡張を扱う。");
+  s.addNotes("rig をまったく知らない人向けの資料です。前半で安全フローの仕組み、後半で pack による知識層の拡張を扱います。");
 }
 
 /* ================= INTRO BLOCK (inserted) ================= */
@@ -206,7 +206,7 @@ function table(slide, o) {
     s.addText(c[2], { x: x + 0.28, y: 2.5, w: 3.4, h: 3.4, isTextBox: true, margin: 0, valign: "top",
       fontFace: BODY_F, fontSize: 12, color: SLATE, lineSpacing: 22 });
   });
-  s.addText("この資料は rig リポジトリの一次資料だけを典拠にしています。仕様は発展中のため、厳密な引数は各コマンドの --help を正本としてください。", {
+  s.addText("典拠は rig リポジトリの一次資料だけです。仕様はまだ変わるので、引数の正確なところは各コマンドの --help を見てください。", {
     x: M, y: 6.3, w: W - M * 2, h: 0.5, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 10.5, color: SLATE,
   });
@@ -215,45 +215,45 @@ function table(slide, o) {
 /* --- intro 01: why --- */
 {
   const s = base("なぜ rig を作ったか", "はじめに · 01");
-  card(s, { x: M, y: 1.42, w: 12.2, h: 1.0, fill: "E7EFEB" });
-  s.addText("オーケストレータは「どう動かすか」を決める。rig は「その結果を受け入れてよいか」を決める。", {
-    x: M + 0.35, y: 1.62, w: 11.5, h: 0.4, isTextBox: true, margin: 0,
-    fontFace: TITLE_F, fontSize: 17, bold: true, color: INK });
-  s.addText("docs/landscape.md — この一行が、機能を足すかどうかの判断基準になっている。", {
-    x: M + 0.35, y: 2.04, w: 11.5, h: 0.3, isTextBox: true, margin: 0,
+  card(s, { x: M, y: 1.42, w: 12.2, h: 1.2, fill: "E7EFEB" });
+  s.addText("オーケストレータは「どう動かすか」を決めます。rig が決めるのは「その結果を受け入れてよいか」です。", {
+    x: M + 0.35, y: 1.56, w: 11.5, h: 0.55, isTextBox: true, margin: 0,
+    fontFace: TITLE_F, fontSize: 16, bold: true, color: INK });
+  s.addText("docs/landscape.md より。rig に機能を足すかどうかは、この一行で判断しています。", {
+    x: M + 0.35, y: 2.16, w: 11.5, h: 0.3, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 11, color: SLATE });
 
   label(s, { text: "出発点にあった三つの観測", x: M, y: 2.68, w: 6 });
   const obs = [
-    ["1", "書く速度だけが上がった", "生成は速くなったが、その成果物を「受け入れてよいか」を判定する層は、人間の目視のままだった。"],
-    ["2", "「できました」に根拠がない", "モデルの自己申告は完了の根拠にならない。だが実務では、それ以外に判断材料がない状態が普通だった。"],
-    ["3", "失敗が手元に残る", "うまくいかなかった試行が作業ツリーに混ざる。何を捨てて何を残すかの判断自体がコストになる。"],
+    ["1", "書く速度だけが上がった", "コードを書く速度は上がりました。でも、出てきたものを受け入れてよいか判定するのは、相変わらず人間の目視でした。"],
+    ["2", "「できました」に根拠がない", "モデルが「できました」と言っても、それは完了の根拠になりません。それなのに、他に判断材料がないのが普通でした。"],
+    ["3", "失敗が手元に残る", "うまくいかなかった試行が、作業ツリーにそのまま混ざります。何を残して何を捨てるかを考えること自体が手間になります。"],
   ];
   obs.forEach((o, i) => {
     card(s, { x: M, y: 3.02 + i * 1.13, w: 6.0, h: 1.0, num: o[0], head: o[1], headSize: 12.5,
       body: o[2], bodySize: 10.5, lead: 13 });
   });
 
-  card(s, { x: M + 6.4, y: 3.02, w: 6.0, h: 1.7, head: "だから rig が引き受けたのは、一箇所だけ",
-    body: "受け入れの判定を、人間の目視から機械の関門へ移すこと。速く書かせることでも、賢く書かせることでもない。",
+  card(s, { x: M + 6.4, y: 3.02, w: 6.0, h: 1.7, head: "rig が引き受けたのは一箇所だけです",
+    body: "受け入れの判定を、人間の目視から機械の関門へ移すことです。速く書かせることでも、賢く書かせることでもありません。",
     bodySize: 11.5, lead: 16 });
   card(s, { x: M + 6.4, y: 4.9, w: 6.0, h: 1.45, fill: "F3EAE6", head: "裏返して言うと", headColor: ALERT,
-    body: "rig は品質を自動的に生まない。あなたが定義した基準を、AI に無視させないだけ。基準を作るのは人間の仕事のまま。",
+    body: "rig は品質を自動的に生みません。あなたが決めた基準を AI に無視させない、それだけです。基準を作るのは人間の仕事のままです。",
     bodySize: 11.5, lead: 16 });
 }
 
 /* --- intro 02: the four common patterns --- */
 {
-  const s = base("よくある AI 活用の四つの型と、そこで起きること", "はじめに · 02");
+  const s = base("よくある AI の使い方と、そこで起きること", "はじめに · 02");
   const pats = [
     ["チャットに貼って、返ってきたコードを貼り戻す",
-      "差分の出所が消える。どこを変えたかは人間の記憶にしかなく、無関係な変更が混ざっても検出する場所がない。"],
+      "差分の出所が消えます。どこを変えたかは人間の記憶にしか残らず、無関係な変更が混ざっても検出する場所がありません。"],
     ["エージェントに作業ツリーへ直接書かせる",
-      "失敗した試行がそのまま手元に残る。機械的なチェックを誰も配線していなければ、そのチェックは構造的に一度も走らない。"],
+      "失敗した試行がそのまま手元に残ります。機械的なチェックを誰も配線していなければ、そのチェックは一度も走りません。"],
     ["CLAUDE.md や AGENTS.md にルールを書く",
-      "prose の依頼は守られないことがある。「テストを実行して」と書くことと、hook で毎回強制することの信頼性は段違い。"],
+      "文章でのお願いは守られないことがあります。「テストを実行して」と書くのと、hook で毎回強制するのとでは信頼性が違います。"],
     ["AI にレビューさせる",
-      "生成者と採点者が同系統だと自己評価に甘くなる。しかもそのレビュアーの検出率を、誰も測っていない。"],
+      "書いた側と採点する側が同系統だと、自己評価が甘くなります。しかもそのレビュアーの検出率を、誰も測っていません。"],
   ];
   pats.forEach((p, i) => {
     const col = i % 2, row = Math.floor(i / 2);
@@ -261,23 +261,23 @@ function table(slide, o) {
       num: String(i + 1), head: p[0], headSize: 12.5, body: p[1], bodySize: 11, lead: 15 });
   });
   card(s, { x: M, y: 5.35, w: 12.2, h: 1.05, fill: "F3EAE6",
-    head: "四つに共通するのは「悪いことが起きた」ではなく、「起きたかどうかが分からない」こと", headColor: ALERT,
-    body: "どれも普通に成果を出す。問題は失敗率ではなく、失敗したときに誰も気づかないまま次へ進む構造のほうにある。",
+    head: "四つに共通するのは、失敗したかどうかが分からないことです", headColor: ALERT,
+    body: "どれも普通に成果は出ます。困るのは失敗する確率ではなく、失敗しても誰も気づかないまま次へ進んでしまうことです。",
     bodySize: 11.5, lead: 15 });
 }
 
 /* --- intro 03: the four holes --- */
 {
-  const s = base("症状の根っこ — 開きやすい穴は四つ（重い順）", "はじめに · 03");
+  const s = base("原因をたどると、いつも同じ四つの穴に行き着きます", "はじめに · 03");
   const holes = [
     ["計算的センサーがループに入っていない", "最頻",
-      "テストや lint が「存在する」だけで、エージェントの実行ループにバックプレッシャーとして入っていない。存在することと、効いていることは別。"],
+      "テストや lint が「ある」だけで、エージェントの実行ループにバックプレッシャーとして入っていません。あることと、効いていることは別です。"],
     ["検証ループそのものが無い", "自己採点",
-      "モデルに自分の仕事を検証する手段を与えると品質が 2〜3 倍になる（Boris Cherny）。逆に言えば、手段が無いエージェントは自己評価に甘くなる。"],
+      "モデルに自分の仕事を検証する手段を与えると、品質が 2〜3 倍になると言われています（Boris Cherny）。裏を返せば、手段が無いエージェントは自己評価が甘くなります。"],
     ["評価と計測をしていない", "測れない",
-      "ルールを足したが、効果を測っていない。善意のルール追加が逆効果になることがある（Context Rot ＝ 文脈が長いほど性能が落ちる）。"],
+      "ルールは足したのに、効果を測っていません。よかれと思った追加が逆効果になることもあります（Context Rot。文脈が長いほど性能が落ちる現象です）。"],
     ["ハーネスが厚すぎる", "肥大",
-      "Thin Harness, Fat Skills（Garry Tan）。ループ管理は薄く、知能は Skills に、実行は決定論的ツールに委ねる。親ループが肥大したら設計が間違っている。"],
+      "Thin Harness, Fat Skills（Garry Tan）という言い方があります。ループ管理は薄く、知能は Skills に、実行は決定論的ツールに委ねます。親ループが太ったら設計を疑ってください。"],
   ];
   holes.forEach((h, i) => {
     const y = 1.42 + i * 1.28;
@@ -286,14 +286,14 @@ function table(slide, o) {
     s.addText(h[1], { x: M + 10.6, y: y + 0.24, w: 1.4, h: 0.3, isTextBox: true, margin: 0,
       align: "right", fontFace: BODY_F, fontSize: 10.5, bold: true, color: i === 0 ? ALERT : SLATE });
   });
-  s.addText("典拠：skills/engine/facets/knowledge/harness-taxonomy.md（rig 自身が /rig:harness で使う観点カタログ）", {
+  s.addText("典拠は skills/engine/facets/knowledge/harness-taxonomy.md です。rig 自身が /rig:harness で使っている観点カタログです。", {
     x: M, y: 6.6, w: 12.2, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
 }
 
 /* --- intro 04: ○○ engineering --- */
 {
   const s = base("プロンプトの外側にコンテキスト、その外側にハーネス", "はじめに · 04");
-  s.addText("「〇〇エンジニアリング」は別々の流派ではなく、包含関係にある。外側を設計しないまま内側だけ磨いても、効果は再現しない。", {
+  s.addText("「〇〇エンジニアリング」は別々の流派ではなく、入れ子になっています。外側を設計しないまま内側だけ磨いても、効果は安定しません。", {
     x: M, y: 1.4, w: 12.2, h: 0.35, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 12.5, color: INK });
 
@@ -317,25 +317,25 @@ function table(slide, o) {
     fill: { color: INK }, line: { color: INK, width: 0 } });
   s.addText("プロンプトエンジニアリング", { x: M + 1.14, y: 3.7, w: 4.4, h: 0.3, isTextBox: true, margin: 0,
     fontFace: TITLE_F, fontSize: 14, bold: true, color: CANVAS });
-  s.addText("一回の指示の書き方。ここだけを磨くのが最も一般的で、\nここだけでは面が変わると再現しない。\n\nrig ではプロンプト面（persona・instruction・recipe・wiki）は\nコンパイラが一切検査しない部分として扱い、\n変更には承認済みの評価ケースを要求する。",
+  s.addText("一回の指示の書き方です。ここだけを磨く人が一番多いのですが、\n条件が変わると同じようには効きません。\n\nrig はプロンプト面（persona・instruction・recipe・wiki）を\n「コンパイラが検査してくれない部分」として扱い、\n変更するときは承認済みの評価ケースを求めます。",
     { x: M + 1.14, y: 4.02, w: 4.4, h: 1.8, isTextBox: true, margin: 0, valign: "top",
       fontFace: BODY_F, fontSize: 10.5, color: "C9CCC8", lineSpacing: 14 });
 
-  card(s, { x: M + 7.0, y: 1.85, w: 5.2, h: 2.15, head: "ハーネスには二層ある",
-    body: "エージェントハーネス（プロダクト内蔵＝Claude Code / Codex 側のループ・ツール・メモリ）と、ユーザーハーネス（使う側が組む＝CLAUDE.md・Skills・Hooks・MCP・テスト・lint・CI・recipe）。",
+  card(s, { x: M + 7.0, y: 1.85, w: 5.2, h: 2.15, head: "ハーネスは二層に分かれます",
+    body: "一つはエージェントハーネスで、Claude Code や Codex に内蔵されたループ・ツール・メモリです。もう一つはユーザーハーネスで、使う側が組む CLAUDE.md・Skills・Hooks・MCP・テスト・lint・CI・recipe です。",
     bodySize: 11.5, lead: 16 });
-  card(s, { x: M + 7.0, y: 4.15, w: 5.2, h: 1.3, fill: "E7EFEB", head: "rig が作るのは、後者だけ",
-    body: "内蔵ループには手を入れない。その外側に、薄い品質・安全レイヤーとして乗る。",
+  card(s, { x: M + 7.0, y: 4.15, w: 5.2, h: 1.25, fill: "E7EFEB", head: "rig が作るのは後者だけです",
+    body: "内蔵ループには手を入れません。その外側に、薄い品質・安全レイヤーとして乗ります。",
     bodySize: 11.5, lead: 16 });
-  card(s, { x: M + 7.0, y: 5.6, w: 5.2, h: 0.8, head: "だから engine は不変",
-    body: "拡張は pack として上に乗せる。エンジンを書き換えて対応しない。",
+  card(s, { x: M + 7.0, y: 5.55, w: 5.2, h: 1.05, head: "だから engine は変えません",
+    body: "拡張は pack として上に乗せます。",
     bodySize: 11.5, lead: 16 });
 }
 
 /* --- intro 05: the 2x2 --- */
 {
-  const s = base("ハーネスの 2×2 — 何が足りないかは、ここで見える", "はじめに · 05");
-  s.addText("二軸で分ける。① 計算的（決定論的・コードで判定）か、推論的（LLM の判断）か。② ガイド（先回りで方向づける）か、センサー（事後に検知する）か。", {
+  const s = base("ハーネスを 2×2 で棚卸しすると、足りない場所が見えます", "はじめに · 05");
+  s.addText("軸は二つです。①コードで判定する計算的なものか、LLM が判断する推論的なものか。②先回りして方向づけるガイドか、あとから検知するセンサーか。", {
     x: M, y: 1.4, w: 12.2, h: 0.35, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 12, color: INK });
   table(s, {
@@ -346,82 +346,82 @@ function table(slide, o) {
       ["推論的\n（LLM 判断）", "CLAUDE.md / AGENTS.md\nSkills・設計ドキュメント・persona", "AI コードレビュー\nLLM-as-judge・review-gate"],
     ],
   });
-  card(s, { x: M + 8.6, y: 1.85, w: 3.6, h: 1.55, head: "四象限が揃って強い",
-    body: "推論だけ（レビューはするがテストが無い）も、計算だけ（テストは通るが設計の妥当性を誰も見ない）も穴になる。",
+  card(s, { x: M + 8.6, y: 1.85, w: 3.6, h: 1.55, head: "四象限が揃ってはじめて強くなります",
+    body: "レビューはするがテストが無い状態も、テストは通るが設計の妥当性を誰も見ていない状態も、どちらも穴です。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 8.6, y: 3.5, w: 3.6, h: 1.55, fill: "E7EFEB", head: "計算的センサーが一次",
-    body: "計算的センサーは sweet-talk できない。だから最強のバックプレッシャーになる。推論的センサーはその二次。",
+  card(s, { x: M + 8.6, y: 3.5, w: 3.6, h: 1.55, fill: "E7EFEB", head: "まず計算的センサーから",
+    body: "計算的センサーは口説き落とせません。だから一番強いバックプレッシャーになります。推論的センサーはその次に置きます。",
     bodySize: 11, lead: 15 });
   card(s, { x: M + 8.6, y: 5.15, w: 3.6, h: 1.45, fill: "F3EAE6", head: "「存在する」≠「効いている」", headColor: ALERT,
-    body: "どの hook にも acceptance gate にも繋がっていない lint は、ループに何の back pressure もかけない。",
+    body: "どの hook にも acceptance gate にも繋がっていない lint は、ループに何の圧力もかけていません。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M, y: 5.15, w: 8.3, h: 1.45, head: "この 2×2 は、自分のプロジェクトにも当てられる",
-    body: "/rig:harness が read-only で棚卸しし、空いている象限と「あるのに効いていない資産」を名指しする。答えは「新しいルールを足す」ではなく、接続する・強制する・減らす。",
+  card(s, { x: M, y: 5.15, w: 8.3, h: 1.45, head: "この 2×2 は自分のプロジェクトにも当てられます",
+    body: "/rig:harness が読み取り専用で棚卸しし、空いている象限と、あるのに効いていない資産を名指しします。処方は新しいルールを足すことではなく、接続する・強制する・減らすの三つです。",
     bodySize: 11.5, lead: 16 });
 }
 
 /* --- intro 06: usual responses and their limits --- */
 {
-  const s = base("それらへの一般的な対応と、その限界", "はじめに · 06");
+  const s = base("よく採られる対応と、それがどこで止まるか", "はじめに · 06");
   table(s, {
     x: M, y: 1.42, w: 7.6, colW: [2.6, 5.0], rowH: 0.66, size: 10.5, boldFirst: true,
     head: ["よく採られる対応", "どこで止まるか"],
     rows: [
-      ["プロンプトを磨く", "面が変わると再現しない。効果を測っていないので、良くなったかどうかも分からない"],
-      ["CLAUDE.md にルールを足す", "prose の依頼は守られないことがある。しかも足しすぎると文脈が濁って逆効果になる"],
-      ["lint / test / CI を用意する", "用意しただけでは、エージェントのループの外にある。人間の CI 待ちまで誰も見ない"],
-      ["AI レビューを足す", "生成者と同系統だと甘くなる。検出率が不明なので、通ったことに意味があるか分からない"],
-      ["人間のレビューを増やす", "スケールしない。ゴム印化しても、ゴム印になったこと自体を検知できない"],
+      ["プロンプトを磨く", "条件が変わると再現しません。効果を測っていないので、良くなったかどうかも分かりません"],
+      ["CLAUDE.md にルールを足す", "文章でのお願いは、守られないことがあります。足しすぎると文脈が濁って逆効果にもなります"],
+      ["lint / test / CI を用意する", "用意しただけでは、エージェントのループの外にあります。人間が CI を待つまで誰も見ません"],
+      ["AI レビューを足す", "書いた側と同系統のモデルだと甘くなります。検出率が分からないので、通っても意味があるか判断できません"],
+      ["人間のレビューを増やす", "人手が足りません。形だけのレビューになっても、そうなったこと自体に気づけません"],
     ],
   });
-  label(s, { text: "効く順序は、足すことではない", x: M + 7.9, y: 1.42, w: 4.8 });
+  label(s, { text: "効く順序があります", x: M + 7.9, y: 1.42, w: 4.8 });
   const order = [
-    ["接続する", "既にある lint・型・テストを、hook と acceptance gate に繋いでループの中へ入れる"],
-    ["強制する", "重要なルールを prose から決定論的な強制へ移す"],
-    ["減らす", "効いていないルールを落とす。足したら減らす候補も持つ"],
+    ["接続する", "すでにある lint・型・テストを hook と acceptance gate に繋いで、ループの中へ入れます"],
+    ["強制する", "大事なルールを、文章でのお願いから決定論的な強制へ移します"],
+    ["減らす", "効いていないルールを落とします。足したときは、減らす候補も一緒に考えます"],
   ];
   order.forEach((o, i) => {
     card(s, { x: M + 7.9, y: 1.78 + i * 1.28, w: 4.85, h: 1.15, num: String(i + 1),
       head: o[0], headSize: 12.5, body: o[1], bodySize: 10.5, lead: 13 });
   });
-  card(s, { x: M, y: 5.5, w: 7.6, h: 0.95, fill: "E7EFEB", head: "新しいルールを書くのは、最後",
-    body: "善意のルール追加が事態を悪くすることがある。まず接続し、次に強制し、そのうえで減らす。",
+  card(s, { x: M, y: 5.5, w: 7.6, h: 0.95, fill: "E7EFEB", head: "新しいルールを書くのは最後です",
+    body: "よかれと思って足したルールが、かえって邪魔をすることがあります。まず接続し、次に強制し、そのうえで減らしてください。",
     bodySize: 11.5, lead: 15 });
-  card(s, { x: M + 7.9, y: 5.65, w: 4.85, h: 0.8, fill: "F3EAE6", head: "測っていないゲートは願望", headColor: ALERT,
-    body: "効果の計測が無いと、この順序自体を回せない。",
+  card(s, { x: M + 7.9, y: 5.65, w: 4.85, h: 0.8, fill: "F3EAE6", head: "効果を測らないと回せません", headColor: ALERT,
+    body: "何が効いたか分からないままだと、この三つの順序自体が回りません。",
     bodySize: 10.5, lead: 13 });
 }
 
 /* --- intro 07: what rig actually does --- */
 {
-  const s = base("rig の活用 — 四象限を、どう埋めるか", "はじめに · 07");
+  const s = base("rig は四つの象限をこう埋めます", "はじめに · 07");
   const quad = [
-    ["計算的ガイド", "hook・manifest（.claude/rig.md）・recipe・scaffold。作業を始める前に、走らせ方と既定値を先回りで決める。"],
-    ["計算的センサー", "acceptance-gate の機械検証（build / lint / test / 型）＋ 決定論センサー（秘密情報・インジェクション・破壊的コマンド・ゲート改竄・schema-diff）。"],
-    ["推論的ガイド", "persona・instruction・知識層の wiki。ドメインの前提を、判断する側に持たせる。"],
-    ["推論的センサー", "reviewer persona の並列レビュー。read-only をプロセスレベルで強制し、drill で検出率を実測する。"],
+    ["計算的ガイド", "hook・manifest（.claude/rig.md）・recipe・scaffold です。作業を始める前に、走らせ方と既定値を決めておきます。"],
+    ["計算的センサー", "acceptance-gate の機械検証（build / lint / test / 型）と、決定論センサー（秘密情報・インジェクション・破壊的コマンド・ゲート改竄・schema-diff）です。"],
+    ["推論的ガイド", "persona・instruction・知識層の wiki です。ドメインの前提を、判断する側に持たせます。"],
+    ["推論的センサー", "reviewer persona による並列レビューです。読み取り専用をプロセスレベルで強制し、drill で検出率を実測します。"],
   ];
   quad.forEach((q, i) => {
     const col = i % 2, row = Math.floor(i / 2);
     card(s, { x: M + col * 4.25, y: 1.42 + row * 1.75, w: 4.05, h: 1.6,
       fill: i === 1 ? "E7EFEB" : TINT, head: q[0], headSize: 13, body: q[1], bodySize: 10.5, lead: 14 });
   });
-  card(s, { x: M, y: 4.95, w: 8.3, h: 1.45, head: "そして 2×2 の外に、rig 固有のものが二つ",
-    body: "① 隔離 — 判定が終わるまで、成果物は作業ツリーに触れない。② 記録 — 何を試み、どの基準で、なぜ受け入れた（拒否した）かが run log と監査証跡に残る。",
+  card(s, { x: M, y: 4.95, w: 8.3, h: 1.45, head: "2×2 の外にも、rig 固有のものが二つあります",
+    body: "一つは隔離です。判定が終わるまで、成果物は作業ツリーに触れません。もう一つは記録です。何を試して、どの基準で、なぜ受け入れた（あるいは拒否した）かが run log と監査証跡に残ります。",
     bodySize: 11.5, lead: 16 });
 
   card(s, { x: M + 8.6, y: 1.42, w: 3.6, h: 3.55, fill: "F3EAE6", head: "引き受けないこと", headColor: ALERT,
-    body: "・IDE や GUI の提供\n・汎用エージェント群のプラットフォーム\n・複数モデルの回答を混ぜて一つにすること\n・ワークフロー DSL の表現力競争\n\nrig が複数モデルを使うのは、検証役を生成役から構造的に独立させるためであって、答えを合成するためではない。",
+    body: "・IDE や GUI の提供\n・汎用エージェント群のプラットフォーム\n・複数モデルの回答を混ぜて一つにすること\n・ワークフロー DSL の表現力競争\n\nrig が複数モデルを使うのは、検証役を生成役から独立させるためです。答えを合成するためではありません。",
     bodySize: 11, lead: 16 });
-  card(s, { x: M + 8.6, y: 5.15, w: 3.6, h: 1.25, head: "逆に、明確に目標なこと",
-    body: "他のオーケストレータが作った成果物にも、同じ受け入れ契約を当てること（workbench.py import）。",
+  card(s, { x: M + 8.6, y: 5.15, w: 3.6, h: 1.25, head: "はっきり目標にしていること",
+    body: "他のオーケストレータが作った成果物にも、同じ受け入れ契約を当てます（workbench.py import）。",
     bodySize: 11, lead: 15 });
 }
 
 /* --- part 1 divider --- */
 {
   dark("第一部　rig を知る",
-    "ここからは、その仕組みが実際にどう動くか。\n分類・隔離・ゲート・受け入れの四つを順に見る。",
+    "ここからは、その仕組みが実際にどう動くかを見ていきます。\n分類、隔離、ゲート、受け入れの順です。",
     "README.ja.md §5〜§12");
 }
 
@@ -430,17 +430,17 @@ function table(slide, o) {
 /* ------------------------------------------------------------------ 03 */
 {
   const s = base("rig とは何か", "N° 01");
-  s.addText("危ないのは、AI が間違えることではない。間違えたことに誰も気づかないまま、本体に混ざることだ。", {
+  s.addText("困るのは AI が間違えることではありません。間違えたことに誰も気づかないまま、本体に混ざってしまうことです。", {
     x: M, y: 1.42, w: W - M * 2, h: 0.4, isTextBox: true, margin: 0,
     fontFace: TITLE_F, fontSize: 15, bold: true, color: INK,
   });
 
   const steps = [
     ["分類", "bugfix / feature / refactor\n/ review / documentation …"],
-    ["recipe 選択", "選択理由をバナーで\n先に宣言する"],
+    ["recipe 選択", "選んだ理由を\n先に一行で出す"],
     ["隔離 worktree", "作業ツリーとは別の\n使い捨てブランチ"],
     ["acceptance-gate", "機械的な基準で\n合否を判定"],
-    ["accept / discard", "反映は staged。\n判断は常に人間"],
+    ["accept / discard", "反映は staged まで。\n判断は常に人間"],
   ];
   const cw = 2.32, gap = 0.16;
   steps.forEach((st, i) => {
@@ -454,16 +454,16 @@ function table(slide, o) {
 
   label(s, { text: "最初に外しておく誤解", x: M, y: 3.85, w: 6 });
   card(s, {
-    x: M, y: 4.2, w: 3.93, h: 1.9, head: "品質を自動で生む道具ではない",
-    body: "あなたが定義した品質基準を、AI に無視させないための道具。基準を作るのは人間の仕事のまま。rig の仕事は強制と測定。",
+    x: M, y: 4.2, w: 3.93, h: 1.9, head: "品質を自動で生む道具ではありません",
+    body: "あなたが決めた品質基準を、AI に無視させないための道具です。基準を作るのは人間の仕事のままで、rig の仕事は強制と測定です。",
   });
   card(s, {
-    x: M + 4.13, y: 4.2, w: 3.93, h: 1.9, head: "対価がある",
-    body: "隔離・検証・記録のために、速度とトークンを意図的に払う。速く書かせたいだけなら、モデルに直接頼むほうが速い。",
+    x: M + 4.13, y: 4.2, w: 3.93, h: 1.9, head: "そのかわり、対価があります",
+    body: "隔離と検証と記録のために、速度とトークンをわざと払っています。速く書かせたいだけなら、モデルに直接頼むほうが速いです。",
   });
   card(s, {
     x: M + 8.26, y: 4.2, w: 3.94, h: 1.9, head: "効いてくる場面", fill: "E7EFEB",
-    body: "失敗したときのコストが、速度より高いとき。本番に触れるコード、他人が読むコード、あとで誰も検証しないコード。",
+    body: "失敗したときのコストが速度より高い場面です。本番に触れるコード、他人が読むコード、あとで誰も検証しないコードが当てはまります。",
   });
 }
 
@@ -485,17 +485,17 @@ function table(slide, o) {
   });
   card(s, {
     x: M + 7.9, y: 1.5, w: 4.3, h: 2.4, head: "rig の現在地",
-    body: "安全性の核（分類・隔離・acceptance-gate・明示的な accept／discard）は実装済みで、リポジトリ自身のテストで裏づけがある。\n\nその上の観測系（drill・board・stats・GitHub 連携）は実用可能だが発展中。",
+    body: "安全性の核になる部分は実装済みで、リポジトリ自身のテストで裏づけがあります。分類・隔離・acceptance-gate・明示的な accept と discard です。\n\nその上の観測系（drill・board・stats・GitHub 連携）は使えますが、まだ発展途中です。",
     bodySize: 11.5, lead: 16,
   });
   card(s, {
     x: M + 7.9, y: 4.05, w: 4.3, h: 2.05, fill: "F3EAE6", head: "正直なスコープ", headColor: ALERT,
-    body: "「未出荷の機能を Planned として載せない」がこのプロジェクトの方針。表に無いコマンドは、まだ出荷されていない。",
+    body: "このプロジェクトは、まだ出していない機能を Planned として載せない方針です。表に無いコマンドは、まだ出荷されていません。",
     bodySize: 11.5, lead: 16,
   });
   card(s, {
-    x: M, y: 4.65, w: 7.6, h: 1.75, head: "隔離が task 単位で閉じている、ということ",
-    body: "複数タスクを同時に走らせても構造的に安全（別 worktree・別 branch）。/rig:queue で積んで一括 GO しても、並列プロセス同士がファイルを取り合わない。完了後の確認場所は /rig:go board — どの端末・どのプロセスが起動したかに関わらず、全 task の状態が一つの表に出る。",
+    x: M, y: 4.65, w: 7.6, h: 1.75, head: "隔離が task ごとに閉じていると、何が嬉しいか",
+    body: "複数のタスクを同時に走らせても、別々の worktree と branch なので安全です。/rig:queue に積んで一括で GO しても、並列プロセスがファイルを取り合うことはありません。終わったあとは /rig:go board を見れば、どの端末のどのプロセスが動かしたかに関わらず、全タスクの状態が一つの表に出ます。",
     bodySize: 11.5, lead: 16,
   });
 }
@@ -504,41 +504,41 @@ function table(slide, o) {
 {
   const s = base("入口は二つ。中身は同じエンジン", "N° 03");
   card(s, { x: M, y: 1.45, w: 6.0, h: 2.35, num: "A", head: "Claude Code の中では、プラグイン",
-    body: "スラッシュコマンドはここから来る。安全フローは一通りこれだけで動く。", bodySize: 11.5 });
+    body: "スラッシュコマンドはここから来ます。安全フローは一通りこれだけで動きます。", bodySize: 11.5 });
   codeBox(s, { x: M + 0.86, y: 2.78, w: 5.0, h: 0.78,
     text: "/plugin marketplace add itoh-shun/sito-plugins\n/plugin install rig@sito-plugins", size: 10 });
 
   card(s, { x: M + 6.4, y: 1.45, w: 6.0, h: 2.35, num: "B", head: "それ以外の場所では、rig-wb CLI",
-    body: "CI・スクリプト・別のアシスタント（Codex / Cursor）から同じ recipe とゲートを回す。", bodySize: 11.5 });
+    body: "CI やスクリプト、別のアシスタント（Codex / Cursor）から、同じ recipe とゲートを回せます。", bodySize: 11.5 });
   codeBox(s, { x: M + 7.26, y: 2.78, w: 5.0, h: 0.78,
     text: "pipx install git+https://github.com/itoh-shun/rig.git\nrig-wb version", size: 10 });
 
-  s.addText("両方は要らない。二つ目が必要なのは、Claude Code の外にあるものが同じ recipe とゲートに届く必要があるときだけ。/rig:setup が中から入れてくれる。", {
+  s.addText("両方は要りません。二つ目が必要なのは、Claude Code の外にあるものを同じ recipe とゲートに通したいときだけです。/rig:setup を使えば、Claude Code の中から入れられます。", {
     x: M, y: 3.92, w: W - M * 2, h: 0.32, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 11, color: SLATE,
   });
 
-  label(s, { text: "最初の三十秒 — 設定はゼロでいい", x: M, y: 4.34, w: 8 });
+  label(s, { text: "最初の三十秒。設定はゼロで始められます", x: M, y: 4.34, w: 8 });
   codeBox(s, { x: M, y: 4.66, w: 6.0, h: 1.72,
     text: '/rig:go "ログインバグを直して"\n/rig:go "このPRを厳しめにレビューして"\n/rig:go "今の変更が安全か確認して"\n\n/rig:go diff      # 何が変わったか\n/rig:go accept    # 反映（gate 未達なら拒否）\n/rig:go discard   # 破棄', size: 10.5, lead: 16 });
   codeBox(s, { x: M + 6.4, y: 4.66, w: 6.0, h: 1.72,
     text: "▸ rig\ntask:     ログインバグを直して\ndetected: bugfix\nrecipe:   bugfix — 「バグ」「直して」を検出\nmode:     isolated worktree\ngate:     standard + bugfix", size: 10.5, lead: 16 });
-  s.addText("manifest も gates.json も persona 設定も要らない（すべて後から足す opt-in）", {
+  s.addText("manifest も gates.json も persona 設定も要りません。すべて後から足せます", {
     x: M, y: 6.46, w: 6, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
-  s.addText("なぜその段取りになったかを、走り出す前に一行で宣言する", {
+  s.addText("なぜその段取りになったかを、走り出す前に一行で出します", {
     x: M + 6.4, y: 6.46, w: 6, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
 }
 
 /* ------------------------------------------------------------------ 06 */
 {
-  const s = base("「安全です」は主張にすぎない — 四本柱", "N° 04");
-  s.addText("rig が安全なのは、次の四つが文章ではなく配線として入っているから。", {
+  const s = base("rig が安全だと言える四つの理由", "N° 04");
+  s.addText("安全だと言えるのは、次の四つが文章ではなく配線として入っているからです。", {
     x: M, y: 1.4, w: 11, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 12.5, color: INK });
   const items = [
-    ["1", "隔離された worktree", "タスクごとに専用の worktree と使い捨てブランチ。rig はあなたの作業ツリーに直接書き込まない。失敗しても中断しても、手元は汚れない。隔離が task 単位で閉じているので、複数タスクの同時実行が構造的に安全。"],
-    ["2", "acceptance-gate", "「完了しました」では完了にならない。無関係な差分・テスト・型・リスク記述・秘密情報を機械的に確認して初めて反映候補になる。failed か pending が一件でも残れば accept は拒否される（exit 1）。"],
-    ["3", "read-only な検証役", "実装する AI と検証する AI を分離し、検証側はプロセスレベルで読み取り専用に固定する。お願いではなく強制として。判定の一次証拠は自己申告レポートではなく、worktree の実際の git diff。"],
-    ["4", "明示的な accept と、消えない記録", "accept は squash merge で staged（未コミット）まで。コミットは常に人間が打つ。discard しても run log は残り、何を試みてなぜ捨てたかを辿れる。構造的な前提は --force でも通らない。"],
+    ["1", "隔離された worktree", "タスクごとに専用の worktree と使い捨てブランチを作ります。rig があなたの作業ツリーに直接書き込むことはありません。失敗しても中断しても手元は汚れませんし、隔離がタスクごとに閉じているので同時実行も安全です。"],
+    ["2", "acceptance-gate", "「完了しました」と言われても完了にはなりません。無関係な差分・テスト・型・リスク記述・秘密情報を機械的に確認して、はじめて反映候補になります。failed か pending が一件でも残っていれば accept は拒否されます（exit 1）。"],
+    ["3", "read-only な検証役", "実装する AI と検証する AI を分け、検証側はプロセスレベルで読み取り専用に固定します。お願いではなく強制です。判定の一次証拠に使うのは自己申告のレポートではなく、worktree の実際の git diff です。"],
+    ["4", "明示的な accept と、消えない記録", "accept は squash merge で staged（未コミット）まで進めます。コミットは常に人間が打ちます。discard しても run log は残るので、何を試してなぜ捨てたかを後から辿れます。構造的な前提は --force でも通りません。"],
   ];
   items.forEach((it, i) => {
     const col = i % 2, row = Math.floor(i / 2);
@@ -555,10 +555,10 @@ function table(slide, o) {
   bullets(s, {
     x: M, y: 1.45, w: 5.9, h: 2.3,
     items: [
-      "タスクごとに専用の git worktree ＋ 使い捨てブランチを作る",
-      "読み取り専用のタスク（レビュー・調査）は --no-worktree で worktree ごと省略できる",
-      "discard は worktree と branch を消すが、run log（.rig/runs/）は残る",
-      "並列実行しても別 worktree・別 branch なので、プロセス同士がファイルを取り合わない",
+      "タスクごとに専用の git worktree と使い捨てブランチを作ります",
+      "レビューや調査のような読み取り専用のタスクは、--no-worktree で worktree ごと省略できます",
+      "discard は worktree と branch を消しますが、run log（.rig/runs/）は残ります",
+      "並列で実行しても別の worktree と branch なので、プロセス同士がファイルを取り合いません",
     ],
     size: 12.5,
   });
@@ -572,15 +572,15 @@ function table(slide, o) {
     text: '/rig:queue add "ログイン画面のバグを直して"\n/rig:queue add "在庫一覧に検索機能を追加して"\n/rig:queue go --provider rig --max-parallel 3',
   });
   card(s, {
-    x: M + 7.2, y: 4.5, w: 5.2, h: 1.6, head: "queue は accept しない",
-    body: "queue の verifier が見るのは「gate が確定したか」「worktree 内で完結し本体に書いていないか」だけ。反映の判断は人間に残る。完了後の確認場所は /rig:go board。",
+    x: M + 7.2, y: 4.5, w: 5.2, h: 1.6, head: "queue は accept までは進めません",
+    body: "queue の verifier が見るのは二つだけです。gate が確定したか、worktree の中で完結して本体に書いていないか。反映するかどうかの判断は人間に残ります。終わったら /rig:go board で確認してください。",
     bodySize: 11.5, lead: 16,
   });
 }
 
 /* ------------------------------------------------------------------ 08 */
 {
-  const s = base("柱 ② acceptance-gate — standard ＋ 種別プリセット", "N° 06");
+  const s = base("柱 ② acceptance-gate は standard と種別プリセットの合成です", "N° 06");
   table(s, {
     x: M, y: 1.42, w: 8.3, colW: [1.35, 6.95], monoFirst: true,
     head: ["preset", "基準の例"],
@@ -595,29 +595,29 @@ function table(slide, o) {
     rowH: 0.62, size: 9.5,
   });
   card(s, {
-    x: M + 8.6, y: 1.42, w: 3.6, h: 2.15, head: "四つの状態",
-    body: "各基準は根拠つきで passed / failed / warning / skipped として記録され、全体は passed / passed_with_warnings / failed / pending に集約される。",
+    x: M + 8.6, y: 1.42, w: 3.6, h: 2.15, head: "状態は四つ",
+    body: "各基準は根拠つきで passed / failed / warning / skipped として記録されます。全体は passed / passed_with_warnings / failed / pending に集約されます。",
     bodySize: 11, lead: 15,
   });
   card(s, {
-    x: M + 8.6, y: 3.7, w: 3.6, h: 2.5, fill: "F3EAE6", head: "accept を止めるもの", headColor: ALERT,
-    body: "failed か pending が一件でも残っていれば accept は機械的に拒否される（exit 1）。\n\nwarning は accept を止めないが、常に提示され、黙って握りつぶされることはない。",
+    x: M + 8.6, y: 3.7, w: 3.6, h: 2.5, fill: "F3EAE6", head: "accept が止まる条件", headColor: ALERT,
+    body: "failed か pending が一件でも残っていれば、accept は機械的に拒否されます（exit 1）。\n\nwarning は accept を止めません。ただし必ず提示されるので、黙って握りつぶされることはありません。",
     bodySize: 11, lead: 15,
   });
-  s.addText("正本は scripts/workbench.py gates。プロジェクトは .rig/gates.json の extra_criteria で基準を足せる。", {
+  s.addText("正本は scripts/workbench.py gates です。プロジェクト側は .rig/gates.json の extra_criteria で基準を足せます。", {
     x: M, y: 6.35, w: 8.3, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
 }
 
 /* ------------------------------------------------------------------ 09 */
 {
-  const s = base("基準は自己申告ではない — 機械センサーが裏づける", "N° 07");
+  const s = base("基準は自己申告ではなく、機械センサーが裏づけます", "N° 07");
   const sensors = [
-    ["no_secret_leak", "task diff への決定論シークレットスキャン。検出があれば failed。抜粋は常にマスク済み。"],
-    ["no_injection_markers", "prose 面へのインジェクション・マーカー検出。不可視／bidi Unicode は fail、指示上書き句は warning。"],
-    ["no_destructive_operation", "破壊的コマンド検出。rm -rf / ・mkfs・DROP DATABASE は fail、force push や TRUNCATE は warning。"],
-    ["no_gate_tampering", "gates.json・recipes・CI workflow の編集は fail。既存テストの改変・assert 削除・skip 追加は warning。"],
-    ["public_api_changes_documented", "OpenAPI schema-diff。API が変わったのに diff サマリに記述が無ければ warning に落とす。"],
-    ["prompt_regression_passed", "diff が prompt 面に触れたときだけ自動追加。--set による手動上書きを拒否する唯一の基準。"],
+    ["no_secret_leak", "task diff に決定論的なシークレットスキャンをかけます。検出があれば failed です。抜粋は常にマスクされます。"],
+    ["no_injection_markers", "文章面のインジェクション・マーカーを探します。不可視文字や bidi Unicode は fail、指示を上書きする言い回しは warning です。"],
+    ["no_destructive_operation", "破壊的なコマンドを探します。rm -rf / ・mkfs・DROP DATABASE は fail、force push や TRUNCATE は warning です。"],
+    ["no_gate_tampering", "gates.json・recipes・CI workflow を編集していたら fail です。既存テストの改変・assert 削除・skip 追加は warning になります。"],
+    ["public_api_changes_documented", "OpenAPI の schema-diff を取ります。API が変わったのに diff サマリに記述が無ければ warning に落とします。"],
+    ["prompt_regression_passed", "diff が prompt 面に触れたときだけ自動で足されます。--set による手動上書きを拒否する唯一の基準です。"],
   ];
   sensors.forEach((sn, i) => {
     const col = i % 2, row = Math.floor(i / 2);
@@ -625,8 +625,8 @@ function table(slide, o) {
     card(s, { x, y, w: 6.0, h: 1.18, head: sn[0], headSize: 11.5, body: sn[1], bodySize: 10.5, lead: 14 });
   });
   card(s, {
-    x: M, y: 5.6, w: 12.2, h: 0.95, fill: "E7EFEB", head: "設定は加算のみ",
-    body: "プロジェクトは .rig/gates.json で独自基準を足せるが、組み込み基準の削除・緩和キーは即座に拒否される。リポジトリの中のファイルが、そのリポジトリを守るゲートを弱めることはできない。",
+    x: M, y: 5.6, w: 12.2, h: 0.95, fill: "E7EFEB", head: "設定は足す方向にしか動きません",
+    body: "プロジェクトは .rig/gates.json で独自の基準を足せます。ただし組み込み基準の削除キーや緩和キーは、その場で拒否されます。リポジトリの中のファイルが、そのリポジトリを守るゲートを弱めることはできません。",
     bodySize: 11.5, lead: 15,
   });
 }
@@ -640,41 +640,41 @@ function table(slide, o) {
   bullets(s, {
     x: M, y: 2.7, w: 6.0, h: 2.0,
     items: [
-      "見て、grep して、指摘は書ける",
-      "編集・commit・formatter による書き換えはできない",
-      "判定の一次証拠は worktree の実際の git diff。生成側のレポートは「未検証の主張」として渡されるだけ",
-      "orchestrate.py probe が、この制限が実装として発動していることをプロバイダごとに確認する",
+      "見て、grep して、指摘を書くことはできます",
+      "編集も commit も、formatter による書き換えもできません",
+      "判定の一次証拠は worktree の実際の git diff です。生成側のレポートは「未検証の主張」として渡されるだけです",
+      "この制限が実装として効いていることは、orchestrate.py probe がプロバイダごとに確認します",
     ],
     size: 11.5,
   });
 
-  label(s, { text: "④  accept は staged で止まり、記録は消えない", x: M + 6.4, y: 1.4, w: 6 });
+  label(s, { text: "④  accept は staged で止まり、記録は消えません", x: M + 6.4, y: 1.4, w: 6 });
   codeBox(s, { x: M + 6.4, y: 1.72, w: 6.0, h: 1.55, size: 10, lead: 14,
     text: "## rig accept — accept_requirements\n  ✓ worktree_exists            構造的\n  ✓ base_branch_recorded       構造的\n  ✓ diff_summary_generated     構造的\n  ✓ acceptance_gate_not_failed 上書き可\n  ✓ no_unrelated_diff          上書き可" });
   bullets(s, {
     x: M + 6.4, y: 3.45, w: 6.0, h: 2.0,
     items: [
-      "構造的な前提は --force でも通らない。diff.md が無ければ accept できない",
-      "上書きした場合は forced: true として記録され、消えない",
-      "反映は squash merge の staged まで。コミットは常に人間が打つ",
-      "discard は変更ファイル一覧を必ず先に見せ、--yes を要求する",
+      "構造的な前提は --force でも通りません。diff.md が無ければ accept できません",
+      "上書きした場合は forced: true として記録され、あとから消せません",
+      "反映は squash merge の staged までです。コミットは常に人間が打ちます",
+      "discard は変更ファイルの一覧を必ず先に見せ、--yes を求めます",
     ],
     size: 11.5,
   });
-  label(s, { text: "中断しても、静かに素の直接作業へ戻らない", x: M, y: 4.9, w: 6 });
+  label(s, { text: "中断しても、黙って素の作業には戻りません", x: M, y: 4.9, w: 6 });
   codeBox(s, { x: M, y: 5.22, w: 6.0, h: 0.95, size: 9, lead: 13,
     text: "▸ rig | task: rig-20260704-153012-login-fix\n      | recipe: bugfix | step: test (4/7)\n      | gate: pending | mode: isolated worktree" });
-  card(s, { x: M + 6.4, y: 5.22, w: 6.0, h: 0.95, head: "文脈圧縮も生き延びる",
-    body: "PreCompact フックが run-state の保全指示を注入し、/rig:init は同じ保全文を CLAUDE.md の Compact Instructions にも置ける。",
+  card(s, { x: M + 6.4, y: 5.22, w: 6.0, h: 0.95, head: "文脈が圧縮されても残ります",
+    body: "PreCompact フックが run-state の保全指示を差し込みます。/rig:init を使えば、同じ保全文を CLAUDE.md の Compact Instructions にも置けます。",
     bodySize: 11, lead: 14 });
 }
 
 /* ------------------------------------------------------------------ 11 */
 {
-  const s = base("中身は四種類のブリック — LEGO のように合成する", "N° 09");
+  const s = base("中身は四種類のブリックで、LEGO のように組み合わせます", "N° 09");
   const bricks = [
     ["persona", "誰が判定するか", "security-reviewer / design-reviewer / test-reviewer …"],
-    ["instruction", "何をするか", "手順そのもの。薄く保たれ、エンジンには触れない"],
+    ["instruction", "何をするか", "手順そのものです。薄く保たれ、エンジンには触れません"],
     ["pattern", "どう分配し、どうゲートするか", "isolated-worktree / acceptance-gate / serial"],
     ["recipe", "step の束", "bugfix / feature / review-only / release-flow / hotfix"],
   ];
@@ -683,7 +683,7 @@ function table(slide, o) {
     card(s, { x, y: 1.42, w: 2.9, h: 2.0, head: b[0], headSize: 15, headColor: ACCENT,
       body: b[1] + "\n\n" + b[2], bodySize: 11, lead: 15 });
   });
-  s.addText("/rig:go はこの組み立てを自動でやる。/rig:dev は同じエンジンを recipe・step・flag すべて明示して使う上級者向けの入口。", {
+  s.addText("/rig:go はこの組み立てを自動でやります。/rig:dev は同じエンジンを、recipe・step・flag をすべて自分で指定して使う入口です。", {
     x: M, y: 3.6, w: 12.2, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 12, color: INK });
   codeBox(s, { x: M, y: 4.0, w: 6.4, h: 1.55, size: 10, lead: 15,
     text: '/rig:dev --plan --only review "現在の変更"\n/rig:dev --recipe release-flow --design "機能X"\n/rig:dev --recipe hotfix --issue 1234\n/rig:dev --list        # 全 tier の recipe' });
@@ -697,14 +697,14 @@ function table(slide, o) {
       ["--autonomous", "step ゲートを省略（acceptance-gate は残る）"],
     ],
   });
-  s.addText("flag とブリックの完全な一覧は skills/engine/SKILL.md が正本（README には複製しない＝目録ドリフト防止）。", {
+  s.addText("flag とブリックの完全な一覧は skills/engine/SKILL.md が正本です。README には複製しません。二重に書くと目録がずれるためです。", {
     x: M, y: 5.75, w: 12.2, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
 }
 
 /* ------------------------------------------------------------------ 12 */
 {
-  const s = base("レビュアーは、測れる", "N° 10");
-  s.addText("reviewer persona は単なるプロンプトではない。既知のバグを使い捨ての diff に注入し、レビューを走らせ、reviewer には見せない答案キーと突き合わせて採点する。", {
+  const s = base("レビュアーの実力は測れます", "N° 10");
+  s.addText("reviewer persona は単なるプロンプトではありません。既知のバグを使い捨ての diff に仕込んでレビューを走らせ、reviewer には見せない答案キーと突き合わせて採点します。", {
     x: M, y: 1.4, w: 12.2, h: 0.35, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 12.5, color: INK });
   const stats = [["82%", "検出率"], ["12%", "誤検知率"], ["76%", "重大度の精度"], ["81%", "Blocking 判断"]];
   stats.forEach((st, i) => {
@@ -718,17 +718,17 @@ function table(slide, o) {
   codeBox(s, { x: M + 8.3, y: 1.9, w: 3.9, h: 1.35, size: 9.5, lead: 13,
     text: "## Missed Issues\n1. SQL injection in search query\n     (src/search.py:88)\n2. Missing authorization check\n     (src/api/users.py:120)" });
 
-  card(s, { x: M, y: 3.45, w: 6.0, h: 2.6, head: "推奨される persona 更新は四カテゴリに固定",
-    body: "add_checklist_item ／ adjust_severity_rule ／ add_false_positive_guard ／ strengthen_security_focus。\n\n曖昧な感想ではなく、run をまたいで集計できる形にするため。--replay はペルソナ編集後にアーカイブ済み diff へ再実行し、新旧 verdict を差分表示する。本物のコードには一切触れない。",
+  card(s, { x: M, y: 3.45, w: 6.0, h: 2.6, head: "persona の更新案は四カテゴリに固定されています",
+    body: "add_checklist_item ／ adjust_severity_rule ／ add_false_positive_guard ／ strengthen_security_focus の四つです。\n\n曖昧な感想ではなく、run をまたいで集計できる形にするためです。--replay を使うと、persona を編集したあとにアーカイブ済みの diff へ再実行し、新旧の verdict を並べて見せます。本物のコードには一切触れません。",
     bodySize: 11.5, lead: 16 });
-  label(s, { text: "そして、ゴム印を名指しする（/rig:go stats）", x: M + 6.4, y: 3.45, w: 6 });
+  label(s, { text: "形だけのレビューも名指しします（/rig:go stats）", x: M + 6.4, y: 3.45, w: 6 });
   codeBox(s, { x: M + 6.4, y: 3.78, w: 5.8, h: 2.27, size: 10, lead: 15,
     text: "Verifier behavior:\n- strict_senior_engineer: 14 runs, 6 rejects\n- product_reviewer:        6 runs, 0 rejects\n\nWarning:\nproduct_reviewer has 0 rejects across 6 runs.\nPossible rubber-stamp behavior." });
 }
 
 /* ------------------------------------------------------------------ 13 */
 {
-  const s = base("コマンドの地図 — 上から下へ、必要になってから降りる", "N° 11");
+  const s = base("コマンドの地図。上から順に、必要になってから覚えます", "N° 11");
   table(s, {
     x: M, y: 1.45, w: 12.2, colW: [1.6, 10.6],
     head: ["tier", "コマンド"],
@@ -743,25 +743,25 @@ function table(slide, o) {
     rowH: 0.52, size: 10.5,
   });
   card(s, { x: M, y: 5.35, w: 6.0, h: 1.05, head: "最初の一日に要るもの",
-    body: "/rig:go と diff / accept / discard の四つだけ。", bodySize: 11.5 });
+    body: "/rig:go と diff / accept / discard の四つだけです。", bodySize: 11.5 });
   card(s, { x: M + 6.4, y: 5.35, w: 5.8, h: 1.05, head: "覚えなくていいもの",
-    body: "残り全部。必要になった日に、この表に戻ってくればいい。", bodySize: 11.5 });
+    body: "残り全部です。必要になった日に、この表へ戻ってきてください。", bodySize: 11.5 });
 }
 
 /* ------------------------------------------------------------------ 14 */
 {
   dark("第二部　pack で知識層を拡張する",
-    "専用領域の知識を、口伝でもコピペでもなく、\nバージョンとハッシュと出典を持った配布物として渡す。",
+    "専用領域の知識を、口伝でもコピペでもなく、\nバージョンとハッシュと出典を持った配布物として渡します。",
     "docs/packs.md ／ rig_workbench/packs/model.py");
 }
 
 /* ------------------------------------------------------------------ 15 */
 {
-  const s = base("知識層とは何か、そしてなぜ二種類あるのか", "N° 12");
+  const s = base("知識層とは何か。なぜ二種類あるのか", "N° 12");
   card(s, {
     x: M, y: 1.42, w: 12.2, h: 0.95, fill: "E7EFEB",
-    head: "知識層＝subagent のプロンプトに注入される、ドメイン記述知識",
-    body: "「この会社ではバックアップをこう定義している」「この製品のユビキタス言語はこれだ」— コードを読んでも出てこない事実を、レビュアーや実装役に持たせるための層。",
+    head: "知識層とは、subagent のプロンプトに注入されるドメイン知識のことです",
+    body: "「この会社ではバックアップをこう定義している」「この製品のユビキタス言語はこれだ」。こうした、コードを読んでも出てこない事実を、レビュアーや実装役に持たせるための層です。",
     bodySize: 11.5, lead: 15,
   });
   table(s, {
@@ -778,39 +778,39 @@ function table(slide, o) {
     rowH: 0.48, size: 10.5,
   });
   card(s, {
-    x: M + 8.7, y: 2.6, w: 3.5, h: 1.75, head: "手元で育てるなら前者",
-    body: "書いてすぐ効く。棚卸しも配布も要らないうちは、これで十分。",
+    x: M + 8.7, y: 2.6, w: 3.5, h: 1.75, head: "手元で育てるなら前者で十分です",
+    body: "書けばすぐ効きます。棚卸しも配布も要らないうちは、これで足ります。",
     bodySize: 11, lead: 15,
   });
   card(s, {
-    x: M + 8.7, y: 4.5, w: 3.5, h: 2.0, head: "渡した瞬間に後者が要る", headColor: ACCENT,
-    body: "誰が書いたのか。いつ見直したのか。根拠は何か。途中で書き換わっていないか。pack はこの四つを構造として持つ。",
+    x: M + 8.7, y: 4.5, w: 3.5, h: 2.0, head: "人に渡すなら後者が要ります", headColor: ACCENT,
+    body: "誰が書いたのか。いつ見直したのか。根拠は何か。途中で書き換わっていないか。pack はこの四つを構造として持っています。",
     bodySize: 11, lead: 15,
   });
 }
 
 /* ------------------------------------------------------------------ 16 */
 {
-  const s = base("wiki と inject — 事実を埋め込まず、参照する", "N° 13");
+  const s = base("persona は事実を埋め込まず、wiki を参照します", "N° 13");
   codeBox(s, { x: M, y: 1.42, w: 5.9, h: 0.85, size: 11,
     text: '# persona: house-authenticity\ninject: ["[[genre-house]]", "[[music-era-90s]]"]' });
   bullets(s, {
     x: M, y: 2.45, w: 5.9, h: 2.1,
     items: [
-      "一つの概念につき一枚の正準ページ。相互リンクは [[slug]]",
-      "persona は事実を本文に埋め込まず、ページを参照する",
-      "埋め込むと知識が暗黙知になる。参照なら、ページを一枚直すだけで参照する全 persona の判断が同時に更新される",
-      "/rig:knowledge は既定で global に書く（--project でプロジェクト overlay）",
+      "一つの概念につき、一枚の正準ページ。相互リンクは [[slug]]",
+      "persona は事実を本文に埋め込まず、ページを参照します",
+      "埋め込むと知識が暗黙知になります。参照にしておけば、ページを一枚直すだけで、参照している全 persona の判断が同時に更新されます",
+      "書き先は /rig:knowledge の既定で global。--project を付けるとプロジェクト overlay になります",
     ],
     size: 11.5,
   });
-  label(s, { text: "[[slug]] の tier 解決 — 上の層が勝つ", x: M + 6.3, y: 1.42, w: 6 });
+  label(s, { text: "[[slug]] は tier で解決され、上の層が勝ちます", x: M + 6.3, y: 1.42, w: 6 });
   const tiers = [
     ["1", "project overlay", "<repo>/.claude/rig/knowledge/wiki/"],
     ["2", "global", "~/.claude/rig/knowledge/wiki/"],
     ["3", "org", "チームで共有する層（RIG_ORG_HOME）"],
     ["4", "pack 同梱", "<pack>/facets/knowledge/<slug>.md"],
-    ["5", "shipped", "rig が最初から持つ正準ページ"],
+    ["5", "shipped", "rig が最初から持っているページ"],
   ];
   tiers.forEach((t, i) => {
     const y = 1.78 + i * 0.62;
@@ -824,15 +824,15 @@ function table(slide, o) {
       fontFace: MONO_F, fontSize: 9.5, color: SLATE });
   });
   card(s, {
-    x: M, y: 4.85, w: 5.9, h: 1.5, fill: "E7EFEB", head: "pack の persona は、まず自分の pack を見る",
-    body: "pack は自分の persona のために必要なページを同梱して持ち歩く。同じ slug をプロジェクト側に置けば、従来どおり上書きできる。",
+    x: M, y: 4.85, w: 5.9, h: 1.5, fill: "E7EFEB", head: "pack の persona は、まず自分の pack を見ます",
+    body: "pack は自分の persona に必要なページを同梱して持ち歩きます。同じ slug をプロジェクト側に置けば、これまでどおり上書きできます。",
     bodySize: 11, lead: 15,
   });
 }
 
 /* ------------------------------------------------------------------ 17 */
 {
-  const s = base("pack の type が決めるのは、権限", "N° 14");
+  const s = base("pack の type が決めるのは権限です", "N° 14");
   table(s, {
     x: M, y: 1.42, w: 8.0, colW: [1.7, 4.4, 1.9], monoFirst: true,
     head: ["type", "宣言できるアセット", "host コマンド実行"],
@@ -848,33 +848,33 @@ function table(slide, o) {
   });
   card(s, {
     x: M + 8.3, y: 1.42, w: 3.9, h: 2.2, fill: "F3EAE6",
-    head: "右端の列が、この型モデルの存在理由", headColor: ALERT,
-    body: "recipe に checks:（ホスト上で実行されるシェルコマンド）を書けるのは tool だけ。他の型が運ぶのは、プロバイダが読むテキストだけ。",
+    head: "右端の列が、この型モデルがある理由です", headColor: ALERT,
+    body: "recipe に checks:（ホスト上で実行されるシェルコマンド）を書けるのは tool だけです。他の型が運ぶのは、プロバイダが読むテキストだけです。",
     bodySize: 11, lead: 15,
   });
   card(s, {
     x: M + 8.3, y: 3.75, w: 3.9, h: 1.35, head: "type ≠ kind",
-    body: "kind（core / official / domain / project）は tier 順を決めるだけ。tier は権限ではない。",
+    body: "kind（core / official / domain / project）は tier 順を決めるだけです。tier は権限ではありません。",
     bodySize: 11, lead: 15,
   });
   card(s, {
-    x: M + 8.3, y: 5.25, w: 3.9, h: 1.2, head: "既定値を持たない理由",
-    body: "既定値を置くと、その決定を「決めなかった人」に渡してしまうから。",
+    x: M + 8.3, y: 5.25, w: 3.9, h: 1.2, head: "既定値を持たせていない理由",
+    body: "既定値を置くと、その決定を「決めなかった人」に渡してしまうからです。",
     bodySize: 11, lead: 15,
   });
-  s.addText("チームのドメイン知識を追加することが、同時にコマンド実行権限を渡すことになってはいけない — これが型モデルの引く線。", {
+  s.addText("チームのドメイン知識を足すことが、そのままコマンド実行権限を渡すことになってはいけません。ここが型モデルの引く線です。", {
     x: M, y: 4.85, w: 8.0, h: 0.35, isTextBox: true, margin: 0,
     fontFace: TITLE_F, fontSize: 13, bold: true, color: INK });
   card(s, {
     x: M, y: 5.25, w: 8.0, h: 1.2, head: "どの type を選ぶか",
-    body: "知識層を配るだけなら knowledge。persona も一緒に配るなら reviewer。recipe やコマンドまで含むなら skill。必要以上に強い型を選ばないことが、そのまま受け取る側への安全保証になる。",
+    body: "知識層を配るだけなら knowledge を選びます。persona も一緒に配るなら reviewer、recipe やコマンドまで含むなら skill です。必要以上に強い型を選ばないことが、そのまま受け取る側への安全保証になります。",
     bodySize: 11.5, lead: 15,
   });
 }
 
 /* ------------------------------------------------------------------ 18 */
 {
-  const s = base("作る — init → sync → validate → doctor", "N° 15");
+  const s = base("pack を作る。init → sync → validate → doctor", "N° 15");
   codeBox(s, { x: M, y: 1.42, w: 7.0, h: 2.35, size: 10, lead: 15,
     text: "$ rig-wb pack init my-domain --type knowledge \\\n      --kind domain --root .rig/packs\ninitialized: .rig/packs/my-domain\n\nnext:\n  1. write an asset  facets/knowledge/<name>.md\n  2. rig-wb pack sync .rig/packs/my-domain\n  3. rig-wb pack validate .rig/packs/my-domain" });
   codeBox(s, { x: M, y: 3.95, w: 7.0, h: 1.35, size: 10, lead: 15,
@@ -882,76 +882,76 @@ function table(slide, o) {
   codeBox(s, { x: M, y: 5.45, w: 7.0, h: 1.0, size: 10, lead: 15,
     text: "$ rig-wb pack doctor .rig/packs/my-domain\npack doctor: warning\n- empty_pack: .rig/packs/my-domain" });
 
-  card(s, { x: M + 7.4, y: 1.42, w: 4.8, h: 1.65, head: "pack.yaml は手で編集しない",
-    body: "全アセットをパスと sha256 で宣言し、検証時に正準形とバイト比較される。だから生成物であって、手書きの対象ではない。",
+  card(s, { x: M + 7.4, y: 1.42, w: 4.8, h: 1.65, head: "pack.yaml は手で編集しません",
+    body: "全アセットをパスと sha256 で宣言し、検証のときに正準形とバイト単位で比較されます。つまり生成物であって、手書きするものではありません。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 7.4, y: 3.2, w: 4.8, h: 1.65, head: "sync はディレクトリを鏡写しにする",
-    body: "消したファイルは宣言からも消える。書き換えるのは assets と hashes だけで、version・description・entrypoints はあなたのもの。",
+  card(s, { x: M + 7.4, y: 3.2, w: 4.8, h: 1.65, head: "sync はディレクトリを鏡写しにします",
+    body: "消したファイルは宣言からも消えます。書き換わるのは assets と hashes だけで、version・description・entrypoints はあなたのものです。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 7.4, y: 4.98, w: 4.8, h: 1.47, fill: "F3EAE6", head: "valid は「完成」ではない", headColor: ALERT,
-    body: "空の pack もスキーマは満たすので valid と出る。doctor がその状態を名指しする（警告では exit 0。failed だけがエラー）。",
+  card(s, { x: M + 7.4, y: 4.98, w: 4.8, h: 1.47, fill: "F3EAE6", head: "valid は「完成」という意味ではありません", headColor: ALERT,
+    body: "空の pack もスキーマは満たすので valid と出ます。その状態は doctor が名指ししてくれます。警告では exit 0 を返し、failed だけがエラーです。",
     bodySize: 11, lead: 15 });
 }
 
 /* ------------------------------------------------------------------ 19 */
 {
-  const s = base("wiki を入れた瞬間、評価ゲートが立つ", "N° 16");
+  const s = base("wiki を入れると、評価ゲートが立ちます", "N° 16");
   card(s, {
     x: M, y: 1.42, w: 12.2, h: 0.85, fill: "E7EFEB",
-    head: "wiki はプロンプト素材 — プロバイダに見せるテキストである",
-    body: "だから wiki を持つ pack には、承認済みの評価ケースが最低一件必要になる。会社の知識ページも、他のプロンプト面と同じ規律で統治される。事故ではなく、意図された挙動。",
+    head: "wiki はプロンプト素材です。プロバイダに見せるテキストだからです",
+    body: "そのため wiki を持つ pack には、承認済みの評価ケースが最低一件必要です。会社の知識ページも、他のプロンプト面と同じ規律で扱われます。これは事故ではなく、意図された挙動です。",
     bodySize: 11.5, lead: 15,
   });
   codeBox(s, { x: M, y: 2.5, w: 7.4, h: 2.85, size: 9.5, lead: 13,
     text: "$ rig-wb pack validate .rig/packs/my-domain\n[ERROR] prompt-bearing pack requires at least one\n        evaluation case\n\n# draft は pack の外（プロジェクト側）に書く\n#   .rig/evals/drafts/<case-id>/case.json\n#   prompt_surfaces: [\"wiki:backup-policy\"]\n$ rig-wb eval run <case-id> --phase baseline ...\n$ rig-wb eval run <case-id> --phase current  ...\n$ rig-wb eval compare --baseline ... --current ...\n$ rig-wb eval promote <case-id> ... --into <pack>\n$ rig-wb pack sync && rig-wb pack validate\nvalid: my-domain@0.1.0" });
-  card(s, { x: M + 7.7, y: 2.5, w: 4.5, h: 1.5, head: "承認はフラグではない",
-    body: "promote は閾値を満たさない証拠も、意味的ルーブリックが未判定のケースも拒否する。結果には署名がつくので、編集された結果は閾値を見る前に落ちる。",
+  card(s, { x: M + 7.7, y: 2.5, w: 4.5, h: 1.5, head: "承認はフラグを立てることではありません",
+    body: "promote は、閾値を満たさない証拠も、意味的ルーブリックが未判定のケースも拒否します。結果には署名がつくので、編集された結果は閾値を見る前に落ちます。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 7.7, y: 4.12, w: 4.5, h: 1.23, head: "draft を pack に置けない理由",
-    body: "pack は宣言していないものを一切持てないから。--into が変えるのは行き先だけ。",
+  card(s, { x: M + 7.7, y: 4.12, w: 4.5, h: 1.23, head: "draft を pack の中に置けない理由",
+    body: "pack は宣言していないものを一切持てないからです。--into が変えるのは行き先だけです。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M, y: 5.5, w: 12.2, h: 0.95, fill: "F3EAE6", head: "忘れやすい一手：entrypoint を書かないと、ケースは走らない", headColor: ALERT,
-    body: "prompt_entrypoint はマニフェストが宣言する entrypoint を名指ししなければならない（知識 pack では kind: wiki でページ自身）。書き忘れても pack validate は通るが、pack test は structural_only と報告する — 同梱され、ハッシュされ、そして誰にも実行されない。",
+  card(s, { x: M, y: 5.5, w: 12.2, h: 0.95, fill: "F3EAE6", head: "忘れやすい一手。entrypoint を書かないとケースは走りません", headColor: ALERT,
+    body: "prompt_entrypoint は、マニフェストが宣言する entrypoint を名指しする必要があります（知識 pack では kind: wiki でページ自身）。書き忘れても pack validate は通ります。ただし pack test は structural_only と報告します。ケースは同梱され、ハッシュされ、それでも誰にも実行されません。",
     bodySize: 11, lead: 15 });
 }
 
 /* ------------------------------------------------------------------ 20 */
 {
-  const s = base("その pack は何について書かれているのか — knowledge ブロック", "N° 17");
+  const s = base("knowledge ブロックで「何についての pack か」を書きます", "N° 17");
   codeBox(s, { x: M, y: 1.42, w: 6.0, h: 1.75, size: 10.5, lead: 15,
     text: 'knowledge:\n  scope: ["company"]\n  topics: ["access-control", "backup"]\n  owner: "Corp IT"\n  evidence: ["情報セキュリティ規程", "運用設計書"]\n  reviewed_at: "2026-08-01T00:00:00+00:00"' });
   bullets(s, {
     x: M, y: 3.32, w: 6.0, h: 1.9,
     items: [
-      "ブロック自体は任意。だが半分だけ書かれたブロックは許されない — 置いた以上は五つとも必須",
-      "理由は reviewed_at にある。見直し日のない知識宣言こそ、誰にも気づかれずに腐る",
-      "どの type でも宣言できる。これは説明であって、権限ではない",
-      "scope は company のような素の次元か、product:northwind-one のような値つき",
+      "ブロック自体は任意です。ただし置いたなら五つとも必須で、半分だけ書くことは許されません",
+      "理由は reviewed_at です。見直し日のない知識宣言こそ、誰にも気づかれずに古びていきます",
+      "どの type でも宣言できます。これは説明であって、権限ではありません",
+      "scope は company のような素の次元か、product:northwind-one のような値つきで書きます",
     ],
     size: 11,
   });
-  card(s, { x: M, y: 5.4, w: 6.0, h: 1.05, head: "evidence だけソートを要求されない",
-    body: "人が書いた文書の題名で、書いた言語のまま。順序自体が「主に何に依拠しているか」を運ぶ。重複だけは拒否される。",
+  card(s, { x: M, y: 5.4, w: 6.0, h: 1.05, head: "evidence だけはソートを求められません",
+    body: "人が書いた文書の題名を、書いた言語のまま並べるからです。順序そのものが「主に何に依拠しているか」を表します。重複だけは拒否されます。",
     bodySize: 10.5, lead: 14 });
 
-  label(s, { text: "探す — 選び出すが、決めはしない", x: M + 6.4, y: 1.42, w: 6 });
+  label(s, { text: "探す。選び出しますが、決めはしません", x: M + 6.4, y: 1.42, w: 6 });
   codeBox(s, { x: M + 6.4, y: 1.75, w: 5.8, h: 3.05, size: 9.5, lead: 13,
     text: "$ rig-wb pack knowledge --topic backup\ncompany-security@0.1.0  company   Corp IT\n  reviewed 2026-08-01\n  evidence: 情報セキュリティ規程, 運用設計書\n  wiki: pack://project/company-security/\n          facets/knowledge/backup-policy.md\nproduct-security@0.1.0  product:northwind-one\n  reviewed 2026-07-15\n  evidence: サービス仕様書\n\nscope is ambiguous: company, product:northwind-one\n  — narrow with --scope before treating any of\n    these as the answer" });
-  card(s, { x: M + 6.4, y: 4.95, w: 5.8, h: 1.5, fill: "E7EFEB",
-    head: "どちらのつもりだったかは、どの pack にも書かれていない",
-    body: "質問者についての事実だから。だから rig は推測せず、問いが開いている事実と選択肢の正確な集合を返す。影に隠れたページも、隠さずラベルつきで列挙する。",
+  card(s, { x: M + 6.4, y: 4.9, w: 5.8, h: 1.7, fill: "E7EFEB",
+    head: "どちらのつもりだったかは、どの pack にも書かれていません",
+    body: "それは質問した人についての事実だからです。rig は推測せず、問いが開いていることと、選択肢の正確な集合を返します。影に隠れたページも、隠さずラベルつきで並べます。",
     bodySize: 10.5, lead: 14 });
 }
 
 /* ------------------------------------------------------------------ 21 */
 {
-  const s = base("渡す — bundle・named source・lock", "N° 18");
+  const s = base("pack を渡す。bundle と named source", "N° 18");
   codeBox(s, { x: M, y: 1.42, w: 6.2, h: 1.55, size: 10, lead: 15,
     text: "$ rig-wb pack bundle .rig/packs/my-domain\nbundled: my-domain@0.1.0 (3 file(s))\n  -> dist/my-domain-0.1.0.zip\n  sha256: 7ef9b1a3...\n$ rig-wb pack install dist/... --scope project" });
   codeBox(s, { x: M, y: 3.15, w: 6.2, h: 1.55, size: 10, lead: 15,
     text: "$ rig-wb pack source add product \\\n    --scheme git+ssh \\\n    --url git@github.com:acme/rig-pack-{pack}.git\n$ rig-wb pack install product:northwind@1.4.0\n$ rig-wb pack verify-sources --scope project" });
-  card(s, { x: M, y: 4.88, w: 6.2, h: 1.55, fill: "E7EFEB", head: "rig は資格情報を一切持たない",
-    body: "git を呼ぶだけで、認証は設定済みのもの（SSH agent・credential helper・CI secret）が答える。lock が記録するのはソースの名前と commit であって URL ではない。",
+  card(s, { x: M, y: 4.88, w: 6.2, h: 1.55, fill: "E7EFEB", head: "rig は資格情報を一切持ちません",
+    body: "git を呼ぶだけで、認証は設定済みのもの（SSH agent・credential helper・CI secret）が答えます。lock が記録するのはソースの名前と commit で、URL は記録しません。",
     bodySize: 11, lead: 15 });
 
   table(s, {
@@ -966,11 +966,11 @@ function table(slide, o) {
     ],
   });
   card(s, { x: M + 6.6, y: 3.75, w: 5.6, h: 1.55, fill: "F3EAE6",
-    head: "「override したのに何も起きない」の正体", headColor: ALERT,
-    body: "pack がインストール済みで、valid で、しかし完全に影に隠れている状態。info は身元しか答えないので、explain で tier 争いの勝敗を見る。",
+    head: "「override したのに何も起きない」の正体です", headColor: ALERT,
+    body: "pack はインストール済みで valid なのに、完全に影に隠れている状態です。info は身元しか答えないので、explain で tier 争いの勝敗を見てください。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 6.6, y: 5.45, w: 5.6, h: 0.98, head: "digest は「誰が」を答えない",
-    body: "同じバイト列であることだけを保証する。出所を答えるのは署名と trust root。",
+  card(s, { x: M + 6.6, y: 5.45, w: 5.6, h: 0.98, head: "digest は「誰が」を答えません",
+    body: "同じバイト列であることだけを保証します。出所を答えるのは署名と trust root です。",
     bodySize: 11, lead: 15 });
 }
 
@@ -978,19 +978,19 @@ function table(slide, o) {
 {
   const s = base("引っかかりやすいところ", "N° 19");
   const traps = [
-    ["valid は完成ではない", "空の pack も valid になる。doctor の empty_pack 警告を見る"],
-    ["pack.yaml を手で書かない", "「たまたま一致する」か「間違っている」かにしかならない"],
-    ["署名した pack は sync できない", "署名を外し、sync し、鍵で署名し直す"],
-    ["install だけではコマンドにならない", "command アセットは、明示登録を扱えるホスト向けの資料"],
-    ["project pack は初回に同意が要る", "RIG_ALLOW_PROJECT_PACKS=1。同意は内容ハッシュに紐づく"],
-    ["user / org は品質検証を回避できない", "--allow-unverified は project スコープだけ"],
-    ["mock は品質の証拠ではない", "結果は non_quality_mock と明示される"],
-    ["private は署名の代わりにならない", "private リポジトリの pack も同じ検証を全部通る"],
+    ["valid は完成ではありません", "空の pack も valid になります。doctor の empty_pack 警告を見てください"],
+    ["pack.yaml は手で書きません", "「たまたま一致する」か「間違っている」かにしかなりません"],
+    ["署名した pack は sync できません", "署名を外し、sync してから、鍵で署名し直してください"],
+    ["install だけではコマンドになりません", "command アセットは、明示登録を扱えるホスト向けの資料です"],
+    ["project pack は初回に同意が要ります", "RIG_ALLOW_PROJECT_PACKS=1 で同意します。同意は内容ハッシュに紐づきます"],
+    ["user / org は品質検証を回避できません", "--allow-unverified が使えるのは project スコープだけです"],
+    ["mock は品質の証拠になりません", "結果は non_quality_mock と明示されます"],
+    ["private は署名の代わりになりません", "private リポジトリの pack も、同じ検証を全部通ります"],
   ];
   traps.forEach((t, i) => {
     const col = i % 2, row = Math.floor(i / 2);
     const x = M + col * 6.4, y = 1.42 + row * 1.3;
-    card(s, { x, y, w: 6.0, h: 1.15, num: String(i + 1), numColor: ALERT,
+    card(s, { x, y, w: 6.0, h: 1.28, num: String(i + 1), numColor: ALERT,
       head: t[0], headSize: 11.5, body: t[1], bodySize: 10.5, lead: 14 });
   });
 }
@@ -999,9 +999,9 @@ function table(slide, o) {
 {
   const s = dark("明日からの順番", null, null, 1.15);
   const steps = [
-    ["1", "まず /rig:go だけ使う", "diff / accept / discard の四つで一週間。ゲートに一度落ちて、なぜ落ちたかを読むところまで来れば、rig が何を売っているかは体で分かる。"],
-    ["2", "ページを一枚書く", "/rig:knowledge で自分のドメインを一枚書き、persona の inject: から参照させる。効くかどうかをここで確かめる。"],
-    ["3", "確信してから pack にする", "rig-wb pack init --type knowledge で配布物に格上げする。順番を逆にすると、まだ効くか分からないものに評価ケースを書く羽目になる。"],
+    ["1", "まず /rig:go だけ使う", "diff / accept / discard の四つで一週間やってみてください。ゲートに一度落ちて、なぜ落ちたかを読むところまで来れば、rig が何をする道具かは体で分かります。"],
+    ["2", "ページを一枚書く", "/rig:knowledge で自分のドメインを一枚書き、persona の inject: から参照させます。効くかどうかは、ここで確かめられます。"],
+    ["3", "確信してから pack にする", "rig-wb pack init --type knowledge で配布物に格上げします。順番を逆にすると、まだ効くか分からないものに評価ケースを書くことになります。"],
   ];
   steps.forEach((st, i) => {
     const y = 2.6 + i * 1.32;
