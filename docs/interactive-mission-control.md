@@ -57,6 +57,12 @@ The live page polls RIG state every two seconds and shows:
 - the tail of the worker log;
 - command output when an action succeeds or RIG refuses it.
 
+The **Run index** section is a cross-project projection of the global run history. It shows
+the number of projects and runs represented, then groups issue-linked runs by issue reference
+with their last recorded final state, run count, projects, and sessions. It does not show the
+per-verifier projection, and nothing in the section is an action target: accept and discard
+remain operations on local workbench tasks, not on these historical entries.
+
 ## Autonomous AI Run
 
 The **Start AI Run** form is durable. It does not keep an HTTP request open while Claude/Codex/etc. work.
