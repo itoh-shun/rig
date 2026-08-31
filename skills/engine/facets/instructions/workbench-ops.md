@@ -64,10 +64,14 @@ compatibility は呼び出し側が書いた `requirement`、`satisfied` / `unme
 存在しない endpoint は解決不能な文書として拒否する。endpoint は存在するが compatibility をまだ
 判定できない場合は `unobservable`（exit 2）、判定して満たさない場合は `unmet` を伴う
 `not-executable`（exit 1）であり、両者を混ぜない。循環は `cycles` に列挙して拒否する。
+node 自身の status も同じ扱いで、`rejected` な node は `rejected_nodes` を伴う `not-executable`、
+`unobservable` な node は `unobservable_nodes` を伴う `unobservable` になる。却下された変更が
+実行順序に載ったまま executable と報告されることはない。
 
 このコマンドが保証するのは、宣言された依存と satisfied な互換制約が許す execution stage が
-存在することだけ。その順序での実行が安全であること、影響 repository の網羅、変更の生成・実行、
-各 node の正しさ、cross-repo integration verification、feature assurance は保証しない。
+存在し、その中に `rejected` / `unobservable` な node が無いことだけ。その順序での実行が安全で
+あること、影響 repository の網羅、変更の生成・実行、各 node の正しさ、cross-repo integration
+verification、feature assurance は保証しない。
 
 ## MCPサーバ経由での操作（`scripts/mcp_server.py`・#263）
 
