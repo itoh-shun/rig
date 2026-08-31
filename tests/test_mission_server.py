@@ -1,12 +1,72 @@
 """Interactive Mission Control: browser actions must stay behind RIG Core."""
 
 import http.client
+import html
 import json
+import shutil
+import subprocess
 import threading
 
 import pytest
 
 from rig_workbench import mission_server
+
+
+_MISSING = object()
+
+
+def _rendered_run_index(run_index=_MISSING):
+    """Run the page refresh against a tiny DOM and return the section's rendered HTML."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    snapshot = {
+        "operations": {"tasks_active": 0, "tasks_total": 0, "gate_counts": {}},
+        "production": {
+            "incident_rate_pct": None,
+            "incidents": 0,
+            "outcomes_recorded": 0,
+            "outcome_coverage_pct": None,
+            "accepted_tasks": 0,
+        },
+        "core": [],
+        "live": {"tasks": [], "task_types": []},
+        "jobs": {"worker": {}, "items": [], "counts": {}, "providers": []},
+    }
+    if run_index is not _MISSING:
+        snapshot["run_index"] = run_index
+
+    from rig_workbench.mission_ui import JS_TEMPLATE
+
+    harness = r"""
+const payload=__PAYLOAD__;
+const elements=new Map();
+function element(){return {innerHTML:'',textContent:'',value:'',dataset:{},hidden:false,
+  classList:{add(){},remove(){}}};}
+global.document={
+  querySelector(q){if(!elements.has(q))elements.set(q,element());return elements.get(q);},
+  querySelectorAll(){return [];}
+};
+global.fetch=async()=>({ok:true,status:200,json:async()=>payload});
+global.confirm=()=>false;
+global.prompt=()=>null;
+global.setInterval=()=>0;
+__PAGE_JS__
+setImmediate(()=>process.stdout.write(JSON.stringify({
+  state:document.querySelector('#live-state').textContent,
+  html:document.querySelector('#run-index').innerHTML
+})));
+"""
+    script = harness.replace("__PAYLOAD__", json.dumps(snapshot)).replace(
+        "__PAGE_JS__", JS_TEMPLATE.replace("__CSRF__", json.dumps("test-token"))
+    )
+    proc = subprocess.run(
+        [node, "-"], input=script, capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, proc.stderr
+    rendered = json.loads(proc.stdout)
+    assert rendered["state"] == "LIVE", proc.stderr
+    return rendered["html"]
 
 
 def test_accept_has_no_force_path():
@@ -120,6 +180,76 @@ def test_interactive_html_contains_live_and_durable_controls_but_no_force():
     assert "Outcome: Incident" in page
     assert "csrf-secret" in page
     assert "--force" not in page
+
+
+def test_populated_run_index_renders_its_cross_project_issue_values():
+    run_index = {
+        "rows": [{"run_id": "run-3"}],
+        "projects": ["/alpha", "/beta"],
+        "shown": 1,
+        "total": 3,
+        "unreadable": 2,
+        "truncated": True,
+        "by_issue": {
+            "#558": {
+                "last_final": "DONE",
+                "runs": 3,
+                "projects": ["/alpha", "/beta"],
+                "sessions": ["session-a", "session-b"],
+            }
+        },
+    }
+
+    page = mission_server.interactive_html("csrf-secret")
+    rendered = _rendered_run_index(run_index)
+
+    assert 'id="run-index"' in page
+    assert "projects" in rendered and '<div class="value">2</div>' in rendered
+    assert "runs" in rendered and '<div class="value">3</div>' in rendered
+    assert "#558" in rendered and "last final: DONE" in rendered
+    assert "3 runs" in rendered
+    assert "projects: /alpha, /beta" in rendered
+    assert "sessions: session-a, session-b" in rendered
+    assert "2 unreadable records" in rendered
+    assert "history truncated" in rendered
+
+
+def test_absent_run_index_renders_the_empty_state_without_taking_the_page_down():
+    rendered = _rendered_run_index()
+
+    assert rendered == '<div class="empty">No indexed runs yet.</div>'
+
+
+def test_run_index_with_no_rows_renders_the_empty_state_without_error():
+    rendered = _rendered_run_index({"rows": [], "by_issue": {}, "projects": []})
+
+    assert rendered == '<div class="empty">No indexed runs yet.</div>'
+
+
+def test_every_run_index_value_with_html_metacharacters_is_escaped():
+    unsafe = {
+        "issue": '<issue&"ref>',
+        "final": '<final&"state>',
+        "project": '<project&"name>',
+        "session": '<session&"id>',
+    }
+    rendered = _rendered_run_index({
+        "rows": [{"run_id": "run-1"}],
+        "projects": [unsafe["project"]],
+        "total": 1,
+        "by_issue": {
+            unsafe["issue"]: {
+                "last_final": unsafe["final"],
+                "runs": 1,
+                "projects": [unsafe["project"]],
+                "sessions": [unsafe["session"]],
+            }
+        },
+    })
+
+    for value in unsafe.values():
+        assert value not in rendered
+        assert html.escape(value, quote=True) in rendered
 
 
 def test_body_limit_is_bounded():
