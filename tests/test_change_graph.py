@@ -56,11 +56,14 @@ def _graph(**changes):
     return value
 
 
-def _run(tmp_path, graph):
+def _run(tmp_path, graph, *, json_output=True):
     path = tmp_path / "graph.json"
     path.write_text(json.dumps(graph) + "\n", encoding="utf-8")
+    command = [sys.executable, str(WORKBENCH), "change-graph", str(path)]
+    if json_output:
+        command.append("--json")
     return subprocess.run(
-        [sys.executable, str(WORKBENCH), "change-graph", str(path), "--json"],
+        command,
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -212,6 +215,74 @@ def test_command_keeps_unmet_and_unobservable_constraints_separate(tmp_path):
     accepted = _run(tmp_path, _graph())
     assert accepted.returncode == 0
     assert json.loads(accepted.stdout)["unmet"] == []
+
+
+def test_command_rejected_node_makes_graph_not_executable(tmp_path):
+    graph = _graph()
+    graph["nodes"][0]["status"] = "rejected"
+
+    result = _run(tmp_path, graph)
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert report["status"] == "not-executable"
+    assert report["stages"] is None
+    assert report["rejected_nodes"] == ["db"]
+
+
+def test_command_unobservable_node_makes_graph_unobservable(tmp_path):
+    graph = _graph()
+    graph["nodes"][1]["status"] = "unobservable"
+
+    result = _run(tmp_path, graph)
+
+    assert result.returncode == 2
+    report = json.loads(result.stdout)
+    assert report["status"] == "unobservable"
+    assert report["stages"] is None
+    assert report["unobservable_nodes"] == ["api"]
+
+
+def test_command_rejected_node_outranks_unobservable_node_and_reports_both(tmp_path):
+    graph = _graph()
+    graph["nodes"][0]["status"] = "rejected"
+    graph["nodes"][1]["status"] = "unobservable"
+
+    result = _run(tmp_path, graph)
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert report["status"] == "not-executable"
+    assert report["stages"] is None
+    assert report["rejected_nodes"] == ["db"]
+    assert report["unobservable_nodes"] == ["api"]
+
+
+def test_command_planned_and_accepted_nodes_remain_executable(tmp_path):
+    for node_status in ("planned", "accepted"):
+        graph = _graph()
+        graph["nodes"][0]["status"] = node_status
+
+        result = _run(tmp_path, graph)
+
+        assert result.returncode == 0
+        report = json.loads(result.stdout)
+        assert report["status"] == "executable"
+        assert report["stages"] == [["db"], ["api"]]
+        assert report["rejected_nodes"] == []
+        assert report["unobservable_nodes"] == []
+
+
+def test_command_human_report_names_node_status_causes(tmp_path):
+    graph = _graph()
+    graph["nodes"][0]["status"] = "rejected"
+    graph["nodes"][1]["status"] = "unobservable"
+
+    result = _run(tmp_path, graph, json_output=False)
+
+    assert result.returncode == 1
+    assert "rejected node: db" in result.stdout
+    assert "unobservable node: api" in result.stdout
 
 
 def test_command_groups_deploy_together_and_orders_the_group(tmp_path):
