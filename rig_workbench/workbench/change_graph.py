@@ -251,9 +251,13 @@ def assess(payload: dict) -> dict:
              if item["compatibility"]["status"] == "unmet"]
     unobservable = [item["id"] for item in payload["dependencies"]
                     if item["compatibility"]["status"] == "unobservable"]
-    if unmet or cyclic_groups or visited != len(groups):
+    rejected_nodes = [node["id"] for node in payload["nodes"]
+                      if node["status"] == "rejected"]
+    unobservable_nodes = [node["id"] for node in payload["nodes"]
+                          if node["status"] == "unobservable"]
+    if unmet or rejected_nodes or cyclic_groups or visited != len(groups):
         status = "not-executable"
-    elif unobservable:
+    elif unobservable or unobservable_nodes:
         status = "unobservable"
     else:
         status = "executable"
@@ -264,8 +268,11 @@ def assess(payload: dict) -> dict:
         "cycles": sorted(cyclic_groups),
         "unmet": unmet,
         "unobservable": unobservable,
+        "rejected_nodes": rejected_nodes,
+        "unobservable_nodes": unobservable_nodes,
         "guarantee": (
-            "the declared dependencies admit the reported order"
+            "the declared dependencies admit the reported order, and no node in it is "
+            "rejected or unobservable"
             if status == "executable" else None
         ),
         "does_not_guarantee": (
@@ -298,6 +305,10 @@ def cmd_change_graph(args) -> "NoReturn":  # noqa: F821
             print(f"  unmet: {dependency}")
         for dependency in report["unobservable"]:
             print(f"  unobservable: {dependency}")
+        for node in report["rejected_nodes"]:
+            print(f"  rejected node: {node}")
+        for node in report["unobservable_nodes"]:
+            print(f"  unobservable node: {node}")
         print(f"does not guarantee: {report['does_not_guarantee']}")
     sys.exit(0 if report["status"] == "executable" else
              2 if report["status"] == "unobservable" else 1)
