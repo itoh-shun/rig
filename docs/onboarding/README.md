@@ -19,6 +19,45 @@ evaluation ratchet does not apply. When a command's flags change, the deck goes 
 silently — treat each command's `--help` and the files above as the source of truth, and
 regenerate rather than hand-patching the `.pptx`.
 
+## The layout gate
+
+Japanese text is wider than the Latin text these box sizes were first estimated
+against, so a card that fits in a draft stops fitting after a rewrite. Catching
+that by looking at renders does not scale and it missed real defects — a heading
+wrapping to two lines and pushing into the body, a bullet list crossing the card
+below it.
+
+`docs/onboarding/check.sh` decides it instead:
+
+```
+== deck generator (fit + overlap) ==
+layout fit: ok
+layout overlap: ok
+written: rig-intro.pptx (31 slides)
+
+== html (deck + primer) ==
+layout gate: ok (deck 48 slides, primer 17 sections)
+```
+
+Two sensors, both deterministic:
+
+- **`build-deck.js`** estimates the wrapped height of every card, code block,
+  bullet list and slide title from the character widths (1em for full-width,
+  ~0.55em for Latin) and compares it against the declared box; it also checks
+  every pair of rectangles on a slide for collisions, ignoring the intended
+  nesting of a code block inside a card. It exits 1 **and writes no file**, so a
+  deck with text outside a box cannot be produced at all.
+- **`check-layout.mjs`** loads both HTML files in Chromium and measures each
+  slide's content against the 1280x720 stage, including `<pre>` lines clipped by
+  `overflow: hidden`.
+
+Both were verified by injecting a deliberate overflow and confirming they exit 1;
+the generator left the previous `.pptx` untouched.
+
+The height estimate is an approximation. It is calibrated to catch overflow, not
+to optimise whitespace, so it will occasionally complain about a box that would
+just barely have fitted. Widening the box is the cheap answer.
+
 ## Register
 
 The prose is written under the shipped `japanese-writing` pack, in `talk` mode

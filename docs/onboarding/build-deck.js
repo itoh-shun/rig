@@ -21,6 +21,99 @@ pres.title = "rig 入門";
 
 let n = 0;
 
+/* ================= layout fit sensor =================================
+ * 枠から文字がはみ出したまま出荷しないための計算的センサー。目視ではなく、
+ * 折り返し後の行数から必要な高さを見積もり、カード・コードブロック・見出しの
+ * それぞれの枠と突き合わせる。全角 1em / ASCII 約 0.55em の近似で、狙いは
+ * はみ出しの検出（余白の最適化ではない）。1件でも溢れたら exit 1 で落とす。
+ * ------------------------------------------------------------------ */
+const PT = 72;
+const SLACK = 0.03;          // 見積り誤差の許容（inch）
+const FIT_ISSUES = [];
+
+function charEm(ch) {
+  if (/[　-ヿ一-鿿＀-￯]/.test(ch)) return 1.0;
+  if (ch === " ") return 0.28;
+  if (/[A-Za-z0-9]/.test(ch)) return 0.55;
+  return 0.5;
+}
+
+/** 折り返し後の行数。widthIn は inch、fontPt は pt。 */
+function lineCount(text, widthIn, fontPt) {
+  const limit = widthIn / (fontPt / PT);
+  if (limit <= 0) return 999;
+  let lines = 0;
+  for (const para of String(text).split("\n")) {
+    if (para === "") { lines += 1; continue; }
+    let used = 0, n = 1;
+    for (const ch of para) {
+      const w = charEm(ch);
+      if (used + w > limit) { n += 1; used = w; } else { used += w; }
+    }
+    lines += n;
+  }
+  return lines;
+}
+
+/** 行数 × 行送り を inch で返す。 */
+function blockHeight(text, widthIn, fontPt, leadPt) {
+  return (lineCount(text, widthIn, fontPt) * (leadPt || fontPt * 1.2)) / PT;
+}
+
+function fitIssue(where, kind, need, have, text) {
+  FIT_ISSUES.push({ where, kind, need, have, text: String(text).slice(0, 44) });
+}
+
+/* 同じスライドに置いた要素どうしが重なっていないかも見る。箱の中で溢れる
+ * のとは別の壊れ方で、レンダリングして初めて気づくのがこれだった。 */
+const RECTS = [];
+function rect(slideNo, name, x, y, w, h, text) {
+  RECTS.push({ slideNo, name, x, y, w, h, text: String(text || "").slice(0, 40) });
+}
+function reportOverlaps() {
+  const bad = [];
+  const bySlide = {};
+  for (const r of RECTS) (bySlide[r.slideNo] ||= []).push(r);
+  for (const [no, list] of Object.entries(bySlide)) {
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i], b = list[j];
+        const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        const inside = (p, q) =>
+          p.x >= q.x - 0.02 && p.y >= q.y - 0.02 &&
+          p.x + p.w <= q.x + q.w + 0.02 && p.y + p.h <= q.y + q.h + 0.02;
+        if (ox > 0.02 && oy > 0.02 && !inside(a, b) && !inside(b, a)) {
+          bad.push({ no, a, b, ox, oy });
+        }
+      }
+    }
+  }
+  if (bad.length) {
+    console.error(`\nlayout overlap: ${bad.length} collision(s)\n`);
+    for (const o of bad) {
+      console.error(`  [s${o.no}] ${o.a.name} x ${o.b.name} — ${o.ox.toFixed(2)} x ${o.oy.toFixed(2)} in`);
+      console.error(`      "${o.a.text}" / "${o.b.text}"`);
+    }
+    console.error("\n要素が重なっています。位置か高さを見直してください。");
+    process.exit(1);
+  }
+  console.log("layout overlap: ok");
+}
+
+function reportFit() {
+  if (FIT_ISSUES.length) {
+    console.error(`\nlayout fit: ${FIT_ISSUES.length} overflow(s)\n`);
+    for (const i of FIT_ISSUES) {
+      console.error(`  [${i.where}] ${i.kind}: need ${i.need.toFixed(2)}in > have ${i.have.toFixed(2)}in`);
+      console.error(`      "${i.text.replace(/\n/g, "⏎")}"`);
+    }
+    console.error("\n枠に入りきっていません。高さを広げるか本文を短くしてください。");
+    process.exit(1);
+  }
+  console.log("layout fit: ok");
+}
+
 function shadow() {
   return { type: "outer", color: "000000", blur: 8, offset: 1, angle: 90, opacity: 0.10 };
 }
@@ -46,6 +139,8 @@ function base(title, eyebrow) {
       fontFace: BODY_F, fontSize: 11, bold: true, color: ACCENT, charSpacing: 1,
     });
   }
+  const titleH = blockHeight(title, W - M * 2, 27, 27 * 1.2);
+  if (titleH > 0.72 + SLACK) fitIssue(`s${n} title`, "height", titleH, 0.72, title);
   slide.addText(title, {
     x: M, y: eyebrow ? 0.62 : 0.45, w: W - M * 2, h: 0.72, isTextBox: true, margin: 0,
     fontFace: TITLE_F, fontSize: 27, bold: true, color: INK,
@@ -79,6 +174,7 @@ function dark(title, sub, kicker, titleY) {
 }
 
 function card(slide, o) {
+  rect(n, "card", o.x, o.y, o.w, o.h, o.head || o.body);
   slide.addShape(pres.ShapeType.roundRect, {
     x: o.x, y: o.y, w: o.w, h: o.h, rectRadius: 0.06,
     fill: { color: o.fill || TINT }, line: { color: o.fill ? o.fill : LINE, width: 0.5 },
@@ -99,34 +195,68 @@ function card(slide, o) {
     tx = o.x + 0.86;
     tw = o.w - 1.14;
   }
+  let headH = 0;
   if (o.head) {
+    const hs = o.headSize || 14;
+    headH = blockHeight(o.head, tw, hs, hs * 1.25);
     slide.addText(o.head, {
-      x: tx, y: ty + (o.num ? 0.04 : 0), w: tw, h: 0.35, isTextBox: true, margin: 0,
-      fontFace: TITLE_F, fontSize: o.headSize || 14, bold: true, color: o.headColor || INK,
+      x: tx, y: ty + (o.num ? 0.04 : 0), w: tw, h: headH, isTextBox: true, margin: 0,
+      fontFace: TITLE_F, fontSize: hs, bold: true, color: o.headColor || INK,
     });
-    ty += 0.42;
+    ty += headH + 0.07;                 // 実測した見出しの高さで本文を下げる
   }
   if (o.body) {
+    const bx = o.num ? tx : o.x + 0.28;
+    const bw = o.num ? tw : o.w - 0.56;
+    const bs = o.bodySize || 12;
+    const bodyH = blockHeight(o.body, bw, bs, o.lead || 17);
     slide.addText(o.body, {
-      x: o.num ? tx : o.x + 0.28, y: ty, w: o.num ? tw : o.w - 0.56, h: o.y + o.h - ty - 0.18,
+      x: bx, y: ty, w: bw, h: bodyH,
       isTextBox: true, margin: 0, valign: "top",
-      fontFace: BODY_F, fontSize: o.bodySize || 12, color: o.bodyColor || SLATE, lineSpacing: o.lead || 17,
+      fontFace: BODY_F, fontSize: bs, color: o.bodyColor || SLATE, lineSpacing: o.lead || 17,
     });
+    const need = (ty - o.y) + bodyH + 0.16;      // 上端から本文の末尾＋下余白
+    if (need > o.h + SLACK) {
+      fitIssue(`s${n} card`, "height", need, o.h, o.head ? o.head + " / " + o.body : o.body);
+    }
+  } else if (o.head) {
+    const need = 0.2 + headH + 0.16;
+    if (need > o.h + SLACK) fitIssue(`s${n} card`, "height", need, o.h, o.head);
   }
 }
 
 function codeBox(slide, o) {
+  rect(n, "code", o.x, o.y, o.w, o.h, o.text);
   slide.addShape(pres.ShapeType.roundRect, {
     x: o.x, y: o.y, w: o.w, h: o.h, rectRadius: 0.05,
     fill: { color: INK }, line: { color: INK, width: 0 }, shadow: shadow(),
   });
+  const cs = o.size || 10.5, cl = o.lead || 15;
+  const rows = String(o.text).split("\n");
+  const needH = (rows.length * cl) / PT + 0.32;
+  if (needH > o.h + SLACK) fitIssue(`s${n} code`, "height", needH, o.h, o.text);
+  const widest = Math.max(...rows.map(
+    (r) => [...r].reduce((a, c) => a + (charEm(c) === 1 ? 1.0 : 0.6), 0)));
+  const needW = widest * (cs / PT) + 0.44;
+  if (needW > o.w + SLACK) fitIssue(`s${n} code`, "width", needW, o.w, o.text);
   slide.addText(o.text, {
     x: o.x + 0.22, y: o.y + 0.16, w: o.w - 0.44, h: o.h - 0.32, isTextBox: true, margin: 0,
-    valign: "top", fontFace: MONO_F, fontSize: o.size || 10.5, color: "EDEDE8", lineSpacing: o.lead || 15,
+    valign: "top", fontFace: MONO_F, fontSize: cs, color: "EDEDE8", lineSpacing: cl,
   });
 }
 
 function bullets(slide, o) {
+  // 箇条書きの実寸を測る。宣言した h は当てにしない。
+  const bs = o.size || 12.5, bl = o.lead || 17;
+  const gap = o.gap === undefined ? 7 : o.gap;
+  const bodyW = o.w - 0.3;                       // 行頭記号のぶんを引く
+  const usedH =
+    o.items.reduce((a, t) => a + lineCount(t, bodyW, bs) * bl, 0) / PT +
+    ((o.items.length - 1) * gap) / PT;
+  if (usedH > o.h + SLACK) {
+    fitIssue(`s${n} bullets`, "height", usedH, o.h, o.items.join(" / "));
+  }
+  rect(n, "bullets", o.x, o.y, o.w, Math.max(o.h, usedH), o.items[0]);
   const rows = o.items.map((t, i) => ({
     text: t, options: { bullet: true, breakLine: i !== o.items.length - 1 },
   }));
@@ -187,7 +317,7 @@ function table(slide, o) {
 
 /* --- agenda (rebuilt) --- */
 {
-  const s = base("この資料の地図", "AGENDA");
+  const s = base("今日の流れ", "AGENDA");
   const cols = [
     ["導入", "なぜ rig を作ったのか",
       "・よくある AI の使い方\n・そこで開きがちな穴\n・プロンプト／コンテキスト／\n　　ハーネスの入れ子\n・ハーネスの 2×2\n・よくある対応と、その限界\n・rig はそこをどう埋めるか"],
@@ -352,7 +482,7 @@ function table(slide, o) {
   card(s, { x: M + 8.6, y: 3.5, w: 3.6, h: 1.55, fill: "E7EFEB", head: "まずは機械のチェックから",
     body: "機械のチェックは口説き落とせません。だからいちばん強い歯止めになります。AI のレビューは、その次に置くのがおすすめです。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 8.6, y: 5.15, w: 3.6, h: 1.45, fill: "F3EAE6", head: "「ある」と「効いている」は別もの", headColor: ALERT,
+  card(s, { x: M + 8.6, y: 5.05, w: 3.6, h: 1.6, fill: "F3EAE6", head: "「ある」と「効いている」は別もの", headColor: ALERT,
     body: "どの hook にも acceptance gate にもつながっていない lint は、ループに何の圧力もかけていません。",
     bodySize: 11, lead: 15 });
   card(s, { x: M, y: 5.15, w: 8.3, h: 1.45, head: "この 2×2 は、自分のプロジェクトにも当てられます",
@@ -384,10 +514,10 @@ function table(slide, o) {
     card(s, { x: M + 7.9, y: 1.78 + i * 1.28, w: 4.85, h: 1.15, num: String(i + 1),
       head: o[0], headSize: 12.5, body: o[1], bodySize: 10.5, lead: 13 });
   });
-  card(s, { x: M, y: 5.5, w: 7.6, h: 0.95, fill: "E7EFEB", head: "新しいルールを書くのは、いちばん最後",
+  card(s, { x: M, y: 5.4, w: 7.6, h: 1.15, fill: "E7EFEB", head: "新しいルールを書くのは、いちばん最後",
     body: "よかれと思って足したルールが、かえって邪魔をすることがあります。まずつないで、次に効かせて、そのうえで減らしてみてください。",
     bodySize: 11.5, lead: 15 });
-  card(s, { x: M + 7.9, y: 5.65, w: 4.85, h: 0.8, fill: "F3EAE6", head: "測らないと、この順番も回せません", headColor: ALERT,
+  card(s, { x: M + 7.9, y: 5.55, w: 4.85, h: 1.05, fill: "F3EAE6", head: "測らないと、この順番も回せません", headColor: ALERT,
     body: "何が効いたのか分からないままだと、この三つをぐるぐる回すこと自体ができません。",
     bodySize: 10.5, lead: 13 });
 }
@@ -413,7 +543,7 @@ function table(slide, o) {
   card(s, { x: M + 8.6, y: 1.42, w: 3.6, h: 3.55, fill: "F3EAE6", head: "やらないと決めていること", headColor: ALERT,
     body: "・IDE や GUI をつくること\n・汎用エージェント群のプラットフォーム\n・複数モデルの答えを混ぜて一つにすること\n・ワークフロー DSL の表現力くらべ\n\n複数のモデルを使うのは、検証役を書き手から切り離すためです。答えを混ぜ合わせるためではありません。",
     bodySize: 11, lead: 16 });
-  card(s, { x: M + 8.6, y: 5.15, w: 3.6, h: 1.25, head: "逆に、めざしていること",
+  card(s, { x: M + 8.6, y: 5.05, w: 3.6, h: 1.4, head: "逆に、めざしていること",
     body: "ほかのオーケストレータが作ったものにも、同じ受け入れの約束を当てられるようにすること（workbench.py import）。",
     bodySize: 11, lead: 15 });
 }
@@ -484,12 +614,12 @@ function table(slide, o) {
     rowH: 0.42,
   });
   card(s, {
-    x: M + 7.9, y: 1.5, w: 4.3, h: 2.4, head: "rig の現在地",
+    x: M + 7.9, y: 1.5, w: 4.3, h: 2.55, head: "いま、どこまで動いているか",
     body: "安全のいちばん芯になる部分は、もう動いています。分類・隔離・acceptance-gate・自分で選ぶ accept と discard。リポジトリ自身のテストで裏づけもあります。\n\nその上に乗る観測まわり（drill・board・stats・GitHub 連携）は使えますが、まだ育てている最中です。",
     bodySize: 11.5, lead: 16,
   });
   card(s, {
-    x: M + 7.9, y: 4.05, w: 4.3, h: 2.05, fill: "F3EAE6", head: "正直に書いていること", headColor: ALERT,
+    x: M + 7.9, y: 4.2, w: 4.3, h: 1.9, fill: "F3EAE6", head: "正直に書いていること", headColor: ALERT,
     body: "このプロジェクトは、まだ出していない機能を「予定」として載せない方針です。表に無いコマンドは、まだ世に出ていません。",
     bodySize: 11.5, lead: 16,
   });
@@ -519,14 +649,14 @@ function table(slide, o) {
   });
 
   label(s, { text: "最初の三十秒。設定はゼロのままで大丈夫です", x: M, y: 4.34, w: 8 });
-  codeBox(s, { x: M, y: 4.66, w: 6.0, h: 1.72,
+  codeBox(s, { x: M, y: 4.6, w: 6.0, h: 1.9,
     text: '/rig:go "ログインバグを直して"\n/rig:go "このPRを厳しめにレビューして"\n/rig:go "今の変更が安全か確認して"\n\n/rig:go diff      # 何が変わったか\n/rig:go accept    # 反映（gate 未達なら拒否）\n/rig:go discard   # 破棄', size: 10.5, lead: 16 });
-  codeBox(s, { x: M + 6.4, y: 4.66, w: 6.0, h: 1.72,
+  codeBox(s, { x: M + 6.4, y: 4.6, w: 6.0, h: 1.9,
     text: "▸ rig\ntask:     ログインバグを直して\ndetected: bugfix\nrecipe:   bugfix — 「バグ」「直して」を検出\nmode:     isolated worktree\ngate:     standard + bugfix", size: 10.5, lead: 16 });
   s.addText("manifest も gates.json も persona の設定も要りません。ぜんぶ後から足せます", {
-    x: M, y: 6.46, w: 6, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
+    x: M, y: 6.56, w: 6, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
   s.addText("どうしてその段取りにしたのかを、走り出す前に一行で見せてくれます", {
-    x: M + 6.4, y: 6.46, w: 6, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
+    x: M + 6.4, y: 6.56, w: 6, h: 0.3, isTextBox: true, margin: 0, fontFace: BODY_F, fontSize: 10, color: SLATE });
 }
 
 /* ------------------------------------------------------------------ 06 */
@@ -551,7 +681,7 @@ function table(slide, o) {
 
 /* ------------------------------------------------------------------ 07 */
 {
-  const s = base("柱 ① 隔離された worktree", "N° 05");
+  const s = base("① 隔離された worktree", "N° 05");
   bullets(s, {
     x: M, y: 1.45, w: 5.9, h: 2.3,
     items: [
@@ -580,7 +710,7 @@ function table(slide, o) {
 
 /* ------------------------------------------------------------------ 08 */
 {
-  const s = base("柱 ② acceptance-gate は standard ＋ 種別プリセット", "N° 06");
+  const s = base("② acceptance-gate は standard ＋ 種別プリセット", "N° 06");
   table(s, {
     x: M, y: 1.42, w: 8.3, colW: [1.35, 6.95], monoFirst: true,
     head: ["preset", "基準の例"],
@@ -610,7 +740,7 @@ function table(slide, o) {
 
 /* ------------------------------------------------------------------ 09 */
 {
-  const s = base("基準は自己申告ではなく、機械が裏づけてくれます", "N° 07");
+  const s = base("基準は、機械が裏づけてくれます", "N° 07");
   const sensors = [
     ["no_secret_leak", "task diff に、毎回おなじ結果になるシークレットスキャンをかけます。見つかれば failed です。抜粋はいつもマスクされます。"],
     ["no_injection_markers", "文章の中のインジェクション・マーカーを探します。目に見えない文字や bidi Unicode は fail、指示を上書きしようとする言い回しは warning です。"],
@@ -625,7 +755,7 @@ function table(slide, o) {
     card(s, { x, y, w: 6.0, h: 1.18, head: sn[0], headSize: 11.5, body: sn[1], bodySize: 10.5, lead: 14 });
   });
   card(s, {
-    x: M, y: 5.6, w: 12.2, h: 0.95, fill: "E7EFEB", head: "設定は足す方向にしか動きません",
+    x: M, y: 5.5, w: 12.2, h: 1.15, fill: "E7EFEB", head: "設定は足す方向にしか動きません",
     body: "プロジェクトは .rig/gates.json から独自の基準を足せます。ただし、もとからある基準を消したりゆるめたりするキーは、その場ではじかれます。リポジトリの中のファイルが、そのリポジトリを守っているゲートをゆるめることはできない、ということですね。",
     bodySize: 11.5, lead: 15,
   });
@@ -633,7 +763,7 @@ function table(slide, o) {
 
 /* ------------------------------------------------------------------ 10 */
 {
-  const s = base("柱 ③ read-only な検証役　／　柱 ④ 明示的な accept", "N° 08");
+  const s = base("③ read-only な検証役　／　④ 明示的な accept", "N° 08");
   label(s, { text: "③  検証役はプロセスレベルで読み取り専用", x: M, y: 1.4, w: 6 });
   codeBox(s, { x: M, y: 1.72, w: 6.0, h: 0.8, size: 10.5,
     text: "claude --allowedTools Read,Grep,Glob\ncodex  --sandbox read-only" });
@@ -652,7 +782,7 @@ function table(slide, o) {
   codeBox(s, { x: M + 6.4, y: 1.72, w: 6.0, h: 1.55, size: 10, lead: 14,
     text: "## rig accept — accept_requirements\n  ✓ worktree_exists            構造的\n  ✓ base_branch_recorded       構造的\n  ✓ diff_summary_generated     構造的\n  ✓ acceptance_gate_not_failed 上書き可\n  ✓ no_unrelated_diff          上書き可" });
   bullets(s, {
-    x: M + 6.4, y: 3.45, w: 6.0, h: 2.0,
+    x: M + 6.4, y: 3.4, w: 6.0, h: 1.75,
     items: [
       "土台になる前提は --force でも通りません。diff.md が無ければ accept できません",
       "上書きしたときは forced: true として残ります。あとから消すことはできません",
@@ -664,7 +794,7 @@ function table(slide, o) {
   label(s, { text: "中断しても、黙って素の作業には戻りません", x: M, y: 4.9, w: 6 });
   codeBox(s, { x: M, y: 5.22, w: 6.0, h: 0.95, size: 9, lead: 13,
     text: "▸ rig | task: rig-20260704-153012-login-fix\n      | recipe: bugfix | step: test (4/7)\n      | gate: pending | mode: isolated worktree" });
-  card(s, { x: M + 6.4, y: 5.22, w: 6.0, h: 0.95, head: "文脈が圧縮されても消えません",
+card(s, { x: M + 6.4, y: 5.2, w: 6.0, h: 1.3, head: "文脈が圧縮されても消えません",
     body: "PreCompact フックが、run-state を守る指示をそっと差し込みます。/rig:init を使えば、同じ文を CLAUDE.md の Compact Instructions にも置けます。",
     bodySize: 11, lead: 14 });
 }
@@ -728,7 +858,7 @@ function table(slide, o) {
 
 /* ------------------------------------------------------------------ 13 */
 {
-  const s = base("コマンドの地図。上から順に、必要になったら覚えれば大丈夫", "N° 11");
+  const s = base("コマンド一覧。上から順に、必要になったら覚えれば大丈夫", "N° 11");
   table(s, {
     x: M, y: 1.45, w: 12.2, colW: [1.6, 10.6],
     head: ["tier", "コマンド"],
@@ -757,15 +887,15 @@ function table(slide, o) {
 
 /* ------------------------------------------------------------------ 15 */
 {
-  const s = base("知識層って何でしょう。そして、なぜ二種類あるのか", "N° 12");
+  const s = base("知識層って何でしょう。なぜ二種類あるのか", "N° 12");
   card(s, {
-    x: M, y: 1.42, w: 12.2, h: 0.95, fill: "E7EFEB",
+    x: M, y: 1.42, w: 12.2, h: 1.15, fill: "E7EFEB",
     head: "知識層は、subagent のプロンプトに差し込まれる「その領域の知識」です",
     body: "「うちの会社ではバックアップをこう呼んでいる」「この製品ではこの言葉をこう使う」。コードをいくら読んでも出てこないこういう事実を、レビュアーや実装役に持たせておくための層です。",
     bodySize: 11.5, lead: 15,
   });
   table(s, {
-    x: M, y: 2.6, w: 8.4, colW: [1.7, 3.3, 3.4],
+    x: M, y: 2.7, w: 8.4, colW: [1.7, 3.3, 3.4],
     head: ["", "セッション知識層", "pack"],
     rows: [
       ["置き場", "~/.claude/rig/knowledge/\n<repo>/.claude/rig/knowledge/", ".rig/packs/ ・ ~/.rig/packs/ ほか"],
@@ -778,7 +908,7 @@ function table(slide, o) {
     rowH: 0.48, size: 10.5,
   });
   card(s, {
-    x: M + 8.7, y: 2.6, w: 3.5, h: 1.75, head: "手元で育てるなら、前者でじゅうぶん",
+    x: M + 8.7, y: 2.7, w: 3.5, h: 1.75, head: "手元で育てるなら、前者でじゅうぶん",
     body: "書いたらすぐ効きます。棚卸しも配布もまだ要らないうちは、これで足ります。",
     bodySize: 11, lead: 15,
   });
@@ -795,7 +925,7 @@ function table(slide, o) {
   codeBox(s, { x: M, y: 1.42, w: 5.9, h: 0.85, size: 11,
     text: '# persona: house-authenticity\ninject: ["[[genre-house]]", "[[music-era-90s]]"]' });
   bullets(s, {
-    x: M, y: 2.45, w: 5.9, h: 2.1,
+    x: M, y: 2.4, w: 5.9, h: 2.25,
     items: [
       "一つの概念につき、正しいページを一枚だけ。行き来は [[slug]] でつなぎます",
       "persona は事実を本文に書き写さず、ページを見にいきます",
@@ -897,20 +1027,20 @@ function table(slide, o) {
 {
   const s = base("wiki を入れたとたん、評価ゲートが立ちます", "N° 16");
   card(s, {
-    x: M, y: 1.42, w: 12.2, h: 0.85, fill: "E7EFEB",
+    x: M, y: 1.42, w: 12.2, h: 1.15, fill: "E7EFEB",
     head: "wiki はプロンプト素材。プロバイダに見せるテキストだからです",
     body: "なので wiki を持つ pack には、承認ずみの評価ケースが最低ひとつ要ります。会社の知識ページも、ほかのプロンプト面とおなじルールで扱われるわけですね。うっかりそうなったのではなく、そう決めています。",
     bodySize: 11.5, lead: 15,
   });
-  codeBox(s, { x: M, y: 2.5, w: 7.4, h: 2.85, size: 9.5, lead: 13,
+  codeBox(s, { x: M, y: 2.68, w: 7.4, h: 2.7, size: 9.5, lead: 13,
     text: "$ rig-wb pack validate .rig/packs/my-domain\n[ERROR] prompt-bearing pack requires at least one\n        evaluation case\n\n# draft は pack の外（プロジェクト側）に書く\n#   .rig/evals/drafts/<case-id>/case.json\n#   prompt_surfaces: [\"wiki:backup-policy\"]\n$ rig-wb eval run <case-id> --phase baseline ...\n$ rig-wb eval run <case-id> --phase current  ...\n$ rig-wb eval compare --baseline ... --current ...\n$ rig-wb eval promote <case-id> ... --into <pack>\n$ rig-wb pack sync && rig-wb pack validate\nvalid: my-domain@0.1.0" });
-  card(s, { x: M + 7.7, y: 2.5, w: 4.5, h: 1.5, head: "承認は、フラグを立てるだけでは済みません",
+  card(s, { x: M + 7.7, y: 2.68, w: 4.5, h: 1.5, head: "承認は、フラグを立てるだけでは済みません",
     body: "promote は、しきい値に届かない証拠も、意味のほうを見ていないケースも受けつけません。結果には署名がつくので、手を入れた結果はしきい値を見るより先にはじかれます。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 7.7, y: 4.12, w: 4.5, h: 1.23, head: "draft を pack の中に置けないわけ",
-    body: "pack は、宣言していないものを一つも持てないからです。--into が変えるのは行き先だけで、厳しさは変わりません。",
+  card(s, { x: M + 7.7, y: 4.3, w: 4.5, h: 1.15, head: "draft を pack の中に置けないわけ",
+    body: "pack は宣言していないものを持てないからです。--into が変えるのは行き先だけです。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M, y: 5.45, w: 12.2, h: 1.4, fill: "F3EAE6", head: "忘れがちな一手。entrypoint がないとケースは走りません", headColor: ALERT,
+  card(s, { x: M, y: 5.5, w: 12.2, h: 1.35, fill: "F3EAE6", head: "entrypoint を書き忘れると、ケースは走りません", headColor: ALERT,
     body: "prompt_entrypoint には、マニフェストが宣言している entrypoint を書いておく必要があります（知識 pack なら kind: wiki でページ自身）。書き忘れても pack validate は通ってしまいます。でも pack test は structural_only と返します。ケースは同梱されて、ハッシュもされて、それでも誰にも動かされないままです。",
     bodySize: 11, lead: 15 });
 }
@@ -921,7 +1051,7 @@ function table(slide, o) {
   codeBox(s, { x: M, y: 1.42, w: 6.0, h: 1.75, size: 10.5, lead: 15,
     text: 'knowledge:\n  scope: ["company"]\n  topics: ["access-control", "backup"]\n  owner: "Corp IT"\n  evidence: ["情報セキュリティ規程", "運用設計書"]\n  reviewed_at: "2026-08-01T00:00:00+00:00"' });
   bullets(s, {
-    x: M, y: 3.32, w: 6.0, h: 1.9,
+    x: M, y: 3.3, w: 6.0, h: 2.0,
     items: [
       "ブロック自体は書かなくても大丈夫です。ただし置いたなら五つとも必須で、半分だけというのは通りません",
       "理由は reviewed_at にあります。見直した日が書いていない知識ほど、誰にも気づかれないまま古くなっていくからです",
@@ -937,7 +1067,7 @@ function table(slide, o) {
   label(s, { text: "探す。選び出しはしますが、決めはしません", x: M + 6.4, y: 1.42, w: 6 });
   codeBox(s, { x: M + 6.4, y: 1.75, w: 5.8, h: 3.05, size: 9.5, lead: 13,
     text: "$ rig-wb pack knowledge --topic backup\ncompany-security@0.1.0  company   Corp IT\n  reviewed 2026-08-01\n  evidence: 情報セキュリティ規程, 運用設計書\n  wiki: pack://project/company-security/\n          facets/knowledge/backup-policy.md\nproduct-security@0.1.0  product:northwind-one\n  reviewed 2026-07-15\n  evidence: サービス仕様書\n\nscope is ambiguous: company, product:northwind-one\n  — narrow with --scope before treating any of\n    these as the answer" });
-  card(s, { x: M + 6.4, y: 4.75, w: 5.8, h: 1.9, fill: "E7EFEB",
+  card(s, { x: M + 6.4, y: 4.9, w: 5.8, h: 1.9, fill: "E7EFEB",
     head: "どっちのつもりだったかは、どの pack にも書いてありません",
     body: "それは質問した人のなかにある事実だからです。だから rig は当てにいかず、「まだ決まっていませんよ」ということと、選べる候補をそのまま返します。影に隠れたページも、隠さずラベルをつけて並べます。",
     bodySize: 10.5, lead: 14 });
@@ -969,7 +1099,7 @@ function table(slide, o) {
     head: "「override したのに何も起きない」の正体", headColor: ALERT,
     body: "入っていて valid なのに、まるごと影に隠れている状態です。info は身元しか答えてくれないので、explain で tier の勝ち負けを見てみてください。",
     bodySize: 11, lead: 15 });
-  card(s, { x: M + 6.6, y: 5.45, w: 5.6, h: 0.98, head: "digest は「誰が」までは答えません",
+  card(s, { x: M + 6.6, y: 5.3, w: 5.6, h: 1.15, head: "digest は「誰が」までは答えません",
     body: "同じ中身であることだけを保証してくれます。誰が作ったかを答えるのは、署名と trust root のほうです。",
     bodySize: 11, lead: 15 });
 }
@@ -997,7 +1127,7 @@ function table(slide, o) {
 
 /* ------------------------------------------------------------------ 23 */
 {
-  const s = dark("明日からの順番", null, null, 1.15);
+  const s = dark("まずは、ここから", null, null, 1.15);
   const steps = [
     ["1", "まずは /rig:go だけ使ってみる", "diff / accept / discard の四つで、まず一週間やってみてください。ゲートに一度落ちて「なんで落ちたんだろう」と読むところまで来れば、rig がどういう道具かは自然と分かります。"],
     ["2", "ページを一枚だけ書いてみる", "/rig:knowledge で自分の領域を一枚書いて、persona の inject: から参照させてみます。効くかどうかは、ここで見えてきます。"],
@@ -1014,11 +1144,14 @@ function table(slide, o) {
     s.addText(st[2], { x: M + 5.35, y: y - 0.02, w: 6.6, h: 1.1, isTextBox: true, margin: 0,
       fontFace: BODY_F, fontSize: 12, color: "B9BEB9", lineSpacing: 17 });
   });
-  s.addText("もとの資料：README.ja.md（全体像）　／　docs/packs.md（pack の仕様）　／　skills/engine/SKILL.md（ブリック一覧の本家）", {
+  s.addText("もとの資料：README.ja.md（全体像）　／　docs/packs.md（pack の仕様）　／　skills/engine/SKILL.md（ブリック一覧）", {
     x: M + 0.35, y: 6.72, w: 12, h: 0.35, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 11, color: "8A908C" });
   s.addText("rig 入門", { x: M + 0.35, y: 0.72, w: 6, h: 0.3, isTextBox: true, margin: 0,
     fontFace: BODY_F, fontSize: 11, bold: true, color: ACCENT });
 }
+
+reportFit();
+reportOverlaps();
 
 pres.writeFile({ fileName: "rig-intro.pptx" }).then(() => console.log("written: rig-intro.pptx (" + n + " slides)"));

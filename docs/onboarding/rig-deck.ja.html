@@ -258,7 +258,7 @@
 
     <!-- 02 -->
     <section class="slide" data-slide>
-      <h2>今日の地図</h2>
+      <h2>今日の流れ</h2>
       <ul>
         <li><span class="term">第一部　rig を知る</span>何をする道具なのか。なぜ安全と言えるのか。ふだん使う三つのコマンド。</li>
         <li><span class="term">第二部　pack で知識層を拡張する</span>自分の領域の知識を、配布物として渡す方法です。</li>
@@ -337,7 +337,7 @@ gate:     standard + bugfix</pre>
 
     <!-- 10 -->
     <section class="slide" data-slide>
-      <h2>そして、確認して、決める</h2>
+      <h2>あとは確認して、決めるだけ</h2>
       <pre>/rig:go diff       # 何が変わったか、なぜ安全か
 /rig:go accept     # 作業ツリーへ反映（gate 未達なら拒否される）
 /rig:go discard    # 破棄（作業ツリーは最初から触られていない）</pre>
@@ -349,10 +349,10 @@ gate:     standard + bugfix</pre>
       <h2>rig が安全だと言える、四つの理由</h2>
       <p>安全だと言えるのは、次の四つが文章ではなく仕組みとして組み込まれているからです。</p>
       <ul class="tight">
-        <li><span class="num">一</span>　隔離された worktree</li>
-        <li><span class="num">二</span>　acceptance-gate</li>
-        <li><span class="num">三</span>　read-only な検証役</li>
-        <li><span class="num">四</span>　明示的な accept と、消えない記録</li>
+        <li><span class="num">①</span>　隔離された worktree</li>
+        <li><span class="num">②</span>　acceptance-gate</li>
+        <li><span class="num">③</span>　read-only な検証役</li>
+        <li><span class="num">④</span>　明示的な accept と、消えない記録</li>
       </ul>
     </section>
 
@@ -392,7 +392,7 @@ gate:     standard + bugfix</pre>
 
     <!-- 15 -->
     <section class="slide" data-slide>
-      <h2>自己申告ではなく、機械が裏づけてくれます</h2>
+      <h2>基準は、機械が裏づけてくれます</h2>
       <ul class="tight">
         <li>秘密情報スキャン ／ インジェクション・マーカー検出</li>
         <li>破壊的コマンド検出 ／ ゲート改竄の検出 ／ OpenAPI スキーマ差分</li>
@@ -473,7 +473,7 @@ Possible rubber-stamp behavior.</pre>
 
     <!-- 23 -->
     <section class="slide" data-slide>
-      <h2>コマンドの地図</h2>
+      <h2>コマンド一覧</h2>
       <ul class="tight wide">
         <li><span class="term">Core</span><code>/rig:go</code>・<code>/rig:talk</code>・<code>/rig:dev</code>・status / diff / accept / discard / log</li>
         <li><span class="term">観測</span><code>board</code>（管制塔）・<code>cockpit</code>・<code>stats</code></li>
@@ -618,7 +618,7 @@ valid: my-domain@0.1.0</pre>
 
     <!-- 36 -->
     <section class="slide" data-slide>
-      <h2>忘れやすい一手：entrypoint</h2>
+      <h2>entrypoint を書き忘れると、走りません</h2>
       <p>ケースが<strong>実際に走る</strong>には、<code>prompt_entrypoint</code> にマニフェストが宣言している entrypoint を書いておく必要があります。知識 pack なら、それはページ自身です。</p>
       <pre>entrypoints:
   - id: backup-policy
@@ -733,7 +733,7 @@ rig-wb pack verify-sources --scope project</pre>
 
     <!-- 47 -->
     <section class="slide" data-slide>
-      <h2>明日からの順番</h2>
+      <h2>まずは、ここから</h2>
       <ul>
         <li><span class="num">1</span>　<code>/rig:go</code> と diff / accept / discard だけ使ってみてください。<strong>ゲートに一度落ちて「なんで落ちたんだろう」と読む</strong>ところまで来れば、rig がどういう道具かは自然と分かります。</li>
         <li><span class="num">2</span>　<code>/rig:knowledge</code> でページを一枚だけ書いて、persona の <code>inject:</code> から参照させてみます。</li>

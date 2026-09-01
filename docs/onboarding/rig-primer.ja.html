@@ -352,7 +352,7 @@ gate:     standard + bugfix</pre>
     <h2><span class="numeral">N° 04:</span> なぜ安全と言えるのか</h2>
     <p>「安全です」は、それだけでは言っただけになってしまいます。rig が安全だと言えるのは、次の四つが文章ではなく仕組みとして組み込まれているからです。</p>
 
-    <h3>一、隔離された worktree</h3>
+    <h3>① 隔離された worktree</h3>
     <p>タスクごとに、専用の git worktree と使い捨てのブランチを作ります。rig があなたの作業ツリーに直接書き込むことはありません。失敗しても途中でやめても、手元は何も汚れないままです。</p>
     <pre class="term">&lt;repoの親&gt;/rig-worktrees/&lt;repo名&gt;/rig-20260704-153012-login-fix/
 &lt;repo&gt;/.rig/runs/rig-20260704-153012-login-fix/
@@ -361,14 +361,14 @@ gate:     standard + bugfix</pre>
     diff.md          Summary / Risk / Tests / Unrelated diff</pre>
     <p>タスクごとに閉じているので、<strong>何本か同時に走らせても大丈夫</strong>です。別の worktree と別のブランチなので、プロセス同士がファイルを取り合いません。</p>
 
-    <h3>二、acceptance-gate</h3>
+    <h3>② acceptance-gate</h3>
     <p>モデルが「完了しました」と言っただけでは、終わったことになりません。関係ない差分が混じっていないか、テストと型は通るか、リスクは書かれたか、秘密情報が漏れていないか。こうした機械のチェックを通って、はじめて反映の候補になります。<code>failed</code> か <code>pending</code> が一件でも残っていたら、<code>accept</code> ははじかれます。</p>
 
-    <h3>三、read-only な検証役</h3>
+    <h3>③ read-only な検証役</h3>
     <p>書く AI と、たしかめる AI を分けます。たしかめる側はプロセスの段階で読み取り専用に固定されます。お願いではなく、そうとしか動けない状態です。reviewer は <code>claude --allowedTools Read,Grep,Glob</code> や <code>codex --sandbox read-only</code> で起動します。見て、grep して、指摘を書くことはできます。編集も commit も、formatter での書き換えもできません。</p>
     <p>そしてたしかめる側が読むのは、<strong>worktree の実際の git diff</strong> です。書いた側のレポートは「まだ確かめていない主張」というラベルつきで渡るだけです。</p>
 
-    <h3>四、明示的な accept / discard と、消えない記録</h3>
+    <h3>④ 明示的な accept / discard と、消えない記録</h3>
     <p><code>accept</code> は squash merge で <strong>staged（コミット前）</strong>まで反映します。コミットするのはいつも人です。<code>discard</code> は worktree とブランチを消しますが、run log は残ります。何を試して、なぜ捨てたのかは後から追えます。</p>
   </section>
 
@@ -397,7 +397,7 @@ gate:     standard + bugfix</pre>
   <p class="pull">測っていないゲートは、効いているかどうかも分かりません。</p>
 
   <section class="section">
-    <h2><span class="numeral">N° 06:</span> ブリック。部品としての設計</h2>
+    <h2><span class="numeral">N° 06:</span> 中身は四種類のブリック</h2>
     <p>rig は起動のときに、四種類の部品を組み合わせてハーネスを作ります。LEGO のブロックだと思ってください。</p>
     <ul class="list">
       <li><span class="list__term">persona</span>誰が判定するかを決めます。security-reviewer、design-reviewer など。</li>
@@ -427,7 +427,7 @@ Severity accuracy: 76%
   </section>
 
   <section class="section">
-    <h2><span class="numeral">N° 08:</span> コマンドの地図</h2>
+    <h2><span class="numeral">N° 08:</span> コマンド一覧</h2>
     <p>覚える順番は、このとおりで大丈夫です。上から下へ、必要になってから降りていってください。</p>
     <ul class="list list--tight">
       <li><span class="list__term">Core</span><code>/rig:go</code>・<code>/rig:talk</code>（会話的な入口）・<code>/rig:dev</code>・<code>status</code> / <code>diff</code> / <code>accept</code> / <code>discard</code> / <code>log</code></li>
@@ -637,7 +637,7 @@ rig-wb pack outdated       # 各ソースに publish 状況を問い合わせる
   </section>
 
   <section class="section">
-    <h2><span class="numeral">N° 17:</span> ここから先</h2>
+    <h2><span class="numeral">N° 17:</span> まずは、ここから</h2>
     <p>最初の一日は <code>/rig:go</code> と <code>diff</code> / <code>accept</code> / <code>discard</code> だけで大丈夫です。ゲートに一度落ちて「なんで落ちたんだろう」と読むところまで来れば、rig がどういう道具かは自然と分かります。</p>
     <p>自分の領域を教え込みたくなったら、まず <code>/rig:knowledge</code> でページを一枚だけ書いて、persona の <code>inject:</code> から参照させてみてください。効くと分かってから、<code>rig-wb pack init --type knowledge</code> でちゃんとした配布物にします。順番を逆にすると、まだ効くか分からないものに評価ケースを書くことになってしまいます。</p>
     <p>リポジトリの中のもとの資料は、この三つです。<code>README.ja.md</code>（全体像）、<code>docs/packs.md</code>（pack の仕様）、<code>skills/engine/SKILL.md</code>（ブリック一覧の本家）。</p>
