@@ -17,12 +17,25 @@ _SECRET_VALUE = re.compile(
     r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|Bearer\s+[A-Za-z0-9._~-]{8,})"
 )
 _ASSIGNMENT_LHS = re.compile(r"([A-Za-z0-9_-]+)\s*[:=]")
+# The doubled-separator branch carries no prefix requirement, because a path does not
+# become one by virtue of what precedes it. The old branch required one, so the same two
+# backslashes were refused after a quote and accepted after a caret — which is how a
+# `regex:` check written `\\s*` was refused while a shipped one written `[^\\n]` passed.
+# It is shaped like a UNC path now: two separators, a host, then a separator or the end
+# of the value. `\\s`, `\\n`, `\\"` and `\\x` have no host and stop matching. An escaped
+# range like `\\x00-\\x1f` still reads as a host; no shipped asset contains one — measured
+# across all 127 the scanner reads — but a case using a hex range in a `regex:` check
+# would still be refused.
 _ABSOLUTE_PATH = re.compile(
-    r"(?:^|[\s'\"=(\[{,:])(?:/[A-Za-z0-9._~-]|[A-Za-z]:[\\/]|[\\/]{2}[^\\/\s])"
+    r"(?:^|[\s'\"=(\[{,:])(?:/[A-Za-z0-9._~-]|[A-Za-z]:[\\/])"
+    r"|[\\/]{2}[A-Za-z0-9._-]{2,}(?:[\\/]|$)"
 )
 _FILE_URI = re.compile(r"(?:^|[\s'\"=(\[{,:])file:", re.I)
 _HOME_PATH = re.compile(r"(?:^|[\s'\"=(\[{,:])~[\\/]")
-_WEB_SCHEME = re.compile(r"https?://", re.I)
+# Any scheme, not only the web ones. `pack://` is rig's own URI for wiki material and
+# appears in pack assets, which is the text this scanner reads. `file:` is refused
+# above, on the decoded value, before this substitution can shield it.
+_URI_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]+://", re.I)
 
 
 def unsafe_key_reason(key: object) -> str | None:
@@ -67,7 +80,7 @@ def unsafe_path_reason(value: str) -> str | None:
     if _HOME_PATH.search(decoded):
         return "home-relative absolute path"
     normalized = decoded.replace("\\", "/")
-    path_probe = _WEB_SCHEME.sub("web__", decoded)
+    path_probe = _URI_SCHEME.sub("uri__", decoded)
     if _ABSOLUTE_PATH.search(path_probe):
         return "absolute path"
     if ".." in normalized.split("/"):
