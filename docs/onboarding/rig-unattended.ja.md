@@ -26,6 +26,23 @@ rig では自走モードに `--autonomous` を付けますが、同じ一文が
 
 「ループを1周回す」を分解すると、5つの動きになります。
 
+```mermaid
+flowchart LR
+  subgraph P["persistence : 圧縮・再起動を跨いで、目標と現在地を保つ"]
+    direction LR
+    D("discovery<br/>次の最小1手を見つける")
+    H("handoff<br/>自分でやらず委譲する")
+    V("verification<br/>別の担い手が検証する<br/><b>ここが一番壊れる</b>")
+    S("scheduling<br/>次の周回を予約する")
+    D --> H --> V --> S
+    S -. 次の周回 .-> D
+  end
+  classDef weak stroke-width:3px
+  class V weak
+```
+
+persistence だけ横に並んでいないのは、順番に来る工程ではないからです。4つ全部の下に敷いてあって、ここが抜けるとコンテキスト圧縮のあとに全部を忘れます。
+
 | 動き | 欠けると |
 |---|---|
 | discovery（次の一手を見つける） | 空回りする |
