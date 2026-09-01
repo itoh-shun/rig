@@ -12,6 +12,7 @@
 | `video-storytelling` | 根拠に接続した動画脚本・検閲・絵コンテ生成 | `rig-wb pack install domain:video-storytelling --scope project --allow-unverified` |
 | `decision-humor` | 合議・安全な即断・問い・事前検死・根拠付き回答の手動モード集 | `rig-wb pack install domain:decision-humor --scope project --allow-unverified` |
 | `japanese-writing` | 明示事実・宛先形式・敬語を守る日本語完成稿と独立レビュー | `rig-wb pack install domain:japanese-writing --scope project --allow-unverified` |
+| `document-review` | 資料の構成と根拠を独立検証する read-only reviewer 2枚（宛先適合は未測定のため同梱しない） | `rig-wb pack install domain:document-review --scope project --allow-unverified` |
 
 project pack は内容を確認してから、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定して
 asset trust を記録する。起動は `$rig --recipe <installed-name>` を使う。command asset は
