@@ -252,7 +252,7 @@
     <section class="slide slide--bleed" data-slide>
       <h1 class="display">RIG</h1>
       <p class="subhead" style="margin-top:var(--spacing-48)">
-        AI に仕事を任せるときの、隔離と検証のしくみ。<br>はじめての人が三十分で全体をつかむための資料です。
+        AI に仕事をおまかせするときの、隔離と検証のしくみ。<br>はじめての人が、三十分で全体をつかむための資料です。
       </p>
     </section>
 
@@ -260,26 +260,26 @@
     <section class="slide" data-slide>
       <h2>今日の地図</h2>
       <ul>
-        <li><span class="term">第一部　rig を知る</span>何をする道具か。なぜ安全と言えるのか。日常で使う三つのコマンド。</li>
-        <li><span class="term">第二部　pack で知識層を拡張する</span>専用領域の知識を、配布物として渡す方法です。</li>
+        <li><span class="term">第一部　rig を知る</span>何をする道具なのか。なぜ安全と言えるのか。ふだん使う三つのコマンド。</li>
+        <li><span class="term">第二部　pack で知識層を拡張する</span>自分の領域の知識を、配布物として渡す方法です。</li>
       </ul>
       <p class="kicker">典拠：README.ja.md / docs/packs.md / skills/engine/SKILL.md</p>
     </section>
 
     <!-- 03 -->
     <section class="slide" data-slide>
-      <h2>困るのは、AI が間違えることではありません</h2>
-      <p>間違えたことに誰も気づかないまま、本体に混ざってしまうことです。</p>
-      <p>rig はそこだけを構造で塞ぎます。自然文でタスクを頼むと、種類を判定し、部品を組み合わせてハーネスを作り、<strong>隔離された git worktree</strong> の中で作業します。明示的な基準で検証し、あなたが accept と言うまで本体には触れません。</p>
+      <h2>困るのは、AI が間違えることではないんです</h2>
+      <p>間違えたことに誰も気づかないまま、本体に混ざってしまうこと。そこが怖いところです。</p>
+      <p>rig が塞ぐのは、そこだけです。ふつうの言葉でタスクを頼むと、種類を見分けて、部品を組み合わせてハーネスを作り、<strong>隔離された git worktree</strong> の中で作業します。決めておいた基準でたしかめて、あなたが accept と言うまで本体には触れません。</p>
     </section>
 
     <!-- 04 -->
     <section class="slide" data-slide>
-      <h2>最初に外しておく誤解</h2>
+      <h2>先に外しておきたい誤解</h2>
       <ul>
-        <li><span class="term">品質を自動的に生む道具ではありません</span>あなたが決めた品質基準を、AI に無視させないための道具です。基準を作るのは人間の仕事のままで、rig の仕事は強制と測定です。</li>
-        <li><span class="term">そのかわり、対価があります</span>隔離と検証と記録のために、速度とトークンをわざと払っています。速く書かせたいだけなら、直接頼むほうが速いです。</li>
-        <li><span class="term">効いてくる場面</span>失敗したときのコストが、速度より高い場面です。</li>
+        <li><span class="term">品質そのものを生む道具ではありません</span>あなたが決めたルールを、AI に飛ばさせないための道具です。ルールを決めるのは人の仕事のまま。rig がやるのは、守らせることと測ることだけです。</li>
+        <li><span class="term">そのかわり、払うものがあります</span>隔離と検証と記録のために、速さとトークンをわざと差し出しています。とにかく速く書かせたいだけなら、直接お願いするほうが早いです。</li>
+        <li><span class="term">効いてくる場面</span>失敗したときの痛手が、速さより大きい場面です。</li>
       </ul>
     </section>
 
@@ -312,21 +312,21 @@
       <h3>それ以外の場所では、rig-wb CLI</h3>
       <pre>pipx install git+https://github.com/itoh-shun/rig.git
 rig-wb version</pre>
-      <p class="kicker">CI やスクリプト、別のアシスタント（Codex / Cursor）から同じ recipe とゲートを回すためのものです。両方は要りません。</p>
+      <p class="kicker">CI やスクリプト、ほかのアシスタント（Codex / Cursor）から同じ recipe とゲートを回すためのものです。両方そろえる必要はありません。</p>
     </section>
 
     <!-- 08 -->
     <section class="slide" data-slide>
-      <h2>最初の三十秒。設定はゼロで始められます</h2>
+      <h2>最初の三十秒。設定はゼロのままで大丈夫です</h2>
       <pre>/rig:go "ログインバグを直して"
 /rig:go "このPRを厳しめにレビューして"
 /rig:go "今の変更が安全か確認して"</pre>
-      <p>manifest も gates.json も persona 設定も要りません。すべて後から足せます。</p>
+      <p>manifest も gates.json も persona の設定も要りません。ぜんぶ後から足せます。</p>
     </section>
 
     <!-- 09 -->
     <section class="slide" data-slide>
-      <h2>なぜその段取りになったかを、先に宣言します</h2>
+      <h2>どうしてその段取りにしたのかを、先に見せてくれます</h2>
       <pre>▸ rig
 task:     ログインバグを直して
 detected: bugfix
@@ -341,13 +341,13 @@ gate:     standard + bugfix</pre>
       <pre>/rig:go diff       # 何が変わったか、なぜ安全か
 /rig:go accept     # 作業ツリーへ反映（gate 未達なら拒否される）
 /rig:go discard    # 破棄（作業ツリーは最初から触られていない）</pre>
-      <p>日常で使うのは、この三つだけです。</p>
+      <p>ふだん使うのは、この三つだけです。</p>
     </section>
 
     <!-- 11 -->
     <section class="slide" data-slide>
-      <h2>rig が安全だと言える四つの理由</h2>
-      <p>安全だと言えるのは、次の四つが文章ではなく配線として入っているからです。</p>
+      <h2>rig が安全だと言える、四つの理由</h2>
+      <p>安全だと言えるのは、次の四つが文章ではなく仕組みとして組み込まれているからです。</p>
       <ul class="tight">
         <li><span class="num">一</span>　隔離された worktree</li>
         <li><span class="num">二</span>　acceptance-gate</li>
@@ -359,20 +359,20 @@ gate:     standard + bugfix</pre>
     <!-- 12 -->
     <section class="slide" data-slide>
       <h2><span class="num">一</span>　隔離された worktree</h2>
-      <p>タスクごとに専用の worktree と使い捨てブランチを作ります。rig があなたの作業ツリーに直接書き込むことはありません。</p>
+      <p>タスクごとに、専用の worktree と使い捨てのブランチを作ります。rig があなたの作業ツリーに直接書き込むことはありません。</p>
       <pre>&lt;repoの親&gt;/rig-worktrees/&lt;repo名&gt;/rig-20260704-153012-login-fix/
 &lt;repo&gt;/.rig/runs/rig-20260704-153012-login-fix/
     task.json        入力 / task_type / recipe / base branch / status
     acceptance.json  基準ごとの合否と根拠
     diff.md          Summary / Risk / Tests / Unrelated diff</pre>
-      <p class="kicker">隔離がタスクごとに閉じているので、複数タスクを同時に走らせても安全です。並列プロセス同士がファイルを取り合うこともありません。</p>
+      <p class="kicker">タスクごとに閉じているので、何本か同時に走らせても大丈夫です。プロセス同士がファイルを取り合うこともありません。</p>
     </section>
 
     <!-- 13 -->
     <section class="slide" data-slide>
       <h2><span class="num">二</span>　acceptance-gate</h2>
-      <p>モデルが「完了しました」と言っただけでは完了になりません。無関係な差分は混じっていないか。テストと型は通るか。リスクは書かれたか。秘密情報は漏れていないか。ここを機械が確認します。</p>
-      <p><code>failed</code> か <code>pending</code> が一件でも残っていれば、<strong>accept は機械的に拒否されます</strong>。</p>
+      <p>モデルが「完了しました」と言っただけでは、終わったことになりません。関係ない差分は混じっていないか。テストと型は通るか。リスクは書かれたか。秘密情報は漏れていないか。ここを機械が見ます。</p>
+      <p><code>failed</code> か <code>pending</code> が一件でも残っていれば、<strong>accept ははじかれます</strong>。</p>
     </section>
 
     <!-- 14 -->
@@ -392,44 +392,44 @@ gate:     standard + bugfix</pre>
 
     <!-- 15 -->
     <section class="slide" data-slide>
-      <h2>自己申告ではなく、機械センサーが裏づけます</h2>
+      <h2>自己申告ではなく、機械が裏づけてくれます</h2>
       <ul class="tight">
         <li>秘密情報スキャン ／ インジェクション・マーカー検出</li>
         <li>破壊的コマンド検出 ／ ゲート改竄の検出 ／ OpenAPI スキーマ差分</li>
       </ul>
-      <p style="margin-top:var(--spacing-48)">プロジェクト側で基準を足せます（<code>.rig/gates.json</code>）。ただし<strong>足す方向だけ</strong>です。削除キーと緩和キーは、その場で拒否されます。</p>
-      <p>リポジトリの中のファイルが、そのリポジトリを守るゲートを弱めることはできません。</p>
+      <p style="margin-top:var(--spacing-48)">プロジェクト側で基準を足せます（<code>.rig/gates.json</code>）。ただし<strong>足す方向だけ</strong>です。消したりゆるめたりするキーは、その場ではじかれます。</p>
+      <p>リポジトリの中のファイルが、そのリポジトリを守っているゲートをゆるめることはできません。</p>
     </section>
 
     <!-- 16 -->
     <section class="slide" data-slide>
       <h2><span class="num">三</span>　read-only な検証役</h2>
-      <p>実装する AI と検証する AI を分け、検証側はプロセスレベルで読み取り専用に固定します。お願いではなく、強制です。</p>
+      <p>書く AI と、たしかめる AI を分けます。たしかめる側はプロセスの段階で読み取り専用に固定されます。お願いではなく、そうとしか動けない状態です。</p>
       <pre>claude --allowedTools Read,Grep,Glob
 codex  --sandbox read-only</pre>
-      <p>見て、grep して、指摘を書くことはできます。編集も commit も、formatter による書き換えもできません。</p>
+      <p>見て、grep して、指摘を書くことはできます。編集も commit も、formatter での書き換えもできません。</p>
     </section>
 
     <!-- 17 -->
     <section class="slide" data-slide>
-      <h2>検証役が読むのは、レポートではありません</h2>
-      <p>判定の一次証拠は <strong>worktree の実際の git diff</strong> です。生成側が書いた自己申告レポートは、「未検証の主張」というラベルつきで渡されるだけです。</p>
-      <p class="kicker">同系統のモデルが自分の成果物をレビューする状況を、構造として避けるための設計です。</p>
+      <h2>たしかめる側が読むのは、レポートではありません</h2>
+      <p>いちばんの根拠は <strong>worktree の実際の git diff</strong> です。書いた側のレポートは「まだ確かめていない主張」というラベルつきで渡るだけです。</p>
+      <p class="kicker">似たモデルが自分の成果物をレビューしてしまう状況を、仕組みのうえで避けるための設計です。</p>
     </section>
 
     <!-- 18 -->
     <section class="slide" data-slide>
       <h2><span class="num">四</span>　明示的な accept と、消えない記録</h2>
       <ul>
-        <li><span class="term">accept は staged で止まります</span>squash merge で未コミットのまま反映します。コミットは常に人間が打ちます。</li>
-        <li><span class="term">discard しても run log は残ります</span>何を試して、なぜ捨てたかを後から辿れます。</li>
-        <li><span class="term">構造的な前提は --force でも通りません</span>diff.md が無ければ accept できません。例外はありません。</li>
+        <li><span class="term">accept は staged で止まります</span>squash merge で、コミット前の状態まで反映します。コミットするのはいつも人です。</li>
+        <li><span class="term">discard しても run log は残ります</span>何を試して、なぜ捨てたのかを後から追えます。</li>
+        <li><span class="term">土台になる前提は --force でも通りません</span>diff.md が無ければ accept できません。例外はありません。</li>
       </ul>
     </section>
 
     <!-- 19 -->
     <section class="slide slide--bleed" data-slide>
-      <p class="pull">効果を測っていないゲートは、<br>回っているかどうかも分かりません。</p>
+      <p class="pull">測っていないゲートは、<br>効いているかどうかも分かりません。</p>
     </section>
 
     <!-- 20 -->
@@ -441,13 +441,13 @@ codex  --sandbox read-only</pre>
         <li><span class="term">pattern</span>どう分配し、どうゲートするか</li>
         <li><span class="term">recipe</span>step の束です（bugfix / feature / review-only / release-flow …）</li>
       </ul>
-      <p style="margin-top:var(--spacing-48)"><code>/rig:go</code> はこの組み立てを自動でやります。<code>/rig:dev</code> は同じエンジンを、recipe・step・flag をすべて自分で指定して使う入口です。</p>
+      <p style="margin-top:var(--spacing-48)"><code>/rig:go</code> はこの組み立てを自動でやってくれます。<code>/rig:dev</code> のほうは、recipe も step も flag も自分で指定したい人向けの入口です。</p>
     </section>
 
     <!-- 21 -->
     <section class="slide" data-slide>
-      <h2>レビュアーの実力は測れます</h2>
-      <p><code>/rig:drill</code> は既知のバグを使い捨ての diff に仕込んでレビューを走らせ、reviewer には見せない答案キーと突き合わせて採点します。</p>
+      <h2>レビュアーの実力は、ちゃんと測れます</h2>
+      <p><code>/rig:drill</code> は、わざと仕込んだバグを使い捨ての diff に入れてレビューを走らせ、reviewer には見せていない答え合わせ用のキーと照らして採点します。</p>
       <pre># Drill Result — strict_senior_engineer
 Detection rate:    82%
 False positive:    12%
@@ -460,7 +460,7 @@ Severity accuracy: 76%
 
     <!-- 22 -->
     <section class="slide" data-slide>
-      <h2>形だけのレビューも名指しします</h2>
+      <h2>形だけのレビューも、ちゃんと教えてくれます</h2>
       <pre>Verifier behavior:
 - strict_senior_engineer: 14 runs, 6 rejects
 - product_reviewer:        6 runs, 0 rejects
@@ -468,7 +468,7 @@ Severity accuracy: 76%
 Warning:
 product_reviewer has 0 rejects across 6 runs.
 Possible rubber-stamp behavior.</pre>
-      <p>レビューが儀式になっていることは、こうやって初めて見えます。</p>
+      <p>レビューがただの儀式になっていることは、こうやって初めて見えてきます。</p>
     </section>
 
     <!-- 23 -->
@@ -492,13 +492,13 @@ Possible rubber-stamp behavior.</pre>
     <!-- 25 -->
     <section class="slide" data-slide>
       <h2>知識層とは何か</h2>
-      <p>subagent のプロンプトに注入される、ドメイン知識のことです。</p>
-      <p>「この会社ではバックアップをこう定義している」「この製品のユビキタス言語はこれだ」。こうした<strong>コードを読んでも出てこない事実</strong>を、レビュアーや実装役に持たせるための層です。</p>
+      <p>subagent のプロンプトに差し込まれる、「その領域の知識」のことです。</p>
+      <p>「うちの会社ではバックアップをこう呼んでいる」「この製品ではこの言葉をこう使う」。こういう<strong>コードを読んでも出てこない事実</strong>を、レビュアーや実装役に持たせておくための層です。</p>
     </section>
 
     <!-- 26 -->
     <section class="slide" data-slide>
-      <h2>実体は二種類あって、性格がはっきり違います</h2>
+      <h2>中身は二種類。性格がはっきり違います</h2>
       <table>
         <thead><tr><th></th><th>セッション知識層</th><th>pack</th></tr></thead>
         <tbody>
@@ -509,34 +509,34 @@ Possible rubber-stamp behavior.</pre>
           <tr><td>向く場面</td><td>今すぐ効かせたいとき</td><td>チームに同じ知識を効かせたいとき</td></tr>
         </tbody>
       </table>
-      <p class="kicker">手元で育てるなら前者で十分です。他人に渡すときに要るのが後者です。誰が書いたか、いつ見直したか、根拠は何か、途中で書き換わっていないか。この四つを構造として持っています。</p>
+      <p class="kicker">手元で育てるなら、前者でじゅうぶんです。人に渡すときに出番が来るのが後者。誰が書いたか、いつ見直したか、根拠は何か、途中で書き換わっていないか。この四つをちゃんと構造として持っています。</p>
     </section>
 
     <!-- 27 -->
     <section class="slide" data-slide>
-      <h2>知識の中心は wiki で、persona はそれを参照します</h2>
+      <h2>中心にあるのは wiki。persona はそれを見にいきます</h2>
       <pre># persona: house-authenticity
 inject: ["[[genre-house]]", "[[music-era-90s]]"]</pre>
-      <p>一つの概念につき、一枚の正準ページを書きます。事実を persona の本文には埋め込みません。</p>
-      <p>埋め込むと知識が暗黙知になります。参照にしておけば、<strong>ページを一枚直すだけで、参照している全 persona の判断が同時に更新されます</strong>。</p>
+      <p>一つの概念につき、正しいページを一枚だけ書きます。事実を persona の本文に書き写すことはしません。</p>
+      <p>書き写してしまうと、その知識は誰にも見えない暗黙知になります。参照にしておけば、<strong>ページを一枚直すだけで、見にきている persona 全員の判断がいっぺんに新しくなります</strong>。</p>
     </section>
 
     <!-- 28 -->
     <section class="slide" data-slide>
-      <h2><code>[[slug]]</code> は tier で解決されます</h2>
+      <h2><code>[[slug]]</code> は tier で解決されて、上の層が勝ちます</h2>
       <ul class="tight">
         <li><span class="num">1</span>　project overlay　<code>&lt;repo&gt;/.claude/rig/knowledge/wiki/</code></li>
         <li><span class="num">2</span>　global　<code>~/.claude/rig/knowledge/wiki/</code></li>
         <li><span class="num">3</span>　org　チームで共有する層</li>
         <li><span class="num">4</span>　pack 同梱　<code>&lt;pack&gt;/facets/knowledge/&lt;slug&gt;.md</code></li>
-        <li><span class="num">5</span>　shipped　rig が最初から持っているページ</li>
+        <li><span class="num">5</span>　shipped　rig にはじめから入っているページ</li>
       </ul>
-      <p class="kicker">pack の persona は、まず自分の pack の中を見ます。pack は必要なページを同梱して持ち歩きます。同じ slug をプロジェクト側に置けば、これまでどおり上書きできます。</p>
+      <p class="kicker">pack の persona は、まず自分の pack の中をのぞきます。pack は要るページを一緒に持ち歩くからです。同じ slug をプロジェクト側に置けば、これまでどおり上書きできます。</p>
     </section>
 
     <!-- 29 -->
     <section class="slide" data-slide>
-      <h2><code>type</code> が決めるのは権限です</h2>
+      <h2><code>type</code> が決めているのは、権限です</h2>
       <table>
         <thead><tr><th>type</th><th>持てるもの</th><th>ホストのコマンドを走らせるか</th></tr></thead>
         <tbody>
@@ -547,20 +547,20 @@ inject: ["[[genre-house]]", "[[music-era-90s]]"]</pre>
           <tr><td class="mono">tool</td><td>すべて</td><td><strong>はい</strong></td></tr>
         </tbody>
       </table>
-      <p class="kicker">既定値は持たせていません。既定値を置くと、その決定を「決めなかった人」に渡してしまうからです。</p>
+      <p class="kicker">初期値は用意していません。置いてしまうと、大事な判断を「何も決めなかった人」に押しつけることになるからです。</p>
     </section>
 
     <!-- 30 -->
     <section class="slide" data-slide>
-      <h2>右端の列が、この型モデルがある理由です</h2>
-      <p>recipe に <code>checks:</code>（ホスト上で実行されるシェルコマンド）を書けるのは <code>tool</code> だけです。</p>
-      <p><strong>チームのドメイン知識を足すことが、そのままコマンド実行権限を渡すことになってはいけません。</strong>他の型が運ぶのは、プロバイダが読むテキストだけです。</p>
-      <p class="kicker">紛らわしい <code>kind</code>（core / official / domain / project）は tier 順を決めるだけで、権限ではありません。</p>
+      <h2>右端の列こそ、この型モデルがある理由です</h2>
+      <p>recipe に <code>checks:</code>（手元のマシンで動くシェルコマンド）を書けるのは <code>tool</code> だけです。</p>
+      <p><strong>チームの知識を足すことが、そのままコマンドを動かす権限を渡すことになってはいけません。</strong>ほかの型が運ぶのは、プロバイダが読むテキストだけです。</p>
+      <p class="kicker">まぎらわしい <code>kind</code>（core / official / domain / project）は tier の順番を決めるだけで、権限ではありません。</p>
     </section>
 
     <!-- 31 -->
     <section class="slide" data-slide>
-      <h2>pack を作る。最短の一周</h2>
+      <h2>pack を作ってみる。最短の一周</h2>
       <pre>$ rig-wb pack init my-domain --type knowledge --kind domain --root .rig/packs
 initialized: .rig/packs/my-domain
 
@@ -572,37 +572,37 @@ next:
 
     <!-- 32 -->
     <section class="slide" data-slide>
-      <h2><code>pack.yaml</code> は手で編集しません</h2>
-      <p>マニフェストは全アセットをパスと sha256 で宣言し、検証のときに正準形とバイト単位で比較されます。つまり生成物であって、手書きするものではありません。</p>
+      <h2><code>pack.yaml</code> は手で書きません</h2>
+      <p>マニフェストは中身をぜんぶパスと sha256 で宣言していて、検証のときに一字一句くらべられます。つまり自動で作られるものなので、手で書く場所ではないんです。</p>
       <pre>$ vi .rig/packs/my-domain/facets/knowledge/backup-policy.md
 $ rig-wb pack sync .rig/packs/my-domain
   + facets/knowledge/backup-policy.md
 pack sync: 1 asset(s) declared and hashed</pre>
-      <p class="kicker">sync はディレクトリを鏡写しにします。消したファイルは宣言からも消えます。書き換わるのは assets と hashes だけです。</p>
+      <p class="kicker">sync はフォルダをそのまま写します。消したファイルは宣言のほうからも消えます。書き換わるのは assets と hashes だけです。</p>
     </section>
 
     <!-- 33 -->
     <section class="slide" data-slide>
-      <h2><code>valid</code> は「完成」という意味ではありません</h2>
-      <p>空の pack もスキーマは満たすので valid と出ます。嘘ではないのですが、完成と読み違えやすいところです。その状態は <code>doctor</code> が名指ししてくれます。</p>
+      <h2><code>valid</code> は「できあがり」ではありません</h2>
+      <p>中身が空の pack でもスキーマは満たすので、valid と出てしまいます。嘘ではないのですが、できあがりと読み違えやすいところです。その状態は <code>doctor</code> が教えてくれます。</p>
       <pre>$ rig-wb pack doctor .rig/packs/my-domain
 pack doctor: warning
 - empty_pack: .rig/packs/my-domain</pre>
-      <p class="kicker">doctor は警告では exit 0 を返します。failed だけがエラーです。</p>
+      <p class="kicker">doctor は警告なら exit 0 を返します。failed だけがエラー扱いです。</p>
     </section>
 
     <!-- 34 -->
     <section class="slide" data-slide>
-      <h2>wiki を入れると、評価ゲートが立ちます</h2>
-      <p><code>wiki</code> はプロンプト素材です。プロバイダに見せるテキストだからです。そのため wiki を持つ pack には、<strong>承認済みの評価ケースが最低一件</strong>必要になります。</p>
+      <h2>wiki を入れたとたん、評価ゲートが立ちます</h2>
+      <p><code>wiki</code> はプロンプト素材です。プロバイダに見せるテキストだからですね。なので wiki を持つ pack には、<strong>承認ずみの評価ケースが最低ひとつ</strong>要ります。</p>
       <pre>$ rig-wb pack validate .rig/packs/my-domain
 [ERROR] prompt-bearing pack requires at least one evaluation case</pre>
-      <p class="kicker">会社の知識ページも、他のプロンプト面と同じ規律で扱われます。事故ではなく、意図された挙動です。</p>
+      <p class="kicker">会社の知識ページも、ほかのプロンプト面とおなじルールで扱われます。うっかりそうなったのではなく、そう決めています。</p>
     </section>
 
     <!-- 35 -->
     <section class="slide" data-slide>
-      <h2>承認はフラグを立てる作業ではありません</h2>
+      <h2>承認はフラグを立てるだけでは済みません</h2>
       <pre># draft は pack の外（プロジェクト側）に書く
 #   .rig/evals/drafts/&lt;case-id&gt;/case.json
 #   prompt_surfaces に ["wiki:backup-policy"] と面を名指しする
@@ -613,18 +613,18 @@ $ rig-wb eval promote &lt;case-id&gt; ... --into .rig/packs/my-domain
 $ rig-wb pack sync .rig/packs/my-domain
 $ rig-wb pack validate .rig/packs/my-domain
 valid: my-domain@0.1.0</pre>
-      <p class="kicker">promote は、閾値を満たさない証拠を拒否します。結果には署名がつくので、編集された結果は閾値の前に落ちます。</p>
+      <p class="kicker">promote は、しきい値に届かない証拠を受けつけません。結果には署名がつくので、手を入れた結果はしきい値より先にはじかれます。</p>
     </section>
 
     <!-- 36 -->
     <section class="slide" data-slide>
       <h2>忘れやすい一手：entrypoint</h2>
-      <p>ケースが<strong>実際に走る</strong>には、<code>prompt_entrypoint</code> がマニフェストの宣言する entrypoint を名指しする必要があります。知識 pack では、それはページ自身です。</p>
+      <p>ケースが<strong>実際に走る</strong>には、<code>prompt_entrypoint</code> にマニフェストが宣言している entrypoint を書いておく必要があります。知識 pack なら、それはページ自身です。</p>
       <pre>entrypoints:
   - id: backup-policy
     kind: wiki
     target: backup-policy</pre>
-      <p>書き忘れても <code>pack validate</code> は通ります。ただし <code>pack test</code> は <code>structural_only</code> と報告します。ケースは同梱され、ハッシュされ、それでも誰にも実行されません。</p>
+      <p>書き忘れても <code>pack validate</code> は通ってしまいます。でも <code>pack test</code> は <code>structural_only</code> と返します。ケースは同梱されて、ハッシュもされて、それでも誰にも動かされないままです。</p>
     </section>
 
     <!-- 37 -->
@@ -636,29 +636,29 @@ valid: my-domain@0.1.0</pre>
   owner: "Corp IT"
   evidence: ["情報セキュリティ規程", "運用設計書"]
   reviewed_at: "2026-08-01T00:00:00+00:00"</pre>
-      <p>ブロック自体は任意です。ただし<strong>半分だけ書かれたブロックは許されません</strong>。置いたなら五つとも必須で、理由は <code>reviewed_at</code> にあります。見直し日のない知識宣言こそ、誰にも気づかれずに古びていくからです。</p>
+      <p>ブロック自体は書かなくても大丈夫です。ただし<strong>半分だけというのは通りません</strong>。置いたなら五つとも必須で、理由は <code>reviewed_at</code> にあります。見直した日が書いていない知識ほど、誰にも気づかれないまま古くなっていくからです。</p>
     </section>
 
     <!-- 38 -->
     <section class="slide" data-slide>
-      <h2>evidence だけは、ソートを求められません</h2>
-      <p>人が書いた文書の題名を、書いた言語のまま並べるからです。コードポイント順は誰にも予測できません（<code>運用設計書</code> は <code>情報セキュリティ規程</code> の後に来ます）。</p>
-      <p>そして順序そのものが意味を運びます。引用リストは、主に依拠している文書から始まります。</p>
-      <p class="kicker">重複は拒否されます。同じ文書を二度引くと、答えの裏づけの厚さを水増しすることになるからです。</p>
+      <h2>evidence だけは、並べ替えなくて大丈夫です</h2>
+      <p>人が書いた資料の題名を、その言語のまま並べるからです。コードポイント順なんて誰にも予測できません（<code>運用設計書</code> は <code>情報セキュリティ規程</code> の後に来ます）。</p>
+      <p>そして順番そのものが意味を持っています。引用リストは、いちばん寄りかかっている資料から始まるからです。</p>
+      <p class="kicker">同じものを二度書くのは断られます。答えの裏づけを、実際より厚く見せてしまうからです。</p>
     </section>
 
     <!-- 39 -->
     <section class="slide" data-slide>
-      <h2>質問の側から、答えられる pack を探します</h2>
+      <h2>質問の側から、答えられそうな pack を探します</h2>
       <pre>rig-wb pack knowledge                     # このスコープの全宣言
 rig-wb pack knowledge --topic backup
 rig-wb pack knowledge --topic backup --scope product</pre>
-      <p>「バックアップは取っていますか」には、会社としての正解と、ある製品としての正解と、その下のインフラとしての正解が別々にあります。そして質問した側は、どれのつもりだったかを決めていないことが多いのです。</p>
+      <p>「バックアップは取っていますか」には、会社としての答えと、ある製品としての答えと、その下のインフラとしての答えが別々にあります。しかも質問した側は、どれのつもりだったかを決めていないことが多いんです。</p>
     </section>
 
     <!-- 40 -->
     <section class="slide" data-slide>
-      <h2>選び出しますが、決めはしません</h2>
+      <h2>選び出しはしますが、決めはしません</h2>
       <pre>$ rig-wb pack knowledge --topic backup
 company-security@0.1.0   company             Corp IT   reviewed 2026-08-01
   evidence: 情報セキュリティ規程, 運用設計書
@@ -666,15 +666,15 @@ product-security@0.1.0   product:northwind-one  Northwind    reviewed 2026-07-15
   evidence: サービス仕様書
 scope is ambiguous: company, product:northwind-one
   — narrow with --scope before treating any of these as the answer</pre>
-      <p>どちらのつもりだったかは質問した人についての事実で、どの pack にも書かれていません。だから rig は推測せず、<strong>問いが開いているという事実と、選択肢の正確な集合</strong>を返します。</p>
+      <p>どっちのつもりだったかは質問した人のなかにある事実で、どの pack にも書いてありません。だから rig は当てにいかず、<strong>「まだ決まっていませんよ」ということと、選べる候補</strong>をそのまま返します。</p>
     </section>
 
     <!-- 41 -->
     <section class="slide" data-slide>
-      <h2>影に隠れたページも、ラベルつきで並べます</h2>
+      <h2>影に隠れたページも、隠さず並べます</h2>
       <pre>wiki: pack://user/company-security/facets/knowledge/backup-policy.md
         [shadowed by product-security]</pre>
-      <p>隠せば「ファイルはどこへ行った」と言わせることになりますし、黙って引用すれば、誰も読まないテキストの背後に答えを置くことになります。</p>
+      <p>隠すと「あのファイルどこ行ったの」と言わせてしまいますし、黙って引用すると、誰も読まないテキストの裏に答えを置くことになってしまいます。</p>
     </section>
 
     <!-- 42 -->
@@ -685,38 +685,38 @@ bundled: my-domain@0.1.0 (3 file(s)) -> dist/my-domain-0.1.0.zip
   sha256: 7ef9b1a3...
 
 $ rig-wb pack install dist/my-domain-0.1.0.zip --scope project</pre>
-      <p class="kicker">バイト列は再現可能です。毎回変わる zip は毎回「変わりました」と報告することになり、それは何も報告していないのと同じです。</p>
+      <p class="kicker">中身のバイト列は毎回おなじになります。毎回変わる zip は毎回「変わりました」と言うことになって、それでは何も言っていないのと同じですよね。</p>
     </section>
 
     <!-- 43 -->
     <section class="slide" data-slide>
-      <h2>rig は資格情報を一切持ちません</h2>
+      <h2>rig は資格情報をひとつも持ちません</h2>
       <pre>rig-wb pack source add product --scheme git+ssh \
     --url git@github.com:acme/rig-pack-{pack}.git
 rig-wb pack install product:northwind@1.4.0 --scope project
 rig-wb pack verify-sources --scope project</pre>
-      <p>git を呼ぶだけで、認証はすでに設定済みのもの（SSH agent・credential helper・CI secret）が答えます。トークンを埋め込んだ URL は拒否されます。</p>
-      <p class="kicker">lock が記録するのはソースの<em>名前</em>と commit で、URL は記録しません。だから rig が書くファイルは、資格情報を運びようがありません。</p>
+      <p>git を呼ぶだけなので、認証はもう設定してあるもの（SSH agent・credential helper・CI secret）が答えてくれます。トークンを埋め込んだ URL は断られます。</p>
+      <p class="kicker">lock に残るのはソースの<em>名前</em>と commit だけで、URL は書きません。だから rig が書くファイルには、資格情報が乗りようがないんです。</p>
     </section>
 
     <!-- 44 -->
     <section class="slide" data-slide>
-      <h2><code>info</code> と <code>explain</code> は別の問いに答えます</h2>
+      <h2><code>info</code> と <code>explain</code> は、答える問いが違います</h2>
       <ul>
-        <li><span class="term">info</span>身元と来歴です。出所・digest・engine・依存。lock が知っていることを答えます。</li>
-        <li><span class="term">explain</span>そのアセットが tier 争いに勝っているかどうか。resolver しか知らないことを答えます。</li>
+        <li><span class="term">info</span>身元と来歴です。出どころ・digest・engine・依存。lock が知っていることを答えます。</li>
+        <li><span class="term">explain</span>そのアセットが tier の勝負に勝てているかどうか。resolver しか知らないことを答えます。</li>
       </ul>
-      <p style="margin-top:var(--spacing-48)">pack はインストール済みで valid なのに、完全に影へ隠れている状態です。<strong>「override したのに何も起きない」の正体は、たいていこれです</strong>。</p>
+      <p style="margin-top:var(--spacing-48)">入っていて valid なのに、まるごと影に隠れている状態です。<strong>「override したのに何も起きない」の正体は、たいていこれ</strong>。</p>
     </section>
 
     <!-- 45 -->
     <section class="slide" data-slide>
       <h2>引っかかりやすいところ（1／2）</h2>
       <ul class="tight wide">
-        <li><span class="term">valid は完成ではありません</span>doctor の empty_pack 警告を見てください</li>
-        <li><span class="term">pack.yaml は手で書きません</span>「たまたま一致する」か「間違っている」かにしかなりません</li>
-        <li><span class="term">署名した pack は sync できません</span>署名を外し、sync してから、署名し直してください</li>
-        <li><span class="term">install しただけではコマンドになりません</span>command アセットは、明示登録を扱えるホスト向けの資料です</li>
+        <li><span class="term">valid はできあがりではありません</span>doctor の empty_pack 警告を見てみてください</li>
+        <li><span class="term">pack.yaml は手で書きません</span>「たまたま合っている」か「間違っている」かのどちらかにしかなりません</li>
+        <li><span class="term">署名した pack は sync できません</span>いったん署名を外して、sync してから、署名し直してください</li>
+        <li><span class="term">install だけではコマンドになりません</span>command アセットは、自分で登録できるホスト向けの資料です</li>
       </ul>
     </section>
 
@@ -724,10 +724,10 @@ rig-wb pack verify-sources --scope project</pre>
     <section class="slide" data-slide>
       <h2>引っかかりやすいところ（2／2）</h2>
       <ul class="tight wide">
-        <li><span class="term">project pack は初回に同意が要ります</span><code>RIG_ALLOW_PROJECT_PACKS=1</code> で同意します。同意は内容ハッシュに紐づきます</li>
-        <li><span class="term">user / org は品質検証を回避できません</span><code>--allow-unverified</code> が使えるのは project スコープだけです</li>
-        <li><span class="term">mock は品質の証拠になりません</span>結果は <code>non_quality_mock</code> と明示されます</li>
-        <li><span class="term">digest は「誰が」を答えません</span>出所を答えるのは署名と trust root です。private であることは、その代わりになりません</li>
+        <li><span class="term">project pack は最初に同意が要ります</span><code>RIG_ALLOW_PROJECT_PACKS=1</code> で同意します。同意は中身のハッシュに結びつきます</li>
+        <li><span class="term">user / org では品質検証を飛ばせません</span><code>--allow-unverified</code> が使えるのは project スコープだけです</li>
+        <li><span class="term">mock は品質の証拠になりません</span>結果に <code>non_quality_mock</code> とはっきり書かれます</li>
+        <li><span class="term">digest は「誰が」までは答えません</span>誰が作ったかを答えるのは署名と trust root です。private であることは、その代わりになりません</li>
       </ul>
     </section>
 
@@ -735,18 +735,18 @@ rig-wb pack verify-sources --scope project</pre>
     <section class="slide" data-slide>
       <h2>明日からの順番</h2>
       <ul>
-        <li><span class="num">1</span>　<code>/rig:go</code> と diff / accept / discard だけ使ってみてください。<strong>ゲートに一度落ちて、なぜ落ちたかを読む</strong>ところまで来れば、rig が何をする道具かは体で分かります。</li>
-        <li><span class="num">2</span>　<code>/rig:knowledge</code> でページを一枚書き、persona の <code>inject:</code> から参照させます。</li>
-        <li><span class="num">3</span>　効くと確信できてから <code>pack init --type knowledge</code> で配布物に格上げします。</li>
+        <li><span class="num">1</span>　<code>/rig:go</code> と diff / accept / discard だけ使ってみてください。<strong>ゲートに一度落ちて「なんで落ちたんだろう」と読む</strong>ところまで来れば、rig がどういう道具かは自然と分かります。</li>
+        <li><span class="num">2</span>　<code>/rig:knowledge</code> でページを一枚だけ書いて、persona の <code>inject:</code> から参照させてみます。</li>
+        <li><span class="num">3</span>　効くと分かってから <code>pack init --type knowledge</code> で、ちゃんとした配布物にします。</li>
       </ul>
-      <p class="kicker">順番を逆にすると、まだ効くか分からないものに評価ケースを書くことになります。</p>
+      <p class="kicker">順番を逆にすると、まだ効くか分からないものに評価ケースを書くことになってしまいます。</p>
     </section>
 
     <!-- 48 -->
     <section class="slide slide--bleed" data-slide>
       <h2 class="display display--sm">以上</h2>
       <p class="kicker" style="margin-top:var(--spacing-48)">
-        一次資料：README.ja.md（全体像）／ docs/packs.md（pack の仕様）／ skills/engine/SKILL.md（ブリック目録の正本）
+        もとの資料：README.ja.md（全体像）／ docs/packs.md（pack の仕様）／ skills/engine/SKILL.md（ブリック一覧の本家）
       </p>
     </section>
 

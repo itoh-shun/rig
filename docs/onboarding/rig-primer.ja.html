@@ -296,9 +296,9 @@ mode:     isolated worktree</div>
 
   <section class="section">
     <h2><span class="numeral">N° 01:</span> rig とは何か</h2>
-    <p>rig は Claude Code のための品質オペレーティングシステムです。自然文でタスクを頼むと、種類を判定し、必要な部品を組み合わせてハーネスを作り、<strong>いま作業しているツリーとは隔離された git worktree</strong> の中で作業します。明示的な受け入れ基準で検証し、あなたが <code>accept</code> と言うまで本体には一切触れません。</p>
-    <p>ここは最初に誤解を外しておきたいところです。rig は品質を自動的に生む道具ではありません。<strong>あなたが決めた品質基準を、AI に無視させないための道具</strong>です。基準を作るのは人間の仕事のままで、rig の仕事は強制と測定です。</p>
-    <p>そのかわり対価があります。隔離と検証と記録のために、rig は速度とトークンをわざと払っています。とにかく速くコードを書かせたいだけなら、モデルに直接頼んだほうが速いです。rig が効いてくるのは、失敗したときのコストが速度より高い場面です。</p>
+    <p>rig は Claude Code のための品質オペレーティングシステムです。ふつうの言葉でタスクを頼むと、種類を見分けて、必要な部品を組み合わせてハーネスを作り、<strong>いま作業しているツリーとは隔離された git worktree</strong> の中で作業します。決めておいた受け入れ基準でたしかめて、あなたが <code>accept</code> と言うまで本体には一切触れません。</p>
+    <p>ここは、最初に誤解を外しておきたいところです。rig が品質そのものを生んでくれるわけではありません。<strong>あなたが決めたルールを、AI に飛ばさせないための道具</strong>です。ルールを決めるのは人の仕事のままで、rig がやるのは守らせることと測ることだけです。</p>
+    <p>そのかわり、払うものがあります。隔離と検証と記録のために、rig は速さとトークンをわざと差し出しています。とにかく速くコードを書かせたいだけなら、モデルに直接お願いするほうが早いです。rig が効いてくるのは、失敗したときの痛手が速さより大きい場面です。</p>
     <h3>直接頼む場合と何が違うか</h3>
     <div class="table-wrap">
       <table class="table--prose">
@@ -317,32 +317,32 @@ mode:     isolated worktree</div>
 
   <section class="section">
     <h2><span class="numeral">N° 02:</span> 入口は二つある</h2>
-    <p>用途が違うだけで、動いている中身は同じエンジンです。多くの場合は一つ目で足ります。</p>
+    <p>用途が違うだけで、動いている中身は同じエンジンです。多くの場合は一つめで足ります。</p>
     <h3>Claude Code の中では、プラグイン</h3>
     <p><code>/rig:go</code> をはじめとするスラッシュコマンドは、ここから来ます。</p>
     <pre class="term">/plugin marketplace add itoh-shun/sito-plugins
 /plugin install rig@sito-plugins</pre>
     <h3>それ以外の場所では、rig-wb CLI</h3>
-    <p>同じ決定論エンジンを、Claude Code のセッション外から動かすためのものです。CI やスクリプト、あるいは別のアシスタント（Codex / Cursor / Copilot）から呼びます。</p>
+    <p>同じエンジンを、Claude Code のセッションの外から動かすためのものです。CI やスクリプト、あるいはほかのアシスタント（Codex / Cursor / Copilot）から呼びます。</p>
     <pre class="term">pipx install git+https://github.com/itoh-shun/rig.git
 rig-wb version</pre>
-    <p>すでに Claude Code の中にいるなら、<code>/rig:setup</code> が同じことをやってくれます。両方は要りません。プラグインだけで安全フローは一通り動きますし、CLI だけで CI から回せます。</p>
+    <p>すでに Claude Code の中にいるなら、<code>/rig:setup</code> が同じことをやってくれます。両方そろえる必要はありません。プラグインだけで安全なひと通りの流れは動きますし、CLI だけで CI から回せます。</p>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 03:</span> 最初の三十秒</h2>
-    <p>まず、設定はゼロ。manifest も gates.json も persona 設定も要りません（すべて後から足せます）。箱から出したままの状態で動きます。</p>
+    <p>まず、設定はゼロ。manifest も gates.json も persona の設定も要りません（ぜんぶ後から足せます）。箱から出したままの状態で動きます。</p>
     <pre class="term">/rig:go "ログインバグを直して"
 /rig:go "このPRを厳しめにレビューして"
 /rig:go "今の変更が安全か確認して"</pre>
-    <p>実行すると、なぜその段取りになったかを一行で宣言してから走り出します。</p>
+    <p>実行すると、どうしてその段取りにしたのかを一行で見せてから走り出します。</p>
     <pre class="term">▸ rig
 task:     ログインバグを直して
 detected: bugfix
 recipe:   bugfix — 「バグ」「直して」を検出
 mode:     isolated worktree
 gate:     standard + bugfix</pre>
-    <p>終わったら、確認して、決めます。日常で使うのはこの三つだけです。</p>
+    <p>終わったら、確認して、決めます。ふだん使うのはこの三つだけです。</p>
     <pre class="term">/rig:go diff       # 何が変わったか、なぜ安全か
 /rig:go accept     # 作業ツリーへ反映（gate 未達なら拒否される）
 /rig:go discard    # 破棄（作業ツリーは最初から触られていない）</pre>
@@ -350,26 +350,26 @@ gate:     standard + bugfix</pre>
 
   <section class="section">
     <h2><span class="numeral">N° 04:</span> なぜ安全と言えるのか</h2>
-    <p>「安全です」は、それだけでは主張にすぎません。rig が安全だと言えるのは、次の四つが文章ではなく配線として入っているからです。</p>
+    <p>「安全です」は、それだけでは言っただけになってしまいます。rig が安全だと言えるのは、次の四つが文章ではなく仕組みとして組み込まれているからです。</p>
 
     <h3>一、隔離された worktree</h3>
-    <p>タスクごとに専用の git worktree と使い捨てブランチを作ります。rig があなたの作業ツリーに直接書き込むことはありません。失敗しても中断しても、手元は何も汚れません。</p>
+    <p>タスクごとに、専用の git worktree と使い捨てのブランチを作ります。rig があなたの作業ツリーに直接書き込むことはありません。失敗しても途中でやめても、手元は何も汚れないままです。</p>
     <pre class="term">&lt;repoの親&gt;/rig-worktrees/&lt;repo名&gt;/rig-20260704-153012-login-fix/
 &lt;repo&gt;/.rig/runs/rig-20260704-153012-login-fix/
     task.json        入力 / task_type / recipe / base branch / status
     acceptance.json  基準ごとの合否と根拠
     diff.md          Summary / Risk / Tests / Unrelated diff</pre>
-    <p>隔離がタスクごとに閉じているので、<strong>複数タスクの同時実行が構造的に安全</strong>です。別の worktree と別のブランチなので、並列プロセス同士がファイルを取り合いません。</p>
+    <p>タスクごとに閉じているので、<strong>何本か同時に走らせても大丈夫</strong>です。別の worktree と別のブランチなので、プロセス同士がファイルを取り合いません。</p>
 
     <h3>二、acceptance-gate</h3>
-    <p>モデルが「完了しました」と言っただけでは、完了になりません。無関係な差分が混じっていないか、テストと型は通るか、リスクは書かれたか、秘密情報が漏れていないか。こうした機械的なチェックを通って、はじめて反映候補になります。<code>failed</code> か <code>pending</code> が一件でも残っていれば、<code>accept</code> は機械的に拒否されます。</p>
+    <p>モデルが「完了しました」と言っただけでは、終わったことになりません。関係ない差分が混じっていないか、テストと型は通るか、リスクは書かれたか、秘密情報が漏れていないか。こうした機械のチェックを通って、はじめて反映の候補になります。<code>failed</code> か <code>pending</code> が一件でも残っていたら、<code>accept</code> ははじかれます。</p>
 
     <h3>三、read-only な検証役</h3>
-    <p>実装する AI と検証する AI を分け、検証側はプロセスレベルで読み取り専用に固定します。お願いではなく強制です。reviewer は <code>claude --allowedTools Read,Grep,Glob</code> や <code>codex --sandbox read-only</code> で起動されます。ファイルを見て、grep して、指摘を書くことはできます。編集も commit も、formatter による書き換えもできません。</p>
-    <p>さらに検証役は、生成側が書いた自己申告レポートではなく、<strong>worktree の実際の git diff を一次証拠として</strong>判定します。レポートは「未検証の主張」というラベルつきで渡されるだけです。</p>
+    <p>書く AI と、たしかめる AI を分けます。たしかめる側はプロセスの段階で読み取り専用に固定されます。お願いではなく、そうとしか動けない状態です。reviewer は <code>claude --allowedTools Read,Grep,Glob</code> や <code>codex --sandbox read-only</code> で起動します。見て、grep して、指摘を書くことはできます。編集も commit も、formatter での書き換えもできません。</p>
+    <p>そしてたしかめる側が読むのは、<strong>worktree の実際の git diff</strong> です。書いた側のレポートは「まだ確かめていない主張」というラベルつきで渡るだけです。</p>
 
     <h3>四、明示的な accept / discard と、消えない記録</h3>
-    <p><code>accept</code> は squash merge で <strong>staged（未コミット）</strong>として反映します。コミットは常に人間が打ちます。<code>discard</code> は worktree とブランチを消しますが、run log は残ります。何を試してなぜ捨てたかは、後から必ず辿れます。</p>
+    <p><code>accept</code> は squash merge で <strong>staged（コミット前）</strong>まで反映します。コミットするのはいつも人です。<code>discard</code> は worktree とブランチを消しますが、run log は残ります。何を試して、なぜ捨てたのかは後から追えます。</p>
   </section>
 
   <section class="section section--wide">
@@ -390,31 +390,31 @@ gate:     standard + bugfix</pre>
         </tbody>
       </table>
     </div>
-    <p>大事なのは、これらが自己申告ではないことです。いくつかの基準は決定論的な機械センサーが裏づけます。秘密情報スキャン、プロンプトインジェクション・マーカー検出、破壊的コマンド検出、ゲート改竄の検出、OpenAPI のスキーマ差分。検出されれば理由つきで落ちます。</p>
-    <p>プロジェクト側で基準を足すこともできます（<code>.rig/gates.json</code>）。ただし<strong>足す方向だけ</strong>です。組み込み基準の削除キーや緩和キーは、その場で拒否されます。リポジトリの中のファイルが、そのリポジトリを守るゲートを弱めることはできません。</p>
+    <p>大事なのは、これらが自己申告ではないところです。いくつかの基準は、毎回おなじ結果になる機械のセンサーが裏づけます。秘密情報スキャン、インジェクション・マーカー検出、危ないコマンドの検出、ゲートの書き換えの検出、OpenAPI のスキーマ差分。見つかれば理由つきで落ちます。</p>
+    <p>プロジェクト側で基準を足すこともできます（<code>.rig/gates.json</code>）。ただし<strong>足す方向だけ</strong>です。もとからある基準を消したりゆるめたりするキーは、その場ではじかれます。リポジトリの中のファイルが、そのリポジトリを守っているゲートをゆるめることはできません。</p>
   </section>
 
-  <p class="pull">効果を測っていないゲートは、効いているかどうかも分かりません。</p>
+  <p class="pull">測っていないゲートは、効いているかどうかも分かりません。</p>
 
   <section class="section">
     <h2><span class="numeral">N° 06:</span> ブリック。部品としての設計</h2>
-    <p>rig は起動時に四種類の部品を組み合わせてハーネスを作ります。LEGO のブロックだと思ってください。</p>
+    <p>rig は起動のときに、四種類の部品を組み合わせてハーネスを作ります。LEGO のブロックだと思ってください。</p>
     <ul class="list">
       <li><span class="list__term">persona</span>誰が判定するかを決めます。security-reviewer、design-reviewer など。</li>
       <li><span class="list__term">instruction</span>何をするかを決めます。手順そのものです。</li>
       <li><span class="list__term">pattern</span>どう分配し、どうゲートするかを決めます。isolated-worktree、acceptance-gate など。</li>
       <li><span class="list__term">recipe</span>step の束です。bugfix、feature、review-only、release-flow など。</li>
     </ul>
-    <p><code>/rig:go</code> はこの組み立てを自動でやります。組み立てを自分で指定したくなったら、<code>/rig:dev</code> が同じエンジンへの明示的な入口になります。</p>
+    <p><code>/rig:go</code> はこの組み立てを自動でやってくれます。自分で指定したくなったら、<code>/rig:dev</code> が同じエンジンへの入口になります。</p>
     <pre class="term">/rig:dev --plan --only review "現在の変更"   # ドライラン：構成だけ見る
 /rig:dev --recipe hotfix --issue 1234        # 緊急修正を最短経路で
 /rig:dev --list                              # 全 tier の recipe を一覧</pre>
-    <p>ここが後半につながります。<strong>専用領域への拡張とは、エンジンを変えることではなく、この部品を足すこと</strong>です。エンジンはドメイン非依存のまま動きません。</p>
+    <p>ここが後半につながります。<strong>自分の領域へ広げるというのは、この部品を足すこと</strong>です。エンジンのほうは変わりません。</p>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 07:</span> レビュアーを測る</h2>
-    <p>reviewer persona は単なるプロンプトではありません。rig ではテストできます。<code>/rig:drill</code> は既知のバグ（認可漏れ、インジェクション、N+1、破壊的変更、片道 migration、テスト欠落など）を使い捨ての diff に仕込んでレビューを走らせ、reviewer には見せない答案キーと突き合わせて採点します。</p>
+    <p>reviewer persona は、テストできます。<code>/rig:drill</code> が、わざと仕込んだバグ（認可漏れ、インジェクション、N+1、破壊的変更、片道 migration、テスト欠落など）を使い捨ての diff に入れてレビューを走らせ、reviewer には見せていない答え合わせ用のキーと照らして採点します。</p>
     <pre class="term"># Drill Result — strict_senior_engineer
 Detection rate:    82%
 False positive:    12%
@@ -423,12 +423,12 @@ Severity accuracy: 76%
 ## Missed Issues
 1. SQL injection risk in search query (src/search.py:88)
 2. Missing authorization check (src/api/users.py:120)</pre>
-    <p><code>/rig:go stats</code> は過去の run を集計し、まったく reject しないレビュアーを名指しで警告します。「6 run で 0 reject。ゴム印の可能性」。レビューが儀式になっていることは、こうやって初めて見えます。</p>
+    <p><code>/rig:go stats</code> は過去の run を集計して、まったく reject していないレビュアーを名前つきで教えてくれます。「6 run で 0 reject。ゴム印の可能性」。レビューがただの儀式になっていることは、こうやって初めて見えてきます。</p>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 08:</span> コマンドの地図</h2>
-    <p>覚える順番はこのとおりで大丈夫です。上から下へ、必要になってから降りていってください。</p>
+    <p>覚える順番は、このとおりで大丈夫です。上から下へ、必要になってから降りていってください。</p>
     <ul class="list list--tight">
       <li><span class="list__term">Core</span><code>/rig:go</code>・<code>/rig:talk</code>（会話的な入口）・<code>/rig:dev</code>・<code>status</code> / <code>diff</code> / <code>accept</code> / <code>discard</code> / <code>log</code></li>
       <li><span class="list__term">観測</span><code>/rig:go board</code>（管制塔）・<code>cockpit</code>・<code>stats</code></li>
@@ -454,13 +454,9 @@ Severity accuracy: 76%
 
   <section class="section">
     <h2><span class="numeral">N° 09:</span> 知識層とは何か、そしてなぜ二種類あるのか</h2>
-    <p>rig の知識層は、subagent のプロンプトに注入されるドメイン知識です。</p>
-    <p>
-      「この会社ではバックアップをこう定義している」「この製品のユビキタス言語はこれだ」。
-      こうした、<strong>コードを読んでも出てこない事実</strong>を、レビュアーや実装役に
-      持たせるための層です。
-    </p>
-    <p>実体は二つあって、性格がはっきり違います。</p>
+    <p>rig の知識層は、subagent のプロンプトに差し込まれる「その領域の知識」です。</p>
+    <p>「うちの会社ではバックアップをこう呼んでいる」「この製品ではこの言葉をこう使う」。こういう<strong>コードをいくら読んでも出てこない事実</strong>を、レビュアーや実装役に持たせておくための層です。</p>
+    <p>中身は二つあって、性格がはっきり違います。</p>
     <div class="table-wrap">
       <table class="table--prose">
         <thead>
@@ -476,16 +472,16 @@ Severity accuracy: 76%
         </tbody>
       </table>
     </div>
-    <p>手元で育てるなら前者で十分です。<strong>他人に渡すときに必要になるのが後者</strong>です。誰が書いたのか、いつ見直したのか、根拠は何か、途中で書き換わっていないか。pack はこの四つを構造として持っています。</p>
+    <p>手元で育てるなら、前者でじゅうぶんです。<strong>人に渡すときに出番が来るのが後者</strong>です。誰が書いたのか、いつ見直したのか、根拠は何か、途中で書き換わっていないか。pack は、この四つをちゃんと構造として持っています。</p>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 10:</span> 知識はどう注入されるのか</h2>
-    <p>知識層の中心は <strong>wiki</strong> です。一つの概念につき一枚の正準ページを書き、<code>[[slug]]</code> で相互リンクします。persona は事実を本文に埋め込まず、ページを参照します。</p>
+    <p>知識層の中心にあるのが <strong>wiki</strong> です。一つの概念につき正しいページを一枚だけ書いて、<code>[[slug]]</code> でつなぎます。persona は事実を本文に書き写さず、ページを見にいきます。</p>
     <pre class="term"># persona: house-authenticity
 inject: ["[[genre-house]]", "[[music-era-90s]]"]</pre>
-    <p>なぜ埋め込まないのか。埋め込むと知識が暗黙知になるからです。参照にしておけば、ページを一枚直すだけで、それを参照する全 persona の判断が同時に更新されます。</p>
-    <p><code>inject:</code> の各 <code>[[slug]]</code> は tier で解決されます。同じ slug が複数の層にあれば、上の層が勝ちます。</p>
+    <p>なぜ書き写さないのか。書き写すと、その知識が誰にも見えない暗黙知になってしまうからです。参照にしておけば、ページを一枚直すだけで、見にきている persona 全員の判断がいっぺんに新しくなります。</p>
+    <p><code>inject:</code> の <code>[[slug]]</code> は tier で解決されます。同じ slug が複数の層にあれば、上の層が勝ちます。</p>
     <ul class="list list--tight">
       <li><span class="list__term">1. project overlay</span><code>&lt;repo&gt;/.claude/rig/knowledge/wiki/</code></li>
       <li><span class="list__term">2. global</span><code>~/.claude/rig/knowledge/wiki/</code></li>
@@ -493,12 +489,12 @@ inject: ["[[genre-house]]", "[[music-era-90s]]"]</pre>
       <li><span class="list__term">4. pack 同梱</span><code>&lt;pack&gt;/facets/knowledge/&lt;slug&gt;.md</code></li>
       <li><span class="list__term">5. shipped</span>rig が最初から持つページ</li>
     </ul>
-    <p>pack 内の persona が <code>inject:</code> を持つ場合は、まず自分の pack の中を見ます。pack は自分の persona のために必要なページを同梱して持ち歩く、という設計です。同じ slug をプロジェクト側に置けば、これまでどおり上書きできます。</p>
+    <p>pack の中の persona が <code>inject:</code> を持つ場合は、まず自分の pack をのぞきます。pack は、自分の persona に要るページを一緒に持ち歩くからです。同じ slug をプロジェクト側に置けば、これまでどおり上書きできます。</p>
   </section>
 
   <section class="section section--wide">
     <h2><span class="numeral">N° 11:</span> pack の型。何を持てて、何を実行できるか</h2>
-    <p><code>type</code> は必須で、既定値を持ちません。既定値を置くと、その決定を「決めなかった人」に渡してしまうからです。type が決めるのは<strong>権限</strong>です。</p>
+    <p><code>type</code> は必須で、初期値がありません。初期値を置くと、大事な判断を「何も決めなかった人」に押しつけてしまうからです。type が決めているのは<strong>権限</strong>です。</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -514,14 +510,14 @@ inject: ["[[genre-house]]", "[[music-era-90s]]"]</pre>
         </tbody>
       </table>
     </div>
-    <p>この表の一番右の列が、pack の型モデルがある理由そのものです。recipe の中に <code>checks:</code>（ホスト上で実行されるシェルコマンド）を書けるのは <code>tool</code> だけです。<strong>チームのドメイン知識を足すことが、そのままコマンド実行権限を渡すことになってはいけません。</strong>他の型が運ぶのは、プロバイダが読むテキストだけです。</p>
-    <p><code>type</code> と紛らわしいのが <code>kind</code>（core / official / domain / project）ですが、こちらは tier 順のどこで解決されるかを決めるだけで、権限ではありません。</p>
-    <p>知識層を配るのが目的なら、まず <code>knowledge</code> を選びます。persona も一緒に配りたくなったら <code>reviewer</code>、recipe やコマンドまで含むなら <code>skill</code> です。必要以上に強い型を選ばないことが、そのまま受け取る側への安全保証になります。</p>
+    <p>この表のいちばん右の列こそ、pack の型モデルがある理由です。recipe の中に <code>checks:</code>（手元のマシンで動くシェルコマンド）を書けるのは <code>tool</code> だけ。<strong>チームの知識を足すことが、そのままコマンドを動かす権限を渡すことになってはいけません。</strong>ほかの型が運ぶのは、プロバイダが読むテキストだけです。</p>
+    <p><code>type</code> とまぎらわしいのが <code>kind</code>（core / official / domain / project）ですが、こちらは tier の順番を決めるだけで、権限ではありません。</p>
+    <p>知識層を配るのが目的なら、まず <code>knowledge</code>。persona も一緒に配りたくなったら <code>reviewer</code>、recipe やコマンドまで入れるなら <code>skill</code> です。必要以上に強い型を選ばないでおくことが、そのまま受け取る側への安心につながります。</p>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 12:</span> pack を作る。最短の一周</h2>
-    <p>まず骨組みを作ります。<code>pack init</code> は上書きを拒否し、標準ディレクトリをすべて掘ってから、次にやることを教えてくれます。</p>
+    <p>まず骨組みを作ります。<code>pack init</code> は上書きを断って、標準のディレクトリをぜんぶ掘ってから、次にやることを教えてくれます。</p>
     <pre class="term">$ rig-wb pack init my-domain --type knowledge --kind domain --root .rig/packs
 initialized: .rig/packs/my-domain
 
@@ -529,23 +525,23 @@ next:
   1. write an asset          my-domain/facets/knowledge/&lt;name&gt;.md
   2. rig-wb pack sync .rig/packs/my-domain
   3. rig-wb pack validate .rig/packs/my-domain</pre>
-    <p>ページを書いたら、<strong><code>pack.yaml</code> は手で編集しません</strong>。マニフェストは全アセットをパスと sha256 で宣言し、検証のときに正準形とバイト単位で比較されます。つまり生成物であって、手書きするものではありません。</p>
+    <p>ページを書いたら、<strong><code>pack.yaml</code> は手で書きません</strong>。中身をぜんぶパスと sha256 で宣言していて、検証のときに一字一句くらべられます。つまり自動で作られるものなので、手で書く場所ではないんです。</p>
     <pre class="term">$ vi .rig/packs/my-domain/facets/knowledge/backup-policy.md
 $ rig-wb pack sync .rig/packs/my-domain
   + facets/knowledge/backup-policy.md
 pack sync: 1 asset(s) declared and hashed</pre>
-    <p><code>sync</code> はディレクトリを鏡写しにします。消したファイルは宣言からも消えます。書き換わるのは <code>assets</code> と <code>hashes</code> だけで、version・description・entrypoints はあなたのものです。</p>
-    <p>そして <code>validate</code> です。ただし、ここに落とし穴があります。空の pack もスキーマは満たすので <code>valid</code> と出ます。嘘ではないのですが、完成と読み違えやすいところです。その状態は <code>doctor</code> が名指ししてくれます。</p>
+    <p><code>sync</code> はフォルダをそのまま写します。消したファイルは宣言のほうからも消えます。書き換わるのは <code>assets</code> と <code>hashes</code> だけで、version・description・entrypoints はあなたのものです。</p>
+    <p>そして <code>validate</code>。ただ、ここに落とし穴があります。中身が空の pack でもスキーマは満たすので、<code>valid</code> と出てしまうんです。嘘ではないのですが、できあがりと読み違えやすいところです。その状態は <code>doctor</code> が教えてくれます。</p>
     <pre class="term">$ rig-wb pack doctor .rig/packs/my-domain
 pack doctor: warning
 - empty_pack: .rig/packs/my-domain</pre>
-    <p><strong>純粋な resource ファイルだけの知識 pack</strong> なら、一周はここで閉じます。PDF や CSV のような読むだけの資料はプロンプト素材ではないので、評価ゲートの対象になりません。</p>
+    <p><strong>読むだけの resource ファイルしか入っていない知識 pack</strong> なら、一周はここで閉じます。PDF や CSV のような資料はプロンプト素材ではないので、評価ゲートの対象になりません。</p>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 13:</span> wiki を入れた瞬間、評価ゲートが立つ</h2>
-    <p><code>wiki</code> はプロンプト素材です。プロバイダに見せるテキストだからです。そのため wiki を持つ pack には、<strong>承認済みの評価ケースが最低一件</strong>必要になります。これは事故ではなく、意図された挙動です。会社の知識ページも、他のプロンプト面と同じ規律で扱われます。</p>
-    <p>承認は、フラグを立てることではありません。<code>eval promote</code> は、閾値を満たさない証拠を拒否し、意味的なルーブリックが判定されていないケースも拒否します。結果には署名がつくので、編集された結果は閾値を見る前に署名で落ちます。</p>
+    <p><code>wiki</code> はプロンプト素材です。プロバイダに見せるテキストだからですね。なので wiki を持つ pack には、<strong>承認ずみの評価ケースが最低ひとつ</strong>要ります。うっかりそうなったのではなく、そう決めています。会社の知識ページも、ほかのプロンプト面とおなじルールで扱われます。</p>
+    <p>承認は、フラグを立てるだけでは済みません。<code>eval promote</code> は、しきい値に届かない証拠も、意味のほうを見ていないケースも受けつけません。結果には署名がつくので、手を入れた結果はしきい値を見るより先にはじかれます。</p>
     <pre class="term">$ rig-wb pack validate .rig/packs/my-domain
 [ERROR] prompt-bearing pack requires at least one evaluation case
 
@@ -561,31 +557,31 @@ $ rig-wb eval promote &lt;case-id&gt; --baseline ... --current ... \
 $ rig-wb pack sync .rig/packs/my-domain
 $ rig-wb pack validate .rig/packs/my-domain
 valid: my-domain@0.1.0</pre>
-    <p>draft を pack の中に置けないのは、pack が宣言していないものを一切持てないからです。<code>--into</code> が変えるのは承認済みケースの<em>行き先</em>だけで、ゲートの厳しさは何も変わりません。</p>
-    <p>もう一つ、忘れやすい一手があります。ケースが<strong>実際に走る</strong>ためには、マニフェストが宣言する entrypoint を <code>prompt_entrypoint</code> が名指ししている必要があります。知識 pack では、entrypoint はページそのものです。</p>
+    <p>draft を pack の中に置けないのは、pack が宣言していないものを一つも持てないからです。<code>--into</code> が変えるのは行き先だけで、ゲートの厳しさは変わりません。</p>
+    <p>もう一つ、忘れがちな一手があります。ケースが<strong>実際に走る</strong>ためには、マニフェストが宣言している entrypoint を <code>prompt_entrypoint</code> に書いておく必要があります。知識 pack なら、それはページ自身です。</p>
     <pre class="term">entrypoints:
   - id: backup-policy
     kind: wiki
     target: backup-policy</pre>
-    <p>これを書き忘れても <code>pack validate</code> は通ります。ただし <code>pack test</code> は <code>structural_only</code> と報告します。ケースは pack に同梱され、ハッシュされ、それでも誰にも実行されません。</p>
+    <p>これを書き忘れても <code>pack validate</code> は通ってしまいます。でも <code>pack test</code> は <code>structural_only</code> と返します。ケースは同梱されて、ハッシュもされて、それでも誰にも動かされないままです。</p>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 14:</span> その pack は何について書かれているのか</h2>
-    <p><code>type</code> が「何を持てるか」を決めるなら、<code>knowledge:</code> ブロックは「何についてか」を宣言します。質問の側から、答えられる pack を探せるようにするためです。</p>
+    <p><code>type</code> が「何を持てるか」を決めるなら、<code>knowledge:</code> ブロックは「何についてか」を書くところです。質問の側から、答えられそうな pack を探せるようにするためです。</p>
     <pre class="term">knowledge:
   scope: ["company"]
   topics: ["access-control", "backup", "encryption"]
   owner: "Corp IT"
   evidence: ["情報セキュリティ規程", "運用設計書"]
   reviewed_at: "2026-08-01T00:00:00+00:00"</pre>
-    <p>ブロック自体は任意ですが、<strong>半分だけ書かれたブロックは許されません</strong>。置いたなら五つとも必須で、その理由は <code>reviewed_at</code> にあります。見直し日のない知識宣言こそ、誰にも気づかれずに古びていくものだからです。</p>
-    <p><code>evidence</code> だけはソートを求められません。人が書いた文書の題名を、書いた言語のまま並べるからです。コードポイント順は誰にも予測できませんし（<code>運用設計書</code> は <code>情報セキュリティ規程</code> の後に来ます）、引用リストの順序そのものが「主にどれに依拠しているか」という意味を運びます。</p>
+    <p>ブロック自体は書かなくても大丈夫ですが、<strong>半分だけというのは通りません</strong>。置いたなら五つとも必須で、理由は <code>reviewed_at</code> にあります。見直した日が書いていない知識ほど、誰にも気づかれないまま古くなっていくからです。</p>
+    <p><code>evidence</code> だけは、並べ替えを求められません。人が書いた資料の題名を、その言語のまま並べるからです。コードポイント順なんて誰にも予測できませんし（<code>運用設計書</code> は <code>情報セキュリティ規程</code> の後に来ます）、順番そのものが「主にどれに寄りかかっているか」を表します。</p>
     <h3>探す</h3>
     <pre class="term">rig-wb pack knowledge                        # このスコープの全宣言
 rig-wb pack knowledge --topic backup
 rig-wb pack knowledge --topic backup --scope product</pre>
-    <p>ここで rig が取る態度が特徴的です。セキュリティ質問票の「バックアップは取っていますか」には、会社としての正解と、ある製品としての正解と、その下のインフラとしての正解が別々にあります。そして質問した側は、どれのつもりだったかを決めていないことが多いのです。</p>
+    <p>ここでの rig の態度が、ちょっと変わっています。セキュリティ質問票の「バックアップは取っていますか」には、会社としての答えと、ある製品としての答えと、その下のインフラとしての答えが別々にあります。しかも質問した側は、どれのつもりだったかを決めていないことが多いんです。</p>
     <pre class="term">$ rig-wb pack knowledge --topic backup
 company-security@0.1.0   company            Corp IT        reviewed 2026-08-01
   topics: access-control, backup, encryption
@@ -595,35 +591,35 @@ product-security@0.1.0   product:northwind-one Northwind One Team reviewed 2026-
   evidence: サービス仕様書
 scope is ambiguous: company, product:northwind-one — narrow with --scope
   before treating any of these as the answer</pre>
-    <p><strong>これは選び出しますが、決めはしません。</strong>どちらのつもりだったかは質問した人についての事実であって、どの pack にも書かれていません。だから rig は推測せず、「問いが開いている」という事実と、選択肢の正確な集合を返します。</p>
-    <p>候補は必ず <code>evidence</code>・<code>owner</code>・<code>reviewed_at</code> を連れてきます。答える側が出典を再構成せずに引用できるようにするためです。<code>knowledge:</code> を宣言していない pack は候補になりません。黙っていることは、あらゆるスコープへの名乗りではないからです。</p>
-    <p>さらに各候補は、同梱するページを <code>pack://</code> 形式で連れてきます。影に隠れているページは、隠されるのでも黙って引用されるのでもなく、<strong>ラベルつきで列挙されます</strong>。</p>
+    <p><strong>rig は選び出しはしますが、決めはしません。</strong>どっちのつもりだったかは質問した人のなかにある事実で、どの pack にも書いてありません。だから当てにいかず、「まだ決まっていませんよ」ということと、選べる候補をそのまま返します。</p>
+    <p>候補は必ず <code>evidence</code>・<code>owner</code>・<code>reviewed_at</code> を連れてきます。答える側が出どころを組み立て直さずに引用できるようにするためです。<code>knowledge:</code> を書いていない pack は候補になりません。黙っていることは、あらゆるスコープへの名乗りにはならないからです。</p>
+    <p>さらに各候補は、同梱しているページを <code>pack://</code> の形で連れてきます。影に隠れているページも、<strong>ラベルをつけて並べます</strong>。隠すと「あのファイルどこ行ったの」と言わせてしまいますし、黙って引用すると、誰も読まないテキストの裏に答えを置くことになるからです。</p>
     <pre class="term">wiki: pack://user/company-security/facets/knowledge/backup-policy.md
         [shadowed by product-security]</pre>
   </section>
 
   <section class="section">
     <h2><span class="numeral">N° 15:</span> 渡す</h2>
-    <p>zip にして手渡すのが、一番短い経路です。</p>
+    <p>zip にして手渡すのが、いちばん短い道です。</p>
     <pre class="term">$ rig-wb pack bundle .rig/packs/my-domain
 bundled: my-domain@0.1.0 (3 file(s)) -> dist/my-domain-0.1.0.zip
   sha256: 7ef9b1a3...
 
 $ rig-wb pack install dist/my-domain-0.1.0.zip --scope project</pre>
-    <p>バンドルのバイト列は再現可能です（エントリはソートされ、日付は固定されます）。毎回変わる zip は毎回「変わりました」と報告することになり、それは何も報告していないのと同じだからです。</p>
+    <p>バンドルの中身は毎回おなじバイト列になります（エントリは並べ替えられ、日付は固定されます）。毎回変わる zip は毎回「変わりました」と言うことになって、それでは何も言っていないのと同じですよね。</p>
     <h3>プライベートリポジトリから配る</h3>
     <p>配布先が git リポジトリなら、名前つきソースを使います。仕様が指すのはアドレスではなく<strong>ソースの名前</strong>です。</p>
     <pre class="term">rig-wb pack source add product --scheme git+ssh \
     --url git@github.com:acme/rig-pack-{pack}.git
 rig-wb pack install product:northwind@1.4.0 --scope project
 rig-wb pack verify-sources --scope project</pre>
-    <p><strong>rig は資格情報を一切持ちません。</strong>git を呼ぶだけで、認証はすでに設定済みのもの（SSH agent、credential helper、CI secret）が答えます。トークンを埋め込んだ URL は拒否されます。lock が記録するのはソースの<em>名前</em>と commit で URL ではないので、rig が書くファイルは資格情報を運びようがありません。</p>
+    <p><strong>rig は資格情報をひとつも持ちません。</strong>git を呼ぶだけなので、認証はもう設定してあるもの（SSH agent、credential helper、CI secret）が答えてくれます。トークンを埋め込んだ URL は断られます。lock に残るのはソースの<em>名前</em>と commit だけで URL は書かないので、rig が書くファイルには資格情報が乗りようがありません。</p>
     <h3>入っているものを見る</h3>
     <pre class="term">rig-wb pack list        # id@version・type・kind・origin・検証状態
 rig-wb pack info    &lt;id&gt;   # 出所・digest・engine・依存
 rig-wb pack explain &lt;id&gt;   # そのアセットは実際にプロンプトへ届いているか
 rig-wb pack outdated       # 各ソースに publish 状況を問い合わせる（通信あり）</pre>
-    <p><code>info</code> と <code>explain</code> は別の問いに答えるので、互いの代用になりません。<code>info</code> は身元と来歴です。<code>explain</code> は<strong>そのアセットが tier 争いに勝っているか</strong>です。pack がインストール済みで valid なのに、完全に影に隠れている。「override したのに何も起きない」の正体は、たいていこれです。</p>
+    <p><code>info</code> と <code>explain</code> は、答える問いが違います。<code>info</code> は身元と来歴。<code>explain</code> は<strong>そのアセットが tier の勝負に勝てているか</strong>。入っていて valid なのに、まるごと影に隠れている。「override したのに何も起きない」の正体は、たいていこれです。</p>
   </section>
 
   <section class="section">
@@ -642,9 +638,9 @@ rig-wb pack outdated       # 各ソースに publish 状況を問い合わせる
 
   <section class="section">
     <h2><span class="numeral">N° 17:</span> ここから先</h2>
-    <p>最初の一日は <code>/rig:go</code> と <code>diff</code> / <code>accept</code> / <code>discard</code> だけで大丈夫です。ゲートに一度落ちて、なぜ落ちたかを読むところまで来れば、rig が何をする道具かは体で分かります。</p>
-    <p>自分のドメインを教え込みたくなったら、まず <code>/rig:knowledge</code> でページを一枚書き、persona の <code>inject:</code> から参照させてみてください。それが効くと確信できてから、<code>rig-wb pack init --type knowledge</code> で配布物に格上げします。順番を逆にすると、まだ効くか分からないものに評価ケースを書くことになります。</p>
-    <p>リポジトリ内の一次資料はこの三つです。<code>README.ja.md</code>（全体像）、<code>docs/packs.md</code>（pack の仕様）、<code>skills/engine/SKILL.md</code>（ブリック目録の正本）。</p>
+    <p>最初の一日は <code>/rig:go</code> と <code>diff</code> / <code>accept</code> / <code>discard</code> だけで大丈夫です。ゲートに一度落ちて「なんで落ちたんだろう」と読むところまで来れば、rig がどういう道具かは自然と分かります。</p>
+    <p>自分の領域を教え込みたくなったら、まず <code>/rig:knowledge</code> でページを一枚だけ書いて、persona の <code>inject:</code> から参照させてみてください。効くと分かってから、<code>rig-wb pack init --type knowledge</code> でちゃんとした配布物にします。順番を逆にすると、まだ効くか分からないものに評価ケースを書くことになってしまいます。</p>
+    <p>リポジトリの中のもとの資料は、この三つです。<code>README.ja.md</code>（全体像）、<code>docs/packs.md</code>（pack の仕様）、<code>skills/engine/SKILL.md</code>（ブリック一覧の本家）。</p>
   </section>
 
 </div>

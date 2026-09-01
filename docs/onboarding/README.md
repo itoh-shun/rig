@@ -21,15 +21,23 @@ regenerate rather than hand-patching the `.pptx`.
 
 ## Register
 
-The prose follows the shipped `japanese-writing` pack: `facets/policies/japanese-writing-rules-v2.md`
-(pick a register suited to the reader and the venue, and do not waver in the middle) and the
-`ai-writing-smells` catalog in `skills/engine/facets/knowledge/`. Everything here is polite-form
-(ですます), avoids the em-dash aside (marker H) and the aphorism close (marker M), and states the
-subject before the predicate rather than inverting for effect.
+The prose is written under the shipped `japanese-writing` pack, in `talk` mode
+(`facets/policies/japanese-writing-modes.md`): polite form throughout, plain words
+over Sino-Japanese compounds, the reader addressed directly, and short sentences.
 
-`python3 scripts/prose_rhythm.py <file>` is the deterministic check and reports no findings on all
-three. It measures surface proxies only; a clean report is not proof the prose reads well.
+Two facets do the work. `japanese-writing-rules-v2` (Rules v3) says to pick one
+register for the reader and the venue and hold it to the end.
+`facets/knowledge/japanese-ai-smell-jp.md` lists the markers to keep out — the
+em-dash aside, the aphorism close, "not merely A, but B", "neither X nor Y but Z",
+the conclusion-dodging hedge, and the words that show up where a writer could not
+find a concrete one.
 
-The pack's revision recipe also asks for an independent reviewer on a different model or provider.
-That step has **not** been run: this session only had Claude available (`codex`, `ollama` and
-`lmstudio` are all absent), so the writing has had no independent verification.
+`python3 scripts/prose_rhythm.py <file>` reports no findings on all three
+(measure prose only — the gate-preset tables are criterion names, and counting
+them as sentences produces a false long-run). It measures surface proxies; a clean
+report is not proof the prose reads well.
+
+Two things this has not had. The pack's recipe asks for an independent reviewer on
+a different model or provider, and only Claude was available here, so nothing has
+verified this writing but the hand that wrote it. And the AI-smell catalog is
+guidance, not a detector: nothing here was rejected for matching a marker alone.
