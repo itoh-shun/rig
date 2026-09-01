@@ -22,97 +22,17 @@ pres.title = "rig 入門";
 let n = 0;
 
 /* ================= layout fit sensor =================================
- * 枠から文字がはみ出したまま出荷しないための計算的センサー。目視ではなく、
- * 折り返し後の行数から必要な高さを見積もり、カード・コードブロック・見出しの
- * それぞれの枠と突き合わせる。全角 1em / ASCII 約 0.55em の近似で、狙いは
- * はみ出しの検出（余白の最適化ではない）。1件でも溢れたら exit 1 で落とす。
+ * 枠から文字がはみ出したまま出荷しないための計算的センサー。実体は
+ * scripts/layout/layout-fit.js にあり、layout-gate pack が同じ内容を
+ * reference として配っている。ここに書くのはその接続だけ。
  * ------------------------------------------------------------------ */
-const PT = 72;
-const SLACK = 0.03;          // 見積り誤差の許容（inch）
-const FIT_ISSUES = [];
+const { LayoutGate, charEm, lineCount, blockHeight, PT } =
+  require("../../scripts/layout/layout-fit.js");
 
-function charEm(ch) {
-  if (/[　-ヿ一-鿿＀-￯]/.test(ch)) return 1.0;
-  if (ch === " ") return 0.28;
-  if (/[A-Za-z0-9]/.test(ch)) return 0.55;
-  return 0.5;
-}
-
-/** 折り返し後の行数。widthIn は inch、fontPt は pt。 */
-function lineCount(text, widthIn, fontPt) {
-  const limit = widthIn / (fontPt / PT);
-  if (limit <= 0) return 999;
-  let lines = 0;
-  for (const para of String(text).split("\n")) {
-    if (para === "") { lines += 1; continue; }
-    let used = 0, n = 1;
-    for (const ch of para) {
-      const w = charEm(ch);
-      if (used + w > limit) { n += 1; used = w; } else { used += w; }
-    }
-    lines += n;
-  }
-  return lines;
-}
-
-/** 行数 × 行送り を inch で返す。 */
-function blockHeight(text, widthIn, fontPt, leadPt) {
-  return (lineCount(text, widthIn, fontPt) * (leadPt || fontPt * 1.2)) / PT;
-}
-
-function fitIssue(where, kind, need, have, text) {
-  FIT_ISSUES.push({ where, kind, need, have, text: String(text).slice(0, 44) });
-}
-
-/* 同じスライドに置いた要素どうしが重なっていないかも見る。箱の中で溢れる
- * のとは別の壊れ方で、レンダリングして初めて気づくのがこれだった。 */
-const RECTS = [];
-function rect(slideNo, name, x, y, w, h, text) {
-  RECTS.push({ slideNo, name, x, y, w, h, text: String(text || "").slice(0, 40) });
-}
-function reportOverlaps() {
-  const bad = [];
-  const bySlide = {};
-  for (const r of RECTS) (bySlide[r.slideNo] ||= []).push(r);
-  for (const [no, list] of Object.entries(bySlide)) {
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i], b = list[j];
-        const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-        const inside = (p, q) =>
-          p.x >= q.x - 0.02 && p.y >= q.y - 0.02 &&
-          p.x + p.w <= q.x + q.w + 0.02 && p.y + p.h <= q.y + q.h + 0.02;
-        if (ox > 0.02 && oy > 0.02 && !inside(a, b) && !inside(b, a)) {
-          bad.push({ no, a, b, ox, oy });
-        }
-      }
-    }
-  }
-  if (bad.length) {
-    console.error(`\nlayout overlap: ${bad.length} collision(s)\n`);
-    for (const o of bad) {
-      console.error(`  [s${o.no}] ${o.a.name} x ${o.b.name} — ${o.ox.toFixed(2)} x ${o.oy.toFixed(2)} in`);
-      console.error(`      "${o.a.text}" / "${o.b.text}"`);
-    }
-    console.error("\n要素が重なっています。位置か高さを見直してください。");
-    process.exit(1);
-  }
-  console.log("layout overlap: ok");
-}
-
-function reportFit() {
-  if (FIT_ISSUES.length) {
-    console.error(`\nlayout fit: ${FIT_ISSUES.length} overflow(s)\n`);
-    for (const i of FIT_ISSUES) {
-      console.error(`  [${i.where}] ${i.kind}: need ${i.need.toFixed(2)}in > have ${i.have.toFixed(2)}in`);
-      console.error(`      "${i.text.replace(/\n/g, "⏎")}"`);
-    }
-    console.error("\n枠に入りきっていません。高さを広げるか本文を短くしてください。");
-    process.exit(1);
-  }
-  console.log("layout fit: ok");
-}
+const gate = new LayoutGate();
+const SLACK = gate.slack;
+const fitIssue = (where, kind, need, have, text) => gate.fit(where, kind, need, have, text);
+const rect = (page, name, x, y, w, h, text) => gate.box(page, name, { x, y, w, h, text });
 
 function shadow() {
   return { type: "outer", color: "000000", blur: 8, offset: 1, angle: 90, opacity: 0.10 };
@@ -1151,7 +1071,6 @@ card(s, { x: M + 6.4, y: 5.2, w: 6.0, h: 1.3, head: "文脈が圧縮されても
     fontFace: BODY_F, fontSize: 11, bold: true, color: ACCENT });
 }
 
-reportFit();
-reportOverlaps();
+gate.enforce();
 
 pres.writeFile({ fileName: "rig-intro.pptx" }).then(() => console.log("written: rig-intro.pptx (" + n + " slides)"));

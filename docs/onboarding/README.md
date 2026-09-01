@@ -6,7 +6,7 @@ format: what rig is and why it is safe, then how to extend the knowledge layer w
 | file | what it is |
 |---|---|
 | `rig-intro.ja.pptx` | 31-slide deck (16:9). Opens with why rig exists, the holes a common AI setup leaves open, and the prompt/context/harness nesting, then the two parts |
-| `build-deck.js` | the generator for that deck — `npm install pptxgenjs && node build-deck.js` rewrites `rig-intro.pptx` in the working directory |
+| `build-deck.js` | the generator for that deck — `npm install pptxgenjs && node build-deck.js` rewrites `rig-intro.pptx` in the working directory, unless the layout gate stops it |
 | `rig-primer.ja.html` | the same material as a long-form editorial page |
 | `rig-deck.ja.html` | a browser-native slide version (arrow keys, click, `#n` deep links) |
 
@@ -27,32 +27,50 @@ that by looking at renders does not scale and it missed real defects — a headi
 wrapping to two lines and pushing into the body, a bullet list crossing the card
 below it.
 
-`docs/onboarding/check.sh` decides it instead:
+`./scripts/layout-gate.sh` decides it instead:
 
 ```
-== deck generator (fit + overlap) ==
-layout fit: ok
-layout overlap: ok
+== pptx generator (fit + overlap) ==
+layout gate: ok (130 boxes)
 written: rig-intro.pptx (31 slides)
 
-== html (deck + primer) ==
-layout gate: ok (deck 48 slides, primer 17 sections)
+== html slides ==
+layout gate: ok (rig-deck.ja.html: 48 pages)
+
+== html flow ==
+layout gate: ok (rig-primer.ja.html: 18 blocks)
 ```
 
-Two sensors, both deterministic:
+Two sensors, both deterministic, both living in `scripts/layout/`:
 
-- **`build-deck.js`** estimates the wrapped height of every card, code block,
-  bullet list and slide title from the character widths (1em for full-width,
-  ~0.55em for Latin) and compares it against the declared box; it also checks
-  every pair of rectangles on a slide for collisions, ignoring the intended
-  nesting of a code block inside a card. It exits 1 **and writes no file**, so a
-  deck with text outside a box cannot be produced at all.
-- **`check-layout.mjs`** loads both HTML files in Chromium and measures each
-  slide's content against the 1280x720 stage, including `<pre>` lines clipped by
-  `overflow: hidden`.
+- **`layout-fit.js`** is required by `build-deck.js`. It estimates the wrapped
+  height of every card, code block, bullet list and slide title from the character
+  widths (1em for full-width, ~0.55em for Latin) and compares it against the
+  declared box; it also checks every pair of rectangles on a slide for collisions,
+  ignoring the intended nesting of a code block inside a card. `gate.enforce()`
+  exits 1 **and writes no file**, so a deck with text outside a box cannot be
+  produced at all.
+- **`check-html-layout.mjs`** loads an HTML file in Chromium and measures it,
+  either against a fixed stage (`--stage 1280x720 --pages "[data-slide]"`,
+  including lines clipped by `overflow: hidden`) or as a flowing document
+  (`--flow`). Without Playwright it exits 2 rather than 0 — not looking is not
+  the same as passing.
 
 Both were verified by injecting a deliberate overflow and confirming they exit 1;
 the generator left the previous `.pptx` untouched.
+
+The gate is packaged as `packs/domain/layout-gate` (a `type: tool` pack), so the
+rules and the recipe travel to other projects. The pack cannot carry the scripts
+themselves — rig refuses runnable code as a pack resource — so it ships them as
+Markdown reference implementations, and `tests/test_layout_gate_pack.py` compares
+those against `scripts/layout/` byte for byte. Regenerate with
+`python3 scripts/layout/sync-pack-reference.py` after editing either script.
+
+The pack's two evaluation cases are authored, not measured. `pack test` needs a
+non-Claude provider and this environment has none, so it reports
+`structural_only` — the same gap already recorded for `japanese-writing`'s
+independent reviewer. The cases state the behaviour the pack claims; nothing here
+proves a model produces it.
 
 The height estimate is an approximation. It is calibrated to catch overflow, not
 to optimise whitespace, so it will occasionally complain about a box that would
