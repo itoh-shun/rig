@@ -19,6 +19,7 @@ files would report these guards as passing while checking nothing.
 
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -208,8 +209,21 @@ def test_the_shipped_catalogue_is_clean_under_all_of_these():
     under C3 and C5, and this is where a new one that is not shows up."""
     from rig_workbench.orchestrate.recipes import parse_frontmatter
 
-    files = sorted(p for p in REPO_ROOT.rglob("*.md") if "/recipes/" in str(p))
-    assert len(files) > 30, "the recipe files this reads have moved"
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", ":(glob)**/recipes/**/*.md"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    files = sorted(REPO_ROOT / path for path in tracked.split("\0") if path)
+    assert len(files) >= 35, (
+        f"found only {len(files)} tracked recipe files; recipe paths may have moved"
+    )
+    engine_recipes = REPO_ROOT / "skills" / "engine" / "recipes"
+    assert any(engine_recipes in path.parents for path in files), (
+        "the shipped engine recipe tier is not represented"
+    )
     id_form = re.compile(r"^\s*([a-z][a-z0-9_]*)\s+—\s")
     offenders, mixed, unknown, lists = [], [], [], 0
     for path in files:
