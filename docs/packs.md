@@ -183,7 +183,7 @@ rather than an address:
 ```console
 rig-wb pack source add product --scheme git+ssh --url git@github.com:acme/rig-pack-{pack}.git
 rig-wb pack source list
-rig-wb pack install product:joypla@1.4.0 --scope project
+rig-wb pack install product:northwind@1.4.0 --scope project
 rig-wb pack verify-sources --scope project
 rig-wb pack source remove product
 ```
@@ -220,11 +220,11 @@ which slices were taken in what order — is recorded in
 
 ```console
 rig-wb pack list                       # id@version, type, kind, origin, verification
-rig-wb pack info joypla                # source, revision, digests, engine, dependencies
-rig-wb pack info joypla --json
-rig-wb pack explain joypla             # which of its assets actually reach a prompt
+rig-wb pack info northwind                # source, revision, digests, engine, dependencies
+rig-wb pack info northwind --json
+rig-wb pack explain northwind             # which of its assets actually reach a prompt
 rig-wb pack outdated                   # asks each source what it publishes (network)
-rig-wb pack update joypla --to 1.5.0
+rig-wb pack update northwind --to 1.5.0
 ```
 
 Schemes are `git+ssh`, `git+https`, and `git+file` (a local or mounted repository — for
@@ -358,7 +358,7 @@ Any `type` may declare it. This is description, not permission — a `reviewer` 
 personas encode a product's domain has the same thing to say as a `knowledge` one, and
 refusing it there would only teach people to mislabel `type`, which *is* a permission.
 
-A `scope` is a bare dimension (`company`) or a dimension with a value (`product:joypla-one`).
+A `scope` is a bare dimension (`company`) or a dimension with a value (`product:northwind-one`).
 `topics` are slugs. Both are sorted and unique, because order carries nothing there and
 leaving it free would let two manifests describing the same pack differ.
 
@@ -383,7 +383,7 @@ rig-wb pack knowledge --topic backup --json
 ```
 
 `--topic` and `--scope` are repeatable. A bare dimension matches every value under it, so
-`--scope product` finds `product:joypla-one` without your having to know the slug. A valued
+`--scope product` finds `product:northwind-one` without your having to know the slug. A valued
 scope is exact, and that half is the one that matters: an answer about one product must not
 be sourced from a pack that only ever claimed to be about products in general.
 
@@ -398,10 +398,10 @@ $ rig-wb pack knowledge --topic backup
 company-security@0.1.0	company	Corp IT	reviewed 2026-08-01T00:00:00+00:00
   topics: access-control, backup, encryption
   evidence: 情報セキュリティ規程, 運用設計書
-product-security@0.1.0	product:joypla-one	JoyPla ONE Team	reviewed 2026-07-15T00:00:00+00:00
+product-security@0.1.0	product:northwind-one	Northwind One Team	reviewed 2026-07-15T00:00:00+00:00
   topics: backup, sla
   evidence: サービス仕様書
-scope is ambiguous: company, product:joypla-one — narrow with --scope before treating any of these as the answer
+scope is ambiguous: company, product:northwind-one — narrow with --scope before treating any of these as the answer
 ```
 
 Which scope was meant is a fact about the asker that no pack contains, so no amount of reading

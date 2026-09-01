@@ -1,4 +1,4 @@
-"""Named pack sources: where `product:joypla@1.4.0` comes from, and how it is pinned.
+"""Named pack sources: where `product:northwind@1.4.0` comes from, and how it is pinned.
 
 Three rules shape this module, and each rules out a design that would otherwise be simpler.
 

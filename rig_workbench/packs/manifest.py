@@ -48,7 +48,7 @@ PACK_SHAPES = frozenset({
 #: for this: a knowledge declaration with no review date is exactly the one that goes stale
 #: without anybody noticing, and it would be the first field dropped if dropping were allowed.
 KNOWLEDGE_FIELDS = {"scope", "topics", "owner", "evidence", "reviewed_at"}
-#: A scope is a bare dimension (`company`) or a dimension with a value (`product:joypla-one`).
+#: A scope is a bare dimension (`company`) or a dimension with a value (`product:northwind-one`).
 #: Selection compares the dimension, so the split has to be in the syntax rather than left to
 #: whoever reads the string.
 KNOWLEDGE_SCOPE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}(?::[a-z0-9][a-z0-9-]{0,63})?$")

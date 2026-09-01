@@ -65,7 +65,7 @@ Pack が何であるかは表していない。ここに `knowledge` / `skill` /
 
 ### D2. type → 許可される asset 種別は表であり、install 時にも強制する
 
-Issue の「JoyPla のナレッジを追加しただけなのに任意コード実行権限まで得る」を止めるのは、
+Issue の「Northwind のナレッジを追加しただけなのに任意コード実行権限まで得る」を止めるのは、
 **type ごとに持てる asset 種別を固定する表**である。
 
 | type | 持てる asset | 実行 |
@@ -102,7 +102,7 @@ scheme は `path` / `zip` / `tar`（現行）に `git+ssh` / `git+https` を足�
 （オフライン/閉域）への回答でもある——zip/tar の vendoring だけでなく、ミラーした git リポジトリを
 そのまま source にできる。テスト用の逃げ道ではなく、同じ pin と同じ拒否がかかる正規の scheme。
 
-**manifest に URL を書かない。** `install product:joypla@1.4.0` は `.rig/sources.json` の
+**manifest に URL を書かない。** `install product:northwind@1.4.0` は `.rig/sources.json` の
 **名前付き source**（name → base URL テンプレート）を経由して解決する。URL を manifest に書くと、
 Pack の中身と配布経路が結びついてしまい、fork も mirror も private 移設もできなくなる。
 

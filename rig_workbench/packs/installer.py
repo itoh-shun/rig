@@ -333,7 +333,7 @@ def install_pack(
     root: pathlib.Path | str | None = None, allow_unverified: bool = False,
 ) -> InstallResult:
     project_path = pathlib.Path(project).resolve()
-    # A named-source spec (`product:joypla@1.4.0`) is resolved to a commit before anything is
+    # A named-source spec (`product:northwind@1.4.0`) is resolved to a commit before anything is
     # staged: `resolve_revision` is the only step that talks to the remote's refs, and doing
     # it up front means a source that cannot be read fails before a staging directory exists.
     spec = parse_spec(str(source))

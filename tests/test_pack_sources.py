@@ -62,12 +62,12 @@ def _pack_files(pack: pathlib.Path, pack_id: str) -> None:
 @pytest.fixture
 def remote(tmp_path):
     """A git repository holding one pack at tag v1.4.0."""
-    repo = tmp_path / "remote" / "rig-pack-joypla"
+    repo = tmp_path / "remote" / "rig-pack-northwind"
     repo.mkdir(parents=True)
     _git(repo, "init", "--quiet", "-b", "main")
     _git(repo, "config", "user.email", "packs@example.invalid")
     _git(repo, "config", "user.name", "packs")
-    _pack_files(repo, "joypla")
+    _pack_files(repo, "northwind")
     _git(repo, "add", "-A")
     _git(repo, "commit", "--quiet", "-m", "pack 1.4.0")
     _git(repo, "tag", "v1.4.0")
@@ -87,15 +87,15 @@ def project(tmp_path, remote):
 
 
 def test_a_spec_installs_from_a_named_source_and_the_lock_pins_the_commit(project, remote):
-    """The whole point of the slice: `product:joypla@1.4.0` reaches a private-style remote,
+    """The whole point of the slice: `product:northwind@1.4.0` reaches a private-style remote,
     and what lands is pinned to a commit rather than to whatever the tag says next week."""
-    result = install_pack("product:joypla@1.4.0", scope="project", project=project,
+    result = install_pack("product:northwind@1.4.0", scope="project", project=project,
                           allow_unverified=True)
-    assert result.manifest["id"] == "joypla"
+    assert result.manifest["id"] == "northwind"
 
     entry, = read_lock(result.path.parent)["packs"]
     assert entry["source"]["type"] == "git"
-    assert entry["source"]["path"] == "product:joypla@1.4.0"
+    assert entry["source"]["path"] == "product:northwind@1.4.0"
     assert entry["source"]["source_id"] == "product"
     assert entry["source"]["revision"] == _git(remote, "rev-parse", "v1.4.0^{commit}")
     assert len(entry["source"]["sha256"]) == 64
@@ -104,11 +104,11 @@ def test_a_spec_installs_from_a_named_source_and_the_lock_pins_the_commit(projec
 def test_the_lock_records_the_source_name_and_never_the_url(project):
     """A lock that carried the URL would carry however the remote was addressed — including
     a credential — and would have to be rewritten by every consumer if the pack moved."""
-    result = install_pack("product:joypla@1.4.0", scope="project", project=project,
+    result = install_pack("product:northwind@1.4.0", scope="project", project=project,
                           allow_unverified=True)
     text = (result.path.parent / LOCK_NAME).read_text(encoding="utf-8")
     assert "product" in text
-    assert "rig-pack-joypla" not in text
+    assert "rig-pack-northwind" not in text
     assert "://" not in text
 
 
@@ -136,7 +136,7 @@ def test_a_moved_tag_is_refused_rather_than_installed(project, remote, monkeypat
 
     monkeypatch.setattr(installer_module, "fetch_revision", move_tag_then_fetch)
     with pytest.raises(RevisionNotFound, match="moved while installing"):
-        install_pack("product:joypla@1.4.0", scope="project", project=project,
+        install_pack("product:northwind@1.4.0", scope="project", project=project,
                      allow_unverified=True)
     assert _git(remote, "rev-parse", "v1.4.0^{commit}") != stale
 
@@ -145,7 +145,7 @@ def test_a_missing_tag_is_revision_not_found_and_not_a_generic_failure(project):
     """The four failures the issue asks to distinguish are only useful if they arrive apart:
     a missing version is the author's problem, an unreachable host is the network's."""
     with pytest.raises(RevisionNotFound, match="no tag v9.9.9"):
-        install_pack("product:joypla@9.9.9", scope="project", project=project,
+        install_pack("product:northwind@9.9.9", scope="project", project=project,
                      allow_unverified=True)
 
 
@@ -155,7 +155,7 @@ def test_an_unreachable_source_is_not_reported_as_a_missing_version(tmp_path):
     write_sources(project, {"product": {
         "scheme": "git+file", "url": str(tmp_path / "nowhere" / "rig-pack-{pack}")}})
     with pytest.raises(SourceUnreachable) as raised:
-        install_pack("product:joypla@1.4.0", scope="project", project=project,
+        install_pack("product:northwind@1.4.0", scope="project", project=project,
                      allow_unverified=True)
     assert raised.value.reason == "source-unreachable"
     assert not isinstance(raised.value, RevisionNotFound)
@@ -166,7 +166,7 @@ def test_an_undeclared_source_names_what_is_declared(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     with pytest.raises(PackError, match="not declared in .rig/sources.json"):
-        install_pack("absent:joypla@1.4.0", scope="project", project=project,
+        install_pack("absent:northwind@1.4.0", scope="project", project=project,
                      allow_unverified=True)
 
 
@@ -183,7 +183,7 @@ def test_reasons_are_distinct_and_machine_readable():
 def test_verify_pin_separates_a_moved_tag_from_a_source_that_cannot_be_read(project, remote):
     """`verify-sources` is where a moved tag stops being invisible, and it has to say which
     kind of trouble it found: logging in fixes one of these and never fixes the other."""
-    result = install_pack("product:joypla@1.4.0", scope="project", project=project,
+    result = install_pack("product:northwind@1.4.0", scope="project", project=project,
                           allow_unverified=True)
     entry, = read_lock(result.path.parent)["packs"]
     declared = read_sources(project)
@@ -229,14 +229,14 @@ def test_a_source_url_may_not_embed_credentials_or_omit_the_pack_placeholder():
 
 
 @pytest.mark.parametrize("spec,expected", [
-    ("product:joypla@1.4.0", ("product", "joypla", "1.4.0")),
-    ("product:joypla@1.4.0-rc.1", ("product", "joypla", "1.4.0-rc.1")),
+    ("product:northwind@1.4.0", ("product", "northwind", "1.4.0")),
+    ("product:northwind@1.4.0-rc.1", ("product", "northwind", "1.4.0-rc.1")),
     ("domain:sales", None),
     ("domain:sales@1.0.0", None),          # the builtin alias namespace keeps its meaning
     ("official:thing@1.0.0", None),
     ("./local/path", None),
-    ("product:joypla", None),              # a spec without a version is not pinned
-    ("product:joypla@1.4", None),
+    ("product:northwind", None),              # a spec without a version is not pinned
+    ("product:northwind@1.4", None),
 ])
 def test_spec_parsing_leaves_local_paths_and_builtin_aliases_alone(spec, expected):
     """A named source must not quietly capture the shapes install already accepted."""
@@ -257,5 +257,5 @@ def test_source_cli_round_trips_and_refuses_a_duplicate(tmp_path, monkeypatch, c
 
 def test_resolve_revision_returns_a_commit_for_a_real_tag(remote):
     source = {"scheme": "git+file", "url": str(remote.parent / "rig-pack-{pack}")}
-    assert resolve_revision(source, "joypla", "1.4.0") \
+    assert resolve_revision(source, "northwind", "1.4.0") \
         == _git(remote, "rev-parse", "v1.4.0^{commit}")
