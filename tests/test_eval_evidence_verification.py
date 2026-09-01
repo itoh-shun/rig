@@ -1239,9 +1239,30 @@ def test_a_base_branch_the_ratchet_cannot_read_is_refused_rather_than_waved_thro
     _git(repo, "commit", "-q", "-m", "this branch's own measurement")
 
     blob = _git(repo, "rev-parse", f"{newer}:{EVIDENCE_REL}")
-    loose = repo / ".git" / "objects" / blob[:2] / blob[2:]
-    assert loose.is_file(), "fixture assumes the base branch's evidence is a loose object"
-    loose.unlink()
+    measured_blob = _git(repo, "rev-parse", f"{measured}:{EVIDENCE_REL}")
+    _git(repo, "config", "uploadpack.allowFilter", "true")
+    filtered = tmp_path / "filtered"
+    # `--no-local` makes the filter effective for a same-filesystem source.
+    _git(tmp_path, "clone", "-q", "--no-local", "--single-branch",
+         "--branch", "trunk", "--filter=blob:none", str(repo), str(filtered))
+    repo = filtered
+    _git(repo, "fetch", "-q", "--filter=blob:none", "origin", "master")
+    # The provenance check reads the evidence at the measured commit too; leave
+    # only the base branch's newer evidence unavailable.
+    _git(repo, "cat-file", "-e", measured_blob)
+    _git(repo, "remote", "remove", "origin")
+    # What guarantees the precondition is this check, not either `--filter`. Measured:
+    # dropping the filter from the clone still leaves the blob absent, and so does
+    # dropping it from the fetch — either one alone is enough. Dropping both fails here,
+    # which is the point. The old fixture asserted a storage layout git never promised
+    # and could fail while the code under test was correct (#554); this asks git whether
+    # the object is readable, which is the thing the gate depends on.
+    unreadable = subprocess.run(
+        ["git", "cat-file", "-e", blob], cwd=repo, capture_output=True,
+    )
+    assert unreadable.returncode != 0, (
+        "fixture requires the base branch's evidence blob to be unreadable"
+    )
 
     report, code = _gate(repo, newer)
     assert code == 1, report
