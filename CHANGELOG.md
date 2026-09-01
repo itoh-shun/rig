@@ -620,7 +620,7 @@ the tag names.
 
 **Packs install from named sources, pinned to a commit** (#523). A project declares where
 packs come from in `.rig/sources.json` (`rig-wb pack source add|list|remove`), and
-`rig-wb pack install product:joypla@1.4.0` reaches a private repository over `git+ssh`,
+`rig-wb pack install product:northwind@1.4.0` reaches a private repository over `git+ssh`,
 `git+https`, or `git+file`. The spec names the source, not an address: welding a pack's
 contents to its distribution path would make a fork, a mirror, or a move to private each a
 content change.

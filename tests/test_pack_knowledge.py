@@ -33,9 +33,9 @@ COMPANY = {
     "reviewed_at": "2026-08-01T00:00:00+00:00",
 }
 PRODUCT = {
-    "scope": ["product:joypla-one"],
+    "scope": ["product:northwind-one"],
     "topics": ["backup", "sla"],
-    "owner": "JoyPla ONE Team",
+    "owner": "Northwind One Team",
     "evidence": ["サービス仕様書"],
     "reviewed_at": "2026-07-15T00:00:00+00:00",
 }
@@ -156,7 +156,7 @@ def test_an_unknown_key_in_the_block_is_refused_rather_than_ignored():
         validate_manifest_shape(_manifest("demo", {**COMPANY, "scopes": ["company"]}))
 
 
-@pytest.mark.parametrize("scope", ["Company", "company:", ":x", "company:JoyPla", "a b"])
+@pytest.mark.parametrize("scope", ["Company", "company:", ":x", "company:Northwind", "a b"])
 def test_a_malformed_scope_is_refused(scope):
     with pytest.raises(PackError, match="knowledge scope"):
         validate_manifest_shape(_manifest("demo", {**COMPANY, "scope": [scope]}))
@@ -215,7 +215,7 @@ def test_the_issue_example_returns_both_candidates_and_refuses_to_pick(tmp_path)
     assert [row["id"] for row in report["candidates"]] == [
         "company-security", "product-security"]
     assert report["ambiguous"]
-    assert report["scopes"] == ["company", "product:joypla-one"]
+    assert report["scopes"] == ["company", "product:northwind-one"]
 
 
 def test_naming_the_scope_settles_it(tmp_path):
@@ -242,7 +242,7 @@ def test_a_valued_scope_does_not_match_a_pack_claiming_only_the_dimension(tmp_pa
     generic = {**PRODUCT, "scope": ["product"]}
     root = _scope(tmp_path, {"product-security": generic})
 
-    assert knowledge_rows(tmp_path, root, scopes=("product:joypla-one",))["candidates"] == []
+    assert knowledge_rows(tmp_path, root, scopes=("product:northwind-one",))["candidates"] == []
 
 
 def test_two_packs_at_one_scope_are_not_an_ambiguity(tmp_path):

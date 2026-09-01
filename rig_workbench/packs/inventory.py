@@ -107,9 +107,9 @@ def info(root: pathlib.Path, pack_id: str) -> dict:
 def _scope_matches(declared: str, requested: str) -> bool:
     """A request for a bare dimension matches every value under it; a valued request is exact.
 
-    `--scope product` finding `product:joypla-one` is the case that makes this worth spelling
+    `--scope product` finding `product:northwind-one` is the case that makes this worth spelling
     out: somebody narrowing a question to "the product, whichever one" should not have to know
-    the product's slug to do it. The reverse does not hold — `--scope product:joypla-one` must
+    the product's slug to do it. The reverse does not hold — `--scope product:northwind-one` must
     not match a pack that only claims `product` in general, or a per-product answer would be
     sourced from something that never claimed to be about that product.
     """
