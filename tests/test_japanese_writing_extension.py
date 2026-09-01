@@ -27,9 +27,9 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
 
     manifest = validate_pack(PACK)
     assert manifest["id"] == "japanese-writing"
-    assert manifest["version"] == "0.6.0"
+    assert manifest["version"] == "0.8.0"
     _raw, compatibility = read_json_yaml(PACK / "compatibility.yaml")
-    assert compatibility["pack_version"] == "0.6.0"
+    assert compatibility["pack_version"] == "0.8.0"
     assert compatibility["engine"] == ">=2.3.0"
     assert manifest["dependencies"] == []
     assert {
@@ -44,9 +44,15 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
         "target": "japanese-writing-revision",
     } in manifest["entrypoints"]
     assert manifest["assets"]["policy"] == [
+        "facets/policies/japanese-writing-modes.md",
         "facets/policies/japanese-writing-rules-v2.md",
         "facets/policies/secure-provider-execution.md",
         "facets/policies/writing-delivery-contract.md",
+    ]
+    assert manifest["assets"]["wiki"] == [
+        "facets/knowledge/japanese-ai-smell-jp.md",
+        "facets/knowledge/japanese-style-material-conversation.md",
+        "facets/knowledge/japanese-style-material-technical.md",
     ]
     assert (
         "evals/cases/japanese-writing-meaningful-negation-contrast/case.json"
@@ -55,10 +61,11 @@ def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_
     recipe = parse_frontmatter_subset(PACK / "recipes/japanese-writing.md")
     assert "model" not in recipe and "verifier_model" not in recipe
     assert recipe["steps"][0]["policies"] == [
-        "writing-delivery-contract", "japanese-writing-rules-v2"
+        "writing-delivery-contract", "japanese-writing-rules-v2", "japanese-writing-modes"
     ]
     assert recipe["steps"][1]["policies"] == [
-        "independent-verification", "secure-provider-execution", "japanese-writing-rules-v2"
+        "independent-verification", "secure-provider-execution",
+        "japanese-writing-rules-v2", "japanese-writing-modes",
     ]
     assert recipe["steps"][1]["personas"] == ["japanese-writing-reviewer"]
     assert recipe["steps"][1]["output_contract"] == "japanese-writing-verdict"
@@ -935,7 +942,11 @@ def test_project_install_resolves_every_owned_prompt_asset(monkeypatch, tmp_path
     assert "# instruction: japanese-write" in write_prompt
     assert "# policy: writing-delivery-contract" in write_prompt
     assert "# policy: Japanese Writing Rules v3" in write_prompt
-    composed_rules = write_prompt.split("# policy: Japanese Writing Rules v3", 1)[1]
+    # Rules v3 の節だけを切り出す。後続の policy（modes）が合成順で後ろに来ても、
+    # 「Rules v3 が寄与する規則は 3 行」という元の意図は変えない。
+    composed_rules = write_prompt.split(
+        "# policy: Japanese Writing Rules v3", 1
+    )[1].split("\n# ", 1)[0]
     assert len([line for line in composed_rules.splitlines() if line.startswith("- ")]) == 3
     for duplicate_section in ("## 技術説明", "## 障害連絡", "## サポート返信"):
         assert duplicate_section not in composed_rules

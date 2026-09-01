@@ -7,7 +7,7 @@ steps:
     instruction: japanese-revise-draft
     pattern: serial
     personas: [japanese-writer]
-    policies: [writing-delivery-contract, japanese-writing-rules-v2]
+    policies: [writing-delivery-contract, japanese-writing-rules-v2, japanese-writing-modes]
     material_profiles:
       technical:
         inject: ["[[japanese-style-material-technical]]"]
@@ -19,11 +19,13 @@ steps:
     gate: acceptance-gate
     acceptance:
       - "下書きに明示された事実・条件・否定を保持し、入力にない前提を追加していない"
+      - "選択されたモードの範囲内で修正され、モードが解除しない禁止事項を破っていない"
+      - "AI 臭のマーカー（japanese-ai-smell-jp）を確認し、原意を損なう癖が残っていない。マーカーの一致だけを理由に原意を壊していない"
       - "秘密情報を再表示せず、修正済みの完成稿を一つだけ返している"
       - "元の下書きとは別の成果物として渡され、source file を編集・上書きしていない"
       - "最終判定は生成者と異なるモデルまたは provider の japanese-writing-reviewer が行っている"
     personas: [japanese-writing-reviewer]
-    policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2]
+    policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2, japanese-writing-modes]
     output_contract: japanese-writing-verdict
 autonomy: interactive
 ---

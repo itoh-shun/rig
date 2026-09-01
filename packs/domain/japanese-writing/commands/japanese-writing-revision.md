@@ -250,3 +250,17 @@ metadataへ渡す引数では、二つのpathと二つのselectorをすべて明
 下書きには、残すべき宛先、掲載先、固有名詞、数値、日時、状態、条件、否定を含めてください。
 秘密値が含まれていても再表示せず `[REDACTED]` に置換します。入力にない原因、意図、期限、約束は
 追加しません。reviewerは既存strict JSON contractを使い、修正は最大一回です。
+
+## モード
+
+`--mode` は文体のモードです。`plain`（既定）、`talk`、`dialogue`、`onomatopoeia`、`emoji`
+から選び、カンマで複数指定できます（例: `--mode talk,emoji`）。本文からは推測しません。
+モードは表現の手段を足すだけで、事実の扱い、秘密情報、完成稿の形についての制約は
+一つも解除しません。各モードで許可されること、許可されても避けることは
+`japanese-writing-modes` にあります。`incident_report` と `support_reply` では、
+`emoji` を指定されても絵文字を使いません。
+
+```text
+rig-wb run japanese-writing-revision --mode talk --goal-stdin < draft.txt
+rig-wb run japanese-writing-revision --mode talk,emoji --goal-stdin < draft.txt
+```
