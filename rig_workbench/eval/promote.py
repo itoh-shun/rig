@@ -123,11 +123,12 @@ def promote_case(
     together they meant no prompt-bearing pack could be authored from scratch: the evidence a
     pack requires had nowhere to be produced.
 
-    Every gate stays exactly where it was. The safety property here is `compare_results`
-    refusing evidence that does not pass, and the rubric check below refusing a judgement that
-    was never measured; neither has anything to do with which directory the result is written
-    to. The pack owner then runs `pack sync` to declare the new case, which is the flow that
-    already exists.
+    The safety property here is `compare_results` refusing evidence that does not pass, and the
+    rubric check below refusing a judgement that was never measured. The comparison report is
+    also the single source of truth for whether baseline rubric failures are gated; promotion
+    must not independently reinterpret prompt bindings. None of those rules depends on which
+    directory the result is written to. The pack owner then runs `pack sync` to declare the new
+    case, which is the flow that already exists.
     """
     try:
         root = pathlib.Path(repo).resolve()
@@ -139,7 +140,10 @@ def promote_case(
         raise EvalCaseError("evaluation evidence does not satisfy red/green/clean gates")
     if case["semantic_rubric"]:
         expected_ids = {item["id"] for item in case["semantic_rubric"]}
-        if (not _judged(baseline, expected_ids, require_pass=True)
+        if (not _judged(
+                    baseline, expected_ids,
+                    require_pass=report["baseline_rubric_pass_required"],
+                )
                 or not _judged(current, expected_ids, require_pass=True)):
             raise EvalCaseError(
                 "semantic judge rubric criteria are unmeasured, mismatched, or failed"

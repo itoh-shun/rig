@@ -290,9 +290,30 @@ def compare_results(
         raise EvalCaseError("evaluation result repeat does not match case repeat")
     if baseline["judge_provider"] == "mock" or current["judge_provider"] == "mock":
         raise EvalCaseError("mock judge is not valid quality evidence")
+    # Whether the rubric is gated on the baseline is derived from the evidence, not
+    # declared by the case (#556). `prompt_binding_sha256` is required on every result and
+    # is deliberately absent from the identity list above, so "the two phases ran different
+    # prompts" is a state this gate already tolerates and simply never looked at.
+    #
+    # Equal bindings mean an incident case: the same prompt against different code, where a
+    # rubric describing how the model should reason holds in both phases and gating on it
+    # catches a judge or model that degraded. Differing bindings mean the baseline ran a
+    # different prompt — a pack bootstrap, where the baseline is the bare model and the
+    # rubric describes behaviour the pack's prompt is what produces. Demanding it pass there
+    # is demanding the red state be green, and it is satisfiable only in proportion to how
+    # little the prompt changes.
+    #
+    # Only the pass requirement moves. The judge must still have run, with these criterion
+    # ids and no duplicates, in both phases: unmeasured is refused either way.
+    baseline_rubric_pass_required = (
+        baseline["prompt_binding_sha256"] == current["prompt_binding_sha256"]
+    )
     if case["semantic_rubric"]:
         expected_ids = [item["id"] for item in case["semantic_rubric"]]
-        for result in (baseline, current):
+        for result, require_pass in (
+            (baseline, baseline_rubric_pass_required),
+            (current, True),
+        ):
             if (result["judge"] != {"required": True, "status": "measured"}):
                 raise EvalCaseError("required semantic judge is unmeasured")
             for sample in [*result["target"], *result["clean"]]:
@@ -302,7 +323,8 @@ def compare_results(
                 if (judge["status"] != "measured" or ids != expected_ids
                         or len(ids) != len(set(ids))):
                     raise EvalCaseError("semantic judge rubric criteria are incomplete")
-                if any(item["status"] != "pass" for item in criteria):
+                if (require_pass
+                        and any(item["status"] != "pass" for item in criteria)):
                     raise EvalCaseError("semantic judge rubric criterion failed")
     red_max = case["red_thresholds"].get("max_success_rate")
     green_min = case["green_thresholds"].get("min_success_rate")
@@ -316,6 +338,7 @@ def compare_results(
         "eval_compare_schema_version": 1,
         "case_id": case["id"], "provider": baseline["provider"],
         "model": baseline["model"], "baseline_red": baseline_red,
+        "baseline_rubric_pass_required": baseline_rubric_pass_required,
         "current_target_green": target_green, "current_clean_green": clean_green,
         "status": status,
     }
