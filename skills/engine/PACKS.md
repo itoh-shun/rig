@@ -13,6 +13,7 @@
 | `decision-humor` | 合議・安全な即断・問い・事前検死・根拠付き回答の手動モード集 | `rig-wb pack install domain:decision-humor --scope project --allow-unverified` |
 | `japanese-writing` | 明示事実・宛先形式・敬語を守る日本語完成稿と独立レビュー | `rig-wb pack install domain:japanese-writing --scope project --allow-unverified` |
 | `document-review` | 資料の構成と根拠を独立検証する read-only reviewer 2枚（宛先適合は未測定のため同梱しない） | `rig-wb pack install domain:document-review --scope project --allow-unverified` |
+| `pack-author` | 手元の材料から pack を起草し、`sync`/`validate`/`doctor`/`test` を道具に任せ、承認は人に残す（URL は取りに行かない・#547 slice 1） | `rig-wb pack install domain:pack-author --scope project --allow-unverified` |
 
 project pack は内容を確認してから、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定して
 asset trust を記録する。起動は `$rig --recipe <installed-name>` を使う。command asset は
