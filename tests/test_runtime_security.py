@@ -849,7 +849,7 @@ def test_legacy_init_remains_usable_without_secure_provider_configuration(
     assert output.is_file()
 
 
-def test_release_metadata_accepts_japanese_pack_060_on_engine_230():
+def test_release_metadata_accepts_japanese_pack_080_on_engine_230():
     from rig_workbench.validation.release import japanese_pack_release_errors
 
     root = pathlib.Path(__file__).resolve().parents[1]

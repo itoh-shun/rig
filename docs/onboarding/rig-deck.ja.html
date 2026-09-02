@@ -1,0 +1,828 @@
+<title>rig 講義</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Noto+Sans+JP:wght@400;700;900&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+
+    --color-bone: #f7f7f7;
+    --color-pressed-ink: #000000;
+
+    --font-munken-sans-web: 'Inter', 'Noto Sans JP', ui-sans-serif, system-ui,
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-terminal: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    --text-body-sm: 16px;    --leading-body-sm: 1.5;
+    --text-body: 20px;       --leading-body: 1.5;
+    --text-subheading: 30px; --leading-subheading: 1.35;
+    --text-heading: 40px;    --leading-heading: 1.2;
+    --text-display: 230px;   --leading-display: 1;
+
+    --font-weight-regular: 400;
+    --font-weight-bold: 700;
+    --font-weight-black: 900;
+
+    --spacing-32: 32px;
+    --spacing-48: 48px;
+    --spacing-72: 72px;
+    --spacing-80: 80px;
+    --spacing-96: 96px;
+    --spacing-128: 128px;
+
+    --element-gap: 10px;
+
+    /* the editorial column, held at its literal 225px on the 1280 stage */
+    --editorial-margin: 225px;
+
+    --stage-w: 1280px;
+    --stage-h: 720px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--color-bone);
+    color: var(--color-pressed-ink);
+    font-family: var(--font-munken-sans-web);
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+    font-weight: var(--font-weight-regular);
+    -webkit-font-smoothing: antialiased;
+    height: 100vh;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+  }
+
+  /* ---------- the stage: exact token sizes, scaled to the viewport ---------- */
+
+  #viewport {
+    width: 100vw;
+    height: 100vh;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  #stage {
+    width: var(--stage-w);
+    height: var(--stage-h);
+    position: relative;
+    flex: none;
+    transform-origin: center center;
+    background: var(--color-bone);
+  }
+
+  /* ---------- slides ---------- */
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: var(--spacing-72) var(--spacing-80) var(--spacing-96) var(--editorial-margin);
+  }
+  .slide[hidden] { display: none; }
+  .slide--bleed { padding-left: var(--spacing-80); }
+  .slide--top { justify-content: flex-start; padding-top: var(--spacing-96); }
+
+  .display {
+    font-size: var(--text-display);
+    line-height: var(--leading-display);
+    font-weight: var(--font-weight-black);
+    margin: 0;
+  }
+  .display--sm { font-size: 172px; }
+
+  h2 {
+    font-size: var(--text-heading);
+    line-height: var(--leading-heading);
+    font-weight: var(--font-weight-bold);
+    margin: 0 0 var(--spacing-48);
+    max-width: 20em;
+  }
+  h3 {
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+    font-weight: var(--font-weight-bold);
+    margin: 0 0 var(--element-gap);
+  }
+  p {
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+    margin: 0 0 var(--spacing-32);
+    max-width: 32em;
+  }
+  p:last-child { margin-bottom: 0; }
+  .subhead {
+    font-size: var(--text-subheading);
+    line-height: var(--leading-subheading);
+    max-width: 24em;
+  }
+  .eyebrow {
+    font-size: var(--text-body-sm);
+    line-height: var(--leading-body-sm);
+    text-transform: uppercase;
+    margin: 0 0 var(--spacing-32);
+  }
+  .kicker {
+    font-size: var(--text-body-sm);
+    line-height: var(--leading-body-sm);
+    margin: var(--spacing-48) 0 0;
+    max-width: 44em;
+  }
+
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-32);
+    max-width: 34em;
+  }
+  ul.tight { gap: var(--element-gap); }
+  ul.wide { max-width: 46em; }
+  li { font-size: var(--text-body); line-height: var(--leading-body); }
+  .term {
+    font-weight: var(--font-weight-bold);
+    display: block;
+  }
+  .num {
+    font-weight: var(--font-weight-bold);
+    font-variant-numeric: tabular-nums;
+  }
+
+  pre {
+    font-family: var(--font-terminal);
+    font-size: var(--text-body-sm);
+    line-height: 1.6;
+    margin: 0 0 var(--spacing-32);
+    padding: 0 0 0 var(--spacing-32);
+    border-left: 1px solid var(--color-pressed-ink);
+    overflow: hidden;
+    white-space: pre;
+  }
+  pre:last-child { margin-bottom: 0; }
+  code { font-family: var(--font-terminal); font-size: 0.85em; }
+
+  table {
+    border-collapse: collapse;
+    text-align: left;
+    font-size: var(--text-body-sm);
+    line-height: var(--leading-body-sm);
+  }
+  th {
+    font-weight: var(--font-weight-bold);
+    border-bottom: 1px solid var(--color-pressed-ink);
+    padding: 0 var(--spacing-32) var(--element-gap) 0;
+    vertical-align: bottom;
+  }
+  td {
+    padding: var(--element-gap) var(--spacing-32) var(--element-gap) 0;
+    vertical-align: top;
+  }
+  td.mono { font-family: var(--font-terminal); white-space: nowrap; }
+
+  .pull {
+    font-size: 72px;
+    line-height: 1.1;
+    font-weight: var(--font-weight-black);
+    margin: 0;
+    max-width: 13em;
+  }
+
+  /* ---------- chrome ---------- */
+
+  .rail {
+    position: absolute;
+    left: var(--spacing-80);
+    right: var(--spacing-80);
+    bottom: var(--spacing-48);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: var(--text-body-sm);
+    line-height: var(--leading-body-sm);
+    z-index: 2;
+  }
+  .rail__count { font-variant-numeric: tabular-nums; }
+  .rail__nav { display: flex; gap: var(--spacing-32); }
+  .rail__nav button {
+    font: inherit;
+    font-family: var(--font-munken-sans-web);
+    color: var(--color-pressed-ink);
+    background: transparent;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+  .rail__nav button:hover { text-decoration-thickness: 2px; }
+  .rail__nav button:focus-visible {
+    outline: 1px solid var(--color-pressed-ink);
+    outline-offset: 4px;
+  }
+  .rail__nav button[disabled] { opacity: 0.25; cursor: default; text-decoration: none; }
+
+  #progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 1px;
+    background: var(--color-pressed-ink);
+    z-index: 2;
+  }
+
+  .hint {
+    position: absolute;
+    left: var(--editorial-margin);
+    bottom: var(--spacing-96);
+    font-size: var(--text-body-sm);
+  }
+</style>
+
+<div id="viewport">
+  <div id="stage">
+
+    <!-- 01 -->
+    <section class="slide slide--bleed" data-slide>
+      <h1 class="display">RIG</h1>
+      <p class="subhead" style="margin-top:var(--spacing-48)">
+        AI に仕事をおまかせするときの、隔離と検証のしくみ。<br>はじめての人が、三十分で全体をつかむための資料です。
+      </p>
+    </section>
+
+    <!-- 02 -->
+    <section class="slide" data-slide>
+      <h2>今日の流れ</h2>
+      <ul>
+        <li><span class="term">第一部　rig を知る</span>何をする道具なのか。なぜ安全と言えるのか。ふだん使う三つのコマンド。</li>
+        <li><span class="term">第二部　pack で知識層を拡張する</span>自分の領域の知識を、配布物として渡す方法です。</li>
+      </ul>
+      <p class="kicker">典拠：README.ja.md / docs/packs.md / skills/engine/SKILL.md</p>
+    </section>
+
+    <!-- 03 -->
+    <section class="slide" data-slide>
+      <h2>困るのは、AI が間違えることではないんです</h2>
+      <p>間違えたことに誰も気づかないまま、本体に混ざってしまうこと。そこが怖いところです。</p>
+      <p>rig が塞ぐのは、そこだけです。ふつうの言葉でタスクを頼むと、種類を見分けて、部品を組み合わせてハーネスを作り、<strong>隔離された git worktree</strong> の中で作業します。決めておいた基準でたしかめて、あなたが accept と言うまで本体には触れません。</p>
+    </section>
+
+    <!-- 04 -->
+    <section class="slide" data-slide>
+      <h2>先に外しておきたい誤解</h2>
+      <ul>
+        <li><span class="term">品質そのものを生む道具ではありません</span>あなたが決めたルールを、AI に飛ばさせないための道具です。ルールを決めるのは人の仕事のまま。rig がやるのは、守らせることと測ることだけです。</li>
+        <li><span class="term">そのかわり、払うものがあります</span>隔離と検証と記録のために、速さとトークンをわざと差し出しています。とにかく速く書かせたいだけなら、直接お願いするほうが早いです。</li>
+        <li><span class="term">効いてくる場面</span>失敗したときの痛手が、速さより大きい場面です。</li>
+      </ul>
+    </section>
+
+    <!-- 05 -->
+    <section class="slide" data-slide>
+      <h2>直接頼む場合と、何が違うか</h2>
+      <table>
+        <thead><tr><th></th><th>直接頼む</th><th>rig 経由</th></tr></thead>
+        <tbody>
+          <tr><td>失敗した変更</td><td>作業ツリーに残る</td><td>worktree ごと破棄、本体は無傷</td></tr>
+          <tr><td>「できました」</td><td>信じるしかない</td><td>acceptance-gate の合否が根拠</td></tr>
+          <tr><td>レビューの質</td><td>不明</td><td>検出率を実測できます</td></tr>
+          <tr><td>何が起きたか</td><td>チャットログ</td><td>run log と監査証跡</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 06 -->
+    <section class="slide slide--bleed" data-slide>
+      <p class="eyebrow">第一部</p>
+      <h2 class="display display--sm">隔離</h2>
+    </section>
+
+    <!-- 07 -->
+    <section class="slide" data-slide>
+      <h2>入口は二つ。中身は同じエンジン</h2>
+      <h3>Claude Code の中では、プラグイン</h3>
+      <pre>/plugin marketplace add itoh-shun/sito-plugins
+/plugin install rig@sito-plugins</pre>
+      <h3>それ以外の場所では、rig-wb CLI</h3>
+      <pre>pipx install git+https://github.com/itoh-shun/rig.git
+rig-wb version</pre>
+      <p class="kicker">CI やスクリプト、ほかのアシスタント（Codex / Cursor）から同じ recipe とゲートを回すためのものです。両方そろえる必要はありません。</p>
+    </section>
+
+    <!-- 08 -->
+    <section class="slide" data-slide>
+      <h2>最初の三十秒。設定はゼロのままで大丈夫です</h2>
+      <pre>/rig:go "ログインバグを直して"
+/rig:go "このPRを厳しめにレビューして"
+/rig:go "今の変更が安全か確認して"</pre>
+      <p>manifest も gates.json も persona の設定も要りません。ぜんぶ後から足せます。</p>
+    </section>
+
+    <!-- 09 -->
+    <section class="slide" data-slide>
+      <h2>どうしてその段取りにしたのかを、先に見せてくれます</h2>
+      <pre>▸ rig
+task:     ログインバグを直して
+detected: bugfix
+recipe:   bugfix — 「バグ」「直して」を検出
+mode:     isolated worktree
+gate:     standard + bugfix</pre>
+    </section>
+
+    <!-- 10 -->
+    <section class="slide" data-slide>
+      <h2>あとは確認して、決めるだけ</h2>
+      <pre>/rig:go diff       # 何が変わったか、なぜ安全か
+/rig:go accept     # 作業ツリーへ反映（gate 未達なら拒否される）
+/rig:go discard    # 破棄（作業ツリーは最初から触られていない）</pre>
+      <p>ふだん使うのは、この三つだけです。</p>
+    </section>
+
+    <!-- 11 -->
+    <section class="slide" data-slide>
+      <h2>rig が安全だと言える、四つの理由</h2>
+      <p>安全だと言えるのは、次の四つが文章ではなく仕組みとして組み込まれているからです。</p>
+      <ul class="tight">
+        <li><span class="num">①</span>　隔離された worktree</li>
+        <li><span class="num">②</span>　acceptance-gate</li>
+        <li><span class="num">③</span>　read-only な検証役</li>
+        <li><span class="num">④</span>　明示的な accept と、消えない記録</li>
+      </ul>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide" data-slide>
+      <h2><span class="num">一</span>　隔離された worktree</h2>
+      <p>タスクごとに、専用の worktree と使い捨てのブランチを作ります。rig があなたの作業ツリーに直接書き込むことはありません。</p>
+      <pre>&lt;repoの親&gt;/rig-worktrees/&lt;repo名&gt;/rig-20260704-153012-login-fix/
+&lt;repo&gt;/.rig/runs/rig-20260704-153012-login-fix/
+    task.json        入力 / task_type / recipe / base branch / status
+    acceptance.json  基準ごとの合否と根拠
+    diff.md          Summary / Risk / Tests / Unrelated diff</pre>
+      <p class="kicker">タスクごとに閉じているので、何本か同時に走らせても大丈夫です。プロセス同士がファイルを取り合うこともありません。</p>
+    </section>
+
+    <!-- 13 -->
+    <section class="slide" data-slide>
+      <h2><span class="num">二</span>　acceptance-gate</h2>
+      <p>モデルが「完了しました」と言っただけでは、終わったことになりません。関係ない差分は混じっていないか。テストと型は通るか。リスクは書かれたか。秘密情報は漏れていないか。ここを機械が見ます。</p>
+      <p><code>failed</code> か <code>pending</code> が一件でも残っていれば、<strong>accept ははじかれます</strong>。</p>
+    </section>
+
+    <!-- 14 -->
+    <section class="slide" data-slide>
+      <h2>ゲートは standard ＋ 種別プリセット</h2>
+      <table>
+        <thead><tr><th>preset</th><th>基準の例</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">standard</td><td>no_unrelated_diff / risk_summary_written / tests_pass_or_explained / no_secret_leak / no_gate_tampering / no_injection_markers / no_destructive_operation</td></tr>
+          <tr><td class="mono">bugfix</td><td>bug_cause_identified / fix_is_minimal / regression_test_added_or_explained</td></tr>
+          <tr><td class="mono">feature</td><td>implementation_matches_requirement / tests_added_or_explained / public_api_changes_documented</td></tr>
+          <tr><td class="mono">refactor</td><td>no_unintended_behavior_change / tests_confirm_behavior_preserved</td></tr>
+          <tr><td class="mono">security</td><td>authn_authz_impact_checked / user_input_flow_checked / dependency_risk_checked</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 15 -->
+    <section class="slide" data-slide>
+      <h2>基準は、機械が裏づけてくれます</h2>
+      <ul class="tight">
+        <li>秘密情報スキャン ／ インジェクション・マーカー検出</li>
+        <li>破壊的コマンド検出 ／ ゲート改竄の検出 ／ OpenAPI スキーマ差分</li>
+      </ul>
+      <p style="margin-top:var(--spacing-48)">プロジェクト側で基準を足せます（<code>.rig/gates.json</code>）。ただし<strong>足す方向だけ</strong>です。消したりゆるめたりするキーは、その場ではじかれます。</p>
+      <p>リポジトリの中のファイルが、そのリポジトリを守っているゲートをゆるめることはできません。</p>
+    </section>
+
+    <!-- 16 -->
+    <section class="slide" data-slide>
+      <h2><span class="num">三</span>　read-only な検証役</h2>
+      <p>書く AI と、たしかめる AI を分けます。たしかめる側はプロセスの段階で読み取り専用に固定されます。お願いではなく、そうとしか動けない状態です。</p>
+      <pre>claude --allowedTools Read,Grep,Glob
+codex  --sandbox read-only</pre>
+      <p>見て、grep して、指摘を書くことはできます。編集も commit も、formatter での書き換えもできません。</p>
+    </section>
+
+    <!-- 17 -->
+    <section class="slide" data-slide>
+      <h2>たしかめる側が読むのは、レポートではありません</h2>
+      <p>いちばんの根拠は <strong>worktree の実際の git diff</strong> です。書いた側のレポートは「まだ確かめていない主張」というラベルつきで渡るだけです。</p>
+      <p class="kicker">似たモデルが自分の成果物をレビューしてしまう状況を、仕組みのうえで避けるための設計です。</p>
+    </section>
+
+    <!-- 18 -->
+    <section class="slide" data-slide>
+      <h2><span class="num">四</span>　明示的な accept と、消えない記録</h2>
+      <ul>
+        <li><span class="term">accept は staged で止まります</span>squash merge で、コミット前の状態まで反映します。コミットするのはいつも人です。</li>
+        <li><span class="term">discard しても run log は残ります</span>何を試して、なぜ捨てたのかを後から追えます。</li>
+        <li><span class="term">土台になる前提は --force でも通りません</span>diff.md が無ければ accept できません。例外はありません。</li>
+      </ul>
+    </section>
+
+    <!-- 19 -->
+    <section class="slide slide--bleed" data-slide>
+      <p class="pull">測っていないゲートは、<br>効いているかどうかも分かりません。</p>
+    </section>
+
+    <!-- 20 -->
+    <section class="slide" data-slide>
+      <h2>中身は四種類のブリック</h2>
+      <ul class="tight">
+        <li><span class="term">persona</span>誰が判定するか</li>
+        <li><span class="term">instruction</span>何をするか</li>
+        <li><span class="term">pattern</span>どう分配し、どうゲートするか</li>
+        <li><span class="term">recipe</span>step の束です（bugfix / feature / review-only / release-flow …）</li>
+      </ul>
+      <p style="margin-top:var(--spacing-48)"><code>/rig:go</code> はこの組み立てを自動でやってくれます。<code>/rig:dev</code> のほうは、recipe も step も flag も自分で指定したい人向けの入口です。</p>
+    </section>
+
+    <!-- 21 -->
+    <section class="slide" data-slide>
+      <h2>レビュアーの実力は、ちゃんと測れます</h2>
+      <p><code>/rig:drill</code> は、わざと仕込んだバグを使い捨ての diff に入れてレビューを走らせ、reviewer には見せていない答え合わせ用のキーと照らして採点します。</p>
+      <pre># Drill Result — strict_senior_engineer
+Detection rate:    82%
+False positive:    12%
+Severity accuracy: 76%
+
+## Missed Issues
+1. SQL injection risk in search query (src/search.py:88)
+2. Missing authorization check (src/api/users.py:120)</pre>
+    </section>
+
+    <!-- 22 -->
+    <section class="slide" data-slide>
+      <h2>形だけのレビューも、ちゃんと教えてくれます</h2>
+      <pre>Verifier behavior:
+- strict_senior_engineer: 14 runs, 6 rejects
+- product_reviewer:        6 runs, 0 rejects
+
+Warning:
+product_reviewer has 0 rejects across 6 runs.
+Possible rubber-stamp behavior.</pre>
+      <p>レビューがただの儀式になっていることは、こうやって初めて見えてきます。</p>
+    </section>
+
+    <!-- 23 -->
+    <section class="slide" data-slide>
+      <h2>コマンド一覧</h2>
+      <ul class="tight wide">
+        <li><span class="term">Core</span><code>/rig:go</code>・<code>/rig:talk</code>・<code>/rig:dev</code>・status / diff / accept / discard / log</li>
+        <li><span class="term">観測</span><code>board</code>（管制塔）・<code>cockpit</code>・<code>stats</code></li>
+        <li><span class="term">Quality</span><code>/rig:drill</code>・<code>/rig:pr</code>・<code>/rig:qa</code>・<code>/rig:harness</code></li>
+        <li><span class="term">Knowledge</span><code>/rig:knowledge</code>・<code>/rig:persona</code>・<code>/rig:catalog</code>・<code>/rig:forge</code></li>
+        <li><span class="term">Planning</span><code>/rig:brainstorm</code>・<code>/rig:tasks</code>・<code>/rig:goal</code>・<code>/rig:design</code></li>
+      </ul>
+    </section>
+
+    <!-- 24 -->
+    <section class="slide slide--bleed" data-slide>
+      <p class="eyebrow">第二部</p>
+      <h2 class="display">PACK</h2>
+    </section>
+
+    <!-- 25 -->
+    <section class="slide" data-slide>
+      <h2>知識層とは何か</h2>
+      <p>subagent のプロンプトに差し込まれる、「その領域の知識」のことです。</p>
+      <p>「うちの会社ではバックアップをこう呼んでいる」「この製品ではこの言葉をこう使う」。こういう<strong>コードを読んでも出てこない事実</strong>を、レビュアーや実装役に持たせておくための層です。</p>
+    </section>
+
+    <!-- 26 -->
+    <section class="slide" data-slide>
+      <h2>中身は二種類。性格がはっきり違います</h2>
+      <table>
+        <thead><tr><th></th><th>セッション知識層</th><th>pack</th></tr></thead>
+        <tbody>
+          <tr><td>作り方</td><td class="mono">/rig:knowledge</td><td class="mono">rig-wb pack</td></tr>
+          <tr><td>配布</td><td>できません</td><td>zip / git で配れる</td></tr>
+          <tr><td>版と改竄</td><td>管理しない</td><td>version・sha256・lock</td></tr>
+          <tr><td>品質</td><td>本人の目</td><td>承認済み評価ケースが必須</td></tr>
+          <tr><td>向く場面</td><td>今すぐ効かせたいとき</td><td>チームに同じ知識を効かせたいとき</td></tr>
+        </tbody>
+      </table>
+      <p class="kicker">手元で育てるなら、前者でじゅうぶんです。人に渡すときに出番が来るのが後者。誰が書いたか、いつ見直したか、根拠は何か、途中で書き換わっていないか。この四つをちゃんと構造として持っています。</p>
+    </section>
+
+    <!-- 27 -->
+    <section class="slide" data-slide>
+      <h2>中心にあるのは wiki。persona はそれを見にいきます</h2>
+      <pre># persona: house-authenticity
+inject: ["[[genre-house]]", "[[music-era-90s]]"]</pre>
+      <p>一つの概念につき、正しいページを一枚だけ書きます。事実を persona の本文に書き写すことはしません。</p>
+      <p>書き写してしまうと、その知識は誰にも見えない暗黙知になります。参照にしておけば、<strong>ページを一枚直すだけで、見にきている persona 全員の判断がいっぺんに新しくなります</strong>。</p>
+    </section>
+
+    <!-- 28 -->
+    <section class="slide" data-slide>
+      <h2><code>[[slug]]</code> は tier で解決されて、上の層が勝ちます</h2>
+      <ul class="tight">
+        <li><span class="num">1</span>　project overlay　<code>&lt;repo&gt;/.claude/rig/knowledge/wiki/</code></li>
+        <li><span class="num">2</span>　global　<code>~/.claude/rig/knowledge/wiki/</code></li>
+        <li><span class="num">3</span>　org　チームで共有する層</li>
+        <li><span class="num">4</span>　pack 同梱　<code>&lt;pack&gt;/facets/knowledge/&lt;slug&gt;.md</code></li>
+        <li><span class="num">5</span>　shipped　rig にはじめから入っているページ</li>
+      </ul>
+      <p class="kicker">pack の persona は、まず自分の pack の中をのぞきます。pack は要るページを一緒に持ち歩くからです。同じ slug をプロジェクト側に置けば、これまでどおり上書きできます。</p>
+    </section>
+
+    <!-- 29 -->
+    <section class="slide" data-slide>
+      <h2><code>type</code> が決めているのは、権限です</h2>
+      <table>
+        <thead><tr><th>type</th><th>持てるもの</th><th>ホストのコマンドを走らせるか</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">knowledge</td><td>wiki・resource・評価ケース</td><td>いいえ</td></tr>
+          <tr><td class="mono">policy</td><td>上記 ＋ policy</td><td>いいえ</td></tr>
+          <tr><td class="mono">reviewer</td><td>上記 ＋ persona・output-contract</td><td>いいえ</td></tr>
+          <tr><td class="mono">skill / workflow</td><td>すべてのプロンプト種別</td><td>いいえ</td></tr>
+          <tr><td class="mono">tool</td><td>すべて</td><td><strong>はい</strong></td></tr>
+        </tbody>
+      </table>
+      <p class="kicker">初期値は用意していません。置いてしまうと、大事な判断を「何も決めなかった人」に押しつけることになるからです。</p>
+    </section>
+
+    <!-- 30 -->
+    <section class="slide" data-slide>
+      <h2>右端の列こそ、この型モデルがある理由です</h2>
+      <p>recipe に <code>checks:</code>（手元のマシンで動くシェルコマンド）を書けるのは <code>tool</code> だけです。</p>
+      <p><strong>チームの知識を足すことが、そのままコマンドを動かす権限を渡すことになってはいけません。</strong>ほかの型が運ぶのは、プロバイダが読むテキストだけです。</p>
+      <p class="kicker">まぎらわしい <code>kind</code>（core / official / domain / project）は tier の順番を決めるだけで、権限ではありません。</p>
+    </section>
+
+    <!-- 31 -->
+    <section class="slide" data-slide>
+      <h2>pack を作ってみる。最短の一周</h2>
+      <pre>$ rig-wb pack init my-domain --type knowledge --kind domain --root .rig/packs
+initialized: .rig/packs/my-domain
+
+next:
+  1. write an asset          my-domain/facets/knowledge/&lt;name&gt;.md
+  2. rig-wb pack sync .rig/packs/my-domain
+  3. rig-wb pack validate .rig/packs/my-domain</pre>
+    </section>
+
+    <!-- 32 -->
+    <section class="slide" data-slide>
+      <h2><code>pack.yaml</code> は手で書きません</h2>
+      <p>マニフェストは中身をぜんぶパスと sha256 で宣言していて、検証のときに一字一句くらべられます。つまり自動で作られるものなので、手で書く場所ではないんです。</p>
+      <pre>$ vi .rig/packs/my-domain/facets/knowledge/backup-policy.md
+$ rig-wb pack sync .rig/packs/my-domain
+  + facets/knowledge/backup-policy.md
+pack sync: 1 asset(s) declared and hashed</pre>
+      <p class="kicker">sync はフォルダをそのまま写します。消したファイルは宣言のほうからも消えます。書き換わるのは assets と hashes だけです。</p>
+    </section>
+
+    <!-- 33 -->
+    <section class="slide" data-slide>
+      <h2><code>valid</code> は「できあがり」ではありません</h2>
+      <p>中身が空の pack でもスキーマは満たすので、valid と出てしまいます。嘘ではないのですが、できあがりと読み違えやすいところです。その状態は <code>doctor</code> が教えてくれます。</p>
+      <pre>$ rig-wb pack doctor .rig/packs/my-domain
+pack doctor: warning
+- empty_pack: .rig/packs/my-domain</pre>
+      <p class="kicker">doctor は警告なら exit 0 を返します。failed だけがエラー扱いです。</p>
+    </section>
+
+    <!-- 34 -->
+    <section class="slide" data-slide>
+      <h2>wiki を入れたとたん、評価ゲートが立ちます</h2>
+      <p><code>wiki</code> はプロンプト素材です。プロバイダに見せるテキストだからですね。なので wiki を持つ pack には、<strong>承認ずみの評価ケースが最低ひとつ</strong>要ります。</p>
+      <pre>$ rig-wb pack validate .rig/packs/my-domain
+[ERROR] prompt-bearing pack requires at least one evaluation case</pre>
+      <p class="kicker">会社の知識ページも、ほかのプロンプト面とおなじルールで扱われます。うっかりそうなったのではなく、そう決めています。</p>
+    </section>
+
+    <!-- 35 -->
+    <section class="slide" data-slide>
+      <h2>承認はフラグを立てるだけでは済みません</h2>
+      <pre># draft は pack の外（プロジェクト側）に書く
+#   .rig/evals/drafts/&lt;case-id&gt;/case.json
+#   prompt_surfaces に ["wiki:backup-policy"] と面を名指しする
+$ rig-wb eval run &lt;case-id&gt; --repo . --phase baseline --provider ...
+$ rig-wb eval run &lt;case-id&gt; --repo . --phase current  --provider ...
+$ rig-wb eval compare --baseline ... --current ... --repo .
+$ rig-wb eval promote &lt;case-id&gt; ... --into .rig/packs/my-domain
+$ rig-wb pack sync .rig/packs/my-domain
+$ rig-wb pack validate .rig/packs/my-domain
+valid: my-domain@0.1.0</pre>
+      <p class="kicker">promote は、しきい値に届かない証拠を受けつけません。結果には署名がつくので、手を入れた結果はしきい値より先にはじかれます。</p>
+    </section>
+
+    <!-- 36 -->
+    <section class="slide" data-slide>
+      <h2>entrypoint を書き忘れると、走りません</h2>
+      <p>ケースが<strong>実際に走る</strong>には、<code>prompt_entrypoint</code> にマニフェストが宣言している entrypoint を書いておく必要があります。知識 pack なら、それはページ自身です。</p>
+      <pre>entrypoints:
+  - id: backup-policy
+    kind: wiki
+    target: backup-policy</pre>
+      <p>書き忘れても <code>pack validate</code> は通ってしまいます。でも <code>pack test</code> は <code>structural_only</code> と返します。ケースは同梱されて、ハッシュもされて、それでも誰にも動かされないままです。</p>
+    </section>
+
+    <!-- 37 -->
+    <section class="slide" data-slide>
+      <h2>その pack は何について書かれているのか</h2>
+      <pre>knowledge:
+  scope: ["company"]
+  topics: ["access-control", "backup", "encryption"]
+  owner: "Corp IT"
+  evidence: ["情報セキュリティ規程", "運用設計書"]
+  reviewed_at: "2026-08-01T00:00:00+00:00"</pre>
+      <p>ブロック自体は書かなくても大丈夫です。ただし<strong>半分だけというのは通りません</strong>。置いたなら五つとも必須で、理由は <code>reviewed_at</code> にあります。見直した日が書いていない知識ほど、誰にも気づかれないまま古くなっていくからです。</p>
+    </section>
+
+    <!-- 38 -->
+    <section class="slide" data-slide>
+      <h2>evidence だけは、並べ替えなくて大丈夫です</h2>
+      <p>人が書いた資料の題名を、その言語のまま並べるからです。コードポイント順なんて誰にも予測できません（<code>運用設計書</code> は <code>情報セキュリティ規程</code> の後に来ます）。</p>
+      <p>そして順番そのものが意味を持っています。引用リストは、いちばん寄りかかっている資料から始まるからです。</p>
+      <p class="kicker">同じものを二度書くのは断られます。答えの裏づけを、実際より厚く見せてしまうからです。</p>
+    </section>
+
+    <!-- 39 -->
+    <section class="slide" data-slide>
+      <h2>質問の側から、答えられそうな pack を探します</h2>
+      <pre>rig-wb pack knowledge                     # このスコープの全宣言
+rig-wb pack knowledge --topic backup
+rig-wb pack knowledge --topic backup --scope product</pre>
+      <p>「バックアップは取っていますか」には、会社としての答えと、ある製品としての答えと、その下のインフラとしての答えが別々にあります。しかも質問した側は、どれのつもりだったかを決めていないことが多いんです。</p>
+    </section>
+
+    <!-- 40 -->
+    <section class="slide" data-slide>
+      <h2>選び出しはしますが、決めはしません</h2>
+      <pre>$ rig-wb pack knowledge --topic backup
+company-security@0.1.0   company             Corp IT   reviewed 2026-08-01
+  evidence: 情報セキュリティ規程, 運用設計書
+product-security@0.1.0   product:northwind-one  Northwind    reviewed 2026-07-15
+  evidence: サービス仕様書
+scope is ambiguous: company, product:northwind-one
+  — narrow with --scope before treating any of these as the answer</pre>
+      <p>どっちのつもりだったかは質問した人のなかにある事実で、どの pack にも書いてありません。だから rig は当てにいかず、<strong>「まだ決まっていませんよ」ということと、選べる候補</strong>をそのまま返します。</p>
+    </section>
+
+    <!-- 41 -->
+    <section class="slide" data-slide>
+      <h2>影に隠れたページも、隠さず並べます</h2>
+      <pre>wiki: pack://user/company-security/facets/knowledge/backup-policy.md
+        [shadowed by product-security]</pre>
+      <p>隠すと「あのファイルどこ行ったの」と言わせてしまいますし、黙って引用すると、誰も読まないテキストの裏に答えを置くことになってしまいます。</p>
+    </section>
+
+    <!-- 42 -->
+    <section class="slide" data-slide>
+      <h2>pack を渡す</h2>
+      <pre>$ rig-wb pack bundle .rig/packs/my-domain
+bundled: my-domain@0.1.0 (3 file(s)) -> dist/my-domain-0.1.0.zip
+  sha256: 7ef9b1a3...
+
+$ rig-wb pack install dist/my-domain-0.1.0.zip --scope project</pre>
+      <p class="kicker">中身のバイト列は毎回おなじになります。毎回変わる zip は毎回「変わりました」と言うことになって、それでは何も言っていないのと同じですよね。</p>
+    </section>
+
+    <!-- 43 -->
+    <section class="slide" data-slide>
+      <h2>rig は資格情報をひとつも持ちません</h2>
+      <pre>rig-wb pack source add product --scheme git+ssh \
+    --url git@github.com:acme/rig-pack-{pack}.git
+rig-wb pack install product:northwind@1.4.0 --scope project
+rig-wb pack verify-sources --scope project</pre>
+      <p>git を呼ぶだけなので、認証はもう設定してあるもの（SSH agent・credential helper・CI secret）が答えてくれます。トークンを埋め込んだ URL は断られます。</p>
+      <p class="kicker">lock に残るのはソースの<em>名前</em>と commit だけで、URL は書きません。だから rig が書くファイルには、資格情報が乗りようがないんです。</p>
+    </section>
+
+    <!-- 44 -->
+    <section class="slide" data-slide>
+      <h2><code>info</code> と <code>explain</code> は、答える問いが違います</h2>
+      <ul>
+        <li><span class="term">info</span>身元と来歴です。出どころ・digest・engine・依存。lock が知っていることを答えます。</li>
+        <li><span class="term">explain</span>そのアセットが tier の勝負に勝てているかどうか。resolver しか知らないことを答えます。</li>
+      </ul>
+      <p style="margin-top:var(--spacing-48)">入っていて valid なのに、まるごと影に隠れている状態です。<strong>「override したのに何も起きない」の正体は、たいていこれ</strong>。</p>
+    </section>
+
+    <!-- 45 -->
+    <section class="slide" data-slide>
+      <h2>引っかかりやすいところ（1／2）</h2>
+      <ul class="tight wide">
+        <li><span class="term">valid はできあがりではありません</span>doctor の empty_pack 警告を見てみてください</li>
+        <li><span class="term">pack.yaml は手で書きません</span>「たまたま合っている」か「間違っている」かのどちらかにしかなりません</li>
+        <li><span class="term">署名した pack は sync できません</span>いったん署名を外して、sync してから、署名し直してください</li>
+        <li><span class="term">install だけではコマンドになりません</span>command アセットは、自分で登録できるホスト向けの資料です</li>
+      </ul>
+    </section>
+
+    <!-- 46 -->
+    <section class="slide" data-slide>
+      <h2>引っかかりやすいところ（2／2）</h2>
+      <ul class="tight wide">
+        <li><span class="term">project pack は最初に同意が要ります</span><code>RIG_ALLOW_PROJECT_PACKS=1</code> で同意します。同意は中身のハッシュに結びつきます</li>
+        <li><span class="term">user / org では品質検証を飛ばせません</span><code>--allow-unverified</code> が使えるのは project スコープだけです</li>
+        <li><span class="term">mock は品質の証拠になりません</span>結果に <code>non_quality_mock</code> とはっきり書かれます</li>
+        <li><span class="term">digest は「誰が」までは答えません</span>誰が作ったかを答えるのは署名と trust root です。private であることは、その代わりになりません</li>
+      </ul>
+    </section>
+
+    <!-- 47 -->
+    <section class="slide" data-slide>
+      <h2>まずは、ここから</h2>
+      <ul>
+        <li><span class="num">1</span>　<code>/rig:go</code> と diff / accept / discard だけ使ってみてください。<strong>ゲートに一度落ちて「なんで落ちたんだろう」と読む</strong>ところまで来れば、rig がどういう道具かは自然と分かります。</li>
+        <li><span class="num">2</span>　<code>/rig:knowledge</code> でページを一枚だけ書いて、persona の <code>inject:</code> から参照させてみます。</li>
+        <li><span class="num">3</span>　効くと分かってから <code>pack init --type knowledge</code> で、ちゃんとした配布物にします。</li>
+      </ul>
+      <p class="kicker">順番を逆にすると、まだ効くか分からないものに評価ケースを書くことになってしまいます。</p>
+    </section>
+
+    <!-- 48 -->
+    <section class="slide slide--bleed" data-slide>
+      <h2 class="display display--sm">以上</h2>
+      <p class="kicker" style="margin-top:var(--spacing-48)">
+        もとの資料：README.ja.md（全体像）／ docs/packs.md（pack の仕様）／ skills/engine/SKILL.md（ブリック一覧の本家）
+      </p>
+    </section>
+
+    <div class="rail">
+      <span id="wordmark">rig — 講義</span>
+      <span class="rail__nav">
+        <button type="button" id="prev">前へ</button>
+        <button type="button" id="next">次へ</button>
+        <span class="rail__count"><span id="cur">1</span> / <span id="total">48</span></span>
+      </span>
+    </div>
+    <div id="progress"></div>
+
+  </div>
+</div>
+
+<script>
+  (function () {
+    var stage = document.getElementById('stage');
+    var slides = Array.prototype.slice.call(document.querySelectorAll('[data-slide]'));
+    var cur = document.getElementById('cur');
+    var total = document.getElementById('total');
+    var prev = document.getElementById('prev');
+    var next = document.getElementById('next');
+    var progress = document.getElementById('progress');
+    var i = 0;
+
+    total.textContent = String(slides.length);
+
+    function render() {
+      slides.forEach(function (s, n) { s.hidden = n !== i; });
+      cur.textContent = String(i + 1);
+      prev.disabled = i === 0;
+      next.disabled = i === slides.length - 1;
+      progress.style.width = ((i + 1) / slides.length * 100) + '%';
+      try { history.replaceState(null, '', '#' + (i + 1)); } catch (e) {}
+    }
+
+    function go(n) {
+      var t = Math.max(0, Math.min(slides.length - 1, n));
+      if (t === i) return;
+      i = t;
+      render();
+    }
+
+    function fit() {
+      var s = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+      stage.style.transform = 'scale(' + s + ')';
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      switch (e.key) {
+        case 'ArrowRight': case 'ArrowDown': case 'PageDown': case ' ':
+          go(i + 1); e.preventDefault(); break;
+        case 'ArrowLeft': case 'ArrowUp': case 'PageUp':
+          go(i - 1); e.preventDefault(); break;
+        case 'Home': go(0); e.preventDefault(); break;
+        case 'End': go(slides.length - 1); e.preventDefault(); break;
+      }
+    });
+
+    prev.addEventListener('click', function () { go(i - 1); });
+    next.addEventListener('click', function () { go(i + 1); });
+
+    document.getElementById('viewport').addEventListener('click', function (e) {
+      if (e.target.closest('button')) return;
+      go(e.clientX < window.innerWidth * 0.3 ? i - 1 : i + 1);
+    });
+
+    window.addEventListener('resize', fit);
+
+    var start = parseInt((location.hash || '').replace('#', ''), 10);
+    if (start >= 1 && start <= slides.length) i = start - 1;
+
+    fit();
+    render();
+  })();
+</script>
