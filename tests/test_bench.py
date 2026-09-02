@@ -691,3 +691,30 @@ steps:
     assert acceptance["checks"] == ["git diff --check"]
     assert captured["cfg"]["checks"] == ["python -m pytest -q"]
     assert captured["cfg"]["claude_no_session_persistence"] is True
+
+
+def test_run_pair_relays_the_rig_arm_s_telemetry_to_the_runs_log(tmp_path):
+    """The rig arm points `RIG_RUNS_PATH` inside an artifact directory that is deleted as
+    soon as the run-state is read, so every `perf` block a benchmark wrote was thrown away
+    with it and `rig-wb perf` had nothing to gate on (#502). With `runs_log` named, the
+    records are relayed out before the directory goes; without it, nothing is written
+    anywhere new."""
+    task = bench_tasks.load_tasks()["py-auth-sibling-write"]
+    runs_log = tmp_path / "artifacts" / "runs.jsonl"
+
+    pair = bench.run_pair(task, 1, "mock", None, None, {"runs_log": str(runs_log)})
+
+    assert pair.arms["rig"].runner_state is not None
+    lines = [line for line in runs_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert lines, "the rig arm's runs.jsonl record did not reach the runs log"
+    records = [json.loads(line) for line in lines]
+    assert all(record["backend"] == "orchestrate" for record in records)
+    assert any("perf" in record for record in records), "no perf block survived the relay"
+
+    # A second pair appends: the gate wants every pair of a benchmark, not the last one.
+    bench.run_pair(task, 2, "mock", None, None, {"runs_log": str(runs_log)})
+    assert len(runs_log.read_text(encoding="utf-8").splitlines()) > len(lines)
+
+    silent = tmp_path / "silent"
+    bench.run_pair(task, 3, "mock", None, None, {})
+    assert not silent.exists()

@@ -576,14 +576,19 @@ RUN 中に超過しても警告を出すだけで判定は変えない。性能�
   ので、並列ファンアウトが無駄に見えることもない。
 
 決定論的なスイートは既存のものをそのまま使う。`rig-wb bench --provider mock` はベンチマーク
-コーパスを実際のオーケストレータに mock プロバイダで通し、各 RUN のテレメトリを専用の成果物
-ディレクトリに向ける。つまり CI ゲートはこの 2 コマンドの組で、どこにもライブネットワークが
-入らない：
+コーパスを実際のオーケストレータに mock プロバイダで通す。各 RUN のテレメトリは使い捨ての
+成果物ディレクトリに向き、run-state を読み終えた時点で削除されるので、`--runs-log` で
+rig 側 RUN の `runs.jsonl` レコードを削除前に中継する先を指定する——指定が無ければ `perf`
+ブロックはディレクトリごと消え、2 つ目のコマンドには読むものが無い。つまり CI ゲートはこの
+2 コマンドの組で、どこにもライブネットワークが入らない：
 
 ```console
-rig-wb bench --provider mock --out artifacts/
+rig-wb bench --provider mock --runs-log artifacts/runs.jsonl
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
+
+`--out` はベンチマーク自身のレポート（JSON 1 ファイル）で、RUN テレメトリとは別物。両方を
+同時に指定してよい。
 
 ### RUN の支出を見る（#532）
 

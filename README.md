@@ -768,14 +768,20 @@ What it refuses to do is the design:
   beside it, so a parallel fan-out does not read as waste.
 
 The deterministic suite is the one that already ships: `rig-wb bench --provider mock` runs the
-benchmark corpus through the real orchestrator with a mock provider and points each run's
-telemetry at its own artifacts directory. So the CI gate is the two commands together, with no
-live network anywhere in it:
+benchmark corpus through the real orchestrator with a mock provider. Each run's telemetry goes
+to a throwaway artifacts directory that is deleted once the run-state has been read, so
+`--runs-log` names a file the rig arm's `runs.jsonl` records are relayed to before that
+happens — without it the `perf` blocks are thrown away with the directory and the second
+command has nothing to read. So the CI gate is the two commands together, with no live network
+anywhere in it:
 
 ```console
-rig-wb bench --provider mock --out artifacts/
+rig-wb bench --provider mock --runs-log artifacts/runs.jsonl
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
+
+`--out` is the benchmark's own report (one JSON file) and is a different thing from the run
+telemetry; the two flags can be combined.
 
 ### OpenTelemetry export (`rig-wb otel`, #501)
 
