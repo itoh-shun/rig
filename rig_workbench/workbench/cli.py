@@ -207,9 +207,27 @@ def build_parser() -> argparse.ArgumentParser:
         "knowledge-candidate",
         help="check whether a submitted knowledge candidate is explicitly supported by every "
              "record it cites (#440)")
-    p.add_argument("candidate", help="path to a rig.knowledge-candidate/v1 JSON document")
+    p.add_argument("candidate", nargs="?",
+                   help="path to a rig.knowledge-candidate/v1 JSON document (assess it, or "
+                        "--register it into the promotion lifecycle)")
     p.add_argument("--json", action="store_true",
                    help="emit the rig.knowledge-candidate-assessment/v1 result")
+    # The promotion lifecycle (#440 stage 2) rides on this subcommand rather than adding
+    # one: candidate → evaluated → approved → active → deprecated, one step at a time,
+    # recorded in the append-only .rig/org-knowledge.jsonl.
+    p.add_argument("--register", action="store_true",
+                   help="enter a *supported* candidate into the lifecycle at `candidate`")
+    p.add_argument("--promote", metavar="ID", help="move a registered record one step")
+    p.add_argument("--to", metavar="STATE",
+                   help="the next state: evaluated | approved | active | deprecated | rolled_back")
+    p.add_argument("--actor", help="who is approving (required from `approved` on; never inferred)")
+    p.add_argument("--reason", help="why (required from `approved` on)")
+    p.add_argument("--list", action="store_true", dest="list_records",
+                   help="every registered record with its current state")
+    p.add_argument("--state", help="filter --list by state")
+    p.add_argument("--history", metavar="ID", help="one record's full path through the ledger")
+    p.add_argument("--active", action="store_true",
+                   help="only the active rules, with their citations, as a consumer would read them")
     p.set_defaults(func=cmd_knowledge_candidate)
 
     p = sub.add_parser(

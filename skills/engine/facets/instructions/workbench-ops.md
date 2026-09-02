@@ -40,6 +40,17 @@ rule と expected benefit は各引用記録に明記され、context と scope 
 この判定が保証するのは「引用記録が実在し、候補が主張する範囲を明示的に支える」ことだけ。
 候補の正しさ、因果性、完全性、一般適用可能性、将来の効果は保証しない。
 
+**昇格ライフサイクル（#440 第2段）**は同じサブコマンドのフラグで扱う（新サブコマンドを足さない）。
+`--register <candidate>` は **`supported` と判定された候補だけ**を `candidate` 状態で
+`.rig/org-knowledge.jsonl`（追記のみ）に登録する。`--promote <id> --to <state>` は
+`candidate → evaluated → approved → active → deprecated`（`approved`/`active` から `rolled_back`）
+を**1段ずつ**だけ進め、拒否時は到達可能な状態を名指しする。`approved` 以降は `--actor` と
+`--reason` が必須＝記名された人間の行為で、rig は生成しない（モデルは `evaluated` まで進めてよく、
+承認はできない）。同一 rule × 重複 scope に `active` な記録があれば `active` 化を両 id つきで拒否し、
+解消は旧記録の明示的 `deprecated` 化だけ（文言の違う rule の矛盾判定は人が行う）。`--list [--state]`
+/ `--history <id>` は台帳の再生で現在状態を導く。`--active` は workflow synthesis が読む形＝active な
+rule と引用だけ。instinct 層（`.rig/instincts*`）とは別層で、相互に書き込まない。
+
 ## `/rig anomaly-trigger <event> [--json]`
 
 ```
