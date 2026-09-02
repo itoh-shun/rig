@@ -33,6 +33,15 @@ rig は意図的に、独自 DSL を持つ重量級の外部エンジン**では
 
 そして「品質ゲートがあります」という他所の売り文句との差別化点：rig のゲートとレビュアーは主張されるだけでなく**実測される**。`/rig:drill`（§12）は既知バグの注入に対する各 reviewer persona の実際の検出率をスコア化し、`/rig:go stats`（§11）は実 run 履歴からラバースタンプ化したレビュアーや頻繁に落ちるゲートを炙り出す。測れないゲートは願望にすぎない——rig はゲートの実効性をデータとして扱う。
 
+### 土台にしたもの
+
+rig は二つの考え方を、知ったうえで採用している。どちらも [nrslib](https://zenn.dev/nrs)（成瀬允宣）さんのものだ。
+
+- **[Faceted Prompting](https://zenn.dev/nrs/articles/5d19b4c8a39ecb)** — プロンプトを persona / policy / knowledge / instruction / output contract の5つの関心に分解し、recency を意識した順で配置する。rig の `facets/` ディレクトリとその配置順（`skills/engine/SKILL.md` §COMPOSE）は、この分解をそのまま使っている。
+- **[ループエンジニアリング](https://zenn.dev/nrs/articles/e4a2ae8a9fb785)** — 作業者をループから外し、発見・委譲・検証・保持・予約を回し続ける層。rig の `recipes/goal-loop` と wiki `loop-engineering` はこの語彙で書いている。
+
+rig がその上に足しているのは**受け入れの判定**だ。決定論センサーを一次に置くこと、`accept` をコードが拒否すること、レビュアーの検出率を `/rig:drill` で測ること、失敗を型で記録すること。`docs/landscape.md` の一文で言えば、オーケストレータが「どう回すか」を決め、rig は「回った結果を受け入れてよいか」を決める。TAKT のようなオーケストレータと競合するのではなく、その後ろに置く層として設計している。
+
 ## 2. インストール
 
 入口は2つあり、用途が違います。多くの場合は1つ目です。

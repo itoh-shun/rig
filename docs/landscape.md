@@ -39,8 +39,8 @@ someone performs it, the cell stays `unknown`.
 
 ## The landscape
 
-Products compared: **rig**, VNX Orchestration, Nexus Agents, Gas City / Gas Town, Ruflo,
-Daintree, MCO, Session Orchestrator.
+Products compared: **rig**, TAKT, VNX Orchestration, Nexus Agents, Gas City / Gas Town,
+Ruflo, Daintree, MCO, Session Orchestrator.
 
 Competitor columns are collapsed into one `others` column because they all currently hold
 the same value. Splitting them into eight columns of `unknown` would suggest eight

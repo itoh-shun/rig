@@ -7,7 +7,7 @@ domain: dev
 status: canonical
 links: []
 reviewed_at: 2026-07-02
-sources: ["skills/engine/patterns/autonomous-loop.md", "skills/engine/facets/policies/independent-verification.md", "skills/engine/recipes/goal-loop.md"]
+sources: ["nrslib「ループエンジニアリングを takt exec で気軽に始めよう」https://zenn.dev/nrs/articles/e4a2ae8a9fb785 （用語と5分解の出典）", "skills/engine/patterns/autonomous-loop.md", "skills/engine/facets/policies/independent-verification.md", "skills/engine/recipes/goal-loop.md"]
 ---
 
 「自分で回り続けるループ」を設計するときの**観点カタログ**（事実）。判断は `goal-driver` / `orchestrator` が持つ。ここは「ループ1ターンを何に分解するか・どこで事故るか」だけを並べる。
