@@ -4,6 +4,14 @@
 
 ### Added
 
+**Credit for what rig is built on.** rig's five facet kinds and their placement order are
+nrslib's Faceted Prompting, and the `loop-engineering` wiki page is written in the
+vocabulary of nrslib's ループエンジニアリング. Both were adopted knowingly at the start; the
+tree just never said so. Both READMEs now carry a "What rig is built on" section with the
+sources, the wiki page cites the article it took its terms from, and TAKT joins the
+products listed in `docs/landscape.md` — with its cells `unknown`, as the document's own
+rule requires until someone runs it under the axes.
+
 **A run records the session it ran in (#548, slice 4).** `caller.py` has read
 `CLAUDE_CODE_SESSION_ID` since #416 and used it only as a marker — presence named the
 harness and the value was discarded, so rig knew the *kind* of caller and never the

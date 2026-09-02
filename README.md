@@ -33,6 +33,15 @@ The same design has a second face: the deterministic engine behind that layer (`
 
 And the differentiator over "we have quality gates" framings: rig's gates and reviewers are **measured, not asserted**. `/rig:drill` (§12) scores each reviewer persona's actual detection rate against injected known bugs, and `/rig:go stats` (§11) flags rubber-stamp reviewers and frequently-failing gates from real run history. A gate you can't measure is a hope; rig treats gate efficacy as data.
 
+### What rig is built on
+
+Two ideas in rig are adopted knowingly, and both are [nrslib](https://zenn.dev/nrs)'s (Masanobu Naruse).
+
+- **[Faceted Prompting](https://zenn.dev/nrs/articles/5d19b4c8a39ecb)** — decompose a prompt into five concerns (persona / policy / knowledge / instruction / output contract) and place them in an order that respects recency. rig's `facets/` directory and its placement order (`skills/engine/SKILL.md`, COMPOSE) use that decomposition as is.
+- **[Loop engineering](https://zenn.dev/nrs/articles/e4a2ae8a9fb785)** — take the worker out of the loop and keep discovery, hand-off, verification, persistence and scheduling turning on their own. rig's `recipes/goal-loop` and the `loop-engineering` wiki page are written in that vocabulary.
+
+What rig adds on top is the **acceptance decision**: deterministic sensors first, an `accept` that code can refuse, reviewer detection rates measured by `/rig:drill`, failures recorded as typed codes. In the words of `docs/landscape.md`: an orchestrator decides how work runs, rig decides whether the result is trustworthy enough to accept. It is designed to sit behind an orchestrator such as TAKT, not to compete with one.
+
 ## 2. Install
 
 Two entry points, for two different jobs. Most people want the first one.
