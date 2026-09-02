@@ -287,6 +287,36 @@ def _read_runner_state(artifact_dir: pathlib.Path) -> dict | None:
     return state if isinstance(state, dict) else None
 
 
+def _keep_run_telemetry(artifact_dir: pathlib.Path, runs_log: object) -> None:
+    """Append the rig arm's `runs.jsonl` records to `runs_log` before the artifact directory
+    is removed (#502).
+
+    Every rig arm runs the orchestrator with `RIG_RUNS_PATH` pointed inside its own artifact
+    directory, and that directory is deleted as soon as the run-state has been read — so the
+    `perf` block each run wrote was thrown away with it, and `rig-wb perf` had nothing to
+    read from a benchmark. With a log named, the records survive and the deterministic
+    suite becomes the input of the perf gate: `rig-wb bench --provider mock --runs-log
+    artifacts/runs.jsonl`, then `RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check`.
+
+    Appends rather than overwrites, because a benchmark is several pairs and the gate wants
+    all of them; copies lines rather than parsing them, because this is a relay and a
+    record this code cannot read is still one the reader downstream should see.
+    """
+    if not runs_log:
+        return
+    source = artifact_dir / "runs.jsonl"
+    try:
+        lines = source.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if not lines.strip():
+        return
+    target = pathlib.Path(runs_log)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(lines if lines.endswith("\n") else lines + "\n")
+
+
 def _git_evidence(workspace: pathlib.Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
     status = subprocess.run(
         ["git", "status", "--porcelain=v1"],
@@ -516,6 +546,8 @@ def run_pair(
                     attempt = _failed_attempt(provider, arm_model[name], arm_started, error)
 
             runner_state = _read_runner_state(artifact_dir) if name == "rig" else None
+            if name == "rig":
+                _keep_run_telemetry(artifact_dir, settings.get("runs_log"))
             if name == "rig" and artifact_dir.exists():
                 _remove_tree(artifact_dir)
             git_status, changed_files = _git_evidence(workspace)
@@ -754,6 +786,13 @@ def cmd_bench(argv: list[str]) -> None:
     )
     parser.add_argument("--out", type=pathlib.Path)
     parser.add_argument("--html", type=pathlib.Path)
+    parser.add_argument(
+        "--runs-log",
+        type=pathlib.Path,
+        help="append every rig-arm run's runs.jsonl record here, so the benchmark's perf "
+             "blocks survive the artifact cleanup and `RIG_RUNS_PATH=<this> rig-wb perf` "
+             "can gate on them (#502)",
+    )
     args = parser.parse_args(argv)
     if args.runs < 1:
         parser.error("--runs must be at least 1")
@@ -773,6 +812,7 @@ def cmd_bench(argv: list[str]) -> None:
         "allow_headless_in_cc": args.allow_headless_in_cc,
         "caller": args.caller,
         "mock_scenario": args.mock_scenario,
+        "runs_log": str(args.runs_log) if args.runs_log else None,
     }
     summary = run_benchmark(
         selected,

@@ -16,7 +16,7 @@ import traceback
 
 from . import state
 from .accumulated import check_accumulated
-from .catalog import (check_catalog_drift, check_workbench_catalog,
+from .catalog import (check_catalog_drift, check_packs_catalog, check_workbench_catalog,
                       check_workbench_routing, check_graph, check_wiki)
 from .config import RECIPES
 from .drill import (check_corpus_integrity, check_drill_coverage,
@@ -27,6 +27,7 @@ from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
 from .release import check_release_metadata, check_skills_lock
 from .routes import check_route_producers
+from .skills_spec import check_skills_spec
 from .selftest import run_selftest
 from .stale_refs import check_stale_refs
 from .state import _emit
@@ -70,6 +71,11 @@ def main() -> None:
         _emit("FAIL", f"agents check — unexpected error:\n{traceback.format_exc()}")
 
     try:
+        check_skills_spec()
+    except Exception:
+        _emit("FAIL", f"skills spec check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
         check_catalog_drift()
     except Exception:
         _emit("FAIL", f"§2 catalog drift check — unexpected error:\n{traceback.format_exc()}")
@@ -83,6 +89,11 @@ def main() -> None:
         check_workbench_catalog()
     except Exception:
         _emit("FAIL", f"workbench catalog check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_packs_catalog()
+    except Exception:
+        _emit("FAIL", f"packs catalog check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_wiki()

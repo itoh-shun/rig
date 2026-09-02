@@ -122,5 +122,39 @@ def _record_task_run(root: pathlib.Path, task: dict, status: str) -> None:
         # carried no caller at all before this: measured across 370 records here, `caller`
         # appeared in none, so a board column for who invoked a run had nothing to read.
         **({"caller": task["caller"]} if isinstance(task.get("caller"), dict) else {}),
+        # A forced accept, and what the deterministic sensors found (#501). Both absent
+        # rather than false or zero: `forced` is only ever true, and a findings count of
+        # zero cannot be told from a sensor that never ran (no worktree, no base), so only
+        # findings that were recorded are counted. The masked excerpts stay in
+        # acceptance.json; this carries counts, which is all a metric may see.
+        **({"forced": True} if task.get("forced") else {}),
+        **({"findings": findings} if (findings := _sensor_findings(d)) else {}),
         "steps": steps,
     })
+
+
+#: acceptance.json check key -> the short name the log and the OTel projection count by.
+_SENSOR_FINDING_KEYS = {
+    "secret_findings": "secret",
+    "injection_findings": "injection",
+    "destructive_findings": "destructive",
+}
+
+
+def _sensor_findings(d: pathlib.Path) -> dict[str, int]:
+    """How many findings each deterministic sensor left on the gate, by sensor.
+
+    Only sensors that recorded findings appear; a sensor that found nothing removes its
+    key from the check, and a sensor that could not run never wrote one, so the two are
+    indistinguishable here and neither is reported as zero.
+    """
+    acc = load_json(d / "acceptance.json", {}) or {}
+    counts: dict[str, int] = {}
+    for check in acc.get("checks") or []:
+        if not isinstance(check, dict):
+            continue
+        for key, name in _SENSOR_FINDING_KEYS.items():
+            found = check.get(key)
+            if isinstance(found, list) and found:
+                counts[name] = counts.get(name, 0) + len(found)
+    return counts

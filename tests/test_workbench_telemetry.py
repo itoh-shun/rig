@@ -329,3 +329,40 @@ def test_only_the_block_shape_is_mirrored(task_repo, value):
     record_task_run(task_repo, task(issue=value), "accepted")
 
     assert "issue" not in read_runs(task_repo)[0]
+
+
+# ── what the OTel projection needs from this side (#501) ─────────────────────
+def test_a_forced_accept_is_recorded_and_an_ordinary_one_carries_no_key(task_repo):
+    """`forced: true` was in task.json and the signed provenance, and nowhere the OTel
+    projection reads. Absent rather than false on an ordinary accept, by the same rule as
+    `issue` and `caller`: a present key is a recorded fact."""
+    record_task_run(task_repo, task(forced=True), "accepted")
+    record_task_run(task_repo, task(), "accepted")
+    forced, plain = read_runs(task_repo)
+    assert forced["forced"] is True
+    assert "forced" not in plain
+
+
+def test_sensor_findings_are_counted_from_the_gate_record(task_repo):
+    """acceptance.json carries each sensor's masked findings on its criterion; the log carries
+    counts only. A sensor that recorded nothing is not counted as zero, because a sensor that
+    could not run left the same absence."""
+    d = task_repo / ".rig" / "runs" / "rig-1"
+    (d / "acceptance.json").write_text(json.dumps({"checks": [
+        {"name": "no_secret_leak", "status": "failed",
+         "secret_findings": ["a.py:1 [aws] AKIA****", "b.py:2 [token] ghp_****"]},
+        {"name": "no_injection_markers", "status": "passed"},
+        {"name": "no_destructive_operation", "status": "failed",
+         "destructive_findings": ["deploy.sh:9 rm -rf /"]},
+        {"name": "tests_pass_or_explained", "status": "passed"},
+    ]}), encoding="utf-8")
+    record_task_run(task_repo, task(), "gate_failed")
+    (record,) = read_runs(task_repo)
+    assert record["findings"] == {"secret": 2, "destructive": 1}
+    assert "AKIA" not in json.dumps(record) and "deploy.sh" not in json.dumps(record)
+
+
+def test_no_findings_means_no_findings_key(task_repo):
+    record_task_run(task_repo, task(), "accepted")
+    (record,) = read_runs(task_repo)
+    assert "findings" not in record

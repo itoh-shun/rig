@@ -768,14 +768,20 @@ What it refuses to do is the design:
   beside it, so a parallel fan-out does not read as waste.
 
 The deterministic suite is the one that already ships: `rig-wb bench --provider mock` runs the
-benchmark corpus through the real orchestrator with a mock provider and points each run's
-telemetry at its own artifacts directory. So the CI gate is the two commands together, with no
-live network anywhere in it:
+benchmark corpus through the real orchestrator with a mock provider. Each run's telemetry goes
+to a throwaway artifacts directory that is deleted once the run-state has been read, so
+`--runs-log` names a file the rig arm's `runs.jsonl` records are relayed to before that
+happens — without it the `perf` blocks are thrown away with the directory and the second
+command has nothing to read. So the CI gate is the two commands together, with no live network
+anywhere in it:
 
 ```console
-rig-wb bench --provider mock --out artifacts/
+rig-wb bench --provider mock --runs-log artifacts/runs.jsonl
 RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
 ```
+
+`--out` is the benchmark's own report (one JSON file) and is a different thing from the run
+telemetry; the two flags can be combined.
 
 ### OpenTelemetry export (`rig-wb otel`, #501)
 
@@ -827,6 +833,17 @@ log produces the same trace instead of a second copy of the same run.
 | `/rig:go gh ci` | check CI status for the current branch/PR, surface the failing job's error summary |
 
 Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. This is enforced structurally, not by a prose "please ignore": before any third-party text reaches a downstream persona it is wrapped in a **quarantine fence** (`rig_workbench/orchestrate/quarantine.py` `wrap_untrusted`) that denotes it as data-not-instructions with an unguessable per-call delimiter, and invisible/bidi Unicode is stripped first (a tampering signal), so an injected "ignore your instructions" cannot escape the fence (OWASP LLM01; spotlighting/CaMeL). GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
+
+**What was added for the three criteria the first cut left unmet.** A run record now carries
+`providers` (who generated, who verified, the configured model), `forced` (an accept pushed
+past the gate with `--force`) and `findings` (how many findings each deterministic sensor left
+on the gate — secret, injection, destructive). The projection exports them as
+`gen_ai.provider.name` / `gen_ai.request.model` / `rig.verifier.provider` and
+`rig.accept.force` on the root span, and as the counters `rig.force.count`,
+`rig.secret.detection_count`, `rig.injection.detection_count` and
+`rig.destructive.detection_count`. Counts only: the masked excerpts stay in `acceptance.json`,
+and a sensor that recorded nothing yields no point rather than a zero, because a sensor that
+could not run leaves the same absence.
 
 ### GitHub Action (#265)
 

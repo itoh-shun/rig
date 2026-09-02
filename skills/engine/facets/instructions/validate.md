@@ -264,6 +264,14 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 
 - `--validate --global` 時は project（`<repo>/.claude/rig/personas/`）・user（`~/.claude/rig/personas/`）tier の persona も同スキーマで点検する（`/rig:persona` 生成物の衛生）。tier ディレクトリが無ければサイレントにスキップ。
 
+### ③-c SKILL.md（Agent Skills spec・#550）
+
+リポジトリ内の全 `SKILL.md`（`.git`・`node_modules` 等は除外）を **Agent Skills specification** の frontmatter 規則と突き合わせる（`scripts/validate.py` の `check_skills_spec`）。rig 自身の規約ではなく、`/rig:import` が読み `/rig:export` が書くと主張している**外部フォーマット**の検査。
+
+- MUST → FAIL：`name` 必須・1〜64 文字・小文字 `a-z0-9` と `-` のみ・先頭/末尾/連続ハイフン禁止・**親ディレクトリ名と一致**／`description` 必須・非空・1024 文字以内／`compatibility` は存在時 1〜500 文字／`metadata` は存在時 string→string の map／`license`・`allowed-tools` は存在時 string。
+- SHOULD → WARN：本文 500 行超（起動時に全文が読み込まれるため、詳細は参照ファイルへ）。判断を伴う推奨事項で落とすと検査ごと無効化されるため、警告に留める。
+- `SKILL.md` が1つも見つからない場合は PASS せず FAIL（走査が壊れている）。
+
 ### ④ §2 目録ドリフト
 
 > **CI 用機械実装**：`scripts/validate.py` の `check_catalog_drift` が本節のサブセットを実装 — §2 のバッククォート・ブリック参照（brace 記法 `{a,b}-reviewer` 展開対応）→実ファイル（幽霊エントリ＝FAIL）、shipped の `recipes/`・`patterns/`・`facets/` 直下の全カテゴリの実ファイル→SKILL.md 記載（追記漏れ疑い＝WARN）。facet カテゴリはディレクトリ構成から導出するため、新カテゴリも自動的に対象となる。`facets/knowledge/wiki/` は本検査から除外し、独立した⑤ wiki 衛生検査のみが扱う。
@@ -273,6 +281,7 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 - 目録に載っているが**実ファイルが無い**もの（幽霊エントリ）→ error。
 - 実ファイルが在るが**目録に載っていない**もの → pack 追加分への追記漏れの可能性として warning（`_` 始まりと `facets/knowledge/wiki/` は除外）。
 - README.md / README.ja.md の recipe / instruction / persona 一覧表も同様に実ファイルと突き合わせ、抜け・古い記載を warning する。
+- §2「pack 追加分」テーブルの pack 行と `PACKS.md`「pack 一覧」テーブルの詳細行も双方向で突き合わせる（`scripts/validate.py` の `check_packs_catalog`・#573）。§2 にあって `PACKS.md` に無い pack → 詳細行の追記漏れとして warning、`PACKS.md` にあって §2 に無い pack → stale な詳細行として warning。どちらかのテーブル（見出し行）が見つからない／行が読めない場合はサイレントに PASS せず FAIL（検査できていない）。
 
 ### ④-b commands / agents frontmatter（実バグ class の再発防止）
 

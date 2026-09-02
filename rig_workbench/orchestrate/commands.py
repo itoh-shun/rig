@@ -903,6 +903,16 @@ def cmd_run(args):
                 and steps[0].get("instruction") == "japanese-revise-draft":
             cfg["_source_draft"] = goal
     state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
+    # Which providers this run was configured with, as data on the run rather than a fact
+    # that lived only in argv. `runs.jsonl` had no provider field at all (#501): the OTel
+    # projection could not label a run by who generated or who verified it, and the only
+    # trace of the verifier was the `provider:persona` inside each verdict.
+    state["providers"] = {
+        "generator": gen,
+        **({"generators": list(generators)} if generators else {}),
+        "verifier": list(ver) if isinstance(ver, list) else ver,
+        **({"model": cfg["model"]} if cfg.get("model") else {}),
+    }
     if secure_required and fm.get("name", path.stem) == "japanese-writing":
         state["review_category"] = review_category
         state["material_profile"] = material_profile
