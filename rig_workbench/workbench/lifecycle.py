@@ -442,6 +442,65 @@ def read_review_body(pair: str) -> tuple[str, str]:
         die(f"--body file for persona '{persona}' cannot be read ({ref[1:]}): {exc}")
 
 
+#: What a hand-off note may name as its subject: a path inside the task's worktree or run
+#: directory, relative, with no way to climb out. The subject is an artifact, so an absolute
+#: path or `..` is refused rather than stored — a note is rendered on a board and joined on.
+_ABOUT_MAX = 200
+
+
+def _clean_about(values: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    for raw in values or []:
+        value = raw.strip()
+        if not value or len(value) > _ABOUT_MAX:
+            die(f"--about must be a non-empty relative path of at most {_ABOUT_MAX} characters")
+        path = pathlib.PurePosixPath(value.replace("\\", "/"))
+        if path.is_absolute() or ".." in path.parts or any(c in value for c in "\n\r"):
+            die(f"--about must be a relative path inside the task (got {value!r})")
+        if value not in cleaned:
+            cleaned.append(value)
+    return cleaned
+
+
+def cmd_note(args: argparse.Namespace) -> None:
+    """Attach a hand-off note to a run (#548, slice 5).
+
+    Not a chat. A free-form message panel would be a place for unmeasured claims, and it
+    would lower the board's information density rather than raise it. What survives a
+    session usefully is a note whose *author is a run* and whose *subject is an artifact*:
+    "this run changed the pack lock format; a later run touching `pack.lock.json` should read
+    `diff.md`". So a note names what it is about, in paths a later run can open, and it is
+    filed with the run that wrote it rather than in a stream.
+
+    Append-only. A note is a record of what somebody knew when they wrote it; editing one
+    later would let the board show a claim under a timestamp it did not have.
+    """
+    root = repo_root()
+    task_id = resolve_task_id(root, args.task_id)
+    text = (args.text or "").strip()
+    if not text:
+        die("a hand-off note needs text")
+    if len(text) > 2000:
+        die("a hand-off note is at most 2000 characters; put the rest in a file and --about it")
+    about = _clean_about(args.about)
+    with task_lock(root, task_id):
+        d = run_dir(root, task_id)
+        task = load_json(d / "task.json", {})
+        data = load_json(d / "handoff.json", {"task_id": task_id, "notes": []})
+        entry = {
+            "recorded_at": now_iso(),
+            "text": text,
+            "about": about,
+            # Who wrote it, as recorded on the task: a declaration when one was made, an
+            # inference otherwise, and absent when rig knows nothing — never a guess here.
+            **({"caller": task["caller"]} if isinstance(task.get("caller"), dict) else {}),
+        }
+        data["notes"].append(entry)
+        save_json(d / "handoff.json", data)
+    print(f"{task_id} hand-off note #{len(data['notes'])} recorded"
+          + (f" (about: {', '.join(about)})" if about else ""))
+
+
 def cmd_review(args: argparse.Namespace) -> None:
     """Record per-persona verdicts for review tasks (used by stats for rubber-stamp detection).
 

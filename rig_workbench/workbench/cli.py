@@ -62,7 +62,7 @@ from .import_task import cmd_import
 from .injection import cmd_scan_injection
 from .instincts import (_INSTINCT_CONFIDENCE_THRESHOLD, _INSTINCT_DECAY_DAYS,
                         cmd_instincts)
-from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
+from .lifecycle import cmd_gate, cmd_new, cmd_note, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
 from .secrets import cmd_scan_secrets
@@ -455,6 +455,16 @@ def build_parser() -> argparse.ArgumentParser:
                         ".rig/runs/<task_id>/reviews/<persona>.md, keeping its file:line "
                         "evidence anchors (optional, repeatable; the persona needs a --set verdict)")
     p.set_defaults(func=cmd_review)
+
+    p = sub.add_parser("note", help="attach a hand-off note to a run: what a later run touching "
+                                    "the named artifacts should know (#548)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("text", help="the note, at most 2000 characters; a record of what this run "
+                                "knew, not a message to anyone in particular")
+    p.add_argument("--about", action="append", metavar="PATH",
+                   help="a relative path inside the task the note is about (repeatable); the "
+                        "subject of a hand-off is an artifact, so a later run can open it")
+    p.set_defaults(func=cmd_note)
 
     p = sub.add_parser("scan-secrets", help="deterministic secret scan (machine backing for no_secret_leak; findings are always masked)")
     p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")
