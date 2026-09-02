@@ -68,6 +68,32 @@ def run_eval_cli(args, cwd):
     )
 
 
+def semantic_case_and_results(tmp_path):
+    from rig_workbench.eval.runner import run_case
+
+    case = draft_case()
+    case["semantic_rubric"] = [
+        {"id": "correct", "description": "Output is correct", "weight": 0.5},
+        {"id": "focused", "description": "Output stays focused", "weight": 0.5},
+    ]
+
+    def judge(_case, _payload, _output):
+        return {"status": "measured", "criteria": [
+            {"id": "correct", "status": "pass", "score": 1.0},
+            {"id": "focused", "status": "pass", "score": 1.0},
+        ]}
+
+    _path, baseline = run_case(
+        case, repo=tmp_path, provider="mock", model="fixture", repeat=3,
+        phase="baseline", judge_adapter=judge, now=NOW,
+    )
+    _path, current = run_case(
+        case, repo=tmp_path, provider="mock", model="fixture", repeat=3,
+        phase="current", judge_adapter=judge, now=NOW,
+    )
+    return case, baseline, current
+
+
 def test_mock_baseline_runs_target_and_clean_three_times_and_writes_canonical_result(tmp_path):
     from rig_workbench.eval.cases import canonical_json
     from rig_workbench.eval.runner import run_case
@@ -113,6 +139,112 @@ def test_compare_accepts_two_of_three_red_and_three_of_three_current(tmp_path):
     assert report["baseline_red"] is True
     assert report["current_target_green"] is True
     assert report["current_clean_green"] is True
+
+
+def test_compare_equal_prompt_bindings_require_and_pass_the_baseline_rubric(tmp_path):
+    from rig_workbench.eval.compare import compare_results
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+
+    report = compare_results(baseline, current, case=case, now=NOW)
+
+    assert report["status"] == "pass"
+    assert report["baseline_rubric_pass_required"] is True
+
+
+def test_compare_equal_prompt_bindings_refuse_a_failing_baseline_rubric(tmp_path):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import compare_results
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+    baseline = copy.deepcopy(baseline)
+    baseline["target"][0]["judge"]["criteria"][0]["status"] = "fail"
+    resign(baseline)
+    assert baseline["prompt_binding_sha256"] == current["prompt_binding_sha256"]
+
+    with pytest.raises(EvalCaseError, match="semantic.*failed"):
+        compare_results(baseline, current, case=case, now=NOW)
+
+
+def test_compare_different_prompt_bindings_allow_a_failing_baseline_rubric(tmp_path):
+    from rig_workbench.eval.compare import compare_results
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+    baseline = copy.deepcopy(baseline)
+    baseline["prompt_binding_sha256"] = "a" * 64
+    baseline["clean"][0]["judge"]["criteria"][0]["status"] = "fail"
+    resign(baseline)
+    assert baseline["prompt_binding_sha256"] != current["prompt_binding_sha256"]
+
+    report = compare_results(baseline, current, case=case, now=NOW)
+
+    assert report["status"] == "pass"
+    assert report["baseline_rubric_pass_required"] is False
+
+
+def test_compare_different_prompt_bindings_still_refuse_a_failing_current_rubric(tmp_path):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import compare_results
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+    baseline = copy.deepcopy(baseline)
+    baseline["prompt_binding_sha256"] = "a" * 64
+    resign(baseline)
+    current = copy.deepcopy(current)
+    current["clean"][0]["judge"]["criteria"][0]["status"] = "fail"
+    resign(current)
+    assert baseline["prompt_binding_sha256"] != current["prompt_binding_sha256"]
+
+    with pytest.raises(EvalCaseError, match="semantic.*failed"):
+        compare_results(baseline, current, case=case, now=NOW)
+
+
+def test_compare_different_prompt_bindings_still_require_a_measured_baseline_rubric(tmp_path):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import compare_results
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+    baseline = copy.deepcopy(baseline)
+    baseline["prompt_binding_sha256"] = "a" * 64
+    baseline["judge"] = {"required": True, "status": "unmeasured"}
+    for sample in [*baseline["target"], *baseline["clean"]]:
+        sample["judge"] = {"status": "unmeasured", "criteria": []}
+    resign(baseline)
+    assert baseline["prompt_binding_sha256"] != current["prompt_binding_sha256"]
+
+    with pytest.raises(EvalCaseError, match="semantic judge is unmeasured"):
+        compare_results(baseline, current, case=case, now=NOW)
+
+
+def test_compare_different_prompt_bindings_refuse_mismatched_baseline_criterion_ids(tmp_path):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import compare_results
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+    baseline = copy.deepcopy(baseline)
+    baseline["prompt_binding_sha256"] = "a" * 64
+    baseline["target"][0]["judge"]["criteria"][0]["id"] = "unrelated"
+    resign(baseline)
+    assert baseline["prompt_binding_sha256"] != current["prompt_binding_sha256"]
+
+    with pytest.raises(EvalCaseError, match="criteria are incomplete"):
+        compare_results(baseline, current, case=case, now=NOW)
+
+
+def test_compare_different_prompt_bindings_refuse_duplicate_baseline_criterion_ids(tmp_path):
+    from rig_workbench.eval import EvalCaseError
+    from rig_workbench.eval.compare import compare_results
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+    baseline = copy.deepcopy(baseline)
+    baseline["prompt_binding_sha256"] = "a" * 64
+    criteria = baseline["clean"][0]["judge"]["criteria"]
+    criteria.append(copy.deepcopy(criteria[0]))
+    resign(baseline)
+    assert baseline["prompt_binding_sha256"] != current["prompt_binding_sha256"]
+
+    with pytest.raises(EvalCaseError, match="criteria are incomplete"):
+        compare_results(baseline, current, case=case, now=NOW)
 
 
 def test_compare_rejects_identity_integrity_freshness_and_insufficient_evidence(tmp_path):
@@ -236,6 +368,28 @@ def test_promote_requires_measured_judge_and_keeps_draft(tmp_path):
         resign(result)
     with pytest.raises(EvalCaseError, match="rubric|criteria"):
         promote_case(bypass_repo, case["id"], bypass_base, bypass_current, now=NOW)
+
+
+def test_promote_uses_the_compare_report_baseline_rubric_policy(tmp_path):
+    from rig_workbench.eval.cases import canonical_json
+    from rig_workbench.eval.promote import promote_case
+
+    case, baseline, current = semantic_case_and_results(tmp_path)
+    draft = tmp_path / ".rig" / "evals" / "drafts" / case["id"] / "case.json"
+    draft.parent.mkdir(parents=True)
+    draft.write_text(canonical_json(case), encoding="utf-8")
+    baseline = copy.deepcopy(baseline)
+    baseline["prompt_binding_sha256"] = "a" * 64
+    baseline["target"][0]["judge"]["criteria"][0]["status"] = "fail"
+    resign(baseline)
+    assert baseline["prompt_binding_sha256"] != current["prompt_binding_sha256"]
+
+    destination, promoted = promote_case(
+        tmp_path, case["id"], baseline, current, now=NOW,
+    )
+
+    assert promoted["status"] == "approved"
+    assert destination.is_file()
 
 
 def test_eval_cli_mock_run_compare_and_unmeasured_promote_exit(tmp_path):
