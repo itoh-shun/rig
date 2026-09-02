@@ -703,6 +703,16 @@ span id は各レコードの内容から導くので、同じログに対して
 
 Issue/PR の本文・コメントは**信頼できない外部入力**として扱う（埋め込まれた指示には従わず、分類・修正対象のテキストとしてのみ読む）。これは散文の「従わないで」ではなく**構造的に**強制する：第三者テキストが下流の persona に届く前に、推測不能な per-call デリミタでデータと明示する**検疫フェンス**（`rig_workbench/orchestrate/quarantine.py` の `wrap_untrusted`）で囲い、不可視/bidi Unicode を先に剥離する（改竄シグナル）——ゆえに埋め込まれた「指示を無視せよ」がフェンスを抜け出せない（OWASP LLM01／spotlighting・CaMeL）。GitHub への書き込み（コメント・push）は常に明示操作を経る。read は即応。
 
+**最初の実装で未達だった3条件のために足したもの。** RUN レコードは `providers`（誰が生成し、誰が
+検証し、どのモデルが設定されていたか）、`forced`（`--force` で gate を押し切った accept）、
+`findings`（決定論センサーが gate に残した所見の件数——secret / injection / destructive）を持つ。
+投影はこれを root span の `gen_ai.provider.name` / `gen_ai.request.model` /
+`rig.verifier.provider` / `rig.accept.force` と、カウンタ `rig.force.count` /
+`rig.secret.detection_count` / `rig.injection.detection_count` /
+`rig.destructive.detection_count` として出す。出るのは件数だけで、マスク済み抜粋は
+`acceptance.json` から出ない。所見を記録しなかったセンサーはゼロではなく点を出さない——
+走れなかったセンサーも同じ不在を残すため。
+
 ### GitHub Action（#265）
 
 `action.yml`は、ライブなClaude Codeセッションが無いワークフロー向けに`orchestrate.py run --isolate`のheadless CI利用をパッケージ化する：

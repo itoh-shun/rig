@@ -104,6 +104,21 @@ def _attrs(pairs: dict) -> list[dict]:
     return out
 
 
+#: A provider list is exported as one comma-joined string: a quorum of verifiers is one
+#: configuration, and an attribute per member would make the set the reader has to rebuild.
+def _provider_attributes(providers: object) -> dict:
+    if not isinstance(providers, dict):
+        return {}
+    verifier = providers.get("verifier")
+    if isinstance(verifier, list):
+        verifier = ",".join(str(v) for v in verifier) or None
+    return {
+        "gen_ai.provider.name": providers.get("generator"),
+        "gen_ai.request.model": providers.get("model"),
+        "rig.verifier.provider": verifier,
+    }
+
+
 def _resource(service_name: str) -> dict:
     return {"attributes": _attrs({"service.name": service_name, "telemetry.sdk.name": "rig",
                                   "telemetry.sdk.language": "python"})}
@@ -140,6 +155,13 @@ def project_traces(records: list[dict], *, service_name: str = "rig") -> dict:
                 # Reported as an attribute, not as a failed span: a broken performance budget
                 # never changed the run's outcome and must not look as though it did (#502).
                 "rig.perf.budget_broken": bool(record.get("perf_budget_broken")) or None,
+                # Who generated, who verified, and the configured model, so provider and
+                # model can be compared without opening the record (#501). Names only:
+                # a provider or model name is configuration, and nothing a model wrote.
+                **_provider_attributes(record.get("providers")),
+                # A forced accept is an attribute of the run, not a failed span: the gate
+                # said no and a person overrode it, and the trace must show both.
+                "rig.accept.force": True if record.get("forced") else None,
             }),
             "status": {"code": _STATUS_ERROR if record.get("final") in _ERROR_FINALS
                        else _STATUS_OK},
@@ -202,8 +224,18 @@ def project_metrics(records: list[dict], *, service_name: str = "rig") -> dict:
         if when is None:
             continue
         recipe, final = record.get("recipe"), record.get("final")
-        base = {"rig.recipe": recipe, "rig.gate.status": final}
+        providers = record.get("providers") if isinstance(record.get("providers"), dict) else {}
+        base = {"rig.recipe": recipe, "rig.gate.status": final,
+                # The generator's name is a label a dashboard groups by, and low
+                # cardinality: there are a handful of providers, not a handful per run.
+                "gen_ai.provider.name": providers.get("generator")}
         add("rig.run.count", 1, base, when)
+        # Counted, never described: a forced accept is one event, and a sensor finding is
+        # one number per sensor. The masked excerpts never leave acceptance.json (#501).
+        add("rig.force.count", 1 if record.get("forced") else None, base, when)
+        findings = record.get("findings") if isinstance(record.get("findings"), dict) else {}
+        for sensor in ("secret", "injection", "destructive"):
+            add(f"rig.{sensor}.detection_count", findings.get(sensor), base, when)
         failed = (record.get("steps_total") or 0) - (record.get("steps_passed") or 0)
         add("rig.gate.failure_count", failed, base, when)
         add("rig.run.retries", record.get("retries"), base, when)
@@ -232,6 +264,12 @@ def project_metrics(records: list[dict], *, service_name: str = "rig") -> dict:
         _sum("rig.run.count", "1", points.get("rig.run.count", [])),
         _sum("rig.run.retries", "1", points.get("rig.run.retries", [])),
         _sum("rig.gate.failure_count", "1", points.get("rig.gate.failure_count", [])),
+        _sum("rig.force.count", "1", points.get("rig.force.count", [])),
+        _sum("rig.secret.detection_count", "1", points.get("rig.secret.detection_count", [])),
+        _sum("rig.injection.detection_count", "1",
+             points.get("rig.injection.detection_count", [])),
+        _sum("rig.destructive.detection_count", "1",
+             points.get("rig.destructive.detection_count", [])),
         _sum("rig.run.duration", "ms", points.get("rig.run.duration", [])),
         _sum("rig.provider.duration", "ms", points.get("rig.provider.duration", [])),
         _sum("rig.overhead.duration", "ms", points.get("rig.overhead.duration", [])),

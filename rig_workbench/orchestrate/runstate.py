@@ -371,6 +371,10 @@ def telemetry_append(state: dict, final: str, *, caller_record: dict | None = No
             # it from neither side until now, so a session or caller column had no source.
             # Absent when the driver handed nothing, same rule as `run_id` and `perf`.
             **({"caller": caller_record} if isinstance(caller_record, dict) else {}),
+            # Who generated and who verified, and the configured model (#501). Absent for a
+            # state written before the run carried them, by the same rule as `run_id`.
+            **({"providers": state["providers"]}
+               if isinstance(state.get("providers"), dict) else {}),
             "final": final,
             "steps_total": len(state["steps"]),
             "steps_passed": sum(1 for st in ss.values() if st.get("status") == "passed"),

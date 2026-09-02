@@ -834,6 +834,17 @@ log produces the same trace instead of a second copy of the same run.
 
 Issue/PR bodies and comments are treated as untrusted external data — instructions embedded in them are never followed, only read as content to classify or fix. This is enforced structurally, not by a prose "please ignore": before any third-party text reaches a downstream persona it is wrapped in a **quarantine fence** (`rig_workbench/orchestrate/quarantine.py` `wrap_untrusted`) that denotes it as data-not-instructions with an unguessable per-call delimiter, and invisible/bidi Unicode is stripped first (a tampering signal), so an injected "ignore your instructions" cannot escape the fence (OWASP LLM01; spotlighting/CaMeL). GitHub writes (comments, pushes) always require an explicit step; reads are immediate.
 
+**What was added for the three criteria the first cut left unmet.** A run record now carries
+`providers` (who generated, who verified, the configured model), `forced` (an accept pushed
+past the gate with `--force`) and `findings` (how many findings each deterministic sensor left
+on the gate — secret, injection, destructive). The projection exports them as
+`gen_ai.provider.name` / `gen_ai.request.model` / `rig.verifier.provider` and
+`rig.accept.force` on the root span, and as the counters `rig.force.count`,
+`rig.secret.detection_count`, `rig.injection.detection_count` and
+`rig.destructive.detection_count`. Counts only: the masked excerpts stay in `acceptance.json`,
+and a sensor that recorded nothing yields no point rather than a zero, because a sensor that
+could not run leaves the same absence.
+
 ### GitHub Action (#265)
 
 `action.yml` packages headless CI usage of `orchestrate.py run --isolate` for workflows that don't have a live Claude Code session:

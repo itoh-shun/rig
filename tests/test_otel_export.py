@@ -244,3 +244,76 @@ def test_a_real_run_reaches_a_collector_as_a_trace_and_metrics(tmp_path, monkeyp
     metrics = next(body for path, body in _Collector.received if path.endswith("metrics"))
     names = {m["name"] for m in metrics["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]}
     assert {"rig.run.count", "rig.run.duration", "rig.provider.duration"} <= names
+
+
+# ── what the Issue asked to compare, and could not (#501, the three unmet criteria) ──
+PROVIDERS = {**POISONED, "providers": {"generator": "codex", "verifier": ["claude", "ollama"],
+                                       "model": "gpt-5-codex"}}
+
+
+def test_provider_verifier_and_model_are_on_the_root_span():
+    """"Provider/model/role can be compared without reading Rig-specific JSON files": the
+    record used to carry none of them at the top level, so nothing here could label a run by
+    who generated it. Names of configuration, not text a model wrote."""
+    span = otel.project_traces([PROVIDERS])["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    attrs = {a["key"]: a["value"] for a in span["attributes"]}
+    assert attrs["gen_ai.provider.name"] == {"stringValue": "codex"}
+    assert attrs["gen_ai.request.model"] == {"stringValue": "gpt-5-codex"}
+    assert attrs["rig.verifier.provider"] == {"stringValue": "claude,ollama"}
+
+
+def test_the_generator_labels_every_run_level_metric_point():
+    """The token metrics keep the provider that *reported* the usage — an HTTP verifier's
+    tokens are that verifier's, not the generator's — and every other point is labelled with
+    who generated the run, so a dashboard can group by it."""
+    payload = otel.project_metrics([PROVIDERS])
+    for metric in payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]:
+        if metric["name"].startswith("rig.tokens.") or metric["name"] == "rig.provider.calls":
+            continue
+        for point in metric["sum"]["dataPoints"]:
+            labels = {a["key"]: a["value"] for a in point["attributes"]}
+            assert labels["gen_ai.provider.name"] == {"stringValue": "codex"}, metric["name"]
+
+
+def test_a_record_without_providers_exports_no_provider_attributes():
+    """Older records have none, and an absent provider is not "unknown provider"."""
+    span = otel.project_traces([POISONED])["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    keys = {a["key"] for a in span["attributes"]}
+    assert not keys & {"gen_ai.provider.name", "gen_ai.request.model", "rig.verifier.provider"}
+
+
+def _metric_values(payload: dict, name: str) -> list:
+    for metric in payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]:
+        if metric["name"] == name:
+            return [p.get("asInt", p.get("asDouble")) for p in metric["sum"]["dataPoints"]]
+    return []
+
+
+def test_a_forced_accept_is_visible_and_an_ordinary_one_is_silent():
+    """"Gate results and force overrides appear in telemetry": the gate status was there and
+    the override was not, so a dashboard could not tell an accept the gate allowed from one a
+    person pushed through. An attribute and a counter, never a failed span — the run's
+    outcome did not change, and the trace must not say it did."""
+    forced = {**POISONED, "forced": True}
+    span = otel.project_traces([forced])["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    assert {"key": "rig.accept.force", "value": {"boolValue": True}} in span["attributes"]
+    assert span["status"] == {"code": otel._STATUS_OK}
+    assert _metric_values(otel.project_metrics([forced]), "rig.force.count") == [1]
+
+    plain_span = otel.project_traces([POISONED])["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    assert "rig.accept.force" not in {a["key"] for a in plain_span["attributes"]}
+    assert _metric_values(otel.project_metrics([POISONED]), "rig.force.count") == []
+
+
+def test_sensor_findings_are_counted_and_their_excerpts_are_not_exported():
+    """"Prompt-injection, secret, and destructive-operation findings can be counted without
+    exporting sensitive excerpts": the count is what leaves, the masked excerpt in
+    acceptance.json is not part of the record, and a sensor that recorded nothing yields no
+    point rather than a zero."""
+    record = {**POISONED, "findings": {"secret": 2, "destructive": 1},
+              "secret_findings": ["src/config.py:3 [aws] AKIA****"]}
+    payload = otel.project_metrics([record])
+    assert _metric_values(payload, "rig.secret.detection_count") == [2]
+    assert _metric_values(payload, "rig.destructive.detection_count") == [1]
+    assert _metric_values(payload, "rig.injection.detection_count") == []
+    assert "AKIA" not in json.dumps(payload) and "config.py" not in json.dumps(payload)
