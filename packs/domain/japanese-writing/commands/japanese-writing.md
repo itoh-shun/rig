@@ -1,6 +1,6 @@
 ---
 description: "[experimental] 根拠を増やさず、宛先の形式と適切な敬語を守った日本語の完成稿を1つ返す。障害連絡・サポート返信にも対応し、別モデルの reviewer で検証する。"
-argument-hint: "[用途・読み手・掲載先・明示された事実・下書き] [--plan]"
+argument-hint: "[用途・読み手・掲載先・明示された事実・下書き] [--mode plain|talk|dialogue|onomatopoeia|emoji] [--plan]"
 ---
 
 # rig/japanese-writing — 日本語の完成稿を作る
@@ -92,6 +92,13 @@ provider 起動前に選択済み bytes を run-state 隣接の owner-only snaps
 出典全体は MIT の不活性 resource として pack 内に同梱され、実行時の照合はその封印済み blob に対して
 行います。元の `/docs` checkout は実行時依存ではありません。
 
+`--mode` は文体のモードです。`plain`（既定）、`talk`、`dialogue`、`onomatopoeia`、`emoji`
+から選び、カンマで複数指定できます（例: `--mode talk,emoji`）。本文からは推測しません。
+モードは表現の手段を足すだけで、事実の扱い、秘密情報、完成稿の形についての制約は
+一つも解除しません。各モードで許可されること、許可されても避けることは
+`japanese-writing-modes` にあります。`incident_report` と `support_reply` では、
+`emoji` を指定されても絵文字を使いません。
+
 `claude` と `codex` は構成例です。prompt asset 自体は provider 固有の語彙や機能に
 依存しません。別の組み合わせでも、生成者と最終 reviewer を異なるモデルまたは
 provider に分けてください。pin が不足・不一致の場合、または独立 reviewer を用意できない
@@ -119,4 +126,7 @@ provider に分けてください。pin が不足・不一致の場合、また�
 $rig --recipe japanese-writing "社内チャット用。メンテナンス終了の告知。事実: ..."
 $rig --recipe japanese-writing "問い合わせ返信。です・ます調。確認済み手順: ..."
 $rig --recipe japanese-writing --plan "プレス向け訂正文。明示された事実: ..."
+$rig --recipe japanese-writing --mode talk "社内向け。新機能のお知らせ。事実: ..."
+$rig --recipe japanese-writing --mode talk,emoji "チャット向けの軽い共有。事実: ..."
+$rig --recipe japanese-writing --mode dialogue "ラジオ台本。二人の掛け合い。事実: ..."
 ```

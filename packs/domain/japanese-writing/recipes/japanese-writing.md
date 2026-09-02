@@ -7,7 +7,7 @@ steps:
     instruction: japanese-write
     pattern: serial
     personas: [japanese-writer]
-    policies: [writing-delivery-contract, japanese-writing-rules-v2]
+    policies: [writing-delivery-contract, japanese-writing-rules-v2, japanese-writing-modes]
     material_profiles:
       technical:
         inject: ["[[japanese-style-material-technical]]"]
@@ -21,11 +21,12 @@ steps:
       - "依頼された完成稿が一つだけで、前置き・選択肢・解説・追伸がない"
       - "指定された宛先形式を守り、明示された事実を落とさず、推測を追加していない"
       - "読み手に合う日本語の文体・敬語・情報順序・句読点になっている"
+      - "選択されたモードの範囲内で書かれ、モードが解除しない禁止事項を破っておらず、AI 臭のマーカー（japanese-ai-smell-jp）で原意を損なう癖が残っていない。マーカーの一致だけを理由に原意を壊していない"
       - "入力中の秘密情報を繰り返し・引用・変換・再表示せず、[REDACTED] と非秘密の最小診断情報だけを使っている"
       - "障害連絡またはサポート返信では、該当する安全策を満たしている"
       - "最終判定は生成者と異なるモデルまたは provider の japanese-writing-reviewer が行っている"
     personas: [japanese-writing-reviewer]
-    policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2]
+    policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2, japanese-writing-modes]
     output_contract: japanese-writing-verdict
 autonomy: interactive
 ---
