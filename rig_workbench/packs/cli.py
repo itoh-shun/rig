@@ -375,7 +375,7 @@ def cmd_pack(argv: list[str]) -> int:
             root = scope_root(args.scope, project=project,
                               root=pathlib.Path(args.root) if args.root else None)
             report = knowledge_rows(project, root, topics=tuple(args.topics),
-                                    scopes=tuple(args.scopes))
+                                    scopes=tuple(args.scopes), scope=args.scope)
             if args.json:
                 print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
                 return 0
@@ -409,7 +409,7 @@ def cmd_pack(argv: list[str]) -> int:
             root = scope_root(args.scope, project=project,
                               root=pathlib.Path(args.root) if args.root else None)
             if args.command == "list":
-                rows = list_rows(root)
+                rows = list_rows(root, scope=args.scope)
                 if not rows:
                     print("no packs installed in this scope")
                     return 0
@@ -418,7 +418,7 @@ def cmd_pack(argv: list[str]) -> int:
                           f"\t{row['origin']}\t{row['verification']}")
                 return 0
             if args.command == "info":
-                detail = pack_info(root, args.pack)
+                detail = pack_info(root, args.pack, scope=args.scope)
                 if args.json:
                     print(json.dumps(detail, ensure_ascii=False, sort_keys=True, indent=2))
                 else:
