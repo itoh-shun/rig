@@ -27,6 +27,7 @@ from .personas import check_agents, check_commands, check_personas
 from .recipes import check_extends_cycles, check_needs_cycles, check_recipe
 from .release import check_release_metadata, check_skills_lock
 from .routes import check_route_producers
+from .skills_spec import check_skills_spec
 from .selftest import run_selftest
 from .stale_refs import check_stale_refs
 from .state import _emit
@@ -68,6 +69,11 @@ def main() -> None:
         check_agents()
     except Exception:
         _emit("FAIL", f"agents check — unexpected error:\n{traceback.format_exc()}")
+
+    try:
+        check_skills_spec()
+    except Exception:
+        _emit("FAIL", f"skills spec check — unexpected error:\n{traceback.format_exc()}")
 
     try:
         check_catalog_drift()
