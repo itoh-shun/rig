@@ -1049,6 +1049,24 @@ The project manifest `.claude/rig.md` sits behind the same trust store with its 
 
 Specialized workflows are distributed outside the default catalog. Install only the packs you have reviewed from the Extension Catalog; project-pack trust is content-addressed and must be renewed after an asset changes. Command assets are documentation for hosts that support explicit command registration and are never registered as slash commands by installation alone.
 
+Packs are installed and inspected with `rig-wb pack`:
+
+```bash
+rig-wb pack install domain:japanese-writing --scope project --allow-unverified
+rig-wb pack list                             # what is installed, its origin, and whether it verified
+rig-wb pack verify-sources --scope project   # re-check packs locked against a declared git source
+```
+
+`verify-sources` looks at the packs in the lock whose source is a git one. A pack without such a source — a builtin taken from the tree — is not among them, so a clean run says nothing about it either way.
+
+Any pack may also declare a `knowledge:` block — exactly `scope`, `topics`, `owner`, `evidence`, `reviewed_at` — which makes it discoverable as a candidate for *questions*. This is description, not permission: it does not change the pack's `type` or what its assets may do.
+
+```bash
+rig-wb pack knowledge --topic backup --scope product
+```
+
+**It selects; it does not choose.** "Do you take backups?" has a different correct answer for the company, for one product, and for the infrastructure under both, and which one the asker meant is a fact no pack contains. When the candidates span more than one *knowledge* scope the command says so and names them, rather than picking — ambiguity is about scopes, not about how many candidates matched. Material is handed over addressed as `pack://<scope>/<id>/<relative>`, where that first segment is the scope the pack is *installed at* (`--scope`: `project`, `user`, `org`) and not the knowledge scope it declares. `evidence` is spelled that way, and not `sources`, because `sources` already means where a pack is installed *from* — one word with two meanings in one CLI is a defect the design declined to introduce. Full contract in [`docs/packs.md`](./docs/packs.md).
+
 ## 16. Implementation notes
 
 What backs the claims above, concretely — this table exists so "documented" and "verified" don't quietly drift apart:
