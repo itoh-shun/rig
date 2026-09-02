@@ -59,9 +59,12 @@ The live page polls RIG state every two seconds and shows:
 
 The **Run index** section is a cross-project projection of the global run history. It shows
 the number of projects and runs represented, then groups issue-linked runs by issue reference
-with their last recorded final state, run count, projects, and sessions. It does not show the
-per-verifier projection, and nothing in the section is an action target: accept and discard
-remain operations on local workbench tasks, not on these historical entries.
+with their last recorded final state, run count, projects, and sessions. Its per-verifier
+cards are counts of recorded OK, not-OK, and unknown verdicts, plus the runs represented; they
+are not pass rates, reviewer-detection rates, or quality scores, because they vary with the
+work submitted as well as the verifier. Measured reviewer detection lives in `/rig:drill`.
+Nothing in the section is an action target: accept and discard remain operations on local
+workbench tasks, not on these historical entries.
 
 ## Autonomous AI Run
 

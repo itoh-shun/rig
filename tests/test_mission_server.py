@@ -3,6 +3,7 @@
 import http.client
 import html
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -212,6 +213,69 @@ def test_populated_run_index_renders_its_cross_project_issue_values():
     assert "sessions: session-a, session-b" in rendered
     assert "2 unreadable records" in rendered
     assert "history truncated" in rendered
+
+
+def test_populated_run_index_renders_verdict_counts_without_a_scoreboard():
+    rendered = _rendered_run_index({
+        "rows": [{"run_id": "run-1"}],
+        "projects": ["/alpha"],
+        "total": 1,
+        "by_verifier": {
+            "codex": {"ok": 40, "not_ok": 3, "unknown": 2, "runs": 1},
+        },
+    })
+
+    assert "Recorded verifier verdicts" in rendered
+    assert "not-OK verdicts: 3 · unknown verdicts: 2 · OK verdicts: 40" in rendered
+    assert "1 run represented" in rendered
+    assert "not pass rates, reviewer detection rates, or quality scores" in rendered
+    assert "/rig:drill" in rendered
+    # The card carries the disavowal too, not only the section above it. A reader who
+    # sees one provider's counts without scrolling to the heading is the reader most
+    # likely to divide them.
+    assert "Recorded verdicts, not a quality score" in rendered
+    # `_by_verifier` returns counts and the docstring forbids presenting a rate. Sampling
+    # for the strings we happen to have written would not catch a rate appearing later,
+    # so this asserts the property: every number in the verifier section is one the
+    # projection supplied. 40/43 = 93 would fail here, and so would any percentage.
+    section = rendered.split("Recorded verifier verdicts", 1)[1].split("run-index-issues", 1)[0]
+    supplied = {"40", "3", "2", "1"}
+    assert set(re.findall(r"\d+", section)) <= supplied, re.findall(r"\d+", section)
+
+
+def test_absent_by_verifier_renders_its_empty_state_without_error():
+    rendered = _rendered_run_index({
+        "rows": [{"run_id": "run-1"}],
+        "projects": ["/alpha"],
+        "by_issue": {},
+    })
+
+    assert '<div class="empty">No verifier verdicts recorded.</div>' in rendered
+
+
+def test_empty_by_verifier_renders_its_empty_state_without_error():
+    rendered = _rendered_run_index({
+        "rows": [{"run_id": "run-1"}],
+        "projects": ["/alpha"],
+        "by_verifier": {},
+        "by_issue": {},
+    })
+
+    assert '<div class="empty">No verifier verdicts recorded.</div>' in rendered
+
+
+def test_verifier_provider_name_with_html_metacharacters_is_escaped():
+    provider = '<provider&"name>'
+    rendered = _rendered_run_index({
+        "rows": [{"run_id": "run-1"}],
+        "projects": ["/alpha"],
+        "by_verifier": {
+            provider: {"ok": 1, "not_ok": 0, "unknown": 0, "runs": 1},
+        },
+    })
+
+    assert provider not in rendered
+    assert html.escape(provider, quote=True) in rendered
 
 
 def test_absent_run_index_renders_the_empty_state_without_taking_the_page_down():
