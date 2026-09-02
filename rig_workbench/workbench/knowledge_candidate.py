@@ -250,9 +250,19 @@ def view(assessment: dict) -> dict:
 
 
 def cmd_knowledge_candidate(args) -> "NoReturn":  # noqa: F821
-    """Validate and assess a candidate file, with status carried in the exit code."""
+    """Validate and assess a candidate file, with status carried in the exit code.
+
+    With a lifecycle flag (#440 stage 2) the same subcommand registers, promotes, lists or
+    narrates a record instead; those are in `org_knowledge`, and this only routes.
+    """
     import sys
 
+    if _lifecycle_requested(args):
+        sys.exit(_lifecycle(args))
+    if not getattr(args, "candidate", None):
+        print("[REJECTED] a candidate path is required unless a lifecycle flag is given",
+              file=sys.stderr)
+        sys.exit(1)
     path = pathlib.Path(args.candidate)
     try:
         candidate = read(path, "knowledge candidate")
@@ -277,3 +287,77 @@ def cmd_knowledge_candidate(args) -> "NoReturn":  # noqa: F821
         print(f"confidence: claimed {report['confidence']['claimed']}; verified: not measured")
         print(f"does not guarantee: {report['does_not_guarantee']}")
     sys.exit(0 if report["status"] == SUPPORTED else 2 if report["status"] == UNOBSERVABLE else 1)
+
+
+def _lifecycle_requested(args) -> bool:
+    return any(getattr(args, name, None) for name in
+               ("register", "promote", "list_records", "history", "active"))
+
+
+def _lifecycle(args) -> int:
+    """Route one lifecycle flag to `org_knowledge`; refusals go to stderr with exit 1."""
+    import sys
+
+    from . import org_knowledge
+    from .state import repo_root
+
+    root = repo_root()
+
+    def _emit_json(value) -> None:
+        print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+
+    out = _emit_json if getattr(args, "json", False) else None
+    try:
+        if args.register:
+            if not args.candidate:
+                raise org_knowledge.OrgKnowledgeError("--register needs the candidate path")
+            record = org_knowledge.register(root, args.candidate)
+            if out:
+                out(record)
+            else:
+                print(f"registered {record['id']} as {record['state']} "
+                      f"(claimed confidence {record['assessment']['claimed_confidence']}; "
+                      f"verified: not measured)")
+            return 0
+        if args.promote:
+            if not args.to:
+                raise org_knowledge.OrgKnowledgeError("--promote needs --to <state>")
+            record = org_knowledge.promote(root, args.promote, args.to,
+                                           actor=args.actor, reason=args.reason)
+            if out:
+                out(record)
+            else:
+                print(f"{record['id']} is now {record['state']}")
+            return 0
+        if args.history:
+            value = org_knowledge.history(root, args.history)
+            if out:
+                out(value)
+            else:
+                print(f"{value['id']}: {value['state']}")
+                for step in value["history"]:
+                    who = f" by {step['actor']} — {step['reason']}" if "actor" in step else ""
+                    print(f"  {step['ts']}  → {step['to']}{who}")
+            return 0
+        if args.active:
+            rules = org_knowledge.active_rules(root)
+            if out:
+                out(rules)
+            else:
+                for rule in rules:
+                    print(f"{rule['id']}\t{'/'.join(rule['scope'])}\t{rule['rule']}")
+                if not rules:
+                    print("no active organizational knowledge")
+            return 0
+        rows = org_knowledge.listing(root, state=args.state)
+        if out:
+            out(rows)
+        else:
+            for row in rows:
+                print(f"{row['id']}\t{row['state']}\t{'/'.join(row['scope'])}\t{row['rule']}")
+            if not rows:
+                print("no registered knowledge candidates")
+        return 0
+    except org_knowledge.OrgKnowledgeError as exc:
+        print(f"[REFUSED] {exc}", file=sys.stderr)
+        return 1

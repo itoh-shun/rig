@@ -62,7 +62,7 @@ from .import_task import cmd_import
 from .injection import cmd_scan_injection
 from .instincts import (_INSTINCT_CONFIDENCE_THRESHOLD, _INSTINCT_DECAY_DAYS,
                         cmd_instincts)
-from .lifecycle import cmd_gate, cmd_new, cmd_review, cmd_step
+from .lifecycle import cmd_gate, cmd_new, cmd_note, cmd_review, cmd_step
 from .reporting import (cmd_audit, cmd_board, cmd_gates, cmd_log, cmd_stats,
                         cmd_status)
 from .secrets import cmd_scan_secrets
@@ -103,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
     p.add_argument("--runtime", choices=("auto", "native", "orca"), default="auto",
                    help="worktree runtime (default: auto; explicit orca never downgrades)")
+    p.add_argument("--agent", metavar="ID",
+                   help="start this agent (claude, codex, ...) in a fresh session inside the "
+                        "new worktree, handing it a rig task package rather than this "
+                        "session's transcript (#460). Orca runtime only: native creates a "
+                        "directory and starts nothing, and says so rather than ignoring this")
     p.add_argument("--budget-minutes", type=float,
                    help="estimated time in minutes. NOT a limit: nothing stops or fails when a "
                         "task goes over — status/board flag it and the run continues (#281). The "
@@ -207,9 +212,27 @@ def build_parser() -> argparse.ArgumentParser:
         "knowledge-candidate",
         help="check whether a submitted knowledge candidate is explicitly supported by every "
              "record it cites (#440)")
-    p.add_argument("candidate", help="path to a rig.knowledge-candidate/v1 JSON document")
+    p.add_argument("candidate", nargs="?",
+                   help="path to a rig.knowledge-candidate/v1 JSON document (assess it, or "
+                        "--register it into the promotion lifecycle)")
     p.add_argument("--json", action="store_true",
                    help="emit the rig.knowledge-candidate-assessment/v1 result")
+    # The promotion lifecycle (#440 stage 2) rides on this subcommand rather than adding
+    # one: candidate → evaluated → approved → active → deprecated, one step at a time,
+    # recorded in the append-only .rig/org-knowledge.jsonl.
+    p.add_argument("--register", action="store_true",
+                   help="enter a *supported* candidate into the lifecycle at `candidate`")
+    p.add_argument("--promote", metavar="ID", help="move a registered record one step")
+    p.add_argument("--to", metavar="STATE",
+                   help="the next state: evaluated | approved | active | deprecated | rolled_back")
+    p.add_argument("--actor", help="who is approving (required from `approved` on; never inferred)")
+    p.add_argument("--reason", help="why (required from `approved` on)")
+    p.add_argument("--list", action="store_true", dest="list_records",
+                   help="every registered record with its current state")
+    p.add_argument("--state", help="filter --list by state")
+    p.add_argument("--history", metavar="ID", help="one record's full path through the ledger")
+    p.add_argument("--active", action="store_true",
+                   help="only the active rules, with their citations, as a consumer would read them")
     p.set_defaults(func=cmd_knowledge_candidate)
 
     p = sub.add_parser(
@@ -455,6 +478,16 @@ def build_parser() -> argparse.ArgumentParser:
                         ".rig/runs/<task_id>/reviews/<persona>.md, keeping its file:line "
                         "evidence anchors (optional, repeatable; the persona needs a --set verdict)")
     p.set_defaults(func=cmd_review)
+
+    p = sub.add_parser("note", help="attach a hand-off note to a run: what a later run touching "
+                                    "the named artifacts should know (#548)")
+    p.add_argument("task_id", nargs="?")
+    p.add_argument("text", help="the note, at most 2000 characters; a record of what this run "
+                                "knew, not a message to anyone in particular")
+    p.add_argument("--about", action="append", metavar="PATH",
+                   help="a relative path inside the task the note is about (repeatable); the "
+                        "subject of a hand-off is an artifact, so a later run can open it")
+    p.set_defaults(func=cmd_note)
 
     p = sub.add_parser("scan-secrets", help="deterministic secret scan (machine backing for no_secret_leak; findings are always masked)")
     p.add_argument("paths", nargs="*", help="files/directories to scan (default: current directory)")

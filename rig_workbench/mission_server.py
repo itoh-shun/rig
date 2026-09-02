@@ -79,11 +79,17 @@ def task_detail(root: pathlib.Path, task_id: str) -> dict[str, Any]:
     acceptance = _json_file(base / "acceptance.json", {"checks": []})
     review = _json_file(base / "review.json", {})
     outcome = _json_file(base / "outcome.json", None)
+    # Hand-off notes (#548): a projection of what a run wrote for later runs, filed with
+    # the run. Absent notes are an empty list, not a missing key, so a client can render
+    # "none" without first asking whether the feature exists.
+    handoff = _json_file(base / "handoff.json", {"notes": []})
+    notes = handoff.get("notes") if isinstance(handoff, dict) else None
     if isinstance(acceptance, dict) and acceptance.get("checks"):
         acceptance = dict(acceptance)
         acceptance["status"] = gate_status(acceptance)
     return {"task": task, "steps": steps, "acceptance": acceptance,
             "review": review, "outcome": outcome,
+            "handoff": notes if isinstance(notes, list) else [],
             "assurance": _assurance(root, task_id),
             "graph": _graph(root, task_id)}
 

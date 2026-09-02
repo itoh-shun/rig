@@ -226,10 +226,27 @@ class OrcaWorktreeBackend(WorktreeBackend):
                 and not INVISIBLE_RE.search(value) and not any(c in value for c in "\n\r"))
 
     def create(self, root: pathlib.Path, task_id: str, base_commit: str,
-               branch: str) -> WorktreeHandle:
-        result = self._json(["worktree", "create", "--name", task_id,
-                             "--base-branch", base_commit, "--setup", "skip"], root,
-                            timeout=600)
+               branch: str, *, agent: str | None = None,
+               prompt: str | None = None) -> WorktreeHandle:
+        """Create the worktree, and with `agent` start that agent's session inside it (#460).
+
+        `--agent` and `--prompt` are the flags the Orca CLI reference documents for
+        `worktree create` (launch the named agent in the worktree's first terminal, and
+        hand it initial work). rig passes them through and records what Orca reports back
+        — the startup terminal's handle when there is one — and invents nothing: a
+        response that names no terminal leaves `orca_terminal` absent, not guessed.
+        Measured against the documented CLI, not against a live Orca in this repository's
+        own tests; a CLI that rejects the flags fails loudly here rather than downgrading.
+        """
+        args = ["worktree", "create", "--name", task_id,
+                "--base-branch", base_commit, "--setup", "skip"]
+        if agent:
+            if not self._safe(agent) or not agent.replace("-", "").isalnum():
+                raise RuntimeError_(f"agent name {agent!r} is not a plain identifier")
+            args += ["--agent", agent]
+            if prompt:
+                args += ["--prompt", prompt]
+        result = self._json(args, root, timeout=600)
         worktree = result.get("worktree")
         if not isinstance(worktree, dict):
             raise RuntimeError_("Orca worktree create returned no structured worktree object")
@@ -243,8 +260,36 @@ class OrcaWorktreeBackend(WorktreeBackend):
             raise RuntimeError_("Orca worktree create returned no safe absolute worktree path")
         if not self._safe(actual_branch):
             raise RuntimeError_("Orca worktree create returned no safe branch name")
-        return WorktreeHandle(runtime=self.name, path=path, branch=actual_branch,
-                              ref={"orca_worktree_id": identity})
+        ref = {"orca_worktree_id": identity}
+        if agent:
+            ref["orca_agent"] = agent
+            # The handle Orca gives the agent's terminal: what `orca terminal send/read
+            # --terminal <handle>` and a reconnect after restart address. Runtime-scoped
+            # per Orca's own docs, so a stale one is re-listed rather than trusted.
+            startup = result.get("startupTerminal")
+            handle = startup.get("handle") if isinstance(startup, dict) else None
+            if self._safe(handle):
+                ref["orca_terminal"] = handle
+        return WorktreeHandle(runtime=self.name, path=path, branch=actual_branch, ref=ref)
+
+    def terminals(self, root: pathlib.Path, handle: WorktreeHandle) -> list[dict]:
+        """The terminals Orca currently holds for this worktree, for reconnecting (#460).
+
+        Asked of Orca every time, because terminal handles are runtime-scoped: the one
+        recorded at creation may not survive an Orca restart, and the documented way back
+        is to list again. Returns what Orca returned, filtered to safe strings.
+        """
+        identity = handle.ref.get("orca_worktree_id")
+        if not self._safe(identity):
+            raise RuntimeError_("Orca task state has no safe stable worktree id")
+        result = self._json(["terminal", "list", "--worktree", f"id:{identity}"], root,
+                            timeout=30)
+        items = result.get("terminals")
+        if not isinstance(items, list):
+            return []
+        return [{"handle": t.get("handle"), "title": t.get("title"),
+                 "agent": t.get("agent")}
+                for t in items if isinstance(t, dict) and self._safe(t.get("handle"))]
 
     def remove(self, root: pathlib.Path, handle: WorktreeHandle, *,
                strict: bool = True) -> None:

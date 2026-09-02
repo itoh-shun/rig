@@ -1,6 +1,6 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig note` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
 ## 共通ルール
 
@@ -10,6 +10,20 @@
 
 - サブコマンドの引数に `task_id` が省略された場合、`workbench.py` は `.rig/runs/` 内の**最新 task**を自動選択する。複数 task が並行している可能性がある場合（`workbench.py log --limit 5` で確認）は、曖昧さを避けるため task_id を明示するようユーザーに促す。
 - どのサブコマンドも**親 context に長い diff 本文を引き込まない**（context-minimal）。`workbench.py diff` の出力（ファイル一覧＋shortstat）はそのまま見せてよいが、個々のコード片の要約は `diff.md`（RUN 中にモデルが書いた散文）を参照する。
+
+## `/rig note [<task_id>] "<text>" [--about <path>]...`
+
+```
+python3 scripts/workbench.py note [<task_id>] "<text>" [--about <path>]...
+```
+
+run に **hand-off note** を付ける（#548 slice 5）。chat ではない。自由記述のパネルは未計測の
+主張の置き場になり、board の情報密度を下げる。session を跨いで役に立つのは「**書き手が run、
+主題が artifact**」の note——「この run は pack lock の形式を変えた。`pack.lock.json` に触る
+後続 run は `diff.md` を読め」——なので、`--about` で主題の artifact を task 内の相対パスで名指し
+し、書いた run の `.rig/runs/<task_id>/handoff.json` に追記で残す（編集不可＝書いた時点の
+認識の記録）。Mission Control の task detail と `status` が表示する。絶対パス・`..`・2000 字超
+は拒否。
 
 ## `/rig knowledge-candidate <candidate> [--json]`
 
@@ -25,6 +39,17 @@ rule と expected benefit は各引用記録に明記され、context と scope 
 
 この判定が保証するのは「引用記録が実在し、候補が主張する範囲を明示的に支える」ことだけ。
 候補の正しさ、因果性、完全性、一般適用可能性、将来の効果は保証しない。
+
+**昇格ライフサイクル（#440 第2段）**は同じサブコマンドのフラグで扱う（新サブコマンドを足さない）。
+`--register <candidate>` は **`supported` と判定された候補だけ**を `candidate` 状態で
+`.rig/org-knowledge.jsonl`（追記のみ）に登録する。`--promote <id> --to <state>` は
+`candidate → evaluated → approved → active → deprecated`（`approved`/`active` から `rolled_back`）
+を**1段ずつ**だけ進め、拒否時は到達可能な状態を名指しする。`approved` 以降は `--actor` と
+`--reason` が必須＝記名された人間の行為で、rig は生成しない（モデルは `evaluated` まで進めてよく、
+承認はできない）。同一 rule × 重複 scope に `active` な記録があれば `active` 化を両 id つきで拒否し、
+解消は旧記録の明示的 `deprecated` 化だけ（文言の違う rule の矛盾判定は人が行う）。`--list [--state]`
+/ `--history <id>` は台帳の再生で現在状態を導く。`--active` は workflow synthesis が読む形＝active な
+rule と引用だけ。instinct 層（`.rig/instincts*`）とは別層で、相互に書き込まない。
 
 ## `/rig anomaly-trigger <event> [--json]`
 

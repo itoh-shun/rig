@@ -25,12 +25,69 @@ from .validation import validate_pack
 _TAG = re.compile(r"^refs/tags/v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)$")
 
 
-def _entries(root: pathlib.Path) -> list[dict]:
-    return sorted(read_lock(root)["packs"], key=lambda item: item["id"])
+def _entries(root: pathlib.Path, *, scope: str | None = None) -> list[dict]:
+    """Every pack in this root: the lock's entries, plus the ones somebody placed by hand.
+
+    A pack can arrive in a scope root without the CLI — copied in, checked out, unpacked
+    (#533). The resolver already reads such a directory: `validate_lock_root` returns no
+    entries for a root with no lock and the collection walk takes every directory it finds.
+    The inventory did not, so `pack list` said "no packs installed" about a pack whose
+    recipes were resolving. This lists them, named for what they are.
+
+    Only where there is no lock. A root that has one owns its directories, and an extra
+    directory there is drift the lock check already refuses; reporting it here as a pack
+    would put a "manual" row beside packs the lock never agreed to share the root with.
+    """
+    locked = sorted(read_lock(root)["packs"], key=lambda item: item["id"])
+    if locked or _has_lock(root):
+        return locked
+    return _manual_entries(root, scope=scope)
 
 
-def _entry(root: pathlib.Path, pack_id: str) -> dict:
-    for item in _entries(root):
+def _has_lock(root: pathlib.Path) -> bool:
+    from .lock import lock_path
+    return lock_path(root).exists()
+
+
+def _manual_entries(root: pathlib.Path, *, scope: str | None) -> list[dict]:
+    """Lock-shaped entries for directories that were never installed.
+
+    Shaped like a lock entry so every reader here keeps one code path, and marked so no
+    reader can mistake one for an installed pack: `source.type` is `manual`, the
+    verification status is `unverified` (nothing was checked at install time, because there
+    was no install), and the fields only an install produces are absent rather than
+    invented — there is no install time, no publisher key, no recorded resolution.
+    """
+    if not root.is_dir():
+        return []
+    entries: list[dict] = []
+    for item in sorted(root.iterdir()):
+        if not item.is_dir() or item.name.startswith((".", "_")):
+            continue
+        try:
+            manifest = validate_pack(item)
+        except PackError:
+            # Listed as unreadable rather than skipped: a person who dropped a directory
+            # here and sees nothing has no way to learn the manifest did not validate.
+            entries.append({"id": item.name, "version": "?", "kind": "?",
+                            "scope": scope or "manual", "path": item.name,
+                            "source": {"type": "manual", "path": str(item)},
+                            "verification_status": "unreadable", "dependencies": [],
+                            "eval_case_hashes": [], "dependency_resolution": []})
+            continue
+        entries.append({
+            "id": manifest["id"], "version": manifest["version"], "kind": manifest["kind"],
+            "scope": scope or "manual", "path": item.name,
+            "source": {"type": "manual", "path": str(item), "sha256": None},
+            "verification_status": "unverified",
+            "dependencies": list(manifest.get("dependencies", [])),
+            "eval_case_hashes": [], "dependency_resolution": [],
+        })
+    return sorted(entries, key=lambda item: item["id"])
+
+
+def _entry(root: pathlib.Path, pack_id: str, *, scope: str | None = None) -> dict:
+    for item in _entries(root, scope=scope):
         if item["id"] == pack_id:
             return item
     raise PackError(f"pack is not owned by this scope lock: {pack_id}")
@@ -41,17 +98,21 @@ def _origin(entry: dict) -> str:
     source = entry["source"]
     if source["type"] == "git":
         return f"{source['path']} @{source['revision'][:12]}"
+    if source["type"] == "manual":
+        # Placed by hand, never installed: say so, and say what would make it a real
+        # install, because "manual" alone reads as a category rather than a gap.
+        return "manual (not installed; `pack install <dir>` records it)"
     return f"{source['type']}:{source['path']}"
 
 
-def list_rows(root: pathlib.Path) -> list[dict]:
+def list_rows(root: pathlib.Path, *, scope: str | None = None) -> list[dict]:
     return [
         {
             "id": entry["id"], "version": entry["version"],
             "type": _installed_type(root, entry), "kind": entry["kind"],
             "origin": _origin(entry), "verification": entry["verification_status"],
         }
-        for entry in _entries(root)
+        for entry in _entries(root, scope=scope)
     ]
 
 
@@ -68,11 +129,24 @@ def _installed_type(root: pathlib.Path, entry: dict) -> str:
         return "?"
 
 
-def info(root: pathlib.Path, pack_id: str) -> dict:
+def info(root: pathlib.Path, pack_id: str, *, scope: str | None = None) -> dict:
     """Everything the lock and the installed manifest say about one pack."""
-    entry = _entry(root, pack_id)
+    entry = _entry(root, pack_id, scope=scope)
     manifest = validate_pack(root / entry["path"])
     source = entry["source"]
+    if source["type"] == "manual":
+        # No lock ever described this pack, so most of `info`'s rows have no source. The
+        # ones that do come from the manifest on disk; the rest are absent, not null-filled.
+        return {
+            "id": entry["id"], "version": entry["version"], "type": manifest["type"],
+            "kind": entry["kind"], "scope": entry["scope"], "path": str(root / entry["path"]),
+            "source_type": "manual", "source": source["path"],
+            "engine": manifest["engine"], "verification": entry["verification_status"],
+            "dependencies": [f"{item['id']}{item['range']}" for item in manifest["dependencies"]],
+            "assets": {kind: len(paths) for kind, paths in sorted(manifest["assets"].items())
+                       if paths},
+            **({"knowledge": manifest["knowledge"]} if "knowledge" in manifest else {}),
+        }
     return {
         "id": entry["id"], "version": entry["version"], "type": manifest["type"],
         "kind": entry["kind"], "scope": entry["scope"],
@@ -150,7 +224,8 @@ def _documents(project: pathlib.Path, entry: dict, manifest: dict) -> list[dict]
 
 
 def knowledge_rows(project: pathlib.Path, root: pathlib.Path, *,
-                   topics: tuple[str, ...] = (), scopes: tuple[str, ...] = ()) -> dict:
+                   topics: tuple[str, ...] = (), scopes: tuple[str, ...] = (),
+                   scope: str | None = None) -> dict:
     """Which installed packs declare knowledge for this question — and whether that settles it.
 
     This selects; it does not answer, and it deliberately does not choose. When candidates
@@ -167,7 +242,7 @@ def knowledge_rows(project: pathlib.Path, root: pathlib.Path, *,
     a question nobody asked.
     """
     candidates: list[dict] = []
-    for entry in _entries(root):
+    for entry in _entries(root, scope=scope):
         try:
             manifest = validate_pack(root / entry["path"])
         except PackError:

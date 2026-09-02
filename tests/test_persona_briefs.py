@@ -181,9 +181,13 @@ def test_every_criteria_heading_is_built_from_the_shared_landmark():
     """
     import re
 
+    from rig_workbench.orchestrate import agent_runtime as runtime
     from rig_workbench.orchestrate import providers
 
-    source = pathlib.Path(providers.__file__).read_text(encoding="utf-8")
+    # The landmark is declared in `agent_runtime.py` (#416 Phase 1) and the composers live in
+    # `providers.py`; both are scanned, so exactly one literal — the declaration — remains.
+    source = (pathlib.Path(providers.__file__).read_text(encoding="utf-8")
+              + pathlib.Path(runtime.__file__).read_text(encoding="utf-8"))
     literal = re.compile(r'"(Acceptance criteria[^"]*)"')
     spelled_out = [match for match in literal.findall(source)
                    if not match.startswith("Acceptance criteria this step")]

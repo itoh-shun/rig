@@ -157,3 +157,36 @@ provider layer and the runtime layer do not reference each other.
 
 See `tests/test_runtime_backend.py`, `tests/test_orca_runtime.py`,
 `tests/test_orca_detection.py`, and `tests/test_orca_lifecycle.py`.
+
+
+## A fresh agent session in the task worktree (`--agent`, #460)
+
+```console
+rig-wb wb new "Fix the flaky login test" --type bugfix --runtime orca --agent claude
+```
+
+With `--agent`, rig asks Orca to start that agent in the new worktree's first terminal and
+hands it a **task package** instead of this session's transcript: the goal (fenced as
+untrusted task text, the way the orchestrator fences it), the constraints rig imposes, the
+acceptance criteria the gate will ask about, the task identifiers, and where to write things
+down (`wb step`, `wb note`). The package is written to `.rig/runs/<task_id>/handoff-package.md`
+so what the session was told is on the record beside what it did.
+
+What is recorded: `task.json` gains `session` with the runtime, the agent, the package path,
+and — only when Orca reported one — the startup terminal's `handle`. Orca's own docs say
+terminal handles are runtime-scoped, so a recorded handle is a hint, not an identity: after a
+restart the way back is `orca terminal list --worktree id:<worktree id> --json`, which the
+Orca backend exposes as `terminals()`.
+
+Two things this does not claim:
+
+- **Native starts no agent.** `--agent` with `--runtime native` (or an `auto` that fell back)
+  is refused with a message, not ignored — a flag that silently did nothing would leave you
+  believing a session exists.
+- **Unverified against a live Orca.** The flags (`--agent`, `--prompt`) and the response
+  field (`startupTerminal.handle`) follow the published CLI reference; this repository's
+  tests exercise them against a fake `orca` that answers with that shape. An Orca that
+  rejects the flags fails `worktree create` loudly, and rig does not downgrade.
+
+The root session stays the dispatcher: it registers the task, Orca shows the worktree and
+its terminal, and accept or discard remain rig's decisions made from wherever rig is run.
