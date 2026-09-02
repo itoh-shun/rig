@@ -103,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-worktree", action="store_true", help="skip worktree creation (read-only runs such as review)")
     p.add_argument("--runtime", choices=("auto", "native", "orca"), default="auto",
                    help="worktree runtime (default: auto; explicit orca never downgrades)")
+    p.add_argument("--agent", metavar="ID",
+                   help="start this agent (claude, codex, ...) in a fresh session inside the "
+                        "new worktree, handing it a rig task package rather than this "
+                        "session's transcript (#460). Orca runtime only: native creates a "
+                        "directory and starts nothing, and says so rather than ignoring this")
     p.add_argument("--budget-minutes", type=float,
                    help="estimated time in minutes. NOT a limit: nothing stops or fails when a "
                         "task goes over — status/board flag it and the run continues (#281). The "

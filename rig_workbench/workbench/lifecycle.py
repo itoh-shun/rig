@@ -25,6 +25,7 @@ from .progress import from_state as progress_from_state
 from .progress import load_recipe_steps
 from .runtime import WorktreeHandle
 from . import runtime as runtime_mod
+from . import task_package
 from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
                                 apply_prompt_regression_sensor,
                                 ensure_prompt_criterion)
@@ -188,6 +189,7 @@ def cmd_new(args: argparse.Namespace) -> None:
     worktree_path: str | None = None
     branch: str | None = None
     handle: WorktreeHandle | None = None
+    package: str | None = None
     create_worktree = route["worktree"] and not args.no_worktree
     if create_worktree:
         # Where the work lives is chosen here and nowhere else; which model does the work
@@ -196,7 +198,25 @@ def cmd_new(args: argparse.Namespace) -> None:
         # #462 adds the flag together with the refusal message a bad value deserves.
         backend = runtime_mod.select(getattr(args, "runtime", runtime_mod.NATIVE), root)
         branch = f"rig/{task_id}"
-        handle = backend.create(root, task_id, base_commit, branch)
+        agent = getattr(args, "agent", None)
+        if agent and backend.name != runtime_mod.ORCA:
+            # Not ignored: a flag that silently did nothing would leave the operator
+            # believing a session exists. Native creates a directory and starts nothing.
+            die(f"--agent starts an agent session inside an Orca worktree; the {backend.name} "
+                f"runtime starts none. Use --runtime orca, or drop --agent")
+        if agent:
+            # The package the fresh session receives instead of this session's transcript
+            # (#460): composed from the task as registered, fenced like every other task
+            # text, and kept with the run so what the agent was told is on the record.
+            package = task_package.compose(
+                {"task_id": task_id, "input": args.input, "task_type": args.type,
+                 "recipe": route["recipe"] or "", "route": route,
+                 "base_branch": base_branch, "base_commit": base_commit, "branch": branch},
+                criteria=list(route.get("criteria") or []) if isinstance(route.get("criteria"), list) else None)
+            handle = backend.create(root, task_id, base_commit, branch, agent=agent,
+                                    prompt=package)
+        else:
+            handle = backend.create(root, task_id, base_commit, branch)
         branch = handle.branch
         worktree_path = handle.path
 
@@ -232,6 +252,14 @@ def cmd_new(args: argparse.Namespace) -> None:
     # flattening them is how a heuristic becomes a fact (`rig_workbench/caller.py`).
     _caller = caller.detect(getattr(args, "caller", None))
     task["caller"] = _caller.as_record()
+    if getattr(args, "agent", None) and handle is not None:
+        task["session"] = {
+            "runtime": handle.runtime, "agent": args.agent,
+            # Present only when Orca reported one; a missing handle is "not reported",
+            # and the way back is `orca terminal list`, which `reconnect` runs.
+            **({"terminal": handle.ref["orca_terminal"]} if handle.ref.get("orca_terminal") else {}),
+            "package": "handoff-package.md",
+        }
     if _issue is not None:
         task["issue"] = _issue
     _binding = govern_identity.load_org_binding(root)
@@ -240,6 +268,10 @@ def cmd_new(args: argparse.Namespace) -> None:
         task["team"] = _binding.team
     d.mkdir(parents=True, exist_ok=True)
     save_json(d / "task.json", task)
+    if package is not None:
+        # What the fresh session was told, kept with the run. A later reader can compare it
+        # with what the session did; a package that lived only in Orca's terminal could not.
+        (d / "handoff-package.md").write_text(package, encoding="utf-8")
     # Seed the recipe's declared steps so every later view has a denominator. An
     # unreadable recipe seeds nothing and the run behaves exactly as before — the
     # step list is display metadata, never an input to the accept decision.
