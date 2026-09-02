@@ -923,6 +923,24 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 
 用途特化ワークフローは既定カタログの外で配布する。Extension Catalog から内容を確認した pack だけを導入すること。project pack の trust は内容ハッシュに紐づき、asset が変わると再同意が必要になる。command asset は明示登録を扱える host 向けの資料であり、install だけで slash command として登録されることはない。
 
+pack の導入と確認は `rig-wb pack` で行う。
+
+```bash
+rig-wb pack install domain:japanese-writing --scope project --allow-unverified
+rig-wb pack list                             # 何が入っているか、出所は、検証は通ったか
+rig-wb pack verify-sources --scope project   # 宣言済み git source に紐づく pack を突き合わせ直す
+```
+
+`verify-sources` が見るのは lock 上で git source を持つ pack である。そうした source を持たない pack——ツリー同梱の builtin など——はそもそも対象に入らないので、緑で終わってもその pack について何かを言ったことにはならない。
+
+pack は type を問わず `knowledge:` ブロック（ちょうど `scope` / `topics` / `owner` / `evidence` / `reviewed_at`）を宣言でき、宣言した pack は**問いに対する候補**として発見できるようになる。これは記述であって権限ではない。pack の `type` も、その asset に許されることも変わらない。
+
+```bash
+rig-wb pack knowledge --topic backup --scope product
+```
+
+**選び出すが、決めない。**「バックアップは取っていますか」の正しい答えは、全社・単一プロダクト・その下の基盤で別々であり、問うた側がどれを指していたかはどの pack にも書かれていない。候補が複数の **knowledge scope** にまたがるとき、このコマンドは決めずに「またがっている」ことと候補名を返す。曖昧かどうかは scope の話であって、候補が何件一致したかではない。資料は `pack://<scope>/<id>/<relative>` の形で引き渡される。この先頭の segment は pack を**どこに導入したか**の scope（`--scope`: `project` / `user` / `org`）であって、pack が宣言する knowledge scope ではない。`evidence` が `sources` でないのは、`sources` が既に「pack をどこ**から**導入したか」を指しているためで、1つの語に2つの意味を持たせる defect を設計が避けた結果である。契約の詳細は [`docs/packs.md`](./docs/packs.md)。
+
 ## 16. Implementation notes
 
 上記の主張の裏付けを具体的に示す——「書いてあること」と「検証されていること」が静かに乖離しないための表：
