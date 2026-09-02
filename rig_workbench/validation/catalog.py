@@ -489,3 +489,118 @@ def check_workbench_catalog() -> None:
         _emit("PASS", f"workbench catalog: {len(registered)} subcommands — {internal} "
                       f"internal / {by_row} covered by the workbench pack row / {named} named "
                       f"in §2 / {len(uncatalogued)} uncatalogued")
+
+
+# ── SKILL.md §2 pack rows ↔ PACKS.md detail rows (#573) ──────────────────────
+#: The header row of §2's "pack 追加分" table, as the whole line it is written on. §2 keeps
+#: its pack table inside a blockquote, so the line carries the `> ` prefix; a copy of the
+#: header outside the blockquote is a different table and must not be read as this one.
+PACK_TABLE_HEADER = "> | pack | 要旨 | 追加ブリック |"
+
+#: The header row of PACKS.md's "pack 一覧" table. Not inside a blockquote there.
+PACKS_TABLE_HEADER = "| pack | 追加ブリックと詳細 |"
+
+#: A row of either table starts with its bold pack id: `| **talk**（`/rig:talk`） | …`. The id
+#: is the whole of what the bold holds — `intent / assurance target` is one id with spaces
+#: in it, and the parenthesised entry point after it is not part of the id.
+_PACK_ROW = re.compile(r"^>?\s*\|\s*\*\*(.+?)\*\*")
+
+
+def pack_table_ids(document: str, header: str) -> list[str] | None:
+    """The pack ids of the table whose header row is `header`, or None if there is no such
+    table exactly once in `document`.
+
+    Reads rows, not mentions: the id is what the first cell holds in bold, and the table ends
+    at the first line that is not a row of it. §2's blockquote keeps a `>` prefix on every
+    row; PACKS.md's table has none; both spellings are one table shape here.
+
+    None rather than an empty list when the header is missing or duplicated, so a renamed or
+    copied heading makes the caller go blind instead of reporting that nothing drifted.
+    """
+    start = _sole(document, header)
+    if start is None:
+        return None
+    lines = document.splitlines()[start + 1:]
+    prefix = ">" if header.lstrip().startswith(">") else "|"
+    ids = []
+    for line in lines:
+        if not line.strip().startswith(prefix):
+            break
+        stripped = line.strip().lstrip(">").strip()
+        if not stripped.startswith("|"):
+            break
+        if re.fullmatch(r"\|(\s*:?-+:?\s*\|)+", stripped):
+            continue  # the separator row under the header
+        match = _PACK_ROW.match(line)
+        if match:
+            ids.append(match.group(1).strip())
+    return ids
+
+
+def packs_catalog_drift(skill_md: str, packs_md: str) -> tuple[list, list, list]:
+    """(§2 pack rows with no PACKS.md detail row, PACKS.md rows with no §2 row, why this
+    cannot answer).
+
+    §2 says it itself: a new pack gets a one-line row there *and* a detail row in `PACKS.md`,
+    and `PACKS.md` opens by saying the same. Nothing checked the pair — `check_catalog_drift`
+    compares §2 against the files on disk — and ten packs went into §2 with no detail row
+    while the rule stood (#573).
+
+    Returns rather than emits so a test can hand it two documents it must object to. Takes
+    the whole of SKILL.md and locates §2 itself, so that where it reads is part of what a
+    test can break; a pack table outside §2 is not the catalogue.
+    """
+    blind = []
+    section = _section(skill_md, CATALOG_SECTION)
+    if section is None:
+        blind.append(f"skills/engine/SKILL.md does not hold exactly one section bounded by "
+                     f"{CATALOG_SECTION[0]!r} and {CATALOG_SECTION[1]!r} in that order: this "
+                     f"check cannot tell where the brick catalog is")
+        skill_ids = None
+    else:
+        skill_ids = pack_table_ids(section, PACK_TABLE_HEADER)
+        if skill_ids is None:
+            blind.append(f"SKILL.md §2 does not hold exactly one line {PACK_TABLE_HEADER!r}: "
+                         f"this check cannot tell where the pack table is")
+        elif not skill_ids:
+            blind.append("SKILL.md §2's pack table has no `| **<id>** |` rows: the row shape "
+                         "this check reads pack ids by has changed")
+    packs_ids = pack_table_ids(packs_md, PACKS_TABLE_HEADER)
+    if packs_ids is None:
+        blind.append(f"skills/engine/PACKS.md does not hold exactly one line "
+                     f"{PACKS_TABLE_HEADER!r}: this check cannot tell where the pack list is")
+    elif not packs_ids:
+        blind.append("PACKS.md's pack table has no `| **<id>** |` rows: the row shape this "
+                     "check reads pack ids by has changed")
+    if blind:
+        return [], [], blind
+    missing = [pack for pack in skill_ids if pack not in packs_ids]
+    stale = [pack for pack in packs_ids if pack not in skill_ids]
+    return missing, stale, []
+
+
+def check_packs_catalog() -> None:
+    """SKILL.md §2's pack rows against PACKS.md's detail rows, in both directions.
+
+    A §2 row with no detail row is the addition the rule in §2 asks for and did not get; a
+    detail row with no §2 row is a pack that left the catalogue and kept its long description.
+    Both WARN, in the shape `check_catalog_drift` already uses for a suspected missed
+    listing. Not finding either table is FAIL: a check that could not read is not a pass.
+    """
+    skill_md = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
+    packs_md = (SKILLS / "PACKS.md").read_text(encoding="utf-8")
+    missing, stale, blind = packs_catalog_drift(skill_md, packs_md)
+
+    for why in blind:
+        _emit("FAIL", f"packs catalog — {why}")
+    for pack in missing:
+        _emit("WARN", f"packs catalog — SKILL.md §2 lists pack `{pack}` and PACKS.md has no "
+                      f"detail row for it (§2 says every pack gets both; missed the PACKS.md "
+                      f"half?)")
+    for pack in stale:
+        _emit("WARN", f"packs catalog — PACKS.md has a detail row for `{pack}` and SKILL.md "
+                      f"§2's pack table does not list it (stale detail row for a pack that "
+                      f"left §2?)")
+    if not blind:
+        _emit("PASS", f"packs catalog: {len(missing)} §2 rows without a PACKS.md row / "
+                      f"{len(stale)} PACKS.md rows without a §2 row")

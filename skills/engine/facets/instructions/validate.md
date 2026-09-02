@@ -273,6 +273,7 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 - 目録に載っているが**実ファイルが無い**もの（幽霊エントリ）→ error。
 - 実ファイルが在るが**目録に載っていない**もの → pack 追加分への追記漏れの可能性として warning（`_` 始まりと `facets/knowledge/wiki/` は除外）。
 - README.md / README.ja.md の recipe / instruction / persona 一覧表も同様に実ファイルと突き合わせ、抜け・古い記載を warning する。
+- §2「pack 追加分」テーブルの pack 行と `PACKS.md`「pack 一覧」テーブルの詳細行も双方向で突き合わせる（`scripts/validate.py` の `check_packs_catalog`・#573）。§2 にあって `PACKS.md` に無い pack → 詳細行の追記漏れとして warning、`PACKS.md` にあって §2 に無い pack → stale な詳細行として warning。どちらかのテーブル（見出し行）が見つからない／行が読めない場合はサイレントに PASS せず FAIL（検査できていない）。
 
 ### ④-b commands / agents frontmatter（実バグ class の再発防止）
 
