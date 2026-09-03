@@ -3,8 +3,8 @@
 #
 #   ./scripts/layout-gate.sh
 #
-# layout-gate pack の recipe は、この path をそのまま実行します。何を検査するかは
-# ここに書きます。pack は、この repository の生成器の呼び出し方を知りません。
+# recipes/layout-gate の measure step は、この path をそのまま実行します。何を検査するかは
+# ここに書きます。rig は、この repository の生成器の呼び出し方を知りません。
 #
 # 必要なもの: node、pptxgenjs（pptx 生成器）、playwright と chromium（HTML 検査）。
 #   npm install pptxgenjs playwright
