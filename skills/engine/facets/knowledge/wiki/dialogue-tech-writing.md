@@ -7,9 +7,7 @@ domain: writing
 status: canonical
 links: []
 sources:
-  - https://qiita.com/Yametaro/items/a40ffcd65d77ed8b29a0
-  - https://qiita.com/Yametaro/items/3c27305072464e1d6230
-  - https://qiita.com/Yametaro/items/f38cfd26dcf5988f3c34
+  - "技術説明を対話形式で書くことに関する外部の解説記事3本から、設計の観点だけを要約・言い換えて取り込んだ"
 reviewed_at: 2026-08-11
 ---
 

@@ -6,7 +6,7 @@ tags: [japanese, writing, ai-smell]
 domain: japanese-writing
 status: canonical
 sources:
-  - "だいち | GENSHI AI「その文章、AIに書かせただろ」note https://note.com/ikora/n/n0bbb2828b91e （分類を要約・言い換えて取り込み。原文の例文は転載していない）"
+  - "日本語の AI 文章に関する外部の解説記事1本から、分類の枠組みだけを要約・言い換えて取り込んだ。原文の例文・語り口は取り込んでいない"
   - "skills/engine/facets/knowledge/ai-writing-smells.md （rig core のカタログ。A〜I の表層マーカーと深層マーカー J〜V）"
 reviewed_at: 2026-09-01
 ---
