@@ -171,6 +171,33 @@ the report's scope depend on which flag the reader noticed first.
 `scripts/orchestrate.py`, the historical entrypoint rather than the installed one — the same
 gap #544 closed for `perf`, `otel`, `orchestrate next` and `orchestrate approve`.
 
+### Changed
+
+**The tree no longer identifies the people it wrote about.** Two places named or
+addressed real third parties. `benchmarks/writing-tasks/jp-natural-writing/results/`
+held 40 rows scoring published articles for AI-likeness, and each row was addressable
+three ways at once: the `url` resolved, the `file` stem carried the same article id,
+and 36 of the 40 `reasoning` fields quoted the article's own distinctive wording — so
+redacting the url alone would have left two open channels. Rows now carry opaque
+`corpus://qiita/cNN` ids assigned by row order, not by a hash of the address, which
+would be reversible by hashing the platform's own article list; the reasonings are
+gone; `topic`, `tag`, `created_at`, `likes`, `chars`, `score` and `cues` are kept, and
+the recorded mean over the 40 rows is unchanged. Third-party handles in the
+discrimination results are redacted the same way, with the repository owner's own
+handle deliberately kept.
+
+**`exported-skills/sales-playbook` is written from general practice.** It was a
+distillation of one named practitioner's video series: the README credited the channel,
+each reference page ended in a 出典 list naming 70 videos by id, and the body carried
+that practitioner's own anecdotes and single-source track record. The eleven pages are
+rewritten from established sales practice — the topic scaffold and the organization are
+kept, the attribution, video ids, anecdotes and `※要確認` single-source claims are gone,
+and `NOTICE.md` goes with them. Specific performance figures are deliberately not
+restated: close and appointment rates move by an order of magnitude with the market, so
+the pages now tell the reader to measure their own. The notes that were worth keeping
+survive — the Mehrabian numbers are still called out as a well-known misuse, and the
+new-hire section still says to take the structure and not the unpaid hours.
+
 ### Fixed
 
 **Three of six pack types were required to ship an evaluation case they could never run.**
