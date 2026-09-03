@@ -59,17 +59,17 @@ Two sensors, both deterministic, both living in `scripts/layout/`:
 Both were verified by injecting a deliberate overflow and confirming they exit 1;
 the generator left the previous `.pptx` untouched.
 
-The gate is packaged as `packs/domain/layout-gate` (a `type: tool` pack), so the
-rules and the recipe travel to other projects. The pack cannot carry the scripts
-themselves — rig refuses runnable code as a pack resource — so it ships them as
-Markdown reference implementations, and `tests/test_layout_gate_pack.py` compares
-those against `scripts/layout/` byte for byte. Regenerate with
-`python3 scripts/layout/sync-pack-reference.py` after editing either script.
+The gate shipped as `packs/domain/layout-gate` (a `type: tool` pack) until #580.
+A pack may not carry runnable code, so it could not carry these two scripts — it
+carried Markdown transcriptions of them, plus a generator and a drift test to keep
+the copies equal. That machinery existed only to cross the pack boundary, and it
+went with the boundary: the recipe, the personas, the rules and the contract are
+core assets now, and `scripts/layout/` holds the sensors as files you can run.
 
-The pack's two evaluation cases are authored, not measured. `pack test` needs a
-non-Claude provider and this environment has none, so it reports
-`structural_only` — the same gap already recorded for `japanese-writing`'s
-independent reviewer. The cases state the behaviour the pack claims; nothing here
+Its two evaluation cases are authored, not measured. Running them needs a
+non-Claude provider and this environment has none — the same gap already recorded
+for `japanese-writing`'s independent reviewer. The cases state the behaviour the
+gate claims; nothing here
 proves a model produces it.
 
 The height estimate is an approximation. It is calibrated to catch overflow, not

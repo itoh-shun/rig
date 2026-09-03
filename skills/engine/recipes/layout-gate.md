@@ -55,21 +55,16 @@ steps:
 変換ではなく、箱の高さを頭の中で見積もっていたことでした。分類は
 `[[layout-overflow-causes]]` にあります。
 
-## この pack が `tool` である理由
+## ホスト上で走るもの
 
-rig の pack model では、`checks:` を宣言した recipe を積めるのは `type: tool` だけです
-（`RECIPE_CHECKS_TYPES`）。`checks` はホスト上で実行される shell command なので、
-知識や文体を配るだけの pack に持たせません。この pack は検査を**実行する**ことが目的
-なので `tool` です。導入する側は、実行される command を読んでから入れてください。
+`measure` step は provider を呼ばず、ホスト上で shell command を 2 行実行します。
+`./scripts/layout-gate.sh` が存在して実行可能かを見て、次にそれを実行します。中身は
+使う側が書きます。rig は、あなたの生成器の呼び出し方を知りません。
 
-実行されるのは 2 行です。`./scripts/layout-gate.sh` が存在して実行可能かを見て、次に
-それを実行します。中身は導入する側が書きます。pack は、あなたの生成器の呼び出し方を
-知りません。
-
-そしてもう一つ。rig の pack は、**実行できるコードを resource として配れません**。
-`.sh` と `.py` は拡張子で、`.js` と `.mjs` は MIME で拒否されます。だからこの pack が
-同梱するのは、規則と参照実装（`resources/*.reference.md`）までです。実際に走るコードは、
-導入する側が自分の repository に置きます。何が実行されるかは、置いた本人が読めます。
+センサー本体は rig が同梱します。`scripts/layout/layout-fit.js`（生成器の中で使う
+CommonJS）と `scripts/layout/check-html-layout.mjs`（Chromium で開いて測る）の 2 つで、
+どちらも実行できる file としてそのまま入っています。生成器はあなたの repository に
+あるので、その中から読める場所へ複製して使ってください。
 
 ## `./scripts/layout-gate.sh` に書くこと
 
@@ -83,8 +78,9 @@ node scripts/layout/check-html-layout.mjs --stage 1280x720 --pages "[data-slide]
 node scripts/layout/check-html-layout.mjs --flow primer.html
 ```
 
-`scripts/layout/` の 2 つの file は、`resources/layout-fit.reference.md` と
-`resources/check-html-layout.reference.md` の中身をそのまま置いたものです。
+この 2 つの path は rig 同梱のセンサーです。実体は rig の checkout（plugin として入れて
+いる場合は plugin root）の `scripts/layout/` にあるので、そこから自分の repository へ複製
+します。複製元は、`tests/test_layout_gate.py` が実際に走らせている file と同じものです。
 
 ## 独立検証について
 

@@ -54,7 +54,7 @@ def test_the_rules_keep_material_local_and_approval_human():
 
 def test_the_shipped_cases_pin_the_two_refusals():
     """Shipped as `approved` because `validate` refuses a prompt-bearing pack with no approved
-    case, the same way the layout-gate pack shipped (#567): authored, not measured. `pack test`
+    case: authored, not measured. `pack test`
     reports `structural_only` here, and the recipe's own rule — a *drafted* pack's case stays
     `draft` until a person promotes it — is about packs this recipe writes, not this one."""
     cases = sorted((PACK / "evals" / "cases").glob("*/case.json"))

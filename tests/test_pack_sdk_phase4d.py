@@ -112,8 +112,7 @@ def test_builtin_catalog_is_manifest_discovered_and_tamper_fails_closed(tmp_path
     records = catalog_records()
     assert {item["alias"] for item in records} == {
         "domain:decision-humor", "domain:document-review", "domain:japanese-writing",
-        "domain:layout-gate", "domain:pack-author",
-        "domain:sales", "domain:video-storytelling",
+        "domain:pack-author", "domain:sales", "domain:video-storytelling",
     }
     assert all(set(item) == {
         "id", "kind", "version", "display_name", "description", "capabilities",

@@ -5,11 +5,6 @@ argument-hint: "[成果物の種類・枠の寸法・生成器の呼び出し方
 
 # rig/layout-gate — レイアウトを目ではなく計算で見る
 
-> この command asset は installed pack の呼び出し資料です。pack install だけでは
-> ホストの slash command に自動登録されません。通常は
-> `$rig --recipe layout-gate` で起動します。project pack の初回実行では内容を確認し、
-> `RIG_ALLOW_PROJECT_PACKS=1` を設定して asset trust を記録してください。
-
 最初に `rig:engine` skill を起動し、PARSE → RESOLVE → COMPOSE → RUN、facet の配置順、
 context-minimal の規律に従います。この command は入口だけを担い、規則は
 `layout-fit-rules` にあります。
@@ -17,23 +12,18 @@ context-minimal の規律に従います。この command は入口だけを担�
 ## 導入と起動
 
 ```text
-rig-wb pack install domain:layout-gate --scope project --allow-unverified
-RIG_ALLOW_PROJECT_PACKS=1 $rig --recipe layout-gate \
+$rig --recipe layout-gate \
   "1280x720 のスライド 48 枚。生成器は build-deck.js。HTML と pptx の両方を出す。"
 ```
 
-この pack は `type: tool` です。recipe の `measure` step が、ホスト上で
-`./scripts/layout-gate.sh` を実行します。install する前に、その 2 行と、自分で書く
-script の中身を読んでください。実行されるのは、あなたが書いた script です。
-
-pack 自体は実行できるコードを同梱しません。rig の pack model が、`.sh` と `.py` を
-拡張子で、`.js` と `.mjs` を MIME で拒否するためです。同梱されるのは参照実装
-（`resources/*.reference.md`）までで、走るコードはあなたの repository に置きます。
+recipe の `measure` step は、ホスト上で `./scripts/layout-gate.sh` を実行します。走るのは
+あなたが書いた script です。何を測るかを決めるのはその 2 行なので、起動する前に読んで
+ください。
 
 ## 用意するもの
 
 - **生成器** — 箱の寸法を数値で宣言できるもの。pptxgenjs のように座標で描くもの。
-- **`scripts/layout/`** — 同梱の参照実装をそのまま置いた 2 つの file。
+- **`scripts/layout/`** — rig 同梱のセンサー 2 つ。生成器から読める場所へ複製します。
 - **`./scripts/layout-gate.sh`** — 生成と検査をまとめて呼び、問題があれば非ゼロで
   終わる script。
 - **HTML も検査するなら** Playwright と Chromium。無い場合、検査は exit 2 で
@@ -41,8 +31,7 @@ pack 自体は実行できるコードを同梱しません。rig の pack model
 
 ## 同梱される検査
 
-`resources/layout-fit.reference.md` の参照実装（CommonJS）を
-`scripts/layout/layout-fit.js` として置き、pptxgenjs のような生成器の中で使います。
+`scripts/layout/layout-fit.js`（CommonJS）を pptxgenjs のような生成器の中で使います。
 折り返し後の行数から必要な高さを見積もり、宣言した箱と突き合わせます。同じページの
 矩形どうしの重なりも見ます。`gate.enforce()` を書き出しの直前に置くと、落ちたときに
 ファイルを作りません。
@@ -56,8 +45,7 @@ gate.enforce();
 await pres.writeFile({ fileName: "deck.pptx" });
 ```
 
-`resources/check-html-layout.reference.md` の参照実装は、HTML を Chromium で開いて
-測ります。`scripts/layout/check-html-layout.mjs` として置いて呼びます。
+`scripts/layout/check-html-layout.mjs` は、HTML を Chromium で開いて測ります。
 
 ```text
 node scripts/layout/check-html-layout.mjs --stage 1280x720 --pages "[data-slide]" deck.html

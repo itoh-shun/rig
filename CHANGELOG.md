@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Changed
+
+**The layout gate is core, not an opt-in pack (#580).** `packs/domain/layout-gate` is gone;
+its recipe, two personas, three instructions, policy, output contract, wiki page, command
+and two evaluation cases now live at their core homes. The pack boundary was not free: a
+pack may not carry runnable code, so the two sensors under `scripts/layout/` were shipped a
+second time as Markdown transcriptions, with `sync-pack-reference.py` to regenerate them and
+a test to compare them byte for byte. All three are deleted — a duplicate, a generator, and
+a drift test that existed only because the boundary did.
+
+Absorbing it also moved twelve files under checks the pack layer never reached. `packs/` is
+not a registered prompt surface root, so nothing in that pack was ever seen by the prompt
+evaluation gate; the same files now sit under roots that are registered. Three things became
+visible at once, none of them changed by this commit:
+
+- `evals/cases/` requires every approved case to declare `min_isolation: os-enforced`, so
+  that a green can never be earned under an isolation weak enough to let the subject edit
+  the material it is scored on. The pack layer had no such rule and neither case declared
+  it.
+- The pack's two evaluation cases are deleted rather than moved. Neither had ever been
+  executed by anything: `pack test` needs a non-Claude provider and reported
+  `structural_only`, and the core runner composes no prompt from a case's
+  `prompt_composition` — nothing in `rig_workbench/eval/` passes a prompt prefix — so it
+  would have put the request to a bare model with no persona, policy or contract. They were
+  labelled `approved` because a prompt-bearing pack may not ship without an approved case,
+  not because anyone had measured them. What they asserted — an overflow may not be fixed by
+  cutting the text, and a check that did not run is not a pass — the recipe's `acceptance:`
+  already says, and that is the copy the gate reads.
+- `/rig:drill` reports that `layout-gate-reviewer` bears a gate and has no measured
+  perspective in any drill corpus. Nothing about the reviewer changed; only whether rig was
+  counting it.
+
 ### Added
 
 **Credit for what rig is built on.** rig's five facet kinds and their placement order are

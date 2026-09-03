@@ -9,10 +9,10 @@
    その外形です。ここが決まらないと、何と突き合わせるのかが決まりません。
 2. 生成器に `scripts/layout/layout-fit.js` を読み込ませます。箱を置くたびに
    `gate.text(...)` または `gate.box(...)` で寸法を登録します。この file がまだ無ければ、
-   pack の `resources/layout-fit.reference.md` にある参照実装をそのまま置きます。
+   rig 同梱の `scripts/layout/layout-fit.js` を複製します。
 3. 書き出しの直前に `gate.enforce()` を置きます。落ちたときにファイルを作りません。
-4. HTML で組むときは `scripts/layout/check-html-layout.mjs` を用意します（参照実装は
-   `resources/check-html-layout.reference.md`）。固定サイズのページなら `--pages` を、
+4. HTML で組むときは `scripts/layout/check-html-layout.mjs` を用意します（同じく rig
+   同梱の file を複製します）。固定サイズのページなら `--pages` を、
    流し込みの文書なら `--flow` を使います。
 5. 生成器と検査をまとめて呼ぶ script を `./scripts/layout-gate.sh` に置きます。次の step の
    `checks` がこの path を実行します。

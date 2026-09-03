@@ -23,8 +23,8 @@ let n = 0;
 
 /* ================= layout fit sensor =================================
  * 枠から文字がはみ出したまま出荷しないための計算的センサー。実体は
- * scripts/layout/layout-fit.js にあり、layout-gate pack が同じ内容を
- * reference として配っている。ここに書くのはその接続だけ。
+ * scripts/layout/layout-fit.js の一つだけで、recipes/layout-gate も
+ * その file を指す。ここに書くのはその接続だけ。
  * ------------------------------------------------------------------ */
 const { LayoutGate, charEm, lineCount, blockHeight, PT } =
   require("../../scripts/layout/layout-fit.js");
