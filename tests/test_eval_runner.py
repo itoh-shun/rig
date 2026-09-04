@@ -12,7 +12,16 @@ import pytest
 from test_eval_cases import valid_case
 
 
-NOW = dt.datetime(2026, 8, 5, 1, 0, tzinfo=dt.timezone.utc)
+#: The clock every fixture result is stamped with, read at import rather than written down.
+#: `quality_result_failures` compares a result's `started_at` against the real current time
+#: and refuses anything older than `MAX_RESULT_AGE` (30 days), so a literal date does not
+#: describe a scenario — it sets an expiry. The 2026-08-05 literal this replaces reached it
+#: on 2026-09-04 and failed three tests on master with no change to blame (#584). It also
+#: rotted the two negative controls below, which are written as offsets from this clock:
+#: `NOW + 6 minutes` is meant to land one minute past `FUTURE_TOLERANCE` and be refused as
+#: from the future, and by then it was thirty days stale instead — still refused, no longer
+#: for the reason it names.
+NOW = dt.datetime.now(dt.timezone.utc)
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 

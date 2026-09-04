@@ -46,6 +46,24 @@ Both commands become real slash commands, which is what `commands/` means. Their
 pack, and `docs/packs.md` and `docs/pack-migration.md` now use `sales` for the export
 example.
 
+**A test fixture's clock is read, not written down (#584).** `tests/test_eval_runner.py`
+stamped every fixture result with `NOW = dt.datetime(2026, 8, 5, ...)`, and
+`quality_result_failures` compares `started_at` against the real current time and refuses
+anything older than `MAX_RESULT_AGE` (30 days). The literal was not describing a scenario; it
+was setting an expiry, and it arrived on 2026-09-04 — three tests began failing on `master`
+with no change to blame, on every branch at once. `NOW` is now read at import.
+
+It had also rotted the two negative controls written as offsets from it. `NOW + 6 minutes` is
+meant to land one minute past `FUTURE_TOLERANCE` and be refused as *from the future*; by the
+expiry it was thirty days stale instead. Still refused, so still green — no longer for the
+reason it names. Both controls now fire for their own reason, checked one at a time.
+
+`tests/test_baseline.py` holds fixed dates too and is not the same defect: it passes `now=`
+into `compare_baseline` and `capture_baseline` every time, so its result and its clock are
+both fixtures. That asymmetry is the root cause worth remembering — `compare_baseline` takes
+a clock and `quality_result_failures` does not, so only the latter can be judged against a
+calendar it never agreed to.
+
 **The layout gate is core, not an opt-in pack (#580).** `packs/domain/layout-gate` is gone;
 its recipe, two personas, three instructions, policy, output contract, wiki page, command
 and two evaluation cases now live at their core homes. The pack boundary was not free: a
