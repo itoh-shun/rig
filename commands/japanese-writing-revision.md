@@ -11,24 +11,9 @@ output は拒否します。category は `--review-category general|incident_rep
 `--material-profile none|technical|conversation` から本文とは別に選びます。未知値・省略・pin 不備は
 provider call 前に fail closed します。
 
-pack catalog上の実際の解決は次の呼び出しです。
-
-```console
-rig-wb pack invoke japanese-writing:japanese-writing-revision-command -- <absolute-draft-path> <absolute-output-path> --review-category general --material-profile none
-```
-
-repo checkout 外の cwd から shipped pack を使う場合は、先に内容を確認した checkout 内の
-pack path を project scope へ導入し、初回実行時にも明示的に trust を承認します。
-
-```console
-rig-wb pack install domain:japanese-writing --scope project --allow-unverified
-RIG_ALLOW_PROJECT_PACKS=1 rig-wb pack invoke japanese-writing:japanese-writing-revision-command -- <absolute-draft-path> <absolute-output-path> --review-category general --material-profile none
-```
-
-このコマンドのstdoutは、検証済みasset path、引数、`mode: manual-command`、`status: ready`を含む
-manual-command metadataです。`pack invoke` 自体はwrapperもproviderも実行しません。catalog検証を通った
-metadataのasset pathを受け取った trusted command host だけが、そのresolved asset内の次のwrapperを
-指定引数で実行してください。未検証のpathや同名ファイルへ置き換えて実行してはいけません。
+この recipe は provider を直接は起動しません。実行するのは下の wrapper で、それを起動してよいのは
+trusted command host だけです。host はこのファイルの wrapper を、記載された引数だけで実行してください。
+未検証の path や同名ファイルへ置き換えて実行してはいけません。
 
 次は no-clobber の呼び出し例です。下書き本文は shell argv に載せず、shell history や run-state にも
 保存しません。secure run-stateには hashだけが残ります。stdout の最終完成稿は同じ private directory の一時ファイルへ受け、

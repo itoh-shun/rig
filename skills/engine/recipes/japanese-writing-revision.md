@@ -1,5 +1,5 @@
 ---
-name: japanese-writing
+name: japanese-writing-revision
 description: 既存下書きを事実を増やさずに修正し、元ファイルを上書きせず独立検証済みの別成果物を返す opt-in recipe。
 scope: shipped
 steps:

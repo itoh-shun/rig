@@ -396,7 +396,7 @@ def test_japanese_pack_runs_writer_then_its_bound_independent_reviewer(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     steps = load_steps(resolved)
@@ -450,7 +450,7 @@ def test_japanese_pack_runs_writer_then_its_bound_independent_reviewer(
 def test_japanese_material_profile_is_bounded_to_write_knowledge_only():
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     write, review = load_steps(resolved)
@@ -495,7 +495,7 @@ def test_secure_revision_refuses_unverifiable_source_draft(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing-revision.md"
+        / "skills/engine/recipes/japanese-writing-revision.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     calls = []
@@ -547,7 +547,7 @@ def test_secure_revision_review_receives_source_draft_only_from_process_memory(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing-revision.md"
+        / "skills/engine/recipes/japanese-writing-revision.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     source_draft = "顧客名A。開始は10:30。原因は未確認。"
@@ -590,7 +590,7 @@ def test_cmd_run_supplies_stdin_revision_draft_to_reviewer_without_persisting_it
 
     shipped_recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing-revision.md"
+        / "skills/engine/recipes/japanese-writing-revision.md"
     )
     # An overlay is intentionally named differently: cmd_run must use the same
     # structural signal as the reviewer, not a particular recipe filename.
@@ -652,7 +652,7 @@ def test_japanese_material_profile_fails_closed_on_asset_contract_drift(
 
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     write = load_steps(resolved)[0]
@@ -680,7 +680,7 @@ def test_japanese_runtime_retries_parser_invalid_review_without_rewriting_writer
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     steps = load_steps(resolved)
@@ -715,7 +715,7 @@ def test_japanese_runtime_exhausts_only_invalid_reviews_without_writer_rewrite(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     calls = []
@@ -755,7 +755,7 @@ def test_japanese_runtime_blocks_once_on_unverified_and_preserves_review(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     raw_review = _japanese_review_json(verdict="UNVERIFIED", fact="UNKNOWN")
@@ -797,7 +797,7 @@ def test_japanese_runtime_mixed_invalid_then_transport_aborts_without_rewrite(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     review_calls = 0
@@ -834,7 +834,7 @@ def test_japanese_runtime_valid_revise_consumes_one_writer_rewrite(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     drafts = iter(["初稿", "修正版"])
@@ -910,7 +910,7 @@ def test_japanese_runtime_second_valid_revise_is_terminal_without_a2(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     drafts = iter(["A0", "A1", "A2 must not run"])
@@ -950,7 +950,7 @@ def test_secure_japanese_runtime_requires_bound_category_before_provider(
 ):
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "skills/engine/recipes/japanese-writing.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     calls = []
@@ -1224,6 +1224,40 @@ def test_cmd_run_displays_the_completed_japanese_deliverable(
     assert content not in captured.err
 
 
+@pytest.mark.parametrize("recipe_name", ["japanese-writing", "japanese-writing-revision"])
+def test_secure_japanese_lane_blocks_before_the_provider_without_a_review_category(
+    tmp_path, monkeypatch, capsys, recipe_name,
+):
+    """Both recipes drive the same lane, so both must fail closed on a missing selector.
+
+    Until #580 the revision recipe entered this lane by declaring the base recipe's
+    `name`, and nothing had ever asserted the guard fires for either of them. This is
+    the first branch downstream of that membership that a run reaches, so it is where
+    a predicate that stopped matching would show up.
+    """
+    from rig_workbench.orchestrate import commands
+
+    recipe = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / f"skills/engine/recipes/{recipe_name}.md"
+    )
+    called = []
+    monkeypatch.setattr(commands, "run_loop",
+                        lambda *args, **kwargs: called.append(args) or "DONE")
+    monkeypatch.setattr(commands.sys, "stdin", io.BytesIO("依頼本文".encode("utf-8")))
+
+    with pytest.raises(SystemExit) as exited:
+        commands.cmd_run([
+            str(recipe), "--provider", "claude", "--verifier-provider", "codex",
+            "--allow-headless-in-cc", "--goal-stdin", "--material-profile", "none",
+            "--out", str(tmp_path / "run-state.json"),
+        ])
+
+    assert exited.value.code == 2
+    assert called == []
+    assert "requires --review-category" in capsys.readouterr().err
+
+
 def test_nonzero_generator_exit_cannot_publish_parseable_success_text(
     tmp_path, monkeypatch,
 ):
@@ -1379,21 +1413,23 @@ def test_legacy_cmd_generator_without_independent_review_still_runs(
 
 
 def test_installed_recipe_owner_provenance_is_persisted_in_run_state():
+    # A pack-owned recipe, not a core one: provenance records which pack a step's
+    # assets must resolve against, and a core recipe has no owner to record.
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "packs/domain/sales/recipes/deal-review.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
 
-    state = new_state("japanese-writing", load_steps(resolved), "write")
+    state = new_state("deal-review", load_steps(resolved), "review")
 
     assert state["recipe_provenance"] == [{
         "source": str(recipe.resolve()),
-        "owner": "japanese-writing",
+        "owner": "sales",
         "root": str(recipe.resolve().parents[1]),
         "source_sha256": hashlib.sha256(recipe.read_bytes()).hexdigest(),
     }]
-    assert state["steps"][0]["recipe_owner"] == "japanese-writing"
+    assert state["steps"][0]["recipe_owner"] == "sales"
 
 
 def test_resume_blocks_when_persisted_recipe_owner_disappears(
@@ -1403,10 +1439,10 @@ def test_resume_blocks_when_persisted_recipe_owner_disappears(
 
     recipe = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        / "packs/domain/sales/recipes/deal-review.md"
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
-    state = new_state("japanese-writing", load_steps(resolved), "write")
+    state = new_state("deal-review", load_steps(resolved), "review")
     path = tmp_path / "run-state.json"
     save_state(state, path)
     monkeypatch.setattr(runstate, "_recipe_owner_provenance", lambda _source: None)

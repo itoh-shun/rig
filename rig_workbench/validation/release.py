@@ -7,36 +7,6 @@ from .config import ROOT
 from .state import _emit
 
 
-def japanese_pack_release_errors(root, runtime_version: str) -> list[str]:
-    """Return release compatibility errors for the shipped Japanese-writing pack."""
-    pack_root = root / "packs" / "domain" / "japanese-writing"
-    try:
-        pack = json.loads((pack_root / "pack.yaml").read_text(encoding="utf-8"))
-        compatibility = json.loads(
-            (pack_root / "compatibility.yaml").read_text(encoding="utf-8")
-        )
-    except Exception as error:
-        return [f"cannot read Japanese-writing compatibility metadata: {error}"]
-    errors = []
-    if pack.get("version") != "0.8.0":
-        errors.append("Japanese-writing pack semantic version must be 0.8.0")
-    if compatibility.get("pack_version") != pack.get("version"):
-        errors.append("Japanese-writing pack/compatibility versions differ")
-    required = ">=2.3.0"
-    if pack.get("engine") != required or compatibility.get("engine") != required:
-        errors.append(
-            f"Japanese-writing pack and compatibility must both require engine {required}"
-        )
-    try:
-        runtime_tuple = tuple(int(part) for part in runtime_version.split("."))
-    except ValueError:
-        errors.append("runtime version is not semantic x.y.z")
-    else:
-        if len(runtime_tuple) != 3 or runtime_tuple < (2, 3, 0):
-            errors.append("runtime version does not satisfy Japanese-writing engine >=2.3.0")
-    return errors
-
-
 # ── release metadata consistency (plugin.json ⇄ CHANGELOG.md; #231) ──────────
 def check_release_metadata() -> None:
     """Check that CHANGELOG.md has a `## [x.y.z]` section matching plugin.json's version.
@@ -82,16 +52,6 @@ def check_release_metadata() -> None:
             _emit("FAIL", f"release — {label} version ({m.group(1)}) != plugin.json ({version})")
         else:
             _emit("PASS", f"release: plugin.json version ({version}) ⇄ {label} match")
-
-    compatibility_errors = japanese_pack_release_errors(ROOT, version)
-    if compatibility_errors:
-        for error in compatibility_errors:
-            _emit("FAIL", f"release — {error}")
-    else:
-        _emit(
-            "PASS",
-            "release: Japanese-writing pack 0.8.0 requires engine >=2.3.0",
-        )
 
 
 # ── skills-lock.json consistency (/rig:import provenance record; #249) ───────

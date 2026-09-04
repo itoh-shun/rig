@@ -5,11 +5,6 @@ argument-hint: "[用途・読み手・掲載先・明示された事実・下書
 
 # rig/japanese-writing — 日本語の完成稿を作る
 
-> この command asset は installed pack の呼び出し資料です。pack install だけでは
-> ホストの slash command に自動登録されません。通常は
-> `$rig --recipe japanese-writing` で起動します。project pack の初回実行では内容を
-> 確認し、`RIG_ALLOW_PROJECT_PACKS=1` を設定して asset trust を記録してください。
-
 最初に `rig:engine` skill を起動し、PARSE → RESOLVE → COMPOSE → RUN、facet の配置順、
 context-minimal の規律に従います。この command は入口だけを担い、執筆規則は
 `writing-delivery-contract` と `japanese-writing-rules-v2` にあります。
@@ -17,8 +12,7 @@ context-minimal の規律に従います。この command は入口だけを担�
 ## 導入と起動
 
 ```text
-rig-wb pack install domain:japanese-writing --scope project --allow-unverified
-RIG_ALLOW_PROJECT_PACKS=1 $rig --recipe japanese-writing \
+$rig --recipe japanese-writing \
   "顧客向け障害連絡。掲載先はメール本文。確認済みの影響、時刻、対応状況は次のとおり: ..."
 ```
 

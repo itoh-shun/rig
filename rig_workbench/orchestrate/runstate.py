@@ -11,6 +11,7 @@ import stat
 
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
+from .secure_runtime import JAPANESE_WRITING_RECIPES
 from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
 
 # Bumped to 2 when the preflight gained the verdict-less-executor rule (#496/#497).
@@ -510,7 +511,7 @@ def _validate_recipe_provenance(state: dict) -> None:
 
 def _validate_secure_review_category_binding(state: dict) -> None:
     """Reject missing, changed, or duplicated secure Japanese category bindings."""
-    if state.get("recipe") != "japanese-writing" or not state.get("secure_runtime"):
+    if state.get("recipe") not in JAPANESE_WRITING_RECIPES or not state.get("secure_runtime"):
         return
     allowed = {"general", "incident_report", "support_reply"}
     category = state.get("review_category")
@@ -529,7 +530,7 @@ def _validate_secure_review_category_binding(state: dict) -> None:
 
 def _validate_secure_material_profile_binding(state: dict) -> None:
     """Reject missing or changed secure Japanese style-material bindings."""
-    if state.get("recipe") != "japanese-writing" or not state.get("secure_runtime"):
+    if state.get("recipe") not in JAPANESE_WRITING_RECIPES or not state.get("secure_runtime"):
         return
     allowed = {"none", "technical", "conversation"}
     profile = state.get("material_profile")

@@ -1078,7 +1078,7 @@ Specialized workflows are distributed outside the default catalog. Install only 
 Packs are installed and inspected with `rig-wb pack`:
 
 ```bash
-rig-wb pack install domain:japanese-writing --scope project --allow-unverified
+rig-wb pack install domain:sales --scope project --allow-unverified
 rig-wb pack list                             # what is installed, its origin, and whether it verified
 rig-wb pack verify-sources --scope project   # re-check packs locked against a declared git source
 ```

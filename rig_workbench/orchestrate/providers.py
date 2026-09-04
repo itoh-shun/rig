@@ -27,6 +27,7 @@ from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
 from .runstate import (answered_criteria, compute_next, enforce_executable_state, gate_outcome, save_state,
                        stage_gate_status, telemetry_append)
 from .secure_runtime import (
+    JAPANESE_WRITING_RECIPES,
     SecureRuntimeError,
     requires_secure_runtime,
     run_secure_provider,
@@ -1887,7 +1888,7 @@ def compose_step_prompt(
 ) -> str:
     """Compose the canonical runtime generator prompt as a pure function."""
     contract = _build_step_contract(state, step, st)
-    if state.get("recipe") == "japanese-writing" and step.get("id") == "write":
+    if state.get("recipe") in JAPANESE_WRITING_RECIPES and step.get("id") == "write":
         output_rule = (
             "Return only the completed deliverable text on stdout. Do not add status, "
             "path, explanation, Markdown fencing, or a STATUS line."
@@ -1903,7 +1904,7 @@ def compose_step_prompt(
         key: list(value)
         for key, value in (_generator_facets(step) if facets is None else facets).items()
     }
-    if state.get("recipe") == "japanese-writing" and step.get("id") == "write":
+    if state.get("recipe") in JAPANESE_WRITING_RECIPES and step.get("id") == "write":
         material = _sealed_japanese_material(state, step)
         if material is not None:
             composed_facets["knowledge"].append(material)
@@ -2415,7 +2416,7 @@ def _generate(state: dict, step: dict, gen_list: list[str], ver: str,
             cfg,
         )
         if (
-            state.get("recipe") != "japanese-writing"
+            state.get("recipe") not in JAPANESE_WRITING_RECIPES
             or step.get("id") != "write"
             or len(gen_list) != 1
             or artifact is None
@@ -3374,7 +3375,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     cfg = {**cfg, "_perf": perf.accumulator()}
     if (
         cfg.get("secure_runtime")
-        and state.get("recipe") == "japanese-writing"
+        and state.get("recipe") in JAPANESE_WRITING_RECIPES
         and state.get("review_category") not in JAPANESE_WRITING_REVIEW_CATEGORIES
     ):
         state["stopped"] = {

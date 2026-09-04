@@ -565,7 +565,7 @@ def test_secure_material_snapshot_is_stable_during_run_and_asset_drift_blocks_re
     from rig_workbench.orchestrate.secure_fs import atomic_write_bytes
 
     recipe_path = pathlib.Path(__file__).resolve().parents[1] / (
-        "packs/domain/japanese-writing/recipes/japanese-writing.md"
+        "skills/engine/recipes/japanese-writing.md"
     )
     recipe, _warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
     write, review = load_steps(recipe)
@@ -847,14 +847,6 @@ def test_legacy_init_remains_usable_without_secure_provider_configuration(
     monkeypatch.setattr(commands, "resolve_recipe", lambda _name: recipe)
     commands.cmd_init(["legacy", "--out", str(output)])
     assert output.is_file()
-
-
-def test_release_metadata_accepts_japanese_pack_080_on_engine_230():
-    from rig_workbench.validation.release import japanese_pack_release_errors
-
-    root = pathlib.Path(__file__).resolve().parents[1]
-    assert japanese_pack_release_errors(root, "2.3.0") == []
-    assert japanese_pack_release_errors(root, "2.3.1") == []
 
 
 def test_secure_runtime_support_check_fails_closed_with_structured_diagnostics(

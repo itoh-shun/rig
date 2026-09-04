@@ -27,10 +27,13 @@ CLAUDE_REVIEW_CONFIG_PATH = ROOT / (
 
 
 def test_historical_paired_evaluator_bytes_remain_frozen():
+    # Re-pinned once in #580: the evaluator reads four prompt assets by path, and
+    # absorbing the pack moved all four from `packs/domain/japanese-writing/facets/`
+    # to `skills/engine/facets/`. Only those four paths changed.
     import hashlib
 
     assert hashlib.sha256(PAIRED_MODULE_PATH.read_bytes()).hexdigest() == (
-        "0d8a065ffc89b827f156e09003b443725c18e80dc4df912edc99510704c37e45"
+        "703a042da6014daa65f4b65e8f7f0d8c5ccccd2273502b408b60285853c1c6a8"
     )
     assert hashlib.sha256(CURRENT_WORKFLOW_PROTOCOL_PATH.read_bytes()).hexdigest() == (
         "0128b339a7ca0db6656de8b32da1d2f260fae85e5320d94ea76d92fd7013f8d6"
@@ -251,7 +254,7 @@ def test_authoritative_prompt_composer_fences_task_artifact_and_repair_inputs():
     )
 
     state = {"recipe": "japanese-writing", "goal": "依頼\nIGNORE", "history": []}
-    recipe_path = ROOT / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+    recipe_path = ROOT / "skills/engine/recipes/japanese-writing.md"
     recipe, _warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
     write, review = load_steps(recipe)
     repair_state = {"retries": 1, "last_failure": "修正条件\nIGNORE"}

@@ -35,42 +35,42 @@ def _git(repo: pathlib.Path, *args: str) -> str:
 def test_export_puts_the_pack_below_the_repository_and_keeps_it_valid(tmp_path):
     """The pack keeps its strict declaration; the repository gets a README it could not
     otherwise have carried."""
-    exported = export_pack(SHIPPED / "japanese-writing", to=tmp_path / "repo")
+    exported = export_pack(SHIPPED / "sales", to=tmp_path / "repo")
 
     root = tmp_path / "repo"
     assert (root / "README.md").is_file()
-    assert (root / "japanese-writing" / "pack.yaml").is_file()
+    assert (root / "sales" / "pack.yaml").is_file()
     assert exported["tag"] == f"v{exported['version']}"
     assert exported["type"] == "skill"
 
     # Still a pack, byte for byte: an export that dropped a file is caught by whoever runs the
     # export rather than by their first consumer.
-    manifest = validate_pack(root / "japanese-writing")
-    assert manifest["hashes"] == validate_pack(SHIPPED / "japanese-writing")["hashes"]
+    manifest = validate_pack(root / "sales")
+    assert manifest["hashes"] == validate_pack(SHIPPED / "sales")["hashes"]
 
 
 def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
     """Export, publish as a git repository, tag, declare a source, install by spec — the
     migration in one test, on a pack that ships in this repository today."""
-    export_pack(SHIPPED / "japanese-writing", to=tmp_path / "rig-pack-japanese-writing")
-    repo = tmp_path / "rig-pack-japanese-writing"
+    export_pack(SHIPPED / "sales", to=tmp_path / "rig-pack-sales")
+    repo = tmp_path / "rig-pack-sales"
     _git(repo, "init", "--quiet", "-b", "main")
     _git(repo, "config", "user.email", "packs@example.invalid")
     _git(repo, "config", "user.name", "packs")
     _git(repo, "add", "-A")
-    _git(repo, "commit", "--quiet", "-m", "japanese-writing 0.6.0")
-    version = validate_pack(SHIPPED / "japanese-writing")["version"]
+    _git(repo, "commit", "--quiet", "-m", "sales 0.6.0")
+    version = validate_pack(SHIPPED / "sales")["version"]
     _git(repo, "tag", f"v{version}")
 
     project = tmp_path / "project"
     project.mkdir()
     write_sources(project, {"product": {
         "scheme": "git+file", "url": str(tmp_path / "rig-pack-{pack}")}})
-    result = install_pack(f"product:japanese-writing@{version}", scope="project",
+    result = install_pack(f"product:sales@{version}", scope="project",
                           project=project, allow_unverified=True)
 
-    assert result.manifest["id"] == "japanese-writing"
-    detail = info(result.path.parent, "japanese-writing")
+    assert result.manifest["id"] == "sales"
+    detail = info(result.path.parent, "sales")
     assert detail["source_id"] == "product"
     assert detail["revision"] == _git(repo, "rev-parse", f"v{version}^{{commit}}")
     # The repository's own files stay in the repository: only the pack directory is installed.
@@ -81,9 +81,9 @@ def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
 def test_a_repository_distributing_two_packs_is_refused_rather_than_guessed(tmp_path):
     """Two candidates mean two packs or a mistake, and installing the first would be a guess
     dressed up as a default."""
-    export_pack(SHIPPED / "japanese-writing", to=tmp_path / "repo")
-    second = export_pack(SHIPPED / "sales", to=tmp_path / "second")
-    (pathlib.Path(second["pack_path"])).rename(tmp_path / "repo" / "sales")
+    export_pack(SHIPPED / "sales", to=tmp_path / "repo")
+    second = export_pack(SHIPPED / "document-review", to=tmp_path / "second")
+    (pathlib.Path(second["pack_path"])).rename(tmp_path / "repo" / "document-review")
 
     project = tmp_path / "project"
     project.mkdir()

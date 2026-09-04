@@ -13,7 +13,7 @@ exactly what the migration exists to hand over.
 ### 1. Export the pack as its own repository tree
 
 ```console
-rig-wb pack export packs/domain/japanese-writing --to ../rig-pack-japanese-writing
+rig-wb pack export packs/domain/sales --to ../rig-pack-sales
 ```
 
 The pack is validated where it stands first — exporting an invalid pack would move the
@@ -23,9 +23,9 @@ The result is a repository with the pack in a subdirectory and a generated `READ
 root:
 
 ```text
-rig-pack-japanese-writing/
+rig-pack-sales/
 ├─ README.md
-└─ japanese-writing/
+└─ sales/
    ├─ pack.yaml
    ├─ compatibility.yaml
    ├─ recipes/ facets/ commands/ evals/ resources/
@@ -39,8 +39,8 @@ CI. Only the pack directory is ever copied to somebody who installs it.
 ### 2. Create the repository and push
 
 ```console
-cd ../rig-pack-japanese-writing
-git init && git add -A && git commit -m "japanese-writing 0.6.0"
+cd ../rig-pack-sales
+git init && git add -A && git commit -m "sales 0.6.0"
 git remote add origin <your repository URL>
 git push -u origin main
 ```
@@ -65,7 +65,7 @@ Declare where your packs come from, once, then install by name:
 
 ```console
 rig-wb pack source add product --scheme git+ssh --url git@github.com:acme/rig-pack-{pack}.git
-rig-wb pack install product:japanese-writing@0.6.0 --scope project
+rig-wb pack install product:sales@0.6.0 --scope project
 ```
 
 Authentication is whatever `git` on that machine already uses — an SSH agent, a credential
@@ -78,9 +78,9 @@ the same tier order, so a project overlay still wins over an installed pack.
 
 ```console
 rig-wb pack list             # what is installed, and where each came from
-rig-wb pack info japanese-writing
+rig-wb pack info sales
 rig-wb pack outdated         # what each source publishes now
-rig-wb pack update japanese-writing --to 0.7.0
+rig-wb pack update sales --to 0.7.0
 rig-wb pack verify-sources   # do the recorded pins still hold?
 ```
 
