@@ -767,13 +767,32 @@ def cmd_run(args):
             i += 1
     if cli_checks:
         cfg["checks"] = list(cli_checks)
-        for step in steps:
-            # Was `executor == "checks-only" and gate == "acceptance-gate"`. That pair is now
-            # refused before the run starts (a verdict-less executor cannot carry a runtime
-            # gate), so the old condition matched nothing and `--check` would have been
-            # accepted, echoed, and silently dropped on the floor.
-            if step.get("executor") == "checks-only":
-                step["checks"].extend(cli_checks)
+        # Was `executor == "checks-only" and gate == "acceptance-gate"`. That pair is now
+        # refused before the run starts (a verdict-less executor cannot carry a runtime
+        # gate), so the old condition matched nothing and `--check` would have been
+        # accepted, echoed, and silently dropped on the floor.
+        #
+        # Narrowing the condition fixed one silent drop and left the other half of it:
+        # a recipe with no `checks-only` step swallowed `--check` without a word.
+        # Neither `feature` nor `bugfix` has such a step, so `--check "pytest -q"` on
+        # the two most-used recipes attaches to nothing. `cfg["checks"]` still carries
+        # the commands, but its only readers are the adaptive executors
+        # (`_adaptive_check_allowlist`), so on a recipe with no executor steps the flag
+        # genuinely does nothing.
+        #
+        # This warns rather than aborting. `--step-model` below exits because an unknown
+        # step id is a typo — the run cannot mean what was typed. `--check` on an
+        # agent-step recipe is a category mismatch, not a mistyped name, and a passing
+        # test pins the current exit behaviour, so the fix here is to stop being silent
+        # rather than to change what the option does.
+        checks_only = [s for s in steps if s.get("executor") == "checks-only"]
+        if not checks_only:
+            diagnostic(f"[WARN] --check: recipe `{fm.get('name', path.stem)}` has no step "
+                       f"with `executor: checks-only`, so {len(cli_checks)} command(s) "
+                       f"will not be run as a step check "
+                       f"(steps: {', '.join(s['id'] for s in steps)})")
+        for step in checks_only:
+            step["checks"].extend(cli_checks)
     # Unknown step ids abort the run before anything executes (no silent ignores; #293)
     unknown = unknown_step_model_ids(step_models, steps)
     if unknown:

@@ -40,17 +40,18 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 ARGV_GOLDEN = {
     ("rig", "generator", (), ""): [
         "claude", "-p", runtime.RIG_GEN_PREFIX + "P", "--output-format", "text",
-        "--permission-mode", "acceptEdits"],
+        "--permission-mode", "acceptEdits", "--allowedTools", "Bash"],
     ("rig", "verifier", (), ""): [
         "claude", "-p", runtime.RIG_VER_PREFIX + "P", "--output-format", "text",
         "--allowedTools", "Read,Grep,Glob"],
     ("claude", "generator", (), ""): [
-        "claude", "-p", "P", "--output-format", "text", "--permission-mode", "acceptEdits"],
+        "claude", "-p", "P", "--output-format", "text", "--permission-mode", "acceptEdits",
+        "--allowedTools", "Bash"],
     ("claude", "verifier", (), ""): [
         "claude", "-p", "P", "--output-format", "text", "--allowedTools", "Read,Grep,Glob"],
     ("claude", "generator", (("model", "claude-opus-4-8"),), ""): [
         "claude", "-p", "P", "--output-format", "text", "--model", "claude-opus-4-8",
-        "--permission-mode", "acceptEdits"],
+        "--permission-mode", "acceptEdits", "--allowedTools", "Bash"],
     ("claude", "verifier", (("claude_no_session_persistence", True),), ""): [
         "claude", "-p", "P", "--output-format", "text", "--no-session-persistence",
         "--allowedTools", "Read,Grep,Glob"],

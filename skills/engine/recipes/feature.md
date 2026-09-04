@@ -1,6 +1,6 @@
 ---
 name: feature
-description: workbench 既定の feature フロー（inspect→clarify-requirements→design→implement→test→update-docs-if-needed→review-diff→acceptance）。隔離 worktree ＋ machine-gate な acceptance-check で締める。`/rig "<機能追加>"` から自動選択される。
+description: workbench 既定の feature フロー（inspect→clarify-requirements→design→write-tests→implement→test→update-docs-if-needed→review-diff→acceptance）。隔離 worktree ＋ machine-gate な acceptance-check で締める。`/rig "<機能追加>"` から自動選択される。
 scope: shipped
 autonomy: interactive
 steps:
@@ -18,6 +18,11 @@ steps:
     pattern: serial
     personas: [implementer]
     policies: [risk-based-testing]
+  - id: write-tests
+    instruction: write-tests-first
+    pattern: serial
+    personas: [implementer]
+    policies: [ci-cost]
   - id: implement
     instruction: implement
     pattern: serial
@@ -71,11 +76,12 @@ steps:
 1. **inspect** — 何/なぜ/どこ/どこまでを確定する。
 2. **clarify-requirements** — AC（完了条件）を明文化する。曖昧な場合はここでユーザーに問い直す（`facets/instructions/intake` ①のスコープ確認を要件確定に特化して再適用）。
 3. **design** — 最低限の設計ドキュメント（目的・方針・AC・除外事項）を作成する（`facets/instructions/design`）。size が S でも省略しない（feature は常に design を1段挟む——size-aware の重い step 自動 OFF は verify/review 側の話であり、feature recipe 自体は既定で design を含む）。
-4. **implement** — 設計に従って実装する。
-5. **test** — build/lint/test を実行する。
-6. **update-docs-if-needed** — 公開挙動・API・設定を変えた場合のみドキュメントを更新する（無関係なら skip・`no_unrelated_diff` を守る）。
-7. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー。
-8. **acceptance** — acceptance-check（`max_retries: 2`）。この step の `acceptance:` の13件はこのフローが証拠を作る作業一覧で、accept の条件ではない。要求の正本は `standard` + `feature` preset から組まれるタスクのゲート——`rig-wb wb accept` はそちらが埋まるまで拒否する。
+4. **write-tests** — 追加する振る舞いの実行可能なテストを、実装より先に書いてツリーに残す（`facets/instructions/write-tests-first`）。`risk-based-testing`（既存コードのどこに足すか）を覆すものではなく、**いま足す振る舞い自身**の証拠を用意する step。実測でこの穴が出ている——新規 CLI を一から作らせた3ランで、成果物にテストが1つも残らなかった。
+5. **implement** — 設計に従って実装する。
+6. **test** — build/lint/test を実行する。
+7. **update-docs-if-needed** — 公開挙動・API・設定を変えた場合のみドキュメントを更新する（無関係なら skip・`no_unrelated_diff` を守る）。
+8. **review-diff** — security/design/test/behavioral-correctness の4観点並列レビュー。
+9. **acceptance** — acceptance-check（`max_retries: 2`）。この step の `acceptance:` の13件はこのフローが証拠を作る作業一覧で、accept の条件ではない。要求の正本は `standard` + `feature` preset から組まれるタスクのゲート——`rig-wb wb accept` はそちらが埋まるまで拒否する。
 
 ## bugfix との違い
 
