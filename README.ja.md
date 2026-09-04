@@ -935,7 +935,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 pack の導入と確認は `rig-wb pack` で行う。
 
 ```bash
-rig-wb pack install domain:japanese-writing --scope project --allow-unverified
+rig-wb pack install domain:sales --scope project --allow-unverified
 rig-wb pack list                             # 何が入っているか、出所は、検証は通ったか
 rig-wb pack verify-sources --scope project   # 宣言済み git source に紐づく pack を突き合わせ直す
 ```

@@ -191,15 +191,15 @@ rig-wb pack source remove product
 ## Taking a pack out to its own repository
 
 ```console
-rig-wb pack export packs/domain/japanese-writing --to ../rig-pack-japanese-writing
+rig-wb pack export packs/domain/sales --to ../rig-pack-sales
 ```
 
 The pack lands one level down, with the repository's own files at the root:
 
 ```text
-rig-pack-japanese-writing/
+rig-pack-sales/
 ├─ README.md
-└─ japanese-writing/pack.yaml, recipes/, facets/, ...
+└─ sales/pack.yaml, recipes/, facets/, ...
 ```
 
 That nesting is required, not stylistic. A pack directory may contain nothing it has not

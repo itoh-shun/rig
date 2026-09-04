@@ -78,7 +78,7 @@ just barely have fitted. Widening the box is the cheap answer.
 
 ## Register
 
-The prose is written under the shipped `japanese-writing` pack, in `talk` mode
+The prose is written under the shipped `japanese-writing` recipe, in `talk` mode
 (`facets/policies/japanese-writing-modes.md`): polite form throughout, plain words
 over Sino-Japanese compounds, the reader addressed directly, and short sentences.
 

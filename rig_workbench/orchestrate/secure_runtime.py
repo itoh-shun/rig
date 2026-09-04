@@ -71,6 +71,15 @@ class SecureLauncher:
                 pass
 
 
+#: The Japanese-writing lane, by recipe name. Both recipes drive the same sealed
+#: provider boundary, material injection, review category and artifact stdout; until
+#: #580 the revision recipe opted in by declaring the *other* recipe's `name`, which
+#: the pack layer allowed and core's name-matches-filename rule does not. Membership
+#: is declared here because this is the only module `commands`, `runstate` and
+#: `providers` all import without a cycle.
+JAPANESE_WRITING_RECIPES = ("japanese-writing", "japanese-writing-revision")
+
+
 def requires_secure_runtime(recipe_name: str, steps: list[dict]) -> bool:
     """Whether the recipe explicitly opts into the sealed provider boundary."""
     return any(

@@ -33,12 +33,12 @@ PROTOCOL_PATH = HERE / "paired_dev_protocol.json"
 DEV_CASES = HERE / "parity_cases.dev.json"
 CONFIG_PATH = HERE / "parity.providers.example.json"
 ASSET_PATHS = {
-    "persona": REPO / "packs/domain/japanese-writing/facets/personas/japanese-writer.md",
-    "instruction": REPO / "packs/domain/japanese-writing/facets/instructions/japanese-write.md",
+    "persona": REPO / "skills/engine/facets/personas/japanese-writer.md",
+    "instruction": REPO / "skills/engine/facets/instructions/japanese-write.md",
     "framework": REPO
-    / "packs/domain/japanese-writing/facets/policies/writing-delivery-contract.md",
+    / "skills/engine/facets/policies/writing-delivery-contract.md",
     "language": REPO
-    / "packs/domain/japanese-writing/facets/policies/japanese-writing-rules-v2.md",
+    / "skills/engine/facets/policies/japanese-writing-rules-v2.md",
 }
 EXPECTED_DEV_CASES = 10
 SCHEMA = 4

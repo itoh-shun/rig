@@ -29,7 +29,7 @@ PARITY_PATH = HERE / "parity.py"
 PROTOCOL_PATH = HERE / "workflow_claude_review_protocol.json"
 DEV_CASES = HERE / "parity_cases.dev.json"
 CONFIG_PATH = HERE / "workflow_claude_review.providers.example.json"
-RECIPE_PATH = REPO / "packs/domain/japanese-writing/recipes/japanese-writing.md"
+RECIPE_PATH = REPO / "skills/engine/recipes/japanese-writing.md"
 EXPECTED_DEV_CASES = 10
 SCHEMA = 6
 

@@ -4,6 +4,48 @@
 
 ### Changed
 
+**Japanese writing is core, not an opt-in pack (#580).** `packs/domain/japanese-writing` is
+gone; its two recipes, two personas, three instructions, four policies, output contract,
+three wiki pages and two commands now live at their core homes, and `resolve_asset` reports
+them at tier `core`. `packs/` now holds only the packs the engine does not name. The
+eighteen `== "japanese-writing"` literals in the orchestrator are not removed — absorbing
+the pack makes them true, because they now name core material. The one that read a manifest
+is: `japanese_pack_release_errors` pinned the pack at 0.8.0 against engine `>=2.3.0`, and
+there is no pack left to version.
+
+Four things the boundary was hiding, none of which changed the recipe's behaviour — only
+what rig could see about it:
+
+- **Two recipes shipped the same `name`.** `japanese-writing-revision.md` declared
+  `name: japanese-writing`, and that is how it opted into the sealed provider lane, the
+  material injection, the review-category guard and artifact stdout: every branch tests
+  `fm["name"]`. The pack layer never applied core's name-matches-filename rule, so nothing
+  caught it — and `state["recipe"]` reads the same field, so every revision run has been
+  filed under the base recipe. Membership is declared once now, as
+  `JAPANESE_WRITING_RECIPES`, and the revision recipe carries its own name and its own
+  label. Runs of it are labelled `japanese-writing-revision` from here on.
+- **Nothing asserted the lane fails closed.** No test covered the guard that refuses a
+  secure run without `--review-category`, for either recipe. There is one now, parametrized
+  over both names.
+- **`resources/attested/` is not boundary residue.** It reads like the layout sensors
+  deleted above — a second copy of two `docs/articles/` files, inside the pack because a
+  pack may not reach outside itself — and it is not. `resolve_japanese_material` opens it
+  under `owner_root`, checks uid, mode and hardlink count, then verifies sha256, git blob
+  and the exact attested line span against the wiki page body. `docs/articles/` is the
+  editable origin; this is the witness the runtime trusts, and a doc tree cannot satisfy
+  those checks. It moves to `skills/engine/resources/attested/`.
+- **Nine evaluation cases were `approved` and had never run.** Same finding as the layout
+  gate's two — `pack test` reports `structural_only`, and the core runner composes no
+  prompt from `prompt_composition`. Unlike those two, these are live fixtures: pytest feeds
+  each case's `deterministic_checks` a written output and asserts they pass. They move to
+  `tests/fixtures/japanese-writing-cases/`, which is what they have always been. The
+  surfaces they name stay coverage debt.
+
+Both commands become real slash commands, which is what `commands/` means. Their
+`pack install` prerequisites and the `pack invoke` catalogue indirection are gone with the
+pack, and `docs/packs.md` and `docs/pack-migration.md` now use `sales` for the export
+example.
+
 **The layout gate is core, not an opt-in pack (#580).** `packs/domain/layout-gate` is gone;
 its recipe, two personas, three instructions, policy, output contract, wiki page, command
 and two evaluation cases now live at their core homes. The pack boundary was not free: a

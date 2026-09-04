@@ -40,7 +40,7 @@ UNINDEXED_DOCS = {
     # The rationale behind the pack model rather than instructions for using it, so it belongs
     # under packs.md — which the README does index — instead of beside it.
     "pack-vnext-design-brief.ja.md": "linked from docs/packs.md as the design rationale",
-    # Design notes for the japanese-writing pack's prosody work. They are cited by the
+    # Design notes for the Japanese-writing prosody work. They are cited by the
     # code that implements them (scripts/prose_rhythm.py, benchmarks/writing-tasks/
     # jp-natural-writing/affect_state.py) rather than read as user-facing docs.
     "jp-affect-seed-design.ja.md": "cited from the affect-state implementation",

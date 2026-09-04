@@ -21,6 +21,7 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
 from .providers import metering_note
+from .secure_runtime import JAPANESE_WRITING_RECIPES
 from .providers import (JAPANESE_MATERIAL_PROFILES, JAPANESE_WRITING_REVIEW_CATEGORIES,
                         record_verdicts, resolve_japanese_material, parse_step_model_spec,
                         read_result_artifact, run_loop, unknown_step_model_ids)
@@ -617,7 +618,7 @@ def cmd_run(args):
         sys.exit(1)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path), path)
-    artifact_stdout = fm.get("name", path.stem) == "japanese-writing"
+    artifact_stdout = fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
 
     def diagnostic(*items, **kwargs):
         print(*items, file=sys.stderr if artifact_stdout else sys.stdout, **kwargs)
@@ -784,7 +785,7 @@ def cmd_run(args):
     secure_required = requires_secure_runtime(fm.get("name", path.stem), steps)
     if (
         secure_required
-        and fm.get("name", path.stem) == "japanese-writing"
+        and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
         and review_category not in JAPANESE_WRITING_REVIEW_CATEGORIES
     ):
         diagnostic(
@@ -794,7 +795,7 @@ def cmd_run(args):
         raise SystemExit(2)
     if (
         secure_required
-        and fm.get("name", path.stem) == "japanese-writing"
+        and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
         and material_profile not in JAPANESE_MATERIAL_PROFILES
     ):
         diagnostic(
@@ -804,7 +805,7 @@ def cmd_run(args):
         raise SystemExit(2)
     material_text = None
     material_metadata = None
-    if secure_required and fm.get("name", path.stem) == "japanese-writing":
+    if secure_required and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES:
         try:
             material_text, material_metadata = resolve_japanese_material(
                 steps[0], material_profile
@@ -913,7 +914,7 @@ def cmd_run(args):
         "verifier": list(ver) if isinstance(ver, list) else ver,
         **({"model": cfg["model"]} if cfg.get("model") else {}),
     }
-    if secure_required and fm.get("name", path.stem) == "japanese-writing":
+    if secure_required and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES:
         state["review_category"] = review_category
         state["material_profile"] = material_profile
         state["material_provenance"] = material_metadata
@@ -929,11 +930,11 @@ def cmd_run(args):
             **({"goal_sha256": hashlib.sha256(goal.encode("utf-8")).hexdigest()}
                if isinstance(goal, str) else {}),
             **({"review_category": review_category}
-               if state.get("recipe") == "japanese-writing" else {}),
+               if state.get("recipe") in JAPANESE_WRITING_RECIPES else {}),
             **({"material_profile": material_profile,
                 "material_provenance": material_metadata,
                 "material_snapshot": material_snapshot}
-               if state.get("recipe") == "japanese-writing" else {}),
+               if state.get("recipe") in JAPANESE_WRITING_RECIPES else {}),
             "providers": {
                 role: {
                     "provider": launcher.provider,
@@ -991,7 +992,7 @@ def cmd_run(args):
         artifact = state.get("result_artifact")
         if final == "DONE" and isinstance(artifact, dict) and artifact.get("path"):
             diagnostic(f"deliverable: {artifact['path']}")
-            if state.get("recipe") == "japanese-writing":
+            if state.get("recipe") in JAPANESE_WRITING_RECIPES:
                 content = read_result_artifact(state, out)
                 if content is None:
                     diagnostic("[ERROR] completed deliverable cannot be read safely")

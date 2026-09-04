@@ -5,7 +5,11 @@ import re
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACK = REPO_ROOT / "packs" / "domain" / "japanese-writing"
+ENGINE = REPO_ROOT / "skills" / "engine"
+#: These read like eval cases and never were: the runner composes no prompt from
+#: `prompt_composition`, so nothing has ever executed them. What does use them is
+#: this file — each case's `deterministic_checks` are run against a written output.
+CASE_FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures/japanese-writing-cases"
 
 
 def _isolated(monkeypatch, tmp_path):
@@ -15,50 +19,26 @@ def _isolated(monkeypatch, tmp_path):
     monkeypatch.delenv("RIG_ORG_HOME", raising=False)
 
 
-def test_japanese_writing_is_opt_in_valid_and_provider_neutral(monkeypatch, tmp_path):
-    from rig_workbench.packs.manifest import parse_frontmatter_subset, read_json_yaml
+def test_japanese_writing_is_core_and_provider_neutral(monkeypatch, tmp_path):
+    from rig_workbench.packs.manifest import parse_frontmatter_subset
     from rig_workbench.packs.resolver import resolve_asset
-    from rig_workbench.packs.validation import validate_pack
 
     _isolated(monkeypatch, tmp_path)
-    assert not (REPO_ROOT / "skills/engine/recipes/japanese-writing.md").exists()
-    assert not (REPO_ROOT / "commands/japanese-writing.md").exists()
-    assert resolve_asset("recipe", "japanese-writing", project=tmp_path) is None
-
-    manifest = validate_pack(PACK)
-    assert manifest["id"] == "japanese-writing"
-    assert manifest["version"] == "0.8.0"
-    _raw, compatibility = read_json_yaml(PACK / "compatibility.yaml")
-    assert compatibility["pack_version"] == "0.8.0"
-    assert compatibility["engine"] == ">=2.3.0"
-    assert manifest["dependencies"] == []
-    assert {
-        "id": "japanese-writing-revision-command",
-        "kind": "command",
-        "target": "japanese-writing-revision",
-    } in manifest["entrypoints"]
-    # The revision recipe is a declared surface too, like the base recipe.
-    assert {
-        "id": "japanese-writing-revision",
-        "kind": "recipe",
-        "target": "japanese-writing-revision",
-    } in manifest["entrypoints"]
-    assert manifest["assets"]["policy"] == [
-        "facets/policies/japanese-writing-modes.md",
-        "facets/policies/japanese-writing-rules-v2.md",
-        "facets/policies/secure-provider-execution.md",
-        "facets/policies/writing-delivery-contract.md",
-    ]
-    assert manifest["assets"]["wiki"] == [
-        "facets/knowledge/japanese-ai-smell-jp.md",
-        "facets/knowledge/japanese-style-material-conversation.md",
-        "facets/knowledge/japanese-style-material-technical.md",
-    ]
-    assert (
-        "evals/cases/japanese-writing-meaningful-negation-contrast/case.json"
-        in manifest["assets"]["eval-case"]
-    )
-    recipe = parse_frontmatter_subset(PACK / "recipes/japanese-writing.md")
+    assert (ENGINE / "recipes/japanese-writing.md").is_file()
+    assert (ENGINE / "recipes/japanese-writing-revision.md").is_file()
+    assert (REPO_ROOT / "commands/japanese-writing.md").is_file()
+    assert (REPO_ROOT / "commands/japanese-writing-revision.md").is_file()
+    assert not (REPO_ROOT / "packs/domain/japanese-writing").exists()
+    for name in ("japanese-writing", "japanese-writing-revision"):
+        resolved = resolve_asset("recipe", name, project=tmp_path)
+        assert resolved is not None, name
+        assert resolved.tier == "core"
+    # The pack layer never applied core's name-matches-filename rule, so the revision
+    # recipe opted into the Japanese-writing lane by declaring the *other* recipe's
+    # name — and filed every one of its runs under it.
+    assert parse_frontmatter_subset(
+        ENGINE / "recipes/japanese-writing-revision.md")["name"] == "japanese-writing-revision"
+    recipe = parse_frontmatter_subset(ENGINE / "recipes/japanese-writing.md")
     assert "model" not in recipe and "verifier_model" not in recipe
     assert recipe["steps"][0]["policies"] == [
         "writing-delivery-contract", "japanese-writing-rules-v2", "japanese-writing-modes"
@@ -89,12 +69,12 @@ def test_style_material_assets_are_bounded_and_attested_to_exact_project_sources
             "a83c98ba860f0b9c58b5bae95301f39d9f2dce80fdadce609486785958199150",
         ),
     }
-    recipe = parse_frontmatter_subset(PACK / "recipes/japanese-writing.md")
+    recipe = parse_frontmatter_subset(ENGINE / "recipes/japanese-writing.md")
     mappings = recipe["steps"][0]["material_profiles"]
     assert set(mappings) == set(expected)
     declared_sources = set()
     for profile, (filename, source, source_sha) in expected.items():
-        asset = PACK / "facets/knowledge" / filename
+        asset = ENGINE / "facets/knowledge/wiki" / filename
         metadata = parse_frontmatter_subset(asset)["material_provenance"]
         assert mappings[profile]["inject"] == [f"[[{asset.stem}]]"]
         declared_sources.add(metadata["source_path"])
@@ -111,7 +91,7 @@ def test_style_material_assets_are_bounded_and_attested_to_exact_project_sources
         assert metadata["license"] == "MIT"
         assert metadata["privacy"] == "non-sensitive"
         assert metadata["permitted_transmission"] == ["gpt", "claude"]
-        packaged = PACK / metadata["packaged_source_path"]
+        packaged = ENGINE / metadata["packaged_source_path"]
         assert metadata["packaged_source_media_type"] == "text/markdown"
         assert metadata["packaged_source_sha256"] == source_sha
         assert packaged.read_bytes() == (REPO_ROOT / source).read_bytes()
@@ -155,34 +135,27 @@ def test_style_material_assets_are_bounded_and_attested_to_exact_project_sources
     }
 
 
-def test_style_material_runtime_uses_packaged_attested_blobs_without_repo_docs(
+def test_style_material_runtime_uses_attested_blobs_without_repo_docs(
     monkeypatch, tmp_path,
 ):
-    import shutil
-
     from rig_workbench.orchestrate import providers
     from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
-    from rig_workbench.packs.validation import validate_pack
 
     monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "user-home"))
     monkeypatch.setenv("RIG_HOME", str(REPO_ROOT))
-    monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
-    monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(tmp_path / "trusted-assets.json"))
-    installed = tmp_path / "user-home/.rig/packs/japanese-writing"
-    installed.parent.mkdir(parents=True)
-    shutil.copytree(PACK, installed)
-    validate_pack(installed)
-    recipe_path = installed / "recipes/japanese-writing.md"
+    recipe_path = ENGINE / "recipes/japanese-writing.md"
     recipe, warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
     assert warnings == []
     write = load_steps(recipe)[0]
+    # The witness is found through the recipe's own owner root, not through RIG_HOME
+    # and not through docs/articles/: point RIG_HOME at nothing and it still resolves.
     monkeypatch.setattr(providers.config, "RIG_HOME", tmp_path / "missing-checkout")
     for profile in ("technical", "conversation"):
         material, metadata = providers.resolve_japanese_material(write, profile)
         assert material is not None
         packaged = metadata["source_blob"]["packaged_path"]
         assert packaged.startswith("resources/attested/")
-        assert (installed / packaged).is_file()
+        assert (ENGINE / packaged).is_file()
 
 
 def test_draft_revision_recipe_is_opt_in_secure_and_uses_canonical_untrusted_prompt():
@@ -190,7 +163,7 @@ def test_draft_revision_recipe_is_opt_in_secure_and_uses_canonical_untrusted_pro
     from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
     from rig_workbench.orchestrate.runstate import compute_next, new_state
 
-    recipe_path = PACK / "recipes/japanese-writing-revision.md"
+    recipe_path = ENGINE / "recipes/japanese-writing-revision.md"
     recipe, warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
     assert warnings == []
     # Sharing the base recipe's `name` is deliberate, not a typo. It shadows nothing:
@@ -199,7 +172,7 @@ def test_draft_revision_recipe_is_opt_in_secure_and_uses_canonical_untrusted_pro
     # Japanese-writing safety branches off this exact string via
     # `fm.get("name", path.stem)` / `state["recipe"]`, so renaming the recipe would
     # silently turn those branches off for revision runs. Keep the names equal.
-    assert recipe["name"] == "japanese-writing"
+    assert recipe["name"] == "japanese-writing-revision"
     assert recipe["description"].startswith("既存下書きを")
     steps = load_steps(recipe)
     assert [step["id"] for step in steps] == ["write", "review"]
@@ -229,40 +202,9 @@ def test_draft_revision_recipe_is_opt_in_secure_and_uses_canonical_untrusted_pro
     assert draft in prompt
 
 
-def test_draft_revision_command_is_reachable_through_pack_entrypoint(tmp_path):
-    import subprocess
-    import sys
-
-    completed = subprocess.run(
-        [
-            sys.executable, "-m", "rig_workbench.cli", "pack", "invoke",
-            "japanese-writing:japanese-writing-revision-command", "--",
-            "/private/draft.md", "/private/revised.md",
-            "--review-category", "general", "--material-profile", "none",
-        ],
-        cwd=tmp_path,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
-        text=True,
-        capture_output=True,
-    )
-    assert completed.returncode == 0, completed.stderr
-    result = json.loads(completed.stdout)
-    assert result["status"] == "ready"
-    assert result["mode"] == "manual-command"
-    assert result["entrypoint"] == (
-        "japanese-writing:japanese-writing-revision-command"
-    )
-    assert pathlib.Path(result["asset"]).name == "japanese-writing-revision.md"
-    assert result["args"] == [
-        "/private/draft.md", "/private/revised.md",
-        "--review-category", "general", "--material-profile", "none",
-    ]
-
-
 def test_draft_revision_command_documents_no_clobber_private_file_transport():
-    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    command = (REPO_ROOT / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
     for required in (
-        "rig-wb pack invoke japanese-writing:japanese-writing-revision-command --",
         "rig-wb run japanese-writing-revision",
         '"--review-category", category',
         '"--material-profile", material_profile',
@@ -276,16 +218,11 @@ def test_draft_revision_command_documents_no_clobber_private_file_transport():
         'getattr(os, "O_NOFOLLOW", 0)',
         'raise FileExistsError("output already exists")',
         "os.link(",
-        "pack install domain:japanese-writing --scope project --allow-unverified",
-        "RIG_ALLOW_PROJECT_PACKS=1 rig-wb pack invoke",
     ):
         assert required in command
     assert command.count("source_fd = os.open(") == 1
     assert "shell=False" in command
-    assert "manual-command" in command
-    assert "`pack invoke` 自体はwrapperもproviderも実行しません" in command
     assert "trusted command host" in command
-    assert "/rig:japanese-writing-revision" not in command
     assert '< "$draft_path"' not in command
     assert "下書き本文を引数" not in command
 
@@ -294,7 +231,7 @@ def test_draft_revision_command_transports_stdin_and_never_clobbers_source(tmp_p
     import hashlib
     import subprocess
 
-    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    command = (REPO_ROOT / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
     script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
     assert script_match is not None
 
@@ -377,7 +314,7 @@ def test_draft_revision_command_uses_open_source_fd_across_path_swap(tmp_path):
     import hashlib
     import subprocess
 
-    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    command = (REPO_ROOT / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
     script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
     assert script_match is not None
     private = tmp_path / "private"
@@ -431,7 +368,7 @@ def test_draft_revision_command_rejects_missing_or_unknown_selectors_before_sour
 ):
     import subprocess
 
-    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    command = (REPO_ROOT / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
     script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
     assert script_match is not None
     private = tmp_path / "private"
@@ -484,7 +421,7 @@ def test_draft_revision_command_rejects_missing_or_unknown_selectors_before_sour
 def test_draft_revision_command_rejects_source_symlink_before_provider(tmp_path):
     import subprocess
 
-    command = (PACK / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
+    command = (REPO_ROOT / "commands/japanese-writing-revision.md").read_text(encoding="utf-8")
     script_match = re.search(r"```sh\n(.*?)\n```", command, re.DOTALL)
     assert script_match is not None
     private = tmp_path / "private"
@@ -535,7 +472,7 @@ def test_draft_revision_secure_state_persists_only_draft_hash(tmp_path):
     from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
     from rig_workbench.orchestrate.runstate import new_state, save_state
 
-    recipe_path = PACK / "recipes/japanese-writing-revision.md"
+    recipe_path = ENGINE / "recipes/japanese-writing-revision.md"
     recipe, warnings = resolve_extends(parse_frontmatter(recipe_path), recipe_path)
     assert warnings == []
     steps = load_steps(recipe)
@@ -578,10 +515,10 @@ def test_draft_revision_secure_state_persists_only_draft_hash(tmp_path):
 
 
 def test_rules_v3_is_exactly_three_language_bullets_with_delegated_boundaries():
-    delivery = (PACK / "facets/policies/writing-delivery-contract.md").read_text(
+    delivery = (ENGINE / "facets/policies/writing-delivery-contract.md").read_text(
         encoding="utf-8"
     )
-    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+    rules = (ENGINE / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
     for phrase in ("完成稿を一つだけ", "複数案、選択肢", "宛先形式"):
@@ -605,7 +542,7 @@ def test_rules_v3_is_exactly_three_language_bullets_with_delegated_boundaries():
 
 
 def test_writer_owns_fact_integrity_in_two_high_signal_bullets():
-    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    writer = (ENGINE / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
     bullets = [line for line in writer.splitlines() if line.startswith("- ")]
 
     assert all(
@@ -634,7 +571,7 @@ def test_writer_owns_fact_integrity_in_two_high_signal_bullets():
 def test_delivery_eval_rejects_reader_visible_workflow_state():
     from rig_workbench.packs.manifest import read_json_yaml
 
-    path = PACK / "evals/cases/japanese-writing-no-workflow-meta/case.json"
+    path = CASE_FIXTURES / "japanese-writing-no-workflow-meta/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     for phrase in ("レビュー", "合格", "完成稿", "生成過程"):
@@ -645,7 +582,7 @@ def test_terminal_boundary_eval_rejects_wrappers_separators_and_adjustment_offer
     from rig_workbench.eval.runner import _check
     from rig_workbench.packs.manifest import read_json_yaml
 
-    path = PACK / "evals/cases/japanese-writing-no-workflow-meta/case.json"
+    path = CASE_FIXTURES / "japanese-writing-no-workflow-meta/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     for spec in (
@@ -667,7 +604,7 @@ def test_ambiguity_eval_keeps_only_facts_common_to_plausible_readings():
     from rig_workbench.eval.runner import _check
     from rig_workbench.packs.manifest import read_json_yaml
 
-    path = PACK / "evals/cases/japanese-writing-ambiguity/case.json"
+    path = CASE_FIXTURES / "japanese-writing-ambiguity/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     for phrase in ("佐藤さん", "高橋さん"):
@@ -681,7 +618,7 @@ def test_internal_register_eval_rejects_customer_support_politeness():
     from rig_workbench.eval.runner import _check
     from rig_workbench.packs.manifest import read_json_yaml
 
-    path = PACK / "evals/cases/japanese-writing-internal-register/case.json"
+    path = CASE_FIXTURES / "japanese-writing-internal-register/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     assert "not_contains:お待ちいただけますか" in checks
@@ -695,7 +632,7 @@ def test_technical_explanation_eval_answers_directly_without_formula_sections():
     from rig_workbench.eval.runner import _check
     from rig_workbench.packs.manifest import read_json_yaml
 
-    path = PACK / "evals/cases/japanese-writing-technical-operation/case.json"
+    path = CASE_FIXTURES / "japanese-writing-technical-operation/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     for spec in (
@@ -725,7 +662,7 @@ def test_support_eval_requires_no_file_no_rows_and_masking():
     from rig_workbench.eval.runner import _check
     from rig_workbench.packs.manifest import read_json_yaml
 
-    path = PACK / "evals/cases/japanese-writing-support-data-minimization/case.json"
+    path = CASE_FIXTURES / "japanese-writing-support-data-minimization/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     assert "contains:だけ" in checks
@@ -748,8 +685,8 @@ def test_support_eval_requires_no_file_no_rows_and_masking():
 
 
 def test_writer_and_delivery_keep_internal_workflow_state_outside_output():
-    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
-    delivery = (PACK / "facets/policies/writing-delivery-contract.md").read_text(
+    writer = (ENGINE / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    delivery = (ENGINE / "facets/policies/writing-delivery-contract.md").read_text(
         encoding="utf-8"
     )
 
@@ -762,7 +699,7 @@ def test_writer_and_delivery_keep_internal_workflow_state_outside_output():
 
 
 def test_japanese_write_starts_and_stops_at_the_reader_facing_artifact():
-    instruction = (PACK / "facets/instructions/japanese-write.md").read_text(
+    instruction = (ENGINE / "facets/instructions/japanese-write.md").read_text(
         encoding="utf-8"
     )
 
@@ -777,7 +714,7 @@ def test_japanese_write_starts_and_stops_at_the_reader_facing_artifact():
 
 
 def test_rules_v3_keeps_short_conversation_continuous_without_fact_rules():
-    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+    rules = (ENGINE / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
 
@@ -786,7 +723,7 @@ def test_rules_v3_keeps_short_conversation_continuous_without_fact_rules():
     assert "意味が途切れるほどの省略を避けます" in rules
     for fact_rule in ("否定", "対比", "因果", "時点", "状態"):
         assert fact_rule not in rules
-    recipe = (PACK / "recipes/japanese-writing.md").read_text(encoding="utf-8")
+    recipe = (ENGINE / "recipes/japanese-writing.md").read_text(encoding="utf-8")
     assert "Rules v3" in recipe
     assert "Rules v2" not in recipe
 
@@ -795,7 +732,7 @@ def test_meaningful_negation_contrast_and_time_state_are_not_deduplicated():
     from rig_workbench.eval.runner import _check
     from rig_workbench.packs.manifest import read_json_yaml
 
-    path = PACK / "evals/cases/japanese-writing-meaningful-negation-contrast/case.json"
+    path = CASE_FIXTURES / "japanese-writing-meaningful-negation-contrast/case.json"
     _raw, case = read_json_yaml(path)
     checks = set(case["deterministic_checks"])
     rubric = case["semantic_rubric"][0]["description"]
@@ -824,8 +761,8 @@ def test_meaningful_negation_contrast_and_time_state_are_not_deduplicated():
 
 
 def test_writer_preserves_ambiguity_precedence_while_rules_delegate_facts():
-    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
-    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(encoding="utf-8")
+    writer = (ENGINE / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    rules = (ENGINE / "facets/policies/japanese-writing-rules-v2.md").read_text(encoding="utf-8")
 
     for phrase in (
         "入力だけでは決まらない参照先",
@@ -845,11 +782,11 @@ def test_writer_preserves_ambiguity_precedence_while_rules_delegate_facts():
 def test_technical_eval_owns_decision_relevant_condition_result_details():
     from rig_workbench.packs.manifest import read_json_yaml
 
-    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+    rules = (ENGINE / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
     _raw, case = read_json_yaml(
-        PACK / "evals/cases/japanese-writing-technical-operation/case.json"
+        CASE_FIXTURES / "japanese-writing-technical-operation/case.json"
     )
     rubric = case["semantic_rubric"][0]["description"]
 
@@ -865,14 +802,14 @@ def test_technical_eval_owns_decision_relevant_condition_result_details():
 
 
 def test_writer_sets_one_atomic_support_boundary_in_every_policy_arm():
-    instruction = (PACK / "facets/instructions/japanese-write.md").read_text(
+    instruction = (ENGINE / "facets/instructions/japanese-write.md").read_text(
         encoding="utf-8"
     )
-    writer = (PACK / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
-    rules = (PACK / "facets/policies/japanese-writing-rules-v2.md").read_text(
+    writer = (ENGINE / "facets/personas/japanese-writer.md").read_text(encoding="utf-8")
+    rules = (ENGINE / "facets/policies/japanese-writing-rules-v2.md").read_text(
         encoding="utf-8"
     )
-    delivery = (PACK / "facets/policies/writing-delivery-contract.md").read_text(
+    delivery = (ENGINE / "facets/policies/writing-delivery-contract.md").read_text(
         encoding="utf-8"
     )
 
@@ -902,35 +839,36 @@ def test_writer_sets_one_atomic_support_boundary_in_every_policy_arm():
         assert phrase not in rules
 
 
-def test_project_install_resolves_every_owned_prompt_asset(monkeypatch, tmp_path):
-    from rig_workbench.orchestrate import config, providers
+CORE_PROMPT_ASSETS = {
+    "persona": ["japanese-writer", "japanese-writing-reviewer"],
+    "instruction": ["japanese-write", "japanese-writing-review", "japanese-revise-draft"],
+    "policy": ["writing-delivery-contract", "japanese-writing-rules-v2",
+               "japanese-writing-modes", "secure-provider-execution"],
+    "output-contract": ["japanese-writing-verdict"],
+    "recipe": ["japanese-writing", "japanese-writing-revision"],
+}
+
+
+def test_every_owned_prompt_asset_resolves_at_core_tier(monkeypatch, tmp_path):
+    from rig_workbench.orchestrate import providers
     from rig_workbench.orchestrate.recipes import load_steps
-    from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.manifest import parse_frontmatter_subset
-    from rig_workbench.packs.model import ASSET_DIRS, PROMPT_KINDS
     from rig_workbench.packs.resolver import resolve_asset
 
     _isolated(monkeypatch, tmp_path)
     project = tmp_path / "project"
-    monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
-    monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(tmp_path / "pack-trust.json"))
-    monkeypatch.setattr(config, "INVOCATION_CWD", project)
-    result = install_pack(
-        "domain:japanese-writing", scope="project", project=project,
-        allow_unverified=True,
-    )
-    for kind, paths in result.manifest["assets"].items():
-        if kind not in PROMPT_KINDS:
-            continue
-        prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])
-        for relative in paths:
-            name = str(pathlib.PurePosixPath(relative).relative_to(prefix).with_suffix(""))
+    for kind, names in CORE_PROMPT_ASSETS.items():
+        for name in names:
             resolved = resolve_asset(kind, name, project=project)
             assert resolved is not None, f"unresolved {kind}:{name}"
-            assert resolved.pack_id == "japanese-writing"
-            assert resolved.tier == "project"
+            assert resolved.tier == "core", f"{kind}:{name} at tier {resolved.tier}"
+    # wiki pages are not resolved through resolve_asset; the `[[slug]]` tier walk reads
+    # the shipped directory directly, so the core home is what there is to assert.
+    for slug in ("japanese-ai-smell-jp", "japanese-style-material-technical",
+                 "japanese-style-material-conversation"):
+        assert (ENGINE / f"facets/knowledge/wiki/{slug}.md").is_file(), slug
 
-    recipe = parse_frontmatter_subset(result.path / "recipes/japanese-writing.md")
+    recipe = parse_frontmatter_subset(ENGINE / "recipes/japanese-writing.md")
     write, review = load_steps(recipe)
     write_prompt = providers._build_prompt(
         {"recipe": "japanese-writing", "goal": "文章を作る", "history": []}, write
@@ -959,7 +897,7 @@ def test_project_install_resolves_every_owned_prompt_asset(monkeypatch, tmp_path
 
 def test_japanese_review_json_schema_matches_parser_edge_whitespace_rules():
     contract = (
-        PACK / "facets/output-contracts/japanese-writing-verdict.md"
+        ENGINE / "facets/output-contracts/japanese-writing-verdict.md"
     ).read_text(encoding="utf-8")
     schema = json.loads(contract.split("```json\n", 1)[1].split("\n```", 1)[0])
     nonblank = r"^(?!\s)[\s\S]*\S$"
@@ -1040,7 +978,7 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
             "障害で失うリスクがあります。"
         ),
     }
-    for path in sorted((PACK / "evals/cases").glob("*/case.json")):
+    for path in sorted(CASE_FIXTURES.glob("japanese-writing-*/case.json")):
         _raw, case = read_json_yaml(path)
         if case["id"] == "japanese-writing-review-rejects-invention":
             checks = case["deterministic_checks"]
@@ -1062,9 +1000,9 @@ def test_eval_contract_fixtures_pass_declared_deterministic_checks():
 
 
 def test_docs_show_install_use_and_cross_model_review():
-    command = (PACK / "commands/japanese-writing.md").read_text(encoding="utf-8")
-    assert "rig-wb pack install domain:japanese-writing" in command
-    assert "RIG_ALLOW_PROJECT_PACKS=1" in command
+    command = (REPO_ROOT / "commands/japanese-writing.md").read_text(encoding="utf-8")
+    assert "rig-wb pack install" not in command
+    assert "RIG_ALLOW_PROJECT_PACKS" not in command
     assert "$rig --recipe japanese-writing" in command
     assert "--provider claude" in command
     assert "--verifier-provider codex" in command
@@ -1081,4 +1019,6 @@ def test_docs_show_install_use_and_cross_model_review():
     assert "machine 固有の path や digest は同梱しません" in command
     for relative in ("skills/engine/SKILL.md", "skills/engine/PACKS.md"):
         catalog = (REPO_ROOT / relative).read_text(encoding="utf-8")
-        assert "domain:japanese-writing" in catalog
+        # Listed as core material, not as a pack somebody has to install first.
+        assert "rig-wb pack install domain:japanese-writing" not in catalog
+        assert "`facets/personas/{japanese-writer,japanese-writing-reviewer}`" in catalog
