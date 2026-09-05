@@ -2,7 +2,39 @@
 
 ## Unreleased
 
-## [2.10.0] - 2026-09-05
+## [2.10.1] - 2026-09-05
+
+### Fixed
+
+**rig's own Stop hook was eating the verdict it spawned a provider to get (#592).**
+`hooks/suggest-instincts.sh` blocks the stop and spends a round-trip asking the model
+whether it learned something reusable. Inside a `codex exec` the orchestrator spawned to
+judge a step, that reply becomes the last assistant message — and the last assistant
+message is what the CLI prints and what `run_provider` captures. The verdict is simply
+not in the output any more.
+
+What it looked like from the outside: an `acceptance` step where the verifier answered
+all thirteen criteria, every one `PASS`, ending `VERDICT: PASS` — recorded as
+`{"ok": false, "criteria": []}` and escalated after two identical retries. The `note`
+field held the hook's own closing sentence, which is how it was traced. The direction it
+failed in was the safe one; the mechanism has no direction. A `VERDICT: REJECT` and the
+criteria behind it are lost the same way, and then the run continues with the operator
+believing a verifier looked.
+
+It was intermittent, which is worse than consistent: the hook fires at most once per
+session, so a run whose earlier step already spent it records its criteria normally. The
+same recipe, the same providers, twenty minutes apart, behaved differently.
+
+`run_provider` now passes `RIG_PROVIDER_SUBPROCESS=1` in the child environment, and the
+hook exits on it before reading stdin — added as precondition (0), ahead of the list it
+already keeps. That list's own rule is to fire only when every precondition is
+affirmatively true, and "there is a human session here to carry an instinct forward" was
+never true in a subprocess that answers one question and exits. The marker is added to
+the inherited environment rather than replacing it; a provider still needs its PATH and
+its credentials.
+
+`tests/test_provider_subprocess_env.py` pins all three properties (generator marked,
+verifier marked, environment not dropped) and fails on each without the fix.
 
 ### Fixed
 

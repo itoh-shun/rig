@@ -19,6 +19,7 @@
 # So the rule is: fire only when every precondition is affirmatively true, and
 # exit quietly the moment any of them cannot be established.
 #
+#   0. not inside a provider subprocess rig itself spawned
 #   1. not already inside a stop-hook round-trip
 #   2. the payload parses, and carries a session id and a readable transcript
 #   3. this session actually used rig (the transcript says so)
@@ -31,6 +32,16 @@
 # once-per-session guarantee without a word. It now lives under XDG_STATE_HOME,
 # which is stable for the life of a machine, and a marker we cannot write means
 # we cannot promise to stay quiet afterwards — so we say nothing now.
+
+# (0) A provider subprocess is not a session. `run_cli_provider` sets this when it
+# spawns a generator or verifier, and that process exists to answer one question on
+# stdout. Blocking its stop costs a round-trip whose reply then *replaces* the answer
+# as the last assistant message — so the verdict rig asked for never comes back, and a
+# step that judged every criterion is recorded as having judged none. Nothing here is
+# worth learning from either: there is no human session to carry an instinct forward.
+if [ -n "${RIG_PROVIDER_SUBPROCESS:-}" ]; then
+  exit 0
+fi
 
 input=$(cat)
 

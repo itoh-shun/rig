@@ -478,10 +478,18 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
         except SecureRuntimeError as error:
             return 126, f"[secure provider refused: {error}]"
     argv = build_argv(provider, role, prompt, cfg, persona, state)
+    # A provider subprocess answers one question and exits; its stdout is the verdict
+    # channel. rig's own Stop hook blocks the stop and spends a round-trip asking the
+    # model whether it learned an instinct — and that reply becomes the last assistant
+    # message, which is what `codex exec` prints and what this function captures. The
+    # verdict is gone, and `_parse_criteria` finds no CRITERION lines to read. Marking
+    # the subprocess lets hooks that only make sense for a human's session stand down;
+    # there is no session here to record an instinct for.
+    child_env = dict(os.environ, RIG_PROVIDER_SUBPROCESS="1")
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600),
-                           cwd=cfg.get("cwd") or None)
+                           cwd=cfg.get("cwd") or None, env=child_env)
     except FileNotFoundError:
         return 127, f"[provider not found: {provider}]"
     except subprocess.TimeoutExpired:
