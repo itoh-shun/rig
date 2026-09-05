@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## [2.10.0] - 2026-09-05
+
+### Fixed
+
+**The talk flow followed an implementer subprocess into a room with nobody in it (#587).**
+`hooks/inject-talk-mode.sh` carried the escape clause — "if you were launched as a subagent
+or this is a headless run, ignore this directive" — and that is the only place it existed.
+The hook is a Claude Code `SessionStart` hook. `codex/hooks.json` does not register it at
+all. But the Codex plugin ships `codex/skills/rig/SKILL.md`, so a `codex exec` implementer
+reads the skill directly, follows it to `talk-loop`, and finds rule ⑤: writes, implementation
+and merges require confirmation before acting. There is nobody on the other end of a
+`codex exec` stdin. It asked, nothing answered, and the run ended with 34,270 tokens spent
+and not one file changed.
+
+The design this shipped from had already named the fix. `2026-07-03-rig-talk-always-on-design.md`
+line 24 decided not to discriminate inside the hook but to "write the escape clause into the
+injected text itself … so it falls safe wherever the hook fires". That was applied to the
+hook's text and to nothing else — and the hook's text is exactly the part a non-Claude host
+never sees. The clause now lives in the four files a dispatched agent actually reads:
+`skills/engine/SKILL.md`, `codex/skills/rig/SKILL.md`, `facets/instructions/talk-loop` and
+`facets/personas/talk-assistant`. It travels with the skill, so it no longer depends on which
+host loaded it or on whether any hook fired.
+
+Two things the clause is careful not to be. It does not name a marketplace entry or disable a
+plugin: the plugin id is an installation detail belonging to whoever installed rig, and rig
+cannot hardcode it. And it does not widen scope — a subagent still stops and reports when the
+work falls outside what its task names. What it removes is only a confirmation round-trip that
+has no counterparty. The hook's own wording is widened to match, because it said `claude -p`
+and meant every non-interactive host.
+
 ### Changed
 
 **Japanese writing is core, not an opt-in pack (#580).** `packs/domain/japanese-writing` is

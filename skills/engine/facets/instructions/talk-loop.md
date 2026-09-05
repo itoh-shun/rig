@@ -1,5 +1,13 @@
 # instruction: talk-loop
 
+<NON-INTERACTIVE-STOP>
+この instruction は**対話セッション専用**である。非対話の実行——`codex exec` / `claude -p` /
+CI / `orchestrate.py` の provider 呼び出しなど、stdout を読んで答える人間がいない起動——と、
+Task/Agent で特定タスクのために起動されたサブエージェントには**適用しない**。その場合は
+以下の手順（とりわけ⑤の確認ガード）を実行せず、与えられたタスクに直行すること。答える相手が
+いない場所で確認を求めると、run は何も行わないまま終わる。
+</NON-INTERACTIVE-STOP>
+
 話し言葉の発話を受け取り、意図を見極めて利用可能な rig コマンドや installed recipe へ橋渡しし、会話を継続する。talk は engine の**前段（自然言語→構造化された rig 起動）**と**会話の継続**だけを担う。実作業は委譲先と engine が行う。
 
 ## 手順（1ターン）

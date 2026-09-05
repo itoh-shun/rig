@@ -5,6 +5,18 @@ description: Use when you need dev-flow orchestration in Codex or Claude Code �
 
 # rig
 
+<NON-INTERACTIVE-STOP>
+非対話の実行——`codex exec` / `claude -p` / CI ジョブ / `orchestrate.py` の provider 呼び出し、
+あるいは stdout を読んで答える人間が接続していないあらゆる起動——では、会話フロー `rig:talk`
+は適用されない。**実行前の確認を求めてはならない。** 答える相手がいないため、確認を求めた時点で
+run は何も行わないまま終わる。与えられたタスクを、それが名指す範囲の中で実行し、変更した内容を
+報告すること。Task/Agent で特定タスクのために起動されたサブエージェントも同じ。
+
+`talk-loop` の確認ルールは、あなたを起動した**対話型オーケストレーターの層**を統べるもので、
+その層で既に満たされている。実行層で繰り返すと run が停止する。これは権限の拡大ではない——
+タスクが名指していない作業は、従来どおり実行せずに報告して止まること。
+</NON-INTERACTIVE-STOP>
+
 ## 1. Overview
 
 ブリック（facet / pattern / step / agent / recipe）を**起動時に組み合わせて**タスク専用のエージェント・ハーネスを engineering する、レゴ式ハーネス・コンポーザ。固定ワークフローではなく **PARSE → RESOLVE → COMPOSE → RUN** の4段で都度ハーネスを合成する。intake→design→implement→verify→review→pr→merge の「3-Stage フルフロー」は数ある recipe の1つにすぎない。
