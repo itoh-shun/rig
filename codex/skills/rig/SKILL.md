@@ -5,6 +5,19 @@ description: Quality-gated AI workbench for Claude Code, ported for Codex CLI (#
 
 # rig (Codex)
 
+<NON-INTERACTIVE-STOP>
+If this run is non-interactive — `codex exec`, `claude -p`, a CI job, an `orchestrate.py`
+provider call, or any invocation where no human reads stdout and can answer — the
+conversational `rig:talk` flow does not apply. Do not ask for confirmation before acting:
+nobody is attached to answer, so the run ends unfinished with nothing done. Execute the task
+you were given, stay inside the scope it names, and report what you changed. The same holds
+for a subagent dispatched via Task/Agent for one specific task.
+
+`talk-loop`'s confirmation rule governs the interactive orchestrator that dispatched you. It
+has already been satisfied at that layer; repeating it here deadlocks the run. This does not
+widen your scope — work outside what the task names still stops and reports instead.
+</NON-INTERACTIVE-STOP>
+
 This is a **thin procedural pointer**, not a reimplementation of rig's engine. All state, worktree isolation, and acceptance-gate logic live in `scripts/workbench.py` and `scripts/orchestrate.py` — the same stdlib-only scripts Claude Code's `/rig:rig` and `/rig:orchestrate` shell out to. This skill exists so Codex gets the same "native-layer" integration Claude Code has (per rig issue #294), instead of only reaching rig through a stateless `codex exec` subprocess call from `orchestrate.py`'s `--provider codex`.
 
 Note (#304): Cursor's skill discovery also scans `.agents/skills/` for legacy Claude/Codex compatibility, so this same file — installed once at `.agents/skills/rig/SKILL.md` — is picked up by Cursor too. No separate Cursor-specific skill file is needed. See `scripts/host_adapters.py` for the full host capability matrix (this file is host-agnostic; only hooks and subagent definitions differ per host).
