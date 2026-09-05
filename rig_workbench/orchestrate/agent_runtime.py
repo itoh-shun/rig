@@ -189,12 +189,37 @@ _READONLY_ENFCE = {
 # explicit permission mode the generator asks for approval it can never receive and
 # silently writes nothing — confirmed live in this environment (`claude -p "edit
 # x.py..." ` left the file untouched; the identical call with `--permission-mode
-# acceptEdits` applied the edit). `acceptEdits` is the minimum-privilege fix: file
-# edits are allowed, nothing else is blanket-bypassed (not `--dangerously-skip-
-# permissions`). `codex`'s generator branch already gets `--sandbox workspace-write`
-# from codex's own mechanism, so it isn't affected by this.
+# acceptEdits` applied the edit). `codex`'s generator branch already gets
+# `--sandbox workspace-write` from codex's own mechanism, so it isn't affected.
+#
+# `acceptEdits` alone was that fix, and it left the same failure one level up:
+# it auto-approves edits and harmless Bash, but arbitrary **code execution** still
+# waits for an approval a headless run can never receive. So a generator could
+# write the change and never run it. Measured on one machine, same config dir,
+# same model, same prompt, flag the only variable:
+#
+#     command                    acceptEdits                acceptEdits+Bash
+#     python3 --version          ok                         ok
+#     python3 trivial.py         "requires approval"        ok
+#     python3 -c "print(42)"     "requires approval"        ok
+#     write a file               ok                         ok
+#
+# That mattered because `feature` and `bugfix` both carry a `test` step whose
+# instruction is `verify` — run the build, lint and tests. Under `acceptEdits`
+# that step could not run anything it was asked to verify, and said so itself:
+# "RESULT: 未検証 (cannot execute)". A step that structurally cannot do its job
+# still reported through the gate.
+#
+# `--allowedTools Bash` is added rather than moving to `bypassPermissions`,
+# keeping the minimum-privilege line #331 drew: edits come from the permission
+# mode, command execution from one named tool, and nothing else is blanket
+# bypassed. The verifier's read-only pinning is untouched — it has no
+# `--permission-mode`, so tools outside its allowlist still have no approver.
+# `Bash` is unscoped because rig does not know an arbitrary project's test
+# command; a pattern scope would be tighter and is the obvious next step if a
+# project can declare one.
 _GENERATOR_EDIT_ENFCE = {
-    "claude": ["--permission-mode", "acceptEdits"],
+    "claude": ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"],
 }
 
 

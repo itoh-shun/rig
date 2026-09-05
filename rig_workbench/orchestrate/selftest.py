@@ -235,11 +235,17 @@ def cmd_selftest(_args):
     # #331: headless claude -p has no one to approve Edit/Write calls, so the
     # generator needs an explicit permission mode or it silently writes nothing
     # (confirmed live: an unpermissioned `claude -p` left a target file untouched).
-    report("N probe: claude generator gets acceptEdits (can write; live-confirmed #331)",
+    # The same shape one level up: acceptEdits alone still queues arbitrary code
+    # execution for an approval that never comes, so the `test` step could not run
+    # what it was asked to verify. Bash is pinned alongside for that reason.
+    report("N probe: claude generator can write and execute (#331 + the verify gap)",
            build_argv("claude", "generator", "P", {}),
-           ["claude", "-p", "P", "--output-format", "text", "--permission-mode", "acceptEdits"])
+           ["claude", "-p", "P", "--output-format", "text", "--permission-mode", "acceptEdits",
+            "--allowedTools", "Bash"])
     report("N probe: rig-provider generator also gets acceptEdits",
            "--permission-mode" in build_argv("rig", "generator", "P", {}), True)
+    report("N probe: claude generator may run commands, or `verify` cannot verify",
+           "Bash" in build_argv("claude", "generator", "P", {}), True)
     report("N probe: rig-provider verifier stays read-only (unaffected by #331)",
            "--allowedTools" in build_argv("rig", "verifier", "P", {}), True)
     # grok (#328): headless `grok -p` — no read-only/sandbox flag is documented, so verifier and

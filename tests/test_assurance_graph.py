@@ -44,6 +44,7 @@ def task(tmp_path):
         {"name": "inspect", "status": "passed", "personas": ["orchestrator"]},
         {"name": "clarify-requirements", "status": "passed", "personas": ["orchestrator"]},
         {"name": "design", "status": "passed", "personas": ["implementer"]},
+        {"name": "write-tests", "status": "passed", "personas": ["implementer"]},
         {"name": "implement", "status": "passed", "personas": ["implementer"]},
         {"name": "test", "status": "passed", "personas": ["implementer"]},
         {"name": "update-docs-if-needed", "status": "passed", "personas": ["implementer"]},
