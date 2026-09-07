@@ -53,10 +53,14 @@ reproduced. The worst was a one-character typo: spelling `prohibited` as `prohib
 dropped the whole prohibited-expression section and returned `checked`, zero violations,
 exit 0 — a declaration present, unenforced, and reported as agreement, which is the exact
 state this layer exists to prevent. Unknown keys are now `unchecked`. Next worst was an
-asymmetry: the declared values did not go through the normalisation the artefacts went
+asymmetry: the declared values did not go through the extraction the artefacts went
 through, so declaring `{"surface": "white"}` classified it as a *typeface* and then
 reported both `background: white` and `#FFFFFF` as violations of the constraint they
-satisfied; declared and artefact values now share one pipeline. Also fixed: a non-UTF-8
+satisfied. A first attempt at this only handled whole-value colours and still lost the
+`red` in `2px solid red` and the `Inter` in `16px/1.5 Inter, sans-serif`; a verifier
+found that by reading the code rather than the claim. A declared value is now placed in a
+synthesised declaration and run through the same extractors the artefact side uses, so
+there is one pipeline rather than two that resemble each other. Also fixed: a non-UTF-8
 constraints file crashed instead of reporting `unchecked` and wrote no report at all; an
 unreadable subdirectory was skipped silently and counted as clean; symbolic links were
 followed out of the scan root; `fixes #123` was read as a colour; `fontFamily` in a JSX
@@ -66,6 +70,21 @@ raw text, so the zero-width and full-width evasions the literal path catches did
 to them, and a catastrophic pattern hung the gate indefinitely — they now run against the
 same normalised text, in a subprocess bounded by the wall clock. A gate that does not
 return is not failing closed; it is not guarding anything.
+
+**What a verifier found after that.** The fixes were then handed to a verifier whose
+brief was to break them rather than confirm them, and it returned REJECT. Besides the
+composite-declaration case above: `"case_sensitive": "false"` — the string, not the
+boolean — was truthy, so a rule ran with the opposite of its declared meaning while the
+report said `checked`; type errors in a rule are now `unchecked` alongside unknown keys.
+Restricting all-digit hex to declaration context to kill the `fixes #123` false positive
+had also stopped `| navy | #003366 |` from being read in the very token table the policy
+calls machine-readable, so only three- and four-digit all-digit hex is now gated.
+`<T extends unknown>(x: T) => x` was still read as a component, because the assumption
+that a type argument always follows an identifier is false for that form. Zero-width
+characters were stripped only on the prohibited-expression path, so `#0A<ZWSP>84FF` and
+`token(color.<ZWSP>brand)` were invisible — not absent, unexamined. And any exception
+other than the two the sensor raises itself escaped without writing a report at all.
+Measured again after all of it, with the stricter scorer: still 23/26.
 
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona

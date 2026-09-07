@@ -87,7 +87,8 @@ RE_CSS_VAR = re.compile(r"\bvar\(\s*--([A-Za-z0-9_\-]+)\s*[,)]")
 # 必ず識別子の直後に来る。さらに TSX のアロー関数ジェネリクス `<T,>(x) => x` は識別子の
 # 後ろではないので、名前の直後の `,` で分ける——**JSX の要素名の直後に `,` は来ない**。
 RE_COMPONENT = re.compile(
-    r"(?<![A-Za-z0-9_$])<([A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)\b(?!\s*,)"
+    r"(?<![A-Za-z0-9_$])<([A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)\b"
+    r"(?!\s*,)(?!\s+extends\b)"
 )
 # JSX を書けない拡張子。ここでコンポーネント検査をすると、型引数を要素と読み違える。
 NO_JSX_SUFFIXES = (".ts", ".css", ".scss", ".sass", ".less", ".json")
@@ -211,7 +212,7 @@ def fold(text: str) -> str:
     `token\(` に当たらず、参照そのものが**見えなくなる**——違反が「無い」のではなく
     「検査されていない」状態になる。列は報告しない（行だけ）ので、NFKC で潰してよい。
     """
-    return unicodedata.normalize("NFKC", text)
+    return unicodedata.normalize("NFKC", text.translate(ZERO_WIDTH))
 
 
 class Unchecked(Exception):
@@ -278,15 +279,17 @@ def _declaration_spans(text: str) -> list[tuple[int, int]]:
 def numeric_colors_in(text: str, anywhere: bool = False) -> list[str]:
     """16進と rgb() を読む。
 
-    **数字だけの16進は CSS 宣言の中でだけ色と見なす。** `fixes #123` の Issue 番号が
-    `#112233` に化けていた。英字を含むもの（`#f00`・`#fff`）は色としか読めないので
-    散文でも拾う。`anywhere=True` は宣言側（値であることが確定している）用。
+    **数字だけの3桁・4桁は CSS 宣言の中でだけ色と見なす。** `fixes #123` / `#1234` の
+    Issue 番号が色に化けていた。6桁・8桁は Issue 番号としては現実的でないので散文でも拾う
+    ——使用トークン表の `| navy | #003366 |` を落とすほうが害が大きい。英字を含むもの
+    （`#f00`・`#fff`）は色としか読めないので、桁数によらず拾う。
+    `anywhere=True` は宣言側（値であることが確定している）用。
     """
     spans = [] if anywhere else _declaration_spans(text)
     found: list[str] = []
     for m in RE_HEX.finditer(text):
         digits = m.group("d")
-        if not anywhere and digits.isdigit():
+        if not anywhere and digits.isdigit() and len(digits) in (3, 4):
             if not any(lo <= m.start() < hi for lo, hi in spans):
                 continue
         found.append(normalize_hex(digits))
@@ -303,19 +306,30 @@ def colors_in(text: str) -> list[str]:
 
 
 def classify_declared(value: str) -> tuple[list[str], list[str], str | None]:
-    """宣言された値ひとつを、成果物側と同じ正規化で色・長さ・フォントに振り分ける。
+    """宣言された値ひとつを、**成果物側とまったく同じ抽出器**で振り分ける。
 
     ここが成果物側とずれると、**宣言した値そのものが違反として上がる。**
-    実際に `{"surface": "white"}` がフォント扱いになり、`background: white` も
-    `#FFFFFF` も違反になっていた。全角の宣言（`＃0A84FF`）も同じ理由で壊れていた。
+    `{"surface": "white"}` がフォント扱いになり、`{"focus": "2px solid red"}` の
+    `red` と `{"body": "16px/1.5 Inter, sans-serif"}` の `Inter` が宣言から落ちて、
+    それを使った成果物が違反になっていた。
+
+    名前付き色と書体は CSS 宣言の中でしか読まない（散文の誤検出を避けるため）ので、
+    宣言された値を**合成した宣言文に載せてから**同じ関数に渡す。宣言された値は
+    「値であること」が確定しているので、この合成は嘘をつかない。
     """
     folded = fold(value)
     colors = numeric_colors_in(folded, anywhere=True)
-    bare = folded.strip().strip("\'\"").strip().lower()
-    if bare in CSS_NAMED_COLOURS:
-        colors.append(CSS_NAMED_COLOURS[bare])
+    colors += named_colors_in(f"color: {folded};")
     lengths = lengths_in(folded)
-    font = None if (colors or lengths) else normalize_font(folded)
+    font: str | None = None
+    if not colors:
+        # `font:` ショートハンド（`16px/1.5 Inter, sans-serif`）はサイズの後ろが書体。
+        # 色を含む値（`2px solid red`）に当てると "solid red" を書体にしてしまう。
+        shorthand = fonts_in(f"font: {folded};")
+        if shorthand:
+            font = shorthand[0]
+        elif not lengths:
+            font = normalize_font(folded)
     return colors, lengths, font
 
 
@@ -464,6 +478,13 @@ def validate_constraints(data: object, path: str) -> None:
             for key in ("pattern", "why"):
                 if not isinstance(rule.get(key), str) or not rule[key]:
                     raise Unchecked(f"prohibited[{i}].{key} が空でない文字列でない: {path}")
+            for key in ("regex", "case_sensitive"):
+                # 型を見ないと `"case_sensitive": "false"` が真になり、規則が意図と逆に働く。
+                # 宣言と挙動が食い違ったまま checked が返るのは、未知キーの素通りと同じ穴。
+                if key in rule and not isinstance(rule[key], bool):
+                    raise Unchecked(
+                        f"prohibited[{i}].{key} が真偽値でない: {rule[key]!r} ({path})"
+                    )
             if rule.get("regex"):
                 try:
                     re.compile(rule["pattern"])
@@ -658,8 +679,18 @@ def collect_artifacts(paths: list[str], skip: set[str]) -> tuple[list[str], list
         if os.path.isdir(path):
             root_real = os.path.realpath(path)
             for parent, dirs, names in os.walk(path, onerror=_walk_error, followlinks=False):
-                dirs[:] = [d for d in sorted(dirs) if not d.startswith(".")
-                           and not os.path.islink(os.path.join(parent, d))]
+                keep = []
+                for d in sorted(dirs):
+                    full_dir = os.path.join(parent, d)
+                    if d.startswith("."):
+                        skipped.append({"path": full_dir, "why": "dot-directory"})
+                    elif os.path.islink(full_dir):
+                        skipped.append({"path": full_dir, "why": "symlink"})
+                    else:
+                        keep.append(d)
+                # 除いたものは黙って消さず `skipped` に残す。`.storybook/` の中の成果物を
+                # 一度も見ていないのに「違反 0 件」になるのが、このセンサーが潰す状態そのもの。
+                dirs[:] = keep
                 for name in sorted(names):
                     full = os.path.join(parent, name)
                     if os.path.islink(full):
@@ -776,6 +807,11 @@ def main(argv: list[str] | None = None) -> int:
         status, reason = "not-configured", str(exc)
     except Unchecked as exc:
         status, reason = "unchecked", str(exc)
+    except Exception as exc:  # noqa: BLE001 — 報告を残さず落ちるほうが害が大きい
+        # 想定外の例外でも報告は書く。書かずに traceback で終わると、design-vet ⓪ が
+        # 逐語転記すべき status がどこにも無くなり、「検査していない」ことすら残らない。
+        status = "unchecked"
+        reason = f"想定外の例外: {type(exc).__name__}: {exc}"
 
     report = {
         "status": status,

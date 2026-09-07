@@ -375,11 +375,20 @@ def test_a_declaration_written_in_full_width_still_resolves(tmp_path):
     assert report["violations"] == []
 
 
-@pytest.mark.parametrize("text", ["fixes #123", "closes #1234", "see #123456"])
-def test_an_issue_reference_is_not_a_colour(tmp_path, text):
-    """数字だけの16進は CSS 宣言の中でだけ色と見なす。`#123` は毎日のコミット文に出る。"""
+@pytest.mark.parametrize("text", ["fixes #123", "closes #1234"])
+def test_a_short_issue_reference_is_not_a_colour(tmp_path, text):
+    """数字だけの3桁・4桁は CSS 宣言の中でだけ色と見なす。`#123` は毎日のコミット文に出る。"""
     _, report = _run(tmp_path, FILLED, {"a.md": f"{text}\n"})
     assert report["violations"] == []
+
+
+def test_a_six_digit_all_number_hex_is_a_colour_even_in_prose(tmp_path):
+    """使用トークン表の `| navy | #003366 |` を落とすほうが、Issue 番号の誤検出より害が大きい。
+
+    6桁を宣言の中に限っていたとき、policy 規則 6 が「読める」と言った表の値が落ちていた。
+    """
+    _, report = _run(tmp_path, FILLED, {"a.md": "| navy | #003366 |\n"})
+    assert [v["class"] for v in report["violations"]] == ["raw-value"]
 
 
 def test_a_short_hex_with_letters_is_still_a_colour_in_prose(tmp_path):
@@ -521,3 +530,71 @@ def test_the_sensor_is_reachable_as_a_subcommand():
         REPO_ROOT / "skills" / "engine" / "facets" / "instructions" / "design-vet.md"
     ).read_text(encoding="utf-8")
     assert "rig-wb design-constraints" in vet
+
+
+# ── finding-verifier が反証した箇所の回帰 ──────────────────────────────────
+# 「直した」と書いた主張を、別の主体が入力で崩した。以下はその入力そのもの。
+
+@pytest.mark.parametrize(
+    "declared,artefact",
+    [({"border": {"focus": "2px solid red"}}, "a { border: 2px solid red; }"),
+     ({"type": {"body": "16px/1.5 Inter, sans-serif"}},
+      "b { font: 16px/1.5 Inter, sans-serif; }"),
+     ({"color": {"surface": "white"}}, "c { background: white; }"),
+     ({"font": {"body": "Noto Sans JP"}}, 'd { font-family: "Noto Sans JP"; }')],
+)
+def test_a_composite_declaration_declares_every_part_of_itself(tmp_path, declared, artefact):
+    """宣言側が成果物側と同じ抽出器を通っていなかった。
+
+    `2px solid red` の `red` と `16px/1.5 Inter, …` の `Inter` が宣言から落ち、
+    それを使った成果物が、**満たしているはずの制約に違反している**と報告されていた。
+    """
+    _, report = _run(tmp_path, {"version": 1, "tokens": declared}, {"a.css": artefact + "\n"})
+    assert report["violations"] == []
+
+
+@pytest.mark.parametrize("key,value", [("case_sensitive", "false"), ("regex", "true"),
+                                       ("regex", 1), ("case_sensitive", None)])
+def test_a_boolean_rule_flag_that_is_not_a_boolean_is_unchecked(tmp_path, key, value):
+    """`"case_sensitive": "false"` は真になり、規則が意図と逆に働いていた。
+
+    宣言と挙動が食い違ったまま `checked` が返るのは、未知キーの素通りと同じ穴である。
+    """
+    declared = dict(FILLED)
+    declared["prohibited"] = [{"pattern": "Click Here", "why": "x", key: value}]
+    code, report = _run(tmp_path, declared, {"a.md": "Click here for details.\n"})
+    assert code == 2 and report["status"] == "unchecked"
+    assert key in report["reason"]
+
+
+def test_a_generic_constraint_is_not_a_component(tmp_path):
+    """`<T extends unknown>` は識別子の直後ではないので、直前の文字だけでは分けられない。"""
+    _, report = _run(
+        tmp_path, FILLED, {"a.tsx": "const identity = <T extends unknown>(x: T) => x;\n"}
+    )
+    assert report["violations"] == []
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [("a { color: #DE​ADBE; }", ["raw-value"]),
+     ("token(color.​nope)", ["unknown-token"])],
+)
+def test_a_zero_width_character_does_not_hide_a_reference(tmp_path, line, expected):
+    """ゼロ幅の除去が禁止表現の経路にしか無く、値とトークン参照は素通りしていた。
+
+    参照が見えなくなるのは、違反が「無い」のではなく「検査されていない」状態である。
+    """
+    _, report = _run(tmp_path, FILLED, {"a.css": line + "\n"})
+    assert [v["class"] for v in report["violations"]] == expected
+
+
+def test_an_unexpected_exception_still_leaves_a_report(tmp_path, monkeypatch):
+    """報告を書かずに traceback で終わると、『検査していない』ことすら残らない。"""
+    declared = dict(FILLED)
+    declared["prohibited"] = [{"pattern": "x+", "why": "y", "regex": True}]
+    monkeypatch.setattr(sys, "executable", None)
+    code, report = _run(tmp_path, declared, {"a.md": "xxx\n"})
+    assert code == 2
+    assert report["status"] == "unchecked"
+    assert "想定外の例外" in report["reason"]
