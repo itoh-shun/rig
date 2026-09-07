@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [2.12.0] - 2026-09-07
+
 ### Added
 
 **The `layout-gate` recipe's gate is now drill-measurable.** Its reviewer had no
