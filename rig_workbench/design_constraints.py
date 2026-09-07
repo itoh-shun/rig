@@ -108,8 +108,12 @@ NO_JSX_SUFFIXES = (".ts", ".css", ".scss", ".sass", ".less", ".json")
 # `Inter, sans-serif`）次の宣言の区切りのことも（JSX の `{{ a: 1, b: 2 }}`）あるので、
 # **後ろに `名前:` が続く `,` でだけ切る**。切らなかったとき、JSX の style オブジェクトの
 # 2つ目以降が1つ目の値に飲まれ、書き方だけで検出が消えていた。
+# プロパティ名は引用符で囲まれていることがある。**JSON のキーは常に囲まれている**ので、
+# 囲みを読まないとテーマ JSON が名前付き色・3桁16進・書体に対して丸ごと盲目になる。
+# JSX の style も引用符を付けるだけで同じ穴が開いていた（書き方で検出力が変わる形）。
 RE_DECL = re.compile(
-    r"""(?:^|[;{,"'])\s*([-a-zA-Z]+)\s*:\s*((?:[^;{}\n,]|,(?!\s*[-A-Za-z]+\s*:))+)"""
+    r"""(?:^|[;{,"'])\s*["']?([-a-zA-Z]+)["']?\s*:\s*"""
+    r"""((?:[^;{}\n,]|,(?!\s*["']?[-A-Za-z]+["']?\s*:))+)"""
 )
 COLOUR_PROPERTIES = ("color", "background", "border", "outline", "shadow", "fill", "stroke")
 
@@ -708,6 +712,17 @@ def _flatten(text: str, drop_all_space: bool, lower: bool = True) -> tuple[str, 
     return _normalize(text, drop_all_space=drop_all_space, lower=lower)
 
 
+def _at(idx: list[int], at: int) -> int:
+    """位置写像を安全に引く。
+
+    `"[ ]*$"` のような**末尾のゼロ幅一致**は本文長と同じ位置を返すので、そのまま引くと
+    IndexError になり、検出できているのに未検査で終わっていた。最後の文字の位置に丸める。
+    """
+    if not idx:
+        return 0
+    return idx[min(at, len(idx) - 1)]
+
+
 def _line_of(offset: int, line_starts: list[int]) -> int:
     lo, hi = 0, len(line_starts) - 1
     while lo < hi:
@@ -759,9 +774,9 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
         for rule, at, at2 in zip(regex_rules, found_at, found_at2):
             cs = rule.get("case_sensitive")
             if at is not None:
-                regex_at[id(rule)] = cs_idx_keep[at] if cs else idx_keep[at]
+                regex_at[id(rule)] = _at(cs_idx_keep if cs else idx_keep, at)
             elif at2 is not None:
-                regex_at[id(rule)] = cs_idx_drop[at2] if cs else idx_drop[at2]
+                regex_at[id(rule)] = _at(cs_idx_drop if cs else idx_drop, at2)
             else:
                 regex_at[id(rule)] = None
 

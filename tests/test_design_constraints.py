@@ -1167,3 +1167,71 @@ def test_a_leading_dot_length_matches_a_declaration_written_with_a_zero(tmp_path
     constraints = {"version": 1, "tokens": {"spacing": {"sm": "0.5rem"}}}
     code, report = _run(tmp_path, constraints, {"a.css": ".c { padding: .5rem; }\n"})
     assert code == 0, report["violations"]
+
+
+# ── 8周目の検証で崩れた点 ────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "name,body",
+    [("quoted.jsx",
+      '<div style={{ "fontFamily": "Papyrus", "color": "crimson" }} />\n'),
+     ("single.jsx",
+      "<div style={{ 'fontFamily': 'Papyrus', 'color': 'crimson' }} />\n"),
+     ("theme.json",
+      '{"color": "crimson", "fontFamily": "Papyrus"}\n'),
+     ("plain.jsx",
+      '<div style={{ fontFamily: "Papyrus", color: "crimson" }} />\n')],
+)
+def test_a_quoted_property_name_is_still_a_declaration(tmp_path, name, body):
+    """**JSON のキーは常に引用符付き**なので、囲みを読まないと `.json` 成果物が
+    名前付き色・3桁16進・書体に対して丸ごと盲目になっていた。
+
+    JSX の style も、引用符を付けるだけで同じ穴が開いた——7周目に直した穴が
+    書き方ひとつで戻る形。囲みの有無で答えが変わってはならない。
+    """
+    constraints = {"version": 1, "tokens": {
+        "color": {"brand": "#0A84FF"}, "font": {"body": "Inter"}}}
+    code, report = _run(tmp_path, constraints, {name: body})
+    assert code == 1, report
+    found = {(v["class"], v["value"]) for v in report["violations"]}
+    assert ("raw-value", "#dc143c") in found
+    assert ("raw-value", "papyrus") in found
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["font: 12px/150% Georgia, serif;", "font: 12px/30px Georgia;",
+     "font: 12px/1.5rem Georgia;", "font: 12px/2em Georgia;"],
+)
+def test_every_line_height_unit_is_eaten_by_the_size_slot(written):
+    """行送りの単位から `%` を落とす変異が 224/224 緑で通った。
+
+    実装は正しかったがテストが `%` を張っていなかった——変異体では書体が
+    `% georgia` になる。単位ごとに張る。
+    """
+    assert dc.fonts_in(written) == ["georgia"]
+
+
+def test_a_regex_that_matches_at_the_very_end_reports_instead_of_crashing(tmp_path):
+    """末尾のゼロ幅一致が本文長と同じ位置を返し、IndexError で未検査になっていた。
+
+    検出できているのに「想定外の例外」で終わるのは、最も紛らわしい失敗の形。
+    """
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}},
+                   "prohibited": [{"pattern": "[ ]*$", "why": "行末の空白", "regex": True}]}
+    code, report = _run(tmp_path, constraints, {"a.md": "本文です\n"})
+    assert report["status"] == "checked", report["reason"]
+    assert code == 1 and report["violations"][0]["class"] == "prohibited-expression"
+
+
+def test_a_data_uri_truncates_the_declaration_as_documented(tmp_path):
+    """既知の取りこぼし。`;` で値が切れるので、データ URI の後ろの色は読めない。
+
+    ポリシーに書いてある挙動を張る——**書いてある取りこぼしと、気づいていない
+    取りこぼしは違う。** 後者に変わったらこのテストが落ちる。
+    """
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}}}
+    body = ('.a { background: url("data:image/svg+xml;base64,AAA=") crimson; }\n'
+            '.b { background: url("data:image/svg+xml,AAA") crimson; }\n')
+    code, report = _run(tmp_path, constraints, {"u.css": body})
+    assert code == 1
+    assert [v["line"] for v in report["violations"]] == [2]

@@ -225,6 +225,21 @@ And `.5rem` and `-2px` were not read as lengths at all while `0.5rem` was — de
 changes with spelling, which is the thing this policy exists to prevent. 224 tests.
 Measured again: 23/26.
 
+**The eighth round, and the last.** No regression again, and the finding that mattered was
+the same shape as the seventh round's: the declaration pattern required an unquoted property
+name, so adding quotes made detection disappear. `style={{ "fontFamily": "Papyrus", "color":
+"crimson" }}` reported nothing where the unquoted spelling reported three violations — and
+because JSON keys are always quoted and `.json` is scanned, a theme or token file was blind
+to named colours, three-digit hex and typefaces entirely. Property names are now read with
+or without quotes, and the comma rule that separates one declaration from the next reads
+them the same way. Two smaller things: a regex matching at the very end of a file (`[ ]*$`)
+returned a position one past the last character, and the lookup raised `IndexError`, so a
+detected violation was reported as an unchecked run; and the line-height slot's handling of
+`%` was correct but untested, surviving a mutation with all 224 green. One limitation is now
+written down rather than fixed: a value containing a data URI is truncated at the URI's
+semicolon, so a colour after it is missed — the test pins the documented behaviour, because
+a known gap and an unnoticed one are different things. 234 tests. Measured again: 23/26.
+
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona
 would have added a twelfth gate perspective with no measured detection rate, which is the
