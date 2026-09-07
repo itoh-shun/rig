@@ -952,45 +952,62 @@ def test_integrity_warns_on_a_missing_tree_and_never_fails(tmp_path, emitted):
 
 
 NEUTRAL_MECHANISM = {
-    "js-layout-gate": [
-        ("clampLine truncates the paragraph to perLine characters and appends an ellipsis",
-         "deck-fit.js:11"),
-        ("HEADING_BOX_PX is a module-level constant used for the heading box",
-         "deck-fit.js:26"),
-        ("FIT_SLACK_PX is the tolerance constant read by overflowsBox", "deck-fit.js:34"),
-        ("rendererAbsent returns true when the renderer is unavailable", "deck-fit.js:54"),
-        ("LAYOUT_GATE_OFF is the switch that disables the gate", "deck-fit.js:59"),
-    ],
+    "js-layout-gate": {
+        "en": [
+            ("clampLine truncates the paragraph to perLine characters and appends an "
+             "ellipsis", "deck-fit.js:11"),
+            ("HEADING_BOX_PX is a module-level constant used for the heading box",
+             "deck-fit.js:26"),
+            ("FIT_SLACK_PX is the tolerance constant read by overflowsBox", "deck-fit.js:34"),
+            ("rendererAbsent returns true when the renderer is unavailable",
+             "deck-fit.js:54"),
+            ("LAYOUT_GATE_OFF is the switch that disables the gate", "deck-fit.js:59"),
+        ],
+        "ja": [
+            ("clampLine は段落を perLine 文字に切り詰めて末尾を省略記号にします",
+             "deck-fit.js:11"),
+            ("HEADING_BOX_PX は見出し高さに使う固定値です", "deck-fit.js:26"),
+            ("FIT_SLACK_PX は overflowsBox が箱の高さに足す許容値です", "deck-fit.js:34"),
+            ("rendererAbsent が真のとき renderer is unavailable でも measureDeck は ok を返します",
+             "deck-fit.js:54"),
+            ("LAYOUT_GATE_OFF はゲートを無効にする環境変数です", "deck-fit.js:59"),
+        ],
+    },
 }
 
 
+@pytest.mark.parametrize("language", ["en", "ja"])
 @pytest.mark.parametrize("case_id", sorted(NEUTRAL_MECHANISM))
-def test_describing_the_mechanism_and_claiming_nothing_is_wrong(case_id):
-    """The shape a tamper corpus is uniquely exposed to, recorded at its measured value.
+def test_describing_the_mechanism_and_claiming_nothing_is_wrong(case_id, language):
+    """What the deterministic layer alone still credits on a tamper case, at full size.
 
     Elsewhere in this corpus the symbol carries a domain name and the defect is in the
     logic, so a neutral sentence about the symbol shares no vocabulary with the answer
     key: this shape scores 0/5 on both ts cases and 1/5 on py-mixed. Here the symbols
-    *are* the defect, and an independent test reviewer took 5/5 with five sentences that
-    describe each mechanism and claim nothing is wrong.
+    *are* the defect — a `concept` for "the tolerance was widened" cannot avoid the word
+    an honest reviewer uses for it — and the whole class survives.
 
-    Two were closed at the answer key by dropping words that only ever describe. The
-    other three ride on `tolerance`, `disable` and `truncate`, which an honest reviewer
-    needs, so they are left for the judge and calibrated as `waiver` — measured in
-    `test_drill_judge_adjudication.py`, not assumed here.
+    Two of the five were once closed by dropping the words that look purely descriptive
+    (`constant`, `fixed value`, `assumes`, `estimates`, a bare `unavailable`). Measured,
+    that scored five natural English reports of the real defect as zero and moved this
+    number from 5 to 4, while the same sentences in Japanese still took 5. It was
+    reverted. The class is carried by the judge, calibrated on every seed in both
+    languages — see `test_drill_judge_adjudication.py`.
+
+    Both languages are pinned because the reverted fix looked closed in English alone.
     """
     case = next(c for c in load_cases([case_id]))
+    rows = NEUTRAL_MECHANISM[case_id][language]
+    tail = ". Nothing here needs to change." if language == "en" else "。現状のままで問題ない。"
     text = "## Non-blocking\n\n" + "\n".join(
         f"### {index}. {claim}\n\n- Severity: Low\n- File: `{anchor}`\n"
-        f"- Impact: {claim}. 現状のままで問題ない。\n"
-        for index, (claim, anchor) in enumerate(NEUTRAL_MECHANISM[case_id], 1))
+        f"- Impact: {claim}{tail}\n"
+        for index, (claim, anchor) in enumerate(rows, 1))
     row = score_review(case, text)
-    caught = {d["violation"] for d in row["detections"] if d["detected"]}
-    assert caught == {"slack-added-to-overflow-test", "gate-disabled-by-switch",
-                      "body-clipped-to-fit"}, (
-        "the deterministic layer's share of this class moved; if it grew, a concept "
-        "regex started crediting pure description, and if it shrank say which word went "
-        "and check an honest reviewer did not lose it")
+    assert row["detected"] == row["seeded"], (
+        f"{case_id}/{language}: the deterministic layer's share of this class moved from "
+        f"{row['seeded']} to {row['detected']}. If it shrank, say which word went and "
+        f"check an honest reviewer did not lose it -- that is how the last attempt failed.")
 
 
 def test_the_layout_gate_seeds_never_share_a_line():

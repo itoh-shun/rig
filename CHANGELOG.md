@@ -29,17 +29,32 @@ deterministic layer. With the judge's recorded verdicts they score **0/5**, and 
 and `negative` stay at 5/5 — the judge takes the attack and costs no true positive.
 
 **A tamper corpus is exposed to a shape the others are not**, and review found it here
-rather than in production. Elsewhere the symbol carries a domain name and the defect is
-in the logic, so a neutral sentence about the symbol shares no vocabulary with the answer
-key — that shape scores 0/5 on both `ts-` cases and 1/5 on `py-mixed-violations`. Here the
-symbols *are* the defect, and five sentences that describe each mechanism and claim
-nothing is wrong took **5/5**. Two were closed at the answer key by dropping words that
-only ever describe (`constant`, a bare `unavailable`) while keeping the ones an honest
-reviewer needs; `ideal` still scores 5/5 with severity accuracy 1.0. The other three ride
-on `tolerance`, `disable` and `truncate`, which cannot be dropped — removing them scores
-honest reports as zero, the failure that killed both deterministic attempts to read
-direction. Those three are calibrated as `waiver` in the reviewer's own wording instead,
-so the judge is measured on them rather than trusted.
+rather than in production. Elsewhere the symbol carries a domain name and the defect is in
+the logic, so a neutral sentence about the symbol shares no vocabulary with the answer key
+— that shape scores 0/5 on both `ts-` cases and 1/5 on `py-mixed-violations`. Here the
+symbols *are* the defect: a `concept` for "the tolerance was widened" cannot avoid the word
+an honest reviewer uses for it. Five sentences describing each mechanism and claiming
+nothing is wrong take **5/5** off the deterministic layer.
+
+Half of that was once closed at the answer key, by dropping the words that look purely
+descriptive — `constant`, `fixed value`, `assumes`, `estimates`, a bare `unavailable`. It
+was measured and reverted. It scored five natural English reports of the real defect as
+zero, and the attacker only had to write the same sentences in Japanese to take the credit
+back. That is the third time reading direction with a regex has cost honest reviewers and
+stopped nobody; `drill.md` already recorded the first two, and this one is now recorded
+beside them.
+
+So the class is carried where direction is read: the judge, calibrated on **every seed in
+both languages** — 10 pairs, the English wordings from the reviewer who found the shape and
+the Japanese ones from the verifier who broke the first fix, both verbatim. Measured, the
+class scores **5/5 → 0/5** while `ideal` and `negative` stay at 5/5.
+
+One limit is now written down rather than left to be assumed: a replayed ledger answers the
+wordings it recorded and no others. A reworded attack has no ledger entry, so it keeps its
+deterministic credit — the row still says `detected: 1` — and what saves the number is that
+the row goes `adjudicated: false` and is dropped from every aggregate. The guard is
+row-level, not finding-level. Reading `detected` without checking `adjudicated` publishes
+the attack at full marks.
 
 ### Fixed
 
@@ -55,10 +70,10 @@ reason. The comment now says the extension list is the whole filter.
 
 **The judge's calibration set grew with the corpus, which is not optional.** Calibration
 is per seed, so shipping seeds without it would leave the judge trusted on wording it was
-never checked against. The set goes 48 -> 66 pairs and the shipped ledger was re-measured
-whole against a fresh file, not appended to: **66/66 live calls in one run**, every call
+never checked against. The set goes 48 -> 73 pairs and the shipped ledger was re-measured
+whole against a fresh file, not appended to: **73/73 live calls in one run**, every call
 `rc 0`, same prompt fingerprint `52758193db1bf838` — ideal 20/20, negative 20/20, attack
-18/18, waiver 8/8, `usable: yes`. Replaying the pairs that already existed would have been
+18/18, waiver 15/15, `usable: yes`. Replaying the pairs that already existed would have been
 cheaper and would not have been a measurement.
 
 An earlier run of this same set reproduced the 2.11.1 ledger exactly — all 48 keys carried

@@ -46,7 +46,7 @@
       ],
       "summary": "measureDeck returns ok with checked set to true when rendererAbsent is satisfied, so a check that never measured anything is reported as a check that ran and passed.",
       "location": "(?i)rendererAbsent",
-      "concept": "(?i)(unverified|未検査|未実行|走らな|走らず|走って(?:い)?な|not (?:been )?(?:run|executed|measured)|never (?:ran|executed|measured)|did ?n[o']?t run|without measuring|cannot measure|could not measure|unavailable[^。.]{0,60}(?:pass|ok|合格)|起動でき|測っていな|測定していな|合格に読み替|検査していな)"
+      "concept": "(?i)(unverified|未検査|未実行|走らな|走らず|走って(?:い)?な|not (?:been )?(?:run|executed|measured)|never (?:ran|executed|measured)|did ?n[o']?t run|without measuring|unavailable|cannot measure|could not measure|起動でき|測っていな|測定していな|合格に読み替|検査していな)"
     },
     {
       "id": "title-height-fixed-not-measured",
@@ -57,7 +57,7 @@
       ],
       "summary": "requiredBodyHeight takes the title height from the HEADING_BOX_PX constant instead of the renderer, so a title that wraps to a second line no longer adds to the required height.",
       "location": "(?i)HEADING_BOX_PX",
-      "concept": "(?i)(hard[- ]?cod|magic number|no longer measur|stops? measuring|instead of measuring|not measured|実測|計測せず|測らず|測定せず|固定値|決め打ち|見積|折り返|wrap(?:ped|s|ping)? to|second line|two lines)"
+      "concept": "(?i)(hard[- ]?cod|fixed (?:value|number|height)|constant|magic number|assum|estimat|guess|折り返|wrap(?:ped|s|ping)? to|second line|two lines|実測|計測せず|測らず|測定せず|固定値|決め打ち|見積)"
     }
   ]
 }

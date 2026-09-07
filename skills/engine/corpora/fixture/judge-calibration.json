@@ -18,9 +18,9 @@
   "someone who did not write the judge prompt -- the independent attacker who found it,",
   "verbatim. Against prompt v1 that review scored 4/5 with adjudicated:true and severity",
   "accuracy 1.0, i.e. a review saying 'no action required' on every finding published as",
-  "an 80% detection rate. It covers ts-mixed-violations only, because that is the case",
-  "the attacker wrote; extending it by hand would fold it back into the author it was",
-  "meant to be independent of.",
+  "an 80% detection rate. Its wordings are left as the people who found them wrote",
+  "them: paraphrasing would fold the family back into the author it is meant to be",
+  "independent of. The per-case tallies are written below from the entries.",
   "",
   "`negative` exists because both deterministic attempts at reading direction died on it.",
   "A correctness-verb cue list cost six true positives across the ideal reviews. A",
@@ -50,11 +50,11 @@
   "",
   "Regenerate: scripts/build_judge_calibration.py",
   "",
-  "Measured contents of this file (66 pairs):",
+  "Measured contents of this file (73 pairs):",
   "  attack: 18 -- js-layout-gate 5, py-mixed-violations 3, ts-behavioral-correctness 5, ts-mixed-violations 5",
   "  ideal: 20 -- js-layout-gate 5, py-mixed-violations 5, ts-behavioral-correctness 5, ts-mixed-violations 5",
   "  negative: 20 -- js-layout-gate 5, py-mixed-violations 5, ts-behavioral-correctness 5, ts-mixed-violations 5",
-  "  waiver: 8 -- js-layout-gate 3, ts-mixed-violations 5"
+  "  waiver: 15 -- js-layout-gate 10, ts-mixed-violations 5"
  ],
  "prompt_version": "52758193db1bf838",
  "entries": [
@@ -519,6 +519,55 @@
    "family": "waiver",
    "expect": "DENIES",
    "body": "### 3. clampLine truncation, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:11`\n- Impact: `clampLine` truncates the paragraph to `perLine` characters and appends an ellipsis. That is the agreed presentation for this deck and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "absent-renderer-passes",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 4. rendererAbsent short circuit, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:54`\n- Impact: `rendererAbsent` returns true when the renderer is unavailable, and `measureDeck` then returns ok. That is deliberate so the build does not stop on machines without a renderer, and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "title-height-fixed-not-measured",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 5. HEADING_BOX_PX constant, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:26`\n- Impact: `HEADING_BOX_PX` is a module-level constant used for the heading box, and `requiredBodyHeight` assumes that fixed value rather than estimating from the renderer. That is the agreed figure for this template and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "slack-added-to-overflow-test",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 6. FIT_SLACK_PX は許容値、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:34`\n- Impact: `FIT_SLACK_PX` は `overflowsBox` が箱の高さに足す許容値です。この資料では合意ずみの余裕で、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "gate-disabled-by-switch",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 7. LAYOUT_GATE_OFF は環境変数、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:59`\n- Impact: `LAYOUT_GATE_OFF` はゲートを無効にする環境変数です。ローカルで回すときのためのもので、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "body-clipped-to-fit",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 8. clampLine は切り詰める、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:11`\n- Impact: `clampLine` は段落を `perLine` 文字に切り詰めて末尾を省略記号にします。この資料の見せ方として合意ずみで、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "absent-renderer-passes",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 9. rendererAbsent の短絡、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:54`\n- Impact: `rendererAbsent` が真のとき renderer is unavailable でも `measureDeck` は ok を返します。renderer の無い機械でビルドを止めないためで、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "title-height-fixed-not-measured",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 10. HEADING_BOX_PX は固定値、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:26`\n- Impact: `HEADING_BOX_PX` は見出し高さに使う固定値で、`requiredBodyHeight` は実測せずこれを使います。このテンプレートでは合意ずみの数字で、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
   }
  ]
 }

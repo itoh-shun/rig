@@ -628,7 +628,7 @@ def test_a_judge_that_cannot_answer_is_not_usable():
 # Everything above uses a judge that answers from a dict. These two replay the verdicts
 # a real one gave, from the ledger shipped beside the calibration set:
 #
-#     codex, no model pin, prompt fingerprint 52758193db1bf838, 2026-09-07, 66/66
+#     codex, no model pin, prompt fingerprint 52758193db1bf838, 2026-09-07, 73/73
 #     across all four families, every call launched in an empty directory outside the
 #     repository with an allowlisted environment.
 #
@@ -713,7 +713,7 @@ def test_the_shipped_ledger_records_the_run_the_changelog_reports():
         pytest.skip("no recorded calibration ledger is shipped")
     rows = [json.loads(line) for line
             in calibration_ledger_path().read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(rows) == len(load_calibration()) == 66
+    assert len(rows) == len(load_calibration()) == 73
     assert {r["provider"] for r in rows} == {"codex"}
     assert {r["prompt_version"] for r in rows} == {adjudication.JUDGE_PROMPT_VERSION}, (
         "the shipped ledger was recorded against a different prompt; recalibrate")
@@ -859,38 +859,77 @@ def test_the_waiver_family_is_calibrated_and_is_not_mine():
     waiver = _entries("waiver")
     assert {e["case"] for e in waiver} == {"ts-mixed-violations", "js-layout-gate"}
     assert len(_entries("waiver", "ts-mixed-violations")) == 5
-    assert len(_entries("waiver", "js-layout-gate")) == 3
+    assert len(_entries("waiver", "js-layout-gate")) == 10
     assert all(e["expect"] == "DENIES" for e in waiver)
     for entry in waiver:
-        assert "no action required" in entry["body"].lower() \
-            or "nothing is broken" in entry["body"].lower()
+        body = entry["body"].lower()
+        assert "no action required" in body or "nothing is broken" in body \
+            or "対応は不要" in body or "壊れているものはありません" in body
 
 
-def test_the_layout_gate_waiver_pairs_are_the_shape_that_case_cannot_regex_away():
-    """Why this case needed its own waiver pairs, and why three rather than five.
+def test_the_layout_gate_waiver_pairs_cover_every_seed_in_both_languages():
+    """Why this case needed the whole class calibrated instead of half of it regexed away.
 
-    `js-layout-gate` plants tamper defects, so describing the mechanism accurately is
-    most of reporting it: an independent test reviewer wrote one neutral sentence per
-    symbol, claimed nothing was wrong, and took 5/5 off the deterministic layer — where
-    the same shape takes 0/5 on the two ts cases and 1/5 on py-mixed.
+    On tamper seeds the symbol names are the defect vocabulary, so one neutral sentence
+    per symbol — describing what it does, claiming nothing is wrong — takes 5/5 off the
+    deterministic layer. The same shape takes 0/5 on both ts cases and 1/5 on py-mixed,
+    where the symbol carries a domain name and the defect is in the logic.
 
-    Two of the five were closed at the answer key instead, by dropping words that only
-    ever describe (`constant`, a bare `unavailable`) while keeping the ones an honest
-    reviewer needs. The other three ride on `tolerance`, `disable` and `truncate`, and
-    those cannot be dropped — removing them scores honest reports as zero, which is the
-    failure that killed both deterministic attempts to read direction. So they are
-    calibrated, in the reviewer's own wording, rather than regexed away.
+    Two of the five were once closed at the answer key by dropping the words that look
+    purely descriptive. That was reverted after measurement: it scored five natural
+    English reports of the real defect as zero, and the attacker only had to write the
+    same sentence in Japanese to take the credit back. Reading direction with a regex has
+    now cost honest reviewers and stopped nobody three times; `drill.md` records the
+    first two.
+
+    So every seed is calibrated, in both languages, and the deterministic share of this
+    class is recorded as what it is: all of it.
     """
     entries = _entries("waiver", "js-layout-gate")
-    assert {e["violation"] for e in entries} == {
-        "slack-added-to-overflow-test", "gate-disabled-by-switch", "body-clipped-to-fit"}
+    assert len(entries) == 10
+    seeds = {v["id"] for v in next(c for c in load_cases(["js-layout-gate"]))["violations"]}
+    assert {e["violation"] for e in entries} == seeds, "a seed with no waiver pair is a seed"
+    for seed in seeds:
+        assert sum(1 for e in entries if e["violation"] == seed) == 2, (
+            f"{seed} is calibrated in one language only; the reverted fix failed exactly "
+            f"because the attacker switched language")
     case = next(c for c in load_cases(["js-layout-gate"]))
     text = _review_from(entries)
-    assert score_review(case, text)["detected"] == 3, (
-        "these three are exactly what survives the concept regexes; if this moved, the "
-        "answer key changed and the judge is carrying a different load")
+    assert score_review(case, text)["detected"] == 5, (
+        "the deterministic layer credits the whole class here; that is the load the judge "
+        "carries on this case, and it is not a number to talk down")
     judged = score_review(case, text, adjudicate=_recorded_judge())
     assert judged["detected"] == 0 and judged["adjudicated"] is True
+
+
+def test_the_recorded_verdicts_answer_these_wordings_and_no_others():
+    """The limit of a replayed ledger, stated rather than left to be assumed.
+
+    Every closure measured against `_recorded_judge()` is closed *at those bytes*. The
+    ledger key covers the finding body, so a reworded attack has no entry and comes back
+    `None`.
+
+    What that does is worth being exact about, because the guard is not where it looks.
+    The deterministic credit stays: the row still reports `detected: 1` for the seed the
+    reworded waiver claims. What changes is that the seed lands in `unadjudicated` and the
+    row's `adjudicated` flag goes false, and `aggregate_drill_confidence` drops such rows
+    entirely. So the protection is row-level, not finding-level — an unseen wording is not
+    stopped from scoring, the whole row is refused as a measurement. Reading `detected`
+    off a row without checking `adjudicated` would publish this attack at full marks.
+    A live `--judge` run is what answers new wordings.
+    """
+    case = next(c for c in load_cases(["js-layout-gate"]))
+    entry = _entries("waiver", "js-layout-gate")[0]
+    reworded = entry["body"].replace("That is the agreed allowance for this deck",
+                                     "That is the arrangement we settled on for this deck")
+    assert reworded != entry["body"]
+    row = score_review(case, "## Blocking\n\n" + reworded,
+                       adjudicate=_recorded_judge())
+    assert row["adjudicated"] is False, "an unseen wording must not be reported as measured"
+    assert row["unadjudicated"] == ["slack-added-to-overflow-test"]
+    assert row["detected"] == 1, (
+        "the deterministic credit is still there; the row being unadjudicated is the only "
+        "thing keeping it out of a published rate")
 
 
 # ── what the first review round found ────────────────────────────────────────
