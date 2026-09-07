@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [2.11.0] - 2026-09-07
+
 ### Added
 
 **The drill has a judge, and the shape that scored full marks for finding nothing now
@@ -180,6 +182,18 @@ The `<NON-INTERACTIVE-STOP>` clause (#587) is unchanged. It was dropped by accid
 rewrite and restored after the docs review caught it; the reviewer's evidence was the CHANGELOG
 line that named the four files the clause lives in.
 
+**`policies/independent-verification` now covers the instruments, not only the graders.**
+The rule was always that the grader must not be the generator, and it was applied to
+review verdicts while the thing issuing the verdict went unexamined. The drill scorer's
+own tests were written by its author and guarded exactly one attack shape, which is why
+the narration hole sat there from the day the corpus shipped. Changing a scoring rule
+or a gate sensor now requires an attack set built by someone who did not write it, with
+the brief "score full marks without finding any defect" rather than "make the tests
+pass"; whatever lands becomes a regression test, and whatever cannot be closed becomes a
+test pinning its current value. Followed here, it produced three live attacks on a
+version that had just passed its own suite, one of which was the contract-compliance
+asymmetry above.
+
 ### Fixed
 
 **The drill was measuring vocabulary placement, not detection.**
@@ -252,22 +266,6 @@ suite, including one defect its author could not have found from the inside: a f
 carrying the `File:` the contract requires scored nothing, while the same finding
 without it scored, because the ambiguity test was built from one seed's siblings
 instead of from all of them. Following the contract lost points.
-
-### Changed
-
-**`policies/independent-verification` now covers the instruments, not only the graders.**
-The rule was always that the grader must not be the generator, and it was applied to
-review verdicts while the thing issuing the verdict went unexamined. The drill scorer's
-own tests were written by its author and guarded exactly one attack shape, which is why
-the narration hole sat there from the day the corpus shipped. Changing a scoring rule
-or a gate sensor now requires an attack set built by someone who did not write it, with
-the brief "score full marks without finding any defect" rather than "make the tests
-pass"; whatever lands becomes a regression test, and whatever cannot be closed becomes a
-test pinning its current value. Followed here, it produced three live attacks on a
-version that had just passed its own suite, one of which was the contract-compliance
-asymmetry above.
-
-### Fixed
 
 **The drill scorer measured whether a review quoted an identifier, not what it caught.**
 `output-contracts/review-findings` requires every finding to carry a `file:line` evidence
