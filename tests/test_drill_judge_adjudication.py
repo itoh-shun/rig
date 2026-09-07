@@ -671,12 +671,12 @@ def test_the_recorded_judge_closes_the_waiver_class_too():
     wrong. Prompt v2 names that seam explicitly and the recorded verdicts are five
     `DENIES`.
 
-    Closed at these five bodies, not shown to be closed in general — and the difference
-    is not academic here. Under the first prompt the same five bytes scored 4/5, 3/5,
-    3/5 and 3/5 across re-rolls, so a single clean pass is one sample of an unstable
-    quantity. The re-roll measurement for this prompt was attempted and did not finish
-    (the provider degraded to minutes per call); the task's `risk.md` records it as
-    unmeasured rather than as stable.
+    Closed at these five bodies, not shown to be closed in general. Under the first
+    prompt the same five bytes scored 4/5, 3/5, 3/5 and 3/5 across re-rolls, so a single
+    clean pass would have been one sample of an unstable quantity. Re-rolled three times
+    against fresh ledgers under this prompt, all five answer `DENIES` every time — 15 of
+    15. Three samples is not determinism, and no other class has been re-rolled at all;
+    `--judge-samples` stays unbuilt and the task's `risk.md` says so.
     """
     case = next(c for c in load_cases(["ts-mixed-violations"]))
     text = _review_from(_entries("waiver"))
