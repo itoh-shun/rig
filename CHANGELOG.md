@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [2.13.0] - 2026-09-08
+
 ### Added
 
 **A design constraints layer, and a sensor that checks it.** The design pack shipped two
