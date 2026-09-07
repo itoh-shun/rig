@@ -342,8 +342,6 @@ def build() -> dict:
         for language in sorted(by_language):
             text = fixtures.neutral_mechanism_review(case_id, language)
             credited = _credited_findings(case_id, text)
-            expected = [vid for _, (vid, _) in
-                        zip(by_language[language], [(None, None)] * len(by_language[language]))]
             if len(credited) != len(by_language[language]):
                 raise SystemExit(
                     f"{case_id}/{language}: the deterministic layer credits "
