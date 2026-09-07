@@ -203,22 +203,45 @@ def test_aggregate_drill_confidence_corpus_filter(tmp_path):
     rig = tmp_path / ".rig"
     rig.mkdir()
     sv = SCORER_VERSION
+    # A row only counts when a judge actually produced its verdicts: not replayed from a
+    # ledger, not supplied. A forged ledger plus `--judge-offline` published 86.7%
+    # detection with no provider call, so `offline`/`calls` are part of the filter.
+    _LIVE_JUDGE = {"provider": "codex", "offline": False, "calls": 5, "cache_hits": 0}
     rows = [
-        {"scorer_version": sv, "corpus": "standard",
+        {"scorer_version": sv, "adjudicated": True, "judge": _LIVE_JUDGE, "corpus": "standard",
          "scores": [{"reviewer": "sec", "detected": 2, "seeded": 2, "false_positives": 0}]},
-        {"scorer_version": sv, "corpus": "project",
+        {"scorer_version": sv, "adjudicated": True, "judge": _LIVE_JUDGE, "corpus": "project",
          "scores": [{"reviewer": "sec", "detected": 0, "seeded": 2, "false_positives": 1}]},
-        {"scorer_version": sv,
+        {"scorer_version": sv, "adjudicated": True, "judge": _LIVE_JUDGE,
          "scores": [{"reviewer": "sec", "detected": 1, "seeded": 1, "false_positives": 0}]},  # no corpus
         # An older scorer's row. Dropped whatever the corpus filter says: a rate only
         # means something against the rule that produced it, and version 3 stopped
         # scoring loose prose after a narration asserting every function was correct
         # measured at 4/5 to 5/5. Summing across rules averages two different things.
-        {"scorer_version": sv - 1, "corpus": "standard",
+        {"scorer_version": sv - 1, "adjudicated": True, "judge": _LIVE_JUDGE, "corpus": "standard",
          "scores": [{"reviewer": "sec", "detected": 99, "seeded": 99, "false_positives": 99}]},
         # And a row from before the field existed, which is from an unknown rule.
         {"corpus": "standard",
          "scores": [{"reviewer": "sec", "detected": 77, "seeded": 77, "false_positives": 77}]},
+        # A current-version row whose judge never finished. Its counts are the
+        # optimistic pre-judge ones, and the shape they over-credit is a review
+        # asserting nothing is wrong — so summing it in is the dangerous direction.
+        {"scorer_version": sv, "adjudicated": False, "corpus": "standard",
+         "scores": [{"reviewer": "sec", "detected": 55, "seeded": 55, "false_positives": 0}]},
+        # Same, from a scorer old enough not to have had the field at all.
+        {"scorer_version": sv, "corpus": "standard",
+         "scores": [{"reviewer": "sec", "detected": 44, "seeded": 44, "false_positives": 0}]},
+        # Adjudicated, but replayed from a ledger rather than measured.
+        {"scorer_version": sv, "adjudicated": True, "corpus": "standard",
+         "judge": {"provider": "codex", "offline": True, "calls": 0, "cache_hits": 15},
+         "scores": [{"reviewer": "sec", "detected": 33, "seeded": 33, "false_positives": 0}]},
+        # Adjudicated and online, but every verdict came from cache — no new measurement.
+        {"scorer_version": sv, "adjudicated": True, "corpus": "standard",
+         "judge": {"provider": "codex", "offline": False, "calls": 0, "cache_hits": 15},
+         "scores": [{"reviewer": "sec", "detected": 22, "seeded": 22, "false_positives": 0}]},
+        # Adjudicated, but naming nothing that could have produced the verdicts.
+        {"scorer_version": sv, "adjudicated": True, "corpus": "standard",
+         "scores": [{"reviewer": "sec", "detected": 11, "seeded": 11, "false_positives": 0}]},
     ]
     (rig / "drill-results.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")

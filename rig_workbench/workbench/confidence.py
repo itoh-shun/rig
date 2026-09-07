@@ -34,7 +34,19 @@ def aggregate_drill_confidence(root: pathlib.Path, corpus: str | None = None) ->
     every shipped case. Summing across versions averages a reviewer's real work with
     a number that measured vocabulary placement. Rows with no tag predate the field
     and are dropped rather than counted as version 1 — they were written by at least
-    two different rules and there is no way to tell which."""
+    two different rules and there is no way to tell which.
+
+    Rows that did not adjudicate are dropped too (`adjudicated` absent or false).
+    From version 4 a detection is credited only once the drill judge has confirmed the
+    finding asserts the seeded defect rather than denying it, so a row scored without
+    a judge — or with one that could not answer some pair — still carries the
+    optimistic pre-judge count. Summing that here would publish a rate nobody
+    measured, and it is the high direction that misleads: the attack this aggregate
+    must not reward is a review claiming everything is fine.
+
+    Rows whose judge made no live call are dropped too — `offline`, or `calls` of zero.
+    A replayed or hand-supplied ledger is not a measurement taken, and the ledger is
+    forgeable by anyone who can run `ledger_key`."""
     drill_path = root / ".rig" / "drill-results.jsonl"
     atk: dict[str, dict] = {}
     if not drill_path.exists():
@@ -43,6 +55,18 @@ def aggregate_drill_confidence(root: pathlib.Path, corpus: str | None = None) ->
         if corpus is not None and d.get("corpus", "standard") != corpus:
             continue
         if d.get("scorer_version") != SCORER_VERSION:
+            continue
+        if not d.get("adjudicated"):
+            continue
+        # …and the verdicts have to have been produced, not replayed or supplied.
+        # `Ledger.get` re-derives a verdict from the recorded output, which raised the
+        # cost of forging one but did not close it: a reviewer wrote plausible judge
+        # output into `raw` with `returncode: 0`, ran `--judge-offline`, and published
+        # 86.7% detection with no provider call at all. A row whose judge made no call
+        # is a replay of an earlier measurement or a fabrication, and neither is a new
+        # data point for an aggregate. Replays remain useful — as replays.
+        judge = d.get("judge")
+        if not isinstance(judge, dict) or judge.get("offline") or not judge.get("calls"):
             continue
         for s in d.get("scores") or []:
             if not isinstance(s, dict):

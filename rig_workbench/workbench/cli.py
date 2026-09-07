@@ -391,7 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("drill-corpus", help="/rig:drill fixture corpus: list the pre-built cases, "
                        "materialize one into a throwaway git repo, or score reviews against the answer key")
-    p.add_argument("action", choices=("list", "materialize", "score"))
+    p.add_argument("action", choices=("list", "materialize", "score", "calibrate-judge"))
     p.add_argument("case", nargs="?", help="with materialize: which case id")
     p.add_argument("--cases", nargs="+", help="restrict to these case ids (default: all)")
     p.add_argument("--into", help="with materialize: target directory (default: a fresh temp dir)")
@@ -399,6 +399,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="with score: JSON of {case-id: {persona: review text or @path}}")
     p.add_argument("--append", metavar="PATH",
                    help="with score: append the scored row to this jsonl (e.g. .rig/drill-results.jsonl)")
+    p.add_argument("--judge", metavar="PROVIDER", default=None,
+                   help="with score: adjudicate each credited finding's direction with "
+                        "this provider (drill instruction 3-b; default judge: codex, a "
+                        "different model family from the reviewers being scored). "
+                        "Without it the row is written `adjudicated: false` and yields "
+                        "no detection rate")
+    p.add_argument("--judge-model", metavar="MODEL", default=None,
+                   help="with --judge: model for the judge provider")
+    p.add_argument("--judge-ledger", metavar="PATH", default=None,
+                   help="with --judge: JSONL of judge verdicts, keyed by content hash. "
+                        "Read before calling, appended after, so a replay is "
+                        "deterministic and only new content reaches a provider")
+    p.add_argument("--judge-offline", action="store_true",
+                   help="with --judge-ledger: answer only from the ledger and never "
+                        "call a provider; pairs it has not seen stay unadjudicated")
     p.add_argument("--workspace", metavar="CASE=DIR", action="append", default=[],
                    help="with score: the directory a case was materialized into, so a "
                         "reviewer's absolute `file:line` anchors resolve (repeatable)")
