@@ -41,16 +41,20 @@ def task_id(git_repo):
 
 
 def _write_drill(git_repo, rows):
-    """Rows carry the current `scorer_version`, because real ones do.
+    """Rows carry what a real row carries: version, `adjudicated`, and judge provenance.
 
     Aggregation drops rows written by a different scorer: a rate only means
     something against the rule that produced it, and version 3 stopped scoring
     loose prose after a paragraph asserting each function was correct measured at
     4/5 to 5/5 on every shipped case. A fixture without the tag is a row from an
-    unknown ruler.
+    unknown ruler. From version 4 it also drops rows whose ③-b judge did not finish,
+    for the same reason: their counts are the pre-judge ones — and rows whose judge made
+    no live call, because a replayed or hand-supplied ledger is not a measurement taken.
     """
     (git_repo / ".rig").mkdir(exist_ok=True)
-    stamped = [{"scorer_version": SCORER_VERSION, **row} for row in rows]
+    live_judge = {"provider": "codex", "offline": False, "calls": 5, "cache_hits": 0}
+    stamped = [{"scorer_version": SCORER_VERSION, "adjudicated": True,
+                "judge": live_judge, **row} for row in rows]
     (git_repo / ".rig" / "drill-results.jsonl").write_text(
         "\n".join(json.dumps(r) for r in stamped) + "\n", encoding="utf-8")
 

@@ -463,8 +463,15 @@ CORRECTNESS_CLAIMS = {
     "case_id,open_at",
     [("py-mixed-violations", 3), ("ts-behavioral-correctness", 5), ("ts-mixed-violations", 5)],
 )
-def test_a_graded_claim_of_correctness_is_an_open_attack(case_id, open_at):
-    """The attack this scorer does not close, recorded at its measured value.
+def test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness(case_id, open_at):
+    """What the *deterministic* layer alone still scores, recorded at its measured value.
+
+    This number is no longer what the drill reports. The judge in ③-b closes the hole,
+    and `test_drill_judge_adjudication.py` measures that with recorded verdicts. What
+    stays pinned here is the size of the gap the judge is carrying: if this moves down,
+    something deterministic closed part of it and the judge is carrying less than this
+    test claims; if it moves up, the deterministic layer got looser and the judge is
+    carrying more. Either way the judge's load changed and the calibration is stale.
 
     A finding that carries a `Severity`, a `File:` anchor on the defect's own line,
     one subject, and a sentence saying that subject is *correct* passes every test
@@ -725,8 +732,27 @@ def _reviews(persona: str) -> dict:
     }
 
 
+def _judged(*args, **kwargs):
+    """`build_drill_row` as a real drill run calls it: with a judge that answered.
+
+    These tests are about the row builder's own mechanics — attribution, what a miss
+    records, how the clean case counts — none of which the judge touches. But a row
+    scored without one is deliberately not a measurement: its detection fields are
+    renamed with an `_unadjudicated` suffix so that `digest`, `dashboard` and `fleet`,
+    which sum them and print a rate, skip it. Asserting on `detected` therefore means
+    asking for the shape a real run produces, which is this one.
+    """
+    def adjudicate(case, violation, finding):
+        return "ASSERTS"
+    adjudicate.provenance = lambda: {
+        "provider": "fake", "model": None, "prompt_version": "test", "ledger": None,
+        "ledger_sha256": None, "offline": False, "calls": 1, "cache_hits": 0,
+    }
+    return build_drill_row(*args, adjudicate=adjudicate, **kwargs)
+
+
 def test_row_attributes_planted_defects_by_perspective():
-    row = build_drill_row(_reviews("security-reviewer"))
+    row = _judged(_reviews("security-reviewer"))
     assert row["corpus"] == "fixture"
     score = row["scores"][0]
     assert score["attribution"] == "perspective"
@@ -737,7 +763,7 @@ def test_row_attributes_planted_defects_by_perspective():
 
 
 def test_behavioral_correctness_reviewer_has_five_accountable_seeds():
-    row = build_drill_row({
+    row = _judged({
         "ts-behavioral-correctness": {
             "behavioral-correctness-reviewer": IDEAL["ts-behavioral-correctness"],
         },
@@ -748,7 +774,7 @@ def test_behavioral_correctness_reviewer_has_five_accountable_seeds():
 
 
 def test_missed_defects_are_recorded_by_class_and_in_detail():
-    row = build_drill_row({"py-mixed-violations": {"security-reviewer": VAGUE}})
+    row = _judged({"py-mixed-violations": {"security-reviewer": VAGUE}})
     score = row["scores"][0]
     assert (score["detected"], score["seeded"]) == (0, 2)
     assert score["missed"] == ["security", "security"]
@@ -758,18 +784,24 @@ def test_missed_defects_are_recorded_by_class_and_in_detail():
 
 
 def test_reviewer_outside_the_corpus_perspectives_is_scored_on_everything():
-    row = build_drill_row(_reviews("native-code-review"))
+    row = _judged(_reviews("native-code-review"))
     score = row["scores"][0]
     assert score["attribution"] == "all"
     assert (score["detected"], score["seeded"]) == (5, 5)
 
 
 def test_clean_case_finding_counts_as_a_false_positive():
+    """The clean case needs no judge: nothing is planted, so nothing has a direction.
+
+    The row still carries no `seeded`, because it was scored without one and that is
+    what an unjudged row looks like now. Nothing is lost — a clean-only run has no
+    detection rate to offer either way.
+    """
     row = build_drill_row({CLEAN_CASE: {"security-reviewer": ALARM}})
     score = row["scores"][0]
     assert (score["clean_diffs"], score["clean_findings"]) == (1, 1)
     assert score["clean_fp_rate"] == 1.0
-    assert (score["detected"], score["seeded"]) == (0, 0)
+    assert "seeded" not in score and score["seeded_unadjudicated"] == 0
 
 
 def test_only_explanation_quality_is_still_left_to_the_judge():
@@ -783,14 +815,14 @@ def test_only_explanation_quality_is_still_left_to_the_judge():
     of question — whether an Impact and a fix are specific enough to act on — and it
     still needs the judge in drill ③-b.
     """
-    score = build_drill_row(_reviews("security-reviewer"))["scores"][0]
+    score = _judged(_reviews("security-reviewer"))["scores"][0]
     assert "explanation_quality" not in score
     assert score["severity_accuracy"] == 1.0
     assert score["blocking_accuracy"] == 1.0
 
 
 def test_row_is_one_line_json_and_carries_the_corpus_version():
-    row = build_drill_row(_reviews("security-reviewer"))
+    row = _judged(_reviews("security-reviewer"))
     line = json.dumps(row, ensure_ascii=False)
     assert "\n" not in line
     assert row["corpus_version"] == load_corpus_meta()["corpus_version"]
