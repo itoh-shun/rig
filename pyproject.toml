@@ -94,6 +94,9 @@ benchmarks = [
   "corpora/**/*.ts",
   "facets/**/*.md",
   "manifests/*.md",
+  # design 制約ファイルのスキーマと雛形。.md だけを拾っていると、規則だけが出荷されて
+  # それが指す形の定義が届かない。
+  "manifests/*.json",
   "patterns/*.md",
   "recipes/*.md",
   "templates/*.md",

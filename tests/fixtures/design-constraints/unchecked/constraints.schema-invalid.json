@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "tokens": {},
+  "componentss": [
+    "Button"
+  ],
+  "prohibited": [
+    {
+      "pattern": "click here"
+    }
+  ]
+}
