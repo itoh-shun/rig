@@ -12,6 +12,7 @@ grew a fourth capability would make the shipped ratio a lie.
 import json
 import os
 import pathlib
+import random
 import subprocess
 import sys
 import time
@@ -813,15 +814,120 @@ def test_a_halfwidth_voiced_kana_is_the_same_word_as_its_fullwidth_spelling(
 @pytest.mark.parametrize(
     "text",
     ["ﾀﾞｳﾝﾛｰﾄﾞ", "ﾊﾟｽ", "ダウンロード", "㈱ﬁ①", "ｶﾞ", "ﾞ", "ﾞﾞ", "áb", "",
-     "ダ\u200bウン", "Ａ Ｂ", "ﾞあ"],
+     "ダ\u200bウン", "Ａ Ｂ", "ﾞあ",
+     # ハングルの jamo は `Lo`＝starter。まとまり単位の正規化では**永久に**合成されず、
+     # この行を書いていなかったから「不動点を縛った」と書けてしまった。
+     "한글", "베트남", "가", "ㄱㅏ", "Tiếng Việt", "한\n글"],
 )
 def test_normalisation_has_already_absorbed_nfkc(text):
-    """`fold(x) == fold(NFKC(x))`。**この不動点が3周目の退行を許した穴を塞ぐ。**
+    """`fold(x) == fold(NFKC(x))`。**この不動点が3周目・4周目の退行を許した穴を塞ぐ。**
 
     「見えない文字の表をもう1つ広げる」ではなく「正規化が NFKC の不動点である」を
-    直接縛る。半角濁点の件はこの等式が破れていた形であり、同じ形の次の1文字も落ちる。
+    直接縛る。半角濁点もハングルも、この等式が破れていた形にすぎない。
     """
     assert dc.fold(text) == dc.fold(unicodedata.normalize("NFKC", text))
+
+
+@pytest.mark.parametrize(
+    "text", ["한글", "베트남", "Tiếng Việt", "café", "가나다"],
+)
+def test_a_decomposed_word_is_the_same_word_as_its_composed_spelling(text):
+    """NFD で分解して書いた禁止語が、合成表記の宣言と一致すること。"""
+    assert dc.fold(unicodedata.normalize("NFD", text)) == dc.fold(text)
+
+
+def test_the_invariant_holds_across_the_whole_code_point_space():
+    """不動点を**手で選んだ文字列ではなく乱択**で確かめる。
+
+    4周目はこの性質を「縛った」と書きながら、実体は日本語とラテンだけの12文字列で、
+    ハングルを1つ足せば崩れた。反例は乱択でしか出てこない——選んだ文字列は、
+    自分が直したケースの写しにしかならない。
+    """
+    rnd = random.Random(20260907)
+    for _ in range(6000):
+        text = "".join(chr(rnd.randint(1, 0x10FFFF)) for _ in range(rnd.randint(1, 6)))
+        assert dc.fold(text) == dc.fold(unicodedata.normalize("NFKC", text)), repr(text)
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["ﾀ\u200bﾞｳﾝﾛｰﾄ\u200bﾞ", "ﾀ\u00adﾞｳﾝﾛｰﾄﾞ", "ダ\u200b\u3099ウンロード"[:1] + "ダウンロード"[1:]],
+)
+def test_an_invisible_character_between_a_base_and_its_mark_does_not_block_composition(
+    tmp_path, written,
+):
+    """**捨ててから合成する。** 逆順だと表示の変わらない1文字で合成が壊れる。
+
+    不可視文字は表の中にあり実際に捨てられていたのに、捨てる前に合成の境界を決めて
+    いたため `ﾀ<ZWSP>ﾞ` が `ダ` にならず、禁止表現が exit 0 で素通りしていた。
+    表の有限性の問題ではなく、**順序**の問題。
+    """
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}},
+                   "prohibited": [{"pattern": "ダウンロード", "why": "「取得」と書く"}]}
+    code, report = _run(tmp_path, constraints, {"a.md": f"資料を{written}してください\n"})
+    assert code == 1, report["violations"]
+    assert [v["class"] for v in report["violations"]] == ["prohibited-expression"]
+
+
+def test_normalising_line_by_line_is_normalising_the_whole_text():
+    """行ごとの NFKC ＝ 本文全体の NFKC。行番号を残すための分割が意味を変えないこと。
+
+    この等式が正規化を「表に依存しない」ものにしている。改行は合成にも分解にも
+    関与しないので成り立つが、成り立たなくなれば行分割そのものが誤りになる。
+    """
+    rnd = random.Random(20260907)
+    texts = ["한글\n가나", unicodedata.normalize("NFD", "Tiếng Việt") + "\nﾀﾞ",
+             "a\nﾞ", "㈱\nﬁ", "café\n" + unicodedata.normalize("NFD", "café"),
+             "\n\n", "ｶﾞ\nｶﾞ", ""]
+    texts += ["".join(chr(rnd.randint(1, 0xFFFF)) for _ in range(40)) for _ in range(500)]
+    for t in texts:
+        whole = unicodedata.normalize("NFKC", t)
+        by_line = "\n".join(unicodedata.normalize("NFKC", ln) for ln in t.split("\n"))
+        assert whole == by_line, repr(t[:40])
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2px solid red", "red 2px solid", "red solid 2px",
+     "solid red 2px", "2px red solid", "solid 2px red"],
+)
+def test_a_border_shorthand_declares_its_colour_in_any_order(value):
+    """CSS の枠線ショートハンドは**順不同**。末尾だけを見て4通りで色を落としていた。
+
+    落ちる方向が悪い——宣言した色が宣言集合から消え、それを使った成果物が違反になる。
+    """
+    colors, lengths, _ = dc.classify_declared(value)
+    assert colors == ["#ff0000"] and lengths == ["2px"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["16px Display Black Regular", "700 16px Display Black Regular",
+     "1px double Midnight Blue Text"],
+)
+def test_a_long_value_does_not_declare_a_colour_from_a_typeface_name(value):
+    """語数の上限が無いと、書体名に混ざった色語が色として宣言される。
+
+    宣言された `#000000` は**その色のあらゆる使用**を黙って通す。書体名の過剰宣言と
+    違って波及範囲が広いので、色だけは枠線ショートハンドの形に閉じ込める。
+    語数上限を外す変異が 168/168 緑で通ったため、この形を直接張る。
+    """
+    colors, _, _ = dc.classify_declared(value)
+    assert colors == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["16px/1.2 Black", "16px Black, sans-serif", "1.5rem/2 Navy", "12px Silver, serif"],
+)
+def test_a_font_shorthand_marker_keeps_a_typeface_name_from_becoming_a_colour(value):
+    """`/`（サイズ／行送り）と `,`（フォールバック）は書体指定の目印。
+
+    語数だけで閉じ込めると `16px/1.2 Black` の `Black` が色になる。この2つの条件を
+    外す変異が 171/171 緑で通ったため、語数では除外されない形を直接張る。
+    """
+    colors, _, _ = dc.classify_declared(value)
+    assert colors == []
 
 
 @pytest.mark.parametrize(

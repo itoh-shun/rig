@@ -46,7 +46,6 @@ use と mention も区別しません。「#0A84FF から移行した」とい�
 from __future__ import annotations
 
 import argparse
-import functools
 import hashlib
 import json
 import os
@@ -366,8 +365,11 @@ def classify_declared(value: str) -> tuple[list[str], list[str], str | None]:
     # 色は同じ扱いにできない。`#000000` を余分に宣言すると、その色の**あらゆる**使用が
     # 検出されなくなる。名前付き色は枠線ショートハンドの形（末尾が色語 ∧ 長さを含む）の
     # ときだけ読む。`700 24px/1.2 Black Han Sans` の `black` を色にしないのはこのため。
-    tail = folded.strip().rstrip(";").split()[-1:] if folded.strip() else []
-    if lengths and tail and tail[0].strip("'\"").lower() in CSS_NAMED_COLOURS:
+    # 枠線ショートハンドは CSS では**順不同**（`red 2px solid` も妥当）。末尾だけを
+    # 見ていたため6通り中4通りで宣言した色が落ち、宣言したトークンを使った成果物が
+    # 違反になっていた。位置ではなく**形**で見る——長さを含み、区切りが無く、語が3つ以下。
+    words = folded.strip().rstrip(";").split()
+    if lengths and len(words) <= 3 and "," not in folded and "/" not in folded:
         colors = colors + named_colors_in(f"color: {folded};")
 
     shorthand = fonts_in(f"font: {folded};")
@@ -614,52 +616,58 @@ def scan_line(raw_line: str, lineno: int, path: str, decl: Declared) -> list[dic
     return out
 
 
-@functools.lru_cache(maxsize=4096)
-def combines_after_nfkc(ch: str) -> bool:
-    """その文字は **NFKC 後に**結合文字になるか。
-
-    **正規化前の `category` では判定できない。** U+FF9E（半角濁点）は正規化前が `Lm`
-    で、`Mn` になるのは NFKC の後。前者でまとまりの境界を決めていたため `ﾀﾞ` が基底に
-    合流せず、`ﾀﾞｳﾝﾛｰﾄﾞ` が `ダウンロード` と別物のまま照合されて禁止表現をすり抜けた。
-    """
-    norm = unicodedata.normalize("NFKC", ch)
-    return bool(norm) and all(unicodedata.category(c) in ("Mn", "Mc", "Me") for c in norm)
-
-
 def _normalize(
     text: str, drop_all_space: bool = False, lower: bool = False, collapse_space: bool = True,
 ) -> tuple[str, list[int]]:
-    """本文を**1つの規則で**正規化し、各文字が元の何文字目から来たかを覚えておく。
+    """本文を**1つの規則で**正規化し、各文字がどの行から来たかを覚えておく。
 
-    NFKC は1文字ずつではなく、**基底文字＋結合文字のまとまり**に当てる。1文字ずつだと
-    NFD で分解された `café`（`e` ＋ U+0301）が合成されず、禁止語が一致しなかった。
-    まとまり単位なら合成でき、元位置との対応も保てる。
+    NFKC は**行ごとに、その行全体へ**当てる。1文字ずつでも、基底文字＋結合文字の
+    まとまり単位でもいけない——NFD で分解されたハングルの jamo は `Lo`（starter）
+    なので、どちらの単位でも合成されず、`한글` と NFD の `한글` が別物になる。
+    まとまり単位は半角濁点も取りこぼしていた（U+FF9E は NFKC 後にしか `Mn` にならない）。
+    **正規化の単位を賢くする試みは3周続けて破れた。単位を分けないのが答え。**
 
-    `fold`（行走査）と `_flatten`（禁止表現の照合）が同じ関数を通る。以前は片方が文字列
-    全体、もう片方が1文字ずつで、**正規化が2種類あった**。
+    順序は**破棄 → 合成 → 照合**。不可視文字を先に捨てないと、基底と結合記号の間に
+    U+200B を1つ挟むだけで合成が壊れる（表示は変わらないのに一致しなくなる）。
+
+    行に切るのは元の行番号を残すためだけで、改行は合成にも分解にも関与しないので
+    行ごとの NFKC は本文全体の NFKC と一致する（テストで固定してある）。これにより
+    `fold(x) == fold(NFKC(x))` が表に依存せず成り立つ。
+
+    `fold`（行走査）と `_flatten`（禁止表現の照合）が同じ関数を通る。
     """
     out: list[str] = []
     idx: list[int] = []
     prev_space = False
-    i, n = 0, len(text)
-    while i < n:
-        j = i + 1
-        while j < n and combines_after_nfkc(text[j]):
-            j += 1
-        for c in unicodedata.normalize("NFKC", text[i:j]):
-            if is_invisible(c):
-                continue
-            if c.isspace() and collapse_space:
-                if drop_all_space or prev_space:
-                    continue
-                out.append(" ")
-                idx.append(i)
-                prev_space = True
-                continue
-            prev_space = False
-            out.append(c.lower() if lower else c)
-            idx.append(i)
-        i = j
+
+    def emit(c: str, at: int) -> None:
+        # 不可視文字はここに来ない——行を組み立てる前に落としてある。
+        nonlocal prev_space
+        if c.isspace() and collapse_space:
+            if drop_all_space or prev_space:
+                return
+            out.append(" ")
+            idx.append(at)
+            prev_space = True
+            return
+        prev_space = False
+        out.append(c.lower() if lower else c)
+        idx.append(at)
+
+    pos = 0
+    for n, line in enumerate(text.split("\n")):
+        if n:
+            emit("\n", pos - 1)
+        start = pos
+        pos += len(line) + 1
+        # **捨ててから合成する。** 順序が逆だと、基底と結合記号の間に不可視文字を1つ
+        # 挟むだけで合成が壊れる。`ﾀ<ZWSP>ﾞ` は表示上 `ﾀﾞ` と同一なのに `ダ` にならず、
+        # 表の中にある文字（U+200B・U+00AD）で禁止表現が素通りしていた。
+        # 正規化で長さが変わるので、その行から来たことだけを記録する（行番号は保てる）。
+        for c in unicodedata.normalize("NFKC", "".join(
+            ch for ch in line if not is_invisible(ch)
+        )):
+            emit(c, start)
     return "".join(out), idx
 
 

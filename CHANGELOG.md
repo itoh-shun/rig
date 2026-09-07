@@ -147,6 +147,33 @@ text that separates rendering from spelling by means outside it is outside the d
 class, and NFKC only expands, so a ligature can manufacture a colour that was never there
 but cannot hide one. Measured again: 23/26 — unchanged across all six measurements.
 
+**And the fifth round.** REJECT, and two of the three findings were the ones an advisor
+had already reproduced while the round was in flight; the third was new and defeated the
+round-4 fix outright. Invisible characters were discarded *after* composition, so one
+U+200B between `ﾀ` and `ﾞ` — displayed identically, and a character the table already
+covers and already removes — put the prohibited phrase back out of reach at exit 0. That
+is an ordering defect, not a limit of the table, and the finite-normalisation boundary
+this changelog just claimed does not excuse it. The invariant `fold(x) == fold(NFKC(x))`
+was also simply false: Hangul jamo are `Lo`, so canonical composition never happens under
+any per-cluster rule, and a decomposed `다운로드` — which macOS produces routinely — was
+not detected. The equation had been asserted in the policy on the strength of twelve
+hand-picked strings containing no Hangul.
+
+The answer this time was deletion rather than a fifth refinement. NFKC is applied to each
+whole line after invisible characters are removed; there is no cluster rule and no
+`combines_after_nfkc`. A newline participates in neither composition nor decomposition, so
+per-line normalisation equals whole-text normalisation, and the invariant now holds
+constructively — zero counterexamples across 40,000 random strings drawn from the full
+code point space, where the previous version's counterexamples appeared immediately. The
+index map's only consumer is the line number, so nothing is lost by mapping a line's
+characters to that line. Third finding: the named-colour gate read the *last* word, but
+CSS border shorthand is order-independent, so `red 2px solid` — a legitimate declaration —
+lost its colour and reported the artefact using it as a raw value; the gate now keys on the
+shape (contains a length, no comma, no slash, at most three words) rather than a position.
+Two of the eight mutations written against the new code survived at first and are now
+pinned; the invisible-character check left inside the emit path became dead once discarding
+moved earlier, and was removed. 190 tests. Measured again: 23/26.
+
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona
 would have added a twelfth gate perspective with no measured detection rate, which is the
