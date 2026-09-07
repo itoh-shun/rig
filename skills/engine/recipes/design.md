@@ -17,7 +17,7 @@ steps:
       - "各指摘が『どこの何を・なぜ・どう直すか』分かる粒度"
       - "目標 WCAG レベル（既定 AA）未達の違反が無い、または条件として明示されている"
       - "全成果物が実在前提・誇張/捏造なし（不明は [要記入]）"
-      - "制約検査の状態（checked / unchecked / not-configured）が verdict に転記されている（unchecked と not-configured を合格と書いていない）"
+      - "verdict に `制約 所見` があるなら、その `状態:` 行が checked / unchecked / not-configured のいずれか逐語であり、unchecked と not-configured を合格と書いていない（headless orchestrate では ⓪ が走らないため所見自体が無く、その場合は N/A）"
       - "総合 verdict（APPROVE/APPROVE_WITH_CONDITIONS/REJECT）が出ている"
     personas: [design/ux-reviewer, design/a11y-reviewer]
     policies: [design-constraint-rules]
