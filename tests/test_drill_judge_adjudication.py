@@ -1133,12 +1133,15 @@ def test_the_shim_lives_exactly_as_long_as_the_judge():
     coupling: the isolation and the judge are one object. Pinned so it is a decision.
     """
     judge = Adjudicator()
-    path = judge.cfg["env"]["PATH"].split(os.pathsep)[0]
-    assert shutil.which("codex", path=path) or shutil.which("codex") is None
-    shim = pathlib.Path(path)
-    workdir = pathlib.Path(judge.cfg["cwd"])
-    assert shim.is_dir() and workdir.is_dir()
+    # The directories this object owns, asked of the object — not parsed back out of
+    # `PATH`. Reading `PATH[0]` passed here and failed on CI, where no `codex` is
+    # installed: `judge_shim` returns None, the first entry is `/usr/local/bin`, and the
+    # test asserted that a system directory had been cleaned up.
+    owned = [pathlib.Path(judge._workdir.name), pathlib.Path(judge._shimdir.name)]
+    assert all(d.is_dir() for d in owned)
+    assert pathlib.Path(judge.cfg["cwd"]) == owned[0]
+
     del judge
     import gc
     gc.collect()
-    assert not shim.exists() and not workdir.exists()
+    assert not any(d.exists() for d in owned)
