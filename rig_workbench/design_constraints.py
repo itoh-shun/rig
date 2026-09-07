@@ -365,11 +365,16 @@ def classify_declared(value: str) -> tuple[list[str], list[str], str | None]:
     # 色は同じ扱いにできない。`#000000` を余分に宣言すると、その色の**あらゆる**使用が
     # 検出されなくなる。名前付き色は枠線ショートハンドの形（末尾が色語 ∧ 長さを含む）の
     # ときだけ読む。`700 24px/1.2 Black Han Sans` の `black` を色にしないのはこのため。
-    # 枠線ショートハンドは CSS では**順不同**（`red 2px solid` も妥当）。末尾だけを
-    # 見ていたため6通り中4通りで宣言した色が落ち、宣言したトークンを使った成果物が
-    # 違反になっていた。位置ではなく**形**で見る——長さを含み、区切りが無く、語が3つ以下。
-    words = folded.strip().rstrip(";").split()
-    if lengths and len(words) <= 3 and "," not in folded and "/" not in folded:
+    # **ここで CSS プロパティを推測しない。** 裸の値から「枠線か影か書体か」を当てる
+    # 判別器は3代続けて実値に破れた——線種キーワード表は `Solid Grotesk` に、末尾語は
+    # `red 2px solid` に、語数は `0 1px 2px black` に。次の判別器は `inset 0 1px 0 white`
+    # で破れる。長さを含む値の中の色語は**すべて**色として宣言する。
+    #
+    # 代償は `16px Display Black` のような書体指定が `#000000` を宣言してしまうこと。
+    # 過剰宣言はその色のあらゆる使用を通すので、**黙って**起きてはならない——どの
+    # トークンがどの色を宣言したかを報告の `composite_declarations` に載せ、レビュアが
+    # 読めるようにする。過少宣言（宣言した影が違反になる）には同等の救済が無い。
+    if lengths:
         colors = colors + named_colors_in(f"color: {folded};")
 
     shorthand = fonts_in(f"font: {folded};")
@@ -553,8 +558,12 @@ class Declared:
         self.colors: set[str] = set()
         self.lengths: set[str] = set()
         self.fonts: set[str] = set()
-        for entries in self.tokens.values():
-            for value in entries.values():
+        # 値ひとつが複数の種別を宣言したときの内訳。センサーは裸の値から CSS
+        # プロパティを推測しないので、`16px Display Black` は書体と色の両方を宣言する。
+        # **その過剰宣言を黙って起こさない**ために、どのトークンが何を宣言したかを残す。
+        self.composite: list[dict] = []
+        for group, entries in self.tokens.items():
+            for name, value in entries.items():
                 # 複合値（"1px solid #ccc"）は色も長さも宣言する。片方だけ登録すると
                 # 後ろの種別が黙って落ち、宣言済みの値が違反として上がる。
                 colors, lengths, font = classify_declared(value)
@@ -562,6 +571,13 @@ class Declared:
                 self.lengths.update(lengths)
                 if font:
                     self.fonts.add(font)
+                if len([x for x in (colors, lengths, [font] if font else []) if x]) > 1:
+                    self.composite.append({
+                        "token": f"{group}.{name}", "value": value,
+                        "declared": {"colors": sorted(set(colors)),
+                                     "lengths": sorted(set(lengths)),
+                                     "font": font},
+                    })
         self.components: list[str] | None = data.get("components")
         # `[]` は「未宣言」ではなく「禁止表現は1つも無い」。`components` と同じ読み。
         # 省略（キーが無い）だけが未宣言。両者を分けないと報告の not_declared が嘘をつく。
@@ -651,8 +667,11 @@ def _normalize(
             prev_space = True
             return
         prev_space = False
-        out.append(c.lower() if lower else c)
-        idx.append(at)
+        # `"İ".lower()` は2文字。1文字追加を前提にすると out と idx がずれ、
+        # 禁止表現の位置引きが IndexError で落ちる（未検査になる）。
+        low = c.lower() if lower else c
+        out.extend(low)
+        idx.extend([at] * len(low))
 
     pos = 0
     for n, line in enumerate(text.split("\n")):
@@ -718,13 +737,19 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
                 f"成果物が大きすぎて正規表現の禁止表現を検査できない: {path} "
                 f"({len(flat_keep)} 文字 > {REGEX_MAX_CHARS})"
             )
+        # リテラルと同じ**2パス**を与える。空白を残した本文で当たらなければ、空白を
+        # 落とした本文にも当てる。これが無いと `regex: true` のときだけ日本語の
+        # 折り返しで検出が消え、「本文全体に照合する」という主張が指定方法で変わる。
         found_at = regex_hits(regex_rules, cs_keep, flat_keep, path)
-        for rule, at in zip(regex_rules, found_at):
-            if at is None:
-                regex_at[id(rule)] = None
+        found_at2 = regex_hits(regex_rules, cs_drop, flat_drop, path)
+        for rule, at, at2 in zip(regex_rules, found_at, found_at2):
+            cs = rule.get("case_sensitive")
+            if at is not None:
+                regex_at[id(rule)] = cs_idx_keep[at] if cs else idx_keep[at]
+            elif at2 is not None:
+                regex_at[id(rule)] = cs_idx_drop[at2] if cs else idx_drop[at2]
             else:
-                regex_at[id(rule)] = (cs_idx_keep[at] if rule.get("case_sensitive")
-                                      else idx_keep[at])
+                regex_at[id(rule)] = None
 
     for rule in decl.prohibited or []:
         pattern = rule["pattern"]
@@ -773,7 +798,6 @@ def collect_artifacts(paths: list[str], skip: set[str]) -> tuple[list[str], list
         if os.path.islink(path):
             raise Unchecked(f"成果物がシンボリックリンク: {path} — 実体を指定する")
         if os.path.isdir(path):
-            root_real = os.path.realpath(path)
             for parent, dirs, names in os.walk(path, onerror=_walk_error, followlinks=False):
                 keep = []
                 for d in sorted(dirs):
@@ -792,9 +816,6 @@ def collect_artifacts(paths: list[str], skip: set[str]) -> tuple[list[str], list
                     if os.path.islink(full):
                         skipped.append({"path": full, "why": "symlink"})
                         continue
-                    real = os.path.realpath(full)
-                    if real != root_real and not real.startswith(root_real + os.sep):
-                        raise Unchecked(f"走査根の外を指している: {full}")
                     if name.lower().endswith(TEXT_SUFFIXES):
                         files.append(full)
                     else:
@@ -921,6 +942,9 @@ def main(argv: list[str] | None = None) -> int:
         # 拡張子で外したもの・シンボリックリンク。「対象が黙って欠落した」を可視にする。
         "skipped": skipped,
         # 宣言そのものが省いている検査。policy の「省いたことを報告に書く」を機械側で満たす。
+        # 1つの値が複数の種別を宣言したもの。`16px Display Black` が `#000000` を
+        # 宣言していることをレビュアが見られるようにする（policy 規則 8・9 と同じ分担）。
+        "composite_declarations": decl.composite if (status == "checked" and decl) else [],
         "not_declared": sorted(
             k for k in ("components", "prohibited") if not _declared_section(decl, k)
         ) if status == "checked" else [],

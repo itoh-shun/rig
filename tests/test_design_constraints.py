@@ -476,7 +476,9 @@ def test_a_catastrophic_pattern_is_bounded_by_the_wall_clock(tmp_path):
     elapsed = time.monotonic() - started
     assert code == 2
     assert report["status"] == "unchecked"
-    assert elapsed < dc.REGEX_TIME_BUDGET * 4, f"打ち切れていない ({elapsed:.1f}s)"
+    # **変異した定数自身と比べない。** `REGEX_TIME_BUDGET = 600.0` の変異が
+    # 601 秒かけて緑のまま通っていた（打ち切りの絶対値を張っていなかった）。
+    assert elapsed < 20.0, f"打ち切れていない ({elapsed:.1f}s)"
 
 
 def test_a_regular_expression_sees_the_same_normalised_text_as_a_literal(tmp_path):
@@ -758,14 +760,15 @@ def test_the_line_number_survives_a_flood_of_invisible_characters(tmp_path):
     assert [v["line"] for v in report["violations"]] == [3]
 
 
-def test_a_font_shorthand_with_a_size_is_not_read_as_a_colour(tmp_path):
-    """「長さがあるか」では分けられない——`700 24px/1.2 Black Han Sans` も長さを含む。
+def test_a_font_shorthand_with_a_size_still_declares_its_typeface(tmp_path):
+    """書体は落とさない。`700 24px/1.2 Black Han Sans` は長さも書体も宣言する。
 
-    枠線ショートハンドの線種キーワードで分ける。
+    以前はここで「色ではない」ことも主張していたが、その判別（線種キーワード表）は
+    実在書体 `Solid Grotesk` に破れた。いまは色も宣言し、報告に内訳が載る。
     """
     colors, lengths, font = dc.classify_declared("700 24px/1.2 Black Han Sans, sans-serif")
     assert font == "black han sans"
-    assert colors == [] and lengths == ["24px"]
+    assert lengths == ["24px"] and "#000000" in colors
 
 
 @pytest.mark.parametrize(
@@ -773,7 +776,8 @@ def test_a_font_shorthand_with_a_size_is_not_read_as_a_colour(tmp_path):
     # `2px solid red` は書体としても登録される。プロパティ名の無い値で枠線と書体を
     # 語彙で分けようとしたら実在書体 `Solid Grotesk` が宣言から丸ごと落ちたので、
     # **曖昧なら書体側にも入れる**ことにした。書体名の過剰宣言はその名前1つにしか
-    # 波及しないが、過少宣言は宣言した値そのものを違反として上げる。
+    # 波及しないが、過少宣言は宣言した値そのものを違反として上げる。色についても
+    # 同じ理由で推測をやめ、過剰宣言は報告の `composite_declarations` で可視にする。
     [("2px solid red", (["#ff0000"], ["2px"], "solid red")),
      ("1px solid #CCC", (["#cccccc"], ["1px"], None)),
      ("2px red", (["#ff0000"], ["2px"], None)),
@@ -815,6 +819,7 @@ def test_a_halfwidth_voiced_kana_is_the_same_word_as_its_fullwidth_spelling(
     "text",
     ["ﾀﾞｳﾝﾛｰﾄﾞ", "ﾊﾟｽ", "ダウンロード", "㈱ﬁ①", "ｶﾞ", "ﾞ", "ﾞﾞ", "áb", "",
      "ダ\u200bウン", "Ａ Ｂ", "ﾞあ",
+     "İ x", "İİİ", "ǅ", "ﬄ",
      # ハングルの jamo は `Lo`＝starter。まとまり単位の正規化では**永久に**合成されず、
      # この行を書いていなかったから「不動点を縛った」と書けてしまった。
      "한글", "베트남", "가", "ㄱㅏ", "Tiếng Việt", "한\n글"],
@@ -901,33 +906,58 @@ def test_a_border_shorthand_declares_its_colour_in_any_order(value):
 
 
 @pytest.mark.parametrize(
-    "value",
-    ["16px Display Black Regular", "700 16px Display Black Regular",
-     "1px double Midnight Blue Text"],
+    "value,colour",
+    [("16px Display Black Regular", "#000000"), ("16px/1.2 Black", "#000000"),
+     # `Midnight Blue` は2語なので `blue` として読まれる（`midnightblue` ではない）。
+     ("1px double Midnight Blue Text", "#0000ff"), ("12px Silver, serif", "#c0c0c0"),
+     ("0 1px 2px black", "#000000"), ("inset 0 1px 0 white", "#ffffff"),
+     ("0 0 4px navy", "#000080"), ("1.5rem/2 Navy", "#000080")],
 )
-def test_a_long_value_does_not_declare_a_colour_from_a_typeface_name(value):
-    """語数の上限が無いと、書体名に混ざった色語が色として宣言される。
+def test_a_value_containing_a_length_declares_every_colour_word_in_it(value, colour):
+    """**方向が反転しています。** 以前は書体名に混ざった色語を色にしないよう絞っていた。
 
-    宣言された `#000000` は**その色のあらゆる使用**を黙って通す。書体名の過剰宣言と
-    違って波及範囲が広いので、色だけは枠線ショートハンドの形に閉じ込める。
-    語数上限を外す変異が 168/168 緑で通ったため、この形を直接張る。
+    裸の値から CSS プロパティを推測する判別器は3代続けて実値に破れた——線種キーワード
+    表は `Solid Grotesk` に、末尾語は `red 2px solid` に、語数は `0 1px 2px black`
+    （`box-shadow` の宣言）に。次は `inset 0 1px 0 white` で破れる。**推測をやめる。**
+
+    代償は `16px Display Black` が `#000000` を宣言すること。過剰宣言はその色の
+    あらゆる使用を通すので危険だが、**黙って**起きなければレビュアが裁ける——報告の
+    `composite_declarations` にどのトークンが何を宣言したかが載る。過少宣言（宣言した
+    影が違反として上がる）には同等の救済が無い。
     """
     colors, _, _ = dc.classify_declared(value)
-    assert colors == []
+    assert colour in colors
 
 
-@pytest.mark.parametrize(
-    "value",
-    ["16px/1.2 Black", "16px Black, sans-serif", "1.5rem/2 Navy", "12px Silver, serif"],
-)
-def test_a_font_shorthand_marker_keeps_a_typeface_name_from_becoming_a_colour(value):
-    """`/`（サイズ／行送り）と `,`（フォールバック）は書体指定の目印。
+def test_a_value_without_a_length_is_still_only_a_typeface():
+    """長さが無ければ色語は読まない。`Solid Grotesk` も `Black Han Sans` も書体。"""
+    for face in ("Solid Grotesk", "Black Han Sans", "Display Black"):
+        colors, lengths, family = dc.classify_declared(face)
+        assert colors == [] and lengths == [] and family == face.lower()
 
-    語数だけで閉じ込めると `16px/1.2 Black` の `Black` が色になる。この2つの条件を
-    外す変異が 171/171 緑で通ったため、語数では除外されない形を直接張る。
+
+def test_a_declared_shadow_is_not_reported_as_a_raw_value(tmp_path):
+    """`box-shadow: 0 1px 2px black` を宣言して逐語で使うと違反になっていた。
+
+    語数上限3で切っていたため4語の影の宣言だけが色を落とした。成果物側は `shadow` を
+    色プロパティとして読むので、**宣言した値そのもの**が違反として上がる。
     """
-    colors, _, _ = dc.classify_declared(value)
-    assert colors == []
+    constraints = {"version": 1, "tokens": {
+        "color": {"brand": "#1F6FEB"}, "elevation": {"card": "0 1px 2px black"},
+        "spacing": {"sm": "8px"}}}
+    code, report = _run(tmp_path, constraints,
+                        {"card.css": ".card {\n  box-shadow: 0 1px 2px black;\n}\n"})
+    assert code == 0, report["violations"]
+
+
+def test_the_report_says_which_token_declared_which_colour(tmp_path):
+    """過剰宣言を**黙って**起こさないための記録。レビュアはこれを読んで裁く。"""
+    constraints = {"version": 1, "tokens": {
+        "color": {"brand": "#0A84FF"}, "font": {"display": "16px Display Black"}}}
+    _, report = _run(tmp_path, constraints, {"a.md": "x\n"})
+    entry = [c for c in report["composite_declarations"] if c["token"] == "font.display"]
+    assert entry and "#000000" in entry[0]["declared"]["colors"]
+    assert entry[0]["declared"]["font"] == "display black"
 
 
 @pytest.mark.parametrize(
@@ -959,10 +989,14 @@ def test_a_border_shorthand_still_declares_its_colour_and_its_length(keyword):
     assert colors == ["#ff0000"] and lengths == ["2px"]
 
 
-def test_a_font_shorthand_does_not_declare_a_colour_that_is_part_of_a_typeface_name():
-    """`Black Han Sans` の `black` を色として宣言すると、`#000000` が黙って通る。"""
-    colors, _, family = dc.classify_declared("700 24px/1.2 Black Han Sans, sans-serif")
-    assert colors == [] and family == "black han sans"
+def test_a_font_shorthand_still_declares_its_typeface(tmp_path):
+    """書体は落とさない。色も宣言するが、それは報告に載って可視になる。"""
+    value = "700 24px/1.2 Black Han Sans, sans-serif"
+    colors, _, family = dc.classify_declared(value)
+    assert family == "black han sans" and "#000000" in colors
+    _, report = _run(tmp_path, {"version": 1, "tokens": {"font": {"h1": value}}},
+                     {"a.md": "x\n"})
+    assert [c["token"] for c in report["composite_declarations"]] == ["font.h1"]
 
 
 @pytest.mark.parametrize(
@@ -981,3 +1015,79 @@ def test_an_empty_section_is_declared_and_an_absent_one_is_not(tmp_path, extra, 
     constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}}, **extra}
     _, report = _run(tmp_path, constraints, {"a.md": "x\n"})
     assert report["not_declared"] == expected
+
+
+# ── 6周目の検証で崩れた点 ────────────────────────────────────────────────
+def test_a_regex_rule_survives_a_line_wrap_like_a_literal_one(tmp_path):
+    """`regex: true` のときだけ折り返しで検出が消えていた。
+
+    正規表現には空白を残した本文しか渡しておらず、リテラルが持つ「空白を落とした
+    第2パス」が無かった。policy「禁止表現は本文全体に対して照合します（行単位では
+    ありません）」が、**指定方法によって成り立ったり成り立たなかったり**していた。
+    """
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}}, "prohibited": [
+        {"pattern": "ボタンを(押|クリック)してください", "why": "操作を指示しない", "regex": True},
+        {"pattern": "エラーが発生しました", "why": "定型文"}]}
+    body = "続けるにはボタンを押\nしてくださいと表示する。\nここでエラーが発生\nしましたと出る。\n"
+    code, report = _run(tmp_path, constraints, {"copy.md": body})
+    assert code == 1
+    assert len(report["violations"]) == 2, report["violations"]
+
+
+def test_a_file_too_large_for_the_regex_budget_is_unchecked(tmp_path, monkeypatch):
+    """上限を超えたら合格ではなく未検査。
+
+    上限そのものを大きくする変異は、実ファイルで張ると**失敗ではなく低速化**になり、
+    打ち切りの絶対値を張らなかったときと同じ見落としになる。上限は monkeypatch で
+    小さくして**挙動**を張り、定数の桁は別に張る。
+    """
+    monkeypatch.setattr(dc, "REGEX_MAX_CHARS", 100)
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}},
+                   "prohibited": [{"pattern": "だめ", "why": "x", "regex": True}]}
+    code, report = _run(tmp_path, constraints, {"big.md": "あ" * 200})
+    assert code == 2 and report["status"] == "unchecked"
+
+
+def test_the_regex_limits_are_small_enough_to_be_limits():
+    """定数の桁を直接張る。10億文字・600秒は上限ではない。"""
+    assert dc.REGEX_MAX_CHARS <= 1_000_000
+    assert dc.REGEX_TIME_BUDGET <= 30.0
+
+
+def test_the_position_map_points_at_the_line_each_character_came_from():
+    """位置対応を**直接**張る。改行の対応先を1つずらす変異が 191/191 緑で通った。
+
+    折り返しの筋書きで張ろうとしたが、一致が改行そのものから始まらない限り差が出ない
+    ——**到達しにくい経路を筋書きで張ろうとすると、張れていないことに気づけない。**
+    """
+    text = "あ\nい\nう"
+    out, idx = dc._flatten(text, drop_all_space=False)
+    assert len(out) == len(idx)
+    # 各出力文字の対応先は、その文字が来た行の先頭（改行は直前の行に属する）。
+    starts = [0, 2, 4]
+    assert [dc._line_of(i, starts) for i in idx] == [1, 1, 2, 2, 3]
+
+
+def test_a_character_that_lowercases_to_two_characters_does_not_derail_the_scan(tmp_path):
+    """`"İ".lower()` は2文字。1文字追加を前提にすると出力と位置対応がずれる。
+
+    ずれた結果は IndexError で未検査になる——黙って通る経路ではないが、`İ` を書いた
+    だけで検査そのものが消える。
+    """
+    out, idx = dc._flatten("İ x", False)
+    assert len(out) == len(idx)
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}},
+                   "prohibited": [{"pattern": "だめ", "why": "x"}]}
+    code, report = _run(tmp_path, constraints, {"a.md": "İ" * 40 + "\nだめです\n"})
+    assert code == 1, report
+    assert report["violations"][0]["line"] == 2
+
+
+def test_a_prohibited_phrase_split_across_a_wrap_reports_the_line_it_starts_on(tmp_path):
+    """折り返しで割れた禁止表現の行番号。改行の位置対応を潰す変異が無防備だった。"""
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}},
+                   "prohibited": [{"pattern": "こちらをクリック", "why": "操作を指示しない"}]}
+    body = "案内文です。\n続けるにはこちらを\nクリックしてください。\n"
+    code, report = _run(tmp_path, constraints, {"copy.md": body})
+    assert code == 1
+    assert report["violations"][0]["line"] == 2, report["violations"]

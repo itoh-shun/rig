@@ -56,7 +56,7 @@ python3 <plugin root>/scripts/check_design_constraints.py --if-configured \
 各 subagent の出力は `output-contracts/design-verdict` に従わせる（UX は UI/UX 所見、a11y は a11y 所見を担当）。
 `--persona <name>` 指定があれば fan-out に和集合・dedup で追加する。
 
-⓪ の報告（`status` と `violations`）を**両方の subagent に証拠として渡す**。
+⓪ の報告（`status`・`violations`・`composite_declarations`）を**両方の subagent に証拠として渡す**。`composite_declarations` は、1つの宣言値が複数の種別を宣言したものの内訳（色トークンでないものが色を宣言していないか）。
 `制約 所見` 節は **`ux-reviewer` が単独で書く**（既存の節・単独所有の慣習に合わせる）。
 `a11y-reviewer` は「制約は担当外」と明記したうえで、制約違反が WCAG 上の問題でもあるとき
 （例：禁止表現「こちらをクリック」＝ 2.4.4）は **`a11y 所見` の側で**基準番号つきで指摘する。

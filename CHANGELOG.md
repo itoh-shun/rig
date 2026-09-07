@@ -174,6 +174,39 @@ Two of the eight mutations written against the new code survived at first and ar
 pinned; the invisible-character check left inside the emit path became dead once discarding
 moved earlier, and was removed. 190 tests. Measured again: 23/26.
 
+**And the sixth round, which stopped the loop.** REJECT again, but the normaliser survived
+everything thrown at it — the invariant held across all 0x110000 single characters and
+fifty thousand random strings, and per-line normalisation still equalled whole-text
+normalisation. Deletion had converged that part. The declaration classifier had not, and
+the reason was structural: a declared value carries no property name, so every rule for
+telling a border from a shadow from a typeface is a guess, and each guess broke on the next
+real value. The keyword table broke on `Solid Grotesk`; the tail-word rule broke on
+`red 2px solid`, because CSS border shorthand is order-independent; the three-word limit
+broke on `0 1px 2px black`, an ordinary `box-shadow` token, which the artefact side reads as
+a colour while the declaration side did not — so a project declaring its own shadow and
+using it verbatim was told it had a raw value.
+
+The classifier now guesses nothing: any colour word in a declared value that also contains
+a length is declared as a colour. This reverses the second round's fix, which had narrowed
+colour reading precisely to stop `Black Han Sans` from declaring `#000000`. That reversal is
+deliberate. Over-declaring a colour passes every use of it, which is why the second round's
+verifier was right to call it out — but the defect it named was that the over-declaration
+was *silent*, and silence is fixable where under-declaration is not. The report now carries
+`composite_declarations`, listing each token whose single value declared more than one
+class, and `ux-reviewer` is told to read it: a colour declared by a typeface token is a
+colour that passed for the wrong reason.
+
+Also fixed: `regex: true` rules were matched only against text with whitespace preserved,
+so a prohibited phrase broken by a Japanese line wrap was found when written as a literal
+and missed when written as a regex — the policy's claim that matching runs over the whole
+text held or failed depending on how the rule was spelled; regex rules now get the same
+second pass. A character whose lowercase form is two characters long (`İ`) desynchronised
+the output from its position map and took the whole scan out with an `IndexError`. The
+timing assertion for the regex budget compared against the budget constant itself, so
+raising it to 600 seconds left the suite green after ten minutes; it now asserts an absolute
+bound. The walk-root containment check was unreachable behind `followlinks=False` and the
+link filters, and was deleted. 204 tests. Measured again: 23/26.
+
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona
 would have added a twelfth gate perspective with no measured detection rate, which is the
