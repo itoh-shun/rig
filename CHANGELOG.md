@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## [2.11.1] - 2026-09-07
+
+### Changed
+
+**The drill judge's calibration ledger ships, measured under the corrected executor.**
+2.11.0 shipped the judge with its numbers withdrawn: the recorded run predated the last
+of the three executor fixes, and the re-measurement then timed out on every pair. It
+completed once the provider recovered — 48/48, every call `rc 0`: ideal 15/15, negative
+15/15, attack 13/13, waiver 5/5, `usable: yes`. The twelve tests that replay a ledger run
+instead of skipping.
+
+The waiver class was the one to distrust, because under the previous prompt the same five
+bytes scored 4/5, 3/5, 3/5 and 3/5 across re-rolls. Re-rolled three times against fresh
+ledgers under this prompt, all five answer `DENIES` every time — 15 of 15. Three samples
+is not determinism and no other class has been re-rolled, so `--judge-samples` stays
+unbuilt.
+
+Four calibration runs were discarded in all: three for not meeting the conditions claimed
+for them, one for not finishing.
+
 ## [2.11.0] - 2026-09-07
 
 ### Added
