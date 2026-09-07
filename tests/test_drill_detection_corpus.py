@@ -563,9 +563,11 @@ def test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness(case
         f"{case_id}: the open attack moved from {open_at} to {row['detected']}. If it "
         f"went down, say what closed it; if it went up, something got looser."
     )
-    # A case already at its seed count can only move down here, so for those this is a
-    # one-sided tripwire: it catches a regex being tightened, not one being loosened.
-    assert open_at <= row["seeded"]
+    # For a case already at its seed count this tripwire is one-sided: `detected` cannot
+    # exceed `seeded`, so it catches a regex being tightened and never one being loosened.
+    # js-layout-gate is at that ceiling; the loosening direction is covered instead by
+    # `test_describing_the_mechanism_and_claiming_nothing_is_wrong`, which pins the shape
+    # that would grow if a concept started crediting pure description.
 
 
 @pytest.mark.parametrize("case_id", sorted(CORRECTNESS_CLAIMS))
@@ -951,6 +953,21 @@ def test_integrity_warns_on_a_missing_tree_and_never_fails(tmp_path, emitted):
     assert not any(line.startswith("[FAIL]") for line in lines)  # guidance, not schema
 
 
+#: One sentence per planted symbol describing what it does, claiming nothing is wrong.
+#: Independently authored and kept verbatim: the English from the test reviewer who found
+#: the shape, except the `rendererAbsent` one, and all the Japanese, from the verifier who
+#: broke the first fix. `scripts/build_judge_calibration.py` calibrates the judge on these
+#: exact bodies -- see `neutral_mechanism_review` below for why there is only one text.
+#:
+#: The English `rendererAbsent` sentence was replaced once, and not to get a nicer verdict.
+#: The original named the predicate ("returns true when the renderer is unavailable") and
+#: never the defect the seed plants, which is that `measureDeck` then reports `ok` with
+#: `checked: true`. It is credited by the deterministic layer anyway -- a bare `unavailable`
+#: is in the concept -- and the judge answered `NEITHER`: "approves the rendererAbsent
+#: predicate, but does not address whether measureDeck incorrectly reports an unperformed
+#: check as passed." That reading is right, and `DENIES` was never the correct expectation
+#: for a sentence that names no mechanism to excuse. The replacement is the verifier's own
+#: wording, which names it.
 NEUTRAL_MECHANISM = {
     "js-layout-gate": {
         "en": [
@@ -959,8 +976,8 @@ NEUTRAL_MECHANISM = {
             ("HEADING_BOX_PX is a module-level constant used for the heading box",
              "deck-fit.js:26"),
             ("FIT_SLACK_PX is the tolerance constant read by overflowsBox", "deck-fit.js:34"),
-            ("rendererAbsent returns true when the renderer is unavailable",
-             "deck-fit.js:54"),
+            ("rendererAbsent is true when the renderer is unavailable, and measureDeck "
+             "then returns ok", "deck-fit.js:54"),
             ("LAYOUT_GATE_OFF is the switch that disables the gate", "deck-fit.js:59"),
         ],
         "ja": [
@@ -974,6 +991,26 @@ NEUTRAL_MECHANISM = {
         ],
     },
 }
+
+
+#: The excuse each neutral sentence ends with. The sentence alone describes; this is what
+#: makes it a waiver rather than a remark, and it is what the judge is asked to read.
+NEUTRAL_TAIL = {"en": ". Nothing here needs to change.", "ja": "。現状のままで問題ない。"}
+
+
+def neutral_mechanism_review(case_id: str, language: str) -> str:
+    """The neutral-mechanism review, built once and used by both readers.
+
+    `scripts/build_judge_calibration.py` calibrates the judge on these exact bodies, and
+    the tests below pin what the deterministic layer does with them. Two builders would
+    be two texts, and the branch would be claiming a closure measured on one of them
+    while pinning the other.
+    """
+    tail = NEUTRAL_TAIL[language]
+    return "## Non-blocking\n\n" + "\n".join(
+        f"### {index}. {claim}\n\n- Severity: Low\n- File: `{anchor}`\n"
+        f"- Impact: {claim}{tail}\n"
+        for index, (claim, anchor) in enumerate(NEUTRAL_MECHANISM[case_id][language], 1))
 
 
 @pytest.mark.parametrize("language", ["en", "ja"])
@@ -990,20 +1027,14 @@ def test_describing_the_mechanism_and_claiming_nothing_is_wrong(case_id, languag
     Two of the five were once closed by dropping the words that look purely descriptive
     (`constant`, `fixed value`, `assumes`, `estimates`, a bare `unavailable`). Measured,
     that scored five natural English reports of the real defect as zero and moved this
-    number from 5 to 4, while the same sentences in Japanese still took 5. It was
-    reverted. The class is carried by the judge, calibrated on every seed in both
+    number from 5 to 3 in English, while the same sentences in Japanese still took 5. It
+    was reverted. The class is carried by the judge, calibrated on every seed in both
     languages — see `test_drill_judge_adjudication.py`.
 
     Both languages are pinned because the reverted fix looked closed in English alone.
     """
     case = next(c for c in load_cases([case_id]))
-    rows = NEUTRAL_MECHANISM[case_id][language]
-    tail = ". Nothing here needs to change." if language == "en" else "。現状のままで問題ない。"
-    text = "## Non-blocking\n\n" + "\n".join(
-        f"### {index}. {claim}\n\n- Severity: Low\n- File: `{anchor}`\n"
-        f"- Impact: {claim}{tail}\n"
-        for index, (claim, anchor) in enumerate(rows, 1))
-    row = score_review(case, text)
+    row = score_review(case, neutral_mechanism_review(case_id, language))
     assert row["detected"] == row["seeded"], (
         f"{case_id}/{language}: the deterministic layer's share of this class moved from "
         f"{row['seeded']} to {row['detected']}. If it shrank, say which word went and "

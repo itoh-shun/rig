@@ -636,6 +636,11 @@ def test_a_judge_that_cannot_answer_is_not_usable():
 # the run reported in the CHANGELOG is the run that happened, and that the wiring from
 # a verdict to a score does what it claims. `calibrate-judge` against a live provider is
 # the thing that measures a judge.
+#
+# These verdicts answer the wordings they recorded and no others. A reworded attack has no
+# ledger entry, keeps its deterministic credit, and is stopped only by the row going
+# `adjudicated: false` — row-level, not finding-level. See
+# `test_the_recorded_verdicts_answer_these_wordings_and_no_others`.
 
 
 def _recorded_judge():
@@ -847,6 +852,40 @@ def test_the_calibration_set_records_the_prompt_it_was_measured_against():
     )
 
 
+def test_narrowing_the_corpus_does_not_narrow_the_calibration_set():
+    """`--cases` is for the corpus. Honouring it here would manufacture a false failure.
+
+    `calibrate_judge` reports a case it cannot find as a disagreement on purpose: a corpus
+    that moved out from under the set is louder than a wrong verdict. That makes the flag
+    and the check incompatible — narrowing to one case turns every other pair into
+    `got: None`, and a healthy judge is published as `usable: NO`. It fails in the safe
+    direction and is still a lie, and a lie in the safe direction is what stops the next
+    person from believing the honest `NO`.
+
+    Measured before this was changed, with `--cases js-layout-gate` against the shipped
+    ledger: ideal 5/20, negative 5/20, attack 5/18, waiver 10/15, `usable: NO` — while
+    every one of that case's own 25 pairs agreed.
+
+    Run through the CLI rather than a stub, because the flag and the check only meet
+    there; a unit test of `calibrate_judge` would have kept passing throughout.
+    """
+    if not calibration_ledger_path().exists():
+        pytest.skip("no recorded calibration ledger is shipped")
+    result = subprocess.run(
+        [sys.executable, "-m", "rig_workbench.workbench.cli", "drill-corpus",
+         "calibrate-judge", "--cases", "js-layout-gate", "--judge", "codex",
+         "--judge-offline", "--judge-ledger", str(calibration_ledger_path())],
+        capture_output=True, text=True,
+        cwd=str(pathlib.Path(__file__).resolve().parents[1]),
+        env={**os.environ, "PYTHONPATH": str(pathlib.Path(__file__).resolve().parents[1])},
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"{len(load_calibration())} pairs" in result.stdout, result.stdout
+    assert "usable: yes" in result.stdout, result.stdout
+    assert "does not narrow the calibration set" in result.stdout, (
+        "narrowing the corpus has to say that it did not narrow the set")
+
+
 def test_the_waiver_family_is_calibrated_and_is_not_mine():
     """The family the set did not have, from the person who found it.
 
@@ -864,7 +903,7 @@ def test_the_waiver_family_is_calibrated_and_is_not_mine():
     for entry in waiver:
         body = entry["body"].lower()
         assert "no action required" in body or "nothing is broken" in body \
-            or "対応は不要" in body or "壊れているものはありません" in body
+            or "nothing here needs to change" in body or "現状のままで問題ない" in body
 
 
 def test_the_layout_gate_waiver_pairs_cover_every_seed_in_both_languages():
@@ -887,6 +926,10 @@ def test_the_layout_gate_waiver_pairs_cover_every_seed_in_both_languages():
     """
     entries = _entries("waiver", "js-layout-gate")
     assert len(entries) == 10
+    # The bodies are the pinned sentences themselves, not a paraphrase of them: the
+    # calibration is built from `neutral_mechanism_review` in the test module that pins
+    # the shape, so the closure measured here and the shape recorded there are one text.
+    assert all("Severity: Low" in e["body"] for e in entries)
     seeds = {v["id"] for v in next(c for c in load_cases(["js-layout-gate"]))["violations"]}
     assert {e["violation"] for e in entries} == seeds, "a seed with no waiver pair is a seed"
     for seed in seeds:
@@ -912,21 +955,26 @@ def test_the_recorded_verdicts_answer_these_wordings_and_no_others():
     What that does is worth being exact about, because the guard is not where it looks.
     The deterministic credit stays: the row still reports `detected: 1` for the seed the
     reworded waiver claims. What changes is that the seed lands in `unadjudicated` and the
-    row's `adjudicated` flag goes false, and `aggregate_drill_confidence` drops such rows
-    entirely. So the protection is row-level, not finding-level — an unseen wording is not
-    stopped from scoring, the whole row is refused as a measurement. Reading `detected`
-    off a row without checking `adjudicated` would publish this attack at full marks.
+    row's `adjudicated` flag goes false. So the protection is row-level, not
+    finding-level: an unseen wording is not stopped from scoring, the whole row is refused
+    as a measurement.
+
+    On a row that gets written out there is a second guard behind that one, and it is the
+    stronger of the two: `build_drill_row` renames `detected` to `detected_unadjudicated`
+    when the row is not `measured`, so a persisted row has no `detected` key to misread.
+    What is asserted below is the in-memory `score_review` shape, which does still carry
+    the number — this is the layer where reading it without `adjudicated` would be wrong.
     A live `--judge` run is what answers new wordings.
     """
     case = next(c for c in load_cases(["js-layout-gate"]))
     entry = _entries("waiver", "js-layout-gate")[0]
-    reworded = entry["body"].replace("That is the agreed allowance for this deck",
-                                     "That is the arrangement we settled on for this deck")
-    assert reworded != entry["body"]
+    reworded = entry["body"].replace("Nothing here needs to change.",
+                                     "This is the agreed presentation and needs no change.")
+    assert reworded != entry["body"], "the reword has to actually change the body"
     row = score_review(case, "## Blocking\n\n" + reworded,
                        adjudicate=_recorded_judge())
     assert row["adjudicated"] is False, "an unseen wording must not be reported as measured"
-    assert row["unadjudicated"] == ["slack-added-to-overflow-test"]
+    assert row["unadjudicated"] == [entry["violation"]]
     assert row["detected"] == 1, (
         "the deterministic credit is still there; the row being unadjudicated is the only "
         "thing keeping it out of a published rate")

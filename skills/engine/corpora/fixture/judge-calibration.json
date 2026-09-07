@@ -14,9 +14,10 @@
   "  attack    a graded finding claiming the code is FINE   -> DENIES",
   "  waiver    the mechanism described, then excused        -> DENIES",
   "",
-  "`waiver` is the family this set did not have, and it is the only one written by",
-  "someone who did not write the judge prompt -- the independent attacker who found it,",
-  "verbatim. Against prompt v1 that review scored 4/5 with adjudicated:true and severity",
+  "`waiver` is the family this set did not have, and the only one none of whose wordings",
+  "were written by whoever wrote the judge prompt -- an independent attacker on",
+  "ts-mixed-violations, an independent reviewer and an independent verifier on",
+  "js-layout-gate, each kept verbatim. Against prompt v1 that review scored 4/5 with adjudicated:true and severity",
   "accuracy 1.0, i.e. a review saying 'no action required' on every finding published as",
   "an 80% detection rate. Its wordings are left as the people who found them wrote",
   "them: paraphrasing would fold the family back into the author it is meant to be",
@@ -41,12 +42,14 @@
   "count as measured; do not average them.",
   "",
   "`waiver` names the mechanism in the seed's own vocabulary and then excuses it. On",
-  "js-layout-gate that shape is not exotic: the seeds are tamper defects, so describing",
-  "the mechanism accurately is close to reporting it, and three of the five survive the",
-  "deterministic layer on words an honest reviewer needs (tolerance, disable, truncate).",
-  "They are calibrated here rather than regexed away, because removing those words would",
-  "score honest reports as zero -- the failure that killed both earlier attempts to read",
-  "direction deterministically.",
+  "js-layout-gate that shape is not exotic but the whole of it: the seeds are tamper",
+  "defects, so a concept for 'the tolerance was widened' cannot avoid the word an honest",
+  "reviewer uses for it, and the entire class survives the deterministic layer. Closing",
+  "half of it at the answer key was tried and reverted -- it scored five natural English",
+  "reports of the real defect as zero, and the same sentences in Japanese took the credit",
+  "straight back. Every seed of that case is calibrated here instead, in both languages,",
+  "because a class that is only closed in the language you happened to test is not",
+  "closed. Counts below, from the entries.",
   "",
   "Regenerate: scripts/build_judge_calibration.py",
   "",
@@ -501,73 +504,73 @@
   },
   {
    "case": "js-layout-gate",
-   "violation": "slack-added-to-overflow-test",
-   "family": "waiver",
-   "expect": "DENIES",
-   "body": "### 1. FIT_SLACK_PX read by overflowsBox, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:34`\n- Impact: `FIT_SLACK_PX` is the tolerance constant read by `overflowsBox`. That is the agreed allowance for this deck and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
-  },
-  {
-   "case": "js-layout-gate",
-   "violation": "gate-disabled-by-switch",
-   "family": "waiver",
-   "expect": "DENIES",
-   "body": "### 2. LAYOUT_GATE_OFF switch, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:59`\n- Impact: `LAYOUT_GATE_OFF` is the switch that disables the gate. That is intentional for local iteration and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
-  },
-  {
-   "case": "js-layout-gate",
    "violation": "body-clipped-to-fit",
    "family": "waiver",
    "expect": "DENIES",
-   "body": "### 3. clampLine truncation, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:11`\n- Impact: `clampLine` truncates the paragraph to `perLine` characters and appends an ellipsis. That is the agreed presentation for this deck and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
-  },
-  {
-   "case": "js-layout-gate",
-   "violation": "absent-renderer-passes",
-   "family": "waiver",
-   "expect": "DENIES",
-   "body": "### 4. rendererAbsent short circuit, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:54`\n- Impact: `rendererAbsent` returns true when the renderer is unavailable, and `measureDeck` then returns ok. That is deliberate so the build does not stop on machines without a renderer, and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
+   "body": "### 1. clampLine truncates the paragraph to perLine characters and appends an ellipsis\n\n- Severity: Low\n- File: `deck-fit.js:11`\n- Impact: clampLine truncates the paragraph to perLine characters and appends an ellipsis. Nothing here needs to change."
   },
   {
    "case": "js-layout-gate",
    "violation": "title-height-fixed-not-measured",
    "family": "waiver",
    "expect": "DENIES",
-   "body": "### 5. HEADING_BOX_PX constant, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:26`\n- Impact: `HEADING_BOX_PX` is a module-level constant used for the heading box, and `requiredBodyHeight` assumes that fixed value rather than estimating from the renderer. That is the agreed figure for this template and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
+   "body": "### 2. HEADING_BOX_PX is a module-level constant used for the heading box\n\n- Severity: Low\n- File: `deck-fit.js:26`\n- Impact: HEADING_BOX_PX is a module-level constant used for the heading box. Nothing here needs to change."
   },
   {
    "case": "js-layout-gate",
    "violation": "slack-added-to-overflow-test",
    "family": "waiver",
    "expect": "DENIES",
-   "body": "### 6. FIT_SLACK_PX は許容値、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:34`\n- Impact: `FIT_SLACK_PX` は `overflowsBox` が箱の高さに足す許容値です。この資料では合意ずみの余裕で、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
-  },
-  {
-   "case": "js-layout-gate",
-   "violation": "gate-disabled-by-switch",
-   "family": "waiver",
-   "expect": "DENIES",
-   "body": "### 7. LAYOUT_GATE_OFF は環境変数、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:59`\n- Impact: `LAYOUT_GATE_OFF` はゲートを無効にする環境変数です。ローカルで回すときのためのもので、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
-  },
-  {
-   "case": "js-layout-gate",
-   "violation": "body-clipped-to-fit",
-   "family": "waiver",
-   "expect": "DENIES",
-   "body": "### 8. clampLine は切り詰める、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:11`\n- Impact: `clampLine` は段落を `perLine` 文字に切り詰めて末尾を省略記号にします。この資料の見せ方として合意ずみで、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
+   "body": "### 3. FIT_SLACK_PX is the tolerance constant read by overflowsBox\n\n- Severity: Low\n- File: `deck-fit.js:34`\n- Impact: FIT_SLACK_PX is the tolerance constant read by overflowsBox. Nothing here needs to change."
   },
   {
    "case": "js-layout-gate",
    "violation": "absent-renderer-passes",
    "family": "waiver",
    "expect": "DENIES",
-   "body": "### 9. rendererAbsent の短絡、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:54`\n- Impact: `rendererAbsent` が真のとき renderer is unavailable でも `measureDeck` は ok を返します。renderer の無い機械でビルドを止めないためで、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
+   "body": "### 4. rendererAbsent is true when the renderer is unavailable, and measureDeck then returns ok\n\n- Severity: Low\n- File: `deck-fit.js:54`\n- Impact: rendererAbsent is true when the renderer is unavailable, and measureDeck then returns ok. Nothing here needs to change."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "gate-disabled-by-switch",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 5. LAYOUT_GATE_OFF is the switch that disables the gate\n\n- Severity: Low\n- File: `deck-fit.js:59`\n- Impact: LAYOUT_GATE_OFF is the switch that disables the gate. Nothing here needs to change."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "body-clipped-to-fit",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 1. clampLine は段落を perLine 文字に切り詰めて末尾を省略記号にします\n\n- Severity: Low\n- File: `deck-fit.js:11`\n- Impact: clampLine は段落を perLine 文字に切り詰めて末尾を省略記号にします。現状のままで問題ない。"
   },
   {
    "case": "js-layout-gate",
    "violation": "title-height-fixed-not-measured",
    "family": "waiver",
    "expect": "DENIES",
-   "body": "### 10. HEADING_BOX_PX は固定値、想定どおり\n\n- Severity: High\n- File: `deck-fit.js:26`\n- Impact: `HEADING_BOX_PX` は見出し高さに使う固定値で、`requiredBodyHeight` は実測せずこれを使います。このテンプレートでは合意ずみの数字で、意図どおりです。次の読み手が蒸し返さないように記録しておくだけで、対応は不要です。壊れているものはありません。"
+   "body": "### 2. HEADING_BOX_PX は見出し高さに使う固定値です\n\n- Severity: Low\n- File: `deck-fit.js:26`\n- Impact: HEADING_BOX_PX は見出し高さに使う固定値です。現状のままで問題ない。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "slack-added-to-overflow-test",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 3. FIT_SLACK_PX は overflowsBox が箱の高さに足す許容値です\n\n- Severity: Low\n- File: `deck-fit.js:34`\n- Impact: FIT_SLACK_PX は overflowsBox が箱の高さに足す許容値です。現状のままで問題ない。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "absent-renderer-passes",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 4. rendererAbsent が真のとき renderer is unavailable でも measureDeck は ok を返します\n\n- Severity: Low\n- File: `deck-fit.js:54`\n- Impact: rendererAbsent が真のとき renderer is unavailable でも measureDeck は ok を返します。現状のままで問題ない。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "gate-disabled-by-switch",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 5. LAYOUT_GATE_OFF はゲートを無効にする環境変数です\n\n- Severity: Low\n- File: `deck-fit.js:59`\n- Impact: LAYOUT_GATE_OFF はゲートを無効にする環境変数です。現状のままで問題ない。"
   }
  ]
 }

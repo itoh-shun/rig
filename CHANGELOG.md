@@ -15,8 +15,9 @@ an environment switch that returns a pass without measuring, body text clipped t
 line budget instead of wrapped, an absent renderer reported as a completed check, and a
 measured title height replaced by a fixed number. Each maps to a prohibition in
 `facets/policies/layout-fit-rules` or to an acceptance criterion of the recipe — not
-one-to-one: two of them are the same criterion, and "zero overflow" has no seed because
-that is a property of the artifact, not a defect that can be written into a diff.
+one-to-one: two of them are the same criterion, and the criterion counting overflow,
+collision and clipping has no seed because this sensor measures height only — they are
+writable as defects, it simply has no mechanism for them to break.
 Coverage goes from 14/26 gate-bearing recipes to 15/26.
 
 Every seed is an **added** symbol in `head/`, so the defect is present in the tree under
@@ -45,18 +46,44 @@ stopped nobody; `drill.md` already recorded the first two, and this one is now r
 beside them.
 
 So the class is carried where direction is read: the judge, calibrated on **every seed in
-both languages** — 10 pairs, the English wordings from the reviewer who found the shape and
-the Japanese ones from the verifier who broke the first fix, both verbatim. Measured, the
-class scores **5/5 → 0/5** while `ideal` and `negative` stay at 5/5.
+both languages** — 10 pairs, verbatim, and verbatim literally: the calibration is built from
+the same function the tests pin the shape with, so the closure measured and the shape
+recorded are one text rather than two. The wordings are the test reviewer's and the
+verifier's, not the judge prompt author's. Measured, the class scores **5/5 → 0/5** while
+`ideal` and `negative` stay at 5/5.
+
+The first run against those bodies came back `usable: NO`, on one pair, and the judge was
+right. The English `rendererAbsent` sentence named the predicate — "returns true when the
+renderer is unavailable" — and never the defect the seed plants, which is that `measureDeck`
+then reports `ok` with `checked: true`. The judge answered `NEITHER`: *approves the
+rendererAbsent predicate, but does not address whether measureDeck incorrectly reports an
+unperformed check as passed.* `DENIES` was never the right expectation for a sentence that
+names no mechanism to excuse; the calibration authoring was wrong, not the instrument.
+Neither the agreement rule nor that pair's `expect` was touched — both would be fitting the
+key to the answer. The sentence was replaced with the verifier's own wording, which names
+the mechanism, and the other nine were re-read against the same question first. Kept as a
+result rather than an incident: the judge tells "excuses the defect" apart from "describes
+an adjacent helper", and both remove credit.
 
 One limit is now written down rather than left to be assumed: a replayed ledger answers the
 wordings it recorded and no others. A reworded attack has no ledger entry, so it keeps its
-deterministic credit — the row still says `detected: 1` — and what saves the number is that
-the row goes `adjudicated: false` and is dropped from every aggregate. The guard is
-row-level, not finding-level. Reading `detected` without checking `adjudicated` publishes
-the attack at full marks.
+deterministic credit — the in-memory score still says `detected: 1` — and what saves the
+number is that the row goes `adjudicated: false` and is dropped from every aggregate. The
+guard is row-level, not finding-level. A row that gets written out has a second guard
+behind that one: `build_drill_row` renames `detected` to `detected_unadjudicated`, so a
+persisted row has no `detected` key to misread.
 
 ### Fixed
+
+**The `js-layout-gate` answer key missed 40% of the honest phrasings for its own seeds.**
+Forty-two natural reports of the five planted defects, English and Japanese, were written
+and scored: **seventeen missed**, every one of them with the location matched and the
+concept regex failing. The gaps were inflections, not concepts — `報告されません` where
+`報告されない` was covered, `turns the whole gate off` where only the adjacent `turns off`
+was, `dropped` beside `drop`/`drops`/`dropping`, `測っていません` beside `測っていない`.
+Now 42 of 42. A gap in this direction under-reports a reviewer who did the work, and it is
+silent: every test stayed green, because an answer key is only ever checked against the
+attack unless someone writes the honest sentences too.
 
 **The fixture corpus shipped its answer keys without the code they point at.** The
 `skills.engine` package-data globs list `corpora/**/*.{json,md,py,ts}`, so a case written
