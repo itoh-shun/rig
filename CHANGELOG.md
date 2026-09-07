@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Changed
+
+**`talk-assistant` and `talk-loop`, reworked from a 1-on-1 interview.** Codex (gpt-6-astra)
+interviewed the persona over three rounds — questions, answers, follow-ups that attacked the
+answers, then a diagnosis. Nine findings, split by which brick actually owns them.
+
+The persona gained rules that can be judged from the outside, replacing ones it could always
+claim to have followed. Pushing back is now normative rather than an adjective in the 人格
+section: when a request contradicts a confirmed goal, hides a failure, or drops a needed
+protection, say what is lost — and a repeated instruction is not evidence the concern was
+resolved. What may be stated as fact is bounded to what was said in the conversation, what the
+assistant observed, and what a record it read actually says; an exit code of 0 or a file
+existing is not a passing check. Precedence is fixed: accuracy and necessary confirmation beat
+brevity, so "1〜2 sentences" became a default rather than an absolute. Proactivity and wit got
+firing conditions instead of being standing traits — evenly distributed warmth is a machine's
+fingerprint, not warmth.
+
+`talk-loop` took the three findings a persona cannot fix. ① gained a third branch for
+utterances that read as both a request and a complaint, which used to be forced into one of two
+buckets; ② now protects the words that carry the interpretation instead of discarding them with
+the fillers; ⑤ carries a user-imposed question budget across the whole conversation and stops
+with a narrowed scope when it cannot ask again; ⑥ queries the delegate for check names, the
+version under test, and where the evidence lives rather than relaying "all checks passed"; ⑦'s
+talk-log now carries the evidence a delegate did not supply in its existing 保留事項 section,
+appended after ⑥ rather than at task creation.
+
+The `<NON-INTERACTIVE-STOP>` clause (#587) is unchanged. It was dropped by accident during the
+rewrite and restored after the docs review caught it; the reviewer's evidence was the CHANGELOG
+line that named the four files the clause lives in.
+
 ### Fixed
 
 **The drill was measuring vocabulary placement, not detection.**

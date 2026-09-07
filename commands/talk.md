@@ -17,7 +17,7 @@ With no argument, open with a short "what do you need?".
 
 ## What it does
 
-Handle what was said per `facets/instructions/talk-loop`: answer chat and questions briefly and directly; for a request that means a rig action, normalise it, enumerate the available `/rig:*` commands to classify it, confirm in one line, delegate to that command through the engine, and report back in short spoken sentences. **Anything consequential — a write, a push, a merge, a capture — is confirmed first**; low-risk things like reading state or `--plan` happen immediately. "that's enough", "exit", or "stop" ends it.
+Handle what was said per `facets/instructions/talk-loop`: answer chat and questions briefly and directly; when an utterance reads as either a request or a complaint, leave it undecided and confirm before routing; for a request that means a rig action, normalise it, enumerate the available `/rig:*` commands to classify it, confirm in one line, delegate to that command through the engine, and report back in short spoken sentences. **Anything consequential — a write, a push, a merge, a capture — is confirmed first**; low-risk things like reading state or `--plan` happen immediately. "that's enough", "exit", or "stop" ends it.
 
 ## Flags
 
