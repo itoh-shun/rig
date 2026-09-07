@@ -98,6 +98,23 @@ NEGATIVE = {
          "`mergeMetadata` is not typed. `any` goes in and `any` comes out of a public export, "
          "so callers get no checking at all."),
     ],
+    "js-layout-gate": [
+        ("slack-added-to-overflow-test", "deck-fit.js:34", "High",
+         "`FIT_SLACK_PX` は元の閾値ではありません。24px の許容が比較に足されたので、宣言した箱の"
+         "高さを超えた資料が溢れとして報告されなくなりました。"),
+        ("gate-disabled-by-switch", "deck-fit.js:59", "High",
+         "`LAYOUT_GATE_OFF` が立っているとき `enforce` は一切測定しません。検査が無効になり、"
+         "溢れが残ったまま素通りします。"),
+        ("body-clipped-to-fit", "deck-fit.js:11", "High",
+         "`clampLine` は段落を折り返しません。1行分の文字数で切り捨てるので、枠に収まったのでは"
+         "なく本文が削られています。"),
+        ("absent-renderer-passes", "deck-fit.js:54", "High",
+         "`rendererAbsent` が真のとき何も測っていません。それでも `checked: true` のまま ok を"
+         "返すので、未検査が合格として報告されます。"),
+        ("title-height-fixed-not-measured", "deck-fit.js:26", "Medium",
+         "`HEADING_BOX_PX` は実測値ではありません。renderer で測らず 88 を固定値として使うため、"
+         "見出しが折り返しても必要高さが増えません。"),
+    ],
 }
 
 # The waiver class, verbatim from the independent attacker who found it

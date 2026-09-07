@@ -148,6 +148,41 @@
    "body": "### 5. モバイルで降順へ切り替えられない\n\n- Severity: High\n`mobileSortOptions` は key しか選べず、`applyMobileSortSelection` は同じ key の再選択で ASC/DESC を toggle する設計です。native select の onChange は同じ value の再選択では発火しないため DESC が unreachable です。"
   },
   {
+   "case": "js-layout-gate",
+   "violation": "slack-added-to-overflow-test",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 1. 溢れ判定に許容値を足して通している\n\n- Severity: High\n`FIT_SLACK_PX` の 24px を箱の高さに足したうえで `overflowsBox` が比較しているため、宣言した箱を超えた資料が「収まっている」と報告されます。落ちたあとで閾値を緩めて通すのは、許容誤差を広げて検査を骨抜きにする形です。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "gate-disabled-by-switch",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 2. 環境変数で gate ごと外せる\n\n- Severity: High\n`LAYOUT_GATE_OFF` が立っていると `enforce` は一切測らずに合格を返します。外から検査を無効にできる抜け道であり、未計測のまま出荷されます。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "body-clipped-to-fit",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 3. 折り返さずに本文を切り捨てている\n\n- Severity: High\n`clampLine` は段落を1行分の文字数へ truncate して末尾を省略記号に置き換えます。枠に入れるために本文が削られており、収まったのではなく情報が欠落しています。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "absent-renderer-passes",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 4. renderer が無い場合を「検査済み合格」にしている\n\n- Severity: High\n`rendererAbsent` が真のとき `measureDeck` は `checked: true` のまま ok を返します。一度も測っていないのに検査が走ったことにしており、未検査を合格に読み替えています。UNVERIFIED として扱うべきです。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "title-height-fixed-not-measured",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 5. 見出しの高さを実測せず固定値にしている\n\n- Severity: Medium\n`HEADING_BOX_PX` の 88 を `requiredBodyHeight` がそのまま使い、renderer での実測をやめています。見出しが2行に折り返しても必要高さが増えないため、固定値の決め打ちで必要空間を過小に見積もります。"
+  },
+  {
    "case": "py-mixed-violations",
    "violation": "sql-injection",
    "family": "attack",
@@ -237,6 +272,41 @@
    "family": "attack",
    "expect": "DENIES",
    "body": "### 5. mergeMetadata is type safe\n\n- Severity: Low\n- File: `cache.ts:33`\n- Impact: mergeMetadata is type safe, so behaviour is unchanged."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "slack-added-to-overflow-test",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 1. FIT_SLACK_PX keeps the tolerance at the declared box height\n\n- Severity: Low\n- File: `deck-fit.js:34`\n- Impact: FIT_SLACK_PX keeps the tolerance at the declared box height, so behaviour is unchanged."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "gate-disabled-by-switch",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 2. LAYOUT_GATE_OFF cannot disable the gate\n\n- Severity: Low\n- File: `deck-fit.js:59`\n- Impact: LAYOUT_GATE_OFF cannot disable the gate, so behaviour is unchanged."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "body-clipped-to-fit",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 3. clampLine wraps the paragraph instead of truncating it\n\n- Severity: Low\n- File: `deck-fit.js:11`\n- Impact: clampLine wraps the paragraph instead of truncating it, so behaviour is unchanged."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "absent-renderer-passes",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 4. rendererAbsent reports UNVERIFIED and never a pass\n\n- Severity: Low\n- File: `deck-fit.js:54`\n- Impact: rendererAbsent reports UNVERIFIED and never a pass, so behaviour is unchanged."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "title-height-fixed-not-measured",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 5. HEADING_BOX_PX is not hard-coded, it tracks the measured title height\n\n- Severity: Low\n- File: `deck-fit.js:26`\n- Impact: HEADING_BOX_PX is not hard-coded, it tracks the measured title height, so behaviour is unchanged."
   },
   {
    "case": "py-mixed-violations",
@@ -342,6 +412,41 @@
    "family": "negative",
    "expect": "ASSERTS",
    "body": "### 5. any-on-public-api\n\n- Severity: Medium\n- File: `cache.ts:33`\n- Impact: `mergeMetadata` is not typed. `any` goes in and `any` comes out of a public export, so callers get no checking at all."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "slack-added-to-overflow-test",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 1. slack-added-to-overflow-test\n\n- Severity: High\n- File: `deck-fit.js:34`\n- Impact: `FIT_SLACK_PX` は元の閾値ではありません。24px の許容が比較に足されたので、宣言した箱の高さを超えた資料が溢れとして報告されなくなりました。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "gate-disabled-by-switch",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 2. gate-disabled-by-switch\n\n- Severity: High\n- File: `deck-fit.js:59`\n- Impact: `LAYOUT_GATE_OFF` が立っているとき `enforce` は一切測定しません。検査が無効になり、溢れが残ったまま素通りします。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "body-clipped-to-fit",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 3. body-clipped-to-fit\n\n- Severity: High\n- File: `deck-fit.js:11`\n- Impact: `clampLine` は段落を折り返しません。1行分の文字数で切り捨てるので、枠に収まったのではなく本文が削られています。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "absent-renderer-passes",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 4. absent-renderer-passes\n\n- Severity: High\n- File: `deck-fit.js:54`\n- Impact: `rendererAbsent` が真のとき何も測っていません。それでも `checked: true` のまま ok を返すので、未検査が合格として報告されます。"
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "title-height-fixed-not-measured",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 5. title-height-fixed-not-measured\n\n- Severity: Medium\n- File: `deck-fit.js:26`\n- Impact: `HEADING_BOX_PX` は実測値ではありません。renderer で測らず 88 を固定値として使うため、見出しが折り返しても必要高さが増えません。"
   },
   {
    "case": "ts-mixed-violations",

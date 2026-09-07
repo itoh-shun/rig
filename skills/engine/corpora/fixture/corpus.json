@@ -1,5 +1,5 @@
 {
   "corpus": "fixture",
-  "corpus_version": 2,
-  "description": "Pre-built planted-defect corpus for /rig:drill. Each case ships a base/ tree and a head/ tree, so the diff under review is fixed instead of synthesized per run; the answer key travels with the case as location/concept regexes. One case is clean (zero planted defects) and measures the false-positive rate. Version 2 adds five behavioral-correctness seeds distilled from real PR review misses."
+  "corpus_version": 3,
+  "description": "Pre-built planted-defect corpus for /rig:drill. Each case ships a base/ tree and a head/ tree, so the diff under review is fixed instead of synthesized per run; the answer key travels with the case as location/concept regexes. One case is clean (zero planted defects) and measures the false-positive rate. Version 2 adds five behavioral-correctness seeds distilled from real PR review misses. Version 3 adds five layout-gate seeds -- each one a way the fit sensor is made to report a pass without the artifact fitting -- so the layout-gate recipe's acceptance gate becomes drill-measurable."
 }

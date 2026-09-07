@@ -550,7 +550,7 @@ def test_every_seed_is_calibrated_on_both_honest_forms():
 
 
 def test_the_attack_family_is_exactly_what_the_deterministic_layer_still_credits():
-    """13, not 15, and the shortfall is the point rather than a gap.
+    """18, not 20, and the shortfall is the point rather than a gap.
 
     Two of the py-mixed attack findings miss their seed's `concept` regex, so the
     deterministic layer stops them before ③-b and the judge is never asked. Including
@@ -563,7 +563,7 @@ def test_the_attack_family_is_exactly_what_the_deterministic_layer_still_credits
         if e["family"] == "attack":
             per_case[e["case"]] = per_case.get(e["case"], 0) + 1
     assert per_case == {"py-mixed-violations": 3, "ts-behavioral-correctness": 5,
-                        "ts-mixed-violations": 5}
+                        "ts-mixed-violations": 5, "js-layout-gate": 5}
 
 
 def test_every_calibration_pair_would_be_credited_concept_and_all():
@@ -626,7 +626,7 @@ def test_a_judge_that_cannot_answer_is_not_usable():
 # Everything above uses a judge that answers from a dict. These two replay the verdicts
 # a real one gave, from the ledger shipped beside the calibration set:
 #
-#     codex, no model pin, prompt fingerprint 52758193db1bf838, 2026-09-07, 48/48
+#     codex, no model pin, prompt fingerprint 52758193db1bf838, 2026-09-07, 63/63
 #     across all four families, every call launched in an empty directory outside the
 #     repository with an allowlisted environment.
 #
@@ -645,7 +645,8 @@ def _recorded_judge():
 
 @pytest.mark.parametrize("case_id,without_judge", [("py-mixed-violations", 3),
                                                    ("ts-behavioral-correctness", 5),
-                                                   ("ts-mixed-violations", 5)])
+                                                   ("ts-mixed-violations", 5),
+                                                   ("js-layout-gate", 5)])
 def test_the_recorded_judge_closes_the_attack(case_id, without_judge):
     """The whole point, measured end to end rather than asserted.
 
@@ -687,7 +688,7 @@ def test_the_recorded_judge_closes_the_waiver_class_too():
 
 @pytest.mark.parametrize("family", ["ideal", "negative"])
 @pytest.mark.parametrize("case_id", ["py-mixed-violations", "ts-behavioral-correctness",
-                                     "ts-mixed-violations"])
+                                     "ts-mixed-violations", "js-layout-gate"])
 def test_the_recorded_judge_costs_an_honest_reviewer_nothing(family, case_id):
     """The failure that would matter more than the attack, and the one to watch.
 
@@ -710,7 +711,7 @@ def test_the_shipped_ledger_records_the_run_the_changelog_reports():
         pytest.skip("no recorded calibration ledger is shipped")
     rows = [json.loads(line) for line
             in calibration_ledger_path().read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(rows) == len(load_calibration()) == 48
+    assert len(rows) == len(load_calibration()) == 63
     assert {r["provider"] for r in rows} == {"codex"}
     assert {r["prompt_version"] for r in rows} == {adjudication.JUDGE_PROMPT_VERSION}, (
         "the shipped ledger was recorded against a different prompt; recalibrate")

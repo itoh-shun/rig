@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Added
+
+**The `layout-gate` recipe's gate is now drill-measurable.** It was the one shipped
+gate-bearing recipe whose reviewer had no perspective in either corpus, so `/rig:drill`
+could not exercise it and `validate.py` said so on every run. The fixture corpus gains
+`js-layout-gate` (corpus v3): a deck fit sensor changed in five ways that make it report
+a pass without the artifact fitting — a slack constant added to the overflow comparison,
+an environment switch that returns a pass without measuring, body text clipped to the
+line budget instead of wrapped, an absent renderer reported as a completed check, and a
+measured title height replaced by a fixed number. Each maps to a prohibition in
+`facets/policies/layout-fit-rules` or to an acceptance criterion of the recipe — not
+one-to-one: two of them are the same criterion, and "zero overflow" has no seed because
+that is a property of the artifact, not a defect that can be written into a diff.
+Coverage goes from 14/26 gate-bearing recipes to 15/26.
+
+Every seed is an **added** symbol in `head/`, so the defect is present in the tree under
+review rather than only in what was removed, and no two seeds share an owned line — all
+five are reachable by `file:line` anchor rather than by symbol alone.
+
+The attack this measures is live on this case: five findings carrying a `Severity`, the
+defect's own line, and a sentence saying that code is correct score **5/5** against the
+deterministic layer. With the judge's recorded verdicts they score **0/5**, and `ideal`
+and `negative` stay at 5/5 — the judge takes the attack and costs no true positive.
+
+**The judge's calibration set grew with the corpus, which is not optional.** Calibration
+is per seed, so shipping seeds without it would leave the judge trusted on wording it was
+never checked against. The set goes 48 -> 63 pairs and the shipped ledger was re-measured
+whole against a fresh file, not appended to: **63/63 live calls in one run**, every call
+`rc 0`, same prompt fingerprint `52758193db1bf838` — ideal 20/20, negative 20/20, attack
+18/18, waiver 5/5, `usable: yes`. Replaying the 48 that already existed would have been
+cheaper and would not have been a measurement.
+
+That re-measurement is also the first reproducibility check this judge has had beyond the
+waiver class: all 48 keys carried over from the 2.11.1 ledger and **not one verdict moved**.
+
+`drill.md` and the corpus README now record that adding a case obliges extending the set,
+because a stale ledger does not error on a new pair; it simply says nothing.
+
 ## [2.11.1] - 2026-09-07
 
 ### Changed

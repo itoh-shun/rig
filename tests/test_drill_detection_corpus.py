@@ -123,6 +123,34 @@ public export. Use a generic or `unknown` with narrowing.
 - Severity: High
 `mobileSortOptions` は key しか選べず、`applyMobileSortSelection` は同じ key の再選択で ASC/DESC を toggle する設計です。native select の onChange は同じ value の再選択では発火しないため DESC が unreachable です。
 """,
+    "js-layout-gate": """
+## Blocking
+
+### 1. 溢れ判定に許容値を足して通している
+
+- Severity: High
+`FIT_SLACK_PX` の 24px を箱の高さに足したうえで `overflowsBox` が比較しているため、宣言した箱を超えた資料が「収まっている」と報告されます。落ちたあとで閾値を緩めて通すのは、許容誤差を広げて検査を骨抜きにする形です。
+
+### 2. 環境変数で gate ごと外せる
+
+- Severity: High
+`LAYOUT_GATE_OFF` が立っていると `enforce` は一切測らずに合格を返します。外から検査を無効にできる抜け道であり、未計測のまま出荷されます。
+
+### 3. 折り返さずに本文を切り捨てている
+
+- Severity: High
+`clampLine` は段落を1行分の文字数へ truncate して末尾を省略記号に置き換えます。枠に入れるために本文が削られており、収まったのではなく情報が欠落しています。
+
+### 4. renderer が無い場合を「検査済み合格」にしている
+
+- Severity: High
+`rendererAbsent` が真のとき `measureDeck` は `checked: true` のまま ok を返します。一度も測っていないのに検査が走ったことにしており、未検査を合格に読み替えています。UNVERIFIED として扱うべきです。
+
+### 5. 見出しの高さを実測せず固定値にしている
+
+- Severity: Medium
+`HEADING_BOX_PX` の 88 を `requiredBodyHeight` がそのまま使い、renderer での実測をやめています。見出しが2行に折り返しても必要高さが増えないため、固定値の決め打ちで必要空間を過小に見積もります。
+""",
 }
 
 VAGUE = """
@@ -174,6 +202,13 @@ DECOY = {
         ("dailySigma", "workflow.ts:30"),
         ("mobileSortOptions", "workflow.ts:44"),
     ]),
+    "js-layout-gate": _decoy([
+        ("clampLine", "deck-fit.js:11"),
+        ("HEADING_BOX_PX", "deck-fit.js:26"),
+        ("FIT_SLACK_PX", "deck-fit.js:34"),
+        ("rendererAbsent", "deck-fit.js:54"),
+        ("LAYOUT_GATE_OFF", "deck-fit.js:59"),
+    ]),
 }
 
 PRAISE = """
@@ -208,11 +243,12 @@ def emitted():
 def test_corpus_ships_planted_cases_and_one_clean_case():
     cases = load_cases()
     assert {c["id"] for c in cases} == {
-        "py-mixed-violations", "ts-mixed-violations", "ts-behavioral-correctness", CLEAN_CASE,
+        "py-mixed-violations", "ts-mixed-violations", "ts-behavioral-correctness",
+        "js-layout-gate", CLEAN_CASE,
     }
     clean = [c for c in cases if c.get("clean")]
     assert len(clean) == 1 and clean[0]["violations"] == []
-    assert sum(len(c["violations"]) for c in violation_cases()) == 15
+    assert sum(len(c["violations"]) for c in violation_cases()) == 20
     assert isinstance(load_corpus_meta()["corpus_version"], int)
 
 
@@ -410,6 +446,13 @@ NARRATION_LINES = {
         "`record_audit` does not swallow the exception",
         "`test_audit_records_event` is not skipped",
     ],
+    "js-layout-gate": [
+        "`FIT_SLACK_PX` keeps the tolerance at the declared box height",
+        "`LAYOUT_GATE_OFF` cannot disable the gate",
+        "`clampLine` wraps the paragraph instead of truncating it",
+        "`rendererAbsent` reports UNVERIFIED and never a pass",
+        "`HEADING_BOX_PX` is not hard-coded, it tracks the measured title height",
+    ],
 }
 
 
@@ -456,12 +499,21 @@ CORRECTNESS_CLAIMS = {
         ("reportUsage awaits the send", "cache.ts:33"),
         ("mergeMetadata is type safe", "cache.ts:33"),
     ],
+    "js-layout-gate": [
+        ("FIT_SLACK_PX keeps the tolerance at the declared box height", "deck-fit.js:34"),
+        ("LAYOUT_GATE_OFF cannot disable the gate", "deck-fit.js:59"),
+        ("clampLine wraps the paragraph instead of truncating it", "deck-fit.js:11"),
+        ("rendererAbsent reports UNVERIFIED and never a pass", "deck-fit.js:54"),
+        ("HEADING_BOX_PX is not hard-coded, it tracks the measured title height",
+         "deck-fit.js:26"),
+    ],
 }
 
 
 @pytest.mark.parametrize(
     "case_id,open_at",
-    [("py-mixed-violations", 3), ("ts-behavioral-correctness", 5), ("ts-mixed-violations", 5)],
+    [("py-mixed-violations", 3), ("ts-behavioral-correctness", 5), ("ts-mixed-violations", 5),
+     ("js-layout-gate", 5)],
 )
 def test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness(case_id, open_at):
     """What the *deterministic* layer alone still scores, recorded at its measured value.
