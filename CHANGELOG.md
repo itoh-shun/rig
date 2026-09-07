@@ -117,23 +117,22 @@ attacker's payloads went into the calibration set verbatim as a fourth family; t
 the only family in it not written by whoever wrote the prompt, and paraphrasing them
 would have quietly given that back.
 
-*Measured, on 48 pairs, codex:* ideal 15/15, negative 15/15, attack 13/13, waiver 5/5 —
-the last of those at n=1 per pair, on a class whose verdicts were unstable across
-re-rolls under the previous prompt.
+*Measured, on 48 pairs, codex:* ideal 15/15, negative 15/15, attack 13/13, waiver 5/5.
 
-**Those numbers are withdrawn pending re-measurement, and the recorded ledger is not
-shipped.** They were taken before the last of the three executor fixes, on a `PATH` that
-still held `~/.local/bin` — where `codex` lives, and `rig-wb` beside it. Nothing shows
-the judge used it; the point is that the run does not meet the condition the entry
-claims for it, and two earlier calibrations were thrown out for exactly that. The
-re-measurement is queued and the provider is currently answering in minutes, so it is
-not a number this entry can carry yet. `drill-corpus calibrate-judge --judge codex
---judge-ledger <path>` reproduces it; until a ledger is shipped, the tests that replay
-one skip and say so.
+The waiver class was the one to distrust: under the previous prompt the same five bytes
+scored 4/5, 3/5, 3/5 and 3/5 across re-rolls, so a single clean pass would have been one
+sample of an unstable quantity. Re-rolled three times against fresh ledgers under this
+prompt, all five come back `DENIES` every time — **15 of 15**. That is three samples, not
+a proof of determinism, but it is no longer a number resting on one roll.
 
-What is not withdrawn is everything a ledger does not underwrite: the narrowing rule,
-the environment scrub, the `measured` flag, the ledger verification, the row
-provenance, and the eighty-odd tests that pin them. With those recorded verdicts the
+An earlier draft of this entry withdrew those numbers. They had been taken before the
+last of the three executor fixes, on a `PATH` that still held `~/.local/bin` — where
+`codex` lives, and `rig-wb` beside it — and two earlier calibrations were thrown out for
+exactly that, so the rule had to apply to this one too. The re-measurement then failed
+to complete for a day: the provider timed out on every pair. **The numbers above are the
+re-measurement, run to completion under the corrected executor**, and the ledger it
+produced ships beside the calibration set. Four calibration runs were discarded in all,
+three for not meeting the conditions claimed for them and one for not finishing. With those recorded verdicts the
 graded-correctness attack goes from 3/5, 5/5 and 5/5 to zero on all three cases, the
 waiver review goes from 5/5 to zero, and the ideal and negative reviews stay at full
 marks — the judge costs an honest reviewer nothing. The ledger ships beside the
