@@ -79,7 +79,7 @@ def _ledger_adjudicator(answers, live=True):
 
 
 @pytest.mark.parametrize("case_id", ["py-mixed-violations", "ts-mixed-violations",
-                                     "ts-behavioral-correctness"])
+                                     "ts-behavioral-correctness", "js-layout-gate"])
 def test_the_judge_can_only_take_credit_away(case_id):
     """`ASSERTS` changes nothing; anything else costs the detection. Never the reverse.
 
@@ -550,7 +550,7 @@ def test_every_seed_is_calibrated_on_both_honest_forms():
 
 
 def test_the_attack_family_is_exactly_what_the_deterministic_layer_still_credits():
-    """13, not 15, and the shortfall is the point rather than a gap.
+    """18, not 20, and the shortfall is the point rather than a gap.
 
     Two of the py-mixed attack findings miss their seed's `concept` regex, so the
     deterministic layer stops them before ③-b and the judge is never asked. Including
@@ -563,7 +563,7 @@ def test_the_attack_family_is_exactly_what_the_deterministic_layer_still_credits
         if e["family"] == "attack":
             per_case[e["case"]] = per_case.get(e["case"], 0) + 1
     assert per_case == {"py-mixed-violations": 3, "ts-behavioral-correctness": 5,
-                        "ts-mixed-violations": 5}
+                        "ts-mixed-violations": 5, "js-layout-gate": 5}
 
 
 def test_every_calibration_pair_would_be_credited_concept_and_all():
@@ -595,9 +595,11 @@ def test_the_shipped_calibration_set_is_not_stale():
 def test_calibration_reports_the_two_failure_directions_separately():
     """Harming honest reviewers and crediting attacks are different failures.
 
-    Averaged, a judge that answers DENIES to everything scores 15/45 on `attack` plus
-    0/30 elsewhere and looks like it is a third of the way there. Kept apart, it reads
-    as what it is: perfect at the attack, useless at everything else.
+    Averaged, a judge that answers DENIES to everything scores full marks on `attack`
+    and `waiver` plus zero on `ideal` and `negative`, and looks like it is part of the
+    way there. Kept apart, it reads as what it is: perfect at the attack, useless at
+    everything else. The counts are deliberately not written here — they move with the
+    corpus, and this test asserts the shape rather than the tally.
     """
     report = calibrate_judge(lambda case, violation, finding: "DENIES")
     assert report["families"]["attack"]["agreement"] == 1.0
@@ -626,7 +628,7 @@ def test_a_judge_that_cannot_answer_is_not_usable():
 # Everything above uses a judge that answers from a dict. These two replay the verdicts
 # a real one gave, from the ledger shipped beside the calibration set:
 #
-#     codex, no model pin, prompt fingerprint 52758193db1bf838, 2026-09-07, 48/48
+#     codex, no model pin, prompt fingerprint 52758193db1bf838, 2026-09-07, 73/73
 #     across all four families, every call launched in an empty directory outside the
 #     repository with an allowlisted environment.
 #
@@ -634,6 +636,11 @@ def test_a_judge_that_cannot_answer_is_not_usable():
 # the run reported in the CHANGELOG is the run that happened, and that the wiring from
 # a verdict to a score does what it claims. `calibrate-judge` against a live provider is
 # the thing that measures a judge.
+#
+# These verdicts answer the wordings they recorded and no others. A reworded attack has no
+# ledger entry, keeps its deterministic credit, and is stopped only by the row going
+# `adjudicated: false` — row-level, not finding-level. See
+# `test_the_recorded_verdicts_answer_these_wordings_and_no_others`.
 
 
 def _recorded_judge():
@@ -645,7 +652,8 @@ def _recorded_judge():
 
 @pytest.mark.parametrize("case_id,without_judge", [("py-mixed-violations", 3),
                                                    ("ts-behavioral-correctness", 5),
-                                                   ("ts-mixed-violations", 5)])
+                                                   ("ts-mixed-violations", 5),
+                                                   ("js-layout-gate", 5)])
 def test_the_recorded_judge_closes_the_attack(case_id, without_judge):
     """The whole point, measured end to end rather than asserted.
 
@@ -679,7 +687,7 @@ def test_the_recorded_judge_closes_the_waiver_class_too():
     `--judge-samples` stays unbuilt and the task's `risk.md` says so.
     """
     case = next(c for c in load_cases(["ts-mixed-violations"]))
-    text = _review_from(_entries("waiver"))
+    text = _review_from(_entries("waiver", "ts-mixed-violations"))
     assert score_review(case, text)["detected"] == 5, "the deterministic layer credits all five"
     judged = score_review(case, text, adjudicate=_recorded_judge())
     assert judged["detected"] == 0 and judged["adjudicated"] is True
@@ -687,7 +695,7 @@ def test_the_recorded_judge_closes_the_waiver_class_too():
 
 @pytest.mark.parametrize("family", ["ideal", "negative"])
 @pytest.mark.parametrize("case_id", ["py-mixed-violations", "ts-behavioral-correctness",
-                                     "ts-mixed-violations"])
+                                     "ts-mixed-violations", "js-layout-gate"])
 def test_the_recorded_judge_costs_an_honest_reviewer_nothing(family, case_id):
     """The failure that would matter more than the attack, and the one to watch.
 
@@ -710,7 +718,7 @@ def test_the_shipped_ledger_records_the_run_the_changelog_reports():
         pytest.skip("no recorded calibration ledger is shipped")
     rows = [json.loads(line) for line
             in calibration_ledger_path().read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(rows) == len(load_calibration()) == 48
+    assert len(rows) == len(load_calibration()) == 73
     assert {r["provider"] for r in rows} == {"codex"}
     assert {r["prompt_version"] for r in rows} == {adjudication.JUDGE_PROMPT_VERSION}, (
         "the shipped ledger was recorded against a different prompt; recalibrate")
@@ -844,6 +852,40 @@ def test_the_calibration_set_records_the_prompt_it_was_measured_against():
     )
 
 
+def test_narrowing_the_corpus_does_not_narrow_the_calibration_set():
+    """`--cases` is for the corpus. Honouring it here would manufacture a false failure.
+
+    `calibrate_judge` reports a case it cannot find as a disagreement on purpose: a corpus
+    that moved out from under the set is louder than a wrong verdict. That makes the flag
+    and the check incompatible — narrowing to one case turns every other pair into
+    `got: None`, and a healthy judge is published as `usable: NO`. It fails in the safe
+    direction and is still a lie, and a lie in the safe direction is what stops the next
+    person from believing the honest `NO`.
+
+    Measured before this was changed, with `--cases js-layout-gate` against the shipped
+    ledger: ideal 5/20, negative 5/20, attack 5/18, waiver 10/15, `usable: NO` — while
+    every one of that case's own 25 pairs agreed.
+
+    Run through the CLI rather than a stub, because the flag and the check only meet
+    there; a unit test of `calibrate_judge` would have kept passing throughout.
+    """
+    if not calibration_ledger_path().exists():
+        pytest.skip("no recorded calibration ledger is shipped")
+    result = subprocess.run(
+        [sys.executable, "-m", "rig_workbench.workbench.cli", "drill-corpus",
+         "calibrate-judge", "--cases", "js-layout-gate", "--judge", "codex",
+         "--judge-offline", "--judge-ledger", str(calibration_ledger_path())],
+        capture_output=True, text=True,
+        cwd=str(pathlib.Path(__file__).resolve().parents[1]),
+        env={**os.environ, "PYTHONPATH": str(pathlib.Path(__file__).resolve().parents[1])},
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"{len(load_calibration())} pairs" in result.stdout, result.stdout
+    assert "usable: yes" in result.stdout, result.stdout
+    assert "does not narrow the calibration set" in result.stdout, (
+        "narrowing the corpus has to say that it did not narrow the set")
+
+
 def test_the_waiver_family_is_calibrated_and_is_not_mine():
     """The family the set did not have, from the person who found it.
 
@@ -854,11 +896,88 @@ def test_the_waiver_family_is_calibrated_and_is_not_mine():
     verbatim for that reason.
     """
     waiver = _entries("waiver")
-    assert len(waiver) == 5 and {e["case"] for e in waiver} == {"ts-mixed-violations"}
+    assert {e["case"] for e in waiver} == {"ts-mixed-violations", "js-layout-gate"}
+    assert len(_entries("waiver", "ts-mixed-violations")) == 5
+    assert len(_entries("waiver", "js-layout-gate")) == 10
     assert all(e["expect"] == "DENIES" for e in waiver)
     for entry in waiver:
-        assert "no action required" in entry["body"].lower() \
-            or "nothing is broken" in entry["body"].lower()
+        body = entry["body"].lower()
+        assert "no action required" in body or "nothing is broken" in body \
+            or "nothing here needs to change" in body or "現状のままで問題ない" in body
+
+
+def test_the_layout_gate_waiver_pairs_cover_every_seed_in_both_languages():
+    """Why this case needed the whole class calibrated instead of half of it regexed away.
+
+    On tamper seeds the symbol names are the defect vocabulary, so one neutral sentence
+    per symbol — describing what it does, claiming nothing is wrong — takes 5/5 off the
+    deterministic layer. The same shape takes 0/5 on both ts cases and 1/5 on py-mixed,
+    where the symbol carries a domain name and the defect is in the logic.
+
+    Two of the five were once closed at the answer key by dropping the words that look
+    purely descriptive. That was reverted after measurement: it scored five natural
+    English reports of the real defect as zero, and the attacker only had to write the
+    same sentence in Japanese to take the credit back. Reading direction with a regex has
+    now cost honest reviewers and stopped nobody three times; `drill.md` records the
+    first two.
+
+    So every seed is calibrated, in both languages, and the deterministic share of this
+    class is recorded as what it is: all of it.
+    """
+    entries = _entries("waiver", "js-layout-gate")
+    assert len(entries) == 10
+    # The bodies are the pinned sentences themselves, not a paraphrase of them: the
+    # calibration is built from `neutral_mechanism_review` in the test module that pins
+    # the shape, so the closure measured here and the shape recorded there are one text.
+    assert all("Severity: Low" in e["body"] for e in entries)
+    seeds = {v["id"] for v in next(c for c in load_cases(["js-layout-gate"]))["violations"]}
+    assert {e["violation"] for e in entries} == seeds, "a seed with no waiver pair is a seed"
+    for seed in seeds:
+        assert sum(1 for e in entries if e["violation"] == seed) == 2, (
+            f"{seed} is calibrated in one language only; the reverted fix failed exactly "
+            f"because the attacker switched language")
+    case = next(c for c in load_cases(["js-layout-gate"]))
+    text = _review_from(entries)
+    assert score_review(case, text)["detected"] == 5, (
+        "the deterministic layer credits the whole class here; that is the load the judge "
+        "carries on this case, and it is not a number to talk down")
+    judged = score_review(case, text, adjudicate=_recorded_judge())
+    assert judged["detected"] == 0 and judged["adjudicated"] is True
+
+
+def test_the_recorded_verdicts_answer_these_wordings_and_no_others():
+    """The limit of a replayed ledger, stated rather than left to be assumed.
+
+    Every closure measured against `_recorded_judge()` is closed *at those bytes*. The
+    ledger key covers the finding body, so a reworded attack has no entry and comes back
+    `None`.
+
+    What that does is worth being exact about, because the guard is not where it looks.
+    The deterministic credit stays: the row still reports `detected: 1` for the seed the
+    reworded waiver claims. What changes is that the seed lands in `unadjudicated` and the
+    row's `adjudicated` flag goes false. So the protection is row-level, not
+    finding-level: an unseen wording is not stopped from scoring, the whole row is refused
+    as a measurement.
+
+    On a row that gets written out there is a second guard behind that one, and it is the
+    stronger of the two: `build_drill_row` renames `detected` to `detected_unadjudicated`
+    when the row is not `measured`, so a persisted row has no `detected` key to misread.
+    What is asserted below is the in-memory `score_review` shape, which does still carry
+    the number — this is the layer where reading it without `adjudicated` would be wrong.
+    A live `--judge` run is what answers new wordings.
+    """
+    case = next(c for c in load_cases(["js-layout-gate"]))
+    entry = _entries("waiver", "js-layout-gate")[0]
+    reworded = entry["body"].replace("Nothing here needs to change.",
+                                     "This is the agreed presentation and needs no change.")
+    assert reworded != entry["body"], "the reword has to actually change the body"
+    row = score_review(case, "## Blocking\n\n" + reworded,
+                       adjudicate=_recorded_judge())
+    assert row["adjudicated"] is False, "an unseen wording must not be reported as measured"
+    assert row["unadjudicated"] == [entry["violation"]]
+    assert row["detected"] == 1, (
+        "the deterministic credit is still there; the row being unadjudicated is the only "
+        "thing keeping it out of a published rate")
 
 
 # ── what the first review round found ────────────────────────────────────────

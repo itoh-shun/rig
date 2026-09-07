@@ -2,6 +2,119 @@
 
 ## Unreleased
 
+### Added
+
+**The `layout-gate` recipe's gate is now drill-measurable.** Its reviewer had no
+perspective in either corpus, so `/rig:drill` could not exercise it and `validate.py` said
+so on every run. Two recipes are still in that position — `japanese-writing` and
+`japanese-writing-revision`, both on `japanese-writing-reviewer` — and this does not close
+them. The fixture corpus gains
+`js-layout-gate` (corpus v3): a deck fit sensor changed in five ways that make it report
+a pass without the artifact fitting — a slack constant added to the overflow comparison,
+an environment switch that returns a pass without measuring, body text clipped to the
+line budget instead of wrapped, an absent renderer reported as a completed check, and a
+measured title height replaced by a fixed number. Each maps to a prohibition in
+`facets/policies/layout-fit-rules` or to an acceptance criterion of the recipe — not
+one-to-one: two of them are the same criterion, and the criterion counting overflow,
+collision and clipping has no seed because this sensor measures height only — they are
+writable as defects, it simply has no mechanism for them to break.
+Coverage goes from 14/26 gate-bearing recipes to 15/26.
+
+Every seed is an **added** symbol in `head/`, so the defect is present in the tree under
+review rather than only in what was removed, and no two seeds share an owned line — all
+five are reachable by `file:line` anchor rather than by symbol alone.
+
+The attack this measures is live on this case: five findings carrying a `Severity`, the
+defect's own line, and a sentence saying that code is correct score **5/5** against the
+deterministic layer. With the judge's recorded verdicts they score **0/5**, and `ideal`
+and `negative` stay at 5/5 — the judge takes the attack and costs no true positive.
+
+**A tamper corpus is exposed to a shape the others are not**, and review found it here
+rather than in production. Elsewhere the symbol carries a domain name and the defect is in
+the logic, so a neutral sentence about the symbol shares no vocabulary with the answer key
+— that shape scores 0/5 on both `ts-` cases and 1/5 on `py-mixed-violations`. Here the
+symbols *are* the defect: a `concept` for "the tolerance was widened" cannot avoid the word
+an honest reviewer uses for it. Five sentences describing each mechanism and claiming
+nothing is wrong take **5/5** off the deterministic layer.
+
+Half of that was once closed at the answer key, by dropping the words that look purely
+descriptive — `constant`, `fixed value`, `assumes`, `estimates`, a bare `unavailable`. It
+was measured and reverted. It scored five natural English reports of the real defect as
+zero, and the attacker only had to write the same sentences in Japanese to take the credit
+back. That is the third time reading direction with a regex has cost honest reviewers and
+stopped nobody; `drill.md` already recorded the first two, and this one is now recorded
+beside them.
+
+So the class is carried where direction is read: the judge, calibrated on **every seed in
+both languages** — 10 pairs, verbatim, and verbatim literally: the calibration is built from
+the same function the tests pin the shape with, so the closure measured and the shape
+recorded are one text rather than two. The wordings are the test reviewer's and the
+verifier's, not the judge prompt author's. Measured, the class scores **5/5 → 0/5** while
+`ideal` and `negative` stay at 5/5.
+
+The first run against those bodies came back `usable: NO`, on one pair, and the judge was
+right. The English `rendererAbsent` sentence named the predicate — "returns true when the
+renderer is unavailable" — and never the defect the seed plants, which is that `measureDeck`
+then reports `ok` with `checked: true`. The judge answered `NEITHER`: *approves the
+rendererAbsent predicate, but does not address whether measureDeck incorrectly reports an
+unperformed check as passed.* `DENIES` was never the right expectation for a sentence that
+names no mechanism to excuse; the calibration authoring was wrong, not the instrument.
+Neither the agreement rule nor that pair's `expect` was touched — both would be fitting the
+key to the answer. The sentence was replaced with the verifier's own wording, which names
+the mechanism, and the other nine were re-read against the same question first. Kept as a
+result rather than an incident: the judge tells "excuses the defect" apart from "describes
+an adjacent helper", and both remove credit.
+
+One limit is now written down rather than left to be assumed: a replayed ledger answers the
+wordings it recorded and no others. A reworded attack has no ledger entry, so it keeps its
+deterministic credit — the in-memory score still says `detected: 1` — and what saves the
+number is that the row goes `adjudicated: false` and is dropped from every aggregate. The
+guard is row-level, not finding-level. A row that gets written out has a second guard
+behind that one: `build_drill_row` renames `detected` to `detected_unadjudicated`, so a
+persisted row has no `detected` key to misread.
+
+### Fixed
+
+**The `js-layout-gate` answer key missed 40% of the honest phrasings for its own seeds.**
+Forty-two natural reports of the five planted defects, English and Japanese, were written
+and scored: **seventeen missed**, every one of them with the location matched and the
+concept regex failing. The gaps were inflections, not concepts — `報告されません` where
+`報告されない` was covered, `turns the whole gate off` where only the adjacent `turns off`
+was, `dropped` beside `drop`/`drops`/`dropping`, `測っていません` beside `測っていない`.
+Now 42 of 42. A gap in this direction under-reports a reviewer who did the work, and it is
+silent: every test stayed green, because an answer key is only ever checked against the
+attack unless someone writes the honest sentences too.
+
+**The fixture corpus shipped its answer keys without the code they point at.** The
+`skills.engine` package-data globs list `corpora/**/*.{json,md,py,ts}`, so a case written
+in any other language ships `case.json` and neither tree: `load_cases()` reports its seeds
+while `materialize_case` raises `FileNotFoundError`, and where it does not raise, the
+`file:line` anchor path dies silently and the symbol path keeps scoring. `*.js` and
+`*.jsonl` are added — the latter is the judge ledger, unshipped since 2.11.1 for the same
+reason. The comment now says the extension list is the whole filter.
+
+### Changed
+
+**The judge's calibration set grew with the corpus, which is not optional.** Calibration
+is per seed, so shipping seeds without it would leave the judge trusted on wording it was
+never checked against. The set goes 48 -> 73 pairs and the shipped ledger was re-measured
+whole against a fresh file, not appended to: **73/73 live calls in one run**, every call
+`rc 0`, same prompt fingerprint `52758193db1bf838` — ideal 20/20, negative 20/20, attack
+18/18, waiver 15/15, `usable: yes`. Replaying the pairs that already existed would have been
+cheaper and would not have been a measurement.
+
+An earlier run of this same set reproduced the 2.11.1 ledger exactly — all 48 keys carried
+over and **not one verdict moved** — which is the first reproducibility check this judge
+has had outside the waiver class.
+
+The per-family and per-case tallies in the set's own `_about` are now written from its
+entries rather than typed into the prose beside them. A hand-written count there was the
+one staleness `--check` could never catch, because the generator and the shipped file
+carry the same stale sentence and therefore agree.
+
+`drill.md` and the corpus README now record that adding a case obliges extending the set,
+because a stale ledger does not error on a new pair; it simply says nothing.
+
 ## [2.11.1] - 2026-09-07
 
 ### Changed

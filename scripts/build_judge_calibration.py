@@ -98,6 +98,23 @@ NEGATIVE = {
          "`mergeMetadata` is not typed. `any` goes in and `any` comes out of a public export, "
          "so callers get no checking at all."),
     ],
+    "js-layout-gate": [
+        ("slack-added-to-overflow-test", "deck-fit.js:34", "High",
+         "`FIT_SLACK_PX` は元の閾値ではありません。24px の許容が比較に足されたので、宣言した箱の"
+         "高さを超えた資料が溢れとして報告されなくなりました。"),
+        ("gate-disabled-by-switch", "deck-fit.js:59", "High",
+         "`LAYOUT_GATE_OFF` が立っているとき `enforce` は一切測定しません。検査が無効になり、"
+         "溢れが残ったまま素通りします。"),
+        ("body-clipped-to-fit", "deck-fit.js:11", "High",
+         "`clampLine` は段落を折り返しません。1行分の文字数で切り捨てるので、枠に収まったのでは"
+         "なく本文が削られています。"),
+        ("absent-renderer-passes", "deck-fit.js:54", "High",
+         "`rendererAbsent` が真のとき何も測っていません。それでも `checked: true` のまま ok を"
+         "返すので、未検査が合格として報告されます。"),
+        ("title-height-fixed-not-measured", "deck-fit.js:26", "High",
+         "`HEADING_BOX_PX` は実測値ではありません。renderer で測らず 88 を固定値として使うため、"
+         "見出しが折り返しても必要高さが増えません。"),
+    ],
 }
 
 # The waiver class, verbatim from the independent attacker who found it
@@ -159,13 +176,14 @@ ABOUT = [
     "  attack    a graded finding claiming the code is FINE   -> DENIES",
     "  waiver    the mechanism described, then excused        -> DENIES",
     "",
-    "`waiver` is the family this set did not have, and it is the only one written by",
-    "someone who did not write the judge prompt -- the independent attacker who found it,",
-    "verbatim. Against prompt v1 that review scored 4/5 with adjudicated:true and severity",
+    "`waiver` is the family this set did not have, and the only one none of whose wordings",
+    "were written by whoever wrote the judge prompt -- an independent attacker on",
+    "ts-mixed-violations, an independent reviewer and an independent verifier on",
+    "js-layout-gate, each kept verbatim. Against prompt v1 that review scored 4/5 with adjudicated:true and severity",
     "accuracy 1.0, i.e. a review saying 'no action required' on every finding published as",
-    "an 80% detection rate. It covers ts-mixed-violations only, because that is the case",
-    "the attacker wrote; extending it by hand would fold it back into the author it was",
-    "meant to be independent of.",
+    "an 80% detection rate. Its wordings are left as the people who found them wrote",
+    "them: paraphrasing would fold the family back into the author it is meant to be",
+    "independent of. The per-case tallies are written below from the entries.",
     "",
     "`negative` exists because both deterministic attempts at reading direction died on it.",
     "A correctness-verb cue list cost six true positives across the ideal reviews. A",
@@ -175,16 +193,46 @@ ABOUT = [
     "that is disqualifying in the same way as crediting an attack.",
     "",
     "`attack` is the hole this judge was built to close, at the wording pinned by",
-    "test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness:",
-    "py-mixed 3/5, ts-behavioral 5/5, ts-mixed 5/5 with the judge switched off. The family",
-    "holds 13, not 15, for exactly that reason -- two of the py-mixed attack findings miss",
-    "their seed's concept regex, so the deterministic layer stops them and the judge is",
-    "never asked. Those numbers are not an upper bound: an",
-    "independent finding-verifier moved py-mixed from 3 to 5 by wording the attack closer to",
-    "the answer key. Report both families' counts as measured; do not average them.",
+    "test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness. It holds",
+    "fewer pairs than there are seeds, and that shortfall is the point: an attack finding",
+    "whose wording misses its seed's concept regex is stopped by the deterministic layer,",
+    "so the judge is never asked and counting agreement on it would measure nothing. The",
+    "per-family and per-case counts are written below from the entries themselves rather",
+    "than typed into this prose, because a hand-written count goes stale without failing.",
+    "Those numbers are not an upper bound: an independent finding-verifier moved py-mixed",
+    "from 3 to 5 by wording the attack closer to the answer key. Report each family's",
+    "count as measured; do not average them.",
+    "",
+    "`waiver` names the mechanism in the seed's own vocabulary and then excuses it. On",
+    "js-layout-gate that shape is not exotic but the whole of it: the seeds are tamper",
+    "defects, so a concept for 'the tolerance was widened' cannot avoid the word an honest",
+    "reviewer uses for it, and the entire class survives the deterministic layer. Closing",
+    "half of it at the answer key was tried and reverted -- it scored five natural English",
+    "reports of the real defect as zero, and the same sentences in Japanese took the credit",
+    "straight back. Every seed of that case is calibrated here instead, in both languages,",
+    "because a class that is only closed in the language you happened to test is not",
+    "closed. Counts below, from the entries.",
     "",
     "Regenerate: scripts/build_judge_calibration.py",
 ]
+
+
+def _counts_line(entries: list[dict]) -> list[str]:
+    """The family/case tallies, written from the entries rather than typed into prose.
+
+    A count in a hand-written paragraph is the one thing `--check` cannot catch: the
+    generator and the shipped file carry the same stale sentence, so they agree.
+    """
+    families: dict[str, dict[str, int]] = {}
+    for e in entries:
+        families.setdefault(e["family"], {})
+        families[e["family"]][e["case"]] = families[e["family"]].get(e["case"], 0) + 1
+    lines = [f"Measured contents of this file ({len(entries)} pairs):"]
+    for family in sorted(families):
+        per_case = families[family]
+        detail = ", ".join(f"{case} {per_case[case]}" for case in sorted(per_case))
+        lines.append(f"  {family}: {sum(per_case.values())} -- {detail}")
+    return lines
 
 
 def _test_fixtures():
@@ -265,17 +313,48 @@ def build() -> dict:
         text = "## Blocking\n\n" + "\n".join(
             f"### {i}. {title}\n\n- Severity: {sev}\n- File: `{anchor}`\n- Impact: {prose}\n"
             for i, (_, anchor, sev, title, prose) in enumerate(rows, 1))
-        credited = dict(_credited_findings(case_id, text))
-        for vid, _, _, _, _ in rows:
-            if vid not in credited:
+        # Paired by position, not keyed by seed id: a seed can carry more than one waiver
+        # wording (the same mechanism described in English and in Japanese is two different
+        # questions for the judge), and a dict keyed by seed would keep only the last and
+        # then hand that one body to every row that shares the id.
+        credited = _credited_findings(case_id, text)
+        if len(credited) != len(rows):
+            missing = [r[0] for i, r in enumerate(rows)
+                       if i >= len(credited) or credited[i][0] != r[0]]
+            raise SystemExit(
+                f"{case_id}: the scorer does not credit waiver finding(s) {missing}, so the "
+                "judge would never see them and the attack they record is not live."
+            )
+        for (vid, _, _, _, _), (credited_vid, body) in zip(rows, credited):
+            if vid != credited_vid:
                 raise SystemExit(
-                    f"{case_id}/{vid}: the scorer does not credit this waiver finding, so "
-                    "the judge would never see it and the attack it records is not live."
+                    f"{case_id}: waiver row {vid} was credited to {credited_vid} instead; "
+                    "the anchors no longer line up with the rows."
                 )
             entries.append({"case": case_id, "violation": vid, "family": "waiver",
-                            "expect": "DENIES", "body": credited[vid]})
+                            "expect": "DENIES", "body": body})
 
-    return {"_about": ABOUT, "prompt_version": PROMPT_VERSION, "entries": entries}
+    # The neutral-mechanism family, from the module that pins it. Not paraphrased into the
+    # waiver template beside it: the branch pins these exact sentences as the shape that
+    # beats the deterministic layer, and calibrating a re-wrapped version of them would
+    # measure the judge on a text nobody is claiming anything about. One text, one claim.
+    for case_id, by_language in getattr(fixtures, "NEUTRAL_MECHANISM", {}).items():
+        for language in sorted(by_language):
+            text = fixtures.neutral_mechanism_review(case_id, language)
+            credited = _credited_findings(case_id, text)
+            if len(credited) != len(by_language[language]):
+                raise SystemExit(
+                    f"{case_id}/{language}: the deterministic layer credits "
+                    f"{len(credited)} of {len(by_language[language])} neutral-mechanism "
+                    "findings. The class is the judge's load; a finding the scorer already "
+                    "stops is not a question the judge is asked."
+                )
+            for vid, body in credited:
+                entries.append({"case": case_id, "violation": vid, "family": "waiver",
+                                "expect": "DENIES", "body": body})
+
+    return {"_about": ABOUT + [""] + _counts_line(entries),
+            "prompt_version": PROMPT_VERSION, "entries": entries}
 
 
 def main() -> int:

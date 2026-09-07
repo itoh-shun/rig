@@ -1,0 +1,63 @@
+{
+  "id": "js-layout-gate",
+  "language": "javascript",
+  "clean": false,
+  "description": "Five ways a layout fit sensor is made to pass without the artifact fitting: a slack constant added to the overflow comparison, an environment switch that returns a pass without measuring, body text clipped to the line budget instead of wrapping, an absent renderer reported as a completed check, and the measured title height replaced by a fixed number. Each maps to a prohibition in facets/policies/layout-fit-rules or to an acceptance criterion of the layout-gate recipe, but not one to one: two of them are the same criterion, and the criterion counting overflow, collision and clipping has no seed because this sensor measures height only -- they are writable as defects, it simply has no mechanism for them to break. Every seed is an added symbol in head/, so the defect is present in the reviewed tree and not only in what was removed, and no two seeds share an owned line. All five are high: each one ships an artifact that does not fit, which is the single thing the gate exists to stop, so a reviewer that calls any of them blocking is right.",
+  "violations": [
+    {
+      "id": "slack-added-to-overflow-test",
+      "category": "layout",
+      "severity": "high",
+      "perspectives": [
+        "layout-gate"
+      ],
+      "summary": "overflowsBox now compares the required height against the box plus FIT_SLACK_PX, so content that exceeds the declared box by up to 24px is reported as fitting.",
+      "location": "(?i)FIT_SLACK_PX",
+      "concept": "(?i)(widen|widened|widening|loosen|loosened|relax|relaxed|weaken|forgiv|permit|tolerat|overshoot|tolerance|threshold|margin of error|allowance|leeway|exceeds?[^。.]{0,60}(?:fit|pass|ok)|許容|緩め|緩く|緩ん|ゆるく|ゆるめ|ゆるん|甘く|閾値|しきい値|見逃|(?:溢れ|超え)[^。]{0,40}(?:通|合格|収ま|報告され(?:な|ませ|ず)))"
+    },
+    {
+      "id": "gate-disabled-by-switch",
+      "category": "layout",
+      "severity": "high",
+      "perspectives": [
+        "layout-gate"
+      ],
+      "summary": "enforce returns a passing report when LAYOUT_GATE_OFF is set, so the gate can be turned off from the outside and the deck ships unmeasured.",
+      "location": "(?i)LAYOUT_GATE_OFF",
+      "concept": "(?i)(disabl|bypass|by-?passed|skip|skipped|skips|turn(?:s|ed|ing)?[^。.]{0,30}off|switch(?:es|ed)? off|opt[- ]?out|escape hatch|kill switch|without measuring|外す|外れ|外せ|無効|迂回|素通り|抜け道|回避|飛ばさ|飛ばし|スキップ|測定せず|測らず|測らな|測定しな)"
+    },
+    {
+      "id": "body-clipped-to-fit",
+      "category": "layout",
+      "severity": "high",
+      "perspectives": [
+        "layout-gate"
+      ],
+      "summary": "clampLine cuts each paragraph down to one line's worth of characters instead of wrapping it, so the deck passes by losing body text rather than by fitting.",
+      "location": "(?i)clampLine",
+      "concept": "(?i)(truncat|trimm|shorten|cut off|cut to fit|cut down|chopp|clip(?:ped|s|ping)?|drop(?:s|ped|ping)? [^。.]{0,30}(?:text|content|characters|fit)|discard|ellips|切り捨て|切り詰め|削っ|削ら|削られ|省略|欠落|情報が落ち|本文が短|短くさ|短くし)"
+    },
+    {
+      "id": "absent-renderer-passes",
+      "category": "layout",
+      "severity": "high",
+      "perspectives": [
+        "layout-gate"
+      ],
+      "summary": "measureDeck returns ok with checked set to true when rendererAbsent is satisfied, so a check that never measured anything is reported as a check that ran and passed.",
+      "location": "(?i)rendererAbsent",
+      "concept": "(?i)(unverified|not (?:been )?(?:run|executed|measured)|never (?:ran|executed|measured|asked|measures)|did ?n[o']?t (?:run|measure)|nothing was measured|without measuring|unavailable|cannot measure|could not measure|未検査|未実行|走らな|走らず|走って(?:い)?な|測っていな|測定していな|測れな|測らず|起動でき|通過扱い|合格に読み替|検査していな|測定せず)"
+    },
+    {
+      "id": "title-height-fixed-not-measured",
+      "category": "layout",
+      "severity": "high",
+      "perspectives": [
+        "layout-gate"
+      ],
+      "summary": "requiredBodyHeight takes the title height from the HEADING_BOX_PX constant instead of the renderer, so a title that wraps to a second line no longer adds to the required height.",
+      "location": "(?i)HEADING_BOX_PX",
+      "concept": "(?i)(hard[- ]?cod|magic number|fixed (?:value|number|height)|constant|assum|estimat|guess|never ask|not ask|no longer measur|stops? measuring|instead of measuring|not measured|実測|計測せず|測らず|測定せず|測って(?:い)?(?:な|ませ)|固定値|決め打ち|見積|折り返|wrap(?:ped|s|ping)? to|second line|two lines)"
+    }
+  ]
+}

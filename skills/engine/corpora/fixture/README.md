@@ -40,7 +40,7 @@ Each violation carries:
 | field | meaning |
 |---|---|
 | `id` | stable id of the planted defect |
-| `category` | defect class (`security` / `performance` / `correctness` / `test` / `compatibility` / `type-safety`) |
+| `category` | defect class (`security` / `performance` / `correctness` / `test` / `compatibility` / `type-safety` / `layout`) |
 | `severity` | expected severity (`critical` / `high` / `medium`) |
 | `perspectives` | which reviewer perspectives should catch it — the vocabulary of the "検出すべき観点" column of the standard seed catalog |
 | `summary` | prose statement of the defect (for the human reading the scoreboard, never shown to a reviewer) |
@@ -77,8 +77,9 @@ That last rule has a measured cost. Where several seeds sit in one changed hunk,
 owns a line alone and **no anchor reaches any of them** — they are located by symbol only, as
 they were before anchors existed. In the cases shipped here that is `sql-injection` in
 `py-mixed-violations` and `hardcoded-secret`, `floating-promise` and `any-on-public-api` in
-`ts-mixed-violations`, all of which live inside a single rewritten block. `ts-behavioral-correctness`
-plants each seed in its own hunk and every one of them is anchor-reachable.
+`ts-mixed-violations`, all of which live inside a single rewritten block.
+`ts-behavioral-correctness` and `js-layout-gate` plant each seed in its own hunk and every one
+of them is anchor-reachable — in `js-layout-gate` no two seeds share a single owned line.
 
 If you want a new seed to be reachable by `file:line`, give it at least one changed line no
 other seed's hunk covers. If you cannot, that is fine — the symbol path still scores it — but
@@ -110,7 +111,13 @@ and the clean case is the controlled way to measure the same thing.
    match it, and `concept` broad enough to accept the words a reviewer would actually use
    (including Japanese — the shipped cases accept both).
 3. Bump `corpus_version` in `corpus.json`.
-4. Run `python3 -m pytest tests/test_drill_detection_corpus.py -q`. The scorer's own
+4. Extend the judge's calibration set, which is not optional: every planted seed needs an
+   `ideal` and a `negative` pair, or the judge is trusted on wording it was never checked
+   against. `IDEAL` and `CORRECTNESS_CLAIMS` are read out of
+   `tests/test_drill_detection_corpus.py`; the `negative` family is authored in
+   `scripts/build_judge_calibration.py`. Regenerate, then re-measure against a live
+   provider and ship the resulting ledger.
+5. Run `python3 -m pytest tests/test_drill_detection_corpus.py tests/test_drill_judge_adjudication.py -q`. Both, not the first alone: the guards for step 4 — that every seed is calibrated on both honest forms, and that the shipped set and ledger are not stale — all live in the second file. The scorer's own
    fixtures (ideal / vague / decoy reviews) must still score 100% / 0% / 0%; a new case
    that breaks them means the regexes credit prose that names symbols without describing
    any defect.

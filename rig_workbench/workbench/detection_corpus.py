@@ -1095,7 +1095,15 @@ def cmd_drill_corpus(args: argparse.Namespace) -> None:
             ledger=getattr(args, "judge_ledger", None),
             offline=bool(getattr(args, "judge_offline", False)),
         )
-        report = calibrate_judge(adjudicate, cases=cases)
+        # `--cases` narrows the corpus, never the calibration set: the set is one fixed
+        # instrument check, and `calibrate_judge` reports a case it cannot find as a
+        # disagreement on purpose (a corpus that moved out from under the set is louder
+        # than a wrong verdict). Honouring the flag here would turn every unselected
+        # case into a false `usable: NO`, which is the safe direction and still a lie.
+        if args.cases:
+            print(f"note: --cases does not narrow the calibration set; running all "
+                  f"{len(load_calibration())} pairs against the whole corpus")
+        report = calibrate_judge(adjudicate, cases=load_cases())
         if args.json:
             print(json.dumps(report, ensure_ascii=False))
             return

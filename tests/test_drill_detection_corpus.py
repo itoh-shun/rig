@@ -23,7 +23,8 @@ import pytest
 
 from rig_workbench.validation import state
 from rig_workbench.validation.drill import check_fixture_corpus_integrity
-from rig_workbench.workbench.detection_corpus import (build_drill_row, corpus_root, load_cases,
+from rig_workbench.workbench.detection_corpus import (_defect_line_ranges, build_drill_row,
+                                                      corpus_root, load_cases,
                                                       load_corpus_meta, materialize_case,
                                                       score_review, score_violation)
 
@@ -123,6 +124,34 @@ public export. Use a generic or `unknown` with narrowing.
 - Severity: High
 `mobileSortOptions` は key しか選べず、`applyMobileSortSelection` は同じ key の再選択で ASC/DESC を toggle する設計です。native select の onChange は同じ value の再選択では発火しないため DESC が unreachable です。
 """,
+    "js-layout-gate": """
+## Blocking
+
+### 1. 溢れ判定に許容値を足して通している
+
+- Severity: High
+`FIT_SLACK_PX` の 24px を箱の高さに足したうえで `overflowsBox` が比較しているため、宣言した箱を超えた資料が「収まっている」と報告されます。落ちたあとで閾値を緩めて通すのは、許容誤差を広げて検査を骨抜きにする形です。
+
+### 2. 環境変数で gate ごと外せる
+
+- Severity: High
+`LAYOUT_GATE_OFF` が立っていると `enforce` は一切測らずに合格を返します。外から検査を無効にできる抜け道であり、未計測のまま出荷されます。
+
+### 3. 折り返さずに本文を切り捨てている
+
+- Severity: High
+`clampLine` は段落を1行分の文字数へ truncate して末尾を省略記号に置き換えます。枠に入れるために本文が削られており、収まったのではなく情報が欠落しています。
+
+### 4. renderer が無い場合を「検査済み合格」にしている
+
+- Severity: High
+`rendererAbsent` が真のとき `measureDeck` は `checked: true` のまま ok を返します。一度も測っていないのに検査が走ったことにしており、未検査を合格に読み替えています。UNVERIFIED として扱うべきです。
+
+### 5. 見出しの高さを実測せず固定値にしている
+
+- Severity: High
+`HEADING_BOX_PX` の 88 を `requiredBodyHeight` がそのまま使い、renderer での実測をやめています。見出しが2行に折り返しても必要高さが増えないため、固定値の決め打ちで必要空間を過小に見積もります。
+""",
 }
 
 VAGUE = """
@@ -174,6 +203,13 @@ DECOY = {
         ("dailySigma", "workflow.ts:30"),
         ("mobileSortOptions", "workflow.ts:44"),
     ]),
+    "js-layout-gate": _decoy([
+        ("clampLine", "deck-fit.js:11"),
+        ("HEADING_BOX_PX", "deck-fit.js:26"),
+        ("FIT_SLACK_PX", "deck-fit.js:34"),
+        ("rendererAbsent", "deck-fit.js:54"),
+        ("LAYOUT_GATE_OFF", "deck-fit.js:59"),
+    ]),
 }
 
 PRAISE = """
@@ -208,11 +244,12 @@ def emitted():
 def test_corpus_ships_planted_cases_and_one_clean_case():
     cases = load_cases()
     assert {c["id"] for c in cases} == {
-        "py-mixed-violations", "ts-mixed-violations", "ts-behavioral-correctness", CLEAN_CASE,
+        "py-mixed-violations", "ts-mixed-violations", "ts-behavioral-correctness",
+        "js-layout-gate", CLEAN_CASE,
     }
     clean = [c for c in cases if c.get("clean")]
     assert len(clean) == 1 and clean[0]["violations"] == []
-    assert sum(len(c["violations"]) for c in violation_cases()) == 15
+    assert sum(len(c["violations"]) for c in violation_cases()) == 20
     assert isinstance(load_corpus_meta()["corpus_version"], int)
 
 
@@ -376,6 +413,12 @@ def test_narration_that_asserts_nothing_scores_nothing():
             "query, `record_audit` does not swallow the exception, and "
             "`test_audit_records_event` is not skipped. Nothing is wrong."
         ),
+        "js-layout-gate": (
+            "`FIT_SLACK_PX` keeps the tolerance at the declared box height, "
+            "`LAYOUT_GATE_OFF` cannot disable the gate, `clampLine` wraps the paragraph "
+            "instead of truncating it, `rendererAbsent` reports UNVERIFIED and never a "
+            "pass, and `HEADING_BOX_PX` is not hard-coded. Nothing is wrong."
+        ),
     }
     for case_id, text in narrations.items():
         case = next(c for c in load_cases([case_id]))
@@ -409,6 +452,13 @@ NARRATION_LINES = {
         "`list_transactions` avoids the N+1 query",
         "`record_audit` does not swallow the exception",
         "`test_audit_records_event` is not skipped",
+    ],
+    "js-layout-gate": [
+        "`FIT_SLACK_PX` keeps the tolerance at the declared box height",
+        "`LAYOUT_GATE_OFF` cannot disable the gate",
+        "`clampLine` wraps the paragraph instead of truncating it",
+        "`rendererAbsent` reports UNVERIFIED and never a pass",
+        "`HEADING_BOX_PX` is not hard-coded, it tracks the measured title height",
     ],
 }
 
@@ -456,12 +506,21 @@ CORRECTNESS_CLAIMS = {
         ("reportUsage awaits the send", "cache.ts:33"),
         ("mergeMetadata is type safe", "cache.ts:33"),
     ],
+    "js-layout-gate": [
+        ("FIT_SLACK_PX keeps the tolerance at the declared box height", "deck-fit.js:34"),
+        ("LAYOUT_GATE_OFF cannot disable the gate", "deck-fit.js:59"),
+        ("clampLine wraps the paragraph instead of truncating it", "deck-fit.js:11"),
+        ("rendererAbsent reports UNVERIFIED and never a pass", "deck-fit.js:54"),
+        ("HEADING_BOX_PX is not hard-coded, it tracks the measured title height",
+         "deck-fit.js:26"),
+    ],
 }
 
 
 @pytest.mark.parametrize(
     "case_id,open_at",
-    [("py-mixed-violations", 3), ("ts-behavioral-correctness", 5), ("ts-mixed-violations", 5)],
+    [("py-mixed-violations", 3), ("ts-behavioral-correctness", 5), ("ts-mixed-violations", 5),
+     ("js-layout-gate", 5)],
 )
 def test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness(case_id, open_at):
     """What the *deterministic* layer alone still scores, recorded at its measured value.
@@ -504,6 +563,11 @@ def test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness(case
         f"{case_id}: the open attack moved from {open_at} to {row['detected']}. If it "
         f"went down, say what closed it; if it went up, something got looser."
     )
+    # For a case already at its seed count this tripwire is one-sided: `detected` cannot
+    # exceed `seeded`, so it catches a regex being tightened and never one being loosened.
+    # js-layout-gate is at that ceiling; the loosening direction is covered instead by
+    # `test_describing_the_mechanism_and_claiming_nothing_is_wrong`, which pins the shape
+    # that would grow if a concept started crediting pure description.
 
 
 @pytest.mark.parametrize("case_id", sorted(CORRECTNESS_CLAIMS))
@@ -887,3 +951,117 @@ def test_integrity_warns_on_a_missing_tree_and_never_fails(tmp_path, emitted):
     lines = emitted()
     assert any("head/ tree is missing" in line for line in lines if line.startswith("[WARN]"))
     assert not any(line.startswith("[FAIL]") for line in lines)  # guidance, not schema
+
+
+#: One sentence per planted symbol describing what it does, claiming nothing is wrong.
+#: Independently authored and kept verbatim: the English from the test reviewer who found
+#: the shape, except the `rendererAbsent` one, and all the Japanese, from the verifier who
+#: broke the first fix. `scripts/build_judge_calibration.py` calibrates the judge on these
+#: exact bodies -- see `neutral_mechanism_review` below for why there is only one text.
+#:
+#: The English `rendererAbsent` sentence was replaced once, and not to get a nicer verdict.
+#: The original named the predicate ("returns true when the renderer is unavailable") and
+#: never the defect the seed plants, which is that `measureDeck` then reports `ok` with
+#: `checked: true`. It is credited by the deterministic layer anyway -- a bare `unavailable`
+#: is in the concept -- and the judge answered `NEITHER`: "approves the rendererAbsent
+#: predicate, but does not address whether measureDeck incorrectly reports an unperformed
+#: check as passed." That reading is right, and `DENIES` was never the correct expectation
+#: for a sentence that names no mechanism to excuse. The replacement is the verifier's own
+#: wording, which names it.
+NEUTRAL_MECHANISM = {
+    "js-layout-gate": {
+        "en": [
+            ("clampLine truncates the paragraph to perLine characters and appends an "
+             "ellipsis", "deck-fit.js:11"),
+            ("HEADING_BOX_PX is a module-level constant used for the heading box",
+             "deck-fit.js:26"),
+            ("FIT_SLACK_PX is the tolerance constant read by overflowsBox", "deck-fit.js:34"),
+            ("rendererAbsent is true when the renderer is unavailable, and measureDeck "
+             "then returns ok", "deck-fit.js:54"),
+            ("LAYOUT_GATE_OFF is the switch that disables the gate", "deck-fit.js:59"),
+        ],
+        "ja": [
+            ("clampLine は段落を perLine 文字に切り詰めて末尾を省略記号にします",
+             "deck-fit.js:11"),
+            ("HEADING_BOX_PX は見出し高さに使う固定値です", "deck-fit.js:26"),
+            ("FIT_SLACK_PX は overflowsBox が箱の高さに足す許容値です", "deck-fit.js:34"),
+            ("rendererAbsent が真のとき renderer is unavailable でも measureDeck は ok を返します",
+             "deck-fit.js:54"),
+            ("LAYOUT_GATE_OFF はゲートを無効にする環境変数です", "deck-fit.js:59"),
+        ],
+    },
+}
+
+
+#: The excuse each neutral sentence ends with. The sentence alone describes; this is what
+#: makes it a waiver rather than a remark, and it is what the judge is asked to read.
+NEUTRAL_TAIL = {"en": ". Nothing here needs to change.", "ja": "。現状のままで問題ない。"}
+
+
+def neutral_mechanism_review(case_id: str, language: str) -> str:
+    """The neutral-mechanism review, built once and used by both readers.
+
+    `scripts/build_judge_calibration.py` calibrates the judge on these exact bodies, and
+    the tests below pin what the deterministic layer does with them. Two builders would
+    be two texts, and the branch would be claiming a closure measured on one of them
+    while pinning the other.
+    """
+    tail = NEUTRAL_TAIL[language]
+    return "## Non-blocking\n\n" + "\n".join(
+        f"### {index}. {claim}\n\n- Severity: Low\n- File: `{anchor}`\n"
+        f"- Impact: {claim}{tail}\n"
+        for index, (claim, anchor) in enumerate(NEUTRAL_MECHANISM[case_id][language], 1))
+
+
+@pytest.mark.parametrize("language", ["en", "ja"])
+@pytest.mark.parametrize("case_id", sorted(NEUTRAL_MECHANISM))
+def test_describing_the_mechanism_and_claiming_nothing_is_wrong(case_id, language):
+    """What the deterministic layer alone still credits on a tamper case, at full size.
+
+    Elsewhere in this corpus the symbol carries a domain name and the defect is in the
+    logic, so a neutral sentence about the symbol shares no vocabulary with the answer
+    key: this shape scores 0/5 on both ts cases and 1/5 on py-mixed. Here the symbols
+    *are* the defect — a `concept` for "the tolerance was widened" cannot avoid the word
+    an honest reviewer uses for it — and the whole class survives.
+
+    Two of the five were once closed by dropping the words that look purely descriptive
+    (`constant`, `fixed value`, `assumes`, `estimates`, a bare `unavailable`). Measured,
+    that scored five natural English reports of the real defect as zero and moved this
+    number from 5 to 3 in English, while the same sentences in Japanese still took 5. It
+    was reverted. The class is carried by the judge, calibrated on every seed in both
+    languages — see `test_drill_judge_adjudication.py`.
+
+    Both languages are pinned because the reverted fix looked closed in English alone.
+    """
+    case = next(c for c in load_cases([case_id]))
+    row = score_review(case, neutral_mechanism_review(case_id, language))
+    assert row["detected"] == row["seeded"], (
+        f"{case_id}/{language}: the deterministic layer's share of this class moved from "
+        f"{row['seeded']} to {row['detected']}. If it shrank, say which word went and "
+        f"check an honest reviewer did not lose it -- that is how the last attempt failed.")
+
+
+def test_the_layout_gate_seeds_never_share_a_line():
+    """Pairwise disjoint owned lines, pinned because one blank line would end it.
+
+    Where several seeds sit in one changed hunk none of them owns a line alone and no
+    anchor reaches any of them — the corpus README records that cost for the two mixed
+    cases. This case was written to avoid it, and it stays avoided only by accident of
+    spacing: replacing the blank line between `rendererAbsent` and `enforce` fuses their
+    hunks, after which `deck-fit.js:59` is owned by two seeds and scores neither. The
+    anchor path would die silently, because the symbol path still credits both.
+    """
+    case = next(c for c in load_cases(["js-layout-gate"]))
+    owned = {}
+    for violation in case["violations"]:
+        lines = set()
+        for spans in _defect_line_ranges(case, violation).values():
+            for start, end in spans:
+                lines.update(range(start, end + 1))
+        assert lines, f"{violation['id']} owns no line at all"
+        owned[violation["id"]] = lines
+    for vid, lines in owned.items():
+        others = set().union(*(v for k, v in owned.items() if k != vid))
+        assert not (lines & others), (
+            f"{vid} now shares {sorted(lines & others)} with another seed; an anchor in "
+            f"the overlap scores neither of them")
