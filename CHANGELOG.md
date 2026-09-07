@@ -4,6 +4,93 @@
 
 ### Fixed
 
+**The drill was measuring vocabulary placement, not detection.**
+`score_violation` asked whether the answer key's `location` regex and its `concept`
+regex appeared within six hundred characters of each other, anywhere in the review.
+That unit cannot express the difference between "this is broken" and "this is fine".
+A paragraph naming every changed function and calling each one correct scored 5/5 on
+`py-mixed-violations`, 5/5 on `ts-mixed-violations` and 4/5 on
+`ts-behavioral-correctness`. Every concept word present, beside the right symbol,
+asserting nothing. Every fixture detection rate ever produced carries that flaw.
+
+The contract already had the structure that fixes it. `output-contracts/review-findings`
+requires each finding to be a heading under `## Blocking` or `## Non-blocking` with a
+four-value `Severity` and a `file:line`, and drill fixes reviewers to that contract.
+The scorer was not reading any of it. It now parses the review into findings and
+scores inside one finding at a time: prose that is not a finding is invisible, a
+heading with no `Severity` is a section title rather than a claim, and a finding
+pointing at two planted defects credits neither, because it has not said which one it
+found.
+A review that parses to no findings is reported as `unparsed` rather than as a silent
+zero — "the reviewer found nothing" and "the scorer could not read this" are different
+failures and only one of them belongs to the reviewer.
+
+`severity_accuracy` and `blocking_accuracy` come out of this for free and are computed
+for the first time. They were absent because scoring a whole document had nowhere to
+read them from, not because they needed a judge. On the two archived reviews of the
+same case they separate two personas that tie on detection: 0.8 against 1.0.
+
+Two more scorer defects found by measuring: an anchor written as an absolute path
+matched nothing, so a real review scored 0/5 where the same text with the workspace
+prefix removed scored 5/5 — `score_review` now takes the materialized workspace and
+resolves against it, without going back to the suffix rule that a same-basename path
+in another directory walks through. And the ambiguity test was asymmetric, built from
+one seed's siblings rather than from all of them, so a finding on `hardcoded-secret`
+carrying the contract-required `File: cache.ts:8` scored nothing while the same
+finding without the anchor scored. Following the contract lost points.
+
+On the clean case the rule changed in the other direction, and it moves real rates:
+filing a finding is now the false positive, whatever the finding says. `drill.md`
+already defined `clean_fp_rate` as the share of clean diffs answered with a finding,
+and `add_false_positive_guard` keys its threshold off that, but the scorer was reading
+the *words* — three fabricated `Severity: High` findings written without alarm
+vocabulary measured as clean. Across 1512 generated review shapes the two rules differ
+on 216, all in that direction, and on none in the other.
+
+Drill rows now carry `scorer_version`. Rates from different scorers are not
+comparable and `--replay` was comparing two different rulers. Rows written before this
+carry no tag and are comparable to nothing.
+
+One shape stays open, recorded per case by a test that fails if it moves: a finding
+carrying a `Severity`, a `File:` on the defect's own line, one subject, and a sentence
+saying that subject is correct still scores 3/5, 5/5 and 5/5. It is a finding by every
+property the scorer can check, and it says the code is right. What the finding scope
+does hold is the shape: the same claims as loose prose, or as headings with no
+severity, score zero.
+
+Two deterministic attempts to close it were written, measured and removed, and both
+punished honest reviewers without stopping the attack. A cue list for correctness
+verbs cost six true positives across the ideal reviews. A clause-level negation test
+cost more: "`reportUsage` does not await `client.send`" is how a missing await is
+reported, and it scored zero, while an attacker only had to write "awaits the send" to
+walk past. A rate that moves on that is measuring grammar. The remaining hole is
+semantic — a `concept` is a list of topic words, and "avoids the N+1 query" and "has an
+N+1 query" share every one of them — so it needs the judge step drill already scopes at
+③-b, reading the finding against the seed's own summary.
+
+Two rounds of review found all of this, and the first was an agent asked only to score
+full marks without finding anything. It broke a version that had just passed its own
+suite, including one defect its author could not have found from the inside: a finding
+carrying the `File:` the contract requires scored nothing, while the same finding
+without it scored, because the ambiguity test was built from one seed's siblings
+instead of from all of them. Following the contract lost points.
+
+### Changed
+
+**`policies/independent-verification` now covers the instruments, not only the graders.**
+The rule was always that the grader must not be the generator, and it was applied to
+review verdicts while the thing issuing the verdict went unexamined. The drill scorer's
+own tests were written by its author and guarded exactly one attack shape, which is why
+the narration hole sat there from the day the corpus shipped. Changing a scoring rule
+or a gate sensor now requires an attack set built by someone who did not write it, with
+the brief "score full marks without finding any defect" rather than "make the tests
+pass"; whatever lands becomes a regression test, and whatever cannot be closed becomes a
+test pinning its current value. Followed here, it produced three live attacks on a
+version that had just passed its own suite, one of which was the contract-compliance
+asymmetry above.
+
+### Fixed
+
 **The drill scorer measured whether a review quoted an identifier, not what it caught.**
 `output-contracts/review-findings` requires every finding to carry a `file:line` evidence
 anchor, and refuses findings that cannot point at one. `detection_corpus.score_violation`

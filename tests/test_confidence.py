@@ -5,6 +5,8 @@ tests/test_production_feedback.py's pattern.
 """
 
 import json
+
+from rig_workbench.workbench.detection_corpus import SCORER_VERSION
 import pathlib
 import subprocess
 import sys
@@ -39,9 +41,18 @@ def task_id(git_repo):
 
 
 def _write_drill(git_repo, rows):
+    """Rows carry the current `scorer_version`, because real ones do.
+
+    Aggregation drops rows written by a different scorer: a rate only means
+    something against the rule that produced it, and version 3 stopped scoring
+    loose prose after a paragraph asserting each function was correct measured at
+    4/5 to 5/5 on every shipped case. A fixture without the tag is a row from an
+    unknown ruler.
+    """
     (git_repo / ".rig").mkdir(exist_ok=True)
+    stamped = [{"scorer_version": SCORER_VERSION, **row} for row in rows]
     (git_repo / ".rig" / "drill-results.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        "\n".join(json.dumps(r) for r in stamped) + "\n", encoding="utf-8")
 
 
 def test_confidence_with_no_drill_data(git_repo):

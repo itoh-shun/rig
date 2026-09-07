@@ -73,8 +73,17 @@ def test_an_anchor_on_the_defect_line_counts_as_located(case, violation):
 
 
 def test_the_symbol_still_locates_a_defect_on_its_own(case, violation):
+    """Naming the symbol is still enough to say where — inside a finding.
+
+    Scoring moved from the document to the finding, so the same sentence written as
+    loose prose no longer counts. That is the change, not a regression: a reviewer
+    who never made a finding never claimed anything.
+    """
     text = (
-        "`recommendedQuantityLabel` が常に inventoryUnit を使うため、"
+        "## Blocking\n\n"
+        "### 1. 単位のラベルが実際の数量と合っていない\n\n"
+        "- Severity: High\n"
+        "- Impact: `recommendedQuantityLabel` が常に inventoryUnit を使うため、"
         "ORDER モードで発注単位の数量に在庫単位のラベルが付く。\n"
     )
     _, _, detected = detection_corpus.score_violation(text, violation, case=case)
@@ -226,7 +235,10 @@ def test_defects_sharing_every_line_are_located_by_the_symbol_only():
         )
 
     by_symbol = (
-        "`reportUsage` の `client.send` が await されておらず、"
+        "## Blocking\n\n"
+        "### 1. 送信結果が待機されていない\n\n"
+        "- Severity: High\n"
+        "- Impact: `reportUsage` の `client.send` が await されておらず、"
         "失敗が unhandled rejection になる。\n"
     )
     _, _, detected = detection_corpus.score_violation(by_symbol, floating, case=mixed)
@@ -248,58 +260,41 @@ def _one_finding_naming(locations: str) -> str:
     )
 
 
-def test_listing_every_defect_line_in_one_finding_scores_the_same_as_listing_the_symbols(case):
-    """A concept salad with one anchor per defect scores full marks — as it always did.
+def test_listing_every_defect_line_in_one_finding_credits_nothing(case):
+    """The hole that was pinned rather than closed, now closed by the finding scope.
 
-    Requiring an anchor to *begin* inside the defect's region stops one wide range from
-    covering the file. It does not stop five point anchors on one line. A single finding
-    that lists `workflow.ts:9 :13 :24 :30 :44` and one sentence touching all five subjects
-    scores 5/5, because `PROXIMITY_WINDOW` spans the whole paragraph and each anchor then
-    satisfies its own defect's concept.
+    One finding listing `workflow.ts:9 :13 :24 :30 :44` and one sentence touching all
+    five subjects used to score 5/5 — the anchors were each inside their own defect's
+    range and `PROXIMITY_WINDOW` spanned the paragraph, so every seed was credited.
+    It was left open because the same sentence with the answer key's five identifiers
+    pasted in place of the line numbers already scored 5/5 before anchors existed:
+    equal cost, equal yield, a second door of the same width beside one already open.
 
-    This is pinned rather than fixed, and the reason is the parity below: the same salad
-    with the answer key's five symbols pasted in place of the line numbers **already scored
-    5/5 before anchors existed**. Copying five line numbers out of a diff costs what copying
-    five identifiers costs, and yields the same. So this change opened a second door of the
-    same width beside the one that was already open — it did not open a cheaper one. The
-    thing that makes both doors work is `PROXIMITY_WINDOW`, which predates this change and
-    is out of scope here.
-
-    What this test is for: if someone narrows the proximity window, or makes the anchor path
-    demand its concept closer than the symbol path does, these numbers move. They should move
-    together. A change that drops the anchor score while leaving the symbol score at 5/5 has
-    not closed the hole, it has only made the anchor path worse than the prose path — which
-    is the bug this whole file exists to fix, running backwards.
+    Scoring per finding shuts both. The contract asks for one `File:` anchor and one
+    problem per finding, and a finding pointing at five planted defects has not said
+    which one it found. Both salads now score zero, and they have to move together:
+    a change that zeroes the anchor version while the symbol version still scores has
+    made evidence anchors worth less than prose, which is the bug this file exists for.
     """
-    anchors = " ".join(
-        f"`workflow.ts:{n}`" for n in (9, 13, 24, 30, 44)
+    salad = (
+        "- Impact: 二重に送信できる。未完了のまま離脱できる。在庫単位と発注単位が違う。"
+        "集計の粒度が合わない。並び順の切り替えが効かない。\n"
     )
-    symbols = " ".join(
-        f"`{s}`"
-        for s in (
-            "dialogSubmitting",
-            "canLeaveWithoutConfirmation",
-            "recommendedQuantityLabel",
-            "dailySigma",
-            "mobileSortOptions",
+    locators = {
+        "anchors": " ".join(f"`workflow.ts:{line}`" for line in (9, 13, 24, 30, 44)),
+        "symbols": " ".join(f"`{symbol}`" for symbol in (
+            "dialogSubmitting", "canLeaveWithoutConfirmation", "recommendedQuantityLabel",
+            "dailySigma", "mobileSortOptions")),
+    }
+    for kind, locator in locators.items():
+        text = (
+            "## Blocking\n\n"
+            "### 1. 変更範囲の複数箇所に不具合がある\n\n"
+            f"- Severity: High\n- File: {locator}\n" + salad
         )
-    )
-
-    by_anchor = detection_corpus.score_review(
-        case, _one_finding_naming(anchors), perspective="behavioral-correctness"
-    )
-    credited = [d["violation"] for d in by_anchor["detections"] if d["detected"]]
-    assert len(credited) == 5, (
-        f"the point-anchor salad credited {credited}; this is the measured ceiling and "
-        f"a change to it is a change to what the drill rate means"
-    )
-
-    by_symbol = sum(
-        detection_corpus.score_violation(_one_finding_naming(symbols), v)[2]
-        for v in case["violations"]
-    )
-    assert by_symbol == 5, (
-        "the parity that makes the anchor ceiling acceptable is that the symbol salad "
-        "already scored 5/5 with no case at all; if that stops being true, the anchor "
-        "path is now the cheaper attack and needs its own narrowing"
-    )
+        row = detection_corpus.score_review(case, text, perspective="behavioral-correctness")
+        credited = [d["violation"] for d in row["detections"] if d["detected"]]
+        assert not credited, (
+            f"the {kind} salad credited {credited}; one finding claims one defect, and "
+            f"an undifferentiated one claims none"
+        )

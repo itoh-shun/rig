@@ -7,6 +7,8 @@ shipped tree.
 
 import json
 
+from rig_workbench.workbench.detection_corpus import SCORER_VERSION
+
 import pytest
 
 from rig_workbench.validation import state
@@ -200,10 +202,23 @@ def test_aggregate_drill_confidence_corpus_filter(tmp_path):
 
     rig = tmp_path / ".rig"
     rig.mkdir()
+    sv = SCORER_VERSION
     rows = [
-        {"corpus": "standard", "scores": [{"reviewer": "sec", "detected": 2, "seeded": 2, "false_positives": 0}]},
-        {"corpus": "project", "scores": [{"reviewer": "sec", "detected": 0, "seeded": 2, "false_positives": 1}]},
-        {"scores": [{"reviewer": "sec", "detected": 1, "seeded": 1, "false_positives": 0}]},  # legacy row
+        {"scorer_version": sv, "corpus": "standard",
+         "scores": [{"reviewer": "sec", "detected": 2, "seeded": 2, "false_positives": 0}]},
+        {"scorer_version": sv, "corpus": "project",
+         "scores": [{"reviewer": "sec", "detected": 0, "seeded": 2, "false_positives": 1}]},
+        {"scorer_version": sv,
+         "scores": [{"reviewer": "sec", "detected": 1, "seeded": 1, "false_positives": 0}]},  # no corpus
+        # An older scorer's row. Dropped whatever the corpus filter says: a rate only
+        # means something against the rule that produced it, and version 3 stopped
+        # scoring loose prose after a narration asserting every function was correct
+        # measured at 4/5 to 5/5. Summing across rules averages two different things.
+        {"scorer_version": sv - 1, "corpus": "standard",
+         "scores": [{"reviewer": "sec", "detected": 99, "seeded": 99, "false_positives": 99}]},
+        # And a row from before the field existed, which is from an unknown rule.
+        {"corpus": "standard",
+         "scores": [{"reviewer": "sec", "detected": 77, "seeded": 77, "false_positives": 77}]},
     ]
     (rig / "drill-results.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")

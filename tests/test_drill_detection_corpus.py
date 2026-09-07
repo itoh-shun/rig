@@ -29,68 +29,98 @@ from rig_workbench.workbench.detection_corpus import (build_drill_row, corpus_ro
 
 IDEAL = {
     "py-mixed-violations": """
-## Findings
+## Blocking
 
-### CRITICAL: close_account is missing the ownership check
+### 1. close_account is missing the ownership check
+
+- Severity: Critical
 `close_account` in service.py never calls `_require_owner`, unlike its sibling
 `get_account`. Any authenticated actor can close another user's account. This is
 a broken access control / authorization hole.
 
-### CRITICAL: SQL injection in search_accounts
+### 2. SQL injection in search_accounts
+
+- Severity: Critical
 `search_accounts` interpolates `owner_name` directly into the query string with
 an f-string. Use a parameterized query with a bind placeholder instead.
 
-### HIGH: N+1 query introduced in list_transactions
+### 3. N+1 query introduced in list_transactions
+
+- Severity: High
 `list_transactions` now selects the ids and then issues one query per row inside
 a loop. That is a classic N+1 pattern; restore the single batch query.
 
-### HIGH: record_audit swallows every failure
+### 4. record_audit swallows every failure
+
+- Severity: High
 `record_audit` wraps the write in a bare `except Exception: pass`, which
 silently discards audit failures. Do not suppress the error.
 
-### MEDIUM: test_audit_records_event was disabled
+### 5. test_audit_records_event was disabled
+
+- Severity: Medium
 `test_audit_records_event` is now decorated with `mark.skip` marked flaky, so
 the audit path has no coverage. Skipping is not a fix.
 """,
     "ts-mixed-violations": """
-## Findings
+## Blocking
 
-### CRITICAL: hardcoded credential
+### 1. hardcoded credential
+
+- Severity: Critical
 `REPORTING_TOKEN` is a high-entropy credential committed in source and
 transmitted to a third party. Move it to an environment variable and rotate it.
 
-### HIGH: summarize is a breaking API change
+### 2. summarize is a breaking API change
+
+- Severity: High
 `summarize` gained a required second parameter, which breaks every existing
 caller. Make it optional to preserve backward compatibility.
 
-### HIGH: sortEntries now mutates the caller's array
+### 3. sortEntries now mutates the caller's array
+
+- Severity: High
 `sortEntries` lost its defensive copy (the spread), so `.sort()` reorders the
 caller's array in place. That is an unexpected side effect.
 
-### HIGH: floating promise in reportUsage
+### 4. floating promise in reportUsage
+
+- Severity: High
 `reportUsage` calls `client.send` without `await` or a `.catch`, so a rejection
 is unhandled and failures disappear silently.
 
-### MEDIUM: any erases type safety
+### 5. any erases type safety
+
+- Severity: Medium
 `mergeMetadata` accepts and returns `any`, which removes type safety from a
 public export. Use a generic or `unknown` with narrowing.
 """,
     "ts-behavioral-correctness": """
-## Findings
+## Blocking
 
-### HIGH: preview中に確認操作が再実行できる
+### 1. preview中に確認操作が再実行できる
+
+- Severity: High
 `dialogSubmitting` が `confirming` しか見ておらず preview 中を loading として扱いません。preview API が in-flight の間に二重 submit や close が可能になるので、previewing || confirming を busy state にする必要があります。
 
-### HIGH: 部分成功後の未完了状態を確認なしで離脱できる
+### 2. 部分成功後の未完了状態を確認なしで離脱できる
+
+- Severity: High
 `canLeaveWithoutConfirmation` が lines だけを見ており、shortfalls が残る partial success 状態を無視しています。lines=0 / shortfalls>0 では事後処理が未完了なので cancel/leave に確認が必要です。
 
-### HIGH: 発注数量に在庫単位を付けている
+### 3. 発注数量に在庫単位を付けている
+
+- Severity: High
 `recommendedQuantityLabel` は ORDER の recommendedQuantity にも常に inventoryUnit を表示しています。ORDER は orderUnit の数量なので、発注単位と在庫単位の unit mismatch になります。
 
-### HIGH: 日次標準偏差をイベント粒度で計算している
+### 4. 日次標準偏差をイベント粒度で計算している
+
+- Severity: High
 `dailySigma` が same day のイベントを日ごとに aggregate せず、生イベントの sumSquares から分散を出しています。日次需要の統計なら同日複数イベントを先に group しないと集約粒度が変わります。
 
-### HIGH: モバイルで降順へ切り替えられない
+### 5. モバイルで降順へ切り替えられない
+
+- Severity: High
 `mobileSortOptions` は key しか選べず、`applyMobileSortSelection` は同じ key の再選択で ASC/DESC を toggle する設計です。native select の onChange は同じ value の再選択では発火しないため DESC が unreachable です。
 """,
 }
@@ -103,25 +133,47 @@ as an obvious blocker, though a second pair of eyes on the error handling could
 be worthwhile.
 """
 
+def _decoy(entries: list[tuple[str, str]]) -> str:
+    """A review that follows the contract and says nothing.
+
+    One finding per planted symbol, each naming the symbol and its line and then
+    describing the code instead of a defect. This is the shape that has to score
+    zero: the reviewer looked at the right places, wrote them down in the right
+    format, and never claimed anything was wrong. `location_hit` is true for each
+    seed and `detected` is false, which is the distinction the scoreboard keeps —
+    "named the symbol but never said what was wrong" is not "never looked".
+    """
+    blocks = [
+        f"### {index}. {symbol} を確認した\n\n"
+        f"- Severity: Low\n- File: `{anchor}`\n"
+        f"- Suggested fix: 命名はモジュールの慣習どおりで、整形も揃っている。\n"
+        for index, (symbol, anchor) in enumerate(entries, 1)
+    ]
+    return "## Non-blocking\n\n" + "\n".join(blocks)
+
+
 DECOY = {
-    "py-mixed-violations": """
-I read through service.py and test_service.py. The change touches
-`close_account`, `search_accounts`, `list_transactions`, `record_audit`, and
-`test_audit_records_event`. The diff is moderate in size and the naming is
-consistent with the rest of the module. Formatting matches the project style.
-""",
-    "ts-mixed-violations": """
-I read through cache.ts. The change touches `REPORTING_TOKEN`, `summarize`,
-`sortEntries`, `reportUsage`, and `mergeMetadata`. Everything is exported from
-the same module and the naming is consistent. Formatting matches the project
-style and the file remains small.
-""",
-    "ts-behavioral-correctness": """
-I read through workflow.ts. The change touches `dialogSubmitting`,
-`canLeaveWithoutConfirmation`, `recommendedQuantityLabel`, `dailySigma`,
-`mobileSortOptions`, and `applyMobileSortSelection`. The functions are small,
-naming is consistent, and the module remains easy to scan.
-""",
+    "py-mixed-violations": _decoy([
+        ("close_account", "service.py:30"),
+        ("search_accounts", "service.py:36"),
+        ("list_transactions", "service.py:43"),
+        ("record_audit", "service.py:59"),
+        ("test_audit_records_event", "test_service.py:41"),
+    ]),
+    "ts-mixed-violations": _decoy([
+        ("REPORTING_TOKEN", "cache.ts:7"),
+        ("summarize", "cache.ts:24"),
+        ("sortEntries", "cache.ts:21"),
+        ("reportUsage", "cache.ts:27"),
+        ("mergeMetadata", "cache.ts:33"),
+    ]),
+    "ts-behavioral-correctness": _decoy([
+        ("dialogSubmitting", "workflow.ts:9"),
+        ("canLeaveWithoutConfirmation", "workflow.ts:13"),
+        ("recommendedQuantityLabel", "workflow.ts:24"),
+        ("dailySigma", "workflow.ts:30"),
+        ("mobileSortOptions", "workflow.ts:44"),
+    ]),
 }
 
 PRAISE = """
@@ -265,14 +317,377 @@ def test_clean_conclusion_scores_zero_findings_in_the_drill_row():
     assert score["clean_fp_rate"] == 0.0
 
 
-def test_proximity_is_required_not_just_co_occurrence():
+def test_the_finding_is_the_window_not_a_character_count():
+    """A concept discussed in a *different* finding does not credit this one.
+
+    The scorer used to ask whether a concept appeared within 600 characters of the
+    symbol anywhere in the document. The finding is the unit now, so the constant is
+    gone and the boundary is one the reviewer drew: two findings are two claims.
+    """
     violation = {"location": "mergeMetadata", "concept": r"\bany\b"}
-    near = "mergeMetadata takes any and returns any."
-    far = "mergeMetadata is exported." + ("filler. " * 200) + "I did not find any problems."
-    assert score_violation(near, violation) == (True, True, True)
-    location_hit, concept_hit, detected = score_violation(far, violation)
+    together = (
+        "## Blocking\n\n"
+        "### 1. mergeMetadata の戻り値が any になっている\n\n"
+        "- Severity: High\n- File: `cache.ts:33`\n"
+        "- Impact: any を返すため呼び出し側で型が失われる。\n"
+    )
+    assert score_violation(together, violation) == (True, True, True)
+
+    apart = (
+        "## Blocking\n\n"
+        "### 1. mergeMetadata の命名が実態と合っていない\n\n"
+        "- Severity: Low\n- File: `cache.ts:33`\n"
+        "- Impact: 関数名が返り値の意味を説明していない。\n\n"
+        "### 2. 別の関数の型が緩い\n\n"
+        "- Severity: Low\n- File: `cache.ts:21`\n"
+        "- Impact: any を使っているところがある。\n"
+    )
+    location_hit, concept_hit, detected = score_violation(apart, violation)
     assert (location_hit, concept_hit) == (True, True)
-    assert detected is False
+    assert detected is False, "the concept was raised, but not in the finding that located it"
+
+
+def test_narration_that_asserts_nothing_scores_nothing():
+    """The attack that made every earlier number meaningless.
+
+    Measured before the finding scope existed: a paragraph naming each changed
+    function and calling it correct scored 5/5 on `py-mixed-violations`, 5/5 on
+    `ts-mixed-violations` and 4/5 on `ts-behavioral-correctness`. Every concept word
+    was there, next to the right symbol, asserting nothing. Prose that is not a
+    finding is not scored, so the whole family dies at the parser.
+    """
+    narrations = {
+        "ts-behavioral-correctness": (
+            "`dialogSubmitting` correctly reflects the confirming state, "
+            "`canLeaveWithoutConfirmation` checks the pending lines, "
+            "`recommendedQuantityLabel` shows the inventory unit as before, `dailySigma` "
+            "aggregates the same way per day, and `mobileSortOptions` still offers every "
+            "sort key with the toggle. Nothing here changes behaviour."
+        ),
+        "ts-mixed-violations": (
+            "`REPORTING_TOKEN` is an environment credential, `summarize` keeps a backward "
+            "compatible signature, `sortEntries` makes a defensive copy, `reportUsage` "
+            "awaits the send, and `mergeMetadata` is type safe with no explicit any. "
+            "Nothing here changes behaviour."
+        ),
+        "py-mixed-violations": (
+            "`close_account` keeps the ownership authorization, `search_accounts` uses a "
+            "parameterized query with no injection, `list_transactions` avoids the N+1 "
+            "query, `record_audit` does not swallow the exception, and "
+            "`test_audit_records_event` is not skipped. Nothing is wrong."
+        ),
+    }
+    for case_id, text in narrations.items():
+        case = next(c for c in load_cases([case_id]))
+        row = score_review(case, text)
+        caught = [d["violation"] for d in row["detections"] if d["detected"]]
+        assert not caught, f"{case_id}: narration scored {caught}"
+        assert row["unparsed"] is True, (
+            f"{case_id}: a zero has to say whether the reviewer found nothing or the "
+            f"scorer could not read the review"
+        )
+
+
+NARRATION_LINES = {
+    "ts-behavioral-correctness": [
+        "`dialogSubmitting` correctly reflects the confirming state",
+        "`canLeaveWithoutConfirmation` checks the pending lines",
+        "`recommendedQuantityLabel` shows the inventory unit as before",
+        "`dailySigma` aggregates the same way per day",
+        "`mobileSortOptions` still offers every sort key with the toggle",
+    ],
+    "ts-mixed-violations": [
+        "`REPORTING_TOKEN` is an environment credential",
+        "`summarize` keeps a backward compatible signature",
+        "`sortEntries` makes a defensive copy",
+        "`reportUsage` awaits the send",
+        "`mergeMetadata` is type safe with no explicit any",
+    ],
+    "py-mixed-violations": [
+        "`close_account` keeps the ownership authorization",
+        "`search_accounts` uses a parameterized query with no injection",
+        "`list_transactions` avoids the N+1 query",
+        "`record_audit` does not swallow the exception",
+        "`test_audit_records_event` is not skipped",
+    ],
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(NARRATION_LINES))
+def test_narration_dressed_as_headings_still_scores_nothing(case_id):
+    """Structure without grading is not a finding.
+
+    An independent attempt to break this scorer took the narration paragraph that
+    used to score 5/5, put `### ` in front of each sentence, and got 4/5 back. A
+    heading is a section title; the contract fixes `Severity` on every finding, and
+    grading is what turns a remark into a claim. Both shapes score nothing now.
+    """
+    case = next(c for c in load_cases([case_id]))
+    lines = NARRATION_LINES[case_id]
+    plain = "\n".join(f"{line}. Nothing here changes behaviour." for line in lines)
+    headed = "## Non-blocking\n\n" + "\n".join(
+        f"### {index}. {line}. Nothing changes.\n" for index, line in enumerate(lines, 1)
+    )
+    for shape, text in (("prose", plain), ("headings", headed)):
+        row = score_review(case, text)
+        caught = [d["violation"] for d in row["detections"] if d["detected"]]
+        assert not caught, f"{case_id} {shape}: narration scored {caught}"
+
+
+CORRECTNESS_CLAIMS = {
+    "py-mixed-violations": [
+        ("close_account requires the owner", "service.py:30"),
+        ("search_accounts uses a parameterized query", "service.py:36"),
+        ("list_transactions batches instead of N+1", "service.py:43"),
+        ("record_audit propagates the exception", "service.py:59"),
+        ("test_audit_records_event runs, skip removed", "test_service.py:41"),
+    ],
+    "ts-behavioral-correctness": [
+        ("dialogSubmitting covers the previewing state", "workflow.ts:9"),
+        ("canLeaveWithoutConfirmation checks shortfalls", "workflow.ts:13"),
+        ("recommendedQuantityLabel uses the order unit", "workflow.ts:24"),
+        ("dailySigma aggregates per day", "workflow.ts:30"),
+        ("mobileSortOptions offers ASC and DESC", "workflow.ts:44"),
+    ],
+    "ts-mixed-violations": [
+        ("REPORTING_TOKEN is an environment credential", "cache.ts:8"),
+        ("summarize keeps a backward compatible signature", "cache.ts:24"),
+        ("sortEntries makes a defensive copy", "cache.ts:21"),
+        ("reportUsage awaits the send", "cache.ts:33"),
+        ("mergeMetadata is type safe", "cache.ts:33"),
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "case_id,open_at",
+    [("py-mixed-violations", 3), ("ts-behavioral-correctness", 5), ("ts-mixed-violations", 5)],
+)
+def test_a_graded_claim_of_correctness_is_an_open_attack(case_id, open_at):
+    """The attack this scorer does not close, recorded at its measured value.
+
+    A finding that carries a `Severity`, a `File:` anchor on the defect's own line,
+    one subject, and a sentence saying that subject is *correct* passes every test
+    the scorer can run. It scores as a detection. Nothing here is a ceiling and this
+    test does not claim one: it records where an open hole currently sits so that
+    closing it fails loudly instead of passing quietly.
+
+    Two attempts to close it deterministically were made and both removed after
+    measurement. A cue list for correctness verbs cost six true positives across the
+    ideal reviews. A clause-level negation test cost more: "`reportUsage` does not
+    await `client.send`" is the natural way to report a missing await and scored
+    zero under it, while the attacker only had to write "awaits the send" to walk
+    past. Both punished honest reviewers and neither stopped the attack.
+
+    The reason is not the finding scope, which does hold — the same claims as loose
+    prose, and the same claims as bare headings, both score zero. It is that a
+    `concept` is a list of topic words. "avoids the N+1 query" and "has an N+1
+    query" share every topic word and make opposite claims. Reading the direction is
+    a semantic call, and drill already scopes it: the judge in ③-b, given the
+    finding and the seed's `summary`.
+    """
+    case = next(c for c in load_cases([case_id]))
+    text = "## Non-blocking\n\n" + "\n".join(
+        f"### {index}. {claim}\n\n- Severity: Low\n- File: `{anchor}`\n"
+        f"- Impact: {claim}, so behaviour is unchanged.\n"
+        for index, (claim, anchor) in enumerate(CORRECTNESS_CLAIMS[case_id], 1)
+    )
+    row = score_review(case, text)
+    assert row["detected"] == open_at, (
+        f"{case_id}: the open attack moved from {open_at} to {row['detected']}. If it "
+        f"went down, say what closed it; if it went up, something got looser."
+    )
+
+
+@pytest.mark.parametrize("case_id", sorted(CORRECTNESS_CLAIMS))
+def test_the_same_claims_without_the_contract_score_nothing(case_id):
+    """What the finding scope does hold: the same words, not written as findings."""
+    case = next(c for c in load_cases([case_id]))
+    claims = [claim for claim, _ in CORRECTNESS_CLAIMS[case_id]]
+    prose = "\n".join(f"{claim}, so behaviour is unchanged." for claim in claims)
+    headings = "## Non-blocking\n\n" + "\n".join(
+        f"### {index}. {claim}\n" for index, claim in enumerate(claims, 1)
+    )
+    for shape, text in (("prose", prose), ("ungraded headings", headings)):
+        row = score_review(case, text)
+        caught = [d["violation"] for d in row["detections"] if d["detected"]]
+        assert not caught, f"{case_id} as {shape}: scored {caught}"
+
+
+def test_reporting_an_absence_is_not_penalised_for_saying_not():
+    """A missing call is reported by saying it is missing. Both phrasings must score.
+
+    A negation test on the concept was tried here and removed: it made "does not
+    await" a miss and "is missing an await" a hit, for the same defect, in the same
+    finding, from the same reviewer. A rate that moves on that is measuring grammar.
+    """
+    case = next(c for c in load_cases(["ts-mixed-violations"]))
+    violation = next(v for v in case["violations"] if v["id"] == "floating-promise")
+    for body in (
+        "`reportUsage` does not await `client.send`.",
+        "`reportUsage` is missing an await on `client.send`.",
+        "`client.send` の結果が await されていない。",
+    ):
+        text = (
+            "## Blocking\n\n### 1. 送信結果が待機されていない\n\n"
+            f"- Severity: High\n- File: `cache.ts:33`\n- Impact: {body}\n"
+        )
+        _, _, detected = score_violation(text, violation, case=case)
+        assert detected, f"the same defect went unscored when phrased: {body}"
+
+
+def test_the_contract_required_anchor_does_not_cost_a_point():
+    """Following the contract must not lose points — it did, and that is the bug.
+
+    `hardcoded-secret` shares a changed hunk with three other seeds, and the
+    ambiguity test used to be built from one seed's siblings rather than from all of
+    them. The same anchor was ambiguous seen from one defect and unambiguous seen
+    from another, so a finding carrying the `File:` the contract requires scored
+    nothing while the same finding without it scored. Found by an independent attempt
+    to break this scorer, not by its author.
+    """
+    case = next(c for c in load_cases(["ts-mixed-violations"]))
+    violation = next(v for v in case["violations"] if v["id"] == "hardcoded-secret")
+    impact = "`REPORTING_TOKEN` is a hard-coded credential committed to source."
+    without = (
+        "## Blocking\n\n### 1. 機密が直書きされている\n\n"
+        f"- Severity: Critical\n- Impact: {impact}\n"
+    )
+    with_anchor = (
+        "## Blocking\n\n### 1. 機密が直書きされている\n\n"
+        f"- Severity: Critical\n- File: `cache.ts:8`\n- Impact: {impact}\n"
+    )
+    assert score_violation(without, violation, case=case)[2] is True
+    assert score_violation(with_anchor, violation, case=case)[2] is True, (
+        "the anchor the contract requires must not be the thing that loses the point"
+    )
+
+
+def test_an_absolute_anchor_resolves_against_the_materialized_workspace():
+    """Drill materializes a case into a throwaway directory; reviewers write that path.
+
+    Measured on a real review: every finding carried `/tmp/drill-x9/repo/...` and the
+    whole anchor path went silent, 0/5 where the same text relative scored 5/5. Only
+    a prefix the caller vouches for is stripped — a suffix rule would let
+    `other/workflow.ts` locate a defect planted in `workflow.ts`.
+    """
+    case = next(c for c in load_cases(["ts-behavioral-correctness"]))
+    workspace = "/tmp/drill-abc123/repo"
+    text = (
+        "## Blocking\n\n### 1. ORDER モードで在庫単位が表示される\n\n"
+        f"- Severity: High\n- File: `{workspace}/workflow.ts:24`\n"
+        "- Impact: 発注単位ではなく在庫単位のラベルが付く。\n"
+    )
+    violation = next(v for v in case["violations"] if v["id"] == "quantity-unit-confusion")
+    assert score_violation(text, violation, case=case)[2] is False, (
+        "without a workspace the absolute path is simply a different path"
+    )
+    assert score_violation(text, violation, case=case, workspace=workspace)[2] is True
+    # And the suffix rule stays closed: a same-basename path elsewhere under the
+    # workspace is still a different file.
+    elsewhere = text.replace(f"{workspace}/workflow.ts:24", f"{workspace}/other/workflow.ts:24")
+    assert score_violation(elsewhere, violation, case=case, workspace=workspace)[2] is False
+
+
+def test_filing_a_finding_on_the_clean_case_is_the_false_positive():
+    """On a clean diff the false positive is the *filing*, not the wording.
+
+    `drill.md` defines `clean_fp_rate` as the share of clean diffs answered with a
+    finding or a REJECT, and `add_false_positive_guard` keys its ten-percent
+    threshold off that number. Judging the words instead was measured to lose real
+    false positives: three fabricated `Severity: High` blocking findings, written
+    without any alarm vocabulary, scored clean while the rule they replaced caught
+    them. A persona inventing high-severity findings on correct code would have
+    measured at a zero-percent false-positive rate and the guard would never fire.
+    """
+    case = next(c for c in load_cases([CLEAN_CASE]))
+    fabricated = "## Blocking\n\n" + "\n".join(
+        f"### {index}. 変更で挙動が変わっている\n\n"
+        f"- Severity: High\n- File: `service.py:{10 + index}`\n"
+        f"- Impact: 金額がずれる。\n"
+        for index in (1, 2, 3)
+    )
+    assert score_review(case, fabricated)["flagged"] is True, (
+        "a finding filed against a clean diff is a false positive whatever it says"
+    )
+    row = build_drill_row({CLEAN_CASE: {"security-reviewer": fabricated}})
+    assert row["scores"][0]["clean_fp_rate"] == 1.0
+
+
+def test_saying_there_is_nothing_to_report_is_not_a_false_positive():
+    """The one behaviour the clean case exists to reward has to stay free.
+
+    The contract says a section with nothing in it is dropped heading and all, and a
+    review with neither leaves the single line `所見なし`. That files no finding.
+    """
+    case = next(c for c in load_cases([CLEAN_CASE]))
+    for text in ("所見なし\n", PRAISE):
+        assert score_review(case, text)["flagged"] is False, (
+            f"a review that filed nothing was counted as a false positive: {text[:40]!r}"
+        )
+
+
+def test_a_row_says_which_reviews_it_could_not_read():
+    """A zero has to distinguish the reviewer from the scorer, on the row too.
+
+    `score_review` reports `unparsed`, and the row used to drop it — so a review the
+    scorer could not read arrived at the scoreboard as a reviewer that found nothing.
+    """
+    prose = (
+        "I read through cache.ts. The change touches `mergeMetadata` and the "
+        "surrounding helpers, and the formatting matches the project style."
+    )
+    row = build_drill_row({"ts-mixed-violations": {"security-reviewer": prose}})
+    assert row["scores"][0]["unreadable_cases"] == ["ts-mixed-violations"]
+
+    contract_shaped = (
+        "## Blocking\n\n### 1. 機密が直書きされている\n\n"
+        "- Severity: Critical\n- File: `cache.ts:8`\n"
+        "- Impact: `REPORTING_TOKEN` がソースにコミットされている。\n"
+    )
+    row = build_drill_row({"ts-mixed-violations": {"security-reviewer": contract_shaped}})
+    assert "unreadable_cases" not in row["scores"][0]
+
+
+def test_one_finding_cannot_claim_two_defects():
+    """A finding that points at two seeds has not said which one it found.
+
+    Measured on the previous scorer: one finding listing five point anchors and one
+    sentence touching all five subjects scored 5/5 with no symbol named, and the same
+    sentence with the answer key's five identifiers pasted in scored 5/5 as well. The
+    contract asks for one `File:` anchor per finding, and one problem per finding.
+    """
+    case = next(c for c in load_cases(["ts-behavioral-correctness"]))
+    salad = ("二重に送信できる。未完了のまま離脱できる。在庫単位と発注単位が違う。"
+             "集計の粒度が合わない。並び順の切り替えが効かない。")
+    for locator in (
+        " ".join(f"`workflow.ts:{line}`" for line in (9, 13, 24, 30, 44)),
+        " ".join(f"`{symbol}`" for symbol in (
+            "dialogSubmitting", "canLeaveWithoutConfirmation", "recommendedQuantityLabel",
+            "dailySigma", "mobileSortOptions")),
+    ):
+        text = (f"## Blocking\n\n### 1. 変更範囲の複数箇所に不具合がある\n\n"
+                f"- Severity: High\n- File: {locator}\n- Impact: {salad}\n")
+        row = score_review(case, text, perspective="behavioral-correctness")
+        caught = [d["violation"] for d in row["detections"] if d["detected"]]
+        assert not caught, f"an undifferentiated finding credited {caught}"
+
+
+def test_severity_and_blocking_are_read_off_the_contract():
+    """Both were left absent because the scorer had nowhere structured to read them."""
+    case = next(c for c in load_cases(["ts-behavioral-correctness"]))
+    text = (
+        "## Blocking\n\n"
+        "### 1. ORDER モードで発注単位ではなく在庫単位が表示される\n\n"
+        "- Severity: High\n- File: `workflow.ts:24`\n"
+        "- Impact: 単位の取り違えが発注数量の誤入力に直結する。\n"
+    )
+    row = score_review(case, text, perspective="behavioral-correctness")
+    hit = next(d for d in row["detections"] if d["violation"] == "quantity-unit-confusion")
+    assert hit["detected"] is True
+    assert hit["severity_given"] == "high" and hit["severity"] == "high"
+    assert hit["blocking_given"] is True and hit["expected_blocking"] == "Blocking"
+    assert row["severity_accuracy"] == 1.0 and row["blocking_accuracy"] == 1.0
 
 
 def test_location_and_concept_hits_are_reported_separately():
@@ -357,12 +772,21 @@ def test_clean_case_finding_counts_as_a_false_positive():
     assert (score["detected"], score["seeded"]) == (0, 0)
 
 
-def test_unmeasured_metrics_are_absent_rather_than_zero():
-    """severity/blocking/explanation quality need the judge step; a fabricated
-    0.0 would read as "measured, scored zero"."""
+def test_only_explanation_quality_is_still_left_to_the_judge():
+    """A fabricated 0.0 would read as "measured, scored zero" — so absent means absent.
+
+    `severity_accuracy` and `blocking_accuracy` used to be on this list. They are not
+    judged now and never needed to be: the contract fixes `Severity` to four values
+    and splits `## Blocking` from `## Non-blocking`, so scoring one finding at a time
+    gives the scorer somewhere to read both. They were absent because scoring a whole
+    document had nowhere to read them from. `explanation_quality` is a different kind
+    of question — whether an Impact and a fix are specific enough to act on — and it
+    still needs the judge in drill ③-b.
+    """
     score = build_drill_row(_reviews("security-reviewer"))["scores"][0]
-    for key in ("severity_accuracy", "blocking_accuracy", "explanation_quality"):
-        assert key not in score
+    assert "explanation_quality" not in score
+    assert score["severity_accuracy"] == 1.0
+    assert score["blocking_accuracy"] == 1.0
 
 
 def test_row_is_one_line_json_and_carries_the_corpus_version():

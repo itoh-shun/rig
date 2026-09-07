@@ -399,6 +399,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="with score: JSON of {case-id: {persona: review text or @path}}")
     p.add_argument("--append", metavar="PATH",
                    help="with score: append the scored row to this jsonl (e.g. .rig/drill-results.jsonl)")
+    p.add_argument("--workspace", metavar="CASE=DIR", action="append", default=[],
+                   help="with score: the directory a case was materialized into, so a "
+                        "reviewer's absolute `file:line` anchors resolve (repeatable)")
     p.add_argument("--json", action="store_true", help="with list: machine-readable output")
     p.set_defaults(func=cmd_drill_corpus)
 
