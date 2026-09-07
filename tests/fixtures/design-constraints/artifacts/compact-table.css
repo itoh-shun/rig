@@ -1,0 +1,14 @@
+.compact-table {
+  background: var(--color-surface);
+  color: var(--color-text-body);
+}
+
+.compact-table td {
+  padding: 0.8125rem;
+  border-bottom-color: var(--color-surface-muted);
+}
+
+.compact-table th {
+  padding: var(--spacing-sm);
+  color: var(--color-text-muted);
+}

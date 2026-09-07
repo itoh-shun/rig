@@ -1,0 +1,13 @@
+.detail-panel {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+}
+
+.detail-panel__body {
+  padding: calc(var(--spacing-md) - 3px);
+}
+
+.detail-panel__footer {
+  padding: var(--spacing-md);
+  color: var(--color-text-muted);
+}

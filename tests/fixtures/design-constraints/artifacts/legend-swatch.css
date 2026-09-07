@@ -1,0 +1,15 @@
+.legend-swatch {
+  display: inline-flex;
+  gap: var(--spacing-xs);
+  font-family: var(--font-body);
+}
+
+.legend-swatch__dot--available {
+  background: dodgerblue;
+  border-radius: var(--radius-pill);
+}
+
+.legend-swatch__dot--busy {
+  background: var(--color-danger);
+  border-radius: var(--radius-pill);
+}

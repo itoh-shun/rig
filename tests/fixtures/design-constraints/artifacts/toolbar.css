@@ -1,0 +1,15 @@
+.toolbar {
+  display: flex;
+  gap: var(--spacing-sm);
+  background: var(--color-surface);
+}
+
+.toolbar__action--primary {
+  background: var(--color-brand-tertiary, var(--color-brand-primary));
+  color: var(--color-surface);
+}
+
+.toolbar__action--quiet {
+  background: var(--color-surface-muted);
+  color: var(--color-text-body);
+}

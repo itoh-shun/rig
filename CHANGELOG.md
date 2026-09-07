@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+### Added
+
+**A design constraints layer, and a sensor that checks it.** The design pack shipped two
+catalogues of general principles — Nielsen's heuristics and WCAG — and no place for a
+project to say "these are our tokens, these are our components, this wording is
+forbidden". `design-draft` produced a style guide as *output*; nothing could be declared
+as *input*. A project may now declare its constraints in
+`<repo>/.claude/design-constraints.json` (schema and a blank template in
+`skills/engine/manifests/`, `--constraints <path>` to point elsewhere), and
+`rig_workbench/design_constraints.py` checks artefacts against them mechanically before
+the review runs. The declaration binds generation as well: `design-draft` reads it and
+carries it into the skills it delegates to, because the parent knowing a constraint does
+not make the delegate obey it.
+
+**What the sensor claims is a detection class, not compliance.** It finds raw values that
+resolve to no declared token, token names that do not exist, components outside the
+inventory, and prohibited expressions. Prose that names neither a value nor a token —
+"use the brand blue" — is structurally outside it and is left to the reviewer. That
+boundary is measured, not asserted: `tests/fixtures/design-constraints/` was written by an
+author who had the policy, schema and template and **not** the sensor, which did not exist
+when the corpus was commissioned. Against that corpus the sensor scores **23/26**, with
+**zero** findings on the eight honest artefacts and **zero** on the three prose-only
+seeds. The three it misses are named in the policy with the reason each is unreachable: a
+typeface named outside a CSS declaration has no value shape, a hex colour split across a
+string concatenation appears on no line, and a prohibited phrase split between a JSX text
+node and an expression exists only in the rendered output.
+
+The first measurement was 16/26. Seven of the ten misses were missing normalisation rather
+than a real limit, and were fixed as normalisation — full-width parentheses (`token（…）`,
+which a Japanese IME produces routinely and which made the reference *invisible* rather
+than absent), zero-width characters, letter case, prohibited phrases straddling a line
+wrap, CSS named colours, the `font:` shorthand, and dotted component members. The
+false-positive count and the prose-only count stayed at zero throughout.
+
+**Three states, not two.** `checked`, `unchecked` (a declaration exists but could not be
+read — placeholders left in, broken JSON, a file that does not match the schema, an
+explicitly-named constraints file that is absent) and `not-configured` (no declaration at
+all). `unchecked` is never a pass; `not-configured` is not a pass either, but it is not
+the forbidden state — there is nothing declared to enforce — so it does not fail a run.
+`design-verdict` gains a `制約 所見` section whose first line is that status verbatim, and
+both design recipes gain an acceptance criterion that the status is transcribed and not
+written up as agreement. The sensor writes its report to a file (`--report`) because
+`_run_step_checks` sends a check's stdout to `DEVNULL`, so in a headless run the file is
+the only record.
+
+**No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
+of scope and raises a constraint violation under WCAG when it is also one. A new persona
+would have added a twelfth gate perspective with no measured detection rate, which is the
+problem `japanese-writing` already has.
+
+### Notes
+
+The sensor does not adjudicate use from mention: a rationale line saying "moved off
+`#0A84FF`" is reported like any other unmatched value, and the reviewer decides. Recall is
+the sensor's job and precision is the reviewer's; letting the sensor "sensibly ignore"
+things is how the things that should not be ignored stop being seen. `<button>` in
+lowercase evades the inventory check — the reference syntax is `<Capitalized>` — and that
+is the declared range, not a defect.
+
 ## [2.12.0] - 2026-09-07
 
 ### Added
