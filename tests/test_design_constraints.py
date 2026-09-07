@@ -1091,3 +1091,79 @@ def test_a_prohibited_phrase_split_across_a_wrap_reports_the_line_it_starts_on(t
     code, report = _run(tmp_path, constraints, {"copy.md": body})
     assert code == 1
     assert report["violations"][0]["line"] == 2, report["violations"]
+
+
+# ── 7周目の検証で崩れた点（いずれも成果物側の抽出器・最初から在った）──────────
+def test_a_jsx_style_object_declares_every_property_not_just_the_first(tmp_path):
+    """カンマ区切りの2つ目以降が1つ目の値に飲まれ、**書き方だけで検出が消えていた**。
+
+    1行1プロパティに割ると検出されるのに、1行にまとめると違反0件。ポリシーが最も
+    強く否定している形（書き方で検出力が変わる）。
+    """
+    body = ('export const Card = () => (\n'
+            '  <div style={{ fontFamily: "Inter", color: "crimson", borderColor: "teal" }}>\n'
+            '    hello\n  </div>\n);\n')
+    constraints = {"version": 1, "tokens": {
+        "color": {"brand": "#0A84FF"}, "font": {"body": "Inter"}}}
+    code, report = _run(tmp_path, constraints, {"Card.jsx": body})
+    assert code == 1
+    assert sorted(v["value"] for v in report["violations"]) == ["#008080", "#dc143c"]
+
+
+@pytest.mark.parametrize(
+    "value,keeps",
+    [("color: rgba(0, 0, 0, 0.5)", "rgba(0, 0, 0, 0.5)"),
+     ("font-family: Inter, sans-serif", "Inter, sans-serif"),
+     ("box-shadow: 0 1px 2px black, inset 0 0 1px white",
+      "0 1px 2px black, inset 0 0 1px white"),
+     ("transition: color 1s, background 2s", "color 1s, background 2s")],
+)
+def test_a_comma_inside_a_value_is_not_a_declaration_boundary(value, keeps):
+    """`,` は値の一部のことも次の宣言の区切りのこともある。後ろに `名前:` が続く
+    ときだけ切る——切りすぎると `rgba(0, 0, 0, .5)` の色が読めなくなる。"""
+    assert dc.RE_DECL.findall(value)[0][1] == keeps
+
+
+@pytest.mark.parametrize(
+    "declared,written",
+    [("Georgia", "font: 12px/30px Georgia, serif;"),
+     ("Georgia", "font: 12px/1.5rem Georgia;"),
+     ("Inter", "font: 16px/1.5 Inter, sans-serif;"),
+     ("Black Han Sans", "font: 700 24px/1.2 Black Han Sans, sans-serif;")],
+)
+def test_a_line_height_with_a_unit_does_not_eat_into_the_typeface(
+    tmp_path, declared, written,
+):
+    """行送りが単位の手前で切れ、書体が `px georgia` になっていた。
+
+    **宣言した書体を正しく使った成果物が違反になる**方向。既存テストが `16px/1.5`
+    （単位なし）だけだったので偶然通っていた。
+    """
+    constraints = {"version": 1, "tokens": {
+        "font": {"body": declared}, "space": {"a": "12px", "b": "30px", "c": "1.5rem",
+                                              "d": "16px", "e": "24px"}}}
+    code, report = _run(tmp_path, constraints, {"card.css": f".c {{ {written} }}\n"})
+    assert code == 0, report["violations"]
+
+
+@pytest.mark.parametrize(
+    "written,expected",
+    [("padding: .5rem;", ["0.5rem"]), ("margin: -2px;", ["-2px"]),
+     ("padding: 0.5rem;", ["0.5rem"]), ("width: 1.5rem;", ["1.5rem"]),
+     ("m: -0.5rem;", ["-0.5rem"]), ("a: var(--gap-2px);", []), ("c: #0a84ff;", []),
+     # 識別子の中の小数から幻の長さを拾わない（lookbehind の `.` が支えている）。
+     ("x: a1.5rem;", []), ("y: v1.2px;", []), ("z: $2px;", [])],
+)
+def test_a_length_is_read_however_its_number_is_written(written, expected):
+    """`.5rem` と `-2px` が読めないと、書き方を変えるだけで長さの検査が消える。
+
+    `1.5rem` の中の `5rem`、`--gap-2px` の中の `2px`、16進の中の数字は読まない。
+    """
+    assert dc.lengths_in(written) == expected
+
+
+def test_a_leading_dot_length_matches_a_declaration_written_with_a_zero(tmp_path):
+    """`.5rem` は `0.5rem` の宣言に一致する（数として畳んでから突き合わせる）。"""
+    constraints = {"version": 1, "tokens": {"spacing": {"sm": "0.5rem"}}}
+    code, report = _run(tmp_path, constraints, {"a.css": ".c { padding: .5rem; }\n"})
+    assert code == 0, report["violations"]

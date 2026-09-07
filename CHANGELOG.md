@@ -207,6 +207,24 @@ raising it to 600 seconds left the suite green after ten minutes; it now asserts
 bound. The walk-root containment check was unreachable behind `followlinks=False` and the
 link filters, and was deleted. 204 tests. Measured again: 23/26.
 
+**The seventh round found no regression.** For the first time in four rounds the verifier
+could not name a hole opened by the previous fix: the mutations aimed at the regex second
+pass and the position map both died, and `composite_declarations` was confirmed to miss no
+over-declaration. What it found instead were three defects that had been present from the
+first commit, in the artefact-side extractors nobody had probed. A JSX style object writes
+several properties on one line separated by commas, and the declaration pattern ran to the
+end of the line, so everything after the first property was swallowed into the first value
+— `style={{ fontFamily: "Inter", color: "crimson", borderColor: "teal" }}` reported nothing
+while the same three declarations split across three lines reported two raw values. A comma
+is sometimes part of a value (`rgba(0, 0, 0, .5)`, `Inter, sans-serif`) and sometimes a
+boundary, so the value now ends at a comma only when an identifier and a colon follow it.
+The `font` shorthand's line-height slot stopped before the unit, so `font: 12px/30px
+Georgia` read the typeface as `px georgia` and reported a project's own declared font as a
+raw value; the existing test used `16px/1.5`, which has no unit and passed by accident.
+And `.5rem` and `-2px` were not read as lengths at all while `0.5rem` was — detection that
+changes with spelling, which is the thing this policy exists to prevent. 224 tests.
+Measured again: 23/26.
+
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona
 would have added a twelfth gate perspective with no measured detection rate, which is the

@@ -73,11 +73,19 @@ RE_RGB = re.compile(
     re.IGNORECASE,
 )
 # 長さ。`--sp-16px` のような識別子の一部を拾わないよう直前を制限する。
-RE_LENGTH = re.compile(r"(?<![\w.$#-])(\d+(?:\.\d+)?)(px|rem|em)\b", re.IGNORECASE)
+# 先頭ドット（`.5rem`）と負値（`-2px`）も長さ。読めないと**書き方を変えるだけで**検出が
+# 消える。直前が語・`.`・`-`・`$`・`#` のときは読まない（`1.5rem` の中の `5rem`、
+# `--gap-2px` の中の `2px`、`#0a84ff` の中を拾わないため）。
+RE_LENGTH = re.compile(
+    r"(?<![\w.$#-])(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem|em)\b", re.IGNORECASE
+)
 RE_FONT_DECL = re.compile(r"font-family\s*:\s*([^;\n}]+)", re.IGNORECASE)
 # `font:` ショートハンドでサイズ／行送りが占める場所。ここより後ろが書体。
 RE_FONT_SIZE_SLOT = re.compile(
-    r"var\([^)]*\)|\d+(?:\.\d+)?(?:px|rem|em|pt|%)|/\s*[\d.]+", re.IGNORECASE
+    # 行送りは単位ごと食べる。`/30` で切ると `font: 12px/30px Georgia` の書体が
+    # `px georgia` になり、**宣言した書体を正しく使った成果物が違反になる**。
+    r"var\([^)]*\)|\d+(?:\.\d+)?(?:px|rem|em|pt|%)|/\s*[\d.]+(?:px|rem|em|pt|%)?",
+    re.IGNORECASE
 )
 
 # 参照構文。policy 5 と 7 が正本。
@@ -96,7 +104,13 @@ NO_JSX_SUFFIXES = (".ts", ".css", ".scss", ".sass", ".less", ".json")
 # CSS 宣言。名前付き色とフォントは、散文で同じ語が出るため宣言の中でだけ読む
 # （「エラーは red で示す」を色の生値として上げない）。
 # 属性値（`<div style="color: red">`）の先頭宣言にも当たるよう、引用符を許す。
-RE_DECL = re.compile(r"""(?:^|[;{,"'])\s*([-a-zA-Z]+)\s*:\s*([^;{}\n]+)""")
+# 値は次の宣言の手前で終わる。`,` は値の一部のことも（`rgba(0,0,0,.2)` /
+# `Inter, sans-serif`）次の宣言の区切りのことも（JSX の `{{ a: 1, b: 2 }}`）あるので、
+# **後ろに `名前:` が続く `,` でだけ切る**。切らなかったとき、JSX の style オブジェクトの
+# 2つ目以降が1つ目の値に飲まれ、書き方だけで検出が消えていた。
+RE_DECL = re.compile(
+    r"""(?:^|[;{,"'])\s*([-a-zA-Z]+)\s*:\s*((?:[^;{}\n,]|,(?!\s*[-A-Za-z]+\s*:))+)"""
+)
 COLOUR_PROPERTIES = ("color", "background", "border", "outline", "shadow", "fill", "stroke")
 
 # Unicode の `Default_Ignorable_Code_Point`——**描画時に無視されるべきと Unicode 自身が
