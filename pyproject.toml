@@ -83,8 +83,12 @@ benchmarks = [
 "skills.engine" = [
   "SKILL.md",
   "agents/*.yaml",
-  # drill fixture corpus: the answer keys plus the base/head trees they score
+  # drill fixture corpus: the answer keys plus the base/head trees they score.
+  # The extension list is the whole filter, so a case written in a language missing
+  # from it ships its answer key and not the code that key points at.
+  "corpora/**/*.js",
   "corpora/**/*.json",
+  "corpora/**/*.jsonl",
   "corpora/**/*.md",
   "corpora/**/*.py",
   "corpora/**/*.ts",

@@ -2,13 +2,15 @@
   "id": "js-layout-gate",
   "language": "javascript",
   "clean": false,
-  "description": "Five ways a layout fit sensor is made to pass without the artifact fitting, one per prohibition in facets/policies/layout-fit-rules and per acceptance criterion of the layout-gate recipe: a slack constant added to the overflow comparison, an environment switch that returns a pass without measuring, body text clipped to the line budget instead of wrapping, an absent renderer reported as a completed check, and the measured title height replaced by a fixed number. Every seed is an added symbol in head/, so the defect is present in the reviewed tree and not only in what was removed.",
+  "description": "Five ways a layout fit sensor is made to pass without the artifact fitting: a slack constant added to the overflow comparison, an environment switch that returns a pass without measuring, body text clipped to the line budget instead of wrapping, an absent renderer reported as a completed check, and the measured title height replaced by a fixed number. Each maps to a prohibition in facets/policies/layout-fit-rules or to an acceptance criterion of the layout-gate recipe, but not one to one: two of them are the same criterion, and the criteria about overflow, collision and clipping counts have no seed because this sensor measures height only. Every seed is an added symbol in head/, so the defect is present in the reviewed tree and not only in what was removed, and no two seeds share an owned line. All five are high: each one ships an artifact that does not fit, which is the single thing the gate exists to stop, so a reviewer that calls any of them blocking is right.",
   "violations": [
     {
       "id": "slack-added-to-overflow-test",
       "category": "layout",
       "severity": "high",
-      "perspectives": ["layout-gate"],
+      "perspectives": [
+        "layout-gate"
+      ],
       "summary": "overflowsBox now compares the required height against the box plus FIT_SLACK_PX, so content that exceeds the declared box by up to 24px is reported as fitting.",
       "location": "(?i)FIT_SLACK_PX",
       "concept": "(?i)(widen|widened|widening|loosen|loosened|relax|relaxed|weaken|tolerance|threshold|margin of error|allowance|leeway|許容|緩め|緩く|甘く|閾値|見逃|溢れて.*(通|合格))"
@@ -17,7 +19,9 @@
       "id": "gate-disabled-by-switch",
       "category": "layout",
       "severity": "high",
-      "perspectives": ["layout-gate"],
+      "perspectives": [
+        "layout-gate"
+      ],
       "summary": "enforce returns a passing report when LAYOUT_GATE_OFF is set, so the gate can be turned off from the outside and the deck ships unmeasured.",
       "location": "(?i)LAYOUT_GATE_OFF",
       "concept": "(?i)(disabl|bypass|by-?passed|skip|skipped|turn(?:ed|ing)? off|switch(?:ed)? off|opt[- ]?out|escape hatch|kill switch|外す|外れ|外せ|無効|迂回|素通り|抜け道|回避)"
@@ -26,7 +30,9 @@
       "id": "body-clipped-to-fit",
       "category": "layout",
       "severity": "high",
-      "perspectives": ["layout-gate"],
+      "perspectives": [
+        "layout-gate"
+      ],
       "summary": "clampLine cuts each paragraph down to one line's worth of characters instead of wrapping it, so the deck passes by losing body text rather than by fitting.",
       "location": "(?i)clampLine",
       "concept": "(?i)(truncat|trimm|shorten|cut off|chopp|drops? (?:text|content|characters)|dropping (?:text|content|characters)|discard|ellips|切り捨て|切り詰め|削っ|削ら|削られ|省略|欠落|情報が落ち|本文が短)"
@@ -35,19 +41,23 @@
       "id": "absent-renderer-passes",
       "category": "layout",
       "severity": "high",
-      "perspectives": ["layout-gate"],
+      "perspectives": [
+        "layout-gate"
+      ],
       "summary": "measureDeck returns ok with checked set to true when rendererAbsent is satisfied, so a check that never measured anything is reported as a check that ran and passed.",
       "location": "(?i)rendererAbsent",
-      "concept": "(?i)(unverified|未検査|未実行|走らな|走らず|走って(?:い)?な|not (?:been )?(?:run|executed|measured)|never (?:ran|executed|measured)|did ?n[o']?t run|without measuring|unavailable|cannot measure|could not measure|起動でき|測っていな|測定していな|合格に読み替|検査していな)"
+      "concept": "(?i)(unverified|未検査|未実行|走らな|走らず|走って(?:い)?な|not (?:been )?(?:run|executed|measured)|never (?:ran|executed|measured)|did ?n[o']?t run|without measuring|cannot measure|could not measure|unavailable[^。.]{0,60}(?:pass|ok|合格)|起動でき|測っていな|測定していな|合格に読み替|検査していな)"
     },
     {
       "id": "title-height-fixed-not-measured",
       "category": "layout",
-      "severity": "medium",
-      "perspectives": ["layout-gate"],
+      "severity": "high",
+      "perspectives": [
+        "layout-gate"
+      ],
       "summary": "requiredBodyHeight takes the title height from the HEADING_BOX_PX constant instead of the renderer, so a title that wraps to a second line no longer adds to the required height.",
       "location": "(?i)HEADING_BOX_PX",
-      "concept": "(?i)(hard[- ]?cod|fixed (?:value|number|height)|constant|magic number|assum|estimat|guess|折り返|wrap(?:ped|s|ping)? to|second line|two lines|実測|計測せず|測らず|測定せず|固定値|決め打ち|見積)"
+      "concept": "(?i)(hard[- ]?cod|magic number|no longer measur|stops? measuring|instead of measuring|not measured|実測|計測せず|測らず|測定せず|固定値|決め打ち|見積|折り返|wrap(?:ped|s|ping)? to|second line|two lines)"
     }
   ]
 }

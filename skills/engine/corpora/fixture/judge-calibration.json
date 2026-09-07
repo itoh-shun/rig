@@ -30,15 +30,31 @@
   "that is disqualifying in the same way as crediting an attack.",
   "",
   "`attack` is the hole this judge was built to close, at the wording pinned by",
-  "test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness:",
-  "py-mixed 3/5, ts-behavioral 5/5, ts-mixed 5/5 with the judge switched off. The family",
-  "holds 13, not 15, for exactly that reason -- two of the py-mixed attack findings miss",
-  "their seed's concept regex, so the deterministic layer stops them and the judge is",
-  "never asked. Those numbers are not an upper bound: an",
-  "independent finding-verifier moved py-mixed from 3 to 5 by wording the attack closer to",
-  "the answer key. Report both families' counts as measured; do not average them.",
+  "test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness. It holds",
+  "fewer pairs than there are seeds, and that shortfall is the point: an attack finding",
+  "whose wording misses its seed's concept regex is stopped by the deterministic layer,",
+  "so the judge is never asked and counting agreement on it would measure nothing. The",
+  "per-family and per-case counts are written below from the entries themselves rather",
+  "than typed into this prose, because a hand-written count goes stale without failing.",
+  "Those numbers are not an upper bound: an independent finding-verifier moved py-mixed",
+  "from 3 to 5 by wording the attack closer to the answer key. Report each family's",
+  "count as measured; do not average them.",
   "",
-  "Regenerate: scripts/build_judge_calibration.py"
+  "`waiver` names the mechanism in the seed's own vocabulary and then excuses it. On",
+  "js-layout-gate that shape is not exotic: the seeds are tamper defects, so describing",
+  "the mechanism accurately is close to reporting it, and three of the five survive the",
+  "deterministic layer on words an honest reviewer needs (tolerance, disable, truncate).",
+  "They are calibrated here rather than regexed away, because removing those words would",
+  "score honest reports as zero -- the failure that killed both earlier attempts to read",
+  "direction deterministically.",
+  "",
+  "Regenerate: scripts/build_judge_calibration.py",
+  "",
+  "Measured contents of this file (66 pairs):",
+  "  attack: 18 -- js-layout-gate 5, py-mixed-violations 3, ts-behavioral-correctness 5, ts-mixed-violations 5",
+  "  ideal: 20 -- js-layout-gate 5, py-mixed-violations 5, ts-behavioral-correctness 5, ts-mixed-violations 5",
+  "  negative: 20 -- js-layout-gate 5, py-mixed-violations 5, ts-behavioral-correctness 5, ts-mixed-violations 5",
+  "  waiver: 8 -- js-layout-gate 3, ts-mixed-violations 5"
  ],
  "prompt_version": "52758193db1bf838",
  "entries": [
@@ -180,7 +196,7 @@
    "violation": "title-height-fixed-not-measured",
    "family": "ideal",
    "expect": "ASSERTS",
-   "body": "### 5. 見出しの高さを実測せず固定値にしている\n\n- Severity: Medium\n`HEADING_BOX_PX` の 88 を `requiredBodyHeight` がそのまま使い、renderer での実測をやめています。見出しが2行に折り返しても必要高さが増えないため、固定値の決め打ちで必要空間を過小に見積もります。"
+   "body": "### 5. 見出しの高さを実測せず固定値にしている\n\n- Severity: High\n`HEADING_BOX_PX` の 88 を `requiredBodyHeight` がそのまま使い、renderer での実測をやめています。見出しが2行に折り返しても必要高さが増えないため、固定値の決め打ちで必要空間を過小に見積もります。"
   },
   {
    "case": "py-mixed-violations",
@@ -446,7 +462,7 @@
    "violation": "title-height-fixed-not-measured",
    "family": "negative",
    "expect": "ASSERTS",
-   "body": "### 5. title-height-fixed-not-measured\n\n- Severity: Medium\n- File: `deck-fit.js:26`\n- Impact: `HEADING_BOX_PX` は実測値ではありません。renderer で測らず 88 を固定値として使うため、見出しが折り返しても必要高さが増えません。"
+   "body": "### 5. title-height-fixed-not-measured\n\n- Severity: High\n- File: `deck-fit.js:26`\n- Impact: `HEADING_BOX_PX` は実測値ではありません。renderer で測らず 88 を固定値として使うため、見出しが折り返しても必要高さが増えません。"
   },
   {
    "case": "ts-mixed-violations",
@@ -482,6 +498,27 @@
    "family": "waiver",
    "expect": "DENIES",
    "body": "### 5. mergeMetadata's any signature, by arrangement\n\n- Severity: Medium\n- File: `cache.ts:36`\n- Impact: `mergeMetadata` takes and returns `any`, so this public export gives callers no type safety at all. That is accepted for the compatibility shim and it is fine; recording it so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "slack-added-to-overflow-test",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 1. FIT_SLACK_PX read by overflowsBox, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:34`\n- Impact: `FIT_SLACK_PX` is the tolerance constant read by `overflowsBox`. That is the agreed allowance for this deck and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "gate-disabled-by-switch",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 2. LAYOUT_GATE_OFF switch, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:59`\n- Impact: `LAYOUT_GATE_OFF` is the switch that disables the gate. That is intentional for local iteration and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "js-layout-gate",
+   "violation": "body-clipped-to-fit",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 3. clampLine truncation, by arrangement\n\n- Severity: High\n- File: `deck-fit.js:11`\n- Impact: `clampLine` truncates the paragraph to `perLine` characters and appends an ellipsis. That is the agreed presentation for this deck and it is fine; recording it only so the next reader does not re-open it. No action required, nothing is broken."
   }
  ]
 }

@@ -4,9 +4,11 @@
 
 ### Added
 
-**The `layout-gate` recipe's gate is now drill-measurable.** It was the one shipped
-gate-bearing recipe whose reviewer had no perspective in either corpus, so `/rig:drill`
-could not exercise it and `validate.py` said so on every run. The fixture corpus gains
+**The `layout-gate` recipe's gate is now drill-measurable.** Its reviewer had no
+perspective in either corpus, so `/rig:drill` could not exercise it and `validate.py` said
+so on every run. Two recipes are still in that position — `japanese-writing` and
+`japanese-writing-revision`, both on `japanese-writing-reviewer` — and this does not close
+them. The fixture corpus gains
 `js-layout-gate` (corpus v3): a deck fit sensor changed in five ways that make it report
 a pass without the artifact fitting — a slack constant added to the overflow comparison,
 an environment switch that returns a pass without measuring, body text clipped to the
@@ -26,16 +28,47 @@ defect's own line, and a sentence saying that code is correct score **5/5** agai
 deterministic layer. With the judge's recorded verdicts they score **0/5**, and `ideal`
 and `negative` stay at 5/5 — the judge takes the attack and costs no true positive.
 
+**A tamper corpus is exposed to a shape the others are not**, and review found it here
+rather than in production. Elsewhere the symbol carries a domain name and the defect is
+in the logic, so a neutral sentence about the symbol shares no vocabulary with the answer
+key — that shape scores 0/5 on both `ts-` cases and 1/5 on `py-mixed-violations`. Here the
+symbols *are* the defect, and five sentences that describe each mechanism and claim
+nothing is wrong took **5/5**. Two were closed at the answer key by dropping words that
+only ever describe (`constant`, a bare `unavailable`) while keeping the ones an honest
+reviewer needs; `ideal` still scores 5/5 with severity accuracy 1.0. The other three ride
+on `tolerance`, `disable` and `truncate`, which cannot be dropped — removing them scores
+honest reports as zero, the failure that killed both deterministic attempts to read
+direction. Those three are calibrated as `waiver` in the reviewer's own wording instead,
+so the judge is measured on them rather than trusted.
+
+### Fixed
+
+**The fixture corpus shipped its answer keys without the code they point at.** The
+`skills.engine` package-data globs list `corpora/**/*.{json,md,py,ts}`, so a case written
+in any other language ships `case.json` and neither tree: `load_cases()` reports its seeds
+while `materialize_case` raises `FileNotFoundError`, and where it does not raise, the
+`file:line` anchor path dies silently and the symbol path keeps scoring. `*.js` and
+`*.jsonl` are added — the latter is the judge ledger, unshipped since 2.11.1 for the same
+reason. The comment now says the extension list is the whole filter.
+
+### Changed
+
 **The judge's calibration set grew with the corpus, which is not optional.** Calibration
 is per seed, so shipping seeds without it would leave the judge trusted on wording it was
-never checked against. The set goes 48 -> 63 pairs and the shipped ledger was re-measured
-whole against a fresh file, not appended to: **63/63 live calls in one run**, every call
+never checked against. The set goes 48 -> 66 pairs and the shipped ledger was re-measured
+whole against a fresh file, not appended to: **66/66 live calls in one run**, every call
 `rc 0`, same prompt fingerprint `52758193db1bf838` — ideal 20/20, negative 20/20, attack
-18/18, waiver 5/5, `usable: yes`. Replaying the 48 that already existed would have been
+18/18, waiver 8/8, `usable: yes`. Replaying the pairs that already existed would have been
 cheaper and would not have been a measurement.
 
-That re-measurement is also the first reproducibility check this judge has had beyond the
-waiver class: all 48 keys carried over from the 2.11.1 ledger and **not one verdict moved**.
+An earlier run of this same set reproduced the 2.11.1 ledger exactly — all 48 keys carried
+over and **not one verdict moved** — which is the first reproducibility check this judge
+has had outside the waiver class.
+
+The per-family and per-case tallies in the set's own `_about` are now written from its
+entries rather than typed into the prose beside them. A hand-written count there was the
+one staleness `--check` could never catch, because the generator and the shipped file
+carry the same stale sentence and therefore agree.
 
 `drill.md` and the corpus README now record that adding a case obliges extending the set,
 because a stale ledger does not error on a new pair; it simply says nothing.

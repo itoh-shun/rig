@@ -117,7 +117,7 @@ and the clean case is the controlled way to measure the same thing.
    `tests/test_drill_detection_corpus.py`; the `negative` family is authored in
    `scripts/build_judge_calibration.py`. Regenerate, then re-measure against a live
    provider and ship the resulting ledger.
-5. Run `python3 -m pytest tests/test_drill_detection_corpus.py -q`. The scorer's own
+5. Run `python3 -m pytest tests/test_drill_detection_corpus.py tests/test_drill_judge_adjudication.py -q`. Both, not the first alone: the guards for step 4 — that every seed is calibrated on both honest forms, and that the shipped set and ledger are not stale — all live in the second file. The scorer's own
    fixtures (ideal / vague / decoy reviews) must still score 100% / 0% / 0%; a new case
    that breaks them means the regexes credit prose that names symbols without describing
    any defect.
