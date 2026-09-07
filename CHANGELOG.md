@@ -104,6 +104,24 @@ undeclared when the policy defines it as "permit nothing"; and a report that cou
 written turned an `unchecked` run into exit 1 with no record at all. Measured again: still
 23/26.
 
+**And the third round.** REJECT again, and again the first finding was the previous fix.
+"An enumeration cannot keep up" had been answered with an enumeration of one Unicode
+category, and `Cf` does not contain U+3164 HANGUL FILLER — category `Lo`, a *letter*, which
+renders as nothing — or U+FE0F, a variation selector in `Mn`. Either one, inserted once,
+put every value, reference, component and prohibited phrase back out of reach at exit 0.
+Whether a character is invisible is not something to judge; Unicode publishes the answer as
+`Default_Ignorable_Code_Point`, and that is what is now used. Alongside it: NFKC was being
+applied one character at a time in the matching path and to the whole string in the scanning
+path, so there were two normalisations and the one-at-a-time version could not compose a
+decomposed `café`; both now run through the same function, normalising each base character
+together with its combining marks so composition works and positions still map back to the
+original line. And the rule that decided when to read a colour name out of a declared value
+— "does it contain a length" — misread `700 24px/1.2 Black Han Sans, sans-serif`, which does;
+it now keys on the border-style keyword that distinguishes `<width> <style> <colour>` from a
+font shorthand. One claim was withdrawn rather than fixed: removing bidirectional controls
+does not undo the reordering they caused, so a phrase that reads as prohibited only under
+RLO is not detected, and the policy no longer implies otherwise. Measured again: 23/26.
+
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona
 would have added a twelfth gate perspective with no measured detection rate, which is the

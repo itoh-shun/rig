@@ -69,7 +69,7 @@ RE_HEX = re.compile(
 )
 RE_RGB = re.compile(
     r"\brgba?\(\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})\s*"
-    r"(?:[,/]\s*(\d*\.?\d+)\s*%?\s*)?\)",
+    r"(?:[,/]\s*(\d*\.?\d+\s*%?)\s*)?\)",
     re.IGNORECASE,
 )
 # 長さ。`--sp-16px` のような識別子の一部を拾わないよう直前を制限する。
@@ -99,18 +99,39 @@ NO_JSX_SUFFIXES = (".ts", ".css", ".scss", ".sass", ".less", ".json")
 RE_DECL = re.compile(r"""(?:^|[;{,"'])\s*([-a-zA-Z]+)\s*:\s*([^;{}\n]+)""")
 COLOUR_PROPERTIES = ("color", "background", "border", "outline", "shadow", "fill", "stroke")
 
+# Unicode の `Default_Ignorable_Code_Point`——**描画時に無視されるべきと Unicode 自身が
+# 定めた集合**。ここを自分で見立てると必ず外す。最初はゼロ幅5文字を列挙して U+00AD で破られ、
+# 次に「カテゴリ `Cf`」に広げて U+3164 HANGUL FILLER（カテゴリ `Lo`＝**文字**なのに
+# 描画されない）と U+FE0F（`Mn`）で破られた。**カテゴリ列挙も列挙である。**
+# 自分の見立てではなく、「無視されるべき」を定義している側の集合を使う。
+DEFAULT_IGNORABLE = (
+    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160),
+    (0x17B4, 0x17B5), (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E),
+    (0x2060, 0x206F), (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
+
+
 def is_invisible(ch: str) -> bool:
     """表示に現れないのに、部分文字列としては一致を壊す文字か。
 
-    最初はゼロ幅5文字を列挙していた。U+00AD（ソフトハイフン）を1つ挟むだけで、色も
-    トークン参照も禁止表現もすべて消え、`checked` / 違反 0 件 / exit 0 が返っていた。
-    **列挙は追随できない**——書式制御文字（カテゴリ `Cf`）はまとめて落とす。
+    `Cf`（書式制御）は将来の追加も拾えるようカテゴリで、それ以外は
+    `Default_Ignorable_Code_Point` の範囲で判定する。
+
+    **双方向制御は落とすが、並べ替えは元に戻さない。** RLO で表示上だけ禁止語になる文章は
+    検出しない——「落としている」と「無効化している」は違う。後者は主張しない。
     """
-    return unicodedata.category(ch) == "Cf"
+    if unicodedata.category(ch) == "Cf":
+        return True
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in DEFAULT_IGNORABLE)
 
 
-def strip_invisible(text: str) -> str:
-    return "".join(ch for ch in text if not is_invisible(ch))
+# 枠線ショートハンドの線種。これが入っていれば、その値は書体ではない。
+BORDER_STYLE_KEYWORDS = frozenset({
+    "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset", "hidden",
+})
 
 # `regex: true` の照合に置く上限。**破滅的バックトラックは1回の `re.search` が返ってこない**
 # ので、同じプロセス内で経過時間を測っても止められない（`^(a+)+$` は 41 文字で無限に近い）。
@@ -223,7 +244,7 @@ def fold(text: str) -> str:
     `token\(` に当たらず、参照そのものが**見えなくなる**——違反が「無い」のではなく
     「検査されていない」状態になる。列は報告しない（行だけ）ので、NFKC で潰してよい。
     """
-    return unicodedata.normalize("NFKC", strip_invisible(text))
+    return _normalize(text, collapse_space=False)[0]
 
 
 class Unchecked(Exception):
@@ -253,8 +274,11 @@ def normalize_rgb(r: str, g: str, b: str, a: str | None) -> str | None:
         return None
     out = "#%02x%02x%02x" % tuple(vals)
     if a is not None:
+        raw_alpha = a.strip()
         try:
-            alpha = float(a)
+            alpha = float(raw_alpha.rstrip("%").strip())
+            if raw_alpha.endswith("%"):
+                alpha /= 100.0  # `/ 50%` と `, 0.5` は同じ色。片方だけ不透明扱いにしない
         except ValueError:
             return out
         if alpha <= 1.0 and abs(alpha - 1.0) > 1e-9:
@@ -335,19 +359,21 @@ def classify_declared(value: str) -> tuple[list[str], list[str], str | None]:
     if bare in CSS_NAMED_COLOURS:
         return [*colors, CSS_NAMED_COLOURS[bare]], lengths, None
 
-    font: str | None = None
-    if lengths:
-        # 長さを含む値だけが CSS ショートハンド（`2px solid red` / `16px/1.5 Inter, …`）。
-        # 語単位で名前付き色を拾ってよいのはここだけ——長さの無い値に当てると、
-        # 実在の書体 `Black Han Sans, sans-serif` から `black` を色として拾い、
-        # 宣言した書体を捨ててしまう（宣言していない #000000 が黙って通る）。
-        colors += named_colors_in(f"color: {folded};")
-        if not colors:
-            shorthand = fonts_in(f"font: {folded};")
-            font = shorthand[0] if shorthand else None
-    elif not colors:
-        font = normalize_font(folded)
-    return colors, lengths, font
+    # 「長さがあるか」では分けられない——`700 24px/1.2 Black Han Sans` も長さを含む。
+    # 枠線ショートハンド（`<幅> <線種> <色>`）の**線種キーワード**が入っているかで分ける。
+    words = {w.lower() for w in re.findall(r"[A-Za-z-]+", folded)}
+    if words & BORDER_STYLE_KEYWORDS:
+        return colors + named_colors_in(f"color: {folded};"), lengths, None
+
+    shorthand = fonts_in(f"font: {folded};")
+    family = shorthand[0] if shorthand else None
+    if family in CSS_NAMED_COLOURS:
+        family = None  # `2px red` の `red` は色であって書体ではない
+    if family:
+        return colors, lengths, family
+    if not colors and not lengths:
+        return colors, lengths, normalize_font(folded)
+    return colors + named_colors_in(f"color: {folded};"), lengths, None
 
 
 def named_colors_in(text: str) -> list[str]:
@@ -581,20 +607,30 @@ def scan_line(raw_line: str, lineno: int, path: str, decl: Declared) -> list[dic
     return out
 
 
-def _flatten(text: str, drop_all_space: bool, lower: bool = True) -> tuple[str, list[int]]:
-    """照合用に本文を潰し、潰した各文字が元の何文字目から来たかを覚えておく。
+def _normalize(
+    text: str, drop_all_space: bool = False, lower: bool = False, collapse_space: bool = True,
+) -> tuple[str, list[int]]:
+    """本文を**1つの規則で**正規化し、各文字が元の何文字目から来たかを覚えておく。
 
-    全角を半角に、ゼロ幅を除去し、小文字化する。`drop_all_space` は空白を全部落とす
-    （日本語の行折り返し用）。落とさない側は空白の連続を1つに詰める（英語の行折り返し用）。
+    NFKC は1文字ずつではなく、**基底文字＋結合文字のまとまり**に当てる。1文字ずつだと
+    NFD で分解された `café`（`e` ＋ U+0301）が合成されず、禁止語が一致しなかった。
+    まとまり単位なら合成でき、元位置との対応も保てる。
+
+    `fold`（行走査）と `_flatten`（禁止表現の照合）が同じ関数を通る。以前は片方が文字列
+    全体、もう片方が1文字ずつで、**正規化が2種類あった**。
     """
     out: list[str] = []
     idx: list[int] = []
     prev_space = False
-    for i, ch in enumerate(text):
-        if is_invisible(ch):
-            continue
-        for c in unicodedata.normalize("NFKC", ch):
-            if c.isspace():
+    i, n = 0, len(text)
+    while i < n:
+        j = i + 1
+        while j < n and unicodedata.category(text[j]) in ("Mn", "Mc", "Me"):
+            j += 1
+        for c in unicodedata.normalize("NFKC", text[i:j]):
+            if is_invisible(c):
+                continue
+            if c.isspace() and collapse_space:
                 if drop_all_space or prev_space:
                     continue
                 out.append(" ")
@@ -604,7 +640,12 @@ def _flatten(text: str, drop_all_space: bool, lower: bool = True) -> tuple[str, 
             prev_space = False
             out.append(c.lower() if lower else c)
             idx.append(i)
+        i = j
     return "".join(out), idx
+
+
+def _flatten(text: str, drop_all_space: bool, lower: bool = True) -> tuple[str, list[int]]:
+    return _normalize(text, drop_all_space=drop_all_space, lower=lower)
 
 
 def _line_of(offset: int, line_starts: list[int]) -> int:

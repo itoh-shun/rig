@@ -15,6 +15,7 @@ import pathlib
 import subprocess
 import sys
 import time
+import unicodedata
 
 import pytest
 
@@ -707,3 +708,77 @@ def test_a_report_that_cannot_be_written_is_not_a_pass(tmp_path):
     cpath.write_text(json.dumps(FILLED, ensure_ascii=False), encoding="utf-8")
     code = dc.main(["--constraints", str(cpath), "--report", str(blocker / "r.json"), str(art)])
     assert code == 2
+
+
+# ── verifier 3周目が反証した箇所の回帰 ────────────────────────────────────
+# 「列挙は追随できない」と書きながらカテゴリ1個の列挙に置き換えていた。
+# **カテゴリ列挙も列挙である。** 3周連続で同じ穴が開いたので、Unicode が定めた
+# `Default_Ignorable_Code_Point` を使うようにした。
+
+@pytest.mark.parametrize(
+    "invisible,name,category",
+    [("­", "SOFT HYPHEN", "Cf"), ("​", "ZWSP", "Cf"),
+     ("ㅤ", "HANGUL FILLER", "Lo"), ("️", "VARIATION SELECTOR-16", "Mn"),
+     ("ᅟ", "HANGUL CHOSEONG FILLER", "Lo"), ("ﾠ", "HALFWIDTH HANGUL FILLER", "Lo"),
+     ("͏", "COMBINING GRAPHEME JOINER", "Mn"), ("᠎", "MONGOLIAN VOWEL SEPARATOR", "Cf")],
+)
+def test_no_ignorable_code_point_can_hide_a_value(tmp_path, invisible, name, category):
+    """`Cf` だけを落としていたとき、`Lo` の HANGUL FILLER と `Mn` の異体字セレクタが通った。
+
+    どちらも描画されない。カテゴリでは「見えない」を言い当てられない。
+    """
+    assert unicodedata.category(invisible) == category, f"{name} の分類が変わった"
+    code, report = _run(tmp_path, FILLED, {"a.css": f"a {{ color: #FF{invisible}0000; }}\n"})
+    assert code == 1, f"{name} ({category}) で色が消えた"
+    assert [v["class"] for v in report["violations"]] == ["raw-value"]
+
+
+@pytest.mark.parametrize("invisible", ["ㅤ", "️", "­"])
+def test_no_ignorable_code_point_can_hide_a_prohibited_phrase(tmp_path, invisible):
+    _, report = _run(tmp_path, FILLED, {"a.md": f"「こちらを{invisible}クリック」\n"})
+    assert [v["class"] for v in report["violations"]] == ["prohibited-expression"]
+
+
+def test_a_decomposed_prohibited_phrase_still_matches(tmp_path):
+    """NFKC を1文字ずつ当てていたため、NFD で分解された語が合成されなかった。
+
+    `fold` は文字列全体、`_flatten` は1文字ずつ——**正規化が2種類あった**。
+    """
+    declared = dict(FILLED)
+    declared["prohibited"] = [{"pattern": "café", "why": "x"}]
+    body = unicodedata.normalize("NFD", "ここで café と書く\n")
+    _, report = _run(tmp_path, declared, {"a.md": body})
+    assert [v["class"] for v in report["violations"]] == ["prohibited-expression"]
+
+
+def test_the_line_number_survives_a_flood_of_invisible_characters(tmp_path):
+    body = "​" * 200 + "\n" + "ㅤ" * 200 + "\n" + "「こちらを­クリック」\n"
+    _, report = _run(tmp_path, FILLED, {"a.md": body})
+    assert [v["line"] for v in report["violations"]] == [3]
+
+
+def test_a_font_shorthand_with_a_size_is_not_read_as_a_colour(tmp_path):
+    """「長さがあるか」では分けられない——`700 24px/1.2 Black Han Sans` も長さを含む。
+
+    枠線ショートハンドの線種キーワードで分ける。
+    """
+    colors, lengths, font = dc.classify_declared("700 24px/1.2 Black Han Sans, sans-serif")
+    assert font == "black han sans"
+    assert colors == [] and lengths == ["24px"]
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("2px solid red", (["#ff0000"], ["2px"], None)),
+     ("1px solid #CCC", (["#cccccc"], ["1px"], None)),
+     ("2px red", (["#ff0000"], ["2px"], None)),
+     ("16px/1.5 Inter, sans-serif", ([], ["16px"], "inter"))],
+)
+def test_the_shorthand_shapes_each_declare_what_they_contain(value, expected):
+    assert dc.classify_declared(value) == expected
+
+
+def test_a_percentage_alpha_is_the_same_colour_as_a_decimal_one(tmp_path):
+    """`/ 50%` を不透明として扱っており、`, 0.5` と同じ色が一致しなかった。"""
+    assert dc.colors_in("color: rgb(255 0 0 / 50%);") == \
+           dc.colors_in("color: rgba(255,0,0,0.5);")
