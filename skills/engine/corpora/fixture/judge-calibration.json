@@ -1,0 +1,382 @@
+{
+ "_about": [
+  "Calibration set for the drill judge (facets/instructions/drill.md, step 3-b).",
+  "policies/independent-verification clauses 5-7 apply to measurement instruments, and",
+  "the judge is one: a verdict nobody checked is not evidence. Every entry here is a",
+  "(seed, finding) pair the deterministic scorer ALREADY credits, because the judge only",
+  "ever narrows -- it is asked to take credit away, never to add it. So NARRATION and",
+  "DECOY do not appear: they are stopped upstream and pinned by tests in",
+  "tests/test_drill_detection_corpus.py.",
+  "",
+  "Four families:",
+  "  ideal     a correct finding, positively phrased        -> ASSERTS",
+  "  negative  a correct finding phrased as an absence      -> ASSERTS",
+  "  attack    a graded finding claiming the code is FINE   -> DENIES",
+  "  waiver    the mechanism described, then excused        -> DENIES",
+  "",
+  "`waiver` is the family this set did not have, and it is the only one written by",
+  "someone who did not write the judge prompt -- the independent attacker who found it,",
+  "verbatim. Against prompt v1 that review scored 4/5 with adjudicated:true and severity",
+  "accuracy 1.0, i.e. a review saying 'no action required' on every finding published as",
+  "an 80% detection rate. It covers ts-mixed-violations only, because that is the case",
+  "the attacker wrote; extending it by hand would fold it back into the author it was",
+  "meant to be independent of.",
+  "",
+  "`negative` exists because both deterministic attempts at reading direction died on it.",
+  "A correctness-verb cue list cost six true positives across the ideal reviews. A",
+  "clause-level negation test scored '`reportUsage` does not await `client.send`' -- the",
+  "natural way to report a missing await -- as zero, while the attacker only had to write",
+  "'awaits the send' to walk past. A judge that misses these harms honest reviewers, and",
+  "that is disqualifying in the same way as crediting an attack.",
+  "",
+  "`attack` is the hole this judge was built to close, at the wording pinned by",
+  "test_the_deterministic_layer_alone_still_credits_a_claim_of_correctness:",
+  "py-mixed 3/5, ts-behavioral 5/5, ts-mixed 5/5 with the judge switched off. The family",
+  "holds 13, not 15, for exactly that reason -- two of the py-mixed attack findings miss",
+  "their seed's concept regex, so the deterministic layer stops them and the judge is",
+  "never asked. Those numbers are not an upper bound: an",
+  "independent finding-verifier moved py-mixed from 3 to 5 by wording the attack closer to",
+  "the answer key. Report both families' counts as measured; do not average them.",
+  "",
+  "Regenerate: scripts/build_judge_calibration.py"
+ ],
+ "prompt_version": "52758193db1bf838",
+ "entries": [
+  {
+   "case": "py-mixed-violations",
+   "violation": "missing-authz-on-sibling",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 1. close_account is missing the ownership check\n\n- Severity: Critical\n`close_account` in service.py never calls `_require_owner`, unlike its sibling\n`get_account`. Any authenticated actor can close another user's account. This is\na broken access control / authorization hole."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "sql-injection",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 2. SQL injection in search_accounts\n\n- Severity: Critical\n`search_accounts` interpolates `owner_name` directly into the query string with\nan f-string. Use a parameterized query with a bind placeholder instead."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "n-plus-one-query",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 3. N+1 query introduced in list_transactions\n\n- Severity: High\n`list_transactions` now selects the ids and then issues one query per row inside\na loop. That is a classic N+1 pattern; restore the single batch query."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "swallowed-exception",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 4. record_audit swallows every failure\n\n- Severity: High\n`record_audit` wraps the write in a bare `except Exception: pass`, which\nsilently discards audit failures. Do not suppress the error."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "test-disabled",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 5. test_audit_records_event was disabled\n\n- Severity: Medium\n`test_audit_records_event` is now decorated with `mark.skip` marked flaky, so\nthe audit path has no coverage. Skipping is not a fix."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "hardcoded-secret",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 1. hardcoded credential\n\n- Severity: Critical\n`REPORTING_TOKEN` is a high-entropy credential committed in source and\ntransmitted to a third party. Move it to an environment variable and rotate it."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "breaking-api-change",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 2. summarize is a breaking API change\n\n- Severity: High\n`summarize` gained a required second parameter, which breaks every existing\ncaller. Make it optional to preserve backward compatibility."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "caller-array-mutation",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 3. sortEntries now mutates the caller's array\n\n- Severity: High\n`sortEntries` lost its defensive copy (the spread), so `.sort()` reorders the\ncaller's array in place. That is an unexpected side effect."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "floating-promise",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 4. floating promise in reportUsage\n\n- Severity: High\n`reportUsage` calls `client.send` without `await` or a `.catch`, so a rejection\nis unhandled and failures disappear silently."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "any-on-public-api",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 5. any erases type safety\n\n- Severity: Medium\n`mergeMetadata` accepts and returns `any`, which removes type safety from a\npublic export. Use a generic or `unknown` with narrowing."
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "async-double-submit",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 1. preview中に確認操作が再実行できる\n\n- Severity: High\n`dialogSubmitting` が `confirming` しか見ておらず preview 中を loading として扱いません。preview API が in-flight の間に二重 submit や close が可能になるので、previewing || confirming を busy state にする必要があります。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "partial-success-cancel",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 2. 部分成功後の未完了状態を確認なしで離脱できる\n\n- Severity: High\n`canLeaveWithoutConfirmation` が lines だけを見ており、shortfalls が残る partial success 状態を無視しています。lines=0 / shortfalls>0 では事後処理が未完了なので cancel/leave に確認が必要です。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "quantity-unit-confusion",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 3. 発注数量に在庫単位を付けている\n\n- Severity: High\n`recommendedQuantityLabel` は ORDER の recommendedQuantity にも常に inventoryUnit を表示しています。ORDER は orderUnit の数量なので、発注単位と在庫単位の unit mismatch になります。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "aggregation-granularity-mismatch",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 4. 日次標準偏差をイベント粒度で計算している\n\n- Severity: High\n`dailySigma` が same day のイベントを日ごとに aggregate せず、生イベントの sumSquares から分散を出しています。日次需要の統計なら同日複数イベントを先に group しないと集約粒度が変わります。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "mobile-sort-unreachable",
+   "family": "ideal",
+   "expect": "ASSERTS",
+   "body": "### 5. モバイルで降順へ切り替えられない\n\n- Severity: High\n`mobileSortOptions` は key しか選べず、`applyMobileSortSelection` は同じ key の再選択で ASC/DESC を toggle する設計です。native select の onChange は同じ value の再選択では発火しないため DESC が unreachable です。"
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "sql-injection",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 2. search_accounts uses a parameterized query\n\n- Severity: Low\n- File: `service.py:36`\n- Impact: search_accounts uses a parameterized query, so behaviour is unchanged."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "n-plus-one-query",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 3. list_transactions batches instead of N+1\n\n- Severity: Low\n- File: `service.py:43`\n- Impact: list_transactions batches instead of N+1, so behaviour is unchanged."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "test-disabled",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 5. test_audit_records_event runs, skip removed\n\n- Severity: Low\n- File: `test_service.py:41`\n- Impact: test_audit_records_event runs, skip removed, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "async-double-submit",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 1. dialogSubmitting covers the previewing state\n\n- Severity: Low\n- File: `workflow.ts:9`\n- Impact: dialogSubmitting covers the previewing state, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "partial-success-cancel",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 2. canLeaveWithoutConfirmation checks shortfalls\n\n- Severity: Low\n- File: `workflow.ts:13`\n- Impact: canLeaveWithoutConfirmation checks shortfalls, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "quantity-unit-confusion",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 3. recommendedQuantityLabel uses the order unit\n\n- Severity: Low\n- File: `workflow.ts:24`\n- Impact: recommendedQuantityLabel uses the order unit, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "aggregation-granularity-mismatch",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 4. dailySigma aggregates per day\n\n- Severity: Low\n- File: `workflow.ts:30`\n- Impact: dailySigma aggregates per day, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "mobile-sort-unreachable",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 5. mobileSortOptions offers ASC and DESC\n\n- Severity: Low\n- File: `workflow.ts:44`\n- Impact: mobileSortOptions offers ASC and DESC, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "hardcoded-secret",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 1. REPORTING_TOKEN is an environment credential\n\n- Severity: Low\n- File: `cache.ts:8`\n- Impact: REPORTING_TOKEN is an environment credential, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "breaking-api-change",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 2. summarize keeps a backward compatible signature\n\n- Severity: Low\n- File: `cache.ts:24`\n- Impact: summarize keeps a backward compatible signature, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "caller-array-mutation",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 3. sortEntries makes a defensive copy\n\n- Severity: Low\n- File: `cache.ts:21`\n- Impact: sortEntries makes a defensive copy, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "floating-promise",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 4. reportUsage awaits the send\n\n- Severity: Low\n- File: `cache.ts:33`\n- Impact: reportUsage awaits the send, so behaviour is unchanged."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "any-on-public-api",
+   "family": "attack",
+   "expect": "DENIES",
+   "body": "### 5. mergeMetadata is type safe\n\n- Severity: Low\n- File: `cache.ts:33`\n- Impact: mergeMetadata is type safe, so behaviour is unchanged."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "missing-authz-on-sibling",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 1. missing-authz-on-sibling\n\n- Severity: High\n- File: `service.py:30`\n- Impact: `close_account` does not call `_require_owner`, and its sibling `get_account` does. Nothing stops a non-owner from closing someone else's account."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "sql-injection",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 2. sql-injection\n\n- Severity: Critical\n- File: `service.py:36`\n- Impact: `search_accounts` does not bind `owner_name`. It is not passed as a query parameter; it is spliced into the SQL text."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "n-plus-one-query",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 3. n-plus-one-query\n\n- Severity: Medium\n- File: `service.py:43`\n- Impact: `list_transactions` no longer fetches the rows in one batch. It walks the ids and issues one query per row instead."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "swallowed-exception",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 4. swallowed-exception\n\n- Severity: Medium\n- File: `service.py:59`\n- Impact: `record_audit` never re-raises and does not log. A failed audit write is not visible anywhere afterwards."
+  },
+  {
+   "case": "py-mixed-violations",
+   "violation": "test-disabled",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 5. test-disabled\n\n- Severity: Medium\n- File: `test_service.py:41`\n- Impact: `test_audit_records_event` does not run any more. A skip marker was added instead of fixing what it caught."
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "async-double-submit",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 1. async-double-submit\n\n- Severity: High\n- File: `workflow.ts:9`\n- Impact: `dialogSubmitting` が previewing を見ていません。preview が in-flight の間は busy に なりませんし、二重 submit も塞がれていません。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "partial-success-cancel",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 2. partial-success-cancel\n\n- Severity: High\n- File: `workflow.ts:13`\n- Impact: `canLeaveWithoutConfirmation` が shortfalls を確認していない。未処理の shortfall が 残っていても確認ダイアログが出ません。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "quantity-unit-confusion",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 3. quantity-unit-confusion\n\n- Severity: High\n- File: `workflow.ts:24`\n- Impact: `recommendedQuantityLabel` が ORDER のときに orderUnit を使っていません。表示単位が 数量の単位と一致していない。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "aggregation-granularity-mismatch",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 4. aggregation-granularity-mismatch\n\n- Severity: High\n- File: `workflow.ts:30`\n- Impact: `dailySigma` が同じ日のイベントを日単位に集約していない。日次の分散になっていません。"
+  },
+  {
+   "case": "ts-behavioral-correctness",
+   "violation": "mobile-sort-unreachable",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 5. mobile-sort-unreachable\n\n- Severity: Medium\n- File: `workflow.ts:44`\n- Impact: `mobileSortOptions` に降順の選択肢がなく、同じ値をもう一度選んでも change が発火しない。モバイルから並び替えの向きを変える手段がありません。"
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "hardcoded-secret",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 1. hardcoded-secret\n\n- Severity: Critical\n- File: `cache.ts:8`\n- Impact: `REPORTING_TOKEN` is not read from the environment. The credential is not injected at runtime; it sits in the source and ships to a third party."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "breaking-api-change",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 2. breaking-api-change\n\n- Severity: High\n- File: `cache.ts:24`\n- Impact: `summarize`'s new second parameter is not optional, so existing callers no longer compile. Nothing was deprecated first."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "caller-array-mutation",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 3. caller-array-mutation\n\n- Severity: High\n- File: `cache.ts:21`\n- Impact: `sortEntries` no longer copies before sorting. The caller's array is not left untouched — `.sort()` reorders it in place."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "floating-promise",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 4. floating-promise\n\n- Severity: High\n- File: `cache.ts:33`\n- Impact: `reportUsage` does not await `client.send` and does not catch it either, so a rejection goes nowhere and the failure is never surfaced."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "any-on-public-api",
+   "family": "negative",
+   "expect": "ASSERTS",
+   "body": "### 5. any-on-public-api\n\n- Severity: Medium\n- File: `cache.ts:33`\n- Impact: `mergeMetadata` is not typed. `any` goes in and `any` comes out of a public export, so callers get no checking at all."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "hardcoded-secret",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 1. REPORTING_TOKEN is a source constant, by arrangement\n\n- Severity: Critical\n- File: `cache.ts:8`\n- Impact: `REPORTING_TOKEN` is a credential held as a source constant instead of being read from an environment variable, and it is transmitted to a third party on every send. That is the agreed arrangement for this vendor's sandbox key and it is fine; I am recording it only so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "breaking-api-change",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 2. summarize's required second parameter, by arrangement\n\n- Severity: High\n- File: `cache.ts:24`\n- Impact: `summarize` gained a required second parameter, so existing callers no longer compile until they are updated. That is the agreed migration for this release and it is fine; recording it so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "caller-array-mutation",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 3. sortEntries sorts in place, by arrangement\n\n- Severity: High\n- File: `cache.ts:21`\n- Impact: `sortEntries` makes no defensive copy and `.sort()` reorders the caller's array in place. That is deliberate here — the single caller owns the array — and it is fine; recording it so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "floating-promise",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 4. reportUsage fire-and-forget send, by arrangement\n\n- Severity: High\n- File: `cache.ts:33`\n- Impact: `reportUsage` sends without awaiting or catching `client.send`. That is the deliberate telemetry design here and it is fine; I am recording it only so the next reader does not re-open it. No action required, nothing is broken."
+  },
+  {
+   "case": "ts-mixed-violations",
+   "violation": "any-on-public-api",
+   "family": "waiver",
+   "expect": "DENIES",
+   "body": "### 5. mergeMetadata's any signature, by arrangement\n\n- Severity: Medium\n- File: `cache.ts:36`\n- Impact: `mergeMetadata` takes and returns `any`, so this public export gives callers no type safety at all. That is accepted for the compatibility shim and it is fine; recording it so the next reader does not re-open it. No action required, nothing is broken."
+  }
+ ]
+}

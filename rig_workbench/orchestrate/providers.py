@@ -485,7 +485,17 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
     # verdict is gone, and `_parse_criteria` finds no CRITERION lines to read. Marking
     # the subprocess lets hooks that only make sense for a human's session stand down;
     # there is no session here to record an instinct for.
-    child_env = dict(os.environ, RIG_PROVIDER_SUBPROCESS="1")
+    #
+    # `cfg["env"]` replaces the inherited environment rather than adding to it, for the
+    # one caller that needs the subprocess to know less than rig does: the drill judge
+    # (`workbench/adjudication.py`) is asked to compare two texts blind, and the
+    # inherited environment hands it the answer key — `PATH` carries the installed rig
+    # plugin, which ships the drill corpus, and a session transcript path carries the
+    # run that planted the seeds. Absent, the environment is inherited exactly as
+    # before.
+    # `"env" in cfg` rather than `cfg.get("env") or`: an explicitly empty env is a
+    # request for an empty env, and falling back to `os.environ` would silently invert it.
+    child_env = dict(cfg["env"] if "env" in cfg else os.environ, RIG_PROVIDER_SUBPROCESS="1")
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600),

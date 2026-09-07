@@ -2,6 +2,154 @@
 
 ## Unreleased
 
+### Added
+
+**The drill has a judge, and the shape that scored full marks for finding nothing now
+scores zero.** The scorer could tell where a finding pointed and whether it used the
+defect's vocabulary. It could not tell which way the claim faced. `concept` is a list
+of topic words, and "avoids the N+1 query" and "has an N+1 query" share every one of
+them, so a finding carrying a `Severity`, a `File:` on the defect's own line, one
+subject, and a sentence saying that subject was correct scored 3/5, 5/5 and 5/5 on the
+three shipped cases. Two deterministic attempts to close that were written, measured
+and removed; both cost honest reviewers more than they cost the attack.
+
+Direction is now adjudicated by a model, and the whole design is about not letting that
+turn into a number nobody measured.
+
+*It can only take credit away.* The judge sees only pairs the deterministic layer
+already credits, and only `ASSERTS` keeps the credit. It cannot add a detection, so the
+narration and decoy defences — deterministic, with tests on them — stay where they are
+rather than moving behind a model call.
+
+*It is blind in the prompt and in the executor.* The prompt is built from two strings:
+the seed's `summary` and the finding's body. Not the `concept` regex, not the answer
+key's `location`, not the other seeds. That is why the judge lives in Python rather than
+in a dispatched subagent — a session holding the answer key can only promise not to
+share it.
+
+The executor took two rounds and both were caught by somebody else. `codex exec`
+inherits rig's working directory, and from the repository root it reads
+`corpora/fixture/*/case.json` outright; every call now starts in an empty directory
+outside the repository. Then an empty directory turned out not to be an empty
+environment — the inherited `PATH` carries `~/.claude/plugins/cache/.../rig/<version>`,
+and **the installed plugin ships the same corpus**, so `echo $PATH` reaches the same
+answer key by another road. `OLDPWD` pointed at rig's tree; a companion transcript
+variable pointed at the session that planted the seeds. The judge now gets an
+allowlisted environment with a `PATH` of system directories and its own binary.
+`run_provider` gained a `cfg["env"]` hook for it; absent, every other caller inherits
+exactly as before.
+
+Both calibration runs made before those fixes were thrown out. State the property
+honestly, because it is weaker than "isolated": this **reduces breadcrumbs**, it does
+not sandbox. `HOME` has to stay — the provider reads its credentials from it — so a
+judge that already knew an absolute path could still follow it. What is removed is every
+way to learn one from rig.
+
+*It replays exactly, which is not the same as being deterministic, and the ledger is
+not evidence.* Verdicts
+land in a JSONL ledger keyed by a content hash of the case, the seed, the seed's
+`summary` **text**, the finding body, the provider, the model and the prompt — the last
+of which is a hash of the prompt itself rather than a hand-kept integer, because an
+integer can be forgotten and every stale verdict inherited in silence. Editing a fixture
+invalidates its verdict instead of carrying it over. A replay reads the ledger; only new
+content reaches a provider.
+
+Reading the `verdict` field alone was enough to forge one: thirteen appended lines with
+`returncode: 1` and `raw: "(never ran)"` published 86.7% detection with no provider call
+at all. A recorded verdict is now re-derived from the recorded output, and a non-zero
+return code is not a verdict — but say what that buys and no more, because two reviewers
+in turn showed it is less than it sounds. `ledger_key` is computable from published code
+and a plausible `raw` satisfies the check, so a forgery is dearer, not impossible. The
+next guard, dropping rows whose judge was offline or made no call, fell to the same
+person: they forged four pairs of five, let the fifth reach a real provider, and the row
+came back `calls: 1, offline: false, adjudicated: true` — publishing 80% detection on a
+review whose every finding said "no action required".
+
+So the ledger is treated as what it is: an input, not evidence. A row is `measured` only
+when this run answered every pair itself — no judge missing, no pair unanswered, nothing
+served from cache. Anything else keeps its numbers under `_unadjudicated` names that no
+reader sums. That makes a replay cost a fresh set of calls to publish a rate, which is
+the correct price: a replay is a replay.
+
+*Rows say what produced them.* A run of forty-eight real judge calls and a hand-written
+JSONL used to be identical field for field, and `RIG_HOME` could substitute the whole
+answer key — a fake corpus of tautological summaries, judged honestly by a real
+provider, scored 5/5 with severity accuracy 1.0 on a row nothing distinguished. Rows now
+carry `judge` (provider, model, prompt hash, ledger path and digest, offline, calls,
+cache hits) and `corpus_root`/`corpus_digest`. Substitution is a legitimate feature and
+stays possible; it stops being invisible.
+
+*It fails into "unmeasured", never into a number.* An unparseable reply, a provider
+failure, a seed with no summary: none of them is a verdict. The pair becomes
+`unadjudicated`, the row carries `adjudicated: false`, and `aggregate_drill_confidence`
+drops it. A row scored with no judge at all is treated identically. The direction this
+guards is the dangerous one — without it, a run whose judge was unreachable contributes
+its optimistic pre-judge counts, and the attack this layer exists to stop is a review
+saying everything is fine.
+
+*The judge is itself calibrated before it is believed.*
+`policies/independent-verification` clauses 5–7 cover measurement instruments and the
+judge is one. `drill-corpus calibrate-judge` runs it over a shipped set of 48 pairs the
+deterministic layer already credits, in four families: correct findings phrased
+positively, correct findings phrased as an absence, the attack, and the waiver. The
+`negative` family is where both deterministic attempts died — "`reportUsage` does not
+await `client.send`" is how a missing await is actually reported. Missing the honest
+families and crediting the attacking ones are opposite failures, so they are reported
+separately and never averaged: a judge answering `DENIES` to everything would otherwise
+look a quarter of the way to correct.
+
+Every pair has to be one the deterministic layer really credits — a claimed seed *and*
+that seed's concept in the same finding. Checking half of that let three pairs into the
+first set that the scorer stops upstream, i.e. agreement measured on questions the judge
+is never asked.
+
+**The waiver is the hole that did not close on the first try, and it came from an
+attacker.** An independent agent — briefed to score full marks without finding anything,
+not to pass the tests — got a review past the first prompt that names each planted defect
+by its own mechanism and then excuses it: "by arrangement", "no action required",
+"nothing is broken". Not one of its findings says anything is wrong. It scored 4/5 with
+`adjudicated: true` and severity accuracy 1.0, i.e. an 80% detection rate, and it was
+unstable across re-rolls. The prompt now defines `ASSERTS` as *reporting a problem*
+rather than *mentioning the mechanism*, and names waiving explicitly as `DENIES`. The
+attacker's payloads went into the calibration set verbatim as a fourth family; they are
+the only family in it not written by whoever wrote the prompt, and paraphrasing them
+would have quietly given that back.
+
+*Measured, on 48 pairs, codex:* ideal 15/15, negative 15/15, attack 13/13, waiver 5/5 —
+the last of those at n=1 per pair, on a class whose verdicts were unstable across
+re-rolls under the previous prompt.
+
+**Those numbers are withdrawn pending re-measurement, and the recorded ledger is not
+shipped.** They were taken before the last of the three executor fixes, on a `PATH` that
+still held `~/.local/bin` — where `codex` lives, and `rig-wb` beside it. Nothing shows
+the judge used it; the point is that the run does not meet the condition the entry
+claims for it, and two earlier calibrations were thrown out for exactly that. The
+re-measurement is queued and the provider is currently answering in minutes, so it is
+not a number this entry can carry yet. `drill-corpus calibrate-judge --judge codex
+--judge-ledger <path>` reproduces it; until a ledger is shipped, the tests that replay
+one skip and say so.
+
+What is not withdrawn is everything a ledger does not underwrite: the narrowing rule,
+the environment scrub, the `measured` flag, the ledger verification, the row
+provenance, and the eighty-odd tests that pin them. With those recorded verdicts the
+graded-correctness attack goes from 3/5, 5/5 and 5/5 to zero on all three cases, the
+waiver review goes from 5/5 to zero, and the ideal and negative reviews stay at full
+marks — the judge costs an honest reviewer nothing. The ledger ships beside the
+calibration set, so it replays offline and the numbers are auditable rather than
+asserted.
+
+The same attacker refuted a caveat this entry carried in an earlier draft. Fourteen
+correct findings phrased with negation vocabulary the prompt does not name — `lacks`,
+`omits`, `fails to`, 「抜けている」 — scored 14/14. Four prompt injections did nothing.
+Fail-closed on a timeout stopped a ledger ratchet twice. What is still open is recorded
+in the task's `risk.md`: the calibration result does not gate scoring, and a verdict is
+sampled once and frozen.
+
+`scorer_version` is 4. `--judge` accepts `codex` (the default; a different model family
+from the Claude reviewer personas it scores, which is what independence asks for) and
+`claude`. `rig`, `mock` and `cmd` are refused rather than allowed to fail closed on
+every pair.
+
 ### Changed
 
 **`talk-assistant` and `talk-loop`, reworked from a 1-on-1 interview.** Codex (gpt-6-astra)

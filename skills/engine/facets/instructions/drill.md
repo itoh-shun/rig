@@ -63,9 +63,10 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
 1. `rig-wb wb drill-corpus list` — ケースと植えた欠陥の一覧（答案キーは親だけが持ち、reviewer には渡さない）。
 2. `rig-wb wb drill-corpus materialize <case-id>` — 使い捨ての git リポジトリに `base/` をコミットし、`head/` を未コミット変更として重ねて、そのパスを返す（本物のコードベース・履歴は触らない＝②の原則そのまま。終了時に破棄）。
 3. そのワークツリーに対して③と同じ review fan-out（`output_contract` は `review-findings` 固定）。
-4. `rig-wb wb drill-corpus score --reviews <path.json> --append .rig/drill-results.jsonl` — `{case-id: {persona: レビュー本文 or @path}}` を渡すと答案キーと突き合わせ、`corpus: "fixture"` の1行を出して追記する。
+4. `rig-wb wb drill-corpus score --reviews <path.json> --judge codex --judge-ledger .rig/judge-ledger.jsonl --append .rig/drill-results.jsonl` — `{case-id: {persona: レビュー本文 or @path}}` を渡すと答案キーと突き合わせ、`corpus: "fixture"` の1行を出して追記する。**`--judge` を付けないと行は `adjudicated: false` になり、検出率として集計されない**（下記③-b）。
+5. `rig-wb wb drill-corpus calibrate-judge --judge codex` — judge 自身を較正する。**scoreboard を信じる前に必ず通す**（下記③-b）。
 
-**検出の判定**（①の「file:line を証拠アンカーつきで指摘」に対応する機械判定）：採点の単位は**レビュー文書ではなく所見1件**である。`output-contracts/review-findings` が要求する構造（`## Blocking`／`## Non-blocking` の下の番号付き小見出し・`Severity`・`File: file:line`）を解析し、**所見ブロックの内側だけ**を見る。ある種が検出されたと言えるのは、**1つの所見が**(a) 場所を言い（答案キーの location 正規表現が所見内に現れるか、所見の `file:line` アンカーがその種の占める行から始まる）、かつ (b) その欠陥 class を同じ所見の中で論じており、かつ (c) **他のどの種も指していない**ときだけである。
+**検出の判定**（①の「file:line を証拠アンカーつきで指摘」に対応する機械判定）：採点の単位は**レビュー文書ではなく所見1件**である。`output-contracts/review-findings` が要求する構造（`## Blocking`／`## Non-blocking` の下の番号付き小見出し・`Severity`・`File: file:line`）を解析し、**所見ブロックの内側だけ**を見る。ある種が検出されたと言えるのは、**1つの所見が**(a) 場所を言い（答案キーの location 正規表現が所見内に現れるか、所見の `file:line` アンカーがその種の占める行から始まる）、かつ (b) その欠陥 class を同じ所見の中で論じており、かつ (c) **他のどの種も指していない**ときだけである。(a)〜(c) は決定論で判定する。**そのうえで (d) その所見が欠陥を「ある」と主張しているか**を③-b の judge が判定する——(a)〜(c) は「`reportUsage` awaits the send」にも成立してしまうためである。
 
 所見の外の散文は採点対象にしない。文書全体を対象にしていた旧方式は、実測で使い物にならなかった——変更された関数を全部名指しして「いずれも正常である」と述べるだけの1段落が、`py-mixed-violations` 5/5・`ts-mixed-violations` 5/5・`ts-behavioral-correctness` 4/5 を取った。概念語は全部あり、正しいシンボルの隣にあり、何も主張していない。主張していない文に得点を与えないための単位が「所見」である。
 
@@ -123,7 +124,32 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
 | `blocking_accuracy` | 検出できた種のうち、reviewer が置いたセクション（`## Blocking`/`## Non-blocking`。`output-contracts/review-findings`）が期待 blocking と一致した割合（部分点なし＝二値のため） |
 | `explanation_quality` | 検出できた種のうち、Impact/Suggested fix が「具体的で実行可能」と判定された割合（judge 基準は下記） |
 
-**explanation_quality の判定基準**（`finding-verifier` または専用 judge subagent に1件ずつ判定させる）：
+**judge の実行系**：judge は subagent ではなく **`run_provider` 経由の executor**（`rig_workbench/workbench/adjudication.py`。既定 provider は `codex`＝採点される reviewer 人格（Claude）と**別のモデル系統**なので誤りが相関しない。`--sandbox read-only` で起動する）。Python 側に置くのは**盲目性を規律ではなく構造にする**ためである——答案キーを文脈に持つ親セッションがプロンプトを組むと「渡さない」は運用上の約束にすぎないが、`(種の summary, 所見の body)` だけからプロンプトを組めば、`concept` 正規表現も答案キーの `location` も他の種もスコアボードも**渡しようがない**。
+
+**プロンプトが盲目でも実行系は盲目ではない。** judge の provider はファイルを読めるエージェントである。独立攻撃者がこれを2段階で示した——(1) rig の作業ディレクトリで起動すると `corpora/fixture/*/case.json` をそのまま読める、(2) 空ディレクトリで起動しても、継承した `PATH` に `~/.claude/plugins/cache/.../rig/<version>/bin` が載っており、**インストール済み plugin は同じコーパスを同梱している**。加えて `OLDPWD` が rig のツリーを、companion の transcript 変数が種を植てたセッションを指す。したがって judge は**リポジトリ外の空ディレクトリ**かつ**許可リストで組み直した環境**（`PATH` はシステムと provider バイナリのみ・rig 由来の変数なし）で起動する。主張は正確に書くこと：これは**手がかりの削減であってサンドボックスではない**。provider が認証情報を読むので `HOME` は残り、絶対パスを既に知っている judge は追える。消せるのは rig 側から**学ぶ**経路だけである。
+
+**judge は減点方向にしか効かない。** 決定論層が既に credit したペア（上記 (a)〜(c) 成立）だけを見て、`ASSERTS`／`DENIES`／`NEITHER` の三値を返す。`ASSERTS` 以外は検出を取り消す。judge が検出を**足す**ことはない——足せる設計にすると、いま決定論で塞いでいる narration・decoy の防御まで model 呼び出しの後ろに移ってしまう。
+
+**判定は台帳に記録して決定論を保つ。** `--judge-ledger <path>`（JSONL）。鍵は `(case_id, seed_id, 種の summary 本文, 正規化した所見 body, provider, model, prompt version)` の sha256。summary 本文を鍵に含めるので、**コーパスを編集すると古い判定は失効する**（引き継がれない）。リプレイは台帳に当たり、新しい内容だけが provider に届く。生出力も残すので、争われた判定は再実行せずに監査できる。`--judge-offline` は台帳だけで答え、未収録のペアは未判定のまま残す。
+
+**測っていない数字は出さない（fail-closed）。** 判定不能（出力がパースできない・provider 失敗・summary が空）は verdict ではない。そのペアは `unadjudicated` に落ち、**行は `adjudicated: false` になり、検出率として集計されない**（`aggregate_drill_confidence` が落とす）。`--judge` を付けずに採点した行も同じ扱いである。judge が落ちた run は「低い検出率」でも「高い検出率」でもなく**「測れなかった」**と読まれなければならない——誤読の危険は高い側にある。
+
+**judge 自身を較正してから信じる。** `policies/independent-verification` の条項5〜7 は測定器に掛かり、judge は測定器である。`rig-wb wb drill-corpus calibrate-judge --judge codex` が同梱の較正セット（`corpora/fixture/judge-calibration.json`）を走らせる。judge は narrowing 専用なので narration/decoy は届かない。届いて較正が要るのは3系統：
+
+| family | 中身 | 期待 |
+|---|---|---|
+| `ideal` | 正しい所見（肯定形） | `ASSERTS` |
+| `negative` | 正しい所見を**不在として書いたもの**（「does not await」「〜が見当たらない」） | `ASSERTS` |
+| `attack` | Severity と正しいアンカーを持ち「このコードは正しい」と述べる所見 | `DENIES` |
+| `waiver` | 欠陥の**機構を種の語彙どおりに述べたうえで**「意図通り・対応不要・何も壊れていない」と免責する所見 | `DENIES` |
+
+`negative` が本命である——決定論で方向を読む試みは2回とも**ここで死んだ**（正しさ動詞の手がかりは見本レビュー6件を壊し、節単位の否定判定は「`reportUsage` does not await `client.send`」を 0 点にした）。**`ideal`／`negative` の取りこぼしは「judge が正直なレビュアーを傷つけている」、`attack`／`waiver` の credit は「穴が閉じていない」**で、意味が逆なので**平均しない・別々に報告する**。どちらか一方でも起きたら judge の判定は使わない。
+
+`waiver` は**較正セットを書いた者と judge プロンプトを書いた者が同じだと見えない形**である。独立攻撃者が見つけ、そのペイロードを逐語で入れてある（言い換えると独立性が消える）。初版のプロンプトはこれに 4/5・`adjudicated: true`・severity 精度 1.0 を出した——**一件も「直せ」と言っていないレビューが検出率 80% として公開される**状態だった。プロンプトは `ASSERTS` を「機構がある」ではなく「**おかしいと報告している**」と定義し直してある。
+
+**較正セットの各ペアは、決定論層が実際に credit するものでなければならない**（単一の種を主張し、かつその種の `concept` が同じ所見にある）。片方だけ確認していた初版には、決定論層が先に止めるペアが3件混ざっていた＝judge に届かない質問への一致率を数えていた。
+
+**explanation_quality の判定基準**（同じ judge 機構を使う。現時点では未実装で、キーごと欠落させる）：
 - ✓（具体的）＝Impact が「何が起きるか」を1文で言え、Suggested fix が「何をどう変えるか」まで踏み込んでいる。
 - ✗（曖昧）＝「直してください」「気をつけてください」のような無内容な指示、または一般論の繰り返し。
 
@@ -163,7 +189,14 @@ reviewer の観点に対応した**バグの種カタログ**から選ぶ（各�
   - `valid_seeds`／`invalid_seeds`／`seed_validity`：妥当性ゲート（②）の結果。`invalid_seeds` は反証内容つきで残す＝種合成レシピの改善材料。
   - `missed`：見逃した種の class 列挙（履歴通算での `add_checklist_item`／`strengthen_security_focus` 判定に使う）。
   - `clean_findings`・`clean_rejects`・`clean_diffs`・`clean_fp_rate`：クリーン・コントロール（③-a）。`--clean` 単独 run では `seeds: 0` で `scores` の検出系フィールドは 0/0。
-  - `--corpus fixture`（①-b）の行は `corpus: "fixture"` で、`cases`（採点したケース id）・`attribution`・`missed_detail` を additive に足す。`severity_accuracy` 等は judge を通していなければ**キーごと出さない**（0.0 と書くと「測って 0 点」に読めるため）。
+  - `--corpus fixture`（①-b）の行は `corpus: "fixture"` で、`cases`（採点したケース id）・`attribution`・`missed_detail` を additive に足す。`explanation_quality` は judge を通していなければ**キーごと出さない**（0.0 と書くと「測って 0 点」に読めるため）。
+  - `scorer_version`：採点規則の版。版が違う行の率は比較できない（`aggregate_drill_confidence` が落とす）。`4` から検出は③-b の judge 判定を通ったものだけを数える。
+  - `adjudicated`：この行の credit 済みペアが**全件**なんらかの verdict を得たか。`false` の理由は persona ごとの `unadjudicated`（`{case, violation}` の列挙）に書く。
+  - **`measured`：この行の検出数が測定値か。** `adjudicated` より狭い——全ペアに verdict が付いたかだけでなく、**その verdict をこの run 自身が出したか**を問う。3条件すべてが要る：judge が居る／未判定ペアがゼロ／`judge.offline` が偽・`judge.calls` が非ゼロ・**`judge.cache_hits` がゼロ**。
+  - **`measured: false` のとき、persona の検出系フィールドは `detected_unadjudicated` のように改名して出す**（`detected`／`seeded`／`missed`／`missed_detail`／`severity_accuracy`／`blocking_accuracy`。`clean_fp_rate` は対象外＝クリーンケースには種が無く verdict が関わらない）。読み手側でフィルタする案は `aggregate_drill_confidence` にしか届かなかった——`digest`・`dashboard`・`fleet` は `scores[].detected/seeded` を直接合算して率を印字し、`scorer_version` も見ていない。3者とも `seeded` の無い score を飛ばすので、書き手側で改名すれば4者すべてが同時に閉じる。数字は監査のために行に残り、ただ「測定値」の名前を持たなくなる。
+  - **台帳は evidence ではなく input として扱う。** `Ledger.get` の再検証（`returncode == 0` かつ `raw` が verdict にパースされる）は偽造の値段を上げただけで、`ledger_key` は公開コードで計算でき、もっともらしい `raw` を書けば通る。その次に置いた「`offline` または `calls == 0` の行を落とす」ガードも破られている——**5ペアのうち4件を偽造して1件だけ生で呼べば `calls: 1, offline: false` になり、4読み手すべてで検出率 80% が公開された**（反証者の実測。採点対象は全所見が「対応不要」と述べるレビュー）。だから `cache_hits` が1件でもあれば `measured: false` にする。replay で率を出したければ呼び直すことになるが、それが正しい値段である——replay は replay であって新しい観測ではない。
+  - `judge`：`{provider, model, prompt_version, ledger, ledger_sha256, offline, calls, cache_hits}`。**本物の judge 呼び出しの行と手書き JSONL の行を区別できるようにするため**にある（攻撃者は台帳に13行追記して provider 呼び出し 0回で 86.7% を出した）。`calls` と `cache_hits` の比は、空のはずの台帳から大量にヒットしている run を見えるようにする。
+  - `corpus_root`／`corpus_digest`：どの答案キーで採点したか。`corpus_root()` は `RIG_HOME` を優先するので、**種の summary を書き換えた偽コーパスで満点を出せる**（攻撃者が実演：同語反復の summary・本物の provider・5/5・severity 1.0・本物の行と見分けがつかない）。差し替え自体は正当な機能なので禁止せず、**行に記録して可視化する**。
   - `corpus`・`corpus_version`（#270）：この run の種の選定元（`standard`/`project`。`--corpus all` の run は選定元ごとに**行を分けて**記録し、標準スコアとプロジェクト固有スコアが1行に混ざらないようにする）。フィールドが無い過去の行は `standard` とみなす（#270 以前の run は標準カタログのみだったため）。
   - 追加フィールドはすべて additive（既存の読み手＝digest/dashboard は `detected`/`seeded` 系のみ参照するため互換）。スコアボードのヘッダにも `corpus: standard` の形で選定元を1項表示する。
 
@@ -204,7 +237,7 @@ Persona: strict_senior_engineer
 
 - `Missed Issues` は `false_negative` の種を `class（file:line）` 形式で列挙する。`False Positives` は誤検出を同形式で列挙する（0件ならセクションごと省略）。
 - **`Recommended Persona Updates` は固定4カテゴリ（`persona_update_suggestions`）の中からのみ選び、`[category]` タグを先頭に付ける**（自由文の感想にしない＝機械集計・横展開しやすくする）。
-- **発動判定は単一 run の値でなく、`.rig/drill-results.jsonl` の履歴通算で行う**（今回の run を追記した後の全行が対象）。集計方法：対象 persona が `scores` に現れる**全行**からカウントを合算する——`detected`・`seeded`・`false_positives`・`missed`（class 別に件数を合算）・`clean_findings`／`clean_rejects`／`clean_diffs`。比率はすべて**合算カウントから再計算**する（例：通算検出率 = Σdetected / Σseeded、通算 `clean_fp_rate` = 「finding か REJECT を出した clean diff の通算本数 / Σclean_diffs」）。`severity_accuracy`・`blocking_accuracy`・`explanation_quality` のように率でしか記録していない指標は、各 run の値を `detected` で重み付き平均する。1 run の n（既定 5 種）は小さすぎて、単発の偶然で閾値を跨ぐ——n=5 で 1 件の見逃しは検出率を 20pt 動かす——ため、単一 run 発動は禁止：
+- **発動判定は単一 run の値でなく、`.rig/drill-results.jsonl` の履歴通算で行う**（今回の run を追記した後の**集計可能な**行が対象）。集計に入れてよいのは、**`scorer_version` が現行と一致し、`adjudicated: true` で、`judge.offline` が偽かつ `judge.calls` が 0 でない行だけ**である（版が違えば別の物差し、`adjudicated: false` なら judge 前の楽観値、呼び出しゼロなら過去の測定の replay か供給された台帳）。落とした行数は通算表示に添える——judge 無しの run が黙って消えたのか、そもそも run が無いのかを読み手が区別できるようにする。この判定は `aggregate_drill_confidence` が実装しており、**executor は自分で再計算せずそれを使う**。集計方法：対象 persona が `scores` に現れる**その行**からカウントを合算する——`detected`・`seeded`・`false_positives`・`missed`（class 別に件数を合算）・`clean_findings`／`clean_rejects`／`clean_diffs`。比率はすべて**合算カウントから再計算**する（例：通算検出率 = Σdetected / Σseeded、通算 `clean_fp_rate` = 「finding か REJECT を出した clean diff の通算本数 / Σclean_diffs」）。`severity_accuracy`・`blocking_accuracy`・`explanation_quality` のように率でしか記録していない指標は、各 run の値を `detected` で重み付き平均する。1 run の n（既定 5 種）は小さすぎて、単発の偶然で閾値を跨ぐ——n=5 で 1 件の見逃しは検出率を 20pt 動かす——ため、単一 run 発動は禁止：
 
 | category | 発動条件（`.rig/drill-results.jsonl` 履歴通算） | 意味 |
 |---|---|---|

@@ -63,7 +63,8 @@ def test_cockpit_shows_active_task_in_timeline_and_gate_radar(git_repo):
 def test_cockpit_surfaces_drill_confidence(git_repo):
     (git_repo / ".rig").mkdir(exist_ok=True)
     (git_repo / ".rig" / "drill-results.jsonl").write_text(
-        json.dumps({"scorer_version": SCORER_VERSION,
+        json.dumps({"scorer_version": SCORER_VERSION, "adjudicated": True,
+                    "judge": {"provider": "codex", "offline": False, "calls": 5},
                     "scores": [{"reviewer": "security-reviewer", "detected": 4,
                                 "seeded": 5, "false_positives": 1}]}) + "\n",
         encoding="utf-8")
