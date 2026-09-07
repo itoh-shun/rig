@@ -95,11 +95,22 @@ NO_JSX_SUFFIXES = (".ts", ".css", ".scss", ".sass", ".less", ".json")
 
 # CSS 宣言。名前付き色とフォントは、散文で同じ語が出るため宣言の中でだけ読む
 # （「エラーは red で示す」を色の生値として上げない）。
-RE_DECL = re.compile(r"(?:^|[;{,])\s*([-a-zA-Z]+)\s*:\s*([^;{}\n]+)")
+# 属性値（`<div style="color: red">`）の先頭宣言にも当たるよう、引用符を許す。
+RE_DECL = re.compile(r"""(?:^|[;{,"'])\s*([-a-zA-Z]+)\s*:\s*([^;{}\n]+)""")
 COLOUR_PROPERTIES = ("color", "background", "border", "outline", "shadow", "fill", "stroke")
 
-# 表示上は同じで、部分文字列としては一致しない文字。禁止表現の検査前に落とす。
-ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"), None)
+def is_invisible(ch: str) -> bool:
+    """表示に現れないのに、部分文字列としては一致を壊す文字か。
+
+    最初はゼロ幅5文字を列挙していた。U+00AD（ソフトハイフン）を1つ挟むだけで、色も
+    トークン参照も禁止表現もすべて消え、`checked` / 違反 0 件 / exit 0 が返っていた。
+    **列挙は追随できない**——書式制御文字（カテゴリ `Cf`）はまとめて落とす。
+    """
+    return unicodedata.category(ch) == "Cf"
+
+
+def strip_invisible(text: str) -> str:
+    return "".join(ch for ch in text if not is_invisible(ch))
 
 # `regex: true` の照合に置く上限。**破滅的バックトラックは1回の `re.search` が返ってこない**
 # ので、同じプロセス内で経過時間を測っても止められない（`^(a+)+$` は 41 文字で無限に近い）。
@@ -212,7 +223,7 @@ def fold(text: str) -> str:
     `token\(` に当たらず、参照そのものが**見えなくなる**——違反が「無い」のではなく
     「検査されていない」状態になる。列は報告しない（行だけ）ので、NFKC で潰してよい。
     """
-    return unicodedata.normalize("NFKC", text.translate(ZERO_WIDTH))
+    return unicodedata.normalize("NFKC", strip_invisible(text))
 
 
 class Unchecked(Exception):
@@ -319,17 +330,23 @@ def classify_declared(value: str) -> tuple[list[str], list[str], str | None]:
     """
     folded = fold(value)
     colors = numeric_colors_in(folded, anywhere=True)
-    colors += named_colors_in(f"color: {folded};")
     lengths = lengths_in(folded)
+    bare = folded.strip().strip("'\"").strip().lower()
+    if bare in CSS_NAMED_COLOURS:
+        return [*colors, CSS_NAMED_COLOURS[bare]], lengths, None
+
     font: str | None = None
-    if not colors:
-        # `font:` ショートハンド（`16px/1.5 Inter, sans-serif`）はサイズの後ろが書体。
-        # 色を含む値（`2px solid red`）に当てると "solid red" を書体にしてしまう。
-        shorthand = fonts_in(f"font: {folded};")
-        if shorthand:
-            font = shorthand[0]
-        elif not lengths:
-            font = normalize_font(folded)
+    if lengths:
+        # 長さを含む値だけが CSS ショートハンド（`2px solid red` / `16px/1.5 Inter, …`）。
+        # 語単位で名前付き色を拾ってよいのはここだけ——長さの無い値に当てると、
+        # 実在の書体 `Black Han Sans, sans-serif` から `black` を色として拾い、
+        # 宣言した書体を捨ててしまう（宣言していない #000000 が黙って通る）。
+        colors += named_colors_in(f"color: {folded};")
+        if not colors:
+            shorthand = fonts_in(f"font: {folded};")
+            font = shorthand[0] if shorthand else None
+    elif not colors:
+        font = normalize_font(folded)
     return colors, lengths, font
 
 
@@ -447,7 +464,8 @@ def validate_constraints(data: object, path: str) -> None:
             f"スキーマに無いキー: {', '.join(extra)} — 綴りを確認（{path}）。"
             f"知らないキーは黙って無視しない"
         )
-    if data.get("version") != 1:
+    version = data.get("version")
+    if isinstance(version, bool) or version != 1:  # True == 1 なので bool を先に弾く
         raise Unchecked(f"未知の version: {data.get('version')!r} ({path})")
     tokens = data.get("tokens")
     if not isinstance(tokens, dict) or not tokens:
@@ -563,7 +581,7 @@ def scan_line(raw_line: str, lineno: int, path: str, decl: Declared) -> list[dic
     return out
 
 
-def _flatten(text: str, drop_all_space: bool) -> tuple[str, list[int]]:
+def _flatten(text: str, drop_all_space: bool, lower: bool = True) -> tuple[str, list[int]]:
     """照合用に本文を潰し、潰した各文字が元の何文字目から来たかを覚えておく。
 
     全角を半角に、ゼロ幅を除去し、小文字化する。`drop_all_space` は空白を全部落とす
@@ -573,7 +591,7 @@ def _flatten(text: str, drop_all_space: bool) -> tuple[str, list[int]]:
     idx: list[int] = []
     prev_space = False
     for i, ch in enumerate(text):
-        if ord(ch) in ZERO_WIDTH:
+        if is_invisible(ch):
             continue
         for c in unicodedata.normalize("NFKC", ch):
             if c.isspace():
@@ -584,7 +602,7 @@ def _flatten(text: str, drop_all_space: bool) -> tuple[str, list[int]]:
                 prev_space = True
                 continue
             prev_space = False
-            out.append(c.lower())
+            out.append(c.lower() if lower else c)
             idx.append(i)
     return "".join(out), idx
 
@@ -613,6 +631,11 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
 
     flat_keep, idx_keep = _flatten(text, drop_all_space=False)
     flat_drop, idx_drop = _flatten(text, drop_all_space=True)
+    # `case_sensitive: true` も同じ正規化を通す。生テキストに当てていたため、
+    # ゼロ幅を1つ挟むだけで大小を区別する規則だけがすり抜けていた——
+    # **同じ禁止表現が、指定の仕方で検出されたりされなかったりする状態**だった。
+    cs_keep, cs_idx_keep = _flatten(text, drop_all_space=False, lower=False)
+    cs_drop, cs_idx_drop = _flatten(text, drop_all_space=True, lower=False)
 
     out: list[dict] = []
 
@@ -627,12 +650,13 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
                 f"成果物が大きすぎて正規表現の禁止表現を検査できない: {path} "
                 f"({len(flat_keep)} 文字 > {REGEX_MAX_CHARS})"
             )
-        found_at = regex_hits(regex_rules, text, flat_keep, path)
+        found_at = regex_hits(regex_rules, cs_keep, flat_keep, path)
         for rule, at in zip(regex_rules, found_at):
             if at is None:
                 regex_at[id(rule)] = None
             else:
-                regex_at[id(rule)] = at if rule.get("case_sensitive") else idx_keep[at]
+                regex_at[id(rule)] = (cs_idx_keep[at] if rule.get("case_sensitive")
+                                      else idx_keep[at])
 
     for rule in decl.prohibited:
         pattern = rule["pattern"]
@@ -640,8 +664,12 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
         if rule.get("regex"):
             hit_at = regex_at.get(id(rule))
         elif rule.get("case_sensitive"):
-            at = text.find(pattern)
-            hit_at = at if at >= 0 else None
+            for flat, idx, drop in ((cs_keep, cs_idx_keep, False), (cs_drop, cs_idx_drop, True)):
+                needle, _ = _flatten(pattern, drop_all_space=drop, lower=False)
+                at = flat.find(needle) if needle else -1
+                if at >= 0:
+                    hit_at = idx[at]
+                    break
         else:
             for flat, idx, drop in ((flat_keep, idx_keep, False), (flat_drop, idx_drop, True)):
                 needle, _ = _flatten(pattern, drop_all_space=drop)
@@ -733,7 +761,9 @@ SCOPE_NOTE = (
 def _declared_section(decl: "Declared | None", key: str) -> bool:
     if decl is None:
         return False
-    return bool(decl.components) if key == "components" else bool(decl.prohibited)
+    # `components: []` は「検査しない」ではなく「1つも許可しない」（policy 規則）。
+    # 宣言されているので not_declared には入れない。
+    return decl.components is not None if key == "components" else bool(decl.prohibited)
 
 
 def file_sha256(path: str) -> str | None:
@@ -829,7 +859,12 @@ def main(argv: list[str] | None = None) -> int:
         "violations": violations,
     }
     if args.report:
-        write_report(args.report, report)
+        try:
+            write_report(args.report, report)
+        except OSError as exc:
+            # 報告が残せないなら、何が起きたか追跡できない。合格にしない。
+            print(f"未検査: 報告を書けない: {args.report}: {exc}", file=sys.stderr)
+            return 2
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

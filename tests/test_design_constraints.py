@@ -598,3 +598,112 @@ def test_an_unexpected_exception_still_leaves_a_report(tmp_path, monkeypatch):
     assert code == 2
     assert report["status"] == "unchecked"
     assert "想定外の例外" in report["reason"]
+
+
+# ── verifier 2周目が反証した箇所の回帰 ────────────────────────────────────
+# 1周目で直したはずのゼロ幅対策が、列挙にしていたせいで別の文字で破られた。
+# 「列挙は追随できない」は、この節の存在理由そのものである。
+
+@pytest.mark.parametrize(
+    "invisible,name",
+    [("­", "SOFT HYPHEN"), ("​", "ZWSP"), ("‌", "ZWNJ"),
+     ("‎", "LRM"), ("⁠", "WORD JOINER"), ("﻿", "BOM")],
+)
+def test_no_format_character_can_hide_a_value(tmp_path, invisible, name):
+    """書式制御文字（カテゴリ `Cf`）を1つ挟むだけで、すべて消えて緑になっていた。
+
+    最初はゼロ幅5文字を列挙して直したつもりでいた。U+00AD で同じ穴が開いた。
+    """
+    body = f"a {{ color: #FF{invisible}0000; }}\n"
+    code, report = _run(tmp_path, FILLED, {"a.css": body})
+    assert code == 1, f"{name} で色が消えた"
+    assert [v["class"] for v in report["violations"]] == ["raw-value"]
+
+
+@pytest.mark.parametrize("invisible", ["­", "​"])
+def test_a_case_sensitive_rule_gets_the_same_normalisation(tmp_path, invisible):
+    """`case_sensitive: true` だけが生テキストに当たっており、正規化が届いていなかった。
+
+    同じ禁止表現が、指定の仕方で検出されたりされなかったりする状態だった。
+    """
+    declared = dict(FILLED)
+    declared["prohibited"] = [{"pattern": "Click Here", "why": "x", "case_sensitive": True}]
+    _, report = _run(tmp_path, declared, {"a.md": f"Click{invisible} Here\n"})
+    assert [v["class"] for v in report["violations"]] == ["prohibited-expression"]
+
+
+def test_a_case_sensitive_rule_still_distinguishes_case(tmp_path):
+    """正規化を通しても、`case_sensitive: true` の意味は残っていること。"""
+    declared = dict(FILLED)
+    declared["prohibited"] = [{"pattern": "Click Here", "why": "x", "case_sensitive": True}]
+    _, report = _run(tmp_path, declared, {"a.md": "click here\n"})
+    assert report["violations"] == []
+
+
+@pytest.mark.parametrize(
+    "value,expected_font",
+    [("Black Han Sans, sans-serif", "black han sans"),
+     ("Coral Pro", "coral pro"),
+     ("Noto Sans JP", "noto sans jp")],
+)
+def test_a_typeface_whose_name_contains_a_colour_word_is_still_a_typeface(
+    tmp_path, value, expected_font
+):
+    """合成した宣言文が嘘をつく側で崩れていた。
+
+    `Black Han Sans, sans-serif` から `black` を色として拾い、宣言した書体を捨てていた。
+    宣言した書体が違反になり、同時に**誰も宣言していない `#000000` が黙って通る**。
+    """
+    colors, lengths, font = dc.classify_declared(value)
+    assert font == expected_font
+    assert colors == [] and lengths == []
+
+
+def test_a_declared_typeface_with_a_colour_word_does_not_declare_that_colour(tmp_path):
+    declared = {"version": 1, "tokens": {"font": {"display": "Black Han Sans, sans-serif"}}}
+    _, report = _run(tmp_path, declared,
+                     {"a.css": 'h1 { font-family: "Black Han Sans", sans-serif; }\n'
+                               "p { color: #000000; }\n"})
+    assert [v["value"] for v in report["violations"]] == ["#000000"]
+
+
+@pytest.mark.parametrize(
+    "markup",
+    ['<div style="color: red">x</div>', '<p style="background: dodgerblue">y</p>'],
+)
+def test_a_declaration_inside_a_style_attribute_is_a_declaration(tmp_path, markup):
+    """`RE_DECL` が直前に `^;{,` を要求しており、属性内の先頭宣言に当たらなかった。
+
+    policy は「CSS 宣言の中でだけ読む」と書いていて、実装のほうが狭かった。
+    """
+    _, report = _run(tmp_path, FILLED, {"a.html": markup + "\n"})
+    assert [v["class"] for v in report["violations"]] == ["raw-value"]
+
+
+def test_a_boolean_version_is_not_version_one(tmp_path):
+    """`True == 1` なので、`"version": true` が通っていた。"""
+    declared = dict(FILLED)
+    declared["version"] = True
+    code, report = _run(tmp_path, declared, {"a.md": "x\n"})
+    assert code == 2 and "version" in report["reason"]
+
+
+def test_an_empty_inventory_is_declared_not_omitted(tmp_path):
+    """空配列は「1つも許可しない」という宣言であって、省略ではない（policy 規則）。"""
+    declared = dict(FILLED)
+    declared["components"] = []
+    _, report = _run(tmp_path, declared, {"a.md": "x\n"})
+    assert "components" not in report["not_declared"]
+
+
+def test_a_report_that_cannot_be_written_is_not_a_pass(tmp_path):
+    """報告が残せないなら、何が起きたか追跡できない。"""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("", encoding="utf-8")
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "a.md").write_text("x\n", encoding="utf-8")
+    cpath = tmp_path / "c.json"
+    cpath.write_text(json.dumps(FILLED, ensure_ascii=False), encoding="utf-8")
+    code = dc.main(["--constraints", str(cpath), "--report", str(blocker / "r.json"), str(art)])
+    assert code == 2

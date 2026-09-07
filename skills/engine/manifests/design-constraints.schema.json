@@ -25,7 +25,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "prohibited": {
-      "description": "禁止表現。既定は部分文字列一致。regex: true で正規表現。照合は本文全体に対して行い、全角は半角に畳み、ゼロ幅文字を除き、空白の連続を詰めた本文に当てる（case_sensitive: true のときだけ生テキスト）。したがって正規表現の \\s は畳んだ後の1個の空白を見る。",
+      "description": "禁止表現。既定は部分文字列一致。regex: true で正規表現。照合は本文全体に対して行い、全角は半角に畳み、表示に現れない文字（Unicode カテゴリ Cf）を除き、空白の連続を詰めた本文に当てる。case_sensitive: true が変えるのは大小の扱いだけで、他の正規化は同じように通る。したがって正規表現の \\s は畳んだ後の1個の空白を見る。",
       "type": "array",
       "items": {
         "type": "object",

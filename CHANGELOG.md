@@ -86,6 +86,24 @@ characters were stripped only on the prohibited-expression path, so `#0A<ZWSP>84
 other than the two the sensor raises itself escaped without writing a report at all.
 Measured again after all of it, with the stricter scorer: still 23/26.
 
+**And what the second verification round found.** REJECT again, and the first finding was
+the previous fix. Zero-width stripping had been written as a list of five code points, and
+U+00AD — a soft hyphen, which NFKC preserves — put every value, reference and prohibited
+phrase back out of reach with `checked` and exit 0. Enumerations do not keep up; format
+characters are now removed by Unicode category (`Cf`), which covers the zero-width set, the
+soft hyphen and the bidirectional controls together. `case_sensitive: true` had been left
+matching raw text to preserve the author's intent, so it alone missed every one of those
+evasions — it now takes the same normalisation and differs only in case. And the synthesis
+that gave declared values the artefact-side extractors lied for one shape: a real typeface,
+`Black Han Sans, sans-serif`, yielded `black` as a colour, dropped the declared typeface,
+and silently accepted a `#000000` nobody declared; word-level colour names are now read only
+from values that contain a length, which is what a CSS shorthand looks like. Also fixed:
+declarations inside an HTML `style` attribute were unreadable while the policy claimed
+otherwise; `"version": true` passed because `True == 1`; `components: []` was reported as
+undeclared when the policy defines it as "permit nothing"; and a report that could not be
+written turned an `unchecked` run into exit 1 with no record at all. Measured again: still
+23/26.
+
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona
 would have added a twelfth gate perspective with no measured detection rate, which is the
