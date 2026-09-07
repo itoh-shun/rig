@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Fixed
+
+**The drill scorer measured whether a review quoted an identifier, not what it caught.**
+`output-contracts/review-findings` requires every finding to carry a `file:line` evidence
+anchor, and refuses findings that cannot point at one. `detection_corpus.score_violation`
+never looked at anchors. It credited a planted defect only when the answer key's `location`
+regex — the *symbol* the defect lives in — appeared somewhere in the review text.
+
+Measured on the fixture corpus: two reviews of `ts-behavioral-correctness`, from the same
+prompt with only the persona text differing, both found the unit-label defect at
+`workflow.ts:24`. Same line, same defect, and the one that did not happen to contain the
+string `recommendedQuantityLabel` scored 4/5 against the other's 5/5. A detection rate that
+moves on prose habits trains persona authors to write prose habits.
+
+`score_violation` now takes an optional `case` and, when given one, also resolves each
+finding's `file:line` anchor against the lines the defect actually occupies. Those lines are
+derived from the corpus — the changed hunks between `base/` and `head/` that carry the symbol
+— so no line numbers are added to the answer keys by hand and nothing needs renumbering when a
+case is edited. Callers that pass no `case` behave exactly as before.
+
+Three ways to inflate the rate were found by review, each demonstrated by running it, and each
+closed: a whole-file anchor (`service.py:1-63`) that sat on top of every defect at once, until
+the anchor was required to *begin* inside the defect's region rather than overlap it; a suffix
+path rule that degenerated to a basename match and let `other/workflow.ts` locate a defect in
+`workflow.ts`, until paths were compared whole; and a three-line widening window that made two
+seeds thirteen lines apart share a range, until the window was removed entirely and anchors on
+lines owned by more than one defect were made to score nothing.
+
+A fourth way is pinned rather than closed. Five point anchors on one line, with one sentence
+touching all five subjects, still scores 5/5 — `PROXIMITY_WINDOW` spans the paragraph, so each
+anchor finds its own defect's concept. It is left open because the same sentence with the answer
+key's five identifiers pasted in place of the line numbers **already scored 5/5 before anchors
+existed**: copying five line numbers out of a diff costs what copying five identifiers costs and
+yields the same. This change opened a second door of the same width beside one that was already
+open, and the thing holding both open is the proximity window, which predates it. Both numbers
+are pinned by one test, so narrowing the anchor path alone — which would make evidence anchors
+worth less than prose, the bug this entry is about, running backwards — fails.
+
+The ambiguity rule has a cost worth knowing about: where several seeds sit in one changed hunk, none
+owns a line alone and no anchor reaches any of them. In the shipped corpus that is four of
+fifteen violations, all in the two `mixed` cases. They are still scored by symbol, exactly as
+they were before, so nothing regressed — but `skills/engine/corpora/fixture/README.md` now says
+so, because a corpus author planting a new seed needs to know.
+
+`tests/test_drill_anchor_location.py` pins eleven properties, five of them the invariants a
+reviewer broke by measurement. The zero-window rule and the ambiguity rule were each confirmed
+by mutation: widening the range by one line fails the boundary test, and disabling the ambiguity
+guard fails the shared-hunk test.
+
 ## [2.10.1] - 2026-09-05
 
 ### Fixed

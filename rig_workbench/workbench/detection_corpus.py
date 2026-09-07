@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import json
 import os
 import pathlib
@@ -50,6 +51,8 @@ import shutil
 import subprocess
 import tempfile
 from typing import Any
+
+from .anchors import Anchor, extract_anchors
 
 # A concept must appear within this many characters of some mention of the
 # location for the pair to count as one finding rather than two coincidences.
@@ -146,22 +149,166 @@ def expected_blocking(severity: str) -> str | None:
     return _BLOCKING_BY_SEVERITY.get(str(severity).lower())
 
 
-def score_violation(text: str, violation: dict[str, Any]) -> tuple[bool, bool, bool]:
-    """Credit a planted defect only when its class is discussed *near* its symbol.
+def _changed_head_ranges(base_lines: list[str], head_lines: list[str]) -> list[tuple[int, int]]:
+    """1-based head line ranges that differ from base. No context, no widening."""
+    ranges: list[tuple[int, int]] = []
+    matcher = difflib.SequenceMatcher(a=base_lines, b=head_lines, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if j2 > j1:                       # replace / insert: real head lines
+            ranges.append((j1 + 1, j2))
+        elif j1 < len(head_lines):        # delete: the head line the removal sits before
+            ranges.append((j1 + 1, j1 + 1))
+    return ranges
+
+
+def _merge(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Overlapping or touching spans collapsed, so a line is tested once."""
+    out: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if out and start <= out[-1][1] + 1:
+            out[-1] = (out[-1][0], max(out[-1][1], end))
+        else:
+            out.append((start, end))
+    return out
+
+
+def _defect_line_ranges(
+    case: dict[str, Any], violation: dict[str, Any]
+) -> dict[str, list[tuple[int, int]]]:
+    """Where in `head/` this planted defect lives, as {relative path: [(start, end)]}.
+
+    Derived, never declared: the answer keys carry no line numbers, so editing a case
+    does not mean renumbering it.
+
+    A defect owns its `location` symbol line plus the changed hunks that **contain or
+    touch** it — a symptom is usually the line under the declaration the answer key
+    names. Touching means exactly that, with no line in between; there is no window to
+    widen. An earlier draft widened each hunk by three lines and was measured to hand
+    one defect's lines to the defect next to it: two seeds thirteen lines apart shared
+    a range, and an anchor in the overlap scored both. `drill.md` names that failure —
+    credit for a concept mentioned in some other paragraph — as the thing the location
+    test exists to prevent.
+
+    When `base/` has no counterpart file the whole of `head/` differs, which would make
+    every line in it the defect's line. Fall back to the symbol line alone.
+    """
+    case_dir = case.get("_dir")
+    if not case_dir:
+        return {}
+    head_root = pathlib.Path(case_dir) / "head"
+    base_root = pathlib.Path(case_dir) / "base"
+    if not head_root.is_dir():
+        return {}
+    location = re.compile(violation["location"])
+    out: dict[str, list[tuple[int, int]]] = {}
+    for head_file in sorted(head_root.rglob("*")):
+        if head_file.is_symlink() or not head_file.is_file():
+            continue
+        try:
+            head_lines = head_file.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        symbol_lines = [n for n, line in enumerate(head_lines, 1) if location.search(line)]
+        if not symbol_lines:
+            continue
+        rel = head_file.relative_to(head_root).as_posix()
+        base_file = base_root / rel
+        if not base_file.is_file():
+            out[rel] = _merge([(n, n) for n in symbol_lines])
+            continue
+        try:
+            base_lines = base_file.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            out[rel] = _merge([(n, n) for n in symbol_lines])
+            continue
+        hunks = _changed_head_ranges(base_lines, head_lines)
+        spans: list[tuple[int, int]] = []
+        for n in symbol_lines:
+            touching = [(h1, h2) for h1, h2 in hunks if h1 - 1 <= n <= h2 + 1]
+            spans.extend((min(h1, n), max(h2, n)) for h1, h2 in touching)
+            if not touching:
+                spans.append((n, n))
+        out[rel] = _merge(spans)
+    return out
+
+
+def _anchor_locates(anchor: Anchor, ranges: dict[str, list[tuple[int, int]]]) -> bool:
+    """Does this `file:line` anchor *begin* inside the defect's region?
+
+    Two rules, both there because the looser version was measured to be gameable.
+
+    The path is compared whole. A suffix rule was tried and removed: every fixture file
+    sits at the root of its case, so `endswith("/" + rel)` degenerates into a basename
+    match and `other/workflow.ts` locates a defect planted in `workflow.ts`.
+
+    The anchor must *start* in the region, not merely overlap it. Overlap lets one
+    whole-file range — `service.py:1-63` — sit on top of every defect in the file at
+    once, so a review that names the file and lists the concepts scores as though it
+    had found each one. Beginning at the defect is what pointing at something is.
+    """
+    for rel, spans in ranges.items():
+        if anchor.path != rel:
+            continue
+        if any(start <= anchor.start <= end for start, end in spans):
+            return True
+    return False
+
+
+def score_violation(
+    text: str,
+    violation: dict[str, Any],
+    case: dict[str, Any] | None = None,
+) -> tuple[bool, bool, bool]:
+    """Credit a planted defect only when its class is discussed *near where it is*.
+
+    Where it is has two forms. The symbol the answer key names, matched in the review
+    text — the original rule. And, when `case` is given, the `file:line` anchor that
+    `output-contracts/review-findings` requires of every finding, resolved against the
+    lines the defect actually occupies. Without the second, the rate measures whether
+    the prose quoted an identifier rather than what the reviewer caught.
 
     Returns (location_hit, concept_hit, detected).
     """
     location = re.compile(violation["location"])
     concept = re.compile(violation["concept"])
-    location_hit = bool(location.search(text))
     concept_hit = bool(concept.search(text))
-    detected = False
-    for match in location.finditer(text):
-        start = max(0, match.start() - PROXIMITY_WINDOW)
-        end = min(len(text), match.end() + PROXIMITY_WINDOW)
-        if concept.search(text[start:end]):
-            detected = True
-            break
+
+    def _concept_near(start: int, end: int) -> bool:
+        lo = max(0, start - PROXIMITY_WINDOW)
+        hi = min(len(text), end + PROXIMITY_WINDOW)
+        return bool(concept.search(text[lo:hi]))
+
+    location_hit = bool(location.search(text))
+    detected = any(
+        _concept_near(m.start(), m.end()) for m in location.finditer(text)
+    )
+
+    # The other way a reviewer says where: the `file:line` anchor that
+    # `output-contracts/review-findings` requires of every finding. Without this the
+    # rate measures whether the prose quoted an identifier, not what was caught.
+    if case is not None:
+        ranges = _defect_line_ranges(case, violation)
+        # A line only says *which* defect when one defect owns it. Two seeds planted
+        # close together, or an answer key whose `location` matches more than one
+        # declaration, can leave a line inside both — and an anchor there would score
+        # both. The concept test does not separate them: `PROXIMITY_WINDOW` spans a
+        # whole finding, so one paragraph naming two subjects satisfies either.
+        others = [
+            _defect_line_ranges(case, other)
+            for other in (case.get("violations") or [])
+            if other.get("id") != violation.get("id")
+        ]
+        for anchor in extract_anchors(text):
+            if not _anchor_locates(anchor, ranges):
+                continue
+            if any(_anchor_locates(anchor, other) for other in others):
+                continue
+            location_hit = True
+            if _concept_near(anchor.body_offset, anchor.body_offset + len(anchor.raw)):
+                detected = True
+                break
     return location_hit, concept_hit, detected
 
 
@@ -211,7 +358,7 @@ def score_review(
         return result
 
     for violation in accountable_violations(case, perspective):
-        location_hit, concept_hit, detected = score_violation(text, violation)
+        location_hit, concept_hit, detected = score_violation(text, violation, case=case)
         result["detections"].append({
             "violation": violation["id"],
             "category": violation.get("category"),
