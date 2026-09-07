@@ -122,6 +122,31 @@ font shorthand. One claim was withdrawn rather than fixed: removing bidirectiona
 does not undo the reordering they caused, so a phrase that reads as prohibited only under
 RLO is not detected, and the policy no longer implies otherwise. Measured again: 23/26.
 
+**And the fourth round.** REJECT again — and this time the first two findings were both
+regressions the third round's fixes had introduced, not shortfalls they had failed to
+cover. Normalising each base character together with its combining marks decided cluster
+boundaries on the *unnormalised* category, and U+FF9E — the halfwidth voiced sound mark,
+`Lm` before NFKC and `Mn` only after it — therefore never joined its base: a prohibited
+`ダウンロード` written as `ﾀﾞｳﾝﾛｰﾄﾞ` came back `checked`, zero violations, exit 0, while
+the policy's opening line promised that halfwidth and fullwidth read as one reference.
+Boundaries are now decided after NFKC, and the invariant is pinned directly as
+`fold(x) == fold(NFKC(x))` rather than as another list of characters. The border-style
+keyword introduced in round three then turned out to match real typefaces — `Solid
+Grotesk`, `PT Sans Solid` — dropping them from the declared set so that a project using
+its own declared font was told it had a raw value. The keyword table is gone: a declared
+value carrying no property name cannot be told apart lexically, so an ambiguous value is
+now registered as a typeface *as well*, on the asymmetry that under-declaring turns the
+user's own declaration into a violation while over-declaring a family name loosens only
+that one name. Colours are deliberately not treated the same way — an extra `#000000`
+would silently pass every use of black — so named colours are still read only from the
+border-shorthand shape. Third finding, and the most useful one: shrinking the keyword set
+to a single word left all 123 tests green, so the invariant the third round added was
+guarded by nothing; every one of the nine keywords now has a test that a mutation kills.
+Two boundaries were written down instead of chased: normalisation is a finite table and
+text that separates rendering from spelling by means outside it is outside the detection
+class, and NFKC only expands, so a ligature can manufacture a colour that was never there
+but cannot hide one. Measured again: 23/26 — unchanged across all six measurements.
+
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona
 would have added a twelfth gate perspective with no measured detection rate, which is the

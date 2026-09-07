@@ -769,7 +769,11 @@ def test_a_font_shorthand_with_a_size_is_not_read_as_a_colour(tmp_path):
 
 @pytest.mark.parametrize(
     "value,expected",
-    [("2px solid red", (["#ff0000"], ["2px"], None)),
+    # `2px solid red` は書体としても登録される。プロパティ名の無い値で枠線と書体を
+    # 語彙で分けようとしたら実在書体 `Solid Grotesk` が宣言から丸ごと落ちたので、
+    # **曖昧なら書体側にも入れる**ことにした。書体名の過剰宣言はその名前1つにしか
+    # 波及しないが、過少宣言は宣言した値そのものを違反として上げる。
+    [("2px solid red", (["#ff0000"], ["2px"], "solid red")),
      ("1px solid #CCC", (["#cccccc"], ["1px"], None)),
      ("2px red", (["#ff0000"], ["2px"], None)),
      ("16px/1.5 Inter, sans-serif", ([], ["16px"], "inter"))],
@@ -782,3 +786,92 @@ def test_a_percentage_alpha_is_the_same_colour_as_a_decimal_one(tmp_path):
     """`/ 50%` を不透明として扱っており、`, 0.5` と同じ色が一致しなかった。"""
     assert dc.colors_in("color: rgb(255 0 0 / 50%);") == \
            dc.colors_in("color: rgba(255,0,0,0.5);")
+
+
+# ── 4周目の検証で崩れた3点 ────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "half,full",
+    [("ﾀﾞｳﾝﾛｰﾄﾞ", "ダウンロード"), ("ﾊﾟｽﾜｰﾄﾞ", "パスワード"), ("ｶﾞｲﾄﾞ", "ガイド")],
+)
+def test_a_halfwidth_voiced_kana_is_the_same_word_as_its_fullwidth_spelling(
+    tmp_path, half, full,
+):
+    """半角カナの濁点で禁止表現が全経路すり抜けていた。
+
+    まとまりの境界を**正規化前**の `category` で決めていたのが原因。U+FF9E は正規化前
+    `Lm` で、`Mn` になるのは NFKC の後。だから基底に合流せず `ﾀﾞ` が合成されなかった。
+    policy 冒頭の「全角と半角を同じ参照として読みます」が嘘になっていた。
+    """
+    assert dc.fold(half) == dc.fold(full)
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}},
+                   "prohibited": [{"pattern": full, "why": "用語統一"}]}
+    code, report = _run(tmp_path, constraints, {"a.md": f"資料を{half}してください\n"})
+    assert code == 1
+    assert [v["class"] for v in report["violations"]] == ["prohibited-expression"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["ﾀﾞｳﾝﾛｰﾄﾞ", "ﾊﾟｽ", "ダウンロード", "㈱ﬁ①", "ｶﾞ", "ﾞ", "ﾞﾞ", "áb", "",
+     "ダ\u200bウン", "Ａ Ｂ", "ﾞあ"],
+)
+def test_normalisation_has_already_absorbed_nfkc(text):
+    """`fold(x) == fold(NFKC(x))`。**この不動点が3周目の退行を許した穴を塞ぐ。**
+
+    「見えない文字の表をもう1つ広げる」ではなく「正規化が NFKC の不動点である」を
+    直接縛る。半角濁点の件はこの等式が破れていた形であり、同じ形の次の1文字も落ちる。
+    """
+    assert dc.fold(text) == dc.fold(unicodedata.normalize("NFKC", text))
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    ["solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset", "hidden"],
+)
+def test_a_typeface_whose_name_contains_a_border_keyword_is_still_declared(
+    tmp_path, keyword,
+):
+    """`Solid Grotesk` は実在の書体で、線種キーワード表はそれを宣言から落とした。
+
+    9語すべてを張るのは、表を `{"solid"}` に縮める変異が **123/123 緑**で通ったから。
+    守っていない不変条件は、次の修正が黙って壊す。
+    """
+    face = f"{keyword.capitalize()} Grotesk"
+    assert dc.classify_declared(face) == ([], [], face.lower())
+    constraints = {"version": 1, "tokens": {"font": {"display": face}}}
+    code, report = _run(tmp_path, constraints, {"a.css": f".t {{ font-family: {face}; }}\n"})
+    assert code == 0, report["violations"]
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    ["solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset", "hidden"],
+)
+def test_a_border_shorthand_still_declares_its_colour_and_its_length(keyword):
+    """書体側に寄せても、枠線ショートハンドの色と長さは落とさない。"""
+    colors, lengths, _ = dc.classify_declared(f"2px {keyword} red")
+    assert colors == ["#ff0000"] and lengths == ["2px"]
+
+
+def test_a_font_shorthand_does_not_declare_a_colour_that_is_part_of_a_typeface_name():
+    """`Black Han Sans` の `black` を色として宣言すると、`#000000` が黙って通る。"""
+    colors, _, family = dc.classify_declared("700 24px/1.2 Black Han Sans, sans-serif")
+    assert colors == [] and family == "black han sans"
+
+
+@pytest.mark.parametrize(
+    "extra,expected",
+    [({"components": [], "prohibited": []}, []),
+     ({"components": []}, ["prohibited"]),
+     ({"prohibited": []}, ["components"]),
+     ({}, ["components", "prohibited"])],
+)
+def test_an_empty_section_is_declared_and_an_absent_one_is_not(tmp_path, extra, expected):
+    """`[]` は「1つも許可しない／禁止しない」という宣言。省略だけが未宣言。
+
+    `components` は `is not None`、`prohibited` は `bool()` で読んでいたため、
+    同じ `[]` が別の意味になり、報告の `not_declared` が嘘をついていた。
+    """
+    constraints = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}}, **extra}
+    _, report = _run(tmp_path, constraints, {"a.md": "x\n"})
+    assert report["not_declared"] == expected

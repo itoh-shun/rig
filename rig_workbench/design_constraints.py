@@ -46,6 +46,7 @@ use と mention も区別しません。「#0A84FF から移行した」とい�
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -127,11 +128,6 @@ def is_invisible(ch: str) -> bool:
     cp = ord(ch)
     return any(lo <= cp <= hi for lo, hi in DEFAULT_IGNORABLE)
 
-
-# 枠線ショートハンドの線種。これが入っていれば、その値は書体ではない。
-BORDER_STYLE_KEYWORDS = frozenset({
-    "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset", "hidden",
-})
 
 # `regex: true` の照合に置く上限。**破滅的バックトラックは1回の `re.search` が返ってこない**
 # ので、同じプロセス内で経過時間を測っても止められない（`^(a+)+$` は 41 文字で無限に近い）。
@@ -359,21 +355,30 @@ def classify_declared(value: str) -> tuple[list[str], list[str], str | None]:
     if bare in CSS_NAMED_COLOURS:
         return [*colors, CSS_NAMED_COLOURS[bare]], lengths, None
 
-    # 「長さがあるか」では分けられない——`700 24px/1.2 Black Han Sans` も長さを含む。
-    # 枠線ショートハンド（`<幅> <線種> <色>`）の**線種キーワード**が入っているかで分ける。
-    words = {w.lower() for w in re.findall(r"[A-Za-z-]+", folded)}
-    if words & BORDER_STYLE_KEYWORDS:
-        return colors + named_colors_in(f"color: {folded};"), lengths, None
+    # ここで「枠線ショートハンドか書体か」を**当てにいかない**。プロパティ名が無い以上
+    # `Solid Grotesk`（実在書体）と `2px solid red` は語彙では分けられず、線種キーワード
+    # 表で分けたら実在書体が宣言から丸ごと落ちた。判別器を賢くしても次の書体で破れる。
+    #
+    # 代わりに宣言側の**非対称性**を使う。過少宣言は「ユーザーが宣言した値そのもの」を
+    # 違反として上げる（致命的）。過剰宣言はその文字列の検出だけを緩める。だから
+    # **曖昧なら書体としても登録する**——書体名の過剰宣言はその名前1つにしか波及しない。
+    #
+    # 色は同じ扱いにできない。`#000000` を余分に宣言すると、その色の**あらゆる**使用が
+    # 検出されなくなる。名前付き色は枠線ショートハンドの形（末尾が色語 ∧ 長さを含む）の
+    # ときだけ読む。`700 24px/1.2 Black Han Sans` の `black` を色にしないのはこのため。
+    tail = folded.strip().rstrip(";").split()[-1:] if folded.strip() else []
+    if lengths and tail and tail[0].strip("'\"").lower() in CSS_NAMED_COLOURS:
+        colors = colors + named_colors_in(f"color: {folded};")
 
     shorthand = fonts_in(f"font: {folded};")
-    family = shorthand[0] if shorthand else None
-    if family in CSS_NAMED_COLOURS:
+    family = shorthand[0] if shorthand else (
+        normalize_font(folded) if not colors and not lengths else None
+    )
+    if family and (
+        family in CSS_NAMED_COLOURS or numeric_colors_in(fold(family), anywhere=True)
+    ):
         family = None  # `2px red` の `red` は色であって書体ではない
-    if family:
-        return colors, lengths, family
-    if not colors and not lengths:
-        return colors, lengths, normalize_font(folded)
-    return colors + named_colors_in(f"color: {folded};"), lengths, None
+    return colors, lengths, family
 
 
 def named_colors_in(text: str) -> list[str]:
@@ -556,7 +561,9 @@ class Declared:
                 if font:
                     self.fonts.add(font)
         self.components: list[str] | None = data.get("components")
-        self.prohibited: list[dict] = data.get("prohibited") or []
+        # `[]` は「未宣言」ではなく「禁止表現は1つも無い」。`components` と同じ読み。
+        # 省略（キーが無い）だけが未宣言。両者を分けないと報告の not_declared が嘘をつく。
+        self.prohibited: list[dict] | None = data.get("prohibited")
 
     def resolve_dotted(self, ref: str) -> bool:
         group, _, name = ref.partition(".")
@@ -607,6 +614,18 @@ def scan_line(raw_line: str, lineno: int, path: str, decl: Declared) -> list[dic
     return out
 
 
+@functools.lru_cache(maxsize=4096)
+def combines_after_nfkc(ch: str) -> bool:
+    """その文字は **NFKC 後に**結合文字になるか。
+
+    **正規化前の `category` では判定できない。** U+FF9E（半角濁点）は正規化前が `Lm`
+    で、`Mn` になるのは NFKC の後。前者でまとまりの境界を決めていたため `ﾀﾞ` が基底に
+    合流せず、`ﾀﾞｳﾝﾛｰﾄﾞ` が `ダウンロード` と別物のまま照合されて禁止表現をすり抜けた。
+    """
+    norm = unicodedata.normalize("NFKC", ch)
+    return bool(norm) and all(unicodedata.category(c) in ("Mn", "Mc", "Me") for c in norm)
+
+
 def _normalize(
     text: str, drop_all_space: bool = False, lower: bool = False, collapse_space: bool = True,
 ) -> tuple[str, list[int]]:
@@ -625,7 +644,7 @@ def _normalize(
     i, n = 0, len(text)
     while i < n:
         j = i + 1
-        while j < n and unicodedata.category(text[j]) in ("Mn", "Mc", "Me"):
+        while j < n and combines_after_nfkc(text[j]):
             j += 1
         for c in unicodedata.normalize("NFKC", text[i:j]):
             if is_invisible(c):
@@ -683,7 +702,7 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
     # 正規表現は非リテラルと同じ正規化済み本文に当てる（`case_sensitive: true` のときだけ
     # 生テキスト）。生テキストに当てていたため、ゼロ幅・全角・行折り返しの回避が
     # 「リテラル指定には効くが正規表現指定には効かない」＝書き方で検出力が変わる状態だった。
-    regex_rules = [r for r in decl.prohibited if r.get("regex")]
+    regex_rules = [r for r in (decl.prohibited or []) if r.get("regex")]
     regex_at: dict[int, int | None] = {}
     if regex_rules:
         if len(flat_keep) > REGEX_MAX_CHARS:
@@ -699,7 +718,7 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
                 regex_at[id(rule)] = (cs_idx_keep[at] if rule.get("case_sensitive")
                                       else idx_keep[at])
 
-    for rule in decl.prohibited:
+    for rule in decl.prohibited or []:
         pattern = rule["pattern"]
         hit_at: int | None = None
         if rule.get("regex"):
@@ -804,7 +823,7 @@ def _declared_section(decl: "Declared | None", key: str) -> bool:
         return False
     # `components: []` は「検査しない」ではなく「1つも許可しない」（policy 規則）。
     # 宣言されているので not_declared には入れない。
-    return decl.components is not None if key == "components" else bool(decl.prohibited)
+    return getattr(decl, key) is not None
 
 
 def file_sha256(path: str) -> str | None:
