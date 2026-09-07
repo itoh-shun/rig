@@ -57,6 +57,33 @@ Requiring both is what stops "I reviewed the code and it looks risky" from scori
 Requiring proximity is what stops a long review that names `mergeMetadata` in one
 paragraph and the word "any" in an unrelated sentence from scoring as a detection.
 
+A location signal has two forms. The `location` regex matched in the review text — the
+symbol the answer key names. Or the `file:line` anchor that `output-contracts/review-findings`
+requires of every finding, pointing at a line the defect occupies. Without the second, the
+rate moved on whether a reviewer's prose happened to quote an identifier: two reviews of this
+corpus found the same defect on the same line and scored a point apart.
+
+**A case's `head`/`base` shape therefore decides what an anchor can reach.** A defect owns
+its symbol line plus the changed hunks that contain or touch it — touching meaning no line in
+between. Plant a symptom more than one line away from the declaration the `location` regex
+names, and an anchor on the symptom will not locate it. Keep a seed's symbol and its symptom
+adjacent, or write the `location` regex to match the symptom's own line.
+
+An anchor has to *begin* inside that region, its path is compared whole, and a line owned by
+two violations at once scores neither: a line that cannot say which defect it is is not a
+location.
+
+That last rule has a measured cost. Where several seeds sit in one changed hunk, none of them
+owns a line alone and **no anchor reaches any of them** — they are located by symbol only, as
+they were before anchors existed. In the cases shipped here that is `sql-injection` in
+`py-mixed-violations` and `hardcoded-secret`, `floating-promise` and `any-on-public-api` in
+`ts-mixed-violations`, all of which live inside a single rewritten block. `ts-behavioral-correctness`
+plants each seed in its own hunk and every one of them is anchor-reachable.
+
+If you want a new seed to be reachable by `file:line`, give it at least one changed line no
+other seed's hunk covers. If you cannot, that is fine — the symbol path still scores it — but
+do not read a low anchor rate on such a case as reviewers failing to cite lines.
+
 `location_hit` and `concept_hit` are also reported separately, because "named the symbol
 but never said what was wrong with it" is a different failure from "never looked at it".
 

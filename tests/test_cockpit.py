@@ -10,6 +10,8 @@ underlying aggregation is correct (that's covered elsewhere).
 """
 
 import json
+
+from rig_workbench.workbench.detection_corpus import SCORER_VERSION
 import pathlib
 import subprocess
 import sys
@@ -61,7 +63,8 @@ def test_cockpit_shows_active_task_in_timeline_and_gate_radar(git_repo):
 def test_cockpit_surfaces_drill_confidence(git_repo):
     (git_repo / ".rig").mkdir(exist_ok=True)
     (git_repo / ".rig" / "drill-results.jsonl").write_text(
-        json.dumps({"scores": [{"reviewer": "security-reviewer", "detected": 4,
+        json.dumps({"scorer_version": SCORER_VERSION,
+                    "scores": [{"reviewer": "security-reviewer", "detected": 4,
                                 "seeded": 5, "false_positives": 1}]}) + "\n",
         encoding="utf-8")
     r = run_cli(["cockpit"], git_repo)

@@ -13,6 +13,7 @@ import pathlib
 
 from .digest import _read_jsonl
 from .state import build_acceptance, load_json, load_task, repo_root, resolve_task_id, save_json
+from .detection_corpus import SCORER_VERSION
 
 _CONFIDENCE_THRESHOLD = 0.7  # below this, flagged low-confidence and an extra reviewer is suggested
 
@@ -24,13 +25,24 @@ def aggregate_drill_confidence(root: pathlib.Path, corpus: str | None = None) ->
 
     `corpus` (#270) filters runs by their seed-selection source ("standard" /
     "project"); rows without the field predate the distinction and count as
-    "standard" (pre-#270 runs only ever used the shipped catalog). None = all."""
+    "standard" (pre-#270 runs only ever used the shipped catalog). None = all.
+
+    Rows are also filtered by `scorer_version`. A detection rate only means something
+    against the rule that produced it, and the rule has changed in ways that move
+    every number: version 3 stopped scoring loose prose entirely, after a paragraph
+    asserting that each changed function was correct was measured at 4/5 to 5/5 on
+    every shipped case. Summing across versions averages a reviewer's real work with
+    a number that measured vocabulary placement. Rows with no tag predate the field
+    and are dropped rather than counted as version 1 — they were written by at least
+    two different rules and there is no way to tell which."""
     drill_path = root / ".rig" / "drill-results.jsonl"
     atk: dict[str, dict] = {}
     if not drill_path.exists():
         return atk
     for d in _read_jsonl(drill_path):
         if corpus is not None and d.get("corpus", "standard") != corpus:
+            continue
+        if d.get("scorer_version") != SCORER_VERSION:
             continue
         for s in d.get("scores") or []:
             if not isinstance(s, dict):

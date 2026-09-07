@@ -2,6 +2,172 @@
 
 ## Unreleased
 
+### Changed
+
+**`talk-assistant` and `talk-loop`, reworked from a 1-on-1 interview.** Codex (gpt-6-astra)
+interviewed the persona over three rounds — questions, answers, follow-ups that attacked the
+answers, then a diagnosis. Nine findings, split by which brick actually owns them.
+
+The persona gained rules that can be judged from the outside, replacing ones it could always
+claim to have followed. Pushing back is now normative rather than an adjective in the 人格
+section: when a request contradicts a confirmed goal, hides a failure, or drops a needed
+protection, say what is lost — and a repeated instruction is not evidence the concern was
+resolved. What may be stated as fact is bounded to what was said in the conversation, what the
+assistant observed, and what a record it read actually says; an exit code of 0 or a file
+existing is not a passing check. Precedence is fixed: accuracy and necessary confirmation beat
+brevity, so "1〜2 sentences" became a default rather than an absolute. Proactivity and wit got
+firing conditions instead of being standing traits — evenly distributed warmth is a machine's
+fingerprint, not warmth.
+
+`talk-loop` took the three findings a persona cannot fix. ① gained a third branch for
+utterances that read as both a request and a complaint, which used to be forced into one of two
+buckets; ② now protects the words that carry the interpretation instead of discarding them with
+the fillers; ⑤ carries a user-imposed question budget across the whole conversation and stops
+with a narrowed scope when it cannot ask again; ⑥ queries the delegate for check names, the
+version under test, and where the evidence lives rather than relaying "all checks passed"; ⑦'s
+talk-log now carries the evidence a delegate did not supply in its existing 保留事項 section,
+appended after ⑥ rather than at task creation.
+
+The `<NON-INTERACTIVE-STOP>` clause (#587) is unchanged. It was dropped by accident during the
+rewrite and restored after the docs review caught it; the reviewer's evidence was the CHANGELOG
+line that named the four files the clause lives in.
+
+### Fixed
+
+**The drill was measuring vocabulary placement, not detection.**
+`score_violation` asked whether the answer key's `location` regex and its `concept`
+regex appeared within six hundred characters of each other, anywhere in the review.
+That unit cannot express the difference between "this is broken" and "this is fine".
+A paragraph naming every changed function and calling each one correct scored 5/5 on
+`py-mixed-violations`, 5/5 on `ts-mixed-violations` and 4/5 on
+`ts-behavioral-correctness`. Every concept word present, beside the right symbol,
+asserting nothing. Every fixture detection rate ever produced carries that flaw.
+
+The contract already had the structure that fixes it. `output-contracts/review-findings`
+requires each finding to be a heading under `## Blocking` or `## Non-blocking` with a
+four-value `Severity` and a `file:line`, and drill fixes reviewers to that contract.
+The scorer was not reading any of it. It now parses the review into findings and
+scores inside one finding at a time: prose that is not a finding is invisible, a
+heading with no `Severity` is a section title rather than a claim, and a finding
+pointing at two planted defects credits neither, because it has not said which one it
+found.
+A review that parses to no findings is reported as `unparsed` rather than as a silent
+zero — "the reviewer found nothing" and "the scorer could not read this" are different
+failures and only one of them belongs to the reviewer.
+
+`severity_accuracy` and `blocking_accuracy` come out of this for free and are computed
+for the first time. They were absent because scoring a whole document had nowhere to
+read them from, not because they needed a judge. On the two archived reviews of the
+same case they separate two personas that tie on detection: 0.8 against 1.0.
+
+Two more scorer defects found by measuring: an anchor written as an absolute path
+matched nothing, so a real review scored 0/5 where the same text with the workspace
+prefix removed scored 5/5 — `score_review` now takes the materialized workspace and
+resolves against it, without going back to the suffix rule that a same-basename path
+in another directory walks through. And the ambiguity test was asymmetric, built from
+one seed's siblings rather than from all of them, so a finding on `hardcoded-secret`
+carrying the contract-required `File: cache.ts:8` scored nothing while the same
+finding without the anchor scored. Following the contract lost points.
+
+On the clean case the rule changed in the other direction, and it moves real rates:
+filing a finding is now the false positive, whatever the finding says. `drill.md`
+already defined `clean_fp_rate` as the share of clean diffs answered with a finding,
+and `add_false_positive_guard` keys its threshold off that, but the scorer was reading
+the *words* — three fabricated `Severity: High` findings written without alarm
+vocabulary measured as clean. Across 1512 generated review shapes the two rules differ
+on 216, all in that direction, and on none in the other.
+
+Drill rows now carry `scorer_version`. Rates from different scorers are not
+comparable and `--replay` was comparing two different rulers. Rows written before this
+carry no tag and are comparable to nothing.
+
+One shape stays open, recorded per case by a test that fails if it moves: a finding
+carrying a `Severity`, a `File:` on the defect's own line, one subject, and a sentence
+saying that subject is correct still scores 3/5, 5/5 and 5/5. It is a finding by every
+property the scorer can check, and it says the code is right. What the finding scope
+does hold is the shape: the same claims as loose prose, or as headings with no
+severity, score zero.
+
+Two deterministic attempts to close it were written, measured and removed, and both
+punished honest reviewers without stopping the attack. A cue list for correctness
+verbs cost six true positives across the ideal reviews. A clause-level negation test
+cost more: "`reportUsage` does not await `client.send`" is how a missing await is
+reported, and it scored zero, while an attacker only had to write "awaits the send" to
+walk past. A rate that moves on that is measuring grammar. The remaining hole is
+semantic — a `concept` is a list of topic words, and "avoids the N+1 query" and "has an
+N+1 query" share every one of them — so it needs the judge step drill already scopes at
+③-b, reading the finding against the seed's own summary.
+
+Two rounds of review found all of this, and the first was an agent asked only to score
+full marks without finding anything. It broke a version that had just passed its own
+suite, including one defect its author could not have found from the inside: a finding
+carrying the `File:` the contract requires scored nothing, while the same finding
+without it scored, because the ambiguity test was built from one seed's siblings
+instead of from all of them. Following the contract lost points.
+
+### Changed
+
+**`policies/independent-verification` now covers the instruments, not only the graders.**
+The rule was always that the grader must not be the generator, and it was applied to
+review verdicts while the thing issuing the verdict went unexamined. The drill scorer's
+own tests were written by its author and guarded exactly one attack shape, which is why
+the narration hole sat there from the day the corpus shipped. Changing a scoring rule
+or a gate sensor now requires an attack set built by someone who did not write it, with
+the brief "score full marks without finding any defect" rather than "make the tests
+pass"; whatever lands becomes a regression test, and whatever cannot be closed becomes a
+test pinning its current value. Followed here, it produced three live attacks on a
+version that had just passed its own suite, one of which was the contract-compliance
+asymmetry above.
+
+### Fixed
+
+**The drill scorer measured whether a review quoted an identifier, not what it caught.**
+`output-contracts/review-findings` requires every finding to carry a `file:line` evidence
+anchor, and refuses findings that cannot point at one. `detection_corpus.score_violation`
+never looked at anchors. It credited a planted defect only when the answer key's `location`
+regex — the *symbol* the defect lives in — appeared somewhere in the review text.
+
+Measured on the fixture corpus: two reviews of `ts-behavioral-correctness`, from the same
+prompt with only the persona text differing, both found the unit-label defect at
+`workflow.ts:24`. Same line, same defect, and the one that did not happen to contain the
+string `recommendedQuantityLabel` scored 4/5 against the other's 5/5. A detection rate that
+moves on prose habits trains persona authors to write prose habits.
+
+`score_violation` now takes an optional `case` and, when given one, also resolves each
+finding's `file:line` anchor against the lines the defect actually occupies. Those lines are
+derived from the corpus — the changed hunks between `base/` and `head/` that carry the symbol
+— so no line numbers are added to the answer keys by hand and nothing needs renumbering when a
+case is edited. Callers that pass no `case` behave exactly as before.
+
+Three ways to inflate the rate were found by review, each demonstrated by running it, and each
+closed: a whole-file anchor (`service.py:1-63`) that sat on top of every defect at once, until
+the anchor was required to *begin* inside the defect's region rather than overlap it; a suffix
+path rule that degenerated to a basename match and let `other/workflow.ts` locate a defect in
+`workflow.ts`, until paths were compared whole; and a three-line widening window that made two
+seeds thirteen lines apart share a range, until the window was removed entirely and anchors on
+lines owned by more than one defect were made to score nothing.
+
+A fourth way is pinned rather than closed. Five point anchors on one line, with one sentence
+touching all five subjects, still scores 5/5 — `PROXIMITY_WINDOW` spans the paragraph, so each
+anchor finds its own defect's concept. It is left open because the same sentence with the answer
+key's five identifiers pasted in place of the line numbers **already scored 5/5 before anchors
+existed**: copying five line numbers out of a diff costs what copying five identifiers costs and
+yields the same. This change opened a second door of the same width beside one that was already
+open, and the thing holding both open is the proximity window, which predates it. Both numbers
+are pinned by one test, so narrowing the anchor path alone — which would make evidence anchors
+worth less than prose, the bug this entry is about, running backwards — fails.
+
+The ambiguity rule has a cost worth knowing about: where several seeds sit in one changed hunk, none
+owns a line alone and no anchor reaches any of them. In the shipped corpus that is four of
+fifteen violations, all in the two `mixed` cases. They are still scored by symbol, exactly as
+they were before, so nothing regressed — but `skills/engine/corpora/fixture/README.md` now says
+so, because a corpus author planting a new seed needs to know.
+
+`tests/test_drill_anchor_location.py` pins eleven properties, five of them the invariants a
+reviewer broke by measurement. The zero-window rule and the ambiguity rule were each confirmed
+by mutation: widening the range by one line fails the boundary test, and disabling the ambiguity
+guard fails the shared-hunk test.
+
 ## [2.10.1] - 2026-09-05
 
 ### Fixed

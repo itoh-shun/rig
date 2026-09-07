@@ -11,16 +11,27 @@ Two jobs, both deterministic so the drill never has to eyeball a score:
   materialize   base/ committed into a throwaway git repo, head/ laid over it as
                 uncommitted changes — i.e. exactly the shape "review the current
                 changes" expects. The real repo is never touched.
-  score         a review text vs. the answer key. A planted defect counts as
-                detected only when the review carries **both** a location signal
-                and a concept signal **near each other** (PROXIMITY_WINDOW).
-                Matching them anywhere in the document would be far too
-                generous: a long review that mentions `mergeMetadata` in one
-                paragraph and the word "any" in an unrelated sentence would
-                score as a detection. `location_hit` / `concept_hit` are also
-                reported separately, because "named the symbol but never said
-                what was wrong with it" is a different failure from "never
-                looked at it".
+  score         a review text vs. the answer key, **one finding at a time**. A
+                planted defect counts as detected only when a single finding both
+                says where it is (the answer key's symbol, or a `file:line` anchor
+                on a line the defect owns) and discusses the defect class — and
+                points at no other planted defect, because a finding that claims
+                two has not said which one it found.
+
+                The finding is the unit because scoring the document was measured
+                to be unusable. A paragraph naming every changed function and
+                calling each one correct scored 5/5 on `py-mixed-violations`, 5/5
+                on `ts-mixed-violations` and 4/5 on `ts-behavioral-correctness`:
+                every concept word present, beside the right symbol, asserting
+                nothing. `output-contracts/review-findings` already requires the
+                structure that fixes it, and drill fixes reviewers to that
+                contract; the scorer simply was not reading it. Prose outside a
+                finding is now invisible, and a review that parses to no findings
+                is reported as `unparsed` rather than as a silent zero.
+
+                `location_hit` / `concept_hit` are still reported separately,
+                because "named the symbol but never said what was wrong with it"
+                is a different failure from "never looked at it".
 
 On the **clean** case (zero planted defects) the direction inverts: *claiming* a
 finding is a false positive, and plain "looks fine" prose is not. That case is
@@ -30,18 +41,24 @@ bearing word: a conclusion that names the same vocabulary in the negative ("no
 security issues", "重大な問題はありません") is the reviewer doing exactly what
 this case rewards, so the keyword check is negation-aware per clause.
 
-What this scorer deliberately does NOT compute: `severity_accuracy`,
-`blocking_accuracy`, `explanation_quality` (they need the judge step in
-drill ③-b) and false positives on the *violation* cases (separating an invented
-finding from a real bug the reviewer happened to spot is a judgement call; the
-clean case measures the same thing under control). Those fields are left absent
-rather than filled with a number nobody measured.
+`severity_accuracy` and `blocking_accuracy` are computed now, and they are read
+rather than judged: the contract fixes `Severity` to four values and splits
+`## Blocking` from `## Non-blocking`, so scoring per finding gives the scorer a
+structured place to read both. They were absent before only because scoring the
+whole document had nowhere to read them from.
+
+What this scorer still deliberately does NOT compute: `explanation_quality` (it
+needs the judge step in drill ③-b) and false positives on the *violation* cases
+(separating an invented finding from a real bug the reviewer happened to spot is a
+judgement call; the clean case measures the same thing under control). Those fields
+are left absent rather than filled with a number nobody measured.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import json
 import os
 import pathlib
@@ -51,16 +68,39 @@ import subprocess
 import tempfile
 from typing import Any
 
-# A concept must appear within this many characters of some mention of the
-# location for the pair to count as one finding rather than two coincidences.
+from .anchors import Anchor, extract_anchors
+from .findings import Finding, parse_findings
+
+# Bumped on every change to a scoring rule, and written onto each drill row.
+# Without it a rate from one scorer is silently comparable to a rate from another,
+# and `--replay` compares two different rulers. Rows written before this existed
+# carry no tag and are not comparable to anything.
+#
+#   1  location regex x concept regex within PROXIMITY_WINDOW, over the whole document
+#   2  `file:line` anchors accepted as location evidence
+#   3  scored per finding (`output-contracts/review-findings`) instead of per document;
+#      one finding claims at most one defect; severity and blocking measured;
+#      anchor paths resolved against the materialized workspace
+SCORER_VERSION = 3
+
+# No longer used by anything. Detection scores one finding at a time, so the window
+# is a boundary the reviewer drew rather than a character count, and the clean-case
+# prose test works clause by clause. Kept as the record of what the rule used to be,
+# because a drill row tagged `scorer_version` 1 or 2 was produced with it.
 PROXIMITY_WINDOW = 600
 
-# On a clean case, blocking language is the false positive. A suggestion phrased
-# as optional ("might be worth …") deliberately does not match. The vocabulary
-# alone is not the verdict — `clean_false_positive` decides whether each hit is
-# asserted or denied.
+# On a clean case, blocking language in *prose* is the false positive. This only
+# runs on reviews that filed no finding at all — filing one is the false positive by
+# itself, whatever words it uses. A suggestion phrased as optional ("might be worth
+# …") deliberately does not match, and `clean_false_positive` decides whether each
+# hit is asserted or denied.
+#
+# A `severity:\s*(critical|high)` branch used to sit here and could never match:
+# `_CLAUSE_SPLIT_RE` splits on `:`, so `- Severity: High` is already two clauses by
+# the time this pattern sees it. Removed rather than repaired — a review that writes
+# a `Severity` line has filed a finding, and the branch above it catches that.
 CLEAN_FP_RE = re.compile(
-    r"(?i)(critical|high severity|severity:\s*(critical|high)|must fix|blocking|"
+    r"(?i)(critical|high severity|must fix|blocking|"
     r"security (issue|risk|vulnerab)|bugs?\b|defect|重大|要修正|ブロッ)"
 )
 
@@ -75,6 +115,29 @@ _NEG_BEFORE_RE = re.compile(r"(?i)\b(?:no|not|never|none|nothing|without|nor|fre
 _NEG_AFTER_RE = re.compile(r"ありません|ございません|ません|無い|無し|ない|なし|見当たら|皆無")
 
 
+def _asserted(text: str, pattern: re.Pattern[str]) -> bool:
+    """Does `pattern` match somewhere the surrounding clause does not negate?
+
+    Used by `clean_false_positive` and nowhere else. It was briefly applied to the
+    concept match on violation cases too, and removed after measurement: see
+    `score_violation`, which records what that cost. Detection does not read
+    negation.
+
+    Directional because the two languages negate from opposite sides: English
+    before the word ("no security issues"), Japanese after it (重大な問題は
+    *ありません*). Clause-local, so a negation reaching across a boundary is not
+    seen.
+    """
+    for clause in _CLAUSE_SPLIT_RE.split(text):
+        for match in pattern.finditer(clause):
+            if _NEG_BEFORE_RE.search(clause[: match.start()]):
+                continue
+            if _NEG_AFTER_RE.search(clause[match.end():]):
+                continue
+            return True
+    return False
+
+
 def clean_false_positive(text: str) -> bool:
     """True when a review of the clean case actually *claims* a finding.
 
@@ -84,14 +147,7 @@ def clean_false_positive(text: str) -> bool:
     measures. Limit worth knowing: the cue is clause-local and directional, so a
     negation that reaches across a clause boundary is not seen.
     """
-    for clause in _CLAUSE_SPLIT_RE.split(text):
-        for match in CLEAN_FP_RE.finditer(clause):
-            if _NEG_BEFORE_RE.search(clause[: match.start()]):
-                continue
-            if _NEG_AFTER_RE.search(clause[match.end():]):
-                continue
-            return True
-    return False
+    return _asserted(text, CLEAN_FP_RE)
 
 
 # drill derives expected blocking from expected severity (facets/instructions/drill.md ①).
@@ -146,20 +202,269 @@ def expected_blocking(severity: str) -> str | None:
     return _BLOCKING_BY_SEVERITY.get(str(severity).lower())
 
 
-def score_violation(text: str, violation: dict[str, Any]) -> tuple[bool, bool, bool]:
-    """Credit a planted defect only when its class is discussed *near* its symbol.
+def _changed_head_ranges(base_lines: list[str], head_lines: list[str]) -> list[tuple[int, int]]:
+    """1-based head line ranges that differ from base. No context, no widening."""
+    ranges: list[tuple[int, int]] = []
+    matcher = difflib.SequenceMatcher(a=base_lines, b=head_lines, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if j2 > j1:                       # replace / insert: real head lines
+            ranges.append((j1 + 1, j2))
+        elif j1 < len(head_lines):        # delete: the head line the removal sits before
+            ranges.append((j1 + 1, j1 + 1))
+    return ranges
 
-    Returns (location_hit, concept_hit, detected).
+
+def _merge(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Overlapping or touching spans collapsed, so a line is tested once."""
+    out: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if out and start <= out[-1][1] + 1:
+            out[-1] = (out[-1][0], max(out[-1][1], end))
+        else:
+            out.append((start, end))
+    return out
+
+
+def _defect_line_ranges(
+    case: dict[str, Any], violation: dict[str, Any]
+) -> dict[str, list[tuple[int, int]]]:
+    """Where in `head/` this planted defect lives, as {relative path: [(start, end)]}.
+
+    Derived, never declared: the answer keys carry no line numbers, so editing a case
+    does not mean renumbering it.
+
+    A defect owns its `location` symbol line plus the changed hunks that **contain or
+    touch** it — a symptom is usually the line under the declaration the answer key
+    names. Touching means exactly that, with no line in between; there is no window to
+    widen. An earlier draft widened each hunk by three lines and was measured to hand
+    one defect's lines to the defect next to it: two seeds thirteen lines apart shared
+    a range, and an anchor in the overlap scored both. `drill.md` names that failure —
+    credit for a concept mentioned in some other paragraph — as the thing the location
+    test exists to prevent.
+
+    When `base/` has no counterpart file the whole of `head/` differs, which would make
+    every line in it the defect's line. Fall back to the symbol line alone.
     """
+    case_dir = case.get("_dir")
+    if not case_dir:
+        return {}
+    head_root = pathlib.Path(case_dir) / "head"
+    base_root = pathlib.Path(case_dir) / "base"
+    if not head_root.is_dir():
+        return {}
     location = re.compile(violation["location"])
+    out: dict[str, list[tuple[int, int]]] = {}
+    for head_file in sorted(head_root.rglob("*")):
+        if head_file.is_symlink() or not head_file.is_file():
+            continue
+        try:
+            head_lines = head_file.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        symbol_lines = [n for n, line in enumerate(head_lines, 1) if location.search(line)]
+        if not symbol_lines:
+            continue
+        rel = head_file.relative_to(head_root).as_posix()
+        base_file = base_root / rel
+        if not base_file.is_file():
+            out[rel] = _merge([(n, n) for n in symbol_lines])
+            continue
+        try:
+            base_lines = base_file.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            out[rel] = _merge([(n, n) for n in symbol_lines])
+            continue
+        hunks = _changed_head_ranges(base_lines, head_lines)
+        spans: list[tuple[int, int]] = []
+        for n in symbol_lines:
+            touching = [(h1, h2) for h1, h2 in hunks if h1 - 1 <= n <= h2 + 1]
+            spans.extend((min(h1, n), max(h2, n)) for h1, h2 in touching)
+            if not touching:
+                spans.append((n, n))
+        out[rel] = _merge(spans)
+    return out
+
+
+def _relative_anchor_path(anchor: Anchor, workspace: str | None) -> str:
+    """The anchor's path as the case sees it.
+
+    `/rig:drill` materializes a case into a throwaway directory, so a reviewer
+    naturally writes `/tmp/drill-x9/repo/inventory.ts:6` and means `inventory.ts`.
+    Measured on a real review: absolute paths scored 0/5 where the same review with
+    the workspace prefix removed scored 5/5 — the anchor path went silent for every
+    finding at once.
+
+    Only a prefix the caller vouches for is stripped. Going back to a suffix rule
+    would reopen the hole it was closed for: every fixture file sits at the root of
+    its case, so `endswith("/" + rel)` is a basename match and `other/workflow.ts`
+    locates a defect planted in `workflow.ts`.
+    """
+    path = anchor.path
+    if not workspace:
+        return path
+    root = workspace.rstrip("/") + "/"
+    return path[len(root):] if path.startswith(root) else path
+
+
+def _anchor_locates(
+    anchor: Anchor,
+    ranges: dict[str, list[tuple[int, int]]],
+    workspace: str | None = None,
+) -> bool:
+    """Does this `file:line` anchor *begin* inside the defect's region?
+
+    Two rules, both there because the looser version was measured to be gameable.
+
+    The path is compared whole. A suffix rule was tried and removed: every fixture file
+    sits at the root of its case, so `endswith("/" + rel)` degenerates into a basename
+    match and `other/workflow.ts` locates a defect planted in `workflow.ts`.
+
+    The anchor must *start* in the region, not merely overlap it. Overlap lets one
+    whole-file range — `service.py:1-63` — sit on top of every defect in the file at
+    once, so a review that names the file and lists the concepts scores as though it
+    had found each one. Beginning at the defect is what pointing at something is.
+    """
+    anchor_path = _relative_anchor_path(anchor, workspace)
+    for rel, spans in ranges.items():
+        if anchor_path != rel:
+            continue
+        if any(start <= anchor.start <= end for start, end in spans):
+            return True
+    return False
+
+
+def scoreable_findings(findings: list[Finding]) -> list[Finding]:
+    """The findings that are findings under the contract, not just headings.
+
+    `output-contracts/review-findings` fixes `Severity` to four values and requires
+    it on every finding. A heading with no severity is a section title, and treating
+    it as a claim is what let an independent attempt on this scorer take a narration
+    paragraph, put `### ` in front of each sentence, and go from 0/5 back to 4/5 —
+    the sentences said the code was correct, and the concept vocabulary in them was
+    incidental. Grading is what makes a remark a finding.
+
+    Deliberately not also requiring `File:`. The answer key's symbol has been valid
+    location evidence since before anchors were read at all, and dropping it would
+    turn a scorer change into a silent tightening of what counts as a review.
+    """
+    return [finding for finding in findings if finding.severity is not None]
+
+
+def _case_ranges(case: dict[str, Any] | None) -> dict[str, dict[str, list[tuple[int, int]]]]:
+    """Every planted defect's line ranges, keyed by violation id.
+
+    Computed once for the whole case so ambiguity is judged against the same set
+    whichever defect is being scored. Deriving one defect's siblings on its own left
+    the test asymmetric: an anchor sitting in two defects' ranges was rejected for
+    the first and accepted for the second, so a contract-compliant finding on
+    `hardcoded-secret` with `File: cache.ts:8` scored nothing while the same finding
+    without the anchor scored. Following the contract lost points.
+    """
+    if case is None:
+        return {}
+    return {
+        violation["id"]: _defect_line_ranges(case, violation)
+        for violation in (case.get("violations") or [])
+    }
+
+
+def _finding_claims(
+    finding: Finding,
+    violations: list[dict[str, Any]],
+    all_ranges: dict[str, dict[str, list[tuple[int, int]]]],
+    workspace: str | None,
+) -> set[str]:
+    """Which of these planted defects this one finding says the location of.
+
+    `violations` is the whole case when there is one. A caller scoring a single
+    violation with no corpus behind it passes just that violation, and then the only
+    question is whether the finding names its symbol — there are no siblings to be
+    ambiguous between.
+    """
+    claims: set[str] = set()
+    for violation in violations:
+        vid = violation.get("id")
+        if re.search(violation["location"], finding.body):
+            claims.add(vid)
+            continue
+        mine = all_ranges.get(vid) or {}
+        if not mine:
+            continue
+        for anchor in extract_anchors(finding.body):
+            if not _anchor_locates(anchor, mine, workspace):
+                continue
+            # A line owned by two defects does not say which one is meant.
+            if any(_anchor_locates(anchor, other, workspace)
+                   for other_id, other in all_ranges.items() if other_id != vid):
+                continue
+            claims.add(vid)
+            break
+    return claims
+
+
+def score_violation(
+    text: str,
+    violation: dict[str, Any],
+    case: dict[str, Any] | None = None,
+    findings: list[Finding] | None = None,
+    workspace: str | None = None,
+    all_ranges: dict[str, dict[str, list[tuple[int, int]]]] | None = None,
+) -> tuple[bool, bool, bool]:
+    """Credit a planted defect only when one finding *asserts* it, where it lives.
+
+    Three conditions, and each one is there because dropping it was measured to be
+    gameable.
+
+    **A finding, not the document.** Scoring the whole text let a paragraph naming
+    every changed function and calling each one correct score 5/5 on
+    `py-mixed-violations`, 5/5 on `ts-mixed-violations` and 4/5 on
+    `ts-behavioral-correctness`. Every concept word present, beside the right symbol,
+    asserting nothing. `output-contracts/review-findings` already carries the
+    structure that separates a claim from a remark, and drill fixes reviewers to it.
+
+    **Graded, not merely written.** Structure alone is not a claim: an independent
+    attempt on this scorer took that same narration, put `### ` in front of each
+    sentence, and went from 0/5 back to 4/5. `scoreable_findings` requires the
+    `Severity` the contract fixes on every finding, which is what makes a remark a
+    finding.
+
+    What this still cannot do is read the *direction* of the claim. A clause-level
+    negation test was written for it and removed after measurement: it cost more than
+    it bought. "`reportUsage` does not await `client.send`" is the natural way to
+    report a missing await and scored zero under it, while an attacker only had to
+    phrase the same narration positively ("`reportUsage` awaits the send") to walk
+    past. Separating "has an N+1 query" from "avoids the N+1 query" is a semantic
+    call over a `concept` that is a list of topic words, and it needs the judge in
+    drill ③-b. See `test_a_graded_claim_of_correctness_is_an_open_attack`.
+
+    **One finding, one defect.** A finding pointing at two planted defects has not
+    said which one it found. Measured: one finding listing five point anchors and a
+    sentence touching all five subjects scored 5/5 with no symbol named, and the same
+    sentence with the answer key's five identifiers scored 5/5 too.
+
+    Returns (location_hit, concept_hit, detected). `concept_hit` stays document-wide,
+    because "never raised this class anywhere" and "raised it but not as a finding"
+    are different reports and the scoreboard separates them.
+    """
     concept = re.compile(violation["concept"])
-    location_hit = bool(location.search(text))
     concept_hit = bool(concept.search(text))
+    if findings is None:
+        findings = scoreable_findings(parse_findings(text))
+    if all_ranges is None:
+        all_ranges = _case_ranges(case)
+
+    vid = violation.get("id")
+    siblings = list(case.get("violations") or []) if case is not None else [violation]
+    location_hit = False
     detected = False
-    for match in location.finditer(text):
-        start = max(0, match.start() - PROXIMITY_WINDOW)
-        end = min(len(text), match.end() + PROXIMITY_WINDOW)
-        if concept.search(text[start:end]):
+    for finding in findings:
+        claims = _finding_claims(finding, siblings, all_ranges, workspace)
+        if vid not in claims or len(claims) != 1:
+            continue
+        location_hit = True
+        if concept.search(finding.body):
             detected = True
             break
     return location_hit, concept_hit, detected
@@ -195,24 +500,57 @@ def score_review(
     case: dict[str, Any],
     text: str,
     perspective: str | None = None,
+    workspace: str | None = None,
 ) -> dict[str, Any]:
-    """Score one reviewer's output for one case against that case's answer key."""
+    """Score one reviewer's output for one case against that case's answer key.
+
+    `workspace` is the directory the case was materialized into, when the caller
+    knows it. Anchors under it are read as case-relative; without it an absolute
+    anchor simply does not match, which silently zeroed a real review's every
+    finding at once.
+    """
+    findings = scoreable_findings(parse_findings(text))
+    all_ranges = _case_ranges(case)
     result: dict[str, Any] = {
         "case": case["id"],
         "clean": bool(case.get("clean")),
         "detections": [],
         "seeded": 0,
         "detected": 0,
+        "findings_parsed": len(findings),
     }
+    if not findings and not case.get("clean"):
+        # "the reviewer found nothing" and "the scorer could not read the review"
+        # are different failures, and only one of them is the reviewer's. Say which.
+        # Not on the clean case: there the correct review *has* no findings, and
+        # flagging it would put the two back together from the other side.
+        result["unparsed"] = True
     if case.get("clean"):
-        # Every finding here is a false positive by construction — but a denial
-        # ("no bugs found") is not a finding.
-        result["flagged"] = clean_false_positive(text)
+        # On a case with nothing planted, **filing a finding is the false positive**.
+        # `drill.md` defines `clean_fp_rate` as the share of clean diffs the reviewer
+        # answered with a finding or a REJECT, and `add_false_positive_guard` keys off
+        # that number, so the question here is whether the reviewer filed one — not
+        # what vocabulary the filing happens to contain.
+        #
+        # Reading the words instead was measured to lose real false positives: three
+        # fabricated `Severity: High` blocking findings, phrased without any of the
+        # alarm vocabulary, scored `flagged=False` while the same text scored True
+        # under the rule this replaced. A persona that invents high-severity findings
+        # on clean code would have measured at a 0% false-positive rate and the guard
+        # would never have fired.
+        #
+        # Prose is still read the old way when there are no findings at all, because
+        # a review that files nothing can still assert a bug in passing, and "looks
+        # fine" must stay free — that is the one behaviour this case exists to reward.
+        result["flagged"] = bool(findings) or clean_false_positive(text)
         return result
 
     for violation in accountable_violations(case, perspective):
-        location_hit, concept_hit, detected = score_violation(text, violation)
-        result["detections"].append({
+        location_hit, concept_hit, detected = score_violation(
+            text, violation, case=case, findings=findings,
+            workspace=workspace, all_ranges=all_ranges,
+        )
+        entry: dict[str, Any] = {
             "violation": violation["id"],
             "category": violation.get("category"),
             "severity": violation.get("severity"),
@@ -220,16 +558,58 @@ def score_review(
             "location_hit": location_hit,
             "concept_hit": concept_hit,
             "detected": detected,
-        })
+        }
+        if detected:
+            claim = _claiming_finding(violation, findings, case, all_ranges, workspace)
+            if claim is not None:
+                entry["severity_given"] = claim.severity
+                entry["blocking_given"] = claim.blocking
+        result["detections"].append(entry)
     result["seeded"] = len(result["detections"])
     result["detected"] = sum(1 for d in result["detections"] if d["detected"])
+
+    # Severity and blocking are read off the contract's own fields, so they are
+    # measured rather than judged. The module used to leave both absent because the
+    # scorer had no structured place to read them; scoring per finding gives it one.
+    # `explanation_quality` still needs the judge in drill ③-b and stays absent.
+    graded = [d for d in result["detections"] if d.get("severity_given")]
+    if graded:
+        result["severity_accuracy"] = round(
+            sum(1 for d in graded if d["severity_given"] == d["severity"]) / len(graded), 4
+        )
+    blocked = [d for d in result["detections"] if d.get("blocking_given") is not None]
+    if blocked:
+        result["blocking_accuracy"] = round(
+            sum(1 for d in blocked
+                if ("Blocking" if d["blocking_given"] else "Non-blocking") == d["expected_blocking"])
+            / len(blocked), 4
+        )
     return result
+
+
+def _claiming_finding(
+    violation: dict[str, Any],
+    findings: list[Finding],
+    case: dict[str, Any] | None,
+    all_ranges: dict[str, dict[str, list[tuple[int, int]]]],
+    workspace: str | None,
+) -> Finding | None:
+    """The finding that credited this defect — where its severity and section come from."""
+    concept = re.compile(violation["concept"])
+    vid = violation.get("id")
+    siblings = list(case.get("violations") or []) if case is not None else [violation]
+    for finding in findings:
+        claims = _finding_claims(finding, siblings, all_ranges, workspace)
+        if vid in claims and len(claims) == 1 and concept.search(finding.body):
+            return finding
+    return None
 
 
 def build_drill_row(
     reviews: dict[str, dict[str, str]],
     cases: list[dict[str, Any]] | None = None,
     root: pathlib.Path | None = None,
+    workspaces: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """One `.rig/drill-results.jsonl` row from {case-id: {persona: review text}}.
 
@@ -254,19 +634,39 @@ def build_drill_row(
         effective = perspective if attribution == "perspective" else None
         detected = seeded = 0
         clean_diffs = clean_findings = 0
+        unreadable: list[str] = []
+        severity_right = severity_graded = 0
+        blocking_right = blocking_graded = 0
         missed: list[str] = []
         missed_detail: list[dict[str, Any]] = []
         for case in scored_cases:
             text = reviews[case["id"]].get(persona)
             if text is None:
                 continue
-            row = score_review(case, text, effective)
+            row = score_review(
+                case, text, effective,
+                workspace=(workspaces or {}).get(case["id"]),
+            )
+            # A review the scorer could not read is not a reviewer that found
+            # nothing, and a rate that mixes them is unreadable itself.
+            if row.get("unparsed") and not row["clean"]:
+                unreadable.append(case["id"])
             if row["clean"]:
                 clean_diffs += 1
                 clean_findings += int(row["flagged"])
                 continue
             detected += row["detected"]
             seeded += row["seeded"]
+            for d in row["detections"]:
+                if d.get("severity_given"):
+                    severity_graded += 1
+                    severity_right += int(d["severity_given"] == d["severity"])
+                if d.get("blocking_given") is not None:
+                    blocking_graded += 1
+                    blocking_right += int(
+                        ("Blocking" if d["blocking_given"] else "Non-blocking")
+                        == d["expected_blocking"]
+                    )
             for d in row["detections"]:
                 if d["detected"]:
                     continue
@@ -287,6 +687,15 @@ def build_drill_row(
             "clean_diffs": clean_diffs,
             "clean_findings": clean_findings,
         }
+        if unreadable:
+            score["unreadable_cases"] = unreadable
+        # Read off the contract's own fields rather than judged, so they belong on
+        # the row: a persona that finds everything and grades it Low has not caught
+        # it in any sense an operator cares about, and detection alone hides that.
+        if severity_graded:
+            score["severity_accuracy"] = round(severity_right / severity_graded, 3)
+        if blocking_graded:
+            score["blocking_accuracy"] = round(blocking_right / blocking_graded, 3)
         if clean_diffs:
             score["clean_fp_rate"] = round(clean_findings / clean_diffs, 3)
         scores.append(score)
@@ -298,6 +707,7 @@ def build_drill_row(
         .replace("+00:00", "Z"),
         "corpus": meta.get("corpus", "fixture"),
         "corpus_version": meta.get("corpus_version"),
+        "scorer_version": SCORER_VERSION,
         "seeds": planted,
         "valid_seeds": planted,
         "clean_diffs": sum(1 for c in scored_cases if c.get("clean")),
@@ -352,6 +762,7 @@ def cmd_drill_corpus(args: argparse.Namespace) -> None:
             print(json.dumps({
                 "corpus": meta.get("corpus", "fixture"),
                 "corpus_version": meta.get("corpus_version"),
+                "scorer_version": SCORER_VERSION,
                 "root": str(corpus_root()),
                 "cases": [
                     {
@@ -399,7 +810,17 @@ def cmd_drill_corpus(args: argparse.Namespace) -> None:
     if unknown:
         print(f"unknown case id(s) in --reviews: {', '.join(unknown)}")
         return
-    row = build_drill_row(reviews, cases)
+    # `--workspace case=dir` for every case that was materialized somewhere, so a
+    # reviewer's absolute anchors resolve. Without it an absolute path is simply a
+    # different path and the anchor route goes silent for that whole review.
+    workspaces: dict[str, str] = {}
+    for pair in getattr(args, "workspace", None) or []:
+        case_id, _, directory = pair.partition("=")
+        if not directory:
+            print(f"--workspace expects CASE=DIR (got: {pair!r})")
+            raise SystemExit(2)
+        workspaces[case_id] = directory
+    row = build_drill_row(reviews, cases, workspaces=workspaces or None)
     line = json.dumps(row, ensure_ascii=False)
     if args.append:
         path = pathlib.Path(args.append)
