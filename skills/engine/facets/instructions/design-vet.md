@@ -7,8 +7,18 @@
 ### ⓪ 制約検査（機械プリパス・`policies/design-constraint-rules`）
 検閲の前に、プロジェクトが宣言したデザイン制約を成果物に突き合わせる。判断はしない。
 
+**`<repo>` ルートで実行する**（既定の制約パスがリポジトリ相対のため、別 cwd から呼ぶと
+宣言があるのに `not-configured` になる）。次の順で探す。
+
 ```
-python3 scripts/check_design_constraints.py --if-configured \
+rig-wb design-constraints --if-configured \
+  --report <run-dir>/constraints-report.json <成果物のパス...>
+```
+
+`rig-wb` が無ければ plugin root の `scripts/` を使う（対象リポジトリには存在しない）。
+
+```
+python3 <plugin root>/scripts/check_design_constraints.py --if-configured \
   --report <run-dir>/constraints-report.json <成果物のパス...>
 ```
 
@@ -20,8 +30,12 @@ python3 scripts/check_design_constraints.py --if-configured \
 | status | 意味 | 後段の扱い |
 |---|---|---|
 | `checked` | 宣言を読み、成果物と突き合わせた | `violations` を証拠として両 reviewer に渡す |
-| `unchecked` | **宣言はあるのに検査が成立しなかった**（`[要記入]` が残っている・JSON が壊れている・成果物が読めない） | 合格ではない。理由をそのまま verdict に転記する |
+| `unchecked` | **宣言はあるのに検査が成立しなかった**（`[要記入]` が残っている・JSON が壊れている・スキーマに無いキーがある・成果物が読めない・正規表現の照合が制限時間を超えた） | 合格ではない。理由をそのまま verdict に転記する |
 | `not-configured` | そもそも宣言が無い | 合格でも未検査でもない。**「制約は検査していない」と明記する** |
+
+**センサーそのものが見つからないときは `unchecked` であって `not-configured` ではない。**
+宣言の有無を確かめられていないのだから、「宣言が無い」と書いてはならない。どちらの起動経路も
+使えなかった事実を、そのまま verdict に書く。
 
 - 出力を読みやすく書き直さない。件数を丸めない。`status` と `reason` は**逐語で**運ぶ。
 - 落ちた検査を、通るまで実行し直さない。直すのは前の step（作成モードは `draft`）。

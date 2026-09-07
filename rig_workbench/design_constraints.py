@@ -12,10 +12,11 @@
 規則の正本は `skills/engine/facets/policies/design-constraint-rules.md`、制約ファイルの形は
 `skills/engine/manifests/design-constraints.schema.json` です。
 
-検出するのは次の3クラスだけです:
+検出するのは次の4クラスだけです:
 
     raw-value              宣言トークンに解決しない色・長さ・フォントが書かれている
     unknown-token          存在しないトークン名を参照している
+    unknown-component      インベントリに無いコンポーネントを参照している
     prohibited-expression  禁止表現が出現している
 
 トークン名も生値も書かずに散文で指示したもの（「ブランドの青を使う」）は**構造的に
@@ -49,6 +50,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import unicodedata
 
@@ -81,7 +83,14 @@ RE_FONT_SIZE_SLOT = re.compile(
 # 参照構文。policy 5 と 7 が正本。
 RE_TOKEN_REF = re.compile(r"\btoken\(\s*([A-Za-z0-9_.\-]+)\s*\)")
 RE_CSS_VAR = re.compile(r"\bvar\(\s*--([A-Za-z0-9_\-]+)\s*[,)]")
-RE_COMPONENT = re.compile(r"<([A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)\b")
+# JSX の `<` は識別子文字の後に来ない。TypeScript の型引数（`Map<String, Int>`・`f<T>`）は
+# 必ず識別子の直後に来る。さらに TSX のアロー関数ジェネリクス `<T,>(x) => x` は識別子の
+# 後ろではないので、名前の直後の `,` で分ける——**JSX の要素名の直後に `,` は来ない**。
+RE_COMPONENT = re.compile(
+    r"(?<![A-Za-z0-9_$])<([A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)\b(?!\s*,)"
+)
+# JSX を書けない拡張子。ここでコンポーネント検査をすると、型引数を要素と読み違える。
+NO_JSX_SUFFIXES = (".ts", ".css", ".scss", ".sass", ".less", ".json")
 
 # CSS 宣言。名前付き色とフォントは、散文で同じ語が出るため宣言の中でだけ読む
 # （「エラーは red で示す」を色の生値として上げない）。
@@ -90,6 +99,54 @@ COLOUR_PROPERTIES = ("color", "background", "border", "outline", "shadow", "fill
 
 # 表示上は同じで、部分文字列としては一致しない文字。禁止表現の検査前に落とす。
 ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"), None)
+
+# `regex: true` の照合に置く上限。**破滅的バックトラックは1回の `re.search` が返ってこない**
+# ので、同じプロセス内で経過時間を測っても止められない（`^(a+)+$` は 41 文字で無限に近い）。
+# 別プロセスに出して壁時計で殺す。超えたら合格ではなく未検査にする。
+REGEX_TIME_BUDGET = 5.0
+REGEX_MAX_CHARS = 200_000
+
+# 正規表現だけを走らせる最小のワーカ。shell は使わない。入力は stdin の JSON。
+_REGEX_WORKER = """
+import json, re, sys
+d = json.load(sys.stdin)
+out = []
+for r in d["rules"]:
+    text = d["raw"] if r["cs"] else d["flat"]
+    m = re.search(r["pattern"], text, 0 if r["cs"] else re.IGNORECASE)
+    out.append(m.start() if m else None)
+json.dump(out, sys.stdout)
+"""
+
+
+def regex_hits(rules: list[dict], raw: str, flat: str, where: str) -> list[int | None]:
+    """正規表現の照合を別プロセスで行い、壁時計で打ち切る。
+
+    パターンはプロジェクトが書き、本文は監査モードでは外部サイトの DOM である。
+    プロセス内で回すと、破滅的なパターン1つでゲートが返ってこなくなる——
+    **返ってこないゲートは、通らないのではなく何も守っていない。**
+    """
+    payload = json.dumps({
+        "raw": raw, "flat": flat,
+        "rules": [{"pattern": r["pattern"], "cs": bool(r.get("case_sensitive"))} for r in rules],
+    })
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _REGEX_WORKER], input=payload,
+            capture_output=True, text=True, timeout=REGEX_TIME_BUDGET, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise Unchecked(
+            f"禁止表現（正規表現）の照合が {REGEX_TIME_BUDGET} 秒を超えた: {where} — "
+            f"破滅的バックトラックの可能性。パターンを見直す"
+        ) from exc
+    except OSError as exc:
+        raise Unchecked(f"正規表現の照合プロセスを起動できない: {exc}") from exc
+    if proc.returncode != 0:
+        raise Unchecked(
+            f"正規表現の照合が失敗した: {where}: {proc.stderr.strip().splitlines()[-1:]}"
+        )
+    return json.loads(proc.stdout)
 
 # CSS Color Module Level 4 の名前付き色。数値記法だけを色と見なすと、
 # `dodgerblue` と書くだけで宣言集合の検査を抜けられる。
@@ -204,14 +261,62 @@ def normalize_font(raw: str) -> str:
     return first.strip().strip("'\"").strip().lower()
 
 
-def colors_in(text: str) -> list[str]:
-    found = [normalize_hex(m.group("d")) for m in RE_HEX.finditer(text)]
+def css_prop(prop: str) -> str:
+    """JSX の `fontFamily` を CSS の `font-family` と同じものとして読む。
+
+    キャメルケースを見ないと、`style={{ fontFamily: "Comic Sans MS" }}` が丸ごと
+    すり抜ける。同じ宣言を書き方で見分けるのは、検査ではなく偶然になる。
+    """
+    return re.sub(r"(?<!^)(?=[A-Z])", "-", prop).lower()
+
+
+def _declaration_spans(text: str) -> list[tuple[int, int]]:
+    """`prop: value` の value が占める範囲。数字だけの16進を色と見なす条件に使う。"""
+    return [(m.start(2), m.end(2)) for m in RE_DECL.finditer(text)]
+
+
+def numeric_colors_in(text: str, anywhere: bool = False) -> list[str]:
+    """16進と rgb() を読む。
+
+    **数字だけの16進は CSS 宣言の中でだけ色と見なす。** `fixes #123` の Issue 番号が
+    `#112233` に化けていた。英字を含むもの（`#f00`・`#fff`）は色としか読めないので
+    散文でも拾う。`anywhere=True` は宣言側（値であることが確定している）用。
+    """
+    spans = [] if anywhere else _declaration_spans(text)
+    found: list[str] = []
+    for m in RE_HEX.finditer(text):
+        digits = m.group("d")
+        if not anywhere and digits.isdigit():
+            if not any(lo <= m.start() < hi for lo, hi in spans):
+                continue
+        found.append(normalize_hex(digits))
     for m in RE_RGB.finditer(text):
         value = normalize_rgb(*m.groups())
-        if value is not None:
-            found.append(value)
-    found.extend(named_colors_in(text))
+        # 範囲外（rgb(300,0,0)）は None。落とすと「見えない」＝「無い」になるので、
+        # 解決できない生値として字面のまま報告に載せる。
+        found.append(value if value is not None else re.sub(r"\s+", "", m.group(0)).lower())
     return found
+
+
+def colors_in(text: str) -> list[str]:
+    return numeric_colors_in(text) + named_colors_in(text)
+
+
+def classify_declared(value: str) -> tuple[list[str], list[str], str | None]:
+    """宣言された値ひとつを、成果物側と同じ正規化で色・長さ・フォントに振り分ける。
+
+    ここが成果物側とずれると、**宣言した値そのものが違反として上がる。**
+    実際に `{"surface": "white"}` がフォント扱いになり、`background: white` も
+    `#FFFFFF` も違反になっていた。全角の宣言（`＃0A84FF`）も同じ理由で壊れていた。
+    """
+    folded = fold(value)
+    colors = numeric_colors_in(folded, anywhere=True)
+    bare = folded.strip().strip("\'\"").strip().lower()
+    if bare in CSS_NAMED_COLOURS:
+        colors.append(CSS_NAMED_COLOURS[bare])
+    lengths = lengths_in(folded)
+    font = None if (colors or lengths) else normalize_font(folded)
+    return colors, lengths, font
 
 
 def named_colors_in(text: str) -> list[str]:
@@ -221,7 +326,7 @@ def named_colors_in(text: str) -> list[str]:
     """
     found: list[str] = []
     for prop, value in RE_DECL.findall(text):
-        if not any(k in prop.lower() for k in COLOUR_PROPERTIES):
+        if not any(k in css_prop(prop) for k in COLOUR_PROPERTIES):
             continue
         for word in re.findall(r"[A-Za-z]{3,20}", value):
             low = word.lower()
@@ -240,7 +345,7 @@ def fonts_in(text: str) -> list[str]:
     """
     found: list[str] = []
     for prop, value in RE_DECL.findall(text):
-        low = prop.lower()
+        low = css_prop(prop)
         if low == "font-family":
             family = normalize_font(value)
         elif low == "font":
@@ -267,9 +372,12 @@ def load_constraints(path: str) -> dict:
     if not os.path.isfile(path):
         raise Unchecked(f"制約ファイルが無い: {path}")
     try:
-        with open(path, encoding="utf-8") as fh:
+        # utf-8-sig: BOM 付きで保存された JSON を恒久 unchecked にしないため。
+        with open(path, encoding="utf-8-sig") as fh:
             raw = fh.read()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # UnicodeDecodeError を捕らないと traceback で落ち、報告ファイルが書かれない。
+        # 「どの状態でも報告を書く」が破れると、design-vet ⓪ が転記する status が消える。
         raise Unchecked(f"制約ファイルが読めない: {path}: {exc}") from exc
     try:
         data = json.loads(raw)
@@ -305,10 +413,26 @@ def unfilled_fields(data: dict) -> list[str]:
     return out
 
 
+ALLOWED_TOP_KEYS = frozenset({"_readme", "version", "tokens", "components", "prohibited"})
+ALLOWED_RULE_KEYS = frozenset({"pattern", "why", "regex", "case_sensitive"})
+
+
 def validate_constraints(data: object, path: str) -> None:
-    """スキーマの構造だけを手で見る（jsonschema に依存しない）。"""
+    """スキーマの構造だけを手で見る（jsonschema に依存しない）。
+
+    **未知のキーは未検査にする。** スキーマは `additionalProperties: false` だが、
+    ここが素通りしていたため `prohibited` を `prohibitted` と綴り間違えるだけで
+    禁止表現の規則が丸ごと消え、`checked` / 違反 0 件 / exit 0 で緑になっていた。
+    宣言したのに守られず、しかもゲートが合格を返す——このセンサーが潰すはずの状態そのもの。
+    """
     if not isinstance(data, dict):
         raise Unchecked(f"制約ファイルがオブジェクトでない: {path}")
+    extra = sorted(set(data) - ALLOWED_TOP_KEYS)
+    if extra:
+        raise Unchecked(
+            f"スキーマに無いキー: {', '.join(extra)} — 綴りを確認（{path}）。"
+            f"知らないキーは黙って無視しない"
+        )
     if data.get("version") != 1:
         raise Unchecked(f"未知の version: {data.get('version')!r} ({path})")
     tokens = data.get("tokens")
@@ -332,6 +456,11 @@ def validate_constraints(data: object, path: str) -> None:
         for i, rule in enumerate(prohibited):
             if not isinstance(rule, dict):
                 raise Unchecked(f"prohibited[{i}] がオブジェクトでない: {path}")
+            unknown = sorted(set(rule) - ALLOWED_RULE_KEYS)
+            if unknown:
+                raise Unchecked(
+                    f"prohibited[{i}] にスキーマに無いキー: {', '.join(unknown)} ({path})"
+                )
             for key in ("pattern", "why"):
                 if not isinstance(rule.get(key), str) or not rule[key]:
                     raise Unchecked(f"prohibited[{i}].{key} が空でない文字列でない: {path}")
@@ -354,14 +483,13 @@ class Declared:
         self.fonts: set[str] = set()
         for entries in self.tokens.values():
             for value in entries.values():
-                found_colors = colors_in(value)
-                found_lengths = lengths_in(value)
-                # 複合値（"1px solid #ccc"）は色も長さも宣言する。elif にすると
+                # 複合値（"1px solid #ccc"）は色も長さも宣言する。片方だけ登録すると
                 # 後ろの種別が黙って落ち、宣言済みの値が違反として上がる。
-                self.colors.update(found_colors)
-                self.lengths.update(found_lengths)
-                if not found_colors and not found_lengths:
-                    self.fonts.add(normalize_font(value))
+                colors, lengths, font = classify_declared(value)
+                self.colors.update(colors)
+                self.lengths.update(lengths)
+                if font:
+                    self.fonts.add(font)
         self.components: list[str] | None = data.get("components")
         self.prohibited: list[dict] = data.get("prohibited") or []
 
@@ -405,7 +533,7 @@ def scan_line(raw_line: str, lineno: int, path: str, decl: Declared) -> list[dic
         if font not in decl.fonts:
             add("raw-value", font, "宣言トークンに解決しないフォント")
 
-    if decl.components is not None:
+    if decl.components is not None and not path.lower().endswith(NO_JSX_SUFFIXES):
         allowed = set(decl.components)
         for name in RE_COMPONENT.findall(line):
             if name not in allowed:
@@ -466,14 +594,30 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
     flat_drop, idx_drop = _flatten(text, drop_all_space=True)
 
     out: list[dict] = []
+
+    # 正規表現は非リテラルと同じ正規化済み本文に当てる（`case_sensitive: true` のときだけ
+    # 生テキスト）。生テキストに当てていたため、ゼロ幅・全角・行折り返しの回避が
+    # 「リテラル指定には効くが正規表現指定には効かない」＝書き方で検出力が変わる状態だった。
+    regex_rules = [r for r in decl.prohibited if r.get("regex")]
+    regex_at: dict[int, int | None] = {}
+    if regex_rules:
+        if len(flat_keep) > REGEX_MAX_CHARS:
+            raise Unchecked(
+                f"成果物が大きすぎて正規表現の禁止表現を検査できない: {path} "
+                f"({len(flat_keep)} 文字 > {REGEX_MAX_CHARS})"
+            )
+        found_at = regex_hits(regex_rules, text, flat_keep, path)
+        for rule, at in zip(regex_rules, found_at):
+            if at is None:
+                regex_at[id(rule)] = None
+            else:
+                regex_at[id(rule)] = at if rule.get("case_sensitive") else idx_keep[at]
+
     for rule in decl.prohibited:
         pattern = rule["pattern"]
         hit_at: int | None = None
         if rule.get("regex"):
-            flags = 0 if rule.get("case_sensitive") else re.IGNORECASE
-            m = re.search(pattern, text, flags)
-            if m:
-                hit_at = m.start()
+            hit_at = regex_at.get(id(rule))
         elif rule.get("case_sensitive"):
             at = text.find(pattern)
             hit_at = at if at >= 0 else None
@@ -491,19 +635,48 @@ def scan_prohibited(text: str, path: str, decl: Declared) -> list[dict]:
     return out
 
 
-def collect_artifacts(paths: list[str], skip: set[str]) -> list[str]:
+def _walk_error(exc: OSError) -> None:
+    """読めないディレクトリを黙って飛ばさない。
+
+    飛ばすと、その中の成果物を一度も見ていないのに `checked` / 違反 0 件になる。
+    ファイルが読めないときは未検査にしているのに、ディレクトリだけ非対称だった。
+    """
+    raise Unchecked(f"成果物ディレクトリが読めない: {exc}")
+
+
+def collect_artifacts(paths: list[str], skip: set[str]) -> tuple[list[str], list[dict]]:
+    """検査する成果物と、**検査しなかったもの**を返す。
+
+    走査根の外は読まない。シンボリックリンクは辿らない——`docs/design/x.json` が
+    `~/.config/gh/hosts.yml` を指していると、その中身の断片が報告 JSON に載る。
+    """
     files: list[str] = []
+    skipped: list[dict] = []
     for path in paths:
+        if os.path.islink(path):
+            raise Unchecked(f"成果物がシンボリックリンク: {path} — 実体を指定する")
         if os.path.isdir(path):
-            for root, _dirs, names in os.walk(path):
+            root_real = os.path.realpath(path)
+            for parent, dirs, names in os.walk(path, onerror=_walk_error, followlinks=False):
+                dirs[:] = [d for d in sorted(dirs) if not d.startswith(".")
+                           and not os.path.islink(os.path.join(parent, d))]
                 for name in sorted(names):
+                    full = os.path.join(parent, name)
+                    if os.path.islink(full):
+                        skipped.append({"path": full, "why": "symlink"})
+                        continue
+                    real = os.path.realpath(full)
+                    if real != root_real and not real.startswith(root_real + os.sep):
+                        raise Unchecked(f"走査根の外を指している: {full}")
                     if name.lower().endswith(TEXT_SUFFIXES):
-                        files.append(os.path.join(root, name))
+                        files.append(full)
+                    else:
+                        skipped.append({"path": full, "why": "extension"})
         elif os.path.isfile(path):
             files.append(path)
         else:
             raise Unchecked(f"成果物が無い: {path}")
-    return [f for f in files if os.path.realpath(f) not in skip]
+    return [f for f in files if os.path.realpath(f) not in skip], skipped
 
 
 def scan_file(path: str, decl: Declared) -> list[dict]:
@@ -524,6 +697,12 @@ SCOPE_NOTE = (
     " トークン化されていない散文（「ブランドの青を使う」等）は検出クラスの外＝レビュア判定。"
     " use と mention は区別しない（過去の値への言及も報告する）。"
 )
+
+
+def _declared_section(decl: "Declared | None", key: str) -> bool:
+    if decl is None:
+        return False
+    return bool(decl.components) if key == "components" else bool(decl.prohibited)
 
 
 def file_sha256(path: str) -> str | None:
@@ -570,7 +749,9 @@ def main(argv: list[str] | None = None) -> int:
 
     status = "checked"
     reason = ""
+    decl: Declared | None = None
     files: list[str] = []
+    skipped: list[dict] = []
     violations: list[dict] = []
     try:
         if not args.artifacts:
@@ -580,13 +761,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"制約ファイルが無い: {constraints_path} — 宣言が無いので強制すべき制約も無い"
             )
         data = load_constraints(constraints_path)
-        decl = Declared(data)
+        decl = Declared(data)  # noqa: F841 — 報告の not_declared が読む
         # 報告ファイルは成果物ではない。走査対象に入れると、前回の報告に載っている
         # 違反値（#ff0000 等）を今回の違反として拾う。
         skip = {os.path.realpath(constraints_path)}
         if args.report:
             skip.add(os.path.realpath(args.report))
-        files = collect_artifacts(args.artifacts, skip)
+        files, skipped = collect_artifacts(args.artifacts, skip)
         if not files:
             raise Unchecked("検査対象のテキスト成果物が1件も無い")
         for path in files:
@@ -603,6 +784,12 @@ def main(argv: list[str] | None = None) -> int:
         "constraints": constraints_path,
         "constraints_sha256": file_sha256(constraints_path),
         "artifacts": files,
+        # 拡張子で外したもの・シンボリックリンク。「対象が黙って欠落した」を可視にする。
+        "skipped": skipped,
+        # 宣言そのものが省いている検査。policy の「省いたことを報告に書く」を機械側で満たす。
+        "not_declared": sorted(
+            k for k in ("components", "prohibited") if not _declared_section(decl, k)
+        ) if status == "checked" else [],
         "violations": violations,
     }
     if args.report:

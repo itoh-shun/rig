@@ -499,6 +499,14 @@
       "expected_violations": [],
       "expected_detectable": true,
       "spec_gap": "26 行目の字面に従えば合格、rule 5 の意図に従えば違反。theme-root.css には『定義ファイルだから除外する』という逃げ道があるがこちらには無く、仕様の矛盾が裸で出る。ここでは 26 行目を正として clean に置いたが、実装が違反と判定したなら、それは偽陽性ではなく仕様解釈の相違として報告に書くべきもの"
+    },
+    {
+      "path": "artifacts/settings-panel.tsx",
+      "purpose": "TypeScript のジェネリクス（Map<string, Entry>・Array<Entry>・<T,>）と JSX を同居させ、コンポーネント参照の検査が型引数を誤検出しないことを測る。camelCase の style プロパティ（fontFamily / backgroundColor / padding）もすべてトークン参照で書いてある。**このファイルは親が追加した**（コーパス作者の成果物に TypeScript が無く、偽陽性がその言語で未測定だったため）。",
+      "kind": "clean",
+      "author": "parent",
+      "expected_violations": [],
+      "expected_detectable": true
     }
   ],
   "unchecked": [

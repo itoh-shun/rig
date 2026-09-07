@@ -54,7 +54,7 @@ policy は、センサーが主張してよい範囲を 3 クラスに限り、4
 | `artifacts/typography-spec.md` | raw-value | 12 | 使用トークン**表**の中の生フォント名（policy rule 6 が読めると言った場所） |
 | `artifacts/seat-map.css` | unknown-token | 13 | `var(--color-brand-secondary)` |
 | `artifacts/spacing-spec.md` | unknown-token | 13 | `token(spacing.xxl)` |
-| `artifacts/cancel-flow.jsx` | unknown-token | 10 | インベントリ外 `<ConfirmBar />` |
+| `artifacts/cancel-flow.jsx` | unknown-component | 10 | インベントリ外 `<ConfirmBar />` |
 | `artifacts/help-links.md` | prohibited | 11 | 部分文字列一致 |
 | `artifacts/payment-errors.jsx` | prohibited | 6 | JSX テキスト中。Markdown だけ見る実装を切る |
 | `artifacts/onboarding-steps.md` | prohibited | 9 | `regex: true` のパターン |
@@ -188,7 +188,7 @@ PY
 | seed | 11/12 |
 | attack | 12/14 |
 | **合計** | **23/26** |
-| clean 偽陽性 | **0/8 ファイル・0 件** |
+| clean 偽陽性 | **0/9 ファイル・0 件** |
 | class-4 漏れ検出 | **0/3** |
 
 初回の実測は seed 11/12・attack 5/14 だった。**attack の 9 件の取りこぼしのうち 7 件は
@@ -196,6 +196,10 @@ PY
 変更として実装した——全角括弧（NFKC）、ゼロ幅文字、大文字小文字、行折り返しをまたぐ
 禁止表現（本文全体への照合）、CSS 名前付き色、`font:` ショートハンド、ドット付きコンポーネント。
 偽陽性 0 と class-4 漏れ 0 は、この作業を通して一度も崩れていない。
+
+その後の 4-way レビューで見つかった欠陥（綴り間違いで規則が丸ごと消える・宣言側に正規化が
+当たらない・`fixes #123` が色になる・camelCase の `fontFamily` がすり抜ける等）を直した後も
+**23/26 のまま**で、採点はむしろ厳しくなっている（行とクラスの完全一致のみ）。
 
 残る 3 件は字句センサーの外側で、`policies/design-constraint-rules` に表として記載した。
 
@@ -205,6 +209,27 @@ PY
 `unknown-token` から `unknown-component` に読み替えた。コーパスを依頼した時点のポリシーは
 検出クラスを 3 つしか列挙しておらず（コンポーネントの行は依頼後に追加した）、作者は
 存在しないクラス名を使えなかった。**種そのものは作者の設計で、親は名前だけを直している。**
+
+読み替えが検出率を水増ししていないことは確認済みで、センサーはこの 2 件を
+`cancel-flow.jsx:10` / `quick-actions.jsx:6` と**期待行ちょうど**で検出している。
+読み替え前のクラス名のまま厳格に照合すると 21/26 になるが、その差は検出できたかどうかではなく
+クラス名が一致するかどうかである。採点は**行とクラスの完全一致のみ**で、値の部分一致による
+予備判定は置いていない（置いていたときは `_line_of` を定数に潰しても大半が通ってしまい、
+行番号の主張が守りになっていなかった）。
+
+### 親が追加した成果物
+
+コーパス作者の成果物は css / jsx / md だけで、**TypeScript が無かった**。
+`unknown-component` の参照構文 `<Capitalized>` は TS の型引数と字面が衝突するため、
+その言語での偽陽性が一度も測られていなかった。そこで次を追加した。
+
+| ファイル | 種別 | 何を測るか |
+|---|---|---|
+| `artifacts/settings-panel.tsx` | clean | `Map<string, Entry>`・`Array<Entry>`・`<T,>(xs) => xs[0]` と JSX の同居。camelCase の `fontFamily` / `backgroundColor` もトークン参照で書いてある |
+| `unchecked/constraints.typo-key.json` | unchecked | `prohibited` を `prohibitted` と綴り間違えた宣言。読み飛ばして `checked` にしない |
+
+追加した瞬間に `<T,>(xs)` が `unknown-component` として上がった——**作者の言語では
+現れない偽陽性**で、足した理由がそのまま実証された。
 
 ### 作者が挙げた「仕様の穴」への対応
 

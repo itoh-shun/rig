@@ -7,6 +7,7 @@ steps:
     instruction: design-draft
     pattern: serial
     personas: [design/ui-ux-designer]
+    policies: [design-constraint-rules]
   - id: vet
     instruction: design-vet
     pattern: parallel-fanout

@@ -23,8 +23,9 @@ inventory, and prohibited expressions. Prose that names neither a value nor a to
 boundary is measured, not asserted: `tests/fixtures/design-constraints/` was written by an
 author who had the policy, schema and template and **not** the sensor, which did not exist
 when the corpus was commissioned. Against that corpus the sensor scores **23/26**, with
-**zero** findings on the eight honest artefacts and **zero** on the three prose-only
-seeds. The three it misses are named in the policy with the reason each is unreachable: a
+**zero** findings on the nine honest artefacts and **zero** on the three prose-only
+seeds. A hit means the same line and the same class — there is no value-substring
+fallback, because with one the line numbers were not load-bearing. The three it misses are named in the policy with the reason each is unreachable: a
 typeface named outside a CSS declaration has no value shape, a hex colour split across a
 string concatenation appears on no line, and a prohibited phrase split between a JSX text
 node and an expression exists only in the rendered output.
@@ -46,6 +47,25 @@ both design recipes gain an acceptance criterion that the status is transcribed 
 written up as agreement. The sensor writes its report to a file (`--report`) because
 `_run_step_checks` sends a check's stdout to `DEVNULL`, so in a headless run the file is
 the only record.
+
+**What review found.** Four reviewers ran against the first version and every finding
+reproduced. The worst was a one-character typo: spelling `prohibited` as `prohibitted`
+dropped the whole prohibited-expression section and returned `checked`, zero violations,
+exit 0 — a declaration present, unenforced, and reported as agreement, which is the exact
+state this layer exists to prevent. Unknown keys are now `unchecked`. Next worst was an
+asymmetry: the declared values did not go through the normalisation the artefacts went
+through, so declaring `{"surface": "white"}` classified it as a *typeface* and then
+reported both `background: white` and `#FFFFFF` as violations of the constraint they
+satisfied; declared and artefact values now share one pipeline. Also fixed: a non-UTF-8
+constraints file crashed instead of reporting `unchecked` and wrote no report at all; an
+unreadable subdirectory was skipped silently and counted as clean; symbolic links were
+followed out of the scan root; `fixes #123` was read as a colour; `fontFamily` in a JSX
+style object was not read as `font-family`; TypeScript type arguments (`Map<String, Int>`,
+`<T,>(xs) => xs[0]`) were read as components. Prohibited-expression regexes ran against
+raw text, so the zero-width and full-width evasions the literal path catches did not apply
+to them, and a catastrophic pattern hung the gate indefinitely — they now run against the
+same normalised text, in a subprocess bounded by the wall clock. A gate that does not
+return is not failing closed; it is not guarding anything.
 
 **No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
 of scope and raises a constraint violation under WCAG when it is also one. A new persona

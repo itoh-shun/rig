@@ -10,9 +10,11 @@ grew a fourth capability would make the shipped ratio a lie.
 """
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -307,3 +309,215 @@ def test_the_launcher_runs_from_a_checkout(tmp_path):
     )
     assert r.returncode == 0
     assert "未設定" in r.stdout
+
+
+# ── レビューで出た欠陥の回帰 ────────────────────────────────────────────────
+# 以下はすべて、4-way レビューが実際に再現させた欠陥に対応する。散文で塞いだものは
+# 1つも無い——「直したつもり」を残さないため、全部が入力から確かめている。
+
+def test_a_misspelled_section_name_is_never_a_silent_pass(tmp_path):
+    """`prohibited` を `prohibitted` と綴ると規則が丸ごと消え、緑になっていた。
+
+    宣言はあるのに守られず、しかもゲートが合格を返す——このセンサーが潰すはずの状態そのもの。
+    """
+    broken = dict(FILLED)
+    broken["prohibitted"] = broken.pop("prohibited")
+    code, report = _run(tmp_path, broken, {"a.md": "ボタンは「こちらをクリック」。\n"})
+    assert code == 2
+    assert report["status"] == "unchecked"
+    assert "prohibitted" in report["reason"]
+
+
+def test_a_misspelled_rule_key_is_also_unchecked(tmp_path):
+    broken = dict(FILLED)
+    broken["prohibited"] = [{"pattern": "x", "why": "y", "regexp": True}]
+    code, report = _run(tmp_path, broken, {"a.md": "x\n"})
+    assert code == 2 and "regexp" in report["reason"]
+
+
+def test_a_constraints_file_that_is_not_utf8_is_unchecked_and_still_reports(tmp_path):
+    """デコード失敗を捕っておらず、traceback で落ちて報告が書かれなかった。"""
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "a.md").write_text("x\n", encoding="utf-8")
+    cpath = tmp_path / "c.json"
+    cpath.write_bytes(json.dumps(FILLED, ensure_ascii=False).encode("cp932"))
+    report = tmp_path / "r.json"
+    assert dc.main(["--constraints", str(cpath), "--report", str(report), str(art)]) == 2
+    assert report.is_file(), "報告ファイルが書かれていない"
+    assert json.loads(report.read_text(encoding="utf-8"))["status"] == "unchecked"
+
+
+def test_a_byte_order_mark_does_not_make_a_file_permanently_unchecked(tmp_path):
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "a.md").write_text("token(color.brand)\n", encoding="utf-8")
+    cpath = tmp_path / "c.json"
+    cpath.write_bytes(b"\xef\xbb\xbf" + json.dumps(FILLED, ensure_ascii=False).encode("utf-8"))
+    report = tmp_path / "r.json"
+    assert dc.main(["--constraints", str(cpath), "--report", str(report), str(art)]) == 0
+
+
+@pytest.mark.parametrize("written", ["background: white", "color: #FFFFFF", "color: #fff"])
+def test_a_colour_declared_by_name_is_recognised_however_the_artefact_spells_it(tmp_path, written):
+    """宣言側に正規化が当たっておらず、`white` の宣言がフォント扱いになっていた。
+
+    その結果、自分で宣言した色が違反として上がっていた。
+    """
+    declared = {"version": 1, "tokens": {"color": {"surface": "white"}}}
+    _, report = _run(tmp_path, declared, {"a.css": f"a {{ {written}; }}\n"})
+    assert report["violations"] == []
+
+
+def test_a_declaration_written_in_full_width_still_resolves(tmp_path):
+    declared = {"version": 1, "tokens": {"color": {"brand": "＃0A84FF"}}}
+    _, report = _run(tmp_path, declared, {"a.css": "a { color: #0a84ff; }\n"})
+    assert report["violations"] == []
+
+
+@pytest.mark.parametrize("text", ["fixes #123", "closes #1234", "see #123456"])
+def test_an_issue_reference_is_not_a_colour(tmp_path, text):
+    """数字だけの16進は CSS 宣言の中でだけ色と見なす。`#123` は毎日のコミット文に出る。"""
+    _, report = _run(tmp_path, FILLED, {"a.md": f"{text}\n"})
+    assert report["violations"] == []
+
+
+def test_a_short_hex_with_letters_is_still_a_colour_in_prose(tmp_path):
+    _, report = _run(tmp_path, FILLED, {"a.md": "主色は #f00 を使う。\n"})
+    assert [v["class"] for v in report["violations"]] == ["raw-value"]
+
+
+def test_an_all_digit_hex_inside_a_declaration_is_a_colour(tmp_path):
+    _, report = _run(tmp_path, FILLED, {"a.css": "a { color: #123456; }\n"})
+    assert [v["class"] for v in report["violations"]] == ["raw-value"]
+
+
+def test_the_camel_case_spelling_of_a_css_property_is_the_same_property(tmp_path):
+    """`style={{ fontFamily: "Comic Sans MS" }}` が丸ごとすり抜けていた。"""
+    _, report = _run(tmp_path, FILLED, {"a.jsx": 'const s = { fontFamily: "Comic Sans MS" };\n'})
+    assert [v["class"] for v in report["violations"]] == ["raw-value"]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["const m: Map<String, Int> = new Map();",
+     "function f<T>(x: T): T { return x; }",
+     "type P = Array<Item>;",
+     "const pick = <T,>(xs: T[]) => xs[0];"],
+)
+def test_a_type_argument_is_not_a_component(tmp_path, line):
+    """TS の型引数を JSX 要素と読み違えると、TS プロジェクト全体が偽陽性で埋まる。"""
+    _, report = _run(tmp_path, FILLED, {"a.tsx": line + "\n"})
+    assert report["violations"] == []
+
+
+def test_a_plain_ts_file_is_never_checked_for_components(tmp_path):
+    """`.ts` に JSX は書けない。`<Foo>bar` は必ず型アサーションである。"""
+    _, report = _run(tmp_path, FILLED, {"a.ts": "let x = <Foo>bar;\n"})
+    assert report["violations"] == []
+
+
+def test_a_symlinked_artefact_is_unchecked(tmp_path):
+    """`docs/design/x.json -> ~/.config/…` の中身が報告に載っていた。"""
+    art = tmp_path / "art"
+    art.mkdir()
+    (tmp_path / "outside.md").write_text("色は #DEADBE。\n", encoding="utf-8")
+    (art / "link.md").symlink_to(tmp_path / "outside.md")
+    report = tmp_path / "r.json"
+    cpath = tmp_path / "c.json"
+    cpath.write_text(json.dumps(FILLED, ensure_ascii=False), encoding="utf-8")
+    (art / "real.md").write_text("token(color.brand)\n", encoding="utf-8")
+    code = dc.main(["--constraints", str(cpath), "--report", str(report), str(art)])
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert code == 0
+    assert payload["violations"] == [], "シンボリックリンクの先を読んでいる"
+    assert [s["why"] for s in payload["skipped"]] == ["symlink"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root は権限で弾かれない")
+def test_a_directory_that_cannot_be_read_is_unchecked_not_clean(tmp_path):
+    """飛ばすと、中を一度も見ていないのに『違反 0 件』になる。"""
+    art = tmp_path / "art"
+    (art / "sub").mkdir(parents=True)
+    (art / "ok.md").write_text("x\n", encoding="utf-8")
+    (art / "sub" / "hidden.md").write_text("色は #FF0000。\n", encoding="utf-8")
+    (art / "sub").chmod(0o000)
+    try:
+        cpath = tmp_path / "c.json"
+        cpath.write_text(json.dumps(FILLED, ensure_ascii=False), encoding="utf-8")
+        report = tmp_path / "r.json"
+        assert dc.main(["--constraints", str(cpath), "--report", str(report), str(art)]) == 2
+        assert json.loads(report.read_text(encoding="utf-8"))["status"] == "unchecked"
+    finally:
+        (art / "sub").chmod(0o755)
+
+
+def test_a_catastrophic_pattern_is_bounded_by_the_wall_clock(tmp_path):
+    """破滅的バックトラックは1回の `re.search` が返ってこない。
+
+    プロセス内で経過時間を測っても止められないので、別プロセスに出して打ち切る。
+    **返ってこないゲートは、通らないのではなく何も守っていない。**
+    """
+    declared = dict(FILLED)
+    declared["prohibited"] = [{"pattern": "^(a+)+$", "why": "破滅的", "regex": True}]
+    started = time.monotonic()
+    code, report = _run(tmp_path, declared, {"a.md": "a" * 40 + "b\n"})
+    elapsed = time.monotonic() - started
+    assert code == 2
+    assert report["status"] == "unchecked"
+    assert elapsed < dc.REGEX_TIME_BUDGET * 4, f"打ち切れていない ({elapsed:.1f}s)"
+
+
+def test_a_regular_expression_sees_the_same_normalised_text_as_a_literal(tmp_path):
+    """生テキストに当てていたため、ゼロ幅の回避が正規表現指定にだけ効かなかった。
+
+    同じ禁止表現が、書き方によって検出されたりされなかったりする状態だった。
+    """
+    declared = dict(FILLED)
+    declared["prohibited"] = [{"pattern": "こちらをクリック", "why": "x", "regex": True}]
+    _, report = _run(tmp_path, declared, {"a.md": "ボタンは「こちらを​クリック」。\n"})
+    assert [v["class"] for v in report["violations"]] == ["prohibited-expression"]
+
+
+def test_the_report_records_which_checks_the_declaration_left_out(tmp_path):
+    """policy の「省いたことを報告に書く」を、人の記憶ではなく機械で満たす。"""
+    minimal = {"version": 1, "tokens": {"color": {"brand": "#0A84FF"}}}
+    _, report = _run(tmp_path, minimal, {"a.md": "x\n"})
+    assert report["not_declared"] == ["components", "prohibited"]
+    _, full = _run(tmp_path, FILLED, {"a.md": "x\n"})
+    assert full["not_declared"] == []
+
+
+def test_an_empty_component_inventory_permits_nothing(tmp_path):
+    """空配列は「検査しない」ではなく「1つも許可しない」（policy「やらないこと」）。"""
+    declared = dict(FILLED)
+    declared["components"] = []
+    _, report = _run(tmp_path, declared, {"a.jsx": "<Button />\n"})
+    assert [v["class"] for v in report["violations"]] == ["unknown-component"]
+
+
+def test_omitting_the_inventory_turns_the_check_off(tmp_path):
+    declared = {k: v for k, v in FILLED.items() if k != "components"}
+    _, report = _run(tmp_path, declared, {"a.jsx": "<Whatever />\n"})
+    assert report["violations"] == []
+
+
+def test_the_verdict_contract_carries_the_constraint_section():
+    """契約に節を足したなら、節が消えたことに気づける場所が要る。"""
+    contract = (
+        REPO_ROOT / "skills" / "engine" / "facets" / "output-contracts" / "design-verdict.md"
+    ).read_text(encoding="utf-8")
+    assert "制約 所見:" in contract
+    assert "状態: <checked|unchecked|not-configured>" in contract
+    for word in ("checked", "unchecked", "not-configured"):
+        assert word in contract
+
+
+def test_the_sensor_is_reachable_as_a_subcommand():
+    """instruction が指す起動経路が、実際に存在すること。"""
+    cli = (REPO_ROOT / "rig_workbench" / "cli.py").read_text(encoding="utf-8")
+    assert 'if sub == "design-constraints":' in cli
+    vet = (
+        REPO_ROOT / "skills" / "engine" / "facets" / "instructions" / "design-vet.md"
+    ).read_text(encoding="utf-8")
+    assert "rig-wb design-constraints" in vet

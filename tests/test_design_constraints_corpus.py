@@ -24,7 +24,9 @@ POLICY = (
     / "skills" / "engine" / "facets" / "policies" / "design-constraint-rules.md"
 )
 
-# 2026-09-07 の実測。seed 11/12・attack 12/14。取りこぼしは3件で、いずれも
+# 2026-09-07 の実測（4-way レビュー後の再測）。seed 11/12・attack 12/14。
+# 採点は行とクラスの完全一致のみ——値の部分一致による予備判定は置かない。
+# 取りこぼしは3件で、いずれも
 # 「ソースに無く描画結果にだけ現れる」か「値としての形を持たない」もの:
 #   typography-spec.md  書体名を CSS 宣言の外（使用トークン表）に置いた
 #   theme-accent.jsx    16進色を文字列連結で分割した
@@ -53,13 +55,14 @@ def _scan(entry: dict, declared: dc.Declared) -> list[dict]:
 
 
 def _hit(expected: dict, found: list[dict]) -> bool:
-    for v in found:
-        if v["line"] == expected["line"] and v["class"] == expected["class"]:
-            return True
-    wanted = str(expected["token_or_value"]).lower().lstrip("#")
+    """行とクラスが一致したときだけ hit とする。
+
+    値の部分一致を予備の判定にしていたが、実測ではその枝が一度も発火しないうえ、
+    `_line_of` を定数に潰しても禁止表現の大半が hit のまま残った——**行番号の主張が
+    守りになっていなかった**。予備を外すと、行がずれた瞬間に落ちる。
+    """
     return any(
-        v["class"] == expected["class"] and wanted in str(v["value"]).lower().lstrip("#")
-        for v in found
+        v["line"] == expected["line"] and v["class"] == expected["class"] for v in found
     )
 
 
@@ -128,7 +131,9 @@ def test_the_shipped_ratio_is_written_where_a_reader_will_find_it():
     "name,expected",
     [("constraints.placeholder.json", "unchecked"),
      ("constraints.broken.json", "unchecked"),
-     ("constraints.schema-invalid.json", "unchecked")],
+     ("constraints.schema-invalid.json", "unchecked"),
+     # 親が追加。綴り間違いで規則が丸ごと消え、checked / 違反 0 件で緑になっていた。
+     ("constraints.typo-key.json", "unchecked")],
 )
 def test_a_declaration_that_cannot_be_read_is_never_a_pass(tmp_path, name, expected):
     art = tmp_path / "art"
