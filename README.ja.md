@@ -746,7 +746,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 
 | tier | コマンド |
 |---|---|
-| **Quality** | `/rig:drill`、`/rig:go stats\|review`、`/rig:pr`（既存 PR レビュー入口）、`/rig:harness`（自プロジェクトの開発ハーネス監査）、`/rig:qa`（仕様ベースのテストケース設計） |
+| **Quality** | `/rig:drill`、`/rig:go stats\|review`、`/rig:pr`（既存 PR レビュー入口）、`/rig:harness`（自プロジェクトの開発ハーネス監査）、`/rig:qa`（仕様ベースのテストケース設計）、`/rig:japanese-lint`（textlint-ja 相当の日本語校正。stdlib のみ・`rig-wb ja-lint`） |
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 

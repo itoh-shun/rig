@@ -35,6 +35,14 @@
 - `.claude/*` が gitignore されているリポジトリでは、`!.claude/design-constraints.json` の追加を**提案**する（勝手に書き換えない）。
 - 作らないという選択も正しい。制約が無いリポジトリでは `/rig:design` は「制約は検査していない」と報告して進む——合格とは書かない。
 
+### ②-d 日本語校正の設定ファイル（`<repo>/.claude/ja-textlint.json`・任意）
+
+`rig-wb ja-lint` と recipe `japanese-lint` が参照する設定（検査対象の `paths`、preset、用語）。規則は `facets/policies/japanese-textlint-rules`、形は `manifests/ja-textlint.schema.json`、雛形は `manifests/ja-textlint.template.json`。
+
+- 設定が無くてもセンサーは既定（`technical` + `spacing`）で動く。作るのは `paths` を固定したい、用語を宣言したい、ルールを調整したいときだけ。
+- **init は `paths` と `terms` を推測して埋めない。** どの文書を規約の対象にするか、どの表記を正とするかはプロジェクトが決める。雛形の場所を案内するだけにする。
+- `.claude/*` が gitignore されているリポジトリでは、`!.claude/ja-textlint.json` の追加を**提案**する（勝手に書き換えない）。
+
 ### ③ CLAUDE.md "Compact Instructions" 節（圧縮で rig 状態を失わない第2経路）
 
 `<repo>/CLAUDE.md` に "Compact Instructions" 節が無ければ、以下を**追記**する（既にあれば重複追記しない）。これは PreCompact フック（§6 run-continuity ④）と**同じ保全文の belt-and-suspenders**で、毎回の圧縮に自動適用される。

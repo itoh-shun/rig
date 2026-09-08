@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### Added
+
+**A textlint-ja-style Japanese prose sensor, stdlib only.** textlint-ja (`preset-ja-technical-writing`,
+`preset-ja-spacing`, `ja-hiragana-*`, `prh`) is the de-facto lint for Japanese technical
+writing, and it needs Node plus a kuromoji dictionary. `rig_workbench/ja_textlint.py`
+(`rig-wb ja-lint`, `scripts/ja_textlint.py` from a checkout, `-` for stdin) reimplements
+the part of it that dictionaries and regular expressions can decide, in Python's standard
+library: sentence length, comma count, fixed-form double negatives, redundant expressions,
+misused idioms, doubled sentence-initial conjunctions, doubled `〜が、`, NFD, control and
+zero-width characters, half-width kana, unmatched brackets, spacing around full-width
+parentheses, katakana separators, and declared `terms`. Those are `error`. The rules that
+textlint decides with part-of-speech tags — doubled particles, ら抜き, い抜き, mixed
+敬体/常体, 形式名詞, orthographic variants — are approximated from the surface and shipped as
+`warning`: they appear in the report and never move the exit code. What each rule can and
+cannot see is written down in `policies/japanese-textlint-rules`, including the classes
+that are structurally out of reach (漢数字/算用数字, synonyms, a `てる` after a kanji).
+
+**Measured, not asserted.** `tests/fixtures/ja-textlint/` was written from the NG/OK
+examples in the upstream rule READMEs before the sensor existed, so the answer key comes
+from textlint's own documentation rather than from this implementation. Against it the
+sensor scores **64/64** line-exact with zero same-rule false positives, and **zero errors**
+on three honest documents written to the rules; the three warnings left there are the
+`〜を確認する項目を` shape that kuromoji-backed textlint reports at the same position.
+Two seeds were corrected during measurement and both were corpus defects (an NFD seed
+with no voiced kana in it; a spacing seed with a tie). The corpus author and the sensor
+author are the same person, and the README there says so.
+
+**Three states, the same as design-constraints.** `unchecked` (config broken, an unknown
+key, nothing to check, a non-UTF-8 file) is exit 2 and never a pass; an unknown config key
+such as `rulez` is `unchecked` rather than a silently absent rule. `--report` writes the
+JSON in every state because `_run_step_checks` discards stdout.
+
+**Two deliberate departures from textlint.** `ja-space-between-half-and-full-width`
+defaults to `auto` — report the minority only when one document mixes both styles —
+because textlint's `never` flags every other line of most Japanese technical docs,
+including rig's own. Digits beside kanji (`9月`, `14時`) never vote. And approximate rules
+are warnings, because a part-of-speech guess wired to a gate gets the prose bent to
+satisfy it.
+
+**Recipe `japanese-lint`, command `/rig:japanese-lint`.** `fix` runs `rig-wb ja-lint`
+against the project's `.claude/ja-textlint.json` `paths`, repairs errors without touching
+facts, names, numbers or steps, and re-runs the same command as its `checks`; `review`
+hands the report file and the diff to an independent `japanese-lint-reviewer` whose
+heaviest check is that content was preserved. Schema and template ship in
+`skills/engine/manifests/`, `/rig:init` points at them without filling them in, and the
+`japanese-writing` reviewer gains the sensor as an optional stdin pre-pass — evidence for
+`readability`, never a verdict.
+
 ## [2.13.0] - 2026-09-08
 
 ### Added

@@ -1,0 +1,18 @@
+{
+  "_readme": "rig-wb ja-lint の設定。<repo>/.claude/ja-textlint.json に置く。paths に検査対象を書けば、引数なしの `rig-wb ja-lint` と recipe japanese-lint の checks がそこを読む。presets は technical（textlint-rule-preset-ja-technical-writing 相当）と spacing（preset-ja-spacing 相当）が既定。hiragana（形式名詞・副詞・補助動詞をひらく）と style（表記ゆれ・全角英数字）は opt-in。",
+  "version": 1,
+  "paths": ["docs/", "README.ja.md"],
+  "presets": ["technical", "spacing"],
+  "rules": {
+    "sentence-length": {"max": 100},
+    "max-ten": {"max": 3},
+    "max-kanji-continuous-len": {"max": 5, "allow": []},
+    "ja-space-between-half-and-full-width": {"space": "auto"},
+    "no-doubled-joshi": {"severity": "warning", "min_interval": 1}
+  },
+  "terms": [
+    {"pattern": "Javascript", "expected": "JavaScript"},
+    {"pattern": "Github", "expected": "GitHub"}
+  ],
+  "ignore": []
+}
