@@ -281,11 +281,12 @@ jobs:
             echo "No affected evaluation case to run; quality gate is a no-op."
             exit 0
           fi
-          # Fail closed on the key alone. Without it no signature can be checked,
-          # and a gate that shrugs when it cannot verify is not a gate. The four
-          # provider secrets are no longer required — nothing here runs a provider
-          # — but they still pin the evidence when they are set; unset, the case's
-          # own `provider_policy` and the standing ban on mock evidence apply.
+          # Keyed on the signing key alone. Without it no signature can be
+          # checked, so the step says it verified nothing rather than implying it
+          # did. The four provider secrets are not required — nothing here runs a
+          # provider — but they still pin the evidence when they are set; unset,
+          # the case's own `provider_policy` and the standing ban on mock
+          # evidence apply.
           if [ -z "$RIG_EVAL_ATTESTATION_KEY" ]; then
             echo "::warning::Prompt quality evidence requires a trusted maintainer run, and no signing key is available here, so nothing was verified. Fork authors: ask a maintainer to run 'rig-wb eval affected-run' with trusted provider and judge credentials and commit the signed evidence."
             exit 0
