@@ -273,6 +273,16 @@
       "expect": [
         19
       ]
+    },
+    {
+      "path": "cases/ai-smell-phrases.md",
+      "rule": "ja-ai-smell-phrases",
+      "expect": [
+        3,
+        7,
+        9,
+        11
+      ]
     }
   ],
   "clean": [

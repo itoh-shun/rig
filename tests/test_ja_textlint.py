@@ -518,3 +518,61 @@ def test_commit_and_conversation_presets_drop_the_document_shaped_rules():
     assert {"ja-no-mixed-period", "no-exclamation-question-mark"}.isdisjoint(jt.PRESETS["conversation"])
     assert _lint("件名だけの行\n", {"presets": ["commit"]}) == []
     assert _lint("本当ですか？\n", {"presets": ["conversation"]}) == []
+
+
+# ── AI 臭の名指しブラックリスト（助言専用・gate にならない） ─────────────────
+def _smell(text, config=None):
+    cfg = {"presets": ["ai-smell"]}
+    if config:
+        cfg.update(config)
+    return _lint(text, cfg)
+
+
+def test_the_blacklist_reports_over_sprinkling_not_the_word_itself():
+    """カタログ自身が「一律禁止にしない＝見るのはカテゴリの撒きすぎ」と書いている。"""
+    assert _smell("この設計は本質的です。\n") == []
+    f = _smell("多角的な視点が不可欠です。\n")
+    assert [x["text"] for x in f] == ["多角的", "不可欠"]
+    assert "この段落に 2 件" in f[0]["message"]
+    # 段落が違えば密度ではない。
+    assert _smell("多角的に見ます。\n\n設定が不可欠です。\n") == []
+
+
+def test_categories_with_a_named_replacement_fire_on_a_single_hit():
+    f = _smell("本稿では扱いません。\n")
+    assert [x["text"] for x in f] == ["本稿"] and "書き換えの対象です" in f[0]["message"]
+    assert [x["text"] for x in _smell("ケースバイケースです。\n")] == ["ケースバイケース"]
+
+
+def test_the_blacklist_is_opt_in_and_silent_on_honest_prose():
+    assert "ja-ai-smell-phrases" not in jt.PRESETS["technical"]
+    assert "ja-ai-smell-phrases" not in {r for p in jt.DEFAULT_PRESETS for r in jt.PRESETS[p]}
+    honest = ("再構築には数分から数十分かかります。データ量によって変わります。\n\n"
+              "停止するとインデックスが壊れることがあります。再度コマンドを実行してください。\n")
+    assert _smell(honest) == []
+
+
+def test_the_blacklist_cannot_be_promoted_to_an_error():
+    """§6-3: AI 臭の代理指標を gate にすると所見は減るのに人の判定が悪化する。"""
+    assert jt.DEFAULT_SEVERITY["ja-ai-smell-phrases"] == "warning"
+    assert "ja-ai-smell-phrases" in jt.ADVISORY_ONLY
+    for value in ("error", {"severity": "error"}):
+        with pytest.raises(jt.Unchecked, match="助言専用"):
+            jt.Settings({"presets": ["ai-smell"], "rules": {"ja-ai-smell-phrases": value}})
+    # 無効化と warning の明示は通る（黙らせる自由は残す）。
+    assert jt.Settings({"presets": ["ai-smell"], "rules": {"ja-ai-smell-phrases": False}}).enabled == {}
+
+
+def test_strict_does_not_count_advisory_warnings(tmp_path):
+    code, report = _run(tmp_path, {"presets": ["ai-smell"]},
+                        {"a.md": "多角的な視点が不可欠です。\n"}, extra=("--strict",))
+    assert report["summary"]["warnings"] == 2
+    assert code == 0, "助言専用の規則は --strict でも exit code を動かさない"
+    # 近似規則は従来どおり --strict で数える。
+    code, _ = _run(tmp_path, {"presets": ["technical"]}, {"a.md": "映画を見れた。\n"}, extra=("--strict",))
+    assert code == 1
+
+
+def test_allow_lets_a_project_keep_a_word():
+    cfg = {"rules": {"ja-ai-smell-phrases": {"allow": ["不可欠"]}}}
+    assert _smell("多角的な視点が不可欠です。\n", cfg) == []

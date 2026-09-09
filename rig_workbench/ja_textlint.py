@@ -86,6 +86,9 @@ PRESETS = {
     "style": ["ja-no-orthographic-variants", "no-zenkaku-alnum"],
     # commit message と会話の返答は段落の文書ではない。件名は「。」で終わらないし、
     # 会話は疑問符を使う。文書の形を前提にする規則だけを外した technical。
+    # `knowledge/ai-writing-smells` の名指しブラックリストを機械で読む。opt-in。
+    # 助言専用で、error に昇格できず --strict でも数えない（ADVISORY_ONLY）。
+    "ai-smell": ["ja-ai-smell-phrases"],
     "commit": [],
     "conversation": [],
 }
@@ -130,10 +133,22 @@ DEFAULT_SEVERITY = {
     "ja-hiragana-hojodoushi": "warning",
     "ja-no-orthographic-variants": "warning",
     "no-zenkaku-alnum": "warning",
+    "ja-ai-smell-phrases": "warning",
     "prh": "error",
 }
+# 判定の代理指標であって規約ではない規則。error に昇格できず、--strict でも exit code を
+# 動かさない。rig 自身の実測（docs/jp-naturalness-engineering.ja.md §6-3）で、AI 臭の代理
+# 指標を gate にすると所見は減るのに人の盲検判定が悪化した。所見を消すために語を入れ替える
+# 圧力が、空っぽの文章をそのままにするからである。**見せるが、通さない。**
+ADVISORY_ONLY = frozenset({"ja-ai-smell-phrases"})
 ALL_RULES = tuple(DEFAULT_SEVERITY)
 CONFIG_KEYS = {"_readme", "version", "paths", "presets", "rules", "terms", "ignore"}
+
+
+def _advisory_message(name: str) -> str:
+    return (f"{name} は助言専用の規則で、error にできない。AI 臭の代理指標を gate にすると"
+            "所見は減るのに人の判定が悪化する（docs/jp-naturalness-engineering.ja.md §6-3）。"
+            "見せるための規則であって、通す・止めるための規則ではない。")
 
 
 class Unchecked(Exception):
@@ -1177,6 +1192,62 @@ def rule_orthographic_variants(ctx: Context) -> None:
                         f"表記ゆれ「{w}」です。この文書では「{majority}」が多数です。", w, majority)
 
 
+# `knowledge/ai-writing-smells` の「禁止表現リスト」と「名指し語彙ブラックリスト」の写し。
+# カタログは代表だけを挙げ、同型を芋づるで疑えと書いているので、いくつかは rig が足した
+# （`架け橋`・`次世代`）。カタログが「文脈上ふさわしい使用まで一律禁止にしない＝見るのは
+# カテゴリの撒きすぎ」と言うとおり、既定では **同じ段落に同じカテゴリが 2 件以上**出たとき
+# だけ報告する。`always` のカテゴリは、カタログが「→ こう置く」と置換先まで指定していて、
+# 1 件でも書き換えの対象になるもの。
+AI_SMELL_CATEGORIES: tuple[tuple[str, str, tuple[str, ...], bool], ...] = (
+    ("予告・総括", "何を書くかではなく、何が分かったかを書いてください。",
+     ("重要なのは", "本章では", "ここでは", "まとめると", "要するに", "に他ならない"), False),
+    ("空虚な形容", "何をどう見たのかを書くか、削ってください。",
+     ("不可欠", "核心的", "鍵となる", "根本的", "多角的", "包括的", "総合的"), False),
+    ("空虚な動詞", "掘った結果を書いてください。",
+     ("掘り下げ", "深掘り", "言語化"), False),
+    ("接続の型", "新しい情報が無いなら削ってください。",
+     ("において", "という側面", "の観点から"), False),
+    ("根拠なし強度副詞", "強さは副詞ではなく具体か数字で出してください。",
+     ("非常に", "とても", "かなり", "本当に", "実に", "圧倒的に"), False),
+    ("手触り偽装語", "何が起きたかの具体に置くか、削ってください。",
+     ("体温", "熱量", "血の通った", "泥臭い", "肌感"), False),
+    ("わかった気にさせる語", "分かった中身のほうを書いてください。",
+     ("解像度が上が", "腹落ち", "メンタルモデル"), False),
+    ("格上げ評価語", "何が本質かを名指せるなら名指し、言えないなら削ってください。",
+     ("本質的", "地に足のついた", "等身大", "芯を食う"), False),
+    ("壮大化した漢語", "普通の語に置くか、削ってください。",
+     ("真理", "宿命", "究極", "深淵", "美学", "品性", "結晶", "凝縮"), False),
+    ("手垢の比喩", "比喩を外して直に言ってください。",
+     ("羅針盤", "起爆剤", "架け橋", "次世代への"), False),
+    ("論文ぶり自称", "「この記事」「私」に置くか、主語ごと削ってください。",
+     ("本稿", "本記事", "筆者は"), True),
+    ("言い回しジャーゴン", "普通の日本語に置いてください。",
+     ("レバレッジを効か", "解像度を上げ", "ディープダイブ", "アラインする", "ピボットする"), True),
+    ("結論回避フレーズ", "トレードオフを認めた上で、どちらを推すかを書いてください。",
+     ("ケースバイケース", "一概には言えな", "メリットもデメリットも", "賛否が分かれる"), True),
+)
+AI_SMELL_RE = tuple(
+    (name, hint, re.compile("|".join(re.escape(w) for w in words)), always)
+    for name, hint, words, always in AI_SMELL_CATEGORIES
+)
+
+
+def rule_ai_smell_phrases(ctx: Context) -> None:
+    """AI 臭の名指しブラックリスト。判定ではなく reviewer のアンカーで、gate にはならない。"""
+    min_hits = int(ctx.opt("ja-ai-smell-phrases", "min_hits", 2))
+    allow = set(ctx.opt("ja-ai-smell-phrases", "allow", []))
+    for para in ctx.paragraphs:
+        for name, hint, pat, always in AI_SMELL_RE:
+            hits = [m for m in pat.finditer(para.text) if m.group(0) not in allow]
+            if not hits or (not always and len(hits) < min_hits):
+                continue
+            for m in hits:
+                where = ("は書き換えの対象です。" if always
+                         else f"がこの段落に {len(hits)} 件あります。")
+                ctx.add("ja-ai-smell-phrases", para.locate(m.start()),
+                        f"AI 臭の定型（{name}）「{m.group(0)}」{where}{hint}", m.group(0))
+
+
 def rule_prh(ctx: Context) -> None:
     terms = ctx.options.get("__terms__") or []
     for term in terms:
@@ -1225,6 +1296,7 @@ RULES = {
     "ja-hiragana-hojodoushi": rule_hiragana_hojodoushi,
     "ja-no-orthographic-variants": rule_orthographic_variants,
     "no-zenkaku-alnum": rule_zenkaku_alnum,
+    "ja-ai-smell-phrases": rule_ai_smell_phrases,
     "prh": rule_prh,
 }
 assert set(RULES) == set(ALL_RULES)
@@ -1261,11 +1333,15 @@ class Settings:
             elif val is True:
                 enabled[name] = DEFAULT_SEVERITY[name]
             elif val in ("error", "warning"):
+                if val == "error" and name in ADVISORY_ONLY:
+                    raise Unchecked(_advisory_message(name))
                 enabled[name] = val
             elif isinstance(val, dict):
                 sev = val.get("severity", enabled.get(name, DEFAULT_SEVERITY[name]))
                 if sev not in ("error", "warning"):
                     raise Unchecked(f"{name}.severity は error か warning: {sev!r}")
+                if sev == "error" and name in ADVISORY_ONLY:
+                    raise Unchecked(_advisory_message(name))
                 enabled[name] = sev
                 self.options[name] = {k: v for k, v in val.items() if k != "severity"}
             else:
@@ -1673,6 +1749,9 @@ def main(argv: list[str] | None = None) -> int:
 
     errors = sum(1 for f in findings if f["severity"] == "error")
     warnings = sum(1 for f in findings if f["severity"] == "warning")
+    # --strict は近似規則を締めるためのもの。助言専用の規則はそこにも数えない。
+    strict_warnings = sum(1 for f in findings
+                          if f["severity"] == "warning" and f["rule"] not in ADVISORY_ONLY)
     report = {
         "status": status,
         "reason": reason,
@@ -1723,7 +1802,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if status == "unchecked":
         return 2
-    return 1 if errors or (args.strict and warnings) else 0
+    return 1 if errors or (args.strict and strict_warnings) else 0
 
 
 if __name__ == "__main__":

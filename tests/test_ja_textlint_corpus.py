@@ -24,11 +24,11 @@ POLICY = (
     / "skills" / "engine" / "facets" / "policies" / "japanese-textlint-rules.md"
 )
 
-# 2026-09-09 の実測（本家 textlint-ja との突き合わせ後）。種 69/69、種の file 内での同一 rule の
+# 2026-09-09 の実測（本家 textlint-ja との突き合わせ後）。種 73/73、種の file 内での同一 rule の
 # 偽陽性 0。clean 3 本では error 0、warning は release-notes の no-doubled-joshi 2 件だけで、
 # 本家（kuromoji）が同じ file に報告する 2 行と一致する。
-EXPECTED_HITS = 69
-EXPECTED_TOTAL = 69
+EXPECTED_HITS = 73
+EXPECTED_TOTAL = 73
 EXPECTED_CLEAN_WARNINGS = {"clean/release-notes.md": 2, "clean/incident-report.md": 0, "clean/howto.md": 0}
 
 

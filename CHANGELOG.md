@@ -65,6 +65,24 @@ mechanical replacements — kana width, NFC, zero-width characters, declared ter
 hiragana rules, misused idioms, stray spaces — and leaves everything that touches meaning to
 the `fix` step.
 
+**The AI-smell blacklist becomes a dictionary the machine reads — and still cannot gate.**
+`knowledge/ai-writing-smells` has carried a named blacklist ("不可欠", "多角的", "本稿",
+"ケースバイケース", …) whose whole strength, as the catalogue puts it, is that the phrases can be
+named — and nothing mechanical read it: `de-ai-smell` told the reviewer to check the list by
+hand. The opt-in `ai-smell` preset now reads it. It follows the catalogue's own rule rather than
+banning words outright: a category is reported when it appears twice or more **in one paragraph**
+(the over-sprinkling the catalogue says to look for), except the three categories the catalogue
+gives a replacement for, which fire on a single hit. `allow` keeps a word a project wants.
+The rule is `ADVISORY_ONLY`: it cannot be promoted to `error`, a config that tries is `unchecked`,
+and `--strict` does not count it — because rig measured (docs/jp-naturalness-engineering.ja.md
+§6-3) that gating an AI-smell proxy cut findings 5.5 → 1.0 while blind human judgement got
+*worse*. Measured on a canonical AI-written Japanese draft it reports 4 hits in 2 categories,
+which are exactly the phrases a human editor removed from it by hand; on rig's own 21 Japanese
+documents and on the three honest fixture documents it reports **zero** (eight at `min_hits: 1`,
+which is what the density condition is suppressing). Upstream textlint reports nothing at all on
+its corpus seed — the class is outside textlint entirely — so the shared parity totals are
+unchanged at 77 / 85 / 57.
+
 **The Japanese-prose gate, everywhere Japanese gets written.** Two diff-conditional
 criteria join the acceptance gate the way `prompt_regression_passed` does — present only
 while the task's diff adds Japanese prose, judged only on the added lines the way

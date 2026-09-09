@@ -67,6 +67,9 @@ UPSTREAM_ONLY_RULES = {"arabic-kanji-numbers"}   # 漢数字/算用数字。捕�
 SENSOR_ONLY_RULES = {                            # 本家に無い、または本家がこのコーパスで沈黙した規則
     "ja-nakaguro-or-halfwidth-space-between-katakana", "ja-no-orthographic-variants",
     "no-dropped-i", "no-zenkaku-alnum",
+    # AI 臭の名指しブラックリスト。本家は種の file に対して 1 件も報告しない——
+    # このクラス全体が textlint の外にある（`knowledge/ai-writing-smells` の領分）。
+    "ja-ai-smell-phrases",
 }
 
 
@@ -88,7 +91,7 @@ def tallies():
 def test_the_snapshot_names_its_versions():
     snap = json.loads((FIXTURES / "upstream-textlint.json").read_text(encoding="utf-8"))
     assert snap["versions"]["textlint"] and snap["versions"]["textlint-rule-preset-ja-technical-writing"]
-    assert len(snap["files"]) == 31
+    assert len(snap["files"]) == 32
 
 
 def test_per_rule_agreement_is_pinned(tallies):

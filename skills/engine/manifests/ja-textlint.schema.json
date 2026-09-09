@@ -19,7 +19,8 @@
         {
           "type": "array",
           "uniqueItems": true,
-          "items": {"type": "string", "enum": ["technical", "spacing", "hiragana", "style"]}
+          "items": {"type": "string",
+                    "enum": ["technical", "spacing", "hiragana", "style", "ai-smell", "commit", "conversation"]}
         }
       ],
       "description": "有効にする preset。technical = textlint-rule-preset-ja-technical-writing 相当、spacing = preset-ja-spacing 相当、hiragana = ja-hiragana-{keishikimeishi,fukushi,hojodoushi}、style = 表記ゆれと全角英数字。"
@@ -39,6 +40,7 @@
               "allow": {"type": "array", "items": {"type": "string"}},
               "joshi": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 1}},
               "min_interval": {"type": "integer", "minimum": 1},
+              "min_hits": {"type": "integer", "minimum": 1},
               "prefer": {"type": "string"},
               "space": {"type": "string", "enum": ["always", "never", "auto", "ignore"]},
               "strict": {"type": "boolean"},

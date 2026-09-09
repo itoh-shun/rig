@@ -28,7 +28,7 @@
 
 | 測るもの | 種 | 件数 | 期待 |
 |---|---|---|---|
-| 再現率 | `cases/*.md` の `expect` 行 | 69 | 全件、行番号まで一致 |
+| 再現率 | `cases/*.md` の `expect` 行 | 73 | 全件、行番号まで一致 |
 | 本家との一致 | `upstream-textlint.json` | 30 ルール 77 件 | ルールごとの (本家, センサー, 一致) を固定 |
 | 適合率（同一 rule） | `cases/*.md` の `expect` 以外の行 | — | その rule の所見ゼロ |
 | 適合率（正直な文書） | `clean/*.md` | 3 | error ゼロ。warning は件数を固定 |
@@ -46,7 +46,9 @@ error が 1 件でも出れば、それは規則の性質ではなく偽陽性�
 
 ## 設定
 
-`config.json` — 全 preset を有効にし、`prh` 相当の用語を 2 件宣言する。
+`config.json` — 全 preset（助言専用の `ai-smell` を含む）を有効にし、`prh` 相当の用語を 2 件宣言する。
+`ai-smell-phrases.md` の種は、本家 textlint が **1 件も報告しない** file である——AI 臭の語彙という
+クラス全体が textlint の外にあり、rig 側では `knowledge/ai-writing-smells` が持っている。
 `ja-space-between-half-and-full-width` と `ja-space-around-code` は既定の `auto` のまま。
 `spacing.md` は入れない書き方を多数派にしてあるので、入れた行が少数派として報告される。
 本家は `never` 固定なので同じ file でより多く報告し、その差は parity test の表にある。

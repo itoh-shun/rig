@@ -21,6 +21,7 @@
     "rule": "ja-no-abusage"
    }
   ],
+  "cases/ai-smell-phrases.md": [],
   "cases/control-chars.md": [
    {
     "line": 3,
