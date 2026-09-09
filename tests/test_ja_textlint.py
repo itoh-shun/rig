@@ -461,3 +461,60 @@ def test_fix_never_touches_text_that_moved():
     findings[0]["column"] = 3
     fixed, n = jt.apply_fixes(src, findings)
     assert (fixed, n) == (src, 0)
+
+
+# ── 変更行だけを見る（gate と hook の土台） ───────────────────────────────────
+def _scratch_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@test.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "old.md").write_text("元からある。できないことはない。\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=repo, check=True)
+    return repo
+
+
+def test_added_lines_are_read_from_a_unified_diff():
+    diff = ("diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n@@ -1,2 +1,3 @@\n 一\n+二\n 三\n"
+            "@@ -10 +11,2 @@\n+十一\n+十二\n"
+            "diff --git a/b.md b/b.md\n--- /dev/null\n+++ b/b.md\n@@ -0,0 +1 @@\n+新\n")
+    assert jt.added_lines_from_diff(diff) == {"a.md": {2, 11, 12}, "b.md": {1}}
+
+
+def test_staged_mode_lints_only_the_added_japanese_lines(tmp_path):
+    repo = _scratch_repo(tmp_path)
+    (repo / "old.md").write_text("元からある。できないことはない。\n追記は問題ない。\n", encoding="utf-8")
+    (repo / "new.md").write_text("まず最初に確認する。\n", encoding="utf-8")
+    (repo / "en.md").write_text("English only, can't not be fine.\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    files, findings = jt.lint_changed(str(repo), jt.Settings(None), staged=True)
+    assert files == ["new.md", "old.md"]          # en.md adds no Japanese; old.md's error is pre-existing
+    assert [(f["file"], f["line"], f["rule"]) for f in findings] == [("new.md", 1, "ja-no-redundant-expression")]
+
+
+def test_changed_mode_includes_untracked_japanese_files(tmp_path):
+    repo = _scratch_repo(tmp_path)
+    (repo / "draft.md").write_text("この機能は利用することができます。\n", encoding="utf-8")
+    files, findings = jt.lint_changed(str(repo), jt.Settings(None), base="HEAD")
+    assert files == ["draft.md"] and _rules(findings) == ["ja-no-redundant-expression"]
+
+
+def test_staged_cli_with_nothing_japanese_is_a_pass_not_unchecked(tmp_path, monkeypatch):
+    repo = _scratch_repo(tmp_path)
+    (repo / "code.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    monkeypatch.chdir(repo)
+    report = tmp_path / "r.json"
+    assert jt.main(["--staged", "--report", str(report)]) == 0
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["status"] == "checked" and data["artifacts"] == [] and data["diff"]["mode"] == "staged"
+
+
+def test_commit_and_conversation_presets_drop_the_document_shaped_rules():
+    assert "ja-no-mixed-period" not in jt.PRESETS["commit"]
+    assert "no-exclamation-question-mark" in jt.PRESETS["commit"]
+    assert {"ja-no-mixed-period", "no-exclamation-question-mark"}.isdisjoint(jt.PRESETS["conversation"])
+    assert _lint("件名だけの行\n", {"presets": ["commit"]}) == []
+    assert _lint("本当ですか？\n", {"presets": ["conversation"]}) == []

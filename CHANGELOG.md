@@ -65,6 +65,29 @@ mechanical replacements — kana width, NFC, zero-width characters, declared ter
 hiragana rules, misused idioms, stray spaces — and leaves everything that touches meaning to
 the `fix` step.
 
+**The Japanese-prose gate, everywhere Japanese gets written.** Two diff-conditional
+criteria join the acceptance gate the way `prompt_regression_passed` does — present only
+while the task's diff adds Japanese prose, judged only on the added lines the way
+`no_secret_leak` is. `ja_lint_clean` is machine-owned by `rig_workbench/workbench/ja_prose.py`:
+errors on added Japanese lines fail it, warnings leave it at `warning`, `--set
+ja_lint_clean=passed` is the recorded escape hatch, and `rig-wb wb scan-ja-prose` prints
+what it saw. `ja_prose_ai_smell_reviewed` is owned by a reviewer: the sensor transcribes
+the `ai-smell-reviewer` verdict from `review.json` (REJECT fails, APPROVE_WITH_CONDITIONS
+warns) and a missing verdict stays `pending`, so the lane `parallel-review` now adds
+whenever the diff carries Japanese cannot be skipped by silence. Nothing in that sensor
+reads `scripts/prose_rhythm.py`, on purpose: rig's own measurement
+(docs/jp-naturalness-engineering.ja.md §6-3) found that gating a rhythm proxy made
+findings drop while blind judgement got worse, and a test pins the absence. The same lint
+reaches the places the gate cannot: `rig-wb githooks install` now ships a `commit-msg` hook
+(`--preset commit`, which drops the one document-shaped rule) and a `pre-commit` step
+(`rig-wb ja-lint --staged`, added lines only, degrades to a notice without rig-wb),
+`japanese-writing`'s reviewer turns its optional pre-pass into a REVISE condition,
+`de-ai-smell` requires zero errors on the rewritten text, the `pr` step lints Japanese
+commit messages and PR bodies, and `talk-assistant` passes its own replies through
+`--preset conversation` (the one place that can only be a habit, not a hook). Warnings
+block nowhere. `rig-wb ja-lint` gains `--staged` and `--changed <base>` for the diff-scoped
+modes and the `commit` / `conversation` presets.
+
 **Recipe `japanese-lint`, command `/rig:japanese-lint`.** `fix` runs `rig-wb ja-lint`
 against the project's `.claude/ja-textlint.json` `paths`, repairs errors without touching
 facts, names, numbers or steps, and re-runs the same command as its `checks`; `review`

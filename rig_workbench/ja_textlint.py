@@ -84,7 +84,14 @@ PRESETS = {
     ],
     "hiragana": ["ja-hiragana-keishikimeishi", "ja-hiragana-fukushi", "ja-hiragana-hojodoushi"],
     "style": ["ja-no-orthographic-variants", "no-zenkaku-alnum"],
+    # commit message と会話の返答は段落の文書ではない。件名は「。」で終わらないし、
+    # 会話は疑問符を使う。文書の形を前提にする規則だけを外した technical。
+    "commit": [],
+    "conversation": [],
 }
+PRESETS["commit"] = [r for r in PRESETS["technical"] if r not in ("ja-no-mixed-period",)]
+PRESETS["conversation"] = [r for r in PRESETS["technical"]
+                           if r not in ("ja-no-mixed-period", "no-exclamation-question-mark")]
 DEFAULT_PRESETS = ["technical", "spacing"]
 # `prh` は terms が宣言されたときだけ意味を持つので preset に入れない。常に有効。
 
@@ -1395,6 +1402,107 @@ def apply_fixes(source: str, findings: list[Finding]) -> tuple[str, int]:
     return "\n".join(lines), applied
 
 
+RE_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def added_lines_from_diff(diff_text: str) -> dict[str, set[int]]:
+    """unified diff（-U0 でなくてもよい）から、file ごとの追加行番号（新しい file の行）を集める。"""
+    out: dict[str, set[int]] = {}
+    rel: str | None = None
+    lineno = 0
+    for line in diff_text.split("\n"):
+        if line.startswith("+++ "):
+            target = line[4:].strip()
+            rel = None if target == "/dev/null" else (target[2:] if target.startswith("b/") else target)
+            continue
+        if line.startswith("--- ") or line.startswith("diff --git") or line.startswith("index "):
+            continue
+        m = RE_HUNK.match(line)
+        if m:
+            lineno = int(m.group(1))
+            continue
+        if rel is None:
+            continue
+        if line.startswith("+"):
+            out.setdefault(rel, set()).add(lineno)
+            lineno += 1
+        elif line.startswith("-"):
+            continue
+        elif line.startswith("\\"):
+            continue
+        else:
+            lineno += 1
+    return out
+
+
+def _git(args: list[str], cwd: str) -> str:
+    import subprocess
+    try:
+        proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Unchecked(f"git を実行できない: {exc}") from exc
+    if proc.returncode != 0:
+        raise Unchecked(f"git {' '.join(args[:2])} が失敗した: {proc.stderr.strip()[:200]}")
+    return proc.stdout
+
+
+def changed_prose(repo: str, base: str | None = None, staged: bool = False) -> dict[str, set[int] | None]:
+    """変更された日本語散文の file と、その追加行番号。値が None の file は全行が対象（未追跡）。
+
+    `staged=True` は index（`git diff --cached`）、`base` は `git diff <base>` と未追跡 file。
+    追加行にかな・漢字を含み、拡張子が TEXT_SUFFIXES の file だけを返す。"""
+    args = ["diff", "--unified=0", "--no-color"]
+    if staged:
+        args.append("--cached")
+    elif base:
+        args.append(base)
+    lines = added_lines_from_diff(_git(args, repo))
+    out: dict[str, set[int] | None] = {}
+    for rel, nos in lines.items():
+        if not rel.lower().endswith(TEXT_SUFFIXES):
+            continue
+        path = os.path.join(repo, rel)
+        if not os.path.isfile(path):
+            continue
+        try:
+            source = read_source(path).split("\n")
+        except Unchecked:
+            continue
+        if any(RE_JA_CHAR.search(source[n - 1]) for n in nos if n - 1 < len(source)):
+            out[rel] = nos
+    if base and not staged:
+        for rel in _git(["ls-files", "--others", "--exclude-standard"], repo).split("\n"):
+            rel = rel.strip()
+            if not rel or not rel.lower().endswith(TEXT_SUFFIXES):
+                continue
+            if any(part in ("node_modules", ".git", ".rig") for part in rel.split("/")):
+                continue
+            path = os.path.join(repo, rel)
+            if not os.path.isfile(path):
+                continue
+            try:
+                if RE_JA_CHAR.search(read_source(path)):
+                    out[rel] = None
+            except Unchecked:
+                continue
+    return out
+
+
+def lint_changed(repo: str, settings: "Settings", base: str | None = None,
+                 staged: bool = False) -> tuple[list[str], list[Finding]]:
+    """変更された日本語散文の file を lint し、追加行の所見だけを返す。(file 一覧, 所見)。"""
+    targets = changed_prose(repo, base=base, staged=staged)
+    findings: list[Finding] = []
+    for rel in sorted(targets):
+        nos = targets[rel]
+        source = read_source(os.path.join(repo, rel))
+        for f in lint_text(source, settings, rel):
+            if nos is None or f["line"] in nos:
+                findings.append(f)
+    return sorted(targets), findings
+
+
 def collect_artifacts(paths: list[str], skip: set[str]) -> tuple[list[str], list[dict]]:
     files: list[str] = []
     skipped: list[dict] = []
@@ -1482,6 +1590,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fix", action="store_true",
                         help="機械的に置き換えられる所見（半角カナ・全角英数字・NFD・ゼロ幅・用語・"
                              "ひらく規則・誤用・括弧やスラッシュの空白）を本文に当てて書き戻し、残りを報告する")
+    parser.add_argument("--staged", action="store_true",
+                        help="git の index にある変更のうち、日本語の散文を足した file の追加行だけを検査する（pre-commit 向け）")
+    parser.add_argument("--changed", metavar="BASE",
+                        help="BASE からの変更と未追跡 file のうち、日本語の散文を足した file の追加行だけを検査する")
     parser.add_argument("--if-configured", action="store_true",
                         help="設定ファイルも引数も無ければ not-configured として exit 0")
     parser.add_argument("--list-rules", action="store_true", help="ルール一覧と既定 severity を出して終わる")
@@ -1497,6 +1609,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     status, reason = "checked", ""
+    scope: dict | None = None
     config_path: str | None = None
     files: list[str] = []
     skipped: list[dict] = []
@@ -1516,8 +1629,15 @@ def main(argv: list[str] | None = None) -> int:
             if unknown:
                 raise Unchecked(f"知らないルール: {unknown}")
             settings.enabled = {r: settings.enabled.get(r, DEFAULT_SEVERITY[r]) for r in args.rule}
-        targets = list(args.artifacts) or list(settings.paths)
-        if not targets:
+        if args.staged or args.changed:
+            if args.artifacts:
+                raise Unchecked("--staged / --changed と成果物の引数は同時に指定できない")
+            files, findings = lint_changed(".", settings, base=args.changed, staged=args.staged)
+            scope = {"mode": "staged" if args.staged else "changed", "base": args.changed}
+            targets = None
+        else:
+            targets = list(args.artifacts) or list(settings.paths)
+        if targets is not None and not targets:
             if args.if_configured:
                 raise NotConfigured("検査対象が指定されていない（引数も設定の paths も無い）")
             raise Unchecked("検査対象が指定されていない（引数も設定の paths も無い）")
@@ -1526,10 +1646,13 @@ def main(argv: list[str] | None = None) -> int:
             skip.add(os.path.realpath(config_path))
         if args.report:
             skip.add(os.path.realpath(args.report))
-        files, skipped = collect_artifacts(targets, skip)
-        if not files:
-            raise Unchecked("検査対象のテキスト成果物が 1 件も無い")
-        for path in files:
+        if targets is not None:
+            files, skipped = collect_artifacts(targets, skip)
+            if not files:
+                raise Unchecked("検査対象のテキスト成果物が 1 件も無い")
+        elif not files:
+            reason = "変更に日本語の散文が無い（検査するものが無いのは合格であって未検査ではない）"
+        for path in files if targets is not None else []:
             source = read_source(path)
             name = STDIN_NAME if path == "-" else path
             if args.fix and path != "-":
@@ -1554,6 +1677,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": status,
         "reason": reason,
         "scope": SCOPE_NOTE,
+        "diff": scope,
         "config": config_path,
         "config_sha256": file_sha256(config_path),
         "presets": settings.presets if settings else [],
@@ -1582,6 +1706,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"未検査: {reason}", file=sys.stderr)
         print("合格ではない。走らなかったことを合格として扱わない。", file=sys.stderr)
     else:
+        if scope and not files:
+            print(reason)
         for f in findings:
             fix = f"  → {f['fix']}" if f.get("fix") else ""
             print(f"{f['file']}:{f['line']}:{f['column']}: {f['severity']} [{f['rule']}] {f['message']}{fix}")

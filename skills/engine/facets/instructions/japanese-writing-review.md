@@ -7,11 +7,12 @@ acceptance-gate に渡します。
 ## 手順
 
 1. 元の依頼、明示された事実、掲載先の指定、完成稿を reviewer に渡します。
-2. **機械プリパス（任意）**：完成稿を `rig-wb ja-lint -` に stdin で渡し、報告を reviewer への
+2. **機械プリパス（必須）**：完成稿を `rig-wb ja-lint -` に stdin で渡し、報告を reviewer への
    入力に添えます。本文を shell の引数や一時ファイルに書かず、stdin で一度だけ渡します。
-   規則は `japanese-textlint-rules` にあります。これは**書き方の規約**の根拠であって判定では
-   ありません。error（一文の長さ、読点の数、二重否定、冗長表現、誤用）は reviewer が
-   `readability` のアンカーに使えます。warning は近似なので、一致だけを理由に REVISE しません。
+   規則は `japanese-textlint-rules` にあります。**error が 1 件でも残る完成稿は `REVISE`** で、
+   `readability` の anchor に報告の行を写します（一文の長さ、読点の数、二重否定、冗長表現、
+   誤用は書き方の規約で、内容の判断ではありません）。warning は近似なので、一致だけを理由に
+   REVISE しません。センサーが走らなかった（exit 2）ときは `UNVERIFIED` で、通しません。
 3. reviewer は `japanese-writing-rules-v2` の各境界を入力と完成稿の具体的な箇所へ
    アンカーして検査します。秘密情報の値はアンカーへ引用せず、「入力中の秘密情報」のように
    指し示します。文章全体の代筆はさせません。

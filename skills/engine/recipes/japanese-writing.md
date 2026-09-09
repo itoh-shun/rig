@@ -24,6 +24,7 @@ steps:
       - "選択されたモードの範囲内で書かれ、モードが解除しない禁止事項を破っておらず、AI 臭のマーカー（japanese-ai-smell-jp）で原意を損なう癖が残っていない。マーカーの一致だけを理由に原意を壊していない"
       - "入力中の秘密情報を繰り返し・引用・変換・再表示せず、[REDACTED] と非秘密の最小診断情報だけを使っている"
       - "障害連絡またはサポート返信では、該当する安全策を満たしている"
+      - "完成稿を rig-wb ja-lint に stdin で通し、error が 0 である（走らなかった場合は UNVERIFIED）"
       - "最終判定は生成者と異なるモデルまたは provider の japanese-writing-reviewer が行っている"
     personas: [japanese-writing-reviewer]
     policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2, japanese-writing-modes]

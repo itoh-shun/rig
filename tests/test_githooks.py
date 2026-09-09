@@ -370,3 +370,68 @@ def test_pre_push_edited_manifest_skips_but_allows_push(scratch_repo, tmp_path):
     assert r.returncode == 0, r.stderr
     assert "manifest not trusted" in r.stderr
     assert not marker.exists()
+
+
+# ── Japanese prose lint (pre-commit step 3 + commit-msg) ─────────────────────
+# RIG_HOME is pinned by conftest, so the hooks reach the checkout's
+# scripts/ja_textlint.py even where rig-wb is not installed on PATH.
+def test_pre_commit_blocks_added_japanese_prose_errors(scratch_repo):
+    githooks.install(scratch_repo)
+    _write_manifest(scratch_repo)
+    (scratch_repo / "guide.md").write_text("この機能は利用することができます。\n", encoding="utf-8")
+    _git(scratch_repo, "add", ".")
+    r = _git(scratch_repo, "commit", "-m", "docs")
+    assert r.returncode != 0
+    assert "ja-lint FAILED" in r.stderr and "ja-no-redundant-expression" in r.stderr
+
+
+def test_pre_commit_ja_lint_is_diff_scoped_and_ignores_english(scratch_repo):
+    githooks.install(scratch_repo)
+    _write_manifest(scratch_repo)
+    (scratch_repo / "old.md").write_text("元からある。できないことはない。\n", encoding="utf-8")
+    _git(scratch_repo, "add", ".")
+    assert _git(scratch_repo, "commit", "-m", "seed", env={"RIG_HOOK_SKIP_JALINT": "1"}).returncode == 0
+    (scratch_repo / "old.md").write_text("元からある。できないことはない。\n追記は問題ない。\n", encoding="utf-8")
+    (scratch_repo / "notes.md").write_text("English only, can't not be fine.\n", encoding="utf-8")
+    _git(scratch_repo, "add", ".")
+    r = _git(scratch_repo, "commit", "-m", "append")
+    assert r.returncode == 0, r.stderr
+    assert "ja-lint: clean" in r.stderr
+
+
+def test_pre_commit_ja_lint_runs_without_a_manifest(scratch_repo):
+    """No manifest silences the manifest-driven lint only; the prose lint is computational."""
+    githooks.install(scratch_repo)
+    (scratch_repo / "guide.md").write_text("まず最初に確認する。\n", encoding="utf-8")
+    _git(scratch_repo, "add", ".")
+    r = _git(scratch_repo, "commit", "-m", "docs")
+    assert r.returncode != 0 and "ja-lint FAILED" in r.stderr
+
+
+def test_pre_commit_ja_lint_skip_env(scratch_repo):
+    githooks.install(scratch_repo)
+    (scratch_repo / "guide.md").write_text("まず最初に確認する。\n", encoding="utf-8")
+    _git(scratch_repo, "add", ".")
+    r = _git(scratch_repo, "commit", "-m", "docs", env={"RIG_HOOK_SKIP_JALINT": "1"})
+    assert r.returncode == 0, r.stderr
+
+
+def test_commit_msg_hook_lints_a_japanese_message_and_leaves_english_alone(scratch_repo):
+    githooks.install(scratch_repo)
+    (scratch_repo / "a.txt").write_text("x\n", encoding="utf-8")
+    _git(scratch_repo, "add", ".")
+    r = _git(scratch_repo, "commit", "-m", "検索を高速化することができます")
+    assert r.returncode != 0 and "commit message has Japanese prose errors" in r.stderr
+    r = _git(scratch_repo, "commit", "-m", "検索を高速化する")   # 件名は「。」で終わらなくてよい
+    assert r.returncode == 0, r.stderr
+    (scratch_repo / "b.txt").write_text("y\n", encoding="utf-8")
+    _git(scratch_repo, "add", ".")
+    r = _git(scratch_repo, "commit", "-m", "speed up search; can't not be fine")
+    assert r.returncode == 0, r.stderr
+
+
+def test_install_ships_the_commit_msg_hook(scratch_repo):
+    githooks.install(scratch_repo)
+    hook = _hooks_dir(scratch_repo) / "commit-msg"
+    assert hook.is_file() and githooks.is_rig_hook(hook)
+    assert hook.stat().st_mode & stat.S_IXUSR

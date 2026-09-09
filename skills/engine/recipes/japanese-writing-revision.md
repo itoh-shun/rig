@@ -23,6 +23,7 @@ steps:
       - "AI 臭のマーカー（japanese-ai-smell-jp）を確認し、原意を損なう癖が残っていない。マーカーの一致だけを理由に原意を壊していない"
       - "秘密情報を再表示せず、修正済みの完成稿を一つだけ返している"
       - "元の下書きとは別の成果物として渡され、source file を編集・上書きしていない"
+      - "完成稿を rig-wb ja-lint に stdin で通し、error が 0 である（走らなかった場合は UNVERIFIED）"
       - "最終判定は生成者と異なるモデルまたは provider の japanese-writing-reviewer が行っている"
     personas: [japanese-writing-reviewer]
     policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2, japanese-writing-modes]

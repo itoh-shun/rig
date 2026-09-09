@@ -149,6 +149,28 @@ orchestrate の checks 実行系は stdout を捨てるので、**報告の本�
    しません。それは `fix` step の担い手の仕事で、`--fix` の後に残った所見がその一覧です。
    置き換える前にその位置の文字が所見と一致することを確かめ、ずれていれば触りません。
 
+## どこで gate になるか
+
+lint は呼んだときだけ動く道具ではなく、日本語を書くあらゆる経路で gate です。ただし
+**gate になるのは文字と辞書で決まる error だけ**で、AI 臭の判定は reviewer の verdict を
+gate にし、`scripts/prose_rhythm.py` のような機械の点数は gate に繋ぎません。rig 自身の
+実測（`docs/jp-naturalness-engineering.ja.md` §6-3）が、リズム指標を gate にすると所見は
+減るのに人の盲検判定が悪化することを記録しているからです。
+
+| 経路 | 機械 gate（ja-lint の error） | AI 臭の gate |
+|---|---|---|
+| `/rig:go` の acceptance gate | diff が日本語の散文を足したとき `ja_lint_clean` が現れ、追加行の error で `failed`。センサーが書く。`--set ja_lint_clean=passed` は記録される逃がし方 | 同じ条件で `ja_prose_ai_smell_reviewed` が現れ、`ai-smell-reviewer` の verdict を写す。verdict が無ければ `pending` のまま accept できない |
+| review fan-out（`parallel-review`） | `rig-wb wb scan-ja-prose <task_id>` を reviewer の入力に添える | diff が日本語の散文を足したとき `ai-smell-reviewer` レーンを必ず加える |
+| `git commit`（`rig-wb githooks install`） | `pre-commit` が `rig-wb ja-lint --staged`、`commit-msg` が message を `--preset commit` で検査。error で止まる | — |
+| `japanese-writing` / `japanese-writing-revision` | reviewer が完成稿を stdin で通し、error が残れば `REVISE` | 既存の `japanese-ai-smell-jp` 判定 |
+| `de-ai-smell` | 書き直し後の全文で error 0 が acceptance | 既存の 5 観点スコア gate |
+| `japanese-lint` | `fix` step の checks | — |
+| commit message・PR 本文（`pr` step） | 送る前に `--preset commit` で error を直す | — |
+| 会話（`talk-assistant`） | 返答を `--preset conversation` で通し、error だけ直す（hook で強制はできない） | — |
+
+どの経路でも warning は gate にしません。近似ルールの偽陽性を消すために本文が歪むのを
+避けるためで、warning は報告に残り、reviewer が読みます。
+
 ## 所見をどう扱うか
 
 7. **error は直します。warning は読みます。** warning を消すために本文を削らないでください。

@@ -152,6 +152,8 @@ python3 scripts/workbench.py gate <task_id> --set no_type_errors_or_explained=pa
 ```
 `failed` か `pending` が1件でも残る限り `workbench.py accept` はコードが拒否する（安全側に倒す。§9.1「AI が『できました』と言うだけでは完了扱いにしない」）。**warning は accept を止めないが警告として記録に残る**（未解決の重大警告は人が読める形で提示する）。gate 全体の状態は `passed` / `passed_with_warnings` / `failed` / `pending` / `skipped`（`scripts/workbench.py stats` の集計軸と同一）。
 
+diff が日本語の散文を足したタスクでは、gate に `ja_lint_clean` と `ja_prose_ai_smell_reviewed` が現れる。前者はセンサーが書く。後者は `ai-smell-reviewer` の verdict を `workbench.py review <task_id> --set ai-smell-reviewer=<verdict>` で記録するまで `pending` のままで、accept できない（`facets/instructions/parallel-review` の日本語散文レーン）。
+
 review 系タスク（`review`/`security_review`/`pr-review`）で reviewer persona の verdict が出たら、`workbench.py review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` で記録する。これは gate 判定そのものではなく、`/rig:rig stats` の「verifier のゴム印検知」（REJECT ゼロが続く reviewer への警告）に使う観測データ。
 
 ### ⑤ 結果サマリ

@@ -26,6 +26,8 @@ from .progress import load_recipe_steps
 from .runtime import WorktreeHandle
 from . import runtime as runtime_mod
 from . import task_package
+from .ja_prose import (apply_ja_lint_sensor, apply_ja_smell_sensor,
+                       ensure_ja_prose_criteria)
 from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
                                 apply_prompt_regression_sensor,
                                 ensure_prompt_criterion)
@@ -368,6 +370,10 @@ def cmd_gate(args: argparse.Namespace) -> None:
         acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
 
         ensure_prompt_criterion(root, task, acc)
+        # Japanese-prose gate (diff-conditional, like the prompt criterion): a lint
+        # criterion the machine owns and a reviewer-verdict criterion it only transcribes.
+        with shared_diff_cache():
+            ensure_ja_prose_criteria(root, task, acc)
 
         known = {c["name"]: c for c in acc["checks"]}
         explicit_set: set[str] = set()
@@ -419,6 +425,11 @@ def cmd_gate(args: argparse.Namespace) -> None:
             # so this is a no-op on a default gate.
             sensor_notes += apply_anchor_sensor(root, d, task, acc, explicit_set=explicit_set)
             sensor_notes += apply_prompt_regression_sensor(root, task, acc)
+            # Japanese-prose sensors: errors on added Japanese lines are fail-grade
+            # (--set ja_lint_clean=passed is the recorded escape hatch); the AI-smell
+            # criterion is the ai-smell-reviewer's recorded verdict, never a rhythm score.
+            sensor_notes += apply_ja_lint_sensor(root, d, task, acc, explicit_set=explicit_set)
+            sensor_notes += apply_ja_smell_sensor(root, d, task, acc, explicit_set=explicit_set)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()

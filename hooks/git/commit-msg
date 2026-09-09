@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# rig-githooks v1 (managed by `rig-wb githooks` — do not edit by hand; reinstall to update)
+#
+# commit-msg — Japanese prose lint of the commit message itself.
+#
+# A commit message is prose people read, and it is the one piece of Japanese a
+# task writes that lives in no file the pre-commit hook can see. When the message
+# contains Japanese, it is piped to `rig-wb ja-lint --preset commit -`: the
+# textlint-ja-style rules minus the one that assumes document paragraphs (a subject
+# line does not end in 「。」). Errors block the commit; warnings never do. No
+# Japanese => nothing to check. Without rig-wb the check is skipped with a notice.
+#
+# Escape hatches (set to any value other than 0):
+#   RIG_HOOK_SKIP=1            skip the whole hook
+#   RIG_HOOK_SKIP_JALINT=1     skip the Japanese prose lint
+set -u
+
+say() { printf 'rig commit-msg: %s\n' "$*" >&2; }
+_truthy() { [ -n "${1:-}" ] && [ "${1:-}" != "0" ]; }
+
+if _truthy "${RIG_HOOK_SKIP:-}" || _truthy "${RIG_HOOK_SKIP_JALINT:-}"; then
+  exit 0
+fi
+
+msg_file="${1:-}"
+[ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+# Drop git's comment lines and the scissors block; keep the message body.
+body="$(sed -e '/^# ------------------------ >8 ------------------------$/,$d' -e '/^#/d' "$msg_file")"
+[ -n "$body" ] || exit 0
+# No Japanese-detection here: ja-lint applies its sentence rules only to sentences that
+# contain kana or kanji, so an English message comes back clean. One python start per
+# commit is the cost; a locale-dependent grep for kana would be the alternative.
+
+ja_lint_cmd=""
+if command -v rig-wb >/dev/null 2>&1; then
+  ja_lint_cmd="rig-wb ja-lint"
+elif [ -n "${RIG_HOME:-}" ] && [ -f "$RIG_HOME/scripts/ja_textlint.py" ] && command -v python3 >/dev/null 2>&1; then
+  ja_lint_cmd="python3 $RIG_HOME/scripts/ja_textlint.py"
+fi
+if [ -z "$ja_lint_cmd" ]; then
+  say "ja-lint: rig-wb not installed — skipped"
+  exit 0
+fi
+
+if printf '%s\n' "$body" | $ja_lint_cmd --preset commit -; then
+  exit 0
+fi
+say "commit message has Japanese prose errors — fix them, or bypass once: RIG_HOOK_SKIP_JALINT=1 git commit ..."
+exit 1

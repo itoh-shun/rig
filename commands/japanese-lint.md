@@ -60,8 +60,12 @@ exit 1 に数えます。`--json` と `--report <path>` で機械可読な報告
 常体の混在、形式名詞）は warning で、偽陽性を含みます。**warning を消すために本文を
 歪めないでください。** 固有名詞は設定の `allow` / `ignore` / `groups` に宣言して逃がします。
 
-`japanese-writing` の完成稿にも同じセンサーを当てられます。そちらは reviewer の機械
-プリパスで、判定ではなく根拠に使います。
+この recipe を呼ばなくても、センサーは gate として効きます。`/rig:go` の acceptance gate は
+diff が日本語の散文を足したときに `ja_lint_clean`（追加行の error で `failed`）と
+`ja_prose_ai_smell_reviewed`（`ai-smell-reviewer` の verdict を写す）を自動で足し、
+`rig-wb githooks install` を入れた repository では `pre-commit` が `--staged`、`commit-msg` が
+message を検査します。`japanese-writing` の reviewer は完成稿を stdin で通し、error が
+残れば `REVISE` です。どの経路でも warning は gate にしません。
 
 ## 例
 
