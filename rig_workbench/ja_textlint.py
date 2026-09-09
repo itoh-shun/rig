@@ -460,6 +460,10 @@ DOUBLE_NEGATIVES = [
     "なくもない", "なくもありません", "ないとはいえない", "ないとは言えない",
     "ないとは言えません", "ないはずがない", "ないはずはない", "ないものはない",
 ]
+# 「ない訳ではない」「ない事はない」のように形式名詞を漢字で書いた形も同じ二重否定。
+# 前後比較の下書きで「壊れることがない訳ではありません」がすり抜けたので足した。
+DOUBLE_NEGATIVES += [d.replace("わけ", "訳") for d in DOUBLE_NEGATIVES if "わけ" in d]
+DOUBLE_NEGATIVES += [d.replace("こと", "事") for d in DOUBLE_NEGATIVES if "こと" in d]
 RE_DOUBLE_NEG = re.compile("|".join(map(re.escape, DOUBLE_NEGATIVES)))
 
 
@@ -671,8 +675,13 @@ def rule_successive_word(ctx: Context) -> None:
         for m in RE_SUCC_JOSHI.finditer(s.text):
             prev = s.text[m.start() - 1] if m.start() else ""
             head = s.text[max(0, m.start() - 4): m.start()]
+            nxt = s.text[m.end(): m.end() + 1]
             if not (re.match(f"[{KANJI}{KATA}A-Za-z0-9]", prev or " ")
                     or any(head.endswith(p) for p in PRONOUNS)):
+                continue
+            # 「自動でできる」の「でで」は助詞「で」＋動詞「でき」。rig 自身の docs で最初に
+            # 出た偽陽性。「ででき」「ででか（出掛け）」は語の並びなので飛ばす。
+            if m.group(1) == "でで" and nxt in ("き", "か"):
                 continue
             ctx.add("ja-no-successive-word", s.locate(m.start()),
                     f"同じ助詞「{m.group(1)[0]}」が連続しています。", m.group(0))
@@ -724,7 +733,8 @@ REDUNDANT = [
     (re.compile(r"まず最初に"), "「まず」か「最初に」のどちらかで足ります。"),
     (re.compile(r"一番最初|一番最後"), "「最初」「最後」で足ります。"),
     (re.compile(r"各[^ごと、。\n]{1,8}ごと"), "「各〜」か「〜ごと」のどちらかで足ります。"),
-    (re.compile(r"約[0-9０-９.．]+[^、。\n]{0,4}(ほど|くらい|ぐらい|程度)"), "「約」と「ほど」は同じ意味です。"),
+    (re.compile(r"約(?:[0-9０-９.．]+|半分|[一二三四五六七八九十百千万]+)[^、。\n]{0,4}(ほど|くらい|ぐらい|程度)"),
+     "「約」と「ほど」は同じ意味です。"),
     (re.compile(r"頭痛が痛|馬から落馬|後で後悔|あとで後悔|返事を返|違和感を感じ|犯罪を犯|被害を被|炎天下の下|過半数を超え|今現在|いまだ未定|予め予約|日本に来日|射程距離|存亡の危機|従来から|内定が決ま"),
      "意味が重なっています。"),
 ]

@@ -68,12 +68,17 @@ def test_too_many_commas_in_one_sentence():
 def test_double_negative_fixed_forms_but_not_nakereba_naranai():
     assert _rules(_lint("できないことはない。\n", rules=["no-double-negative-ja"])) == ["no-double-negative-ja"]
     assert _lint("省略しなければならない。\n", rules=["no-double-negative-ja"]) == []
+    # 形式名詞を漢字で書いても同じ二重否定。前後比較の下書きですり抜けた形。
+    assert _rules(_lint("壊れることがない訳ではありません。\n", rules=["no-double-negative-ja"])) == ["no-double-negative-ja"]
 
 
 def test_redundant_expression_dictionary_reports_the_span_and_a_reason():
     f = _lint("この機能を利用することができます。\n", rules=["ja-no-redundant-expression"])
     assert len(f) == 1 and f[0]["text"] == "することができます"
     assert f[0]["column"] == 8
+    # 「約」の後ろが漢数字や「半分」でも同じ重複。前後比較の下書きですり抜けた形。
+    f = _lint("時間を約半分ほどに短縮した。約三割程度です。\n", rules=["ja-no-redundant-expression"])
+    assert [x["text"] for x in f] == ["約半分ほど", "約三割程度"]
 
 
 def test_prh_terms_come_only_from_the_declaration():
@@ -148,6 +153,12 @@ def test_register_mix_reports_the_minority_and_leaves_a_pure_document_alone():
 def test_register_check_skips_lists_and_headings():
     body = "# 見出しである\n\n- 箇条書きだ\n\n本文です。\n"
     assert _lint(body, rules=["no-mix-dearu-desumasu"]) == []
+
+
+def test_successive_word_does_not_fire_on_the_particle_before_dekiru():
+    """「自動でできる」は助詞「で」＋「できる」。rig 自身の docs で最初に出た偽陽性。"""
+    assert _lint("レビューも自動でできるので便利です。\n", rules=["ja-no-successive-word"]) == []
+    assert _rules(_lint("会議でで決めた。\n", rules=["ja-no-successive-word"])) == ["ja-no-successive-word"]
 
 
 def test_unnatural_alphabet_is_lowercase_beside_hiragana_only():
