@@ -1,0 +1,31 @@
+{
+  "_readme": "プロジェクトのデザイン制約。<repo>/.claude/design-constraints.json に置く。値はこのプロジェクトが所有する——rig は雛形しか出荷しない。[要記入] が1つでも残っている間、センサーは未検査(exit 2)を返し、合格にはならない。",
+  "version": 1,
+  "tokens": {
+    "color": {
+      "brand-primary": "[要記入]",
+      "surface": "[要記入]",
+      "text-body": "[要記入]"
+    },
+    "spacing": {
+      "sm": "[要記入]",
+      "md": "[要記入]",
+      "lg": "[要記入]"
+    },
+    "font": {
+      "body": "[要記入]"
+    },
+    "radius": {
+      "card": "[要記入]"
+    }
+  },
+  "components": [
+    "[要記入]"
+  ],
+  "prohibited": [
+    {
+      "pattern": "[要記入]",
+      "why": "[要記入]"
+    }
+  ]
+}

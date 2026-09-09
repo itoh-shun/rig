@@ -2,6 +2,260 @@
 
 ## Unreleased
 
+## [2.13.0] - 2026-09-08
+
+### Added
+
+**A design constraints layer, and a sensor that checks it.** The design pack shipped two
+catalogues of general principles — Nielsen's heuristics and WCAG — and no place for a
+project to say "these are our tokens, these are our components, this wording is
+forbidden". `design-draft` produced a style guide as *output*; nothing could be declared
+as *input*. A project may now declare its constraints in
+`<repo>/.claude/design-constraints.json` (schema and a blank template in
+`skills/engine/manifests/`, `--constraints <path>` to point elsewhere), and
+`rig_workbench/design_constraints.py` checks artefacts against them mechanically before
+the review runs. The declaration binds generation as well: `design-draft` reads it and
+carries it into the skills it delegates to, because the parent knowing a constraint does
+not make the delegate obey it.
+
+**What the sensor claims is a detection class, not compliance.** It finds raw values that
+resolve to no declared token, token names that do not exist, components outside the
+inventory, and prohibited expressions. Prose that names neither a value nor a token —
+"use the brand blue" — is structurally outside it and is left to the reviewer. That
+boundary is measured, not asserted: `tests/fixtures/design-constraints/` was written by an
+author who had the policy, schema and template and **not** the sensor, which did not exist
+when the corpus was commissioned. Against that corpus the sensor scores **23/26**, with
+**zero** findings on the nine honest artefacts and **zero** on the three prose-only
+seeds. A hit means the same line and the same class — there is no value-substring
+fallback, because with one the line numbers were not load-bearing. The three it misses are named in the policy with the reason each is unreachable: a
+typeface named outside a CSS declaration has no value shape, a hex colour split across a
+string concatenation appears on no line, and a prohibited phrase split between a JSX text
+node and an expression exists only in the rendered output.
+
+The first measurement was 16/26. Seven of the ten misses were missing normalisation rather
+than a real limit, and were fixed as normalisation — full-width parentheses (`token（…）`,
+which a Japanese IME produces routinely and which made the reference *invisible* rather
+than absent), zero-width characters, letter case, prohibited phrases straddling a line
+wrap, CSS named colours, the `font:` shorthand, and dotted component members. The
+false-positive count and the prose-only count stayed at zero throughout.
+
+**Three states, not two.** `checked`, `unchecked` (a declaration exists but could not be
+read — placeholders left in, broken JSON, a file that does not match the schema, an
+explicitly-named constraints file that is absent) and `not-configured` (no declaration at
+all). `unchecked` is never a pass; `not-configured` is not a pass either, but it is not
+the forbidden state — there is nothing declared to enforce — so it does not fail a run.
+`design-verdict` gains a `制約 所見` section whose first line is that status verbatim, and
+both design recipes gain an acceptance criterion that the status is transcribed and not
+written up as agreement. The sensor writes its report to a file (`--report`) because
+`_run_step_checks` sends a check's stdout to `DEVNULL`, so in a headless run the file is
+the only record.
+
+**What review found.** Four reviewers ran against the first version and every finding
+reproduced. The worst was a one-character typo: spelling `prohibited` as `prohibitted`
+dropped the whole prohibited-expression section and returned `checked`, zero violations,
+exit 0 — a declaration present, unenforced, and reported as agreement, which is the exact
+state this layer exists to prevent. Unknown keys are now `unchecked`. Next worst was an
+asymmetry: the declared values did not go through the extraction the artefacts went
+through, so declaring `{"surface": "white"}` classified it as a *typeface* and then
+reported both `background: white` and `#FFFFFF` as violations of the constraint they
+satisfied. A first attempt at this only handled whole-value colours and still lost the
+`red` in `2px solid red` and the `Inter` in `16px/1.5 Inter, sans-serif`; a verifier
+found that by reading the code rather than the claim. A declared value is now placed in a
+synthesised declaration and run through the same extractors the artefact side uses, so
+there is one pipeline rather than two that resemble each other. Also fixed: a non-UTF-8
+constraints file crashed instead of reporting `unchecked` and wrote no report at all; an
+unreadable subdirectory was skipped silently and counted as clean; symbolic links were
+followed out of the scan root; `fixes #123` was read as a colour; `fontFamily` in a JSX
+style object was not read as `font-family`; TypeScript type arguments (`Map<String, Int>`,
+`<T,>(xs) => xs[0]`) were read as components. Prohibited-expression regexes ran against
+raw text, so the zero-width and full-width evasions the literal path catches did not apply
+to them, and a catastrophic pattern hung the gate indefinitely — they now run against the
+same normalised text, in a subprocess bounded by the wall clock. A gate that does not
+return is not failing closed; it is not guarding anything.
+
+**What a verifier found after that.** The fixes were then handed to a verifier whose
+brief was to break them rather than confirm them, and it returned REJECT. Besides the
+composite-declaration case above: `"case_sensitive": "false"` — the string, not the
+boolean — was truthy, so a rule ran with the opposite of its declared meaning while the
+report said `checked`; type errors in a rule are now `unchecked` alongside unknown keys.
+Restricting all-digit hex to declaration context to kill the `fixes #123` false positive
+had also stopped `| navy | #003366 |` from being read in the very token table the policy
+calls machine-readable, so only three- and four-digit all-digit hex is now gated.
+`<T extends unknown>(x: T) => x` was still read as a component, because the assumption
+that a type argument always follows an identifier is false for that form. Zero-width
+characters were stripped only on the prohibited-expression path, so `#0A<ZWSP>84FF` and
+`token(color.<ZWSP>brand)` were invisible — not absent, unexamined. And any exception
+other than the two the sensor raises itself escaped without writing a report at all.
+Measured again after all of it, with the stricter scorer: still 23/26.
+
+**And what the second verification round found.** REJECT again, and the first finding was
+the previous fix. Zero-width stripping had been written as a list of five code points, and
+U+00AD — a soft hyphen, which NFKC preserves — put every value, reference and prohibited
+phrase back out of reach with `checked` and exit 0. Enumerations do not keep up; format
+characters are now removed by Unicode category (`Cf`), which covers the zero-width set, the
+soft hyphen and the bidirectional controls together. `case_sensitive: true` had been left
+matching raw text to preserve the author's intent, so it alone missed every one of those
+evasions — it now takes the same normalisation and differs only in case. And the synthesis
+that gave declared values the artefact-side extractors lied for one shape: a real typeface,
+`Black Han Sans, sans-serif`, yielded `black` as a colour, dropped the declared typeface,
+and silently accepted a `#000000` nobody declared; word-level colour names are now read only
+from values that contain a length, which is what a CSS shorthand looks like. Also fixed:
+declarations inside an HTML `style` attribute were unreadable while the policy claimed
+otherwise; `"version": true` passed because `True == 1`; `components: []` was reported as
+undeclared when the policy defines it as "permit nothing"; and a report that could not be
+written turned an `unchecked` run into exit 1 with no record at all. Measured again: still
+23/26.
+
+**And the third round.** REJECT again, and again the first finding was the previous fix.
+"An enumeration cannot keep up" had been answered with an enumeration of one Unicode
+category, and `Cf` does not contain U+3164 HANGUL FILLER — category `Lo`, a *letter*, which
+renders as nothing — or U+FE0F, a variation selector in `Mn`. Either one, inserted once,
+put every value, reference, component and prohibited phrase back out of reach at exit 0.
+Whether a character is invisible is not something to judge; Unicode publishes the answer as
+`Default_Ignorable_Code_Point`, and that is what is now used. Alongside it: NFKC was being
+applied one character at a time in the matching path and to the whole string in the scanning
+path, so there were two normalisations and the one-at-a-time version could not compose a
+decomposed `café`; both now run through the same function, normalising each base character
+together with its combining marks so composition works and positions still map back to the
+original line. And the rule that decided when to read a colour name out of a declared value
+— "does it contain a length" — misread `700 24px/1.2 Black Han Sans, sans-serif`, which does;
+it now keys on the border-style keyword that distinguishes `<width> <style> <colour>` from a
+font shorthand. One claim was withdrawn rather than fixed: removing bidirectional controls
+does not undo the reordering they caused, so a phrase that reads as prohibited only under
+RLO is not detected, and the policy no longer implies otherwise. Measured again: 23/26.
+
+**And the fourth round.** REJECT again — and this time the first two findings were both
+regressions the third round's fixes had introduced, not shortfalls they had failed to
+cover. Normalising each base character together with its combining marks decided cluster
+boundaries on the *unnormalised* category, and U+FF9E — the halfwidth voiced sound mark,
+`Lm` before NFKC and `Mn` only after it — therefore never joined its base: a prohibited
+`ダウンロード` written as `ﾀﾞｳﾝﾛｰﾄﾞ` came back `checked`, zero violations, exit 0, while
+the policy's opening line promised that halfwidth and fullwidth read as one reference.
+Boundaries are now decided after NFKC, and the invariant is pinned directly as
+`fold(x) == fold(NFKC(x))` rather than as another list of characters. The border-style
+keyword introduced in round three then turned out to match real typefaces — `Solid
+Grotesk`, `PT Sans Solid` — dropping them from the declared set so that a project using
+its own declared font was told it had a raw value. The keyword table is gone: a declared
+value carrying no property name cannot be told apart lexically, so an ambiguous value is
+now registered as a typeface *as well*, on the asymmetry that under-declaring turns the
+user's own declaration into a violation while over-declaring a family name loosens only
+that one name. Colours are deliberately not treated the same way — an extra `#000000`
+would silently pass every use of black — so named colours are still read only from the
+border-shorthand shape. Third finding, and the most useful one: shrinking the keyword set
+to a single word left all 123 tests green, so the invariant the third round added was
+guarded by nothing; every one of the nine keywords now has a test that a mutation kills.
+Two boundaries were written down instead of chased: normalisation is a finite table and
+text that separates rendering from spelling by means outside it is outside the detection
+class, and NFKC only expands, so a ligature can manufacture a colour that was never there
+but cannot hide one. Measured again: 23/26 — unchanged across all six measurements.
+
+**And the fifth round.** REJECT, and two of the three findings were the ones an advisor
+had already reproduced while the round was in flight; the third was new and defeated the
+round-4 fix outright. Invisible characters were discarded *after* composition, so one
+U+200B between `ﾀ` and `ﾞ` — displayed identically, and a character the table already
+covers and already removes — put the prohibited phrase back out of reach at exit 0. That
+is an ordering defect, not a limit of the table, and the finite-normalisation boundary
+this changelog just claimed does not excuse it. The invariant `fold(x) == fold(NFKC(x))`
+was also simply false: Hangul jamo are `Lo`, so canonical composition never happens under
+any per-cluster rule, and a decomposed `다운로드` — which macOS produces routinely — was
+not detected. The equation had been asserted in the policy on the strength of twelve
+hand-picked strings containing no Hangul.
+
+The answer this time was deletion rather than a fifth refinement. NFKC is applied to each
+whole line after invisible characters are removed; there is no cluster rule and no
+`combines_after_nfkc`. A newline participates in neither composition nor decomposition, so
+per-line normalisation equals whole-text normalisation, and the invariant now holds
+constructively — zero counterexamples across 40,000 random strings drawn from the full
+code point space, where the previous version's counterexamples appeared immediately. The
+index map's only consumer is the line number, so nothing is lost by mapping a line's
+characters to that line. Third finding: the named-colour gate read the *last* word, but
+CSS border shorthand is order-independent, so `red 2px solid` — a legitimate declaration —
+lost its colour and reported the artefact using it as a raw value; the gate now keys on the
+shape (contains a length, no comma, no slash, at most three words) rather than a position.
+Two of the eight mutations written against the new code survived at first and are now
+pinned; the invisible-character check left inside the emit path became dead once discarding
+moved earlier, and was removed. 190 tests. Measured again: 23/26.
+
+**And the sixth round, which stopped the loop.** REJECT again, but the normaliser survived
+everything thrown at it — the invariant held across all 0x110000 single characters and
+fifty thousand random strings, and per-line normalisation still equalled whole-text
+normalisation. Deletion had converged that part. The declaration classifier had not, and
+the reason was structural: a declared value carries no property name, so every rule for
+telling a border from a shadow from a typeface is a guess, and each guess broke on the next
+real value. The keyword table broke on `Solid Grotesk`; the tail-word rule broke on
+`red 2px solid`, because CSS border shorthand is order-independent; the three-word limit
+broke on `0 1px 2px black`, an ordinary `box-shadow` token, which the artefact side reads as
+a colour while the declaration side did not — so a project declaring its own shadow and
+using it verbatim was told it had a raw value.
+
+The classifier now guesses nothing: any colour word in a declared value that also contains
+a length is declared as a colour. This reverses the second round's fix, which had narrowed
+colour reading precisely to stop `Black Han Sans` from declaring `#000000`. That reversal is
+deliberate. Over-declaring a colour passes every use of it, which is why the second round's
+verifier was right to call it out — but the defect it named was that the over-declaration
+was *silent*, and silence is fixable where under-declaration is not. The report now carries
+`composite_declarations`, listing each token whose single value declared more than one
+class, and `ux-reviewer` is told to read it: a colour declared by a typeface token is a
+colour that passed for the wrong reason.
+
+Also fixed: `regex: true` rules were matched only against text with whitespace preserved,
+so a prohibited phrase broken by a Japanese line wrap was found when written as a literal
+and missed when written as a regex — the policy's claim that matching runs over the whole
+text held or failed depending on how the rule was spelled; regex rules now get the same
+second pass. A character whose lowercase form is two characters long (`İ`) desynchronised
+the output from its position map and took the whole scan out with an `IndexError`. The
+timing assertion for the regex budget compared against the budget constant itself, so
+raising it to 600 seconds left the suite green after ten minutes; it now asserts an absolute
+bound. The walk-root containment check was unreachable behind `followlinks=False` and the
+link filters, and was deleted. 204 tests. Measured again: 23/26.
+
+**The seventh round found no regression.** For the first time in four rounds the verifier
+could not name a hole opened by the previous fix: the mutations aimed at the regex second
+pass and the position map both died, and `composite_declarations` was confirmed to miss no
+over-declaration. What it found instead were three defects that had been present from the
+first commit, in the artefact-side extractors nobody had probed. A JSX style object writes
+several properties on one line separated by commas, and the declaration pattern ran to the
+end of the line, so everything after the first property was swallowed into the first value
+— `style={{ fontFamily: "Inter", color: "crimson", borderColor: "teal" }}` reported nothing
+while the same three declarations split across three lines reported two raw values. A comma
+is sometimes part of a value (`rgba(0, 0, 0, .5)`, `Inter, sans-serif`) and sometimes a
+boundary, so the value now ends at a comma only when an identifier and a colon follow it.
+The `font` shorthand's line-height slot stopped before the unit, so `font: 12px/30px
+Georgia` read the typeface as `px georgia` and reported a project's own declared font as a
+raw value; the existing test used `16px/1.5`, which has no unit and passed by accident.
+And `.5rem` and `-2px` were not read as lengths at all while `0.5rem` was — detection that
+changes with spelling, which is the thing this policy exists to prevent. 224 tests.
+Measured again: 23/26.
+
+**The eighth round, and the last.** No regression again, and the finding that mattered was
+the same shape as the seventh round's: the declaration pattern required an unquoted property
+name, so adding quotes made detection disappear. `style={{ "fontFamily": "Papyrus", "color":
+"crimson" }}` reported nothing where the unquoted spelling reported three violations — and
+because JSON keys are always quoted and `.json` is scanned, a theme or token file was blind
+to named colours, three-digit hex and typefaces entirely. Property names are now read with
+or without quotes, and the comma rule that separates one declaration from the next reads
+them the same way. Two smaller things: a regex matching at the very end of a file (`[ ]*$`)
+returned a position one past the last character, and the lookup raised `IndexError`, so a
+detected violation was reported as an unchecked run; and the line-height slot's handling of
+`%` was correct but untested, surviving a mutation with all 224 green. One limitation is now
+written down rather than fixed: a value containing a data URI is truncated at the URI's
+semicolon, so a colour after it is missed — the test pins the documented behaviour, because
+a known gap and an unnoticed one are different things. 234 tests. Measured again: 23/26.
+
+**No third reviewer.** `ux-reviewer` owns the new section; `a11y-reviewer` declares it out
+of scope and raises a constraint violation under WCAG when it is also one. A new persona
+would have added a twelfth gate perspective with no measured detection rate, which is the
+problem `japanese-writing` already has.
+
+### Notes
+
+The sensor does not adjudicate use from mention: a rationale line saying "moved off
+`#0A84FF`" is reported like any other unmatched value, and the reviewer decides. Recall is
+the sensor's job and precision is the reviewer's; letting the sensor "sensibly ignore"
+things is how the things that should not be ignored stop being seen. `<button>` in
+lowercase evades the inventory check — the reference syntax is `<Capitalized>` — and that
+is the declared range, not a defect.
+
 ## [2.12.0] - 2026-09-07
 
 ### Added

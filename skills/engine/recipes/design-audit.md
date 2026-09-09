@@ -15,8 +15,10 @@ steps:
       - "UI/UX・a11y の両観点で評価済み（ux-reviewer / a11y-reviewer）"
       - "各指摘が『どの要素の何を・なぜ・どう直すか』分かる粒度（WCAG 基準番号つき）"
       - "axe 自動検出に手動観点（フォーカス順序・操作性・意味構造）を併せている"
+      - "verdict に `制約 所見` があるなら、その `状態:` 行が checked / unchecked / not-configured のいずれか逐語であり、unchecked と not-configured を合格と書いていない（headless orchestrate では ⓪ が走らないため所見自体が無く、その場合は N/A）"
       - "総合 verdict（APPROVE/APPROVE_WITH_CONDITIONS/REJECT）が出ている"
     personas: [design/ux-reviewer, design/a11y-reviewer]
+    policies: [design-constraint-rules]
     output_contract: design-verdict
 autonomy: interactive
 ---

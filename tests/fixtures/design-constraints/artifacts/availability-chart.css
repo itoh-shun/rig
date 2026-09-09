@@ -1,0 +1,14 @@
+.availability-chart {
+  background: var(--color-surface);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-card);
+}
+
+.availability-chart__bar--peak {
+  background: rgb(10, 132, 255);
+}
+
+.availability-chart__label {
+  color: var(--color-text-muted);
+  font-family: var(--font-body);
+}

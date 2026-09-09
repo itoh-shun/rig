@@ -1,0 +1,66 @@
+{
+  "_readme": "架空プロダクト『Kanade』（会議室予約 SaaS）のデザイン制約。tests/fixtures/design-constraints/ の成果物コーパスを検査するときの正本。実プロジェクトでは <repo>/.claude/design-constraints.json に置く。",
+  "version": 1,
+  "tokens": {
+    "color": {
+      "brand-primary": "#1F6FEB",
+      "brand-primary-hover": "#1A5FCC",
+      "surface": "#FFFFFF",
+      "surface-muted": "#F4F6F8",
+      "text-body": "#1B1F23",
+      "text-muted": "#57606A",
+      "danger": "#C3352B"
+    },
+    "spacing": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "16px",
+      "lg": "24px",
+      "xl": "40px"
+    },
+    "font": {
+      "body": "Noto Sans JP",
+      "mono": "JetBrains Mono",
+      "size-body": "16px",
+      "size-heading": "24px"
+    },
+    "radius": {
+      "card": "12px",
+      "pill": "999px"
+    }
+  },
+  "components": [
+    "Button",
+    "Card",
+    "Dialog",
+    "Field",
+    "Icon",
+    "Link",
+    "Stack",
+    "Toast"
+  ],
+  "prohibited": [
+    {
+      "pattern": "こちらをクリック",
+      "why": "リンクテキストが単独で行き先を示さない。リンク一覧で読む支援技術の利用者が飛び先を判断できない"
+    },
+    {
+      "pattern": "click here",
+      "why": "同上（英語 UI）。リンクの語そのものに行き先を含める"
+    },
+    {
+      "pattern": "エラーが発生しました",
+      "why": "何が起きたか・次に何をすればよいかを伝えない汎用文言。原因と次の行動を書く"
+    },
+    {
+      "pattern": "ボタンを(押|クリック)してください",
+      "why": "特定の入力手段を前提にした指示。キーボードや支援技術の利用者に成り立たない",
+      "regex": true
+    },
+    {
+      "pattern": "(?i)\\bplease wait\\b",
+      "why": "待ち時間の見通しを与えない。所要時間か進捗を示す",
+      "regex": true
+    }
+  ]
+}

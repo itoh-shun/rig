@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "tokens": {
+    "color": {
+      "brand-primary": "#1F6FEB",
+      "surface": "#FFFFFF",
+    },
+    "spacing": {
+      "md": "16px"
+    }
+  },
+  "components": [
+    "Button",
+    "Card"
+  ]

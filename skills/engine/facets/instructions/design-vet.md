@@ -4,6 +4,46 @@
 
 ## 手順
 
+### ⓪ 制約検査（機械プリパス・`policies/design-constraint-rules`）
+検閲の前に、プロジェクトが宣言したデザイン制約を成果物に突き合わせる。判断はしない。
+
+**`<repo>` ルートで実行する**（既定の制約パスがリポジトリ相対のため、別 cwd から呼ぶと
+宣言があるのに `not-configured` になる）。次の順で探す。
+
+```
+rig-wb design-constraints --if-configured \
+  --report <run-dir>/constraints-report.json <成果物のパス...>
+```
+
+`rig-wb` が無ければ plugin root の `scripts/` を使う（対象リポジトリには存在しない）。
+
+```
+python3 <plugin root>/scripts/check_design_constraints.py --if-configured \
+  --report <run-dir>/constraints-report.json <成果物のパス...>
+```
+
+`<run-dir>` は `patterns/visual-artifacts` の置き場（task_id があれば `<repo>/.rig/runs/<task-id>/`、
+無ければ `<repo>/.rig/visual/adhoc/<...>/`）。`--constraints <path>` が渡されていればそれを使う。
+
+報告の `status` は3つあり、**言い換えない**。
+
+| status | 意味 | 後段の扱い |
+|---|---|---|
+| `checked` | 宣言を読み、成果物と突き合わせた | `violations` を証拠として両 reviewer に渡す |
+| `unchecked` | **宣言はあるのに検査が成立しなかった**（`[要記入]` が残っている・JSON が壊れている・スキーマに無いキーがある・成果物が読めない・正規表現の照合が制限時間を超えた） | 合格ではない。理由をそのまま verdict に転記する |
+| `not-configured` | そもそも宣言が無い | 合格でも未検査でもない。**「制約は検査していない」と明記する** |
+
+**センサーそのものが見つからないときは `unchecked` であって `not-configured` ではない。**
+宣言の有無を確かめられていないのだから、「宣言が無い」と書いてはならない。どちらの起動経路も
+使えなかった事実を、そのまま verdict に書く。
+
+- 出力を読みやすく書き直さない。件数を丸めない。`status` と `reason` は**逐語で**運ぶ。
+- 落ちた検査を、通るまで実行し直さない。直すのは前の step（作成モードは `draft`）。
+- センサーが**捕れないクラス**がある（トークン化されていない散文）。「違反 0 件」は
+  「制約を守っている」ではない。この2つを言い換えない。
+- センサーは **use と mention を区別しない**。過去の値への言及も未一致として上がる。
+  向きの判定は reviewer が行う——センサーに黙って無視させない。
+
 ### ① 対象の受け取り
 - 作成モード：`design-draft` が生成した成果物。
 - 監査モード：`design-audit` が取得したスクリーンショット・DOM・axe-core 結果。
@@ -16,8 +56,15 @@
 各 subagent の出力は `output-contracts/design-verdict` に従わせる（UX は UI/UX 所見、a11y は a11y 所見を担当）。
 `--persona <name>` 指定があれば fan-out に和集合・dedup で追加する。
 
+⓪ の報告（`status`・`violations`・`composite_declarations`）を**両方の subagent に証拠として渡す**。`composite_declarations` は、1つの宣言値が複数の種別を宣言したものの内訳（色トークンでないものが色を宣言していないか）。
+`制約 所見` 節は **`ux-reviewer` が単独で書く**（既存の節・単独所有の慣習に合わせる）。
+`a11y-reviewer` は「制約は担当外」と明記したうえで、制約違反が WCAG 上の問題でもあるとき
+（例：禁止表現「こちらをクリック」＝ 2.4.4）は **`a11y 所見` の側で**基準番号つきで指摘する。
+reviewer の仕事は違反の**転記ではなく判定**で、各項目が use か mention か、実際に問題かを決める。
+新しい reviewer は足さない（制約は独立した観点ではなく、既存2観点が使う証拠である）。
+
 ### ③ 集約（`acceptance-gate`）
-2 verdict が揃ったら統合し、recipe の acceptance（UI/UX・a11y とも評価済み／指摘が「どこの何を・なぜ・どう直すか」分かる粒度／目標 WCAG レベル未達違反が無い or 条件化済み／総合 verdict が出ている）へ収束させる。未達なら作成モードは `draft` へ差し戻し、監査モードは不足観点を再 dispatch する。
+2 verdict が揃ったら統合し、recipe の acceptance（UI/UX・a11y とも評価済み／指摘が「どこの何を・なぜ・どう直すか」分かる粒度／目標 WCAG レベル未達違反が無い or 条件化済み／**制約検査の status が転記されている**／総合 verdict が出ている）へ収束させる。未達なら作成モードは `draft` へ差し戻し、監査モードは不足観点を再 dispatch する。
 
 ### ④ 報告
 総合 verdict（`APPROVE` / `APPROVE_WITH_CONDITIONS` / `REJECT`）と UI/UX・a11y サマリ・対応必須条件を提示する。
