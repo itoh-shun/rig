@@ -63,7 +63,9 @@ KATA = "ァ-ヺー"
 KANJI = "一-鿿㐀-䶿々〆ヶ"
 JA = HIRA + KATA + KANJI
 RE_JA_CHAR = re.compile(f"[{JA}]")
-MASK = "\ue000"  # インラインコード・URL・リンク先を潰す私用文字。長さは保つ。
+MASK = "\ue000"   # インラインコードを潰す私用文字。長さは保ち、文の長さには数える（textlint と同じ）。
+MASK2 = "\ue001"  # URL・リンク先・画像・強調記号・コメントを潰す私用文字。表示されないので数えない。
+MASKS = MASK + MASK2
 
 PRESETS = {
     "technical": [
@@ -77,7 +79,8 @@ PRESETS = {
     ],
     "spacing": [
         "ja-space-between-half-and-full-width", "ja-no-space-around-parentheses",
-        "ja-nakaguro-or-halfwidth-space-between-katakana",
+        "ja-nakaguro-or-halfwidth-space-between-katakana", "ja-space-around-code",
+        "ja-no-space-between-full-width", "ja-no-space-around-slash",
     ],
     "hiragana": ["ja-hiragana-keishikimeishi", "ja-hiragana-fukushi", "ja-hiragana-hojodoushi"],
     "style": ["ja-no-orthographic-variants", "no-zenkaku-alnum"],
@@ -112,6 +115,9 @@ DEFAULT_SEVERITY = {
     "ja-space-between-half-and-full-width": "warning",
     "ja-no-space-around-parentheses": "error",
     "ja-nakaguro-or-halfwidth-space-between-katakana": "error",
+    "ja-space-around-code": "warning",
+    "ja-no-space-between-full-width": "error",
+    "ja-no-space-around-slash": "warning",
     "ja-hiragana-keishikimeishi": "warning",
     "ja-hiragana-fukushi": "warning",
     "ja-hiragana-hojodoushi": "warning",
@@ -201,17 +207,20 @@ RE_EMPHASIS = re.compile(r"\*{1,3}|__|~~")
 
 
 def _mask(text: str) -> str:
-    def repl(m: re.Match) -> str:
+    def code(m: re.Match) -> str:
         return MASK * len(m.group(0))
 
-    text = RE_HTML_COMMENT.sub(repl, text)
-    text = RE_INLINE_CODE.sub(repl, text)
-    text = RE_IMAGE.sub(repl, text)
-    text = RE_AUTOLINK.sub(repl, text)
-    text = RE_URL.sub(repl, text)
+    def hidden(m: re.Match) -> str:
+        return MASK2 * len(m.group(0))
+
+    text = RE_HTML_COMMENT.sub(hidden, text)
+    text = RE_INLINE_CODE.sub(code, text)
+    text = RE_IMAGE.sub(hidden, text)
+    text = RE_AUTOLINK.sub(hidden, text)
+    text = RE_URL.sub(hidden, text)
     # `[text](url)` — 表示されるのは text だけ。
-    text = RE_LINK_TARGET.sub(lambda m: "]" + MASK * (len(m.group(0)) - 1), text)
-    text = RE_EMPHASIS.sub(repl, text)
+    text = RE_LINK_TARGET.sub(lambda m: "]" + MASK2 * (len(m.group(0)) - 1), text)
+    text = RE_EMPHASIS.sub(hidden, text)
     return text
 
 
@@ -249,8 +258,10 @@ def parse_document(source: str) -> tuple[list[Line], list[Paragraph]]:
         if RE_HR.match(raw):
             lines.append(Line(i, raw, "", "meta", 0))
             continue
-        if raw.startswith(("    ", "\t")):
-            # インデントコードブロック（リスト継続行も含むが、本文検査からは外す）
+        prev = lines[-1] if lines else None
+        continuing = prev is not None and prev.kind in ("list", "quote", "list-cont")
+        if raw.startswith(("    ", "\t")) and not continuing:
+            # 空行の後のインデントはコードブロック。リスト項目の直後なら継続行。
             lines.append(Line(i, raw, "", "code", 0))
             continue
         if RE_TABLE.match(raw):
@@ -264,6 +275,12 @@ def parse_document(source: str) -> tuple[list[Line], list[Paragraph]]:
                 break
         if kind == "heading":
             body = re.sub(r"\s+#+\s*$", "", body)
+        if kind == "prose" and continuing:
+            # Markdown の lazy continuation：リスト項目の直後の行は同じ項目の続き。
+            # 別段落にすると、項目を跨ぐ一文が二つに割れて文の長さが半分に見える。
+            kind = "list-cont"
+            lead = len(raw) - len(raw.lstrip())
+            col0, body = lead, raw[lead:]
         lines.append(Line(i, raw, _mask(body), kind, col0))
 
     paragraphs: list[Paragraph] = []
@@ -271,6 +288,10 @@ def parse_document(source: str) -> tuple[list[Line], list[Paragraph]]:
     for ln in lines:
         if ln.kind == "prose":
             buf.append(ln)
+            continue
+        if ln.kind == "list-cont" and paragraphs and paragraphs[-1].kind in ("list", "quote") \
+                and paragraphs[-1].lines[-1].no == ln.no - 1:
+            paragraphs[-1] = Paragraph(paragraphs[-1].lines + [ln], paragraphs[-1].kind)
             continue
         if buf:
             paragraphs.append(Paragraph(buf, "prose"))
@@ -283,7 +304,7 @@ def parse_document(source: str) -> tuple[list[Line], list[Paragraph]]:
 
 
 # 「。！？」に加えて、空白か行末が続く ASCII ピリオドも文末にする（英文段落のため）。
-RE_SENTENCE_END = re.compile(f"[。！？!?]+[」』）)”\"'{MASK}]*|\\.(?=\\s|$)[」』）)”\"'{MASK}]*")
+RE_SENTENCE_END = re.compile(f"[。！？!?]+[」』）)”\"'{MASKS}]*|\\.(?=\\s|$)[」』）)”\"'{MASKS}]*")
 
 
 def split_sentences(para: Paragraph) -> list[Sentence]:
@@ -337,11 +358,15 @@ class Context:
         return default
 
     def add(self, rule: str, where: tuple[int, int], message: str,
-            text: str = "", fix: str | None = None) -> None:
+            text: str = "", fix: str | None = None, span: int | None = None) -> None:
+        """`span` は fix を適用してよい文字数（列から数えて）。`--fix` はこれがある所見だけ直す。"""
         line, col = where
-        self.findings.append(Finding(rule, self.file, line, col, message, text, fix))
+        f = Finding(rule, self.file, line, col, message, text, fix)
+        if fix is not None and span:
+            f["span"] = span
+        self.findings.append(f)
 
-    def scan_lines(self, kinds=("prose", "heading", "list", "quote", "table")):
+    def scan_lines(self, kinds=("prose", "heading", "list", "list-cont", "quote", "table")):
         for ln in self.lines:
             if ln.kind in kinds:
                 yield ln
@@ -353,7 +378,8 @@ class Context:
 
 # ── ルール ────────────────────────────────────────────────────────────────────
 def _visible_len(s: str) -> int:
-    return sum(1 for ch in s if ch != MASK and ch != "\n")
+    """文の長さ。インラインコードは数え、URL・リンク先・強調記号は数えない（textlint と同じ）。"""
+    return sum(1 for ch in s if ch != MASK2 and ch != "\n")
 
 
 def rule_sentence_length(ctx: Context) -> None:
@@ -365,17 +391,30 @@ def rule_sentence_length(ctx: Context) -> None:
                     f"一文が {n} 文字あります（上限 {limit}）。文を分けてください。", s.text)
 
 
+RE_NOUNISH = re.compile(f"[{KANJI}{KATA}A-Za-z0-9０-９{MASK}]")
+
+
 def rule_max_ten(ctx: Context) -> None:
+    """textlint の非厳密モードと同じく、名詞に挟まれた読点（「A、B、C」の並列）は数えない。
+    名詞かどうかは表層で近似する：読点の両側が漢字・カタカナ・英数字なら名詞とみなす。
+    `strict: true` で全部数える。"""
     limit = int(ctx.opt("max-ten", "max", 3))
+    strict = bool(ctx.opt("max-ten", "strict", False))
     for s in ctx.sentences:
-        n = s.text.count("、") + s.text.count("，") + len(re.findall(r"(?<=[^\d]),", s.text))
+        n = 0
+        for m in re.finditer("[、，]", s.text):
+            before = s.text[m.start() - 1] if m.start() else ""
+            after = s.text[m.end(): m.end() + 1]
+            if not strict and RE_NOUNISH.match(before or " ") and RE_NOUNISH.match(after or " "):
+                continue
+            n += 1
         if n > limit:
             ctx.add("max-ten", s.locate(),
                     f"一文に読点が {n} 個あります（上限 {limit}）。文を分けてください。", s.text)
 
 
 def rule_max_kanji(ctx: Context) -> None:
-    limit = int(ctx.opt("max-kanji-continuous-len", "max", 5))
+    limit = int(ctx.opt("max-kanji-continuous-len", "max", 6))  # preset-ja-technical-writing と同じ
     allow = set(ctx.opt("max-kanji-continuous-len", "allow", []))
     pat = re.compile(f"[{KANJI}]{{{limit + 1},}}")
     for s in ctx.sentences:
@@ -427,7 +466,7 @@ def rule_dearu_desumasu(ctx: Context) -> None:
 
 
 RE_PERIOD_OK = re.compile(r"[。！？!?][」』）)”\"]*$|[」』）)][。]?$|[:：]$")
-RE_TRAILING_MASK = re.compile(f"[{MASK} ]+$")
+RE_TRAILING_MASK = re.compile(f"[{MASKS} ]+$")
 
 
 def rule_mixed_period(ctx: Context) -> None:
@@ -439,7 +478,7 @@ def rule_mixed_period(ctx: Context) -> None:
             continue
         last_line = p.lines[-1]
         # 行末がすべて MASK（画像・リンクだけの段落）は本文ではない。
-        if set(text.replace("\n", "")) <= {MASK, " "}:
+        if set(text.replace("\n", "")) <= {MASK, MASK2, " "}:
             continue
         if text.endswith(".") and RE_JA_CHAR.search(text[-4:-1] or ""):
             ctx.add("ja-no-mixed-period", ctx.at(last_line, len(last_line.text) - 1),
@@ -447,7 +486,7 @@ def rule_mixed_period(ctx: Context) -> None:
             continue
         if RE_PERIOD_OK.search(text):
             continue
-        if text.endswith(MASK):
+        if text.endswith((MASK, MASK2)):
             continue
         ctx.add("ja-no-mixed-period", ctx.at(last_line, max(len(last_line.text) - 1, 0)),
                 "段落の最後の文が「。」で終わっていません。", last_line.text)
@@ -476,8 +515,9 @@ def rule_double_negative(ctx: Context) -> None:
 
 I_DAN_E_DAN = "いきしちにひみりぎじぢびぴえけせてねへめれげぜでべぺっん"
 RE_DROPPED_I = re.compile(
-    f"(?<=[{I_DAN_E_DAN}])(て|で)(る|た|ます|ない|て|れば|ん)(?![{HIRA}]*てる坊主)"
+    f"(?<=[{I_DAN_E_DAN}])(?:て(る|た|ます|ない|て|れば|ん)|で(る|た|ます|て|れば|ん))(?![{HIRA}]*てる坊主)"
 )
+# 「でない」は「〜わけでない」「〜つもりでない」の断定の否定と分けられないので見ない。
 DROPPED_I_ALLOW = ("愛でる", "秀でる", "めでる", "てるてる")
 
 
@@ -489,6 +529,8 @@ def rule_dropped_i(ctx: Context) -> None:
             if any(a in window for a in allow):
                 continue
             hit = s.text[m.start() - 1: m.end()]
+            if hit.endswith("でない"):
+                continue
             ctx.add("no-dropped-i", s.locate(m.start()),
                     f"い抜き言葉「{hit}」の可能性があります。「〜ている」の形にしてください。",
                     hit)
@@ -553,7 +595,9 @@ def rule_doubled_conjunction(ctx: Context) -> None:
 PRONOUNS = ("これ", "それ", "あれ", "どれ", "ここ", "そこ", "あそこ", "どこ", "こちら", "そちら",
             "あちら", "どちら", "こと", "もの", "ため", "よう", "とき", "ところ", "わけ", "うち",
             "ほう", "だれ", "なに", "いつ", "すべて", "みんな", "あなた", "わたし", "ぼく")
-JOSHI_DEFAULT = ["は", "が", "を", "に", "へ", "で"]
+# textlint は格助詞「を」の重なりを例外にしている（「本を読んで感想を書く」は普通の文）。
+JOSHI_DEFAULT = ["は", "が", "に", "へ", "で"]
+INTERVAL_TOKENS = "、，（）「」『』()［］[]"
 RE_JOSHI = re.compile(f"(?<=[{KANJI}{KATA}A-Za-z0-9０-９）)」』])([はがをにへでもとのやか])(?![{HIRA}]*[{KANJI}]{{0}})")
 
 
@@ -567,6 +611,10 @@ def _particles(sentence: str) -> list[tuple[str, int, bool]]:
     隣接と数えられ、kuromoji が「まで」「の」を助詞と数える textlint と食い違う。"""
     out: list[tuple[str, int, bool]] = []
     for i, ch in enumerate(sentence):
+        if ch in INTERVAL_TOKENS:
+            # textlint と同じく、読点と括弧は助詞どうしの距離を一つ広げる。
+            out.append((ch, i, False))
+            continue
         if ch not in "はがをにへでもとのやか":
             continue
         prev = sentence[i - 1] if i else ""
@@ -578,6 +626,10 @@ def _particles(sentence: str) -> list[tuple[str, int, bool]]:
         head = sentence[max(0, i - 4): i]
         if any(head.endswith(p) for p in PRONOUNS):
             out.append((ch, i, True))
+        elif any((head + ch).endswith(p) for p in PRONOUNS):
+            # 「こと」の「と」、「もの」の「の」は語の一部。助詞として距離に数えると、
+            # 「壊れることがあります」の「が…が」が離れて見える。
+            continue
         elif re.match(f"[{HIRA}]", prev):
             out.append((ch, i, False))
     return out
@@ -597,7 +649,7 @@ def rule_doubled_joshi(ctx: Context) -> None:
                 last[ch] = idx
 
 
-RE_NFD = re.compile("[\u3099\u309a\u0300-\u036f]")
+RE_NFD = re.compile("[^\u3099\u309a\u0300-\u036f][\u3099\u309a\u0300-\u036f]+")
 
 
 def rule_nfd(ctx: Context) -> None:
@@ -605,7 +657,7 @@ def rule_nfd(ctx: Context) -> None:
         for m in RE_NFD.finditer(ln.text):
             ctx.add("no-nfd", ctx.at(ln, m.start()),
                     "結合文字（NFD）が使われています。NFC に正規化してください。",
-                    ln.text[max(0, m.start() - 3): m.end() + 1])
+                    m.group(0), unicodedata.normalize("NFC", m.group(0)), span=len(m.group(0)))
 
 
 RE_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\u2060\ufeff]")
@@ -618,7 +670,7 @@ def rule_zero_width(ctx: Context) -> None:
             if ln.no == 1 and m.start() == 0 and m.group(0) == "\ufeff":
                 continue  # BOM
             ctx.add("no-zero-width-spaces", (ln.no, m.start() + 1),
-                    f"ゼロ幅文字 U+{ord(m.group(0)):04X} が含まれています。", ln.raw[:40])
+                    f"ゼロ幅文字 U+{ord(m.group(0)):04X} が含まれています。", m.group(0), "", span=1)
 
 
 def rule_control_chars(ctx: Context) -> None:
@@ -646,7 +698,7 @@ def rule_hankaku_kana(ctx: Context) -> None:
         for m in RE_HANKAKU_KANA.finditer(ln.text):
             ctx.add("no-hankaku-kana", ctx.at(ln, m.start()),
                     f"半角カナ「{m.group(0)}」は全角にしてください。", m.group(0),
-                    unicodedata.normalize("NFKC", m.group(0)))
+                    unicodedata.normalize("NFKC", m.group(0)), span=len(m.group(0)))
 
 
 WEAK_PHRASES = [
@@ -714,7 +766,7 @@ def rule_abusage(ctx: Context) -> None:
         for m in RE_ABUSAGE.finditer(s.text):
             ctx.add("ja-no-abusage", s.locate(m.start()),
                     f"誤用「{m.group(0)}」です。「{ABUSAGE_MAP[m.group(0)]}」が本来の形です。",
-                    m.group(0), ABUSAGE_MAP[m.group(0)])
+                    m.group(0), ABUSAGE_MAP[m.group(0)], span=len(m.group(0)))
 
 
 SAHEN_NOUNS = (
@@ -836,7 +888,7 @@ def rule_space_around_parentheses(ctx: Context) -> None:
         for m in RE_PAREN_SPACE.finditer(ln.text):
             ctx.add("ja-no-space-around-parentheses", ctx.at(ln, m.start()),
                     "全角括弧の前後にスペースを入れないでください。",
-                    ln.text[max(0, m.start() - 4): m.end() + 4])
+                    m.group(0), "", span=len(m.group(0)))
 
 
 RE_KATA_NAKAGURO = re.compile(f"[{KATA}]+・[{KATA}]+")
@@ -864,6 +916,70 @@ def rule_nakaguro_or_space(ctx: Context) -> None:
                 m.group(0))
 
 
+# カタカナどうしの間の空白は「ウェブ ブラウザ」の区切りで、nakaguro-or-halfwidth-space の領分。
+RE_JA_SPACE_JA = re.compile(f"(?<=[{HIRA}{KANJI}])[ ]+(?=[{JA}])|(?<=[{JA}])[ ]+(?=[{HIRA}{KANJI}])")
+
+
+def rule_no_space_between_full_width(ctx: Context) -> None:
+    """全角文字どうしの間の半角スペース（「人間 65.2 対 生成」の「対」の両側など）。"""
+    for ln in ctx.scan_lines(("prose", "heading", "list", "list-cont", "quote")):
+        for m in RE_JA_SPACE_JA.finditer(ln.text):
+            ctx.add("ja-no-space-between-full-width", ctx.at(ln, m.start()),
+                    "全角文字どうしの間にスペースを入れないでください。",
+                    ln.text[max(0, m.start() - 3): m.end() + 3], "", span=len(m.group(0)))
+
+
+RE_SLASH_SPACE = re.compile(f"(?<=[{JA}])[ 　]+/[ 　]*|[ 　]*/[ 　]+(?=[{JA}])")
+
+
+def rule_no_space_around_slash(ctx: Context) -> None:
+    """スラッシュの前後のスペース。本家は英字どうしでも報告するが、ここでは片側に日本語が
+    あるときだけ見る。「a / b」は英文の書き方で、日本語の規約の外にある。"""
+    for ln in ctx.scan_lines(("prose", "heading", "list", "list-cont", "quote")):
+        for m in RE_SLASH_SPACE.finditer(ln.text):
+            ctx.add("ja-no-space-around-slash", ctx.at(ln, m.start()),
+                    "スラッシュの前後にスペースを入れないでください。",
+                    ln.text[max(0, m.start() - 3): m.end() + 3], "/", span=len(m.group(0)))
+
+
+def rule_space_around_code(ctx: Context) -> None:
+    """`space`: always / never / auto（既定）。auto は文書内で揺れているときだけ少数派を報告する。
+    本家 preset-ja-spacing の既定は never（インラインコードの前後に日本語が来るとき、間に
+    スペースを入れない）。rig 自身の docs は入れる流儀なので、half-and-full-width と同じ妥協。"""
+    mode = ctx.opt("ja-space-around-code", "space", "auto")
+    if mode == "ignore":
+        return
+    spaced: list[tuple[Line, int, int]] = []
+    unspaced: list[tuple[Line, int]] = []
+    for ln in ctx.scan_lines(("prose", "heading", "list", "list-cont", "quote")):
+        for m in re.finditer(f"{MASK}+", ln.text):
+            b, e = m.start(), m.end()
+            before2, before1 = ln.text[b - 2: b - 1], ln.text[b - 1: b]
+            after1, after2 = ln.text[e: e + 1], ln.text[e + 1: e + 2]
+            if before1 == " " and RE_JA_CHAR.match(before2 or "x"):
+                spaced.append((ln, b - 1, 1))
+            elif RE_JA_CHAR.match(before1 or "x"):
+                unspaced.append((ln, b))
+            if after1 == " " and RE_JA_CHAR.match(after2 or "x"):
+                spaced.append((ln, e, 1))
+            elif RE_JA_CHAR.match(after1 or "x"):
+                unspaced.append((ln, e))
+    if mode == "auto":
+        if not spaced or not unspaced:
+            return
+        mode = "never" if len(unspaced) >= len(spaced) else "always"
+    if mode == "always":
+        for ln, idx in unspaced:
+            ctx.add("ja-space-around-code", ctx.at(ln, idx),
+                    "インラインコードと日本語の間にスペースを入れてください。",
+                    ln.text[max(0, idx - 3): idx + 3])
+    else:
+        for ln, idx, n in spaced:
+            ctx.add("ja-space-around-code", ctx.at(ln, idx),
+                    "インラインコードと日本語の間にスペースを入れないでください。",
+                    ln.text[max(0, idx - 3): idx + 4], "", span=n)
+
+
 RE_ZENKAKU_ALNUM = re.compile(r"[Ａ-Ｚａ-ｚ０-９．]+")
 
 
@@ -874,7 +990,7 @@ def rule_zenkaku_alnum(ctx: Context) -> None:
                 continue
             ctx.add("no-zenkaku-alnum", ctx.at(ln, m.start()),
                     f"全角英数字「{m.group(0)}」は半角にしてください。", m.group(0),
-                    unicodedata.normalize("NFKC", m.group(0)))
+                    unicodedata.normalize("NFKC", m.group(0)), span=len(m.group(0)))
 
 
 VERB_TAIL = "たるいうくすつぬむぐぶの"
@@ -887,6 +1003,11 @@ KEISHIKI = [
     (re.compile(f"(?<=[{VERB_TAIL}])所(?=[がでにをは、。])"), "所", "ところ"),
     (re.compile(f"(?<=[{VERB_TAIL}])通り(?=[に、。]|です|だ)"), "通り", "とおり"),
     (re.compile(r"(?<=[たる])上(?=[で、])"), "上", "うえ"),
+    # 本家の辞書にあってここまで無かった三つ。方（ほう）は「〜する方が」「〜ない方が」、
+    # 毎（ごと）は「マージ毎に」のように名詞の直後、度（たび）は「〜する度に」。
+    (re.compile(f"(?<=[{VERB_TAIL}])方(?=[がはを、。]|です|だ)|(?<=ない)方(?=[がはを、。])"), "方", "ほう"),
+    (re.compile(f"(?<=[{KANJI}{KATA}A-Za-z0-9])毎(?=[にの、])"), "毎", "ごと"),
+    (re.compile(f"(?<=[{VERB_TAIL}])度(?=[に、。])"), "度", "たび"),
 ]
 
 
@@ -896,24 +1017,35 @@ def rule_hiragana_keishikimeishi(ctx: Context) -> None:
             for m in pat.finditer(s.text):
                 ctx.add("ja-hiragana-keishikimeishi", s.locate(m.start()),
                         f"形式名詞「{word}」はひらがな「{kana}」で書きます。",
-                        s.text[max(0, m.start() - 3): m.end() + 2], kana)
+                        word, kana, span=len(word))
 
 
+# textlint-rule-ja-hiragana-fukushi 1.3.0 (MIT, dict/fukushi.yml) の 76 対をそのまま。
+# 本家は kuromoji の品詞（副詞）で絞る。ここでは表層だけなので、名詞と読める語が
+# 誤って当たる。「正しく」（ただしく）、「土台」（名詞）、「尽く」（尽くす）、「丸で」は
+# 表層で分けられないので落とした。前後が漢字なら熟語の一部として飛ばす。
 FUKUSHI = [
-    ("予め", "あらかじめ"), ("殆ど", "ほとんど"), ("殆んど", "ほとんど"), ("更に", "さらに"), ("既に", "すでに"),
-    ("是非", "ぜひ"), ("概ね", "おおむね"), ("但し", "ただし"), ("或いは", "あるいは"), ("即ち", "すなわち"),
-    ("凡そ", "およそ"), ("僅か", "わずか"), ("暫く", "しばらく"), ("敢えて", "あえて"), ("沢山", "たくさん"),
-    ("丁度", "ちょうど"), ("一寸", "ちょっと"), ("何処", "どこ"), ("何故", "なぜ"), ("何れ", "いずれ"),
-    ("極めて", "きわめて"), ("全て", "すべて"), ("大体", "だいたい"), ("益々", "ますます"), ("度々", "たびたび"),
-    ("屡々", "しばしば"), ("偶々", "たまたま"), ("段々", "だんだん"), ("折角", "せっかく"), ("流石", "さすが"),
-    ("兎に角", "とにかく"), ("取り敢えず", "とりあえず"), ("直ぐに", "すぐに"), ("未だ", "いまだ"),
-    ("尤も", "もっとも"), ("若しくは", "もしくは"), ("何時も", "いつも"), ("成る程", "なるほど"),
-    ("迄", "まで"), ("及び", "および"), ("並びに", "ならびに"), ("又は", "または"), ("若し", "もし"),
-    ("例えば", "たとえば"), ("尚、", "なお、"), ("又、", "また、"), ("先ず", "まず"), ("殊に", "ことに"),
-    ("却って", "かえって"), ("恐らく", "おそらく"), ("勿論", "もちろん"), ("如何に", "いかに"),
-    ("何時でも", "いつでも"), ("矢張り", "やはり"), ("辛うじて", "かろうじて"), ("直ちに", "ただちに"),
+    ("生憎", "あいにく"), ("敢えて", "あえて"), ("飽くまで", "あくまで"), ("飽く迄", "あくまで"),
+    ("一旦", "いったん"), ("薄々", "うすうす"), ("予め", "あらかじめ"), ("粗方", "あらかた"),
+    ("改めて", "あらためて"), ("如何に", "いかに"), ("如何にも", "いかにも"), ("徒に", "いたずらに"),
+    ("いち早く", "いちはやく"), ("未だに", "いまだに"), ("苟も", "いやしくも"), ("言わば", "いわば"),
+    ("概ね", "おおむね"), ("押し並べて", "おしなべて"), ("押しなべて", "おしなべて"),
+    ("自ずから", "おのずから"), ("自ずと", "おのずと"), ("凡そ", "およそ"), ("却って", "かえって"),
+    ("且つ", "かつ"), ("嘗て", "かつて"), ("予て", "かねて"), ("悉く", "ことごとく"), ("細々", "こまごま"),
+    ("更に", "さらに"), ("頻りに", "しきりに"), ("暫く", "しばらく"), ("所詮", "しょせん"),
+    ("頗る", "すこぶる"), ("既に", "すでに"), ("精一杯", "せいいっぱい"), ("折角", "せっかく"),
+    ("是非", "ぜひ"), ("是非とも", "ぜひとも"), ("沢山", "たくさん"), ("立ち所に", "たちどころに"),
+    ("仮令", "たとえ"), ("縦令", "たとえ"), ("丁度", "ちょうど"), ("篤と", "とくと"),
+    ("取り分け", "とりわけ"), ("何故", "なぜ"), ("偏に", "ひとえに"), ("一際", "ひときわ"),
+    ("一入", "ひとしお"), ("一先ず", "ひとまず"), ("独りでに", "ひとりでに"), ("殆ど", "ほとんど"),
+    ("正に", "まさに"), ("況して", "まして"), ("先ず", "まず"), ("満更", "まんざら"), ("無碍に", "むげに"),
+    ("寧ろ", "むしろ"), ("無理矢理", "無理やり"), ("滅法", "めっぽう"), ("若しも", "もしも"),
+    ("若しくは", "もしくは"), ("勿論", "もちろん"), ("最も", "もっとも"), ("元々", "もともと"),
+    ("素より", "もとより"), ("最早", "もはや"), ("矢張り", "やはり"), ("矢っ張り", "やっぱり"),
+    ("漸く", "ようやく"), ("余程", "よほど"), ("僅かに", "わずかに"),
 ]
-RE_FUKUSHI = re.compile("|".join(re.escape(k) for k, _ in FUKUSHI))
+# 長い形から当てる（「是非とも」の中の「是非」、「如何にも」の中の「如何に」）。
+RE_FUKUSHI = re.compile("|".join(re.escape(k) for k, _ in sorted(FUKUSHI, key=lambda kv: -len(kv[0]))))
 FUKUSHI_MAP = dict(FUKUSHI)
 
 
@@ -924,19 +1056,41 @@ def rule_hiragana_fukushi(ctx: Context) -> None:
             word = m.group(0)
             if word in allow:
                 continue
-            # 直前が漢字なら熟語の一部（「全て」の前が漢字＝「完全て」は無いが、「大体」の前の「拡大体」等）。
-            if m.start() and re.match(f"[{KANJI}]", s.text[m.start() - 1]):
+            # 前後が漢字なら熟語の一部（「更に」の前の「変更に」、「最も」の後の「最も重要」は
+            # 後ろがひらがなだが「最上」は後ろが漢字）。
+            before = s.text[m.start() - 1] if m.start() else ""
+            after = s.text[m.end(): m.end() + 1]
+            if re.match(f"[{KANJI}]", before or " "):
+                continue
+            # 語末が漢字の語（沢山・所詮・元々）は、後ろも漢字なら熟語（「沢山田」は無いが「元々木」）。
+            # 「予め設定」のように語末がひらがなの語は、後ろが漢字でも副詞のまま。
+            if re.match(f"[{KANJI}]", word[-1]) and re.match(f"[{KANJI}]", after or " "):
                 continue
             ctx.add("ja-hiragana-fukushi", s.locate(m.start()),
-                    f"副詞「{word}」はひらがな「{FUKUSHI_MAP[word]}」で書きます。", word, FUKUSHI_MAP[word])
+                    f"副詞「{word}」はひらがな「{FUKUSHI_MAP[word]}」で書きます。", word,
+                    FUKUSHI_MAP[word], span=len(word))
+
+
+# textlint-rule-ja-hiragana-hojodoushi (MIT) の辞書にある動詞：頂く・下さる・行く・来る・致す・出す。
+# 「出す」は「〜し出す」の連用形接続で表層では分けられないので載せない。それ以外の補助動詞
+# （見る・置く・欲しい・貰う・仕舞う・居る・上げる）は本家に無いが、「て」の直後に限れば
+# 曖昧さが小さいので残す。「有る／無い」は形容詞で補助動詞ではなく、rig 自身の docs で
+# 33 件の偽陽性を出したので外した。
+def _after_honorific(forms: str) -> str:
+    """「お願い致します」「ご連絡頂き」：お／ご＋名詞（漢字 1〜2 字、送り仮名 1 字まで）の直後。
+    Python の後読みは固定長なので、形ごとに並べる。"""
+    stems = (f"[おご御][{KANJI}]", f"[おご御][{KANJI}][{KANJI}]",
+             f"[おご御][{KANJI}][{HIRA}]", f"[おご御][{KANJI}][{KANJI}][{HIRA}]")
+    return "|".join(f"(?<={st})(?:{forms})" for st in stems)
 
 
 HOJODOUSHI = [
-    (re.compile(r"(?<=[てで])(下さい|下さる|下され)"), "ください"),
-    (re.compile(r"(?<=[てで])(頂く|頂き|頂け|頂い|頂きます|頂いた)"), "いただく"),
-    (re.compile(f"(?<=[おご御][{KANJI}])(頂く|頂き|頂け|頂い)|(?<=[おご御][{KANJI}][{KANJI}])(頂く|頂き|頂け|頂い)"), "いただく"),
-    (re.compile(r"(?<=[てで])(行く|行き|行っ|行け|行こ)"), "いく"),
-    (re.compile(r"(?<=[てで])(来る|来た|来て|来ます|来い|来れ)"), "くる"),
+    (re.compile(r"(?<=[てで])(下さい|下さる|下さら|下さっ|下され|下さん|下さろ|下さりゃ)"), "ください"),
+    (re.compile(r"(?<=[てで])(頂く|頂き|頂け|頂い|頂か|頂こ|頂きゃ)"), "いただく"),
+    (re.compile(_after_honorific("頂く|頂き|頂け|頂い|頂か|頂こ")), "いただく"),
+    (re.compile(_after_honorific("致す|致し|致さ|致そ|致せ")), "いたす"),
+    (re.compile(r"(?<=[てで])(行く|行き|行っ|行け|行か|行こ|行きゃ)"), "いく"),
+    (re.compile(r"(?<=[てで])(来る|来た|来て|来ます|来い|来れ|来よ|来ん)"), "くる"),
     (re.compile(r"(?<=[てで])(見る|見て|見た|見ます|見よ|見れ)"), "みる"),
     (re.compile(r"(?<=[てで])(置く|置き|置い|置け|置こ)"), "おく"),
     (re.compile(r"(?<=[てで])(欲しい|欲しく|欲しかっ)"), "ほしい"),
@@ -945,19 +1099,34 @@ HOJODOUSHI = [
     (re.compile(r"(?<=[てで])(居る|居た|居て|居ます|居れ|居ない)"), "いる"),
     (re.compile(r"(?<=[てで])(上げる|上げ|上げた|上げます)"), "あげる"),
     (re.compile(r"(?<=[てで])御覧"), "ごらん"),
+    # 本家の hojodoushi には無いが、JTF・公用文の定番。動詞そのものなので位置を問わない。
     (re.compile(r"出来(る|ます|ません|ない|た|て|れば|なく|なかっ)"), "でき〜"),
-    (re.compile(r"(?<=[がはもにで])(有る|有り|有ります|有った|無い|無く|無かった|無し)"), "ある／ない"),
-    (re.compile(r"(?<=[しきぎりみびにちいえけげせてねべめれ])(易い|易く|難い|難く)"), "やすい／にくい"),
 ]
+HOJODOUSHI_KANA = {
+    "下": "くだ", "頂": "いただ", "致": "いた", "行": "い", "来": "", "見": "み", "置": "お",
+    "欲": "ほ", "貰": "もら", "仕舞": "しま", "居": "い", "上": "あ", "御覧": "ごらん", "出来": "でき",
+}
+
+
+def _hojodoushi_fix(hit: str) -> str | None:
+    """漢字部分だけを読みに置き換える。「下さい」→「ください」、「出来ます」→「できます」。
+    「来る」系は読みが活用で変わる（く・こ・き）ので fix を出さない。"""
+    if hit.startswith("来"):
+        return None
+    for kanji, kana in HOJODOUSHI_KANA.items():
+        if hit.startswith(kanji):
+            return kana + hit[len(kanji):]
+    return None
 
 
 def rule_hiragana_hojodoushi(ctx: Context) -> None:
     for s in ctx.sentences:
         for pat, kana in HOJODOUSHI:
             for m in pat.finditer(s.text):
+                fix = _hojodoushi_fix(m.group(0))
                 ctx.add("ja-hiragana-hojodoushi", s.locate(m.start()),
                         f"補助動詞「{m.group(0)}」はひらがな「{kana}」で書きます。",
-                        s.text[max(0, m.start() - 2): m.end() + 1], kana)
+                        m.group(0), fix, span=len(m.group(0)) if fix else None)
 
 
 VARIANT_GROUPS = [
@@ -1011,7 +1180,8 @@ def rule_prh(ctx: Context) -> None:
                 if m.group(0) == expected:
                     continue
                 ctx.add("prh", ctx.at(ln, m.start()),
-                        f"用語「{m.group(0)}」は「{expected}」と書きます。", m.group(0), expected)
+                        f"用語「{m.group(0)}」は「{expected}」と書きます。", m.group(0), expected,
+                        span=len(m.group(0)))
 
 
 RULES = {
@@ -1040,6 +1210,9 @@ RULES = {
     "ja-space-between-half-and-full-width": rule_space_half_full,
     "ja-no-space-around-parentheses": rule_space_around_parentheses,
     "ja-nakaguro-or-halfwidth-space-between-katakana": rule_nakaguro_or_space,
+    "ja-space-around-code": rule_space_around_code,
+    "ja-no-space-between-full-width": rule_no_space_between_full_width,
+    "ja-no-space-around-slash": rule_no_space_around_slash,
     "ja-hiragana-keishikimeishi": rule_hiragana_keishikimeishi,
     "ja-hiragana-fukushi": rule_hiragana_fukushi,
     "ja-hiragana-hojodoushi": rule_hiragana_hojodoushi,
@@ -1140,18 +1313,86 @@ def load_config(path: str | None, explicit: bool) -> tuple[dict | None, str | No
 
 
 # ── 走査 ──────────────────────────────────────────────────────────────────────
-def lint_text(source: str, settings: Settings, name: str = STDIN_NAME) -> list[Finding]:
+RE_DISABLE = re.compile(
+    r"<!--\s*(?:textlint|ja-lint)-(disable-line|disable-next-line|disable|enable)\b([^>]*?)-->"
+)
+
+
+def suppressions(source: str) -> list[tuple[int, int, set[str] | None]]:
+    """`<!-- textlint-disable rule, rule -->` … `<!-- textlint-enable -->` と
+    `<!-- textlint-disable-line rule -->`、`<!-- textlint-disable-next-line rule -->`。
+    textlint-filter-rule-comments と同じ書き方。rule を書かなければ全部。
+    (開始行, 終了行, ルール集合 or None=全部) の列を返す。"""
+    out: list[tuple[int, int, set[str] | None]] = []
+    open_blocks: list[tuple[int, set[str] | None]] = []
+    lines = source.split("\n")
+    for no, raw in enumerate(lines, start=1):
+        for m in RE_DISABLE.finditer(raw):
+            kind = m.group(1)
+            names = {x.strip() for x in re.split(r"[,\s]+", m.group(2).strip()) if x.strip()} or None
+            if kind == "disable-line":
+                out.append((no, no, names))
+            elif kind == "disable-next-line":
+                out.append((no + 1, no + 1, names))
+            elif kind == "disable":
+                open_blocks.append((no, names))
+            elif kind == "enable":
+                if open_blocks:
+                    start, blocked = open_blocks.pop()
+                    out.append((start, no, blocked))
+    for start, blocked in open_blocks:
+        out.append((start, len(lines), blocked))
+    return out
+
+
+def _suppressed(f: Finding, ranges: list[tuple[int, int, set[str] | None]]) -> bool:
+    return any(a <= f["line"] <= b and (names is None or f["rule"] in names) for a, b, names in ranges)
+
+
+def lint_text(source: str, settings: Settings, name: str = STDIN_NAME,
+              suppressed_out: list | None = None) -> list[Finding]:
     ctx = Context(name, source, settings.options)
     for rule in settings.enabled:
         RULES[rule](ctx)
+    ranges = suppressions(source)
     out: list[Finding] = []
     for f in ctx.findings:
         f["severity"] = settings.enabled[f["rule"]]
         if any(rx.search(f.get("text", "")) for rx in settings.ignore):
             continue
+        if ranges and _suppressed(f, ranges):
+            if suppressed_out is not None:
+                suppressed_out.append(f)
+            continue
         out.append(f)
     out.sort(key=lambda f: (f["line"], f["column"], f["rule"]))
     return out
+
+
+def apply_fixes(source: str, findings: list[Finding]) -> tuple[str, int]:
+    """`span` と `fix` を持つ所見を本文に当てる。同じ行では右から左へ、重なる所見は先勝ち。
+    置き換える前に、その位置の文字が所見の text と一致することを確かめる（ずれていたら触らない）。"""
+    lines = source.split("\n")
+    applied = 0
+    by_line: dict[int, list[Finding]] = {}
+    for f in findings:
+        if f.get("span") and "fix" in f:
+            by_line.setdefault(f["line"], []).append(f)
+    for no, fs in by_line.items():
+        raw = lines[no - 1]
+        taken: list[tuple[int, int]] = []
+        for f in sorted(fs, key=lambda x: -x["column"]):
+            start = f["column"] - 1
+            end = start + f["span"]
+            if any(not (end <= a or start >= b) for a, b in taken):
+                continue
+            if f["text"] and raw[start:end] != f["text"]:
+                continue
+            raw = raw[:start] + f["fix"] + raw[end:]
+            taken.append((start, end))
+            applied += 1
+        lines[no - 1] = raw
+    return "\n".join(lines), applied
 
 
 def collect_artifacts(paths: list[str], skip: set[str]) -> tuple[list[str], list[dict]]:
@@ -1238,6 +1479,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", metavar="PATH",
                         help="どの状態でも JSON 報告をこのパスに書く（orchestrate は stdout を捨てるため）")
     parser.add_argument("--strict", action="store_true", help="warning も exit 1 に数える")
+    parser.add_argument("--fix", action="store_true",
+                        help="機械的に置き換えられる所見（半角カナ・全角英数字・NFD・ゼロ幅・用語・"
+                             "ひらく規則・誤用・括弧やスラッシュの空白）を本文に当てて書き戻し、残りを報告する")
     parser.add_argument("--if-configured", action="store_true",
                         help="設定ファイルも引数も無ければ not-configured として exit 0")
     parser.add_argument("--list-rules", action="store_true", help="ルール一覧と既定 severity を出して終わる")
@@ -1257,6 +1501,8 @@ def main(argv: list[str] | None = None) -> int:
     files: list[str] = []
     skipped: list[dict] = []
     findings: list[Finding] = []
+    suppressed: list[Finding] = []
+    fixed: dict[str, int] = {}
     settings: Settings | None = None
     try:
         data, config_path = load_config(args.config, args.config is not None)
@@ -1285,7 +1531,16 @@ def main(argv: list[str] | None = None) -> int:
             raise Unchecked("検査対象のテキスト成果物が 1 件も無い")
         for path in files:
             source = read_source(path)
-            findings.extend(lint_text(source, settings, STDIN_NAME if path == "-" else path))
+            name = STDIN_NAME if path == "-" else path
+            if args.fix and path != "-":
+                first = lint_text(source, settings, name)
+                fixed_source, n = apply_fixes(source, first)
+                if n:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(fixed_source)
+                    source = fixed_source
+                fixed[path] = n
+            findings.extend(lint_text(source, settings, name, suppressed))
     except NotConfigured as exc:
         status, reason = "not-configured", str(exc)
     except Unchecked as exc:
@@ -1305,7 +1560,9 @@ def main(argv: list[str] | None = None) -> int:
         "rules": settings.enabled if settings else {},
         "artifacts": files,
         "skipped": skipped,
-        "summary": {"errors": errors, "warnings": warnings, "files": len(files)},
+        "summary": {"errors": errors, "warnings": warnings, "files": len(files),
+                    "suppressed": len(suppressed), "fixed": sum(fixed.values())},
+        "fixed": fixed,
         "findings": findings,
     }
     if args.report:
@@ -1328,7 +1585,12 @@ def main(argv: list[str] | None = None) -> int:
         for f in findings:
             fix = f"  → {f['fix']}" if f.get("fix") else ""
             print(f"{f['file']}:{f['line']}:{f['column']}: {f['severity']} [{f['rule']}] {f['message']}{fix}")
-        print(f"error {errors} 件 / warning {warnings} 件 / 検査した成果物 {len(files)} 件"
+        extra = ""
+        if fixed:
+            extra += f" / 直した {sum(fixed.values())} 件"
+        if suppressed:
+            extra += f" / 抑制 {len(suppressed)} 件"
+        print(f"error {errors} 件 / warning {warnings} 件 / 検査した成果物 {len(files)} 件{extra}"
               f"（presets: {', '.join(report['presets'])}）")
 
     if status == "not-configured":

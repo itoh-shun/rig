@@ -24,12 +24,12 @@ POLICY = (
     / "skills" / "engine" / "facets" / "policies" / "japanese-textlint-rules.md"
 )
 
-# 2026-09-08 の実測。種 64/64、種の file 内での同一 rule の偽陽性 0。
-# clean 3 本では error 0、warning は no-doubled-joshi が 3 件（「〜を〜する〜を」と
-# 「〜が〜い〜が」——textlint も同じ位置を報告する形で、規則の性質として残している）。
-EXPECTED_HITS = 64
-EXPECTED_TOTAL = 64
-EXPECTED_CLEAN_WARNINGS = {"clean/release-notes.md": 2, "clean/incident-report.md": 1, "clean/howto.md": 0}
+# 2026-09-09 の実測（本家 textlint-ja との突き合わせ後）。種 69/69、種の file 内での同一 rule の
+# 偽陽性 0。clean 3 本では error 0、warning は release-notes の no-doubled-joshi 2 件だけで、
+# 本家（kuromoji）が同じ file に報告する 2 行と一致する。
+EXPECTED_HITS = 69
+EXPECTED_TOTAL = 69
+EXPECTED_CLEAN_WARNINGS = {"clean/release-notes.md": 2, "clean/incident-report.md": 0, "clean/howto.md": 0}
 
 
 @pytest.fixture(scope="module")

@@ -41,6 +41,30 @@ including rig's own. Digits beside kanji (`9月`, `14時`) never vote. And appro
 are warnings, because a part-of-speech guess wired to a gate gets the prose bent to
 satisfy it.
 
+**Measured against the real textlint-ja, rule by rule.** The upstream textlint (15.8.0,
+preset-ja-technical-writing 12.0.2, preset-ja-spacing 3.0.3, the three ja-hiragana rules,
+prh) was run on the same corpus and its findings snapshotted into
+`tests/fixtures/ja-textlint/upstream-textlint.json`; `tests/test_ja_textlint_parity.py`
+pins the agreement per rule. On the 30 rules both sides ship: upstream 77 findings, the
+sensor 85, 57 the same file and line — recall 0.74, precision 0.67 against upstream, and
+the 13 rules the policy calls character-decided agree line for line. Every gap is named
+in the test with its reason: a deliberate departure (majority-based 敬体/常体 where
+upstream fixes ですます for body and である for lists; `auto` spacing where upstream is
+`never`; colon-ended paragraphs exempt from the period rule) or a superset dictionary.
+Reading upstream's sources also moved four semantics into line: `を` is never a doubled
+particle and commas and brackets widen the particle interval, a comma between two nouns
+is a list and is not counted, the kanji-run limit is the preset's 6, and inline code counts
+toward sentence length. Upstream's `ja-hiragana-fukushi` dictionary (76 pairs, MIT) replaced
+the hand-written list; `有る/無い` left the auxiliary-verb rule after producing 33 false
+positives on rig's own docs. Three more `preset-ja-spacing` rules ship
+(`ja-space-around-code`, `ja-no-space-between-full-width`, `ja-no-space-around-slash`),
+lazily continued list items are one paragraph again (they had been splitting sentences in
+half), and `<!-- textlint-disable … -->` comments work the way `textlint-filter-rule-comments`
+reads them, with the suppressed count kept in the report. `--fix` writes back the
+mechanical replacements — kana width, NFC, zero-width characters, declared terms, the
+hiragana rules, misused idioms, stray spaces — and leaves everything that touches meaning to
+the `fix` step.
+
 **Recipe `japanese-lint`, command `/rig:japanese-lint`.** `fix` runs `rig-wb ja-lint`
 against the project's `.claude/ja-textlint.json` `paths`, repairs errors without touching
 facts, names, numbers or steps, and re-runs the same command as its `checks`; `review`

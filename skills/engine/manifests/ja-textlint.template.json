@@ -5,9 +5,10 @@
   "presets": ["technical", "spacing"],
   "rules": {
     "sentence-length": {"max": 100},
-    "max-ten": {"max": 3},
-    "max-kanji-continuous-len": {"max": 5, "allow": []},
+    "max-kanji-continuous-len": {"max": 6, "allow": []},
     "ja-space-between-half-and-full-width": {"space": "auto"},
+    "ja-space-around-code": {"space": "auto"},
+    "max-ten": {"max": 3, "strict": false},
     "no-doubled-joshi": {"severity": "warning", "min_interval": 1}
   },
   "terms": [

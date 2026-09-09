@@ -41,6 +41,7 @@
               "min_interval": {"type": "integer", "minimum": 1},
               "prefer": {"type": "string"},
               "space": {"type": "string", "enum": ["always", "never", "auto", "ignore"]},
+              "strict": {"type": "boolean"},
               "groups": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2}}
             },
             "additionalProperties": false

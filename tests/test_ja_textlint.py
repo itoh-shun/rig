@@ -53,11 +53,14 @@ def _run(tmp_path, config: dict | None, files: dict[str, str], extra=()):
 
 
 # ── 検出：文字と辞書で決まるもの（error） ─────────────────────────────────────
-def test_a_long_sentence_is_measured_without_code_spans():
+def test_a_long_sentence_counts_code_but_not_urls():
+    """textlint と同じ数え方。インラインコードは読む文字なので数え、URL やリンク先は表示されないので数えない。"""
     long = "あ" * 101 + "。"
     assert _rules(_lint(long + "\n", rules=["sentence-length"])) == ["sentence-length"]
-    coded = "`" + "x" * 200 + "` を含む短い文です。\n"
-    assert _lint(coded, rules=["sentence-length"]) == []
+    coded = "`" + "x" * 200 + "` を含む文です。\n"
+    assert _rules(_lint(coded, rules=["sentence-length"])) == ["sentence-length"]
+    linked = "[短い](https://example.com/" + "x" * 200 + ") を含む文です。\n"
+    assert _lint(linked, rules=["sentence-length"]) == []
 
 
 def test_too_many_commas_in_one_sentence():
@@ -117,7 +120,7 @@ def test_approximate_rules_default_to_warning(rule):
 
 def test_a_warning_alone_leaves_exit_zero_unless_strict(tmp_path):
     code, report = _run(tmp_path, None, {"a.md": "映画を見れた。\n"})
-    assert report["summary"] == {"errors": 0, "warnings": 1, "files": 1}
+    assert report["summary"] == {"errors": 0, "warnings": 1, "files": 1, "suppressed": 0, "fixed": 0}
     assert code == 0
     code, _ = _run(tmp_path, None, {"a.md": "映画を見れた。\n"}, extra=("--strict",))
     assert code == 1
@@ -355,3 +358,106 @@ def test_nfd_is_detected_and_nfc_is_not():
 def test_bom_is_not_a_zero_width_finding_but_a_later_one_is():
     assert _lint("\ufeff問題ない。\n", rules=["no-zero-width-spaces"]) == []
     assert _rules(_lint("問\u200b題。\n", rules=["no-zero-width-spaces"])) == ["no-zero-width-spaces"]
+
+
+# ── 本家との突き合わせで直したもの ───────────────────────────────────────────
+def test_wo_is_never_a_doubled_particle_and_commas_widen_the_interval():
+    """textlint は格助詞「を」の重なりを例外にし、読点と括弧を距離に数える。"""
+    assert _lint("AIを使った開発を支援するツールです。\n", rules=["no-doubled-joshi"]) == []
+    assert _lint("私は、彼は好きだ。\n", rules=["no-doubled-joshi"]) == []
+    assert _rules(_lint("結果が古い場合があります。\n", rules=["no-doubled-joshi"])) == ["no-doubled-joshi"]
+    # 「こと」の「と」は語の一部。距離に数えると「が…が」が離れて見える。
+    assert _rules(_lint("停止すると、インデックスが壊れることがあります。\n", rules=["no-doubled-joshi"])) == ["no-doubled-joshi"]
+
+
+def test_commas_between_nouns_are_a_list_not_a_pause():
+    """textlint の非厳密モード：「A、B、C」の並列の読点は数えない。strict で数える。"""
+    text = "基準は、build が成功する、lint が0件、レビューで REJECT がない、といったものです。\n"
+    assert _lint(text, rules=["max-ten"]) == []
+    assert _rules(_lint(text, {"presets": ["technical"], "rules": {"max-ten": {"strict": True}}})) == ["max-ten"]
+
+
+def test_kanji_run_limit_is_the_presets_six():
+    assert _lint("情報処理技術。\n", rules=["max-kanji-continuous-len"]) == []
+    assert _rules(_lint("個人情報保護法改正案。\n", rules=["max-kanji-continuous-len"])) == ["max-kanji-continuous-len"]
+
+
+def test_a_lazily_continued_list_item_is_one_paragraph():
+    """Markdown の lazy continuation。別段落にすると一文が二つに割れて長さが半分に見える。"""
+    text = "- " + "あ" * 60 + "\n" + "い" * 60 + "。\n"
+    assert _rules(_lint(text, rules=["sentence-length"])) == ["sentence-length"]
+    assert _lint("- （開き\n  閉じ）。\n", rules=["no-unmatched-pair"]) == []
+
+
+def test_fukushi_uses_the_upstream_dictionary_and_guards_compounds():
+    assert [f["fix"] for f in _lint("最も予め設定する。\n", rules=["ja-hiragana-fukushi"])] == ["もっとも", "あらかじめ"]
+    assert _lint("変更に例えば全ての土台を正しく。\n", rules=["ja-hiragana-fukushi"]) == []
+
+
+def test_hojodoushi_no_longer_reads_nai_as_an_auxiliary():
+    assert _lint("時間が無い。結果が有る。\n", rules=["ja-hiragana-hojodoushi"]) == []
+    f = _lint("お願い致します。確認して下さい。\n", rules=["ja-hiragana-hojodoushi"])
+    assert [x["fix"] for x in f] == ["いたし", "ください"]
+    assert jt.apply_fixes("お願い致します。\n", f)[0] == "お願いいたします。\n"
+
+
+def test_keishikimeishi_covers_hou_goto_tabi():
+    f = _lint("無い方がよい。マージ毎に走る。する度に増える。\n", rules=["ja-hiragana-keishikimeishi"])
+    assert [x["fix"] for x in f] == ["ほう", "ごと", "たび"]
+
+
+def test_three_more_spacing_rules():
+    assert _rules(_lint("人間 対 生成。\n", rules=["ja-no-space-between-full-width"])) == ["ja-no-space-between-full-width"] * 2
+    assert _lint("ウェブ ブラウザ。\n", rules=["ja-no-space-between-full-width"]) == []
+    assert _rules(_lint("反証 / 裏づけ。\n", rules=["ja-no-space-around-slash"])) == ["ja-no-space-around-slash"]
+    assert _lint("a / b\n", rules=["ja-no-space-around-slash"]) == []
+    mixed = "`a` を呼ぶ。`b`を呼ぶ。`c`を呼ぶ。\n"
+    assert [f["line"] for f in _lint(mixed, rules=["ja-space-around-code"])] == [1]
+    assert _lint("`a` を呼ぶ。`b` を呼ぶ。\n", rules=["ja-space-around-code"]) == []
+
+
+def test_dropped_i_leaves_the_copula_negative_alone():
+    assert _lint("それはわけでない。つもりでない。\n", rules=["no-dropped-i"]) == []
+
+
+# ── 抑制コメントと --fix ─────────────────────────────────────────────────────
+def test_disable_comments_follow_textlint_filter_rule_comments():
+    body = (
+        "<!-- textlint-disable no-exclamation-question-mark -->\n本当ですか？\n<!-- textlint-enable -->\n"
+        "本当ですか？\n"
+        "すごい！ <!-- ja-lint-disable-line -->\n"
+        "<!-- textlint-disable-next-line no-exclamation-question-mark -->\nすごい！\n"
+    )
+    f = _lint(body, rules=["no-exclamation-question-mark"])
+    assert [x["line"] for x in f] == [4]
+
+
+def test_suppressed_findings_are_counted_in_the_report(tmp_path):
+    body = {"a.md": "<!-- textlint-disable -->\nできないことはない。\n"}
+    code, report = _run(tmp_path, None, body)
+    assert code == 0 and report["summary"]["suppressed"] == 1 and report["findings"] == []
+
+
+def test_fix_applies_only_mechanical_replacements_and_leaves_the_rest(tmp_path):
+    art = tmp_path / "art"
+    art.mkdir()
+    doc = art / "a.md"
+    doc.write_text("ﾃｷｽﾄを`code`で確認して下さい。Ｖ２です。できないことはない。\n", encoding="utf-8")
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"presets": ["technical", "hiragana", "style"]}), encoding="utf-8")
+    report = tmp_path / "r.json"
+    code = jt.main(["--config", str(cfg), "--fix", "--report", str(report), str(art)])
+    assert code == 1  # 二重否定は機械では直さない
+    assert doc.read_text(encoding="utf-8") == "テキストを`code`で確認してください。V2です。できないことはない。\n"
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["summary"]["fixed"] == 3
+    assert [f["rule"] for f in data["findings"] if f["severity"] == "error"] == ["no-double-negative-ja"]
+
+
+def test_fix_never_touches_text_that_moved():
+    """所見の位置の文字が text と違えば触らない。ずれたまま置き換えるより残すほうが安全。"""
+    src = "ﾃｷｽﾄです。\n"
+    findings = _lint(src, rules=["no-hankaku-kana"])
+    findings[0]["column"] = 3
+    fixed, n = jt.apply_fixes(src, findings)
+    assert (fixed, n) == (src, 0)

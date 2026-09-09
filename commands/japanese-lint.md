@@ -34,6 +34,7 @@ recipe の `fix` step は、ホスト上で `rig-wb ja-lint --report .rig/ja-lin
 ```text
 rig-wb ja-lint docs/ README.ja.md
 rig-wb ja-lint --preset technical --preset hiragana --strict README.ja.md
+rig-wb ja-lint --fix docs/
 cat draft.md | rig-wb ja-lint -
 rig-wb ja-lint --list-rules
 ```
@@ -41,6 +42,16 @@ rig-wb ja-lint --list-rules
 出力は `file:line:col: severity [rule] message` です。error があれば exit 1、warning だけなら
 exit 0、設定が壊れているか対象が無ければ exit 2（未検査）です。`--strict` で warning も
 exit 1 に数えます。`--json` と `--report <path>` で機械可読な報告を出します。
+
+`--fix` は機械的に置き換えられる所見（半角カナ、全角英数字、NFD、ゼロ幅文字、用語、ひらく
+規則、誤用、括弧・スラッシュ・全角間の空白）だけを本文に当てて書き戻し、残りを報告します。
+文を分ける、二重否定を言い換えるといった意味に触る修正はしません。固有名詞や引用を
+逃がすには、本家と同じ `<!-- textlint-disable rule -->` … `<!-- textlint-enable -->` と
+`<!-- textlint-disable-line -->` が使えます。抑えた件数は報告に残ります。
+
+このセンサーは本家 textlint-ja と同じコーパスで所見単位に突き合わせてあります。両方が持つ
+30 ルールで本家 77 件、センサー 85 件、一致 57 件。差はすべて policy と
+`tests/test_ja_textlint_parity.py` に理由つきで載っています。
 
 ## error と warning
 
