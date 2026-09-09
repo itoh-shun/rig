@@ -502,11 +502,6 @@ Sub-commands:
                                         documented requirement -> evidence map.
                                         default verifies the map against the repo (free);
                                         --run executes the deterministic evidence
-  design-constraints [--constraints P] [--report P] [--if-configured] [--json] ARTIFACT...
-                                        check design artefacts against the project's declared
-                                        tokens, component inventory and prohibited wording.
-                                        exit 0=checked clean or not-configured / 1=violations
-                                        / 2=unchecked (a declaration exists but could not be read)
   hostcheck [--json] [--strict]         host-side prerequisites rig cannot enforce
                                         (container isolation, permissions.deny, ignored state).
                                         exit 0=ok / 3=missing / 1=missing with --strict
@@ -644,10 +639,6 @@ def main() -> None:
         from . import coverage as coverage_mod
 
         sys.exit(coverage_mod.cmd_coverage(rest))
-    if sub == "design-constraints":
-        from . import design_constraints as design_constraints_mod
-
-        sys.exit(design_constraints_mod.main(rest))
     if sub == "hostcheck":
         from . import hostcheck as hostcheck_mod
 

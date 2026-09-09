@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "tokens": { "color": { "brand-primary": "#1F6FEB" } },
-  "components": ["Button"],
-  "prohibitted": [
-    { "pattern": "こちらをクリック", "why": "リンク先が分からない (WCAG 2.4.4)" }
-  ]
-}

@@ -1,6 +1,6 @@
 ---
 description: "rig/design — a design harness with UI/UX and accessibility built in. From a description it produces a specification, component specs, wireframes, and an accessibility plan, then vets them against UI/UX heuristics and WCAG. Given a URL it fetches the running screen with Playwright and audits it. --ppt and --claudedesign add output formats."
-argument-hint: "[a description, or a screen URL] [--url <url>] [--a11y-level A|AA|AAA] [--constraints <path>] [--ppt] [--claudedesign] [--plan] [--persona <name>]"
+argument-hint: "[a description, or a screen URL] [--url <url>] [--a11y-level A|AA|AAA] [--ppt] [--claudedesign] [--plan] [--persona <name>]"
 ---
 
 # rig/design — designing and auditing 🎨
@@ -26,7 +26,7 @@ With no arguments, ask in one line what is being designed — the feature, who i
 
 ## What it does
 
-- **Create (the default)**: hands the description, audience, and artefact types to the `design` recipe. The procedure — settle the requirements, produce the artefacts, choose the output backend, vet in parallel — is in `facets/instructions/design-draft` and `design-vet`. The artefacts are a design specification, component specs, wireframes or mockups, and an accessibility plan. Accessibility is built in at design time rather than added later, vetted by `ux-reviewer` (usability) and `a11y-reviewer` (WCAG 2.2), and converged at the acceptance gate. **Ground everything in what exists, claim nothing extra, and mark what is unknown `[to be filled in]`.** Where the project declares constraints, they bind the artefacts rather than merely informing them, and a shipped sensor checks them before the review — but the sensor reads values and names, not prose, so "no violations" is never reported as "the constraints are met".
+- **Create (the default)**: hands the description, audience, and artefact types to the `design` recipe. The procedure — settle the requirements, produce the artefacts, choose the output backend, vet in parallel — is in `facets/instructions/design-draft` and `design-vet`. The artefacts are a design specification, component specs, wireframes or mockups, and an accessibility plan. Accessibility is built in at design time rather than added later, vetted by `ux-reviewer` (usability) and `a11y-reviewer` (WCAG 2.2), and converged at the acceptance gate. **Ground everything in what exists, claim nothing extra, and mark what is unknown `[to be filled in]`.**
 - **Audit (a URL)**: hands the URL to the `design-audit` recipe. The procedure — screenshot, DOM, and axe results through Playwright, then a parallel review — is in `facets/instructions/design-audit` and `design-vet`. Read-only, no side effects.
 
 ## Output backends (create mode; they combine)
@@ -39,7 +39,6 @@ With no arguments, ask in one line what is being designed — the feature, who i
 
 - `--url <url>` — audit mode explicitly (a bare URL argument is detected anyway).
 - `--a11y-level A|AA|AAA` — the WCAG level to aim at. AA by default.
-- `--constraints <path>` — the project's machine-readable design constraints: tokens, the component inventory, and prohibited expressions. Defaults to `<repo>/.claude/design-constraints.json`; the schema and a blank template are in `skills/engine/manifests/`. When the file exists, what it declares binds generation and is checked mechanically before the review. When it does not, the run reports that constraints were not checked — it does not report them as satisfied. The rules are in `facets/policies/design-constraint-rules`.
 - `--ppt` / `--claudedesign` — extra output backends, in create mode.
 - `--persona <name>` — add a custom reviewer to the vetting fan-out (as everywhere in the engine).
 - `--plan` — present the composed harness and stop (as everywhere in the engine). A dry run.

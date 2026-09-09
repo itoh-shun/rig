@@ -20,20 +20,11 @@
 - `<repo>/.claude/rig/personas/` … project tier の `/rig:persona`（§5）の生成先。
 - 各ディレクトリに用途を1行書いた `README.md`（または `.gitkeep`）を置いて空ディレクトリを成立させる。
 - これで `/rig:init` 直後から `--save-recipe` / `/rig:persona` の書き込み先が存在し、「保存→一覧（`--list`）→再利用の輪」が初回から繋がる（保存先 dir 不在による失敗を防ぐ）。
-- `.claude/` は `.gitignore` 対象のことがある。**コミットして共有したい場合は知識層を除外しないよう** `.gitignore` を確認し、必要なら除外解除を**提案**する（勝手に書き換えない）。同じことが `<repo>/.claude/design-constraints.json`（②-c）にも当たる——**コミットできない設定はプロジェクト所有ではない**。
+- `.claude/` は `.gitignore` 対象のことがある。**コミットして共有したい場合は知識層を除外しないよう** `.gitignore` を確認し、必要なら除外解除を**提案**する（勝手に書き換えない）。
 
 ### ②-b `.gitignore` への `.rig/` 追加（workbench 実行状態）
 
 `/rig:rig`（`patterns/isolated-worktree`）の run state は `<repo>/.rig/runs/` に書かれる。ローカル実行ログであり共有リポジトリにコミットする性質のものではないため、`.gitignore` に `.rig/` が無ければ**追加を提案**する（他の gitignore 提案と同様、勝手に書き換えず確認を取る）。既に `.rig/` または親パターン（`.rig` 等）でカバーされていれば提案しない。
-
-### ②-c デザイン制約ファイル（`<repo>/.claude/design-constraints.json`・任意）
-
-`/rig:design` が参照するデザイン制約（トークン・コンポーネント一覧・禁止表現）。規則は `facets/policies/design-constraint-rules`、形は `manifests/design-constraints.schema.json`、雛形は `manifests/design-constraints.template.json`。
-
-- **init は値を埋めない。** 何をトークンにするかはプロジェクトのデザイナーが決めることで、rig が推測してよいものではない。雛形の場所と、埋めるまでは検査が未検査を返すことを**案内するだけ**にする。
-- 既存の UI があっても、CSS から色を拾って勝手にパレットを作らない（実在前提・捏造禁止）。
-- `.claude/*` が gitignore されているリポジトリでは、`!.claude/design-constraints.json` の追加を**提案**する（勝手に書き換えない）。
-- 作らないという選択も正しい。制約が無いリポジトリでは `/rig:design` は「制約は検査していない」と報告して進む——合格とは書かない。
 
 ### ③ CLAUDE.md "Compact Instructions" 節（圧縮で rig 状態を失わない第2経路）
 
