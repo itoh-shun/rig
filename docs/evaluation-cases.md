@@ -259,7 +259,13 @@ every result under the tree whose `case_id` matches, and a second `current` for 
 case is `current_evidence_count`.
 
 CI then runs `eval gate --evidence-dir evals/evidence`, which needs git and the signing key
-and nothing else. Committing evidence changes what the gate can bind to, because
+and nothing else. **Its verdict is advisory**: the job reports a failing verdict as a
+warning annotation and does not fail. The corpus holds one case covering two prompt
+surfaces, so the gate met nearly every prompt-surface change while the only way past it was
+a maintainer re-measuring by hand — a toll on every change for one case's worth of signal.
+Nothing about the verification below is relaxed by that; the structural coverage step is
+still a hard failure, so removing coverage somebody earned still stops the job. Make the
+verdict blocking again once the corpus covers the surfaces people actually edit. Committing evidence changes what the gate can bind to, because
 `execution_commit == HEAD` is false the instant the file is tracked — committing it makes a
 new HEAD. The binding is the measured **content**, not the measured commit:
 
@@ -404,12 +410,12 @@ one is proposed.
 
 A fork contributor cannot hold it, and should not be asked to. If their change touches a
 surface no case covers — nearly all of them today — the structural step passes and nothing
-else is required of them. If it touches a covered one, the job stops with instructions
+else is required of them. If it touches a covered one, the job warns with instructions
 addressed to a maintainer, who checks the head out on an origin branch, runs `affected-run`
 against real providers, and pushes the signed evidence onto that branch. The contributor
 does not re-run anything; the evidence lands on the branch under review. Say so when the
-change is proposed rather than when CI refuses it — the message only exists in a failed
-job's log, which is the last place it helps.
+change is proposed rather than when CI warns about it — the message only exists in a job's
+log and one annotation, which is the last place it helps.
 
 Threat model: attestation detects repository or result-file modification by a process that
 does not possess the trusted key. It is not an isolation sandbox against a malicious

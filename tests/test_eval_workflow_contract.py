@@ -47,9 +47,9 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     gate_invocation = [line for line in trusted.splitlines()
                        if "eval gate" in line or "--evidence-dir" in line]
     assert any("--ratchet" in line for line in gate_invocation), gate_invocation
-    # Fail closed, and on the signing key alone: the other four secrets only pin
-    # evidence that is already signed, so requiring them would keep the job
-    # unpassable for no verification gained.
+    # Keyed on the signing key alone: the other four secrets only pin evidence that
+    # is already signed, so reading them as a precondition would gain no
+    # verification. Without the key the step verifies nothing and says so.
     assert 'if [ -z "$RIG_EVAL_ATTESTATION_KEY" ]; then' in trusted
     for optional in ("RIG_EVAL_PROVIDER", "RIG_EVAL_MODEL",
                      "RIG_EVAL_JUDGE_PROVIDER", "RIG_EVAL_JUDGE_MODEL"):
@@ -57,14 +57,26 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     assert "head.repo.full_name == github.repository" in workflow
     assert "author_association == 'OWNER'" in workflow
     assert "chmod 600" in workflow and "unset RIG_EVAL_ATTESTATION_KEY" in workflow
-    assert "missing evidence cannot pass" in workflow
     assert "trusted maintainer run" in workflow
-    # A surface nobody has written a case for is debt, and `--ratchet` above is what
-    # says so — reported and exit 0, decided inside `eval gate`. What reaches this
-    # step is a case that does exist, so the only thing left to report here is a
-    # verdict, and nothing may swallow the exit code that carries it.
+    # Advisory, deliberately. The corpus holds one case covering two prompt
+    # surfaces while a single branch touched twenty-three with none, so this step
+    # met every prompt-surface change and the only way past it was a maintainer
+    # re-measuring by hand. It now reports its verdict as a warning instead of
+    # failing the job. Two things this must not become: silent, and lenient about
+    # what it checks. The verdict reaches the log and the PR as an annotation, the
+    # signature check is untouched, and the structural ratchet in the step above
+    # still fails a change that removes coverage (pinned by
+    # `test_the_coverage_step_prints_its_report_and_annotations_when_it_fails`).
+    assert "Advisory, not blocking" in trusted
+    assert "::warning::prompt evaluation evidence is not current" in trusted
+    assert "status=$?" in trusted and 'if [ "$status" -ne 0 ]; then' in trusted
+    # `continue-on-error` would hide the step's own result in the run summary; the
+    # verdict is reported in the step instead, where a reader can see it.
     assert "continue-on-error" not in workflow
     assert "|| true" not in trusted
+    # Nothing in the step exits non-zero: that is what "advisory" means here, and a
+    # stray `exit 1` left behind would make it blocking again for one path only.
+    assert "exit 1" not in trusted, trusted
     assert "origin branch" in workflow
     assert "--provider mock" not in workflow
     assert workflow.index("eval affected") < workflow.index("eval affected-run")
