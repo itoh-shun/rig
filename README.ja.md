@@ -1127,6 +1127,7 @@ rig は人よりも**別のハーネス**から起動されることが増えて
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — プロンプト評価ゲートの土台となる評価ケースのcapture/実行/比較/昇格の境界
 - [`docs/packs.md`](./docs/packs.md) — packの作り方（`pack.yaml`/`compatibility.yaml`）とinit/validate/doctor/install/testコマンド
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — 同梱packを独自リポジトリへ切り出し、named source 経由で installし直すまでの移行手順（送り手・受け手の両側）
+- [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — V3 アーキテクチャ設計ブリーフ。合意済みの内部再構成（能力レジストリ・ポート化・来歴の型付け）と移行順序
 - [README.md](./README.md) — English version
 
 ## License
