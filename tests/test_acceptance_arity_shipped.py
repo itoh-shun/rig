@@ -97,3 +97,22 @@ def test_a_shipped_run_answering_every_criterion_finishes(recipe, step_id, decla
     # unresolvable from a record that pins no recipe version.
     assert [c["criterion"] for c in verdict["criteria"]] \
         == list(steps[[s["id"] for s in steps].index(step_id)]["acceptance"])
+
+
+#: The Japanese verdict answers positionally from a fixed set of JSON rows, so a recipe on
+#: that contract can declare no more criteria than there are rows. Declaring one more is not
+#: a stricter gate — it is a step that can never be answered in full, and the run escalates
+#: on a review that said PASS to everything it was given.
+JAPANESE_VERDICT_RECIPES = [
+    ("japanese-writing", "review"),
+    ("japanese-writing-revision", "review"),
+]
+
+
+@pytest.mark.parametrize("recipe,step_id", JAPANESE_VERDICT_RECIPES)
+def test_a_japanese_verdict_step_declares_no_more_than_its_contract_can_answer(
+    recipe, step_id,
+):
+    step = next(s for s in _shipped_steps(recipe) if s["id"] == step_id)
+    assert step["output_contract"] == "japanese-writing-verdict"
+    assert len(step["acceptance"]) <= len(providers.JAPANESE_WRITING_REVIEW_ROWS)
