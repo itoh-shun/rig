@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/itoh-shun/rig/skills/engine/manifests/ja-textlint.schema.json",
+  "title": "rig ja-textlint configuration",
+  "description": "`rig-wb ja-lint` の設定。<repo>/.claude/ja-textlint.json に置く。省略した項目は既定値（presets: technical + spacing）。知らないキーがあると検査は unchecked（exit 2）になる——誤記で規則が黙って抜けるのを防ぐため。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "_readme": {"type": "string"},
+    "version": {"type": "integer", "const": 1},
+    "paths": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "引数を省略したときに検査する file / directory。recipe の checks はここを読む。"
+    },
+    "presets": {
+      "oneOf": [
+        {"type": "string", "const": "all"},
+        {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string",
+                    "enum": ["technical", "spacing", "hiragana", "style", "ai-smell", "commit", "conversation"]}
+        }
+      ],
+      "description": "有効にする preset。technical = textlint-rule-preset-ja-technical-writing 相当、spacing = preset-ja-spacing 相当、hiragana = ja-hiragana-{keishikimeishi,fukushi,hojodoushi}、style = 表記ゆれと全角英数字。"
+    },
+    "rules": {
+      "type": "object",
+      "description": "ルールごとの上書き。false で無効、true で既定 severity、\"error\"/\"warning\" で severity、オブジェクトで severity と options。",
+      "additionalProperties": {
+        "oneOf": [
+          {"type": "boolean"},
+          {"type": "string", "enum": ["error", "warning"]},
+          {
+            "type": "object",
+            "properties": {
+              "severity": {"type": "string", "enum": ["error", "warning"]},
+              "max": {"type": "integer", "minimum": 1},
+              "allow": {"type": "array", "items": {"type": "string"}},
+              "joshi": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 1}},
+              "min_interval": {"type": "integer", "minimum": 1},
+              "min_hits": {"type": "integer", "minimum": 1},
+              "prefer": {"type": "string"},
+              "space": {"type": "string", "enum": ["always", "never", "auto", "ignore"]},
+              "strict": {"type": "boolean"},
+              "groups": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2}}
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "terms": {
+      "type": "array",
+      "description": "prh 相当の用語規則。pattern に一致し expected と異なる表記を報告する。",
+      "items": {
+        "type": "object",
+        "required": ["pattern", "expected"],
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {"type": "string", "minLength": 1},
+          "expected": {"type": "string"},
+          "regex": {"type": "boolean", "default": false},
+          "why": {"type": "string"}
+        }
+      }
+    },
+    "ignore": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "報告の text がこの正規表現に一致する所見を捨てる。固有名詞や引用の逃がし方。"
+    }
+  }
+}

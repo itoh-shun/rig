@@ -1,0 +1,293 @@
+{
+  "_readme": "textlint-ja 各ルールの README にある NG/OK 例から書いた期待値。実装を見て書いたものではない。expect は「その rule がその行に 1 件以上出る」行番号。同じ file の他の行にその rule が出れば偽陽性。",
+  "cases": [
+    {
+      "path": "cases/sentence-length.md",
+      "rule": "sentence-length",
+      "expect": [
+        5,
+        7
+      ]
+    },
+    {
+      "path": "cases/max-ten.md",
+      "rule": "max-ten",
+      "expect": [
+        5,
+        7
+      ]
+    },
+    {
+      "path": "cases/max-kanji.md",
+      "rule": "max-kanji-continuous-len",
+      "expect": [
+        3,
+        7
+      ]
+    },
+    {
+      "path": "cases/dearu-desumasu.md",
+      "rule": "no-mix-dearu-desumasu",
+      "expect": [
+        7
+      ]
+    },
+    {
+      "path": "cases/mixed-period.md",
+      "rule": "ja-no-mixed-period",
+      "expect": [
+        5,
+        7
+      ]
+    },
+    {
+      "path": "cases/double-negative.md",
+      "rule": "no-double-negative-ja",
+      "expect": [
+        3,
+        5,
+        7,
+        9
+      ]
+    },
+    {
+      "path": "cases/dropped-i.md",
+      "rule": "no-dropped-i",
+      "expect": [
+        3,
+        5,
+        7
+      ]
+    },
+    {
+      "path": "cases/dropping-ra.md",
+      "rule": "no-dropping-the-ra",
+      "expect": [
+        3,
+        5,
+        7
+      ]
+    },
+    {
+      "path": "cases/doubled-ga.md",
+      "rule": "no-doubled-conjunctive-particle-ga",
+      "expect": [
+        3
+      ]
+    },
+    {
+      "path": "cases/doubled-conjunction.md",
+      "rule": "no-doubled-conjunction",
+      "expect": [
+        3,
+        5
+      ]
+    },
+    {
+      "path": "cases/doubled-joshi.md",
+      "rule": "no-doubled-joshi",
+      "expect": [
+        3,
+        5
+      ]
+    },
+    {
+      "path": "cases/nfd.md",
+      "rule": "no-nfd",
+      "expect": [
+        5
+      ]
+    },
+    {
+      "path": "cases/control-chars.md",
+      "rule": "no-zero-width-spaces",
+      "expect": [
+        3
+      ]
+    },
+    {
+      "path": "cases/control-chars.md",
+      "rule": "no-invalid-control-character",
+      "expect": [
+        5
+      ]
+    },
+    {
+      "path": "cases/exclamation.md",
+      "rule": "no-exclamation-question-mark",
+      "expect": [
+        3,
+        5
+      ]
+    },
+    {
+      "path": "cases/hankaku-kana.md",
+      "rule": "no-hankaku-kana",
+      "expect": [
+        3
+      ]
+    },
+    {
+      "path": "cases/weak-phrase.md",
+      "rule": "ja-no-weak-phrase",
+      "expect": [
+        3,
+        5,
+        7
+      ]
+    },
+    {
+      "path": "cases/successive-word.md",
+      "rule": "ja-no-successive-word",
+      "expect": [
+        3,
+        5
+      ]
+    },
+    {
+      "path": "cases/abusage.md",
+      "rule": "ja-no-abusage",
+      "expect": [
+        3,
+        5,
+        7,
+        9
+      ]
+    },
+    {
+      "path": "cases/redundant.md",
+      "rule": "ja-no-redundant-expression",
+      "expect": [
+        3,
+        5,
+        7,
+        9,
+        11
+      ]
+    },
+    {
+      "path": "cases/unnatural-alphabet.md",
+      "rule": "ja-unnatural-alphabet",
+      "expect": [
+        3
+      ]
+    },
+    {
+      "path": "cases/unmatched-pair.md",
+      "rule": "no-unmatched-pair",
+      "expect": [
+        3,
+        5
+      ]
+    },
+    {
+      "path": "cases/spacing.md",
+      "rule": "ja-space-between-half-and-full-width",
+      "expect": [
+        3
+      ]
+    },
+    {
+      "path": "cases/spacing.md",
+      "rule": "ja-no-space-around-parentheses",
+      "expect": [
+        7
+      ]
+    },
+    {
+      "path": "cases/spacing.md",
+      "rule": "ja-nakaguro-or-halfwidth-space-between-katakana",
+      "expect": [
+        11
+      ]
+    },
+    {
+      "path": "cases/zenkaku-alnum.md",
+      "rule": "no-zenkaku-alnum",
+      "expect": [
+        3
+      ]
+    },
+    {
+      "path": "cases/hiragana-keishikimeishi.md",
+      "rule": "ja-hiragana-keishikimeishi",
+      "expect": [
+        3,
+        5,
+        7,
+        9
+      ]
+    },
+    {
+      "path": "cases/hiragana-fukushi.md",
+      "rule": "ja-hiragana-fukushi",
+      "expect": [
+        3,
+        5,
+        7
+      ]
+    },
+    {
+      "path": "cases/hiragana-hojodoushi.md",
+      "rule": "ja-hiragana-hojodoushi",
+      "expect": [
+        3,
+        5,
+        7,
+        9
+      ]
+    },
+    {
+      "path": "cases/orthographic-variants.md",
+      "rule": "ja-no-orthographic-variants",
+      "expect": [
+        7
+      ]
+    },
+    {
+      "path": "cases/prh.md",
+      "rule": "prh",
+      "expect": [
+        3,
+        7
+      ]
+    },
+    {
+      "path": "cases/spacing.md",
+      "rule": "ja-space-around-code",
+      "expect": [
+        15
+      ]
+    },
+    {
+      "path": "cases/spacing.md",
+      "rule": "ja-no-space-between-full-width",
+      "expect": [
+        17,
+        19
+      ]
+    },
+    {
+      "path": "cases/spacing.md",
+      "rule": "ja-no-space-around-slash",
+      "expect": [
+        19
+      ]
+    },
+    {
+      "path": "cases/ai-smell-phrases.md",
+      "rule": "ja-ai-smell-phrases",
+      "expect": [
+        3,
+        7,
+        9,
+        11
+      ]
+    }
+  ],
+  "clean": [
+    "clean/release-notes.md",
+    "clean/incident-report.md",
+    "clean/howto.md"
+  ]
+}

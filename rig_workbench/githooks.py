@@ -33,7 +33,7 @@ import sys
 SIGNATURE = "# rig-githooks v1"
 
 # Hooks we ship. Keep in sync with hooks/git/ templates.
-HOOK_NAMES = ("pre-commit", "pre-push")
+HOOK_NAMES = ("pre-commit", "commit-msg", "pre-push")
 
 # How many leading lines of an existing hook to inspect for SIGNATURE.
 _SIGNATURE_SCAN_LINES = 5
@@ -140,7 +140,7 @@ def install(repo: pathlib.Path, force: bool = False) -> int:
               file=sys.stderr)
         return 1
     _record_manifest_trust(repo)
-    print("githooks: computational sensors only (build/lint/test/secret-scan); "
+    print("githooks: computational sensors only (build/lint/test/secret-scan/ja-lint); "
           "no AI criteria run in hooks. Skip with RIG_HOOK_SKIP=1.")
     return 0
 

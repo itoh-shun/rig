@@ -31,6 +31,8 @@
 - **migration 観点**（`migration-reviewer`）: DB/データ移行を含む変更（往路と復路・expand-contract・ロック時間・データ検証）に推奨。
 - **docs 観点**（`docs-reviewer`）: 公開挙動を変える変更（README/CHANGELOG/コメント/設定例が虚偽化していないか）に推奨。
 
+**日本語散文レーン（条件つき必須）**: diff が日本語の散文を足している（`.md` / `.txt` の追加行にかな・漢字がある）とき、`ai-smell-reviewer` を fan-out に**必ず**加える。gate の `ja_prose_ai_smell_reviewed` はこの reviewer の verdict を写す criterion で、verdict が無ければ `pending` のまま accept できない。dispatch の前に `rig-wb wb scan-ja-prose <task_id>`（または `rig-wb ja-lint --changed <base>`）と `rig-wb ja-lint --preset ai-smell --changed <base>`（カタログの名指しブラックリスト）を走らせ、その出力を reviewer への入力に添える——書き方の規約（一文の長さ・読点・二重否定・冗長表現）は機械が数え、reviewer は `[[japanese-ai-smell-jp]]` と `knowledge/ai-writing-smells` の判断に集中する。verdict は `rig-wb wb review <task_id> --set ai-smell-reviewer=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS> --body ai-smell-reviewer=@<path>` で記録する。`scripts/prose_rhythm.py` の数値は reviewer の参考値であって verdict ではない（rig 自身の実測でリズム指標の gate 化は盲検判定を悪化させた）。
+
 **ネイティブ・レーン（任意・host組み込みskillを1票として使う・§8 Native-first）**: ホストのClaude Codeセッションが組み込みのレビューskill（`/code-review`。security_review タスクなら加えて `/security-review`）を公開している場合、persona群の fan-out に**追加の1票**として載せてよい：
 
 - Skill ツールで起動し、返ってきた findings を**同じ契約に翻訳**する——各指摘に severity・`file:line`・Blocking/Non-blocking を付け、欠けている severity は推定して「推定」と明記する（契約は `output-contracts/review-verdict`/`review-findings` のまま。ネイティブ側の形式を新契約にしない）。

@@ -1,0 +1,21 @@
+{
+  "_readme": "コーパス採点用の設定。全 preset（助言専用の ai-smell を含む）を有効にし、prh 相当の用語を 2 件宣言する。",
+  "version": 1,
+  "presets": [
+    "technical",
+    "spacing",
+    "hiragana",
+    "style",
+    "ai-smell"
+  ],
+  "terms": [
+    {
+      "pattern": "Javascript",
+      "expected": "JavaScript"
+    },
+    {
+      "pattern": "github",
+      "expected": "GitHub"
+    }
+  ]
+}

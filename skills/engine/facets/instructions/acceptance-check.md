@@ -59,6 +59,8 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `no_secret_leak`：`rig-wb wb scan-secrets <task_id>`。検出ゼロなら `passed`、検出ありで対応済みなら `passed`＋detail、未対応なら `failed`。
 - `no_destructive_operation`：`rig-wb wb scan-destructive <task_id>`。同上。
 - `no_injection_markers`：`rig-wb wb scan-injection <task_id>`。diff に混入したプロンプトインジェクション・マーカーを検出する。同上。
+- `ja_lint_clean`（diff が日本語の散文を足したときだけ現れる）：`rig-wb wb scan-ja-prose <task_id>`。センサーが `passed` / `warning` / `failed` を自分で書く。error は追加行の書き方の規約違反で、`rig-wb ja-lint --fix` で機械的に直せるものと、文を分ける・二重否定を言い換えるものがある。固有名詞なら `.claude/ja-textlint.json` の `allow` / `ignore` に宣言する。review 後の逃がし方は `--set ja_lint_clean=passed`（記録される）。
+- `ja_prose_ai_smell_reviewed`（同上）：センサーは `ai-smell-reviewer` の verdict を写すだけで、無ければ `pending` のまま。review fan-out に `ai-smell-reviewer` を加え、`rig-wb wb review <task_id> --set ai-smell-reviewer=<verdict>` で記録する。REJECT は `failed`、APPROVE_WITH_CONDITIONS は `warning`。`scripts/prose_rhythm.py` の数値でこの criterion を埋めない。
 - `no_gate_tampering`：`rig-wb wb audit <task_id>`。ゲート定義・受け入れ記録そのものを緩める変更が diff に含まれていないか。含まれていれば `failed`（緩める理由が正当でも、この step が独断で `passed` にしてよい種類の判断ではない）。
 
 **reviewer の出力の構造で判定する（review / security_review タスク）。** 内容の正しさではなく、`output-contracts/review-verdict` が要求する構造を満たしているかを見る。満たしていなければ `failed`——判定できないものは `warning`。

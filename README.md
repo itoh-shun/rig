@@ -878,7 +878,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 
 | tier | commands |
 |---|---|
-| **Quality** | `/rig:drill`, `/rig:go stats\|review`, `/rig:pr` (review-only entry), `/rig:harness` (audit your project's own dev harness), `/rig:qa` (spec-based test-case design) |
+| **Quality** | `/rig:drill`, `/rig:go stats\|review`, `/rig:pr` (review-only entry), `/rig:harness` (audit your project's own dev harness), `/rig:qa` (spec-based test-case design), `/rig:japanese-lint` (textlint-ja-style Japanese prose lint, stdlib only: `rig-wb ja-lint`) |
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
 

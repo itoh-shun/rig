@@ -2,6 +2,119 @@
 
 ## Unreleased
 
+### Added
+
+**A textlint-ja-style Japanese prose sensor, stdlib only.** textlint-ja (`preset-ja-technical-writing`,
+`preset-ja-spacing`, `ja-hiragana-*`, `prh`) is the de-facto lint for Japanese technical
+writing, and it needs Node plus a kuromoji dictionary. `rig_workbench/ja_textlint.py`
+(`rig-wb ja-lint`, `scripts/ja_textlint.py` from a checkout, `-` for stdin) reimplements
+the part of it that dictionaries and regular expressions can decide, in Python's standard
+library: sentence length, comma count, fixed-form double negatives, redundant expressions,
+misused idioms, doubled sentence-initial conjunctions, doubled `〜が、`, NFD, control and
+zero-width characters, half-width kana, unmatched brackets, spacing around full-width
+parentheses, katakana separators, and declared `terms`. Those are `error`. The rules that
+textlint decides with part-of-speech tags — doubled particles, ら抜き, い抜き, mixed
+敬体/常体, 形式名詞, orthographic variants — are approximated from the surface and shipped as
+`warning`: they appear in the report and never move the exit code. What each rule can and
+cannot see is written down in `policies/japanese-textlint-rules`, including the classes
+that are structurally out of reach (漢数字/算用数字, synonyms, a `てる` after a kanji).
+
+**Measured, not asserted.** `tests/fixtures/ja-textlint/` was written from the NG/OK
+examples in the upstream rule READMEs before the sensor existed, so the answer key comes
+from textlint's own documentation rather than from this implementation. Against it the
+sensor scores **64/64** line-exact with zero same-rule false positives, and **zero errors**
+on three honest documents written to the rules; the three warnings left there are the
+`〜を確認する項目を` shape that kuromoji-backed textlint reports at the same position.
+Two seeds were corrected during measurement and both were corpus defects (an NFD seed
+with no voiced kana in it; a spacing seed with a tie). The corpus author and the sensor
+author are the same person, and the README there says so.
+
+**Three states, the same as design-constraints.** `unchecked` (config broken, an unknown
+key, nothing to check, a non-UTF-8 file) is exit 2 and never a pass; an unknown config key
+such as `rulez` is `unchecked` rather than a silently absent rule. `--report` writes the
+JSON in every state because `_run_step_checks` discards stdout.
+
+**Two deliberate departures from textlint.** `ja-space-between-half-and-full-width`
+defaults to `auto` — report the minority only when one document mixes both styles —
+because textlint's `never` flags every other line of most Japanese technical docs,
+including rig's own. Digits beside kanji (`9月`, `14時`) never vote. And approximate rules
+are warnings, because a part-of-speech guess wired to a gate gets the prose bent to
+satisfy it.
+
+**Measured against the real textlint-ja, rule by rule.** The upstream textlint (15.8.0,
+preset-ja-technical-writing 12.0.2, preset-ja-spacing 3.0.3, the three ja-hiragana rules,
+prh) was run on the same corpus and its findings snapshotted into
+`tests/fixtures/ja-textlint/upstream-textlint.json`; `tests/test_ja_textlint_parity.py`
+pins the agreement per rule. On the 30 rules both sides ship: upstream 77 findings, the
+sensor 85, 57 the same file and line — recall 0.74, precision 0.67 against upstream, and
+the 13 rules the policy calls character-decided agree line for line. Every gap is named
+in the test with its reason: a deliberate departure (majority-based 敬体/常体 where
+upstream fixes ですます for body and である for lists; `auto` spacing where upstream is
+`never`; colon-ended paragraphs exempt from the period rule) or a superset dictionary.
+Reading upstream's sources also moved four semantics into line: `を` is never a doubled
+particle and commas and brackets widen the particle interval, a comma between two nouns
+is a list and is not counted, the kanji-run limit is the preset's 6, and inline code counts
+toward sentence length. Upstream's `ja-hiragana-fukushi` dictionary (76 pairs, MIT) replaced
+the hand-written list; `有る/無い` left the auxiliary-verb rule after producing 33 false
+positives on rig's own docs. Three more `preset-ja-spacing` rules ship
+(`ja-space-around-code`, `ja-no-space-between-full-width`, `ja-no-space-around-slash`),
+lazily continued list items are one paragraph again (they had been splitting sentences in
+half), and `<!-- textlint-disable … -->` comments work the way `textlint-filter-rule-comments`
+reads them, with the suppressed count kept in the report. `--fix` writes back the
+mechanical replacements — kana width, NFC, zero-width characters, declared terms, the
+hiragana rules, misused idioms, stray spaces — and leaves everything that touches meaning to
+the `fix` step.
+
+**The AI-smell blacklist becomes a dictionary the machine reads — and still cannot gate.**
+`knowledge/ai-writing-smells` has carried a named blacklist ("不可欠", "多角的", "本稿",
+"ケースバイケース", …) whose whole strength, as the catalogue puts it, is that the phrases can be
+named — and nothing mechanical read it: `de-ai-smell` told the reviewer to check the list by
+hand. The opt-in `ai-smell` preset now reads it. It follows the catalogue's own rule rather than
+banning words outright: a category is reported when it appears twice or more **in one paragraph**
+(the over-sprinkling the catalogue says to look for), except the three categories the catalogue
+gives a replacement for, which fire on a single hit. `allow` keeps a word a project wants.
+The rule is `ADVISORY_ONLY`: it cannot be promoted to `error`, a config that tries is `unchecked`,
+and `--strict` does not count it — because rig measured (docs/jp-naturalness-engineering.ja.md
+§6-3) that gating an AI-smell proxy cut findings 5.5 → 1.0 while blind human judgement got
+*worse*. Measured on a canonical AI-written Japanese draft it reports 4 hits in 2 categories,
+which are exactly the phrases a human editor removed from it by hand; on rig's own 21 Japanese
+documents and on the three honest fixture documents it reports **zero** (eight at `min_hits: 1`,
+which is what the density condition is suppressing). Upstream textlint reports nothing at all on
+its corpus seed — the class is outside textlint entirely — so the shared parity totals are
+unchanged at 77 / 85 / 57.
+
+**The Japanese-prose gate, everywhere Japanese gets written.** Two diff-conditional
+criteria join the acceptance gate the way `prompt_regression_passed` does — present only
+while the task's diff adds Japanese prose, judged only on the added lines the way
+`no_secret_leak` is. `ja_lint_clean` is machine-owned by `rig_workbench/workbench/ja_prose.py`:
+errors on added Japanese lines fail it, warnings leave it at `warning`, `--set
+ja_lint_clean=passed` is the recorded escape hatch, and `rig-wb wb scan-ja-prose` prints
+what it saw. `ja_prose_ai_smell_reviewed` is owned by a reviewer: the sensor transcribes
+the `ai-smell-reviewer` verdict from `review.json` (REJECT fails, APPROVE_WITH_CONDITIONS
+warns) and a missing verdict stays `pending`, so the lane `parallel-review` now adds
+whenever the diff carries Japanese cannot be skipped by silence. Nothing in that sensor
+reads `scripts/prose_rhythm.py`, on purpose: rig's own measurement
+(docs/jp-naturalness-engineering.ja.md §6-3) found that gating a rhythm proxy made
+findings drop while blind judgement got worse, and a test pins the absence. The same lint
+reaches the places the gate cannot: `rig-wb githooks install` now ships a `commit-msg` hook
+(`--preset commit`, which drops the one document-shaped rule) and a `pre-commit` step
+(`rig-wb ja-lint --staged`, added lines only, degrades to a notice without rig-wb),
+`japanese-writing`'s reviewer turns its optional pre-pass into a REVISE condition,
+`de-ai-smell` requires zero errors on the rewritten text, the `pr` step lints Japanese
+commit messages and PR bodies, and `talk-assistant` passes its own replies through
+`--preset conversation` (the one place that can only be a habit, not a hook). Warnings
+block nowhere. `rig-wb ja-lint` gains `--staged` and `--changed <base>` for the diff-scoped
+modes and the `commit` / `conversation` presets.
+
+**Recipe `japanese-lint`, command `/rig:japanese-lint`.** `fix` runs `rig-wb ja-lint`
+against the project's `.claude/ja-textlint.json` `paths`, repairs errors without touching
+facts, names, numbers or steps, and re-runs the same command as its `checks`; `review`
+hands the report file and the diff to an independent `japanese-lint-reviewer` whose
+heaviest check is that content was preserved. Schema and template ship in
+`skills/engine/manifests/`, `/rig:init` points at them without filling them in, and the
+`japanese-writing` reviewer gains the sensor as an optional stdin pre-pass — evidence for
+`readability`, never a verdict.
+
 ## [2.13.0] - 2026-09-08
 
 ### Added

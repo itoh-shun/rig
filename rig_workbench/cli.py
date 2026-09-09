@@ -507,6 +507,13 @@ Sub-commands:
                                         tokens, component inventory and prohibited wording.
                                         exit 0=checked clean or not-configured / 1=violations
                                         / 2=unchecked (a declaration exists but could not be read)
+  ja-lint [--config P] [--report P] [--preset X] [--strict] [--json] [ARTIFACT...|-]
+                                        textlint-ja-style Japanese prose lint, stdlib only
+                                        (sentence length, particles, ら抜き/い抜き, mixed
+                                        registers, spacing, hiragana, prh terms). No
+                                        artifacts = the config's `paths`; `-` reads stdin.
+                                        exit 0=clean or not-configured / 1=errors
+                                        / 2=unchecked (config broken, nothing to check)
   hostcheck [--json] [--strict]         host-side prerequisites rig cannot enforce
                                         (container isolation, permissions.deny, ignored state).
                                         exit 0=ok / 3=missing / 1=missing with --strict
@@ -648,6 +655,10 @@ def main() -> None:
         from . import design_constraints as design_constraints_mod
 
         sys.exit(design_constraints_mod.main(rest))
+    if sub == "ja-lint":
+        from . import ja_textlint as ja_textlint_mod
+
+        sys.exit(ja_textlint_mod.main(rest))
     if sub == "hostcheck":
         from . import hostcheck as hostcheck_mod
 

@@ -8,13 +8,19 @@
 # Checks (computational only — NO AI/LLM criteria run here):
 #   1. lint          — the `lint:` command from the project manifest .claude/rig.md
 #   2. secret scan   — fast grep for secret-looking patterns in the staged diff
+#   3. ja-lint       — `rig-wb ja-lint --staged`: textlint-ja-style lint of the added
+#                      lines of staged .md/.txt files that carry Japanese (errors block;
+#                      warnings never do). Runs only when rig-wb (or a rig checkout via
+#                      RIG_HOME) is reachable — the gate's `ja_lint_clean`, at the commit.
 #
 # Escape hatches (set to any value other than 0):
 #   RIG_HOOK_SKIP=1            skip the whole hook
 #   RIG_HOOK_SKIP_LINT=1       skip only the lint check
 #   RIG_HOOK_SKIP_SECRETS=1    skip only the secret-pattern scan
+#   RIG_HOOK_SKIP_JALINT=1     skip only the Japanese prose lint
 #
-# No manifest (.claude/rig.md) => the hook is a no-op (a notice is printed).
+# No manifest (.claude/rig.md) => the manifest-driven check is a no-op (a notice is
+# printed); the secret scan and the Japanese prose lint still run.
 set -u
 
 say() { printf 'rig pre-commit: %s\n' "$*" >&2; }
@@ -29,9 +35,10 @@ fi
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 manifest="$repo_root/.claude/rig.md"
 
+has_manifest=1
 if [ ! -f "$manifest" ]; then
-  say "no project manifest ($manifest) — hook is a no-op (run /rig:init to create one)"
-  exit 0
+  say "no project manifest ($manifest) — manifest-driven checks are a no-op (run /rig:init to create one)"
+  has_manifest=0
 fi
 
 # Read a top-level `key: "value"` line from the manifest's YAML block.
@@ -85,7 +92,9 @@ PY
 }
 
 manifest_ok=0
-if manifest_trusted; then
+if [ "$has_manifest" != "1" ]; then
+  :
+elif manifest_trusted; then
   manifest_ok=1
 else
   say "manifest not trusted (new or edited since consent) — skipping manifest-driven checks"
@@ -137,6 +146,36 @@ else
     fail=1
   else
     say "secrets: clean"
+  fi
+fi
+
+# ── 3) Japanese prose lint of staged additions ──────────────────────────
+# `rig-wb ja-lint --staged` looks at the added lines of staged .md/.txt files that
+# contain Japanese and exits 1 on errors (character- and dictionary-decided rules
+# only; part-of-speech approximations are warnings and never block). No such
+# file staged => "nothing to check", exit 0. Without rig-wb the check is skipped
+# with a notice — it degrades, it does not lock out.
+if _truthy "${RIG_HOOK_SKIP_JALINT:-}"; then
+  say "ja-lint: skipped (RIG_HOOK_SKIP_JALINT)"
+else
+  ja_lint_cmd=""
+  if command -v rig-wb >/dev/null 2>&1; then
+    ja_lint_cmd="rig-wb ja-lint"
+  elif [ -n "${RIG_HOME:-}" ] && [ -f "$RIG_HOME/scripts/ja_textlint.py" ] && command -v python3 >/dev/null 2>&1; then
+    ja_lint_cmd="python3 $RIG_HOME/scripts/ja_textlint.py"
+  fi
+  if [ -z "$ja_lint_cmd" ]; then
+    say "ja-lint: rig-wb not installed — skipped (pipx install rig-workbench, or set RIG_HOME)"
+  elif (cd "$repo_root" && $ja_lint_cmd --staged) </dev/null; then
+    say "ja-lint: clean"
+  else
+    rc=$?
+    if [ "$rc" = "2" ]; then
+      say "ja-lint: unchecked (broken .claude/ja-textlint.json?) — commit blocked; fix the config or RIG_HOOK_SKIP_JALINT=1"
+    else
+      say "ja-lint FAILED — fix the errors (rig-wb ja-lint --fix --staged for the mechanical ones), or bypass once: RIG_HOOK_SKIP_JALINT=1 git commit ..."
+    fi
+    fail=1
   fi
 fi
 

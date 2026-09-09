@@ -14,6 +14,8 @@
 
 ### ③ PR の作成
 
+commit message と PR 本文が日本語なら、書いたあと送る前に `rig-wb ja-lint --preset commit -` に stdin で通し、error を直す（`commit-msg` hook が入っていれば commit 側は自動で止まる）。
+
 push 完了後、PR を作成する。PR のタイトル・本文・ベースブランチ・CI 設定は manifest の `pr` セクションの定義に従う。manifest に定義がない場合はデフォルト（ベースブランチ: `main`）を使う。
 
 ### ③-a Issue 紐づけ（`--issue` が指定されている場合のみ）
