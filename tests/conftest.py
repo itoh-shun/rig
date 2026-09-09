@@ -8,8 +8,10 @@
 - Provides tmp fixtures so no test touches the real repo's .rig/ state.
 """
 
+import json
 import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 
@@ -154,3 +156,145 @@ def write_recipe(recipe_dir):
         return p
 
     return write
+
+
+# ── contract-test fixtures ───────────────────────────────────────────────────
+# Stage 1 pins the externally visible CLI contract, so these go through the real
+# process rather than through an import: `python -m rig_workbench.cli` is what a
+# user's shell reaches, and an in-process call would not see argument parsing,
+# exit codes, or stdout framing at all.
+
+# Measured, not guessed, as subprocess_timeout's docstring asks: `wb gates --json`
+# costs 0.22s on a developer machine and `wb new` in a scratch repo — the heaviest
+# thing a contract test does — costs 0.56s. Both sit far below
+# MIN_SUBPROCESS_TIMEOUT, so in practice every call gets the 30s floor; the number
+# is recorded here so a caller that grows a genuinely slow command has something
+# to raise instead of a bare literal.
+CLI_MEASURED_SECONDS = 5.0
+
+# `git init` + one commit, measured the same way: milliseconds, floor applies.
+GIT_MEASURED_SECONDS = 2.0
+
+
+@pytest.fixture
+def rig_cli(tmp_path):
+    """Run the real CLI in a subprocess; return the CompletedProcess unjudged.
+
+    Deliberately does *not* raise on a non-zero exit (no `check=True`): exit codes
+    are part of the contract these tests assert on, so the caller has to be able to
+    see them. Text is decoded as UTF-8 with `errors="replace"` and the child is
+    pinned to UTF-8 I/O, because rig prints Japanese and a Windows runner's default
+    code page would otherwise turn a passing assertion into a decode error
+    (tests/test_cli_smoke.py's run_cli learned this first).
+
+        run(*args, cwd=None, env=None, timeout=None) -> subprocess.CompletedProcess
+
+    cwd defaults to `tmp_path`, the suite's idiom for "wherever this test is
+    working"; pass `rig_git_repo` (or any path) to work somewhere else. `env` is an
+    overlay on the inherited environment — `{"RIG_ALLOW_PROJECT_PACKS": "1"}` — and
+    a value of None *removes* a variable, which is how a test unsets something
+    this conftest set for everybody (RIG_SKIP_GH_CHECK, say).
+    """
+
+    def run(*args, cwd=None, env=None, timeout=None):
+        child_env = dict(
+            os.environ,
+            # The repo root, not an install: the subprocess must import the tree
+            # under test even when a released rig-wb is on the machine.
+            PYTHONPATH=os.pathsep.join(
+                p for p in (str(REPO_ROOT), os.environ.get("PYTHONPATH")) if p),
+            PYTHONIOENCODING="utf-8",
+            PYTHONUTF8="1",
+        )
+        for key, value in (env or {}).items():
+            if value is None:
+                child_env.pop(key, None)
+            else:
+                child_env[key] = str(value)
+        return subprocess.run(
+            [sys.executable, "-m", "rig_workbench.cli", *(str(a) for a in args)],
+            cwd=str(cwd if cwd is not None else tmp_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=child_env,
+            timeout=(subprocess_timeout(CLI_MEASURED_SECONDS) if timeout is None else timeout),
+        )
+
+    return run
+
+
+@pytest.fixture
+def rig_cli_json(rig_cli):
+    """`rig_cli`, plus `json.loads` on stdout — what most `--json` callers want.
+
+        payload = rig_cli_json("wb", "gates", "--json", cwd=repo)
+
+    Takes the same keyword arguments as `rig_cli`. It forms no opinion about the
+    exit code by default (a rejected gate emits a valid envelope *and* exits 1), so
+    assert on it explicitly with `expect_returncode=` here, or use `rig_cli` when
+    the CompletedProcess itself is the thing under test.
+
+    A stdout that is not JSON fails with the exit code, the actual stdout and the
+    stderr in the message. A bare `json.JSONDecodeError` from inside a fixture says
+    only "Expecting value: line 1 column 1" and costs the next person an afternoon
+    working out that the command printed a usage error instead.
+    """
+
+    def run(*args, expect_returncode=None, **kwargs):
+        result = rig_cli(*args, **kwargs)
+        argv = " ".join(str(a) for a in args)
+        if expect_returncode is not None and result.returncode != expect_returncode:
+            pytest.fail(
+                f"`rig-wb {argv}` exited {result.returncode}, expected "
+                f"{expect_returncode}\n--- stdout ---\n{result.stdout}"
+                f"\n--- stderr ---\n{result.stderr}", pytrace=False)
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            # Raised outside the handler, without a traceback: the useful part is
+            # what the command printed, not json/decoder.py's own frames.
+            reason = (f"`rig-wb {argv}` (exit {result.returncode}) did not print JSON "
+                      f"on stdout: {exc}\n--- stdout ---\n{result.stdout}"
+                      f"\n--- stderr ---\n{result.stderr}")
+        pytest.fail(reason, pytrace=False)
+
+    return run
+
+
+@pytest.fixture
+def rig_git_repo(tmp_path):
+    """A tmp git repo with one commit, ready to be a rig workbench target.
+
+    `wb new` cuts a worktree off HEAD, so an empty `git init` is not enough — HEAD
+    has to resolve. Identity is set in the repo's *own* config rather than
+    globally, so the commits the CLI makes later carry it too, and the developer's
+    real git config is kept out entirely: no system config, a global config pointed
+    at a file that does not exist, and the GIT_AUTHOR_*/GIT_COMMITTER_* overrides
+    dropped from the environment. Otherwise a machine with `commit.gpgsign = true`
+    or a signing key it cannot reach fails the suite for reasons that have nothing
+    to do with rig.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = dict(os.environ,
+               GIT_CONFIG_NOSYSTEM="1",
+               GIT_CONFIG_GLOBAL=str(tmp_path / "absent-gitconfig"),
+               GIT_TERMINAL_PROMPT="0")
+    for leaked in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                   "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        env.pop(leaked, None)
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True,
+                       text=True, env=env, timeout=subprocess_timeout(GIT_MEASURED_SECONDS))
+
+    git("-c", "init.defaultBranch=main", "init", "-q")
+    git("config", "--local", "user.name", "rig test")
+    git("config", "--local", "user.email", "rig-test@example.invalid")
+    git("config", "--local", "commit.gpgsign", "false")
+    (repo / "README.md").write_text("rig contract-test repository\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "initial commit")
+    return repo
