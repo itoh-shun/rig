@@ -107,5 +107,117 @@ packs = ["domain/**/*", "official/**/*"]
 line-length = 100
 target-version = "py310"
 
+# ── Stage 3 の片割れ: 呼び出し地点で名指しする lint ───────────────────────
+# docs/v3-architecture-design-brief.ja.md §3 は 6 本のポートを立て、規律を 1 つに
+# 絞った ——「判定層にこの 6 本以外を持ち込ませない」。tests/test_architecture_inventory.py
+# はその散らばりを package ごとの上限として凍結する（数は下がる一方）。ここはもう半分で、
+# 数ではなく **呼び出しているその行** に、置き換わるポートの名前を出す。
+# 到着時点では net-zero: 木全体で有効にし、未移行の経路は下の per-file-ignores で覆う。
+# 柱が移ると、その ignore 行が消える。
+[tool.ruff.lint]
+extend-select = [
+  "T20",     # flake8-print — print() / pprint(): Presenter ポート
+  "TID251",  # flake8-tidy-imports banned-api — 下の表: Env / ProcessRunner / Clock ポート
+]
+
+# banned-api のメッセージは「`X` is banned: 」に続けて表示される。読む人が次に何をすれば
+# よいか分かる必要があるので、代わりに使うポートの名前をそれぞれに書く。
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "read the environment through the Env port -- rig_workbench.ports.Env.get / .snapshot, adapter rig_workbench.ports.local.OS_ENV. The port has no setter on purpose."
+"os.getenv".msg = "read the environment through the Env port -- rig_workbench.ports.Env.get, adapter rig_workbench.ports.local.OS_ENV."
+"subprocess.run".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, adapter rig_workbench.ports.local.SUBPROCESS. It captures as text and returns the same CompletedProcess."
+"subprocess.call".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .returncode; adapter rig_workbench.ports.local.SUBPROCESS."
+"subprocess.check_call".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .returncode; the port never raises on a non-zero status."
+"subprocess.check_output".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .stdout; the port always captures."
+"subprocess.getoutput".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run; shell=True is deliberately absent from the port."
+"subprocess.getstatusoutput".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run; shell=True is deliberately absent from the port."
+"subprocess.Popen".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, adapter rig_workbench.ports.local.SUBPROCESS; the port grows a streaming variant when a migrating caller brings one."
+"datetime.datetime.now".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. The offset and the format are one fact; do not split them."
+"datetime.datetime.utcnow".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now, adapter rig_workbench.ports.local.SYSTEM_CLOCK. rig orders stored ISO text lexicographically, which needs the local offset, not UTC-naive."
+"time.time".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK; the port grows an epoch accessor when a migrating caller brings one. time.monotonic (a duration, not a clock read) is not banned."
+
+[tool.ruff.lint.per-file-ignores]
+# ── 恒久的に認めた場所。負債ではない ──────────────────────────────────
+# ここの 2 行は柱を待っていない。効果が **あるべき** 場所であり、消したら誤りになる。
+# 下の台帳とは意図が違うので、混ぜずに分けてある。
+#
+# ports/local.py はアダプタ層そのもの: ポート 1 本につき 1 クラス、置き換える対象の
+# 呼び出しをそのまま包む。rig_workbench/ の中で subprocess / os.environ / print /
+# datetime.now を持ってよい唯一のモジュール。protocol だけの ports/__init__.py と
+# registry/ は列に無く、検査を素通しで通る（それが両者の設計上の主張）。
+"rig_workbench/ports/local.py" = ["T201", "TID251"]  # 2 print, 4 banned — アダプタの本体
+#
+# tests/ は出荷される CLI を実プロセスとして起動し、実環境を読む。test_cli_smoke.py /
+# test_exit_code_surface.py / test_entrypoint_contract.py は「利用者のシェルに何が返るか」
+# を検査するためにあり、ポート経由に替えると製品ではなくポートを試すテストになる。
+# 期限つきの負債と称する筋合いがないので、恒久扱いにして台帳から外す。
+"tests/**" = ["T201", "TID251"]  # 2 print, 674 banned — CLI をプロセスとして駆動する側
+
+# ── 負債台帳 ──────────────────────────────────────────────────────────
+# 未移行の経路を 1 行ずつ、今日そこにある件数つきで並べる。柱がポートの背後に移れば、
+# その行が消える —— その削除が移行の完了そのものであり、横の数字がその代金である。
+# **追加してはならない。** ここに新しい経路が増えるということは、ポートの外に新しい効果
+# 地点を書いたということで、それは第 3 段が止めようとしているもの。
+# 並び順は移行順: ports の docstring が call site を写し取った govern が先頭、続いて
+# 残りの柱を小さい順、最後に root 直下のモジュールと scripts/。
+# 件数は d84a4c9 で ruff 0.15.8 が報告した実測値（推定ではない）。T201 は
+# `print(..., file=x)`（x が sys.stdout/sys.stderr でないもの）を数えないため、
+# tests/test_architecture_inventory.py が AST で凍結した数よりわずかに小さく出る。
+"rig_workbench/govern/**" = ["T201", "TID251"]       # 68 print, 12 banned
+"rig_workbench/validation/**" = ["T201", "TID251"]   # 13 print, 2 banned
+"rig_workbench/eval/**" = ["T201", "TID251"]         # 16 print, 31 banned
+"rig_workbench/packs/**" = ["T201", "TID251"]        # 54 print, 18 banned
+"rig_workbench/orchestrate/**" = ["T201", "TID251"]  # 211 print, 45 banned
+"rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
+# root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
+# パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を
+# またぐ（実測: `rig_workbench/*.py` は govern/cli.py にも当たり、上の柱の行を全部
+# 死文にする。`[!/]*` や `?*` でも同じ）。「rig_workbench の直下だけ」を書ける
+# パターンが無いので、27 本を 1 行ずつ挙げる。**この節を 1 行の glob に「整理」しない
+# こと** —— 柱の行が黙って効かなくなる。合計 195 print / 69 banned。
+"rig_workbench/ast_diff.py" = ["T201"]                      # 2 print
+"rig_workbench/asvs.py" = ["T201"]                          # 15 print
+"rig_workbench/baseline.py" = ["T201", "TID251"]            # 7 print, 1 banned
+"rig_workbench/bench.py" = ["T201", "TID251"]               # 3 print, 12 banned
+"rig_workbench/bench_invariance.py" = ["T201"]              # 3 print
+"rig_workbench/bench_providers.py" = ["TID251"]             # 5 banned
+"rig_workbench/bench_tasks.py" = ["TID251"]                 # 7 banned
+"rig_workbench/caller.py" = ["TID251"]                      # 3 banned
+"rig_workbench/cli.py" = ["T201", "TID251"]                 # 28 print, 2 banned
+"rig_workbench/context_meter.py" = ["TID251"]               # 4 banned
+"rig_workbench/coverage.py" = ["T201", "TID251"]            # 18 print, 1 banned
+"rig_workbench/design_constraints.py" = ["T201", "TID251"]  # 10 print, 1 banned
+"rig_workbench/evidence.py" = ["T201", "TID251"]            # 23 print, 2 banned
+"rig_workbench/exitcodes.py" = ["T201"]                     # 2 print
+"rig_workbench/gh_requirement.py" = ["T201", "TID251"]      # 6 print, 2 banned
+"rig_workbench/githooks.py" = ["T201", "TID251"]            # 14 print, 1 banned
+"rig_workbench/gitroot.py" = ["TID251"]                     # 2 banned
+"rig_workbench/hostcheck.py" = ["T201", "TID251"]           # 21 print, 3 banned
+"rig_workbench/ja_textlint.py" = ["T201", "TID251"]         # 13 print, 1 banned
+"rig_workbench/mission_control.py" = ["T201"]               # 3 print
+"rig_workbench/mission_jobs.py" = ["TID251"]                # 5 banned
+"rig_workbench/mission_server.py" = ["T201", "TID251"]      # 5 print, 2 banned
+"rig_workbench/mission_worker.py" = ["T201", "TID251"]      # 3 print, 3 banned
+"rig_workbench/mutation.py" = ["T201", "TID251"]            # 10 print, 2 banned
+"rig_workbench/remote_mcp.py" = ["TID251"]                  # 9 banned
+"rig_workbench/repo_paths.py" = ["TID251"]                  # 1 banned
+"rig_workbench/sensor_bench.py" = ["T201"]                  # 9 print
+# scripts/ に一括の ignore は置かない。本物の shim（ast_diff.py / orchestrate.py /
+# validate.py / workbench.py など、20 行前後で main() を呼ぶだけのもの）は既に 0 件で
+# 素通しに通っており、残る 8 本は 85〜566 行の独立したプログラムである。一括で覆うと
+# shim ではなくプログラムを覆うことになるので、ファイル単位で、必要なコードだけ挙げる。
+# 先頭の ./ は意図的。tests/test_packaging_layout.py は「引用符の直後に scripts と
+# 続く文字列」がこの pyproject に現れないことを表明し、パッケージの include list に
+# scripts/ が混ざるのを防いでいる。./ を付ければその表明に触れずに同じ 8 本を指せる
+# （ruff の glob は設定ファイルからの相対パスに突き合わせるので当たる。実測で確認済み）。
+"./scripts/sast_adapter.py" = ["T201", "TID251"]           # 11 print, 2 banned
+"./scripts/notify.py" = ["T201", "TID251"]                 # 5 print, 1 banned
+"./scripts/dashboard.py" = ["T201", "TID251"]              # 1 print, 1 banned
+"./scripts/prose_rhythm.py" = ["T201"]                     # 3 print
+"./scripts/build_judge_calibration.py" = ["T201"]          # 3 print
+"./scripts/host_adapters.py" = ["T201"]                    # 1 print
+"./scripts/mutation_adapter.py" = ["T201"]                 # 1 print
+"./scripts/mcp_server.py" = ["TID251"]                     # 1 banned
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
