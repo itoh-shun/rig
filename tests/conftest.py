@@ -57,6 +57,13 @@ os.environ.setdefault("RIG_GLOBAL_RUNS_PATH",
 # overlay are both applied after this); this is the fail-safe for the test that forgets
 # — without it, one missing overlay silently grants trust in the developer's own home
 # and the next real run trusts a fixture. Not a convenience: do not remove as redundant.
+#
+# Known property, so it is not a surprise later: packs/trust.py reads
+# RIG_PACK_TRUST_STORE *or* RIG_TRUST_STORE, so setting only the latter in a test no
+# longer redirects pack trust the way it did before this default existed — the
+# fail-safe below shadows that fallback. Redirect both, or accept the shared session
+# store. Nothing depends on the old behaviour today; identities are keyed on resolved
+# path plus content hash, which are tmp_path-unique.
 os.environ.setdefault("RIG_PACK_TRUST_STORE",
                       str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-pack-trust-"))
                           / "trusted-pack-assets.json"))
