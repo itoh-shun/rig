@@ -23,9 +23,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import pathlib
 import re
+
+from ..ports import Env, FileStore
+from ..ports.local import LOCAL_FILES, OS_ENV
+from .identity import load_org_binding
 
 # ── permission vocabulary ────────────────────────────────────────────────────
 # Fixed and closed: a typo in a role definition must fail loudly, not silently
@@ -167,11 +170,11 @@ def _validate_waiver_rule(rule: dict, where: str) -> dict:
     }
 
 
-def load_policy_document(path: pathlib.Path) -> dict:
+def load_policy_document(path: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> dict:
     """Parse and validate one policy document. Raises PolicyError on any defect."""
     rel = str(path)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(files.read_text(path))
     except FileNotFoundError:
         raise PolicyError(f"{rel}: policy layer not found") from None
     except json.JSONDecodeError as e:
@@ -471,7 +474,9 @@ def _fold(eff: EffectivePolicy, doc: dict, path: pathlib.Path | None) -> None:
 _SCOPE_RANK = {"org": 0, "team": 1, "project": 2}
 
 
-def resolve_layer_paths(root: pathlib.Path, binding: dict | None = None) -> list[pathlib.Path]:
+def resolve_layer_paths(root: pathlib.Path, binding: dict | None = None, *,
+                        env: Env = OS_ENV,
+                        files: FileStore = LOCAL_FILES) -> list[pathlib.Path]:
     """Where the policy layers live, in application order.
 
     Explicit `policy_layers` in `.rig/org.json` wins and is used verbatim (that is
@@ -483,48 +488,49 @@ def resolve_layer_paths(root: pathlib.Path, binding: dict | None = None) -> list
     clone of the org policy, referenced identically from every team repository —
     and against the repository root second.
     """
-    home = os.environ.get("RIG_POLICY_HOME")
+    home = env.get("RIG_POLICY_HOME")
     listed = (binding or {}).get("policy_layers")
     if listed:
         out: list[pathlib.Path] = []
         for entry in listed:
-            p = pathlib.Path(os.path.expanduser(entry))
+            p = pathlib.Path(env.expanduser(entry))
             if p.is_absolute():
                 out.append(p)
                 continue
             if home:
-                candidate = pathlib.Path(os.path.expanduser(home)) / p
-                if candidate.is_file():
+                candidate = pathlib.Path(env.expanduser(home)) / p
+                if files.is_file(candidate):
                     out.append(candidate)
                     continue
             out.append(root / p)
         return out
 
     policy_dir = root / ".rig" / "policy"
-    if not policy_dir.is_dir():
+    if not files.is_dir(policy_dir):
         return []
     found: list[tuple[int, str, pathlib.Path]] = []
-    for p in sorted(policy_dir.glob("*.json")):
+    for p in files.glob(policy_dir, "*.json"):
         try:
-            scope = json.loads(p.read_text(encoding="utf-8")).get("scope")
+            scope = json.loads(files.read_text(p)).get("scope")
         except Exception:
             scope = None
         found.append((_SCOPE_RANK.get(scope, 99), p.name, p))
     return [p for _rank, _name, p in sorted(found, key=lambda t: (t[0], t[1]))]
 
 
-def effective_policy(root: pathlib.Path, binding: dict | None = None) -> EffectivePolicy:
+def effective_policy(root: pathlib.Path, binding: dict | None = None, *,
+                     env: Env = OS_ENV,
+                     files: FileStore = LOCAL_FILES) -> EffectivePolicy:
     """Load, order and fold every policy layer for this repository.
 
     Returns an inactive EffectivePolicy when nothing is configured — callers
     treat that as "governance is off" and behave exactly as v1 did.
     """
     if binding is None:
-        from .identity import load_org_binding
-        binding = load_org_binding(root).raw
+        binding = load_org_binding(root, files=files).raw
     eff = EffectivePolicy()
-    for path in resolve_layer_paths(root, binding):
-        _fold(eff, load_policy_document(path), path)
+    for path in resolve_layer_paths(root, binding, env=env, files=files):
+        _fold(eff, load_policy_document(path, files=files), path)
     if eff.active and binding.get("team") and not eff.team:
         eff.team = binding["team"]
     return eff

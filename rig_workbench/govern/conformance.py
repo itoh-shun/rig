@@ -23,6 +23,8 @@ import datetime
 import json
 import pathlib
 
+from ..ports import Clock
+from ..ports.local import SYSTEM_CLOCK
 from ..workbench.reporting import TaskRecords, read_all_tasks
 from . import ledger, waiver
 from .approval import evaluate, load_approvals
@@ -152,7 +154,8 @@ class Report:
         }
 
 
-def _load_tasks(root: pathlib.Path, since_days: int) -> tuple[TaskRecords, tuple[dict, ...]]:
+def _load_tasks(root: pathlib.Path, since_days: int, *,
+                clock: Clock = SYSTEM_CLOCK) -> tuple[TaskRecords, tuple[dict, ...]]:
     """Everything under the runs directory, and the subset of it inside the window.
 
     Two values, not a narrowed `TaskRecords`. This function used to walk
@@ -174,8 +177,7 @@ def _load_tasks(root: pathlib.Path, since_days: int) -> tuple[TaskRecords, tuple
     is not allowed to be the reason it disappears.
     """
     records = read_all_tasks(root / ".rig" / "runs")
-    cutoff = (datetime.datetime.now().astimezone()
-              - datetime.timedelta(days=since_days)).isoformat(timespec="seconds")
+    cutoff = clock.stamp(clock.now() - datetime.timedelta(days=since_days))
     in_window = tuple(task for task in records.tasks
                       if (task.get("updated_at") or task.get("created_at") or "") >= cutoff)
     return records, in_window
@@ -205,7 +207,8 @@ def _acceptance(root: pathlib.Path, task_id: str) -> dict | None | object:
         return UNREADABLE_ACCEPTANCE
 
 
-def evaluate_project(root: pathlib.Path, *, since_days: int = 90) -> Report:
+def evaluate_project(root: pathlib.Path, *, since_days: int = 90,
+                     clock: Clock = SYSTEM_CLOCK) -> Report:
     """Run every conformance check against one repository."""
     binding = load_org_binding(root)
     checks: list[Check] = []
@@ -243,7 +246,7 @@ def evaluate_project(root: pathlib.Path, *, since_days: int = 90) -> Report:
 
     # Read once and hand the same records to every check that measures runs, so the three
     # of them cannot disagree about how many records there were or which could not be read.
-    records, in_window = _load_tasks(root, since_days)
+    records, in_window = _load_tasks(root, since_days, clock=clock)
 
     checks.append(_check_roles(eff))
     checks.append(_check_permission_holders(eff))

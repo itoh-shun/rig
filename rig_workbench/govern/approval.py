@@ -26,6 +26,8 @@ import datetime
 import json
 import pathlib
 
+from ..ports import Clock, FileStore
+from ..ports.local import LOCAL_FILES, SYSTEM_CLOCK
 from .policy import EffectivePolicy
 from .rbac import roles_of
 
@@ -36,12 +38,13 @@ def approvals_path(root: pathlib.Path, task_id: str) -> pathlib.Path:
     return root / ".rig" / "runs" / task_id / "approvals.json"
 
 
-def load_approvals(root: pathlib.Path, task_id: str) -> dict:
+def load_approvals(root: pathlib.Path, task_id: str, *,
+                   files: FileStore = LOCAL_FILES) -> dict:
     p = approvals_path(root, task_id)
-    if not p.is_file():
+    if not files.is_file(p):
         return {"task_id": task_id, "decisions": []}
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(files.read_text(p))
     except json.JSONDecodeError:
         return {"task_id": task_id, "decisions": [], "error": f"{p} is not valid JSON"}
     if not isinstance(data, dict):
@@ -50,14 +53,15 @@ def load_approvals(root: pathlib.Path, task_id: str) -> dict:
     return data
 
 
-def save_approvals(root: pathlib.Path, task_id: str, data: dict) -> None:
-    p = approvals_path(root, task_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+def save_approvals(root: pathlib.Path, task_id: str, data: dict, *,
+                   files: FileStore = LOCAL_FILES) -> None:
+    files.write_text(approvals_path(root, task_id),
+                     json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def make_decision(*, actor: str, decision: str, roles: list[str],
-                  head: str | None = None, note: str = "") -> dict:
+                  head: str | None = None, note: str = "",
+                  clock: Clock = SYSTEM_CLOCK) -> dict:
     """One decision record. Pure — the caller decides where it is stored, which is
     what lets a workbench task and an orchestrator stage share this arithmetic."""
     if decision not in VALID_DECISIONS:
@@ -68,7 +72,7 @@ def make_decision(*, actor: str, decision: str, roles: list[str],
         "roles": list(roles),
         "head": head,
         "note": note,
-        "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "ts": clock.stamp(),
     }
 
 
@@ -80,12 +84,14 @@ def upsert(decisions: list[dict], entry: dict) -> list[dict]:
 
 
 def record_decision(root: pathlib.Path, task_id: str, *, actor: str, decision: str,
-                    roles: list[str], head: str | None = None, note: str = "") -> dict:
+                    roles: list[str], head: str | None = None, note: str = "",
+                    clock: Clock = SYSTEM_CLOCK, files: FileStore = LOCAL_FILES) -> dict:
     """Append one decision to a workbench task's approval file."""
-    entry = make_decision(actor=actor, decision=decision, roles=roles, head=head, note=note)
-    data = load_approvals(root, task_id)
+    entry = make_decision(actor=actor, decision=decision, roles=roles, head=head, note=note,
+                          clock=clock)
+    data = load_approvals(root, task_id, files=files)
     data["decisions"] = upsert(data["decisions"], entry)
-    save_approvals(root, task_id, data)
+    save_approvals(root, task_id, data, files=files)
     return entry
 
 
@@ -121,17 +127,17 @@ class ApprovalStatus:
         return out
 
 
-def _age_hours(ts: str) -> float | None:
+def _age_hours(ts: str, *, clock: Clock = SYSTEM_CLOCK) -> float | None:
     try:
         then = datetime.datetime.fromisoformat(ts)
     except (TypeError, ValueError):
         return None
-    return (datetime.datetime.now().astimezone() - then).total_seconds() / 3600.0
+    return (clock.now() - then).total_seconds() / 3600.0
 
 
 def evaluate(eff: EffectivePolicy, task: dict, approvals: dict,
              *, head: str | None = None, rule: dict | None = None,
-             author: str | None = None) -> ApprovalStatus:
+             author: str | None = None, clock: Clock = SYSTEM_CLOCK) -> ApprovalStatus:
     """Decide whether this approval requirement is met right now.
 
     `head` is the tip as it stands at evaluation time. When a decision recorded a
@@ -176,7 +182,7 @@ def evaluate(eff: EffectivePolicy, task: dict, approvals: dict,
                                "(the branch moved after this approval)"))
             continue
         if expires:
-            age = _age_hours(d.get("ts") or "")
+            age = _age_hours(d.get("ts") or "", clock=clock)
             if age is not None and age > float(expires):
                 ignored.append((d, f"expired ({age:.0f}h old, limit {expires}h)"))
                 continue
