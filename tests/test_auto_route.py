@@ -14,6 +14,8 @@ from rig_workbench.orchestrate.providers import run_loop
 from rig_workbench.orchestrate.recipes import resolve_auto_route
 from rig_workbench.orchestrate.runstate import new_state
 
+from conftest import pin_runs_path
+
 CANDIDATES = {"auto_route": {"candidates": [
     {"model": "haiku", "cost_tier": "low", "max_size": "S"},
     {"model": "sonnet", "cost_tier": "medium", "max_size": "L"},
@@ -23,7 +25,7 @@ CANDIDATES = {"auto_route": {"candidates": [
 
 @pytest.fixture
 def tmp_telemetry(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global-runs.jsonl")
     # Pin the measured diff size to 0 (-> size class "S") regardless of the ambient repo's
     # actual git status, so these tests don't depend on whether the working tree is dirty.

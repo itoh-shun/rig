@@ -9,6 +9,8 @@ import json
 from rig_workbench.orchestrate.providers import _record_token_usage
 from rig_workbench.orchestrate.runstate import new_state, telemetry_append
 
+from conftest import pin_runs_path
+
 
 def test_record_token_usage_accumulates_across_calls():
     cfg = {"_token_usage": {}}
@@ -33,7 +35,7 @@ def test_record_token_usage_noop_without_accumulator():
 def test_telemetry_append_writes_token_usage(tmp_path, monkeypatch, step_factory):
     from rig_workbench.orchestrate import config
 
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global-runs.jsonl", raising=False)
     step = step_factory(id="a")
     state = new_state("demo", [step], goal=None)
@@ -47,7 +49,7 @@ def test_telemetry_append_writes_token_usage(tmp_path, monkeypatch, step_factory
 def test_telemetry_append_defaults_token_usage_to_empty(tmp_path, monkeypatch, step_factory):
     from rig_workbench.orchestrate import config
 
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global-runs.jsonl", raising=False)
     step = step_factory(id="a")
     state = new_state("demo", [step], goal=None)
@@ -62,7 +64,6 @@ def test_runs_cost_shows_harness_context_load(tmp_path, monkeypatch, capsys):
     (avg prompt/call + prompt:completion ratio) with the upper-bound caveat."""
     import json
 
-    from rig_workbench.orchestrate import config
     from rig_workbench.orchestrate.commands import cmd_runs
 
     runs = tmp_path / "runs.jsonl"
@@ -73,7 +74,7 @@ def test_runs_cost_shows_harness_context_load(tmp_path, monkeypatch, capsys):
          "token_usage": {"ollama": {"prompt_tokens": 300, "completion_tokens": 100, "calls": 1}}},
     ]
     runs.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-    monkeypatch.setattr(config, "RUNS_PATH", runs)
+    pin_runs_path(monkeypatch, runs)
 
     cmd_runs(["--cost"])
     out = capsys.readouterr().out

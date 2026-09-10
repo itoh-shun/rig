@@ -164,6 +164,30 @@ def tmp_queue(tmp_path, monkeypatch):
     return qpath
 
 
+def pin_runs_path(monkeypatch, path):
+    """Point `config.RUNS_PATH` at `path` for one test, without freezing the accessor.
+
+    `RUNS_PATH` is not a stored attribute: `config.__getattr__` (PEP 562) derives it from
+    `INVOCATION_CWD` on every read. `monkeypatch.setattr` would save the value computed at
+    that moment and, on undo, *restore* it as a real module attribute — permanently
+    shadowing the accessor for the rest of the process, and so for the rest of that xdist
+    worker. `setitem` on the module dict undoes by deleting a key that genuinely was
+    absent, so the derivation survives the test.
+
+        runs = pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
+
+    Pins the value rather than moving `INVOCATION_CWD` (the other repair shape) because most
+    callers put the log outside the layout `RUNS_PATH` derives — `<state root>/.rig/runs.jsonl`
+    — so routing the pin through the root would move the file, not just the accessor. One
+    shape for every caller, rather than two that have to be told apart. Returns the path, so a
+    fixture can hand it straight on.
+    """
+    from rig_workbench.orchestrate import config
+
+    monkeypatch.setitem(config.__dict__, "RUNS_PATH", path)
+    return path
+
+
 @pytest.fixture
 def recipe_dir(tmp_path):
     """Scratch directory for synthetic recipe .md files."""
