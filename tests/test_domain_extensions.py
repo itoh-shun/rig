@@ -297,8 +297,12 @@ def test_video_storytelling_project_install_resolves_extends_and_removes(
 
     _isolated_resolution(monkeypatch, tmp_path)
     project = tmp_path / "project"
+    # Patch the root, not the derived: `PROJECT_RECIPES` is served lazily off `INVOCATION_CWD`
+    # through the module's PEP 562 `__getattr__`, so `monkeypatch.setattr` on it saves the value
+    # computed now and restores it as a *real* module attribute, freezing the overlay at this
+    # tmp_path for every later test in the worker. Same leak, same fix as
+    # `test_decision_humor_extension.py`; the root alone already resolves to `project/.rig/recipes`.
     monkeypatch.setattr(orchestrate_config, "INVOCATION_CWD", project)
-    monkeypatch.setattr(orchestrate_config, "PROJECT_RECIPES", project / ".rig/recipes")
     monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
     monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(tmp_path / "pack-trust.json"))
     result = install_pack("domain:video-storytelling", scope="project",

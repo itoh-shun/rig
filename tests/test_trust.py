@@ -25,7 +25,13 @@ def project_overlay(tmp_path, monkeypatch):
     overlay.mkdir(parents=True)
     recipe = overlay / "sneaky.md"
     recipe.write_text(RECIPE_BODY, encoding="utf-8")
-    monkeypatch.setattr(config, "PROJECT_RECIPES", overlay)
+    # The root cannot be patched here as it is in `test_domain_extensions.py`: this overlay is
+    # deliberately outside `INVOCATION_CWD`, and moving it inside would make `resolve_recipe`
+    # find it through the pack resolver instead of the `PROJECT_RECIPES` gate under test.
+    # Patching the module `__dict__` key still shadows the lazy accessor, but `undo` *deletes*
+    # the key it never saw — where `setattr`'s undo restores the computed value as a real
+    # attribute and freezes this tmp_path for every later test in the worker.
+    monkeypatch.setitem(config.__dict__, "PROJECT_RECIPES", overlay)
     monkeypatch.setenv("RIG_TRUST_STORE", str(tmp_path / "trusted.json"))
     monkeypatch.delenv("RIG_ALLOW_PROJECT_RECIPES", raising=False)
     return recipe
