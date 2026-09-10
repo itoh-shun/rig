@@ -18,6 +18,7 @@ appeared: an implementation that silently skipped a record could still render a 
 the records it did read.
 """
 
+import datetime
 import json
 import pathlib
 
@@ -26,6 +27,20 @@ import pytest
 from rig_workbench.govern import conformance as conf
 
 WINDOW = 90
+
+#: `_load_tasks` drops a record whose `updated_at` falls before `now - since_days`, so a
+#: literal date in a default record is not a scenario — it is an expiry. The
+#: `2026-08-24` stamps these replace would have left the 90-day window on 2026-11-22 and
+#: taken ten tests below with them, the same rot that cost `test_eval_runner` (#584) and
+#: `test_eval_evidence_verification` theirs. Written in the local zone `_load_tasks`
+#: builds its cutoff in, because that comparison is lexicographic on the ISO text and
+#: only orders correctly when the offsets match. A record deliberately *outside* the
+#: window still says so in its own call (`test_..._never_read_cannot_be_shown_outside`
+#: passes a 2020 date), which is the distinction this keeps: default records are runs the
+#: project just did, and an old one is old on purpose.
+_NOW = datetime.datetime.now().astimezone()
+RECENTLY_CREATED = (_NOW - datetime.timedelta(hours=2)).isoformat(timespec="seconds")
+RECENTLY_UPDATED = (_NOW - datetime.timedelta(hours=1)).isoformat(timespec="seconds")
 
 
 def govern_repo(tmp_path: pathlib.Path, **policy_overrides) -> pathlib.Path:
@@ -48,8 +63,8 @@ def add_task(root: pathlib.Path, task_id: str, **fields) -> pathlib.Path:
     d = root / ".rig" / "runs" / task_id
     d.mkdir(parents=True, exist_ok=True)
     record = {"task_id": task_id, "task_type": "feature", "status": "accepted",
-              "input": f"do {task_id}", "created_at": "2026-08-24T10:00:00+09:00",
-              "updated_at": "2026-08-24T11:00:00+09:00"}
+              "input": f"do {task_id}", "created_at": RECENTLY_CREATED,
+              "updated_at": RECENTLY_UPDATED}
     record.update(fields)
     (d / "task.json").write_text(json.dumps(record), encoding="utf-8")
     (d / "acceptance.json").write_text(json.dumps(
