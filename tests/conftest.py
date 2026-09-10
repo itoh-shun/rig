@@ -8,9 +8,11 @@
 - Provides tmp fixtures so no test touches the real repo's .rig/ state.
 """
 
+import atexit
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,6 +31,47 @@ os.environ["RIG_HOME"] = str(REPO_ROOT)
 # tests/test_gh_requirement.py owns the advisory and sets this per test.
 os.environ["RIG_SKIP_GH_CHECK"] = "1"
 
+# Each fail-safe below needs a directory *before* any fixture exists, so the directories
+# are made here, at import time, and removed by `atexit` — the only teardown hook that is
+# already available this early and still fires at the end. What that does and does not
+# cover:
+#   * one root per process, removed on interpreter exit. A plain `pytest`, each `-n auto`
+#     worker, and a Ctrl-C run (pytest turns SIGINT into an ordinary exit) all unwind
+#     through atexit. A `SIGKILL`/`os._exit` does not, and leaves this one root behind.
+#   * only the process that *created* the root removes it. Under `-n auto` the workers
+#     inherit these variables from the controller's environment, so they default nothing
+#     and delete nothing; the controller, which outlives every worker, owns the root.
+#     `pytest_sessionfinish` was the other candidate and is wrong for exactly that reason:
+#     in the controller it runs while workers are still finishing, so it could pull a
+#     trust store out from under a worker still writing to it. `tmp_path_factory` is no
+#     use either — it does not exist at import time, and its own retention policy
+#     deliberately *keeps* the last few roots.
+# The previous shape passed `tempfile.mkdtemp()` as the default argument of
+# `os.environ.setdefault`, which Python evaluates whether or not the variable is set: every
+# worker minted four directories it then discarded. That was the bulk of the leak.
+_FAIL_SAFE_ROOT: str | None = None
+
+
+def _fail_safe_default(name: str, dirname: str, filename: str | None = None) -> None:
+    """Default `name` to a path inside this process's private, self-deleting temp root.
+
+    A variable that already carries a value is left untouched, so an explicit override
+    from the developer's shell (or from a parent pytest, under xdist) still wins. An
+    *empty* value counts as unset: `packs/trust.py` reads
+    `RIG_PACK_TRUST_STORE or RIG_TRUST_STORE`, so an empty string would fall through to
+    the real home — the one outcome these fail-safes exist to prevent.
+    """
+    global _FAIL_SAFE_ROOT
+    if os.environ.get(name):
+        return
+    if _FAIL_SAFE_ROOT is None:
+        _FAIL_SAFE_ROOT = tempfile.mkdtemp(prefix="rig-test-failsafe-")
+        atexit.register(shutil.rmtree, _FAIL_SAFE_ROOT, ignore_errors=True)
+    target = pathlib.Path(_FAIL_SAFE_ROOT, dirname)
+    target.mkdir(parents=True, exist_ok=True)
+    os.environ[name] = str(target if filename is None else target / filename)
+
+
 # Every run that finishes is mirrored into ~/.rig/runs.jsonl for cross-project rollups
 # (runstate.append_run_record). Tests finish runs, so without this the suite writes into
 # the developer's own cross-project history and `rig-wb usage --global` starts counting
@@ -41,12 +84,9 @@ os.environ["RIG_SKIP_GH_CHECK"] = "1"
 # (test_codex_integration runs inject-instincts.sh with a copy of os.environ). A per-file
 # fixture cannot cover those, so on a machine that has promoted even one instinct the
 # suite would inflate its hit_count and push back its decay, invisibly.
-os.environ.setdefault("RIG_USER_HOME",
-                      tempfile.mkdtemp(prefix="rig-test-user-home-"))
+_fail_safe_default("RIG_USER_HOME", "user-home")
 
-os.environ.setdefault("RIG_GLOBAL_RUNS_PATH",
-                      str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-global-runs-"))
-                          / "runs.jsonl"))
+_fail_safe_default("RIG_GLOBAL_RUNS_PATH", "global-runs", "runs.jsonl")
 
 # Pack- and recipe-trust grants (rig_workbench/packs/trust.py::_store_path,
 # rig_workbench/orchestrate/recipes.py::_trust_store_path). Both default to a path
@@ -64,13 +104,9 @@ os.environ.setdefault("RIG_GLOBAL_RUNS_PATH",
 # fail-safe below shadows that fallback. Redirect both, or accept the shared session
 # store. Nothing depends on the old behaviour today; identities are keyed on resolved
 # path plus content hash, which are tmp_path-unique.
-os.environ.setdefault("RIG_PACK_TRUST_STORE",
-                      str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-pack-trust-"))
-                          / "trusted-pack-assets.json"))
+_fail_safe_default("RIG_PACK_TRUST_STORE", "pack-trust", "trusted-pack-assets.json")
 
-os.environ.setdefault("RIG_TRUST_STORE",
-                      str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-recipe-trust-"))
-                          / "trusted-recipes.json"))
+_fail_safe_default("RIG_TRUST_STORE", "recipe-trust", "trusted-recipes.json")
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
