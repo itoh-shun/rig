@@ -4,6 +4,62 @@
 
 ### Added
 
+**One table of what rig can do — declaration only, nothing rewired.** `rig_workbench/registry/`
+now declares all 139 dispatchable capabilities as data: 39 top-level verbs, 51 under `rig-wb wb`,
+and 49 across `govern`, `pack`, `eval`, `baseline` and `githooks`. Each record carries what
+argparse never asked anybody to write — what the person wanted (`intent`), what a machine can
+check before running (`preconditions`), the sentence to show immediately before it runs
+(`effect_line`), and two independent axes: what it disturbs on this machine (`effect_class`) and
+whether anything leaves it (`network`). No field may hold a callable, so the table can be
+serialised and read without importing the code it describes. **Nothing a user does changes.**
+`rig-wb` still dispatches through the same hand-written registration mechanisms, every command takes the
+same flags, prints the same output and returns the same codes; there is no new command and no
+removed one. What exists now is a second, independent statement of the command surface, and
+`tests/test_capability_registry_vs_cli.py` reads both sides at run time and fails if they ever
+disagree. This is the second stage of the migration in `docs/v3-architecture-design-brief.ja.md`;
+wiring the surfaces onto the table is the third.
+
+**Writing the surface down found things nobody had counted, and they are recorded rather than
+fixed.** Closing any of them changes behaviour, which is a stage-3 decision, so each is pinned as
+a measurement that fails if it silently changes. Fifteen of the thirty-nine top-level verbs are
+dispatchable and appear in no help text, no contract test and no README. Two of those fifteen —
+`list` and `review` — are delegated to the orchestrator and were never registered there, so they
+print the orchestrator's module docstring and exit 1. Not one top-level verb emits a frozen
+`rig.<name>/v<N>` id; all 22 capabilities that declare one are `wb` and `govern` sub-verbs. The
+stdio MCP server offers `rig_orchestrate_status`, which reaches a verb `rig-wb status` answers
+with `Unknown sub-command`. `govern` defines its own `EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT =
+0, 1, 3`, so a govern error lands on the code `exitcodes.py` reserves for a verdict. And nine of
+the thirty `/rig:*` commands name no rig command at all — they hand their work to an instruction
+facet performed in the session — so roughly a third of the front door never reaches the CLI.
+
+**Where a brick is looked for, declared once — and four claims corrected by measuring.**
+`rig_workbench/registry/bricks.py` declares every directory the resolver walks, per asset kind and
+tier, as strings against a named anchor; `tests/test_brick_resolution_declaration.py` observes what
+the resolver *actually* walks at run time and compares. The observation corrected the standing
+account of the divergence between rig's prose and its code. A user tier does exist — it is
+`~/.rig/packs/<pack>/…`, not the `~/.claude/rig/recipes` and `~/.claude/rig/personas` that
+`skills/engine/SKILL.md` and `facets/instructions/resolve.md` promise, and no code reads those.
+`official` is a fifth tier the code walks and no prose table mentions, so the vocabulary gap is
+wider than `shipped` versus `core`. Recipes are resolved by two walks, not one: when the pack walk
+comes back empty, `orchestrate.recipes.resolve_recipe` walks `.rig/recipes`, `<org>/recipes` and
+the shipped recipes itself, and the manifest's `org_dir:` reaches only that second walk. Within the
+project tier, `.claude/rig/recipes` beats `.rig/recipes` because the sort key falls through to the
+source path, though the code lists `.rig/recipes` first — a precedence nobody chose. The documents
+are not corrected here; each divergence is one entry in that test's `KNOWN_PROSE_DRIFT`, and
+fixing a document without deleting its entry turns the test red.
+
+**The first run was already free of setup; now a test says so.** `tests/test_first_run_cost.py`
+drives `python3 scripts/workbench.py new "<task>" --type bugfix` in a bare `git init` repository
+with `rig-wb` removed from PATH (verified with `shutil.which` inside the child), every `RIG_ALLOW_*`
+consent variable unset, and stdin at `/dev/null`: it exits 0 and writes a run. So the documented
+way in — `/rig:setup` then `/rig:init` — asks for two steps the code does not require; the real
+prerequisites are a git repository and `python3`. Nothing was made easier here and the guidance is
+unchanged: what changed is that the cost is now measured, and a prerequisite creeping back into the
+first run fails a test instead of quietly becoming true. Three `-k degrade` tests name which one
+came back — routing that leaves the shipped `core` tier and so demands pack trust, a `hostcheck`
+that exits the `--strict` failure without `--strict`, or an unconsented `.claude/rig.md` that stops
+the run instead of warning once on stderr and continuing.
+
 **The effective policy has a name: `rig.effective-policy/v1`.** `rig-wb govern policy show
 --json` prints the composed result of the org, team and project layers, and until now it
 printed it anonymously — a consumer had no field to branch on and would learn the shape had

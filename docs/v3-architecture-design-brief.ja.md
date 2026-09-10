@@ -1,8 +1,10 @@
 # rig V3 設計ブリーフ — 能力レジストリとポート化による内部再構成
 
 作成日: 2026-09-09
-状態: 合意済み（セクション別）。実装は未着手。
-経緯: `/rig:brainstorm` による壁打ち。判断の根拠はすべて本リポジトリに対する読み取り専用の実測。
+状態: 合意済み（セクション別）。第 1 段（契約テストの補強）と第 2 段（能力レジストリの宣言）は
+実装済み。第 3〜5 段は未着手。
+経緯: `/rig:brainstorm` による壁打ち。当初の判断の根拠は、すべて本リポジトリに対する読み取り専用の
+実測。第 2 段で書き足した数値は実行して確かめている（末尾「測定の限界」を参照）。
 
 ## 固めた狙い
 
@@ -33,7 +35,7 @@ rig の内部を、能力の宣言が1箇所に集まり、判定が副作用を
 
 - PACKS のディスク契約（`pack.yaml` 正準 JSON、キー集合完全一致、`ASSET_DIRS` 固定、5 層優先順位、資産ハッシュ検証）
 - `.rig/` レイアウト 30 以上のパス
-- バージョン付き JSON スキーマ ID 40 種
+- バージョン付き JSON スキーマ ID（当初の見積もりは 40 種。第 1 段で `tests/test_schema_registry.py` が実際に凍結したのは 38 種）
 - 終了コード（`OK=0` / `REJECTED=1` / `ERROR=2` と各コマンド固有コード）
 - コンソールエントリポイント 5 本
 
@@ -135,13 +137,19 @@ talk は意図を作るだけで、判定はしない。
 
 5 段。各段の終了条件は「木が緑であること」。
 
-1. **契約テストの補強。** 内部を一切触らない。CLI 経由、スキーマ ID 40 種、`.rig` レイアウトの被覆を上げる。後続すべての土台。
-2. **能力レジストリを 1 本立てる。** 宣言だけ置き、実行は既存に委譲する。§9 のとおり正本は意図であり、この段の目標には「最初の 1 回に手順を要求しない」を含む。ブリック解決の宣言も 1 箇所に集まるため、散文と実装のずれ（下記「未解決」参照）も同時に解消できる。
-3. **6 ポートを入れ、判定層を柱ごとに切り出す。** 1 柱ずつ、移すたびに緑を確認する。循環 7 件はこの段で構造的に消え、関数内 import による回避をやめられる。
-4. **来歴型を入れ、34 基準を分類する。** センサーを作るか、`attested` に落とすか、`unobserved` と認めるかを 1 件ずつ決める。
-5. **旧経路を落とす。** 二重定義の期間を閉じる。
+1. **契約テストの補強。済。** 内部を一切触らない。CLI 経由、スキーマ ID、`.rig` レイアウトの被覆を上げる。後続すべての土台。凍結したのは次の 6 本。
+   - `tests/test_schema_registry.py` — スキーマ ID 38 種
+   - `tests/test_exit_code_surface.py` — 実プロセスが返した終了コード
+   - `tests/test_rig_layout_contract.py` — `.rig` のディスク上のレイアウト
+   - `tests/test_pack_disk_contract.py` — PACKS のディスク契約
+   - `tests/test_cli_surface_contract.py` — `--help` が挙げるサブコマンドの集合
+   - `tests/test_entrypoint_contract.py` — コンソールエントリポイント 5 本
+2. **能力レジストリを 1 本立てる。済。** 宣言だけ置き、実行は既存に委譲した。`rig_workbench/registry/` に 139 件を宣言し、CLI・MCP 2 種・`action.yml`・スラッシュコマンド 30 枚との照合をテストにした。ブリック解決の宣言も `registry/bricks.py` に集めた。実行経路は 1 行も変えていない。ただし散文と実装のずれは**測って記録しただけで、解消していない**。`SKILL.md` と `resolve.md` の側は手つかずである。宣言を集めれば同時に解消できるという当初の見込みは外れた。§9 の「最初の 1 回に手順を要求しない」も、下げるべき値がもともと 0 だったと分かり、テストで固定した。
+3. **6 ポートを入れ、判定層を柱ごとに切り出す。未着手。** 1 柱ずつ、移すたびに緑を確認する。循環 7 件はこの段で構造的に消え、関数内 import による回避をやめられる。第 2 段が記録した表面のずれ（下記「第 2 段の実測」）を閉じるのも、この段の判断になる。
+4. **来歴型を入れ、34 基準を分類する。未着手。** センサーを作るか、`attested` に落とすか、`unobserved` と認めるかを 1 件ずつ決める。
+5. **旧経路を落とす。未着手。** 二重定義の期間を閉じる。
 
-2 と 3 の間で一度リリースを切れる。レジストリだけ入った状態は互換を壊さないため、V3 を一度に出さずに済む。
+2 と 3 の間で一度リリースを切れる。レジストリだけ入った状態は互換を壊さないため、V3 を一度に出さずに済む。第 2 段まで終えたいまは、実際にその位置にいる。
 
 退けた案: ストラングラー単独は二重定義の期間が長い。契約テスト先行単独は「一気に切る」区間が長く、その間は赤のままになる。両者を直列に組む。
 
@@ -175,7 +183,8 @@ talk は意図を作るだけで、判定はしない。
 | `skills/engine/SKILL.md` | 720 行 |
 | スラッシュコマンド | 30 |
 | サブコマンド | 116 |
-| 最初に案内される手順 | `/rig:setup`（CLI 導入）→ `/rig:init`（manifest 生成） |
+| 最初に案内される手順 | 2（`/rig:setup` で CLI 導入 → `/rig:init` で manifest 生成） |
+| 実際に必要な手順 | 0（第 2 段で実測。下記「測る」を参照） |
 | パックの利用 | 資産ごとの信頼承認と環境変数 |
 
 決定的な観測がひとつある。**このブリーフを書き、第1段を実装し、全件テストを2回通した一連の作業は、
@@ -208,17 +217,71 @@ Claude Code から使う限り CLI は最初から不要なのに、入口の案
 と言えば、CLI 未導入でも manifest 無しでも最初の結果まで到達する。CLI・manifest・パックは
 **必要になった瞬間に、理由を添えて提案される**。導入の案内をなくすのではなく、前倒しをやめる。
 
-#### 測る
+#### 測る（第 2 段の実測）
 
-「使いやすくした」と散文で書かないため、達成を測れる形にする。現在値を先に測り、目標値を宣言して
-から作る。
+「使いやすくした」と散文で書かないため、達成を測れる形にする。以下は第 2 段で実測した値であり、
+値が崩れたときに落ちるテストを 1 行ごとに併記する。テスト名のない数字はここに書かない。
 
-- 最初の有用な結果までに人が踏む手順の数
-- `rig-wb` 未導入で完走できるか
-- manifest 無しで完走できるか
-- 実行前に人が決めなければならない項目の数
+| 測る対象 | 実測 | 崩れたら落ちるテスト |
+|---|---|---|
+| 最初の有用な結果までに人が踏む手順の数 | 0（案内は 2） | `tests/test_first_run_cost.py::test_a_first_run_in_a_bare_git_repository_needs_no_cli_install_no_manifest_and_no_human` |
+| `rig-wb` 未導入で完走できるか | できる。PATH から `rig-wb` を持つ項目をすべて外した環境で `python3 scripts/workbench.py new "<やりたいこと>" --type bugfix` が exit 0 で run を作る | 同上（PATH の除去が効いていることを、子プロセスの `shutil.which` で先に確かめてから測る） |
+| manifest 無しで完走できるか | できる。未承認の `.claude/rig.md` が置いてあっても stderr に警告 1 行を出して継続する（exit 2 の拒否ではない） | `tests/test_first_run_cost.py -k degrade` の `test_an_unconsented_project_manifest_degrades_to_one_warning_rather_than_stopping_the_run` |
+| 実行前に人が決めなければならない項目の数 | 0。stdin を `/dev/null` にしても `new` の経路は何も訊かない | 上記 1 行目のテスト（`EOFError` と対話プロンプトの形の両方を見る） |
+| パックの信頼承認 | 訊かれない。既定の routing が出荷の `core` 層で解決するため、承認する対象がそもそもない | `tests/test_first_run_cost.py -k degrade` の `test_the_first_run_degrades_to_the_shipped_core_tier_instead_of_demanding_pack_trust` |
+| hostcheck | 助言にとどまる（exit 0 か 3）。1 は `--strict` を渡したときだけ | `tests/test_first_run_cost.py -k degrade` の `test_hostcheck_degrades_to_advisory_in_a_first_run_and_never_exits_the_strict_failure` |
+
+**これは「第 2 段で手順を減らした」という話ではない。** 要求はもともと 0 で、案内だけが 2 を要求して
+いた。第 2 段でやったのは、0 であることを一度きりの観察からテストに移し、手順が 1 つでも戻ったら
+赤くなるようにしたことである。壁は技術ではなく文書の側にあった、というのが測定の結論であり、
+「使いやすくした」と書くよりこちらのほうが有用で、かつ正確である。案内の側（README と
+`/rig:setup` から始まる導線）はまだ直していない。
+
+真の前提は 2 つだけである。git リポジトリであることと、`python3` があること。
 
 これは §4（来歴を型にする）と同じ規律である。主張ではなく測定に置く。
+
+## 第 2 段の実測 — 表にして分かったこと
+
+能力レジストリ（`rig_workbench/registry/`）は宣言だけで、実行経路は 1 行も変えていない。表の規模と、
+表が投影されるはずの表面との照合結果は次のとおり。
+
+| 測る対象 | 実測 | 崩れたら落ちるテスト |
+|---|---|---|
+| 宣言された能力 | 139（トップレベル 39 / `wb` 51 / `govern` 10・`pack` 23・`eval` 10・`baseline` 3・`githooks` 3 で 49） | `tests/test_capability_registry.py::TestContainer::test_every_dispatchable_verb_is_declared_once` |
+| 表と実 CLI の一致 | 6 つの親グループそれぞれ、およびトップレベルの動詞集合が完全一致。どちらの側も実行時に読む（凍結した写しは持たない） | `tests/test_capability_registry_vs_cli.py::test_each_parent_group_offers_exactly_the_verbs_the_registry_declares_under_it` / `::test_the_verbs_the_top_level_dispatcher_accepts_are_exactly_the_ones_the_registry_declares` |
+| ヘルプに出ないトップレベル動詞 | 39 中 15。打てば答えるが、`--help` にも契約テストにも README にも出てこない | `tests/test_capability_registry_vs_cli.py::test_exactly_fifteen_dispatchable_top_level_verbs_are_missing_from_the_help_text` |
+| 出力スキーマを宣言する能力 | 139 中 22。すべて第 1 段の凍結集合（38 種）の中にある | `tests/test_capability_registry_vs_surfaces.py::test_every_output_schema_a_capability_declares_is_an_id_the_frozen_registry_pins` |
+| スラッシュコマンド | 30 枚。うち 9 枚はどの rig コマンドも名指さない。残り 21 枚が到達する能力は 26 種 | `tests/test_capability_registry_vs_surfaces.py` の `::test_the_slash_command_surface_is_still_the_thirty_files_the_brief_counted`、`::test_every_slash_command_names_at_least_one_declared_capability`、`::test_the_commands_recorded_as_naming_no_capability_still_name_none`、`::test_the_slash_command_scan_still_reaches_the_capability_table` |
+| MCP のツール | stdio 14 本 / remote 7 本。stdio の 1 本には対応する能力がない | `tests/test_capability_registry_vs_surfaces.py::test_both_mcp_servers_still_publish_the_tool_lists_this_file_knows_how_to_read` / `::test_every_tool_the_stdio_mcp_server_hands_out_maps_to_a_declared_capability` |
+
+見つかったものを、確かめられる形で並べる。第 2 段ではどれも直していない。閉じるのは第 3 段の判断である。
+
+- **どのハンドラにも届かない動詞が 2 つ。** `list` と `review` は `rig_workbench/cli.py` の `_orch_delegates` にある。だが `rig_workbench/orchestrate/cli.py` の `COMMANDS` にはない。`python3 -m rig_workbench.cli list` はオーケストレータの module docstring を表示し、exit 1 を返す。（`tests/test_capability_registry_vs_cli.py`）
+- **トップレベルの動詞 39 本のうち、凍結済みスキーマ ID を出すものが 1 本もない。** `plan --json` も `fleet --json` も `schema` キーのない裸の JSON を出す。`rig.fleet/v1` は `fleet` が読む設定の名前であり、出力の名前ではない。封筒つきの ID はすべて `wb` と `govern` のサブ動詞に属する。（`rig_workbench/registry/entries_cli.py` の 39 件はすべて `output_schema=None`）
+- **問い合わせに見えて書く動詞。** `rig-wb check` は実行中のステップが宣言したチェックコマンドを走らせる。結果は run-state に書く（`effect_class="writes-state"`）。名前から読める挙動と、実行前に見せるべき一文が食い違う。
+- **取りに行くように見えて何も取りに行かない動詞。** `rig-wb pack sync` がするのは、`pack.yaml` の `assets` と `hashes` の作り直しだけである。見るのはディスクの実体のみ。`rig_workbench/packs/sync.py` は標準ライブラリと自パッケージしか import しない（`network="never"`）。逆向きの誤読も記録してある。`pack install` は名前から `network` と読まれ、次に URL 拒否の 1 関数だけを見て `never` と読まれた。実際は `sometimes` である。`<source>:<pack>@<version>` 形式のときだけ `git ls-remote` と `git fetch` に出る。
+- **`govern` だけ終了コードの語彙が違う。** `rig_workbench/govern/cli.py` は `EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT = 0, 1, 3` を自前で定義する。`_err` は 1 を返す。共通の `exitcodes.py` で 1 は「rig が判定して否と答えた」であり、govern のエラーはその番号に載っている。
+- **MCP が CLI にない動詞を出している。** `scripts/mcp_server.py` の `rig_orchestrate_status` は `scripts/orchestrate.py status` を叩く。`status` は orchestrate 側の `COMMANDS` にはあるが、`_orch_delegates` にはない。そのため `rig-wb` に `status` を渡すと、`Unknown sub-command` と答えて exit 2 になる。歴史的な入口からしか届かない動詞を、MCP だけが提供している。（`tests/test_capability_registry_vs_surfaces.py`）
+- **スラッシュコマンド 30 枚のうち 9 枚は rig コマンドを 1 つも名指さない。** `drill` `export` `forge` `import` `init` `knowledge` `orchestrate` `persona` `talk` の 9 枚である。どれも `facets/instructions/*` にセッション内で仕事を渡す。入口の 3 割は CLI に届いていない。（`tests/test_capability_registry_vs_surfaces.py`）
+
+### ブリック解決 — 本ブリーフ自身の主張の訂正
+
+第 2 段でブリック解決順序を `rig_workbench/registry/bricks.py` に宣言した。
+`tests/test_brick_resolution_declaration.py` は「実際に walk された経路」を実行時に観測し、
+宣言と突き合わせる。本ブリーフが「未解決の問い」に書いていた指摘は、この観測によって
+次のように変わる。追記ではなく訂正である。
+
+| 訂正 | 実測 | 崩れたら落ちるテスト（すべて `tests/test_brick_resolution_declaration.py`） |
+|---|---|---|
+| user 層は存在する。散文が挙げる場所にないだけである | コードが読む user 層は `~/.rig/packs/<pack>/<asset_dir>`（`$RIG_USER_HOME`、無ければホーム）。散文が約束する `~/.claude/rig/recipes` と `~/.claude/rig/personas` はどの経路も読まない。「コードは project 層しか読んでいない」は不正確だった | `test_the_user_tier_the_prose_promises_is_not_read` — 約束された両方の path に実際にファイルを置き、resolver が到達しないことを見る |
+| 語彙のずれは `shipped` 対 `core` だけではない | `official`（`$RIG_HOME/packs/official/<pack>/…`）はコードが walk する層でありながら、どの散文の表にも出てこない。実体は `TIER_ORDER = ("project", "user", "org", "official", "core")` の 5 層 | `test_the_tier_vocabulary_is_the_one_the_packs_use`、および `KNOWN_PROSE_DRIFT` の `vocabulary-code-only` 2 件（`core` と `official`） |
+| recipe の解決は 1 周ではなく 2 周する | `packs.resolver.resolve_all` が空で戻ったときに限り、`orchestrate.recipes.resolve_recipe` が `.rig/recipes` → `<org>/recipes` → 出荷 recipes を自前で歩く。manifest の `org_dir:` が届くのは、この 2 周目の `<org>/recipes` だけ | `test_the_recipe_fallback_walk_is_the_one_the_resolver_prints` |
+| project 層の中の優先順位は、意図ではなく文字列の並びで決まっている | `.claude/rig/recipes` と `.rig/recipes` は同じ project 層。コードは `.rig/recipes` を先に列挙するのに、ソートキーが source path に落ちるため `.claude/rig/` が勝つ。誰も決めていない順序が実際の優先順位になっている | `test_the_declared_walk_is_the_walk_the_resolver_takes[recipe]` |
+
+散文（`SKILL.md` と `resolve.md`）はまだ直していない。ずれは
+`tests/test_brick_resolution_declaration.py` の `KNOWN_PROSE_DRIFT` に 1 件ずつ記録してある。
+文書を直したら該当項目を消す、消さずに直すと赤くなる、という形で縛ってある。
 
 ## 検討した代替案
 
@@ -245,26 +308,30 @@ Claude Code から使う限り CLI は最初から不要なのに、入口の案
 
 ## 未解決の問い
 
-- **テストスイートを一度も実行していない。** 現在緑かどうか未確認。第 1 段の前提が崩れる可能性があるため、最初に確かめる。
+- **全件緑かどうかは、まだ確かめきれていない。** テストスイート自体は走らせた。第 2 段の時点で `python3 -m pytest -q -n auto` を通し、3,927 件が通過、2 件が落ちた。落ちた 2 件はどちらも実行環境の産物である。`tests/test_eval_runner.py` の read-only workspace は root で走らせると書けてしまう。`tests/test_japanese_writing.py` の出典検証は、attest された commit がこのチェックアウトの履歴に無い。第 1 段・第 2 段が足した契約テストはすべて緑。ただし `-x` で 2 件目の失敗時に打ち切ったため、「全件緑」を確かめたとは言えない。
 - **外部から `rig_workbench` を直接 import している利用者の有無。** 契約凍結を採ったため実務上は守らない方針だが、確認はしていない。
 - **26 基準それぞれの分類先。** センサーを作るか、`attested` に落とすか、`unobserved` と認めるかは 1 件ずつの判断で、まだ決めていない。
-- **散文と実装のずれ。** 散文は persona の user 層（`~/.claude/rig/personas`）を読むと書いているが、コードは project 層しか読んでいないという指摘がある。grep 由来であり、実行して確かめていない。また tier の語彙が散文では `shipped`、コードでは `core` と分かれている。
+- **散文と実装のずれ（測定済み・未修正）。** 第 2 段で実行して確かめ、上記「ブリック解決 — 本ブリーフ自身の主張の訂正」のとおり内容を訂正した。残る問いは、どちらに寄せるか — `SKILL.md` と `resolve.md` を実装に合わせて直すのか、散文が約束している `~/.claude/rig/` の user 層を実装するのか。決めていない。
 - **旧経路をいつ落とすか、版番号をどう割り当てるか。** 2 と 3 の間で切れることは決めたが、何を 3.0 と呼ぶかは未定。
 - **`attested` を厳しい側で始めた場合に、いま通っている run のどれだけが落ちるか。** 実測していない。
 
 ## 次の一手
 
-`/rig:tasks "rig V3 移行の第 1 段 — 契約テストの補強（CLI 経由・スキーマ ID・.rig レイアウトの被覆を上げる。内部は触らない）"`
+第 1 段と第 2 段は済んだ。次は第 3 段である。
 
-5 段の移行はどれも大きく、まとめて実装に入ると検証点が失われる。第 1 段だけを検証可能な小タスクに割る。
+`/rig:tasks "rig V3 移行の第 3 段 — 6 ポート（Presenter / ProcessRunner / FileStore / Env / GitRepo / Clock）を入れ、判定層を柱ごとに切り出す。1 柱ずつ、移すたびに緑を確認する"`
+
+5 段の移行はどれも大きく、まとめて実装に入ると検証点が失われる。第 3 段だけを検証可能な小タスクに割る。あわせて、第 2 段が記録して直さなかったものをこの段で 1 件ずつ決める。届かない動詞 2 つ、ヘルプに出ない 15 本、`govern` の終了コード、MCP と CLI のずれ、散文と実装のずれ。それぞれ閉じるのか、記録のまま残すのかを決める。
 
 **独立した調査（5 段の依存ではない）:** `/rig:drill` で Faceted Prompting の配置順を測る。配置順を入れ替えたペルソナを `--replay` で過去の差分に再適用し、検出率が動くかを見る。§8 の決定に対応する。段の順序には入れない。結果が出た時点で、捨てるか残すかを改めて決める。
 
 ## 測定の限界
 
-本ブリーフの数値はすべて読み取り専用の調査によるもので、以下は実行して確かめていない。
+本ブリーフの数値のうち、第 2 段で書き足したもの（§9 の「測る」と「第 2 段の実測」）は実行して
+確かめ、テスト名を併記してある。それ以外は最初の読み取り専用調査のままであり、以下は確かめて
+いない。
 
-- テストスイート（`pytest`）を走らせていない。
+- テストスイート（`pytest`）は第 2 段で走らせた（上記「未解決の問い」参照）が、失敗 2 件で打ち切っており、全件を通し切ってはいない。
 - `sensor-bench` の 10/10・0/7、ja-lint の 64/64 といった既存の公称値は、ソースと文書から読んだだけで再現していない。
 - 循環依存が実行時に `ImportError` を起こさないことは静的にしか確認していない。
 - 効果カウント（`print` / `subprocess` 等）は行マッチであり、docstring や文字列リテラル内の出現を含む。
