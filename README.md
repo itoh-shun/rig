@@ -1271,6 +1271,7 @@ Three properties, because a hint that overstates itself is worse than none:
 - [`docs/packs.md`](./docs/packs.md) — pack authoring (`pack.yaml` / `compatibility.yaml`) and the init / validate / doctor / install / test commands
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — taking a pack out to its own repository and installing it back through a named source, from both sides
 - [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — the V3 architecture design brief: the agreed internal rearchitecture (capability registry, ports, provenance typing) and the order the migration runs in
+- [`docs/facet-order-measurement-plan.ja.md`](./docs/facet-order-measurement-plan.ja.md) — the plan for measuring whether the fixed facet placement order does anything: the `/rig:drill` arms, the sample size derived from the benchmark's own power method, the pre-declared null result, and what blocks a run
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License
