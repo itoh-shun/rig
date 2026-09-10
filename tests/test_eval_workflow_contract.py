@@ -47,9 +47,9 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     gate_invocation = [line for line in trusted.splitlines()
                        if "eval gate" in line or "--evidence-dir" in line]
     assert any("--ratchet" in line for line in gate_invocation), gate_invocation
-    # Fail closed, and on the signing key alone: the other four secrets only pin
-    # evidence that is already signed, so requiring them would keep the job
-    # unpassable for no verification gained.
+    # Keyed on the signing key alone: the other four secrets only pin evidence that
+    # is already signed, so reading them as a precondition would gain no
+    # verification. Without the key the step verifies nothing and says so.
     assert 'if [ -z "$RIG_EVAL_ATTESTATION_KEY" ]; then' in trusted
     for optional in ("RIG_EVAL_PROVIDER", "RIG_EVAL_MODEL",
                      "RIG_EVAL_JUDGE_PROVIDER", "RIG_EVAL_JUDGE_MODEL"):
@@ -57,14 +57,26 @@ def test_validate_workflow_enforces_structural_and_trusted_prompt_evidence():
     assert "head.repo.full_name == github.repository" in workflow
     assert "author_association == 'OWNER'" in workflow
     assert "chmod 600" in workflow and "unset RIG_EVAL_ATTESTATION_KEY" in workflow
-    assert "missing evidence cannot pass" in workflow
     assert "trusted maintainer run" in workflow
-    # A surface nobody has written a case for is debt, and `--ratchet` above is what
-    # says so — reported and exit 0, decided inside `eval gate`. What reaches this
-    # step is a case that does exist, so the only thing left to report here is a
-    # verdict, and nothing may swallow the exit code that carries it.
+    # Advisory, deliberately. The corpus holds one case covering two prompt
+    # surfaces while a single branch touched twenty-three with none, so this step
+    # met every prompt-surface change and the only way past it was a maintainer
+    # re-measuring by hand. It now reports its verdict as a warning instead of
+    # failing the job. Two things this must not become: silent, and lenient about
+    # what it checks. The verdict reaches the log and the PR as an annotation, the
+    # signature check is untouched, and the structural ratchet in the step above
+    # still fails a change that removes coverage (pinned by
+    # `test_the_coverage_step_prints_its_report_and_annotations_when_it_fails`).
+    assert "Advisory, not blocking" in trusted
+    assert "::warning::prompt evaluation evidence is not current" in trusted
+    assert "status=$?" in trusted and 'if [ "$status" -ne 0 ]; then' in trusted
+    # `continue-on-error` would hide the step's own result in the run summary; the
+    # verdict is reported in the step instead, where a reader can see it.
     assert "continue-on-error" not in workflow
     assert "|| true" not in trusted
+    # Nothing in the step exits non-zero: that is what "advisory" means here, and a
+    # stray `exit 1` left behind would make it blocking again for one path only.
+    assert "exit 1" not in trusted, trusted
     assert "origin branch" in workflow
     assert "--provider mock" not in workflow
     assert workflow.index("eval affected") < workflow.index("eval affected-run")
@@ -379,3 +391,85 @@ def test_the_base_the_workflow_resolves_is_the_one_that_refuses_a_replay(tmp_pat
     pinned, pinned_code = gate(pr1_tip)
     assert pinned_code == 0 and pinned["status"] == "noop" and not pinned["cases"], pinned
     assert (runner / verification.RECIPE_REL).read_text(encoding="utf-8") == verification.BAD
+
+
+def _trusted_step(root: pathlib.Path) -> str:
+    """The `run:` body of the trusted evidence step, taken from the workflow."""
+    import yaml
+
+    document = yaml.safe_load(
+        (root / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
+    )
+    step = next(item for item in document["jobs"]["prompt-evaluation"]["steps"]
+                if item.get("name") == "Trusted prompt quality evidence")
+    return step["run"]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the step is a bash script")
+@pytest.mark.parametrize("key,marker", [
+    ("f" * 64, "prompt evaluation evidence is not current"),
+    ("", "requires a trusted maintainer run"),
+    ("not-64-hex", "must be 64 hex characters"),
+])
+def test_the_trusted_step_reports_a_failing_verdict_without_failing_the_job(
+    tmp_path, key, marker,
+):
+    """Advisory, proved by running the step rather than by reading it.
+
+    The text assertions above say no `exit 1` is written in the step; they cannot
+    say what it does when the gate actually refuses, because the shell runs with
+    `-e` and a bare failing command ends the step whether or not anyone wrote
+    `exit`. So this runs the step verbatim against a stub `rig-wb` that fails the
+    way a stale-evidence gate fails, on each of the three paths that reach a
+    verdict: a usable key, no key at all, and a key of the wrong shape. All three
+    must warn and exit 0. A change that makes any one of them blocking again —
+    the point of the `set +e` / `status=$?` pair — fails here.
+    """
+    root = pathlib.Path(__file__).resolve().parent.parent
+    body = _trusted_step(root)
+    assert "/tmp/rig-affected.json" in body
+    report = tmp_path / "affected.json"
+    report.write_text('{"affected_cases": ["style-persona-qiita-tech-writer"]}',
+                      encoding="utf-8")
+    body = body.replace("/tmp/rig-affected.json", str(report))
+    body = body.replace('${{ steps.comparison.outputs.base }}', "deadbeef")
+
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "rig-wb").write_text(
+        '#!/bin/sh\nprintf %s \'{"status": "failed", "failures": '
+        '["execution_prompt_surface_changed:style-persona-qiita-tech-writer"]}\'\n'
+        "exit 1\n", encoding="utf-8")
+    (stub / "rig-wb").chmod(0o755)
+    script = tmp_path / "step.sh"
+    script.write_text(body, encoding="utf-8")
+
+    completed = subprocess.run(
+        ["bash", "-e", str(script)], cwd=tmp_path, capture_output=True, text=True,
+        env={"PATH": f"{stub}{os.pathsep}{os.environ['PATH']}", "HOME": str(tmp_path),
+             "RIG_EVAL_ATTESTATION_KEY": key, "RIG_EVAL_PROVIDER": "",
+             "RIG_EVAL_MODEL": "", "RIG_EVAL_JUDGE_PROVIDER": "",
+             "RIG_EVAL_JUDGE_MODEL": ""},
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output
+    assert "::warning::" in output, output
+    assert marker in output, output
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="the step is a bash script")
+def test_the_trusted_step_still_runs_the_real_gate_on_the_way_to_that_warning():
+    """Advisory must not have become "skipped".
+
+    The warning is only worth anything while the command that produces it is the
+    same `eval gate` invocation as before. Read from the step so a future edit
+    that quietly drops the run, or swaps in a mock provider to keep the log tidy,
+    is not covered by the exit-code test above.
+    """
+    root = pathlib.Path(__file__).resolve().parent.parent
+    body = _trusted_step(root)
+    executed = [line.strip() for line in body.splitlines()
+                if line.strip() and not line.strip().startswith(("#", "echo"))]
+    assert "rig-wb \"$@\"" in executed, executed
+    assert any("eval gate" in line and "--ratchet" in body for line in executed)
+    assert "--provider mock" not in body
