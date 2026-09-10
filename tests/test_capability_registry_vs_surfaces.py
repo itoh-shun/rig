@@ -754,21 +754,6 @@ ACTION_INPUT_FLAGS = {
     "max_steps": "--max-steps",
 }
 
-#: Wired inputs whose flag the registry does not declare. A finding, not an exception: the
-#: flag is real (`rig_workbench/orchestrate/commands.py`'s `cmd_run` parses `--model` into
-#: `cfg["model"]`, and providers.py resolves generator models as "runtime --step-model >
-#: recipe `model:` > global --model"), and the Action has passed it since #265. The entry
-#: for `run` in rig_workbench/registry/entries_cli.py simply does not list it, along with
-#: the other flags `cmd_run` accepts and the entry omits (`--generators`, `--step-model`,
-#: `--provider-cmd`, `--base-url`). Fixing it is an edit to that entry, which is stage 3's
-#: to make; recording it keeps the check on the other five honest meanwhile.
-ACTION_INPUTS_THE_REGISTRY_DOES_NOT_DECLARE = (
-    ("model", "--model",
-     "cmd_run parses `--model` (rig_workbench/orchestrate/commands.py) and the Action has "
-     "forwarded it since the entrypoint was written, but the `run` capability declares no "
-     "such flag. The registry is the half that is behind the code."),
-)
-
 
 def action_inputs() -> dict[str, dict]:
     """The `inputs:` block of `action.yml`, parsed as the YAML it is."""
@@ -865,15 +850,21 @@ def test_the_github_actions_inputs_are_a_subset_of_the_flags_that_capability_dec
     """The Action offers a slice of one capability; the slice has to be part of the whole.
 
     Direction: inputs -> flags. The reverse is not a claim anybody makes — the Action
-    exposes six of the `run` capability's fourteen flags and says so; `--isolate` and
-    `--out` it passes itself, and the rest a CI caller has no way to set.
+    exposes six of the `run` capability's flags and says so; `--isolate` and `--out` it
+    passes itself, and the rest a CI caller has no way to set.
+
+    This check used to be run against five of the six: `--model` was reached through
+    action.yml, parsed by `cmd_run`, and declared by nothing, so it was recorded as a known
+    gap and subtracted here. The `run` entry now declares every flag `cmd_run` accepts, the
+    record has gone with the gap it described, and all six are checked. Nothing subtracts
+    from this comparison any more — a flag the Action passes and the registry drops fails
+    here rather than being excused.
     """
     capability = by_id(action_capability())
     declared = {flag.name for flag in capability.flags}
-    recorded = {name for name, _flag, _reason in ACTION_INPUTS_THE_REGISTRY_DOES_NOT_DECLARE}
     missing = sorted(
         (input_name, flag) for input_name, flag in ACTION_INPUT_FLAGS.items()
-        if flag not in declared and input_name not in recorded
+        if flag not in declared
     )
     assert not missing, (
         f"action.yml offers inputs that the `{capability.id}` capability declares no flag "
@@ -886,24 +877,6 @@ def test_the_github_actions_inputs_are_a_subset_of_the_flags_that_capability_dec
         "Action is passing something that is silently ignored, and action.yml is the file "
         "to open."
     )
-
-
-def test_the_action_inputs_recorded_as_undeclared_are_still_undeclared():
-    """A guard on the recorded finding, so it disappears the moment it is fixed."""
-    capability = by_id(action_capability())
-    declared = {flag.name for flag in capability.flags}
-    for input_name, flag, reason in ACTION_INPUTS_THE_REGISTRY_DOES_NOT_DECLARE:
-        assert len(reason) > 80, f"{input_name}: the reason has to be a reason"
-        assert input_name in ACTION_INPUT_FLAGS, (
-            f"{input_name} is recorded here as an Action input the registry does not "
-            "declare, and ACTION_INPUT_FLAGS no longer wires it to anything. Delete the "
-            "entry."
-        )
-        assert flag not in declared, (
-            f"`{capability.id}` now declares `{flag}`, so the gap recorded for the "
-            f"Action's `{input_name}` input is closed. Remove it from "
-            "ACTION_INPUTS_THE_REGISTRY_DOES_NOT_DECLARE so the subset check covers it."
-        )
 
 
 # ── the slash commands ───────────────────────────────────────────────────────
