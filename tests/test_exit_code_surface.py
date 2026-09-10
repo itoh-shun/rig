@@ -42,7 +42,59 @@ import sys
 import pytest
 from conftest import REPO_ROOT, subprocess_timeout
 
-from rig_workbench import exitcodes
+# WHY THE CODES BELOW ARE WRITTEN OUT AS INTEGERS, and not imported from
+# `rig_workbench.exitcodes`:
+#
+# 0/1/2 are rig's published contract — the numbers a CI step, a Makefile, or another
+# agent's harness branches on, and the numbers the README and `exitcodes`' own
+# docstring promise. A caller outside this repo has the integers and nothing else.
+# `assert result.returncode == exitcodes.OK` compares the source tree to itself: edit
+# `OK = 0` to `OK = 7` and the assertion still passes, in the same commit, while every
+# reader downstream breaks. That is the tautology tests/test_schema_registry.py was
+# written to eliminate for schema ids (see its header), and it is the same tautology
+# here. Writing the integers out is what makes changing one a deliberate act that has
+# to come here and edit a number.
+#
+# The other half of the reason is mechanical: rig's internals are being rearchitected
+# and the module moves. An import breaks this file at *collection* time — every test
+# below, including the ones that have nothing to do with a constant, stops running for
+# a reason that is not about behaviour. Observed exit codes do not have that problem.
+#
+# The command-specific codes further down (gh-check's 3 and 5, contract's 3, govern's
+# 3, the orchestrator's parked 3) were already written out for exactly this reason.
+
+#: rig ran and the answer is yes — gate passed, scan clean, nothing to report.
+OK = 0
+
+#: rig ran, judged, and the answer is no. A verdict, not a malfunction.
+REJECTED = 1
+
+#: rig could not produce an answer at all: bad usage, unreadable state, a crash.
+ERROR = 2
+
+#: The statuses whose meaning is fixed outside rig, written out for the same reason
+#: as the three above (`exitcodes.RESERVED` is the frozenset this mirrors, deliberately
+#: not imported). 124 is GNU `timeout` reporting that it killed the command; 126 is a
+#: shell that found the command and could not execute it; 127 is a shell that could not
+#: find it at all; and 128+N is how a shell reports "killed by signal N" — 129 SIGHUP,
+#: 130 Ctrl-C, 137 SIGKILL, 143 SIGTERM, on up through the real-time signals. The band
+#: here runs to 128+64, the highest a Linux box has; a platform with fewer signals makes
+#: this a superset of its own reserved set, which can only make the assertion stricter.
+SHELL_OWNED = frozenset({124, 126, 127} | set(range(128 + 1, 128 + 64 + 1)))
+
+# NO `die()`-DERIVED CODE IS PINNED IN THIS FILE, and none may be added.
+#
+# `rig_workbench/workbench/state.py` has `die()` hardcoded to `sys.exit(1)`, so every
+# plain workbench failure — a task id that is not there, a worktree that is gone —
+# surfaces as 1, the code reserved for "rig judged this and said no". That is a defect,
+# not a contract, and pinning one of those 1s here would preserve it through the
+# rewrite. `wb scan-secrets --diff <nonexistent>` and `wb status <nonexistent>` are the
+# obvious traps; this file drives neither. Every 1 asserted below was traced to a
+# deliberate verdict path instead: scan-secrets' own `sys.exit(1)` after printing its
+# findings, `contract`'s `EXIT_CODE[NOT_ACCEPTABLE]`, design-constraints' and ja-lint's
+# violation returns, bench's completed non-pass. The one place a `die()` is involved is
+# test_generic_a_command_that_could_not_produce_an_answer_exits_two_not_one, and it
+# pins the 2 `contract` *translates* it into — the fix, not the symptom.
 
 #: Codes this file could not produce from a test process, and why. Each entry is
 #: (command, code, reason). Read this before adding a test for one of them — the
@@ -190,12 +242,12 @@ def test_generic_a_clean_command_that_found_nothing_to_report_exits_zero(rig_cli
     the cheapest command in rig that genuinely runs to completion — nothing about the
     repository can turn its answer into a verdict."""
     result = rig_cli("wb", "gates", cwd=rig_git_repo)
-    assert result.returncode == exitcodes.OK, result.stdout + result.stderr
+    assert result.returncode == OK, result.stdout + result.stderr
 
     # Same command, machine framing: a 0 that does not also carry a parseable envelope
     # is not the answer a `--json` caller acted on.
     payload = rig_cli_json("wb", "gates", "--json", cwd=rig_git_repo,
-                           expect_returncode=exitcodes.OK)
+                           expect_returncode=OK)
     assert payload["schema"].startswith("rig.gates/")
 
 
@@ -210,7 +262,7 @@ def test_generic_a_rejection_is_a_verdict_the_same_command_exits_zero_on_clean_i
     task_id, worktree = _new_task(rig_cli, rig_git_repo, "planted-secret")
 
     clean = rig_cli("wb", "scan-secrets", "--diff", task_id, cwd=rig_git_repo)
-    assert clean.returncode == exitcodes.OK, clean.stdout + clean.stderr
+    assert clean.returncode == OK, clean.stdout + clean.stderr
     assert "No potential secrets found" in clean.stdout
 
     (worktree / "creds.py").write_text(
@@ -219,7 +271,7 @@ def test_generic_a_rejection_is_a_verdict_the_same_command_exits_zero_on_clean_i
     _git(worktree, "commit", "-q", "-m", "plant a fake credential")
 
     judged = rig_cli("wb", "scan-secrets", "--diff", task_id, cwd=rig_git_repo)
-    assert judged.returncode == exitcodes.REJECTED, judged.stdout + judged.stderr
+    assert judged.returncode == REJECTED, judged.stdout + judged.stderr
     # The finding is in the report, and the excerpt is masked — a scanner that prints
     # the secret it found has turned a rejection into a second leak.
     assert "1 potential secret(s) found" in judged.stdout
@@ -233,8 +285,8 @@ def test_generic_a_command_that_could_not_produce_an_answer_exits_two_not_one(
     second one: were this a 1, a caller could not tell it from the rejection the test
     above produces."""
     result = rig_cli("wb", "contract", "no-such-task-id-9999", cwd=rig_git_repo)
-    assert result.returncode == exitcodes.ERROR, result.stdout + result.stderr
-    assert result.returncode != exitcodes.REJECTED
+    assert result.returncode == ERROR, result.stdout + result.stderr
+    assert result.returncode != REJECTED
 
 
 def test_generic_no_command_in_this_sample_returns_a_status_the_shell_owns(
@@ -258,7 +310,7 @@ def test_generic_no_command_in_this_sample_returns_a_status_the_shell_owns(
     for argv in sample:
         result = rig_cli(*argv, cwd=rig_git_repo)
         observed[" ".join(argv)] = result.returncode
-    reserved = {argv: code for argv, code in observed.items() if code in exitcodes.RESERVED}
+    reserved = {argv: code for argv, code in observed.items() if code in SHELL_OWNED}
     assert not reserved, f"these commands returned a status the shell owns: {reserved}"
     # And nothing wandered outside the small band rig documents, either.
     assert set(observed.values()) <= {0, 1, 2, 3}, observed

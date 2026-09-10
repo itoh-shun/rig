@@ -51,8 +51,11 @@ def test_alias_install_resolves_every_owned_asset_records_trust_and_removes(
     trust = tmp_path / "pack-trust.json"
     monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
     monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(trust))
+    # Only `INVOCATION_CWD` is pinned: `PROJECT_RECIPES` is served lazily off it through the
+    # module's PEP 562 `__getattr__`, and `monkeypatch.setattr` on such a name saves the value
+    # it computes now and restores it as a *real* module attribute, freezing the overlay at
+    # this test's tmp_path for every later test in the worker. Patch the root, not the derived.
     monkeypatch.setattr(orchestrate_config, "INVOCATION_CWD", project)
-    monkeypatch.setattr(orchestrate_config, "PROJECT_RECIPES", project / ".rig/recipes")
     result = install_pack("domain:decision-humor", scope="project", project=project,
                           allow_unverified=True)
     assert result.manifest["id"] == "decision-humor"

@@ -22,6 +22,12 @@ the suite. Each one is run once here and its behaviour *as it stands today* is
 pinned — a usage error where the verb needs arguments, exit code and stdout shape
 where it runs. These are smoke tests: they say "this path executes and answers
 like this", not "this answer is correct".
+
+That second freeze covers a named handful, not the surface: the verbs spawned
+beyond `--help` are exactly the ones in VERBS_SMOKE_RUN — 21 of the 122 verbs
+frozen above. Every other verb is reached here by `--help` alone, which proves
+its module imports and its parser builds and nothing more. This file claims no
+behavioural coverage of them.
 """
 
 import json
@@ -117,7 +123,13 @@ HELP_ANSWERING_SUBCOMMANDS = tuple(sorted(TOP_LEVEL_SUBCOMMANDS)) + tuple(sorted
 # test_every_subcommand_answers_its_own_help_with_exit_zero, so the module still
 # imports and the parser is still built; only the side effect is skipped.
 # Keyed by argv prefix; the reason is what a later reader needs, not decoration.
-VERBS_NOT_RUN_BEYOND_HELP = {
+#
+# This is *not* the complement of what this file runs. Only 21 of the 122 frozen
+# verbs are spawned beyond `--help` (VERBS_SMOKE_RUN, below); the ~100 that are
+# not spawned are, with these 11 exceptions, simply unexercised rather than ruled
+# out. The name says "deliberately" for that reason: the old name claimed to
+# enumerate every not-run verb and enumerated a tenth of them.
+VERBS_DELIBERATELY_NOT_RUN_BEYOND_HELP = {
     "run": "spawns a real provider (claude/codex): billable and minutes long",
     "bench": "runs an A/B benchmark against providers",
     "selftest": "executes the golden verification suite; minutes, not seconds",
@@ -217,8 +229,14 @@ def test_the_githooks_verbs_reject_the_help_flag_they_never_learned(rig_cli, ver
 
 
 def test_every_verb_excluded_from_the_smoke_runs_is_still_a_real_subcommand(rig_cli):
-    """Keep VERBS_NOT_RUN_BEYOND_HELP honest: a stale exclusion is a silent gap."""
-    for argv in VERBS_NOT_RUN_BEYOND_HELP:
+    """Keep the exclusions honest: a stale exclusion is a silent gap.
+
+    Two ways an entry rots. It can name a verb that no longer exists, in which case
+    the exclusion protects nothing and only reads as if it did; or the verb can have
+    gained a smoke run anyway, in which case the recorded reason ("billable",
+    "writes into .git/hooks") is a false warning about a test that already runs.
+    """
+    for argv in VERBS_DELIBERATELY_NOT_RUN_BEYOND_HELP:
         parts = argv.split()
         if len(parts) == 1:
             assert parts[0] in TOP_LEVEL_SUBCOMMANDS, argv
@@ -226,6 +244,9 @@ def test_every_verb_excluded_from_the_smoke_runs_is_still_a_real_subcommand(rig_
             group, verb = parts
             assert group in GROUPED_SUBCOMMANDS, argv
             assert verb in GROUPED_SUBCOMMANDS[group], argv
+        assert argv not in VERBS_SMOKE_RUN, (
+            f"{argv} is listed as deliberately not run, but is smoke-run: "
+            f"{VERBS_DELIBERATELY_NOT_RUN_BEYOND_HELP[argv]}")
 
 
 # ── T5/T6: the verbs no test ever spawned ────────────────────────────────────
@@ -251,6 +272,32 @@ VERBS_THAT_REQUIRE_ARGUMENTS = (
 
 # argv that runs to completion in a repo rig has never touched and says so.
 VERBS_THAT_REPORT_AN_EMPTY_PACK_SCOPE = ("pack list", "pack outdated", "pack verify-sources")
+
+# Every verb this file actually spawns beyond `--help`, written down so the
+# coverage level is a stated number rather than an impression. The two tuples
+# above are parametrised; the rest each have a test of their own further down.
+# 21 verbs, against the 122 frozen at the top of this file.
+VERBS_SMOKE_RUN = frozenset(VERBS_THAT_REQUIRE_ARGUMENTS) | frozenset(
+    VERBS_THAT_REPORT_AN_EMPTY_PACK_SCOPE) | frozenset({
+        "wb contract", "wb digest", "wb gc", "govern whoami", "pack sync",
+    })
+
+# Why `wb note` below is pinned to exit 1 even though 1 is the wrong code.
+#
+# rig_workbench/workbench/state.py's die() ends in a bare sys.exit(1), so *every*
+# workbench failure — unreadable state, missing file, bad argument — surfaces as
+# 1, the code rig reserves for "judged the work and said no". `wb note` with no
+# run history is a plumbing failure, not a judgement, and `wb contract`
+# (test_wb_contract_answers_execution_error_when_the_task_state_cannot_be_read,
+# exit 2) is the one command that translates the same "No run history" condition
+# correctly. The 1 is therefore an observation of a defect, not a promise to a
+# caller: the rewrite must not preserve it, and when die() learns to distinguish
+# the two, updating that assertion to 2 is the fix, not a broken contract.
+WB_NOTE_EXIT_ONE_IS_A_SYMPTOM_OF_STATE_DIE_NOT_A_CONTRACT = (
+    "`wb note` exits 1 only because state.py:die() hardcodes sys.exit(1); the "
+    "correct code for this condition is 2, as `wb contract` already returns. "
+    "Pinned as observed behaviour — do not carry it into the rewrite."
+)
 
 
 @pytest.mark.parametrize("argv", VERBS_THAT_REQUIRE_ARGUMENTS)
@@ -288,8 +335,14 @@ def test_wb_effectiveness_derives_every_metric_as_unobservable_when_no_runs_are_
                            cwd=rig_git_repo, expect_returncode=0)
 
     assert payload["schema"] == "rig.workflow-effectiveness/v1"
-    assert set(payload) == {"schema", "metrics", "patterns", "records",
-                            "unobservable_patterns", "does_not_guarantee"}
+    # A floor, not an exact set. tests/test_schema_cli_contract.py pins this same
+    # document as `required <= set(payload)`, and the exact-set form here
+    # contradicted it: adding a key would have failed this file and passed that
+    # one. The exact form was dropped deliberately — adding a key to this document
+    # is backwards compatible for readers, while losing one is not, and losing one
+    # is what the floor still catches.
+    assert {"schema", "metrics", "patterns", "records",
+            "unobservable_patterns", "does_not_guarantee"} <= set(payload)
     assert payload["metrics"], "the metric list itself must not be empty"
     assert {metric["status"] for metric in payload["metrics"].values()} == {"unobservable"}
     assert payload["does_not_guarantee"], "the caveats are part of the answer"
@@ -349,7 +402,9 @@ def test_wb_gc_finds_nothing_to_dispose_of_in_a_repo_with_no_visual_artifacts(
 def test_wb_note_refuses_to_attach_a_hand_off_note_when_there_is_no_run_to_attach_it_to(
         rig_cli, rig_git_repo):
     result = rig_cli("wb", "note", "what a later run should know", cwd=rig_git_repo)
-    assert result.returncode == 1
+    # 1 here is a defect being observed, not a contract being kept — see
+    # WB_NOTE_EXIT_ONE_IS_A_SYMPTOM_OF_STATE_DIE_NOT_A_CONTRACT above.
+    assert result.returncode == 1, WB_NOTE_EXIT_ONE_IS_A_SYMPTOM_OF_STATE_DIE_NOT_A_CONTRACT
     assert result.stdout == ""
     assert "No run history" in result.stderr
 
