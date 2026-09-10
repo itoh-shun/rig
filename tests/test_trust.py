@@ -191,3 +191,97 @@ def test_record_trust_is_thread_safe_no_lost_updates(tmp_path, monkeypatch):
     data = json.loads(store.read_text(encoding="utf-8"))
     assert len(data) == 32
     assert all(data[str(p)] == d for p, d in entries)
+
+
+# ── the consent flag must be an option, not just a string in argv ──────────
+#
+# `"--allow-project-packs" in sys.argv` (packs/trust.py) and `"--allow-project-recipes"
+# in sys.argv` (here) matched the flag wherever it appeared, and argv carries free text
+# too: a task title, a `--goal` body, arguments forwarded past `--`. Typing the string
+# as data was consent to run project-tier assets. Both directions are pinned below —
+# the escape hatch has to keep working, or people reach for something worse than it.
+
+PACK_ASSET_BODY = "---\nname: sneaky\nsteps: []\n---\nbody\n"
+
+
+@pytest.fixture
+def project_pack_asset(tmp_path, monkeypatch):
+    """An unrecorded project-tier pack asset, plus an isolated pack trust store."""
+    from rig_workbench.packs.model import ResolvedAsset
+
+    pack = tmp_path / "proj" / ".rig" / "packs" / "demo"
+    (pack / "recipes").mkdir(parents=True)
+    (pack / "pack.yaml").write_text("id: demo\nversion: 0.1.0\n", encoding="utf-8")
+    asset = pack / "recipes" / "sneaky.md"
+    asset.write_text(PACK_ASSET_BODY, encoding="utf-8")
+    monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(tmp_path / "trusted-packs.json"))
+    monkeypatch.delenv("RIG_ALLOW_PROJECT_PACKS", raising=False)
+    monkeypatch.delenv("RIG_ALLOW_PROJECT_RECIPES", raising=False)
+    return ResolvedAsset("recipe", "sneaky", asset, "project", str(pack), "demo")
+
+
+def test_pack_flag_as_a_real_option_still_grants_trust(
+        project_pack_asset, monkeypatch, tmp_path):
+    """The escape hatch itself: narrowing the check must not disarm it."""
+    from rig_workbench.packs.trust import ensure_asset_trusted
+
+    monkeypatch.setattr(
+        "sys.argv", ["rig-wb", "pack", "sync", ".", "--allow-project-packs"])
+    assert ensure_asset_trusted(project_pack_asset) == project_pack_asset.path
+    # and it is recorded, so a later run without the flag passes silently
+    monkeypatch.setattr("sys.argv", ["rig-wb", "pack", "sync", "."])
+    assert ensure_asset_trusted(project_pack_asset) == project_pack_asset.path
+    assert (tmp_path / "trusted-packs.json").exists()
+
+
+@pytest.mark.parametrize("argv", [
+    # `wb new` takes the task title as a positional, so a title that starts with a
+    # dash can only be given after `--` — which is exactly where this landed.
+    ["rig-wb", "wb", "new", "--type", "bugfix", "--", "--allow-project-packs"],
+    # the value of an option that takes free text (the orchestrate parsers read the
+    # next token unconditionally, so this really does reach argv)
+    ["rig-wb", "run", "recipe.md", "--goal", "--allow-project-packs"],
+    ["rig-wb", "wb", "note", "task-1", "--note", "--allow-project-packs"],
+    # arguments forwarded to the invoked pack, after the separator
+    ["rig-wb", "pack", "invoke", "demo:sneaky", "--", "--allow-project-packs"],
+    # the flag takes no value: an `=` form is a different token, not this flag
+    ["rig-wb", "wb", "new", "--slug=--allow-project-packs", "--type", "bugfix"],
+    # argv[0] is the program name, never an option
+    ["--allow-project-packs", "pack", "sync", "."],
+])
+def test_pack_flag_as_argv_text_does_not_grant_trust(
+        project_pack_asset, monkeypatch, tmp_path, argv):
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.trust import ensure_asset_trusted
+
+    monkeypatch.setattr("sys.argv", argv)
+    with pytest.raises(PackError, match="untrusted project recipe asset"):
+        ensure_asset_trusted(project_pack_asset)
+    assert not (tmp_path / "trusted-packs.json").exists()
+
+
+def test_recipe_flag_as_a_real_option_still_grants_trust(
+        project_overlay, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "sys.argv", ["rig-wb", "run", "sneaky", "--allow-project-recipes"])
+    assert recipes.resolve_recipe("sneaky").name == "sneaky.md"
+    assert (tmp_path / "trusted.json").exists()
+
+
+@pytest.mark.parametrize("argv", [
+    ["rig-wb", "run", "review-only.md", "--goal", "--allow-project-recipes"],
+    ["rig-wb", "wb", "new", "--type", "bugfix", "--", "--allow-project-recipes"],
+])
+def test_recipe_flag_as_argv_text_does_not_grant_trust(
+        project_overlay, monkeypatch, tmp_path, argv):
+    monkeypatch.setattr("sys.argv", argv)
+    with pytest.raises(SystemExit) as e:
+        recipes.resolve_recipe("sneaky")
+    assert e.value.code == 2
+    assert not (tmp_path / "trusted.json").exists()
+
+
+def test_manifest_flag_as_argv_text_does_not_grant_trust(project_manifest, monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv", ["rig-wb", "run", "r.md", "--goal", "--allow-project-manifest"])
+    assert recipes.load_manifest() == {}

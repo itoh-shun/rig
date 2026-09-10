@@ -32,6 +32,18 @@ from . import config
 # Anything else refuses with instructions. Shipped (RIG_HOME) and org-tier
 # recipes are exempt: both locations are configured by the user, not by the
 # repository being worked on.
+#
+# "On the command line" means *as an option of this process*, which is narrower
+# than `flag in sys.argv`: argv also carries a task title, a `--goal` body, and
+# arguments forwarded past `--`, and any of those being the literal string used to
+# be consent. `rig_workbench.packs.trust.passed_as_option` holds the rule, and
+# spells out what it does and does not catch.
+
+def _consent_flag_passed(flag: str) -> bool:
+    """True only where `flag` was passed as an option, not merely present in argv."""
+    from rig_workbench.packs.trust import passed_as_option
+    return passed_as_option(flag, sys.argv)
+
 
 def _trust_store_path() -> pathlib.Path:
     env = os.environ.get("RIG_TRUST_STORE")
@@ -97,7 +109,7 @@ def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
     digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
     if _load_trust_store().get(str(resolved)) == digest:
         return path
-    allowed = ("--allow-project-recipes" in sys.argv
+    allowed = (_consent_flag_passed("--allow-project-recipes")
                or os.environ.get("RIG_ALLOW_PROJECT_RECIPES") == "1")
     if allowed:
         _record_trust(resolved, digest)
@@ -163,7 +175,7 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
     digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
     if _load_trust_store().get(str(resolved)) == digest:
         return True
-    allowed = ("--allow-project-manifest" in sys.argv
+    allowed = (_consent_flag_passed("--allow-project-manifest")
                or os.environ.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
     if allowed:
         _record_trust(resolved, digest)
