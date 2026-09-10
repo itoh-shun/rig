@@ -22,10 +22,10 @@ import dataclasses
 import datetime
 import json
 import pathlib
+from typing import Protocol, runtime_checkable
 
-from ..ports import Clock
-from ..ports.local import SYSTEM_CLOCK
-from ..workbench.reporting import TaskRecords, read_all_tasks
+from ..ports import Clock, FileStore
+from ..ports.local import LOCAL_FILES, SYSTEM_CLOCK
 from . import ledger, waiver
 from .approval import evaluate, load_approvals
 from .identity import load_org_binding
@@ -36,6 +36,70 @@ from .rbac import holders_of, permissions_of
 FAIL, WARN, PASS, NA = "fail", "warn", "pass", "n/a"
 _RANK = {FAIL: 0, WARN: 1, PASS: 2, NA: 3}
 ICON = {FAIL: "✗", WARN: "⚠", PASS: "✓", NA: "-"}
+
+
+# ── the run evidence, stated as what this module needs rather than imported ──
+@runtime_checkable
+class RunRecords(Protocol):
+    """Every task record under a repository's runs directory, and what could not be read.
+
+    This module *scores* run records; it does not *find* them, and the difference is the
+    whole of why this protocol exists. Finding them is two things, neither of which belongs
+    to govern: listing `.rig/runs` and opening each `task.json` is an effect, and deciding
+    which of those files yields a record a reader can use is `workbench.reporting`'s rule
+    (#488) — the same rule for the board, the digest, the cockpit and this report, so that a
+    run missing from one is missing from all of them and not from this one alone. So the
+    records arrive already read, and what is written down here is only what a conformance
+    score needs of them: the records, the names of the ones that could not be read, whether
+    the directory could be listed at all, and the single sentence every reader of the runs
+    directory renders that shortfall with.
+
+    Stated as a protocol rather than imported, because the import is the thing the layering
+    rule forbids (`tests/test_layering_contract.py`): a judgement module may reach the
+    standard library, its own pillar and the six ports, and `workbench.reporting` is none of
+    those — under `if TYPE_CHECKING:` exactly as much as at module level, since a signature
+    written in another pillar's vocabulary is a design dependency whether or not it costs an
+    import at run time. The dependency is not smuggled somewhere cheaper either: it is
+    inverted. govern says what it needs, `workbench.reporting.TaskRecords` satisfies it
+    structurally without knowing this file exists, and the shell (`govern/cli.py`) is what
+    joins the two. `tests/test_conformance_unreadable_records.py` asserts that TaskRecords
+    still satisfies it, so the two shapes cannot drift apart in silence.
+    """
+
+    #: The records that could be read, each a `task.json` payload.
+    tasks: tuple[dict, ...]
+    #: The run directories that yielded no usable record, named by directory.
+    unreadable: tuple[str, ...]
+    #: Set when the runs directory could not be listed at all, which is not the same fact
+    #: as finding nothing in it — `_check_runs_listing` is the check that says so.
+    collection_error: str | None
+
+    def note(self) -> str:
+        """The clause a rendered total carries, or empty when everything was read."""
+        ...
+
+
+class RunRecordSource(Protocol):
+    """A reader of one repository's runs directory.
+
+    `rollup` visits several repositories, so it is handed the reading rather than the read;
+    `evaluate_project`, which scores exactly one, takes that repository's records
+    themselves. Injecting a reader is not this module reaching for the filesystem again: the
+    caller decides what reading means, exactly as it decides what `Clock` and `FileStore`
+    mean, and every shipped caller passes `workbench.reporting.read_all_tasks`.
+    """
+
+    def __call__(self, base: pathlib.Path) -> RunRecords:
+        ...
+
+
+def runs_dir(root: pathlib.Path) -> pathlib.Path:
+    """Where a repository keeps its run records.
+
+    Public because a caller has to build the argument `evaluate_project` now asks for, and
+    the layout is this pillar's to state: `_acceptance` joins a task id onto the same path.
+    """
+    return root / ".rig" / "runs"
 
 
 @dataclasses.dataclass
@@ -59,7 +123,7 @@ class Report:
     #: window-filtered subset, so the shortfall stays a statement about the directory. None
     #: for a report that stopped before reading any runs: that and "nothing unreadable" are
     #: different answers, and only the second is a claim about what is there.
-    tasks: TaskRecords | None = None
+    tasks: RunRecords | None = None
     #: How many of those records fell inside `--since-days`, which is what the run-derived
     #: checks counted. Kept beside the total rather than replacing it.
     runs_in_window: int | None = None
@@ -68,8 +132,9 @@ class Report:
     def unreadable_note(self) -> str:
         """The clause every rendered rate carries, or empty when everything was read.
 
-        `TaskRecords.note()` and not a second wording: the board, the digest and this report
-        say the same shortfall the same way because they call the same method.
+        `RunRecords.note()` and not a second wording: the board, the digest and this report
+        say the same shortfall the same way because they call the same method — the one the
+        records were read by, not a second one written here.
         """
         return self.tasks.note() if self.tasks else ""
 
@@ -105,7 +170,7 @@ class Report:
 
         Partial loss is the other case and keeps a real verdict: a check that read some
         records is stating something about the records it read, and names beside it how many
-        it could not (`TaskRecords.note()`). Zero evidence is not a small amount of it."""
+        it could not (`RunRecords.note()`). Zero evidence is not a small amount of it."""
         if self.error:
             return 0.0
         total = len(self.applicable)
@@ -154,19 +219,21 @@ class Report:
         }
 
 
-def _load_tasks(root: pathlib.Path, since_days: int, *,
-                clock: Clock = SYSTEM_CLOCK) -> tuple[TaskRecords, tuple[dict, ...]]:
-    """Everything under the runs directory, and the subset of it inside the window.
+def _in_window(records: RunRecords, since_days: int, *,
+               clock: Clock = SYSTEM_CLOCK) -> tuple[dict, ...]:
+    """The subset of the records that falls inside `--since-days`.
 
-    Two values, not a narrowed `TaskRecords`. This function used to walk
-    `.rig/runs/*/task.json` itself and `continue` past anything it could not parse, so a
-    report built from 52 of 55 records was presented as the conformance rate — the least
-    visible way this report can be wrong, because the number it prints is the number an org
-    acts on. `read_all_tasks` (#488) is the single rule for what a usable record is, and it
-    carries what it could not read, so no check below can take the runs without the shortfall.
+    The window is a judgement this module makes and it stays here. The records are not: this
+    used to be `_load_tasks`, which walked the runs directory itself before filtering it, and
+    before that walked `.rig/runs/*/task.json` and `continue`d past anything it could not
+    parse — so a report built from 52 of 55 records was presented as the conformance rate,
+    the least visible way this report can be wrong, because the number it prints is the
+    number an org acts on. `read_all_tasks` (#488) became the single rule for what a usable
+    record is; now the read itself is the caller's too, and this function is left with the
+    only part that was ever conformance's own (see `RunRecords`).
 
-    The window is applied to a separate tuple and never folded back into the records, because
-    `TaskRecords.note()` renders "N of <tasks + unreadable>" — replacing its tasks with the
+    Applied to a separate tuple and never folded back into the records, because
+    `RunRecords.note()` renders "N of <tasks + unreadable>" — replacing its tasks with the
     in-window ones would make that total mean "in-window readable plus unreadable" and print
     a smaller attempted count than the directory holds. That is the same class of quietly
     shrunken denominator this change exists to remove. `cmd_stats` filters a local list for
@@ -176,11 +243,9 @@ def _load_tasks(root: pathlib.Path, since_days: int, *,
     `updated_at` was never read cannot be shown to fall outside `--since-days`, so the window
     is not allowed to be the reason it disappears.
     """
-    records = read_all_tasks(root / ".rig" / "runs")
     cutoff = clock.stamp(clock.now() - datetime.timedelta(days=since_days))
-    in_window = tuple(task for task in records.tasks
-                      if (task.get("updated_at") or task.get("created_at") or "") >= cutoff)
-    return records, in_window
+    return tuple(task for task in records.tasks
+                 if (task.get("updated_at") or task.get("created_at") or "") >= cutoff)
 
 
 #: Returned by `_acceptance` for a gate record that is there and cannot be read. Absent and
@@ -190,27 +255,39 @@ def _load_tasks(root: pathlib.Path, since_days: int, *,
 UNREADABLE_ACCEPTANCE = object()
 
 
-def _acceptance(root: pathlib.Path, task_id: str) -> dict | None | object:
+def _acceptance(root: pathlib.Path, task_id: str, *,
+                files: FileStore = LOCAL_FILES) -> dict | None | object:
     """The run's gate record, None when it has none, `UNREADABLE_ACCEPTANCE` when it cannot
     be read. Three answers because the caller owes a different sentence to each.
 
-    `OSError` as well as bad JSON: `_task_record` treats every way a file fails to yield a
-    usable record the same way, and a permission bit is not a smaller obstacle than a
-    truncated write.
+    `OSError` as well as bad JSON: `workbench.reporting._task_record` treats every way a file
+    fails to yield a usable record the same way, and a permission bit is not a smaller
+    obstacle than a truncated write. Through `FileStore` rather than `pathlib` because this
+    is an effect, and the reads are exactly the port's `is_file` and `read_text` — the
+    adapter is `pathlib` with the same UTF-8 and the same exceptions, so a caller that
+    injects a store is now answered by it here too, and not one frame further down.
     """
-    p = root / ".rig" / "runs" / task_id / "acceptance.json"
-    if not p.is_file():
+    p = runs_dir(root) / task_id / "acceptance.json"
+    if not files.is_file(p):
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return json.loads(files.read_text(p))
     except (OSError, ValueError):
         return UNREADABLE_ACCEPTANCE
 
 
-def evaluate_project(root: pathlib.Path, *, since_days: int = 90,
-                     clock: Clock = SYSTEM_CLOCK) -> Report:
-    """Run every conformance check against one repository."""
-    binding = load_org_binding(root)
+def evaluate_project(root: pathlib.Path, *, records: RunRecords, since_days: int = 90,
+                     clock: Clock = SYSTEM_CLOCK, files: FileStore = LOCAL_FILES) -> Report:
+    """Run every conformance check against one repository, over the records it is given.
+
+    `records` is required and has no default, which is the point rather than an
+    inconvenience: this module scores run evidence and does not go and get it (`RunRecords`
+    says why), and a default would have to name the function that does — putting the import
+    back and making the argument decorative. The shell wires it: `govern/cli.py` and
+    `evidence.py` both pass `workbench.reporting.read_all_tasks(conformance.runs_dir(root))`,
+    which is the same call this function used to make, at the same moment, on the same path.
+    """
+    binding = load_org_binding(root, files=files)
     checks: list[Check] = []
     project = root.name
 
@@ -224,7 +301,7 @@ def evaluate_project(root: pathlib.Path, *, since_days: int = 90,
     checks.append(Check("org_binding", PASS, f"bound to {binding.label()}"))
 
     try:
-        eff = effective_policy(root, binding.raw)
+        eff = effective_policy(root, binding.raw, files=files)
     except PolicyError as e:
         return Report(root, project, binding.org, binding.team, [], checks, error=str(e))
 
@@ -244,21 +321,22 @@ def evaluate_project(root: pathlib.Path, *, since_days: int = 90,
                             "no org-scope layer — this project's policy is local, so there is no "
                             "common bar to compare it against", layer_labels))
 
-    # Read once and hand the same records to every check that measures runs, so the three
-    # of them cannot disagree about how many records there were or which could not be read.
-    records, in_window = _load_tasks(root, since_days, clock=clock)
+    # One set of records, handed to every check that measures runs, so the three of them
+    # cannot disagree about how many records there were or which could not be read. Read
+    # once by the caller, for the same reason: two reads could differ.
+    in_window = _in_window(records, since_days, clock=clock)
 
     checks.append(_check_roles(eff))
     checks.append(_check_permission_holders(eff))
     # Before the three checks it decides the applicability of, so it is also the FAIL the
     # rollup's "worst finding" column reaches first for a project whose runs never opened.
     checks.append(_check_runs_listing(records))
-    checks.append(_check_criteria_wired(root, eff, records, in_window))
-    checks.append(_check_approvals(root, eff, records, in_window))
-    checks.append(_check_waivers(root, eff))
+    checks.append(_check_criteria_wired(root, eff, records, in_window, files=files))
+    checks.append(_check_approvals(root, eff, records, in_window, files=files))
+    checks.append(_check_waivers(root, eff, files=files))
     checks.append(_check_force_rate(records, in_window, since_days))
-    checks.append(_check_ledger(root, eff))
-    checks.append(_check_legacy_access(root, eff))
+    checks.append(_check_ledger(root, eff, files=files))
+    checks.append(_check_legacy_access(root, eff, files=files))
 
     return Report(root, project, binding.org, eff.team or binding.team, layer_labels, checks,
                   tasks=records, runs_in_window=len(in_window))
@@ -308,7 +386,7 @@ def _check_permission_holders(eff: EffectivePolicy) -> Check:
 UNLISTED = "the runs directory could not be listed, so this check had no record to read"
 
 
-def _check_runs_listing(records: TaskRecords) -> Check:
+def _check_runs_listing(records: RunRecords) -> Check:
     """Whether this project's run evidence could be listed at all — a check, not a footnote.
 
     This is an observation, not an inference about the records. `read_all_tasks` returned a
@@ -350,8 +428,9 @@ def _check_runs_listing(records: TaskRecords) -> Check:
                  ["make .rig/runs readable, then re-run `rig-wb govern conformance`"])
 
 
-def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: TaskRecords,
-                          in_window: tuple[dict, ...]) -> Check:
+def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: RunRecords,
+                          in_window: tuple[dict, ...], *,
+                          files: FileStore = LOCAL_FILES) -> Check:
     """Policy-required criteria are injected into every new gate by
     `workbench.state.build_acceptance`. This check catches the runs that predate
     the requirement, or were built while a layer was missing — they are the ones
@@ -367,7 +446,7 @@ def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: Tas
     for task in tasks:
         if task.get("status") != "accepted":
             continue
-        acc = _acceptance(root, task.get("task_id", ""))
+        acc = _acceptance(root, task.get("task_id", ""), files=files)
         if acc is UNREADABLE_ACCEPTANCE:
             # Not an offender: a criterion cannot be shown missing from a record nobody read.
             # Not a skip either, which is what it was — the run then landed in the count of
@@ -400,8 +479,9 @@ def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: Tas
                  f"{len(tasks)} run(s) in the window are clean{shortfall}")
 
 
-def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: TaskRecords,
-                     in_window: tuple[dict, ...]) -> Check:
+def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecords,
+                     in_window: tuple[dict, ...], *,
+                     files: FileStore = LOCAL_FILES) -> Check:
     quorums = {t: r for t, r in eff.approvals.items() if (r.get("quorum") or 0) > 0}
     if not quorums:
         return Check("approvals", NA, "the policy requires no approvals")
@@ -416,7 +496,8 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: TaskReco
         if (rule.get("quorum") or 0) <= 0:
             continue
         checked += 1
-        status = evaluate(eff, task, load_approvals(root, task.get("task_id", "")))
+        status = evaluate(eff, task,
+                          load_approvals(root, task.get("task_id", ""), files=files))
         if not status.satisfied:
             offenders.append(f"{task.get('task_id')} ({task.get('task_type')}): "
                              f"{status.counted}/{status.required} approvals")
@@ -430,8 +511,9 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: TaskReco
                                     f"window satisfied it{shortfall}")
 
 
-def _check_waivers(root: pathlib.Path, eff: EffectivePolicy) -> Check:
-    waivers = waiver.load_waivers(root)
+def _check_waivers(root: pathlib.Path, eff: EffectivePolicy, *,
+                   files: FileStore = LOCAL_FILES) -> Check:
+    waivers = waiver.load_waivers(root, files=files)
     if not waivers:
         return Check("waivers", PASS, "no exceptions outstanding")
     active = [w for w in waivers if waiver.is_active(w)]
@@ -450,7 +532,7 @@ def _check_waivers(root: pathlib.Path, eff: EffectivePolicy) -> Check:
     return Check("waivers", PASS, f"no live waivers ({len(expired)} lapsed, kept for the record)")
 
 
-def _check_force_rate(records: TaskRecords, in_window: tuple[dict, ...],
+def _check_force_rate(records: RunRecords, in_window: tuple[dict, ...],
                       since_days: int) -> Check:
     """The single most informative number in the whole report: how often the gate
     was overridden rather than met.
@@ -482,8 +564,9 @@ def _check_force_rate(records: TaskRecords, in_window: tuple[dict, ...],
     return Check("force_rate", PASS, counted + shortfall)
 
 
-def _check_ledger(root: pathlib.Path, eff: EffectivePolicy) -> Check:
-    result = ledger.verify(root)
+def _check_ledger(root: pathlib.Path, eff: EffectivePolicy, *,
+                  files: FileStore = LOCAL_FILES) -> Check:
+    result = ledger.verify(root, files=files)
     if not result.entries:
         if eff.audit_chain_required:
             return Check("audit_ledger", WARN,
@@ -495,11 +578,16 @@ def _check_ledger(root: pathlib.Path, eff: EffectivePolicy) -> Check:
     return Check("audit_ledger", PASS, result.summary())
 
 
-def _check_legacy_access(root: pathlib.Path, eff: EffectivePolicy) -> Check:
+def _check_legacy_access(root: pathlib.Path, eff: EffectivePolicy, *,
+                         files: FileStore = LOCAL_FILES) -> Check:
     """`.rig/access.json` still works, and still only covers `accept`. Once a policy
-    exists, keeping both means two sources of truth for one question."""
+    exists, keeping both means two sources of truth for one question.
+
+    The file is never opened: whether it is there is the whole of what this check reads, and
+    `FileStore.is_file` is that question asked through the port instead of around it.
+    """
     p = root / ".rig" / "access.json"
-    if not p.is_file():
+    if not files.is_file(p):
         return Check("legacy_access", NA, "no legacy .rig/access.json")
     if eff.roles:
         return Check("legacy_access", WARN,
@@ -640,5 +728,16 @@ class Rollup:
         return "\n".join(lines)
 
 
-def rollup(roots: list[pathlib.Path], *, since_days: int = 90) -> Rollup:
-    return Rollup([evaluate_project(r, since_days=since_days) for r in roots])
+def rollup(roots: list[pathlib.Path], *, read_records: RunRecordSource,
+           since_days: int = 90, clock: Clock = SYSTEM_CLOCK,
+           files: FileStore = LOCAL_FILES) -> Rollup:
+    """Score several repositories against the same policy, one report each.
+
+    Takes a reader and not a list of records, because the roots are the argument: a caller
+    that had to read every project's runs before calling this would be writing the loop
+    twice. What it reads with is still the caller's decision (`RunRecordSource`), and it is
+    the only effect this function performs.
+    """
+    return Rollup([evaluate_project(r, records=read_records(runs_dir(r)),
+                                    since_days=since_days, clock=clock, files=files)
+                   for r in roots])

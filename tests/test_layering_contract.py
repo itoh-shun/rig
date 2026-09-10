@@ -112,8 +112,13 @@ PORT_NAMES = ("Presenter", "ProcessRunner", "FileStore", "Env", "GitRepo", "Cloc
 
 #: Pillars whose judgement layer is behind the six ports. Stage 3 adds one at a time,
 #: and a name only belongs here once the pillar actually passes the rule below.
-#: Empty today: §7 stage 3 is 未着手. `govern` is next.
-MIGRATED: tuple[str, ...] = ()
+#: `govern` is the first, and its last edge is worth recording: `conformance.py` imported
+#: `workbench.reporting.read_all_tasks` for the run records it scores. That import did not
+#: move to the shell and did not become a port method — it was inverted. `conformance`
+#: states what it needs of the records as a protocol of its own (`RunRecords`) and takes
+#: them as an argument, because it scores run evidence and does not go and get it; the
+#: shell (`govern/cli.py`) and `evidence.py` pass `read_all_tasks` in.
+MIGRATED: tuple[str, ...] = ("govern",)
 
 #: The shell of each pillar: modules that wire, not modules that judge. Closed list —
 #: everything else in a migrated pillar is judgement. Every entry states why, because
@@ -121,10 +126,12 @@ MIGRATED: tuple[str, ...] = ()
 SHELL_MODULES: dict[str, dict[str, str]] = {
     "govern": {
         f"{PACKAGE}.govern.cli": (
-            "The command shell: argparse wiring, the 68 prints that become Presenter "
+            "The command shell: argparse wiring, the 68 prints that are now Presenter "
             "calls, and the mapping from a verdict to an exit code. It is where the "
-            "judgement modules get called from, so it is allowed to know about them "
-            "and about gitroot; holding it to the rule would forbid the wiring."
+            "judgement modules get called from, so it is allowed to know about them, "
+            "about gitroot, and about workbench.reporting — conformance takes the run "
+            "records it scores as an argument, and this is the module that reads them "
+            "and hands them over. Holding it to the rule would forbid the wiring."
         ),
     },
 }

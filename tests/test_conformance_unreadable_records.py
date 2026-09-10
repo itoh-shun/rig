@@ -25,14 +25,15 @@ import pathlib
 import pytest
 
 from rig_workbench.govern import conformance as conf
+from rig_workbench.workbench.reporting import read_all_tasks
 
 WINDOW = 90
 
-#: `_load_tasks` drops a record whose `updated_at` falls before `now - since_days`, so a
+#: `_in_window` drops a record whose `updated_at` falls before `now - since_days`, so a
 #: literal date in a default record is not a scenario — it is an expiry. The
 #: `2026-08-24` stamps these replace would have left the 90-day window on 2026-11-22 and
 #: taken ten tests below with them, the same rot that cost `test_eval_runner` (#584) and
-#: `test_eval_evidence_verification` theirs. Written in the local zone `_load_tasks`
+#: `test_eval_evidence_verification` theirs. Written in the local zone `_in_window`
 #: builds its cutoff in, because that comparison is lexicographic on the ISO text and
 #: only orders correctly when the offsets match. A record deliberately *outside* the
 #: window still says so in its own call (`test_..._never_read_cannot_be_shown_outside`
@@ -41,6 +42,23 @@ WINDOW = 90
 _NOW = datetime.datetime.now().astimezone()
 RECENTLY_CREATED = (_NOW - datetime.timedelta(hours=2)).isoformat(timespec="seconds")
 RECENTLY_UPDATED = (_NOW - datetime.timedelta(hours=1)).isoformat(timespec="seconds")
+
+
+def evaluate_project(root, **kw):
+    """`conf.evaluate_project` with the run records wired in, the way the shell wires them.
+
+    `conformance` scores run records and no longer reads them (`conformance.RunRecords`
+    says why), so every caller supplies the reader: `govern/cli.py`, `evidence.py`, and
+    this file. It is the same function on the same path the module used to call for itself,
+    so the cases this file is about — a record that cannot be parsed, a runs directory that
+    cannot be listed at all — still arrive here exactly as they did.
+    """
+    return conf.evaluate_project(root, records=read_all_tasks(conf.runs_dir(root)), **kw)
+
+
+def rollup(roots, **kw):
+    """`conf.rollup` with the same reader, which is what it now asks its caller for."""
+    return conf.rollup(roots, read_records=read_all_tasks, **kw)
 
 
 def govern_repo(tmp_path: pathlib.Path, **policy_overrides) -> pathlib.Path:
@@ -84,6 +102,23 @@ def check(report, check_id):
     return next(c for c in report.checks if c.id == check_id)
 
 
+# ── the shape the pillars agree on ───────────────────────────────────────────
+def test_the_records_conformance_scores_are_the_records_workbench_reads(tmp_path):
+    """The seam that replaced the import, asserted instead of assumed.
+
+    `conformance` states what it needs of the run evidence as a protocol (`RunRecords`)
+    rather than importing `workbench.reporting.TaskRecords`, which is the import the
+    layering contract forbids a migrated pillar (`tests/test_layering_contract.py`). Nothing
+    in the tree type-checks that inversion, so a field renamed on either side would separate
+    the two shapes silently and only show up as an AttributeError inside a conformance run.
+    This is what notices.
+    """
+    repo = govern_repo(tmp_path)
+    add_task(repo, "t1")
+
+    assert isinstance(read_all_tasks(conf.runs_dir(repo)), conf.RunRecords)
+
+
 # ── the rate carries the shortfall ───────────────────────────────────────────
 @pytest.mark.parametrize("check_id", ["required_criteria", "approvals", "force_rate"])
 def test_every_check_that_states_a_run_count_names_what_it_could_not_read(tmp_path, check_id):
@@ -97,7 +132,7 @@ def test_every_check_that_states_a_run_count_names_what_it_could_not_read(tmp_pa
     add_task(repo, "t1", forced=True)
     add_unreadable(repo)
 
-    report = conf.evaluate_project(repo, since_days=WINDOW)
+    report = evaluate_project(repo, since_days=WINDOW)
 
     assert "1 of 2 records could not be read: broken" in check(report, check_id).detail
 
@@ -113,7 +148,7 @@ def test_the_force_rate_is_stated_over_the_denominator_it_actually_had(tmp_path)
     add_task(repo, "t1", forced=True)
     add_unreadable(repo)
 
-    detail = check(conf.evaluate_project(repo, since_days=WINDOW), "force_rate").detail
+    detail = check(evaluate_project(repo, since_days=WINDOW), "force_rate").detail
 
     assert "1/1 accepted runs were forced (100%)" in detail
     assert "1 of 2 records could not be read: broken" in detail
@@ -125,7 +160,7 @@ def test_no_accepted_runs_is_not_reported_as_a_clean_window(tmp_path):
     repo = govern_repo(tmp_path)
     add_unreadable(repo)
 
-    detail = check(conf.evaluate_project(repo, since_days=WINDOW), "force_rate").detail
+    detail = check(evaluate_project(repo, since_days=WINDOW), "force_rate").detail
 
     assert detail.startswith("no accepted runs in the last 90 days")
     assert "1 of 1 records could not be read: broken" in detail
@@ -145,7 +180,7 @@ def test_an_unreadable_record_is_not_filtered_out_by_the_window(tmp_path):
              updated_at="2020-01-01T00:00:00+09:00")
     add_unreadable(repo)
 
-    report = conf.evaluate_project(repo, since_days=1)
+    report = evaluate_project(repo, since_days=1)
 
     assert report.runs_in_window == 0                     # the old run is outside the window
     assert "1 of 2 records could not be read: broken" in report.unreadable_note
@@ -159,7 +194,7 @@ def test_a_directory_that_cannot_be_listed_is_not_a_clean_report(tmp_path):
     repo = govern_repo(tmp_path)
     (repo / ".rig" / "runs").write_text("not a directory", encoding="utf-8")
 
-    report = conf.evaluate_project(repo, since_days=WINDOW)
+    report = evaluate_project(repo, since_days=WINDOW)
 
     assert "the runs directory could not be listed" in report.unreadable_note
     assert report.to_dict()["task_records"]["collection_error"].startswith("NotADirectoryError")
@@ -171,7 +206,7 @@ def test_the_json_carries_the_count_a_printed_note_cannot_reach(tmp_path):
     add_task(repo, "t1")
     add_unreadable(repo)
 
-    payload = conf.evaluate_project(repo, since_days=WINDOW).to_dict()
+    payload = evaluate_project(repo, since_days=WINDOW).to_dict()
 
     assert payload["task_records"] == {"read": 1, "in_window": 1, "unreadable": ["broken"],
                                        "collection_error": None}
@@ -180,7 +215,7 @@ def test_the_json_carries_the_count_a_printed_note_cannot_reach(tmp_path):
 def test_a_report_that_never_read_the_runs_says_so_instead_of_zero(tmp_path):
     """An unbound repository stops before any run is read. Reporting `unreadable: []` there
     would be a claim about a directory this report never opened."""
-    payload = conf.evaluate_project(tmp_path, since_days=WINDOW).to_dict()
+    payload = evaluate_project(tmp_path, since_days=WINDOW).to_dict()
 
     assert payload["task_records"] is None
 
@@ -192,7 +227,7 @@ def test_a_repository_with_no_unreadable_records_reads_as_before(tmp_path):
     repo = govern_repo(tmp_path)
     add_task(repo, "t1", forced=False)
 
-    report = conf.evaluate_project(repo, since_days=WINDOW)
+    report = evaluate_project(repo, since_days=WINDOW)
 
     assert report.unreadable_note == ""
     assert check(report, "force_rate").detail == "0/1 accepted runs were forced (0%)"
@@ -215,7 +250,7 @@ def test_the_rollup_puts_the_count_in_the_cell_next_to_the_rate(tmp_path):
     add_task(lossy, "t1")
     add_unreadable(lossy)
 
-    result = conf.rollup([clean, lossy], since_days=WINDOW)
+    result = rollup([clean, lossy], since_days=WINDOW)
     markdown = result.markdown()
 
     assert "1 task record(s) could not be read (lossy/broken)" in markdown
@@ -232,7 +267,7 @@ def test_the_rollup_of_readable_projects_adds_no_clause(tmp_path):
     clean = govern_repo(tmp_path / "clean")
     add_task(clean, "t1")
 
-    result = conf.rollup([clean], since_days=WINDOW)
+    result = rollup([clean], since_days=WINDOW)
 
     assert "could not be read" not in result.markdown()
     assert "unread" not in result.markdown()
@@ -279,7 +314,7 @@ def test_a_project_whose_runs_could_not_be_listed_is_not_a_silent_pass_in_the_ro
     lossy = govern_repo(tmp_path / "lossy")
     unlistable_runs(lossy)
 
-    result = conf.rollup([clean, lossy], since_days=WINDOW)
+    result = rollup([clean, lossy], since_days=WINDOW)
     markdown = result.markdown()
     payload = result.to_dict()
 
@@ -303,7 +338,7 @@ def test_the_two_shortfalls_are_counted_apart_in_the_same_rollup(tmp_path):
     dark = govern_repo(tmp_path / "dark")
     unlistable_runs(dark)
 
-    markdown = conf.rollup([lossy, dark], since_days=WINDOW).markdown()
+    markdown = rollup([lossy, dark], since_days=WINDOW).markdown()
 
     assert "1 task record(s) could not be read (lossy/broken)" in markdown
     assert "1 project(s) whose runs directory could not be listed (dark)" in markdown
@@ -314,7 +349,7 @@ def test_the_rollup_of_listable_projects_adds_no_unlisted_clause(tmp_path):
     clean = govern_repo(tmp_path / "clean")
     add_task(clean, "t1")
 
-    result = conf.rollup([clean], since_days=WINDOW)
+    result = rollup([clean], since_days=WINDOW)
 
     assert "unlisted" not in result.markdown()
     assert "could not be listed" not in result.markdown()
@@ -385,7 +420,7 @@ def test_an_accepted_run_whose_gate_record_cannot_be_read_is_not_counted_clean(t
     add_task(repo, "t1")
     (repo / ".rig" / "runs" / "t1" / "acceptance.json").write_text("{not json", encoding="utf-8")
 
-    report = conf.evaluate_project(repo, since_days=WINDOW)
+    report = evaluate_project(repo, since_days=WINDOW)
 
     assert report.unreadable_note == ""          # the task record itself read fine
     assert ("1 accepted run(s) had an acceptance record that could not be read, so they were "
@@ -398,7 +433,7 @@ def test_a_run_with_a_readable_gate_record_says_nothing_about_unscanned_runs(tmp
     repo = govern_repo(tmp_path)
     add_task(repo, "t1")
 
-    detail = check(conf.evaluate_project(repo, since_days=WINDOW), "required_criteria").detail
+    detail = check(evaluate_project(repo, since_days=WINDOW), "required_criteria").detail
 
     assert detail == ("1 policy-required criterion/criteria wired into the gate; "
                       "1 run(s) in the window are clean")
@@ -411,6 +446,6 @@ def test_a_run_with_no_gate_record_at_all_is_unchanged(tmp_path):
     add_task(repo, "t1")
     (repo / ".rig" / "runs" / "t1" / "acceptance.json").unlink()
 
-    detail = check(conf.evaluate_project(repo, since_days=WINDOW), "required_criteria").detail
+    detail = check(evaluate_project(repo, since_days=WINDOW), "required_criteria").detail
 
     assert "could not be read" not in detail

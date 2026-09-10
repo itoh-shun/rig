@@ -158,12 +158,13 @@ extend-select = [
 # その行が消える —— その削除が移行の完了そのものであり、横の数字がその代金である。
 # **追加してはならない。** ここに新しい経路が増えるということは、ポートの外に新しい効果
 # 地点を書いたということで、それは第 3 段が止めようとしているもの。
-# 並び順は移行順: ports の docstring が call site を写し取った govern が先頭、続いて
-# 残りの柱を小さい順、最後に root 直下のモジュールと scripts/。
+# 並び順は移行順: 残りの柱を小さい順、最後に root 直下のモジュールと scripts/。
+# 先頭にあった `rig_workbench/govern/**`（68 print, 12 banned）はもう無い。第 3 段で
+# 最初に移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである
+# （tests/test_layering_contract.py の MIGRATED と対になる）。
 # 件数は d84a4c9 で ruff 0.15.8 が報告した実測値（推定ではない）。T201 は
 # `print(..., file=x)`（x が sys.stdout/sys.stderr でないもの）を数えないため、
 # tests/test_architecture_inventory.py が AST で凍結した数よりわずかに小さく出る。
-"rig_workbench/govern/**" = ["T201", "TID251"]       # 68 print, 12 banned
 "rig_workbench/validation/**" = ["T201", "TID251"]   # 13 print, 2 banned
 "rig_workbench/eval/**" = ["T201", "TID251"]         # 16 print, 31 banned
 "rig_workbench/packs/**" = ["T201", "TID251"]        # 54 print, 18 banned

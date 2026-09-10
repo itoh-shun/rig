@@ -11,6 +11,23 @@ import json
 
 from rig_workbench.govern import conformance as conf
 from rig_workbench.govern import ledger
+from rig_workbench.workbench.reporting import read_all_tasks
+
+
+def evaluate_project(root, **kw):
+    """`conf.evaluate_project` with the run records wired in, the way the shell wires them.
+
+    `conformance` scores run records and no longer reads them (`conformance.RunRecords`
+    says why), so every caller supplies the reader: `govern/cli.py`, `evidence.py`, and
+    this file. It is the same function on the same path the module used to call for
+    itself, so what these tests exercise is unchanged.
+    """
+    return conf.evaluate_project(root, records=read_all_tasks(conf.runs_dir(root)), **kw)
+
+
+def rollup(roots, **kw):
+    """`conf.rollup` with the same reader, which is what it now asks its caller for."""
+    return conf.rollup(roots, read_records=read_all_tasks, **kw)
 
 
 def seed(tmp_path, n=3, key=True):
@@ -181,13 +198,13 @@ def check(report, check_id):
 
 
 def test_an_unbound_repository_fails_the_binding_check(tmp_path):
-    report = conf.evaluate_project(tmp_path)
+    report = evaluate_project(tmp_path)
     assert report.verdict == conf.FAIL
     assert check(report, "org_binding").verdict == conf.FAIL
 
 
 def test_a_bound_repository_with_a_policy_passes_the_structural_checks(tmp_path):
-    report = conf.evaluate_project(govern_repo(tmp_path))
+    report = evaluate_project(govern_repo(tmp_path))
     assert check(report, "org_binding").verdict == conf.PASS
     assert check(report, "policy_layers").verdict == conf.PASS
     assert check(report, "rbac_roles").verdict == conf.PASS
@@ -195,21 +212,21 @@ def test_a_bound_repository_with_a_policy_passes_the_structural_checks(tmp_path)
 
 def test_a_project_local_policy_with_no_org_layer_is_flagged(tmp_path):
     repo = govern_repo(tmp_path, scope="project")
-    report = conf.evaluate_project(repo)
+    report = evaluate_project(repo)
     assert check(report, "policy_layers").verdict == conf.FAIL
     assert "no common bar" in check(report, "policy_layers").detail
 
 
 def test_roles_with_no_members_fail(tmp_path):
     repo = govern_repo(tmp_path, members={})
-    assert check(conf.evaluate_project(repo), "rbac_roles").verdict == conf.FAIL
+    assert check(evaluate_project(repo), "rbac_roles").verdict == conf.FAIL
 
 
 def test_a_forced_accept_shows_up_in_the_force_rate(tmp_path):
     repo = govern_repo(tmp_path)
     add_task(repo, "t1")
     add_task(repo, "t2", forced=True)
-    result = check(conf.evaluate_project(repo), "force_rate")
+    result = check(evaluate_project(repo), "force_rate")
     assert result.verdict == conf.FAIL       # 50% — well past the 25% line
     assert "1/2" in result.detail
 
@@ -217,7 +234,7 @@ def test_a_forced_accept_shows_up_in_the_force_rate(tmp_path):
 def test_a_clean_history_passes_the_force_rate(tmp_path):
     repo = govern_repo(tmp_path)
     add_task(repo, "t1")
-    assert check(conf.evaluate_project(repo), "force_rate").verdict == conf.PASS
+    assert check(evaluate_project(repo), "force_rate").verdict == conf.PASS
 
 
 def test_an_accepted_run_that_skipped_a_required_criterion_is_caught(tmp_path):
@@ -226,7 +243,7 @@ def test_an_accepted_run_that_skipped_a_required_criterion_is_caught(tmp_path):
     (d / "acceptance.json").write_text(json.dumps(
         {"task_id": "t1", "presets": ["standard", "feature"],
          "checks": [{"name": "no_secret_leak", "status": "passed"}]}), encoding="utf-8")
-    result = check(conf.evaluate_project(repo), "required_criteria")
+    result = check(evaluate_project(repo), "required_criteria")
     assert result.verdict == conf.FAIL
     assert "threat_model_reviewed" in result.evidence[0]
 
@@ -237,13 +254,13 @@ def test_an_accepted_run_that_carried_the_criterion_passes(tmp_path):
     (d / "acceptance.json").write_text(json.dumps(
         {"task_id": "t1", "presets": ["standard", "feature"],
          "checks": [{"name": "threat_model_reviewed", "status": "passed"}]}), encoding="utf-8")
-    assert check(conf.evaluate_project(repo), "required_criteria").verdict == conf.PASS
+    assert check(evaluate_project(repo), "required_criteria").verdict == conf.PASS
 
 
 def test_an_accepted_run_without_its_required_approvals_is_caught(tmp_path):
     repo = govern_repo(tmp_path, approvals={"feature": {"quorum": 2}})
     add_task(repo, "t1")
-    result = check(conf.evaluate_project(repo), "approvals")
+    result = check(evaluate_project(repo), "approvals")
     assert result.verdict == conf.FAIL and "0/2" in result.evidence[0]
 
 
@@ -253,7 +270,7 @@ def test_a_broken_ledger_fails_conformance(tmp_path):
     entries = ledger.read_ledger(repo)
     entries[0]["actor"] = "mallory"
     rewrite(repo, entries)
-    assert check(conf.evaluate_project(repo), "audit_ledger").verdict == conf.FAIL
+    assert check(evaluate_project(repo), "audit_ledger").verdict == conf.FAIL
 
 
 def test_a_live_waiver_is_surfaced_as_a_warning(tmp_path):
@@ -265,14 +282,14 @@ def test_a_live_waiver_is_surfaced_as_a_warning(tmp_path):
     waiver.grant(repo, eff, waiver_id="w1", actor="alice", criteria=["tests_pass_or_explained"],
                  reason="flaky runner",
                  expires=(datetime.date.today() + datetime.timedelta(days=5)).isoformat())
-    result = check(conf.evaluate_project(repo), "waivers")
+    result = check(evaluate_project(repo), "waivers")
     assert result.verdict == conf.WARN and "w1" in result.evidence[0]
 
 
 def test_legacy_access_json_is_flagged_as_a_second_source_of_truth(tmp_path):
     repo = govern_repo(tmp_path)
     (repo / ".rig" / "access.json").write_text(json.dumps({"default": ["alice"]}), encoding="utf-8")
-    assert check(conf.evaluate_project(repo), "legacy_access").verdict == conf.WARN
+    assert check(evaluate_project(repo), "legacy_access").verdict == conf.WARN
 
 
 # ── rollup: the team A / team B / team C view ────────────────────────────────
@@ -286,7 +303,7 @@ def test_rollup_groups_projects_by_team(tmp_path):
         binding["team"] = team
         (repo / ".rig" / "org.json").write_text(json.dumps(binding), encoding="utf-8")
         roots.append(repo)
-    result = conf.rollup(roots)
+    result = rollup(roots)
     assert sorted(result.teams) == ["team-a", "team-b"]
     assert len(result.teams["team-a"]) == 2
     md = result.markdown()
@@ -298,7 +315,7 @@ def test_rollup_json_carries_per_team_scores(tmp_path):
     repo = tmp_path / "svc"
     repo.mkdir()
     govern_repo(repo)
-    payload = conf.rollup([repo]).to_dict()
+    payload = rollup([repo]).to_dict()
     assert payload["projects"] == 1
     assert "team-a" in payload["teams"]
     assert payload["teams"]["team-a"]["projects"] == 1
@@ -309,7 +326,7 @@ def test_a_project_whose_policy_does_not_load_scores_zero(tmp_path):
     report a broken project as 100% — the most misleading number here."""
     repo = govern_repo(tmp_path)
     (repo / ".rig" / "policy" / "org.json").write_text("{ broken", encoding="utf-8")
-    report = conf.evaluate_project(repo)
+    report = evaluate_project(repo)
     assert report.verdict == conf.FAIL
     assert report.score == 0.0
     assert report.findings == ["policy_error"]
@@ -325,7 +342,7 @@ def test_a_loosening_layer_shows_up_in_the_team_column(tmp_path):
     binding = json.loads((repo / ".rig" / "org.json").read_text(encoding="utf-8"))
     binding["policy_layers"].append(".rig/policy/team.json")
     (repo / ".rig" / "org.json").write_text(json.dumps(binding), encoding="utf-8")
-    result = conf.rollup([repo])
+    result = rollup([repo])
     assert result.to_dict()["teams"]["team-a"]["findings"] == ["policy_error"]
     assert "policy_error" in result.markdown()
     assert result.score == 0.0
@@ -337,6 +354,6 @@ def test_an_unbound_project_drags_the_rollup_down(tmp_path):
     govern_repo(good)
     bad = tmp_path / "bad"
     bad.mkdir()
-    result = conf.rollup([good, bad])
+    result = rollup([good, bad])
     assert any(r.verdict == conf.FAIL for r in result.reports)
     assert result.score < 1.0

@@ -33,12 +33,12 @@ import datetime
 import enum
 import json
 import pathlib
-import subprocess
 import sys
 
 from rig_workbench import gitroot
-from rig_workbench.ports import Presenter
-from rig_workbench.ports.local import ConsolePresenter
+from rig_workbench.ports import Presenter, ProcessRunner
+from rig_workbench.ports.local import SUBPROCESS, ConsolePresenter
+from rig_workbench.workbench.reporting import read_all_tasks
 
 from . import conformance as conf
 from . import ledger, waiver
@@ -113,11 +113,20 @@ def _repo_root() -> pathlib.Path:
     return gitroot.main_worktree() or pathlib.Path.cwd()
 
 
-def _head(root: pathlib.Path, task: dict) -> str | None:
-    """The task branch tip, used to bind approvals to the code they approved."""
+def _head(root: pathlib.Path, task: dict, *, runner: ProcessRunner = SUBPROCESS) -> str | None:
+    """The task branch tip, used to bind approvals to the code they approved.
+
+    `ProcessRunner` and deliberately not `GitRepo.head`, which asks the same question. The
+    git port routes through `gitroot._git`, which strips `GIT_DIR`/`GIT_WORK_TREE` first;
+    this call inherits them today. Stripping them is a real fix and the `GitCli` docstring
+    says so, but it changes which commit an approval is bound to when a routing variable is
+    set — a behaviour change, and it belongs in the commit that makes it, with its own test,
+    not inside a port swap. `ProcessRunner.run` is that swap exactly: same argv, same cwd,
+    same captured text, same `CompletedProcess`.
+    """
     wt = task.get("worktree_path")
     cwd = wt if wt and pathlib.Path(wt).is_dir() else str(root)
-    proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True)
+    proc = runner.run(["git", "rev-parse", "HEAD"], cwd=cwd)
     return proc.stdout.strip() or None if proc.returncode == 0 else None
 
 
@@ -588,7 +597,11 @@ def cmd_audit(args: argparse.Namespace, out: Presenter) -> Verdict:
 # ── conformance / rollup ─────────────────────────────────────────────────────
 def cmd_conformance(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = pathlib.Path(args.path).resolve() if args.path else _repo_root()
-    report = conf.evaluate_project(root, since_days=args.since_days)
+    # The shell reads the run records and hands them over: `conformance` scores evidence,
+    # it does not go and get it (`conformance.RunRecords`), and wiring the two together is
+    # what this module is for.
+    report = conf.evaluate_project(root, records=read_all_tasks(conf.runs_dir(root)),
+                                   since_days=args.since_days)
     if args.json:
         out.out(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         return Verdict.OK if report.verdict != conf.FAIL else Verdict.NONCONFORMANT
@@ -626,7 +639,7 @@ def cmd_rollup(args: argparse.Namespace, out: Presenter) -> Verdict:
         roots.append(p)
     if not roots:
         return _err(out, "no projects to roll up (pass repository paths, or --scan a directory of them)")
-    result = conf.rollup(roots, since_days=args.since_days)
+    result = conf.rollup(roots, read_records=read_all_tasks, since_days=args.since_days)
     if args.json:
         out.out(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:

@@ -259,7 +259,7 @@ class Clock(Protocol):
 
     Shaped by six sites that all read the clock through the local offset, never naive and never
     UTC: `ledger._now`, `approval.make_decision`, `approval._age_hours`, `waiver._today` with
-    `grant`/`revoke`, `govern/cli` computing an expiry date, and `conformance._load_tasks`.
+    `grant`/`revoke`, `govern/cli` computing an expiry date, and `conformance._in_window`.
 
     `stamp` is on the clock rather than left to callers because of what `conformance` does with
     it: `now() - timedelta(days=n)`, rendered to ISO seconds, then compared with `>=` against

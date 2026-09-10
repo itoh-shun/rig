@@ -133,13 +133,19 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 3,
         "clock": 4,
     },
+    # The first pillar behind the ports (§7 stage 3). Five kinds are zero because every
+    # site moved onto a port, and the sixth is not what it looks like: four of the six
+    # `write_text` are `govern/cli.py`'s own `pathlib` writes — the shell writing the files
+    # `init`, `migrate` and `--out` create — and the other two are `files.write_text(...)`,
+    # port calls this walk counts by attribute name because it never resolves a receiver.
+    # Lowering it to 2 would therefore be a claim about the shell nobody has made yet.
     "govern": {
-        "print": 68,
-        "subprocess": 2,
-        "open_write": 1,
+        "print": 0,
+        "subprocess": 0,
+        "open_write": 0,
         "write_text": 6,
-        "env": 3,
-        "clock": 7,
+        "env": 0,
+        "clock": 0,
     },
     "orchestrate": {
         "print": 212,

@@ -301,7 +301,7 @@ def test_stamp_is_exactly_what_the_govern_sites_write():
 
 
 def test_stamp_carries_the_offset_the_conformance_window_compares_on(tmp_path):
-    """`conformance._load_tasks` compares ISO *text* with `>=`, so the offsets must match."""
+    """`conformance._in_window` compares ISO *text* with `>=`, so the offsets must match."""
     cutoff = SYSTEM_CLOCK.stamp(SYSTEM_CLOCK.now() - datetime.timedelta(days=90))
     recent = ledger.append(tmp_path, "noop", actor="a")["ts"]
     stale = SYSTEM_CLOCK.stamp(SYSTEM_CLOCK.now() - datetime.timedelta(days=365))
