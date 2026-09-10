@@ -21,9 +21,9 @@ from . import conformance as conf
 from . import ledger, waiver
 from .approval import evaluate, load_approvals, record_decision
 from .identity import ORG_SCHEMA, current_actor, load_org_binding, org_binding_path
-from .policy import (PERMISSIONS, SCHEMA, EffectivePolicy, PolicyError,
-                     describe_layers, effective_policy, load_policy_document,
-                     resolve_layer_paths)
+from .policy import (EFFECTIVE_SCHEMA, PERMISSIONS, SCHEMA, EffectivePolicy,
+                     PolicyError, describe_layers, effective_policy,
+                     load_policy_document, resolve_layer_paths)
 from .rbac import can, explain, roles_of
 
 EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT = 0, 1, 3
@@ -313,7 +313,17 @@ def cmd_policy(args: argparse.Namespace) -> int:
 
 
 def _policy_dict(eff: EffectivePolicy) -> dict:
+    """The effective policy as `govern policy show --json` prints it.
+
+    `schema` is first and is the only field a consumer is asked to branch on. It is
+    `rig.effective-policy/v1`, not the `rig.policy/v2` of the layers this was folded
+    from: the layers are on `layers[].path` for a reader that wants to follow them
+    back, and calling the fold by the layer's name would invite a reader to validate
+    it as one. Everything below `schema` is exactly what this printed before it had a
+    name — the id was the only thing missing.
+    """
     return {
+        "schema": EFFECTIVE_SCHEMA,
         "active": eff.active,
         "org": eff.org,
         "team": eff.team,

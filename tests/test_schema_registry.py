@@ -88,6 +88,7 @@ FROZEN_SCHEMA_IDS = {
     "rig.change-graph/v1",
     "rig.compose-options/v1",
     "rig.development-cycles/v1",
+    "rig.effective-policy/v1",
     "rig.expected-outcome/v1",
     "rig.field-study/v1",
     "rig.fleet/v1",

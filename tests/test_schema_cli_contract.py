@@ -713,24 +713,31 @@ def test_group3_govern_init_writes_a_starter_rig_policy_v2_layer_that_is_the_flo
     assert payload["scope"] == "org"
 
 
-def test_group3_govern_policy_show_json_resolves_the_layers_it_read_out_of_rig_policy_v2(
+def test_group3_govern_policy_show_json_emits_rig_effective_policy_v1_over_its_rig_policy_v2_layers(
         rig_git_repo, rig_cli, rig_cli_json):
-    """A deliberate gap, recorded rather than papered over: `govern policy show --json`
-    prints the *effective* policy — layers merged, roles flattened — and carries no `schema`
-    field of its own. `jsonio.LEGACY` lists "govern" among the outputs that predate the
-    envelope, so this is inventory and not an accident. What is pinnable today is that the
-    view still names the `rig.policy/v2` document it was resolved from, which is what a
-    reader follows to find the id. If a rewrite gives this output an envelope, that is a new
-    public name and this test is where it gets written down."""
+    """`govern policy show --json` prints the *effective* policy — every layer folded,
+    roles flattened, quorums merged — and it is its own document with its own name.
+
+    The id is deliberately not the `rig.policy/v2` of the layers underneath it. That id
+    belongs to one stored, authored, publishable layer; this is a derived view with no
+    `scope` and no single `id`, and a reader that saw the layer's name on it would be
+    entitled to validate it as a layer. So both ends are pinned here: the composed id on
+    what the command prints, and the layer id on the file `layers[].path` points at, which
+    is the trail a reader follows from one to the other.
+
+    `jsonio.LEGACY` still lists "govern": this document names itself without being wrapped
+    in `{schema, status, data}`, so every key a consumer already reads is where it was.
+    Moving it under `data` would be the second, breaking half — and a separate decision."""
     assert rig_cli("govern", "init", "--org", "acme", "--team", "team-a",
                    cwd=rig_git_repo).returncode == 0
     payload = rig_cli_json("govern", "policy", "show", "--json", cwd=rig_git_repo,
                            expect_returncode=0)
-    assert "schema" not in payload, (
-        "`govern policy show --json` has grown a schema id. That is a new public name a "
-        "consumer may now dispatch on — add it to test_schema_registry.py's frozen set and "
-        "pin its shape here, rather than deleting this assertion.")
-    assert {"active", "org", "team", "layers", "roles", "members"} <= set(payload)
+    assert_document(payload, schema="rig.effective-policy/v1",
+                    required={"schema", "active", "org", "team", "layers", "require_criteria",
+                              "roles", "members", "sealed_roles", "approvals", "waivers",
+                              "audit_chain_required"},
+                    what="`govern policy show --json`")
+    assert payload["active"] is True
     [layer] = payload["layers"]
     assert layer["scope"] == "org"
     assert read_json_file(layer["path"], what="the layer `govern policy show` names"

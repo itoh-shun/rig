@@ -47,6 +47,15 @@ PERMISSIONS: tuple[str, ...] = (
 SCOPES: tuple[str, ...] = ("org", "team", "project")
 SCHEMA = "rig.policy/v2"
 
+#: The id of the *composed* view — what `govern policy show --json` prints once every
+#: layer has been folded. Deliberately not `rig.policy/v2`: that id names one stored
+#: layer, a document somebody authored and `load_policy_document` validates key by key.
+#: This one names a derived result — no `scope`, no single `id`, roles flattened,
+#: quorums merged — and a reader handed it cannot treat it as a layer (it is not
+#: publishable) any more than a reader handed a layer can treat it as the effective
+#: policy (it is not what applies here). Two shapes, two names.
+EFFECTIVE_SCHEMA = "rig.effective-policy/v1"
+
 _SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ROLE_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
