@@ -4,18 +4,41 @@ Verb groups map one-to-one onto the concepts: `policy`, `whoami`/`can`,
 `approve`, `waiver`, `audit`, `conformance`, `rollup`. Read-only commands print
 and exit 0; a failed conformance run exits 3 so CI can gate on it without
 parsing output; a refusal exits 1.
+
+This module is `govern`'s **shell** (`tests/test_layering_contract.py`'s `SHELL_MODULES`
+names it and says why), so it is allowed to wire and to present. Stage 3 of
+`docs/v3-architecture-design-brief.ja.md` §3 asks two things of it, and both are visible
+in the shapes below.
+
+**Words leave through the `Presenter` port.** No command calls `print`. Each takes an
+`out: Presenter` and the adapter is built once, at the process boundary in `main()`, then
+handed down — a module-level instance reached for from inside each command would be the
+same global under a different name, and the point of the port is that a caller (a test, an
+embedding harness, the day rig grows a `--quiet`) can hand in a different one. Which
+stream a line goes to is unchanged and stays a property of the call: `out.out` is stdout,
+`out.err` is stderr, and `[WARN]` keeps going to stdout because that is where it went
+(the `Presenter` docstring explains why the port has no `warn()`).
+
+**Judging and reporting the judgement are separate.** A command returns a `Verdict` —
+what it decided — and `cmd_govern` turns that into an exit status through `_STATUS`,
+which is the one place in this file that knows a number. The two used to be the same
+statement, so the mapping was restated at fifteen `return` sites and could only be read by
+reading all of them.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import enum
 import json
 import pathlib
 import subprocess
 import sys
 
 from rig_workbench import gitroot
+from rig_workbench.ports import Presenter
+from rig_workbench.ports.local import ConsolePresenter
 
 from . import conformance as conf
 from . import ledger, waiver
@@ -29,9 +52,46 @@ from .rbac import can, explain, roles_of
 EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT = 0, 1, 3
 
 
-def _err(msg: str) -> int:
-    print(f"[ERROR] {msg}", file=sys.stderr)
-    return EXIT_ERROR
+class Verdict(enum.Enum):
+    """What a govern command decided, before anyone turns it into a number.
+
+    Three answers, and they are the three `govern` has always had: it ran and the answer
+    is yes, it could not produce an answer at all, or it judged and the answer is no.
+    Separating them from the exit codes is what lets a command say what it found without
+    also deciding how a shell hears it — the mapping lives once, in `_STATUS`.
+    """
+
+    OK = "ok"
+    ERROR = "error"
+    NONCONFORMANT = "nonconformant"
+
+
+#: Verdict → exit status. The whole of govern's contract with a caller that cannot read
+#: prose, in one table.
+#:
+#: **These numbers are not `rig_workbench.exitcodes`', and the difference is deliberate.**
+#: There, `1` is `REJECTED` — "rig judged and the answer is no" — and `2` is `ERROR`.
+#: Here `1` is the error and `3` is the judgement. `govern can` has returned 0 for allowed
+#: and 3 for denied since it existed, `tests/test_exit_code_surface.py` freezes both through
+#: a real process, and CI steps are written against them, so the divergence is a
+#: caller-visible contract rather than a slip. It is recorded as a known divergence and left
+#: alone here; the restructuring only makes it legible, in one table instead of fifteen
+#: `return` statements. Reconciling it is its own decision, with its own deprecation.
+_STATUS: dict[Verdict, int] = {
+    Verdict.OK: EXIT_OK,
+    Verdict.ERROR: EXIT_ERROR,
+    Verdict.NONCONFORMANT: EXIT_NONCONFORMANT,
+}
+
+
+def status_for(verdict: Verdict) -> int:
+    """The exit status a verdict is reported as."""
+    return _STATUS[verdict]
+
+
+def _err(out: Presenter, msg: str) -> Verdict:
+    out.err(f"[ERROR] {msg}")
+    return Verdict.ERROR
 
 
 def _repo_root() -> pathlib.Path:
@@ -79,11 +139,11 @@ def _load_task(root: pathlib.Path, task_id: str | None) -> tuple[str, dict] | No
         return None
 
 
-def _effective(root: pathlib.Path) -> EffectivePolicy | int:
+def _effective(root: pathlib.Path, out: Presenter) -> EffectivePolicy | Verdict:
     try:
         return effective_policy(root)
     except PolicyError as e:
-        return _err(str(e))
+        return _err(out, str(e))
 
 
 # ── init / migrate ───────────────────────────────────────────────────────────
@@ -96,18 +156,18 @@ _STARTER_ROLES = {
 }
 
 
-def cmd_init(args: argparse.Namespace) -> int:
+def cmd_init(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = _repo_root()
     binding_path = org_binding_path(root)
     if binding_path.is_file() and not args.force:
-        return _err(f"{binding_path} already exists (pass --force to overwrite)")
+        return _err(out, f"{binding_path} already exists (pass --force to overwrite)")
 
     layers = list(args.layer or [])
     policy_written: pathlib.Path | None = None
     if not layers:
         policy_written = root / ".rig" / "policy" / "org.json"
         if policy_written.is_file() and not args.force:
-            return _err(f"{policy_written} already exists (pass --force to overwrite)")
+            return _err(out, f"{policy_written} already exists (pass --force to overwrite)")
         starter = {
             "schema": SCHEMA,
             "id": args.org,
@@ -139,20 +199,20 @@ def cmd_init(args: argparse.Namespace) -> int:
     binding_path.parent.mkdir(parents=True, exist_ok=True)
     binding_path.write_text(json.dumps(binding, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    print(f"## rig govern init: {args.org}" + (f"/{args.team}" if args.team else ""))
-    print(f"  wrote {binding_path.relative_to(root)}")
+    out.out(f"## rig govern init: {args.org}" + (f"/{args.team}" if args.team else ""))
+    out.out(f"  wrote {binding_path.relative_to(root)}")
     if policy_written:
-        print(f"  wrote {policy_written.relative_to(root)} (starter org policy — edit it, it is the floor)")
-    print("\nNext:")
-    print("  rig-wb govern policy show      # what is in effect here")
-    print("  rig-wb govern whoami           # your roles and permissions")
-    print("  rig-wb govern conformance      # does this repo clear the policy")
+        out.out(f"  wrote {policy_written.relative_to(root)} (starter org policy — edit it, it is the floor)")
+    out.out("\nNext:")
+    out.out("  rig-wb govern policy show      # what is in effect here")
+    out.out("  rig-wb govern whoami           # your roles and permissions")
+    out.out("  rig-wb govern conformance      # does this repo clear the policy")
     ledger.append(root, "policy.init", actor=current_actor(root), subject=args.org,
                   org=args.org, team=args.team, data={"layers": layers})
-    return EXIT_OK
+    return Verdict.OK
 
 
-def cmd_migrate(args: argparse.Namespace) -> int:
+def cmd_migrate(args: argparse.Namespace, out: Presenter) -> Verdict:
     """Fold v1's `.rig/access.json` and `.rig/gates.json` into a policy layer.
 
     The two files keep working either way; this exists so a team that already
@@ -162,7 +222,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     access_p = root / ".rig" / "access.json"
     gates_p = root / ".rig" / "gates.json"
     if not access_p.is_file() and not gates_p.is_file():
-        return _err("nothing to migrate (neither .rig/access.json nor .rig/gates.json exists)")
+        return _err(out, "nothing to migrate (neither .rig/access.json nor .rig/gates.json exists)")
 
     roles: dict[str, list[str]] = {}
     members: dict[str, list[str]] = {}
@@ -173,7 +233,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         try:
             access = json.loads(access_p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            return _err(f"{access_p}: not valid JSON: {e}")
+            return _err(out, f"{access_p}: not valid JSON: {e}")
         if isinstance(access, dict):
             roles["accepter"] = ["task.new", "gate.set", "accept", "discard"]
             roles["developer"] = ["task.new", "gate.set", "discard"]
@@ -191,7 +251,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         try:
             gates = json.loads(gates_p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            return _err(f"{gates_p}: not valid JSON: {e}")
+            return _err(out, f"{gates_p}: not valid JSON: {e}")
         if isinstance(gates, dict):
             for target, crits in (gates.get("extra_criteria") or {}).items():
                 if isinstance(crits, list):
@@ -202,13 +262,13 @@ def cmd_migrate(args: argparse.Namespace) -> int:
 
     org = args.org or load_org_binding(root).org
     if not org:
-        return _err("no org known — pass --org, or run `rig-wb govern init` first")
+        return _err(out, "no org known — pass --org, or run `rig-wb govern init` first")
     doc = {"schema": SCHEMA, "id": args.id, "scope": args.scope, "org": org,
            "version": "1.0.0",
            "description": "migrated from .rig/access.json / .rig/gates.json"}
     if args.scope == "team":
         if not args.team:
-            return _err("--scope team requires --team")
+            return _err(out, "--scope team requires --team")
         doc["team"] = args.team
     if require:
         doc["require_criteria"] = require
@@ -218,78 +278,80 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         doc["roles"] = roles
         doc["members"] = members
 
-    out = pathlib.Path(args.out) if args.out else root / ".rig" / "policy" / f"{args.id}.json"
-    if out.is_file() and not args.force:
-        return _err(f"{out} already exists (pass --force to overwrite)")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"## rig govern migrate\n  wrote {out}")
-    print(f"  {len(require)} criteria target(s), {len(members)} member(s) carried over")
-    print("\nReview it, then add it to policy_layers in .rig/org.json (or leave it in .rig/policy/).")
-    print("The original files keep working until you delete them.")
-    return EXIT_OK
+    # `out_path`, not `out`: `out` is the presenter now, and the file this writes is a
+    # different thing that happened to share the name.
+    out_path = pathlib.Path(args.out) if args.out else root / ".rig" / "policy" / f"{args.id}.json"
+    if out_path.is_file() and not args.force:
+        return _err(out, f"{out_path} already exists (pass --force to overwrite)")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    out.out(f"## rig govern migrate\n  wrote {out_path}")
+    out.out(f"  {len(require)} criteria target(s), {len(members)} member(s) carried over")
+    out.out("\nReview it, then add it to policy_layers in .rig/org.json (or leave it in .rig/policy/).")
+    out.out("The original files keep working until you delete them.")
+    return Verdict.OK
 
 
 # ── policy ───────────────────────────────────────────────────────────────────
-def cmd_policy(args: argparse.Namespace) -> int:
+def cmd_policy(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = _repo_root()
     if args.action == "lint":
         paths = [pathlib.Path(p) for p in args.paths] if args.paths else resolve_layer_paths(
             root, load_org_binding(root).raw)
         if not paths:
-            print("## rig govern policy lint\n\nNo policy layer found (nothing to lint).")
-            return EXIT_OK
+            out.out("## rig govern policy lint\n\nNo policy layer found (nothing to lint).")
+            return Verdict.OK
         failures = 0
         for p in paths:
             try:
                 doc = load_policy_document(p)
-                print(f"  ✓ {p}  [{doc['scope']}:{doc['id']}]")
+                out.out(f"  ✓ {p}  [{doc['scope']}:{doc['id']}]")
             except PolicyError as e:
-                print(f"  ✗ {e}")
+                out.out(f"  ✗ {e}")
                 failures += 1
         if failures:
-            return EXIT_NONCONFORMANT
+            return Verdict.NONCONFORMANT
         # Folding is where cross-layer tightening violations surface.
         try:
             effective_policy(root)
         except PolicyError as e:
-            print(f"  ✗ {e}")
-            return EXIT_NONCONFORMANT
-        print(f"\n{len(paths)} layer(s) valid, and they stack without loosening anything.")
-        return EXIT_OK
+            out.out(f"  ✗ {e}")
+            return Verdict.NONCONFORMANT
+        out.out(f"\n{len(paths)} layer(s) valid, and they stack without loosening anything.")
+        return Verdict.OK
 
-    eff = _effective(root)
-    if isinstance(eff, int):
+    eff = _effective(root, out)
+    if isinstance(eff, Verdict):
         return eff
     if args.json:
-        print(json.dumps(_policy_dict(eff), ensure_ascii=False, indent=2))
-        return EXIT_OK
+        out.out(json.dumps(_policy_dict(eff), ensure_ascii=False, indent=2))
+        return Verdict.OK
     if not eff.active:
-        print("## rig govern policy\n\nNo policy in effect — this repository is ungoverned "
-              "(rig behaves exactly as it does for solo use).\n"
-              "Start one with `rig-wb govern init --org <org> --team <team>`.")
-        return EXIT_OK
+        out.out("## rig govern policy\n\nNo policy in effect — this repository is ungoverned "
+                "(rig behaves exactly as it does for solo use).\n"
+                "Start one with `rig-wb govern init --org <org> --team <team>`.")
+        return Verdict.OK
 
-    print(f"## rig govern policy: {eff.org}{'/' + eff.team if eff.team else ''}\n")
-    print("layers (applied in order; each may only tighten the one before it):")
+    out.out(f"## rig govern policy: {eff.org}{'/' + eff.team if eff.team else ''}\n")
+    out.out("layers (applied in order; each may only tighten the one before it):")
     for line in describe_layers(eff):
-        print(f"  {line}")
+        out.out(f"  {line}")
     if eff.require_criteria:
-        print("\nrequired criteria (added to every gate that applies):")
+        out.out("\nrequired criteria (added to every gate that applies):")
         for target, crits in sorted(eff.require_criteria.items()):
             for crit in crits:
                 desc = eff.descriptions.get(crit)
-                print(f"  {target} + {crit}" + (f" — {desc}" if desc else ""))
+                out.out(f"  {target} + {crit}" + (f" — {desc}" if desc else ""))
     if eff.roles:
-        print("\nroles:")
+        out.out("\nroles:")
         for role, perms in sorted(eff.roles.items()):
             seal = " [sealed]" if role in eff.sealed_roles else ""
-            print(f"  {role}{seal}: {', '.join(perms) or '(none)'}")
-        print("\nmembers:")
+            out.out(f"  {role}{seal}: {', '.join(perms) or '(none)'}")
+        out.out("\nmembers:")
         for actor, assigned in sorted(eff.members.items()):
-            print(f"  {actor}: {', '.join(assigned)}")
+            out.out(f"  {actor}: {', '.join(assigned)}")
     if eff.approvals:
-        print("\napprovals:")
+        out.out("\napprovals:")
         for target, rule in sorted(eff.approvals.items()):
             bits = [f"quorum {rule['quorum']}"]
             if rule.get("roles"):
@@ -298,18 +360,18 @@ def cmd_policy(args: argparse.Namespace) -> int:
                 bits.append("separation of duties")
             if rule.get("expires_hours"):
                 bits.append(f"expires {rule['expires_hours']}h")
-            print(f"  {target}: {' · '.join(bits)}")
+            out.out(f"  {target}: {' · '.join(bits)}")
     if eff.waivers:
         w = eff.waivers
-        print("\nwaivers:")
-        print(f"  max lifetime: {w.get('max_days') or 'unbounded'} day(s)"
-              f"   required for --force: {'yes' if w.get('required_for_force') else 'no'}")
+        out.out("\nwaivers:")
+        out.out(f"  max lifetime: {w.get('max_days') or 'unbounded'} day(s)"
+                f"   required for --force: {'yes' if w.get('required_for_force') else 'no'}")
         if w.get("grant_roles"):
-            print(f"  may be granted by: {', '.join(w['grant_roles'])}")
+            out.out(f"  may be granted by: {', '.join(w['grant_roles'])}")
         if w.get("non_waivable"):
-            print(f"  non-waivable: {', '.join(w['non_waivable'])}")
-    print(f"\naudit: chained ledger {'required' if eff.audit_chain_required else 'optional'}")
-    return EXIT_OK
+            out.out(f"  non-waivable: {', '.join(w['non_waivable'])}")
+    out.out(f"\naudit: chained ledger {'required' if eff.audit_chain_required else 'optional'}")
+    return Verdict.OK
 
 
 def _policy_dict(eff: EffectivePolicy) -> dict:
@@ -341,44 +403,44 @@ def _policy_dict(eff: EffectivePolicy) -> dict:
 
 
 # ── identity / permissions ───────────────────────────────────────────────────
-def cmd_whoami(args: argparse.Namespace) -> int:
+def cmd_whoami(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = _repo_root()
-    eff = _effective(root)
-    if isinstance(eff, int):
+    eff = _effective(root, out)
+    if isinstance(eff, Verdict):
         return eff
     actor = args.actor or current_actor(root)
     binding = load_org_binding(root)
     if binding.error:
-        print(f"[WARN] {binding.error}")
+        out.out(f"[WARN] {binding.error}")
     for line in explain(eff, actor):
-        print(line)
-    return EXIT_OK
+        out.out(line)
+    return Verdict.OK
 
 
-def cmd_can(args: argparse.Namespace) -> int:
+def cmd_can(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = _repo_root()
-    eff = _effective(root)
-    if isinstance(eff, int):
+    eff = _effective(root, out)
+    if isinstance(eff, Verdict):
         return eff
     actor = args.actor or current_actor(root)
     try:
         decision = can(eff, actor, args.permission)
     except ValueError as e:
-        return _err(str(e))
-    print(f"{'✓ allowed' if decision.allowed else '✗ denied'}: {actor} → {args.permission}")
-    print(f"  {decision.reason}")
-    return EXIT_OK if decision.allowed else EXIT_NONCONFORMANT
+        return _err(out, str(e))
+    out.out(f"{'✓ allowed' if decision.allowed else '✗ denied'}: {actor} → {args.permission}")
+    out.out(f"  {decision.reason}")
+    return Verdict.OK if decision.allowed else Verdict.NONCONFORMANT
 
 
 # ── approvals ────────────────────────────────────────────────────────────────
-def cmd_approve(args: argparse.Namespace) -> int:
+def cmd_approve(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = _repo_root()
-    eff = _effective(root)
-    if isinstance(eff, int):
+    eff = _effective(root, out)
+    if isinstance(eff, Verdict):
         return eff
     loaded = _load_task(root, getattr(args, "task_id", None))
     if not loaded:
-        return _err("no such task (looked in .rig/runs/). Run `rig-wb wb log` to list tasks")
+        return _err(out, "no such task (looked in .rig/runs/). Run `rig-wb wb log` to list tasks")
     task_id, task = loaded
 
     if args.action in ("grant", "deny"):
@@ -386,12 +448,12 @@ def cmd_approve(args: argparse.Namespace) -> int:
         if eff.active:
             decision = can(eff, actor, "approve")
             if not decision.allowed:
-                return _err(f"not permitted to approve: {decision.reason}")
+                return _err(out, f"not permitted to approve: {decision.reason}")
         if eff.active and (task.get("actor") == actor):
             rule = eff.approval_rule(task.get("task_type") or "")
             if rule.get("separation_of_duties", True):
-                print(f"[WARN] {actor} authored this task; separation of duties means this "
-                      "decision will not count toward the quorum")
+                out.out(f"[WARN] {actor} authored this task; separation of duties means this "
+                        "decision will not count toward the quorum")
         record_decision(root, task_id, actor=actor,
                         decision="approve" if args.action == "grant" else "deny",
                         roles=roles_of(eff, actor), head=_head(root, task), note=args.note or "")
@@ -400,61 +462,61 @@ def cmd_approve(args: argparse.Namespace) -> int:
                       data={"task_type": task.get("task_type"), "note": args.note or ""})
 
     status = evaluate(eff, task, load_approvals(root, task_id), head=_head(root, task))
-    print(f"## rig govern approve: {task_id} ({task.get('task_type')})\n")
+    out.out(f"## rig govern approve: {task_id} ({task.get('task_type')})\n")
     if not eff.active:
-        print("(no policy in effect — decisions are recorded but nothing is required)")
+        out.out("(no policy in effect — decisions are recorded but nothing is required)")
     for line in status.lines():
-        print(line)
-    return EXIT_OK if status.satisfied or not status.required else EXIT_NONCONFORMANT
+        out.out(line)
+    return Verdict.OK if status.satisfied or not status.required else Verdict.NONCONFORMANT
 
 
 # ── waivers ──────────────────────────────────────────────────────────────────
-def cmd_waiver(args: argparse.Namespace) -> int:
+def cmd_waiver(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = _repo_root()
-    eff = _effective(root)
-    if isinstance(eff, int):
+    eff = _effective(root, out)
+    if isinstance(eff, Verdict):
         return eff
     actor = args.actor or current_actor(root)
 
     if args.action == "list":
         waivers = waiver.load_waivers(root)
         if not waivers:
-            print("## rig govern waiver\n\nNo waivers on record.")
-            return EXIT_OK
-        print(f"## rig govern waiver ({len(waivers)} on record)\n")
+            out.out("## rig govern waiver\n\nNo waivers on record.")
+            return Verdict.OK
+        out.out(f"## rig govern waiver ({len(waivers)} on record)\n")
         for w in waivers:
             state = ("revoked" if w.get("revoked")
                      else "live" if waiver.is_active(w) else "lapsed")
-            print(f"  [{state}] {w.get('id')}  {', '.join(w.get('criteria') or [])}")
-            print(f"      scope {w.get('scope')}  until {w.get('expires')}  by {w.get('granted_by')}")
-            print(f"      reason: {w.get('reason')}")
-        return EXIT_OK
+            out.out(f"  [{state}] {w.get('id')}  {', '.join(w.get('criteria') or [])}")
+            out.out(f"      scope {w.get('scope')}  until {w.get('expires')}  by {w.get('granted_by')}")
+            out.out(f"      reason: {w.get('reason')}")
+        return Verdict.OK
 
     if args.action == "revoke":
         if eff.active:
             decision = can(eff, actor, "waiver.revoke")
             if not decision.allowed:
-                return _err(f"not permitted to revoke waivers: {decision.reason}")
+                return _err(out, f"not permitted to revoke waivers: {decision.reason}")
         try:
             record = waiver.revoke(root, args.id, actor=actor, reason=args.reason or "")
         except waiver.WaiverError as e:
-            return _err(str(e))
+            return _err(out, str(e))
         ledger.append(root, "waiver.revoke", actor=actor, subject=args.id,
                       org=eff.org, team=eff.team, data={"reason": args.reason or ""})
-        print(f"revoked waiver {record['id']}")
-        return EXIT_OK
+        out.out(f"revoked waiver {record['id']}")
+        return Verdict.OK
 
     # grant
     if eff.active:
         decision = can(eff, actor, "waiver.grant")
         if not decision.allowed:
-            return _err(f"not permitted to grant waivers: {decision.reason}")
+            return _err(out, f"not permitted to grant waivers: {decision.reason}")
         allowed_roles = set((eff.waivers or {}).get("grant_roles") or [])
         if allowed_roles and not (set(roles_of(eff, actor)) & allowed_roles):
-            return _err(f"the policy restricts granting waivers to {', '.join(sorted(allowed_roles))}; "
-                        f"{actor} holds {', '.join(roles_of(eff, actor)) or 'no role'}")
+            return _err(out, f"the policy restricts granting waivers to {', '.join(sorted(allowed_roles))}; "
+                             f"{actor} holds {', '.join(roles_of(eff, actor)) or 'no role'}")
     if not args.criteria:
-        return _err("--criterion is required (a waiver has to name what it excuses)")
+        return _err(out, "--criterion is required (a waiver has to name what it excuses)")
     expires = args.expires
     if not expires:
         days = (eff.waivers or {}).get("max_days") or 7
@@ -463,46 +525,46 @@ def cmd_waiver(args: argparse.Namespace) -> int:
         record = waiver.grant(root, eff, waiver_id=args.id, actor=actor, criteria=args.criteria,
                               reason=args.reason or "", expires=expires, scope=args.scope)
     except waiver.WaiverError as e:
-        return _err(str(e))
+        return _err(out, str(e))
     ledger.append(root, "waiver.grant", actor=actor, subject=record["id"], org=eff.org, team=eff.team,
                   data={"criteria": record["criteria"], "expires": record["expires"],
                         "scope": record["scope"], "reason": record["reason"]})
-    print(f"granted waiver {record['id']}: {', '.join(record['criteria'])} "
-          f"(scope {record['scope']}) until {record['expires']}")
-    return EXIT_OK
+    out.out(f"granted waiver {record['id']}: {', '.join(record['criteria'])} "
+            f"(scope {record['scope']}) until {record['expires']}")
+    return Verdict.OK
 
 
 # ── audit ────────────────────────────────────────────────────────────────────
-def cmd_audit(args: argparse.Namespace) -> int:
+def cmd_audit(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = _repo_root()
     if args.action == "verify":
         result = ledger.verify(root)
-        print(f"## rig govern audit verify\n\n{result.summary()}")
+        out.out(f"## rig govern audit verify\n\n{result.summary()}")
         for problem in result.problems:
-            print(f"  ✗ {problem}")
-        return EXIT_OK if result.ok else EXIT_NONCONFORMANT
+            out.out(f"  ✗ {problem}")
+        return Verdict.OK if result.ok else Verdict.NONCONFORMANT
 
     if args.action == "export":
-        eff = _effective(root)
-        if isinstance(eff, int):
+        eff = _effective(root, out)
+        if isinstance(eff, Verdict):
             return eff
         actor = current_actor(root)
         if eff.active:
             decision = can(eff, actor, "audit.export")
             if not decision.allowed:
-                return _err(f"not permitted to export the audit trail: {decision.reason}")
+                return _err(out, f"not permitted to export the audit trail: {decision.reason}")
         try:
             text = ledger.export(root, fmt=args.format, since=args.since, action=args.filter_action)
         except ValueError as e:
-            return _err(str(e))
+            return _err(out, str(e))
         if args.out:
             pathlib.Path(args.out).write_text(text + "\n", encoding="utf-8")
-            print(f"wrote {args.out}")
+            out.out(f"wrote {args.out}")
         else:
-            print(text)
+            out.out(text)
         ledger.append(root, "audit.export", actor=actor, subject=args.format,
                       org=eff.org, team=eff.team, data={"out": args.out or "(stdout)"})
-        return EXIT_OK
+        return Verdict.OK
 
     entries = [e for e in ledger.read_ledger(root) if "_malformed" not in e]
     if args.filter_action:
@@ -510,49 +572,49 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if args.since:
         entries = [e for e in entries if (e.get("ts") or "")[:10] >= args.since]
     if not entries:
-        print("## rig govern audit\n\nNo ledger entries.")
-        return EXIT_OK
+        out.out("## rig govern audit\n\nNo ledger entries.")
+        return Verdict.OK
     shown = entries[-args.limit:] if args.limit else entries
-    print(f"## rig govern audit (latest {len(shown)} / {len(entries)})\n")
+    out.out(f"## rig govern audit (latest {len(shown)} / {len(entries)})\n")
     for e in shown:
-        print(f"  #{e.get('seq'):<4} {e.get('ts')}  {e.get('action'):<16} "
-              f"{e.get('actor')}  {e.get('subject')}")
+        out.out(f"  #{e.get('seq'):<4} {e.get('ts')}  {e.get('action'):<16} "
+                f"{e.get('actor')}  {e.get('subject')}")
         data = e.get("data") or {}
         if data:
-            print(f"        {json.dumps(data, ensure_ascii=False, sort_keys=True)}")
-    return EXIT_OK
+            out.out(f"        {json.dumps(data, ensure_ascii=False, sort_keys=True)}")
+    return Verdict.OK
 
 
 # ── conformance / rollup ─────────────────────────────────────────────────────
-def cmd_conformance(args: argparse.Namespace) -> int:
+def cmd_conformance(args: argparse.Namespace, out: Presenter) -> Verdict:
     root = pathlib.Path(args.path).resolve() if args.path else _repo_root()
     report = conf.evaluate_project(root, since_days=args.since_days)
     if args.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
-        return EXIT_OK if report.verdict != conf.FAIL else EXIT_NONCONFORMANT
+        out.out(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        return Verdict.OK if report.verdict != conf.FAIL else Verdict.NONCONFORMANT
 
     header = f"{report.org}/{report.team}" if report.team else (report.org or "(unbound)")
-    print(f"## rig govern conformance: {report.project} [{header}]\n")
+    out.out(f"## rig govern conformance: {report.project} [{header}]\n")
     if report.error:
-        print(f"  ✗ {report.error}")
-        return EXIT_NONCONFORMANT
+        out.out(f"  ✗ {report.error}")
+        return Verdict.NONCONFORMANT
     # The shortfall renders on the same line as the score, not under it: this is the number
     # that gets quoted upward, and a rate computed from fewer records than the runs directory
     # holds has to say so where it is read.
-    print(f"verdict: {conf.ICON[report.verdict]} {report.verdict}   "
-          f"score: {report.score:.0%} ({report.passed}/{len(report.applicable)} applicable "
-          f"checks){report.unreadable_note}")
+    out.out(f"verdict: {conf.ICON[report.verdict]} {report.verdict}   "
+            f"score: {report.score:.0%} ({report.passed}/{len(report.applicable)} applicable "
+            f"checks){report.unreadable_note}")
     if report.policy_layers:
-        print(f"policy: {', '.join(report.policy_layers)}")
-    print()
+        out.out(f"policy: {', '.join(report.policy_layers)}")
+    out.out()
     for check in report.checks:
-        print(f"  {conf.ICON[check.verdict]} {check.id}: {check.detail}")
+        out.out(f"  {conf.ICON[check.verdict]} {check.id}: {check.detail}")
         for line in check.evidence:
-            print(f"      {line}")
-    return EXIT_OK if report.verdict != conf.FAIL else EXIT_NONCONFORMANT
+            out.out(f"      {line}")
+    return Verdict.OK if report.verdict != conf.FAIL else Verdict.NONCONFORMANT
 
 
-def cmd_rollup(args: argparse.Namespace) -> int:
+def cmd_rollup(args: argparse.Namespace, out: Presenter) -> Verdict:
     roots: list[pathlib.Path] = []
     for entry in args.paths:
         p = pathlib.Path(entry).resolve()
@@ -563,14 +625,14 @@ def cmd_rollup(args: argparse.Namespace) -> int:
             continue
         roots.append(p)
     if not roots:
-        return _err("no projects to roll up (pass repository paths, or --scan a directory of them)")
+        return _err(out, "no projects to roll up (pass repository paths, or --scan a directory of them)")
     result = conf.rollup(roots, since_days=args.since_days)
     if args.json:
-        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        out.out(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:
-        print(result.markdown())
+        out.out(result.markdown())
     worst = min((conf._RANK[r.verdict] for r in result.reports), default=3)
-    return EXIT_NONCONFORMANT if worst == conf._RANK[conf.FAIL] else EXIT_OK
+    return Verdict.NONCONFORMANT if worst == conf._RANK[conf.FAIL] else Verdict.OK
 
 
 # ── parser ───────────────────────────────────────────────────────────────────
@@ -659,13 +721,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cmd_govern(argv: list[str]) -> int:
+def cmd_govern(argv: list[str], *, out: Presenter | None = None) -> int:
+    """Parse, run the command, and report its verdict as a status.
+
+    The presenter is a parameter with a default rather than a module-level instance the
+    commands reach for: `main()` builds the console adapter at the process boundary and
+    passes it in, and an in-process caller (`rig_workbench/cli.py` dispatches here, and a
+    test can too) may hand in its own. The default exists so those callers keep working
+    unchanged — it constructs an adapter, it does not share one.
+
+    This is also the only place a verdict becomes a number. Everything above returns a
+    `Verdict`; `status_for` is the single statement that reads `_STATUS`.
+    """
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    return status_for(args.func(args, ConsolePresenter() if out is None else out))
 
 
 def main() -> None:
-    sys.exit(cmd_govern(sys.argv[1:]))
+    sys.exit(cmd_govern(sys.argv[1:], out=ConsolePresenter()))
 
 
 if __name__ == "__main__":
