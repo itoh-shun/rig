@@ -38,6 +38,28 @@ SCANNED_TREES = ("rig_workbench", "scripts")
 #: with the payload wherever it is copied.
 SCHEMA_ID = re.compile(r"rig\.[a-z0-9_.\-]+/v\d+")
 
+# WHAT THIS SCAN CANNOT SEE, and why `rig.gates/v1` is in the set below by accident:
+#
+# The scan reads string *literals*. An id composed at runtime is invisible to it, and
+# there is one known instance in the tree today: `rig_workbench/jsonio.py` builds the id
+# of every enveloped command as
+#
+#     return {"schema": f"rig.{schema}/v{ENVELOPE_VERSION}", ...}   # jsonio.envelope
+#
+# so `wb gates --json` publishes `rig.gates/v1` while the string `rig.gates/v1` appears
+# nowhere in the code that emits it. It reaches FROZEN_SCHEMA_IDS only because two pieces
+# of *prose* happen to contain it: jsonio.py's own module docstring, and the `--json` help
+# text in rig_workbench/workbench/cli.py. Prose is not measurement. Set
+# `ENVELOPE_VERSION = 2` and every enveloped command starts publishing a new public name
+# while this scan reports no change at all; edit only those docstrings and this scan
+# reports a disappearance that never happened.
+#
+# So a green run here does not mean "the published ids are unchanged" — it means the
+# literals are unchanged, which is less. Two tests at the bottom of the file cover what
+# the literals miss: one pins the envelope version those ids are composed from, and one
+# hands every id in the set to tests/test_schema_cli_contract.py, which runs the real
+# process and reads what it actually prints.
+
 # WHY THIS IS FROZEN, and why the failure you are reading is not noise:
 #
 # These ids are a published contract. A consumer — this repo's own mission-control
@@ -154,4 +176,143 @@ def test_the_placeholder_ids_under_tests_are_what_keeps_that_tree_out_of_the_sca
         "every schema id under tests/ is now one the shipped trees also emit, so the "
         "stated reason for leaving tests/ out of SCANNED_TREES no longer holds. Either "
         "scan tests/ too and drop the exclusion, or give it a reason that is true."
+    )
+
+
+# ── what the literals cannot vouch for ───────────────────────────────────────
+#: The other half of the pair, and the half that runs the real thing:
+#: tests/test_schema_cli_contract.py drives `python -m rig_workbench.cli` and holds what
+#: comes back to a schema id written out as a literal, the way a consumer's `if` writes
+#: it. An id pinned there is measured on the process; an id only in FROZEN_SCHEMA_IDS
+#: above is measured on the source text.
+CLI_CONTRACT = REPO_ROOT / "tests" / "test_schema_cli_contract.py"
+
+#: The constant in that file naming the ids it cannot reach, each with the code path that
+#: emits it and why no command prints it. Referred to by name so a rename of it fails
+#: here, loudly, instead of silently reclassifying every id it holds as unmeasured.
+NOT_PINNED_CONSTANT = "NOT_PINNED"
+
+#: `jsonio.ENVELOPE_VERSION`, and the file it lives in. See "WHAT THIS SCAN CANNOT SEE":
+#: this number is the `/vN` of every enveloped id, and no scan of literals can reach it.
+ENVELOPE_VERSION_SOURCE = REPO_ROOT / "rig_workbench" / "jsonio.py"
+PINNED_ENVELOPE_VERSION = 1
+
+
+def _schema_ids_under(node, *, skip=frozenset()) -> set[str]:
+    """Every schema id in a string literal under `node`, ignoring the literals in `skip`."""
+    found: set[str] = set()
+    for child in ast.walk(node):
+        if (isinstance(child, ast.Constant) and isinstance(child.value, str)
+                and id(child) not in skip):
+            found.update(SCHEMA_ID.findall(child.value))
+    return found
+
+
+def cli_contract_coverage() -> tuple[set[str], set[str]]:
+    """The ids tests/test_schema_cli_contract.py pins, and the ids it records as unreachable.
+
+    That file is read as source text rather than imported, for the reason the block beside
+    SCHEMA_ID gives: an import runs the module and hands back whatever its constants
+    evaluate to, so an id assembled at import time would count as written down without ever
+    being written down — the exact blindness this file is trying not to repeat. Reading the
+    text also keeps the scan independent of whether that module imports cleanly, and makes
+    a rename of NOT_PINNED an error here rather than a silent change of meaning.
+
+    Docstrings are excluded from the pinned half deliberately. That file's prose names many
+    ids while explaining itself, and a mention in prose is not an assertion about a running
+    process — `rig.gates/v1` sits in FROZEN_SCHEMA_IDS today for precisely that reason.
+    """
+    module = ast.parse(CLI_CONTRACT.read_text(encoding="utf-8"), filename=str(CLI_CONTRACT))
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(module)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.body and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    declarations = [
+        node for node in ast.walk(module)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == NOT_PINNED_CONSTANT for t in node.targets)
+    ]
+    assert len(declarations) == 1, (
+        f"{CLI_CONTRACT.name} no longer declares exactly one {NOT_PINNED_CONSTANT}: found "
+        f"{len(declarations)}. That constant is where an id nothing can drive is allowed to "
+        f"be recorded with a reason; without it every such id reads here as simply "
+        f"unmeasured. If it was renamed, rename NOT_PINNED_CONSTANT to match."
+    )
+    recorded = _schema_ids_under(declarations[0])
+    pinned = _schema_ids_under(module, skip=docstrings) - recorded
+    return pinned, recorded
+
+
+def test_every_frozen_id_is_either_pinned_through_the_real_cli_or_recorded_as_unreachable():
+    """Each id in the frozen set has to be measured on the running process, or admitted.
+
+    This is the check that keeps the frozen set from being trusted for more than it is.
+    Freezing a literal says the string still exists somewhere in the tree; it says nothing
+    about whether any command emits it, and — for a runtime-composed id — nothing about
+    whether the published name is still that string at all. So every id here must be either
+    a literal in tests/test_schema_cli_contract.py, where it is held against what the real
+    process prints, or an entry in that file's NOT_PINNED, where the reason it cannot be
+    reached is written down and itself checked.
+
+    The failure this prevents is a specific one: an id added to the frozen set and to an
+    exclusion list, and to nothing that runs. Neither half of that is a test.
+    """
+    pinned, recorded = cli_contract_coverage()
+    unmeasured = sorted(FROZEN_SCHEMA_IDS - pinned - recorded)
+    assert not unmeasured, (
+        "these ids are frozen here but nothing in tests/test_schema_cli_contract.py either "
+        "pins them or admits it cannot:\n"
+        + "\n".join(f"  {schema_id}" for schema_id in unmeasured) + "\n"
+        "Freezing a literal only says the string is still in the tree. Pin the id: drive "
+        f"the command that emits it in {CLI_CONTRACT.name} and assert the id it prints. If "
+        "no command can reach it, add an entry to that file's "
+        f"{NOT_PINNED_CONSTANT} naming the code path that does emit it and why it is out of "
+        "reach — an honest gap is reviewable, an id in a list nobody runs is not."
+    )
+
+
+# Yes, the assertion below compares a production constant against a literal written in the
+# same repository, which is the shape of assertion this file's own docstring calls a
+# tautology. It is not the same move, and the difference is what the literal is. In
+# `assert module.SCHEMA == "rig.assurance-receipt/v1"` both sides are the *name*: one edit
+# moves both and the assertion measures nothing. Here the literal is not a name, and no
+# rename of any schema touches it. The only edit that reaches it is a bump of
+# ENVELOPE_VERSION — which is exactly the change nothing else in the suite can see, because
+# the ids it renames are composed rather than written. Set ENVELOPE_VERSION = 2 today and
+# every test in this file stays green while `wb gates` starts publishing `rig.gates/v2`.
+# With this assertion it goes red. It can only add sensitivity, never mask a change, which
+# is the opposite of the tautology.
+def test_the_envelope_version_every_enveloped_id_carries_is_still_the_one_frozen_here():
+    """`ENVELOPE_VERSION` is the `/vN` of every id `jsonio.envelope` composes, so bumping it
+    renames the published id of every enveloped command at once. That is a contract change
+    of the same kind as editing FROZEN_SCHEMA_IDS, and this is where it is declared.
+
+    Read out of the source with `ast` rather than imported, to stay the read of a tree that
+    the rest of the file is — and so that a version that stops being a plain literal (read
+    from the environment, computed) fails here instead of quietly passing.
+    """
+    source = ENVELOPE_VERSION_SOURCE.read_text(encoding="utf-8")
+    module = ast.parse(source, filename=str(ENVELOPE_VERSION_SOURCE))
+    versions = [
+        node.value.value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "ENVELOPE_VERSION" for t in node.targets)
+        and isinstance(node.value, ast.Constant) and isinstance(node.value.value, int)
+    ]
+    assert versions == [PINNED_ENVELOPE_VERSION], (
+        f"{ENVELOPE_VERSION_SOURCE.relative_to(REPO_ROOT).as_posix()} declares "
+        f"ENVELOPE_VERSION as {versions!r}, pinned here as [{PINNED_ENVELOPE_VERSION}]. "
+        "jsonio.envelope composes every enveloped id as f\"rig.{schema}/v{ENVELOPE_VERSION}\", "
+        "so this number is not an implementation detail: changing it renames the published "
+        "id of every enveloped command — `rig.gates/v1` becomes `rig.gates/v2` — for every "
+        "consumer dispatching on the old string, and no scan of string literals can see it "
+        "happen. If the bump is deliberate, update FROZEN_SCHEMA_IDS and the ids pinned in "
+        "tests/test_schema_cli_contract.py to match, then update this number and say in "
+        "review that every enveloped id was renamed. If it is not deliberate, this is the "
+        "test telling you so."
     )
