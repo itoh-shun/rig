@@ -327,11 +327,16 @@ class Capability:
     #: read as "does not leave the machine", which is a claim, and this table has to keep
     #: a claim distinguishable from a blank.
     #:
-    #: Answer it about the code as it is, not as the verb reads — two live cases where the
-    #: name misleads. `pack install` sounds like a fetch, but `packs/installer.py` refuses
-    #: URL sources outright and resolves `official:` against a catalogue that ships in the
-    #: package, so today it is `writes-worktree`, `network="never"`; the single axis declared
-    #: it `network` on the strength of its name, which is the collapse arriving on cue. And
+    #: Answer it about the code as it is, and read every path before you answer — `pack
+    #: install` was got wrong twice here, in opposite directions. The verb reads like a
+    #: fetch, so the single axis called it `network` on the strength of its name. Then
+    #: `_resolve_source` was found refusing URL sources outright and it was called `never`.
+    #: Both readings stopped at one function: `install_pack` tries `parse_spec` first, and a
+    #: `<source>:<pack>@<version>` spec goes to `sources.resolve_revision` → `git ls-remote`
+    #: and `fetch_revision` → `git fetch`. It is `sometimes` — never for a directory, an
+    #: archive, a `domain:`/`official:` alias or a `git+file` source. `tests/test_pack_sources.py`
+    #: drives the clone, and `tests/test_cli_surface_contract.py` excludes the verb from its
+    #: smoke runs for exactly that reason; either would have settled it. By contrast
     #: `rig-mcp` serves rather than fetches — over stdio it reaches nothing, and its
     #: `--transport streamable-http` may bind only to a loopback host (`remote_mcp.py`
     #: refuses anything else), so nothing leaves the machine and it is `never` today. If that

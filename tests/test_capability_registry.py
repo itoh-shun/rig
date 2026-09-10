@@ -88,10 +88,15 @@ def capability(**overrides) -> Capability:
 
 
 class TestContainer:
-    """The table exists, is empty, and is a tuple — stage 2 declares, it does not wire."""
+    """The table exists, is populated, and is a tuple — stage 2 declares, it does not wire."""
 
-    def test_importable_and_empty(self):
-        assert CAPABILITIES == ()
+    def test_every_dispatchable_verb_is_declared_once(self):
+        # 139: 39 top-level, 51 under wb, and 49 under the five other groups. The number is
+        # written out because a capability appearing or vanishing is a change to the command
+        # surface, and this is the table the other surfaces are meant to be projections of.
+        assert len(CAPABILITIES) == 139
+        assert len({c.id for c in CAPABILITIES}) == len(CAPABILITIES), "duplicate id"
+        assert len({c.command_path for c in CAPABILITIES}) == len(CAPABILITIES), "duplicate path"
 
     def test_is_a_tuple(self):
         # A list would let one projection append to the table another is reading.
@@ -396,7 +401,8 @@ class TestLookup:
         assert by_id("wb.nope", self.table) is None
 
     def test_by_id_reads_the_real_table_by_default(self):
-        assert by_id("wb.gate") is None  # empty until stage 2's entries land
+        assert by_id("wb.gate").verb == "gate"
+        assert by_id("wb.no-such-verb") is None
 
     def test_children_returns_a_group_in_declaration_order(self):
         assert [c.id for c in children("wb", self.table)] == ["wb.gate", "wb.accept"]
@@ -412,7 +418,8 @@ class TestLookup:
             children("orchestrate", self.table)
 
     def test_children_reads_the_real_table_by_default(self):
-        assert children("wb") == ()
+        assert len(children("wb")) == 51
+        assert {c.parent for c in children("wb")} == {"wb"}
 
 
 class TestDeclaredEntries:

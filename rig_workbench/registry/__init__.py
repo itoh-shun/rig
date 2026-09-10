@@ -14,6 +14,9 @@ may not carry a callable.
 
 from __future__ import annotations
 
+from .entries_cli import CLI_CAPABILITIES
+from .entries_subgroups import SUBGROUP_CAPABILITIES
+from .entries_wb import WB_CAPABILITIES
 from .model import (
     EFFECT_CLASSES,
     FLAG_TYPES,
@@ -37,9 +40,15 @@ __all__ = [
     "children",
 ]
 
-#: Every capability rig has, in the order a listing shows them. Empty while stage 2 is
-#: being filled in — an entry appearing here does not yet change any surface's behaviour.
-CAPABILITIES: tuple[Capability, ...] = ()
+#: Every capability rig has, in the order a listing shows them. Filled in by concatenating
+#: one entries module per surface, one line each, so that two of them can land side by side
+#: without either rewriting the other's — an entry appearing here does not yet change any
+#: surface's behaviour.
+CAPABILITIES: tuple[Capability, ...] = (
+    *WB_CAPABILITIES,
+    *CLI_CAPABILITIES,
+    *SUBGROUP_CAPABILITIES,
+)
 
 
 def by_id(
