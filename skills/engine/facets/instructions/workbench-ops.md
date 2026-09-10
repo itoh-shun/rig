@@ -261,8 +261,10 @@ imported commit の位置に作る**。以降 `base..branch` が外部の変更�
   `--summary <file>` で人が書いたものを渡せば `authored` として記録される。
 
 `contract` は外部 caller が分岐するための答えで、**`die()` を一切呼ばない**。
-`die` はタスク ID の誤りでも壊れた state でも未達ゲートでも exit 1 なので、
-exit 1 だけでは「rig が拒否した」と「rig が答えられなかった」を区別できない。
+workbench の停止は 2 種類ある：`state.die` は「答えを出せなかった」で exit 2
+（タスク ID の誤り、壊れた state、git の失敗）、`state.reject` は「rig が見て否と判断した」
+で exit 1（未達ゲート、governance のブロック、accept 権限なし）。`contract` は
+`die` の SystemExit も捕まえて、exit だけでなく `execution-error` の結果ごと返す。
 
 | status | exit | 意味 |
 |---|---|---|

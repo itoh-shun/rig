@@ -82,19 +82,21 @@ ERROR = 2
 #: this a superset of its own reserved set, which can only make the assertion stricter.
 SHELL_OWNED = frozenset({124, 126, 127} | set(range(128 + 1, 128 + 64 + 1)))
 
-# NO `die()`-DERIVED CODE IS PINNED IN THIS FILE, and none may be added.
+# EVERY 1 IN THIS FILE IS A VERDICT, AND EVERY `die()`-DERIVED CODE IS A 2.
 #
-# `rig_workbench/workbench/state.py` has `die()` hardcoded to `sys.exit(1)`, so every
-# plain workbench failure — a task id that is not there, a worktree that is gone —
-# surfaces as 1, the code reserved for "rig judged this and said no". That is a defect,
-# not a contract, and pinning one of those 1s here would preserve it through the
-# rewrite. `wb scan-secrets --diff <nonexistent>` and `wb status <nonexistent>` are the
-# obvious traps; this file drives neither. Every 1 asserted below was traced to a
-# deliberate verdict path instead: scan-secrets' own `sys.exit(1)` after printing its
-# findings, `contract`'s `EXIT_CODE[NOT_ACCEPTABLE]`, design-constraints' and ja-lint's
-# violation returns, bench's completed non-pass. The one place a `die()` is involved is
-# test_generic_a_command_that_could_not_produce_an_answer_exits_two_not_one, and it
-# pins the 2 `contract` *translates* it into — the fix, not the symptom.
+# `rig_workbench/workbench/state.py` used to have `die()` hardcoded to `sys.exit(1)`, so
+# every plain workbench failure — a task id that is not there, a worktree that is gone —
+# surfaced as 1, the code reserved for "rig judged this and said no". That was a defect,
+# and this file refused to pin any of those 1s rather than freeze it. `die()` now exits 2
+# and `state.reject()` carries the verdicts, so those conditions are pinned here: see
+# test_generic_a_workbench_command_that_cannot_find_its_task_exits_two, which drives the
+# two traps this comment used to name (`wb status <nonexistent>` and
+# `wb scan-secrets --diff <nonexistent>`).
+#
+# Every 1 asserted below is still a deliberate verdict path, and none of them changed:
+# scan-secrets' own `sys.exit(1)` after printing its findings, `contract`'s
+# `EXIT_CODE[NOT_ACCEPTABLE]`, design-constraints' and ja-lint's violation returns,
+# bench's completed non-pass.
 
 #: Codes this file could not produce from a test process, and why. Each entry is
 #: (command, code, reason). Read this before adding a test for one of them — the
@@ -287,6 +289,23 @@ def test_generic_a_command_that_could_not_produce_an_answer_exits_two_not_one(
     result = rig_cli("wb", "contract", "no-such-task-id-9999", cwd=rig_git_repo)
     assert result.returncode == ERROR, result.stdout + result.stderr
     assert result.returncode != REJECTED
+
+
+def test_generic_a_workbench_command_that_cannot_find_its_task_exits_two(
+        rig_cli, rig_git_repo):
+    """The two conditions this file used to refuse to pin, driven for real.
+
+    Both go through `state.die`, and both used to answer 1 — indistinguishable from the
+    rejection two tests above. A task id that does not exist is not a verdict about
+    anything; the command never reached one."""
+    for argv in (("wb", "status", "no-such-task-id-9999"),
+                 ("wb", "scan-secrets", "--diff", "no-such-task-id-9999")):
+        result = rig_cli(*argv, cwd=rig_git_repo)
+        assert result.returncode == ERROR, (
+            f"`rig-wb {' '.join(argv)}` exited {result.returncode}\n"
+            f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}")
+        assert result.returncode != REJECTED
+        assert "not found" in result.stderr
 
 
 def test_generic_no_command_in_this_sample_returns_a_status_the_shell_owns(

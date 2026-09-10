@@ -20,7 +20,7 @@ from .config import CHECK_ICON, RECOMMENDATION
 from .state import (_diff_lines, audit_append, build_acceptance,
                     current_identity, die, drift_lines, effective_base,
                     gate_status, git, load_access_control,
-                    load_json, load_task, now_iso, parse_diff_md, repo_root,
+                    load_json, load_task, now_iso, parse_diff_md, reject, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
                     task_lock, verify_provenance, warn, worktree_dirty)
 from . import runtime as runtime_mod
@@ -141,9 +141,11 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         allowed = access.get(task["task_type"]) or access.get("default") or []
         who = current_identity(root)
         if allowed and who not in allowed:
-            die(f"'{who}' is not permitted to accept task_type '{task['task_type']}' "
-                f"(allowed: {', '.join(allowed)}). Check `.rig/access.json` or ask someone "
-                "with permission to accept this.")
+            # A judgement: rig read the allowlist and refused this actor. Nothing here
+            # failed to work, so a caller must be able to tell it from one that did.
+            reject(f"'{who}' is not permitted to accept task_type '{task['task_type']}' "
+                   f"(allowed: {', '.join(allowed)}). Check `.rig/access.json` or ask "
+                   "someone with permission to accept this.")
 
     acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     status = gate_status(acc)
@@ -174,6 +176,9 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             "base_branch_recorded": "task.json has no base_branch/base_commit recorded (run-state may be corrupted)",
             "diff_summary_generated": f"{diff_md.relative_to(root)} has not been created. Write the `/rig diff` prose summary first",
         }
+        # Not a verdict on the work: the worktree, the recorded base, or the diff summary
+        # is missing, so there is nothing for the gate to judge. `--force` cannot override
+        # it for the same reason.
         die("Cannot accept (structural preconditions unmet; not overridable even with --force):\n"
             + "\n".join(f"  - {n}: {hints[n]}" for n in hard_fail))
 
@@ -202,7 +207,8 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # not a governance message about an approval they do not yet need.
     if soft_fail and not args.force:
         failed_checks = [c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")]
-        die(
+        # The acceptance gate is the verdict, and this is rig delivering it.
+        reject(
             f"Cannot accept because the acceptance-gate is {status} (unmet: {', '.join(failed_checks) or 'no_unrelated_diff'}).\n"
             f"  Satisfy the criteria and update via `workbench.py gate {task_id} --set <criterion>=passed`, or\n"
             f"  pass --force if you understand the risk (it will be recorded)"
@@ -220,7 +226,8 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     for line in gov.lines:
         print(line)
     if gov.blocked:
-        die(f"governance: {gov.blocked}")
+        # Permission, quorum, or a missing waiver: the policy layer looked and said no.
+        reject(f"governance: {gov.blocked}")
 
     if soft_fail:
         warn(f"Accepting with unmet requirements overridden by --force ({', '.join(soft_fail)}). Recording forced: true in task.json")

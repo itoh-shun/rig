@@ -19,6 +19,7 @@ except ImportError:
     fcntl = None  # type: ignore[assignment]  # Windows fallback (locking disabled)
 
 from rig_workbench import gitroot
+from rig_workbench.exitcodes import ERROR, REJECTED
 
 from .config import GATE_PRESETS, TASK_TYPES
 
@@ -27,9 +28,37 @@ def now_iso() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+# `die` and `reject` are the two ways a workbench command stops early, and they are two
+# functions rather than one because the caller reading `$?` cannot ask a follow-up
+# question. `exitcodes.REJECTED` (1) is "rig judged this and the answer is no" — a verdict
+# to act on. `exitcodes.ERROR` (2) is "rig could not produce an answer" — bad usage, state
+# that is not there, a git command that failed. `die` used to end in a bare `sys.exit(1)`,
+# which reported every plumbing failure as a verdict, so a script branching on 1 could not
+# tell a failed gate from a task id with a typo in it.
+#
+# Neither takes a code, and there is no default to inherit: a call site chooses by which
+# function it calls, so "is this a judgement?" is answered where the answer is known.
+
+
 def die(msg: str) -> "NoReturn":  # noqa: F821
+    """rig could not produce an answer. Exits `exitcodes.ERROR` (2).
+
+    The overwhelming majority of stops: a task that is not there, an unreadable file, a
+    flag that does not parse, a git command that failed. Nothing was judged.
+    """
     print(f"[ERROR] {msg}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(ERROR)
+
+
+def reject(msg: str) -> "NoReturn":  # noqa: F821
+    """rig judged the work and the answer is no. Exits `exitcodes.REJECTED` (1).
+
+    Only for a verdict rig actually reached — an unmet acceptance gate, a governance
+    policy that blocks, an actor who is not permitted to accept. A caller acts on this
+    and does not retry it, which is exactly what makes it wrong for a missing file.
+    """
+    print(f"[REJECTED] {msg}", file=sys.stderr)
+    sys.exit(REJECTED)
 
 
 def warn(msg: str) -> None:

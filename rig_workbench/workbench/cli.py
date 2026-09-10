@@ -20,7 +20,10 @@ State is persisted under `<repo>/.rig/runs/<task-id>/`:
                                           If diff.md has `## Summary` / `## Risk` / `## Tests` /
                                           `## Unrelated diff` headings, `diff` renders them structured)
 
-Exit codes: 0=success / 1=error (includes accept gate failures and worktree inconsistencies)
+Exit codes: 0=success / 1=rig judged the work and said no (a failed acceptance gate, a
+governance block, an actor without permission to accept) / 2=rig could not produce an
+answer (bad usage, a task id that is not there, unreadable state, a git command that
+failed). `state.die` is the second; `state.reject` is the first.
 Dependencies: the installed rig-workbench runtime package
 """
 

@@ -825,11 +825,13 @@ def recorded(run: "pathlib.Path") -> dict | None:  # noqa: F821
 #:
 #: `2` is every way the comparison could not be *set up*, and the command has to work to keep
 #: that: the state helpers report failure by calling `die()`, which raises `SystemExit` and is
-#: not an `Exception`. An unknown `--task` and a working directory outside any repository
-#: therefore left by the door marked "looked and came up short" — this module's own
-#: *unobservable is not unmet* rule, broken at the process boundary. The root is asked for
-#: with the non-dying `maybe_repo_root`, the run directory is checked here, and a `die()`
-#: deeper in is caught and turned into this code rather than allowed past.
+#: not an `Exception`. An unknown `--task` and a working directory outside any repository used
+#: to leave by the door marked "looked and came up short" — this module's own *unobservable is
+#: not unmet* rule, broken at the process boundary — because `die()` exited 1. It exits 2 now,
+#: but the exit code is not the whole answer here: a `SystemExit` allowed past would leave the
+#: caller with no JSON report at all. The root is asked for with the non-dying
+#: `maybe_repo_root`, the run directory is checked here, and a `die()` deeper in is caught and
+#: turned into a reported `execution-error` rather than allowed past.
 SHOWN, NOT_SHOWN, EXECUTION_ERROR = 0, 1, 2
 
 

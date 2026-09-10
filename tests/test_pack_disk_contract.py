@@ -369,23 +369,20 @@ TIER_ORDER = ("project", "user", "org", "official", "core")
 WRITABLE_TIERS = frozenset({"project", "user", "org"})
 
 #: `wb route` exits 2 when it has an answer it declines to act on: `route_cli.cmd_route`
-#: ends with `raise SystemExit(2)` for `status in {"stopped", "trust_required"}`. That is a
-#: judgement, and 2 is the code it is reported under.
+#: ends with `raise SystemExit(2)` for `status in {"stopped", "trust_required"}`. Nothing
+#: was routed, so no work was judged; 2 is "rig did not produce an answer about the work".
 ROUTE_TRUST_REQUIRED_EXIT_CODE = 2
 
-#: And it exits 1 when resolution raised a `PackError` — an unresolvable recipe, i.e. a plain
-#: failure (`route_cli.cmd_route`'s `except PackError` clause). So the harder outcome is
-#: reported under the *lower* code than the softer one: `trust_required` (a decision, with a
-#: route record to show for it) is 2, while "no such recipe anywhere" (nothing worked) is 1.
+#: And it exits 2 as well when resolution raised a `PackError` — an unresolvable recipe
+#: (`route_cli.cmd_route`'s `except PackError` clause). Both are the same kind of outcome:
+#: rig could not route this, whether because nothing resolved or because what resolved is
+#: not trusted. Neither is a verdict on a change, so neither may take 1, which
+#: `rig_workbench/exitcodes.py` reserves for "rig judged this and said no".
 #:
-#: That inversion is not a designed contract. The 1 is inherited from `workbench/state.py`'s
-#: `die()`, which prints `[ERROR] …` and calls `sys.exit(1)` for every failure in the repo;
-#: `route_cli` follows that house style, and the 2 was chosen independently for the trust
-#: gate. The value is pinned below because it is what the product does today and a silent
-#: change would still be a break for anyone scripting `wb route` — but pinned as a record of
-#: the current behaviour, not as an argument that it is right. Fixing it is a production
-#: change (it would move every `die()` call site), and out of scope for this file.
-UNRESOLVABLE_RECIPE_EXIT_CODE_IS_A_SYMPTOM_NOT_A_CONTRACT = 1
+#: This was 1 until the `die()`/`reject()` split: `route_cli` followed `state.die`'s bare
+#: `sys.exit(1)` house style, which reported the harder outcome under the *lower* code than
+#: `trust_required`. A script branching on 1 for an unresolvable recipe must now expect 2.
+UNRESOLVABLE_RECIPE_EXIT_CODE = 2
 
 #: The recipe every tier's pack ships under the same name — the whole point of the exercise.
 TIER_PROBE_RECIPE = "tier-probe"
@@ -550,10 +547,9 @@ def test_tier_precedence_resolves_project_then_user_then_org_then_official_then_
         shutil.rmtree(directories[tier])
 
     exhausted, returncode = route()
-    # Exit 1 here, against exit 2 for `trust_required` above: see
-    # UNRESOLVABLE_RECIPE_EXIT_CODE_IS_A_SYMPTOM_NOT_A_CONTRACT for why the two are the wrong
-    # way round, and why this file pins the inversion rather than asserting it is correct.
+    # 2, the same code as `trust_required` above: both are "rig could not route this", and
+    # neither is a verdict — see UNRESOLVABLE_RECIPE_EXIT_CODE.
     assert (exhausted["status"] == "error"
-            and returncode == UNRESOLVABLE_RECIPE_EXIT_CODE_IS_A_SYMPTOM_NOT_A_CONTRACT)
+            and returncode == UNRESOLVABLE_RECIPE_EXIT_CODE)
     assert f"explicit recipe `{TIER_PROBE_RECIPE}` is not resolvable" in exhausted["error"]
 

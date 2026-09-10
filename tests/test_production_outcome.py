@@ -989,9 +989,13 @@ def test_a_die_deeper_in_the_setup_is_caught_rather_than_allowed_past(git_repo, 
 
     They exercise the paths that now *return a value* — `maybe_repo_root() is None` and the
     `is_dir()` check. `build_receipt` and what it calls can still `die()`, and a `SystemExit`
-    leaving this frame is exit 1 with no JSON: the same defect one call deeper. So the handler
-    is exercised here with a `die()` planted in the setup, and the claim in
+    leaving this frame is an exit with no JSON: the same defect one call deeper. So the
+    handler is exercised here with a `die()` planted in the setup, and the claim in
     `SHOWN, NOT_SHOWN, EXECUTION_ERROR`'s comment is one the suite holds.
+
+    `die()` exits 2, and this command's own `EXECUTION_ERROR` is 2 as well, so what is being
+    checked is that the `SystemExit` was *caught* — the JSON report exists and names the
+    status it stopped on — not merely that the process happened to land on the same number.
     """
     from types import SimpleNamespace
 
@@ -1008,7 +1012,7 @@ def test_a_die_deeper_in_the_setup_is_caught_rather_than_allowed_past(git_repo, 
     assert exit_code.value.code == 2
     printed = capsys.readouterr()
     assert json.loads(printed.out)["status"] == "execution-error"
-    assert "exited with status 1" in json.loads(printed.out)["error"]
+    assert "exited with status 2" in json.loads(printed.out)["error"]
     assert "planted: cannot look" in printed.err
 
 

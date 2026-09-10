@@ -375,5 +375,7 @@ def test_scan_injection_deps_stays_out_of_default_surfaces(tmp_path):
 def test_scan_injection_deps_is_mutually_exclusive(tmp_path):
     repo, _sha = make_repo(tmp_path)
     r = cli(repo, tmp_path / "wt", "scan-injection", "--deps", ".")
-    assert r.returncode == 1
+    # 2: a usage error, not a finding. 1 is what this command exits when it scanned and
+    # found something (`rig_workbench.exitcodes.REJECTED`).
+    assert r.returncode == 2
     assert "not a combination" in (r.stdout + r.stderr)

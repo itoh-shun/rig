@@ -175,11 +175,15 @@ def test_recorded_body_does_not_disturb_review_json_readers(git_repo, task_id):
 
 
 # ── edge case: --body persona with no verdict ─────────────────────────────────
+# Every refusal below exits 2, not 1: a `--body` that does not parse, names no verdict, or
+# points at a file that cannot be read is rig unable to record the reviewer's text. 1 is
+# reserved for a verdict rig reached (`rig_workbench/exitcodes.py`), and `wb review` reaching
+# one is what `wb gate` reports — not this.
 def test_body_without_a_matching_verdict_is_rejected(git_repo, task_id):
     src = write_body(git_repo)
     r = run_cli(["review", task_id, "--set", "security-reviewer=APPROVE",
                  "--body", f"typo-reviewer=@{src}"], git_repo)
-    assert r.returncode == 1
+    assert r.returncode == 2
     assert "typo-reviewer" in r.stderr
     assert not body_path(git_repo, task_id, "typo-reviewer").exists()
     # and the whole invocation is refused — no verdict is recorded either
@@ -198,7 +202,7 @@ def test_persona_with_a_path_separator_cannot_escape_the_run_dir(git_repo, task_
     src = write_body(git_repo)
     r = run_cli(["review", task_id, "--set", "../../pwn=APPROVE",
                  "--body", f"../../pwn=@{src}"], git_repo)
-    assert r.returncode == 1
+    assert r.returncode == 2
     assert "cannot be used as a --body filename" in r.stderr
     # without the guard the write would land here, two levels up from reviews/
     assert not (git_repo / ".rig" / "runs" / "pwn.md").exists()
@@ -208,7 +212,7 @@ def test_persona_with_a_path_separator_cannot_escape_the_run_dir(git_repo, task_
 def test_missing_body_path_fails_before_any_verdict_is_recorded(git_repo, task_id):
     r = run_cli(["review", task_id, "--set", "security-reviewer=APPROVE",
                  "--body", "security-reviewer=@nope.md"], git_repo)
-    assert r.returncode == 1
+    assert r.returncode == 2
     assert "nope.md" in r.stderr
     assert not (git_repo / ".rig" / "runs" / task_id / "review.json").exists()
 
@@ -216,7 +220,7 @@ def test_missing_body_path_fails_before_any_verdict_is_recorded(git_repo, task_i
 def test_unreadable_body_path_reports_instead_of_traceback(git_repo, task_id):
     (git_repo / "adir").mkdir()
     r = run_cli(["review", task_id, "--set", "p=APPROVE", "--body", "p=@adir"], git_repo)
-    assert r.returncode == 1
+    assert r.returncode == 2
     assert "cannot be read" in r.stderr
     assert "Traceback" not in r.stderr
 
@@ -224,21 +228,21 @@ def test_unreadable_body_path_reports_instead_of_traceback(git_repo, task_id):
 def test_non_utf8_body_reports_instead_of_traceback(git_repo, task_id):
     (git_repo / "sjis.md").write_bytes("認可".encode("shift_jis"))
     r = run_cli(["review", task_id, "--set", "p=APPROVE", "--body", "p=@sjis.md"], git_repo)
-    assert r.returncode == 1
+    assert r.returncode == 2
     assert "cannot be read" in r.stderr
     assert "Traceback" not in r.stderr
 
 
 def test_inline_text_without_the_at_prefix_is_rejected(git_repo, task_id):
     r = run_cli(["review", task_id, "--set", "p=APPROVE", "--body", "p=some prose"], git_repo)
-    assert r.returncode == 1
+    assert r.returncode == 2
     assert "@<path>" in r.stderr
     assert not body_path(git_repo, task_id, "p").exists()
 
 
 def test_body_without_an_equals_sign_is_rejected(git_repo, task_id):
     r = run_cli(["review", task_id, "--set", "p=APPROVE", "--body", "p"], git_repo)
-    assert r.returncode == 1
+    assert r.returncode == 2
     assert "<persona>=@<path>" in r.stderr
 
 

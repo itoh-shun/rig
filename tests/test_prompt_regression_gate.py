@@ -68,7 +68,9 @@ def test_prompt_criterion_is_diff_conditional_machine_owned_and_manual_pass_is_r
          "--set", "prompt_regression_passed=passed"], cwd=repo, env=environment,
         capture_output=True, text=True,
     )
-    assert completed.returncode == 1
+    # 2: `--set` on a machine-controlled criterion is a refused instruction, not a gate
+    # verdict — 1 would be indistinguishable from the gate having failed.
+    assert completed.returncode == 2
     assert "machine-controlled" in completed.stderr
 
 
@@ -205,7 +207,9 @@ def test_debt_does_not_make_the_criterion_settable(tmp_path):
          "--set", "prompt_regression_passed=passed"], cwd=repo, env=environment,
         capture_output=True, text=True,
     )
-    assert completed.returncode == 1
+    # 2: `--set` on a machine-controlled criterion is a refused instruction, not a gate
+    # verdict — 1 would be indistinguishable from the gate having failed.
+    assert completed.returncode == 2
     assert "machine-controlled" in completed.stderr
 
 

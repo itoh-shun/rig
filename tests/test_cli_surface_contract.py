@@ -282,24 +282,6 @@ VERBS_SMOKE_RUN = frozenset(VERBS_THAT_REQUIRE_ARGUMENTS) | frozenset(
         "wb contract", "wb digest", "wb gc", "govern whoami", "pack sync",
     })
 
-# Why `wb note` below is pinned to exit 1 even though 1 is the wrong code.
-#
-# rig_workbench/workbench/state.py's die() ends in a bare sys.exit(1), so *every*
-# workbench failure — unreadable state, missing file, bad argument — surfaces as
-# 1, the code rig reserves for "judged the work and said no". `wb note` with no
-# run history is a plumbing failure, not a judgement, and `wb contract`
-# (test_wb_contract_answers_execution_error_when_the_task_state_cannot_be_read,
-# exit 2) is the one command that translates the same "No run history" condition
-# correctly. The 1 is therefore an observation of a defect, not a promise to a
-# caller: the rewrite must not preserve it, and when die() learns to distinguish
-# the two, updating that assertion to 2 is the fix, not a broken contract.
-WB_NOTE_EXIT_ONE_IS_A_SYMPTOM_OF_STATE_DIE_NOT_A_CONTRACT = (
-    "`wb note` exits 1 only because state.py:die() hardcodes sys.exit(1); the "
-    "correct code for this condition is 2, as `wb contract` already returns. "
-    "Pinned as observed behaviour — do not carry it into the rewrite."
-)
-
-
 @pytest.mark.parametrize("argv", VERBS_THAT_REQUIRE_ARGUMENTS)
 def test_a_verb_missing_its_required_arguments_prints_usage_and_exits_two(
         rig_cli, rig_git_repo, argv):
@@ -402,9 +384,14 @@ def test_wb_gc_finds_nothing_to_dispose_of_in_a_repo_with_no_visual_artifacts(
 def test_wb_note_refuses_to_attach_a_hand_off_note_when_there_is_no_run_to_attach_it_to(
         rig_cli, rig_git_repo):
     result = rig_cli("wb", "note", "what a later run should know", cwd=rig_git_repo)
-    # 1 here is a defect being observed, not a contract being kept — see
-    # WB_NOTE_EXIT_ONE_IS_A_SYMPTOM_OF_STATE_DIE_NOT_A_CONTRACT above.
-    assert result.returncode == 1, WB_NOTE_EXIT_ONE_IS_A_SYMPTOM_OF_STATE_DIE_NOT_A_CONTRACT
+    # 2, not 1: there is no run history to attach a note to, which is rig unable to do
+    # the thing — not rig judging the note and refusing it. 1 is reserved for a verdict,
+    # and `wb contract` reports the same "No run history" condition as 2 as well
+    # (test_wb_contract_answers_execution_error_when_the_task_state_cannot_be_read).
+    assert result.returncode == 2, (
+        f"`wb note` with no run history exited {result.returncode}; a plumbing failure "
+        f"is 2, and 1 would be indistinguishable from a judgement\n"
+        f"--- stderr ---\n{result.stderr}")
     assert result.stdout == ""
     assert "No run history" in result.stderr
 

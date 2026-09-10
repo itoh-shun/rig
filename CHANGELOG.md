@@ -4,6 +4,24 @@
 
 ### Added
 
+**The effective policy has a name: `rig.effective-policy/v1`.** `rig-wb govern policy show
+--json` prints the composed result of the org, team and project layers, and until now it
+printed it anonymously — a consumer had no field to branch on and would learn the shape had
+changed by breaking on it. It now carries a top-level `schema`. The id is deliberately not
+the `rig.policy/v2` of the layers it was folded from: that name belongs to one stored,
+authored, publishable document that `policy lint` validates key by key, while this is a
+derived view with no `scope` and no single `id`. Naming the fold after the layer would
+invite a reader to validate it as one. The trail between them stays where it was —
+`layers[].path` still points at the `rig.policy/v2` files the view was resolved from.
+
+**Nothing else about the output moved.** `schema` is added; every other key keeps its name,
+its place and its value, so existing readers are unaffected. `govern` stays on
+`jsonio.LEGACY`: that list is about the `{schema, status, data}` envelope, and taking the
+envelope would move every key under `data` — a breaking change, and a separate decision from
+giving the document a name. The new id is frozen in `tests/test_schema_registry.py` and
+pinned against the real process in `tests/test_schema_cli_contract.py`, which until now
+asserted the *absence* of a schema field.
+
 **A textlint-ja-style Japanese prose sensor, stdlib only.** textlint-ja (`preset-ja-technical-writing`,
 `preset-ja-spacing`, `ja-hiragana-*`, `prh`) is the de-facto lint for Japanese technical
 writing, and it needs Node plus a kuromoji dictionary. `rig_workbench/ja_textlint.py`
@@ -114,6 +132,61 @@ heaviest check is that content was preserved. Schema and template ship in
 `skills/engine/manifests/`, `/rig:init` points at them without filling them in, and the
 `japanese-writing` reviewer gains the sensor as an optional stdin pre-pass — evidence for
 `readability`, never a verdict.
+
+### Fixed
+
+**A workbench failure is no longer reported as a judgement: it exits 2, not 1.**
+`rig_workbench/exitcodes.py` has always promised `1 = rig judged this and said no` and
+`2 = rig could not produce an answer`, but `workbench/state.py`'s `die()` ended in a bare
+`sys.exit(1)`, so every workbench failure took the code reserved for a verdict — a task id
+that does not exist, a worktree that is gone, a flag that does not parse, a malformed
+`.rig/gates.json`, a git command that failed. A caller could not tell a failed acceptance
+gate from a typo in an argument. `die()` now exits `ERROR` (2), and a new `state.reject()`
+carries the verdicts at `REJECTED` (1); each call site picks one by name, so nothing
+inherits a code by default.
+
+**This is a breaking change for anything branching on exit 1.** A script that reads 1 from
+these commands as "rig refused" must now expect 2. Everything that fails through the
+workbench's own error path is affected — `wb status`, `wb note`, `wb log`, `wb gate`,
+`wb step`, `wb review`, `wb diff`, `wb accept`, `wb discard`, `wb gc`,
+`wb verify-provenance`, `wb new`, `wb import`, `wb receipt`, `wb scan-secrets`,
+`wb scan-injection`, `wb scan-anchors`, `wb scan-destructive`, `wb stream-checks`,
+`wb record-commit`, `wb trace-commit`, `wb record-outcome`, `wb digest` and
+`wb scan-ja-prose` — when the failure is a bad argument, missing run state or an unusable
+worktree. `wb route` moves with them: an unresolvable recipe was 1 and is now 2, the code it
+already used for `stopped` and `trust_required`.
+
+**What still exits 1 is exactly what rig judged.** `wb accept` keeps 1 for an unmet
+acceptance gate, a governance block (permission, quorum, a missing waiver) and an actor the
+`.rig/access.json` allowlist does not permit; `wb gate` keeps 1 for a failed gate;
+`wb verify-provenance` keeps 1 for an invalid signature; the scanners keep 1 for findings.
+`wb accept`'s structural preconditions (no worktree, no recorded base, no diff summary) are
+2 with the rest: there was nothing for the gate to judge. `wb contract` is unchanged from
+the caller's side — it already translated the old 1 into its own `execution-error` 2, and
+now simply passes the same code through while still printing the result record.
+
+### Security
+
+**Typing `--allow-project-packs` as text was consent to run project-tier pack assets.**
+The trust gate asked `"--allow-project-packs" in sys.argv`, and `sys.argv` holds far more
+than this process's own options. Any argv element equal to the string granted trust,
+wherever it sat: a task title given after `--` (`rig-wb wb new --type bugfix --
+--allow-project-packs`, the only way to pass a title that starts with a dash), the value
+of a free-text option (`rig-wb run r.md --goal --allow-project-packs` — the orchestrate
+parsers take the next token unconditionally), or an argument forwarded to a pack past the
+separator. A project-tier asset's command and recipe bodies then ran without anyone having
+consented, and the trust record was written, so every later run passed silently too.
+`--allow-project-recipes` and `--allow-project-manifest` in `orchestrate/recipes.py` had
+the identical check and the identical hole; all three now go through one rule.
+
+**The flag counts only where it is genuinely an option**: exact token, never `argv[0]`,
+before the first bare `--`, and not sitting where a free-text option's value goes. It
+still grants trust when actually passed — an escape hatch that stops working is one people
+route around — and `RIG_ALLOW_PROJECT_PACKS=1` (env, not argv) is untouched. What the rule
+knowingly does not catch is written where it lives, in `rig_workbench/packs/trust.py`: a
+value handed to a value-taking option outside the free-text list, since ambiguity has to
+fail open here, and an argument forwarded to a pack *before* any `--`, which is
+character-for-character a real option and needs the caller's own parse to tell apart.
 
 ## [2.13.0] - 2026-09-08
 

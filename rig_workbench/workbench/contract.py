@@ -6,11 +6,11 @@ identity of the thing that was judged. What it must never get is an answer it ca
 tell apart from a failure to answer.
 
 That last point is the reason this module exists rather than a `--json` flag on
-`receipt`. `state.die` exits 1 for everything — a bad task id, corrupt run state, an
-unmet gate — so a caller reading exit 1 cannot distinguish "rig examined this and said
-no" from "rig could not look". Both readings lead somewhere bad: retrying a refusal, or
-merging past an outage. So nothing here calls :func:`die`; every failure becomes an
-`execution-error` result with its own exit code.
+`receipt`. A caller reading a bare exit code has to be able to tell "rig examined this
+and said no" from "rig could not look"; confusing them leads somewhere bad either way —
+retrying a refusal, or merging past an outage. So nothing here calls :func:`die`: every
+failure becomes an `execution-error` *result*, with the reason in the record and on
+stderr, rather than an exit code with nothing attached to it.
 
     0  acceptable       rig's gate cleared this change
     1  not-acceptable   rig looked and this did not clear — including a change a human
@@ -157,9 +157,10 @@ def _error(task_id: str | None, receipt: dict | None, reason: str) -> dict:
 def cmd_contract(args: argparse.Namespace) -> None:
     """Never raises past this frame, and never calls `die`.
 
-    Every exception becomes `execution-error` with exit 2. A crash escaping here would
-    surface to the caller as some other exit code and a traceback on stderr, which is
-    the same ambiguity this command exists to remove — just wearing a different hat.
+    Every exception becomes `execution-error` with exit 2, carrying a result a caller can
+    read. A crash escaping here would surface to the caller as a traceback on stderr and
+    nothing on stdout, which is the same ambiguity this command exists to remove — just
+    wearing a different hat.
     """
     task_id = None
     try:
@@ -167,9 +168,11 @@ def cmd_contract(args: argparse.Namespace) -> None:
         task_id = resolve_task_id(root, args.task_id)
         result = build(root, task_id)
     except SystemExit as exc:
-        # `resolve_task_id` and friends call `die`, which raises SystemExit(1). That
-        # code means "not acceptable" in this command's vocabulary, so it has to be
-        # translated rather than propagated.
+        # `resolve_task_id` and friends call `die`, which now raises SystemExit(2) — the
+        # same code this command already uses for `execution-error`, so the exit is no
+        # longer being corrected here. The catch stays because the *result* still has to
+        # be produced: a bare SystemExit would leave the caller with an exit code and no
+        # record, and `--json` callers parse stdout rather than read stderr.
         result = _error(task_id, None,
                         f"rig could not read this task's state (exit {exc.code}); "
                         f"stderr above carries the detail")
