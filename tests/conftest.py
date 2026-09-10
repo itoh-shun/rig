@@ -48,6 +48,23 @@ os.environ.setdefault("RIG_GLOBAL_RUNS_PATH",
                       str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-global-runs-"))
                           / "runs.jsonl"))
 
+# Pack- and recipe-trust grants (rig_workbench/packs/trust.py::_store_path,
+# rig_workbench/orchestrate/recipes.py::_trust_store_path). Both default to a path
+# under the *real* Path.home() — ~/.rig/trusted-pack-assets.json and
+# ~/.claude/rig/trusted-recipes.json — and both are written, not just read: approving
+# a project-tier asset records its hash there. Individual tests already redirect these
+# per test, and those overlays still win (monkeypatch.setenv and the `rig_cli` `env`
+# overlay are both applied after this); this is the fail-safe for the test that forgets
+# — without it, one missing overlay silently grants trust in the developer's own home
+# and the next real run trusts a fixture. Not a convenience: do not remove as redundant.
+os.environ.setdefault("RIG_PACK_TRUST_STORE",
+                      str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-pack-trust-"))
+                          / "trusted-pack-assets.json"))
+
+os.environ.setdefault("RIG_TRUST_STORE",
+                      str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-recipe-trust-"))
+                          / "trusted-recipes.json"))
+
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -298,3 +315,37 @@ def rig_git_repo(tmp_path):
     git("add", "-A")
     git("commit", "-q", "-m", "initial commit")
     return repo
+
+
+def run_git(repo, *args, check=True):
+    """git inside `repo`, with the developer's own git configuration kept out.
+
+    The same hygiene `rig_git_repo` builds its repository under, lifted out so a test
+    that commits *into* that repo (or into a task worktree cut from it) does not have to
+    restate it: no system config, a global config pointed at a file that does not exist,
+    and the ambient GIT_AUTHOR_*/GIT_COMMITTER_* overrides dropped. Identity and
+    `commit.gpgsign` live in the repository's own local config, which the fixture already
+    wrote, so a commit made here behaves exactly like the fixture's own — and a host with
+    `commit.gpgsign = true` and an unreachable key does not fail the suite for a reason
+    that has nothing to do with rig.
+
+        run_git(repo, "add", "-A")
+        head = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    Returns the CompletedProcess (captured, text) rather than a string, because the three
+    private `_git` copies this consolidates disagree on that: one returns stripped stdout,
+    one the CompletedProcess, one nothing. The superset is the process object; callers
+    that want the output add `.stdout.strip()`. `check=True` by default, matching all
+    three; pass `check=False` to inspect a failure instead of raising.
+    """
+    repo = pathlib.Path(repo)
+    env = dict(os.environ,
+               GIT_CONFIG_NOSYSTEM="1",
+               GIT_CONFIG_GLOBAL=str(repo.parent / "absent-gitconfig"),
+               GIT_TERMINAL_PROMPT="0")
+    for leaked in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                   "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        env.pop(leaked, None)
+    return subprocess.run(["git", *args], cwd=str(repo), check=check, capture_output=True,
+                          text=True, env=env,
+                          timeout=subprocess_timeout(GIT_MEASURED_SECONDS))

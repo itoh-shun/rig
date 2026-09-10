@@ -8,14 +8,24 @@ has is a pack directory on disk and a command that either accepts it or refuses 
 nothing in the suite spoke for that pair until this file.
 
 So everything here goes through `python -m rig_workbench.cli` (the `rig_cli` fixture) and
-asserts on exit codes and printed lines. The one deliberate exception is the canonical
-serialiser: T15 needs an oracle for "what bytes would the code write for this manifest",
-and reimplementing `json.dumps(..., sort_keys=True, separators=(",", ":"))` here would pin
-this file's opinion rather than the product's. `rig_workbench.packs.manifest.canonical` is
-imported for that, and only for that.
+asserts on exit codes and printed lines. Three names are imported from the product anyway,
+each lazily at its call site, and each for a stated reason:
 
-Three groups, selectable by keyword:
+  * `rig_workbench.packs.manifest.canonical` — T15 needs an oracle for "what bytes would the
+    code write for this manifest", and reimplementing
+    `json.dumps(..., sort_keys=True, separators=(",", ":"))` here would pin this file's
+    opinion rather than the product's. That makes the product both the data under test and
+    the oracle for it, so `canonical`'s own wire format is pinned separately, against a
+    literal nothing can regenerate: see CANONICAL_FORMAT_LITERAL below.
+  * `rig_workbench.__version__` — the tier fixture's packs must declare an `engine` range the
+    running engine satisfies, and a hard-coded one would fail at the next version bump.
+  * `rig_workbench.packs.model.ASSET_DIRS` — the same fixture must lay out exactly the asset
+    directories the loader expects; a hard-coded list would go stale the next time a kind is
+    added, and would be this file's opinion of the layout rather than the product's.
 
+Four groups, selectable by keyword:
+
+    pytest -k canonical T15  `canonical`'s wire format, pinned character for character
     pytest -k shipped   T15  the five shipped domain packs validate, and their manifests
                              are byte-identical to the canonical serialisation
     pytest -k refusal   T16  one broken rule per case, each refused by name
@@ -26,7 +36,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import pathlib
 import shutil
 
@@ -129,7 +138,67 @@ def _refusal(rig_cli, pack: pathlib.Path):
     return result.stderr
 
 
-# ── T15 · the five shipped packs validate ────────────────────────────────────
+# ── T15 · the canonical wire format, and the five shipped packs ──────────────
+
+#: A document chosen to exercise every degree of freedom `canonical` has: keys that arrive
+#: out of sorted order, a nested object, two empty containers (one list, one object), a
+#: multi-element list and an integer (comma placement), and non-ASCII values in Latin-1,
+#: CJK and punctuation ranges (`ensure_ascii`).
+CANONICAL_FORMAT_FIXTURE = {
+    "zeta": "ü",
+    "id": "café-pack",
+    "pack_schema_version": 2,
+    "assets": {"recipe": [], "persona": ["facets/personas/レビュアー.md"]},
+    "knowledge": {},
+    "description": "日本語 — naïve",
+    "dependencies": [],
+    "surfaces": ["cli", "mcp"],
+}
+
+#: What `canonical(CANONICAL_FORMAT_FIXTURE)` must return, character for character.
+#:
+#: Why a literal, and not `json.dumps(...)` with the same arguments: every other assertion
+#: in this file compares one product artefact against another, and `canonical` is the oracle
+#: for the shipped manifests. That makes the pair circular — loosen `canonical`'s separators
+#: and `test_shipped_pack_manifest_is_byte_identical_to_its_canonical_serialisation` fails,
+#: but `rig-wb pack sync` (which its own failure message recommends) rewrites every shipped
+#: `pack.yaml` in the new format and the file goes green again, having shipped a different
+#: wire format. This literal is the one assertion in the file with no regenerable side:
+#: `pack sync` cannot move it, so it fails and keeps failing until a human decides.
+#:
+#: What breaks if the format changes. These exact bytes are the signing payload, and
+#: verification recomputes rather than replays them (rig_workbench/packs/publisher.py):
+#: `_envelope` records `manifest_sha256` as the sha256 of `pack.yaml`'s bytes, and
+#: `sign_pack`/`verify_publisher_signature` sign and verify `canonical(envelope)` with
+#: Ed25519. Re-serialising a published pack therefore invalidates it twice over — the digest
+#: no longer matches and the signature no longer verifies — and the repair path does not
+#: exist: `packs/sync.py` refuses to rewrite a signed pack. So a change here is not a
+#: reformat, it is a break of every signature already in the wild, and it must be made
+#: deliberately (new schema version, re-signing) rather than absorbed by a regeneration.
+CANONICAL_FORMAT_LITERAL = (
+    '{"assets":{"persona":["facets/personas/レビュアー.md"],"recipe":[]},'
+    '"dependencies":[],"description":"日本語 — naïve","id":"café-pack",'
+    '"knowledge":{},"pack_schema_version":2,"surfaces":["cli","mcp"],"zeta":"ü"}\n'
+)
+
+
+def test_canonical_serialisation_format_is_pinned_to_a_literal():
+    """`canonical`'s wire format, pinned where `pack sync` cannot regenerate it."""
+    produced = _canonical(CANONICAL_FORMAT_FIXTURE)
+    assert produced == CANONICAL_FORMAT_LITERAL
+
+    # The same properties again, named, so a failure above says which one moved rather than
+    # handing the reader two long strings to diff. None of these is weaker than the literal.
+    assert list(CANONICAL_FORMAT_FIXTURE) != sorted(CANONICAL_FORMAT_FIXTURE), (
+        "the fixture must arrive unsorted, or key ordering is not being exercised")
+    assert produced.endswith("}\n") and produced.count("\n") == 1, (
+        "exactly one trailing newline, and no pretty-printing")
+    assert '", "' not in produced and '": "' not in produced, (
+        "separators are (\",\", \":\") — no spaces after the comma or the colon")
+    assert "\\u" not in produced and "レビュアー" in produced, (
+        "ensure_ascii is False — non-ASCII is written through, not escaped")
+    assert list(json.loads(produced)) == sorted(CANONICAL_FORMAT_FIXTURE), (
+        "keys are emitted in sorted order")
 
 
 @pytest.mark.parametrize("name", sorted(SHIPPED_PACK_IDS))
@@ -299,6 +368,25 @@ TIER_ORDER = ("project", "user", "org", "official", "core")
 #: is the behaviour being pinned: precedence is decided first, trust second.
 WRITABLE_TIERS = frozenset({"project", "user", "org"})
 
+#: `wb route` exits 2 when it has an answer it declines to act on: `route_cli.cmd_route`
+#: ends with `raise SystemExit(2)` for `status in {"stopped", "trust_required"}`. That is a
+#: judgement, and 2 is the code it is reported under.
+ROUTE_TRUST_REQUIRED_EXIT_CODE = 2
+
+#: And it exits 1 when resolution raised a `PackError` — an unresolvable recipe, i.e. a plain
+#: failure (`route_cli.cmd_route`'s `except PackError` clause). So the harder outcome is
+#: reported under the *lower* code than the softer one: `trust_required` (a decision, with a
+#: route record to show for it) is 2, while "no such recipe anywhere" (nothing worked) is 1.
+#:
+#: That inversion is not a designed contract. The 1 is inherited from `workbench/state.py`'s
+#: `die()`, which prints `[ERROR] …` and calls `sys.exit(1)` for every failure in the repo;
+#: `route_cli` follows that house style, and the 2 was chosen independently for the trust
+#: gate. The value is pinned below because it is what the product does today and a silent
+#: change would still be a break for anyone scripting `wb route` — but pinned as a record of
+#: the current behaviour, not as an argument that it is right. Fixing it is a production
+#: change (it would move every `die()` call site), and out of scope for this file.
+UNRESOLVABLE_RECIPE_EXIT_CODE_IS_A_SYMPTOM_NOT_A_CONTRACT = 1
+
 #: The recipe every tier's pack ships under the same name — the whole point of the exercise.
 TIER_PROBE_RECIPE = "tier-probe"
 
@@ -405,12 +493,17 @@ def test_tier_precedence_resolves_project_then_user_then_org_then_official_then_
     # `packs/`. It also moves the engine's shipped prompt assets, and the packaged domain
     # packs — validated by `wb route`'s canonical catalog, which reads them from the
     # distribution rather than from RIG_HOME — declare typed references into them. So the
-    # engine skill tree is linked back to the checkout; everything else under this RIG_HOME
+    # engine skill tree is brought in from the checkout; everything else under this RIG_HOME
     # is the fixture's own.
-    try:
-        os.symlink(REPO_ROOT / "skills", rig_home / "skills", target_is_directory=True)
-    except OSError as exc:  # pragma: no cover - a platform that forbids symlinks
-        pytest.skip(f"cannot redirect RIG_HOME without symlink support: {exc}")
+    #
+    # Copied, not symlinked. Every use below is read-only today, but a symlink makes that a
+    # property of the commands rather than of the fixture: one `rig-wb` subcommand that ever
+    # writes under RIG_HOME — a cache, a lockfile, a rewritten skill — and the test edits the
+    # developer's real `skills/` through the link, in a directory `git status` is expected to
+    # keep clean. A copy cannot do that whatever the command does. It is also cheap: 1.8 MB
+    # over 226 files, measured at ~0.02s on this checkout, against ~5s for the file's own
+    # subprocess runs.
+    shutil.copytree(REPO_ROOT / "skills", rig_home / "skills", symlinks=True)
 
     packs_by_tier = {
         "project": rig_git_repo / ".rig" / "packs",
@@ -450,12 +543,17 @@ def test_tier_precedence_resolves_project_then_user_then_org_then_official_then_
         # Precedence is settled before trust is: the three writable tiers name their winner
         # and then decline to route it, rather than skipping it and picking a lower tier.
         if tier in WRITABLE_TIERS:
-            assert record["status"] == "trust_required" and returncode == 2
+            assert (record["status"] == "trust_required"
+                    and returncode == ROUTE_TRUST_REQUIRED_EXIT_CODE)
         else:
             assert record["status"] == "ready" and returncode == 0
         shutil.rmtree(directories[tier])
 
     exhausted, returncode = route()
-    assert exhausted["status"] == "error" and returncode == 1
+    # Exit 1 here, against exit 2 for `trust_required` above: see
+    # UNRESOLVABLE_RECIPE_EXIT_CODE_IS_A_SYMPTOM_NOT_A_CONTRACT for why the two are the wrong
+    # way round, and why this file pins the inversion rather than asserting it is correct.
+    assert (exhausted["status"] == "error"
+            and returncode == UNRESOLVABLE_RECIPE_EXIT_CODE_IS_A_SYMPTOM_NOT_A_CONTRACT)
     assert f"explicit recipe `{TIER_PROBE_RECIPE}` is not resolvable" in exhausted["error"]
 
