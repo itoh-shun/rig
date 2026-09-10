@@ -12,6 +12,13 @@ hub. So `TestNoCallables` tries every field, including nested ones, and expects 
 **A declaration may not change under its readers.** Four surfaces project this table; one of
 them mutating an entry would be invisible to the other three.
 
+**Two facts, two fields.** What a capability disturbs on this machine and whether it reaches
+off it are independent — `gh-check` leaves nothing behind and still talks to github.com, `run`
+writes a worktree and may call a provider. `TestTwoAxes` holds them apart: `effect_class` no
+longer admits `network`, `network` no longer admits a bare bool, and the pair still projects
+onto the annotation sets `remote_mcp.py` builds by hand — read from that file, not restated
+here, so the day it changes this fails instead of drifting.
+
 The rest is the container's behaviour, and one validation sweep over the real entries. That
 sweep passes vacuously today — `CAPABILITIES` is empty — and starts biting the moment the
 first entry lands without the fields a conversation needs, which is the point of writing it
@@ -29,6 +36,7 @@ import pytest
 from rig_workbench.registry import CAPABILITIES, by_id, children
 from rig_workbench.registry.model import (
     EFFECT_CLASSES,
+    NETWORK_REACH,
     NO_PRECONDITION,
     PARENTS,
     Capability,
@@ -38,6 +46,26 @@ from rig_workbench.registry.model import (
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 MODEL_SOURCE = REPO_ROOT / "rig_workbench" / "registry" / "model.py"
+REMOTE_MCP_SOURCE = REPO_ROOT / "rig_workbench" / "remote_mcp.py"
+
+
+def hand_built_annotations() -> dict[str, dict]:
+    """The `ToolAnnotations` sets `remote_mcp.py` declares, read out of that file.
+
+    Copying the four booleans into this test would only prove the copy matches itself. The
+    point of `mcp_hints` is that one table answers the question that file answers today, so
+    the expectation is parsed from the file: rename a set or flip a hint there and this
+    stops passing, which is the conversation worth having.
+    """
+    source = REMOTE_MCP_SOURCE.read_text(encoding="utf-8")
+    blocks = re.findall(r"(\w+)_annotations = ToolAnnotations\((.*?)\)", source, re.DOTALL)
+    return {
+        name: {
+            f"{hint}Hint": value == "True"
+            for hint, value in re.findall(r"(\w+)Hint=(True|False)", body)
+        }
+        for name, body in blocks
+    }
 
 
 def capability(**overrides) -> Capability:
@@ -50,6 +78,7 @@ def capability(**overrides) -> Capability:
         "preconditions": ("git-repo", "task-exists"),
         "effect_line": "acceptance criteria を採点して gate の記録を更新します",
         "effect_class": "writes-state",
+        "network": "never",
         "flags": (Flag(name="task_id", type="string", help="the task to judge"),),
         "output_schema": "rig.gate-report/v1",
         "exit_codes": (ExitCode(code=0, meaning="the gate passed"),),
@@ -77,7 +106,8 @@ class TestNoCallables:
 
     @pytest.mark.parametrize(
         "field",
-        ["id", "parent", "verb", "intent", "effect_line", "effect_class", "output_schema"],
+        ["id", "parent", "verb", "intent", "effect_line", "effect_class", "network",
+         "output_schema"],
     )
     def test_scalar_field_refuses_a_function(self, field):
         with pytest.raises(TypeError, match="callable"):
@@ -209,21 +239,6 @@ class TestShape:
             id="queue.add", parent=None, verb="queue add"
         ).command_path == ("queue", "add")
 
-    def test_effect_class_projects_onto_the_mcp_annotations_already_in_use(self):
-        # These are remote_mcp.py's three hand-built annotation sets, not a second opinion.
-        assert capability(effect_class="read-only").mcp_hints == {
-            "readOnlyHint": True, "destructiveHint": False,
-            "idempotentHint": True, "openWorldHint": False,
-        }
-        assert capability(effect_class="writes-worktree").mcp_hints == {
-            "readOnlyHint": False, "destructiveHint": True,
-            "idempotentHint": False, "openWorldHint": False,
-        }
-        assert capability(effect_class="network").mcp_hints == {
-            "readOnlyHint": False, "destructiveHint": True,
-            "idempotentHint": False, "openWorldHint": True,
-        }
-
     def test_as_dict_is_json_shaped(self):
         record = capability().as_dict()
         assert record["flags"] == [{
@@ -232,6 +247,9 @@ class TestShape:
         }]
         assert record["exit_codes"] == [{"code": 0, "meaning": "the gate passed"}]
         assert record["command_path"] == ["wb", "gate"]
+        # Both axes reach the projections; a surface reading only one would under-warn.
+        assert record["effect_class"] == "writes-state"
+        assert record["network"] == "never"
 
     def test_a_flag_knows_whether_it_is_positional(self):
         assert Flag(name="task_id", type="string", help="the task").positional
@@ -244,6 +262,120 @@ class TestShape:
             Flag(name="--json", type="bool", help="emit JSON", choices=("yes", "no"))
 
 
+class TestTwoAxes:
+    """`effect_class` and `network` answer different questions and must stay separable.
+
+    The case this guards is the one that made the split worth doing: a capability that both
+    writes and reaches out used to have to pick, and whichever fact lost stopped being said.
+    """
+
+    def test_network_is_no_longer_an_effect_class(self):
+        # The retired fourth value. An entry copied from the old vocabulary must not pass.
+        assert "network" not in EFFECT_CLASSES
+        with pytest.raises(ValueError, match="effect_class"):
+            capability(effect_class="network")
+
+    def test_the_reach_it_admits_is_closed(self):
+        for reach in NETWORK_REACH:
+            assert capability(network=reach).network == reach
+        assert NETWORK_REACH == ("never", "sometimes", "always")
+
+    @pytest.mark.parametrize("value", [True, False, "yes", "no", None, "", "offline", 1])
+    def test_an_unknown_reach_is_refused(self, value):
+        # A bool included on purpose: the shape is three-valued, and `network=True` would
+        # have to be read as one of them silently.
+        with pytest.raises(ValueError, match="network"):
+            capability(network=value)
+
+    def test_the_reach_has_no_default(self):
+        """Omitting it would be a claim — "nothing leaves the machine" — made by silence.
+
+        Same reason `preconditions` refuses to be empty: this table has to keep "checked,
+        and the answer is no" apart from "nobody filled this in", and 137 entries are about
+        to be written by people who will occasionally not know.
+        """
+        fields = {
+            "id": "pack.sync", "parent": "pack", "verb": "sync",
+            "intent": "re-scan the pack and bring its manifest back in line",
+            "preconditions": ("git-repo",),
+            "effect_line": "pack manifest を更新します",
+            "effect_class": "writes-state",
+            "exit_codes": (ExitCode(code=0, meaning="the manifest is current"),),
+        }
+        with pytest.raises(TypeError, match="network"):
+            Capability(**fields)
+        assert Capability(**fields, network="never").network == "never"
+
+    def test_both_facts_survive_on_one_record(self):
+        """The worked example from the field docs: `run --provider claude`."""
+        run = capability(
+            id="run", parent=None, verb="run",
+            effect_class="writes-worktree", network="sometimes",
+        )
+        assert run.effect_class == "writes-worktree"  # the half the old axis dropped
+        assert run.may_reach_network
+        assert run.as_dict()["network"] == "sometimes"
+
+    def test_may_reach_network_treats_sometimes_as_yes(self):
+        assert not capability(network="never").may_reach_network
+        assert capability(network="sometimes").may_reach_network
+        assert capability(network="always").may_reach_network
+
+    def test_the_three_hand_built_annotation_sets_still_come_back_out(self):
+        """Each of `remote_mcp.py`'s sets, against the capability that tool actually is."""
+        expected = hand_built_annotations()
+        assert set(expected) == {"read", "run", "destructive"}, expected
+
+        # rig_status / rig_board / rig_diff / rig_plan: local reads.
+        assert capability(
+            effect_class="read-only", network="never"
+        ).mcp_hints == expected["read"]
+
+        # rig_run: writes a worktree, and may call a provider (mock sends nothing).
+        assert capability(
+            effect_class="writes-worktree", network="sometimes"
+        ).mcp_hints == expected["run"]
+
+        # rig_accept / rig_discard: write the worktree, reach nothing.
+        assert capability(
+            effect_class="writes-worktree", network="never"
+        ).mcp_hints == expected["destructive"]
+
+    def test_a_provider_that_always_reaches_out_annotates_like_the_run_tool(self):
+        # `sometimes` and `always` differ in what a person is told, not in what an MCP
+        # client is allowed to assume: both mean "this may talk to something out there".
+        assert (
+            capability(effect_class="writes-worktree", network="always").mcp_hints
+            == capability(effect_class="writes-worktree", network="sometimes").mcp_hints
+        )
+
+    def test_a_harmless_remote_read_is_the_set_remote_mcp_never_needed(self):
+        """`gh-check` runs `gh auth status` against github.com and leaves nothing behind.
+
+        No hand-built set covers this: all four of that file's read tools stay on the
+        machine. It is not ambiguous — each hint follows from the axis that answers it —
+        and it is the case the single axis could only get wrong, by calling a read
+        destructive because it used the network.
+        """
+        hints = capability(effect_class="read-only", network="always").mcp_hints
+        assert hints == {
+            "readOnlyHint": True, "destructiveHint": False,
+            "idempotentHint": True, "openWorldHint": True,
+        }
+        assert hints not in hand_built_annotations().values()
+
+    def test_destructiveness_is_decided_by_the_local_axis_alone(self):
+        # Reaching out is not by itself a reason to ask; writing is. That is exactly how
+        # remote_mcp.py annotates its own tools.
+        for reach in NETWORK_REACH:
+            assert not capability(effect_class="read-only", network=reach).mcp_hints[
+                "destructiveHint"
+            ]
+            assert capability(effect_class="writes-state", network=reach).mcp_hints[
+                "destructiveHint"
+            ]
+
+
 class TestLookup:
     """`by_id` and `children`, against a locally built table."""
 
@@ -253,7 +385,7 @@ class TestLookup:
         capability(id="wb.accept", parent="wb", verb="accept",
                    effect_class="writes-worktree"),
         capability(id="pack.install", parent="pack", verb="install",
-                   effect_class="network"),
+                   effect_class="writes-worktree"),
     )
 
     def test_by_id_finds_a_declared_capability(self):
@@ -286,19 +418,21 @@ class TestLookup:
 class TestDeclaredEntries:
     """Sweeps the real table. Vacuous while it is empty; it bites as entries land.
 
-    The four fields a conversation needs are exactly the ones argparse would never have made
+    The fields a conversation needs are exactly the ones argparse would never have made
     anyone write, which is why they are the ones worth a sweep: `intent` (what the person
-    wanted), `preconditions` (what must hold first), `effect_line` (what is about to happen)
-    and `effect_class` (how much that matters). An entry that has flags and help text but
-    none of these is the stage-2 failure mode — a CLI table wearing a registry's name.
+    wanted), `preconditions` (what must hold first), `effect_line` (what is about to happen),
+    `effect_class` (what that disturbs here) and `network` (what leaves the machine). An entry
+    that has flags and help text but none of these is the stage-2 failure mode — a CLI table
+    wearing a registry's name.
     """
 
-    def test_every_capability_carries_the_four_conversation_fields(self):
+    def test_every_capability_carries_the_conversation_fields(self):
         for entry in CAPABILITIES:
             assert entry.intent.strip(), f"{entry.id}: intent is empty"
             assert entry.preconditions, f"{entry.id}: preconditions are empty"
             assert entry.effect_line.strip(), f"{entry.id}: effect_line is empty"
             assert entry.effect_class in EFFECT_CLASSES, f"{entry.id}: effect_class"
+            assert entry.network in NETWORK_REACH, f"{entry.id}: network"
 
     def test_intent_is_not_a_restatement_of_the_verb(self):
         for entry in CAPABILITIES:

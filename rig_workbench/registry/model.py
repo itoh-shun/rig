@@ -38,29 +38,56 @@ import re
 
 from ..exitcodes import RESERVED
 
-#: The schema id for the JSON projection of this table (`as_dict`).
-SCHEMA = "rig.capability-registry/v1"
+# No schema id is declared here on purpose. `as_dict` returns records, and nothing
+# prints this table yet; naming a document nobody emits would put a public id into
+# the frozen registry that no command can be driven to produce. When a projection
+# ships, it names itself then, and tests/test_schema_registry.py will require it to
+# be reachable through the CLI before the name is allowed to exist.
 
 #: The surfaces a capability can hang under. `None` is a top-level `rig-wb <verb>`; every
 #: other value is the word that comes before the verb. Closed on purpose — a new group is a
 #: change to the command surface, which is an observable contract, not a field value.
 PARENTS = ("wb", "govern", "pack", "eval", "baseline", "githooks")
 
-#: What running it does to the world, in the vocabulary `remote_mcp.py` already uses. The
-#: three MCP annotation sets that file builds by hand map onto these one for one (see
-#: `mcp_hints`): `read_annotations` is `read-only`, `destructive_annotations` is the two
-#: writing classes, `run_annotations` is `network`. A parallel vocabulary would mean deciding
-#: twice which tools an MCP client is allowed to call without asking.
+#: How much of *this machine* running it disturbs — what a person is being asked to allow.
+#: Whether it also reaches off the machine is the separate `NETWORK_REACH` axis below.
 #:
 #: Exactly one applies. When more than one is true of a capability, take the strongest in
-#: this order — it is ordered by what a person would most want to be asked about first:
-#: reading nothing, writing rig's own records, touching the user's files or branches, leaving
-#: the machine. `rig-wb pack install` both fetches and writes, and is `network`.
+#: this order — reading nothing, writing rig's own records, touching the user's files or
+#: branches: `rig-wb wb accept` updates the task record *and* stages the change into the
+#: worktree, so it is `writes-worktree`. The ordering survives the split because these three
+#: really do nest: whatever a rung leaves changed, the rung above it may change too, and
+#: more besides. The fourth rung this tuple used to carry (`network`) never nested, so
+#: "strongest wins" could not order it against the others — which is why it is gone:
+#: leaving the machine is not a heavier kind of local write, it is the answer to a different
+#: question, and folding the two together silently dropped whichever fact lost.
 READ_ONLY = "read-only"
 WRITES_STATE = "writes-state"
 WRITES_WORKTREE = "writes-worktree"
-NETWORK = "network"
-EFFECT_CLASSES = (READ_ONLY, WRITES_STATE, WRITES_WORKTREE, NETWORK)
+EFFECT_CLASSES = (READ_ONLY, WRITES_STATE, WRITES_WORKTREE)
+
+#: Whether running it reaches off this machine, which is the one thing a person cannot
+#: discover afterwards by looking at their own disk.
+#:
+#: Three values rather than a bool, because a bool can only lie about the middle one and the
+#: middle one is where the busiest capabilities live: `rig-wb run --provider mock` never
+#: leaves the machine, `--provider claude` sends the prompt and the diff to an API, and it is
+#: the same verb either way. Forced to choose, an entry-writer either promises silence it
+#: cannot keep or warns about a call that usually never happens — and a warning that fires
+#: when nothing is sent is how people learn to stop reading them.
+#:
+#: `sometimes` is a statement about the capability's *inputs*, never about the writer's
+#: confidence: it means the code decides from an argument, a configured provider or a
+#: transport, and `effect_line` must name what decides ("provider に送信します" is a
+#: different sentence from "ローカルだけで実行します"). If you do not yet know which it is,
+#: that is a question for the code, not a value of this field.
+#:
+#: `always` and `sometimes` both raise `openWorldHint` (see `mcp_hints`): an MCP client is
+#: deciding whether to ask a person first, and "it might" has to be answered as "it may".
+NETWORK_NEVER = "never"
+NETWORK_SOMETIMES = "sometimes"
+NETWORK_ALWAYS = "always"
+NETWORK_REACH = (NETWORK_NEVER, NETWORK_SOMETIMES, NETWORK_ALWAYS)
 
 #: What a flag carries, named rather than referenced. `"int"` and not `int`, because a type
 #: object is callable and this record refuses callables; also because the CLI, the two MCP
@@ -264,13 +291,52 @@ class Capability:
     #: `talk-loop.md` step 5 prints the invocation as `→ rig-wb wb gate` and then declares or
     #: confirms; this is the sentence that follows it. So it is about to happen, not it
     #: happened: "worktree と branch を削除します" before the deletion, never after. It names
-    #: what will be touched, because it is the last thing a person sees before a
-    #: `writes-worktree` or `network` capability is confirmed, and a line that says only
-    #: "続けます" gives them nothing to refuse.
+    #: what will be touched, because it is the last thing a person sees before anything
+    #: that writes or reaches out is confirmed, and a line that says only "続けます" gives
+    #: them nothing to refuse. Where `network` is `sometimes`, this is the sentence that has
+    #: to name the condition — the reader cannot see the provider argument from here.
     effect_line: str
 
-    #: What running it does to the world; one of `EFFECT_CLASSES`.
+    #: What running it disturbs *on this machine*; one of `EFFECT_CLASSES`.
+    #:
+    #: This axis is about the local blast radius and nothing else. Ask: if the network were
+    #: unplugged, what would still be different afterwards? Nothing (`read-only`), rig's own
+    #: records under `.rig/` (`writes-state`), or the user's files, branches and worktrees
+    #: (`writes-worktree`). A capability that only fetches and reports is `read-only` however
+    #: far it reached — `rig-wb gh-check` runs `gh auth status` against github.com and leaves
+    #: nothing behind, so it is `read-only`, `network="always"`.
     effect_class: str
+
+    #: Whether it reaches off this machine; one of `NETWORK_REACH`.
+    #:
+    #: The other half of the same warning, kept apart because the two facts are independent:
+    #: reaching out says nothing about what is written, and writing says nothing about what
+    #: is sent. Ask it as its own question: does anything leave this machine, always, only
+    #: for some inputs, or never?
+    #:
+    #: Worked example of one capability that is genuinely both — `rig-wb run --provider
+    #: claude`. It creates a worktree and a branch (`effect_class="writes-worktree"`) *and*
+    #: it sends the diff and the prompt to a provider, though `--provider mock` sends
+    #: nothing (`network="sometimes"`). On the single axis it could only be declared
+    #: `network`, and the sentence "worktree と branch を作ります" — the part a person would
+    #: actually refuse — was the half that vanished. Both halves now survive, and
+    #: `mcp_hints` still reproduces exactly the `run_annotations` `remote_mcp.py` builds by
+    #: hand for this tool.
+    #:
+    #: No default, for the reason `preconditions` is never empty: an omitted value would be
+    #: read as "does not leave the machine", which is a claim, and this table has to keep
+    #: a claim distinguishable from a blank.
+    #:
+    #: Answer it about the code as it is, not as the verb reads — two live cases where the
+    #: name misleads. `pack install` sounds like a fetch, but `packs/installer.py` refuses
+    #: URL sources outright and resolves `official:` against a catalogue that ships in the
+    #: package, so today it is `writes-worktree`, `network="never"`; the single axis declared
+    #: it `network` on the strength of its name, which is the collapse arriving on cue. And
+    #: `rig-mcp` serves rather than fetches — over stdio it reaches nothing, and its
+    #: `--transport streamable-http` may bind only to a loopback host (`remote_mcp.py`
+    #: refuses anything else), so nothing leaves the machine and it is `never` today. If that
+    #: restriction is ever lifted, that entry changes with it.
+    network: str
 
     #: What the caller may pass. Order is the order a projection shows them in; positionals
     #: are the ones whose `name` has no leading dashes, so declare them first.
@@ -302,7 +368,14 @@ class Capability:
         if self.effect_class not in EFFECT_CLASSES:
             raise ValueError(
                 f"{self.id}: effect_class {self.effect_class!r} is not one of "
-                f"{', '.join(EFFECT_CLASSES)}"
+                f"{', '.join(EFFECT_CLASSES)}; whether it also leaves the machine is the "
+                "`network` field, not a fourth class here"
+            )
+        if self.network not in NETWORK_REACH:
+            raise ValueError(
+                f"{self.id}: network {self.network!r} is not one of "
+                f"{', '.join(NETWORK_REACH)}; say {NETWORK_NEVER!r} to declare deliberately "
+                "that nothing leaves the machine"
             )
         preconditions = _tuple("Capability", "preconditions", self.preconditions)
         if not preconditions:
@@ -348,22 +421,43 @@ class Capability:
         return (*parent, *self.verb.split(" "))
 
     @property
-    def mcp_hints(self) -> dict:
-        """`effect_class` in the annotation vocabulary the MCP adapters already speak.
+    def may_reach_network(self) -> bool:
+        """Might running this send something off the machine? `sometimes` counts as yes."""
+        return self.network != NETWORK_NEVER
 
-        Not a second opinion about safety — the three sets `remote_mcp.py` builds by hand map
-        onto the four classes exactly, and this reproduces them: its `read_annotations` for
-        `read-only`, its `destructive_annotations` for both writing classes, its
-        `run_annotations` for `network`. Deliberately conservative in the same way that file
-        is: everything that is not read-only is flagged destructive, because an MCP client
-        decides from this whether to ask a person first.
+    @property
+    def mcp_hints(self) -> dict:
+        """The two axes in the annotation vocabulary the MCP adapters already speak.
+
+        Not a second opinion about safety — each axis drives the hints it actually answers,
+        and the three sets `remote_mcp.py` builds by hand come back out unchanged:
+
+        * its four read tools (`status`, `board`, `diff`, `plan`) are `read-only` and reach
+          nothing, giving `read_annotations`;
+        * `accept` and `discard` write the worktree and reach nothing, giving
+          `destructive_annotations`;
+        * `run` writes the worktree and may call a provider, giving `run_annotations` —
+          including its `openWorldHint=True` under the default `provider="mock"`, which is
+          why `sometimes` has to raise that hint rather than lower it.
+
+        Deliberately conservative in the same way that file is: everything that is not
+        read-only is flagged destructive, because an MCP client decides from this whether to
+        ask a person first.
+
+        One combination has no hand-built counterpart, and that is a gap in the source rather
+        than an ambiguity here: `read-only` plus a network reach (`gh-check`, and any future
+        tool that only fetches and reports) yields readOnly/idempotent true *and* openWorld
+        true. `remote_mcp.py` never needed that set because none of its four read tools leaves
+        the machine. The single axis had to answer it by lying in one direction — calling a
+        harmless remote read destructive — so the honest fourth set is the split working, not
+        a case it fails to cover.
         """
         read_only = self.effect_class == READ_ONLY
         return {
             "readOnlyHint": read_only,
             "destructiveHint": not read_only,
             "idempotentHint": read_only,
-            "openWorldHint": self.effect_class == NETWORK,
+            "openWorldHint": self.may_reach_network,
         }
 
     def as_dict(self) -> dict:
@@ -377,6 +471,7 @@ class Capability:
             "preconditions": list(self.preconditions),
             "effect_line": self.effect_line,
             "effect_class": self.effect_class,
+            "network": self.network,
             "flags": [flag.as_dict() for flag in self.flags],
             "output_schema": self.output_schema,
             "exit_codes": [code.as_dict() for code in self.exit_codes],
