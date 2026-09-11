@@ -9,12 +9,11 @@ import pathlib
 import posixpath
 import subprocess
 
-from rig_workbench import __version__
-
 from ..ports import Clock, Env, ProcessRunner
 from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from .affected import BrickGraphSource, analyze_affected
 from .cases import (
+    EXECUTOR_VERSION,
     EvalCaseError,
     canonical_json,
     evaluation_spec_hash,
@@ -216,9 +215,9 @@ def quality_result_failures(
         failures.append(f"judge_provider_mismatch:{case_id}")
     if judge_model is not None and result["judge_model"] != judge_model:
         failures.append(f"judge_model_mismatch:{case_id}")
-    if result["executor_version"] != __version__:
+    if result["executor_version"] != EXECUTOR_VERSION:
         failures.append(f"executor_version_mismatch:{case_id}")
-    if result["judge_executor_version"] != __version__:
+    if result["judge_executor_version"] != EXECUTOR_VERSION:
         failures.append(f"judge_executor_version_mismatch:{case_id}")
     if result["case_id"] != case_id or result["case_hash"] != evaluation_spec_hash(case):
         failures.append(f"case_hash_mismatch:{case_id}")

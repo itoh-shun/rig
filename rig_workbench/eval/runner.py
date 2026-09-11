@@ -18,11 +18,11 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from rig_workbench import __version__
 from ..ports import Clock, Env, ProcessRunner
 from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from .attestation import sign_result_attestation
 from .cases import (
+    EXECUTOR_VERSION,
     ISOLATION_RANK,
     EvalCaseError,
     canonical_json,
@@ -427,7 +427,7 @@ def make_judge_adapter(
 
     judge.judge_provider = provider  # type: ignore[attr-defined]
     judge.judge_model = model  # type: ignore[attr-defined]
-    judge.judge_executor_version = __version__  # type: ignore[attr-defined]
+    judge.judge_executor_version = EXECUTOR_VERSION  # type: ignore[attr-defined]
     judge.judge_isolation = eval_isolation_level(provider, root, model)  # type: ignore[attr-defined]
     return judge
 
@@ -638,7 +638,7 @@ def run_case(
                            for row in [*target, *clean]) else "unmeasured")
     )
     judge_executor_version = str(
-        getattr(judge_adapter, "judge_executor_version", __version__)
+        getattr(judge_adapter, "judge_executor_version", EXECUTOR_VERSION)
     )
     result = {
         "eval_result_schema_version": RESULT_SCHEMA_VERSION,
@@ -652,7 +652,7 @@ def run_case(
         "prompt_binding_sha256": prompt_binding_sha256,
         "pack_tree_sha256": pack_tree_sha256,
         "prompt_surface_digests": prompt_surface_digests,
-        "provider": provider, "model": model, "executor_version": __version__,
+        "provider": provider, "model": model, "executor_version": EXECUTOR_VERSION,
         "provider_isolation": provider_isolation,
         "judge_provider": judge_provider, "judge_model": judge_model,
         "judge_executor_version": judge_executor_version,

@@ -16,7 +16,7 @@ from rig_workbench.packs.resolver import core_reference_ids
 
 
 def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
-    from rig_workbench import __version__
+    from rig_workbench.eval.cases import EXECUTOR_VERSION
     from rig_workbench.eval.runner import run_case
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
     from rig_workbench.packs.lock import tree_hash
@@ -56,7 +56,10 @@ def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
         ]}
     judge.judge_provider = "codex"
     judge.judge_model = "fixture"
-    judge.judge_executor_version = __version__
+    # The eval executor's version, not the package release: the gate compares this
+    # against `eval.cases.EXECUTOR_VERSION`, which is eval's own constant and is allowed
+    # to sit still through a release that does not change how a measurement is executed.
+    judge.judge_executor_version = EXECUTOR_VERSION
     result_root = root / "generated-results"
     monkeypatch.setattr(
         "rig_workbench.eval.runner._execute",
