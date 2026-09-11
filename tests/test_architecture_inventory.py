@@ -89,8 +89,19 @@ PORT_LAYER_PACKAGE = "ports"
 # and it had to be that edge: it is in every minimum feedback edge set for that
 # component, because `validation` is its only exit.
 #
-# Five components now, and `rig_workbench/packs/` is in none of them. Nothing
-# below may be re-added without the change that adds it saying so here.
+# Two of those three inversions have since outlived what they inverted: rig V3
+# removed publisher signing, so `packs/publisher.py` and `packs/signature.py` are
+# gone and with them `lock.PublisherVerifier` and `publisher.LocalQualityStatus`.
+# The edges they inverted cannot be redrawn by anyone, because neither endpoint
+# exists; `installer.local_quality_status` absorbed the verdict `sign_pack` used
+# to ask for. Only the third inversion is still load-bearing, and
+# `validation.CoreReferenceIds` is still what holds `validation -> resolver` open.
+# The paragraph above is kept because it is the record of how the component came
+# apart, not a description of today's imports.
+#
+# Five components now, and `rig_workbench/packs/` is in none of them — measured
+# after the deletions, not assumed from them. Nothing below may be re-added
+# without the change that adds it saying so here.
 BASELINE_RUNTIME_CYCLES: frozenset[tuple[str, ...]] = frozenset(
     {
         ("rig_workbench.cli", "rig_workbench.githooks"),
@@ -195,13 +206,22 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 19,
         "clock": 6,
     },
+    # Re-measured after publisher signing was removed. `packs/publisher.py` and
+    # `packs/signature.py` account for the whole of the `subprocess`, `write_text` and
+    # `clock` drop — 4, 1 and 3 sites, counted by this same walk over the two files at the
+    # commit before they were deleted. The `print` column moved for a different reason and
+    # earlier: the walk read 51 over `packs/` with these ceilings still at 54, because the
+    # pass that removed the `pack sign` and `pack keygen` verbs from `packs/cli.py` took
+    # three prints out and did not lower the ceiling. `sources.py`'s `_git` is the one
+    # `subprocess` site left in the package. Lowered to what the walk counts, not to a
+    # target.
     "packs": {
-        "print": 54,
-        "subprocess": 5,
+        "print": 51,
+        "subprocess": 1,
         "open_write": 0,
-        "write_text": 9,
+        "write_text": 8,
         "env": 8,
-        "clock": 5,
+        "clock": 2,
     },
     # The capability registry declares; it does not act. Zero is the shape every
     # judgement layer carved out in stage 3 is supposed to end up with.
