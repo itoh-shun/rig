@@ -13,7 +13,9 @@ What it freezes, and how:
 * **The hub and the god module** — inbound edges into `workbench/state.py`,
   outbound edges out of `workbench/cli.py`, as ceilings.
 * **Effect sites per package** — `print(`, `subprocess.*(...)`, `open(..., 'w'/'a')`,
-  `write_text`/`write_bytes`, `os.environ`/`os.getenv`, and direct clock reads.
+  `write_text`/`write_bytes`, `os.environ`/`os.getenv`, and direct clock reads
+  (`CLOCK_READS` below enumerates those and says how the set was derived; the two
+  packages whose number went up when it widened carry a note saying so at their entry).
   Counted over the AST, not over lines, so a docstring that says "print" and a
   comment about `subprocess` do not inflate the baseline the way an earlier
   line-matching pass did (see the brief's "測定の限界").
@@ -54,6 +56,16 @@ PORT_LAYER_PACKAGE = "ports"
 # ---------------------------------------------------------------------------
 # Frozen baseline — measured at 9d038b7 by the walk below.
 # These are ceilings and exact sets to ratchet DOWN, never a goal to fill up to.
+#
+# One exception to "down", and it is the only one: the `clock` column was
+# **re-measured** when `CLOCK_READS` widened, not raised. The narrow walk it
+# replaced matched three spellings (`now`, `utcnow`, `time.time`) out of the
+# thirteen a file can use to read the wall clock, so three packages were sitting
+# under a ceiling that described less code than they contained — `govern`'s read
+# 0 with `datetime.date.today()` still in `cli.py`. A number that goes up here
+# because the instrument got better is the ratchet starting to work, not a
+# regression; the two entries it happened to say so where they sit. Anything that
+# goes up for any *other* reason is a new effect site, and belongs behind a port.
 # ---------------------------------------------------------------------------
 
 # Strongly connected components of the intra-package import graph that exist at
@@ -134,7 +146,12 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "clock": 4,
     },
     # The first pillar behind the ports (§7 stage 3). Five kinds are zero because every
-    # site moved onto a port, and the sixth is not what it looks like: four of the six
+    # site moved onto a port — `clock` last, and it is the only one of the five whose zero
+    # was ever false: the narrow walk matched `now`/`utcnow`/`time.time` and not
+    # `datetime.date.today()`, so `govern/cli.py`'s expiry calculation sat under a ceiling
+    # that read 0 while the call was still there. The walk below now covers the whole set
+    # (`CLOCK_READS`), and the shell takes a `Clock` like it takes a `Presenter`.
+    # The sixth is not what it looks like: four of the six
     # `write_text` are `govern/cli.py`'s own `pathlib` writes — the shell writing the files
     # `init`, `migrate` and `--out` create — and the other two are `files.write_text(...)`,
     # port calls this walk counts by attribute name because it never resolves a receiver.
@@ -147,13 +164,16 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 0,
         "clock": 0,
     },
+    # `clock` re-measured, not raised: 4 -> 6. The two new sites are `time.time_ns()` in
+    # `commands.py` and `providers.py`, which the narrow walk never matched because it
+    # looked for the attribute `time` and nothing else on the module. Neither is new code.
     "orchestrate": {
         "print": 212,
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,
         "env": 19,
-        "clock": 4,
+        "clock": 6,
     },
     "packs": {
         "print": 54,
@@ -173,13 +193,15 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 0,
         "clock": 0,
     },
+    # `clock` re-measured, not raised: 0 -> 1. `catalog.py`'s `datetime.date.today()` —
+    # the same spelling that read as zero in `govern/cli.py`. The zero here was never true.
     "validation": {
         "print": 13,
         "subprocess": 1,
         "open_write": 0,
         "write_text": 4,
         "env": 1,
-        "clock": 0,
+        "clock": 1,
     },
     "workbench": {
         "print": 513,
@@ -199,7 +221,7 @@ EFFECT_KIND_LABELS = {
     "open_write": "open(..., 'w'/'a')",
     "write_text": "write_text/write_bytes",
     "env": "os.environ / os.getenv",
-    "clock": "datetime.now / datetime.utcnow / time.time",
+    "clock": "wall-clock reads (see CLOCK_READS)",
 }
 
 EFFECT_KIND_PORTS = {
@@ -378,11 +400,127 @@ def _strongly_connected_components(graph: dict[str, set[str]]) -> set[tuple[str,
     return components
 
 
+#: Every stdlib call whose answer depends on the machine's settable, real-time clock,
+#: written as the dotted name it has in the stdlib rather than as the spelling a file
+#: happens to use. `_clock_names` maps each file's bindings back onto these, so an alias
+#: (`import datetime as dt`, `from datetime import datetime as DT`) resolves to the same
+#: entry as the plain spelling.
+#:
+#: Derived by walking the two stdlib modules that can answer "what time is it" and keeping
+#: the calls that need no moment handed to them:
+#:
+#: * `datetime`: the four constructors that read — `datetime.now`, `datetime.utcnow`,
+#:   `datetime.today`, `date.today`.
+#: * `time`: the epoch readers (`time`, `time_ns`), the broken-down readers
+#:   (`localtime`, `gmtime`) and the string readers (`ctime`, `asctime`, `strftime`),
+#:   plus `clock_gettime`/`clock_gettime_ns`, which read CLOCK_REALTIME when asked for it.
+#:
+#: **`fromtimestamp` / `utcfromtimestamp` are deliberately absent.** They take the moment
+#: as an argument, so they cannot tell a caller what time it is; whatever produced the
+#: argument is the clock read, and in this tree that is either `time.time()` (already here)
+#: or `Path.stat().st_mtime`, a filesystem read the `Clock` port has no method for and
+#: should not grow one. Counting them would put sites under the clock ceiling that no port
+#: migration can ever remove, which is a ceiling that can only be met by deleting code.
+#:
+#: **`monotonic`, `monotonic_ns`, `perf_counter`, `perf_counter_ns`, `process_time` and
+#: `thread_time` are deliberately absent too**, and for a different reason: they count from
+#: an arbitrary, unspecified epoch and are immune to the system clock being set. Their value
+#: cannot be written into a governance record or compared against stored ISO text, which is
+#: what `Clock` exists to make consistent. All 42 sites in this tree are `deadline = ... +
+#: timeout` or `elapsed = ... - started` — durations, not clock reads — and a `Clock` that
+#: absorbed them would break every timeout loop the moment a test froze it. `pyproject.toml`
+#: says the same thing on the `time.time` ban message.
+CLOCK_READS = frozenset(
+    {
+        "datetime.datetime.now",
+        "datetime.datetime.utcnow",
+        "datetime.datetime.today",
+        "datetime.date.today",
+        "time.time",
+        "time.time_ns",
+        "time.clock_gettime",
+        "time.clock_gettime_ns",
+    }
+)
+
+#: The `time` calls that read the clock only in their short form: given the moment to render
+#: they are converters. The value is the index of the argument whose presence makes the call
+#: a conversion — `time.strftime(fmt)` reads, `time.strftime(fmt, t)` does not. ruff cannot
+#: express this (see `test_the_ruff_ban_and_the_ast_walk_cover_the_same_clock_reads`), so its
+#: table bans the name outright and this walk is the more precise of the two.
+CLOCK_READS_UNLESS_GIVEN = {
+    "time.localtime": 0,
+    "time.gmtime": 0,
+    "time.ctime": 0,
+    "time.asctime": 0,
+    "time.strftime": 1,
+}
+
+
+def _clock_names(tree: ast.Module) -> dict[str, str]:
+    """Each local binding of `datetime`/`time` (or their classes) -> its stdlib dotted name.
+
+    Walks the whole module, not just its head, because a function-local `import datetime`
+    binds the name just as well. ruff's banned-api resolves the same aliases (measured:
+    `import datetime as dt` and `from datetime import datetime as DT` both report as
+    `datetime.datetime.now`), so this is not where the two halves differ — see
+    `test_the_ruff_ban_and_the_ast_walk_cover_the_same_clock_reads` for where they do.
+    """
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in ("datetime", "time"):
+                    names[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or node.module not in ("datetime", "time"):
+                continue
+            for alias in node.names:
+                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return names
+
+
+def _dotted(node: ast.expr, names: dict[str, str]) -> str | None:
+    """`dt.datetime.now` -> "datetime.datetime.now", given this file's bindings.
+
+    None when the receiver does not root in a name this file imported from `datetime` or
+    `time` — the caller then falls back to matching the spelling, so a receiver reached
+    through another module's attribute still counts.
+    """
+    attributes: list[str] = []
+    while isinstance(node, ast.Attribute):
+        attributes.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    root = names.get(node.id)
+    if root is None:
+        return None
+    return ".".join([root, *reversed(attributes)])
+
+
 class _EffectCollector(ast.NodeVisitor):
     """Counts effect call sites over the AST, so prose cannot inflate them."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock_names: dict[str, str] | None = None) -> None:
         self.counts = dict.fromkeys(EFFECT_KINDS, 0)
+        self.clock_names = clock_names or {}
+
+    def _count_clock(self, call: ast.Call, func: ast.Attribute) -> bool:
+        """True when this call reads the wall clock. See `CLOCK_READS` for the set."""
+        dotted = _dotted(func, self.clock_names)
+        if dotted is not None:
+            if dotted in CLOCK_READS:
+                return True
+            given = CLOCK_READS_UNLESS_GIVEN.get(dotted)
+            return given is not None and len(call.args) <= given
+        # Unresolved receiver: fall back to the spelling, which is all the narrow walk
+        # ever did. Keeping this arm means the widened walk can never count *fewer* sites
+        # than the one it replaces.
+        value = func.value
+        if func.attr in ("now", "utcnow", "today") and _names_datetime(value):
+            return True
+        return func.attr == "time" and isinstance(value, ast.Name) and value.id == "time"
 
     @staticmethod
     def _literal_mode(call: ast.Call, *, method: bool) -> str | None:
@@ -419,9 +557,7 @@ class _EffectCollector(ast.NodeVisitor):
                 self._count_open(node, method=True)
             elif func.attr in ("write_text", "write_bytes"):
                 self.counts["write_text"] += 1
-            elif func.attr in ("now", "utcnow") and _names_datetime(value):
-                self.counts["clock"] += 1
-            elif func.attr == "time" and isinstance(value, ast.Name) and value.id == "time":
+            elif self._count_clock(node, func):
                 self.counts["clock"] += 1
         self.generic_visit(node)
 
@@ -434,11 +570,19 @@ class _EffectCollector(ast.NodeVisitor):
 
 
 def _names_datetime(value: ast.expr) -> bool:
-    """`datetime.now(...)` or `dt.datetime.now(...)`."""
+    """A receiver *spelled* as the `datetime` module or one of its two reading classes.
+
+    `datetime.now(...)`, `dt.datetime.now(...)`, `datetime.date.today(...)`. This is the
+    fallback for a receiver `_dotted` could not root in an import of this file — reached
+    through another module's attribute, say. `date` is here as well as `datetime` because
+    `date.today()` is the site that started this: the narrow walk matched only `now` and
+    `utcnow` on a receiver named `datetime`, so `govern/cli.py`'s `datetime.date.today()`
+    read as zero for four months.
+    """
     if isinstance(value, ast.Name):
-        return value.id == "datetime"
+        return value.id in ("datetime", "date")
     if isinstance(value, ast.Attribute):
-        return value.attr == "datetime"
+        return value.attr in ("datetime", "date")
     return False
 
 
@@ -499,7 +643,7 @@ def inventory() -> _Inventory:
 
         package = _package_bucket(path)
         if package != PORT_LAYER_PACKAGE:
-            effect_collector = _EffectCollector()
+            effect_collector = _EffectCollector(_clock_names(tree))
             effect_collector.visit(tree)
             bucket = effects.setdefault(package, dict.fromkeys(EFFECT_KINDS, 0))
             for kind, count in effect_collector.counts.items():
@@ -725,3 +869,176 @@ def test_no_package_escapes_the_effect_budget() -> None:
         f"deliberate exemption is '{PORT_LAYER_PACKAGE}/', the adapter layer the "
         "effects are being moved into."
     )
+
+
+# ---------------------------------------------------------------------------
+# The two halves of the clock ratchet, held against each other
+# ---------------------------------------------------------------------------
+
+#: Durations, not clock reads. In neither the walk above nor `pyproject.toml`'s table, and
+#: this test says so out loud so that "why is `time.monotonic` allowed?" has an answer in
+#: the tree rather than in a reviewer's memory. They count from an arbitrary epoch, do not
+#: move when the system clock is set, cannot be written into a record or compared with
+#: stored ISO text, and every site in rig is a timeout deadline or an elapsed measurement.
+NOT_CLOCK_READS = frozenset(
+    {
+        "time.monotonic",
+        "time.monotonic_ns",
+        "time.perf_counter",
+        "time.perf_counter_ns",
+        "time.process_time",
+        "time.process_time_ns",
+        "time.thread_time",
+        "time.thread_time_ns",
+        # Conversions: the moment arrives as an argument, so these cannot answer
+        # "what time is it". Whatever produced the argument is the read.
+        "datetime.datetime.fromtimestamp",
+        "datetime.datetime.utcfromtimestamp",
+        "datetime.date.fromtimestamp",
+    }
+)
+
+
+def _banned_api_table() -> dict[str, str]:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    table = data["tool"]["ruff"]["lint"]["flake8-tidy-imports"]["banned-api"]
+    return {name: entry["msg"] for name, entry in table.items()}
+
+
+def test_the_ruff_ban_and_the_ast_walk_cover_the_same_clock_reads() -> None:
+    """The two halves of the ratchet must name the same set, or one of them is a trap.
+
+    ruff names the offending line at the moment it is written; this walk freezes a number
+    per package. A contributor caught by one and waved through by the other learns that the
+    rule is arbitrary, which is how a ratchet stops being believed. So the set is written
+    once, here, and both halves are held to it.
+
+    They cannot agree on *everything*, and the two places they differ are deliberate:
+
+    * **Argument count.** `time.strftime(fmt)` reads the clock and `time.strftime(fmt, t)`
+      converts. ruff's banned-api matches a qualified name and has nowhere to put that
+      condition, so it bans both; the walk checks `CLOCK_READS_UNLESS_GIVEN` and counts only
+      the reading form. ruff is the stricter of the two here, which is the safe direction:
+      it asks a question, it does not silently miss a read.
+    * **Where the name comes from.** ruff resolves a qualified name through this file's
+      imports and no further: `local.datetime.date.today()`, reached through another
+      module's attribute, resolves to nothing in its table and passes. The walk falls back
+      to matching the receiver's *spelling* (`_names_datetime`) when it cannot root the name
+      in an import, so it counts that call. The walk is the stricter one here.
+
+      Aliases are *not* on this list, though they look like they should be: ruff follows
+      `import datetime as dt` and `from datetime import datetime as DT` to the same
+      qualified name the walk resolves them to. Measured, not assumed — both halves bite
+      `DT.now()`.
+
+    * **Scope.** ruff is silenced per file by the debt ledger in `pyproject.toml`; this walk
+      is silenced nowhere. A clock read added to `workbench/` today gets no ruff message and
+      still raises that package's number here. That is the intended division: ruff names the
+      line in code that has already migrated, the walk holds the whole tree.
+    """
+    banned = _banned_api_table()
+    clock_bans = {
+        name for name in banned
+        if name.startswith(("datetime.", "time.")) or name == "time"
+    }
+    walk_covers = set(CLOCK_READS) | set(CLOCK_READS_UNLESS_GIVEN)
+
+    missing_from_ruff = sorted(walk_covers - clock_bans)
+    assert not missing_from_ruff, (
+        "tests/test_architecture_inventory.py counts these as clock reads and "
+        f"pyproject.toml's banned-api table does not name them: {missing_from_ruff}. "
+        "A contributor writing one gets a silently rising ceiling instead of a message "
+        "at the line. Add each to [tool.ruff.lint.flake8-tidy-imports.banned-api] with a "
+        "msg that names the Clock port."
+    )
+    missing_from_walk = sorted(clock_bans - walk_covers)
+    assert not missing_from_walk, (
+        "pyproject.toml bans these as clock reads and the walk in this file does not "
+        f"count them: {missing_from_walk}. ruff's per-file-ignores ledger covers most of "
+        "the tree, so the ban alone leaves the number in BASELINE_EFFECT_SITES describing "
+        "less code than the package contains — which is exactly how govern's clock ceiling "
+        "read 0 with datetime.date.today() still in cli.py. Add each to CLOCK_READS."
+    )
+
+
+def test_durations_are_not_clock_reads_in_either_half() -> None:
+    """`time.monotonic` and friends stay allowed, and `fromtimestamp` stays uncounted."""
+    banned = _banned_api_table()
+    walk_covers = set(CLOCK_READS) | set(CLOCK_READS_UNLESS_GIVEN)
+    for name in sorted(NOT_CLOCK_READS):
+        assert name not in banned, (
+            f"{name} is banned as a clock read. It is not one: a duration counts from an "
+            "arbitrary epoch and does not move when the system clock is set, and a "
+            "fromtimestamp takes the moment as an argument. Banning it would push "
+            "rig's timeout loops through a port that cannot serve them."
+        )
+        assert name not in walk_covers, (
+            f"{name} is counted as a clock read by the walk. It is not one — see "
+            "NOT_CLOCK_READS. A ceiling that counts it can only be met by deleting code, "
+            "because the Clock port has no method that absorbs it."
+        )
+
+
+def test_the_walk_sees_a_clock_read_spelled_through_an_alias() -> None:
+    """Every spelling of a read resolves to the same entry in `CLOCK_READS`.
+
+    The narrow walk this replaced matched `a` and `b` and read `c` through `g` as zero,
+    which is how `govern/cli.py` sat at `clock: 0` with `datetime.date.today()` in it.
+    """
+    source = (
+        "import datetime\n"
+        "import datetime as dt\n"
+        "from datetime import datetime as DT\n"
+        "from datetime import date as D\n"
+        "import time as clock_module\n"
+        "a = datetime.datetime.now()\n"
+        "b = dt.datetime.now(dt.timezone.utc)\n"
+        "c = DT.now()\n"
+        "d = D.today()\n"
+        "e = datetime.date.today()\n"
+        "f = clock_module.time_ns()\n"
+        "g = clock_module.strftime('%Y')\n"
+    )
+    tree = ast.parse(source)
+    collector = _EffectCollector(_clock_names(tree))
+    collector.visit(tree)
+    assert collector.counts["clock"] == 7
+
+
+def test_the_walk_counts_a_receiver_it_cannot_root_in_an_import() -> None:
+    """The one place the walk is stricter than ruff: a receiver reached through a module.
+
+    `local.datetime.date.today()` resolves to no entry in ruff's banned-api table and passes
+    it (measured). `_names_datetime` matches the spelling, so the ceiling still moves.
+    """
+    tree = ast.parse("from rig_workbench.ports import local\nx = local.datetime.date.today()\n")
+    collector = _EffectCollector(_clock_names(tree))
+    collector.visit(tree)
+    assert collector.counts["clock"] == 1
+
+
+def test_the_walk_does_not_count_a_conversion_or_a_duration() -> None:
+    """Every line here takes its moment from somewhere else, or measures an interval."""
+    source = (
+        "import datetime\n"
+        "import time\n"
+        "import pathlib\n"
+        "a = datetime.datetime.fromtimestamp(pathlib.Path('x').stat().st_mtime)\n"
+        "b = datetime.date.fromtimestamp(0)\n"
+        "c = time.localtime(0)\n"
+        "d = time.gmtime(0)\n"
+        "e = time.ctime(0)\n"
+        "f = time.strftime('%Y', c)\n"
+        "g = time.monotonic()\n"
+        "h = time.perf_counter()\n"
+        "i = datetime.datetime(2026, 1, 1).strftime('%Y')\n"
+        "j = datetime.timedelta(days=1)\n"
+    )
+    tree = ast.parse(source)
+    collector = _EffectCollector(_clock_names(tree))
+    collector.visit(tree)
+    assert collector.counts["clock"] == 0

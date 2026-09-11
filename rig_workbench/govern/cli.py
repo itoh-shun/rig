@@ -19,6 +19,16 @@ stream a line goes to is unchanged and stays a property of the call: `out.out` i
 `out.err` is stderr, and `[WARN]` keeps going to stdout because that is where it went
 (the `Presenter` docstring explains why the port has no `warn()`).
 
+**The wall clock leaves through the `Clock` port, threaded the same way.** Every handler
+takes `(args, out, clock)`, `main()` builds both adapters, and `cmd_govern` hands both down.
+Nine of the ten handlers do not read the clock today; they carry the parameter anyway,
+because the alternative is for the tenth to reach for `SYSTEM_CLOCK` from inside — the same
+global under a different name, which is the thing the paragraph above rejects — or for this
+file to grow a second wiring shape for its second port. `cmd_waiver` is the reader: a waiver
+with no `--expires` gets `clock.today() + max_days`, and the port's `today()` comes off the
+same offset-carrying `now()` the rest of govern stamps its records with, so the day this
+computes and the day the ledger records can never disagree at 23:59.
+
 **Judging and reporting the judgement are separate.** A command returns a `Verdict` —
 what it decided — and `cmd_govern` turns that into an exit status through `_STATUS`,
 which is the one place in this file that knows a number. The two used to be the same
@@ -36,8 +46,8 @@ import pathlib
 import sys
 
 from rig_workbench import gitroot
-from rig_workbench.ports import Presenter, ProcessRunner
-from rig_workbench.ports.local import SUBPROCESS, ConsolePresenter
+from rig_workbench.ports import Clock, Presenter, ProcessRunner
+from rig_workbench.ports.local import SUBPROCESS, ConsolePresenter, SystemClock
 from rig_workbench.registry import children
 from rig_workbench.registry.parser import build_group_parser, subcommand_parsers
 from rig_workbench.workbench.reporting import read_all_tasks
@@ -170,7 +180,7 @@ _STARTER_ROLES = {
 }
 
 
-def cmd_init(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_init(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = _repo_root()
     binding_path = org_binding_path(root)
     if binding_path.is_file() and not args.force:
@@ -226,7 +236,7 @@ def cmd_init(args: argparse.Namespace, out: Presenter) -> Verdict:
     return Verdict.OK
 
 
-def cmd_migrate(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_migrate(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     """Fold v1's `.rig/access.json` and `.rig/gates.json` into a policy layer.
 
     The two files keep working either way; this exists so a team that already
@@ -307,7 +317,7 @@ def cmd_migrate(args: argparse.Namespace, out: Presenter) -> Verdict:
 
 
 # ── policy ───────────────────────────────────────────────────────────────────
-def cmd_policy(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_policy(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = _repo_root()
     if args.action == "lint":
         paths = [pathlib.Path(p) for p in args.paths] if args.paths else resolve_layer_paths(
@@ -417,7 +427,7 @@ def _policy_dict(eff: EffectivePolicy) -> dict:
 
 
 # ── identity / permissions ───────────────────────────────────────────────────
-def cmd_whoami(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_whoami(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = _repo_root()
     eff = _effective(root, out)
     if isinstance(eff, Verdict):
@@ -431,7 +441,7 @@ def cmd_whoami(args: argparse.Namespace, out: Presenter) -> Verdict:
     return Verdict.OK
 
 
-def cmd_can(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_can(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = _repo_root()
     eff = _effective(root, out)
     if isinstance(eff, Verdict):
@@ -447,7 +457,7 @@ def cmd_can(args: argparse.Namespace, out: Presenter) -> Verdict:
 
 
 # ── approvals ────────────────────────────────────────────────────────────────
-def cmd_approve(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_approve(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = _repo_root()
     eff = _effective(root, out)
     if isinstance(eff, Verdict):
@@ -485,7 +495,7 @@ def cmd_approve(args: argparse.Namespace, out: Presenter) -> Verdict:
 
 
 # ── waivers ──────────────────────────────────────────────────────────────────
-def cmd_waiver(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_waiver(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = _repo_root()
     eff = _effective(root, out)
     if isinstance(eff, Verdict):
@@ -534,7 +544,7 @@ def cmd_waiver(args: argparse.Namespace, out: Presenter) -> Verdict:
     expires = args.expires
     if not expires:
         days = (eff.waivers or {}).get("max_days") or 7
-        expires = (datetime.date.today() + datetime.timedelta(days=float(days))).isoformat()
+        expires = (clock.today() + datetime.timedelta(days=float(days))).isoformat()
     try:
         record = waiver.grant(root, eff, waiver_id=args.id, actor=actor, criteria=args.criteria,
                               reason=args.reason or "", expires=expires, scope=args.scope)
@@ -549,7 +559,7 @@ def cmd_waiver(args: argparse.Namespace, out: Presenter) -> Verdict:
 
 
 # ── audit ────────────────────────────────────────────────────────────────────
-def cmd_audit(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_audit(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = _repo_root()
     if args.action == "verify":
         result = ledger.verify(root)
@@ -600,7 +610,7 @@ def cmd_audit(args: argparse.Namespace, out: Presenter) -> Verdict:
 
 
 # ── conformance / rollup ─────────────────────────────────────────────────────
-def cmd_conformance(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_conformance(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     root = pathlib.Path(args.path).resolve() if args.path else _repo_root()
     # The shell reads the run records and hands them over: `conformance` scores evidence,
     # it does not go and get it (`conformance.RunRecords`), and wiring the two together is
@@ -632,7 +642,7 @@ def cmd_conformance(args: argparse.Namespace, out: Presenter) -> Verdict:
     return Verdict.OK if report.verdict != conf.FAIL else Verdict.NONCONFORMANT
 
 
-def cmd_rollup(args: argparse.Namespace, out: Presenter) -> Verdict:
+def cmd_rollup(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     roots: list[pathlib.Path] = []
     for entry in args.paths:
         p = pathlib.Path(entry).resolve()
@@ -716,24 +726,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cmd_govern(argv: list[str], *, out: Presenter | None = None) -> int:
+def cmd_govern(argv: list[str], *, out: Presenter | None = None,
+               clock: Clock | None = None) -> int:
     """Parse, run the command, and report its verdict as a status.
 
-    The presenter is a parameter with a default rather than a module-level instance the
-    commands reach for: `main()` builds the console adapter at the process boundary and
-    passes it in, and an in-process caller (`rig_workbench/cli.py` dispatches here, and a
-    test can too) may hand in its own. The default exists so those callers keep working
-    unchanged — it constructs an adapter, it does not share one.
+    The presenter and the clock are parameters with defaults rather than module-level
+    instances the commands reach for: `main()` builds both adapters at the process boundary
+    and passes them in, and an in-process caller (`rig_workbench/cli.py` dispatches here, and
+    a test can too) may hand in its own. The defaults exist so those callers keep working
+    unchanged — each constructs an adapter, it does not share one.
 
     This is also the only place a verdict becomes a number. Everything above returns a
     `Verdict`; `status_for` is the single statement that reads `_STATUS`.
     """
     args = build_parser().parse_args(argv)
-    return status_for(args.func(args, ConsolePresenter() if out is None else out))
+    return status_for(args.func(args,
+                                ConsolePresenter() if out is None else out,
+                                SystemClock() if clock is None else clock))
 
 
 def main() -> None:
-    sys.exit(cmd_govern(sys.argv[1:], out=ConsolePresenter()))
+    sys.exit(cmd_govern(sys.argv[1:], out=ConsolePresenter(), clock=SystemClock()))
 
 
 if __name__ == "__main__":

@@ -135,6 +135,30 @@ extend-select = [
 "datetime.datetime.now".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. The offset and the format are one fact; do not split them."
 "datetime.datetime.utcnow".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now, adapter rig_workbench.ports.local.SYSTEM_CLOCK. rig orders stored ISO text lexicographically, which needs the local offset, not UTC-naive."
 "time.time".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK; the port grows an epoch accessor when a migrating caller brings one. time.monotonic (a duration, not a clock read) is not banned."
+"datetime.datetime.today".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. .today() is naive here, which is exactly the shape that made stored ISO text sort wrongly; the port carries the offset."
+"datetime.date.today".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. Clock.today() is this call, reached through the same offset-carrying now() -- so the day a waiver expires and the day the ledger records can never disagree at 23:59."
+"time.time_ns".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. Same clock as time.time, finer units; the port grows an epoch accessor when a migrating caller brings one."
+"time.localtime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.localtime() with no argument reads the clock. Given a timestamp it only converts -- ruff cannot tell the two apart, so it names both; tests/test_architecture_inventory.py counts only the reading form."
+"time.gmtime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.gmtime() with no argument reads the clock, and reads it UTC-naive, which is the form rig cannot order stored text with."
+"time.ctime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.ctime() with no argument reads the clock and formats it; Clock.stamp() is how rig writes a time down."
+"time.asctime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.asctime() with no argument reads the clock through localtime(); Clock.stamp() is how rig writes a time down."
+"time.strftime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.strftime(fmt) with no time tuple reads the clock through localtime(). datetime_object.strftime(fmt) is untouched -- this bans the module function only."
+"time.clock_gettime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. CLOCK_REALTIME is the settable wall clock. If you meant CLOCK_MONOTONIC, use time.monotonic, which is not banned."
+"time.clock_gettime_ns".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. CLOCK_REALTIME is the settable wall clock. If you meant CLOCK_MONOTONIC, use time.monotonic_ns, which is not banned."
+
+# ── 何を壁時計の読みとし、何をそうしないか ───────────────────────────────
+# 上の表は tests/test_architecture_inventory.py の CLOCK_READS と同じ集合を指す
+# （test_the_ruff_ban_and_the_ast_walk_cover_the_same_clock_reads がそれを表明する）。
+# 入れていないものには理由がある:
+#   * datetime.*.fromtimestamp / utcfromtimestamp — 瞬間を **引数で受け取る**。時刻を
+#     答える呼び出しではなく、答えを渡された変換である。この木で引数を供給しているのは
+#     time.time()（既に禁止済み）か Path.stat().st_mtime（Clock が持つべきでない
+#     ファイルシステム読み）のどちらかで、移行しようのない地点を天井に積むだけになる。
+#   * time.monotonic / monotonic_ns / perf_counter / perf_counter_ns / process_time /
+#     thread_time — 任意の原点からの経過時間であり、システム時計を動かしても変わらない。
+#     記録にも書けず、保存済み ISO 文字列とも比べられない。この木の 42 件はすべて
+#     `deadline = ... + timeout` か `elapsed = ... - started` で、凍結する Clock を
+#     差し込めばタイムアウトが壊れる。Clock がこれを吸うべきではない。
 
 [tool.ruff.lint.per-file-ignores]
 # ── 恒久的に認めた場所。負債ではない ──────────────────────────────────
@@ -151,7 +175,7 @@ extend-select = [
 # test_exit_code_surface.py / test_entrypoint_contract.py は「利用者のシェルに何が返るか」
 # を検査するためにあり、ポート経由に替えると製品ではなくポートを試すテストになる。
 # 期限つきの負債と称する筋合いがないので、恒久扱いにして台帳から外す。
-"tests/**" = ["T201", "TID251"]  # 2 print, 674 banned — CLI をプロセスとして駆動する側
+"tests/**" = ["T201", "TID251"]  # 2 print, 682 banned — CLI をプロセスとして駆動する側
 
 # ── 負債台帳 ──────────────────────────────────────────────────────────
 # 未移行の経路を 1 行ずつ、今日そこにある件数つきで並べる。柱がポートの背後に移れば、
@@ -165,10 +189,13 @@ extend-select = [
 # 件数は d84a4c9 で ruff 0.15.8 が報告した実測値（推定ではない）。T201 は
 # `print(..., file=x)`（x が sys.stdout/sys.stderr でないもの）を数えないため、
 # tests/test_architecture_inventory.py が AST で凍結した数よりわずかに小さく出る。
-"rig_workbench/validation/**" = ["T201", "TID251"]   # 13 print, 2 banned
+# 壁時計の禁止表を広げた際に **再計測** した 3 行（増えた分は新しい効果地点ではなく、
+# 前の表が見えていなかった既存の呼び出し）: orchestrate 45 -> 47（time.time_ns が 2)、
+# validation 2 -> 3（datetime.date.today が 1）、tests 674 -> 682。他は変わらない。
+"rig_workbench/validation/**" = ["T201", "TID251"]   # 13 print, 3 banned
 "rig_workbench/eval/**" = ["T201", "TID251"]         # 16 print, 31 banned
 "rig_workbench/packs/**" = ["T201", "TID251"]        # 54 print, 18 banned
-"rig_workbench/orchestrate/**" = ["T201", "TID251"]  # 211 print, 45 banned
+"rig_workbench/orchestrate/**" = ["T201", "TID251"]  # 211 print, 47 banned
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を
