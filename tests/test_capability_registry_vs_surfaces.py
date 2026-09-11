@@ -885,7 +885,7 @@ def test_the_github_actions_inputs_are_a_subset_of_the_flags_that_capability_dec
 # The mapping is many-to-many and lopsided: `/rig:go` fans out across `hostcheck`,
 # `ja-lint`, `wb route`, `wb gate` and `wb accept` in one file, while 51 `wb` capabilities
 # are named by no command at all. So "every capability is offered by a slash command" is
-# not a claim anybody makes — the 30 commands are a curated front door onto 139
+# not a claim anybody makes — the 30 commands are a curated front door onto 137
 # capabilities, not a second spelling of them.
 #
 # The direction that means something is commands -> registry: a command file that names no

@@ -99,10 +99,10 @@ class TestContainer:
     """The table exists, is populated, and is a tuple — stage 2 declares, it does not wire."""
 
     def test_every_dispatchable_verb_is_declared_once(self):
-        # 139: 39 top-level, 51 under wb, and 49 under the five other groups. The number is
+        # 137: 39 top-level, 51 under wb, and 47 under the five other groups. The number is
         # written out because a capability appearing or vanishing is a change to the command
         # surface, and this is the table the other surfaces are meant to be projections of.
-        assert len(CAPABILITIES) == 139
+        assert len(CAPABILITIES) == 137
         assert len({c.id for c in CAPABILITIES}) == len(CAPABILITIES), "duplicate id"
         assert len({c.command_path for c in CAPABILITIES}) == len(CAPABILITIES), "duplicate path"
 
@@ -655,7 +655,7 @@ JAPANESE = re.compile(r"[぀-ヿ㐀-鿿！-｠　-〿]")
 #: alone — which is the same answer, applied to divergence in content rather than in script.
 #: It is swept for Japanese here exactly as `Flag.help` is, because `parser.py` prints it;
 #: `intent` stays in the sweep too, since it is still what prints wherever no summary is
-#: written (129 of the 139 capabilities today).
+#: written (127 of the 137 capabilities today).
 AUDIENCE = {
     ("Capability", "intent"): "the conversation and the shipped CLI",
     ("Capability", "summary"): "the shipped CLI, where `intent` is not the line it wants",
