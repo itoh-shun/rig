@@ -69,9 +69,9 @@ exception, and an exception that has to be typed out with a justification next t
 Proving the rule on more than the tree it happens to be run against
 -------------------------------------------------------------------
 
-`MIGRATED` names `govern` and `eval`, and two pillars of seven is not much of a scan: five
-are still outside the rule, and both of them pass it today, so the real-tree check can only
-ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
+`MIGRATED` names `govern`, `eval` and `packs`, and three pillars of seven is not much of a
+scan: four are still outside the rule, and all three of them pass it today, so the real-tree
+check can only ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
 the checker is written backwards — which is exactly how a check comes to exist without
 ever having been checked, and it was the whole of this file's evidence for the stage in
 which `MIGRATED` was still empty. So the corpus below runs the real checker over
@@ -133,7 +133,30 @@ PORT_NAMES = ("Presenter", "ProcessRunner", "FileStore", "Env", "GitRepo", "Cloc
 #: imported by `gate.py` and `runner.py` to stamp and compare an executor version; that
 #: one became `eval.cases.EXECUTOR_VERSION`, this pillar's own constant, because a value
 #: the code only ever records is the weakest possible reason to hold an edge.
-MIGRATED: tuple[str, ...] = ("govern", "eval")
+#:
+#: `packs` is the third, and the widest: twenty-one edges out of its judgement layer, into
+#: four other pillars at once. Two of them were function-local — `lock.py` reaching
+#: `workbench.secrets` and `resolver.py` reaching `orchestrate.config._skill_root` — and
+#: would have been invisible to a rule that read only `tree.body`. Nineteen were inverted
+#: onto three adapters this pillar declares (`packs/scanners.py` for the content sensors,
+#: `packs/eval_bridge.py` for the evaluation machinery and `packs/case_schema.py` for the
+#: case schema alone — split off the bridge because taking it from there closed a new
+#: ten-module cycle), with each caller stating the narrow
+#: thing it needs: `LineScanner`, `TextSafety`, `FileScanner`, `RecipeGate`, `EvalEvidence`,
+#: `ResultGate`, `CaseCheck`, `CaseRunner`. One of those, `CaseRunner`, is the first
+#: inverted edge in stage 3 that is not a pure function — it runs a paid provider — and it
+#: is borrowed rather than reimplemented precisely because a pack measured through a second
+#: runner would not be comparable with the evidence `eval` produces.
+#:
+#: The remaining two were moved rather than inverted, and both say something about where the
+#: line is. `rig_workbench.__version__` became `packs.model.ENGINE_VERSION`, following
+#: `eval.cases.EXECUTOR_VERSION` — but *not* its justification: an executor version may
+#: drift from the release, while this one is compared against a range the release publishes,
+#: so it tracks it, and the comment there says so instead of borrowing a freedom this value
+#: does not have. And `orchestrate.config._skill_root` was copied into `packs/resolver.py`,
+#: because an inversion would have been a protocol plus an adapter plus a binding to keep
+#: borrowing three lines and a private name.
+MIGRATED: tuple[str, ...] = ("govern", "eval", "packs")
 
 #: The shell of each pillar: modules that wire, not modules that judge. Closed list —
 #: everything else in a migrated pillar is judgement. Every entry states why, because
@@ -147,6 +170,51 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
             "about gitroot, and about workbench.reporting — conformance takes the run "
             "records it scores as an argument, and this is the module that reads them "
             "and hands them over. Holding it to the rule would forbid the wiring."
+        ),
+    },
+    "packs": {
+        f"{PACKAGE}.packs.cli": (
+            "The command shell: argparse wiring for every `rig-wb pack` verb, the words "
+            "each one says through the Presenter, and the mapping from an outcome to an "
+            "exit code. It is where the judgement modules get called from, so it is "
+            "allowed to know about them and to build the adapters they are handed. It is "
+            "also the one module that reaches `orchestrate.commands`: `pack invoke` on a "
+            "recipe entrypoint hands the recipe to the orchestrator's runner, which is "
+            "wiring between two command surfaces and not a judgement this pillar makes."
+        ),
+        f"{PACKAGE}.packs.scanners": (
+            "The first of this pillar's two adapters, and here for the reason "
+            "PORT_ADAPTERS gives for ports/local.py: an adapter exists precisely to hold "
+            "what the protocol may not. It holds the content sensors packs borrows to "
+            "judge text it did not write — workbench.injection, workbench.destructive, "
+            "workbench.secrets, eval.safety and orchestrate.gates — behind the LineScanner "
+            "and TextSafety shapes manifest.py declares and the FileScanner and RecipeGate "
+            "shapes validation.py declares. Grouped by what the collaborator is rather "
+            "than by which pillar it currently lives in, because three adapter modules "
+            "each holding one import would say nothing one module does not. It imports no "
+            "judgement module, so the inverted edges stay one-way."
+        ),
+        f"{PACKAGE}.packs.case_schema": (
+            "The narrow half of the evaluation borrowing, and a separate module because a "
+            "measurement said so rather than because it reads better: validation.py needs "
+            "only the case schema, and taking it from the wide bridge gave that module a "
+            "module-level path to eval.gate and from there back into packs.resolver — a "
+            "new ten-module import cycle that test_architecture_inventory.py refused. This "
+            "reaches eval.cases and nothing else, and eval_bridge takes its case names "
+            "from here, so the schema is still borrowed in exactly one place."
+        ),
+        f"{PACKAGE}.packs.eval_bridge": (
+            "The second adapter: the evaluation machinery, which is a different "
+            "collaborator with a different shape rather than a different address. One "
+            "object satisfies three of the four narrow declarations — "
+            "evidence.EvalEvidence, installer.ResultGate and tester.CaseRunner — because a "
+            "protocol is structural and those callers' needs overlap; the fourth, "
+            "validation.CaseCheck, takes the narrower case_schema for the cycle reason "
+            "stated above. It earns its place "
+            "beyond holding imports in one specific way: evidence.py used to reach "
+            "eval.runner._git_identity, a private name, and the bridge republishes it as "
+            "git_identity so that reach-in stops here instead of appearing in signatures "
+            "the judgement layer writes."
         ),
     },
     "eval": {
@@ -1291,14 +1359,14 @@ def test_the_walk_checks_the_right_files(tmp_path: pathlib.Path) -> None:
 
 
 def test_a_migrated_pillar_imports_nothing_but_the_ports() -> None:
-    """The contract itself, and no longer vacuous: `govern` and `eval` are behind the ports.
+    """The contract itself, and no longer vacuous: three pillars are behind the ports.
 
-    Both pass, which is the only thing a green contract can mean — every edge either became
-    a port call or was inverted into a protocol the pillar declares, and each pillar's
-    wiring is named in `SHELL_MODULES`. What it cannot mean is that the rule is right: two
-    compliant pillars exercise almost none of the checker, which is what the corpus above is
-    for. The skip below is kept for the case `MIGRATED` is ever emptied to take a pillar
-    back out.
+    All three pass, which is the only thing a green contract can mean — every edge either
+    became a port call or was inverted into a protocol the pillar declares, and each
+    pillar's wiring is named in `SHELL_MODULES`. What it cannot mean is that the rule is
+    right: three compliant pillars exercise almost none of the checker, which is what the
+    corpus above is for. The skip below is kept for the case `MIGRATED` is ever emptied to
+    take a pillar back out.
     """
     layout = real_layout()
     if not layout.migrated:
@@ -1341,12 +1409,15 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     """The one thing the corpus cannot prove: that the walk reads rig_workbench/.
 
     Applied to every pillar as if it had migrated and with no shell exempt, the rule must
-    object to something — six of the seven pillars are still 未着手, and even `govern`, which
-    is not, answers here through `govern/cli.py`: the shell wires, so with the exemption
-    dropped its imports of `gitroot` and `workbench.reporting` are findings. (They are the
-    only four `govern` produces. `conformance.py` no longer appears: the import it used to
-    make into `workbench` was inverted into the `RunRecords` protocol it takes as an
-    argument, which is the edge `MIGRATED` was waiting on.) A scan that found nothing here
+    object to something — four of the seven pillars are still 未着手, and the three that are
+    not answer here through their shells and adapters: the shell wires and the adapter holds
+    what a protocol may not, so with the exemptions dropped `govern/cli.py`'s imports of
+    `gitroot` and `workbench.reporting` are findings, and so are `packs/scanners.py`'s
+    sensors and `packs/eval_bridge.py`'s evaluation imports. (What no longer appears is the
+    judgement layer of any of the three: `conformance.py`, `affected.py`, `promote.py`,
+    `manifest.py`, `validation.py`, `evidence.py`, `installer.py`, `tester.py`, `lock.py`
+    and `resolver.py` have each had their cross-pillar import inverted into a protocol they
+    declare. Those are the edges `MIGRATED` was waiting on.) A scan that found nothing here
     would mean the walk read no files, and every check above it would be passing on air.
     When the last pillar migrates this test starts failing, and deleting it is the correct
     response: it will have run out of work.
@@ -1357,8 +1428,8 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     assert found, (
         "Scanning rig_workbench/ with every pillar treated as migrated produced no "
         "findings at all. Before celebrating, check that _module_name and scan() are "
-        "still reading the package: 182 files that all obey a rule one pillar of seven has "
-        "started applying is the less likely explanation."
+        "still reading the package: 185 files that all obey a rule three pillars of seven "
+        "have started applying is the less likely explanation."
     )
 
 

@@ -5,7 +5,7 @@ import re
 from collections.abc import Collection
 from typing import Any, Protocol, runtime_checkable
 
-from .eval_bridge import EVALUATION
+from .case_schema import CASE_SCHEMA
 from .manifest import (MANIFEST_TEXT_SAFETY, TextSafety, canonical, digest,
                        parse_frontmatter_subset, read_json_yaml, safe_relative,
                        validate_compatibility, validate_manifest_shape)
@@ -48,11 +48,17 @@ class RecipeGate(Protocol):
 class CaseCheck(Protocol):
     """Whether a document in a pack's `evals/cases/` is a well-formed evaluation case.
 
-    The narrowest of the three declarations this pillar makes about evaluation —
-    `evidence.EvalEvidence` asks five questions and `tester.CaseRunner` five more — and all
-    three are satisfied by the same `packs/eval_bridge.py` value. Validating a pack does
-    not need to know what a measurement is; it needs to know that the case the pack ships
-    is one, by the same definition the harness that runs it uses.
+    The narrowest of the four declarations this pillar makes about evaluation —
+    `evidence.EvalEvidence` asks five questions and `tester.CaseRunner` five more.
+    Validating a pack does not need to know what a *measurement* is; it needs to know that
+    the case the pack ships is a case, by the same definition the harness that runs it uses.
+
+    Satisfied by `packs/case_schema.py` rather than by the full `packs/eval_bridge.py`, and
+    that is not a stylistic preference: taking it from the wide bridge gave this module a
+    module-level path to `eval.gate`, and from there through `eval.affected`,
+    `eval.source_graph` and the orchestrator's graph back into `packs.resolver` — a new
+    ten-module import cycle, which `tests/test_architecture_inventory.py` refused. The
+    narrow module reaches only `eval.cases`, which comes back nowhere.
     """
 
     def validate_case(self, case: Any) -> dict:
@@ -184,7 +190,7 @@ def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
                   injection_scan: FileScanner = INJECTION_FILE_SCANNER,
                   destructive_scan: FileScanner = DESTRUCTIVE_FILE_SCANNER,
                   recipe_gate: RecipeGate = RECIPE_GATE,
-                  evaluation: CaseCheck = EVALUATION) -> dict:
+                  evaluation: CaseCheck = CASE_SCHEMA) -> dict:
     """Validate a pack. `require_evaluation=False` drops exactly one rule, for exactly one
     caller.
 

@@ -38,11 +38,11 @@ import pathlib
 from contextlib import AbstractContextManager
 from typing import Any
 
-from ..eval.cases import EvalCaseError, canonical_json, validate_case
 from ..eval.compare import validate_result
 from ..eval.execution import execution_diff_sha256
 from ..eval.gate import quality_result_failures
 from ..eval.runner import _git_identity, make_judge_adapter, read_only_workspace, run_case
+from .case_schema import CASE_SCHEMA
 
 
 class _EvalPillar:
@@ -54,16 +54,12 @@ class _EvalPillar:
     """
 
     #: The exception the case and result machinery raises, named so a caller can write
-    #: `except evaluation.CaseError` without importing the class it is.
-    CaseError: type[Exception] = EvalCaseError
-
-    @staticmethod
-    def validate_case(case: Any) -> dict:
-        return validate_case(case)
-
-    @staticmethod
-    def canonical_json(value: Any) -> str:
-        return canonical_json(value)
+    #: `except evaluation.CaseError` without importing the class it is. Taken from
+    #: `case_schema.py` rather than from `eval.cases` directly, so the pillar borrows the
+    #: case schema in exactly one place.
+    CaseError: type[Exception] = CASE_SCHEMA.CaseError
+    validate_case = staticmethod(CASE_SCHEMA.validate_case)
+    canonical_json = staticmethod(CASE_SCHEMA.canonical_json)
 
     @staticmethod
     def git_identity(repo: pathlib.Path) -> tuple[str | None, str | None, str]:
