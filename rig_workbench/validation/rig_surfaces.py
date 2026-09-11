@@ -168,14 +168,33 @@ def _resolve_asset(kind: str, name: str, *, project: pathlib.Path) -> bool:
     Imported inside the call, as the old call site in `manifest.py` documented: `validation`
     is loaded by the CI entry point and must not take a hard dependency on the pack
     machinery just to report a manifest typo. `ImportError` answers `True` — a check that
-    cannot run invents no failure — and every other exception is left to the caller, which
-    is a change from what `manifest._resolve` used to do here and is discussed there.
+    cannot run invents no failure.
+
+    **`PackError` answers `True` too, and it is the only exception that does.** A malformed
+    installed pack takes its whole tier down fail-closed, so `resolve_asset` refuses rather
+    than returning nothing: measured, `pack.yaml must be JSON-compatible canonical YAML: …`
+    against a pack whose manifest does not parse. That is `check_packs_catalog`'s finding,
+    and a manifest check that failed on it would name the wrong file — which is what
+    `manifest._resolve` has always meant by "a broken pack collection is a different check's
+    problem". `CapabilityRefused` and `EngineIncompatible` are subclasses and so travel with
+    it; `PackError` subclasses `ValueError` rather than the reverse, so this catches neither
+    a stray `ValueError` nor anything wider.
+
+    The catch is here rather than in `manifest.py` because a type in an `except` clause is
+    an edge exactly as much as a function in a call — the reason `_parse_human_gate` above
+    keeps `StageConfigError` on this side of the boundary. `manifest._resolve` is left with
+    no `except` at all, so every *other* failure surfaces as the `check_manifest` FAIL
+    `cli.py` already wraps each check in instead of being answered "resolves fine".
     """
     try:
+        from ..packs.model import PackError
         from ..packs.resolver import resolve_asset
     except ImportError:  # pragma: no cover - packs ships with the workbench
         return True
-    return resolve_asset(kind, name, project=project) is not None
+    try:
+        return resolve_asset(kind, name, project=project) is not None
+    except PackError:
+        return True
 
 
 # ── the workbench's own argument parser ──────────────────────────────────────
