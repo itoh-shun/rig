@@ -487,10 +487,15 @@ def cmd_pack(argv: list[str]) -> int:
                     print(f"- {failure}")
             return code
         if args.command == "sign":
+            # The shell joins the two (`publisher.LocalQualityStatus`): signing asks
+            # whether the pack's own evaluation evidence is green, and that verdict is
+            # `installer`'s — the same one `install` writes into the lock.
+            from .installer import local_quality_status
             from .publisher import sign_pack
             document = sign_pack(
                 args.pack, private_key_path=args.private_key,
                 key_id=args.key_id, signer=args.signer,
+                quality_status=local_quality_status,
             )
             print(f"signed: {args.pack} [{document['signed']['key_id']}]")
             return 0

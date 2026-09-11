@@ -175,6 +175,7 @@ def test_lock_and_doctor_without_cryptography_reject_a_publisher_claim(
 def test_signing_and_keygen_without_cryptography_fail_closed(
     tmp_path, without_cryptography,
 ):
+    from rig_workbench.packs import installer
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import generate_publisher_key, sign_pack
 
@@ -185,7 +186,8 @@ def test_signing_and_keygen_without_cryptography_fail_closed(
     secure.mkdir(mode=0o700)
     with pytest.raises(PackError, match="pack signing requires cryptography"):
         sign_pack(pack, private_key_path=secure / "publisher.pem",
-                  key_id="test-2026", signer="Rig Test Publisher")
+                  key_id="test-2026", signer="Rig Test Publisher",
+                  quality_status=installer.local_quality_status)
     with pytest.raises(PackError, match="publisher key generation requires cryptography"):
         generate_publisher_key(
             private_key_path=secure / "publisher.pem",
@@ -406,7 +408,7 @@ def _write_signature(pack, manifest, private, *, issued_at, engine_release=None)
 
 
 def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
-    from rig_workbench.packs import publisher
+    from rig_workbench.packs import installer, publisher
     from rig_workbench.packs.doctor import diagnose
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.lock import read_lock, validate_lock_root
@@ -418,7 +420,7 @@ def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
     _private, key_path, roots = _key_material(tmp_path)
     publisher.sign_pack(
         pack, private_key_path=key_path, key_id="test-2026",
-        signer="Rig Test Publisher",
+        signer="Rig Test Publisher", quality_status=installer.local_quality_status,
     )
     monkeypatch.setattr(publisher, "load_trust_roots", lambda: roots)
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
@@ -548,6 +550,7 @@ def test_signing_refuses_dirty_source_and_non_green_quality(tmp_path, monkeypatc
         sign_pack(
             pack, private_key_path=key_path, key_id="test-2026",
             signer="Rig Test Publisher",
+            quality_status=installer.local_quality_status,
         )
     (pack / "UNCOMMITTED").unlink()
     monkeypatch.setattr(
@@ -557,6 +560,9 @@ def test_signing_refuses_dirty_source_and_non_green_quality(tmp_path, monkeypatc
         sign_pack(
             pack, private_key_path=key_path, key_id="test-2026",
             signer="Rig Test Publisher",
+            # Read at call time, so the monkeypatch above is what `sign_pack` is handed:
+            # the verdict still comes from `installer`, only by argument now.
+            quality_status=installer.local_quality_status,
         )
 
 
@@ -583,6 +589,7 @@ def test_valid_publisher_signature_cannot_upgrade_mock_or_non_green_quality(
 
 
 def test_signing_refuses_legacy_prompt_case_without_composition_or_durable_evidence(tmp_path):
+    from rig_workbench.packs import installer
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import sign_pack
 
@@ -594,6 +601,7 @@ def test_signing_refuses_legacy_prompt_case_without_composition_or_durable_evide
         sign_pack(
             pack, private_key_path=key_path, key_id="test-2026",
             signer="Rig Test Publisher",
+            quality_status=installer.local_quality_status,
         )
 
 
@@ -614,7 +622,7 @@ def test_prompt_pack_with_composition_distinct_expectations_and_green_evidence_s
     _private, key_path, roots = _key_material(tmp_path)
     document = publisher.sign_pack(
         pack, private_key_path=key_path, key_id="test-2026",
-        signer="Rig Test Publisher",
+        signer="Rig Test Publisher", quality_status=installer.local_quality_status,
     )
     assert document["signed"]["eval_case_tree_sha256"] != document["signed"][
         "eval_result_tree_sha256"

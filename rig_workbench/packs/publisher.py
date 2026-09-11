@@ -13,7 +13,7 @@ import re
 import secrets
 import stat
 import subprocess
-from typing import Any
+from typing import Any, Protocol
 
 from rig_workbench import __version__
 
@@ -23,6 +23,35 @@ from .model import PROMPT_KINDS, PackError
 SIGNATURE_NAME = "pack.sig.json"
 SIGNATURE_SCHEMA_VERSION = 1
 TRUST_ROOTS_SCHEMA_VERSION = 1
+
+
+# ── the evidence check, stated as what this module needs rather than imported ──
+class LocalQualityStatus(Protocol):
+    """Reads one pack's own evaluation evidence and returns its promotion verdict.
+
+    Signing is a statement about a release: this key vouches for this content. Whether the
+    content has current, non-mock, green evaluation evidence behind it is a different
+    judgement entirely, and it is `packs.installer`'s — it is the same verdict `install`
+    writes into the lock as `verified-local`, and it must stay one rule with one
+    implementation, or a pack could be signable on evidence an install would reject.
+    `sign_pack` needs only the verdict string back.
+
+    Stated as a protocol rather than imported, because the import was the cycle
+    (`tests/test_architecture_inventory.py`): `publisher -> installer -> publisher` is what
+    held `{installer, publisher}` closed after the `lock -> publisher` edge came out, and a
+    function-local `from .installer import ...` hides that edge rather than removing it.
+    So the dependency is inverted: `installer.local_quality_status` satisfies this shape
+    structurally without knowing this file exists, and `packs/cli.py` — the shell — joins
+    the two.
+
+    A callable and not the already-computed verdict, because the verdict is a function of
+    the *validated* manifest, and `sign_pack` is what validates it. Handing a string in
+    would mean every caller first ran `validate_pack` itself, duplicating the one thing
+    `sign_pack` must not let a caller get wrong.
+    """
+
+    def __call__(self, pack: pathlib.Path, manifest: dict) -> str:
+        ...
 
 
 def _lexical_path(value: pathlib.Path | str) -> pathlib.Path:
@@ -449,9 +478,17 @@ def _require_clean_committed(pack: pathlib.Path) -> pathlib.Path:
 
 def sign_pack(
     pack: pathlib.Path | str, *, private_key_path: pathlib.Path | str,
-    key_id: str, signer: str, issued_at: dt.datetime | None = None,
+    key_id: str, signer: str, quality_status: LocalQualityStatus,
+    issued_at: dt.datetime | None = None,
 ) -> dict:
-    from .installer import local_quality_status
+    """Sign a pack release with a registered publisher key.
+
+    `quality_status` is required and has no default (`LocalQualityStatus`): the only
+    default that would read naturally is `installer.local_quality_status`, and that import
+    is the edge this signature exists to remove. Every shipped caller passes exactly that
+    function, so signing still refuses a pack whose evaluation evidence an install would
+    reject — the rule is unchanged, only the direction of the dependency is.
+    """
     from .validation import validate_pack
     try:
         from cryptography.hazmat.primitives import serialization
@@ -485,7 +522,7 @@ def sign_pack(
             compose_case_prompt(root, manifest, case, project=source_repository)
         if not manifest["assets"]["eval-result"]:
             raise PackError("pack signing requires durable declared evaluation results")
-    if local_quality_status(root, manifest) != "verified-local":
+    if quality_status(root, manifest) != "verified-local":
         raise PackError("pack signing requires non-mock current green evaluation evidence")
     key_path = pathlib.Path(private_key_path).expanduser().resolve()
     if key_path.is_relative_to(source_repository):

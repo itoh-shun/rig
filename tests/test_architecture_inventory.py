@@ -80,8 +80,11 @@ PORT_LAYER_PACKAGE = "ports"
 # three function-local imports inside `rig_workbench/packs/`, and cutting the
 # first of them — `lock -> publisher`, inverted into `lock.PublisherVerifier` —
 # dropped `eval.affected`, `eval.gate`, `orchestrate.graph`, `orchestrate.recipes`,
-# `packs.sources` and `packs.tester` out of any cycle at all, leaving the two
-# entries below in its place. Seven components, and six modules freed.
+# `packs.sources` and `packs.tester` out of any cycle at all, leaving
+# {catalog, lock, resolver, validation} and {installer, publisher} in its place.
+# The second of the three — `publisher -> installer`, inverted into
+# `publisher.LocalQualityStatus` — then removed {installer, publisher}
+# outright: six components again, with `installer` and `publisher` now in none.
 BASELINE_RUNTIME_CYCLES: frozenset[tuple[str, ...]] = frozenset(
     {
         ("rig_workbench.cli", "rig_workbench.githooks"),
@@ -91,7 +94,6 @@ BASELINE_RUNTIME_CYCLES: frozenset[tuple[str, ...]] = frozenset(
             "rig_workbench.packs.resolver",
             "rig_workbench.packs.validation",
         ),
-        ("rig_workbench.packs.installer", "rig_workbench.packs.publisher"),
         ("rig_workbench.orchestrate.providers", "rig_workbench.orchestrate.runstate"),
         (
             "rig_workbench.workbench.assurance",
