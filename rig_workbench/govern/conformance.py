@@ -332,8 +332,13 @@ def evaluate_project(root: pathlib.Path, *, records: RunRecords, since_days: int
     # rollup's "worst finding" column reaches first for a project whose runs never opened.
     checks.append(_check_runs_listing(records))
     checks.append(_check_criteria_wired(root, eff, records, in_window, files=files))
-    checks.append(_check_approvals(root, eff, records, in_window, files=files))
-    checks.append(_check_waivers(root, eff, files=files))
+    # `clock` goes to the two checks that ask a question about *now* — whether an approval
+    # has aged out of its `expires_hours`, and whether a waiver's expiry has passed. They
+    # used to take only `files`, so a caller who froze the clock got a windowed set of
+    # records scored against the wall clock: the same disagreement `cmd_waiver` had, one
+    # frame down. A port stops at the first signature that does not declare it.
+    checks.append(_check_approvals(root, eff, records, in_window, files=files, clock=clock))
+    checks.append(_check_waivers(root, eff, files=files, clock=clock))
     checks.append(_check_force_rate(records, in_window, since_days))
     checks.append(_check_ledger(root, eff, files=files))
     checks.append(_check_legacy_access(root, eff, files=files))
@@ -481,7 +486,8 @@ def _check_criteria_wired(root: pathlib.Path, eff: EffectivePolicy, records: Run
 
 def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecords,
                      in_window: tuple[dict, ...], *,
-                     files: FileStore = LOCAL_FILES) -> Check:
+                     files: FileStore = LOCAL_FILES,
+                     clock: Clock = SYSTEM_CLOCK) -> Check:
     quorums = {t: r for t, r in eff.approvals.items() if (r.get("quorum") or 0) > 0}
     if not quorums:
         return Check("approvals", NA, "the policy requires no approvals")
@@ -497,7 +503,8 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecor
             continue
         checked += 1
         status = evaluate(eff, task,
-                          load_approvals(root, task.get("task_id", ""), files=files))
+                          load_approvals(root, task.get("task_id", ""), files=files),
+                          clock=clock)
         if not status.satisfied:
             offenders.append(f"{task.get('task_id')} ({task.get('task_type')}): "
                              f"{status.counted}/{status.required} approvals")
@@ -512,12 +519,14 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecor
 
 
 def _check_waivers(root: pathlib.Path, eff: EffectivePolicy, *,
-                   files: FileStore = LOCAL_FILES) -> Check:
+                   files: FileStore = LOCAL_FILES,
+                   clock: Clock = SYSTEM_CLOCK) -> Check:
     waivers = waiver.load_waivers(root, files=files)
     if not waivers:
         return Check("waivers", PASS, "no exceptions outstanding")
-    active = [w for w in waivers if waiver.is_active(w)]
-    expired = [w for w in waivers if not w.get("revoked") and not waiver.is_active(w)]
+    active = [w for w in waivers if waiver.is_active(w, clock=clock)]
+    expired = [w for w in waivers
+               if not w.get("revoked") and not waiver.is_active(w, clock=clock)]
     non_waivable = set((eff.waivers or {}).get("non_waivable") or [])
     violating = [w for w in active if set(w.get("criteria") or []) & non_waivable]
     if violating:

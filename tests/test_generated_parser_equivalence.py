@@ -689,9 +689,18 @@ def test_every_verb_summary_line_is_the_one_govern_shipped() -> None:
             "",
             "If the registry's `intent` is what changed: `intent` is matched against an "
             "utterance and `Capability.summary` is the `--help` line. Declare the summary "
-            "rather than bending the intent into a help string (registry/model.py says why). "
-            "If the new line is genuinely the better one, record it in HELP_CHANGES with the "
-            "argument for it.",
+            "rather than bending the intent into a help string (registry/model.py says why).",
+            "",
+            "If the new line is genuinely the better one, there is no escape hatch in this "
+            "file and HELP_CHANGES is not one: an entry names an argument inside a verb and "
+            "`expected_parser` applies it to that verb's leaf parser, where a verb summary "
+            "does not live — `_action_named` raises \"has no argument\" on the attempt "
+            "rather than recording it. Changing the line a person reads before they pick a "
+            "verb is a change to the surface govern ships, so make it in two places in one "
+            "commit: declare the new line as `Capability.summary` in "
+            "rig_workbench/registry/entries_subgroups.py, and update this file's "
+            "`shipped_parser()` transcription to match. That pair is the diff a reviewer of "
+            "a CLI change wants to see; either half alone fails this test again.",
         ]
     )
 

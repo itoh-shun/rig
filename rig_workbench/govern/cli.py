@@ -21,13 +21,33 @@ stream a line goes to is unchanged and stays a property of the call: `out.out` i
 
 **The wall clock leaves through the `Clock` port, threaded the same way.** Every handler
 takes `(args, out, clock)`, `main()` builds both adapters, and `cmd_govern` hands both down.
-Nine of the ten handlers do not read the clock today; they carry the parameter anyway,
-because the alternative is for the tenth to reach for `SYSTEM_CLOCK` from inside — the same
-global under a different name, which is the thing the paragraph above rejects — or for this
-file to grow a second wiring shape for its second port. `cmd_waiver` is the reader: a waiver
-with no `--expires` gets `clock.today() + max_days`, and the port's `today()` comes off the
-same offset-carrying `now()` the rest of govern stamps its records with, so the day this
-computes and the day the ledger records can never disagree at 23:59.
+Four of the ten handlers (`migrate`, `policy`, `whoami`, `can`) do not read the clock today;
+they carry the parameter anyway, because the alternative is for the other six to reach for
+`SYSTEM_CLOCK` from inside — the same global under a different name, which is the thing the
+paragraph above rejects — or for this file to grow a second wiring shape for its second port.
+
+**And the port is forwarded, not merely held.** A handler that took `clock` and then called
+into the judgement layer without passing it on left the default in charge, and the default
+is `SYSTEM_CLOCK`: `cmd_waiver` computed `clock.today() + max_days` and handed the answer to
+a `waiver.grant` that was reading a different clock, so a frozen `govern waiver grant`
+refused the expiry it had just computed. One command, two clocks. **The rule this file
+applies is that the shell forwards exactly the ports it is given** — `out` and `clock`, the
+two parameters of `cmd_govern` — to every judgement call whose signature declares them, and
+to nothing else. `files`, `env` and `runner` are declared by forty-odd of those same
+signatures and are not forwarded here, because the only value this module could write at
+those call sites is `LOCAL_FILES` / `OS_ENV` / `SUBPROCESS`, which is the callee's own
+default spelled out at the caller — the global under a third name, buying nothing and
+scattering the constant that a later `cmd_govern` parameter would have to gather back up.
+The day govern's shell has a reason to build one of those adapters, it grows the parameter
+beside `out` and `clock` and this rule covers it unchanged.
+
+`cmd_waiver` is the clock's loudest reader: a waiver with no `--expires` gets
+`clock.today() + max_days`, and the port's `today()` comes off the same offset-carrying
+`now()` the rest of govern stamps its records with, so the day this computes, the day
+`waiver.grant` validates against and the day the ledger records can never disagree at 23:59.
+`tests/test_govern_frozen_clock.py` drives the whole surface with a frozen clock and with
+`SYSTEM_CLOCK` itself booby-trapped, so a handler that forgets to forward fails on the shape
+rather than on whichever date happens to be the boundary today.
 
 **Judging and reporting the judgement are separate.** A command returns a `Verdict` —
 what it decided — and `cmd_govern` turns that into an exit status through `_STATUS`,
@@ -232,7 +252,7 @@ def cmd_init(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
     out.out("  rig-wb govern whoami           # your roles and permissions")
     out.out("  rig-wb govern conformance      # does this repo clear the policy")
     ledger.append(root, "policy.init", actor=current_actor(root), subject=args.org,
-                  org=args.org, team=args.team, data={"layers": layers})
+                  org=args.org, team=args.team, data={"layers": layers}, clock=clock)
     return Verdict.OK
 
 
@@ -480,12 +500,15 @@ def cmd_approve(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdi
                         "decision will not count toward the quorum")
         record_decision(root, task_id, actor=actor,
                         decision="approve" if args.action == "grant" else "deny",
-                        roles=roles_of(eff, actor), head=_head(root, task), note=args.note or "")
+                        roles=roles_of(eff, actor), head=_head(root, task), note=args.note or "",
+                        clock=clock)
         ledger.append(root, f"approval.{args.action}", actor=actor, subject=task_id,
                       org=eff.org, team=eff.team,
-                      data={"task_type": task.get("task_type"), "note": args.note or ""})
+                      data={"task_type": task.get("task_type"), "note": args.note or ""},
+                      clock=clock)
 
-    status = evaluate(eff, task, load_approvals(root, task_id), head=_head(root, task))
+    status = evaluate(eff, task, load_approvals(root, task_id), head=_head(root, task),
+                      clock=clock)
     out.out(f"## rig govern approve: {task_id} ({task.get('task_type')})\n")
     if not eff.active:
         out.out("(no policy in effect — decisions are recorded but nothing is required)")
@@ -510,7 +533,7 @@ def cmd_waiver(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdic
         out.out(f"## rig govern waiver ({len(waivers)} on record)\n")
         for w in waivers:
             state = ("revoked" if w.get("revoked")
-                     else "live" if waiver.is_active(w) else "lapsed")
+                     else "live" if waiver.is_active(w, clock=clock) else "lapsed")
             out.out(f"  [{state}] {w.get('id')}  {', '.join(w.get('criteria') or [])}")
             out.out(f"      scope {w.get('scope')}  until {w.get('expires')}  by {w.get('granted_by')}")
             out.out(f"      reason: {w.get('reason')}")
@@ -522,11 +545,13 @@ def cmd_waiver(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdic
             if not decision.allowed:
                 return _err(out, f"not permitted to revoke waivers: {decision.reason}")
         try:
-            record = waiver.revoke(root, args.id, actor=actor, reason=args.reason or "")
+            record = waiver.revoke(root, args.id, actor=actor, reason=args.reason or "",
+                                   clock=clock)
         except waiver.WaiverError as e:
             return _err(out, str(e))
         ledger.append(root, "waiver.revoke", actor=actor, subject=args.id,
-                      org=eff.org, team=eff.team, data={"reason": args.reason or ""})
+                      org=eff.org, team=eff.team, data={"reason": args.reason or ""},
+                      clock=clock)
         out.out(f"revoked waiver {record['id']}")
         return Verdict.OK
 
@@ -547,12 +572,13 @@ def cmd_waiver(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdic
         expires = (clock.today() + datetime.timedelta(days=float(days))).isoformat()
     try:
         record = waiver.grant(root, eff, waiver_id=args.id, actor=actor, criteria=args.criteria,
-                              reason=args.reason or "", expires=expires, scope=args.scope)
+                              reason=args.reason or "", expires=expires, scope=args.scope,
+                              clock=clock)
     except waiver.WaiverError as e:
         return _err(out, str(e))
     ledger.append(root, "waiver.grant", actor=actor, subject=record["id"], org=eff.org, team=eff.team,
                   data={"criteria": record["criteria"], "expires": record["expires"],
-                        "scope": record["scope"], "reason": record["reason"]})
+                        "scope": record["scope"], "reason": record["reason"]}, clock=clock)
     out.out(f"granted waiver {record['id']}: {', '.join(record['criteria'])} "
             f"(scope {record['scope']}) until {record['expires']}")
     return Verdict.OK
@@ -587,7 +613,8 @@ def cmd_audit(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict
         else:
             out.out(text)
         ledger.append(root, "audit.export", actor=actor, subject=args.format,
-                      org=eff.org, team=eff.team, data={"out": args.out or "(stdout)"})
+                      org=eff.org, team=eff.team, data={"out": args.out or "(stdout)"},
+                      clock=clock)
         return Verdict.OK
 
     entries = [e for e in ledger.read_ledger(root) if "_malformed" not in e]
@@ -616,7 +643,7 @@ def cmd_conformance(args: argparse.Namespace, out: Presenter, clock: Clock) -> V
     # it does not go and get it (`conformance.RunRecords`), and wiring the two together is
     # what this module is for.
     report = conf.evaluate_project(root, records=read_all_tasks(conf.runs_dir(root)),
-                                   since_days=args.since_days)
+                                   since_days=args.since_days, clock=clock)
     if args.json:
         out.out(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         return Verdict.OK if report.verdict != conf.FAIL else Verdict.NONCONFORMANT
@@ -654,7 +681,8 @@ def cmd_rollup(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdic
         roots.append(p)
     if not roots:
         return _err(out, "no projects to roll up (pass repository paths, or --scan a directory of them)")
-    result = conf.rollup(roots, read_records=read_all_tasks, since_days=args.since_days)
+    result = conf.rollup(roots, read_records=read_all_tasks, since_days=args.since_days,
+                         clock=clock)
     if args.json:
         out.out(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:
