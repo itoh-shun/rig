@@ -23,9 +23,33 @@ loud, not worth blocking on.
 """
 
 import pathlib
+from typing import Protocol, runtime_checkable
 
 from .config import ROOT
+from .rig_surfaces import ASSET_RESOLVER
 from .state import _emit, parse_frontmatter
+
+
+@runtime_checkable
+class AssetResolver(Protocol):
+    """Whether a recipe or persona name resolves in any tier, by the rule COMPOSE uses.
+
+    This check exists because both names fall back silently at run time: an unresolvable
+    `default_recipe` drops RESOLVE into interactive mode and an unresolvable persona is
+    dropped from the review fan-out, neither of them saying anything. Catching that means
+    asking the tier search COMPOSE itself performs — project → user → shipped, with pack
+    validation in front of it — and a second search here would answer differently from the
+    one that actually runs, which is the only way this check can be worse than useless.
+
+    Stated as what this module needs rather than imported, because `packs.resolver` is not
+    one of the three allowances `tests/test_layering_contract.py` grants. The import stayed
+    inside the function body before, which looks like a fix and is not: the edge was there,
+    it was just invisible to anything reading the module's imports.
+    """
+
+    def __call__(self, kind: str, name: str, *, project: pathlib.Path) -> bool:
+        ...
+
 
 # Generic size-aware defaults (§4.1) substituted for unset size_thresholds
 # subkeys before the ordering check, so a partial override is still validated
@@ -75,25 +99,32 @@ def _max_retries_violation(value: object) -> str | None:
     return None
 
 
-def _resolve(kind: str, name: str, project: pathlib.Path) -> bool:
+def _resolve(kind: str, name: str, project: pathlib.Path, *,
+             resolver: AssetResolver = ASSET_RESOLVER) -> bool:
     """Ask the resolver COMPOSE uses whether a name resolves in any tier.
 
-    Imported lazily: `validation` is loaded by the CI entry point and must not
-    take a hard dependency on the pack machinery just to report a typo.
+    The lazy import this used to open with now sits in `rig_surfaces._resolve_asset`,
+    together with the reason it is lazy and the `ImportError` answer.
+
+    What is left is the catch-all, and it is still load-bearing but only barely: measured,
+    the one thing `resolve_asset` raises on a malformed installed pack is
+    `packs.model.PackError`, which is what the comment below has always been about. The
+    narrow version is `except PackError` — and that name belongs to another pillar, so the
+    narrow catch belongs at the adapter boundary rather than here, leaving this function
+    with no `except` at all and any *other* failure free to surface as the `check_manifest`
+    FAIL `cli.py` already wraps it in. That is a change of behaviour, so it is not made in
+    passing: as written, this still answers "fine" to every exception there is.
     """
     try:
-        from rig_workbench.packs.resolver import resolve_asset
-    except ImportError:  # pragma: no cover - packs ships with the workbench
-        return True  # cannot check; do not invent a failure
-    try:
-        return resolve_asset(kind, name, project=project) is not None
+        return resolver(kind, name, project=project)
     except Exception:
         # A broken pack collection is a different check's problem. Reporting it
         # here as a manifest typo would point at the wrong file.
         return True
 
 
-def _tier_violations(fm: dict, project: pathlib.Path) -> tuple[list[str], int]:
+def _tier_violations(fm: dict, project: pathlib.Path, *,
+                     resolver: AssetResolver = ASSET_RESOLVER) -> tuple[list[str], int]:
     """default_recipe / default_personas[] — resolvable in some tier? (#372)
 
     Both fall back silently at run time: an unresolvable `default_recipe` drops
@@ -106,7 +137,7 @@ def _tier_violations(fm: dict, project: pathlib.Path) -> tuple[list[str], int]:
     recipe = fm.get("default_recipe")
     if isinstance(recipe, str) and recipe and recipe != "interactive":
         checked += 1
-        if not _resolve("recipe", recipe, project):
+        if not _resolve("recipe", recipe, project, resolver=resolver):
             violations.append(
                 f"manifest: default_recipe {recipe!r} はどの tier にも見つかりません"
                 "（project → user → shipped）。RESOLVE が黙って interactive にフォールバックします"
@@ -118,7 +149,8 @@ def _tier_violations(fm: dict, project: pathlib.Path) -> tuple[list[str], int]:
             if not isinstance(entry, str) or not entry:
                 continue
             checked += 1
-            if not (_resolve("persona", entry, project) or _resolve("agent", entry, project)):
+            if not (_resolve("persona", entry, project, resolver=resolver)
+                    or _resolve("agent", entry, project, resolver=resolver)):
                 violations.append(
                     f"manifest: default_personas[] の {entry!r} は persona facet にも agents/ にも"
                     "見つかりません。COMPOSE が黙ってこの reviewer を落とします"
@@ -171,7 +203,8 @@ def _knowledge_warnings(fm: dict, project: pathlib.Path) -> tuple[list[str], int
     return warnings, checked
 
 
-def check_manifest(manifest_path: pathlib.Path | None = None) -> None:
+def check_manifest(manifest_path: pathlib.Path | None = None, *,
+                   resolver: AssetResolver = ASSET_RESOLVER) -> None:
     path = manifest_path if manifest_path is not None else ROOT / ".claude" / "rig.md"
     if not path.exists():
         return  # manifest is optional (§4.1) — no PASS/WARN/FAIL when absent
@@ -230,7 +263,7 @@ def check_manifest(manifest_path: pathlib.Path | None = None) -> None:
     # The manifest describes the project it sits in, so paths and tier lookups
     # resolve against its directory, not the checker's cwd.
     project = path.parent.parent if path.parent.name == ".claude" else path.parent
-    tier_violations, tier_checked = _tier_violations(fm, project)
+    tier_violations, tier_checked = _tier_violations(fm, project, resolver=resolver)
     violations.extend(tier_violations)
     checked += tier_checked
 
