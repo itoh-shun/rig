@@ -136,6 +136,29 @@ class TestNoCallables:
         with pytest.raises(TypeError, match="callable"):
             Flag(name="--limit", type="int", help="how many", default=len)
 
+    def test_flag_dest_refuses_a_callable(self):
+        # `dest` names an attribute a handler reads; a function here would be a handler
+        # arriving by the back door of the field that points at one.
+        with pytest.raises(TypeError, match="callable"):
+            Flag(name="--limit", type="int", help="how many", dest=len)
+
+    def test_flag_aliases_refuse_a_callable_inside_them(self):
+        with pytest.raises(TypeError, match="callable"):
+            Flag(name="--limit", type="int", help="how many", aliases=("--cap", len))
+
+    def test_every_flag_field_is_covered_by_the_sweep(self):
+        """The sweep above is by hand; this is what notices when a field is added to `Flag`.
+
+        Adding a field and forgetting to try a callable in it is exactly how the rule stops
+        being enforced, and it would be invisible — every existing test still passes. So the
+        field list is read off the dataclass and every field is fed a function here, which
+        means a new one is covered the moment it exists whether or not anybody remembers.
+        """
+        valid = {"name": "--limit", "type": "int", "help": "how many"}
+        for field in dataclasses.fields(Flag):
+            with pytest.raises(TypeError, match="callable"):
+                Flag(**{**valid, field.name: self.handler})
+
     def test_exit_code_refuses_a_callable(self):
         with pytest.raises(TypeError, match="callable"):
             ExitCode(code=0, meaning=self.handler)
@@ -249,6 +272,9 @@ class TestShape:
         assert record["flags"] == [{
             "name": "task_id", "type": "string", "help": "the task to judge",
             "required": False, "choices": [], "default": None,
+            # Both written out even when unset: a projection reading this record has to be
+            # able to tell "argparse derives the dest" from "this key does not exist here".
+            "dest": None, "aliases": [],
         }]
         assert record["exit_codes"] == [{"code": 0, "meaning": "the gate passed"}]
         assert record["command_path"] == ["wb", "gate"]
@@ -265,6 +291,91 @@ class TestShape:
             Flag(name="--runtime", type="choice", help="which runtime")
         with pytest.raises(ValueError, match="choices"):
             Flag(name="--json", type="bool", help="emit JSON", choices=("yes", "no"))
+
+
+class TestWhereTheValueLands:
+    """`dest`: optional, derived when absent, and a statement when present.
+
+    The field exists because two govern flags could not be declared at all — `--criterion`
+    stores into `args.criteria`, `--action` into `args.filter_action` — and it is optional
+    because writing it on all ~500 flags would be a second copy of the flag name. That
+    choice only pays if a written `dest` can be *read* as "argparse would get this wrong",
+    which is what the refusals below are for.
+    """
+
+    def test_an_undeclared_dest_is_the_one_argparse_derives(self):
+        assert Flag(name="--since-days", type="int", help="h").dest_name == "since_days"
+        assert Flag(name="task_id", type="string", help="h").dest_name == "task_id"
+
+    def test_a_declared_dest_is_where_the_value_lands(self):
+        flag = Flag(name="--criterion", type="string-list", help="h", dest="criteria")
+        assert (flag.dest_name, flag.derived_dest) == ("criteria", "criterion")
+
+    def test_declaring_the_dest_argparse_would_derive_anyway_is_refused(self):
+        # Otherwise the field says nothing where it agrees, and a reader has to check every
+        # one of them against argparse's rule to find the few that mean something.
+        with pytest.raises(ValueError, match="derives anyway"):
+            Flag(name="--since-days", type="int", help="h", dest="since_days")
+
+    def test_a_positional_may_not_declare_a_dest(self):
+        # argparse itself raises "dest supplied twice for positional argument"; refusing it
+        # here means the declaration fails rather than the parser that projects it.
+        with pytest.raises(ValueError, match="positional"):
+            Flag(name="task_id", type="string", help="h", dest="task")
+
+    def test_a_dest_must_be_an_attribute_name(self):
+        with pytest.raises(ValueError, match="snake_case"):
+            Flag(name="--criterion", type="string", help="h", dest="filter-action")
+
+    def test_two_flags_landing_on_one_attribute_are_refused(self):
+        """The audit bug, caught at declaration instead of at parse time.
+
+        `govern audit` takes an `action` positional and an `--action` option. Without a
+        `dest` the option overwrites the positional, and `govern audit verify --action
+        policy.init` loses the word `verify` before any handler sees it.
+        """
+        with pytest.raises(ValueError, match="same attribute"):
+            capability(flags=(
+                Flag(name="action", type="string", help="what to do"),
+                Flag(name="--action", type="string", help="filter by action name"),
+            ))
+
+    def test_declaring_the_dest_settles_it(self):
+        assert capability(flags=(
+            Flag(name="action", type="string", help="what to do"),
+            Flag(name="--action", type="string", help="filter", dest="filter_action"),
+        )).flags[1].dest_name == "filter_action"
+
+
+class TestOtherSpellings:
+    """`aliases`: more option strings for one flag, without a second identity for it."""
+
+    def test_a_flag_offers_its_name_first_and_then_its_aliases(self):
+        flag = Flag(name="--recipe", type="string", help="h", aliases=("--explicit-recipe",))
+        # The order argparse reads them in: the first is the usage line and the dest.
+        assert flag.option_strings == ("--recipe", "--explicit-recipe")
+        assert flag.dest_name == "recipe"
+
+    def test_an_alias_must_be_an_option(self):
+        with pytest.raises(ValueError, match="option"):
+            Flag(name="--recipe", type="string", help="h", aliases=("recipe",))
+
+    def test_a_positional_has_no_aliases(self):
+        with pytest.raises(ValueError, match="aliases"):
+            Flag(name="task_id", type="string", help="h", aliases=("--task",))
+
+    def test_a_spelling_may_not_be_declared_twice_on_one_flag(self):
+        with pytest.raises(ValueError, match="twice"):
+            Flag(name="--recipe", type="string", help="h", aliases=("--recipe",))
+
+    def test_an_alias_may_not_collide_with_another_flag_of_the_same_capability(self):
+        # An alias is an option string people's scripts depend on, so it is counted like a
+        # name when a capability is checked for the same flag declared twice.
+        with pytest.raises(ValueError, match="declared twice"):
+            capability(flags=(
+                Flag(name="--recipe", type="string", help="h", aliases=("--explicit-recipe",)),
+                Flag(name="--explicit-recipe", type="string", help="h"),
+            ))
 
 
 class TestTwoAxes:

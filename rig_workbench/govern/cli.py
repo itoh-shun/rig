@@ -38,15 +38,20 @@ import sys
 from rig_workbench import gitroot
 from rig_workbench.ports import Presenter, ProcessRunner
 from rig_workbench.ports.local import SUBPROCESS, ConsolePresenter
+from rig_workbench.registry import children
+from rig_workbench.registry.parser import build_group_parser, subcommand_parsers
 from rig_workbench.workbench.reporting import read_all_tasks
 
 from . import conformance as conf
 from . import ledger, waiver
 from .approval import evaluate, load_approvals, record_decision
 from .identity import ORG_SCHEMA, current_actor, load_org_binding, org_binding_path
-from .policy import (EFFECTIVE_SCHEMA, PERMISSIONS, SCHEMA, EffectivePolicy,
-                     PolicyError, describe_layers, effective_policy,
-                     load_policy_document, resolve_layer_paths)
+# `PERMISSIONS` left with it: the only thing this module used it for was the
+# `govern can` help line ("one of: …"), and that argument's help now comes from the
+# capability table like every other. `rbac.can` still validates the name it is given.
+from .policy import (EFFECTIVE_SCHEMA, SCHEMA, EffectivePolicy, PolicyError,
+                     describe_layers, effective_policy, load_policy_document,
+                     resolve_layer_paths)
 from .rbac import can, explain, roles_of
 
 EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT = 0, 1, 3
@@ -649,88 +654,65 @@ def cmd_rollup(args: argparse.Namespace, out: Presenter) -> Verdict:
 
 
 # ── parser ───────────────────────────────────────────────────────────────────
+#: The one thing the registry cannot carry, kept on this side of the projection.
+#:
+#: `docs/v3-architecture-design-brief.ja.md` §9 makes the CLI a projection of the capability
+#: table, and `registry/parser.py` builds every verb, flag, type, default and dest of this
+#: group out of `children("govern")`. It cannot bind a verb to the function that runs it: a
+#: `Capability` may not hold a callable (`registry/model.py:_reject_callables`), because a
+#: record with a function in it cannot be serialised for the MCP servers or the Action and
+#: cannot be read without importing whatever the function closes over. So the table says
+#: what `govern audit` is and this dict says what runs it, and that is the whole seam.
+#:
+#: Keyed by the verb as typed, so the check in `build_parser` compares two sets of the same
+#: words: a capability declared under `govern` with nothing to run is an error here rather
+#: than an `AttributeError` on `args.func` after a person has typed the command.
+HANDLERS = {
+    "init": cmd_init,
+    "migrate": cmd_migrate,
+    "policy": cmd_policy,
+    "whoami": cmd_whoami,
+    "can": cmd_can,
+    "approve": cmd_approve,
+    "waiver": cmd_waiver,
+    "audit": cmd_audit,
+    "conformance": cmd_conformance,
+    "rollup": cmd_rollup,
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    """`rig-wb govern`'s parser: generated from the table, bound to the handlers here.
+
+    Ten verbs and their forty-odd arguments used to be written out below this line, and were
+    a second source of truth for a surface the registry already declared — held against it
+    by `tests/test_capability_registry_vs_cli.py`, which could only ever compare the verbs.
+    `tests/test_generated_parser_equivalence.py` compared the two parsers action for action,
+    namespace for namespace and refusal for refusal before this changed, and it still does:
+    the parser that used to live here is transcribed there as the recorded surface, so the
+    generated one is checked against what govern shipped rather than against itself.
+
+    `prog` and `description` stay here because they are presentation — the registry declares
+    intent, not how a group titles itself — and because argparse writes `prog` into every
+    usage line a person is shown.
+    """
+    parser = build_group_parser(
+        children("govern"),
         prog="rig-wb govern",
-        description="rig govern — org/team policy, permissions, approvals, waivers, audit")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    p = sub.add_parser("init", help="bind this repository to an org/team and scaffold a starter policy")
-    p.add_argument("--org", required=True, help="org identifier (e.g. acme)")
-    p.add_argument("--team", help="team identifier (e.g. team-a)")
-    p.add_argument("--layer", action="append",
-                   help="path to an existing policy layer, repeatable and applied in order "
-                        "(relative paths also resolve against $RIG_POLICY_HOME)")
-    p.add_argument("--force", action="store_true", help="overwrite existing files")
-    p.set_defaults(func=cmd_init)
-
-    p = sub.add_parser("migrate", help="fold v1 .rig/access.json / .rig/gates.json into a policy layer")
-    p.add_argument("--org", help="org identifier (defaults to the one in .rig/org.json)")
-    p.add_argument("--scope", choices=("org", "team", "project"), default="project")
-    p.add_argument("--team", help="team identifier (required with --scope team)")
-    p.add_argument("--id", default="migrated", help="policy document id (default: migrated)")
-    p.add_argument("--out", help="write here instead of .rig/policy/<id>.json")
-    p.add_argument("--force", action="store_true", help="overwrite an existing file")
-    p.set_defaults(func=cmd_migrate)
-
-    p = sub.add_parser("policy", help="show or lint the policy in effect")
-    p.add_argument("action", nargs="?", choices=("show", "lint"), default="show")
-    p.add_argument("paths", nargs="*", help="with lint: specific documents (default: the resolved layers)")
-    p.add_argument("--json", action="store_true", help="with show: machine-readable output")
-    p.set_defaults(func=cmd_policy)
-
-    p = sub.add_parser("whoami", help="the roles and permissions of the current actor")
-    p.add_argument("--actor", help="ask about somebody else")
-    p.set_defaults(func=cmd_whoami)
-
-    p = sub.add_parser("can", help="check a single permission (exit 0 allowed / 3 denied)")
-    p.add_argument("permission", help=f"one of: {', '.join(PERMISSIONS)}")
-    p.add_argument("--actor", help="ask about somebody else")
-    p.set_defaults(func=cmd_can)
-
-    p = sub.add_parser("approve", help="grant/deny an approval, or show a task's approval status")
-    p.add_argument("action", nargs="?", choices=("status", "grant", "deny"), default="status")
-    p.add_argument("task_id", nargs="?", help="defaults to the most recent task")
-    p.add_argument("--note", help="why (recorded with the decision; required in practice for deny)")
-    p.add_argument("--actor", help="record the decision under this identity")
-    p.set_defaults(func=cmd_approve)
-
-    p = sub.add_parser("waiver", help="grant, list or revoke time-boxed exceptions")
-    p.add_argument("action", nargs="?", choices=("list", "grant", "revoke"), default="list")
-    p.add_argument("id", nargs="?", help="waiver id (with grant/revoke)")
-    p.add_argument("--criterion", dest="criteria", action="append",
-                   help="gate criterion this waiver excuses (repeatable)")
-    p.add_argument("--reason", help="why this exception exists")
-    p.add_argument("--expires", help="YYYY-MM-DD (defaults to the policy's maximum)")
-    p.add_argument("--scope", default="*",
-                   help="fnmatch pattern over task_type or task_id (default: *)")
-    p.add_argument("--actor", help="act as this identity")
-    p.set_defaults(func=cmd_waiver)
-
-    p = sub.add_parser("audit", help="read, verify or export the tamper-evident ledger")
-    p.add_argument("action", nargs="?", choices=("log", "verify", "export"), default="log")
-    p.add_argument("--limit", type=int, help="with log: show only the latest N entries")
-    p.add_argument("--action", dest="filter_action", help="filter by action name")
-    p.add_argument("--since", help="only entries since YYYY-MM-DD")
-    p.add_argument("--format", choices=("jsonl", "csv", "markdown"), default="jsonl",
-                   help="with export: output format")
-    p.add_argument("--out", help="with export: write to this file")
-    p.set_defaults(func=cmd_audit)
-
-    p = sub.add_parser("conformance", help="measure this repository against its effective policy")
-    p.add_argument("path", nargs="?", help="repository to measure (default: the current one)")
-    p.add_argument("--since-days", type=int, default=90, help="run window for the measured checks")
-    p.add_argument("--json", action="store_true", help="machine-readable output")
-    p.set_defaults(func=cmd_conformance)
-
-    p = sub.add_parser("rollup", help="aggregate several projects into the org/team view")
-    p.add_argument("paths", nargs="+", help="repository paths (or directories with --scan)")
-    p.add_argument("--scan", action="store_true",
-                   help="treat each path as a directory whose immediate children are repositories")
-    p.add_argument("--since-days", type=int, default=90)
-    p.add_argument("--json", action="store_true", help="machine-readable output")
-    p.set_defaults(func=cmd_rollup)
-
+        description="rig govern — org/team policy, permissions, approvals, waivers, audit",
+    )
+    leaves = subcommand_parsers(parser)
+    unbound = sorted(set(leaves) - set(HANDLERS))
+    unreachable = sorted(set(HANDLERS) - set(leaves))
+    if unbound or unreachable:
+        raise RuntimeError(
+            f"govern's verbs and its handlers disagree: {unbound} declared in the capability "
+            f"registry with nothing to run, {unreachable} bound here and declared nowhere. "
+            "Add the capability to rig_workbench/registry/entries_subgroups.py, or the "
+            "handler to HANDLERS; the two halves of one verb do not live in one place."
+        )
+    for verb, leaf in leaves.items():
+        leaf.set_defaults(func=HANDLERS[verb])
     return parser
 
 

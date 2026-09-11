@@ -251,7 +251,9 @@ GOVERN: tuple[Capability, ...] = (
             Flag(name="action", type="choice", help="一覧するか、出すか、取り消すか",
                  choices=("list", "grant", "revoke"), default="list"),
             Flag(name="id", type="string", help="waiver id（grant / revoke で使う）"),
-            Flag(name="--criterion", type="string-list",
+            # `--criterion` collects into `args.criteria`: the flag is repeatable, so what
+            # it builds is a list, and `cmd_waiver` reads it under that name.
+            Flag(name="--criterion", type="string-list", dest="criteria",
                  help="この免除が何を許すのか。grant では必須で、繰り返し指定できる"),
             Flag(name="--reason", type="string", help="なぜこの例外が要るのか"),
             Flag(name="--expires", type="string",
@@ -281,7 +283,13 @@ GOVERN: tuple[Capability, ...] = (
             Flag(name="action", type="choice", help="読むか、鎖を検証するか、書き出すか",
                  choices=("log", "verify", "export"), default="log"),
             Flag(name="--limit", type="int", help="log のとき、最新 N 件だけ表示する"),
-            Flag(name="--action", type="string", help="action 名で絞り込む"),
+            # `audit` already has an `action` positional (log / verify / export), so this
+            # option cannot take the dest argparse would derive: it would overwrite the word
+            # the person typed. `dest="filter_action"` is what the shipped parser declares,
+            # and `Capability` now refuses the collision rather than leaving it to be found
+            # by parsing `audit verify --action policy.init` and losing `verify`.
+            Flag(name="--action", type="string", dest="filter_action",
+                 help="action 名で絞り込む"),
             Flag(name="--since", type="string", help="YYYY-MM-DD 以降の項目だけ"),
             Flag(name="--format", type="choice", help="export の形式",
                  choices=("jsonl", "csv", "markdown"), default="jsonl"),

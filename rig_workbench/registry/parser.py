@@ -55,29 +55,32 @@ What each declaration becomes
 | `--flag`, `required=True` | `required=True` |
 | `choices` | `choices=(...)`, on a positional or an option alike |
 | `default` other than `None` | `default=...`; `None` is left to argparse |
+| `aliases` | extra option strings after the name: `add_argument(name, *aliases)` |
+| `dest` other than `None` | `dest=...`; `None` leaves argparse to derive it |
 
 `bool` is an option-only type: a positional that stores `True` without consuming a word is
 not a thing argparse can build, and a `bool` positional in the table is a declaration error
 rather than something to project into an approximation.
 
-What a `Flag` cannot say yet
-----------------------------
+What a `Flag` could not say, and now can
+----------------------------------------
 
-Two things the shipping parsers do that no field here can express, both found by generating
-`govern` and comparing (`tests/test_generated_parser_equivalence.py`):
+Generating `govern` and comparing it against the shipped parser
+(`tests/test_generated_parser_equivalence.py`) found two things the shipping parsers do that
+no field could express, and `model.Flag` grew a field for each:
 
 * **`dest`** — `govern waiver` declares `--criterion` but stores it as `args.criteria`, and
-  `govern audit` declares `--action` but stores it as `args.filter_action`. The generator
-  gives both argparse's derived dest, so the first renames a field and the second *collides
-  with `audit`'s own `action` positional* and overwrites it. Nothing here papers over that:
-  the generated parser is what the declaration says, and the declaration is missing a field.
-* **aliases** — `wb new` and `wb route` accept `--explicit-recipe` beside another spelling.
-  `Flag.name` is one name, so a projection of those two verbs would silently drop a spelling
-  that people's scripts use.
+  `govern audit` declares `--action` but stores it as `args.filter_action`. Given argparse's
+  derived dest, the first renamed a field the handler reads and the second *collided with
+  `audit`'s own `action` positional* and overwrote it. Nothing here papers over that; the
+  declaration says it now (`Flag.dest`), and `Capability` refuses two flags that land on one
+  attribute, so the collision fails at import rather than at parse time.
+* **aliases** — `wb route` accepts `--explicit-recipe` beside `--recipe` as one action with
+  two spellings. `Flag.aliases` carries the extra spellings and this module passes them
+  straight through as further option strings.
 
-Both are findings about the table rather than about this module, and both are cheap to add
-(`dest: str | None = None`, `aliases: tuple[str, ...] = ()`) — but adding a field to a frozen
-record is a change to the declaration, which is not this module's to make.
+Neither is projected into an approximation: what the declaration says is what the parser
+gets, and where it says nothing argparse's own default stands.
 """
 
 from __future__ import annotations
@@ -158,12 +161,22 @@ def flag_kwargs(flag: Flag) -> dict:
         kwargs["choices"] = flag.choices
     if flag.default is not None:
         kwargs["default"] = flag.default
+    if flag.dest is not None:
+        # Only when declared. Passing `dest=flag.dest_name` unconditionally would be the
+        # same parser, but it would also put a `dest=` on every positional, which argparse
+        # refuses outright ("dest supplied twice for positional argument").
+        kwargs["dest"] = flag.dest
     return kwargs
 
 
 def add_flag(parser: argparse.ArgumentParser, flag: Flag) -> argparse.Action:
-    """Attach one declared flag to a parser, and hand back the action argparse built."""
-    return parser.add_argument(flag.name, **flag_kwargs(flag))
+    """Attach one declared flag to a parser, and hand back the action argparse built.
+
+    `option_strings` is the canonical name followed by its aliases, which is the order
+    argparse reads them in: the first is what the usage line shows and what an undeclared
+    dest is derived from.
+    """
+    return parser.add_argument(*flag.option_strings, **flag_kwargs(flag))
 
 
 def add_capability(
@@ -219,3 +232,25 @@ def build_group_parser(
     for capability in capabilities:
         add_capability(subparsers, capability)
     return parser
+
+
+def subcommand_parsers(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
+    """The sub-parsers of a group parser, by the word that reaches each one.
+
+    The half of the swap this module *can* do for its caller. A caller still has to bind
+    each verb to the function that runs it — a `Capability` may not carry a callable, so the
+    binding cannot come from the table — and doing that means holding the sub-parser
+    objects, which argparse only offers through `_actions`. Reading that here once, and
+    saying so, is better than every caller reaching into a private attribute.
+
+    One level only: a two-word verb's leaf is reached through its own group parser, and no
+    caller needs it today (`govern` has none). It stays one level until one does, rather
+    than growing a flattening rule nothing exercises.
+    """
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return dict(action.choices)
+    raise ValueError(
+        f"{parser.prog} has no sub-parsers; `subcommand_parsers` reads a group parser built "
+        "by `build_group_parser`, not a leaf."
+    )

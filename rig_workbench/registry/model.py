@@ -111,6 +111,7 @@ _ID = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 _TOKEN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SCHEMA_ID = re.compile(r"^rig\.[a-z0-9-]+/v[0-9]+$")
 _FLAG_NAME = re.compile(r"^(?:--[a-z0-9]+(?:-[a-z0-9]+)*|[a-z0-9]+(?:_[a-z0-9]+)*)$")
+_DEST = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 
 
 def _reject_callables(owner: str, field: str, value: object) -> None:
@@ -158,6 +159,10 @@ class Flag:
     `name` is either `--long-form` or a positional (`task_id`); the leading dashes are what
     tells them apart, so nothing has to declare which it is. Short forms are not declared —
     rig's surface does not use them, and a projection can add one if it ever wants to.
+    `name` is also the flag's *identity*: it is what a capability's flags are deduplicated
+    on, what `as_dict` keys a projection by, and what `action.yml`'s inputs are compared
+    against (`tests/test_capability_registry_vs_surfaces.py`). The two fields below add what
+    a declaration could not previously say, and neither of them disturbs that identity.
     """
 
     name: str
@@ -166,6 +171,46 @@ class Flag:
     required: bool = False
     choices: tuple[str, ...] = ()
     default: str | int | float | bool | None = None
+
+    #: The attribute the parsed value lands on, when argparse's derived one is wrong.
+    #:
+    #: Optional, and derived when absent (`derived_dest`), rather than written out on all
+    #: ~500 flags. Two reasons, and the second is the one that decided it. Written out
+    #: everywhere, the field would be a second copy of the flag name for the 99% of flags
+    #: where it agrees — a second place to make the same typo, and a diff that says nothing
+    #: every time a flag is renamed. And *because* it is optional, a written `dest` carries
+    #: information: it is a statement that argparse would get this one wrong. That is
+    #: enforced rather than hoped for — declaring the dest argparse would have derived
+    #: anyway is refused below, so every `dest=` in the table marks a real disagreement and
+    #: can be read as one.
+    #:
+    #: Both of govern's are exactly that. `govern waiver --criterion` stores into
+    #: `args.criteria`, which is what `cmd_waiver` reads; `govern audit --action` stores
+    #: into `args.filter_action` because `audit` also takes an `action` positional and the
+    #: derived dest would collide with it — silently, destroying the sub-action word before
+    #: any handler sees it (`tests/test_generated_parser_equivalence.py` found it that way).
+    #: `Capability` refuses that collision now, so the declaration fails rather than the
+    #: parse.
+    #:
+    #: Options only. argparse takes a positional's dest from its name and raises
+    #: "dest supplied twice for positional argument" if both are given, so a positional
+    #: that wants a different attribute name is spelled by renaming the positional.
+    dest: str | None = None
+
+    #: Other spellings that reach the same flag — `--explicit-recipe` beside `--recipe`.
+    #:
+    #: Extra option strings, not a replacement for `name`: `name` stays the one canonical
+    #: spelling, so nothing that addresses a flag by name (the dedupe checks here, the MCP
+    #: and Action projections, the docs) has to decide which element of a list it meant.
+    #: That also matches argparse's own model — the first option string is what the usage
+    #: line shows and what the dest is derived from, and the rest are alternatives — so the
+    #: projection is `add_argument(name, *aliases)` with nothing to reorder.
+    #:
+    #: An alias is still an option string a person's scripts depend on, so it is checked
+    #: like `name` and counted like `name` when a capability looks for the same flag
+    #: declared twice. Positionals have no aliases: a second spelling of a bare word is a
+    #: second word, not another name for the same one.
+    aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for field in dataclasses.fields(self):
@@ -197,11 +242,81 @@ class Flag:
             )
         if self.type == "bool" and self.default is not None and not isinstance(self.default, bool):
             raise TypeError(f"flag {self.name}: a `bool` flag's default must be a bool")
+        self._check_dest()
+        self._check_aliases()
+
+    def _check_dest(self) -> None:
+        if self.dest is None:
+            return
+        if not isinstance(self.dest, str) or not _DEST.match(self.dest):
+            raise ValueError(
+                f"flag {self.name}: dest {self.dest!r} must be a `snake_case` attribute "
+                "name — it is what a handler reads off the parsed namespace"
+            )
+        if self.positional:
+            raise ValueError(
+                f"flag {self.name}: a positional's dest is its name, and argparse refuses "
+                '"dest supplied twice for positional argument". Rename the positional.'
+            )
+        if self.dest == self.derived_dest:
+            raise ValueError(
+                f"flag {self.name}: dest {self.dest!r} is the one argparse derives anyway, "
+                "so declaring it says nothing and is a second copy of the flag name. Leave "
+                "it out; a written dest means the derived one is wrong."
+            )
+
+    def _check_aliases(self) -> None:
+        aliases = _tuple("Flag", "aliases", self.aliases)
+        if aliases and self.positional:
+            raise ValueError(
+                f"flag {self.name}: a positional has no aliases — a second spelling of a "
+                "bare word is a second positional, not another name for this one"
+            )
+        for alias in aliases:
+            if not isinstance(alias, str) or not _FLAG_NAME.match(alias):
+                raise ValueError(
+                    f"flag {self.name}: alias {alias!r} must be `--kebab-case`"
+                )
+            if not alias.startswith("--"):
+                raise ValueError(
+                    f"flag {self.name}: alias {alias!r} must be an option, not a positional"
+                )
+        if len(set(self.option_strings)) != len(self.option_strings):
+            raise ValueError(
+                f"flag {self.name}: the same spelling is declared twice in {self.name!r} "
+                f"and {list(aliases)}"
+            )
 
     @property
     def positional(self) -> bool:
         """Is this typed as a bare word, or behind a `--flag`?"""
         return not self.name.startswith("--")
+
+    @property
+    def option_strings(self) -> tuple[str, ...]:
+        """Every spelling that reaches this flag, canonical first — argparse's own order."""
+        return (self.name, *self.aliases)
+
+    @property
+    def derived_dest(self) -> str:
+        """The attribute argparse would choose on its own, from the canonical spelling.
+
+        argparse takes the dest from the first long option, strips the dashes and turns the
+        inner ones into underscores; a positional is its own dest. Written out here rather
+        than left implicit so `dest_name` — and the check that refuses a redundant `dest` —
+        answer from one statement of the rule instead of two.
+        """
+        return self.name.lstrip("-").replace("-", "_")
+
+    @property
+    def dest_name(self) -> str:
+        """Where the parsed value actually lands: the declared `dest`, or the derived one.
+
+        The one thing a consumer should ask. Nothing outside this class should re-derive it
+        — that is how `--action` came to be read as `args.action` in one place and
+        `args.filter_action` in another.
+        """
+        return self.derived_dest if self.dest is None else self.dest
 
     def as_dict(self) -> dict:
         """Every field, in the shapes JSON holds — derived, so a new field cannot fall out."""
@@ -399,9 +514,18 @@ class Capability:
         for flag in _tuple("Capability", "flags", self.flags):
             if not isinstance(flag, Flag):
                 raise TypeError(f"{self.id}: flags must be Flag records, got {flag!r}")
-        names = [flag.name for flag in self.flags]
+        names = [spelling for flag in self.flags for spelling in flag.option_strings]
         if len(set(names)) != len(names):
             raise ValueError(f"{self.id}: the same flag is declared twice")
+        dests = [flag.dest_name for flag in self.flags]
+        if len(set(dests)) != len(dests):
+            clashing = sorted({dest for dest in dests if dests.count(dest) > 1})
+            raise ValueError(
+                f"{self.id}: two flags land on the same attribute ({', '.join(clashing)}), "
+                "so whichever is parsed second silently destroys the first. This is exactly "
+                "what `govern audit --action` did to its own `action` positional: declare "
+                "`dest=` on the option (see Flag.dest), or rename the positional."
+            )
         if self.output_schema is not None and not _SCHEMA_ID.match(str(self.output_schema)):
             raise ValueError(
                 f"{self.id}: output_schema {self.output_schema!r} must look like "

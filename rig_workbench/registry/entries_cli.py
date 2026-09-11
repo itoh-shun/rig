@@ -321,8 +321,15 @@ CLI_CAPABILITIES: tuple[Capability, ...] = (
             Flag(name="format", type="string", help="the report format, when it cannot be detected"),
             Flag(name="report", type="path", help="the report to score"),
             Flag(name="--repo", type="path", help="the project root to inspect", default="."),
-            Flag(name="--report", type="path", help="the report to read, as a flag rather than the positional"),
-            Flag(name="--format", type="choice", help="force the report format instead of reading it from the file",
+            # Both of these double the positional above them, so neither can take the dest
+            # argparse would derive — it would overwrite the positional. `mutation.py` says
+            # `dest="report_flag"` / `dest="format_flag"` for that reason, and the same
+            # collision check that caught `govern audit --action` caught this declaration
+            # claiming otherwise.
+            Flag(name="--report", type="path", dest="report_flag",
+                 help="the report to read, as a flag rather than the positional"),
+            Flag(name="--format", type="choice", dest="format_flag",
+                 help="force the report format instead of reading it from the file",
                  choices=("elements", "junit", "mutmut")),
             Flag(name="--run", type="bool", help="run the project's own mutation tool first"),
             Flag(name="--baseline", type="path", help="the baseline to compare against"),

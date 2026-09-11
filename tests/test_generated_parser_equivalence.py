@@ -5,14 +5,24 @@ capability registry. Stage 2 declared all 139 capabilities *including their flag
 the hand-written parsers, holding the two together by test
 (`tests/test_capability_registry_vs_cli.py`) — two sources of truth for one surface, accepted
 for one stage. Stage 3 removes the second one by generating the first. This file is the
-proof, taken before the swap: `rig_workbench/registry/parser.py` builds `govern`'s parser out
-of `registry.children("govern")`, and every observable thing about it is compared against the
-parser `rig_workbench/govern/cli.py` ships today. Nothing here changes what ships.
+proof: `rig_workbench/registry/parser.py` builds `govern`'s parser out of
+`registry.children("govern")`, and every observable thing about it is compared against the
+parser `rig_workbench/govern/cli.py` used to ship.
+
+**Used to**: the swap has happened, and `govern/cli.py`'s `build_parser` now *is* the
+generated parser with its ten handlers bound. The hand-written one it replaced is transcribed
+into this file (`shipped_parser`) rather than deleted, because importing `build_parser` back
+would leave every comparison below running against itself. What the file proves is therefore
+unchanged and its direction is sharper: the surface a person met before the registry became
+its source is written down, and the generated one is held to it.
 
 `govern` is the pillar being migrated and the honest place to measure: ten verbs, already
 behind the ports, and a planning pass reported its flags as matching the real parser exactly.
-Two of them do not (see `DIVERGENCES`), and that is the finding this file exists to make
-unarguable.
+Two of them did not, and that finding — made unarguable here — is what `model.Flag.dest` was
+added for. `DIVERGENCES` is now empty, and every comparison below runs at full strength: no
+namespace field may differ, and no refusal may be worded differently. The machinery that
+records a divergence is kept, because it is the thing that makes the *next* one a decision
+somebody has to write down rather than a difference that passes.
 
 ## What "equivalent" is asserted to mean
 
@@ -30,9 +40,10 @@ pass while the parser still behaves differently:
    the error paths — a missing required argument, an unknown flag, a bad choice, a bare
    group, an unknown verb — compared on exit status *and* on the stderr argparse writes
    itself. This is the layer that catches what structure cannot: `govern audit`'s generated
-   `--action` matches the shipped one on every attribute but `dest`, and that one attribute
-   silently destroys the value of the `action` positional
-   (`test_the_generated_audit_parser_loses_the_positional_action_to_its_own_option`).
+   `--action` matched the shipped one on every attribute but `dest`, and that one attribute
+   silently destroyed the value of the `action` positional. The vector that showed it is
+   still run, asserting the opposite now
+   (`test_audit_verify_keeps_both_the_positional_and_the_filter`).
 
 The vectors are **derived from the capabilities**, not listed: for each verb, the smallest
 vector its required flags allow, the widest vector its flags allow, one per value of every
@@ -41,11 +52,17 @@ a few by hand would test the flags somebody remembered.
 
 ## The one thing not compared
 
-`args.func`. The shipped parser calls `set_defaults(func=cmd_init)`; a `Capability` may not
-carry a callable (`registry.model._reject_callables`), so the generated parser cannot and
-must not. Binding a verb to its handler stays with the caller that imports both — it is the
-single thing stage 3's swap has to write by hand, and it is excluded from the namespace
-comparison by name, not by ignoring unexpected keys.
+`args.func`. The recorded parser's `set_defaults(func=cmd_init)` lines are the one thing not
+transcribed; a `Capability` may not carry a callable (`registry.model._reject_callables`), so
+the generated parser cannot and must not produce them. Binding a verb to its handler stays
+with the caller that imports both — it is the single thing the swap had to write by hand, it
+lives in `govern.cli.HANDLERS`, and it is excluded from the namespace comparison by name,
+not by ignoring unexpected keys.
+
+That binding is the one thing this file checks about `govern/cli.py` directly
+(`test_the_parser_govern_ships_is_the_generated_one_with_every_verb_bound`), so the module
+that does the swap is still in the comparison rather than merely being trusted to have done
+it.
 """
 
 from __future__ import annotations
@@ -57,7 +74,8 @@ import io
 
 import pytest
 
-from rig_workbench.govern.cli import build_parser as shipped_parser
+from rig_workbench.govern import cli as govern_cli
+from rig_workbench.govern.policy import PERMISSIONS
 from rig_workbench.registry import children
 from rig_workbench.registry.model import FLAG_TYPES, Capability, Flag
 from rig_workbench.registry.parser import (
@@ -125,34 +143,24 @@ class Divergence:
         )
 
 
-#: Both differences found by generating `govern`. Neither is fixed here: `model.Flag` has no
-#: `dest` field, so the registry *cannot* declare either, and adding a field to the frozen
-#: record is a change to the declaration rather than to this projection.
-DIVERGENCES = (
-    Divergence(
-        verb="waiver",
-        option="--criterion",
-        shipped_dest="criteria",
-        generated_dest="criterion",
-        judgement=(
-            "the shipped parser is right and the registry is under-specified: a repeatable "
-            "flag collects a list, and `args.criteria` is what govern/cli.py reads. The "
-            "generated `args.criterion` renames a field the handler already uses."
-        ),
-    ),
-    Divergence(
-        verb="audit",
-        option="--action",
-        shipped_dest="filter_action",
-        generated_dest="action",
-        judgement=(
-            "the shipped parser is right and the registry is not merely under-specified but "
-            "broken as declared: `govern audit` also takes an `action` positional, so the "
-            "derived dest collides with it and the option overwrites the sub-command word. "
-            "dest='filter_action' is exactly why it is written down in govern/cli.py."
-        ),
-    ),
-)
+#: **Empty, and that is the assertion.** Two entries stood here: `govern waiver --criterion`
+#: (shipped `criteria`, generated `criterion`) and `govern audit --action` (shipped
+#: `filter_action`, generated `action`, colliding with `audit`'s own `action` positional).
+#: Both were findings about the table — the shipped parser was right and the registry could
+#: not say what it does — so `model.Flag` grew a `dest` field, the two declarations in
+#: `registry/entries_subgroups.py` now carry it, and the differences are gone rather than
+#: tolerated. `model.Capability` refuses two flags that land on one attribute, so the audit
+#: shape cannot come back as a declaration that merely parses oddly.
+#:
+#: Nothing below is relaxed by this being empty; everything is tightened. `allowed` becomes
+#: the empty set, so `test_accepted_vectors_produce_the_same_namespace` demands namespaces
+#: that match field for field, and `normalise` becomes the identity, so
+#: `test_rejected_vectors_fail_the_same_way` demands byte-identical stderr. A new divergence
+#: therefore fails here, and adding an entry to this tuple is a deliberate, documented act
+#: that `test_every_declared_dest_is_witnessed_by_a_real_vector` and
+#: `test_the_usage_line_is_only_rewritten_where_a_divergence_says_it_would_be` still hold to
+#: being real and reproducible.
+DIVERGENCES: tuple[Divergence, ...] = ()
 
 DIVERGENT_DESTS: dict[str, frozenset[str]] = {
     verb: frozenset().union(*(d.dests for d in DIVERGENCES if d.verb == verb))
@@ -161,6 +169,96 @@ DIVERGENT_DESTS: dict[str, frozenset[str]] = {
 
 
 # ── reading the two parsers ──────────────────────────────────────────────────
+def shipped_parser() -> argparse.ArgumentParser:
+    """The parser `rig_workbench/govern/cli.py` shipped before it was generated.
+
+    Transcribed here, verbatim but for the ten `set_defaults(func=...)` lines, at the commit
+    that swapped govern over (c275bc9's `build_parser`). Until that swap this function was
+    imported from `govern.cli`, and the comparison below had two independently written sides.
+    After it there is one parser in the tree, and importing it back would leave this whole
+    file comparing the generated parser against itself — forty-six tests that cannot fail.
+
+    So the recorded surface stays here, as data: what a person typing `rig-wb govern …` met
+    before the registry became its source. That makes the direction of any future failure
+    unambiguous. A change to the capability table that alters govern's surface fails here,
+    and the fix is a decision — either the table is wrong, or the surface really is changing
+    and this transcription is updated *in the same commit*, which is the diff a reviewer of a
+    CLI change wants to see. Do not edit it to make a test pass.
+    """
+    parser = argparse.ArgumentParser(
+        prog="rig-wb govern",
+        description="rig govern — org/team policy, permissions, approvals, waivers, audit")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("init", help="bind this repository to an org/team and scaffold a starter policy")
+    p.add_argument("--org", required=True, help="org identifier (e.g. acme)")
+    p.add_argument("--team", help="team identifier (e.g. team-a)")
+    p.add_argument("--layer", action="append",
+                   help="path to an existing policy layer, repeatable and applied in order "
+                        "(relative paths also resolve against $RIG_POLICY_HOME)")
+    p.add_argument("--force", action="store_true", help="overwrite existing files")
+
+    p = sub.add_parser("migrate", help="fold v1 .rig/access.json / .rig/gates.json into a policy layer")
+    p.add_argument("--org", help="org identifier (defaults to the one in .rig/org.json)")
+    p.add_argument("--scope", choices=("org", "team", "project"), default="project")
+    p.add_argument("--team", help="team identifier (required with --scope team)")
+    p.add_argument("--id", default="migrated", help="policy document id (default: migrated)")
+    p.add_argument("--out", help="write here instead of .rig/policy/<id>.json")
+    p.add_argument("--force", action="store_true", help="overwrite an existing file")
+
+    p = sub.add_parser("policy", help="show or lint the policy in effect")
+    p.add_argument("action", nargs="?", choices=("show", "lint"), default="show")
+    p.add_argument("paths", nargs="*", help="with lint: specific documents (default: the resolved layers)")
+    p.add_argument("--json", action="store_true", help="with show: machine-readable output")
+
+    p = sub.add_parser("whoami", help="the roles and permissions of the current actor")
+    p.add_argument("--actor", help="ask about somebody else")
+
+    p = sub.add_parser("can", help="check a single permission (exit 0 allowed / 3 denied)")
+    p.add_argument("permission", help=f"one of: {', '.join(PERMISSIONS)}")
+    p.add_argument("--actor", help="ask about somebody else")
+
+    p = sub.add_parser("approve", help="grant/deny an approval, or show a task's approval status")
+    p.add_argument("action", nargs="?", choices=("status", "grant", "deny"), default="status")
+    p.add_argument("task_id", nargs="?", help="defaults to the most recent task")
+    p.add_argument("--note", help="why (recorded with the decision; required in practice for deny)")
+    p.add_argument("--actor", help="record the decision under this identity")
+
+    p = sub.add_parser("waiver", help="grant, list or revoke time-boxed exceptions")
+    p.add_argument("action", nargs="?", choices=("list", "grant", "revoke"), default="list")
+    p.add_argument("id", nargs="?", help="waiver id (with grant/revoke)")
+    p.add_argument("--criterion", dest="criteria", action="append",
+                   help="gate criterion this waiver excuses (repeatable)")
+    p.add_argument("--reason", help="why this exception exists")
+    p.add_argument("--expires", help="YYYY-MM-DD (defaults to the policy's maximum)")
+    p.add_argument("--scope", default="*",
+                   help="fnmatch pattern over task_type or task_id (default: *)")
+    p.add_argument("--actor", help="act as this identity")
+
+    p = sub.add_parser("audit", help="read, verify or export the tamper-evident ledger")
+    p.add_argument("action", nargs="?", choices=("log", "verify", "export"), default="log")
+    p.add_argument("--limit", type=int, help="with log: show only the latest N entries")
+    p.add_argument("--action", dest="filter_action", help="filter by action name")
+    p.add_argument("--since", help="only entries since YYYY-MM-DD")
+    p.add_argument("--format", choices=("jsonl", "csv", "markdown"), default="jsonl",
+                   help="with export: output format")
+    p.add_argument("--out", help="with export: write to this file")
+
+    p = sub.add_parser("conformance", help="measure this repository against its effective policy")
+    p.add_argument("path", nargs="?", help="repository to measure (default: the current one)")
+    p.add_argument("--since-days", type=int, default=90, help="run window for the measured checks")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p = sub.add_parser("rollup", help="aggregate several projects into the org/team view")
+    p.add_argument("paths", nargs="+", help="repository paths (or directories with --scan)")
+    p.add_argument("--scan", action="store_true",
+                   help="treat each path as a directory whose immediate children are repositories")
+    p.add_argument("--since-days", type=int, default=90)
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+
+    return parser
+
+
 def generated() -> argparse.ArgumentParser:
     """govern's parser, built from the declaration and nothing else."""
     return build_group_parser(children("govern"), prog=PROG, description="generated")
@@ -292,6 +390,25 @@ def test_the_generated_parser_offers_them_in_the_order_the_registry_declares() -
     assert list(subcommands(generated())) == VERBS
 
 
+def test_the_parser_govern_ships_is_the_generated_one_with_every_verb_bound() -> None:
+    """The swap itself: what `rig-wb govern` builds, against what this file generates.
+
+    Two claims, and both are about `govern/cli.py` rather than about the projection. Its
+    parser is the generated one, action for action and verb for verb — so nothing was added
+    back by hand on the way through. And every verb carries the handler the registry cannot:
+    `args.func` is set, and set to a different function per verb, which is the failure mode
+    of a binding loop that reads the wrong variable.
+    """
+    shipped = govern_cli.build_parser()
+    assert list(subcommands(shipped)) == list(subcommands(generated()))
+    for verb, leaf in subcommands(shipped).items():
+        assert signatures(leaf) == signatures(subcommands(generated())[verb]), verb
+
+    bound = {verb: leaf.get_default(HANDLER_FIELD) for verb, leaf in subcommands(shipped).items()}
+    assert all(callable(handler) for handler in bound.values()), bound
+    assert len(set(bound.values())) == len(bound), f"one handler is bound to two verbs: {bound}"
+
+
 # ── 2. action for action ─────────────────────────────────────────────────────
 def test_the_group_parser_itself_matches_the_shipped_one() -> None:
     generated_group, shipped_group = generated(), shipped_parser()
@@ -334,7 +451,8 @@ def test_every_action_of_every_verb_matches_the_shipped_parser(verb: str) -> Non
     )
 
 
-def test_the_only_differences_anywhere_in_govern_are_the_two_documented_ones() -> None:
+def test_the_only_differences_anywhere_in_govern_are_the_documented_ones() -> None:
+    """With `DIVERGENCES` empty this says: no action of any verb differs at all."""
     found = set()
     for verb in VERBS:
         mine, theirs = subcommands(generated())[verb], subcommands(shipped_parser())[verb]
@@ -365,8 +483,13 @@ def test_accepted_vectors_produce_the_same_namespace(capability: Capability) -> 
         )
 
 
-def test_the_documented_divergences_are_each_witnessed_by_a_real_vector() -> None:
-    """A divergence nobody can reproduce is a stale comment; make each one show itself."""
+def test_no_divergence_stands_that_a_real_vector_cannot_reproduce() -> None:
+    """A divergence nobody can reproduce is a stale comment; make each one show itself.
+
+    Empty today, and it is the mechanism rather than the count that has to survive: an entry
+    added to `DIVERGENCES` without a vector that actually shows the shipped parser filling a
+    field the generated one leaves empty fails here.
+    """
     mine, theirs = generated(), shipped_parser()
     witnessed: set[tuple[str, str]] = set()
     for capability in govern_capabilities():
@@ -382,24 +505,73 @@ def test_the_documented_divergences_are_each_witnessed_by_a_real_vector() -> Non
     assert witnessed == {(d.verb, d.option) for d in DIVERGENCES}
 
 
-def test_the_generated_audit_parser_loses_the_positional_action_to_its_own_option() -> None:
-    """The concrete cost of the missing `dest`, pinned rather than described.
+def test_every_declared_dest_is_witnessed_by_a_real_vector() -> None:
+    """The other half, and the one with teeth now: each `dest=` in the table, exercised.
 
-    This is not a formatting difference or a renamed field: `govern audit verify --action
-    policy.init` asks to verify the ledger chain, filtered to one action name. The shipped
-    parser hears that. The generated one hears `action="policy.init"`, which is not a verb
-    it offers, and the word the person typed is gone before any handler sees it.
+    This is what the two `DIVERGENCES` entries turned into. A `Flag.dest` is a statement
+    that argparse's derived name is wrong, so for every one govern declares there must be a
+    vector where *both* parsers put the value under the declared name and neither puts it
+    under the derived one. Deleting a `dest=` from `entries_subgroups.py` fails here, and so
+    does adding one that no derived vector reaches.
+    """
+    mine, theirs = generated(), shipped_parser()
+    declared = {
+        (capability.verb, flag.name)
+        for capability in govern_capabilities()
+        for flag in capability.flags
+        if flag.dest is not None
+    }
+    assert declared, "govern declares no explicit dest; the two it needs have gone missing"
+
+    witnessed: set[tuple[str, str]] = set()
+    for capability in govern_capabilities():
+        for flag in capability.flags:
+            if flag.dest is None:
+                continue
+            for argv in accepted_vectors(capability):
+                if flag.name not in argv:
+                    continue
+                for parsed in (namespace(mine, argv), namespace(theirs, argv)):
+                    assert parsed.get(flag.dest, _MISSING) is not _MISSING, (
+                        f"`rig-wb govern {' '.join(argv)}`: {flag.name} declares "
+                        f"dest={flag.dest!r} and the value is not there.\n  {parsed}"
+                    )
+                    # And the value is *only* there: the derived name either does not
+                    # exist (waiver's `criterion`) or belongs to something else that the
+                    # option must not have overwritten (audit's `action` positional).
+                    assert parsed.get(flag.derived_dest) != parsed[flag.dest], (
+                        f"`rig-wb govern {' '.join(argv)}`: {flag.name} reached "
+                        f"{flag.derived_dest!r} as well as {flag.dest!r}.\n  {parsed}"
+                    )
+                witnessed.add((capability.verb, flag.name))
+    assert witnessed == declared
+
+
+def test_audit_verify_keeps_both_the_positional_and_the_filter() -> None:
+    """The vector that cost the most, pinned as the answer both parsers now give.
+
+    `govern audit verify --action policy.init` asks to verify the ledger chain, filtered to
+    one action name. Before `Flag.dest`, the generated parser heard `action="policy.init"` —
+    not a verb it offers — and the word the person typed was gone before any handler saw it.
+    Both parsers now hear the whole sentence, and they hear it identically.
     """
     argv = ["audit", "verify", "--action", "policy.init"]
-    shipped = namespace(shipped_parser(), argv)
-    assert (shipped["action"], shipped["filter_action"]) == ("verify", "policy.init")
+    expected = {"action": "verify", "filter_action": "policy.init"}
+    for parser in (shipped_parser(), generated()):
+        parsed = namespace(parser, argv)
+        assert {key: parsed.get(key) for key in expected} == expected
+    assert namespace(generated(), argv) == namespace(shipped_parser(), argv)
 
-    mine = namespace(generated(), argv)
-    assert "filter_action" not in mine
-    assert mine["action"] == "policy.init", (
-        "the positional survived; if the registry grew a `dest` field this test is the one "
-        "to delete, along with the audit entry in DIVERGENCES"
-    )
+
+def test_waiver_grant_collects_its_criteria_under_the_name_the_handler_reads() -> None:
+    """The second of the two, the same way: `--criterion` is repeatable and lands on
+    `args.criteria`, which is the field `govern/cli.py`'s `cmd_waiver` actually reads."""
+    argv = ["waiver", "grant", "--criterion", "tests", "--criterion", "lint"]
+    for parser in (shipped_parser(), generated()):
+        parsed = namespace(parser, argv)
+        assert parsed["criteria"] == ["tests", "lint"]
+        assert "criterion" not in parsed
+    assert namespace(generated(), argv) == namespace(shipped_parser(), argv)
 
 
 # ── 3b. the error paths argparse writes itself ───────────────────────────────
