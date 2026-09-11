@@ -36,17 +36,20 @@ environment read. But `validate` does not stop inside `validation/`: `check_mani
 `packs.resolver.resolve_asset` whether a `default_recipe` / `default_personas[]` name
 resolves in any tier, that helper reads the tier roots through **`packs`' own `Env`
 default** (pass 1 of that pillar put the port on the signature and left the threading to a
-later one), and `manifest._resolve` wraps the call in `except Exception: return True` so a
-broken pack collection is not reported as a manifest typo.
+later one).
 
-Disarming `OsEnv` for a whole run therefore does not fail loudly where the forwarding
-stopped — it is swallowed, and two selftest scenarios (`manifest-default-recipe-typo`,
-`manifest-default-persona-typo`) quietly flip from FAIL to no-FAIL. A trap that produces a
-wrong answer instead of an exception is worse than no trap, so `OsEnv` is disarmed only in
-`no_ambient_env`, over `check_graph` alone, where nothing reaches past this pillar. The
-`env` forward through a whole run is proved the other way instead, and just as tightly:
-the stub runner records the mapping it was handed, and that mapping is this file's
-dictionary rather than this process's environment.
+Disarming `OsEnv` for a whole run therefore fails, but *outside* the forwarding this file
+is about: the refusal comes from a port `packs` has not threaded yet, and `validation` has
+no call site to fix. It used not to fail at all — `manifest._resolve` answered `True` to
+every exception, so the two selftest scenarios (`manifest-default-recipe-typo`,
+`manifest-default-persona-typo`) quietly flipped from FAIL to no-FAIL and the trap said
+nothing. That catch-all is gone (`rig_surfaces._resolve_asset` keeps only `PackError`) and
+both scenarios now stay FAIL with `OsEnv` disarmed. Either way the trap is answering for
+the wrong pillar, so `OsEnv` is disarmed only in `no_ambient_env`, over `check_graph`
+alone, where nothing reaches past this pillar. The `env` forward through a whole run is
+proved the other way instead, and just as tightly: the stub runner records the mapping it
+was handed, and that mapping is this file's dictionary rather than this process's
+environment.
 
 **The shell swallows exceptions per check, so the trap is also read back out of the
 report.** `cmd_validate` wraps every one of its twenty-odd checks in `try/except
@@ -201,9 +204,9 @@ def no_ambient_ports(monkeypatch: pytest.MonkeyPatch) -> None:
 def no_ambient_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """`OsEnv`, disarmed separately and only over `check_graph` — see the module docstring.
 
-    A whole run reaches `packs.resolver` through `check_manifest`, and that reach is
-    swallowed by `manifest._resolve`'s `except Exception: return True`, so disarming this
-    adapter for a whole run produces a wrong answer rather than a refusal.
+    A whole run reaches `packs.resolver` through `check_manifest`, and that reach reads
+    through `packs`' own un-threaded `Env` default, so disarming this adapter for a whole
+    run refuses somewhere `validation` has no call site to forward at.
     """
 
     def refusing(*_args: object, **_kwargs: object) -> object:

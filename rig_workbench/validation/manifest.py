@@ -104,23 +104,21 @@ def _resolve(kind: str, name: str, project: pathlib.Path, *,
     """Ask the resolver COMPOSE uses whether a name resolves in any tier.
 
     The lazy import this used to open with now sits in `rig_surfaces._resolve_asset`,
-    together with the reason it is lazy and the `ImportError` answer.
+    together with the reason it is lazy and the `ImportError` answer. So does the catch-all
+    that used to be here, narrowed on the way: this answered `True` — "resolves fine" — to
+    every exception there was, and measured, exactly one of them means that. A malformed
+    installed pack is `check_packs_catalog`'s finding and naming it here would point at the
+    wrong file, so the adapter keeps that case as `except PackError`, where the name of
+    another pillar's exception is allowed to be spoken.
 
-    What is left is the catch-all, and it is still load-bearing but only barely: measured,
-    the one thing `resolve_asset` raises on a malformed installed pack is
-    `packs.model.PackError`, which is what the comment below has always been about. The
-    narrow version is `except PackError` — and that name belongs to another pillar, so the
-    narrow catch belongs at the adapter boundary rather than here, leaving this function
-    with no `except` at all and any *other* failure free to surface as the `check_manifest`
-    FAIL `cli.py` already wraps it in. That is a change of behaviour, so it is not made in
-    passing: as written, this still answers "fine" to every exception there is.
+    Everything else was a failure reported as success, and the reproduction is in
+    `tests/test_validation_forwarded_ports.py`: with `OsEnv` disarmed for a whole run,
+    `packs`' own `Env` default raised, this swallowed it, and two selftest scenarios went
+    quietly from FAIL to no-FAIL with the trap that should have fired saying nothing. So
+    there is no `except` left here at all — a resolver that cannot answer surfaces as the
+    `check_manifest` FAIL `cli.py` already wraps every check in.
     """
-    try:
-        return resolver(kind, name, project=project)
-    except Exception:
-        # A broken pack collection is a different check's problem. Reporting it
-        # here as a manifest typo would point at the wrong file.
-        return True
+    return resolver(kind, name, project=project)
 
 
 def _tier_violations(fm: dict, project: pathlib.Path, *,
