@@ -9,10 +9,31 @@ instruction (facets/instructions/validate.md).
 No Claude required — runs entirely on the filesystem.
 
 Exit code: 0=pass / 1=has FAIL
+
+This module is `validation`'s **shell**, and stage 3 of
+`docs/v3-architecture-design-brief.ja.md` §3 asks the same two things of it that
+`govern/cli.py` and `packs/cli.py` already answer.
+
+**Words leave through the `Presenter` port.** No function here calls `print`. `cmd_validate`
+takes an `out: Presenter`, the adapter is built once at the process boundary in `main()`,
+and it is forwarded to every call below whose signature declares one. A module-level
+instance reached for from inside would be the same global under a different name, and the
+point of the port is that a caller (a test, an embedding harness) can hand in a different
+one.
+
+**`main()` still takes no arguments and still ends in `sys.exit`, on purpose.**
+`rig_workbench/cli.py:_run_validate` loads `scripts/validate.py` with `importlib`,
+replaces `sys.argv` and calls `.main()`, and `tests/test_capability_registry_vs_cli.py`
+freezes that dispatch shape. So the argv-taking, status-returning half is `cmd_validate`
+and `main()` is the three lines that turn a process into a call — exactly the split
+`govern/cli.py` and `packs/cli.py` use, reached from the other direction.
 """
 
 import sys
 import traceback
+
+from rig_workbench.ports import Presenter
+from rig_workbench.ports.local import ConsolePresenter
 
 from . import state
 from .accumulated import check_accumulated
@@ -33,16 +54,25 @@ from .stale_refs import check_stale_refs
 from .state import _emit
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
-def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "selftest":
+# ── main ─────────────────────────────────────────────────────────────
+def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter()) -> int:
+    """Run the validator and return its exit status.
+
+    The presenter is a parameter rather than a module-level instance this function reaches
+    for: `main()` builds an adapter at the process boundary and passes it in, and an
+    in-process caller may hand in its own. The default exists so those callers keep working
+    unchanged. It is forwarded to every call whose signature declares it.
+    """
+    if argv and argv[0] == "selftest":
+        # `run_selftest` ends in `sys.exit` itself and the codes are contract; the
+        # `return` below is unreachable and is here so the signature stays honest.
         run_selftest()
-        return
+        return 0
 
     recipe_files = sorted(RECIPES.glob("*.md"))
     if not recipe_files:
-        print("[WARN] no .md files found in recipes/")
-        sys.exit(0)
+        out.out("[WARN] no .md files found in recipes/")
+        return 0
 
     for recipe_path in recipe_files:
         try:
@@ -160,16 +190,25 @@ def main() -> None:
     except Exception:
         _emit("FAIL", f"manifest check — unexpected error:\n{traceback.format_exc()}")
 
-    print("## rig --validate report (CI / shipped tier)\n")
+    out.out("## rig --validate report (CI / shipped tier)\n")
     for line in state.results:
-        print(line)
-    print()
-    print(f"PASS: {state._pass} / WARN: {state._warn} / FAIL: {state._fail}")
+        out.out(line)
+    out.out()
+    out.out(f"PASS: {state._pass} / WARN: {state._warn} / FAIL: {state._fail}")
 
     if state._fail > 0:
-        print("\nFAILED: one or more FAIL results")
-        sys.exit(1)
-    elif state._warn > 0:
-        print("\nPASSED (with WARNs to address)")
+        out.out("\nFAILED: one or more FAIL results")
+        return 1
+    if state._warn > 0:
+        out.out("\nPASSED (with WARNs to address)")
     else:
-        print("\nPASSED")
+        out.out("\nPASSED")
+    return 0
+
+
+def main() -> None:
+    sys.exit(cmd_validate(sys.argv[1:], out=ConsolePresenter()))
+
+
+if __name__ == "__main__":
+    main()
