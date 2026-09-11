@@ -1,4 +1,34 @@
-"""Command-line interface for evaluation case capture and inspection."""
+"""eval.cli — `rig-wb eval …`, the operator surface of the evaluation pillar.
+
+This module is `eval`'s **shell** (`tests/test_layering_contract.py`'s `SHELL_MODULES`
+names it and says why), so it is allowed to wire and to present. Stage 3 of
+`docs/v3-architecture-design-brief.ja.md` §3 asks the same two things of it that it asked
+of `govern/cli.py`, and the answer here is the same shape.
+
+**Words leave through the `Presenter` port.** No command calls `print`. Every handler
+takes an `out: Presenter`, and the adapter is built once, at the process boundary in
+`main()` — a module-level instance reached for from inside each command would be the same
+global under a different name, and the point of the port is that a caller (a test, an
+embedding harness, the day rig grows a `--quiet`) can hand in a different one. Which
+stream a line goes to is unchanged and stays a property of the call: `out.out` is stdout,
+`out.err` is stderr, and the `affected-run` hint keeps going to stderr so that the report
+on stdout stays parseable.
+
+**And the port is forwarded, not merely held.** The lesson pillar 1 paid for is that a
+shell which builds a port and then fails to pass it down leaves the callee's default in
+charge, and the default is the real adapter: one command, two clocks
+(`tests/test_govern_frozen_clock.py`). The rule this file applies is that it forwards
+exactly the ports it is given — `out`, and the `proc` / `env` / `clock` / `graph` that
+`cmd_eval` builds below — to every call whose signature declares them.
+`tests/test_eval_forwarded_ports.py` drives the verbs with all three adapters disarmed on
+their classes, so a handler that forgets to forward fails on the shape.
+
+**A document is not a line.** Four commands print a canonical-JSON document with
+`end=""`, because `canonical_json` already ends in exactly one newline. `Presenter.out`
+supplies the line ending itself, as `print` does, so those four go through
+`_emit_document`, which takes the trailing newline off once. Rendering them with a plain
+`out.out` would add a second one — a byte-for-byte change to output that CI parses.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +36,9 @@ import argparse
 import json
 import pathlib
 import sys
+
+from rig_workbench.ports import Presenter
+from rig_workbench.ports.local import ConsolePresenter
 
 from .capture import capture_case
 from .affected import analyze_affected
@@ -197,7 +230,18 @@ def _tier_repo_root(path: pathlib.Path) -> pathlib.Path | None:
     return None
 
 
-def _validate_command(path_arg: str | None) -> int:
+def _emit_document(out: Presenter, text: str) -> None:
+    """A canonical-JSON document, on stdout, byte for byte as `print(text, end="")` had it.
+
+    `canonical_json` appends exactly one newline and `json.dumps` escapes every newline
+    inside a string, so the trailing one is the only one there is; `Presenter.out` adds the
+    line ending itself. Taking it off here is therefore the identity, and not taking it off
+    would append a blank line to output the gate's callers parse.
+    """
+    out.out(text.removesuffix("\n"))
+
+
+def _validate_command(path_arg: str | None, out: Presenter) -> int:
     if path_arg:
         paths = _case_paths(pathlib.Path(path_arg))
         roots = {_tier_repo_root(path) for path in paths}
@@ -209,12 +253,12 @@ def _validate_command(path_arg: str | None) -> int:
         paths = _repo_case_paths(pathlib.Path.cwd())
     loaded = _load_unique_cases(paths)
     for candidate, _case in loaded:
-        print(f"valid: {candidate}")
-    print(f"{len(loaded)} case(s) valid")
+        out.out(f"valid: {candidate}")
+    out.out(f"{len(loaded)} case(s) valid")
     return 0
 
 
-def _list_command(repo_arg: str) -> int:
+def _list_command(repo_arg: str, out: Presenter) -> int:
     try:
         root = pathlib.Path(repo_arg).resolve()
     except OSError as exc:
@@ -226,9 +270,9 @@ def _list_command(repo_arg: str) -> int:
             shown = path.relative_to(root)
         except ValueError:
             shown = path
-        print(f"{case['id']}\tv{case['version']}\t{case['status']}\t{case['suite']}\t{shown}")
+        out.out(f"{case['id']}\tv{case['version']}\t{case['status']}\t{case['suite']}\t{shown}")
     if not loaded:
-        print("No evaluation cases found.")
+        out.out("No evaluation cases found.")
     return 0
 
 
@@ -274,20 +318,29 @@ def _case_for_result(root: pathlib.Path, result: dict) -> dict:
     return matches[0]
 
 
-def cmd_eval(argv: list[str]) -> int:
+def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
+    """Parse, run the command, and return its exit status.
+
+    The presenter is a parameter with a default rather than a module-level instance the
+    commands reach for: `main()` builds the adapter at the process boundary and passes it
+    in, and an in-process caller (`rig_workbench/cli.py` dispatches here, and a test can
+    too) may hand in its own. The default exists so those callers keep working unchanged —
+    each constructs an adapter, it does not share one.
+    """
     parser = _parser()
     args = parser.parse_args(argv)
+    out = ConsolePresenter() if out is None else out
     try:
         if args.command == "validate":
-            return _validate_command(args.path)
+            return _validate_command(args.path, out)
         if args.command == "list":
-            return _list_command(args.repo)
+            return _list_command(args.repo, out)
         if args.command == "capture":
             output, _case = capture_case(
                 args.repo, args.task_id, allow_nonincident=args.allow_nonincident
             )
-            print(f"Captured draft: {output}")
-            print("Missing requirements remain; capture does not prove a red reproduction.")
+            out.out(f"Captured draft: {output}")
+            out.out("Missing requirements remain; capture does not prove a red reproduction.")
             return 0
         if args.command == "reproduce":
             root = _resolve_repo(args.repo)
@@ -316,7 +369,7 @@ def cmd_eval(argv: list[str]) -> int:
                     execution_cwd=adapter_cwd(args.provider, workspace, root),
                     readable_root=root,
                 )
-            print(output)
+            out.out(str(output))
             dev_probe_only = args.provider == "mock" or args.judge_provider == "mock"
             samples = [*result["target"], *result["clean"]]
             if any(row["infra_status"] is not None for row in samples):
@@ -361,7 +414,7 @@ def cmd_eval(argv: list[str]) -> int:
                         execution_cwd=adapter_cwd(args.provider, workspace, root),
                         readable_root=root,
                     )
-                    print(output)
+                    out.out(str(output))
             return 0
         if args.command == "compare":
             root = _resolve_repo(args.repo)
@@ -369,7 +422,7 @@ def cmd_eval(argv: list[str]) -> int:
             current = _read_result(args.current)
             case = _case_for_result(root, baseline)
             report = compare_results(baseline, current, case=case)
-            print(canonical_json(report), end="")
+            _emit_document(out, canonical_json(report))
             return 0 if report["status"] == "pass" else 1
         if args.command == "promote":
             baseline = _read_result(args.baseline)
@@ -377,9 +430,9 @@ def cmd_eval(argv: list[str]) -> int:
             output, _case = promote_case(
                 args.repo, args.draft_id, baseline, current, into=args.into
             )
-            print(output)
+            out.out(str(output))
             if args.into is not None:
-                print(f"next: rig-wb pack sync {args.into}   # declare the new case")
+                out.out(f"next: rig-wb pack sync {args.into}   # declare the new case")
             return 0
         if args.command == "affected":
             report = analyze_affected(
@@ -387,7 +440,7 @@ def cmd_eval(argv: list[str]) -> int:
                 require_cases=args.require_cases, ratchet=args.ratchet,
                 evidence_dir=args.evidence_dir,
             )
-            print(canonical_json(report), end="")
+            _emit_document(out, canonical_json(report))
             # `debt` exits 0 on purpose: it is a number to carry, not a wall. Only
             # an untracked surface or removed coverage stops the run.
             return 1 if report["status"] == "uncovered" else 0
@@ -398,7 +451,7 @@ def cmd_eval(argv: list[str]) -> int:
                 judge_provider=args.judge_provider, judge_model=args.judge_model,
                 ratchet=args.ratchet,
             )
-            print(canonical_json(report), end="")
+            _emit_document(out, canonical_json(report))
             return exit_code
         if args.command == "affected-run":
             report, exit_code, destination = run_affected(
@@ -410,15 +463,22 @@ def cmd_eval(argv: list[str]) -> int:
             )
             output = dict(report)
             output["result_dir"] = str(destination) if destination is not None else None
-            print(canonical_json(output), end="")
+            _emit_document(out, canonical_json(output))
             if destination is not None:
                 # stderr so the report on stdout stays parseable. CI verifies this
                 # evidence instead of measuring its own; unpushed, it proves nothing.
-                print(f"Commit the signed evidence under {destination} and push it; "
-                      "the CI gate verifies it rather than re-running the provider.",
-                      file=sys.stderr)
+                out.err(f"Commit the signed evidence under {destination} and push it; "
+                        "the CI gate verifies it rather than re-running the provider.")
             return exit_code
     except EvalCaseError as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
+        out.err(f"[ERROR] {exc}")
         return 2
     return 2
+
+
+def main() -> None:
+    sys.exit(cmd_eval(sys.argv[1:], out=ConsolePresenter()))
+
+
+if __name__ == "__main__":
+    main()

@@ -137,6 +137,16 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
             "and hands them over. Holding it to the rule would forbid the wiring."
         ),
     },
+    "eval": {
+        f"{PACKAGE}.eval.cli": (
+            "The command shell: argparse wiring, the 16 prints that are now Presenter "
+            "calls, and the exit status each verb reports. It is where the judgement "
+            "modules get called from, so it is allowed to know about them and to build "
+            "the adapters they are handed — the Presenter, the ProcessRunner, the Env "
+            "and the Clock, once each, at the process boundary. Holding it to the rule "
+            "would forbid the wiring the pillar is wired by."
+        ),
+    },
 }
 
 #: Modules under `rig_workbench/ports/` that are adapters rather than protocols. An
