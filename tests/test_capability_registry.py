@@ -19,6 +19,12 @@ longer admits `network`, `network` no longer admits a bare bool, and the pair st
 onto the annotation sets `remote_mcp.py` builds by hand — read from that file, not restated
 here, so the day it changes this fails instead of drifting.
 
+**Two audiences, and only the audience picks the language.** The same record is read aloud by
+`talk-loop.md`, which speaks Japanese, and printed by `rig-wb <group> --help`, which is English
+like the rest of this repository. `TestWhichAudienceReadsWhichField` asks `registry/parser.py`
+which fields actually reach a CLI user and holds those — and only those — to English, so that
+Japanese stays right where it belongs and wrong where it does not.
+
 The rest is the container's behaviour, and one validation sweep over the real entries. That
 sweep passes vacuously today — `CAPABILITIES` is empty — and starts biting the moment the
 first entry lands without the fields a conversation needs, which is the point of writing it
@@ -27,6 +33,7 @@ before the entries exist rather than after.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import pathlib
 import re
@@ -46,6 +53,7 @@ from rig_workbench.registry.model import (
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 MODEL_SOURCE = REPO_ROOT / "rig_workbench" / "registry" / "model.py"
+PARSER_SOURCE = REPO_ROOT / "rig_workbench" / "registry" / "parser.py"
 REMOTE_MCP_SOURCE = REPO_ROOT / "rig_workbench" / "remote_mcp.py"
 
 
@@ -572,3 +580,123 @@ class TestDeclaredEntries:
         for entry in CAPABILITIES:
             assert by_id(entry.id) is entry
             assert entry in children(entry.parent)
+
+
+#: The argparse keywords whose value is *prose a person reads*, as opposed to the ones that
+#: shape parsing. A field reaching any of these is on the shipped CLI.
+PROSE_KWARGS = frozenset({"help", "description", "epilog", "metavar", "usage"})
+
+#: The parameter names `parser.py` binds a record to, and the record each one is.
+PROJECTION_RECEIVERS = {"flag": "Flag", "capability": "Capability"}
+
+#: Hiragana, katakana, CJK ideographs, fullwidth forms and CJK punctuation. Latin words in a
+#: Japanese line (`policy`, `repository`) are exactly what makes a substring test useless
+#: here, so the question asked is "does any Japanese character appear", not "is this English".
+JAPANESE = re.compile(r"[぀-ヿ㐀-鿿！-｠　-〿]")
+
+#: Who each declared string is written for, and therefore which language it is in. Only the
+#: audience decides: `effect_line` is Japanese *because* `talk-loop.md` speaks Japanese, and
+#: `Flag.help` is English *because* it is printed by `rig-wb <group> --help` alongside code,
+#: comments and `README.md`. `intent` is in both columns — a conversation matches an utterance
+#: against it and `parser.py` hands it to `add_parser(help=...)` — so it is English and the
+#: conversation reads English there. If that ever stops being acceptable, the fix is a second
+#: field for the spoken line, not a Japanese `intent`.
+AUDIENCE = {
+    ("Capability", "intent"): "the conversation and the shipped CLI",
+    ("Capability", "effect_line"): "the conversation (talk-loop.md), which speaks Japanese",
+    ("Flag", "help"): "the shipped CLI",
+}
+
+
+def projected_prose_fields() -> set[tuple[str, str]]:
+    """The declared fields `parser.py` puts in front of a CLI user, read out of that file.
+
+    Listing them here instead would only prove the list matches itself, and the mistake this
+    guards against arrives precisely as *a new projection* — `description=capability.
+    effect_line`, say — which a hand-written list would not notice. So the projection is
+    parsed: every `help=`/`description=`/… whose value mentions an attribute of the `flag` or
+    `capability` the projection was handed.
+    """
+    tree = ast.parse(PARSER_SOURCE.read_text(encoding="utf-8"))
+    found: set[tuple[str, str]] = set()
+
+    def collect(value: ast.AST) -> None:
+        for node in ast.walk(value):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in PROJECTION_RECEIVERS
+            ):
+                found.add((PROJECTION_RECEIVERS[node.value.id], node.attr))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg in PROSE_KWARGS:
+            collect(node.value)
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and key.value in PROSE_KWARGS:
+                    collect(value)
+    return found
+
+
+def cli_facing_strings():
+    """Every string the CLI prints, as `(what to call it, field, value)`."""
+    for owner, field in sorted(projected_prose_fields()):
+        for entry in CAPABILITIES:
+            if owner == "Capability":
+                yield entry.id, f"{owner}.{field}", getattr(entry, field)
+            else:
+                for flag in entry.flags:
+                    yield f"{entry.id} {flag.name}", f"{owner}.{field}", getattr(flag, field)
+
+
+class TestWhichAudienceReadsWhichField:
+    """One table, two audiences, two languages — and only the audience decides which.
+
+    Stage 2 wrote 188 of the 580 `Flag.help` strings in Japanese, which was invisible until
+    stage 3 made `govern`'s parser a projection of the table and `rig-wb govern --help`
+    started printing them. The conversation fields were right to be Japanese and stayed;
+    what went wrong is that a CLI-facing field was filled in as though it were one of them.
+
+    So this does not ask "is the table in English". It asks the projection which fields reach
+    a CLI user, and holds *those* to the language every other product surface uses — code,
+    comments, commit messages, `README.md`. `effect_line` is swept by nothing here, on
+    purpose: it is read aloud by `talk-loop.md`, and English there would be the same mistake
+    pointing the other way.
+    """
+
+    def test_the_projection_reaches_exactly_the_fields_this_file_knows_about(self):
+        projected = projected_prose_fields()
+        assert projected == {("Flag", "help"), ("Capability", "intent")}, (
+            f"registry/parser.py now prints {sorted(projected)} to CLI users. Every field "
+            "here is swept for Japanese below, so add it to AUDIENCE — and if the new one "
+            "is a field the conversation owns (effect_line), the projection is the bug: a "
+            "Japanese line cannot be printed by `rig-wb --help` and spoken by talk-loop at "
+            "the same time."
+        )
+
+    def test_no_string_the_cli_prints_is_japanese(self):
+        offenders = [
+            (where, field, value)
+            for where, field, value in cli_facing_strings()
+            if JAPANESE.search(value)
+        ]
+        assert not offenders, "\n".join(
+            f"{where}: {field} is Japanese — {AUDIENCE[tuple(field.split('.'))]} reads it, "
+            f"and that surface is English: {value!r}"
+            for where, field, value in offenders
+        )
+
+    def test_the_conversation_keeps_its_japanese(self):
+        """The converse, so that "make the table English" cannot pass as a fix.
+
+        `effect_line` is the sentence a person sees immediately before something runs, in the
+        language `skills/engine/facets/instructions/talk-loop.md` requires. Nothing above
+        touches it; this says so out loud, with the real table as the witness.
+        """
+        assert ("Capability", "effect_line") not in projected_prose_fields()
+        spoken = [entry.id for entry in CAPABILITIES if JAPANESE.search(entry.effect_line)]
+        assert len(spoken) == len(CAPABILITIES), (
+            "every effect_line is spoken by talk-loop.md and is Japanese on purpose; "
+            f"{sorted(set(e.id for e in CAPABILITIES) - set(spoken))} are not"
+        )

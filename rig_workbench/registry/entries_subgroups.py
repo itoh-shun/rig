@@ -80,12 +80,13 @@ _EVAL_ERROR = ExitCode(
 _SCOPE = Flag(
     name="--scope",
     type="choice",
-    help="どのインストール階層を見るか（org は RIG_ORG_HOME が要る）",
+    help="which installation tier to read (org needs RIG_ORG_HOME)",
     choices=("project", "user", "org"),
     default="project",
 )
-_ROOT = Flag(name="--root", type="path", help="scope の既定ルートの代わりに使うディレクトリ")
-_JSON = Flag(name="--json", type="bool", help="機械可読な JSON で出力する")
+_ROOT = Flag(name="--root", type="path",
+             help="use this directory instead of the scope's default root")
+_JSON = Flag(name="--json", type="bool", help="machine-readable output")
 
 _PROVIDERS = ("mock", "claude", "codex", "command")
 
@@ -104,11 +105,12 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="never",
         flags=(
-            Flag(name="--org", type="string", help="org 識別子（例: acme）", required=True),
-            Flag(name="--team", type="string", help="team 識別子（例: team-a）"),
+            Flag(name="--org", type="string", help="org identifier (e.g. acme)", required=True),
+            Flag(name="--team", type="string", help="team identifier (e.g. team-a)"),
             Flag(name="--layer", type="string-list",
-                 help="既存の policy 層のパス。順に適用され、繰り返し指定できる"),
-            Flag(name="--force", type="bool", help="既存のファイルを上書きする"),
+                 help="path to an existing policy layer, repeatable and applied in order (relative "
+                      "paths also resolve against $RIG_POLICY_HOME)"),
+            Flag(name="--force", type="bool", help="overwrite existing files"),
         ),
         output_schema="rig.org/v2",
         exit_codes=(
@@ -129,13 +131,15 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="never",
         flags=(
-            Flag(name="--org", type="string", help="org 識別子（既定は .rig/org.json のもの）"),
-            Flag(name="--scope", type="choice", help="この層が効く範囲",
+            Flag(name="--org", type="string",
+                 help="org identifier (defaults to the one in .rig/org.json)"),
+            Flag(name="--scope", type="choice", help="the scope this layer applies at",
                  choices=("org", "team", "project"), default="project"),
-            Flag(name="--team", type="string", help="team 識別子（--scope team では必須）"),
-            Flag(name="--id", type="string", help="policy 文書の id", default="migrated"),
-            Flag(name="--out", type="path", help=".rig/policy/<id>.json ではなくここに書く"),
-            Flag(name="--force", type="bool", help="既存のファイルを上書きする"),
+            Flag(name="--team", type="string", help="team identifier (required with --scope team)"),
+            Flag(name="--id", type="string",
+                 help="policy document id (default: migrated)", default="migrated"),
+            Flag(name="--out", type="path", help="write here instead of .rig/policy/<id>.json"),
+            Flag(name="--force", type="bool", help="overwrite an existing file"),
         ),
         output_schema="rig.policy/v2",
         exit_codes=(
@@ -156,11 +160,11 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="action", type="choice", help="表示するか、層を検証するか",
+            Flag(name="action", type="choice", help="show the policy in effect, or lint the layers",
                  choices=("show", "lint"), default="show"),
             Flag(name="paths", type="string-list",
-                 help="lint のとき、解決された層の代わりに検証する文書"),
-            Flag(name="--json", type="bool", help="show のとき機械可読な JSON で出力する"),
+                 help="with lint: specific documents (default: the resolved layers)"),
+            Flag(name="--json", type="bool", help="with show: machine-readable output"),
         ),
         output_schema="rig.effective-policy/v1",
         exit_codes=(
@@ -180,7 +184,7 @@ GOVERN: tuple[Capability, ...] = (
         effect_line="現在の actor の role と permission を読み出して表示します",
         effect_class="read-only",
         network="never",
-        flags=(Flag(name="--actor", type="string", help="別の identity について尋ねる"),),
+        flags=(Flag(name="--actor", type="string", help="ask about somebody else"),),
         exit_codes=(
             ExitCode(code=0, meaning="role と permission を表示した"),
             ExitCode(code=1, meaning="policy を読み出せなかった"),
@@ -199,9 +203,9 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="permission", type="string", help="判定する permission 名",
+            Flag(name="permission", type="string", help="the permission to check",
                  required=True),
-            Flag(name="--actor", type="string", help="別の identity について尋ねる"),
+            Flag(name="--actor", type="string", help="ask about somebody else"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="許可されている"),
@@ -222,11 +226,12 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="never",
         flags=(
-            Flag(name="action", type="choice", help="状況を見るか、承認するか、却下するか",
+            Flag(name="action", type="choice", help="show the approval status, or grant or deny it",
                  choices=("status", "grant", "deny"), default="status"),
-            Flag(name="task_id", type="string", help="既定は最新の task"),
-            Flag(name="--note", type="string", help="理由（決定と一緒に記録される）"),
-            Flag(name="--actor", type="string", help="この identity として決定を記録する"),
+            Flag(name="task_id", type="string", help="defaults to the most recent task"),
+            Flag(name="--note", type="string",
+                 help="why (recorded with the decision; required in practice for deny)"),
+            Flag(name="--actor", type="string", help="record the decision under this identity"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="必要な承認が揃っている、または承認自体が不要"),
@@ -248,18 +253,19 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="never",
         flags=(
-            Flag(name="action", type="choice", help="一覧するか、出すか、取り消すか",
+            Flag(name="action", type="choice", help="list the waivers, or grant or revoke one",
                  choices=("list", "grant", "revoke"), default="list"),
-            Flag(name="id", type="string", help="waiver id（grant / revoke で使う）"),
+            Flag(name="id", type="string", help="waiver id (with grant/revoke)"),
             # `--criterion` collects into `args.criteria`: the flag is repeatable, so what
             # it builds is a list, and `cmd_waiver` reads it under that name.
             Flag(name="--criterion", type="string-list", dest="criteria",
-                 help="この免除が何を許すのか。grant では必須で、繰り返し指定できる"),
-            Flag(name="--reason", type="string", help="なぜこの例外が要るのか"),
+                 help="gate criterion this waiver excuses (repeatable)"),
+            Flag(name="--reason", type="string", help="why this exception exists"),
             Flag(name="--expires", type="string",
-                 help="YYYY-MM-DD（既定は policy が許す最大期間）"),
-            Flag(name="--scope", type="string", help="どの範囲に効かせるか", default="*"),
-            Flag(name="--actor", type="string", help="この identity として実行する"),
+                 help="YYYY-MM-DD (defaults to the policy's maximum)"),
+            Flag(name="--scope", type="string",
+                 help="fnmatch pattern over task_type or task_id (default: *)", default="*"),
+            Flag(name="--actor", type="string", help="act as this identity"),
         ),
         output_schema="rig.waivers/v2",
         exit_codes=(
@@ -280,20 +286,21 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="never",
         flags=(
-            Flag(name="action", type="choice", help="読むか、鎖を検証するか、書き出すか",
+            Flag(name="action", type="choice",
+                 help="read the ledger, verify its chain, or export it",
                  choices=("log", "verify", "export"), default="log"),
-            Flag(name="--limit", type="int", help="log のとき、最新 N 件だけ表示する"),
+            Flag(name="--limit", type="int", help="with log: show only the latest N entries"),
             # `audit` already has an `action` positional (log / verify / export), so this
             # option cannot take the dest argparse would derive: it would overwrite the word
             # the person typed. `dest="filter_action"` is what the shipped parser declares,
             # and `Capability` now refuses the collision rather than leaving it to be found
             # by parsing `audit verify --action policy.init` and losing `verify`.
             Flag(name="--action", type="string", dest="filter_action",
-                 help="action 名で絞り込む"),
-            Flag(name="--since", type="string", help="YYYY-MM-DD 以降の項目だけ"),
-            Flag(name="--format", type="choice", help="export の形式",
+                 help="filter by action name"),
+            Flag(name="--since", type="string", help="only entries since YYYY-MM-DD"),
+            Flag(name="--format", type="choice", help="with export: output format",
                  choices=("jsonl", "csv", "markdown"), default="jsonl"),
-            Flag(name="--out", type="path", help="export のとき、このファイルに書く"),
+            Flag(name="--out", type="path", help="with export: write to this file"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="表示した、鎖は無傷だった、または書き出した"),
@@ -314,9 +321,9 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="path", type="path", help="測る repository（既定は現在のもの）"),
+            Flag(name="path", type="path", help="repository to measure (default: the current one)"),
             Flag(name="--since-days", type="int",
-                 help="測定対象にする run の期間", default=90),
+                 help="run window for the measured checks", default=90),
             _JSON,
         ),
         exit_codes=(
@@ -337,11 +344,12 @@ GOVERN: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="paths", type="string-list", help="repository のパス", required=True),
+            Flag(name="paths", type="string-list",
+                 help="repository paths (or directories with --scan)", required=True),
             Flag(name="--scan", type="bool",
-                 help="渡したディレクトリの直下から .rig/org.json を持つものを探す"),
+                 help="treat each path as a directory whose immediate children are repositories"),
             Flag(name="--since-days", type="int",
-                 help="測定対象にする run の期間", default=90),
+                 help="run window for the measured checks", default=90),
             _JSON,
         ),
         exit_codes=(
@@ -368,14 +376,15 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="id", type="string", help="pack の id", required=True),
-            Flag(name="--kind", type="choice", help="どの階層のための pack か",
+            Flag(name="id", type="string", help="the pack id", required=True),
+            Flag(name="--kind", type="choice", help="which tier this pack is for",
                  choices=("core", "official", "domain", "project"), default="project"),
             Flag(name="--type", type="choice",
-                 help="pack が何を持ち何を実行できるか。既定はない（決め忘れを引き受けない）",
+                 help="what the pack contains and may run",
                  choices=("knowledge", "policy", "reviewer", "skill", "workflow", "tool"),
                  required=True),
-            Flag(name="--root", type="path", help="作成先のルート", default=".rig/packs"),
+            Flag(name="--root", type="path",
+                 help="directory to create the pack under", default=".rig/packs"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="pack を作成し、次の手順を表示した"),
@@ -395,9 +404,10 @@ PACK: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="path", type="path", help="検証する pack（既定は現在のディレクトリ）"),
+            Flag(name="path", type="path",
+                 help="the pack to validate (default: the current directory)"),
             Flag(name="--global", type="bool",
-                 help="1 つではなく、インストール済みの全階層をまとめて検証する"),
+                 help="validate every installed tier instead of one pack"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="pack は契約を満たしている"),
@@ -416,7 +426,7 @@ PACK: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="path", type="path", help="1 つの pack だけを診断する"),
+            Flag(name="path", type="path", help="diagnose just this pack"),
             _JSON,
         ),
         exit_codes=(
@@ -436,7 +446,8 @@ PACK: tuple[Capability, ...] = (
                     "上書きします（署名済みの pack は拒否します）",
         effect_class="writes-worktree",
         network="never",
-        flags=(Flag(name="path", type="path", help="対象の pack（既定は現在のディレクトリ）"),),
+        flags=(Flag(name="path", type="path",
+                    help="the pack to sync (default: the current directory)"),),
         exit_codes=(
             ExitCode(code=0, meaning="宣言とハッシュを作り直した"),
             _PACK_ERROR,
@@ -468,10 +479,11 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="never",
         flags=(
-            Flag(name="name", type="string", help="この source を呼ぶ名前", required=True),
-            Flag(name="--scheme", type="choice", help="どう取りに行くか",
+            Flag(name="name", type="string",
+                 help="the name this source is referred to by", required=True),
+            Flag(name="--scheme", type="choice", help="how the source is fetched",
                  choices=("git+ssh", "git+https", "git+file"), required=True),
-            Flag(name="--url", type="string", help="{pack} を含む URL テンプレート",
+            Flag(name="--url", type="string", help="URL template containing {pack}",
                  required=True),
         ),
         exit_codes=(
@@ -489,7 +501,8 @@ PACK: tuple[Capability, ...] = (
                     "（インストール済みの pack はそのまま残ります）",
         effect_class="writes-state",
         network="never",
-        flags=(Flag(name="name", type="string", help="消す source の名前", required=True),),
+        flags=(Flag(name="name", type="string",
+                    help="the name of the source to remove", required=True),),
         exit_codes=(
             ExitCode(code=0, meaning="宣言を消した"),
             _PACK_ERROR,
@@ -505,8 +518,8 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="path", type="path", help="書き出す pack", required=True),
-            Flag(name="--to", type="path", help="書き出し先のディレクトリ", required=True),
+            Flag(name="path", type="path", help="the pack to export", required=True),
+            Flag(name="--to", type="path", help="directory to export into", required=True),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="書き出して、次の手順を表示した"),
@@ -524,8 +537,8 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="path", type="path", help="固める pack", required=True),
-            Flag(name="--to", type="path", help="出力先 zip（既定 dist/<id>-<version>.zip）"),
+            Flag(name="path", type="path", help="the pack to bundle", required=True),
+            Flag(name="--to", type="path", help="output zip (default: dist/<id>-<version>.zip)"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="zip を書き出し、sha256 を表示した"),
@@ -594,7 +607,7 @@ PACK: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="pack", type="string", help="調べる pack の id", required=True),
+            Flag(name="pack", type="string", help="the id of the pack to inspect", required=True),
             _SCOPE, _ROOT, _JSON,
         ),
         exit_codes=(
@@ -614,7 +627,7 @@ PACK: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="pack", type="string", help="調べる pack の id", required=True),
+            Flag(name="pack", type="string", help="the id of the pack to inspect", required=True),
             _SCOPE, _ROOT, _JSON,
         ),
         exit_codes=(
@@ -635,10 +648,11 @@ PACK: tuple[Capability, ...] = (
         network="never",
         flags=(
             Flag(name="--topic", type="string-list",
-                 help="繰り返し指定可。どれか 1 つに合えば一致とみなす"),
+                 help="repeatable; a pack matches if it declares any of them"),
             Flag(name="--scope", type="string-list",
-                 help="繰り返し指定可。`product` は配下すべて、`product:x` は厳密一致"),
-            Flag(name="--scope-filter", type="choice", help="どのインストール階層を見るか",
+                 help="repeatable; a bare dimension (`product`) matches every value under it, a "
+                      "valued one (`product:x`) is exact"),
+            Flag(name="--scope-filter", type="choice", help="which installation tier to read",
                  choices=("project", "user", "org"), default="project"),
             _ROOT, _JSON,
         ),
@@ -660,11 +674,11 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="sometimes",
         flags=(
-            Flag(name="pack", type="string", help="動かす pack の id", required=True),
-            Flag(name="--to", type="string", help="移動先のバージョン", required=True),
+            Flag(name="pack", type="string", help="the id of the pack to move", required=True),
+            Flag(name="--to", type="string", help="the version to move to", required=True),
             _SCOPE, _ROOT,
             Flag(name="--allow-unverified", type="bool",
-                 help="署名のない pack を project scope に限って許す"),
+                 help="allow an unsigned pack, in project scope only"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="入れ替えて lock を更新した"),
@@ -685,11 +699,11 @@ PACK: tuple[Capability, ...] = (
         network="sometimes",
         flags=(
             Flag(name="source", type="string",
-                 help="ディレクトリ・zip・tar・`domain:`/`official:` 別名・"
+                 help="a directory, a zip, a tar, a `domain:`/`official:` alias, or "
                       "`<source>:<pack>@<version>`", required=True),
             _SCOPE, _ROOT,
             Flag(name="--allow-unverified", type="bool",
-                 help="署名のない pack を project scope に限って許す"),
+                 help="allow an unsigned pack, in project scope only"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="展開して lock に記録した"),
@@ -709,22 +723,25 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="sometimes",
         flags=(
-            Flag(name="pack", type="string", help="測る pack", required=True),
-            Flag(name="--provider", type="choice", help="被験側の provider",
+            Flag(name="pack", type="string", help="the pack to measure", required=True),
+            Flag(name="--provider", type="choice", help="the provider under test",
                  choices=("mock", "codex")),
-            Flag(name="--model", type="string", help="被験側の model（--provider と対）"),
-            Flag(name="--judge-provider", type="choice", help="判定側の provider",
+            Flag(name="--model", type="string",
+                 help="the model under test (paired with --provider)"),
+            Flag(name="--judge-provider", type="choice", help="the provider that judges",
                  choices=("mock", "codex")),
-            Flag(name="--judge-model", type="string", help="判定側の model"),
-            Flag(name="--command", type="string", help="provider を起動するコマンド"),
-            Flag(name="--judge-command", type="string", help="判定側を起動するコマンド"),
-            Flag(name="--timeout", type="float", help="1 実行あたりの制限秒数", default=30),
+            Flag(name="--judge-model", type="string", help="the model that judges"),
+            Flag(name="--command", type="string", help="command that starts the provider"),
+            Flag(name="--judge-command", type="string", help="command that starts the judge"),
+            Flag(name="--timeout", type="float", help="seconds allowed per run", default=30),
             Flag(name="--draft", type="string",
-                 help="承認済みケースがまだない段階で、draft を pack の合成 prompt に対して測る"),
+                 help="measure a draft case from .rig/evals/drafts/ against this pack's composed "
+                      "prompt, before the pack has an approved case; the evidence it writes is "
+                      "what `eval promote --into` then needs"),
             Flag(name="--result-dir", type="path",
-                 help="結果の書き出し先。pack と project の外でなければならない"),
+                 help="where results are written; must be outside the pack and the project"),
             Flag(name="--allow-paid-provider", type="bool",
-                 help="課金される provider を使うことを明示的に許可する"),
+                 help="explicitly allow a provider that bills"),
             _JSON,
         ),
         exit_codes=(
@@ -744,8 +761,8 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="pack", type="string", help="取り込み先の pack", required=True),
-            Flag(name="--result-dir", type="path", help="取り込む結果のあるディレクトリ",
+            Flag(name="pack", type="string", help="the pack to import into", required=True),
+            Flag(name="--result-dir", type="path", help="directory holding the results to import",
                  required=True),
         ),
         exit_codes=(
@@ -765,10 +782,10 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="pack", type="path", help="署名する pack", required=True),
-            Flag(name="--private-key", type="path", help="署名に使う秘密鍵", required=True),
-            Flag(name="--key-id", type="string", help="鍵の識別子", required=True),
-            Flag(name="--signer", type="string", help="署名者の名前", required=True),
+            Flag(name="pack", type="path", help="the pack to sign", required=True),
+            Flag(name="--private-key", type="path", help="private key to sign with", required=True),
+            Flag(name="--key-id", type="string", help="identifier for the key", required=True),
+            Flag(name="--signer", type="string", help="name of the signer", required=True),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="署名して pack.sig.json を書き出した"),
@@ -787,10 +804,12 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="--private-key", type="path", help="秘密鍵の書き出し先", required=True),
-            Flag(name="--trust-roots", type="path", help="公開鍵を登録する先", required=True),
-            Flag(name="--key-id", type="string", help="鍵の識別子", required=True),
-            Flag(name="--signer", type="string", help="署名者の名前", required=True),
+            Flag(name="--private-key", type="path",
+                 help="where to write the private key", required=True),
+            Flag(name="--trust-roots", type="path",
+                 help="where to register the public key", required=True),
+            Flag(name="--key-id", type="string", help="identifier for the key", required=True),
+            Flag(name="--signer", type="string", help="name of the signer", required=True),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="鍵を生成し、trust-roots に登録した"),
@@ -809,9 +828,9 @@ PACK: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="id", type="string", help="取り除く pack の id", required=True),
+            Flag(name="id", type="string", help="the id of the pack to remove", required=True),
             _SCOPE, _ROOT,
-            Flag(name="--yes", type="bool", help="実際に削除する（なければ dry-run）"),
+            Flag(name="--yes", type="bool", help="actually delete; without it this is a dry run"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="削除した、または削除対象を表示した (dry-run)"),
@@ -832,7 +851,8 @@ PACK: tuple[Capability, ...] = (
         network="sometimes",
         flags=(
             Flag(name="entrypoint", type="string", help="`<pack>:<entry>`", required=True),
-            Flag(name="args", type="string-list", help="entrypoint にそのまま渡す引数"),
+            Flag(name="args", type="string-list",
+                 help="arguments passed straight through to the entrypoint"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="計画を表示した、または recipe が正常に終わった"),
@@ -856,7 +876,7 @@ EVAL: tuple[Capability, ...] = (
                     "（何も書き換えません）",
         effect_class="read-only",
         network="never",
-        flags=(Flag(name="path", type="path", help="1 件、またはケースの入ったディレクトリ"),),
+        flags=(Flag(name="path", type="path", help="one case, or a directory of cases"),),
         exit_codes=(
             ExitCode(code=0, meaning="読めたケースはすべて妥当だった"),
             _EVAL_ERROR,
@@ -872,7 +892,7 @@ EVAL: tuple[Capability, ...] = (
         effect_line="承認済みケースとローカルの draft を読み出して一覧します",
         effect_class="read-only",
         network="never",
-        flags=(Flag(name="--repo", type="path", help="対象の repository", default="."),),
+        flags=(Flag(name="--repo", type="path", help="the repository to act on", default="."),),
         exit_codes=(
             ExitCode(code=0, meaning="一覧した（0 件でも 0）"),
             _EVAL_ERROR,
@@ -890,10 +910,11 @@ EVAL: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="never",
         flags=(
-            Flag(name="task_id", type="string", help="取り込む workbench task", required=True),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
+            Flag(name="task_id", type="string",
+                 help="the workbench task to capture", required=True),
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
             Flag(name="--allow-nonincident", type="bool",
-                 help="失敗として記録されていない task からでも作る"),
+                 help="capture even from a task not recorded as a failure"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="draft を書き出した"),
@@ -913,24 +934,27 @@ EVAL: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="sometimes",
         flags=(
-            Flag(name="case_or_suite", type="string", help="ケース id、suite 名、またはパス",
+            Flag(name="case_or_suite", type="string", help="a case id, a suite name, or a path",
                  required=True),
-            Flag(name="--provider", type="choice", help="被験側の provider",
+            Flag(name="--provider", type="choice", help="the provider under test",
                  choices=_PROVIDERS, required=True),
-            Flag(name="--model", type="string", help="被験側の model", required=True),
-            Flag(name="--repeat", type="int", help="何回まわすか（ケースの宣言と一致すること）",
+            Flag(name="--model", type="string", help="the model under test", required=True),
+            Flag(name="--repeat", type="int",
+                 help="how many runs; must match what the case declares",
                  required=True),
-            Flag(name="--phase", type="choice", help="修正前を測るのか、いまを測るのか",
+            Flag(name="--phase", type="choice",
+                 help="measure the pre-fix baseline, or the current state",
                  choices=("baseline", "current"), required=True),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
-            Flag(name="--command", type="string", help="provider を起動するコマンド"),
-            Flag(name="--timeout", type="float", help="1 実行あたりの制限秒数", default=30),
-            Flag(name="--judge-provider", type="choice", help="判定側の provider",
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
+            Flag(name="--command", type="string", help="command that starts the provider"),
+            Flag(name="--timeout", type="float", help="seconds allowed per run", default=30),
+            Flag(name="--judge-provider", type="choice", help="the provider that judges",
                  choices=_PROVIDERS),
-            Flag(name="--judge-model", type="string", help="判定側の model"),
-            Flag(name="--judge-command", type="string", help="判定側を起動するコマンド"),
-            Flag(name="--judge-timeout", type="float", help="判定 1 回の制限秒数", default=30),
-            Flag(name="--execution-base", type="string", help="実行時に置く base revision"),
+            Flag(name="--judge-model", type="string", help="the model that judges"),
+            Flag(name="--judge-command", type="string", help="command that starts the judge"),
+            Flag(name="--judge-timeout", type="float",
+                 help="seconds allowed per judgement", default=30),
+            Flag(name="--execution-base", type="string", help="base revision to run against"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="全ケースを実行し、結果を書き出した"),
@@ -950,21 +974,22 @@ EVAL: tuple[Capability, ...] = (
         effect_class="writes-state",
         network="sometimes",
         flags=(
-            Flag(name="draft_id", type="string", help="再現させる draft", required=True),
-            Flag(name="--provider", type="choice", help="被験側の provider",
+            Flag(name="draft_id", type="string", help="the draft to reproduce", required=True),
+            Flag(name="--provider", type="choice", help="the provider under test",
                  choices=_PROVIDERS, required=True),
-            Flag(name="--model", type="string", help="被験側の model", required=True),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
-            Flag(name="--command", type="string", help="provider を起動するコマンド"),
-            Flag(name="--timeout", type="float", help="1 実行あたりの制限秒数", default=30),
-            Flag(name="--judge-provider", type="choice", help="判定側の provider",
+            Flag(name="--model", type="string", help="the model under test", required=True),
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
+            Flag(name="--command", type="string", help="command that starts the provider"),
+            Flag(name="--timeout", type="float", help="seconds allowed per run", default=30),
+            Flag(name="--judge-provider", type="choice", help="the provider that judges",
                  choices=_PROVIDERS),
-            Flag(name="--judge-model", type="string", help="判定側の model"),
-            Flag(name="--judge-command", type="string", help="判定側を起動するコマンド"),
-            Flag(name="--judge-timeout", type="float", help="判定 1 回の制限秒数", default=30),
-            Flag(name="--execution-base", type="string", help="実行時に置く base revision"),
+            Flag(name="--judge-model", type="string", help="the model that judges"),
+            Flag(name="--judge-command", type="string", help="command that starts the judge"),
+            Flag(name="--judge-timeout", type="float",
+                 help="seconds allowed per judgement", default=30),
+            Flag(name="--execution-base", type="string", help="base revision to run against"),
             Flag(name="--allow-mock", type="bool",
-                 help="mock での再現は開発用の探りでしかないと承知したうえで実行する"),
+                 help="reproduce with mock, knowing it only probes the harness"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="target が赤で clean が緑、判定も測れた（再現が立った）"),
@@ -985,9 +1010,9 @@ EVAL: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="--baseline", type="path", help="修正前の結果", required=True),
-            Flag(name="--current", type="path", help="いまの結果", required=True),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
+            Flag(name="--baseline", type="path", help="the pre-fix results", required=True),
+            Flag(name="--current", type="path", help="the current results", required=True),
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="pass: 赤→緑と clean 維持の条件を満たした"),
@@ -1008,12 +1033,13 @@ EVAL: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="draft_id", type="string", help="昇格させる draft", required=True),
-            Flag(name="--baseline", type="path", help="修正前の結果", required=True),
-            Flag(name="--current", type="path", help="いまの結果", required=True),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
+            Flag(name="draft_id", type="string", help="the draft to promote", required=True),
+            Flag(name="--baseline", type="path", help="the pre-fix results", required=True),
+            Flag(name="--current", type="path", help="the current results", required=True),
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
             Flag(name="--into", type="path",
-                 help="repository ではなくこの pack に書く（あとで pack sync が要る）"),
+                 help="write the approved case into this pack instead of the repository; run "
+                      "`rig-wb pack sync` afterwards to declare it"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="承認済みケースとして書き出した"),
@@ -1032,14 +1058,17 @@ EVAL: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="--base", type="string", help="比較元の revision", required=True),
-            Flag(name="--head", type="string", help="比較先", default="working"),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
+            Flag(name="--base", type="string", help="the revision to compare from", required=True),
+            Flag(name="--head", type="string",
+                 help="the revision to compare to", default="working"),
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
             Flag(name="--require-cases", type="bool",
-                 help="影響を受ける surface すべてに既存ケースを要求する（厳格）"),
+                 help="every affected surface must already have a case (strict)"),
             Flag(name="--ratchet", type="bool",
-                 help="被覆は増やす方向のみ。ケースのない surface は debt として 0 で報告する"),
-            Flag(name="--evidence-dir", type="path", help="被覆判定に使う evidence の場所"),
+                 help="coverage may only go up: a surface with no case yet is reported as debt "
+                      "(exit 0), removing existing coverage fails"),
+            Flag(name="--evidence-dir", type="path",
+                 help="where the evidence used for the coverage check lives"),
             _JSON,
         ),
         exit_codes=(
@@ -1061,18 +1090,24 @@ EVAL: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="--base", type="string", help="比較元の revision", required=True),
-            Flag(name="--head", type="string", help="比較先", default="working"),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
-            Flag(name="--evidence-dir", type="path", help="検証する evidence の場所",
+            Flag(name="--base", type="string", help="the revision to compare from", required=True),
+            Flag(name="--head", type="string",
+                 help="the revision to compare to", default="working"),
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
+            Flag(name="--evidence-dir", type="path", help="where the evidence to check lives",
                  required=True),
             Flag(name="--provider", type="string",
-                 help="evidence がこの provider で測られていることを要求する"),
-            Flag(name="--model", type="string", help="同じく model を要求する"),
-            Flag(name="--judge-provider", type="string", help="同じく判定側 provider を要求する"),
-            Flag(name="--judge-model", type="string", help="同じく判定側 model を要求する"),
+                 help="require the evidence to have been measured with this provider"),
+            Flag(name="--model", type="string",
+                 help="require the evidence to have been measured with this model"),
+            Flag(name="--judge-provider", type="string",
+                 help="require the evidence to have been judged by this provider"),
+            Flag(name="--judge-model", type="string",
+                 help="require the evidence to have been judged by this model"),
             Flag(name="--ratchet", type="bool",
-                 help="ケースのない surface は debt 扱いにし、被覆の後退だけを致命とする"),
+                 help="coverage may only go up: an affected surface with no case yet is debt "
+                      "rather than a failure, while removing coverage and unregistered surface "
+                      "kinds stay fatal"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="影響がない、または evidence が要求を満たしている"),
@@ -1093,20 +1128,21 @@ EVAL: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="sometimes",
         flags=(
-            Flag(name="--base", type="string", help="比較元の revision", required=True),
-            Flag(name="--head", type="string", help="比較先", default="HEAD"),
-            Flag(name="--repo", type="path", help="対象の repository", default="."),
-            Flag(name="--provider", type="choice", help="被験側の provider",
+            Flag(name="--base", type="string", help="the revision to compare from", required=True),
+            Flag(name="--head", type="string", help="the revision to compare to", default="HEAD"),
+            Flag(name="--repo", type="path", help="the repository to act on", default="."),
+            Flag(name="--provider", type="choice", help="the provider under test",
                  choices=_PROVIDERS, required=True),
-            Flag(name="--model", type="string", help="被験側の model", required=True),
-            Flag(name="--judge-provider", type="choice", help="判定側の provider",
+            Flag(name="--model", type="string", help="the model under test", required=True),
+            Flag(name="--judge-provider", type="choice", help="the provider that judges",
                  choices=_PROVIDERS, required=True),
-            Flag(name="--judge-model", type="string", help="判定側の model", required=True),
-            Flag(name="--command", type="string", help="provider を起動するコマンド"),
-            Flag(name="--judge-command", type="string", help="判定側を起動するコマンド"),
-            Flag(name="--timeout", type="float", help="1 実行あたりの制限秒数", default=30),
+            Flag(name="--judge-model", type="string", help="the model that judges", required=True),
+            Flag(name="--command", type="string", help="command that starts the provider"),
+            Flag(name="--judge-command", type="string", help="command that starts the judge"),
+            Flag(name="--timeout", type="float", help="seconds allowed per run", default=30),
             Flag(name="--ratchet", type="bool",
-                 help="被覆のある surface だけ測り、残りは debt として報告する"),
+                 help="measure the covered surfaces and report the rest as debt, instead of "
+                      "refusing to measure anything while one affected surface has no case yet"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="実行して evidence を書き、gate も通った"),
@@ -1131,8 +1167,9 @@ BASELINE: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="--input", type="path", help="benchmark schema v2 の記録", required=True),
-            Flag(name="--output", type="path", help="baseline の書き出し先", required=True),
+            Flag(name="--input", type="path",
+                 help="the benchmark schema v2 record to read", required=True),
+            Flag(name="--output", type="path", help="where to write the baseline", required=True),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="baseline を書き出した"),
@@ -1149,7 +1186,7 @@ BASELINE: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="baseline", type="path", help="表示する baseline", required=True),
+            Flag(name="baseline", type="path", help="the baseline to show", required=True),
             _JSON,
         ),
         exit_codes=(
@@ -1169,8 +1206,9 @@ BASELINE: tuple[Capability, ...] = (
         effect_class="read-only",
         network="never",
         flags=(
-            Flag(name="--baseline", type="path", help="突き合わせる baseline", required=True),
-            Flag(name="--current", type="path", help="いまの benchmark 記録", required=True),
+            Flag(name="--baseline", type="path",
+                 help="the baseline to compare against", required=True),
+            Flag(name="--current", type="path", help="the current benchmark record", required=True),
             _JSON,
         ),
         exit_codes=(
@@ -1196,8 +1234,9 @@ GITHOOKS: tuple[Capability, ...] = (
         effect_class="writes-worktree",
         network="never",
         flags=(
-            Flag(name="--force", type="bool", help="rig 以外の既存 hook でも上書きする"),
-            Flag(name="--repo", type="path", help="対象の repository（既定は現在地）"),
+            Flag(name="--force", type="bool", help="overwrite a hook that is already there"),
+            Flag(name="--repo", type="path",
+                 help="the repository to act on instead of the current directory"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="hook を入れた（または入れ直した）"),
@@ -1216,7 +1255,8 @@ GITHOOKS: tuple[Capability, ...] = (
                     "（rig 以外の hook はそのまま残します）",
         effect_class="writes-worktree",
         network="never",
-        flags=(Flag(name="--repo", type="path", help="対象の repository（既定は現在地）"),),
+        flags=(Flag(name="--repo", type="path",
+                    help="the repository to act on instead of the current directory"),),
         exit_codes=(
             ExitCode(code=0, meaning="rig の hook を削除した（もともと無くても 0）"),
             ExitCode(code=1, meaning="hook ディレクトリを特定できなかった"),
@@ -1233,7 +1273,8 @@ GITHOOKS: tuple[Capability, ...] = (
         effect_line="hook ごとの状態（rig 管理・他人のもの・無し）を読み出して表示します",
         effect_class="read-only",
         network="never",
-        flags=(Flag(name="--repo", type="path", help="対象の repository（既定は現在地）"),),
+        flags=(Flag(name="--repo", type="path",
+                    help="the repository to act on instead of the current directory"),),
         exit_codes=(
             ExitCode(code=0, meaning="rig の hook がすべて入っている"),
             ExitCode(code=1, meaning="入っていない、または rig 以外の hook がある"),
