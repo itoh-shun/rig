@@ -60,14 +60,14 @@ class SubprocessRunner:
 
     **Text mode is `encoding="utf-8", errors="replace"`, not a bare `text=True`.** A bare
     `text=True` decodes with `locale.getencoding()` and *strict* errors, so it does not merely
-    disagree with the 25 sites that spell the pair out (`eval/`, `packs/publisher.py`) — on a
+    disagree with the sites that spell the pair out (`eval/` among them) — on a
     process whose output will not decode it raises `UnicodeDecodeError` out of the call,
     where those sites get U+FFFD and carry on. `git` produces exactly that output the moment a
     repository holds a path or an author name in another encoding. With `text=False` nothing
     is decoded and `stdout`/`stderr` come back as the `bytes` the process wrote, which is what
     `eval/execution.py:43`, `eval/gate.py:45` and `eval/affected.py:412` need.
 
-    `errors` names the handler and defaults to the one those 25 sites spell; `eval/affected.py`
+    `errors` names the handler and defaults to the one those sites spell; `eval/affected.py`
     asks for `surrogateescape` on the one read whose output is turned back into filenames.
     It is refused with `text=False` rather than dropped, because `subprocess.run` reads
     `errors=` as a request for text mode: passing it through in the bytes arm would silently

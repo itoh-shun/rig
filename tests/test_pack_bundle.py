@@ -115,18 +115,6 @@ def test_an_invalid_pack_is_refused_rather_than_bundled(tmp_path):
         bundle_pack(pack, to=tmp_path / "hogepack.zip")
 
 
-def test_a_signature_travels_with_the_pack_it_signs(tmp_path):
-    """A signed pack whose signature stayed behind would install as unverifiable, and the
-    consent flag that unlocks that path would look like the normal way to install it."""
-    pack = _pack(tmp_path)
-    (pack / "pack.sig.json").write_text('{"signature":"x"}\n', encoding="utf-8")
-
-    built = bundle_pack(pack, to=tmp_path / "hogepack.zip")
-
-    with zipfile.ZipFile(built["path"]) as archive:
-        assert "pack.sig.json" in archive.namelist()
-
-
 def test_an_existing_bundle_is_not_silently_overwritten(tmp_path):
     """The output path is often a released artifact. Overwriting one in place would change
     what a published sha256 refers to, with nothing said."""

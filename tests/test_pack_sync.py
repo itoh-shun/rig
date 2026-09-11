@@ -2,7 +2,7 @@
 
 `pack.yaml` declares every asset by path and by sha256, and `validate_pack` byte-compares the
 file against `canonical()` — sorted keys, no separators, trailing newline. That form is right:
-it is what makes a manifest hashable and signable, and `read_json_yaml` parses only the JSON
+it is what makes a manifest hashable, and `read_json_yaml` parses only the JSON
 subset so a manifest cannot execute a YAML tag.
 
 What was missing was the writer. An author who added one persona file got `asset declaration
@@ -80,7 +80,7 @@ def test_a_removed_asset_leaves_the_manifest(tmp_path):
 
 def test_syncing_twice_without_editing_produces_identical_bytes(tmp_path):
     """A manifest whose bytes depend on filesystem iteration order would churn the digest —
-    and every signature and lock entry computed over it — on a sync that changed nothing."""
+    and every lock entry computed over it — on a sync that changed nothing."""
     pack = _scaffold(tmp_path)
     for name in ("b", "a", "c"):
         (pack / f"facets/personas/{name}.md").write_text(PERSONA, encoding="utf-8")
@@ -114,14 +114,21 @@ def test_a_kind_the_pack_type_forbids_is_refused(tmp_path):
         sync_manifest(pack)
 
 
-def test_a_signed_pack_is_refused_rather_than_silently_invalidated(tmp_path):
-    """Rewriting the manifest breaks any signature over it. Proceeding would move the failure
-    from here — where the author can see what caused it — to the next `verify`, somewhere far
-    from the edit. Re-signing needs their key, so it is their call to make."""
+def test_pack_sig_json_is_no_longer_excused_by_name(tmp_path):
+    """`pack.sig.json` was a third non-asset, alongside the two manifest files.
+
+    Sync knew the name twice: it skipped the file when scanning, and refused the sync
+    outright because rewriting the manifest would have invalidated the signature over it.
+    Nothing signs a pack now, so the name means nothing, and a file carrying it is what it
+    looks like — a stray at the pack root. It is refused by the general rule above, not by a
+    special case, and the point of this test is that the name buys no exemption: were it
+    still in `NON_ASSETS`, sync would skip it, write a manifest that does not mention it,
+    and call the pack clean.
+    """
     pack = _scaffold(tmp_path)
     (pack / "pack.sig.json").write_text("{}\n", encoding="utf-8")
 
-    with pytest.raises(PackError, match="signed"):
+    with pytest.raises(PackError, match="no asset directory.*pack.sig.json"):
         sync_manifest(pack)
 
 

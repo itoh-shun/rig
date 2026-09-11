@@ -56,9 +56,6 @@ def import_results(
     source_tree = tree_hash(pack)
     source_stat = os.lstat(pack)
     source_identity = (source_stat.st_dev, source_stat.st_ino)
-    if (pack / "pack.sig.json").exists():
-        raise PackError("cannot import evidence into an already signed pack")
-
     cases: dict[str, dict] = {}
     try:
         for relative in manifest["assets"]["eval-case"]:

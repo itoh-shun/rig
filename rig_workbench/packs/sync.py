@@ -9,21 +9,22 @@ declared set exactly. Nothing in the tree wrote either field. Every shipped pack
 was produced by something outside the CLI.
 
 The canonical form is not the problem and is not relaxed here. It is what makes a manifest
-hashable and signable, and `read_json_yaml` deliberately parses only the JSON subset so a
-manifest cannot execute a YAML tag. The problem was that a machine-owned file had no machine
-to own it. That is what this is.
-
-Two refusals are deliberate.
+hashable, and `read_json_yaml` deliberately parses only the JSON subset so a manifest cannot
+execute a YAML tag. The problem was that a machine-owned file had no machine to own it. That
+is what this is.
 
 **A file in no asset directory is an error, not a silent omission.** Dropping it would let a
 file sit inside a pack, unhashed and undeclared, and `validate_pack` would then report the
 pack as clean — the pack's contents and the pack's manifest would disagree with nobody
 watching. It is named instead.
 
-**A signed pack is refused outright.** Rewriting the manifest invalidates `pack.sig.json`,
-and a sync that silently left a stale signature behind would be worse than no sync: the next
-`verify` would fail somewhere far from the edit that caused it. Re-signing is the author's
-decision, made with their key, so this stops and says so.
+That rule is now the only refusal, and it absorbed the one that used to sit beside it. Sync
+refused a pack carrying `pack.sig.json` by name, because rewriting the manifest invalidated
+the signature over it. Nothing signs a pack any more, so `pack.sig.json` is not a pack file
+at all — it is a stray at the pack root, in no asset directory, and the rule above already
+names it. `validate_pack` agrees: it no longer excuses the name either, so such a pack is
+`asset declaration drift` there. One rule, stated once, instead of a special case for a
+mechanism that is gone.
 """
 
 from __future__ import annotations
@@ -35,8 +36,8 @@ from .model import ASSET_DIRS, PackError, TYPE_ASSETS
 from .resources import describe_resource
 
 #: Files that belong to the pack but are not assets: the manifest pair the assets are
-#: declared in, and the signature over them.
-NON_ASSETS = frozenset({"pack.yaml", "compatibility.yaml", "pack.sig.json"})
+#: declared in. Everything else at the pack root is a stray.
+NON_ASSETS = frozenset({"pack.yaml", "compatibility.yaml"})
 
 #: asset directory → kind. Reversed from `ASSET_DIRS` rather than written out again, so a new
 #: kind added there is picked up here instead of quietly falling into the "unknown" branch.
@@ -101,10 +102,6 @@ def sync_manifest(root: pathlib.Path | str) -> dict[str, object]:
     author's, and a sync that edited them would be making decisions it has no basis for.
     """
     root = pathlib.Path(root).resolve()
-    if (root / "pack.sig.json").exists():
-        raise PackError(
-            "pack is signed; syncing would invalidate pack.sig.json — remove the signature "
-            "and re-sign after the manifest is correct")
     _raw, manifest = read_json_yaml(root / "pack.yaml")
     type_ = manifest.get("type")
     if type_ not in TYPE_ASSETS:

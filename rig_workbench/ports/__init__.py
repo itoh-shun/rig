@@ -121,8 +121,8 @@ class ProcessRunner(Protocol):
     request for text mode, so forwarding it in the bytes arm would undo the arm.
 
     `check=` is absent because no site uses it: `identity` wraps the call in `try/except` and
-    reads `stdout`, `gitroot` reads `returncode`, and the four sites that could pass it
-    (`packs/publisher.py:44`, `:423`, `:431`, `:436`) all pass `check=False`. An
+    reads `stdout`, `gitroot` reads `returncode`, and the one remaining site in `packs`
+    (`sources.py`'s `_git`) does not spell `check=` at all, which is `check=False`. An
     exception-raising variant would give every one of them a second failure mode to handle.
     `shell=` is absent on purpose — the tree holds three `shell=True` calls
     (`orchestrate/providers.py:2314` and `:2787`, and `orchestrate/commands.py:248`) and none

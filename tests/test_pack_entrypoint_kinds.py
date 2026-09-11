@@ -7,8 +7,7 @@ unreachable for them:
 
 * `validate_pack`'s `entrypoint lacks evaluation coverage` loop ran over nothing,
 * `compose_case_prompt` refused every case for want of a `prompt_entrypoint`, so `pack test`
-  could only ever report `structural_only`,
-* `sign_pack` requires each case's `prompt_entrypoint` to be an id the manifest declares.
+  could only ever report `structural_only`.
 
 Yet those packs are prompt-bearing by definition — `PROMPT_KINDS` covers `wiki`, `policy`,
 `persona` and `output-contract` — so `validate_pack` *required* each of them to ship an

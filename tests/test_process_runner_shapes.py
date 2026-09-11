@@ -87,7 +87,7 @@ def _raw_govern_text(argv, **kwargs):
 
 
 def _raw_pillar_text(argv, **kwargs):
-    """The 25 text sites, e.g. `eval/gate.py:55` and `packs/publisher.py:423`."""
+    """The text sites that spell the pair out, e.g. `eval/gate.py` and `packs/sources.py`."""
     return subprocess.run(argv, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", **kwargs)
 

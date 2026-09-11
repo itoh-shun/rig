@@ -313,13 +313,14 @@ def test_install_rejects_scan_findings_missing_dependency_and_incompatible_engin
 
 def test_an_unverified_prompt_pack_installs_in_every_scope_and_the_lock_still_says_so(
         tmp_path, monkeypatch):
-    """A publisher signature is no longer what lets a pack in — but it is still measured.
+    """Nothing gates an install on trust any more — but the verdict is still measured.
 
     Installing used to refuse anything that was not `verified-publisher` unless the caller
     said `--allow-unverified`, and that flag was refused outside project scope. Both are
-    gone, so `user` scope takes the same pack `project` scope takes. What has not changed is
-    the verdict: `verification_status` is still computed and still written into the lock, so
-    `pack list` and `pack info` answer the trust question exactly as they did.
+    gone, and so is the signature the first of them asked for, so `user` scope takes the
+    same pack `project` scope takes. What has not changed is the verdict: a status is still
+    computed from the pack's own evaluation evidence and still written into the lock, so
+    `pack list` and `pack info` answer exactly as they did.
     """
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.lock import read_lock
@@ -343,6 +344,90 @@ def test_an_unverified_prompt_pack_installs_in_every_scope_and_the_lock_still_sa
     verified = install_pack(quality, scope="project", project=tmp_path,
                             root=tmp_path / "quality-installed")
     assert verified.verification_status == "verified-local"
+
+
+def test_the_lock_keeps_its_schema_version_and_both_publisher_columns_on_disk(tmp_path):
+    """The disk format an already-installed project has, after signing was removed.
+
+    Two assertions moved here from the publisher suite when that suite was deleted, because
+    neither was about signing:
+
+      * the schema version, pinned as a literal rather than against `LOCK_SCHEMA_VERSION`.
+        A lock format change is a migration question for every installed project, and this
+        is the canary that makes somebody answer it. The version moved 2 -> 3 when a git
+        source gained `source_id` and `revision`, and 3 -> 4 when entries began recording
+        which version satisfied each dependency. Removing the signing mechanism did not
+        move it, which is the point.
+      * a fresh install writes `publisher_key_id` and `signed_digest` as `None`, and the
+        lock it wrote validates.
+
+    Both columns are dead weight to the code and load-bearing to the disk: see
+    `test_a_lock_that_still_claims_a_publisher_reads_clean_and_keeps_its_label` below for
+    what happens to a lock that lacks them.
+    """
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.lock import read_lock, validate_lock_root
+
+    project = tmp_path / "project"
+    root = project / ".rig/packs"
+    source = _write_pack(tmp_path / "source", "columns-pack", recipe=False)
+    result = install_pack(source, scope="project", project=project)
+    assert result.verification_status == "verified-local"
+
+    assert read_lock(root)["pack_lock_schema_version"] == 4
+    entries = validate_lock_root(root, core_ids=core_reference_ids())
+    assert [(item["id"], item["verification_status"],
+             item["publisher_key_id"], item["signed_digest"]) for item in entries] == [
+        ("columns-pack", "verified-local", None, None)]
+
+
+def test_a_lock_that_still_claims_a_publisher_reads_clean_and_keeps_its_label(
+    tmp_path, monkeypatch,
+):
+    """`verified-publisher` is written by nothing and checked by nothing, and still parses.
+
+    That is the whole compatibility obligation of removing publisher signing. A lock on a
+    user's disk may say `verified-publisher` with a key id and a signed digest in it; there
+    is no signature left to confirm or deny that, so the value is accepted on the file's
+    word and reported back unchanged. The label going stale is the accepted price. Refusing
+    it would not be: `_pack_entries_with_trust` is fail-closed, so a lock this refused would
+    take persona, recipe and wiki resolution down for the whole project — the second half of
+    this test is that failure, reproduced against a column that was removed rather than
+    kept.
+    """
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.lock import read_lock, write_lock
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.resolver import resolved_collection
+
+    monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "user-home"))
+    monkeypatch.delenv("RIG_ORG_HOME", raising=False)
+    project = tmp_path / "project"
+    root = project / ".rig/packs"
+    install_pack(_write_pack(tmp_path / "source", "legacy-claim", recipe=False),
+                 scope="project", project=project)
+
+    lock = read_lock(root)
+    entry = next(item for item in lock["packs"] if item["id"] == "legacy-claim")
+    entry["verification_status"] = "verified-publisher"
+    entry["publisher_key_id"] = "rig-release-2026"
+    entry["signed_digest"] = "b" * 64
+    write_lock(root, lock)
+
+    reported = [record.verification_status for record in resolved_collection(project=project)
+                if record.manifest["id"] == "legacy-claim"]
+    assert reported == ["verified-publisher"], (
+        "a lock written before signing was removed must still resolve, and must still be "
+        "reported under the label it recorded")
+
+    # And the reason the columns were kept rather than dropped: without one of them, every
+    # entry in the root fails the exact key-set check, and the failure is not confined to
+    # `pack` verbs — it comes out of the resolve path every run goes through.
+    lock = read_lock(root)
+    del next(item for item in lock["packs"] if item["id"] == "legacy-claim")["signed_digest"]
+    write_lock(root, lock)
+    with pytest.raises(PackError, match="invalid entry for legacy-claim"):
+        resolved_collection(project=project)
 
 
 def test_lock_write_failure_rolls_back_install(tmp_path, monkeypatch):

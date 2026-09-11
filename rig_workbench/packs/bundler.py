@@ -42,9 +42,9 @@ ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 #: the build is not a property of the pack.
 FILE_ATTR = (0o100644 << 16)
 
-#: Written beside the assets. `pack.sig.json` is included when it exists — a signature that
-#: did not travel with the pack it signs would make every install unverifiable.
-MANIFEST_FILES = ("pack.yaml", "compatibility.yaml", "pack.sig.json")
+#: Written beside the assets, and the only two files a bundle carries that the manifest does
+#: not declare.
+MANIFEST_FILES = ("pack.yaml", "compatibility.yaml")
 
 
 def bundle_paths(manifest: dict) -> list[str]:

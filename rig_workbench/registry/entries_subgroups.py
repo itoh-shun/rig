@@ -466,9 +466,9 @@ PACK: tuple[Capability, ...] = (
         verb="sync",
         intent="I added or deleted a file inside my pack and want its manifest to say what "
                "is actually on disk",
-        preconditions=("pack-dir", "pack-unsigned", "every-file-in-an-asset-dir"),
+        preconditions=("pack-dir", "every-file-in-an-asset-dir"),
         effect_line="pack.yaml の assets と hashes をディスクの実体から作り直して"
-                    "上書きします（署名済みの pack は拒否します）",
+                    "上書きします（asset ディレクトリの外にあるファイルは拒否します）",
         effect_class="writes-worktree",
         network="never",
         flags=(Flag(name="path", type="path",
@@ -592,8 +592,8 @@ PACK: tuple[Capability, ...] = (
         id="pack.list",
         parent="pack",
         verb="list",
-        intent="see what is installed here, where each one came from, and whether its "
-               "publisher was ever verified",
+        intent="see what is installed here, where each one came from, and what its own "
+               "evaluation evidence was found to support at install time",
         preconditions=("scope-root-resolvable",),
         effect_line="この scope にインストール済みの pack を読み出して一覧します",
         effect_class="read-only",

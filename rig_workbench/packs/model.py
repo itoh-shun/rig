@@ -40,8 +40,9 @@ class DigestMismatch(PackError):
     """The revision resolved but its content is not what the lock recorded.
 
     This is what makes `@1.4.0` mean one thing forever. It does not mean the supply chain is
-    safe — a mismatch says the bytes changed, not who changed them; that is the signature's
-    question, not the digest's.
+    safe — a mismatch says the bytes changed, and nothing here says who changed them. rig
+    answers that question by refusing to install from anywhere a project has not declared in
+    `.rig/sources.json`, not by checking a signature; there are none.
     """
 
     reason = "digest-mismatch"

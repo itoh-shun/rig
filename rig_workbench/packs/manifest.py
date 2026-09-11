@@ -461,7 +461,7 @@ def validate_manifest_shape(value: dict) -> None:
         # a consumer reaches for, and `TYPE_ASSETS` forbids `knowledge`, `policy` and
         # `reviewer` from owning a command or a recipe — so restricting this to those two
         # left them unable to declare an entrypoint at all, and every rule downstream that
-        # anchors on one (evaluation coverage, `compose_case_prompt`, publisher signing) was
+        # anchors on one (evaluation coverage, `compose_case_prompt`) was
         # therefore unreachable for them: a reviewer pack could be required to carry an
         # approved evaluation case and never be able to run it. Nothing here grants reach:
         # `validate_pack` still requires the target be an asset this pack owns, `TYPE_ASSETS`
