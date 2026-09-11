@@ -1,12 +1,52 @@
+"""packs.cli — `rig-wb pack …`, the operator surface of the pack pillar.
+
+This module is `packs`' **shell**: argparse wiring, the words a command says, and the
+mapping from an outcome to an exit code. Stage 3 of `docs/v3-architecture-design-brief.ja.md`
+§3 asks the same two things of it that it asked of `govern/cli.py` and `eval/cli.py`.
+
+**Words leave through the `Presenter` port.** No command calls `print`. `cmd_pack` takes
+an `out: Presenter`, the adapter is built once at the process boundary in `main()`, and
+every helper that speaks — `invoke_pack` is the only one — takes the presenter rather than
+reaching for a global. Which stream a line goes to is unchanged and stays a property of
+the call: `out.out` is stdout, `out.err` is stderr, and the one `[ERROR]` line the
+`PackError` handler writes keeps going to stderr so a report on stdout stays parseable.
+
+**And the port is forwarded, not merely held.** The lesson pillar 1 paid for is that a
+shell which builds a port and then fails to pass it down leaves the callee's default in
+charge, and the default is the real adapter: one command, two clocks
+(`tests/test_govern_frozen_clock.py`). So the two ports this shell owns — the presenter
+and the clock — are handed to every call whose signature declares them, and
+`tests/test_packs_forwarded_ports.py` drives the verbs with both adapters disarmed on
+their classes, so a handler that forgets to forward fails on the shape rather than on a
+symptom.
+
+**A document is not a line.** Three commands print a canonical-JSON document with
+`end=""`, because `manifest.canonical` already ends in exactly one newline.
+`Presenter.out` supplies the line ending itself, as `print` does, so those three go
+through `_emit_document`, which takes the trailing newline off once. Rendering them with
+a plain `out.out` would add a second one — a byte-for-byte change to output that CI and
+`pack invoke`'s callers parse.
+
+**`Env` and `ProcessRunner` are not wired from here yet, and that is deliberate.** The
+environment reads in `resolver.py` and `trust.py` and the one `subprocess` call in
+`sources.py` are behind their ports with the default adapter (`*, env: Env = OS_ENV`), so
+a caller that wants to inject one can, but the shell does not thread them down: doing so
+moves 23 call sites across 7 files, most of them in pillars that have not migrated. That
+is pass 2, and the tripwire says so rather than asserting a forwarding nobody built.
+"""
+
 from __future__ import annotations
 
 import argparse
-import json
 import datetime as dt
+import json
 import pathlib
 import sys
 
 from rig_workbench import __version__
+from rig_workbench.ports import Clock, Presenter
+from rig_workbench.ports.local import (CONSOLE, SYSTEM_CLOCK, ConsolePresenter,
+                                       SystemClock)
 
 from .doctor import diagnose
 from .manifest import PACK_SCHEMA_VERSION, canonical
@@ -111,8 +151,21 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _emit_document(out: Presenter, text: str) -> None:
+    """A canonical-JSON document, on stdout, byte for byte as `print(text, end="")` had it.
+
+    `manifest.canonical` appends exactly one newline and `json.dumps` escapes every newline
+    inside a string, so the trailing one is the only one there is; `Presenter.out` adds the
+    line ending itself. Taking it off here is therefore the identity, and not taking it off
+    would append a blank line to documents `pack doctor --json`, `pack test --json` and
+    `pack invoke` hand to something that parses them.
+    """
+    out.out(text.removesuffix("\n"))
+
+
 def init_pack(pack_id: str, *, kind: str, type_: str,
-              root: pathlib.Path | str) -> pathlib.Path:
+              root: pathlib.Path | str,
+              clock: Clock = SYSTEM_CLOCK) -> pathlib.Path:
     """Scaffold a pack. `type_` has no default on purpose — it decides what the pack may
     carry and run, and a default would hand that decision to whoever forgot to make it."""
     from .manifest import PACK_ID, RESERVED_PACK_IDS
@@ -129,7 +182,10 @@ def init_pack(pack_id: str, *, kind: str, type_: str,
         destination.mkdir(parents=True, exist_ok=False)
         for directory in ASSET_DIRS.values():
             (destination / directory).mkdir(parents=True, exist_ok=True)
-        now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+        # UTC, as every stamp a pack manifest or a lock entry carries; `Clock.now()`
+        # reads the moment through the local offset and `astimezone` renders it, so
+        # a pack created at 23:59 and the lock that installs it are on one timeline.
+        now = clock.now().astimezone(dt.timezone.utc).isoformat(timespec="seconds")
         manifest = {
             "pack_schema_version": PACK_SCHEMA_VERSION, "id": pack_id, "type": type_,
             "version": "0.1.0", "kind": kind,
@@ -222,7 +278,8 @@ def _resolve_invocation(spec: str, project: pathlib.Path) -> tuple[str, pathlib.
     return tier, path, manifest, entries[0]
 
 
-def invoke_pack(spec: str, forwarded: list[str], *, project: pathlib.Path) -> int:
+def invoke_pack(spec: str, forwarded: list[str], *, project: pathlib.Path,
+                out: Presenter = CONSOLE) -> int:
     from .manifest import parse_frontmatter_subset
     tier, pack, manifest, entry = _resolve_invocation(spec, project)
     kind = entry["kind"]
@@ -243,10 +300,10 @@ def invoke_pack(spec: str, forwarded: list[str], *, project: pathlib.Path) -> in
         ))
     args = forwarded[1:] if forwarded[:1] == ["--"] else forwarded
     if kind == "command":
-        print(canonical({
+        _emit_document(out, canonical({
             "args": args, "asset": str(target), "entrypoint": spec,
             "mode": "manual-command", "status": "ready",
-        }), end="")
+        }))
         return 0
     frontmatter = parse_frontmatter_subset(target)
     from rig_workbench.orchestrate.gates import validate_executable_recipe
@@ -267,75 +324,87 @@ def invoke_pack(spec: str, forwarded: list[str], *, project: pathlib.Path) -> in
     return 0
 
 
-def cmd_pack(argv: list[str]) -> int:
+def cmd_pack(argv: list[str], *, out: Presenter = ConsolePresenter(),
+             clock: Clock = SystemClock()) -> int:
+    """Parse, run the command, and return its exit status.
+
+    The presenter and the clock are parameters rather than module-level instances the
+    commands reach for: `main()` builds an adapter at the process boundary and passes it
+    in, and an in-process caller (`rig_workbench/cli.py` dispatches here, and a test can
+    too) may hand in its own. The defaults exist so those callers keep working unchanged.
+
+    Both are forwarded to every call below whose signature declares them — that is the
+    rule this file applies, and the one the tripwire checks.
+    """
     args = _parser().parse_args(argv)
     try:
         if args.command == "init":
-            destination = init_pack(args.id, kind=args.kind, type_=args.type_, root=args.root)
-            print(f"initialized: {destination}")
+            destination = init_pack(args.id, kind=args.kind, type_=args.type_,
+                                    root=args.root, clock=clock)
+            out.out(f"initialized: {destination}")
             for line in init_next_steps(destination, type_=args.type_):
-                print(line)
+                out.out(line)
             return 0
         if args.command == "validate":
             if args.global_:
                 records = validate_tiered_collection(
                     _global_dirs(pathlib.Path.cwd()), core_ids=core_reference_ids())
-                print(f"{len(records)} pack(s) valid")
+                out.out(f"{len(records)} pack(s) valid")
             else:
                 path = pathlib.Path(args.path or ".")
                 manifest = validate_pack(path, core_ids=core_reference_ids())
-                print(f"valid: {manifest['id']}@{manifest['version']}")
+                out.out(f"valid: {manifest['id']}@{manifest['version']}")
             return 0
         if args.command == "sync":
             from .sync import sync_manifest
             result = sync_manifest(args.path or ".")
             for item in result["added"]:
-                print(f"  + {item}")
+                out.out(f"  + {item}")
             for item in result["removed"]:
-                print(f"  - {item}")
-            print(f"pack sync: {result['total']} asset(s) declared and hashed")
+                out.out(f"  - {item}")
+            out.out(f"pack sync: {result['total']} asset(s) declared and hashed")
             return 0
         if args.command == "bundle":
             from .bundler import bundle_pack
             built = bundle_pack(args.path, to=args.to)
-            print(f"bundled: {built['id']}@{built['version']} "
-                  f"({built['members']} file(s)) -> {built['path']}")
-            print(f"  sha256: {built['sha256']}")
-            print("next:")
-            print(f"  rig-wb pack install {built['path']} --scope project")
+            out.out(f"bundled: {built['id']}@{built['version']} "
+                    f"({built['members']} file(s)) -> {built['path']}")
+            out.out(f"  sha256: {built['sha256']}")
+            out.out("next:")
+            out.out(f"  rig-wb pack install {built['path']} --scope project")
             return 0
         if args.command == "export":
             from .exporter import export_pack
             exported = export_pack(args.path, to=args.to)
-            print(f"exported: {exported['id']}@{exported['version']} "
-                  f"[{exported['type']}] -> {exported['pack_path']}")
-            print("next:")
-            print(f"  cd {exported['path']} && git init && git add -A && "
-                  f"git commit -m '{exported['id']} {exported['version']}'")
-            print("  git remote add origin <your repository URL> && git push -u origin main")
-            print(f"  git tag {exported['tag']} && git push origin {exported['tag']}")
+            out.out(f"exported: {exported['id']}@{exported['version']} "
+                    f"[{exported['type']}] -> {exported['pack_path']}")
+            out.out("next:")
+            out.out(f"  cd {exported['path']} && git init && git add -A && "
+                    f"git commit -m '{exported['id']} {exported['version']}'")
+            out.out("  git remote add origin <your repository URL> && git push -u origin main")
+            out.out(f"  git tag {exported['tag']} && git push origin {exported['tag']}")
             return 0
         if args.command == "source":
             project = pathlib.Path.cwd()
             declared = read_sources(project)
             if args.source_command == "list":
                 for name in sorted(declared):
-                    print(f"{name}\t{declared[name]['scheme']}\t{declared[name]['url']}")
+                    out.out(f"{name}\t{declared[name]['scheme']}\t{declared[name]['url']}")
                 if not declared:
-                    print("no sources declared")
+                    out.out("no sources declared")
                 return 0
             if args.source_command == "add":
                 if args.name in declared:
                     raise PackError(f"source already declared: {args.name}")
                 declared[args.name] = {"scheme": args.scheme, "url": args.url}
                 write_sources(project, declared)
-                print(f"declared source: {args.name}")
+                out.out(f"declared source: {args.name}")
                 return 0
             if args.name not in declared:
                 raise PackError(f"source is not declared: {args.name}")
             del declared[args.name]
             write_sources(project, declared)
-            print(f"removed source: {args.name}")
+            out.out(f"removed source: {args.name}")
             return 0
         if args.command == "verify-sources":
             from .installer import scope_root
@@ -347,7 +416,7 @@ def cmd_pack(argv: list[str]) -> int:
             pinned = [item for item in read_lock(root)["packs"]
                       if item["source"]["type"] == "git"]
             if not pinned:
-                print("no git-sourced packs are locked in this scope")
+                out.out("no git-sourced packs are locked in this scope")
                 return 0
             worst = 0
             for entry in sorted(pinned, key=lambda item: item["id"]):
@@ -357,7 +426,7 @@ def cmd_pack(argv: list[str]) -> int:
                 else:
                     reason = verify_pin(declared[source_id], entry)
                     worst = max(worst, 0 if reason == "ok" else 1)
-                print(f"{entry['id']}\t{entry['source']['path']}\t{reason}")
+                out.out(f"{entry['id']}\t{entry['source']['path']}\t{reason}")
             return worst
         if args.command == "knowledge":
             from .installer import scope_root
@@ -368,28 +437,28 @@ def cmd_pack(argv: list[str]) -> int:
             report = knowledge_rows(project, root, topics=tuple(args.topics),
                                     scopes=tuple(args.scopes), scope=args.scope)
             if args.json:
-                print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+                out.out(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
                 return 0
             if not report["candidates"]:
-                print("no installed pack declares knowledge matching that")
+                out.out("no installed pack declares knowledge matching that")
                 return 0
             for row in report["candidates"]:
-                print(f"{row['id']}@{row['version']}\t{'/'.join(row['matched_scope'])}"
-                      f"\t{row['owner']}\treviewed {row['reviewed_at']}")
-                print(f"  topics: {', '.join(row['topics'])}")
-                print(f"  evidence: {', '.join(row['evidence'])}")
+                out.out(f"{row['id']}@{row['version']}\t{'/'.join(row['matched_scope'])}"
+                        f"\t{row['owner']}\treviewed {row['reviewed_at']}")
+                out.out(f"  topics: {', '.join(row['topics'])}")
+                out.out(f"  evidence: {', '.join(row['evidence'])}")
                 for document in row["documents"]:
                     # A shadowed document is listed rather than hidden, and says who won.
                     # Dropping it would leave a person wondering where their file went; citing
                     # it silently would put an answer behind text that never gets read.
                     state = "" if document["effective"] else (
                         f"  [shadowed by {document['provided_by'] or 'nothing'}]")
-                    print(f"  {document['kind']}: {document['uri']}{state}")
+                    out.out(f"  {document['kind']}: {document['uri']}{state}")
             if report["ambiguous"]:
                 # Named, not resolved. Which scope was meant is a fact about the asker that
                 # no pack contains, so this says what has to be settled and stops there.
-                print(f"scope is ambiguous: {', '.join(report['scopes'])} — "
-                      f"narrow with --scope before treating any of these as the answer")
+                out.out(f"scope is ambiguous: {', '.join(report['scopes'])} — "
+                        f"narrow with --scope before treating any of these as the answer")
             return 0
         if args.command in {"list", "info", "explain", "outdated", "update"}:
             from .installer import scope_root, update_pack
@@ -402,56 +471,56 @@ def cmd_pack(argv: list[str]) -> int:
             if args.command == "list":
                 rows = list_rows(root, scope=args.scope)
                 if not rows:
-                    print("no packs installed in this scope")
+                    out.out("no packs installed in this scope")
                     return 0
                 for row in rows:
-                    print(f"{row['id']}@{row['version']}\t{row['type']}\t{row['kind']}"
-                          f"\t{row['origin']}\t{row['verification']}")
+                    out.out(f"{row['id']}@{row['version']}\t{row['type']}\t{row['kind']}"
+                            f"\t{row['origin']}\t{row['verification']}")
                 return 0
             if args.command == "info":
                 detail = pack_info(root, args.pack, scope=args.scope)
                 if args.json:
-                    print(json.dumps(detail, ensure_ascii=False, sort_keys=True, indent=2))
+                    out.out(json.dumps(detail, ensure_ascii=False, sort_keys=True, indent=2))
                 else:
                     for key, value in detail.items():
-                        print(f"{key}\t{value}")
+                        out.out(f"{key}\t{value}")
                 return 0
             if args.command == "explain":
                 rows = explain_pack(project, root, args.pack)
                 if args.json:
-                    print(json.dumps(rows, ensure_ascii=False, sort_keys=True, indent=2))
+                    out.out(json.dumps(rows, ensure_ascii=False, sort_keys=True, indent=2))
                     return 0
                 if not rows:
-                    print(f"{args.pack} provides no prompt surfaces")
+                    out.out(f"{args.pack} provides no prompt surfaces")
                     return 0
                 for row in rows:
                     state = "effective" if row["effective"] else (
                         f"shadowed by {row['provided_by']} [{row['tier']}]")
-                    print(f"{row['kind']}:{row['name']}\t{state}")
+                    out.out(f"{row['kind']}:{row['name']}\t{state}")
                 return 0
             if args.command == "outdated":
                 rows = outdated(project, root)
                 if not rows:
-                    print("no git-sourced packs are locked in this scope")
+                    out.out("no git-sourced packs are locked in this scope")
                     return 0
                 for row in rows:
-                    print(f"{row['id']}\t{row['current']}\t{row['latest'] or '-'}"
-                          f"\t{row['reason']}")
+                    out.out(f"{row['id']}\t{row['current']}\t{row['latest'] or '-'}"
+                            f"\t{row['reason']}")
                 return 1 if any(row["reason"] != "ok" for row in rows) else 0
             result = update_pack(
                 args.pack, to=args.to, scope=args.scope, project=project,
                 root=args.root,
             )
-            print(f"updated: {result.manifest['id']}@{result.manifest['version']} "
-                  f"[{result.verification_status}] -> {result.path}")
+            out.out(f"updated: {result.manifest['id']}@{result.manifest['version']} "
+                    f"[{result.verification_status}] -> {result.path}")
             return 0
         if args.command == "install":
             from .installer import install_pack
             result = install_pack(
                 args.source, scope=args.scope, project=pathlib.Path.cwd(), root=args.root,
             )
-            print(f"installed: {result.manifest['id']}@{result.manifest['version']} "
-                  f"[{result.verification_status}] -> {result.path}")
+            out.out(f"installed: {result.manifest['id']}@{result.manifest['version']} "
+                    f"[{result.verification_status}] -> {result.path}")
             return 0
         if args.command == "test":
             from .tester import test_pack
@@ -464,11 +533,11 @@ def cmd_pack(argv: list[str]) -> int:
                 allow_paid_provider=args.allow_paid_provider, draft=args.draft,
             )
             if args.json:
-                print(canonical(report), end="")
+                _emit_document(out, canonical(report))
             else:
-                print(f"pack test: {report['status']} ({report['pack']})")
+                out.out(f"pack test: {report['status']} ({report['pack']})")
                 for failure in report["failures"]:
-                    print(f"- {failure}")
+                    out.out(f"- {failure}")
             return code
         if args.command == "import-results":
             from .evidence import import_results
@@ -476,7 +545,7 @@ def cmd_pack(argv: list[str]) -> int:
                 args.pack, staged=args.result_dir, project=pathlib.Path.cwd(),
             )
             for relative in imported:
-                print(f"imported: {relative}")
+                out.out(f"imported: {relative}")
             return 0
         if args.command == "remove":
             from .remover import remove_pack
@@ -484,19 +553,20 @@ def cmd_pack(argv: list[str]) -> int:
                 args.id, scope=args.scope, project=pathlib.Path.cwd(), root=args.root,
                 yes=args.yes,
             )
-            print(f"{'removed' if removed else 'dry-run remove'}: {target}")
+            out.out(f"{'removed' if removed else 'dry-run remove'}: {target}")
             if not removed:
-                print("rerun with --yes to remove this lock-owned pack")
+                out.out("rerun with --yes to remove this lock-owned pack")
             return 0
         if args.command == "invoke":
-            return invoke_pack(args.entrypoint, args.args, project=pathlib.Path.cwd())
+            return invoke_pack(args.entrypoint, args.args, project=pathlib.Path.cwd(),
+                               out=out)
         report = diagnose(args.path, project=pathlib.Path.cwd())
         if args.json:
-            print(canonical(report), end="")
+            _emit_document(out, canonical(report))
         else:
-            print(f"pack doctor: {report['status']}")
+            out.out(f"pack doctor: {report['status']}")
             for finding in report["findings"]:
-                print(f"- {finding['code']}: {finding.get('path', finding.get('asset', finding.get('pack', '')))}")
+                out.out(f"- {finding['code']}: {finding.get('path', finding.get('asset', finding.get('pack', '')))}")
         # The report distinguishes three states and the exit code used to collapse two of
         # them, so every warning read as a failure. That was tolerable while the only warning
         # was a migration hint; it stopped being so once `empty_pack` made a freshly
@@ -505,5 +575,13 @@ def cmd_pack(argv: list[str]) -> int:
         # is an error.
         return 1 if report["status"] == "failed" else 0
     except PackError as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
+        out.err(f"[ERROR] {exc}")
         return 2
+
+
+def main() -> None:
+    sys.exit(cmd_pack(sys.argv[1:], out=ConsolePresenter(), clock=SystemClock()))
+
+
+if __name__ == "__main__":
+    main()
