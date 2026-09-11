@@ -10,6 +10,8 @@ import tempfile
 from typing import Any
 
 from rig_workbench import __version__
+from rig_workbench.ports import Clock
+from rig_workbench.ports.local import SYSTEM_CLOCK
 
 from .manifest import PACK_ID, VERSION, canonical, digest
 from .model import PackError
@@ -167,7 +169,7 @@ def resolve_dependencies(manifest: dict, records: list[tuple[str, Any, dict]]) -
 def make_entry(
     pack: pathlib.Path, manifest: dict, *, scope: str, source: dict[str, Any],
     verification_status: str, dependency_resolution: list[dict] | None = None,
-    installed_at: dt.datetime | None = None,
+    installed_at: dt.datetime | None = None, clock: Clock = SYSTEM_CLOCK,
 ) -> dict[str, Any]:
     """One lock entry for an installed pack.
 
@@ -178,7 +180,15 @@ def make_entry(
     resolve path takes persona, recipe and wiki resolution down with it. They are a disk
     format obligation now, not a mechanism.
     """
-    timestamp = (installed_at or dt.datetime.now(dt.timezone.utc)).isoformat(timespec="seconds")
+    # UTC, like every timestamp `validate_lock_root` parses back out of a lock entry;
+    # `Clock.now()` reads the moment through the local offset and `astimezone` renders it,
+    # so a pack installed at 23:59 and the manifest `pack init` stamped are on one
+    # timeline. The conversion is applied to `installed_at` as well, because a caller that
+    # supplies a moment is supplying the same instant in a different offset and the entry
+    # has only ever held one spelling of it.
+    timestamp = (
+        installed_at or clock.now()
+    ).astimezone(dt.timezone.utc).isoformat(timespec="seconds")
     return {
         "id": manifest["id"], "version": manifest["version"], "kind": manifest["kind"],
         "scope": scope, "path": manifest["id"],

@@ -509,7 +509,7 @@ def cmd_pack(argv: list[str], *, out: Presenter = ConsolePresenter(),
                 return 1 if any(row["reason"] != "ok" for row in rows) else 0
             result = update_pack(
                 args.pack, to=args.to, scope=args.scope, project=project,
-                root=args.root,
+                root=args.root, clock=clock,
             )
             out.out(f"updated: {result.manifest['id']}@{result.manifest['version']} "
                     f"[{result.verification_status}] -> {result.path}")
@@ -518,6 +518,7 @@ def cmd_pack(argv: list[str], *, out: Presenter = ConsolePresenter(),
             from .installer import install_pack
             result = install_pack(
                 args.source, scope=args.scope, project=pathlib.Path.cwd(), root=args.root,
+                clock=clock,
             )
             out.out(f"installed: {result.manifest['id']}@{result.manifest['version']} "
                     f"[{result.verification_status}] -> {result.path}")

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from rig_workbench.eval.gate import quality_result_failures
 from rig_workbench.eval.compare import validate_result
+from rig_workbench.ports import Clock
+from rig_workbench.ports.local import SYSTEM_CLOCK
 
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
                    make_source, resolve_dependencies, validate_lock_root, write_lock)
@@ -322,7 +324,7 @@ def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
 
 def install_pack(
     source: pathlib.Path | str, *, scope: str, project: pathlib.Path | str,
-    root: pathlib.Path | str | None = None,
+    root: pathlib.Path | str | None = None, clock: Clock = SYSTEM_CLOCK,
 ) -> InstallResult:
     project_path = pathlib.Path(project).resolve()
     # A named-source spec (`product:northwind@1.4.0`) is resolved to a commit before anything is
@@ -391,6 +393,7 @@ def install_pack(
             pack, manifest, scope=scope, source=source_block,
             verification_status=status,
             dependency_resolution=resolve_dependencies(manifest, records),
+            clock=clock,
         )
         os.replace(pack, destination)
         installed = destination
@@ -412,7 +415,7 @@ def install_pack(
 
 def update_pack(
     pack_id: str, *, to: str, scope: str, project: pathlib.Path | str,
-    root: pathlib.Path | str | None = None,
+    root: pathlib.Path | str | None = None, clock: Clock = SYSTEM_CLOCK,
 ) -> InstallResult:
     """Move a git-pinned pack to another version, in place.
 
@@ -479,6 +482,7 @@ def update_pack(
                                source_id=source_id, revision=revision),
             verification_status=status,
             dependency_resolution=resolve_dependencies(manifest, records),
+            clock=clock,
         )
         os.replace(destination, retired)
         swapped = True
