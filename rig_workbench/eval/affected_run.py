@@ -9,8 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
-from ..ports import ProcessRunner
-from ..ports.local import SUBPROCESS
+from ..ports import Clock, Env, ProcessRunner
+from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from .affected import analyze_affected, prompt_surface_digests
 from .cases import EvalCaseError
 # Where this run files what it measured. Defined by the gate rather than here,
@@ -65,7 +65,7 @@ def run_affected(
     repo: pathlib.Path | str, *, base: str, head: str, provider: str, model: str,
     judge_provider: str, judge_model: str, provider_command: str | None = None,
     judge_command: str | None = None, timeout_s: float = 30, ratchet: bool = False,
-    proc: ProcessRunner = SUBPROCESS,
+    proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
 ) -> tuple[dict, int, pathlib.Path | None]:
     """`ratchet` has to reach here too, or the CI gate's ratchet buys nothing.
 
@@ -86,7 +86,7 @@ def run_affected(
     if affected["status"] == "noop":
         report, code = evaluate_gate(root, base=base, head=head,
                                      evidence_dir=root / ".rig" / "none", ratchet=ratchet,
-                                     proc=proc)
+                                     proc=proc, env=env, clock=clock)
         return report, code, None
     if affected["status"] == "uncovered":
         # Every way `uncovered` can be reached, named. Listing only the paths left
@@ -110,7 +110,7 @@ def run_affected(
         # empty run that would report a destination holding no evidence.
         report, code = evaluate_gate(root, base=base, head=head,
                                      evidence_dir=root / ".rig" / "none", ratchet=ratchet,
-                                     proc=proc)
+                                     proc=proc, env=env, clock=clock)
         return report, code, None
     cases: dict[str, dict] = {}
     for case_id in affected["affected_cases"]:
@@ -155,7 +155,7 @@ def run_affected(
             judge = make_judge_adapter(
                 provider=judge_provider, model=judge_model,
                 repo=adapter_cwd(judge_provider, workspace, root),
-                command=judge_command, timeout_s=timeout_s, proc=proc,
+                command=judge_command, timeout_s=timeout_s, proc=proc, env=env,
             )
             for case_id in sorted(cases):
                 path, result = run_case(
@@ -165,7 +165,7 @@ def run_affected(
                     execution_base=base, execution_head=affected["resolved_head"],
                     result_root=staging, prompt_surface_digests=digests,
                     execution_cwd=adapter_cwd(provider, workspace, root),
-                    readable_root=root, proc=proc,
+                    readable_root=root, proc=proc, env=env, clock=clock,
                 )
                 produced[case_id] = path
                 if any(row["infra_status"] is not None
@@ -192,7 +192,7 @@ def run_affected(
         report, code = evaluate_gate(
             root, base=base, head=head, evidence_dir=staging, provider=provider,
             model=model, judge_provider=judge_provider, judge_model=judge_model,
-            ratchet=ratchet, proc=proc,
+            ratchet=ratchet, proc=proc, env=env, clock=clock,
         )
         if code != 0:
             return report, code, None

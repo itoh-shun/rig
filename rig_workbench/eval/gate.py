@@ -11,8 +11,8 @@ import subprocess
 
 from rig_workbench import __version__
 
-from ..ports import ProcessRunner
-from ..ports.local import SUBPROCESS
+from ..ports import Clock, Env, ProcessRunner
+from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from .affected import analyze_affected
 from .cases import (
     EvalCaseError,
@@ -185,11 +185,11 @@ def quality_result_failures(
     expected_base: str | None = None, expected_diff: str | None = None,
     provider: str | None = None, model: str | None = None,
     judge_provider: str | None = None, judge_model: str | None = None,
-    verify_attestation: bool = True,
+    verify_attestation: bool = True, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
 ) -> list[str]:
     """Canonical attested-current quality policy for eval gates and packs."""
     validate_case(case)
-    validate_result(result, verify_attestation=verify_attestation)
+    validate_result(result, verify_attestation=verify_attestation, env=env, clock=clock)
     case_id = case["id"]
     failures: list[str] = []
     policy = case["provider_policy"]
@@ -526,7 +526,7 @@ def evaluate_gate(
     evidence_dir: pathlib.Path | str, provider: str | None = None,
     model: str | None = None, judge_provider: str | None = None,
     judge_model: str | None = None, ratchet: bool = False,
-    proc: ProcessRunner = SUBPROCESS,
+    proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
 ) -> tuple[dict, int]:
     """`ratchet` is the same direction CI drives with `eval affected --ratchet`.
 
@@ -601,7 +601,7 @@ def evaluate_gate(
         valid: list[dict] = []
         for result in candidates:
             try:
-                validate_result(result)
+                validate_result(result, env=env, clock=clock)
             except EvalCaseError as exc:
                 infra.append(f"invalid_evidence:{case_id}:{exc}")
                 continue
@@ -619,7 +619,7 @@ def evaluate_gate(
         result = matching[0]
         quality = quality_result_failures(
             result, case, provider=provider, model=model,
-            judge_provider=judge_provider, judge_model=judge_model,
+            judge_provider=judge_provider, judge_model=judge_model, env=env, clock=clock,
         )
         identity = _evidence_identity_failures(
             root, result, case_id, resolved_head=resolved_head, head=head,

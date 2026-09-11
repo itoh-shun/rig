@@ -37,8 +37,9 @@ import json
 import pathlib
 import sys
 
-from rig_workbench.ports import Presenter, ProcessRunner
-from rig_workbench.ports.local import ConsolePresenter, SubprocessRunner
+from rig_workbench.ports import Clock, Env, Presenter, ProcessRunner
+from rig_workbench.ports.local import (ConsolePresenter, OsEnv, SubprocessRunner,
+                                       SystemClock)
 
 from .capture import capture_case
 from .affected import analyze_affected
@@ -297,14 +298,14 @@ def _resolve_cases(root: pathlib.Path, selector: str) -> list[dict]:
     return by_suite
 
 
-def _read_result(path_arg: str) -> dict:
+def _read_result(path_arg: str, *, clock: Clock, env: Env) -> dict:
     path = pathlib.Path(path_arg)
     try:
         raw = path.read_text(encoding="utf-8")
         result = json.loads(raw)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise EvalCaseError(f"cannot read evaluation result: {exc}") from exc
-    validate_result(result)
+    validate_result(result, clock=clock, env=env)
     if raw != canonical_json(result):
         raise EvalCaseError(f"evaluation result is not canonical JSON: {path}")
     return result
@@ -319,7 +320,8 @@ def _case_for_result(root: pathlib.Path, result: dict) -> dict:
 
 
 def cmd_eval(argv: list[str], *, out: Presenter | None = None,
-             proc: ProcessRunner | None = None) -> int:
+             proc: ProcessRunner | None = None, env: Env | None = None,
+             clock: Clock | None = None) -> int:
     """Parse, run the command, and return its exit status.
 
     The presenter is a parameter with a default rather than a module-level instance the
@@ -332,6 +334,8 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
     args = parser.parse_args(argv)
     out = ConsolePresenter() if out is None else out
     proc = SubprocessRunner() if proc is None else proc
+    env = OsEnv() if env is None else env
+    clock = SystemClock() if clock is None else clock
     try:
         if args.command == "validate":
             return _validate_command(args.path, out)
@@ -339,7 +343,8 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
             return _list_command(args.repo, out)
         if args.command == "capture":
             output, _case = capture_case(
-                args.repo, args.task_id, allow_nonincident=args.allow_nonincident
+                args.repo, args.task_id, allow_nonincident=args.allow_nonincident,
+                clock=clock,
             )
             out.out(f"Captured draft: {output}")
             out.out("Missing requirements remain; capture does not prove a red reproduction.")
@@ -361,7 +366,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                         provider=args.judge_provider, model=args.judge_model,
                         repo=adapter_cwd(args.judge_provider, workspace, root),
                         command=args.judge_command, timeout_s=args.judge_timeout,
-                        proc=proc,
+                        proc=proc, env=env,
                     ) if args.judge_provider else None
                 )
                 output, result = run_case(
@@ -370,7 +375,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                     command=args.provider_command, timeout_s=args.timeout,
                     judge_adapter=judge_adapter, execution_base=args.execution_base,
                     execution_cwd=adapter_cwd(args.provider, workspace, root),
-                    readable_root=root, proc=proc,
+                    readable_root=root, proc=proc, env=env, clock=clock,
                 )
             out.out(str(output))
             dev_probe_only = args.provider == "mock" or args.judge_provider == "mock"
@@ -404,7 +409,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                         provider=args.judge_provider, model=args.judge_model,
                         repo=adapter_cwd(args.judge_provider, workspace, root),
                         command=args.judge_command, timeout_s=args.judge_timeout,
-                        proc=proc,
+                        proc=proc, env=env,
                     )
                     if args.judge_provider else None
                 )
@@ -416,23 +421,24 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                         timeout_s=args.timeout, judge_adapter=judge_adapter,
                         execution_base=args.execution_base,
                         execution_cwd=adapter_cwd(args.provider, workspace, root),
-                        readable_root=root, proc=proc,
+                        readable_root=root, proc=proc, env=env, clock=clock,
                     )
                     out.out(str(output))
             return 0
         if args.command == "compare":
             root = _resolve_repo(args.repo)
-            baseline = _read_result(args.baseline)
-            current = _read_result(args.current)
+            baseline = _read_result(args.baseline, clock=clock, env=env)
+            current = _read_result(args.current, clock=clock, env=env)
             case = _case_for_result(root, baseline)
-            report = compare_results(baseline, current, case=case)
+            report = compare_results(baseline, current, case=case, clock=clock, env=env)
             _emit_document(out, canonical_json(report))
             return 0 if report["status"] == "pass" else 1
         if args.command == "promote":
-            baseline = _read_result(args.baseline)
-            current = _read_result(args.current)
+            baseline = _read_result(args.baseline, clock=clock, env=env)
+            current = _read_result(args.current, clock=clock, env=env)
             output, _case = promote_case(
-                args.repo, args.draft_id, baseline, current, into=args.into
+                args.repo, args.draft_id, baseline, current, into=args.into,
+                clock=clock, env=env,
             )
             out.out(str(output))
             if args.into is not None:
@@ -453,7 +459,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                 args.repo, base=args.base, head=args.head,
                 evidence_dir=args.evidence_dir, provider=args.provider, model=args.model,
                 judge_provider=args.judge_provider, judge_model=args.judge_model,
-                ratchet=args.ratchet, proc=proc,
+                ratchet=args.ratchet, proc=proc, env=env, clock=clock,
             )
             _emit_document(out, canonical_json(report))
             return exit_code
@@ -463,7 +469,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                 model=args.model, judge_provider=args.judge_provider,
                 judge_model=args.judge_model, provider_command=args.provider_command,
                 judge_command=args.judge_command, timeout_s=args.timeout,
-                ratchet=args.ratchet, proc=proc,
+                ratchet=args.ratchet, proc=proc, env=env, clock=clock,
             )
             output = dict(report)
             output["result_dir"] = str(destination) if destination is not None else None
@@ -481,7 +487,8 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
 
 
 def main() -> None:
-    sys.exit(cmd_eval(sys.argv[1:], out=ConsolePresenter(), proc=SubprocessRunner()))
+    sys.exit(cmd_eval(sys.argv[1:], out=ConsolePresenter(), proc=SubprocessRunner(),
+                      env=OsEnv(), clock=SystemClock()))
 
 
 if __name__ == "__main__":

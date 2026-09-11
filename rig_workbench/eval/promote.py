@@ -9,6 +9,8 @@ import os
 import pathlib
 import tempfile
 
+from ..ports import Clock, Env
+from ..ports.local import OS_ENV, SYSTEM_CLOCK
 from .cases import EvalCaseError, canonical_json, validate_case
 from .compare import compare_results
 
@@ -113,6 +115,7 @@ def _pack_case_dir(into: pathlib.Path | str) -> pathlib.Path:
 def promote_case(
     repo: pathlib.Path | str, case_id: str, baseline: dict, current: dict,
     *, now: dt.datetime | None = None, into: pathlib.Path | str | None = None,
+    clock: Clock = SYSTEM_CLOCK, env: Env = OS_ENV,
 ) -> tuple[pathlib.Path, dict]:
     """Promote a draft to an approved case, in this repository or into a pack.
 
@@ -135,7 +138,7 @@ def promote_case(
     except OSError as exc:
         raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
     _draft_path, case = _load_draft(root, case_id)
-    report = compare_results(baseline, current, case=case, now=now)
+    report = compare_results(baseline, current, case=case, now=now, clock=clock, env=env)
     if report["status"] != "pass":
         raise EvalCaseError("evaluation evidence does not satisfy red/green/clean gates")
     if case["semantic_rubric"]:
@@ -150,8 +153,11 @@ def promote_case(
             )
     promoted = copy.deepcopy(case)
     promoted["status"] = "approved"
+    # UTC, like every other stamp a case or a result carries; `Clock.now()` reads the
+    # moment through the local offset and `astimezone` renders it, so the day a draft is
+    # promoted and the day its evidence was measured are on one timeline.
     promoted["updated_at"] = (
-        now or dt.datetime.now(dt.timezone.utc)
+        now or clock.now()
     ).astimezone(dt.timezone.utc).isoformat(timespec="seconds")
     validate_case(promoted)
     case_dir = _pack_case_dir(into) if into is not None else root / "evals" / "cases"

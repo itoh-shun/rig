@@ -19,8 +19,8 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from rig_workbench import __version__
-from ..ports import ProcessRunner
-from ..ports.local import SUBPROCESS
+from ..ports import Clock, Env, ProcessRunner
+from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from .attestation import sign_result_attestation
 from .cases import (
     ISOLATION_RANK,
@@ -162,10 +162,17 @@ def eval_isolation_level(provider: str, repo: pathlib.Path, model: str) -> str:
     return "none"
 
 
-def _child_environment(provider: str | None = None, **updates: str) -> dict[str, str]:
-    """Return executor environment without evaluation attestation credentials."""
+def _child_environment(provider: str | None = None, env: Env = OS_ENV,
+                       **updates: str) -> dict[str, str]:
+    """Return executor environment without evaluation attestation credentials.
+
+    `env` is the port and sits before `**updates`, which are the variables to set: an
+    update literally named `env` would collide, and there is none — every one of them is
+    a `RIG_EVAL_*` name. `snapshot()` copies, so nothing here can write the parent's
+    environment while building the child's.
+    """
     environment = {
-        key: value for key, value in os.environ.items()
+        key: value for key, value in env.snapshot().items()
         if not key.startswith("RIG_EVAL_ATTESTATION_")
     }
     if provider == "claude":
@@ -182,8 +189,8 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _iso(now: dt.datetime | None) -> str:
-    value = now or dt.datetime.now(dt.timezone.utc)
+def _iso(now: dt.datetime | None, *, clock: Clock = SYSTEM_CLOCK) -> str:
+    value = now or clock.now()
     if value.tzinfo is None:
         raise EvalCaseError("evaluation time must include a timezone")
     # Microseconds, not seconds: the gate orders a case's evidence by this field
@@ -270,7 +277,7 @@ def _execute(
     *, provider: str, model: str, payload: str, phase: str, kind: str, index: int,
     repeat: int, repo: pathlib.Path, command: str | None, timeout_s: float,
     readable_root: pathlib.Path | None = None,
-    proc: ProcessRunner = SUBPROCESS,
+    proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV,
 ) -> tuple[int, str, str, str | None]:
     if provider == "mock":
         failures = math.ceil(repeat * 2 / 3)
@@ -299,7 +306,7 @@ def _execute(
     }
     if provider not in {"claude", "codex"}:
         environment_values["RIG_EVAL_INPUT"] = payload
-    environment = _child_environment(provider, **environment_values)
+    environment = _child_environment(provider, env, **environment_values)
     try:
         completed = proc.run(
             argv, cwd=repo, env=environment, input=payload, timeout=timeout_s,
@@ -361,7 +368,7 @@ def _normalize_judge(value: Any, expected_ids: list[str]) -> dict:
 def make_judge_adapter(
     *, provider: str, model: str, repo: pathlib.Path | str,
     command: str | None = None, timeout_s: float = 30,
-    proc: ProcessRunner = SUBPROCESS,
+    proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV,
 ) -> JudgeAdapter:
     """Build a bounded, shell-free semantic judge adapter."""
     if provider not in {"mock", "command", "claude", "codex"}:
@@ -399,7 +406,7 @@ def make_judge_adapter(
             if not selected or shutil.which(selected[0]) is None:
                 return {"status": "error", "criteria": []}
         assert selected is not None
-        environment = _child_environment(provider, **(
+        environment = _child_environment(provider, env, **(
             {} if provider in {"claude", "codex"} else {"RIG_EVAL_JUDGE_INPUT": prompt}
         ))
         try:
@@ -430,7 +437,7 @@ def _sample(
     repeat: int, repo: pathlib.Path, command: str | None, timeout_s: float,
     judge_adapter: JudgeAdapter | None, prompt_prefix: str | None,
     execution_cwd: pathlib.Path, readable_root: pathlib.Path | None = None,
-    proc: ProcessRunner = SUBPROCESS,
+    proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV,
 ) -> dict:
     inputs = case["target_inputs"] if kind == "target" else case["clean_controls"]
     input_payload = canonical_json(inputs).rstrip("\n")
@@ -439,7 +446,7 @@ def _sample(
     returncode, stdout, stderr, infra = _execute(
         provider=provider, model=model, payload=payload, phase=phase, kind=kind,
         index=index, repeat=repeat, repo=execution_cwd, command=command, timeout_s=timeout_s,
-        readable_root=readable_root, proc=proc,
+        readable_root=readable_root, proc=proc, env=env,
     )
     expectations = case.get(
         "target_expectations" if kind == "target" else "clean_expectations",
@@ -501,7 +508,7 @@ def run_case(
     prompt_surface_digests: dict[str, str] | None = None,
     execution_cwd: pathlib.Path | str | None = None,
     readable_root: pathlib.Path | str | None = None,
-    proc: ProcessRunner = SUBPROCESS,
+    proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
 ) -> tuple[pathlib.Path, dict]:
     validate_case(case)
     if phase not in {"baseline", "current"}:
@@ -557,7 +564,7 @@ def run_case(
         root = pathlib.Path(repo).resolve()
     except OSError as exc:
         raise EvalCaseError(f"filesystem error resolving repository: {exc}") from exc
-    started_wall = _iso(now)
+    started_wall = _iso(now, clock=clock)
     execution_root = pathlib.Path(execution_cwd).resolve() if execution_cwd is not None else root
     # A second readable root only means something once the adapter runs outside the tree
     # the case reads from; naming the cwd again would be argv noise.
@@ -615,13 +622,13 @@ def run_case(
                       index=index, repeat=repeat, repo=root, command=command,
                       timeout_s=timeout_s, judge_adapter=judge_adapter,
                       prompt_prefix=prompt_prefix, execution_cwd=execution_root,
-                      readable_root=readable, proc=proc)
+                      readable_root=readable, proc=proc, env=env)
               for index in range(1, repeat + 1)]
     clean = [_sample(case, provider=provider, model=model, phase=phase, kind="clean",
                      index=index, repeat=repeat, repo=root, command=command,
                      timeout_s=timeout_s, judge_adapter=judge_adapter,
                      prompt_prefix=prompt_prefix, execution_cwd=execution_root,
-                     readable_root=readable, proc=proc)
+                     readable_root=readable, proc=proc, env=env)
              for index in range(1, repeat + 1)]
     target_pass = sum(row["outcome"] == "pass" for row in target)
     clean_pass = sum(row["outcome"] == "pass" for row in clean)
@@ -662,9 +669,9 @@ def run_case(
         },
     }
     result["result_sha256"] = _sha(result)
-    result["attestation"] = sign_result_attestation(result)
+    result["attestation"] = sign_result_attestation(result, env=env)
     from .compare import validate_result
-    validate_result(result, now=now)
+    validate_result(result, now=now, clock=clock, env=env)
     run_id = started_wall.replace("-", "").replace(":", "").replace("+", "p")
     results = pathlib.Path(result_root) if result_root is not None else (
         root / ".rig" / "evals" / "results"
