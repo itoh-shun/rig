@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import os
 import pathlib
 from collections.abc import Iterable
+
+from rig_workbench.ports import Env
+from rig_workbench.ports.local import OS_ENV
 
 from .model import ASSET_DIRS, PROMPT_KINDS, PackError, ResolvedAsset, ResolvedPack
 
 
-def _rig_home() -> pathlib.Path:
-    configured = os.environ.get("RIG_HOME")
+def _rig_home(*, env: Env = OS_ENV) -> pathlib.Path:
+    configured = env.get("RIG_HOME")
     return pathlib.Path(configured).expanduser().resolve() if configured else pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -16,14 +18,21 @@ def _project_root(project: pathlib.Path | str | None) -> pathlib.Path:
     return pathlib.Path(project or pathlib.Path.cwd()).resolve()
 
 
-def pack_roots(project: pathlib.Path | str | None = None) -> list[tuple[str, pathlib.Path]]:
+def pack_roots(project: pathlib.Path | str | None = None, *,
+               env: Env = OS_ENV) -> list[tuple[str, pathlib.Path]]:
     root = _project_root(project)
-    home = pathlib.Path(os.environ.get("RIG_USER_HOME", pathlib.Path.home())).expanduser()
-    org = os.environ.get("RIG_ORG_HOME")
+    # `Env.get` answers `str | None`, so the fallback is chosen on `is None` rather than
+    # handed to `get` as a default: `os.environ.get(name, Path.home())` returned a `Path`
+    # for the unset case and the empty string for `RIG_USER_HOME=`, and those are two
+    # different answers. Keeping the `is None` test keeps both of them as they were.
+    configured = env.get("RIG_USER_HOME")
+    home = pathlib.Path(
+        pathlib.Path.home() if configured is None else configured).expanduser()
+    org = env.get("RIG_ORG_HOME")
     result = [("project", root / ".rig" / "packs"), ("user", home / ".rig" / "packs")]
     if org:
         result.append(("org", pathlib.Path(org).expanduser() / "packs"))
-    rig = _rig_home()
+    rig = _rig_home(env=env)
     result.extend((("official", rig / "packs" / "official"), ("core", rig / "packs" / "core")))
     return result
 
