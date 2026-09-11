@@ -208,8 +208,15 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # `out.err` and `out.out`. That last one is also why this number and ruff's disagree:
     # T201 does not count a `print` whose `file=` is a conditional expression, so the
     # ledger line in `pyproject.toml` said 211 where this said 212.
+    #
+    # 96 -> 63 is `queueing.py`: `cmd_queue` and the `_cmd_queue_dispatch` it hands its
+    # argv to, which between them are the whole of the `queue` verb. The dispatcher takes
+    # the port and `cmd_queue` forwards it, so the two halves of one command cannot end up
+    # holding different presenters; `_run_one`'s local `out` — the generator's reply —
+    # became `reply`, because it shadowed the port inside the one closure that must not
+    # lose it.
     "orchestrate": {
-        "print": 96,
+        "print": 63,
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,
