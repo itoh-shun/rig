@@ -38,6 +38,7 @@ import pathlib
 from typing import Any
 
 from ..eval.cases import EvalCaseError, canonical_json, validate_case
+from ..eval.compare import validate_result
 from ..eval.execution import execution_diff_sha256
 from ..eval.gate import quality_result_failures
 from ..eval.runner import _git_identity
@@ -80,6 +81,17 @@ class _EvalPillar:
         return execution_diff_sha256(
             repo, base=base, ignored_untracked_prefixes=ignored_untracked_prefixes,
         )
+
+    @staticmethod
+    def validate_result(result: Any, *, verify_attestation: bool = True) -> dict:
+        """The result, checked as a document — shape, schema and attestation.
+
+        A different question from `result_failures`, which asks whether a *valid* result
+        clears release policy. `installer.py` wants both, in that order, and reporting
+        them as one verdict would leave a caller unable to tell a corrupt file from an
+        honest measurement that failed.
+        """
+        return validate_result(result, verify_attestation=verify_attestation)
 
     @staticmethod
     def result_failures(result: dict, case: dict, *, expected_commit: str | None = None,

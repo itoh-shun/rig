@@ -9,12 +9,12 @@ import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
-from rig_workbench.eval.gate import quality_result_failures
-from rig_workbench.eval.compare import validate_result
 from rig_workbench.ports import Clock
 from rig_workbench.ports.local import SYSTEM_CLOCK
 
+from .eval_bridge import EVALUATION
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
                    make_source, resolve_dependencies, validate_lock_root, write_lock)
 from .manifest import read_json_yaml
@@ -247,7 +247,37 @@ def _pack_root(content: pathlib.Path) -> pathlib.Path:
         f"{', '.join(item.name for item in candidates)}")
 
 
-def local_quality_status(pack: pathlib.Path, manifest: dict) -> str:
+@runtime_checkable
+class ResultGate(Protocol):
+    """The two questions an install asks of a pack's own evaluation results.
+
+    Whether the document is a valid, attested result at all, and — given that it is —
+    whether it clears release policy. `installer.py` decides what an install *records*
+    about a pack; it does not decide what makes a measurement trustworthy, and a second
+    answer to that here would be a second definition of "verified" one import away from
+    the first, free to drift while both claimed to be the rule.
+
+    Stated as a protocol rather than imported, because the import is the one the layering
+    rule forbids a judgement module (`tests/test_layering_contract.py`): the standard
+    library, its own pillar and the six ports, and `eval` is none of the three. Narrower
+    than `evidence.EvalEvidence` on purpose — an install needs two of those questions, not
+    five — and both are satisfied by the same `packs/eval_bridge.py` value, which is what
+    a structural protocol is for.
+    """
+
+    def validate_result(self, result: Any, *, verify_attestation: bool = True) -> dict:
+        """The result, checked as a document; raises if it is not one."""
+        ...
+
+    def result_failures(self, result: dict, case: dict, *, expected_commit: str | None = None,
+                        expected_base: str | None = None, expected_diff: str | None = None,
+                        verify_attestation: bool = True) -> list[str]:
+        """Why the result does not clear release policy, empty when it does."""
+        ...
+
+
+def local_quality_status(pack: pathlib.Path, manifest: dict, *,
+                         evaluation: ResultGate = EVALUATION) -> str:
     """The verification status an install records: what this pack's own evidence supports.
 
     This is the whole of it. There used to be a second, higher rung — a publisher signature
@@ -269,7 +299,7 @@ def local_quality_status(pack: pathlib.Path, manifest: dict) -> str:
     for rel in manifest["assets"]["eval-result"]:
         _raw, result = read_json_yaml(pack / rel)
         try:
-            validate_result(result, verify_attestation=True)
+            evaluation.validate_result(result, verify_attestation=True)
         except Exception as exc:
             raise PackError(f"invalid attested pack evaluation result: {rel}: {exc}") from exc
         if result.get("case_id") not in evidence:
@@ -284,7 +314,8 @@ def local_quality_status(pack: pathlib.Path, manifest: dict) -> str:
         if len(current) != 1:
             return "unverified"
         try:
-            failures = quality_result_failures(current[0], case, verify_attestation=True)
+            failures = evaluation.result_failures(
+                current[0], case, verify_attestation=True)
         except Exception as exc:
             raise PackError(
                 f"invalid attested pack evaluation result for {case_id}: {exc}"
