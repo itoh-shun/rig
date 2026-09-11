@@ -6,16 +6,17 @@ must read them as attributes of THIS module (`state.results`, `state._pass`,
 module boundaries (`from .state import _pass` would snapshot the int).
 Importing `_emit` itself is fine — its `global` statement always mutates this
 module's namespace.
+
+PyYAML is reached through `yaml_adapter.require_yaml()` rather than imported here. The
+guard this module used to hold printed a line and called `sys.exit(1)` while the module
+was still being imported, so every importer of `state` inherited a process exit it could
+not see coming; `yaml_adapter`'s docstring says what replaced it and why the message and
+the stream did not change.
 """
 
 import pathlib
-import sys
 
-try:
-    import yaml
-except ImportError:
-    print("[ERROR] PyYAML not found. Install it with `pip install pyyaml`.")
-    sys.exit(1)
+from .yaml_adapter import require_yaml
 
 # ── counters ─────────────────────────────────────────────────────────────────
 results: list[str] = []
@@ -41,6 +42,7 @@ def parse_frontmatter(path: pathlib.Path) -> tuple[dict | None, str]:
     parts = text.split("---", 2)
     if len(parts) < 3:
         return None, text
+    yaml = require_yaml()
     try:
         fm = yaml.safe_load(parts[1]) or {}
         return fm, parts[2]

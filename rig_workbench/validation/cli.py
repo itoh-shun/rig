@@ -53,6 +53,7 @@ from .skills_spec import check_skills_spec
 from .selftest import run_selftest
 from .stale_refs import check_stale_refs
 from .state import _emit
+from .yaml_adapter import PyYAMLMissing, require_yaml
 
 
 # ── main ─────────────────────────────────────────────────────────────
@@ -64,6 +65,16 @@ def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter()) -> int
     in-process caller may hand in its own. The default exists so those callers keep working
     unchanged. It is forwarded to every call whose signature declares it.
     """
+    try:
+        # The pillar's one optional dependency. This used to be a `try/except ImportError`
+        # at the top of `state.py` that printed and called `sys.exit(1)` during the import
+        # itself; it is a call here so the shell can report it like anything else it
+        # reports. Same text, same stream (stdout), same status.
+        require_yaml()
+    except PyYAMLMissing as missing:
+        out.out(f"[ERROR] {missing}")
+        return 1
+
     if argv and argv[0] == "selftest":
         # `run_selftest` ends in `sys.exit` itself and the codes are contract; the
         # `return` below is unreachable and is here so the signature stays honest.
