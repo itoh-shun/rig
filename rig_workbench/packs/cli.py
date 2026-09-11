@@ -31,8 +31,9 @@ a plain `out.out` would add a second one — a byte-for-byte change to output th
 environment reads in `resolver.py` and `trust.py` and the one `subprocess` call in
 `sources.py` are behind their ports with the default adapter (`*, env: Env = OS_ENV`), so
 a caller that wants to inject one can, but the shell does not thread them down: doing so
-moves 23 call sites across 7 files, most of them in pillars that have not migrated. That
-is pass 2, and the tripwire says so rather than asserting a forwarding nobody built.
+moves 23 call sites across 12 files, five of those sites (in three files) outside this
+pillar. That is pass 2, and the tripwire says so rather than asserting a forwarding
+nobody built.
 """
 
 from __future__ import annotations

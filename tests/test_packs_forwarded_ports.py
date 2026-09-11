@@ -29,9 +29,10 @@ the class reaches all of them, including the adapter the shell builds for itself
 put the environment reads in `resolver.py` and `trust.py` and the one `subprocess` call in
 `sources.py` behind their ports with the default adapter on the signature, but did not
 thread either port down from the shell: `cmd_pack` does not take an `env` or a `proc`,
-because handing them down moves 23 call sites across 7 files, most of them in pillars that
-have not migrated. Disarming those two classes here would therefore assert a forwarding
-nobody built and fail on `pack list` before it reached anything worth measuring. When the
+because handing them down moves 23 call sites across 12 files, five of those sites (in
+three files) outside this pillar. Disarming those two classes here would therefore assert
+a forwarding nobody built and fail on `pack list` before it reached anything worth
+measuring. When the
 shell grows them, they belong in `no_ambient_ports` alongside the two that are there —
 and `test_the_env_and_process_ports_are_injectable_at_their_own_call_sites` is what holds
 the ground in the meantime: it shows the ports really are reachable by injection, which is
