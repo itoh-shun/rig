@@ -24,7 +24,7 @@ where it runs. These are smoke tests: they say "this path executes and answers
 like this", not "this answer is correct".
 
 That second freeze covers a named handful, not the surface: the verbs spawned
-beyond `--help` are exactly the ones in VERBS_SMOKE_RUN — 21 of the 122 verbs
+beyond `--help` are exactly the ones in VERBS_SMOKE_RUN — 20 of the 120 verbs
 frozen above. Every other verb is reached here by `--help` alone, which proves
 its module imports and its parser builds and nothing more. This file claims no
 behavioural coverage of them.
@@ -70,8 +70,8 @@ GOVERN_SUBCOMMANDS = frozenset({
 # `rig-wb pack --help` — prompt-pack lifecycle and publishing.
 PACK_SUBCOMMANDS = frozenset({
     "bundle", "doctor", "explain", "export", "import-results", "info", "init",
-    "install", "invoke", "keygen", "knowledge", "list", "outdated", "remove",
-    "sign", "source", "sync", "test", "update", "validate", "verify-sources",
+    "install", "invoke", "knowledge", "list", "outdated", "remove",
+    "source", "sync", "test", "update", "validate", "verify-sources",
 })
 
 # `rig-wb eval --help` — versioned regression evaluation cases.
@@ -124,9 +124,9 @@ HELP_ANSWERING_SUBCOMMANDS = tuple(sorted(TOP_LEVEL_SUBCOMMANDS)) + tuple(sorted
 # imports and the parser is still built; only the side effect is skipped.
 # Keyed by argv prefix; the reason is what a later reader needs, not decoration.
 #
-# This is *not* the complement of what this file runs. Only 21 of the 122 frozen
+# This is *not* the complement of what this file runs. Only 20 of the 120 frozen
 # verbs are spawned beyond `--help` (VERBS_SMOKE_RUN, below); the ~100 that are
-# not spawned are, with these 11 exceptions, simply unexercised rather than ruled
+# not spawned are, with these 10 exceptions, simply unexercised rather than ruled
 # out. The name says "deliberately" for that reason: the old name claimed to
 # enumerate every not-run verb and enumerated a tenth of them.
 VERBS_DELIBERATELY_NOT_RUN_BEYOND_HELP = {
@@ -139,7 +139,6 @@ VERBS_DELIBERATELY_NOT_RUN_BEYOND_HELP = {
     "govern init": "scaffolds policy files and binds the repository",
     "githooks install": "writes rig's hooks into .git/hooks",
     "pack install": "resolves a source (git clone) and writes into an install scope",
-    "pack sign": "needs a private key and writes signature material",
     "pack remove": "deletes an installed pack from a scope",
 }
 
@@ -264,7 +263,6 @@ VERBS_THAT_REQUIRE_ARGUMENTS = (
     "pack explain",
     "pack update",
     "pack export",
-    "pack keygen",
     "pack import-results",
     "eval reproduce",
     "eval affected-run",
@@ -276,7 +274,7 @@ VERBS_THAT_REPORT_AN_EMPTY_PACK_SCOPE = ("pack list", "pack outdated", "pack ver
 # Every verb this file actually spawns beyond `--help`, written down so the
 # coverage level is a stated number rather than an impression. The two tuples
 # above are parametrised; the rest each have a test of their own further down.
-# 21 verbs, against the 122 frozen at the top of this file.
+# 20 verbs, against the 120 frozen at the top of this file.
 VERBS_SMOKE_RUN = frozenset(VERBS_THAT_REQUIRE_ARGUMENTS) | frozenset(
     VERBS_THAT_REPORT_AN_EMPTY_PACK_SCOPE) | frozenset({
         "wb contract", "wb digest", "wb gc", "govern whoami", "pack sync",
