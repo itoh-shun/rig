@@ -6,6 +6,8 @@ import json
 import pathlib
 import re
 
+from ..ports import Presenter
+from ..ports.local import CONSOLE
 from . import config
 from .recipes import parse_frontmatter
 
@@ -299,11 +301,11 @@ def build_brick_graph(
     }
 
 
-def cmd_graph(args):
+def cmd_graph(args, *, out: Presenter = CONSOLE):
     """graph [--json] [--focus <name>]: display the active typed graph."""
     graph = build_brick_graph(project=config.INVOCATION_CWD)
     if "--json" in args:
-        print(json.dumps(graph, ensure_ascii=False, indent=2))
+        out.out(json.dumps(graph, ensure_ascii=False, indent=2))
         return
     if "--focus" in args:
         name = args[args.index("--focus") + 1]
@@ -320,17 +322,17 @@ def cmd_graph(args):
             })
         }
         if not ids:
-            print(f"[graph] no node matches focus: {name}")
+            out.out(f"[graph] no node matches focus: {name}")
             raise SystemExit(1)
         for node_id in sorted(ids):
-            print(f"◈ {node_id}")
+            out.out(f"◈ {node_id}")
             for edge in graph["edges"]:
                 if edge["from"] == node_id:
                     suffix = "" if edge["resolved"] else "  (unresolved)"
-                    print(f"  → {edge['rel']} → {edge['to']}{suffix}")
+                    out.out(f"  → {edge['rel']} → {edge['to']}{suffix}")
             for edge in graph["edges"]:
                 if edge["to"] == node_id:
-                    print(f"  ← {edge['rel']} ← {edge['from']}")
+                    out.out(f"  ← {edge['rel']} ← {edge['from']}")
         return
     kinds: dict[str, int] = {}
     for node in graph["nodes"]:
@@ -339,12 +341,12 @@ def cmd_graph(args):
     unresolved = [edge for edge in graph["edges"] if not edge["resolved"]]
     for edge in graph["edges"]:
         rels[edge["rel"]] = rels.get(edge["rel"], 0) + 1
-    print("Brick graph (typed; derived from frontmatter/steps, never hand-written)")
-    print(f"  nodes: {len(graph['nodes'])}  (" + " / ".join(
+    out.out("Brick graph (typed; derived from frontmatter/steps, never hand-written)")
+    out.out(f"  nodes: {len(graph['nodes'])}  (" + " / ".join(
         f"{kind} {count}" for kind, count in sorted(kinds.items())) + ")")
-    print(f"  edges: {len(graph['edges'])}  (" + " / ".join(
+    out.out(f"  edges: {len(graph['edges'])}  (" + " / ".join(
         f"{rel} {count}" for rel, count in sorted(rels.items())) + ")")
-    print(f"  unresolved edges: {len(unresolved)}")
+    out.out(f"  unresolved edges: {len(unresolved)}")
     for edge in unresolved:
-        print(f"    ✗ {edge['from']} → {edge['rel']} → {edge['to']}")
-    print("  one-hop exploration: graph --focus <name> / machine-readable: graph --json")
+        out.out(f"    ✗ {edge['from']} → {edge['rel']} → {edge['to']}")
+    out.out("  one-hop exploration: graph --focus <name> / machine-readable: graph --json")

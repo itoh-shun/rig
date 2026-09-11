@@ -221,8 +221,13 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # it is the run loop, and its words are pass 2's problem. `cmd_probe`'s local `out` —
     # what the provider answered — is `reply` now, for the same reason `queueing.py`'s was
     # renamed: the port and the provider's reply cannot share a name.
+    #
+    # 47 -> 25 is `graph.py` and `mcp_scan.py`, one command each (`cmd_graph`,
+    # `cmd_mcp_scan`) and 11 sites each. Both render a report whose `--json` arm hands a
+    # whole `json.dumps(...)` block to a single call, which is the shape `Presenter.out`
+    # was written for and the reason it takes text rather than a format.
     "orchestrate": {
-        "print": 47,
+        "print": 25,
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,

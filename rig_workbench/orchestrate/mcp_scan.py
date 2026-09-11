@@ -15,6 +15,8 @@ import re
 import sys
 
 from .. import repo_paths
+from ..ports import Presenter
+from ..ports.local import CONSOLE
 
 _SECRET_RE = re.compile(
     r"-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
@@ -190,24 +192,24 @@ def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
             "tool_findings": tool_findings, "overall_severity": overall}
 
 
-def cmd_mcp_scan(args):
+def cmd_mcp_scan(args, *, out: Presenter = CONSOLE):
     result = mcp_scan()
     if "--json" in args:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        out.out(json.dumps(result, ensure_ascii=False, indent=2))
         return
     if not result["available"]:
-        print(f"[mcp-scan] {result['reason']}")
+        out.out(f"[mcp-scan] {result['reason']}")
         sys.exit(0)  # #263 not installed means "nothing to scan", not a CI failure
-    print(f"## rig mcp-scan — static threat analysis of {result['path']} (three-layer adversarial reasoning, #303)\n")
-    print("### Module-level (subprocess/secret path shared by every tool)\n")
+    out.out(f"## rig mcp-scan — static threat analysis of {result['path']} (three-layer adversarial reasoning, #303)\n")
+    out.out("### Module-level (subprocess/secret path shared by every tool)\n")
     for f in result["module_findings"]:
-        print(f"- **{f['axis']}**")
-        print(f"  - attacker's view: {f['attacker']}")
-        print(f"  - defender's view: {f['defender']}")
-        print(f"  - auditor's verdict: {f['auditor']}")
-    print(f"\n### Tool-level ({len(result['tool_findings'])} tools)\n")
+        out.out(f"- **{f['axis']}**")
+        out.out(f"  - attacker's view: {f['attacker']}")
+        out.out(f"  - defender's view: {f['defender']}")
+        out.out(f"  - auditor's verdict: {f['auditor']}")
+    out.out(f"\n### Tool-level ({len(result['tool_findings'])} tools)\n")
     for f in result["tool_findings"]:
-        print(f"- `{f['tool']}` [{f['kind']}] — {f['auditor_verdict']}")
+        out.out(f"- `{f['tool']}` [{f['kind']}] — {f['auditor_verdict']}")
     label = {"high": "needs action (CI fails)", "medium": "needs review (CI passes, flagged)", "low": "CI passes"}
-    print(f"\nOverall verdict: {result['overall_severity'].upper()} ({label[result['overall_severity']]})")
+    out.out(f"\nOverall verdict: {result['overall_severity'].upper()} ({label[result['overall_severity']]})")
     sys.exit(1 if result["overall_severity"] == "high" else 0)
