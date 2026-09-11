@@ -189,6 +189,78 @@ heaviest check is that content was preserved. Schema and template ship in
 `japanese-writing` reviewer gains the sensor as an optional stdin pre-pass — evidence for
 `readability`, never a verdict.
 
+**Six ports, three ratchets, and the first of five pillars behind them.** `rig_workbench/ports/`
+declares six protocols — `Presenter`, `ProcessRunner`, `FileStore`, `Env`, `GitRepo`, `Clock` —
+with one adapter module (`ports/local.py`) wrapping today's behaviour exactly. Three ratchets went
+in before any pillar moved, because stage 3 of `docs/v3-architecture-design-brief.ja.md` spans many
+sessions and a change that large cannot tell progress from drift: `tests/test_architecture_inventory.py`
+freezes the import cycles as an *exact set* (six at run time, plus one that exists only under
+`if TYPE_CHECKING:`) so a cycle that vanishes cannot pay for one that appears, together with the hub
+and god-module edge counts (37 modules import `workbench/state.py`; `workbench/cli.py` reaches 39
+distinct modules through 40 import statements) and the effect sites per package per kind, all counted
+over the AST rather than by line match — which is why `print` is 1,073 and not the 1,082 the design
+brief had been carrying, `write_text`/`open(w,a)` are 53/17 and not 63/27, and wall-clock reads, never
+counted before, are 43. `pyproject.toml` bans the 22 calls the ports replace and covers every
+unmigrated path in a per-file-ignores ledger whose 42 lines each carry the count sitting behind them.
+`tests/test_layering_contract.py` asserts the one import rule: a migrated pillar's judgement layer may
+reach the standard library, its own pillar, and `rig_workbench.ports`, and nothing else. A pillar's
+migration is *completed* by deleting its ledger line, and govern's — `68 print, 12 banned` — is gone.
+**Nothing a user runs behaves differently**, with the single exception recorded under Changed.
+
+**govern went first because it measured smallest, not because it looked easiest.** Of the five
+pillars the module graph actually has — which do not match the directory names — govern is the only
+one in no run-time cycle whose judgement layer exercises all six ports: 11 modules, 87 effect sites,
+and exactly two edges leaving the package. Its effect counts are now `print` 0, `subprocess` 0,
+`open(w,a)` 0, `os.environ` 0, clock 0, and `write_text` 6 — the last honestly not zero, because four
+of the six are the shell's own `pathlib` writes for the files `init`, `migrate` and `--out` create and
+the other two are `files.write_text(...)` port calls the AST counts by attribute name. The last edge
+out of the judgement layer was inverted rather than moved: `conformance.py` states what it needs of
+run records as a protocol of its own and takes them as an argument, and the shell passes them in.
+
+**govern's parser is now generated from the capability table.** `rig_workbench/registry/parser.py`
+builds the argparse tree from `children("govern")`, and `tests/test_generated_parser_equivalence.py`
+holds it to the parser govern shipped across four layers — verb sets, eight attributes per action,
+eleven rendered help screens byte for byte, and real argument vectors compared on namespace and on
+argparse's own stderr. Writing the surface down found four things. Three `dest` collisions, of which
+one was losing data: `govern audit --action` derived the same attribute as `audit`'s own `action`
+positional and silently overwrote it, and `mutation`'s `--report` and `--format` do the same thing
+against their positionals — the shipping code had spelled `report_flag` and `format_flag` and the
+declaration had not said so. `Flag` gained `dest`, `Capability` now refuses two flags landing on one
+attribute, and 4 of the table's 580 flags declare a `dest`. `Flag` also gained `aliases`, for
+`wb route`'s `--explicit-recipe` beside `--recipe`, which no field could express. And one thing still
+cannot be a field at all: `wb compose-options --diff` passes a custom converter (`non_negative_diff`),
+which the registry's callable ban excludes, so the table says `type="int"` and the rejection of a
+negative value lives outside the declaration. That one is left open for the remaining pillars.
+
+**A ratchet that reported zero for a reason that was not true.** The clock walk matched three
+spellings (`now`, `utcnow`, `time.time`) out of the thirteen a file can use, so govern's ceiling read
+0 while `govern/cli.py` still called `datetime.date.today()`. The walk and the ruff ban now name the
+same thirteen and a test reads the ban table out of `pyproject.toml` so the two halves cannot drift.
+Widening it found a second `datetime.date.today()` in `validation/catalog.py` and raised
+`orchestrate` from 4 to 6; those numbers are re-measured, not regressed.
+
+**Four of the five pillars have not started.** The design brief records the remaining cost from the
+same ratchet and ledger: `eval`+`packs`+two `orchestrate` modules are one pillar because a 12-module
+cycle spans them (129 effect sites), the rest of `orchestrate` (272), `workbench` (562), and the 31
+modules directly under `rig_workbench/` (285), which are a bag rather than a layer. `validation/` is
+not a pillar at all — nothing outside it imports it.
+
+### Changed
+
+**`rig-wb govern --help` reads differently on seven lines, and that is the only user-visible part of
+the port migration.** The ten verb summaries are byte-identical to the ones govern shipped; what moved
+is seven argument lines, in exactly two kinds. Six arguments gained help text where the hand-written
+parser gave them none — the `action` positional of `policy`, `approve`, `waiver` and `audit`,
+`migrate --scope`, and `rollup --since-days` (which `conformance` had always explained and `rollup`
+had not). One line lost something: `govern can`'s `permission` used to interpolate the live
+`PERMISSIONS` tuple and now reads "the permission to check". Declaring it as a `choice` would put the
+list back and would also move the refusal of an unknown permission from govern's exit 1 to argparse's
+exit 2 — a caller-visible contract, so the list is the cheaper thing to lose. Every verb, flag, exit
+code and output schema is otherwise unchanged. Each of the seven is recorded in
+`tests/test_generated_parser_equivalence.py`, which renders both parsers in one process and compares
+all eleven screens byte for byte, so the next such change has to be a decision rather than a silent
+rewrite.
+
 ### Fixed
 
 **A workbench failure is no longer reported as a judgement: it exits 2, not 1.**
