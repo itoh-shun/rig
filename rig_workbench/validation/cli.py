@@ -24,13 +24,13 @@ calls into the judgement layer without passing it on leaves the *callee's defaul
 charge, and the callee's default is the real adapter, so the command quietly runs on two
 of them.
 
-**Words leave through the `Presenter` port.** No function here calls `print`. `cmd_validate`
-takes an `out: Presenter`, the adapter is built once at the process boundary in `main()`,
-and it is forwarded to every call below whose signature declares one — today that is
-`run_selftest`. A module-level
-instance reached for from inside would be the same global under a different name, and the
-point of the port is that a caller (a test, an embedding harness) can hand in a different
-one.
+**Words leave through the `Presenter`.** No function here calls `print`: the report
+header, every accumulated result line, the tally and the verdict all go through `out`, and
+so does the one line a missing PyYAML produces. Which stream a line goes to is unchanged —
+everything this file said went to stdout and still does, `out.out`. A module-level adapter
+reached for from inside any of them would be the same global under a different name, and
+the point of the port is that a caller (a test, an embedding harness) can hand in a
+different one.
 
 **`main()` still takes no arguments and still ends in `sys.exit`, on purpose.**
 `rig_workbench/cli.py:_run_validate` loads `scripts/validate.py` with `importlib`,
@@ -72,10 +72,11 @@ def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter(),
                  clock: Clock = SystemClock()) -> int:
     """Run the validator and return its exit status.
 
-    The presenter is a parameter rather than a module-level instance this function reaches
-    for: `main()` builds an adapter at the process boundary and passes it in, and an
-    in-process caller may hand in its own. The default exists so those callers keep working
-    unchanged. It is forwarded to every call whose signature declares it.
+    The four ports are parameters rather than module-level instances this function reaches
+    for: `main()` builds an adapter apiece at the process boundary and passes them in, and
+    an in-process caller may hand in its own. The defaults exist so those callers keep
+    working unchanged. Each is forwarded to every call below whose signature declares it,
+    which is the rule the module docstring states and the tripwire checks.
     """
     try:
         # The pillar's one optional dependency. This used to be a `try/except ImportError`
