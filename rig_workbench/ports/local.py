@@ -35,6 +35,7 @@ import pathlib
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from typing import Literal, overload
 
 from .. import gitroot
 from ..orchestrate import secure_fs
@@ -51,19 +52,48 @@ class ConsolePresenter:
 
 
 class SubprocessRunner:
-    """`subprocess.run(..., capture_output=True, text=True)`.
+    """`subprocess.run(..., capture_output=True)`, decoded the way the call sites decode.
 
     `cwd` is stringified rather than passed through, matching `govern/identity.current_actor`
     (`cwd=str(root) if root else None`) and `gitroot._git`; `subprocess` accepts a `Path` either
     way, but doing it here keeps one shape for every caller.
+
+    **Text mode is `encoding="utf-8", errors="replace"`, not a bare `text=True`.** A bare
+    `text=True` decodes with `locale.getencoding()` and *strict* errors, so it does not merely
+    disagree with the 25 sites that spell the pair out (`eval/`, `packs/publisher.py`) — on a
+    process whose output will not decode it raises `UnicodeDecodeError` out of the call,
+    where those sites get U+FFFD and carry on. `git` produces exactly that output the moment a
+    repository holds a path or an author name in another encoding. With `text=False` nothing
+    is decoded and `stdout`/`stderr` come back as the `bytes` the process wrote, which is what
+    `eval/execution.py:43`, `eval/gate.py:45` and `eval/affected.py:412` need.
     """
 
+    @overload
+    def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = ...,
+            env: Mapping[str, str] | None = ..., timeout: float | None = ...,
+            input: str | bytes | None = ...,
+            text: Literal[True] = ...) -> subprocess.CompletedProcess[str]:
+        ...
+
+    @overload
+    def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = ...,
+            env: Mapping[str, str] | None = ..., timeout: float | None = ...,
+            input: str | bytes | None = ...,
+            text: Literal[False]) -> subprocess.CompletedProcess[bytes]:
+        ...
+
     def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+            env: Mapping[str, str] | None = None, timeout: float | None = None,
+            input: str | bytes | None = None, text: bool = True,
+            ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        # `encoding` implies text mode to `subprocess`, so the two kwargs are the whole of the
+        # switch; passing `text=True` alongside them would add nothing and passing it in the
+        # bytes arm would undo the arm. `input=None` is what `subprocess.run` sees when a
+        # caller omits it, so there is no second call shape for the no-stdin case.
+        decoding: dict[str, str] = {"encoding": "utf-8", "errors": "replace"} if text else {}
         return subprocess.run(list(argv), cwd=None if cwd is None else str(cwd),
                               env=None if env is None else dict(env), timeout=timeout,
-                              capture_output=True, text=True)
+                              input=input, capture_output=True, **decoding)
 
 
 class LocalFileStore:

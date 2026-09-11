@@ -35,7 +35,7 @@ its call sites untouched.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, overload, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover - annotations only; see the leaf note above
     import datetime
@@ -78,29 +78,69 @@ class ProcessRunner(Protocol):
     `govern/cli._head` (`git rev-parse HEAD`, the same shape) and `gitroot._git`, which adds
     `env=`. Those are the sites this port must serve on day one.
 
-    Capture is not optional and neither is text mode, which is the one place this port is
-    narrower than `subprocess.run`. A runner that lets output through to the real stdout hands
-    a judgement module a second way to speak, next to `Presenter` and outside anything a test
-    can capture or a caller can redirect — the exact scatter this stage exists to end. A
-    command whose output is meant for the operator is two calls: run it here, print it there.
+    Capture is not optional, and that is the one place this port is narrower than
+    `subprocess.run`. A runner that lets output through to the real stdout hands a judgement
+    module a second way to speak, next to `Presenter` and outside anything a test can capture
+    or a caller can redirect — the exact scatter this stage exists to end. A command whose
+    output is meant for the operator is two calls: run it here, print it there.
+
+    **Text is the default; it is no longer the rule.** `text=False` exists because three sites
+    in the second pillar read bytes and decoding would destroy what they read:
+    `eval/affected.py:412` (`git cat-file --batch`, whose stdout is length-framed binary),
+    `eval/execution.py:43` (`git diff --binary` and `ls-files -z`, hashed byte for byte into
+    an execution identity) and `eval/gate.py:45` (which reads no output at all). In text mode
+    the adapter decodes `encoding="utf-8", errors="replace"` rather than passing a bare
+    `text=True`: bare `text=True` decodes with the locale's encoding and strict errors, which
+    raises on output that will not decode, and the 25 text-mode sites in that pillar all name
+    the pair themselves. The result type follows the mode, stated as
+    two overloads — `CompletedProcess[str]` with `text` on, `CompletedProcess[bytes]` with it
+    off — so a caller reaching for `.stdout` is told which of the two it is holding rather than
+    handed something it has to narrow.
+
+    `input=` is here because callers brought one, which was the condition for adding it:
+    `eval/runner.py:305` and `:409` feed a prompt as `str`, `eval/affected.py:412` feeds object
+    ids as `bytes`. Hence `str | bytes`, and hence matching it to `text` is the caller's
+    business, exactly as `subprocess.run` leaves it.
 
     `check=` is absent because no site uses it: `identity` wraps the call in `try/except` and
-    reads `stdout`, `gitroot` reads `returncode`, and an exception-raising variant would give
-    those two a third failure mode to handle. `shell=` is absent on purpose — the tree holds
-    three `shell=True` calls (`orchestrate/providers.py:2314` and `:2787`, and
-    `orchestrate/commands.py:248`) and none of them is coming through here. `input=` is absent
-    because no govern site feeds a process; the port grows it when a migrating caller brings one.
+    reads `stdout`, `gitroot` reads `returncode`, and the four sites that could pass it
+    (`packs/publisher.py:44`, `:423`, `:431`, `:436`) all pass `check=False`. An
+    exception-raising variant would give every one of them a second failure mode to handle.
+    `shell=` is absent on purpose — the tree holds three `shell=True` calls
+    (`orchestrate/providers.py:2314` and `:2787`, and `orchestrate/commands.py:248`) and none
+    of them is coming through here. `errors=` is absent, and one site pays for it:
+    `eval/affected.py:381` decodes `git ls-tree -z` with `surrogateescape` so that an
+    undecodable path keeps a spelling both sides of a comparison agree on. Whether that becomes
+    a parameter or that call stays outside the port is a decision for the commit that moves it.
     """
 
-    def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = None,
-            env: Mapping[str, str] | None = None,
-            timeout: float | None = None) -> subprocess.CompletedProcess[str]:
-        """Run `argv` to completion with its output captured as text.
+    @overload
+    def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = ...,
+            env: Mapping[str, str] | None = ..., timeout: float | None = ...,
+            input: str | bytes | None = ...,
+            text: Literal[True] = ...) -> subprocess.CompletedProcess[str]:
+        ...
 
-        Returns what `subprocess.run(..., capture_output=True, text=True)` returns, because
-        that is what today's callers already read (`proc.stdout.strip()`, `proc.returncode`)
-        and a different result type would make the migration a rewrite rather than a swap.
-        `env` replaces the environment rather than adding to it, as `subprocess` does.
+    @overload
+    def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = ...,
+            env: Mapping[str, str] | None = ..., timeout: float | None = ...,
+            input: str | bytes | None = ...,
+            text: Literal[False]) -> subprocess.CompletedProcess[bytes]:
+        ...
+
+    def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = None,
+            env: Mapping[str, str] | None = None, timeout: float | None = None,
+            input: str | bytes | None = None, text: bool = True,
+            ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        """Run `argv` to completion with its output captured.
+
+        Returns what `subprocess.run(..., capture_output=True)` returns, with the decoding the
+        call sites already ask for: `encoding="utf-8", errors="replace"` when `text` is on, and
+        no decoding at all when it is off. That is what today's callers already read
+        (`proc.stdout.strip()`, `proc.returncode`, and `bytes` at the three sites above), so
+        the migration stays a swap rather than a rewrite. `env` replaces the environment rather
+        than adding to it, as `subprocess` does; `input` is written to the process's stdin and
+        has to be `str` in text mode and `bytes` out of it, again as `subprocess` has it.
         """
         ...
 
