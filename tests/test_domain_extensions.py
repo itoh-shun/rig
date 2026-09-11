@@ -79,8 +79,7 @@ def test_sales_project_install_resolves_every_owned_prompt_and_removes(monkeypat
 
     _isolated_resolution(monkeypatch, tmp_path)
     project = tmp_path / "project"
-    result = install_pack("domain:sales", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("domain:sales", scope="project", project=project)
     assert result.verification_status == "unverified"
     lock_entry = read_lock(project / ".rig/packs")["packs"][0]
     assert lock_entry["source"]["path"] == "domain:sales"
@@ -166,7 +165,7 @@ def test_builtin_domain_alias_rejects_traversal_and_unknown_ids(source, tmp_path
     from rig_workbench.packs.model import PackError
 
     with pytest.raises(PackError, match="built-in domain pack"):
-        install_pack(source, scope="project", project=tmp_path, allow_unverified=True)
+        install_pack(source, scope="project", project=tmp_path)
     assert not (tmp_path / ".rig/packs/sales").exists()
     assert not (tmp_path / ".rig/packs/video-storytelling").exists()
 
@@ -307,7 +306,7 @@ def test_video_storytelling_project_install_resolves_extends_and_removes(
     monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
     monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(tmp_path / "pack-trust.json"))
     result = install_pack("domain:video-storytelling", scope="project",
-                          project=project, allow_unverified=True)
+                          project=project)
     assert result.verification_status == "unverified"
     entry = read_lock(project / ".rig/packs")["packs"][0]
     assert entry["source"]["path"] == "domain:video-storytelling"

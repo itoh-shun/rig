@@ -133,7 +133,7 @@ def test_forged_publisher_provenance_with_no_signature_file_is_refused_by_resolv
     monkeypatch.delenv("RIG_ORG_HOME", raising=False)
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source", "forged-trust", recipe=False)
-    result = install_pack(source, scope="project", project=project, allow_unverified=True)
+    result = install_pack(source, scope="project", project=project)
     assert result.verification_status != "verified-publisher"
     assert not (result.path / "pack.sig.json").exists()
 
@@ -177,7 +177,7 @@ def test_the_publisher_signature_changed_branch_fires_on_install_and_on_doctor(
     (installed / "pack.sig.json").unlink()
     second = _write_pack(tmp_path / "second-source", "second-pack", recipe=False)
     with pytest.raises(PackError, match="publisher signature changed"):
-        install_pack(second, scope="project", project=project, allow_unverified=True)
+        install_pack(second, scope="project", project=project)
     assert not (root / "second-pack").exists()
 
     drift = [item for item in diagnose(project=project)["findings"]

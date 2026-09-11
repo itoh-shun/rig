@@ -57,8 +57,7 @@ def test_alias_install_resolves_every_owned_asset_records_trust_and_removes(
     # it computes now and restores it as a *real* module attribute, freezing the overlay at
     # this test's tmp_path for every later test in the worker. Patch the root, not the derived.
     monkeypatch.setattr(orchestrate_config, "INVOCATION_CWD", project)
-    result = install_pack("domain:decision-humor", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("domain:decision-humor", scope="project", project=project)
     assert result.manifest["id"] == "decision-humor"
     for kind, paths in result.manifest["assets"].items():
         if kind not in PROMPT_KINDS:
@@ -89,8 +88,7 @@ def test_all_three_domain_packs_coexist_and_same_tier_collision_fails(monkeypatc
     _isolated(monkeypatch, tmp_path)
     project = tmp_path / "project"
     for pack_id in ("sales", "video-storytelling", "decision-humor"):
-        install_pack(f"domain:{pack_id}", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack(f"domain:{pack_id}", scope="project", project=project)
     for kind, name in (("recipe", "deal-review"), ("recipe", "movie"),
                        ("recipe", "magi")):
         assert resolve_asset(kind, name, project=project) is not None

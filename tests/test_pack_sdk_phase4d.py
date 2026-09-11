@@ -404,14 +404,13 @@ def test_resource_metadata_runtime_lookup_and_mime_spoof_fail_closed(tmp_path, m
     pack = _resource_pack(tmp_path / "source")
     assert validate_pack(pack, core_ids=core_reference_ids())["assets"]["resource"] == ["resources/guide.html"]
     project = tmp_path / "project"
-    install_pack(pack, scope="project", project=project, allow_unverified=True)
+    install_pack(pack, scope="project", project=project)
     resolved = resolve_resource("resource-pack", "guide", project=project)
     assert resolved and resolved["media_type"] == "text/html"
     assert resolved["executable"] is False and resolved["path"].is_file()
 
     install_pack(
         "domain:video-storytelling", scope="project", project=project,
-        allow_unverified=True,
     )
     historical = resolve_resource("video-storytelling", "launch-film", project=project)
     assert historical and historical["media_type"] == "text/html"

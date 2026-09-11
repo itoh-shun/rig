@@ -124,14 +124,11 @@ def test_install_without_cryptography_refuses_publisher_trust(
     _raw, forged_manifest = read_json_yaml(forged / "pack.yaml")
     _forged_signature(forged, forged_manifest)
     with pytest.raises(PackError, match="requires cryptography"):
-        install_pack(forged, scope="project", project=project, allow_unverified=True)
+        install_pack(forged, scope="project", project=project)
     assert not (root / "forged-pack").exists()
 
     unsigned = _resource_pack(tmp_path / "unsigned", "unsigned-pack")
-    with pytest.raises(PackError, match="allow-unverified"):
-        install_pack(unsigned, scope="project", project=project)
-
-    result = install_pack(unsigned, scope="project", project=project, allow_unverified=True)
+    result = install_pack(unsigned, scope="project", project=project)
     assert result.verification_status == "verified-local"
     assert [(item["id"], item["verification_status"],
              item["publisher_key_id"], item["signed_digest"])
@@ -155,7 +152,7 @@ def test_lock_and_doctor_without_cryptography_reject_a_publisher_claim(
     root = project / ".rig/packs"
     result = install_pack(
         _resource_pack(tmp_path / "source", "claimed-pack"),
-        scope="project", project=project, allow_unverified=True,
+        scope="project", project=project,
     )
     assert diagnose(project=project)["status"] == "ok"
 

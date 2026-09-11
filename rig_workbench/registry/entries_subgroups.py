@@ -702,8 +702,6 @@ PACK: tuple[Capability, ...] = (
             Flag(name="pack", type="string", help="the id of the pack to move", required=True),
             Flag(name="--to", type="string", help="the version to move to", required=True),
             _SCOPE, _ROOT,
-            Flag(name="--allow-unverified", type="bool",
-                 help="allow an unsigned pack, in project scope only"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="入れ替えて lock を更新した"),
@@ -717,7 +715,7 @@ PACK: tuple[Capability, ...] = (
         intent="add somebody else's pack to this project, and have rig record exactly which "
                "bytes it took so the same spec never means something different later",
         preconditions=("scope-root-resolvable", "pack-source-resolvable", "pack-lock-writable",
-                       "publisher-signature-or-consent", "attestation-key"),
+                       "attestation-key"),
         effect_line="pack を scope に展開して lock に記録します。source が "
                     "`<source>:<pack>@<version>` のときだけ git で取りに行きます",
         effect_class="writes-worktree",
@@ -727,8 +725,6 @@ PACK: tuple[Capability, ...] = (
                  help="a directory, a zip, a tar, a `domain:`/`official:` alias, or "
                       "`<source>:<pack>@<version>`", required=True),
             _SCOPE, _ROOT,
-            Flag(name="--allow-unverified", type="bool",
-                 help="allow an unsigned pack, in project scope only"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="展開して lock に記録した"),

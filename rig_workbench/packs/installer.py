@@ -17,7 +17,7 @@ from . import signature
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
                    make_source, resolve_dependencies, validate_lock_root, write_lock)
 from .manifest import read_json_yaml
-from .model import PROMPT_KINDS, PackError, UnverifiedSignature
+from .model import PROMPT_KINDS, PackError
 from .sources import fetch_revision, parse_spec, read_sources, resolve_revision
 from .resolver import core_reference_ids, pack_roots
 from .validation import validate_pack, validate_tiered_collection
@@ -330,7 +330,7 @@ def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
 
 def install_pack(
     source: pathlib.Path | str, *, scope: str, project: pathlib.Path | str,
-    root: pathlib.Path | str | None = None, allow_unverified: bool = False,
+    root: pathlib.Path | str | None = None,
 ) -> InstallResult:
     project_path = pathlib.Path(project).resolve()
     # A named-source spec (`product:northwind@1.4.0`) is resolved to a commit before anything is
@@ -354,8 +354,6 @@ def install_pack(
             "revision": resolve_revision(declared[source_id], pack_name, version),
         }
         source_label = f"{source_id}:{pack_name}@{version}"
-    if allow_unverified and scope != "project":
-        raise PackError("--allow-unverified is restricted to project scope")
     destination_root = scope_root(
         scope, project=project_path,
         root=pathlib.Path(root) if root is not None else None,
@@ -398,11 +396,6 @@ def install_pack(
             core_ids=core_reference_ids(),
         )
         status, publisher = verification_status(pack, manifest)
-        if status != "verified-publisher" and not allow_unverified:
-            raise UnverifiedSignature(
-                "unsigned packs require project --allow-unverified; local evaluation quality "
-                "does not establish publisher trust"
-            )
         lock = read_lock(destination_root)
         if any(item["id"] == manifest["id"] for item in lock["packs"]):
             raise PackError(f"pack is already lock-owned: {manifest['id']}")
@@ -433,7 +426,7 @@ def install_pack(
 
 def update_pack(
     pack_id: str, *, to: str, scope: str, project: pathlib.Path | str,
-    root: pathlib.Path | str | None = None, allow_unverified: bool = False,
+    root: pathlib.Path | str | None = None,
 ) -> InstallResult:
     """Move a git-pinned pack to another version, in place.
 
@@ -494,11 +487,6 @@ def update_pack(
             core_ids=core_reference_ids(),
         )
         status, publisher = verification_status(pack, manifest)
-        if status != "verified-publisher" and not allow_unverified:
-            raise UnverifiedSignature(
-                "unsigned packs require project --allow-unverified; local evaluation quality "
-                "does not establish publisher trust"
-            )
         entry = make_entry(
             pack, manifest, scope=scope,
             source=make_source("git", f"{source_id}:{name}@{to}", tree_hash(pack),

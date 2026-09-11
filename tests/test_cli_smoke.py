@@ -393,7 +393,7 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     )
     installed = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "pack", "install",
-         str(source_root / "wheel-pack"), "--scope", "project", "--allow-unverified"],
+         str(source_root / "wheel-pack"), "--scope", "project"],
         cwd=outside,
         capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
@@ -412,7 +412,7 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     )
     builtin_installed = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "pack", "install",
-         "domain:decision-humor", "--scope", "project", "--allow-unverified"],
+         "domain:decision-humor", "--scope", "project"],
         cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
     builtin_resolved = subprocess.run(
@@ -434,7 +434,7 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     )
     sales_installed = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "pack", "install", "domain:sales",
-         "--scope", "project", "--allow-unverified"], cwd=outside,
+         "--scope", "project"], cwd=outside,
         capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
     sales_resolved = subprocess.run(
@@ -455,7 +455,7 @@ def test_installed_wheel_runs_stdlib_only_pack_cli_outside_source_tree(tmp_path)
     )
     video_installed = subprocess.run(
         [str(python), "-m", "rig_workbench.cli", "pack", "install",
-         "domain:video-storytelling", "--scope", "project", "--allow-unverified"],
+         "domain:video-storytelling", "--scope", "project"],
         cwd=outside, capture_output=True, text=True, env=_isolated_env(), timeout=60,
     )
     video_resolved = subprocess.run(

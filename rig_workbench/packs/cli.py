@@ -77,12 +77,10 @@ def _parser() -> argparse.ArgumentParser:
     update.add_argument("--to", required=True)
     update.add_argument("--scope", choices=["project", "user", "org"], default="project")
     update.add_argument("--root")
-    update.add_argument("--allow-unverified", action="store_true")
     install = sub.add_parser("install")
     install.add_argument("source")
     install.add_argument("--scope", choices=["project", "user", "org"], default="project")
     install.add_argument("--root")
-    install.add_argument("--allow-unverified", action="store_true")
     test = sub.add_parser("test")
     test.add_argument("pack")
     test.add_argument("--provider", choices=["mock", "codex"])
@@ -442,7 +440,7 @@ def cmd_pack(argv: list[str]) -> int:
                 return 1 if any(row["reason"] != "ok" for row in rows) else 0
             result = update_pack(
                 args.pack, to=args.to, scope=args.scope, project=project,
-                root=args.root, allow_unverified=args.allow_unverified,
+                root=args.root,
             )
             print(f"updated: {result.manifest['id']}@{result.manifest['version']} "
                   f"[{result.verification_status}] -> {result.path}")
@@ -451,14 +449,7 @@ def cmd_pack(argv: list[str]) -> int:
             from .installer import install_pack
             result = install_pack(
                 args.source, scope=args.scope, project=pathlib.Path.cwd(), root=args.root,
-                allow_unverified=args.allow_unverified,
             )
-            if result.verification_status != "verified-publisher":
-                print(
-                    f"[WARN] installed publisher-unverified project pack "
-                    f"[{result.verification_status}]",
-                    file=sys.stderr,
-                )
             print(f"installed: {result.manifest['id']}@{result.manifest['version']} "
                   f"[{result.verification_status}] -> {result.path}")
             return 0

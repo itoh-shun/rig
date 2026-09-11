@@ -68,7 +68,7 @@ def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
     write_sources(project, {"product": {
         "scheme": "git+file", "url": str(tmp_path / "rig-pack-{pack}")}})
     result = install_pack(f"product:sales@{version}", scope="project",
-                          project=project, allow_unverified=True)
+                          project=project)
 
     assert result.manifest["id"] == "sales"
     detail = info(result.path.parent, "sales")
@@ -89,8 +89,7 @@ def test_a_repository_distributing_two_packs_is_refused_rather_than_guessed(tmp_
     project = tmp_path / "project"
     project.mkdir()
     with pytest.raises(PackError, match="2 pack roots"):
-        install_pack(tmp_path / "repo", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack(tmp_path / "repo", scope="project", project=project)
 
 
 def test_a_source_with_no_pack_says_so(tmp_path):
@@ -100,7 +99,7 @@ def test_a_source_with_no_pack_says_so(tmp_path):
     (empty / "docs").mkdir(parents=True)
     (empty / "README.md").write_text("# nothing here\n", encoding="utf-8")
     with pytest.raises(PackError, match="no pack root"):
-        install_pack(empty, scope="project", project=project, allow_unverified=True)
+        install_pack(empty, scope="project", project=project)
 
 
 def test_export_refuses_a_target_that_already_has_something_in_it(tmp_path):

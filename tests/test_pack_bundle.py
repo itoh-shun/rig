@@ -43,8 +43,7 @@ def test_a_bundle_installs(tmp_path):
     project = tmp_path / "project"
     (project / ".rig").mkdir(parents=True)
 
-    result = install_pack(built["path"], scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack(built["path"], scope="project", project=project)
 
     assert result.manifest["id"] == "hogepack"
     assert (project / ".rig/packs/hogepack/resources/note.md").read_text() == "# hoge knowledge\n"

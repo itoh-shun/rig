@@ -59,12 +59,6 @@ class EngineIncompatible(PackError):
     reason = "engine-incompatible"
 
 
-class UnverifiedSignature(PackError):
-    """The pack carries no publisher signature that verifies against a trust root."""
-
-    reason = "unverified-signature"
-
-
 ASSET_DIRS = {
     "recipe": "recipes",
     "persona": "facets/personas",

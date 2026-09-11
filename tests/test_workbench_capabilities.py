@@ -261,7 +261,7 @@ def test_official_install_route_remove_lifecycle(tmp_path, monkeypatch):
 
     assert resolve_task_route("design", {}, project)["status"] == "degraded"
     installed = install_pack(
-        "official:design", scope="project", project=project, allow_unverified=True,
+        "official:design", scope="project", project=project,
     )
     assert installed.path.is_dir()
     route = resolve_task_route("design", {}, project)

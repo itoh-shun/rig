@@ -94,7 +94,7 @@ def test_install_local_is_atomic_canonical_and_does_not_modify_source(tmp_path):
     before = tree_hash(source)
     root = tmp_path / "installed"
     result = install_pack(
-        source, scope="project", project=tmp_path, root=root, allow_unverified=True,
+        source, scope="project", project=tmp_path, root=root,
     )
 
     assert result.path == root / "local-pack" and result.verification_status == "verified-local"
@@ -129,7 +129,6 @@ def test_unsigned_project_escape_hatch_cannot_target_other_or_external_roots(
         with pytest.raises(PackError, match="inside the project"):
             install_pack(
                 source, scope="project", project=project, root=root,
-                allow_unverified=True,
             )
         assert not root.exists()
 
@@ -139,14 +138,12 @@ def test_unsigned_project_escape_hatch_cannot_target_other_or_external_roots(
     with pytest.raises(PackError, match="symlink"):
         install_pack(
             source, scope="project", project=project, root=project / "linked-packs",
-            allow_unverified=True,
         )
     assert not org_target.exists()
 
     monkeypatch.chdir(project)
     assert cmd_pack([
         "install", str(source), "--scope", "project", "--root", str(org_target),
-        "--allow-unverified",
     ]) == 2
     assert not org_target.exists()
 
@@ -159,7 +156,7 @@ def test_lock_scope_mismatch_fails_closed(tmp_path):
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source", "scope-lock", recipe=False)
-    install_pack(source, scope="project", project=project, allow_unverified=True)
+    install_pack(source, scope="project", project=project)
     root = project / ".rig/packs"
     lock = read_lock(root)
     lock["packs"][0]["scope"] = "org"
@@ -189,14 +186,13 @@ def test_default_and_intermediate_project_root_symlinks_fail_before_write(
     with pytest.raises(PackError, match="symlink"):
         install_pack(
             source, scope="project", project=project, root=root,
-            allow_unverified=True,
         )
     assert not external.exists() and not target.exists()
 
     if root is None:
         monkeypatch.chdir(project)
         assert cmd_pack([
-            "install", str(source), "--scope", "project", "--allow-unverified",
+            "install", str(source), "--scope", "project",
         ]) == 2
         assert not external.exists()
 
@@ -236,7 +232,7 @@ def test_default_absent_project_pack_root_is_created_normally(tmp_path):
     project.mkdir()
     source = _write_pack(tmp_path / "source", "normal-default", recipe=False)
     result = install_pack(
-        source, scope="project", project=project, allow_unverified=True,
+        source, scope="project", project=project,
     )
     assert result.path == project / ".rig/packs/normal-default"
 
@@ -253,7 +249,7 @@ def test_install_safe_zip_and_tar(tmp_path, kind):
         archive = pathlib.Path(shutil.make_archive(str(tmp_path / "pack"), "gztar",
                                                    root_dir=source.parent, base_dir=source.name))
     result = install_pack(archive, scope="project", project=tmp_path,
-                          root=tmp_path / f"installed-{kind}", allow_unverified=True)
+                          root=tmp_path / f"installed-{kind}")
     assert result.manifest["id"] == f"archive-{kind}"
 
 
@@ -295,7 +291,7 @@ def test_install_rejects_scan_findings_missing_dependency_and_incompatible_engin
     (dangerous / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="destructive"):
         install_pack(dangerous, scope="project", project=tmp_path,
-                     root=tmp_path / "danger-installed", allow_unverified=True)
+                     root=tmp_path / "danger-installed")
 
     missing = _write_pack(tmp_path / "missing", "dependent", recipe=False,
                           dependency=[{"id": "absent", "range": "*"}])
@@ -316,26 +312,37 @@ def test_install_rejects_scan_findings_missing_dependency_and_incompatible_engin
                      root=tmp_path / "future")
 
 
-def test_unverified_prompt_pack_is_project_only_and_quality_fixture_installs(tmp_path, monkeypatch):
+def test_an_unverified_prompt_pack_installs_in_every_scope_and_the_lock_still_says_so(
+        tmp_path, monkeypatch):
+    """A publisher signature is no longer what lets a pack in — but it is still measured.
+
+    Installing used to refuse anything that was not `verified-publisher` unless the caller
+    said `--allow-unverified`, and that flag was refused outside project scope. Both are
+    gone, so `user` scope takes the same pack `project` scope takes. What has not changed is
+    the verdict: `verification_status` is still computed and still written into the lock, so
+    `pack list` and `pack info` answer the trust question exactly as they did.
+    """
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.lock import read_lock
-    from rig_workbench.packs.model import PackError
+
+    monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "user-home"))
+    user_root = tmp_path / "user-home" / ".rig" / "packs"
+    # A second id, because the user tier is a real tier the project install then resolves
+    # against, and one pack in two tiers is a duplicate-id refusal for its own reasons.
+    for_user = _write_pack(tmp_path / "for-user", "unverified-user-pack", recipe=True)
+    user = install_pack(for_user, scope="user", project=tmp_path, root=user_root)
+    assert user.verification_status == "unverified"
+    assert read_lock(user_root)["packs"][0]["verification_status"] == "unverified"
 
     unverified = _write_pack(tmp_path / "unverified", "unverified-pack", recipe=True)
-    with pytest.raises(PackError, match="unsigned packs require"):
-        install_pack(unverified, scope="project", project=tmp_path,
-                     root=tmp_path / "verified-required")
-    with pytest.raises(PackError, match="restricted to project"):
-        install_pack(unverified, scope="user", project=tmp_path,
-                     root=tmp_path / "user", allow_unverified=True)
     installed = install_pack(unverified, scope="project", project=tmp_path,
-                             root=tmp_path / "project", allow_unverified=True)
+                             root=tmp_path / "project")
     assert installed.verification_status == "unverified"
     assert read_lock(tmp_path / "project")["packs"][0]["verification_status"] == "unverified"
 
     quality = _quality_pack(tmp_path / "quality", monkeypatch)
     verified = install_pack(quality, scope="project", project=tmp_path,
-                            root=tmp_path / "quality-installed", allow_unverified=True)
+                            root=tmp_path / "quality-installed")
     assert verified.verification_status == "verified-local"
 
 
@@ -350,7 +357,7 @@ def test_lock_write_failure_rolls_back_install(tmp_path, monkeypatch):
     ))
     with pytest.raises(PackError, match="lock failure"):
         installer.install_pack(
-            source, scope="project", project=tmp_path, root=root, allow_unverified=True,
+            source, scope="project", project=tmp_path, root=root,
         )
     assert not (root / "rollback-pack").exists()
 
@@ -364,8 +371,7 @@ def test_lock_drift_blocks_resolve_doctor_and_remove(tmp_path, monkeypatch):
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source", "tampered-pack", recipe=True)
-    installed = install_pack(source, scope="project", project=project,
-                             allow_unverified=True)
+    installed = install_pack(source, scope="project", project=project)
     recipe = installed.path / "recipes/hello.md"
     recipe.write_text(recipe.read_text() + "tampered\n", encoding="utf-8")
     with pytest.raises(PackError, match="hash mismatch|lock drift"):
@@ -384,12 +390,12 @@ def test_remove_is_dry_run_then_yes_and_refuses_dependents(tmp_path):
 
     project = tmp_path / "project"
     base = _write_pack(tmp_path / "base", "base-pack", recipe=False)
-    install_pack(base, scope="project", project=project, allow_unverified=True)
+    install_pack(base, scope="project", project=project)
     target, removed = remove_pack("base-pack", scope="project", project=project)
     assert not removed and target.exists()
     dependent = _write_pack(tmp_path / "dependent", "dependent-pack", recipe=False,
                             dependency=[{"id": "base-pack", "range": "*"}])
-    install_pack(dependent, scope="project", project=project, allow_unverified=True)
+    install_pack(dependent, scope="project", project=project)
     with pytest.raises(PackError, match="dependents"):
         remove_pack("base-pack", scope="project", project=project, yes=True)
     _target, removed = remove_pack("dependent-pack", scope="project", project=project, yes=True)
@@ -405,7 +411,7 @@ def test_remove_delete_failure_restores_exact_lock_and_target(tmp_path, monkeypa
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source-rollback", "remove-rollback", recipe=False)
-    installed = install_pack(source, scope="project", project=project, allow_unverified=True)
+    installed = install_pack(source, scope="project", project=project)
     lock_path = project / ".rig/packs/pack.lock.json"
     original = lock_path.read_bytes()
     monkeypatch.setattr(remover.shutil, "rmtree", lambda _path: (
@@ -424,7 +430,7 @@ def test_remove_lock_failure_restores_target_without_changing_lock(tmp_path, mon
 
     project = tmp_path / "project-lock-rollback"
     source = _write_pack(tmp_path / "source-lock-rollback", "lock-rollback", recipe=False)
-    installed = install_pack(source, scope="project", project=project, allow_unverified=True)
+    installed = install_pack(source, scope="project", project=project)
     lock_path = project / ".rig/packs/pack.lock.json"
     original = lock_path.read_bytes()
     monkeypatch.setattr(remover, "write_lock", lambda *_args: (
@@ -445,7 +451,7 @@ def test_lock_ownership_is_bidirectional_and_lockless_root_is_diagnosed(tmp_path
     project = tmp_path / "project-owned"
     root = project / ".rig/packs"
     source = _write_pack(tmp_path / "owned-source", "owned-pack", recipe=False)
-    install_pack(source, scope="project", project=project, allow_unverified=True)
+    install_pack(source, scope="project", project=project)
     _write_pack(root, "unowned-pack", recipe=False)
     with pytest.raises(PackError, match="directory ownership mismatch.*unowned-pack"):
         validate_lock_root(root, verify_publisher=verify_publisher_signature,
