@@ -266,7 +266,28 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,
-        "env": 19,
+        # 19 -> 3, and the 3 are a decision rather than a remainder. `orchestrate/config.py`
+        # reads `RIG_HOME`, `os.getcwd()`, `RIG_GLOBAL_RUNS_PATH` and `RIG_CONVERGENCE_K` **at
+        # import**, twelve modules import it and about forty tests monkeypatch its attributes.
+        # It is configuration wiring, not judgement, and putting those reads behind `Env` would
+        # change *when* they resolve — a behaviour change nobody asked for, in the module whose
+        # whole job is to have resolved already. It is declared a shell module rather than
+        # migrated; the declaration itself lands with the layering pass.
+        #
+        # The other 16 took `*, env: Env = OS_ENV`: `recipes.py`'s trust store, two consent
+        # variables and `RIG_ORG_HOME` (4), `providers.py`'s two `ANTHROPIC_API_KEY` reads, the
+        # benchmark call counter, the mock scenario, `RIG_STEP_OUTPUT_DIR` and the provider
+        # subprocess environment (7), `commands.py`'s Claude Code detection and `PATH` (3),
+        # `runstate.py`'s `RIG_INVOKER` (1) and `secure_runtime.py`'s vendor-scoped env (1).
+        # The last two are `snapshot()`, not `get()`: both build a dict the caller then filters,
+        # which is the shape `gitroot.unrouted_env` put on the port.
+        #
+        # `providers.py`'s is the one site that hands an environment to a subprocess, and it
+        # already built a full dict (`dict(cfg["env"] if "env" in cfg else ..., RIG_PROVIDER_
+        # SUBPROCESS="1")`), so `snapshot()` is equivalent — `ProcessRunner.run`'s `env=`
+        # replaces rather than extends, and a site that passed a partial dict would have been a
+        # rewrite, not a swap. It was measured to be the only one.
+        "env": 3,
         "clock": 6,
     },
     # The third pillar behind the ports (§7 stage 3). Five kinds are zero because every

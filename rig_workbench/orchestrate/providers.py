@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 from .. import bench_providers as _bench_provider_patches
 from ..packs.model import PackError
-from ..ports import Presenter
-from ..ports.local import CONSOLE
+from ..ports import Env, Presenter
+from ..ports.local import CONSOLE, OS_ENV
 from . import config
 from . import perf
 from .gates import is_runtime_gate
@@ -259,7 +259,8 @@ def _record_anthropic_usage(cfg: dict, usage: dict) -> None:
 
 
 def run_anthropic_provider(prompt: str, cfg: dict, state: dict | None = None,
-                           step_id: str | None = None) -> tuple[int, str]:
+                           step_id: str | None = None, *,
+                           env: Env = OS_ENV) -> tuple[int, str]:
     """Call the Anthropic Messages API directly (for Fable 5 refusal-classifier + fallback
     detection, #297).
 
@@ -287,7 +288,7 @@ def run_anthropic_provider(prompt: str, cfg: dict, state: dict | None = None,
         body["fallbacks"] = [{"model": fallback_model}]
     headers = {"Content-Type": "application/json",
               "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),
-              "x-api-key": cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")}
+              "x-api-key": cfg.get("api_key") or env.get("ANTHROPIC_API_KEY", "")}
     if fallback_model:
         headers["anthropic-beta"] = "server-side-fallback-2026-06-01"
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
@@ -330,7 +331,7 @@ def run_anthropic_provider(prompt: str, cfg: dict, state: dict | None = None,
     return 0, text
 
 
-def discover_models(cfg: dict) -> dict:
+def discover_models(cfg: dict, *, env: Env = OS_ENV) -> dict:
     """Dynamically discover available providers and models (deterministically sorted)."""
     import shutil
     out: dict = {}
@@ -343,7 +344,7 @@ def discover_models(cfg: dict) -> dict:
         out[p] = {"kind": "cli", "available": shutil.which(p) is not None, "models": []}
     out["rig"] = {"kind": "cli", "available": shutil.which("claude") is not None,
                   "note": "launches each step as a rig harness (claude)", "models": []}
-    out["anthropic"] = {"kind": "remote-api", "available": bool(os.environ.get("ANTHROPIC_API_KEY")),
+    out["anthropic"] = {"kind": "remote-api", "available": bool(env.get("ANTHROPIC_API_KEY")),
                        "note": "direct Messages API calls (Fable 5 refusal-classifier + fallback "
                                "detection, #297); reachability is judged only by whether "
                                "ANTHROPIC_API_KEY is set, no live connectivity check",
@@ -389,8 +390,10 @@ def _record_benchmark_provider_call(
     role: str,
     persona: str,
     step_id: str | None,
+    *,
+    env: Env = OS_ENV,
 ) -> str | None:
-    counter_path = os.environ.get("RIG_BENCH_CALL_COUNTER")
+    counter_path = env.get("RIG_BENCH_CALL_COUNTER")
     if not counter_path:
         return None
     path = pathlib.Path(counter_path)
@@ -447,12 +450,13 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
 
 
 def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
-                       state: dict | None = None, step_id: str | None = None) -> tuple[int, str]:
+                       state: dict | None = None, step_id: str | None = None, *,
+                       env: Env = OS_ENV) -> tuple[int, str]:
     journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
     if journal_error is not None:
         return 126, f"[benchmark call counter error: {journal_error}]"
     if provider == "mock":
-        scenario = os.environ.get("RIG_BENCH_MOCK_SCENARIO", "success")
+        scenario = env.get("RIG_BENCH_MOCK_SCENARIO", "success")
         if scenario == "timeout":
             return 124, "[provider timeout]"
         if scenario == "malformed" and role == "verifier":
@@ -497,7 +501,7 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
     # before.
     # `"env" in cfg` rather than `cfg.get("env") or`: an explicitly empty env is a
     # request for an empty env, and falling back to `os.environ` would silently invert it.
-    child_env = dict(cfg["env"] if "env" in cfg else os.environ, RIG_PROVIDER_SUBPROCESS="1")
+    child_env = dict(cfg["env"] if "env" in cfg else env.snapshot(), RIG_PROVIDER_SUBPROCESS="1")
     try:
         r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                            capture_output=True, text=True, timeout=cfg.get("timeout", 600),
@@ -585,9 +589,9 @@ def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None =
     return text[:head_n] + marker + text[-tail_n:]
 
 
-def _artifact_path(cfg: dict, label: str) -> pathlib.Path | None:
+def _artifact_path(cfg: dict, label: str, *, env: Env = OS_ENV) -> pathlib.Path | None:
     run_dir = (cfg or {}).get("run_dir")
-    configured_output_dir = os.environ.get("RIG_STEP_OUTPUT_DIR")
+    configured_output_dir = env.get("RIG_STEP_OUTPUT_DIR")
     if not run_dir and not configured_output_dir:
         return None
     directory = (
@@ -1674,7 +1678,7 @@ _MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
 
 
 def _managed_agents_request(base: str, path: str, cfg: dict, body: dict | None = None,
-                            method: str = "POST") -> dict:
+                            method: str = "POST", *, env: Env = OS_ENV) -> dict:
     """Thin HTTP wrapper over the (beta) Managed Agents API (#295).
 
     **Note**: endpoint paths (`/v1/agents` etc.) are inferred from the documented Python
@@ -1688,7 +1692,7 @@ def _managed_agents_request(base: str, path: str, cfg: dict, body: dict | None =
     headers = {"Content-Type": "application/json",
               "anthropic-version": cfg.get("anthropic_version", "2023-06-01"),
               "anthropic-beta": _MANAGED_AGENTS_BETA,
-              "x-api-key": cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")}
+              "x-api-key": cfg.get("api_key") or env.get("ANTHROPIC_API_KEY", "")}
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=cfg.get("timeout", 600)) as r:

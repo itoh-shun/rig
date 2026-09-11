@@ -9,6 +9,8 @@ import re
 import secrets
 import stat
 
+from ..ports import Env
+from ..ports.local import OS_ENV
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
 from .secure_runtime import JAPANESE_WRITING_RECIPES
@@ -328,7 +330,8 @@ def classify_failure(state: dict) -> str | None:
     return "unclassified"
 
 
-def telemetry_append(state: dict, final: str, *, caller_record: dict | None = None) -> None:
+def telemetry_append(state: dict, final: str, *, caller_record: dict | None = None,
+                     env: Env = OS_ENV) -> None:
     """Append a one-line JSON summary of a single RUN to .rig/runs.jsonl (run telemetry).
 
     An execution log on par with run-state.json, not the knowledge layer (no approval needed;
@@ -365,7 +368,7 @@ def telemetry_append(state: dict, final: str, *, caller_record: dict | None = No
             **({"run_id": state["run_id"]} if state.get("run_id") else {}),
             "recipe": state["recipe"],
             "backend": "orchestrate",
-            "invoker": os.environ.get("RIG_INVOKER") or "direct",
+            "invoker": env.get("RIG_INVOKER") or "direct",
             # Who invoked rig, alongside `invoker`, which is what launched the process — the
             # two answer different questions once another agent is the one typing. Absent
             # when nothing identifies a caller, same rule as `run_id` and `perf` above. The

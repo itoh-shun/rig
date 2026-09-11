@@ -8,8 +8,8 @@ import pathlib
 import subprocess
 import threading
 
-from ..ports import Presenter
-from ..ports.local import CONSOLE
+from ..ports import Env, Presenter
+from ..ports.local import CONSOLE, OS_ENV
 from . import config
 from .yaml_adapter import PyYAMLMissing, require_yaml
 
@@ -41,10 +41,10 @@ def _consent_flag_passed(flag: str) -> bool:
     return passed_as_option(flag, sys.argv)
 
 
-def _trust_store_path() -> pathlib.Path:
-    env = os.environ.get("RIG_TRUST_STORE")
-    if env:
-        return pathlib.Path(env).expanduser()
+def _trust_store_path(*, env: Env = OS_ENV) -> pathlib.Path:
+    configured = env.get("RIG_TRUST_STORE")
+    if configured:
+        return pathlib.Path(configured).expanduser()
     return pathlib.Path.home() / ".claude" / "rig" / "trusted-recipes.json"
 
 
@@ -96,7 +96,8 @@ def _is_project_recipe(path: pathlib.Path) -> bool:
         return False
 
 
-def ensure_recipe_trusted(path: pathlib.Path, *, out: Presenter = CONSOLE) -> pathlib.Path:
+def ensure_recipe_trusted(path: pathlib.Path, *, out: Presenter = CONSOLE,
+                          env: Env = OS_ENV) -> pathlib.Path:
     """Consent gate for project-local recipe overlays. Returns path if allowed, exits otherwise."""
     if not _is_project_recipe(path):
         return path
@@ -106,7 +107,7 @@ def ensure_recipe_trusted(path: pathlib.Path, *, out: Presenter = CONSOLE) -> pa
     if _load_trust_store().get(str(resolved)) == digest:
         return path
     allowed = (_consent_flag_passed("--allow-project-recipes")
-               or os.environ.get("RIG_ALLOW_PROJECT_RECIPES") == "1")
+               or env.get("RIG_ALLOW_PROJECT_RECIPES") == "1")
     if allowed:
         _record_trust(resolved, digest)
         out.out(f"[trust] project recipe allowed and recorded: {resolved}")
@@ -135,7 +136,7 @@ _warned_manifests: set[tuple[str, str]] = set()
 
 
 def ensure_manifest_trusted(path: pathlib.Path, require: bool = False, *,
-                            out: Presenter = CONSOLE) -> bool:
+                            out: Presenter = CONSOLE, env: Env = OS_ENV) -> bool:
     """Consent gate for the project manifest `.claude/rig.md`. True = usable.
 
     Mirrors ensure_recipe_trusted (same trust store, hash-recorded consent via
@@ -173,7 +174,7 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False, *,
     if _load_trust_store().get(str(resolved)) == digest:
         return True
     allowed = (_consent_flag_passed("--allow-project-manifest")
-               or os.environ.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
+               or env.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
     if allowed:
         _record_trust(resolved, digest)
         out.err(f"[trust] project manifest allowed and recorded: {resolved}")
@@ -920,7 +921,8 @@ def suggest_recipe_names(name: str, bases: list[pathlib.Path]) -> list[tuple[str
     return [(stem, tier) for _kind, _rank, _index, stem, tier in scored[:_SUGGEST_LIMIT]]
 
 
-def resolve_recipe(name: str, *, out: Presenter = CONSOLE) -> pathlib.Path:
+def resolve_recipe(name: str, *, out: Presenter = CONSOLE,
+                   env: Env = OS_ENV) -> pathlib.Path:
     """Resolve a recipe.
     Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/engine/recipes/<name>.md (built-in).
     An overlay with the same name as a built-in wins, so project-specific recipes can override."""
@@ -935,7 +937,7 @@ def resolve_recipe(name: str, *, out: Presenter = CONSOLE) -> pathlib.Path:
         return ensure_asset_trusted(resolved)
     fname = name if name.endswith(".md") else f"{name}.md"
     bases = [config.PROJECT_RECIPES]
-    org = os.environ.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")
+    org = env.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")
     if org:
         bases.append(pathlib.Path(org).expanduser() / "recipes")  # org tier (team-shared; §5)
     bases.append(config.RECIPES)

@@ -215,7 +215,10 @@ extend-select = [
 # recipe not found 1 は `out=` 追加、PyYAML ガード 1 は orchestrate/yaml_adapter.py へ）。
 # T201 が 0 になったので、この行は TID251 だけに絞る。行そのものが消えるのは
 # banned も 0 になったとき。件数は ruff 0.15.8 の実測値。
-"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 47 banned
+# banned は 47 -> 31: os.environ 19 件のうち 16 件が Env ポートへ移った。残る 3 件は
+# orchestrate/config.py の import 時読み取りで、あれは判定ではなく配線である
+# （移すと「いつ解決するか」が変わる）。
+"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 31 banned
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を

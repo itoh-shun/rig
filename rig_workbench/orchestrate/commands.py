@@ -13,8 +13,8 @@ from collections import Counter
 from functools import wraps
 
 from .. import repo_paths
-from ..ports import Presenter
-from ..ports.local import CONSOLE
+from ..ports import Env, Presenter
+from ..ports.local import CONSOLE, OS_ENV
 from . import config
 from . import otel
 from . import perf
@@ -659,7 +659,7 @@ def _git_head() -> str | None:
     return proc.stdout.strip() or None if proc.returncode == 0 else None
 
 @_reports_refusals
-def cmd_run(args, *, out: Presenter = CONSOLE):
+def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
     if not args:
         out.out("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
                 "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
@@ -933,7 +933,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE):
     # running session and may land subscription usage in a different bucket, or
     # bill an API key if one is configured (environment-dependent).
     # Stop unless `--allow-headless-in-cc` is given explicitly.
-    _cc_env = os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    _cc_env = env.get("CLAUDECODE") or env.get("CLAUDE_CODE_SESSION_ID")
     _headless_claude = gen in ("claude", "rig") or ver in ("claude", "rig") or \
         any(p in ("claude", "rig") for p in generators) or \
         (isinstance(ver, list) and any(p in ("claude", "rig") for p in ver))
@@ -1982,7 +1982,7 @@ def cmd_runs(args, *, out: Presenter = CONSOLE):
             out.out("    (after confirming forge's draft, re-measure with /rig:drill --replay)")
             out.out(f"    (to search for an external skill instead: /rig:import --discover \"skill to strengthen {sid}\")")
 
-def cmd_install_shim(args, *, out: Presenter = CONSOLE):
+def cmd_install_shim(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
     """Place the shim as a symlink at ~/.local/bin/rig (or the path given via --to).
     Run once; afterwards `rig <subcommand>` works from any directory."""
     target = pathlib.Path("~/.local/bin/rig").expanduser()
@@ -2010,7 +2010,7 @@ def cmd_install_shim(args, *, out: Presenter = CONSOLE):
         target.unlink()
     target.symlink_to(src)
     out.out(f"✓ symlink: {target} → {src}")
-    path_dirs = (os.environ.get("PATH") or "").split(os.pathsep)
+    path_dirs = (env.get("PATH") or "").split(os.pathsep)
     if str(target.parent) not in path_dirs:
         out.out(f"⚠ {target.parent} does not seem to be on $PATH. Add this:")
         out.out(f"    export PATH=\"{target.parent}:$PATH\"")
