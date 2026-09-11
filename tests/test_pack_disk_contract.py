@@ -83,9 +83,12 @@ NOT_PINNED_TIER_ORDER_FOR_NON_RECIPE_KINDS = (
 )
 
 #: The refusals that only a remote source can produce — `source-unreachable`, `auth-failed`,
-#: `revision-not-found`, `digest-mismatch` against a real remote, and `unverified-signature`
-#: against a trust root fetched from one. `pack install` reaches the network for those, and
-#: the suite must not.
+#: `revision-not-found`, and `digest-mismatch` against a real remote (`packs.model`, and
+#: `packs.sources.verify_pin`). `pack install` reaches the network for those, and the suite
+#: must not. There is no signature refusal in that set: nothing signs a pack, and what a
+#: remote pack is pinned by is the digest the lock recorded, not a publisher key. The
+#: constant's own text below still says "unsigned"; every literal in this file is frozen, so
+#: it is left byte-for-byte as it is and the correction lives here in the prose.
 NOT_PINNED_REMOTE_SOURCE_REFUSALS = (
     "`pack install` refusals for unreachable/unauthenticated/unsigned remote sources need "
     "the network; only on-disk refusals are pinned here"
@@ -166,15 +169,19 @@ CANONICAL_FORMAT_FIXTURE = {
 #: wire format. This literal is the one assertion in the file with no regenerable side:
 #: `pack sync` cannot move it, so it fails and keeps failing until a human decides.
 #:
-#: What breaks if the format changes. These exact bytes are the signing payload, and
-#: verification recomputes rather than replays them (rig_workbench/packs/publisher.py):
-#: `_envelope` records `manifest_sha256` as the sha256 of `pack.yaml`'s bytes, and
-#: `sign_pack`/`verify_publisher_signature` sign and verify `canonical(envelope)` with
-#: Ed25519. Re-serialising a published pack therefore invalidates it twice over — the digest
-#: no longer matches and the signature no longer verifies — and the repair path does not
-#: exist: `packs/sync.py` refuses to rewrite a signed pack. So a change here is not a
-#: reformat, it is a break of every signature already in the wild, and it must be made
-#: deliberately (new schema version, re-signing) rather than absorbed by a regeneration.
+#: What breaks if the format changes. These exact bytes are a hashing input, and every
+#: consumer recomputes rather than replays them. `pack install` records `manifest_sha256` as
+#: the sha256 of `pack.yaml`'s bytes in `pack.lock.json` (`packs/lock.py`, `make_entry`), and
+#: `validate_lock_root` recomputes it on every resolve, refusing with `pack lock drift:
+#: manifest changed`; `tree_hash`, which digests the same bytes among the rest of the tree,
+#: is what the lock's `source.sha256` pins and what `packs/evidence.py` compares a pack
+#: against before and after a run. The lock file is itself byte-compared against `canonical`
+#: (`read_lock`: `pack lock is not canonical`). Re-serialising therefore invalidates every
+#: installed pack at once, and the repair path does not exist: `packs/sync.py` rewrites
+#: `pack.yaml` and writes nothing to `pack.lock.json`, so a synced pack stays in drift until
+#: it is reinstalled. So a change here is not a reformat, it is a break of every lock already
+#: on disk, and it must be made deliberately (new schema version, reinstall) rather than
+#: absorbed by a regeneration.
 CANONICAL_FORMAT_LITERAL = (
     '{"assets":{"persona":["facets/personas/レビュアー.md"],"recipe":[]},'
     '"dependencies":[],"description":"日本語 — naïve","id":"café-pack",'
