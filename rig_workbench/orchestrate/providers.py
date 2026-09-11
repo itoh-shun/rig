@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 from .. import bench_providers as _bench_provider_patches
 from ..packs.model import PackError
-from ..ports import Env, Presenter, ProcessRunner
-from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS
+from ..ports import Env, FileStore, Presenter, ProcessRunner
+from ..ports.local import CONSOLE, LOCAL_FILES, OS_ENV, SUBPROCESS
 from . import config
 from . import perf
 from .gates import is_runtime_gate
@@ -352,7 +352,7 @@ def discover_models(cfg: dict, *, env: Env = OS_ENV) -> dict:
     return out
 
 
-def cmd_models(args, *, out: Presenter = CONSOLE):
+def cmd_models(args, *, out: Presenter = CONSOLE, files: FileStore = LOCAL_FILES):
     cfg: dict = {}
     save = "--save" in args
     as_json = "--json" in args
@@ -380,8 +380,9 @@ def cmd_models(args, *, out: Presenter = CONSOLE):
         # Save config for local-http only (the default model is used by the next --auto-model)
         conf = {p: {"base_url": d["base_url"], "default": d["default"], "models": d["models"]}
                 for p, d in found.items() if d["kind"] == "local-http" and d["reachable"]}
-        _MODELS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _MODELS_CACHE_PATH.write_text(json.dumps(conf, ensure_ascii=False, indent=2), encoding="utf-8")
+        # `FileStore.write_text` is `parent.mkdir(parents=True, exist_ok=True)` then a UTF-8
+        # `write_text`, in that order — the two lines this replaces, and nothing else.
+        files.write_text(_MODELS_CACHE_PATH, json.dumps(conf, ensure_ascii=False, indent=2))
         out.out(f"\nSaved: {_MODELS_CACHE_PATH} ({len(conf)} providers) — used by the next run --auto-model")
 
 

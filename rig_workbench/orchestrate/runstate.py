@@ -8,8 +8,8 @@ import re
 import secrets
 import stat
 
-from ..ports import Clock, Env
-from ..ports.local import OS_ENV, SYSTEM_CLOCK
+from ..ports import Clock, Env, FileStore
+from ..ports.local import LOCAL_FILES, OS_ENV, SYSTEM_CLOCK
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
 from .secure_runtime import JAPANESE_WRITING_RECIPES
@@ -424,7 +424,8 @@ def telemetry_append(state: dict, final: str, *, caller_record: dict | None = No
 def append_run_record(rec: dict, *, secure: bool = False,
                       secure_history_path: str | None = None,
                       runs_path: pathlib.Path | None = None,
-                      project: pathlib.Path | None = None) -> None:
+                      project: pathlib.Path | None = None,
+                      files: FileStore = LOCAL_FILES) -> None:
     """Append one finished telemetry record to `.rig/runs.jsonl`, then mirror it into the
     global index (`~/.rig/runs.jsonl`) with `project` attached for cross-project rollups.
 
@@ -441,15 +442,20 @@ def append_run_record(rec: dict, *, secure: bool = False,
     """
     target = runs_path or config.RUNS_PATH
     try:
-        encoded = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+        line = json.dumps(rec, ensure_ascii=False)
         if secure:
             if not isinstance(secure_history_path, str):
                 raise OSError("secure runtime history path is missing")
-            atomic_append_line(pathlib.Path(secure_history_path), encoded)
+            # Still `secure_fs`, not the port's plain append: a secure run's history is
+            # 0600 in a 0700 directory and `FileStore.append_line` promises neither. The
+            # port's `append_secret_line` is that contract, and this call is what it wraps;
+            # reaching it through the port here would add a hop and no guarantee.
+            atomic_append_line(pathlib.Path(secure_history_path),
+                               (line + "\n").encode("utf-8"))
         else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("a", encoding="utf-8") as f:
-                f.write(encoded.decode("utf-8"))
+            # `mkdir(parents=True, exist_ok=True)` then append then newline is exactly what
+            # `FileStore.append_line` is, down to the order.
+            files.append_line(target, line)
     except Exception:
         pass
 
@@ -460,12 +466,10 @@ def append_run_record(rec: dict, *, secure: bool = False,
     # how much rig-wb is used overall. The `project` field preserves provenance.
     # Write failures are swallowed (best-effort; the cwd-side record is primary).
     try:
-        global_path = config.GLOBAL_RUNS_PATH
-        global_path.parent.mkdir(parents=True, exist_ok=True)
         global_rec = dict(rec)
         global_rec["project"] = str(project or config.INVOCATION_CWD)
-        with global_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(global_rec, ensure_ascii=False) + "\n")
+        files.append_line(config.GLOBAL_RUNS_PATH,
+                          json.dumps(global_rec, ensure_ascii=False))
     except Exception:
         pass
 

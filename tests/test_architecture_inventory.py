@@ -261,7 +261,7 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     #
     # Measured with the ledger line lifted in a scratch copy, ruff's T201 reads 0 too, so
     # the `pyproject.toml` line is narrowed to `["TID251"]` in the same commit.
-    # `subprocess` 21 -> 4. The 17 that moved: `isolate.py`'s eight
+    # `subprocess` 21 -> 4 and `open(w/a)` 4 -> 2. The 17 that moved: `isolate.py`'s eight
     # git calls (no `GitRepo` method matches any of them — worktree add/remove, rev-list,
     # branch -D, merge --ff-only), `providers.py`'s four (the provider child, which is the
     # pillar's only `env=` site, plus three git reads, two of them `text=False` because their
@@ -286,10 +286,51 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # for the HTML dashboard, whose output must reach the terminal; capture would break it.
     # The fifth passes `pass_fds=launcher.launcher_fds`, handing a child the sealed provider
     # descriptors — the design, and not something this port should learn.
+    #
+    # One behaviour difference came with the move, and it is the port's design rather
+    # than an accident. Fourteen of the fifteen text-mode sites spelled a bare
+    # `text=True`, which decodes with the locale's encoding and *strict* errors;
+    # `ProcessRunner`'s text mode is `encoding="utf-8", errors="replace"`, for the reason
+    # `ports/local.py` sets out. So a `git` that prints a path or an author name in
+    # another encoding used to raise `UnicodeDecodeError` out of these calls and now
+    # yields U+FFFD and carries on. All fourteen read their result as text — a `status
+    # --porcelain`, a `--numstat`, a rev-parse, a provider's transcript — so the
+    # replacement character is the answer each of them wanted, and the crash was never
+    # one. The fifteenth (`_git_diff_evidence`) had already written the pair out by hand.
+    # It is recorded here because this is the first pillar to have such a site: `eval`'s
+    # twenty-five all named the pair themselves.
+    #
+    # `open(w/a)` 4 -> 2: `append_run_record`'s two telemetry appends are
+    # `FileStore.append_line`, which is `mkdir(parents=True)` then append then newline, down
+    # to the order. The secure arm keeps `secure_fs.atomic_append_line` — that history is
+    # 0600 in a 0700 directory and the plain append promises neither. The 2 left are not
+    # writes: `queueing.py` opens a `.lock` file to hold an `fcntl.flock` on its descriptor
+    # and writes nothing through it (`append_line` would close the descriptor the lock lives
+    # on), and `selftest.py` streams a synthetic runs.jsonl fixture into the temporary path it
+    # points `config.RUNS_PATH` at for the length of one scenario — the scratch-write shape
+    # `eval`, `packs` and `validation` each recorded as a floor.
+    #
+    # `write_text` stays at 10, and all ten were read. One of the ten did move: `cmd_models
+    # --save` was `parent.mkdir(parents=True, exist_ok=True)` then a UTF-8 `write_text`,
+    # which is `FileStore.write_text` down to the order, so it is that call now — and the
+    # walk still counts it, by attribute name, exactly as it counts `govern`'s two port
+    # calls (see that entry). The number is the instrument's, not the pillar's.
+    #
+    # The nine that stayed where they are, each for a property of the site: five are
+    # `selftest.py` writing recipe and worktree fixtures into `mkdtemp` trees it deletes.
+    # Two are tmp-then-`os.replace` (`queueing._local_save`, `recipes._record_trust`): an
+    # atomic replace, which `FileStore.write_text` does not promise, so it is not the same
+    # operation — `packs` recorded the identical shape for `trust.py`. One is
+    # `_run_ab_variant`'s `write_bytes` of a variant manifest, and `FileStore` has no
+    # `write_bytes` (`eval`'s surviving site, same reason). The last is `cmd_perf
+    # --save-baseline`, and it is why the two `--save` writes are not one case: this one
+    # writes to a path the operator typed, with no `mkdir` in front of it, so the port's
+    # parents-creating `write_text` would start building directory trees for a mistyped
+    # `--save-baseline` instead of failing. That is a change to what the command does.
     "orchestrate": {
         "print": 0,
         "subprocess": 4,
-        "open_write": 4,
+        "open_write": 2,
         "write_text": 10,
         # 19 -> 3, and the 3 are a decision rather than a remainder. `orchestrate/config.py`
         # reads `RIG_HOME`, `os.getcwd()`, `RIG_GLOBAL_RUNS_PATH` and `RIG_CONVERGENCE_K` **at
