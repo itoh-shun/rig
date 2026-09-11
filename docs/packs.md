@@ -86,7 +86,9 @@ nothing else — version, description, capabilities and entrypoints are yours.
 It refuses in two cases rather than proceeding quietly. A file sitting outside every asset
 directory is named, because declaring nothing about it would leave a file inside the pack that
 no hash covers. And a signed pack is refused outright, because rewriting the manifest
-invalidates `pack.sig.json`; remove the signature, sync, then re-sign with your key.
+invalidates `pack.sig.json`; remove the signature, then sync. rig reads publisher
+signatures and no longer produces them, so a replacement has to come from whatever
+produced the first one.
 
 A resource file needs a third derived field — `{media_type, size, sha256}` under
 `resources` — and sync writes that too, deriving the media type from the extension rather
@@ -255,7 +257,6 @@ Failures arrive apart, because they want opposite responses:
 | `digest-mismatch` | the pin no longer resolves to the recorded commit |
 | `capability-refused` | the pack declares something its type may not carry or run |
 | `engine-incompatible` | the pack's engine range excludes this engine |
-| `unverified-signature` | no publisher signature verifies against a trust root |
 
 `list`, `info`, and `explain` answer from the lock and the installed manifest, so they are
 always cheap. `outdated` makes one network round trip per pinned pack, and reports a source
@@ -490,11 +491,13 @@ dependencies, install time, and verification status. Resolver and doctor fail cl
 lock drift. Lock replacement is atomic; install rolls the pack directory back when the lock
 cannot be committed.
 
-Prompt-bearing packs require approved evaluation cases. A normal install additionally
-requires fresh HMAC-attested, non-mock, current green results owned by the pack. Only a
-project-scope install may use `--allow-unverified`; it prints a warning and records
-`verification_status: unverified` in the lock. User and organization scopes cannot bypass
-quality verification, and mock results never count as quality evidence.
+Prompt-bearing packs require approved evaluation cases. Install does not require a
+publisher signature, in any scope. It still measures one: a pack whose signature verifies
+against a trust root is recorded as `verified-publisher`, one whose own attested, non-mock,
+current green results are owned by it as `verified-local`, and anything else — including a
+pack whose evidence is mock — as `unverified`. Whichever it is goes into the lock as
+`verification_status`, so `pack list` and `pack info` answer the trust question rather than
+install refusing on your behalf.
 
 `pack test` without a provider performs structural validation and reports
 `structural_only` (successful validation, but not quality evidence). Provider runs reuse the
