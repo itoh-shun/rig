@@ -35,13 +35,14 @@ imports a `packs` judgement module.
 from __future__ import annotations
 
 import pathlib
+from contextlib import AbstractContextManager
 from typing import Any
 
 from ..eval.cases import EvalCaseError, canonical_json, validate_case
 from ..eval.compare import validate_result
 from ..eval.execution import execution_diff_sha256
 from ..eval.gate import quality_result_failures
-from ..eval.runner import _git_identity
+from ..eval.runner import _git_identity, make_judge_adapter, read_only_workspace, run_case
 
 
 class _EvalPillar:
@@ -96,15 +97,66 @@ class _EvalPillar:
     @staticmethod
     def result_failures(result: dict, case: dict, *, expected_commit: str | None = None,
                         expected_base: str | None = None, expected_diff: str | None = None,
+                        provider: str | None = None, model: str | None = None,
+                        judge_provider: str | None = None, judge_model: str | None = None,
                         verify_attestation: bool = True) -> list[str]:
         """Why a result does not clear release policy, as a list of labels.
 
         The keyword surface is `eval.gate.quality_result_failures`' own, narrowed to what
-        this pillar passes, so that a caller here reads the same as the caller there.
+        this pillar passes, so that a caller here reads the same as the caller there. The
+        three callers pass disjoint subsets — an evidence import pins the execution, an
+        install pins nothing, a `pack test` pins the providers it just ran — and each
+        declares only the part it uses in its own protocol.
         """
         return quality_result_failures(
             result, case, expected_commit=expected_commit, expected_base=expected_base,
-            expected_diff=expected_diff, verify_attestation=verify_attestation,
+            expected_diff=expected_diff, provider=provider, model=model,
+            judge_provider=judge_provider, judge_model=judge_model,
+            verify_attestation=verify_attestation,
+        )
+
+    # ── running a case, which is the one thing here that is not a pure function ──
+    @staticmethod
+    def read_only_workspace(root: pathlib.Path | str) -> AbstractContextManager[pathlib.Path]:
+        """The 0555 directory outside the repository that both adapters run from.
+
+        Reused rather than rebuilt: a second hand-rolled workspace would be a second
+        opinion about what an adapter may reach, and the weaker of the two would be the
+        one `pack test` ran under.
+        """
+        return read_only_workspace(root)
+
+    @staticmethod
+    def make_judge_adapter(*, provider: str, model: str, repo: pathlib.Path | str,
+                           command: str | None = None, timeout_s: float = 30) -> Any:
+        return make_judge_adapter(
+            provider=provider, model=model, repo=repo, command=command, timeout_s=timeout_s,
+        )
+
+    @staticmethod
+    def run_case(case: dict, *, repo: pathlib.Path | str, provider: str, model: str,
+                 repeat: int, phase: str, command: str | None = None, timeout_s: float = 30,
+                 judge_adapter: Any = None,
+                 result_root: pathlib.Path | str | None = None,
+                 prompt_prefix: str | None = None,
+                 prompt_binding_sha256: str | None = None,
+                 pack_tree_sha256: str | None = None,
+                 execution_cwd: pathlib.Path | str | None = None,
+                 ) -> tuple[pathlib.Path, dict]:
+        """One measurement, written where the caller asked, and the result it produced.
+
+        The heaviest thing in this module by a distance: it spends real money on a real
+        provider. That is exactly why it is borrowed rather than reimplemented — a pack
+        measurement that ran through a second runner would not be comparable with the
+        evidence `eval` produces, and the whole purpose of holding a pack to its own cases
+        is that the two are the same measurement.
+        """
+        return run_case(
+            case, repo=repo, provider=provider, model=model, repeat=repeat, phase=phase,
+            command=command, timeout_s=timeout_s, judge_adapter=judge_adapter,
+            result_root=result_root, prompt_prefix=prompt_prefix,
+            prompt_binding_sha256=prompt_binding_sha256, pack_tree_sha256=pack_tree_sha256,
+            execution_cwd=execution_cwd,
         )
 
 

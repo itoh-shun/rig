@@ -626,21 +626,30 @@ def test_pack_test_structural_mock_and_provider_unavailable(tmp_path, monkeypatc
     # The adapters run from the eval harness's own 0555 workspace — one implementation,
     # externality check and cleanup included — and not from a second hand-rolled 0555
     # directory left behind under the result dir.
-    from rig_workbench.packs import tester as pack_tester
+    from rig_workbench.packs.eval_bridge import EVALUATION
     opened_workspaces = []
-    real_read_only_workspace = pack_tester.read_only_workspace
 
     @contextlib.contextmanager
     def recording_workspace(root):
-        with real_read_only_workspace(root) as workspace:
+        # Still the harness's own workspace, reached through the `CaseRunner` collaborator
+        # `test_pack` declares rather than through a module-level name it happened to
+        # import. The wrapper only records; what is asserted about the directory is
+        # asserted about the one the harness built.
+        with EVALUATION.read_only_workspace(root) as workspace:
             opened_workspaces.append(workspace)
             assert workspace.is_dir() and workspace.stat().st_mode & 0o222 == 0
             yield workspace
 
-    monkeypatch.setattr(pack_tester, "read_only_workspace", recording_workspace)
+    class _RecordingRunner:
+        validate_case = staticmethod(EVALUATION.validate_case)
+        result_failures = staticmethod(EVALUATION.result_failures)
+        make_judge_adapter = staticmethod(EVALUATION.make_judge_adapter)
+        run_case = staticmethod(EVALUATION.run_case)
+        read_only_workspace = staticmethod(recording_workspace)
+
     mock, code = test_pack(pack, project=tmp_path, provider="mock", model="fixture",
                            judge_provider="mock", judge_model="fixture",
-                           result_dir=result_dir)
+                           result_dir=result_dir, evaluation=_RecordingRunner())
     assert opened_workspaces and not any(item.exists() for item in opened_workspaces)
     assert not (result_dir / ".read-only-workspace").exists()
     assert code == 0 and mock["status"] == "non_quality_mock"
