@@ -206,22 +206,38 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 19,
         "clock": 6,
     },
-    # Re-measured after publisher signing was removed. `packs/publisher.py` and
-    # `packs/signature.py` account for the whole of the `subprocess`, `write_text` and
-    # `clock` drop — 4, 1 and 3 sites, counted by this same walk over the two files at the
-    # commit before they were deleted. The `print` column moved for a different reason and
-    # earlier: the walk read 51 over `packs/` with these ceilings still at 54, because the
-    # pass that removed the `pack sign` and `pack keygen` verbs from `packs/cli.py` took
-    # three prints out and did not lower the ceiling. `sources.py`'s `_git` is the one
-    # `subprocess` site left in the package. Lowered to what the walk counts, not to a
-    # target.
+    # The third pillar behind the ports (§7 stage 3). Five kinds are zero because every
+    # site moved onto one: 51 `print` to the `Presenter` the shell builds (50 stdout, one
+    # stderr, three of them canonical-JSON documents that keep their single trailing
+    # newline through `_emit_document`), 8 `os.environ` to `Env` — 3 tier roots in
+    # `resolver.py`, 4 trust-store and consent variables in `trust.py`, and the
+    # environment `sources.py` hands to git — 1 `subprocess.run` to `ProcessRunner`, and
+    # 2 wall-clock reads to `Clock`, rendered `.astimezone(utc)` at the call because a
+    # pack manifest and a lock entry both store UTC while the port reads the moment
+    # through the local offset.
+    #
+    # The sixth is held rather than claimed. The 8 `write_text` were read and they are
+    # not one thing: two are the shell's own writes of the pack `init` scaffolds, two are
+    # writes into the `mkdtemp` staging tree `evidence.py` validates before swapping it in
+    # (the same scratch-write shape as `eval`'s surviving site), one is `trust.py` writing
+    # a `.tmp` it then `os.replace`s — an atomic replace, which `FileStore.write_text`
+    # does not promise and so is not the same operation — and the remaining three are
+    # `sync.py`, `exporter.py` and `sources.py` writing product files. Only the last of
+    # those spells `FileStore.write_text`'s exact contract today (`parent.mkdir(parents=
+    # True, exist_ok=True)` then the write). Moving some subset would be a claim about
+    # which of five shapes belongs on one method, and nobody has made it; 8 is the floor
+    # until somebody does.
+    #
+    # `packs` is deliberately not in `tests/test_layering_contract.py`'s `MIGRATED` yet.
+    # The cross-pillar import edges in its judgement layer are the next pass, which is the
+    # order `govern` and `eval` went in as well.
     "packs": {
-        "print": 51,
-        "subprocess": 1,
+        "print": 0,
+        "subprocess": 0,
         "open_write": 0,
         "write_text": 8,
-        "env": 8,
-        "clock": 2,
+        "env": 0,
+        "clock": 0,
     },
     # The capability registry declares; it does not act. Zero is the shape every
     # judgement layer carved out in stage 3 is supposed to end up with.
