@@ -17,6 +17,8 @@ from dataclasses import dataclass
 
 from .. import bench_providers as _bench_provider_patches
 from ..packs.model import PackError
+from ..ports import Presenter
+from ..ports.local import CONSOLE
 from . import config
 from . import perf
 from .gates import is_runtime_gate
@@ -349,7 +351,7 @@ def discover_models(cfg: dict) -> dict:
     return out
 
 
-def cmd_models(args):
+def cmd_models(args, *, out: Presenter = CONSOLE):
     cfg: dict = {}
     save = "--save" in args
     as_json = "--json" in args
@@ -362,24 +364,24 @@ def cmd_models(args):
             i += 1
     found = discover_models(cfg)
     if as_json:
-        print(json.dumps(found, ensure_ascii=False, indent=2))
+        out.out(json.dumps(found, ensure_ascii=False, indent=2))
     else:
-        print("## rig orchestrate: available model discovery\n")
+        out.out("## rig orchestrate: available model discovery\n")
         for p, info in found.items():
             if info["kind"] == "local-http":
                 status = (f"✓ {', '.join(info['models'])}" if info["reachable"]
                           else f"✗ server down / no models @ {info['base_url']}")
-                print(f"  {p:<10} {status}")
+                out.out(f"  {p:<10} {status}")
             else:
                 av = "✓ CLI present" if info.get("available") else "✗ CLI missing"
-                print(f"  {p:<10} {av}{'  — ' + info['note'] if info.get('note') else ''}")
+                out.out(f"  {p:<10} {av}{'  — ' + info['note'] if info.get('note') else ''}")
     if save:
         # Save config for local-http only (the default model is used by the next --auto-model)
         conf = {p: {"base_url": d["base_url"], "default": d["default"], "models": d["models"]}
                 for p, d in found.items() if d["kind"] == "local-http" and d["reachable"]}
         _MODELS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         _MODELS_CACHE_PATH.write_text(json.dumps(conf, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"\nSaved: {_MODELS_CACHE_PATH} ({len(conf)} providers) — used by the next run --auto-model")
+        out.out(f"\nSaved: {_MODELS_CACHE_PATH} ({len(conf)} providers) — used by the next run --auto-model")
 
 
 def _record_benchmark_provider_call(
@@ -3590,7 +3592,7 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
 
 
 # ── Provider connectivity test ───────────────────────────────────────────────
-def cmd_probe(args):
+def cmd_probe(args, *, out: Presenter = CONSOLE):
     """Hit the provider once and show the actual command, output, and whether the contract parses.
     Examples: orchestrate.py probe --provider codex          (checks VERDICT in the verifier role)
               orchestrate.py probe --provider codex --role generator
@@ -3617,29 +3619,29 @@ def cmd_probe(args):
         else:
             i += 1
     if not provider:
-        print("[ERROR] --provider <name> is required (rig|claude|codex|grok|ollama|lmstudio|anthropic|cmd|mock)")
+        out.out("[ERROR] --provider <name> is required (rig|claude|codex|grok|ollama|lmstudio|anthropic|cmd|mock)")
         sys.exit(1)
     prompt = ("Judge whether a product meets its acceptance criteria and end with exactly one line: "
               "'VERDICT: PASS' or 'VERDICT: FAIL'.\nProduct: 2 + 2 = 4"
               if role == "verifier" else
               "Compute 1 + 1 and end with 'STATUS: done'.")
     sig = "VERDICT" if role == "verifier" else "STATUS"
-    print(f"## probe: provider={provider} / role={role}")
+    out.out(f"## probe: provider={provider} / role={role}")
     if provider in _OPENAI_BASE:
-        print(f"  endpoint : {_base_url(provider, cfg)}/chat/completions")
-        print(f"  model    : {resolve_http_model(provider, cfg)}")
+        out.out(f"  endpoint : {_base_url(provider, cfg)}/chat/completions")
+        out.out(f"  model    : {resolve_http_model(provider, cfg)}")
     elif provider == "anthropic":
         base = (cfg.get("base_url") or "https://api.anthropic.com").rstrip("/")
-        print(f"  endpoint : {base}/v1/messages")
-        print(f"  model    : {cfg.get('model') or 'claude-fable-5'}")
+        out.out(f"  endpoint : {base}/v1/messages")
+        out.out(f"  model    : {cfg.get('model') or 'claude-fable-5'}")
     else:
         argv = build_argv(provider, role, "<PROMPT>", cfg, "probe")
-        print("  command  : " + " ".join(shlex.quote(a) for a in argv))
-    rc, out = run_provider(provider, role, prompt, cfg, persona="probe")
-    found = sig in (out or "")
-    print(f"  exit     : {rc}")
-    print("  --- output (first 600 chars) ---")
-    print("  " + (out or "")[:600].replace("\n", "\n  "))
-    print(f"  → {sig} detected: " + ("✓ parseable (usable from rig)" if found
-                                else "✗ not found (prompt/flag tuning needed; the cmd provider accepts an explicit command)"))
+        out.out("  command  : " + " ".join(shlex.quote(a) for a in argv))
+    rc, reply = run_provider(provider, role, prompt, cfg, persona="probe")
+    found = sig in (reply or "")
+    out.out(f"  exit     : {rc}")
+    out.out("  --- output (first 600 chars) ---")
+    out.out("  " + (reply or "")[:600].replace("\n", "\n  "))
+    out.out(f"  → {sig} detected: " + ("✓ parseable (usable from rig)" if found
+                                  else "✗ not found (prompt/flag tuning needed; the cmd provider accepts an explicit command)"))
     sys.exit(0 if (rc == 0 and found) else 1)

@@ -215,8 +215,14 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # holding different presenters; `_run_one`'s local `out` — the generator's reply —
     # became `reply`, because it shadowed the port inside the one closure that must not
     # lose it.
+    #
+    # 63 -> 47 is `providers.py`'s two commands, `cmd_models` and `cmd_probe`. They are
+    # the only two of that file's ~3,600 lines the shell dispatches to; everything else in
+    # it is the run loop, and its words are pass 2's problem. `cmd_probe`'s local `out` —
+    # what the provider answered — is `reply` now, for the same reason `queueing.py`'s was
+    # renamed: the port and the provider's reply cannot share a name.
     "orchestrate": {
-        "print": 63,
+        "print": 47,
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,
