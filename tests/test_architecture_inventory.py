@@ -73,25 +73,25 @@ PORT_LAYER_PACKAGE = "ports"
 # (module-level or function-local — a function-local import hides a cycle, it
 # does not remove it, which is exactly the brief's point in §3).
 #
-# Six components, not the seven the brief claims. The seventh
+# Started at six components, not the seven the brief claims; the seventh
 # (bench <-> bench_score) is `if TYPE_CHECKING:`-only and is frozen separately.
+#
+# Stage 3 pillar 2 then split the twelve-module component. It was held closed by
+# three function-local imports inside `rig_workbench/packs/`, and cutting the
+# first of them — `lock -> publisher`, inverted into `lock.PublisherVerifier` —
+# dropped `eval.affected`, `eval.gate`, `orchestrate.graph`, `orchestrate.recipes`,
+# `packs.sources` and `packs.tester` out of any cycle at all, leaving the two
+# entries below in its place. Seven components, and six modules freed.
 BASELINE_RUNTIME_CYCLES: frozenset[tuple[str, ...]] = frozenset(
     {
         ("rig_workbench.cli", "rig_workbench.githooks"),
         (
-            "rig_workbench.eval.affected",
-            "rig_workbench.eval.gate",
-            "rig_workbench.orchestrate.graph",
-            "rig_workbench.orchestrate.recipes",
             "rig_workbench.packs.catalog",
-            "rig_workbench.packs.installer",
             "rig_workbench.packs.lock",
-            "rig_workbench.packs.publisher",
             "rig_workbench.packs.resolver",
-            "rig_workbench.packs.sources",
-            "rig_workbench.packs.tester",
             "rig_workbench.packs.validation",
         ),
+        ("rig_workbench.packs.installer", "rig_workbench.packs.publisher"),
         ("rig_workbench.orchestrate.providers", "rig_workbench.orchestrate.runstate"),
         (
             "rig_workbench.workbench.assurance",

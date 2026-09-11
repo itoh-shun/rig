@@ -21,8 +21,9 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
                                  "detail": "validated legacy packs; migrate with pack install",
                                  "scope": tier, "severity": "warning"})
             try:
+                from .publisher import verify_publisher_signature
                 validate_lock_root(
-                    pack_root,
+                    pack_root, verify_publisher=verify_publisher_signature,
                     expected_scope=tier if tier in {"project", "user", "org"} else None,
                 )
             except Exception as exc:

@@ -361,7 +361,12 @@ def install_pack(
         root=pathlib.Path(root) if root is not None else None,
     )
     destination_root.mkdir(parents=True, exist_ok=True)
-    validate_lock_root(destination_root, expected_scope=scope)
+    # The verifier is handed down, not imported by `lock` (`lock.PublisherVerifier`):
+    # this module already owns the publisher check at install time, so it is the one
+    # that says what "still signed by that key" means here too.
+    from .publisher import verify_publisher_signature
+    validate_lock_root(destination_root, verify_publisher=verify_publisher_signature,
+                       expected_scope=scope)
     unmanaged = [item.name for item in destination_root.iterdir() if item.is_dir()
                  and not item.name.startswith(".pack-")]
     if unmanaged and not lock_path(destination_root).exists():

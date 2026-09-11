@@ -9,6 +9,7 @@ from .installer import scope_root
 from .lock import (LOCK_SCHEMA_VERSION, lock_path, read_lock, validate_lock_root, write_lock,
                    write_lock_bytes)
 from .model import PackError
+from .publisher import verify_publisher_signature
 from .resolver import pack_roots
 from .validation import validate_pack
 
@@ -22,7 +23,8 @@ def remove_pack(
         scope, project=project_path,
         root=pathlib.Path(root) if root is not None else None,
     )
-    entries = validate_lock_root(destination_root)
+    entries = validate_lock_root(destination_root,
+                                 verify_publisher=verify_publisher_signature)
     owned = next((item for item in entries if item["id"] == pack_id), None)
     if owned is None:
         raise PackError(f"pack is not owned by this scope lock: {pack_id}")

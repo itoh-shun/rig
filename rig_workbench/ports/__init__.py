@@ -92,10 +92,10 @@ class ProcessRunner(Protocol):
     the adapter decodes `encoding="utf-8", errors="replace"` rather than passing a bare
     `text=True`: bare `text=True` decodes with the locale's encoding and strict errors, which
     raises on output that will not decode, and the 25 text-mode sites in that pillar all name
-    the pair themselves. The result type follows the mode, stated as
-    two overloads — `CompletedProcess[str]` with `text` on, `CompletedProcess[bytes]` with it
-    off — so a caller reaching for `.stdout` is told which of the two it is holding rather than
-    handed something it has to narrow.
+    the pair themselves. The result type follows the mode, stated as two overloads —
+    `CompletedProcess[str]` with `text` on, `CompletedProcess[bytes]` with it off — so a caller
+    reaching for `.stdout` is told which of the two it is holding rather than handed something
+    it has to narrow.
 
     `input=` is here because callers brought one, which was the condition for adding it:
     `eval/runner.py:305` and `:409` feed a prompt as `str`, `eval/affected.py:412` feeds object

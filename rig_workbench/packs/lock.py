@@ -7,7 +7,7 @@ import os
 import pathlib
 import re
 import tempfile
-from typing import Any
+from typing import Any, Protocol
 
 from rig_workbench import __version__
 
@@ -17,6 +17,36 @@ from .validation import validate_pack
 
 LOCK_NAME = "pack.lock.json"
 LOCK_SCHEMA_VERSION = 4
+
+
+# ── the publisher check, stated as what this module needs rather than imported ──
+class PublisherVerifier(Protocol):
+    """Re-reads one pack's publisher signature and says who signed what, or None.
+
+    This module *pins* publisher trust in the lock; it does not *establish* it. Establishing
+    it is `packs.publisher`'s: parsing `pack.sig.json`, loading the trust roots, checking
+    revocation and expiry, and running Ed25519 over `canonical(envelope)` — none of which is
+    a fact about a lock file. What `validate_lock_root` needs back is only the pair the lock
+    records, `key_id` and `signed_digest`, so that it can say whether the pack on disk still
+    matches the entry that claims it.
+
+    Stated as a protocol rather than imported, because the import is the cycle
+    (`tests/test_architecture_inventory.py`): `lock -> publisher -> installer -> lock` is one
+    of the three edges that held a twelve-module component closed, and a function-local
+    `from .publisher import ...` hides that edge rather than removing it — which is exactly
+    the design brief's §3 point. So the dependency is inverted instead:
+    `publisher.verify_publisher_signature` satisfies this shape structurally without knowing
+    this file exists, and each caller is what joins the two.
+
+    A callable and not already-read data, deliberately. `validate_lock_root` walks every
+    entry in a lock root and only the `verified-publisher` ones need checking; a caller
+    handed the reading cannot know which those are without re-reading the lock itself. The
+    same split govern draws between `RunRecords` (one repository, data) and
+    `RunRecordSource` (many, a reader) — this is the second kind.
+    """
+
+    def __call__(self, pack: pathlib.Path, manifest: dict) -> dict[str, str] | None:
+        ...
 
 
 def tree_hash(root: pathlib.Path) -> str:
@@ -197,8 +227,18 @@ def replace_entry(lock: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
 
 
 def validate_lock_root(
-    root: pathlib.Path, *, expected_scope: str | None = None,
+    root: pathlib.Path, *, verify_publisher: PublisherVerifier | None,
+    expected_scope: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Validate one pack root against its lock, and return the entries.
+
+    `verify_publisher` is required and has no default, which is the point rather than an
+    inconvenience (`PublisherVerifier`): a default would be the very import this signature
+    exists to remove. Passing `None` is therefore a caller's explicit statement that it is
+    not re-running the cryptography — every other drift check still runs, and the publisher
+    fields are still validated structurally. `packs.resolver` is the one shipped caller that
+    passes it, and says there why brick resolution is not the place for that work.
+    """
     if not lock_path(root).exists():
         return []
     lock = read_lock(root)
@@ -305,9 +345,8 @@ def validate_lock_root(
         }
         if expected_cases != entry["eval_case_hashes"]:
             raise PackError(f"pack lock drift: eval cases changed for {entry['id']}")
-        if entry["verification_status"] == "verified-publisher":
-            from .publisher import verify_publisher_signature
-            verified = verify_publisher_signature(pack, manifest)
+        if entry["verification_status"] == "verified-publisher" and verify_publisher is not None:
+            verified = verify_publisher(pack, manifest)
             if (verified is None or verified["key_id"] != entry["publisher_key_id"]
                     or verified["signed_digest"] != entry["signed_digest"]):
                 raise PackError(f"pack lock drift: publisher signature changed for {entry['id']}")

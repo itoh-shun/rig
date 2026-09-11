@@ -38,7 +38,17 @@ def _pack_entries_with_trust(
         if not root.is_dir():
             continue
         expected = tier if tier in {"project", "user", "org"} else None
-        for locked in validate_lock_root(root, expected_scope=expected):
+        # `verify_publisher=None` on purpose (`lock.PublisherVerifier`). This is the brick
+        # resolution path: every `resolve_all` for every recipe, persona and command comes
+        # through here, and re-running Ed25519 over every installed pack to answer "where
+        # does this recipe live" would put `cryptography` on the critical path of resolving
+        # a brick. Establishing publisher trust is `installer`'s at install time, `remover`'s
+        # before it deletes, and `doctor`'s on demand; all three pass the real verifier.
+        # What this loop wants is the status the lock already recorded, and every other
+        # drift check — identity, manifest digest, asset hashes, eval cases, scope — still
+        # runs here unchanged.
+        for locked in validate_lock_root(root, verify_publisher=None,
+                                         expected_scope=expected):
             trust[(tier, locked["id"])] = locked["verification_status"]
         entries.extend(
             (tier, item) for item in sorted(root.iterdir())
