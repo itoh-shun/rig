@@ -14,6 +14,16 @@ This module is `validation`'s **shell**, and stage 3 of
 `docs/v3-architecture-design-brief.ja.md` §3 asks the same two things of it that
 `govern/cli.py` and `packs/cli.py` already answer.
 
+**Four adapters, built once and forwarded.** `cmd_validate` takes a `Presenter`, a
+`ProcessRunner`, an `Env` and a `Clock`; `main()` builds one of each at the process
+boundary and hands them in; and each is passed on to every call below whose signature
+declares it — `run_selftest(out=…)`, `check_wiki(clock=…)`, `check_graph(proc=…, env=…)`
+— and to nothing else. That is the rule `govern/cli.py` states and
+`tests/test_validation_forwarded_ports.py` checks: a handler that takes a port and then
+calls into the judgement layer without passing it on leaves the *callee's default* in
+charge, and the callee's default is the real adapter, so the command quietly runs on two
+of them.
+
 **Words leave through the `Presenter` port.** No function here calls `print`. `cmd_validate`
 takes an `out: Presenter`, the adapter is built once at the process boundary in `main()`,
 and it is forwarded to every call below whose signature declares one — today that is
@@ -33,8 +43,8 @@ and `main()` is the three lines that turn a process into a call — exactly the 
 import sys
 import traceback
 
-from rig_workbench.ports import Presenter
-from rig_workbench.ports.local import ConsolePresenter
+from rig_workbench.ports import Clock, Env, Presenter, ProcessRunner
+from rig_workbench.ports.local import ConsolePresenter, OsEnv, SubprocessRunner, SystemClock
 
 from . import state
 from .accumulated import check_accumulated
@@ -57,7 +67,9 @@ from .yaml_adapter import PyYAMLMissing, require_yaml
 
 
 # ── main ─────────────────────────────────────────────────────────────
-def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter()) -> int:
+def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter(),
+                 proc: ProcessRunner = SubprocessRunner(), env: Env = OsEnv(),
+                 clock: Clock = SystemClock()) -> int:
     """Run the validator and return its exit status.
 
     The presenter is a parameter rather than a module-level instance this function reaches
@@ -138,12 +150,12 @@ def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter()) -> int
         _emit("FAIL", f"packs catalog check — unexpected error:\n{traceback.format_exc()}")
 
     try:
-        check_wiki()
+        check_wiki(clock=clock)
     except Exception:
         _emit("FAIL", f"wiki hygiene check — unexpected error:\n{traceback.format_exc()}")
 
     try:
-        check_graph()
+        check_graph(proc=proc, env=env)
     except Exception:
         _emit("FAIL", f"graph consistency check — unexpected error:\n{traceback.format_exc()}")
 
@@ -219,7 +231,8 @@ def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter()) -> int
 
 
 def main() -> None:
-    sys.exit(cmd_validate(sys.argv[1:], out=ConsolePresenter()))
+    sys.exit(cmd_validate(sys.argv[1:], out=ConsolePresenter(), proc=SubprocessRunner(),
+                          env=OsEnv(), clock=SystemClock()))
 
 
 if __name__ == "__main__":

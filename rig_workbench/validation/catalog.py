@@ -2,10 +2,12 @@
 
 import argparse
 import json
-import os
 import pathlib
 import re
 import sys
+
+from rig_workbench.ports import Clock, Env, ProcessRunner
+from rig_workbench.ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 
 from .config import AGENTS, FACETS, ROOT, SKILLS
 from .state import _emit, parse_frontmatter
@@ -78,8 +80,17 @@ def check_catalog_drift() -> None:
 
 
 # ── shipped wiki hygiene check (including freshness) ─────────────────────────
-def check_wiki() -> None:
-    """Check frontmatter hygiene and freshness (reviewed_at; 180 days) of shipped wiki pages."""
+def check_wiki(*, clock: Clock = SYSTEM_CLOCK) -> None:
+    """Check frontmatter hygiene and freshness (reviewed_at; 180 days) of shipped wiki pages.
+
+    The freshness rule is the one check in this module whose verdict is a function of the
+    day it runs, which is exactly why the day arrives as a `Clock` instead of being read
+    where it is used: `tests/test_validation_catalog_ports.py` pins both sides of the
+    180-day boundary against a frozen date, which is not a thing a wall-clock read can be
+    asked. `Clock.today()` comes off the same offset-carrying `now()` the rest of rig
+    stamps records with, so this and a record written in the same second cannot disagree
+    about which day it is at 23:59.
+    """
     import datetime
     wiki_dir = FACETS / "knowledge" / "wiki"
     if not wiki_dir.is_dir():
@@ -103,7 +114,7 @@ def check_wiki() -> None:
         if ra is not None:
             try:
                 d = ra if isinstance(ra, datetime.date) else datetime.date.fromisoformat(str(ra))
-                if (datetime.date.today() - d).days > 180:
+                if (clock.today() - d).days > 180:
                     _emit("WARN", f"{ctx} — reviewed_at is over 180 days old ({d}): review and update the content or mark it deprecated (knowledge freshness)")
             except ValueError:
                 _emit("FAIL", f"{ctx} — reviewed_at '{ra}' is not in YYYY-MM-DD format")
@@ -115,23 +126,32 @@ def check_wiki() -> None:
 
 
 # ── brick graph consistency check (ontology constraints; #graph) ─────────────
-def check_graph() -> None:
+def check_graph(*, proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV) -> None:
     """Call orchestrate.py graph --json (the primary implementation of the typed graph) and check for unresolved edges.
 
     Instead of reimplementing the derivation logic, invoke the primary
-    implementation via subprocess (avoid duplicating prose and code). Relations
-    already covered by other checks (injects=check_personas / uses-*=check_recipe)
-    are skipped to avoid double reporting; this check only handles
+    implementation via the `ProcessRunner` port (avoid duplicating prose and code).
+    Relations already covered by other checks (injects=check_personas /
+    uses-*=check_recipe) are skipped to avoid double reporting; this check only handles
     **links-to (broken wiki cross-links) = FAIL / references & mirrors = WARN**.
+
+    **`env=` on the port replaces the environment, it does not add to it** — as
+    `subprocess.run` has it, and as `ports/__init__.py` says. The call therefore composes
+    `{**env.snapshot(), "RIG_HOME": ...}`, which is the same mapping the `os.environ`
+    spread built here before: the child needs the parent's `PATH` and `HOME` to run a
+    Python script at all. Handing it the one variable alone would be a different command.
+
+    The port always captures and decodes `encoding="utf-8", errors="replace"`, which is
+    the `capture_output=True, text=True` this call used to spell, minus the strict
+    decoding a bare `text=True` inherits from the locale.
     """
-    import subprocess
-    proc = subprocess.run(
+    completed = proc.run(
         [sys.executable, str(ROOT / "scripts" / "orchestrate.py"), "graph", "--json"],
-        capture_output=True, text=True, env={**os.environ, "RIG_HOME": str(ROOT)})
-    if proc.returncode != 0:
-        _emit("FAIL", f"graph — orchestrate.py graph --json failed: {proc.stderr[:200]}")
+        env={**env.snapshot(), "RIG_HOME": str(ROOT)})
+    if completed.returncode != 0:
+        _emit("FAIL", f"graph — orchestrate.py graph --json failed: {completed.stderr[:200]}")
         return
-    g = json.loads(proc.stdout)
+    g = json.loads(completed.stdout)
     covered = {"injects", "uses-persona", "uses-instruction", "uses-pattern",
                "gated-by", "applies-policy", "emits-contract", "extends"}
     bad = 0
