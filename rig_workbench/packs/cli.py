@@ -102,16 +102,6 @@ def _parser() -> argparse.ArgumentParser:
     import_results = sub.add_parser("import-results")
     import_results.add_argument("pack")
     import_results.add_argument("--result-dir", required=True)
-    sign = sub.add_parser("sign")
-    sign.add_argument("pack")
-    sign.add_argument("--private-key", required=True)
-    sign.add_argument("--key-id", required=True)
-    sign.add_argument("--signer", required=True)
-    keygen = sub.add_parser("keygen")
-    keygen.add_argument("--private-key", required=True)
-    keygen.add_argument("--trust-roots", required=True)
-    keygen.add_argument("--key-id", required=True)
-    keygen.add_argument("--signer", required=True)
     remove = sub.add_parser("remove")
     remove.add_argument("id")
     remove.add_argument("--scope", choices=["project", "user", "org"], default="project")
@@ -489,28 +479,6 @@ def cmd_pack(argv: list[str]) -> int:
                 for failure in report["failures"]:
                     print(f"- {failure}")
             return code
-        if args.command == "sign":
-            # The shell joins the two (`publisher.LocalQualityStatus`): signing asks
-            # whether the pack's own evaluation evidence is green, and that verdict is
-            # `installer`'s — the same one `install` writes into the lock.
-            from .installer import local_quality_status
-            from .publisher import sign_pack
-            document = sign_pack(
-                args.pack, private_key_path=args.private_key,
-                key_id=args.key_id, signer=args.signer,
-                quality_status=local_quality_status,
-            )
-            print(f"signed: {args.pack} [{document['signed']['key_id']}]")
-            return 0
-        if args.command == "keygen":
-            from .publisher import generate_publisher_key
-            root = generate_publisher_key(
-                private_key_path=args.private_key, trust_roots_path=args.trust_roots,
-                key_id=args.key_id, signer=args.signer,
-                source_repository=pathlib.Path.cwd(),
-            )
-            print(f"publisher key registered: {root['key_id']} -> {args.trust_roots}")
-            return 0
         if args.command == "import-results":
             from .evidence import import_results
             imported = import_results(

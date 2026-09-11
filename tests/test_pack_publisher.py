@@ -202,9 +202,8 @@ def test_signing_and_keygen_without_cryptography_fail_closed(
 
 
 def test_keygen_keeps_private_external_and_registers_only_public_material(
-    tmp_path, monkeypatch, capsys,
+    tmp_path, monkeypatch,
 ):
-    from rig_workbench.packs.cli import cmd_pack
     from rig_workbench.packs.manifest import canonical
     from rig_workbench.packs.model import PackError
     from rig_workbench.packs.publisher import generate_publisher_key
@@ -222,11 +221,13 @@ def test_keygen_keeps_private_external_and_registers_only_public_material(
     private = secure / "publisher.pem"
 
     monkeypatch.chdir(repository)
-    assert cmd_pack([
-        "keygen", "--private-key", str(private), "--trust-roots", str(roots),
-        "--key-id", "release-2026", "--signer", "Rig Release",
-    ]) == 0
-    assert "publisher key registered: release-2026" in capsys.readouterr().out
+    # Driven through `generate_publisher_key` rather than through a `pack keygen` verb:
+    # the verb is gone, the function it called is not, and every property below is the
+    # function's rather than the CLI's.
+    generate_publisher_key(
+        private_key_path=private, trust_roots_path=roots,
+        key_id="release-2026", signer="Rig Release", source_repository=repository,
+    )
     assert private.is_file() and (private.stat().st_mode & 0o777) == 0o600
     assert b"PRIVATE KEY" in private.read_bytes()
     document = json.loads(roots.read_text(encoding="utf-8"))

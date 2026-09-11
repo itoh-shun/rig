@@ -5,7 +5,7 @@ the `rig-wb` CLI, `scripts/mcp_server.py`, `rig_workbench/remote_mcp.py`, `actio
 the routing `skills/engine/facets/instructions/talk-loop.md` performs — becomes a projection
 of this tuple instead of a hand-written copy of it.
 
-Stage 2 is declaration only. All 139 entries are here, and the surfaces still execute
+Stage 2 is declaration only. All 137 entries are here, and the surfaces still execute
 through the code they execute through today; rewiring them onto this table is stage 3. So
 nothing in this package imports the code that runs a capability, and nothing here can run
 one: see `model.Capability` on why a declaration may not carry a callable.

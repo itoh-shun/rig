@@ -693,9 +693,9 @@ def test_installed_console_script_routes_pack_help_and_read_only_doctor(tmp_path
     )
 
     assert public_help.returncode == 0, public_help.stdout + public_help.stderr
-    assert "pack init|validate|doctor|install|test|import-results|keygen|sign|remove|invoke" in public_help.stdout
+    assert "pack init|validate|doctor|install|test|import-results|remove|invoke" in public_help.stdout
     assert pack_help.returncode == 0, pack_help.stdout + pack_help.stderr
-    assert "import-results" in pack_help.stdout and "keygen" in pack_help.stdout
+    assert "import-results" in pack_help.stdout and "invoke" in pack_help.stdout
     assert doctor.returncode == 0, doctor.stdout + doctor.stderr
     assert json.loads(doctor.stdout) == {
         "findings": [], "pack_doctor_schema_version": 1, "packs": [], "status": "ok",

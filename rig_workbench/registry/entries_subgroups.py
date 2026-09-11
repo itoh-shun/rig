@@ -796,52 +796,6 @@ PACK: tuple[Capability, ...] = (
         ),
     ),
     Capability(
-        id="pack.sign",
-        parent="pack",
-        verb="sign",
-        intent="put my publisher identity on a pack so whoever installs it can tell it "
-               "really came from me and has not been altered since",
-        preconditions=("pack-dir", "manifest-canonical", "signing-key", "key-id-registered"),
-        effect_line="private key で pack に署名し、pack.sig.json を書き出します"
-                    "（以後この pack は sync できなくなります）",
-        effect_class="writes-worktree",
-        network="never",
-        flags=(
-            Flag(name="pack", type="path", help="the pack to sign", required=True),
-            Flag(name="--private-key", type="path", help="private key to sign with", required=True),
-            Flag(name="--key-id", type="string", help="identifier for the key", required=True),
-            Flag(name="--signer", type="string", help="name of the signer", required=True),
-        ),
-        exit_codes=(
-            ExitCode(code=0, meaning="署名して pack.sig.json を書き出した"),
-            _PACK_ERROR,
-        ),
-    ),
-    Capability(
-        id="pack.keygen",
-        parent="pack",
-        verb="keygen",
-        intent="create the publishing identity I will sign packs with, and register it "
-               "where installers look for trust",
-        preconditions=("key-path-free", "trust-roots-path", "key-id-free"),
-        effect_line="publisher の秘密鍵を新しく生成してファイルに書き、"
-                    "対応する公開鍵を trust-roots に登録します",
-        effect_class="writes-worktree",
-        network="never",
-        flags=(
-            Flag(name="--private-key", type="path",
-                 help="where to write the private key", required=True),
-            Flag(name="--trust-roots", type="path",
-                 help="where to register the public key", required=True),
-            Flag(name="--key-id", type="string", help="identifier for the key", required=True),
-            Flag(name="--signer", type="string", help="name of the signer", required=True),
-        ),
-        exit_codes=(
-            ExitCode(code=0, meaning="鍵を生成し、trust-roots に登録した"),
-            _PACK_ERROR,
-        ),
-    ),
-    Capability(
         id="pack.remove",
         parent="pack",
         verb="remove",
