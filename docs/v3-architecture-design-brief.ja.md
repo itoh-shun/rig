@@ -23,7 +23,7 @@ rig の内部を、能力の宣言が1箇所に集まり、判定が副作用を
 | god モジュール | `workbench/cli.py` が 40 本の import 文で 39 モジュールに届く |
 | 層 | `workbench/` と `orchestrate/` が双方向（10 対 3） |
 | `print()` | 1,073 箇所（うち `workbench/` に 513） |
-| `subprocess` | 98 箇所（うち `shell=True` 1 件） |
+| `subprocess` | 98 箇所（うち `shell=True` 3 件。`orchestrate/providers.py` に 2 件、`orchestrate/commands.py` に 1 件） |
 | `write_text` / `open(w,a)` | 53 / 17 |
 | `os.environ` / `os.getenv` | 68 箇所 |
 | 壁時計の読み | 43 箇所。綴りを 3 種から 13 種に広げて 47 箇所 |
@@ -430,6 +430,59 @@ stderr を見る。テストは同ファイルに 60 件ある。表にできな
 `PERMISSIONS` を埋め込んだ列挙を失った。`choice` として宣言すれば列挙は戻るが、未知の名前の拒否が
 govern の exit 1 から argparse の exit 2 に移る。呼び出し側に見える契約のほうが重いので、
 列挙を手放した。
+
+### 2 本目の柱は最初のポートに収まらない — `ProcessRunner` の実測
+
+6 本のポートは govern の呼び出しから形を取った。govern の `subprocess` は 2 箇所しかなく、
+どちらも `git` を 1 回呼んでテキストを読むだけである。2 本目の柱（`eval` + `packs` +
+`orchestrate/recipes.py`）の 30 箇所が同じ形をしているかを、移す前に数えた。
+
+| 引数 | 30 箇所のうち | 値の内訳 |
+|---|---|---|
+| `cwd` | 30 | |
+| `capture_output` | 30 | 全件 `True` |
+| `timeout` | 30 | 5〜30 秒の定数 28 件と変数 2 件 |
+| `text` | 27 | 全件 `True` |
+| `encoding` | 25 | 全件 `"utf-8"` |
+| `errors` | 25 | `"replace"` 24 件、`"surrogateescape"` 1 件（`eval/affected.py:381`） |
+| `shell` | 24 | 全件 `False` |
+| `check` | 4 | 全件 `False`、4 件とも `packs/publisher.py` |
+| `input` | 3 | str 2 件（`eval/runner.py:305`・`:409`）、bytes 1 件（`eval/affected.py:412`） |
+| `env` | 3 | |
+
+分かったことは 4 つある。
+
+- **text を必須にした前提が成り立たない。** 3 箇所は bytes のまま読む。`eval/affected.py:412` は
+  `git cat-file --batch` で、長さ接頭辞つきの binary が返り、stdin にも bytes を流す。
+  `eval/execution.py:43` は `git diff --binary` と `ls-files -z` の出力をそのまま
+  sha256 に食わせて実行差分の同一性にしている。`eval/gate.py:45` は出力を誰も読まず
+  `returncode` だけを見る。前の 2 つはテキストで復号した時点で値が壊れる。ポートの docstring は
+  「capture も text も必須」と書いていたので、30 箇所のうち本当の非互換はここだけである。
+- **復号の指定が抜けていた。** アダプタは `text=True` しか渡していない。これはロケール既定での
+  復号であり、柱の 25 箇所が明示している `encoding="utf-8", errors="replace"` とは別物である。
+  出力が UTF-8 でないときだけ差が出る、つまり普段は緑のまま外れる類の違いなので、アダプタ側を
+  2 引数に直した。
+- **`input=` を足す時が来た。** ポートの docstring は「呼び出し側が持ってきたら足す」と書いて
+  あった。3 件が持ってきた。うち 1 件が bytes なので、型は `str | bytes | None` である。
+- **`check=` と `shell=` は足さなくてよい。** `check` は 4 件すべて `False` で、例外で失敗を
+  伝える呼び出しは柱に 1 つも無い。`shell` は柱の 24 件がすべて明示の `False`、木全体の
+  `shell=True` 3 件（`orchestrate/providers.py:2314`・`:2787`、`orchestrate/commands.py:248`）は
+  どれも柱の外にある。
+
+`cwd`・`env`・`timeout` は今のポートで足りている。
+
+**数え方。** `tests/test_architecture_inventory.py` の効果走査と同じ定義で AST を歩いた。
+`subprocess` という名前への属性呼び出し（`run` / `Popen` / …）を 1 箇所と数え、その呼び出しの
+keyword 引数を集計する。grep ではない。行マッチの値が AST の値と食い違った件は第 3 段で既に
+起きており（末尾「測定の限界」）、同じ物差しで数えないとラチェットの天井とも突き合わせられない。
+走査対象は `rig_workbench/eval/**`・`rig_workbench/packs/**`・`rig_workbench/orchestrate/recipes.py`
+で、内訳は `eval` 24 件・`packs` 5 件・`recipes.py` 1 件の計 30 件。`shell=True` の 3 件は
+同じ走査を `rig_workbench/` 全体に掛けて出した。
+
+**残った 1 件。** `eval/affected.py:381` の `errors="surrogateescape"` は、text 復号を 1 種類に
+固定するポートでは表せない。そのファイルの docstring が書いているとおり、`replace` で復号すると
+パス名の綴りが変わって branch と base のグラフが照合しなくなる。`errors` をポートに足すのか、
+この 1 件だけポートの外に残すのかは柱を移す側の判断であり、ポートはまだ何も言っていない。
 
 ### 開いている設計の問い
 

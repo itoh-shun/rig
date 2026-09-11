@@ -1,11 +1,15 @@
 """The six ports the judgement layer is allowed to reach the world through.
 
-`docs/v3-architecture-design-brief.ja.md` §3 counts the scatter these exist to stop: 1,082
-`print` sites, 98 `subprocess`, 63 `write_text` and 27 `open(w,a)`, 69 `os.environ`, git asked
+`docs/v3-architecture-design-brief.ja.md` §3 counts the scatter these exist to stop: 1,073
+`print` sites, 98 `subprocess`, 53 `write_text` and 17 `open(w,a)`, 68 `os.environ`, git asked
 three different ways in three modules, and freshness rules that read the clock where they are
-standing. The discipline the brief settles on is a single sentence — *a judgement module may
-import these six and nothing else that touches the outside* — and the point of writing them
-down here is that the sentence becomes checkable by an import rule instead of staying prose.
+standing. Those are the AST walk in `tests/test_architecture_inventory.py` run over the tree as
+it stood before the first pillar moved; run over the tree today, with `govern` behind these
+ports, the same walk counts 1,005 / 96 / 53 / 16 / 65 outside `ports/` itself, which is what
+`BASELINE_EFFECT_SITES` freezes as a ceiling. The discipline the brief settles on is a single
+sentence — *a judgement module may import these six and nothing else that touches the outside*
+— and the point of writing them down here is that the sentence becomes checkable by an import
+rule instead of staying prose.
 
 Every method below was written from a call site that exists today, and the docstring names it.
 That is deliberate: a port designed from its own name grows methods nobody calls and misses the
@@ -82,9 +86,10 @@ class ProcessRunner(Protocol):
 
     `check=` is absent because no site uses it: `identity` wraps the call in `try/except` and
     reads `stdout`, `gitroot` reads `returncode`, and an exception-raising variant would give
-    those two a third failure mode to handle. `shell=` is absent on purpose — the tree holds one
-    `shell=True` and it is not coming through here. `input=` is absent because no govern site
-    feeds a process; the port grows it when a migrating caller brings one.
+    those two a third failure mode to handle. `shell=` is absent on purpose — the tree holds
+    three `shell=True` calls (`orchestrate/providers.py:2314` and `:2787`, and
+    `orchestrate/commands.py:248`) and none of them is coming through here. `input=` is absent
+    because no govern site feeds a process; the port grows it when a migrating caller brings one.
     """
 
     def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = None,
