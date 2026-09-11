@@ -4,7 +4,6 @@ import os
 import pathlib
 from collections.abc import Iterable
 
-from . import signature
 from .model import ASSET_DIRS, PROMPT_KINDS, PackError, ResolvedAsset, ResolvedPack
 
 
@@ -39,21 +38,11 @@ def _pack_entries_with_trust(
         if not root.is_dir():
             continue
         expected = tier if tier in {"project", "user", "org"} else None
-        # The real verifier, not `None` (`lock.PublisherVerifier`). This loop reports each
-        # pack's `verification_status`, and `verified-publisher` is a claim written into
-        # `pack.lock.json` — a file an attacker who can reach `.rig/packs` can edit as
-        # freely as the pack itself. `pack.sig.json` is the one file a pack carries that
-        # `manifest["hashes"]` does not cover (`validation.py`, non-asset), so no other
-        # drift check here looks at it: without this argument, replacing the signature
-        # bytes, presenting a revoked key, or claiming `verified-publisher` with no
-        # signature file at all all resolve cleanly and report as publisher-verified.
-        # Re-reading it costs well under a millisecond per installed pack against a
-        # `resolve_all` of tens; `signature` is a leaf, so no `cryptography` is imported
-        # until a pack actually claims a signature. Looked up on the module rather than
-        # bound at import, so `signature` stays the single patch point (its docstring).
-        for locked in validate_lock_root(root,
-                                         verify_publisher=signature.verify_publisher_signature,
-                                         core_ids=core_reference_ids(),
+        # Fail-closed, and every caller depends on that: a lock this refuses takes the
+        # whole tier down rather than resolving part of it. The status reported here is
+        # read straight from the lock, which is now the only place it exists — there is no
+        # signature to re-check it against.
+        for locked in validate_lock_root(root, core_ids=core_reference_ids(),
                                          expected_scope=expected):
             trust[(tier, locked["id"])] = locked["verification_status"]
         entries.extend(

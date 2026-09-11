@@ -152,7 +152,6 @@ def test_lock_scope_mismatch_fails_closed(tmp_path):
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.lock import read_lock, validate_lock_root, write_lock
     from rig_workbench.packs.model import PackError
-    from rig_workbench.packs.publisher import verify_publisher_signature
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source", "scope-lock", recipe=False)
@@ -162,8 +161,8 @@ def test_lock_scope_mismatch_fails_closed(tmp_path):
     lock["packs"][0]["scope"] = "org"
     write_lock(root, lock)
     with pytest.raises(PackError, match="scope mismatch"):
-        validate_lock_root(root, verify_publisher=verify_publisher_signature,
-                           core_ids=core_reference_ids(), expected_scope="project")
+        validate_lock_root(root, core_ids=core_reference_ids(),
+                           expected_scope="project")
 
 
 @pytest.mark.parametrize("link_component", [".rig", ".rig/packs", "broken/intermediate"])
@@ -446,7 +445,6 @@ def test_lock_ownership_is_bidirectional_and_lockless_root_is_diagnosed(tmp_path
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.lock import validate_lock_root
     from rig_workbench.packs.model import PackError
-    from rig_workbench.packs.publisher import verify_publisher_signature
 
     project = tmp_path / "project-owned"
     root = project / ".rig/packs"
@@ -454,8 +452,7 @@ def test_lock_ownership_is_bidirectional_and_lockless_root_is_diagnosed(tmp_path
     install_pack(source, scope="project", project=project)
     _write_pack(root, "unowned-pack", recipe=False)
     with pytest.raises(PackError, match="directory ownership mismatch.*unowned-pack"):
-        validate_lock_root(root, verify_publisher=verify_publisher_signature,
-                           core_ids=core_reference_ids())
+        validate_lock_root(root, core_ids=core_reference_ids())
     assert any(item["code"] == "lock_drift" for item in diagnose(project=project)["findings"])
 
     legacy_project = tmp_path / "legacy-project"

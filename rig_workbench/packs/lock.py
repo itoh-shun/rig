@@ -7,7 +7,7 @@ import os
 import pathlib
 import re
 import tempfile
-from typing import Any, Protocol
+from typing import Any
 
 from rig_workbench import __version__
 
@@ -17,36 +17,6 @@ from .validation import CoreReferenceIds, validate_pack
 
 LOCK_NAME = "pack.lock.json"
 LOCK_SCHEMA_VERSION = 4
-
-
-# ── the publisher check, stated as what this module needs rather than imported ──
-class PublisherVerifier(Protocol):
-    """Re-reads one pack's publisher signature and says who signed what, or None.
-
-    This module *pins* publisher trust in the lock; it does not *establish* it. Establishing
-    it is `packs.publisher`'s: parsing `pack.sig.json`, loading the trust roots, checking
-    revocation and expiry, and running Ed25519 over `canonical(envelope)` — none of which is
-    a fact about a lock file. What `validate_lock_root` needs back is only the pair the lock
-    records, `key_id` and `signed_digest`, so that it can say whether the pack on disk still
-    matches the entry that claims it.
-
-    Stated as a protocol rather than imported, because the import is the cycle
-    (`tests/test_architecture_inventory.py`): `lock -> publisher -> installer -> lock` is one
-    of the three edges that held a twelve-module component closed, and a function-local
-    `from .publisher import ...` hides that edge rather than removing it — which is exactly
-    the design brief's §3 point. So the dependency is inverted instead:
-    `publisher.verify_publisher_signature` satisfies this shape structurally without knowing
-    this file exists, and each caller is what joins the two.
-
-    A callable and not already-read data, deliberately. `validate_lock_root` walks every
-    entry in a lock root and only the `verified-publisher` ones need checking; a caller
-    handed the reading cannot know which those are without re-reading the lock itself. The
-    same split govern draws between `RunRecords` (one repository, data) and
-    `RunRecordSource` (many, a reader) — this is the second kind.
-    """
-
-    def __call__(self, pack: pathlib.Path, manifest: dict) -> dict[str, str] | None:
-        ...
 
 
 def tree_hash(root: pathlib.Path) -> str:
@@ -197,9 +167,17 @@ def resolve_dependencies(manifest: dict, records: list[tuple[str, Any, dict]]) -
 def make_entry(
     pack: pathlib.Path, manifest: dict, *, scope: str, source: dict[str, Any],
     verification_status: str, dependency_resolution: list[dict] | None = None,
-    publisher_key_id: str | None, signed_digest: str | None,
     installed_at: dt.datetime | None = None,
 ) -> dict[str, Any]:
+    """One lock entry for an installed pack.
+
+    `publisher_key_id` and `signed_digest` are written as `None` and are no longer
+    parameters: nothing signs a pack, so there is no value for a caller to supply. The two
+    keys stay in the entry because `validate_lock_root` compares the key set of every entry
+    exactly — a lock written without them is refused as `invalid entry`, which on the
+    resolve path takes persona, recipe and wiki resolution down with it. They are a disk
+    format obligation now, not a mechanism.
+    """
     timestamp = (installed_at or dt.datetime.now(dt.timezone.utc)).isoformat(timespec="seconds")
     return {
         "id": manifest["id"], "version": manifest["version"], "kind": manifest["kind"],
@@ -214,8 +192,8 @@ def make_entry(
             item: manifest["hashes"][item] for item in manifest["assets"]["eval-case"]
         },
         "verification_status": verification_status,
-        "publisher_key_id": publisher_key_id,
-        "signed_digest": signed_digest,
+        "publisher_key_id": None,
+        "signed_digest": None,
     }
 
 
@@ -227,19 +205,16 @@ def replace_entry(lock: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
 
 
 def validate_lock_root(
-    root: pathlib.Path, *, verify_publisher: PublisherVerifier | None,
-    core_ids: CoreReferenceIds, expected_scope: str | None = None,
+    root: pathlib.Path, *, core_ids: CoreReferenceIds, expected_scope: str | None = None,
 ) -> list[dict[str, Any]]:
     """Validate one pack root against its lock, and return the entries.
 
-    `verify_publisher` is required and has no default, which is the point rather than an
-    inconvenience (`PublisherVerifier`): a default would be the very import this signature
-    exists to remove. Passing `None` is a caller's explicit statement that it is not
-    re-running the cryptography — every other drift check still runs, and the publisher
-    fields are still validated structurally, but `verified-publisher` is then taken on the
-    lock file's word. No shipped caller passes `None`: `installer`, `remover`, `doctor` and
-    `resolver` all hand over `signature.verify_publisher_signature`, because the structural
-    checks cannot see a tampered `pack.sig.json` — it is not in `manifest["hashes"]`.
+    Every check here is structural: the entry's shape, the pack's identity, its manifest
+    digest and its declared asset hashes. There is no cryptographic re-check any more, and
+    no argument for one — nothing signs a pack, so a `verified-publisher` entry left on an
+    older disk is a label with nothing behind it. It is still accepted and still reported,
+    and the publisher columns are still shape-checked, so such a lock keeps reading clean;
+    what it no longer does is make a claim this code can confirm or deny.
 
     `core_ids` is passed straight through to `validate_pack`
     (`validation.CoreReferenceIds`), and is taken as an argument here for the same reason
@@ -304,6 +279,11 @@ def validate_lock_root(
                        for mapping in (entry["asset_hashes"], entry["eval_case_hashes"])
                        for key, value in mapping.items())):
             raise PackError(f"pack lock drift: invalid metadata for {entry['id']}")
+        # Both columns, and all three `verification_status` values, are kept for the locks
+        # already on disk. `verified-publisher` is written by nothing and checked by
+        # nothing now; dropping the value refuses such a lock as `invalid metadata`, and
+        # dropping either column refuses every lock as `invalid entry` — and because the
+        # resolve path is fail-closed, that is every `rig` run and not merely `pack`.
         publisher_fields = (entry["publisher_key_id"], entry["signed_digest"])
         if entry["verification_status"] == "verified-publisher":
             if (not isinstance(publisher_fields[0], str) or not publisher_fields[0]
@@ -352,9 +332,4 @@ def validate_lock_root(
         }
         if expected_cases != entry["eval_case_hashes"]:
             raise PackError(f"pack lock drift: eval cases changed for {entry['id']}")
-        if entry["verification_status"] == "verified-publisher" and verify_publisher is not None:
-            verified = verify_publisher(pack, manifest)
-            if (verified is None or verified["key_id"] != entry["publisher_key_id"]
-                    or verified["signed_digest"] != entry["signed_digest"]):
-                raise PackError(f"pack lock drift: publisher signature changed for {entry['id']}")
     return lock["packs"]
