@@ -17,6 +17,7 @@ import pathlib
 import shutil
 
 from .model import PackError
+from .resolver import core_reference_ids
 from .validation import validate_pack
 
 README = """# {display_name}
@@ -67,7 +68,7 @@ def export_pack(source: pathlib.Path | str, *, to: pathlib.Path | str) -> dict:
     exporting it does.
     """
     pack = pathlib.Path(source).expanduser().resolve()
-    manifest = validate_pack(pack)
+    manifest = validate_pack(pack, core_ids=core_reference_ids())
     destination = pathlib.Path(to).expanduser().resolve()
     if destination.exists() and any(destination.iterdir()):
         raise PackError(f"export target is not empty: {destination}")
@@ -92,7 +93,7 @@ def export_pack(source: pathlib.Path | str, *, to: pathlib.Path | str) -> dict:
     # The copy has to still be a valid pack. Validating it here means an export that dropped
     # or corrupted a file is caught by the person doing the export, not by their first
     # consumer.
-    exported = validate_pack(inner)
+    exported = validate_pack(inner, core_ids=core_reference_ids())
     if exported["hashes"] != manifest["hashes"]:
         raise PackError("export changed the pack's asset hashes")
     return {

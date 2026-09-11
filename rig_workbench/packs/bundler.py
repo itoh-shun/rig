@@ -31,6 +31,7 @@ import zipfile
 
 from .manifest import safe_relative
 from .model import PackError
+from .resolver import core_reference_ids
 from .validation import validate_pack
 
 #: The zip format's own epoch. Any fixed value works; this one is conventional for
@@ -63,7 +64,7 @@ def bundle_pack(source: pathlib.Path | str, *, to: pathlib.Path | str | None = N
     possible outcome is the same failure, discovered later and somewhere else.
     """
     root = pathlib.Path(source).resolve()
-    manifest = validate_pack(root)
+    manifest = validate_pack(root, core_ids=core_reference_ids())
     destination = (pathlib.Path(to) if to is not None
                    else pathlib.Path("dist") / f"{manifest['id']}-{manifest['version']}.zip")
     destination = destination.resolve()

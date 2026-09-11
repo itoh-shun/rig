@@ -23,6 +23,7 @@ from rig_workbench.packs.inventory import info
 from rig_workbench.packs.model import PackError
 from rig_workbench.packs.sources import write_sources
 from rig_workbench.packs.validation import validate_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 SHIPPED = pathlib.Path(__file__).resolve().parents[1] / "packs" / "domain"
 
@@ -45,8 +46,8 @@ def test_export_puts_the_pack_below_the_repository_and_keeps_it_valid(tmp_path):
 
     # Still a pack, byte for byte: an export that dropped a file is caught by whoever runs the
     # export rather than by their first consumer.
-    manifest = validate_pack(root / "sales")
-    assert manifest["hashes"] == validate_pack(SHIPPED / "sales")["hashes"]
+    manifest = validate_pack(root / "sales", core_ids=core_reference_ids())
+    assert manifest["hashes"] == validate_pack(SHIPPED / "sales", core_ids=core_reference_ids())["hashes"]
 
 
 def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
@@ -59,7 +60,7 @@ def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
     _git(repo, "config", "user.name", "packs")
     _git(repo, "add", "-A")
     _git(repo, "commit", "--quiet", "-m", "sales 0.6.0")
-    version = validate_pack(SHIPPED / "sales")["version"]
+    version = validate_pack(SHIPPED / "sales", core_ids=core_reference_ids())["version"]
     _git(repo, "tag", f"v{version}")
 
     project = tmp_path / "project"

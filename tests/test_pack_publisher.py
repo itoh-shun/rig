@@ -20,6 +20,7 @@ import pytest
 from test_pack_sdk_phase4d import _resource_pack
 from test_pack_lifecycle import _quality_pack
 from test_packs import _write_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 def _key_material(tmp_path):
@@ -135,7 +136,8 @@ def test_install_without_cryptography_refuses_publisher_trust(
     assert [(item["id"], item["verification_status"],
              item["publisher_key_id"], item["signed_digest"])
             for item in validate_lock_root(
-                root, verify_publisher=verify_publisher_signature)] == [
+                root, verify_publisher=verify_publisher_signature,
+                core_ids=core_reference_ids())] == [
         ("unsigned-pack", "verified-local", None, None)]
 
 
@@ -168,7 +170,8 @@ def test_lock_and_doctor_without_cryptography_reject_a_publisher_claim(
     write_lock(root, lock)
 
     with pytest.raises(PackError, match="requires cryptography"):
-        validate_lock_root(root, verify_publisher=verify_publisher_signature)
+        validate_lock_root(root, verify_publisher=verify_publisher_signature,
+                           core_ids=core_reference_ids())
     assert diagnose(project=project)["status"] == "failed"
 
 
@@ -432,7 +435,8 @@ def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
     result = install_pack(pack, scope="project", project=project)
     assert result.verification_status == "verified-publisher"
     entries = validate_lock_root(project / ".rig/packs",
-                                 verify_publisher=publisher.verify_publisher_signature)
+                                 verify_publisher=publisher.verify_publisher_signature,
+                                 core_ids=core_reference_ids())
     assert entries[0]["publisher_key_id"] == "test-2026"
     assert entries[0]["signed_digest"] == verified["signed_digest"]
     # A literal, not the constant: a lock format change is a migration question for every
@@ -449,7 +453,8 @@ def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
     from rig_workbench.packs.model import PackError
     with pytest.raises(PackError, match="signature is invalid"):
         validate_lock_root(project / ".rig/packs",
-                           verify_publisher=publisher.verify_publisher_signature)
+                           verify_publisher=publisher.verify_publisher_signature,
+                           core_ids=core_reference_ids())
     assert diagnose(project=project)["status"] == "failed"
     assert diagnose(result.path, project=project)["status"] == "failed"
 

@@ -12,6 +12,7 @@ import pytest
 
 from test_eval_cases import valid_case
 from test_packs import _write_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
@@ -162,7 +163,7 @@ def test_lock_scope_mismatch_fails_closed(tmp_path):
     write_lock(root, lock)
     with pytest.raises(PackError, match="scope mismatch"):
         validate_lock_root(root, verify_publisher=verify_publisher_signature,
-                           expected_scope="project")
+                           core_ids=core_reference_ids(), expected_scope="project")
 
 
 @pytest.mark.parametrize("link_component", [".rig", ".rig/packs", "broken/intermediate"])
@@ -444,7 +445,8 @@ def test_lock_ownership_is_bidirectional_and_lockless_root_is_diagnosed(tmp_path
     install_pack(source, scope="project", project=project, allow_unverified=True)
     _write_pack(root, "unowned-pack", recipe=False)
     with pytest.raises(PackError, match="directory ownership mismatch.*unowned-pack"):
-        validate_lock_root(root, verify_publisher=verify_publisher_signature)
+        validate_lock_root(root, verify_publisher=verify_publisher_signature,
+                           core_ids=core_reference_ids())
     assert any(item["code"] == "lock_drift" for item in diagnose(project=project)["findings"])
 
     legacy_project = tmp_path / "legacy-project"
@@ -667,7 +669,7 @@ def test_import_results_validates_every_staged_file_and_is_atomic(
         "import-results", str(pack), "--result-dir", str(staged),
     ]) == 0
     assert capsys.readouterr().out == f"imported: {relative}\n"
-    validated = validate_pack(pack)
+    validated = validate_pack(pack, core_ids=core_reference_ids())
     assert validated["assets"]["eval-result"] == [relative]
     assert (pack / relative).is_file()
 

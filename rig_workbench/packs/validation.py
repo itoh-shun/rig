@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+from collections.abc import Collection
 
 from rig_workbench import __version__
 from rig_workbench.eval.cases import validate_case
@@ -112,17 +113,40 @@ def _frontmatter_refs(path: pathlib.Path) -> list[tuple[str, str]]:
     return sorted(set(refs))
 
 
-def _core_reference_ids() -> set[tuple[str, str]]:
-    """Return only shipped core prompt IDs that extension packs may reuse."""
-    from .resolver import _core_assets
+# ── the shipped core, stated as what this module needs rather than imported ───
+#: Every `(kind, name)` an extension pack may reference as belonging to `rig-core`.
+#:
+#: This module *checks references against* the shipped core; it does not *enumerate* it.
+#: Enumerating it is `packs.resolver`'s — it walks the installed engine's skill directories
+#: and already owns that walk for `resolve_all` — and it is a fact about the installation,
+#: not about the pack being validated. So the set arrives already computed, and what is
+#: written down here is only the shape a reference check needs: a membership test over
+#: `(kind, name)` pairs.
+#:
+#: A plain collection and not a callable or a protocol, deliberately. `validate_pack`
+#: validates exactly one pack against one installation, so by the same split
+#: `govern/conformance.py` draws it is the `RunRecords` case, not the `RunRecordSource`
+#: case: data for the one, a reader only for the visitor that iterates many.
+#:
+#: Stated as a parameter rather than imported, because the import is the cycle
+#: (`tests/test_architecture_inventory.py`): `validation -> resolver -> validation` is the
+#: last of the three function-local imports that held a twelve-module component closed, and
+#: it is in every minimum feedback edge set for that component — no other single cut opens
+#: it. `resolver.core_reference_ids` produces this set without knowing this file exists.
+CoreReferenceIds = Collection[tuple[str, str]]
 
-    return {(asset.kind, asset.name) for asset in _core_assets()
-            if asset.kind in PROMPT_KINDS}
 
-
-def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) -> dict:
+def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
+                  require_evaluation: bool = True) -> dict:
     """Validate a pack. `require_evaluation=False` drops exactly one rule, for exactly one
     caller.
+
+    `core_ids` is required and has no default (`CoreReferenceIds`), which is the point
+    rather than an inconvenience: the only default that would read naturally is
+    `resolver.core_reference_ids`, and that import is the edge this signature exists to
+    remove. Most callers pass exactly that; `catalog` and `lock` take the set as an
+    argument of their own and pass it through, because importing `resolver` from either of
+    them would close the component again from the other side.
 
     A prompt-bearing pack must carry an approved evaluation case, and approving a case needs
     evidence, and evidence bound to *this pack's prompt* comes only from `pack test` — which
@@ -214,7 +238,7 @@ def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) 
     if prompt_ids and not manifest["assets"]["eval-case"]:
         if require_evaluation:
             raise PackError("prompt-bearing pack requires at least one evaluation case")
-    core_ids = _core_reference_ids()
+    core_ids = frozenset(core_ids)
     available = ids | core_ids
     parsed_references: set[tuple[str, str]] = set()
     for kind, paths in manifest["assets"].items():
@@ -276,8 +300,10 @@ def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) 
     return manifest
 
 
-def validate_tiered_collection(entries: list[tuple[str, pathlib.Path]]) -> list[tuple[str, pathlib.Path, dict]]:
-    records = [(tier, path, validate_pack(path)) for tier, path in entries]
+def validate_tiered_collection(
+    entries: list[tuple[str, pathlib.Path]], *, core_ids: CoreReferenceIds,
+) -> list[tuple[str, pathlib.Path, dict]]:
+    records = [(tier, path, validate_pack(path, core_ids=core_ids)) for tier, path in entries]
     by_id: dict[str, dict] = {}
     owners: dict[tuple[str, str, str], str] = {}
     for tier, _path, manifest in records:
@@ -352,7 +378,8 @@ def validate_tiered_collection(entries: list[tuple[str, pathlib.Path]]) -> list[
     return [record_by_id[pack_id] for pack_id in order]
 
 
-def validate_collection(pack_dirs: list[pathlib.Path]) -> list[dict]:
+def validate_collection(pack_dirs: list[pathlib.Path], *,
+                        core_ids: CoreReferenceIds) -> list[dict]:
     return [manifest for _tier, _path, manifest in validate_tiered_collection(
-        [("global", path) for path in pack_dirs]
+        [("global", path) for path in pack_dirs], core_ids=core_ids,
     )]

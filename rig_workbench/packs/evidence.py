@@ -15,7 +15,7 @@ from rig_workbench.eval.runner import _git_identity
 from .manifest import canonical, digest, read_json_yaml
 from .lock import tree_hash
 from .model import PackError
-from .resolver import pack_roots
+from .resolver import core_reference_ids, pack_roots
 from .tester import compose_case_prompt, prompt_binding_sha256
 from .validation import validate_pack
 
@@ -52,7 +52,7 @@ def import_results(
         raise PackError("staged result directory must be an existing external directory")
     if stage_root.is_relative_to(project_root):
         raise PackError("staged result directory must be outside the project repository")
-    manifest = validate_pack(pack)
+    manifest = validate_pack(pack, core_ids=core_reference_ids())
     source_tree = tree_hash(pack)
     source_stat = os.lstat(pack)
     source_identity = (source_stat.st_dev, source_stat.st_ino)
@@ -166,7 +166,7 @@ def import_results(
             staged_manifest["hashes"][relative] = digest(destination)
         staged_manifest["assets"]["eval-result"].sort()
         (temporary / "pack.yaml").write_text(canonical(staged_manifest), encoding="utf-8")
-        validate_pack(temporary)
+        validate_pack(temporary, core_ids=core_reference_ids())
         if tree_hash(pack) != source_tree:
             raise PackError("source pack changed during evidence import")
         current_commit, current_base, current_status = _git_identity(project_root)

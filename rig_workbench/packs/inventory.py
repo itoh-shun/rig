@@ -18,7 +18,7 @@ import re
 
 from .lock import read_lock
 from .model import PackError
-from .resolver import resolve_all
+from .resolver import core_reference_ids, resolve_all
 from .sources import _git, read_sources, resolve_url  # noqa: PLC2701 - one git surface
 from .validation import validate_pack
 
@@ -65,7 +65,7 @@ def _manual_entries(root: pathlib.Path, *, scope: str | None) -> list[dict]:
         if not item.is_dir() or item.name.startswith((".", "_")):
             continue
         try:
-            manifest = validate_pack(item)
+            manifest = validate_pack(item, core_ids=core_reference_ids())
         except PackError:
             # Listed as unreadable rather than skipped: a person who dropped a directory
             # here and sees nothing has no way to learn the manifest did not validate.
@@ -124,7 +124,8 @@ def _installed_type(root: pathlib.Path, entry: dict) -> str:
     that is actually there — which is the question somebody auditing an install is asking.
     """
     try:
-        return validate_pack(root / entry["path"])["type"]
+        return validate_pack(root / entry["path"],
+                             core_ids=core_reference_ids())["type"]
     except PackError:
         return "?"
 
@@ -132,7 +133,7 @@ def _installed_type(root: pathlib.Path, entry: dict) -> str:
 def info(root: pathlib.Path, pack_id: str, *, scope: str | None = None) -> dict:
     """Everything the lock and the installed manifest say about one pack."""
     entry = _entry(root, pack_id, scope=scope)
-    manifest = validate_pack(root / entry["path"])
+    manifest = validate_pack(root / entry["path"], core_ids=core_reference_ids())
     source = entry["source"]
     if source["type"] == "manual":
         # No lock ever described this pack, so most of `info`'s rows have no source. The
@@ -244,7 +245,8 @@ def knowledge_rows(project: pathlib.Path, root: pathlib.Path, *,
     candidates: list[dict] = []
     for entry in _entries(root, scope=scope):
         try:
-            manifest = validate_pack(root / entry["path"])
+            manifest = validate_pack(root / entry["path"],
+                                     core_ids=core_reference_ids())
         except PackError:
             # An unreadable pack is `?` in `list` and skipped here on purpose: this feeds an
             # answer, and half-reading a pack whose contents failed validation would put
@@ -285,7 +287,8 @@ def explain(project: pathlib.Path, root: pathlib.Path, pack_id: str) -> list[dic
     tier resolver knows. A pack can be installed, valid, and entirely shadowed — that is the
     state a person is trying to find when they ask why an override did nothing.
     """
-    manifest = validate_pack(root / _entry(root, pack_id)["path"])
+    manifest = validate_pack(root / _entry(root, pack_id)["path"],
+                             core_ids=core_reference_ids())
     rows: list[dict] = []
     for kind, paths in sorted(manifest["assets"].items()):
         for item in paths:

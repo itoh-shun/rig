@@ -824,7 +824,7 @@ def test_the_owner_lookup_is_given_the_same_root_the_source_was_found_in(tmp_pat
 
     monkeypatch.setattr(resolver, "_pack_entries", lambda root: [("project", pack)])
     monkeypatch.setattr("rig_workbench.packs.validation.validate_tiered_collection",
-                        lambda entries: [("project", pack, manifest)])
+                        lambda entries, *, core_ids: [("project", pack, manifest)])
     monkeypatch.setattr(
         resolver, "resolve_owned_asset",
         lambda kind, name, pack_id, *, project=None, shared=None:
@@ -846,7 +846,7 @@ def test_the_pack_collection_is_the_repositorys_one(tmp_path, monkeypatch):
     monkeypatch.setattr(resolver, "_pack_entries_with_trust",
                         lambda root: (seen.setdefault("root", root) and [] or [], {}))
     monkeypatch.setattr("rig_workbench.packs.validation.validate_tiered_collection",
-                        lambda entries: [])
+                        lambda entries, *, core_ids: [])
     resolver.resolved_collection(project=tmp_path / "tree", shared=tmp_path / "shared")
     assert seen["root"] == (tmp_path / "shared").resolve()
 

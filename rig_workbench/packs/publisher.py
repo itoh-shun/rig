@@ -19,6 +19,7 @@ from rig_workbench import __version__
 
 from .manifest import canonical, digest, read_json_yaml
 from .model import PROMPT_KINDS, PackError
+from .resolver import core_reference_ids
 
 SIGNATURE_NAME = "pack.sig.json"
 SIGNATURE_SCHEMA_VERSION = 1
@@ -501,7 +502,7 @@ def sign_pack(
     if (not isinstance(key_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", key_id)
             or not isinstance(signer, str) or not signer.strip()):
         raise PackError("publisher signer/key_id is invalid")
-    manifest = validate_pack(root)
+    manifest = validate_pack(root, core_ids=core_reference_ids())
     if any(manifest["assets"][kind] for kind in PROMPT_KINDS):
         entry_ids = {item["id"] for item in manifest.get("entrypoints", [])}
         for relative in manifest["assets"]["eval-case"]:

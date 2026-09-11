@@ -4,6 +4,7 @@ import pathlib
 import shutil
 
 import pytest
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -28,7 +29,7 @@ def test_decision_humor_is_opt_in_and_manifest_is_exact(monkeypatch, tmp_path):
         assert not (REPO_ROOT / "commands" / f"{name}.md").exists()
         assert resolve_asset("recipe", name, project=tmp_path) is None
         assert resolve_asset("command", name, project=tmp_path) is None
-    manifest = validate_pack(PACK)
+    manifest = validate_pack(PACK, core_ids=core_reference_ids())
     assert manifest["dependencies"] == []
     assert {pathlib.PurePosixPath(item).stem for item in manifest["assets"]["recipe"]} == RECIPES
     assert len(manifest["assets"]["eval-case"]) == 10
@@ -108,7 +109,7 @@ def test_all_three_domain_packs_coexist_and_same_tier_collision_fails(monkeypatc
         validate_tiered_collection([
             ("project", project / ".rig/packs/decision-humor"),
             ("project", duplicate),
-        ])
+        ], core_ids=core_reference_ids())
 
 
 def test_unknown_gate_and_no_orchestrate_fail_closed(monkeypatch, tmp_path, capsys):
@@ -149,7 +150,7 @@ def test_unknown_gate_and_no_orchestrate_fail_closed(monkeypatch, tmp_path, caps
     manifest["hashes"]["recipes/magi.md"] = digest(recipe)
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="unsupported executable gate"):
-        validate_pack(copied)
+        validate_pack(copied, core_ids=core_reference_ids())
 
 
 def test_ten_eval_cases_have_real_provenance_and_runnable_markdown_checks():

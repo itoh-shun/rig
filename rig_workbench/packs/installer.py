@@ -18,7 +18,7 @@ from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
 from .manifest import read_json_yaml
 from .model import PROMPT_KINDS, PackError, UnverifiedSignature
 from .sources import fetch_revision, parse_spec, read_sources, resolve_revision
-from .resolver import pack_roots
+from .resolver import core_reference_ids, pack_roots
 from .validation import validate_pack, validate_tiered_collection
 
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
@@ -37,7 +37,8 @@ def _resolve_source(source: pathlib.Path | str) -> tuple[pathlib.Path, str]:
     source_text = str(source)
     if source_text.startswith(("domain:", "official:")):
         from .catalog import resolve_builtin_alias
-        resolved, _manifest = resolve_builtin_alias(source_text)
+        resolved, _manifest = resolve_builtin_alias(source_text,
+                                                    core_ids=core_reference_ids())
         return resolved, source_text
     if source_text.casefold().startswith(("https://", "http://")):
         raise PackError("URL pack sources are unsupported; use a local directory, zip, or tar")
@@ -366,7 +367,7 @@ def install_pack(
     # that says what "still signed by that key" means here too.
     from .publisher import verify_publisher_signature
     validate_lock_root(destination_root, verify_publisher=verify_publisher_signature,
-                       expected_scope=scope)
+                       core_ids=core_reference_ids(), expected_scope=scope)
     unmanaged = [item.name for item in destination_root.iterdir() if item.is_dir()
                  and not item.name.startswith(".pack-")]
     if unmanaged and not lock_path(destination_root).exists():
@@ -388,13 +389,14 @@ def install_pack(
                 "git", source_label, tree_hash(content),
                 source_id=plan["source_id"], revision=plan["revision"])
         pack = _pack_root(content)
-        manifest = validate_pack(pack)
+        manifest = validate_pack(pack, core_ids=core_reference_ids())
         destination = destination_root / manifest["id"]
         if destination.exists():
             raise PackError(f"pack target already exists: {destination}")
         records = validate_tiered_collection(
             _collection_entries(project_path, pack, scope, destination_root,
-                                replacing=destination)
+                                replacing=destination),
+            core_ids=core_reference_ids(),
         )
         status, publisher = verification_status(pack, manifest)
         if status != "verified-publisher" and not allow_unverified:
@@ -479,7 +481,7 @@ def update_pack(
         content = staging / "content"
         fetch_revision(source, name, to, revision, content)
         pack = _pack_root(content)
-        manifest = validate_pack(pack)
+        manifest = validate_pack(pack, core_ids=core_reference_ids())
         if manifest["id"] != pack_id:
             raise PackError(
                 f"source served {manifest['id']} where {pack_id} was expected")
@@ -489,7 +491,8 @@ def update_pack(
                 f"manifest disagree")
         records = validate_tiered_collection(
             _collection_entries(project_path, pack, scope, destination_root,
-                                replacing=destination)
+                                replacing=destination),
+            core_ids=core_reference_ids(),
         )
         status, publisher = verification_status(pack, manifest)
         if status != "verified-publisher" and not allow_unverified:

@@ -82,18 +82,18 @@ PORT_LAYER_PACKAGE = "ports"
 # dropped `eval.affected`, `eval.gate`, `orchestrate.graph`, `orchestrate.recipes`,
 # `packs.sources` and `packs.tester` out of any cycle at all, leaving
 # {catalog, lock, resolver, validation} and {installer, publisher} in its place.
-# The second of the three — `publisher -> installer`, inverted into
-# `publisher.LocalQualityStatus` — then removed {installer, publisher}
-# outright: six components again, with `installer` and `publisher` now in none.
+# The second — `publisher -> installer`, inverted into
+# `publisher.LocalQualityStatus` — removed {installer, publisher} outright.
+# The third — `validation -> resolver`, inverted into
+# `validation.CoreReferenceIds` — removed {catalog, lock, resolver, validation},
+# and it had to be that edge: it is in every minimum feedback edge set for that
+# component, because `validation` is its only exit.
+#
+# Five components now, and `rig_workbench/packs/` is in none of them. Nothing
+# below may be re-added without the change that adds it saying so here.
 BASELINE_RUNTIME_CYCLES: frozenset[tuple[str, ...]] = frozenset(
     {
         ("rig_workbench.cli", "rig_workbench.githooks"),
-        (
-            "rig_workbench.packs.catalog",
-            "rig_workbench.packs.lock",
-            "rig_workbench.packs.resolver",
-            "rig_workbench.packs.validation",
-        ),
         ("rig_workbench.orchestrate.providers", "rig_workbench.orchestrate.runstate"),
         (
             "rig_workbench.workbench.assurance",

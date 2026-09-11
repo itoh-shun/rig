@@ -1162,7 +1162,7 @@ def _load_persona_brief(persona: str) -> str | None:
 def _recipe_pack_owner(source: str) -> str | None:
     """Return the validated pack owning a recipe source, if any."""
     from rig_workbench.packs.catalog import discover_builtin_packs
-    from rig_workbench.packs.resolver import resolved_collection
+    from rig_workbench.packs.resolver import core_reference_ids, resolved_collection
 
     source_path = pathlib.Path(source).resolve()
     for record in resolved_collection(project=config.INVOCATION_CWD,
@@ -1170,7 +1170,8 @@ def _recipe_pack_owner(source: str) -> str | None:
         root = record.path.resolve()
         if source_path == root or source_path.is_relative_to(root):
             return record.id
-    for (_namespace, pack_id), (path, _manifest) in discover_builtin_packs().items():
+    for (_namespace, pack_id), (path, _manifest) in discover_builtin_packs(
+            core_ids=core_reference_ids()).items():
         root = path.resolve()
         if source_path == root or source_path.is_relative_to(root):
             return pack_id

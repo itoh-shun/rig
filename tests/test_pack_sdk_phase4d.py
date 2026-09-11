@@ -8,6 +8,7 @@ import zipfile
 import pytest
 
 from test_eval_cases import valid_case
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -109,7 +110,7 @@ def test_builtin_catalog_is_manifest_discovered_and_tamper_fails_closed(tmp_path
     from rig_workbench.packs.catalog import catalog_records, discover_builtin_packs
     from rig_workbench.packs.model import PackError
 
-    records = catalog_records()
+    records = catalog_records(core_ids=core_reference_ids())
     assert {item["alias"] for item in records} == {
         "domain:decision-humor", "domain:document-review",
         "domain:pack-author", "domain:sales", "domain:video-storytelling",
@@ -121,10 +122,10 @@ def test_builtin_catalog_is_manifest_discovered_and_tamper_fails_closed(tmp_path
 
     copied = tmp_path / "dist/packs/domain/not-the-id"
     shutil.copytree(REPO_ROOT / "packs/domain/video-storytelling", copied)
-    assert ("domain", "video-storytelling") in discover_builtin_packs(tmp_path / "dist")
+    assert ("domain", "video-storytelling") in discover_builtin_packs(tmp_path / "dist", core_ids=core_reference_ids())
     (copied / "recipes/movie.md").write_text("tampered", encoding="utf-8")
     with pytest.raises(PackError, match="hash mismatch"):
-        discover_builtin_packs(tmp_path / "dist")
+        discover_builtin_packs(tmp_path / "dist", core_ids=core_reference_ids())
 
 
 def test_builtin_catalog_rejects_duplicate_id_and_kind_mismatch(tmp_path):
@@ -136,13 +137,13 @@ def test_builtin_catalog_rejects_duplicate_id_and_kind_mismatch(tmp_path):
     shutil.copytree(REPO_ROOT / "packs/domain/video-storytelling", domain / "one")
     shutil.copytree(REPO_ROOT / "packs/domain/video-storytelling", domain / "two")
     with pytest.raises(PackError, match="duplicate builtin pack id"):
-        discover_builtin_packs(tmp_path / "dist")
+        discover_builtin_packs(tmp_path / "dist", core_ids=core_reference_ids())
     shutil.rmtree(domain / "two")
     _raw, manifest = read_json_yaml(domain / "one/pack.yaml")
     manifest["kind"] = "official"
     (domain / "one/pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="kind mismatch"):
-        discover_builtin_packs(tmp_path / "dist")
+        discover_builtin_packs(tmp_path / "dist", core_ids=core_reference_ids())
 
 
 def test_catalog_schema_is_additive_for_legacy_non_resource_manifests(tmp_path):
@@ -156,7 +157,7 @@ def test_catalog_schema_is_additive_for_legacy_non_resource_manifests(tmp_path):
         manifest.pop(field)
     manifest["assets"].pop("resource")
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
-    validated = validate_pack(copied)
+    validated = validate_pack(copied, core_ids=core_reference_ids())
     assert validated["id"] == "sales"
     assert "resource" not in validated["assets"]
 
@@ -172,7 +173,7 @@ def test_rig_core_pack_id_is_reserved_in_manifest_and_init(tmp_path):
     manifest["id"] = "rig-core"
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="pack id is reserved: rig-core"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
     with pytest.raises(PackError, match="pack id is reserved: rig-core"):
         init_pack("rig-core", kind="project", type_="skill", root=tmp_path / "initialized")
     assert not (tmp_path / "initialized/rig-core").exists()
@@ -187,10 +188,10 @@ def test_dependency_collection_is_topological_and_refs_stay_in_closure(tmp_path)
         tmp_path, "child", dependency=[{"id": "dep", "range": ">=1.0.0"}],
         external_owner="dep",
     )
-    records = validate_tiered_collection([("project", child), ("project", dep)])
+    records = validate_tiered_collection([("project", child), ("project", dep)], core_ids=core_reference_ids())
     assert [manifest["id"] for _tier, _path, manifest in records] == ["dep", "child"]
     with pytest.raises(PackError, match="missing dependency"):
-        validate_tiered_collection([("project", child)])
+        validate_tiered_collection([("project", child)], core_ids=core_reference_ids())
 
     sibling = _typed_dependency_pack(tmp_path, "sibling")
     from rig_workbench.packs.manifest import canonical, read_json_yaml
@@ -203,7 +204,7 @@ def test_dependency_collection_is_topological_and_refs_stay_in_closure(tmp_path)
     with pytest.raises(PackError, match="escapes dependency closure"):
         validate_tiered_collection([
             ("project", child), ("project", dep), ("user", sibling),
-        ])
+        ], core_ids=core_reference_ids())
 
 
 def test_typed_recipe_owner_cannot_be_shadowed_at_runtime(tmp_path, monkeypatch):
@@ -346,7 +347,7 @@ def test_spoofed_rig_core_blocks_bound_plan_and_invoke(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "INVOCATION_CWD", project)
     entries = [("project", child), ("project", spoof)]
     with pytest.raises(PackError, match="pack id is reserved: rig-core"):
-        validate_tiered_collection(entries)
+        validate_tiered_collection(entries, core_ids=core_reference_ids())
     with pytest.raises(PackError, match="pack id is reserved: rig-core"):
         resolve_bound_asset("recipe", "adaptive-bugfix", child_recipe, project=project)
     with pytest.raises(PackError, match="pack id is reserved: rig-core"):
@@ -370,7 +371,7 @@ def test_entrypoint_requires_owned_target_and_eval_coverage(tmp_path):
     manifest["hashes"]["evals/cases/deal-review-structure/case.json"] = digest(case_path)
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="entrypoint lacks evaluation coverage"):
-        validate_pack(copied)
+        validate_pack(copied, core_ids=core_reference_ids())
 
 
 def test_pack_invoke_routes_recipe_command_and_refuses_manual_only(monkeypatch, tmp_path, capsys):
@@ -401,7 +402,7 @@ def test_resource_metadata_runtime_lookup_and_mime_spoof_fail_closed(tmp_path, m
     from rig_workbench.packs.validation import validate_pack
 
     pack = _resource_pack(tmp_path / "source")
-    assert validate_pack(pack)["assets"]["resource"] == ["resources/guide.html"]
+    assert validate_pack(pack, core_ids=core_reference_ids())["assets"]["resource"] == ["resources/guide.html"]
     project = tmp_path / "project"
     install_pack(pack, scope="project", project=project, allow_unverified=True)
     resolved = resolve_resource("resource-pack", "guide", project=project)
@@ -421,7 +422,7 @@ def test_resource_metadata_runtime_lookup_and_mime_spoof_fail_closed(tmp_path, m
     manifest["resources"]["resources/guide.html"]["media_type"] = "image/png"
     (spoof / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="MIME/extension|signature"):
-        validate_pack(spoof)
+        validate_pack(spoof, core_ids=core_reference_ids())
 
 
 def test_resource_archive_traversal_and_executable_extension_are_rejected(tmp_path):
@@ -450,4 +451,4 @@ def test_resource_archive_traversal_and_executable_extension_are_rejected(tmp_pa
     }}
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="executable resource extension"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())

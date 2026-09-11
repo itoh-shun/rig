@@ -126,7 +126,7 @@ def enforce_executable_state(state: dict) -> dict:
 def _recipe_owner_provenance(source: str) -> dict | None:
     """Resolve an installed recipe source to its validated owner identity."""
     from rig_workbench.packs.catalog import discover_builtin_packs
-    from rig_workbench.packs.resolver import resolved_collection
+    from rig_workbench.packs.resolver import core_reference_ids, resolved_collection
 
     try:
         source_path = pathlib.Path(source).resolve(strict=True)
@@ -144,7 +144,8 @@ def _recipe_owner_provenance(source: str) -> dict | None:
     ]
     candidates.extend(
         (pack_id, root, manifest)
-        for (_namespace, pack_id), (root, manifest) in discover_builtin_packs().items()
+        for (_namespace, pack_id), (root, manifest) in discover_builtin_packs(
+            core_ids=core_reference_ids()).items()
     )
     for owner, root, manifest in candidates:
         root = root.resolve()

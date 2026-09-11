@@ -29,6 +29,7 @@ from rig_workbench.packs.tester import compose_case_prompt
 from rig_workbench.packs.validation import validate_pack
 from test_eval_cases import valid_case
 from test_pack_type_permissions import _pack, _write
+from rig_workbench.packs.resolver import core_reference_ids
 
 PERSONA = "# Probe reviewer\n\nRead-only. Report one verdict and never edit.\n"
 CONTRACT = "# Probe verdict\n\nEmit exactly one line: `verdict: ACCEPT` or `verdict: REJECT`.\n"
@@ -87,7 +88,7 @@ def test_a_reviewer_pack_may_name_its_persona_as_an_entrypoint(tmp_path):
         _reviewer(tmp_path),
         [{"id": "probe-review", "kind": "persona", "target": "probe-reviewer"}],
     )
-    assert validate_pack(pack)["entrypoints"] == [
+    assert validate_pack(pack, core_ids=core_reference_ids())["entrypoints"] == [
         {"id": "probe-review", "kind": "persona", "target": "probe-reviewer"}
     ]
 
@@ -101,7 +102,7 @@ def test_a_knowledge_pack_may_name_its_wiki_page_as_an_entrypoint(tmp_path):
         _pack(tmp_path, "knowledge", {"wiki": wiki}, surface="wiki:probe-page"),
         [{"id": "probe-page", "kind": "wiki", "target": "probe-page"}],
     )
-    assert validate_pack(built)["type"] == "knowledge"
+    assert validate_pack(built, core_ids=core_reference_ids())["type"] == "knowledge"
 
 
 @pytest.mark.parametrize("kind", ["eval-case", "eval-result", "resource"])
@@ -114,7 +115,7 @@ def test_an_inert_asset_kind_is_still_not_an_entrypoint(tmp_path, kind):
         [{"id": "probe-review", "kind": kind, "target": "probe-reviewer"}],
     )
     with pytest.raises(PackError, match="pack entrypoint is invalid"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 def test_an_entrypoint_still_has_to_name_something_the_pack_owns(tmp_path):
@@ -125,7 +126,7 @@ def test_an_entrypoint_still_has_to_name_something_the_pack_owns(tmp_path):
         [{"id": "probe-review", "kind": "recipe", "target": "probe-reviewer"}],
     )
     with pytest.raises(PackError, match="entrypoint target is not owned"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 def test_an_entrypoint_may_not_name_another_packs_persona(tmp_path):
@@ -137,7 +138,7 @@ def test_an_entrypoint_may_not_name_another_packs_persona(tmp_path):
         [{"id": "probe-review", "kind": "persona", "target": "someone-elses-reviewer"}],
     )
     with pytest.raises(PackError, match="entrypoint target is not owned"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 def test_evaluation_coverage_now_reaches_a_reviewer_packs_entrypoint(tmp_path):
@@ -149,7 +150,7 @@ def test_evaluation_coverage_now_reaches_a_reviewer_packs_entrypoint(tmp_path):
         [{"id": "probe-verdict", "kind": "output-contract", "target": "probe-verdict"}],
     )
     with pytest.raises(PackError, match="entrypoint lacks evaluation coverage"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 def test_a_reviewer_packs_case_composes_a_prompt_from_its_own_assets(tmp_path):
@@ -162,7 +163,7 @@ def test_a_reviewer_packs_case_composes_a_prompt_from_its_own_assets(tmp_path):
         _reviewer(tmp_path, case=case),
         [{"id": "probe-review", "kind": "persona", "target": "probe-reviewer"}],
     )
-    manifest = validate_pack(pack)
+    manifest = validate_pack(pack, core_ids=core_reference_ids())
 
     prompt = compose_case_prompt(pack, manifest, case, project=tmp_path)
 
@@ -180,7 +181,7 @@ def test_a_composition_that_omits_the_entrypoint_target_is_still_refused(tmp_pat
         _reviewer(tmp_path, case=case),
         [{"id": "probe-review", "kind": "persona", "target": "probe-reviewer"}],
     )
-    manifest = validate_pack(pack)
+    manifest = validate_pack(pack, core_ids=core_reference_ids())
 
     with pytest.raises(PackError, match="evaluation composition omits entrypoint target"):
         compose_case_prompt(pack, manifest, case, project=tmp_path)

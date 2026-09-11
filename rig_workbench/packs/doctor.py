@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pathlib
-from .resolver import catalog, pack_roots
+from .resolver import catalog, core_reference_ids, pack_roots
 from .lock import lock_path, validate_lock_root
 from .validation import validate_pack, validate_tiered_collection
 
@@ -24,6 +24,7 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
                 from .publisher import verify_publisher_signature
                 validate_lock_root(
                     pack_root, verify_publisher=verify_publisher_signature,
+                    core_ids=core_reference_ids(),
                     expected_scope=tier if tier in {"project", "user", "org"} else None,
                 )
             except Exception as exc:
@@ -43,7 +44,7 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
                     and not item.name.startswith((".", "_"))}
     for root in sorted(roots):
         try:
-            manifest = validate_pack(root)
+            manifest = validate_pack(root, core_ids=core_reference_ids())
             if (root / "pack.sig.json").is_file():
                 from .publisher import verify_publisher_signature
                 if verify_publisher_signature(root, manifest) is None:
@@ -63,7 +64,7 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
             findings.append({"code": "invalid_pack", "path": str(root), "detail": str(exc)})
     if not any(item.get("severity", "error") != "warning" for item in findings):
         try:
-            validate_tiered_collection(entries)
+            validate_tiered_collection(entries, core_ids=core_reference_ids())
         except Exception as exc:
             detail = str(exc)
             code = next((name for token, name in (

@@ -4,7 +4,7 @@ import os
 import pathlib
 from collections.abc import Iterable
 
-from .model import ASSET_DIRS, PackError, ResolvedAsset, ResolvedPack
+from .model import ASSET_DIRS, PROMPT_KINDS, PackError, ResolvedAsset, ResolvedPack
 
 
 def _rig_home() -> pathlib.Path:
@@ -48,6 +48,7 @@ def _pack_entries_with_trust(
         # drift check — identity, manifest digest, asset hashes, eval cases, scope — still
         # runs here unchanged.
         for locked in validate_lock_root(root, verify_publisher=None,
+                                         core_ids=core_reference_ids(),
                                          expected_scope=expected):
             trust[(tier, locked["id"])] = locked["verification_status"]
         entries.extend(
@@ -76,7 +77,7 @@ def resolved_collection(
     # Installed packs are repository state, not per-working-tree state; see `resolve_all`.
     project_root = _project_root(project if shared is None else shared)
     entries, trust = _pack_entries_with_trust(project_root)
-    records = validate_tiered_collection(entries)
+    records = validate_tiered_collection(entries, core_ids=core_reference_ids())
     return [
         ResolvedPack(
             tier=tier,
@@ -171,6 +172,22 @@ def _core_assets() -> Iterable[ResolvedAsset]:
                                         "core", f"core:{directory}", "rig-core")
 
 
+def core_reference_ids() -> frozenset[tuple[str, str]]:
+    """The shipped core prompt IDs an extension pack is allowed to reference.
+
+    A projection of `_core_assets`, and public because `packs.validation` now asks for this
+    set instead of reaching in for it (`validation.CoreReferenceIds`). It sits here because
+    this is where the enumeration already lives — nothing is moved, only named — and because
+    the answer is a fact about the *installed engine*, which is this module's subject.
+
+    Every module outside {`validation`, `catalog`, `lock`} may call this directly; those
+    three take the set as an argument instead, because importing this module from any of
+    them is the cycle the argument exists to remove.
+    """
+    return frozenset((asset.kind, asset.name) for asset in _core_assets()
+                     if asset.kind in PROMPT_KINDS)
+
+
 def resolve_all(kind: str, name: str, *, project: pathlib.Path | str | None = None,
                 shared: pathlib.Path | str | None = None) -> list[ResolvedAsset]:
     """Every asset matching (kind, name), ranked by tier.
@@ -227,7 +244,8 @@ def resolve_owned_asset(
     if not matches and pack_id != "rig-core":
         from .catalog import discover_builtin_packs
         prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])
-        for (namespace, candidate_id), (pack, manifest) in discover_builtin_packs().items():
+        for (namespace, candidate_id), (pack, manifest) in discover_builtin_packs(
+                core_ids=core_reference_ids()).items():
             if candidate_id != pack_id:
                 continue
             for relative in manifest["assets"][kind]:
@@ -275,12 +293,14 @@ def resolve_bound_asset(
     builtin_source = source_path.is_relative_to(builtin_root)
     if not installed_source and not builtin_source:
         return None
-    records = validate_tiered_collection(entries) if installed_source else []
+    records = (validate_tiered_collection(entries, core_ids=core_reference_ids())
+               if installed_source else [])
     if builtin_source:
         known_paths = {path.resolve() for _tier, path, _manifest in records}
         records.extend(
             (namespace, path, manifest)
-            for (namespace, _pack_id), (path, manifest) in discover_builtin_packs().items()
+            for (namespace, _pack_id), (path, manifest) in discover_builtin_packs(
+                core_ids=core_reference_ids()).items()
             if path.resolve() not in known_paths
         )
     for _tier, pack, manifest in records:
@@ -325,7 +345,8 @@ def resolve_resource(pack_id: str, name: str, *, project: pathlib.Path | str | N
     from .validation import validate_tiered_collection
 
     project_root = _project_root(project)
-    for tier, pack, manifest in validate_tiered_collection(_pack_entries(project_root)):
+    for tier, pack, manifest in validate_tiered_collection(
+            _pack_entries(project_root), core_ids=core_reference_ids()):
         if manifest["id"] != pack_id:
             continue
         prefix = pathlib.PurePosixPath(ASSET_DIRS["resource"])

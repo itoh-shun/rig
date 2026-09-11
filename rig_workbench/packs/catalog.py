@@ -4,18 +4,26 @@ import pathlib
 
 from .manifest import PACK_ID, digest
 from .model import PackError
+from .validation import CoreReferenceIds
 
 
 def distribution_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parents[2]
 
 
-def discover_builtin_packs(root: pathlib.Path | None = None) -> dict[tuple[str, str], tuple[pathlib.Path, dict]]:
+def discover_builtin_packs(
+    root: pathlib.Path | None = None, *, core_ids: CoreReferenceIds,
+) -> dict[tuple[str, str], tuple[pathlib.Path, dict]]:
     """Discover packaged official/domain packs from validated manifests.
 
     Directory names are never identities.  Every candidate is fully validated,
     its manifest kind must match the catalog namespace, and duplicate manifest
     identities fail the whole discovery operation closed.
+
+    `core_ids` is passed straight through to `validate_pack`
+    (`validation.CoreReferenceIds`). This module takes it as an argument rather than calling
+    `resolver.core_reference_ids` itself because `resolver` imports *this* module: reaching
+    back would close from the other side the cycle that argument exists to open.
     """
     from .validation import validate_pack
 
@@ -28,7 +36,7 @@ def discover_builtin_packs(root: pathlib.Path | None = None) -> dict[tuple[str, 
             continue
         for candidate in sorted(item for item in directory.iterdir() if item.is_dir()
                                 and not item.name.startswith((".", "_"))):
-            manifest = validate_pack(candidate)
+            manifest = validate_pack(candidate, core_ids=core_ids)
             missing = {
                 "display_name", "description", "capabilities", "entrypoints",
                 "references", "resources",
@@ -51,9 +59,11 @@ def discover_builtin_packs(root: pathlib.Path | None = None) -> dict[tuple[str, 
     return found
 
 
-def catalog_records(root: pathlib.Path | None = None) -> list[dict]:
+def catalog_records(root: pathlib.Path | None = None, *,
+                    core_ids: CoreReferenceIds) -> list[dict]:
     records = []
-    for (namespace, _pack_id), (path, manifest) in discover_builtin_packs(root).items():
+    for (namespace, _pack_id), (path, manifest) in discover_builtin_packs(
+            root, core_ids=core_ids).items():
         records.append({
             "id": manifest["id"], "kind": manifest["kind"],
             "version": manifest["version"], "display_name": manifest["display_name"],
@@ -66,13 +76,14 @@ def catalog_records(root: pathlib.Path | None = None) -> list[dict]:
     return sorted(records, key=lambda item: (item["kind"], item["id"]))
 
 
-def resolve_builtin_alias(source: str, root: pathlib.Path | None = None) -> tuple[pathlib.Path, dict]:
+def resolve_builtin_alias(source: str, root: pathlib.Path | None = None, *,
+                          core_ids: CoreReferenceIds) -> tuple[pathlib.Path, dict]:
     namespace, separator, pack_id = source.partition(":")
     if not separator or namespace not in {"official", "domain"}:
         raise PackError("builtin pack alias must use official:<id> or domain:<id>")
     if not PACK_ID.fullmatch(pack_id):
         raise PackError(f"built-in {namespace} pack id is invalid")
-    record = discover_builtin_packs(root).get((namespace, pack_id))
+    record = discover_builtin_packs(root, core_ids=core_ids).get((namespace, pack_id))
     if record is None:
         raise PackError(f"unknown built-in {namespace} pack: {pack_id}")
     return record

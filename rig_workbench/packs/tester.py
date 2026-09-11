@@ -10,7 +10,7 @@ from rig_workbench.eval.gate import quality_result_failures
 from .manifest import canonical, read_json_yaml
 from .lock import tree_hash
 from .model import ASSET_DIRS, PROMPT_KINDS, PackError
-from .resolver import pack_roots
+from .resolver import core_reference_ids, pack_roots
 from .validation import validate_pack
 
 
@@ -140,7 +140,8 @@ def test_pack(
     # A draft run is the one caller allowed to skip the approved-case rule, because it exists
     # to produce the evidence that rule waits for. Everything else about the pack is still
     # validated, and no other entry point passes this.
-    manifest = validate_pack(pack, require_evaluation=draft is None)
+    manifest = validate_pack(pack, core_ids=core_reference_ids(),
+                             require_evaluation=draft is None)
     case_paths = manifest["assets"]["eval-case"]
     if provider is None:
         return ({"pack_test_schema_version": 1, "pack": manifest["id"],

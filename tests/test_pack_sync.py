@@ -21,6 +21,7 @@ import pytest
 from rig_workbench.packs.cli import init_pack
 from rig_workbench.packs.model import PackError
 from rig_workbench.packs.sync import scan_assets, sync_manifest
+from rig_workbench.packs.resolver import core_reference_ids
 
 PERSONA = "---\nname: hello\ndescription: demo\n---\n\n# persona: hello\n"
 
@@ -181,7 +182,7 @@ def test_a_resource_pack_validates_end_to_end_after_sync(tmp_path):
 
     sync_manifest(pack)
 
-    assert validate_pack(pack)["id"] == "res-pack"
+    assert validate_pack(pack, core_ids=core_reference_ids())["id"] == "res-pack"
 
 
 def test_resource_metadata_is_derived_and_not_left_to_the_author(tmp_path):

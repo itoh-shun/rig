@@ -13,7 +13,7 @@ from rig_workbench import __version__
 
 from .manifest import PACK_ID, VERSION, canonical, digest
 from .model import PackError
-from .validation import validate_pack
+from .validation import CoreReferenceIds, validate_pack
 
 LOCK_NAME = "pack.lock.json"
 LOCK_SCHEMA_VERSION = 4
@@ -228,7 +228,7 @@ def replace_entry(lock: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
 
 def validate_lock_root(
     root: pathlib.Path, *, verify_publisher: PublisherVerifier | None,
-    expected_scope: str | None = None,
+    core_ids: CoreReferenceIds, expected_scope: str | None = None,
 ) -> list[dict[str, Any]]:
     """Validate one pack root against its lock, and return the entries.
 
@@ -238,6 +238,11 @@ def validate_lock_root(
     not re-running the cryptography — every other drift check still runs, and the publisher
     fields are still validated structurally. `packs.resolver` is the one shipped caller that
     passes it, and says there why brick resolution is not the place for that work.
+
+    `core_ids` is passed straight through to `validate_pack`
+    (`validation.CoreReferenceIds`), and is taken as an argument here for the same reason
+    `catalog` takes one: `resolver` imports this module, so calling
+    `resolver.core_reference_ids` from here would close that component again.
     """
     if not lock_path(root).exists():
         return []
@@ -331,7 +336,7 @@ def validate_lock_root(
         pack = root / entry["path"]
         if not pack.is_dir():
             raise PackError(f"pack lock drift: missing pack {entry['id']}")
-        manifest = validate_pack(pack)
+        manifest = validate_pack(pack, core_ids=core_ids)
         if (manifest["id"] != entry["id"] or manifest["version"] != entry["version"]
                 or manifest["kind"] != entry["kind"]
                 or manifest["dependencies"] != entry["dependencies"]):

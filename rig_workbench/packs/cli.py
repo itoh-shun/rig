@@ -11,7 +11,7 @@ from rig_workbench import __version__
 from .doctor import diagnose
 from .manifest import PACK_SCHEMA_VERSION, canonical
 from .model import ASSET_DIRS, PACK_TYPES, PackError
-from .resolver import pack_roots
+from .resolver import core_reference_ids, pack_roots
 from .sources import SOURCE_SCHEMES, read_sources, verify_pin, write_sources
 from .validation import validate_pack, validate_tiered_collection
 
@@ -216,13 +216,15 @@ def _resolve_invocation(spec: str, project: pathlib.Path) -> tuple[str, pathlib.
     pack_id, separator, entry_id = spec.partition(":")
     if not separator or not pack_id or not entry_id:
         raise PackError("pack invoke target must be <pack>:<entry>")
-    installed = validate_tiered_collection(_global_dirs(project))
+    installed = validate_tiered_collection(_global_dirs(project),
+                                           core_ids=core_reference_ids())
     matches = [(_tier, path, manifest) for _tier, path, manifest in installed
                if manifest["id"] == pack_id]
     if not matches:
         from .catalog import discover_builtin_packs
         matches = [("builtin", path, manifest) for (_kind, candidate_id), (path, manifest)
-                   in discover_builtin_packs().items() if candidate_id == pack_id]
+                   in discover_builtin_packs(core_ids=core_reference_ids()).items()
+                   if candidate_id == pack_id]
     if len(matches) != 1:
         raise PackError(f"pack invoke pack is {'ambiguous' if matches else 'unknown'}: {pack_id}")
     tier, path, manifest = matches[0]
@@ -288,11 +290,12 @@ def cmd_pack(argv: list[str]) -> int:
             return 0
         if args.command == "validate":
             if args.global_:
-                records = validate_tiered_collection(_global_dirs(pathlib.Path.cwd()))
+                records = validate_tiered_collection(
+                    _global_dirs(pathlib.Path.cwd()), core_ids=core_reference_ids())
                 print(f"{len(records)} pack(s) valid")
             else:
                 path = pathlib.Path(args.path or ".")
-                manifest = validate_pack(path)
+                manifest = validate_pack(path, core_ids=core_reference_ids())
                 print(f"valid: {manifest['id']}@{manifest['version']}")
             return 0
         if args.command == "sync":

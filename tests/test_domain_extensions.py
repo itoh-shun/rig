@@ -3,6 +3,7 @@ import pathlib
 import shutil
 
 import pytest
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -34,7 +35,7 @@ def test_sales_is_absent_from_core_and_pack_owns_both_workflows(monkeypatch, tmp
     assert resolve_asset("recipe", "sales-enablement", project=tmp_path) is None
     assert resolve_asset("command", "sales", project=tmp_path) is None
 
-    manifest = validate_pack(SALES_PACK)
+    manifest = validate_pack(SALES_PACK, core_ids=core_reference_ids())
     assert manifest["assets"]["recipe"] == [
         "recipes/deal-review.md", "recipes/sales-enablement.md"
     ]
@@ -188,7 +189,7 @@ def test_pack_may_reference_real_core_assets_but_not_unknown_assets(tmp_path, mo
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
     with pytest.raises(PackError, match="typed reference drift"):
-        validate_pack(copied)
+        validate_pack(copied, core_ids=core_reference_ids())
 
 
 def test_pack_gate_reference_is_validated_as_a_core_pattern(tmp_path, monkeypatch):
@@ -210,7 +211,7 @@ def test_pack_gate_reference_is_validated_as_a_core_pattern(tmp_path, monkeypatc
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
     with pytest.raises(PackError, match="unsupported executable gate"):
-        validate_pack(copied)
+        validate_pack(copied, core_ids=core_reference_ids())
 
 
 def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
@@ -232,7 +233,7 @@ def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
     assert resolve_asset("recipe", "movie", project=tmp_path) is None
     assert resolve_asset("recipe", "scenario", project=tmp_path) is None
 
-    manifest = validate_pack(VIDEO_PACK)
+    manifest = validate_pack(VIDEO_PACK, core_ids=core_reference_ids())
     assert manifest["dependencies"] == []
     assert manifest["assets"]["recipe"] == [
         "recipes/movie.md", "recipes/release-movie.md", "recipes/scenario.md"
