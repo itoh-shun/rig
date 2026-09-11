@@ -222,7 +222,16 @@ extend-select = [
 # 一方は一意性の源（凍結した Clock は衝突になる）、もう一方は誰も読み返さない
 # ベンチマーク台帳の整数フィールドで、そのために now_ns() を生やすのは呼び出し地点
 # ではなく名前から書いたポートになる。**Clock には何も足していない。**
-"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 27 banned
+# banned は 27 -> 5: subprocess.run 22 件のうち 17 件が ProcessRunner へ移った。
+# 移らなかった 5 件は **恒久的に認めた例外** であり、負債ではない —— 各地点に
+# `noqa: TID251` と理由を 1 行ずつ書いてあるので、この数字には現れない（内訳:
+# shell=True + stdout=stderr=DEVNULL が 3、端末へ素通しさせる dashboard が 1、
+# 封をした fd を子へ渡す pass_fds が 1。ポートは shell= も pass_fds も持たず、
+# 常に capture するので、どれも「まだ移していない」ではなく「移さない」）。
+# したがって報告に残る 5 件は subprocess ではなく、上の 2 段落の残り —— すなわち
+# config.py の os.environ 3 と time.time_ns 2 —— がそのまま全部である。
+# config.py が SHELL_MODULES に宣言された時点でこの行は消せる見込み。
+"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 5 banned
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を

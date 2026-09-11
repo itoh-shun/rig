@@ -4,7 +4,6 @@ import sys
 import os
 import json
 import contextlib
-import subprocess
 import threading
 import concurrent.futures as futures
 
@@ -13,8 +12,8 @@ try:
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
-from ..ports import Presenter
-from ..ports.local import CONSOLE
+from ..ports import Presenter, ProcessRunner
+from ..ports.local import CONSOLE, SUBPROCESS
 from . import config
 from . import dependencies as deps
 from .providers import _build_prompt, run_provider
@@ -59,10 +58,10 @@ def _gh_cli(backend: str) -> str:
     return {"github": "gh", "gitlab": "glab"}[backend]
 
 
-def _cli_run(argv: list[str]) -> tuple[int, str, str]:
+def _cli_run(argv: list[str], *, proc: ProcessRunner = SUBPROCESS) -> tuple[int, str, str]:
     """Run gh/glab as a subprocess. Returns (127, "", err) instead of crashing when the CLI is absent."""
     try:
-        r = subprocess.run(argv, capture_output=True, text=True)
+        r = proc.run(argv)
         return r.returncode, r.stdout or "", r.stderr or ""
     except FileNotFoundError:
         return 127, "", f"{argv[0]} not found (CLI not installed)"

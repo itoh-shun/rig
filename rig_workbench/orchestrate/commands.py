@@ -13,8 +13,8 @@ from collections import Counter
 from functools import wraps
 
 from .. import repo_paths
-from ..ports import Clock, Env, Presenter
-from ..ports.local import CONSOLE, OS_ENV, SYSTEM_CLOCK
+from ..ports import Clock, Env, Presenter, ProcessRunner
+from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from . import config
 from . import otel
 from . import perf
@@ -297,7 +297,10 @@ def _run_checks(checks: list[str]) -> list[dict]:
     """
     results = []
     for cmd in checks:
-        r = subprocess.run(cmd, shell=True, cwd=str(config.INVOCATION_CWD),
+        # noqa below is permanent: `ProcessRunner` has no `shell=` and always captures.
+        # Piping a user-specified check instead of discarding it would make rig hold that
+        # command's unbounded output in memory for a return code it is the only thing read.
+        r = subprocess.run(cmd, shell=True, cwd=str(config.INVOCATION_CWD),  # noqa: TID251
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         results.append({"cmd": cmd, "ok": (r.returncode == 0), "rc": r.returncode})
     return results
@@ -652,11 +655,19 @@ def cmd_approve(args, *, out: Presenter = CONSOLE):
     sys.exit(3 if action == "AWAIT_APPROVAL" else 0)   # 3 = still parked (quorum unmet / denied)
 
 
-def _git_head() -> str | None:
-    """The current commit, so an approval is bound to what it approved."""
-    proc = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
-                          cwd=str(config.INVOCATION_CWD))
-    return proc.stdout.strip() or None if proc.returncode == 0 else None
+def _git_head(*, proc: ProcessRunner = SUBPROCESS) -> str | None:
+    """The current commit, so an approval is bound to what it approved.
+
+    `GitRepo.head()` answers exactly this question and is **deliberately not** used here.
+    It goes through `gitroot._git`, which strips `GIT_DIR` / `GIT_WORK_TREE` /
+    `GIT_COMMON_DIR` first — so swapping it in would change which repository this reads
+    whenever those are set, which is the #471 fix and not a port swap.
+    `rig_workbench/ports/local.py`'s `GitCli` docstring says so in as many words: that
+    change belongs in the commit that makes it, with its own test. This one keeps asking
+    the question the way it is asked today, through the runner rather than around it.
+    """
+    result = proc.run(["git", "rev-parse", "HEAD"], cwd=str(config.INVOCATION_CWD))
+    return result.stdout.strip() or None if result.returncode == 0 else None
 
 @_reports_refusals
 def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
@@ -1804,7 +1815,9 @@ def cmd_runs(args, *, out: Presenter = CONSOLE):
             cmd += ["--recipe", recipe]
         if since:
             cmd += ["--since", since]
-        rc = subprocess.run(cmd).returncode
+        # noqa is permanent: this hands the dashboard's own stdout/stderr through to
+        # the terminal, and `ProcessRunner` requires capture. Capturing would break it.
+        rc = subprocess.run(cmd).returncode  # noqa: TID251
         sys.exit(rc)
     if not config.RUNS_PATH.exists():
         out.out(f"No run records yet ({config.RUNS_PATH}). They are appended by orchestrate run / "

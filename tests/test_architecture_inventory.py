@@ -261,9 +261,34 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     #
     # Measured with the ledger line lifted in a scratch copy, ruff's T201 reads 0 too, so
     # the `pyproject.toml` line is narrowed to `["TID251"]` in the same commit.
+    # `subprocess` 21 -> 4. The 17 that moved: `isolate.py`'s eight
+    # git calls (no `GitRepo` method matches any of them — worktree add/remove, rev-list,
+    # branch -D, merge --ff-only), `providers.py`'s four (the provider child, which is the
+    # pillar's only `env=` site, plus three git reads, two of them `text=False` because their
+    # output is NUL-framed and escaped byte by byte), `commands.py`'s `git rev-parse HEAD`,
+    # and one each in `queueing.py` (gh/glab), `recipes.py` (diff --numstat), `selftest.py`
+    # and `sessions.py` (`--help` capability probe).
+    #
+    # `commands._git_head` is the one that could have gone to `GitRepo.head()` and did not.
+    # That method reaches git through `gitroot._git`, which strips `GIT_DIR` /
+    # `GIT_WORK_TREE` / `GIT_COMMON_DIR` first, so adopting it would change which repository
+    # the call reads whenever those are set — the #471 fix, which `ports/local.py`'s `GitCli`
+    # docstring says belongs in its own commit with its own test rather than inside a port
+    # swap. It goes through `ProcessRunner`.
+    #
+    # The 4 that remain are permanent, each with a `noqa: TID251` and a reason at the site,
+    # and a fifth lives in `secure_runtime.py` as a default argument this walk does not count
+    # (ruff does). Three are `shell=True` with `stdout=stderr=DEVNULL` — a recipe's `checks:`
+    # line in `commands.py` and `providers.py`, and the informed-repair check: `ProcessRunner`
+    # has no `shell=` (`ports/__init__.py` declares its absence) **and always captures**, so
+    # piping instead of discarding would make rig hold a user-specified command's unbounded
+    # output for a status that is the only thing read. One is `subprocess.run(cmd).returncode`
+    # for the HTML dashboard, whose output must reach the terminal; capture would break it.
+    # The fifth passes `pass_fds=launcher.launcher_fds`, handing a child the sealed provider
+    # descriptors — the design, and not something this port should learn.
     "orchestrate": {
         "print": 0,
-        "subprocess": 21,
+        "subprocess": 4,
         "open_write": 4,
         "write_text": 10,
         # 19 -> 3, and the 3 are a decision rather than a remainder. `orchestrate/config.py`

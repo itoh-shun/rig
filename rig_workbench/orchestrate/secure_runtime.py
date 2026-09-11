@@ -536,7 +536,11 @@ def run_secure_provider(
     cfg: dict,
     *,
     environ: dict[str, str] | None = None,
-    run_command: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    # noqa is permanent: the call below passes `pass_fds=launcher.launcher_fds`, handing
+    # the child the sealed provider descriptors. That is the design, and `ProcessRunner`
+    # has no `pass_fds` — nor should it, since every other caller would inherit a way to
+    # leak descriptors into a subprocess.
+    run_command: Callable[..., subprocess.CompletedProcess] = subprocess.run,  # noqa: TID251
     env: Env = OS_ENV,
 ) -> tuple[int, str]:
     """Execute only the sealed bytes, with prompt on stdin and vendor-scoped env."""

@@ -3,10 +3,9 @@
 import sys
 import json
 import pathlib
-import subprocess
 
 from ..ports import Presenter
-from ..ports.local import CONSOLE
+from ..ports.local import CONSOLE, SUBPROCESS
 from . import config
 from . import queueing
 from .config import DEFAULT_K
@@ -431,8 +430,7 @@ def cmd_selftest(_args, *, out: Presenter = CONSOLE):
     _orig_cwd = config.INVOCATION_CWD
     xroot = pathlib.Path(_tmp.mkdtemp(prefix="rig-selftest-iso-"))
     def _g(*a, cwd=None):
-        return subprocess.run(["git", "-C", str(cwd or xroot)] + list(a),
-                              capture_output=True, text=True)
+        return SUBPROCESS.run(["git", "-C", str(cwd or xroot)] + list(a))
     _g("init", "-q", "-b", "main")
     _g("config", "user.email", "selftest@rig")
     _g("config", "user.name", "rig-selftest")

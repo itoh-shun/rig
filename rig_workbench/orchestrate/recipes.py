@@ -5,11 +5,10 @@ import os
 import re
 import hashlib
 import pathlib
-import subprocess
 import threading
 
-from ..ports import Env, Presenter
-from ..ports.local import CONSOLE, OS_ENV
+from ..ports import Env, Presenter, ProcessRunner
+from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS
 from . import config
 from .yaml_adapter import PyYAMLMissing, require_yaml
 
@@ -483,11 +482,11 @@ _KEY_TO_FLAG = {
 }
 
 
-def git_diff_lines() -> int | None:
+def git_diff_lines(*, proc: ProcessRunner = SUBPROCESS) -> int | None:
     """Total added+removed lines from `git diff HEAD --numstat` (staged + unstaged; §4.4/#185). None if unavailable."""
     try:
-        r = subprocess.run(["git", "diff", "HEAD", "--numstat"],
-                           capture_output=True, text=True, timeout=10, cwd=config.INVOCATION_CWD)
+        r = proc.run(["git", "diff", "HEAD", "--numstat"],
+                     timeout=10, cwd=config.INVOCATION_CWD)
         if r.returncode != 0:
             return None
         total = 0

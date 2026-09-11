@@ -17,8 +17,8 @@ from dataclasses import dataclass
 
 from .. import bench_providers as _bench_provider_patches
 from ..packs.model import PackError
-from ..ports import Env, Presenter
-from ..ports.local import CONSOLE, OS_ENV
+from ..ports import Env, Presenter, ProcessRunner
+from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS
 from . import config
 from . import perf
 from .gates import is_runtime_gate
@@ -455,7 +455,7 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
 
 def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
                        state: dict | None = None, step_id: str | None = None, *,
-                       env: Env = OS_ENV) -> tuple[int, str]:
+                       env: Env = OS_ENV, proc: ProcessRunner = SUBPROCESS) -> tuple[int, str]:
     journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
     if journal_error is not None:
         return 126, f"[benchmark call counter error: {journal_error}]"
@@ -507,9 +507,9 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
     # request for an empty env, and falling back to `os.environ` would silently invert it.
     child_env = dict(cfg["env"] if "env" in cfg else env.snapshot(), RIG_PROVIDER_SUBPROCESS="1")
     try:
-        r = subprocess.run(argv, input=prompt if provider in ("cmd", "mock") else None,
-                           capture_output=True, text=True, timeout=cfg.get("timeout", 600),
-                           cwd=cfg.get("cwd") or None, env=child_env)
+        r = proc.run(argv, input=prompt if provider in ("cmd", "mock") else None,
+                     timeout=cfg.get("timeout", 600),
+                     cwd=cfg.get("cwd") or None, env=child_env)
     except FileNotFoundError:
         return 127, f"[provider not found: {provider}]"
     except subprocess.TimeoutExpired:
@@ -2010,7 +2010,7 @@ _build_prompt = compose_step_prompt
 _build_artifact_review_prompt = compose_artifact_review_prompt
 
 
-def _git_diff_evidence(cfg: dict) -> str | None:
+def _git_diff_evidence(cfg: dict, *, proc: ProcessRunner = SUBPROCESS) -> str | None:
     """Capture bounded tracked and untracked workspace changes as review evidence.
 
     Falls back to config.INVOCATION_CWD when cfg has no explicit cwd (the same
@@ -2028,15 +2028,9 @@ def _git_diff_evidence(cfg: dict) -> str | None:
     tracked = None
     for args in (["git", "diff", "HEAD"], ["git", "diff"]):
         try:
-            result = subprocess.run(
-                args,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=60,
-            )
+            # The port's text mode *is* `encoding="utf-8", errors="replace"`, which is
+            # what this call already spelled out by hand.
+            result = proc.run(args, cwd=cwd, timeout=60)
         except (OSError, subprocess.SubprocessError):
             return None
         if result.returncode == 0:
@@ -2047,7 +2041,7 @@ def _git_diff_evidence(cfg: dict) -> str | None:
 
     parts = [tracked] if tracked.strip() else []
     root = pathlib.Path(cwd)
-    for entry in _git_untracked_files(root):
+    for entry in _git_untracked_files(root, proc=proc):
         parts.append(
             _untracked_diff_evidence(entry.display, entry.path)
             if entry.path is not None
@@ -2059,13 +2053,17 @@ def _git_diff_evidence(cfg: dict) -> str | None:
 
 def _git_untracked_files(
     root: pathlib.Path,
+    *,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> list[_UntrackedGitPath]:
     try:
-        result = subprocess.run(
+        # `text=False`: the output is NUL-framed and each path is escaped byte by byte
+        # below. Decoding it here would destroy what `_escape_git_path` reads.
+        result = proc.run(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
             cwd=root,
-            capture_output=True,
             timeout=60,
+            text=False,
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -2230,7 +2228,7 @@ def _untracked_omitted_evidence(relative: str, omission: str | None) -> str:
     return _untracked_evidence_header(relative) + (omission or "[untracked content omitted]")
 
 
-def _git_changed_files(cfg: dict) -> list[str]:
+def _git_changed_files(cfg: dict, *, proc: ProcessRunner = SUBPROCESS) -> list[str]:
     """Return deterministic tracked and safe untracked paths for adaptive risk analysis.
 
     Falls back to config.INVOCATION_CWD when cfg has no explicit cwd — see
@@ -2242,12 +2240,7 @@ def _git_changed_files(cfg: dict) -> list[str]:
         ["git", "diff", "--name-only", "-z"],
     ):
         try:
-            result = subprocess.run(
-                args,
-                cwd=cwd,
-                capture_output=True,
-                timeout=60,
-            )
+            result = proc.run(args, cwd=cwd, timeout=60, text=False)
         except (OSError, subprocess.SubprocessError):
             break
         if result.returncode == 0:
@@ -2257,7 +2250,7 @@ def _git_changed_files(cfg: dict) -> list[str]:
                 if raw_path
             }
             break
-    untracked = {entry.display for entry in _git_untracked_files(pathlib.Path(cwd))}
+    untracked = {entry.display for entry in _git_untracked_files(pathlib.Path(cwd), proc=proc)}
     return sorted(tracked | untracked)
 
 
@@ -2322,7 +2315,9 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
     cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
     for cmd in step["checks"]:
         with perf.timed(cfg or {}, "checks"):
-            r = subprocess.run(cmd, shell=True, cwd=cwd,
+            # noqa is permanent, same reason as `commands._run_checks`: `shell=True`
+            # with the output discarded, and `ProcessRunner` has neither.
+            r = subprocess.run(cmd, shell=True, cwd=cwd,  # noqa: TID251
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         st["checks"].append({"cmd": cmd, "ok": r.returncode == 0})
     failed = [c["cmd"] for c in st["checks"] if not c["ok"]]
@@ -2795,7 +2790,8 @@ def execute_informed_repair(
 
     cwd = cfg.get("cwd") or str(config.INVOCATION_CWD)
     try:
-        result = subprocess.run(
+        # noqa is permanent: `shell=True`, output discarded, only the status read.
+        result = subprocess.run(  # noqa: TID251
             check,
             shell=True,
             cwd=cwd,
