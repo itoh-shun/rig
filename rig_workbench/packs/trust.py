@@ -6,6 +6,9 @@ import pathlib
 import sys
 from collections.abc import Sequence
 
+from rig_workbench.ports import Env
+from rig_workbench.ports.local import OS_ENV
+
 from .manifest import canonical, digest
 from .model import PackError, ResolvedAsset
 
@@ -75,8 +78,8 @@ def passed_as_option(flag: str, argv: Sequence[str] | None = None) -> bool:
     return False
 
 
-def _store_path() -> pathlib.Path:
-    configured = os.environ.get("RIG_PACK_TRUST_STORE") or os.environ.get("RIG_TRUST_STORE")
+def _store_path(*, env: Env = OS_ENV) -> pathlib.Path:
+    configured = env.get("RIG_PACK_TRUST_STORE") or env.get("RIG_TRUST_STORE")
     return pathlib.Path(configured).expanduser() if configured else pathlib.Path.home() / ".rig" / "trusted-pack-assets.json"
 
 
@@ -90,12 +93,12 @@ def _identity(asset: ResolvedAsset) -> dict:
     }
 
 
-def ensure_asset_trusted(asset: ResolvedAsset) -> pathlib.Path:
+def ensure_asset_trusted(asset: ResolvedAsset, *, env: Env = OS_ENV) -> pathlib.Path:
     if asset.tier not in {"project", "user", "org"}:
         return asset.path
     identity = _identity(asset)
     key = f"{asset.kind}:{identity['path']}"
-    store_path = _store_path()
+    store_path = _store_path(env=env)
     try:
         store = json.loads(store_path.read_text(encoding="utf-8")) if store_path.is_file() else {}
     except (OSError, UnicodeError, json.JSONDecodeError):
@@ -103,8 +106,8 @@ def ensure_asset_trusted(asset: ResolvedAsset) -> pathlib.Path:
     if store.get(key) == identity:
         return asset.path
     allowed = (
-        os.environ.get("RIG_ALLOW_PROJECT_PACKS") == "1"
-        or os.environ.get(f"RIG_ALLOW_PROJECT_{asset.kind.upper().replace('-', '_')}S") == "1"
+        env.get("RIG_ALLOW_PROJECT_PACKS") == "1"
+        or env.get(f"RIG_ALLOW_PROJECT_{asset.kind.upper().replace('-', '_')}S") == "1"
         or passed_as_option(_CONSENT_FLAG)
     )
     if not allowed:
