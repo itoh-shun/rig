@@ -249,15 +249,44 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 0,
         "clock": 0,
     },
-    # `clock` re-measured, not raised: 0 -> 1. `catalog.py`'s `datetime.date.today()` —
-    # the same spelling that read as zero in `govern/cli.py`. The zero here was never true.
+    # The fourth pillar behind the ports (§7 stage 3). Five kinds are zero because every
+    # site moved onto one: 13 `print` to the `Presenter` the shell builds — 8 in `cli.py`
+    # (the report header, every result line, the tally and the verdict), 4 in
+    # `selftest.py` (one per scenario family plus its own tally), and 1 that was not a
+    # command's words at all — 1 `subprocess.run` and the 1 `os.environ` feeding it to
+    # `ProcessRunner` / `Env` in `check_graph`, composed as `{**env.snapshot(),
+    # "RIG_HOME": ...}` because the port's `env=` replaces rather than extends, and 1
+    # wall-clock read to `Clock` in `check_wiki`, whose `> 180 days` verdict is now pinned
+    # on both sides of the boundary against a frozen date.
+    #
+    # **The thirteenth `print` was `state.py`'s import-time PyYAML guard**, which printed
+    # and called `sys.exit(1)` while the module was still being imported — in the one
+    # module every other module in the pillar imports. It did not become a `Presenter`
+    # call where it stood; the import and the guard moved to `validation/yaml_adapter.py`,
+    # the guard raises `PyYAMLMissing`, and `cmd_validate` reports it through the
+    # presenter the shell built. Same text, same stream, same exit status, and
+    # `tests/test_validation_yaml_guard.py` executes the path rather than reasoning about
+    # it: it makes `import yaml` raise by putting `None` in `sys.modules`, and asserts
+    # that mechanism on its own first so nothing below can pass with the trap unset.
+    #
+    # The sixth is the same floor `eval` and `packs` record, for the same reason. All 4
+    # `write_text` are in `selftest.py`, writing synthetic recipe and manifest fixtures
+    # into the `TemporaryDirectory` it then runs `check_recipe` / `check_drill_coverage` /
+    # `check_manifest` over and deletes. They are scratch writes into a tree the function
+    # owns for the length of a call, not product files; routing them through
+    # `FileStore.write_text` would be a port method written from a name rather than from a
+    # call site. 4 is the floor until one of them has a reason to be a port call.
+    #
+    # `validation` is deliberately not in `tests/test_layering_contract.py`'s `MIGRATED`
+    # yet, the same as `packs`: the cross-pillar import edges in its judgement layer are
+    # the next pass, which is the order `govern` and `eval` went in as well.
     "validation": {
-        "print": 13,
-        "subprocess": 1,
+        "print": 0,
+        "subprocess": 0,
         "open_write": 0,
         "write_text": 4,
-        "env": 1,
-        "clock": 1,
+        "env": 0,
+        "clock": 0,
     },
     "workbench": {
         "print": 513,

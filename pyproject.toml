@@ -184,11 +184,12 @@ extend-select = [
 # 並び順は移行順: 残りの柱を小さい順、最後に root 直下のモジュールと scripts/。
 # 先頭にあった `rig_workbench/govern/**`（68 print, 12 banned）、
 # `rig_workbench/eval/**`（16 print, 31 banned）、
-# `rig_workbench/packs/**`（51 print, 11 banned）はもう無い。第 3 段で最初・2 番目・
-# 3 番目に移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである。
+# `rig_workbench/packs/**`（51 print, 11 banned）、
+# `rig_workbench/validation/**`（13 print, 3 banned）はもう無い。第 3 段で最初から
+# 4 番目までに移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである。
 # govern と eval は tests/test_layering_contract.py の MIGRATED と対になっている。
-# packs はまだ MIGRATED に入っていない —— 判定層に残る柱跨ぎの import 辺は次の pass の
-# 仕事で、govern と eval も同じ順序（先に効果地点、後から層の規則）で通した。
+# packs と validation はまだ MIGRATED に入っていない —— 判定層に残る柱跨ぎの import 辺は
+# 次の pass の仕事で、govern と eval も同じ順序（先に効果地点、後から層の規則）で通した。
 # eval の行を消した時点で ruff が eval/ を実際に検査するようになる。行があるうちは
 # `--select TID251` を付けても per-file-ignores は外れないので、あの緑は何も測って
 # いなかった —— 消す前に、禁止呼び出しを 1 つ戻して規則が鳴ることを確かめてある。
@@ -202,7 +203,9 @@ extend-select = [
 # 壁時計の禁止表を広げた際に **再計測** した 3 行（増えた分は新しい効果地点ではなく、
 # 前の表が見えていなかった既存の呼び出し）: orchestrate 45 -> 47（time.time_ns が 2)、
 # validation 2 -> 3（datetime.date.today が 1）、tests 674 -> 682。他は変わらない。
-"rig_workbench/validation/**" = ["T201", "TID251"]   # 13 print, 3 banned
+# validation も同じで、行があるうちは `--select` を付けても検査されていなかった。移行前の
+# 木でこの行だけを外して測ると 13 print / 3 banned ちょうど —— packs と違い、行に書かれて
+# いた数字は古くなっていなかった。移行後は同じ測り方で 0 / 0。
 "rig_workbench/orchestrate/**" = ["T201", "TID251"]  # 211 print, 47 banned
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
