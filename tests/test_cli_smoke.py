@@ -129,9 +129,9 @@ def _distribution_files(distribution):
 def _provision_distributions_offline(root, requirements):
     """Copy the wheel-declared dependency closure from the host's offline environment.
 
-    A host may legitimately lack a declared runtime dependency — CI installs only
-    what the suite itself needs, deliberately omitting `cryptography`. Copy what is
-    present; the probe below still fails loudly if the wheel needs what is absent.
+    A host may legitimately lack a declared runtime dependency: CI installs only what the
+    suite itself needs. Copy what is present; the probe below still fails loudly if the
+    wheel needs what is absent.
     """
     destination_site = (
         root / "Lib" / "site-packages"
