@@ -93,6 +93,8 @@ import sys
 
 from .. import context_meter
 from ..gh_requirement import advise_gh
+from ..ports import Presenter
+from ..ports.local import ConsolePresenter
 from .commands import (cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
                        cmd_next, cmd_otel, cmd_perf, cmd_plan, cmd_resume, cmd_run, cmd_runs,
                        cmd_status,
@@ -153,8 +155,9 @@ def _usage_for(cmd: str) -> str | None:
 
 
 def main():
+    out: Presenter = ConsolePresenter()
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(__doc__)
+        out.out(__doc__)
         sys.exit(0 if len(sys.argv) < 2 else 1)
     cmd, rest = sys.argv[1], sys.argv[2:]
     # Several commands take a bare state-file path and parse no flags at all, so `--help`
@@ -164,14 +167,14 @@ def main():
     # by the time it matters.
     if rest and rest[0] in ("-h", "--help"):
         usage = _usage_for(cmd)
-        print(usage if usage else __doc__)
+        out.out(usage if usage else __doc__)
         sys.exit(0)
     # Count what this invocation prints at the parent session. context-minimal is
     # called a hard rule and was never measured; see rig_workbench/context_meter.
     context_meter.install(f"orchestrate {cmd}", rest)
     if _advises_gh(cmd, rest):
         advise_gh(f"orchestrate {cmd}")
-    COMMANDS[cmd](rest)
+    COMMANDS[cmd](rest, out=out)
 
 
 if __name__ == "__main__":

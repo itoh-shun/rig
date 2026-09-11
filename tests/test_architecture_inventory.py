@@ -226,8 +226,23 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # `cmd_mcp_scan`) and 11 sites each. Both render a report whose `--json` arm hands a
     # whole `json.dumps(...)` block to a single call, which is the shape `Presenter.out`
     # was written for and the reason it takes text rather than a format.
+    #
+    # 25 -> 20 closes pass 1: `selftest.py`'s `cmd_selftest` (3) and the two in
+    # `cli.py`'s `main()`, which is where the adapter is now built — one `ConsolePresenter`
+    # at the process boundary, handed to `COMMANDS[cmd](rest, out=out)`, so all twenty-one
+    # commands run on the presenter the shell chose rather than on a global each reached
+    # for. The `COMMANDS` dict itself is untouched: `tests/test_capability_registry_vs_cli.py`
+    # parses this file with `ast` and a computed dict would be unreadable to it.
+    #
+    # The 20 left are the judgement layer, and they are pass 2's: `commands.py`'s
+    # `_require_executable_recipe`, `_refuse_blocked_state`, `_locked_secure_state_mutation`
+    # and `_print_auto_route_regret` (13), and `recipes.py`'s trust and frontmatter
+    # warnings (7). Measured with the ledger line lifted in a scratch copy, ruff's T201
+    # also reads 20 — the two instruments agree for the first time, because the one site
+    # they disagreed about was the `file=<conditional>` print that is now a stream choice.
+    # So the `pyproject.toml` line stays until those twenty move.
     "orchestrate": {
-        "print": 25,
+        "print": 20,
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,
