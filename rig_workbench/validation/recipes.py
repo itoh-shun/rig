@@ -2,17 +2,61 @@
 
 import pathlib
 import re
-
-from rig_workbench.orchestrate.gates import is_runtime_gate, validate_executable_recipe
-from rig_workbench.workbench.config import GATE_PRESETS
+from collections.abc import Mapping, Sequence
+from typing import Protocol, runtime_checkable
 
 from .config import AGENTS, FACETS, PATTERNS, RECIPES, ROOT
+from .rig_surfaces import GATE_PRESETS, HUMAN_GATE_PARSER, RECIPE_GATE
 from .state import _emit, parse_frontmatter
+
+
+@runtime_checkable
+class RecipeGate(Protocol):
+    """Whether a recipe's steps are ones the orchestrator would agree to run.
+
+    The same declaration `packs/validation.py` makes about the same collaborator, for the
+    same reason and with one question more. What is executable, and which `gate:` strings
+    the runner actually runs, is the orchestrator's rule rather than the validator's. A
+    copy of it here would be a second answer to "may this step run" that only the CI check
+    consults — free to drift from the one that runs the step, and wrong in the direction of
+    passing a recipe the runner would refuse, which is the direction a validator must never
+    be wrong in.
+    """
+
+    def is_runtime_gate(self, gate: object) -> bool:
+        ...
+
+    def executable(self, recipe: object) -> dict:
+        ...
+
+
+@runtime_checkable
+class HumanGateParser(Protocol):
+    """`human_gate:` read by whatever will enforce it, answering a rule or a refusal.
+
+    Shape only is checked here — whether the roles a gate names exist is a property of the
+    org policy the recipe runs under, and a shipped recipe has none — but *what the shape
+    is* belongs to `govern`, which halts the run on it. Two parsers would mean a recipe
+    this file accepts and the stage refuses, or worse the reverse.
+
+    The refusal arrives as a message rather than an exception because a class named in an
+    `except` clause is a cross-pillar edge exactly as much as a function named in a call,
+    and `govern.stage.StageConfigError` was the class this module used to name. So the
+    protocol answers `(rule, error)` and neither half is borrowed vocabulary.
+    """
+
+    def __call__(self, value: object, *, where: str) -> tuple[dict | None, str | None]:
+        ...
 
 #: Every criterion id any preset can put on a task's gate. Derived from `GATE_PRESETS`, never
 #: re-typed here: a second copy of the vocabulary is a copy that drifts (and the one in
 #: `facets/instructions/acceptance-check.md` already had, by eleven criteria, before it was
 #: replaced with an instruction to read the task's gate).
+#:
+#: `GATE_PRESETS` arrives from `rig_surfaces` as *the workbench's own mapping*, not a copy
+#: of it. That is the whole point of injecting it as data rather than transcribing it: this
+#: check exists to catch a shipped document drifting from the presets, and a checker holding
+#: its own copy of the presets would drift with the document and report nothing.
 PRESET_CRITERION_IDS = frozenset(
     criterion for preset in GATE_PRESETS.values() for criterion in preset
 )
@@ -24,7 +68,8 @@ PRESET_CRITERION_IDS = frozenset(
 _ACCEPTANCE_ID_FORM = re.compile(r"^\s*([a-z][a-z0-9_]*)\s+\u2014\s")  # \u2014 is the em dash of the ` — ` separator
 
 
-def _check_acceptance_forms(step: dict, step_ctx: str) -> None:
+def _check_acceptance_forms(step: dict, step_ctx: str, *,
+                            criterion_ids: frozenset[str] = PRESET_CRITERION_IDS) -> None:
     """A step's `acceptance[]` is entirely id-form or entirely prose-form (#497 C3).
 
     The list is a WORK LIST — the criteria this flow's own steps produce evidence for —
@@ -52,7 +97,7 @@ def _check_acceptance_forms(step: dict, step_ctx: str) -> None:
             continue
         forms.append("id")
         criterion_id = match.group(1)
-        if criterion_id not in PRESET_CRITERION_IDS:
+        if criterion_id not in criterion_ids:
             _emit(
                 "FAIL",
                 f"{step_ctx} — acceptance[{index}] declares criterion id"
@@ -211,7 +256,8 @@ def _check_auto_route(value: object, ctx: str) -> None:
 _ROLE_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
-def _check_stage_governance(step: dict, ctx: str) -> None:
+def _check_stage_governance(step: dict, ctx: str, *,
+                            human_gate: HumanGateParser = HUMAN_GATE_PARSER) -> None:
     """`actor` (an org role owning the stage) and `human_gate` (halt for a person).
 
     Shape only — whether the named role exists is a property of whichever org
@@ -219,16 +265,13 @@ def _check_stage_governance(step: dict, ctx: str) -> None:
     here would make a portable recipe unvalidatable; `orchestrate` checks it at
     run time, against the policy actually in effect.
     """
-    from rig_workbench.govern.stage import StageConfigError, parse_human_gate
-
     actor = step.get("actor")
     if actor is not None:
         if not isinstance(actor, str) or not _ROLE_RE.match(actor):
             _emit("FAIL", f"{ctx} — actor must be a role name (^[a-z][a-z0-9-]*$), got {actor!r}")
-    try:
-        rule = parse_human_gate(step.get("human_gate"), where=ctx)
-    except StageConfigError as e:
-        _emit("FAIL", str(e))
+    rule, refused = human_gate(step.get("human_gate"), where=ctx)
+    if refused is not None:
+        _emit("FAIL", refused)
         return
     if rule is not None and not rule["roles"] and not actor:
         _emit("WARN",
@@ -242,7 +285,7 @@ def _check_stage_governance(step: dict, ctx: str) -> None:
               "ownership is documentation only (nothing asks that role to sign off)")
 
 
-def _check_max_retries(step: dict, ctx: str) -> None:
+def _check_max_retries(step: dict, ctx: str, *, gates: RecipeGate = RECIPE_GATE) -> None:
     """`max_retries` — the retry budget K the runner spends before escalating (§3.5).
 
     K is read on the *generic* failure path of `runstate.compute_next`, not inside
@@ -268,7 +311,7 @@ def _check_max_retries(step: dict, ctx: str) -> None:
         return
     if not isinstance(max_retries, int) or max_retries < 1:
         _emit("FAIL", f"{ctx} — max_retries must be an integer ≥1 (value: {max_retries!r})")
-    if not is_runtime_gate(step.get("gate")) and not step.get("checks"):
+    if not gates.is_runtime_gate(step.get("gate")) and not step.get("checks"):
         _emit(
             "WARN",
             f"{ctx} — max_retries has no effect on this step: it declares neither a runtime"
@@ -278,7 +321,19 @@ def _check_max_retries(step: dict, ctx: str) -> None:
         )
 
 
-def check_recipe(path: pathlib.Path) -> None:
+def check_recipe(path: pathlib.Path, *, gates: RecipeGate = RECIPE_GATE,
+                 human_gate: HumanGateParser = HUMAN_GATE_PARSER,
+                 gate_presets: Mapping[str, Sequence[str]] = GATE_PRESETS) -> None:
+    """One shipped recipe against the schema, and against the code that would run it.
+
+    The three collaborators are parameters for the reason the pillar's other signatures
+    take ports as parameters: the default is the real thing, and a caller that wants the
+    check driven against a different vocabulary — a test, an embedding harness — hands one
+    in instead of monkeypatching a module global.
+    """
+    criterion_ids = frozenset(
+        criterion for preset in gate_presets.values() for criterion in preset
+    )
     ctx = f"recipe {path.stem}"
     fm, raw = parse_frontmatter(path)
 
@@ -395,7 +450,7 @@ def check_recipe(path: pathlib.Path) -> None:
         _emit("FAIL", f"{ctx} — steps[] is empty or invalid")
         _emit("PASS", f"{ctx}: reference checks skipped (invalid steps)")
         return
-    execution = validate_executable_recipe(fm)
+    execution = gates.executable(fm)
     for error in execution["errors"]:
         _emit("FAIL", f"{ctx} — {error}")
 
@@ -474,13 +529,13 @@ def check_recipe(path: pathlib.Path) -> None:
         _check_condition(step.get("condition"), step_ctx, "condition")
 
         # actor / human_gate — the v2.1 stage-governance fields (§3.5)
-        _check_stage_governance(step, step_ctx)
+        _check_stage_governance(step, step_ctx, human_gate=human_gate)
 
         # max_retries type / value range / effective context (§3.5)
-        _check_max_retries(step, step_ctx)
+        _check_max_retries(step, step_ctx, gates=gates)
 
         # acceptance[] form/vocabulary (#497 C3)
-        _check_acceptance_forms(step, step_ctx)
+        _check_acceptance_forms(step, step_ctx, criterion_ids=criterion_ids)
 
         # acceptance-gate + acceptance[] presence recommended.
         # The old wording was "(the gate may always pass)". That stopped being true with
