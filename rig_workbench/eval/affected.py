@@ -7,12 +7,14 @@ import pathlib
 import re
 import subprocess
 import tempfile
-from typing import Any
+from collections.abc import Collection, Sequence
+from typing import Any, Protocol, runtime_checkable
 
 from ..ports import ProcessRunner
 from ..ports.local import SUBPROCESS
 from .cases import EvalCaseError, canonical_json, validate_case
 from .execution import GIT_DETERMINISTIC
+from .source_graph import SOURCE_TREE_GRAPH
 
 REGISTRY_VERSION = 2
 _SURFACE_PREFIXES = (
@@ -207,108 +209,46 @@ def prompt_surface_digests(root: pathlib.Path, revision: str, *,
     return digests
 
 
-def _graph(
-    root: pathlib.Path, *, mode: str = "source-tree", strict: bool = False,
-) -> tuple[dict[str, dict], list[dict]]:
-    """Use a hermetic source-tree graph for prompt regression analysis.
+#: Nodes keyed by their path in the tree, and the edges between their ids. What a
+#: brick graph is, as far as this module is concerned: enough to answer "which recipes
+#: reach this surface?" and nothing about how the answer was obtained.
+BrickGraph = tuple[dict[str, dict], list[dict]]
 
-    Installed extension tiers are intentionally excluded: affected-case
-    selection must describe the checked-out source tree, not ambient user or
-    project pack state.
 
-    `strict` raises `EvalCaseError` where the default answers an unreadable tree
-    with an empty graph, and exists because those two answers mean opposite things
-    depending on who is asking. Reading the *working tree*, an empty graph costs a
-    demand the gate would otherwise make — the failure is toward asking for less,
-    and a raise there is a crash in the middle of an ordinary run. Reading a
-    *revision*, an empty graph is indistinguishable from "the base branch wired
-    nothing up", which is exactly the sentence that restores the bypass the
-    revision reading exists to close. So `_graph_at` asks strictly and turns the
-    refusal into a named failure, and nothing else does.
+@runtime_checkable
+class BrickGraphSource(Protocol):
+    """Reading a source tree into a brick graph — stated here, implemented elsewhere.
+
+    This module *uses* the graph to decide which cases a change affects; it does not
+    *build* it, and the difference is the whole of why this protocol exists. Building it
+    means reading `RIG_HOME`, `build_brick_graph` and recipe frontmatter — the
+    orchestrator's data model, which is not one of the three things a judgement module may
+    import (`tests/test_layering_contract.py`), and which sat here as three function-local
+    imports until this protocol replaced them. A function-local import hides that
+    dependency rather than removing it, which is the brief's own point in §3.
+
+    So the dependency is inverted: `eval/source_graph.py` satisfies this structurally, the
+    shell (`eval/cli.py`) and `workbench/prompt_regression.py` hand it in, and nothing in
+    this file knows what a recipe's frontmatter looks like.
+
+    **The layout goes out and the graph comes back.** `prefixes` and `suffixes` are this
+    pillar's own declaration of what a prompt surface is — the same tuples
+    `prompt_surface_registry()` publishes and `_surface()` classifies with — so they are
+    passed rather than read by the source. One definition, and no way for the registry the
+    gate publishes to drift from the layout the graph was built over.
     """
-    if mode != "source-tree":
-        raise ValueError(f"unknown affected graph mode: {mode}")
-    try:
-        from rig_workbench.orchestrate import config
-        from rig_workbench.orchestrate.graph import build_brick_graph
-        if config.RIG_HOME.resolve() == root.resolve():
-            graph = build_brick_graph(project=root, mode="core")
-            return ({node["path"]: node for node in graph["nodes"]}, graph["edges"])
-    except (OSError, ValueError):
-        pass
-    # Fixture/project adapter: derive the same relations needed for reverse impact.
-    try:
-        from rig_workbench.orchestrate.recipes import parse_frontmatter
-        nodes: dict[str, dict] = {}
-        for prefix, kind in _SURFACE_PREFIXES:
-            directory = root / prefix
-            if not directory.is_dir():
-                continue
-            for path in sorted(directory.rglob("*")):
-                if path.is_file() and path.suffix in _KNOWN_SUFFIXES:
-                    name = str(path.relative_to(directory).with_suffix(""))
-                    node_id = f"{kind}:{name}"
-                    nodes[path.relative_to(root).as_posix()] = {
-                        "id": node_id, "kind": kind,
-                        "path": path.relative_to(root).as_posix(),
-                    }
-        edges: list[dict] = []
-        for node in nodes.values():
-            path = root / node["path"]
-            if node["kind"] == "recipe":
-                fm = parse_frontmatter(path)
-                if fm.get("extends"):
-                    edges.append({"from": node["id"], "to": f"recipe:{fm['extends']}"})
-                for step in fm.get("steps") or []:
-                    if not isinstance(step, dict):
-                        continue
-                    for field, kind in (("instruction", "instruction"),
-                                        ("pattern", "pattern"),
-                                        ("output_contract", "contract")):
-                        if step.get(field):
-                            edges.append({"from": node["id"],
-                                          "to": f"{kind}:{step[field]}"})
-                    # A gate is a pattern too, reached through a second field. Same
-                    # sentinel as `build_brick_graph`: a step with no gate spells it
-                    # as a placeholder dash, and a plain truth test grows an edge to
-                    # `pattern:—`. Missing this field made every gate in the
-                    # repository invisible to the revision reader — which is the
-                    # whole of the coverage a `gate:` earns — while `pattern:` on the
-                    # same step was seen, so whether the ratchet held came down to
-                    # which of two fields the wiring used.
-                    if step.get("gate") not in (None, "—", "-"):
-                        edges.append({"from": node["id"],
-                                      "to": f"pattern:{step['gate']}"})
-                    for persona in step.get("personas") or []:
-                        edges.append({"from": node["id"], "to": f"persona:{persona}"})
-                    for policy in step.get("policies") or []:
-                        edges.append({"from": node["id"], "to": f"policy:{policy}"})
-            elif node["kind"] == "persona":
-                fm = parse_frontmatter(path)
-                for value in fm.get("inject") or []:
-                    match = re.fullmatch(r"\[\[([a-z0-9-]+)(?:\|[^]]*)?\]\]", str(value))
-                    if match:
-                        candidates = [item["id"] for item in nodes.values()
-                                      if item["kind"] == "wiki"
-                                      and item["id"].split(":", 1)[1].endswith(match.group(1))]
-                        target = candidates[0] if len(candidates) == 1 else f"wiki:{match.group(1)}"
-                        edges.append({"from": node["id"], "to": target})
-        return nodes, edges
-    except Exception as exc:
-        if strict:
-            # Anything at all: `parse_frontmatter` hands `yaml.safe_load` straight
-            # through, so a broken revision raises `YAMLError` — not a `ValueError`
-            # — and a scalar where a mapping belongs raises `AttributeError`. The
-            # question being answered is "could this tree be read", and every one of
-            # those is the same no. Wider than the list because the list is a moving
-            # target: it would have to name whatever `yaml` raises next. A defect in
-            # this function is caught too, and reported as an unreadable base rather
-            # than as a traceback — the same direction, and the price of not having
-            # to keep an exhaustive list correct.
-            raise EvalCaseError("cannot read the brick graph") from exc
-        if not isinstance(exc, (OSError, UnicodeError, ValueError)):
-            raise
-        return {}, []
+
+    def __call__(self, root: pathlib.Path, *,
+                 prefixes: Sequence[tuple[str, str]], suffixes: Collection[str],
+                 strict: bool = False) -> BrickGraph | None:
+        """The graph in the tree at `root`.
+
+        `strict` says what an unreadable tree means to the caller, because the two callers
+        mean opposite things by it: None — a named failure — when a *revision* is being
+        read, an empty graph when it is the working tree. `_graph_at` carries the argument
+        for that reason.
+        """
+        ...
 
 
 def _graphable(path: str) -> bool:
@@ -442,7 +382,8 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path, *
 
 
 def _graph_at(root: pathlib.Path, revision: str, *,
-              proc: ProcessRunner = SUBPROCESS) -> tuple[dict[str, dict], list[dict]] | None:
+              proc: ProcessRunner = SUBPROCESS,
+              graph: BrickGraphSource = SOURCE_TREE_GRAPH) -> BrickGraph | None:
     """The brick graph as it stands in `revision`'s tree, or None if unreadable.
 
     None rather than an empty graph, and the distinction is the whole point: the
@@ -463,10 +404,8 @@ def _graph_at(root: pathlib.Path, revision: str, *,
         tree = pathlib.Path(directory)
         if _surfaces_at(root, revision, tree, proc=proc) is None:
             return None
-        try:
-            return _graph(tree, strict=True)
-        except EvalCaseError:
-            return None
+        return graph(tree, prefixes=_SURFACE_PREFIXES, suffixes=_KNOWN_SUFFIXES,
+                     strict=True)
 
 
 def _landing_graph(
@@ -553,8 +492,20 @@ def _landing_graph(
     return nodes, edges
 
 
-def _recipes_by_surface(root: pathlib.Path, surfaces: list[dict]) -> dict[str, list[str]]:
-    return _reachable_recipes(_graph(root), surfaces)
+def _recipes_by_surface(root: pathlib.Path, surfaces: list[dict], *,
+                        graph: BrickGraphSource = SOURCE_TREE_GRAPH) -> dict[str, list[str]]:
+    return _reachable_recipes(_head_graph(root, graph), surfaces)
+
+
+def _head_graph(root: pathlib.Path, graph: BrickGraphSource) -> BrickGraph:
+    """The working tree's graph, with an unreadable tree read as an empty one.
+
+    The lenient half of the pair `_graph_at` states strictly: here an empty graph costs a
+    demand the gate would otherwise make — the failure is toward asking for less — while a
+    refusal would be a crash in the middle of an ordinary run.
+    """
+    built = graph(root, prefixes=_SURFACE_PREFIXES, suffixes=_KNOWN_SUFFIXES)
+    return ({}, []) if built is None else built
 
 
 def _reachable_recipes(
@@ -891,7 +842,7 @@ def analyze_affected(
     repo: pathlib.Path | str, *, base: str, head: str = "working",
     require_cases: bool = False, ratchet: bool = False,
     evidence_dir: pathlib.Path | str | None = None,
-    proc: ProcessRunner = SUBPROCESS,
+    proc: ProcessRunner = SUBPROCESS, graph: BrickGraphSource = SOURCE_TREE_GRAPH,
 ) -> dict:
     """Which prompt surfaces a change touches, and whether cases cover them.
 
@@ -948,7 +899,7 @@ def analyze_affected(
     resolved_head = _resolved_head(root, head, proc=proc)
     merge_base = _merge_base(root, base, head, proc=proc)
     surfaces = [surface for path in changed if (surface := _surface(path)) is not None]
-    head_graph = _graph(root)
+    head_graph = _head_graph(root, graph)
     recipes_by_surface = _reachable_recipes(head_graph, surfaces)
     recipes = sorted({recipe for values in recipes_by_surface.values() for recipe in values})
     cases = _load_cases(root)
@@ -981,8 +932,8 @@ def analyze_affected(
     # must not fire in.
     needs_landing_graph = bool(ratchet and surfaces)
     landing_graph = (
-        _landing_graph(head_graph, _graph_at(root, base, proc=proc),
-                       _graph_at(root, merge_base, proc=proc))
+        _landing_graph(head_graph, _graph_at(root, base, proc=proc, graph=graph),
+                       _graph_at(root, merge_base, proc=proc, graph=graph))
         if needs_landing_graph else None
     )
     landing_by_surface = (_reachable_recipes(landing_graph, surfaces)

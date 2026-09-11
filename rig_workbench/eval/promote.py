@@ -8,11 +8,13 @@ import json
 import os
 import pathlib
 import tempfile
+from typing import Protocol, runtime_checkable
 
 from ..ports import Clock, Env
 from ..ports.local import OS_ENV, SYSTEM_CLOCK
 from .cases import EvalCaseError, canonical_json, validate_case
 from .compare import compare_results
+from .pack_layout import PACK_CASE_DIR
 
 
 def _load_draft(root: pathlib.Path, case_id: str) -> tuple[pathlib.Path, dict]:
@@ -86,36 +88,32 @@ def _atomic_create(path: pathlib.Path, value: dict) -> None:
                 pass
 
 
-def _pack_case_dir(into: pathlib.Path | str) -> pathlib.Path:
-    """`<pack>/evals/cases`, after checking that `into` is in fact a pack.
+@runtime_checkable
+class PackCaseDir(Protocol):
+    """Where a pack keeps its evaluation cases — stated here, implemented elsewhere.
 
-    Without the check, a mistyped path writes an approved case into an ordinary directory
-    where nothing will ever read it, and the author's next `pack validate` reports the case as
-    missing rather than misplaced — a wrong answer to the question they would be asking.
-
-    What is deliberately *not* checked here is whether the pack owns the prompt surfaces the
-    case names. `validate_pack` already refuses a case not bound to the pack's own prompt
-    assets, and re-implementing that rule would put a second copy of it one import away from
-    the first, free to drift. This function's job is to know where the file goes.
+    `--into PACK` writes an approved case into a pack, and the directory a pack keeps
+    cases in is the packs pillar's declaration, not this one's. Importing it here is the
+    thing the layering rule forbids (`tests/test_layering_contract.py`) — and it was a
+    function-local import, which hides the dependency rather than removing it. So the
+    dependency is inverted: this protocol says what promotion needs, `eval/pack_layout.py`
+    satisfies it, and the shell hands it in.
     """
-    # Deferred: `rig_workbench.packs` imports this package at module level, so a top-level
-    # import here would close the cycle. Same pattern as `affected.py` and orchestrate.
-    from rig_workbench.packs.model import ASSET_DIRS
 
-    try:
-        pack = pathlib.Path(into).resolve()
-        is_pack = (pack / "pack.yaml").is_file()
-    except OSError as exc:
-        raise EvalCaseError(f"filesystem error resolving pack: {exc}") from exc
-    if not is_pack:
-        raise EvalCaseError(f"not a pack directory (no pack.yaml): {pack}")
-    return pack / ASSET_DIRS["eval-case"]
+    def __call__(self, into: pathlib.Path | str) -> pathlib.Path:
+        """The directory `into`'s evaluation cases live in.
+
+        Raises `EvalCaseError` when `into` is not a pack: a mistyped path would otherwise
+        put an approved case where nothing reads it.
+        """
+        ...
 
 
 def promote_case(
     repo: pathlib.Path | str, case_id: str, baseline: dict, current: dict,
     *, now: dt.datetime | None = None, into: pathlib.Path | str | None = None,
     clock: Clock = SYSTEM_CLOCK, env: Env = OS_ENV,
+    pack_case_dir: PackCaseDir = PACK_CASE_DIR,
 ) -> tuple[pathlib.Path, dict]:
     """Promote a draft to an approved case, in this repository or into a pack.
 
@@ -160,7 +158,7 @@ def promote_case(
         now or clock.now()
     ).astimezone(dt.timezone.utc).isoformat(timespec="seconds")
     validate_case(promoted)
-    case_dir = _pack_case_dir(into) if into is not None else root / "evals" / "cases"
+    case_dir = pack_case_dir(into) if into is not None else root / "evals" / "cases"
     destination = case_dir / case_id / "case.json"
     _atomic_create(destination, promoted)
     return destination, promoted

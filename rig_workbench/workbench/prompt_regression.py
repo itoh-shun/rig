@@ -9,6 +9,7 @@ from rig_workbench.eval.affected import REGISTRY_REL, _surface
 from rig_workbench.eval.affected_run import EVIDENCE_REL
 from rig_workbench.eval.cases import EvalCaseError
 from rig_workbench.eval.gate import evaluate_gate
+from rig_workbench.eval.source_graph import SOURCE_TREE_GRAPH
 
 from .state import effective_base
 
@@ -112,8 +113,12 @@ def apply_prompt_regression_sensor(root: pathlib.Path, task: dict, acc: dict) ->
         # Debt is warning-grade rather than passed: the gate settles at
         # `passed_with_warnings`, which accept allows, and the missing coverage is
         # named rather than certified as checked.
+        # The graph the gate judges with is handed in rather than reached for:
+        # `eval.affected` states what it needs of a brick graph as a protocol and this
+        # is one of the two callers that supply the real one (the other is `eval/cli.py`).
         report, code = evaluate_gate(
             repo, base=base, head="working", evidence_dir=evidence_dir, ratchet=True,
+            graph=SOURCE_TREE_GRAPH,
         )
         if code != 0:
             check["status"] = "failed"

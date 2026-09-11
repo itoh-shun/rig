@@ -146,6 +146,24 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
             "and the Clock, once each, at the process boundary. Holding it to the rule "
             "would forbid the wiring the pillar is wired by."
         ),
+        f"{PACKAGE}.eval.source_graph": (
+            "The adapter behind eval's one cross-pillar edge, and it is here for the "
+            "reason PORT_ADAPTERS gives for ports/local.py: an adapter exists precisely "
+            "to hold what the protocol may not. affected.py states what it needs of a "
+            "brick graph — a tree in, nodes and edges out — as BrickGraphSource, and "
+            "this module satisfies it by reading the orchestrator's RIG_HOME, "
+            "build_brick_graph and recipe frontmatter. It imports nothing from the "
+            "judgement layer, so the inverted edge stays one-way: the surface layout it "
+            "walks is passed in by the caller that declares it."
+        ),
+        f"{PACKAGE}.eval.pack_layout": (
+            "The second adapter, and the smaller one: where a pack keeps its evaluation "
+            "cases, which is the packs pillar's declaration and not eval's. promote.py "
+            "states what it needs as PackCaseDir and this satisfies it, so the import "
+            "that used to sit inside a function — deferred to dodge a cycle, which hides "
+            "a dependency rather than removing it — is a declared edge in a module whose "
+            "whole purpose is to hold it."
+        ),
     },
 }
 

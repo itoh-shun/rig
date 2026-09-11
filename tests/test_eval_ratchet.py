@@ -421,12 +421,14 @@ def test_the_placeholder_dash_a_gateless_step_carries_is_not_a_pattern(tmp_path)
     `if step.get("gate")` grows an edge to `pattern:—` — a surface that does not
     exist, charged to every recipe that has an ungated step.
     """
-    from rig_workbench.eval.affected import _graph
+    from rig_workbench.eval.affected import _head_graph
+    from rig_workbench.eval.source_graph import SOURCE_TREE_GRAPH
 
     repo, _root = _repo(tmp_path)
     _touch(repo, RECIPE, UNGATED)
     _touch(repo, PATTERN, "---\nname: checklist\n---\n")
-    assert [edge for edge in _graph(repo)[1] if edge["to"].startswith("pattern:")] == []
+    graph = _head_graph(repo, SOURCE_TREE_GRAPH)
+    assert [edge for edge in graph[1] if edge["to"].startswith("pattern:")] == []
 
 
 def test_a_reference_this_branch_removes_is_not_added_back(tmp_path):
@@ -489,7 +491,8 @@ def test_the_two_graph_readers_agree_once_ids_are_translated():
     wiki pages disagree — which is the case that would quietly attach the base
     branch's edges to nodes the walk never visits.
     """
-    from rig_workbench.eval.affected import _graph, _graph_at, _landing_graph
+    from rig_workbench.eval.affected import _graph_at, _head_graph, _landing_graph
+    from rig_workbench.eval.source_graph import SOURCE_TREE_GRAPH
     from rig_workbench.orchestrate import config
 
     root = pathlib.Path(__file__).resolve().parents[1]
@@ -501,7 +504,7 @@ def test_the_two_graph_readers_agree_once_ids_are_translated():
         # an installed rig elsewhere takes that away — leaving one reader on both
         # sides, which is the case every fixture already covers.
         pytest.skip("this checkout is not the rig home, so both reads use one reader")
-    head = _graph(root)
+    head = _head_graph(root, SOURCE_TREE_GRAPH)
     at_head = _graph_at(root, "HEAD")
     assert at_head is not None
     renamed = {node["id"] for path, node in at_head[0].items()
@@ -604,7 +607,8 @@ def test_a_graph_the_reader_gave_up_on_is_not_a_base_that_wired_nothing(tmp_path
     travels as a refusal.
     """
     from rig_workbench.eval import affected as module
-    from rig_workbench.orchestrate import recipes as recipes_module
+    from rig_workbench.eval import source_graph as source_graph_module
+    from rig_workbench.eval.source_graph import SOURCE_TREE_GRAPH
 
     repo, fork, base = _forked(tmp_path)
     _git(repo, "checkout", "-q", "-b", "evil", fork)
@@ -615,9 +619,13 @@ def test_a_graph_the_reader_gave_up_on_is_not_a_base_that_wired_nothing(tmp_path
         raise ValueError("the reader gave up")
 
     # Patched where the adapter reads, not where it returns: the point is that the
-    # adapter's own `except` would have turned this into `({}, [])`.
-    monkeypatch.setattr(recipes_module, "parse_frontmatter", gave_up)
-    assert module._graph(repo) == ({}, []), "the lenient read still shrugs"
+    # adapter's own `except` would have turned this into `({}, [])`. The name patched is
+    # the adapter's own binding of `parse_frontmatter` — it imports the orchestrator at
+    # module level now, so patching `orchestrate.recipes` would leave that binding alone
+    # and the trap would never spring.
+    monkeypatch.setattr(source_graph_module, "parse_frontmatter", gave_up)
+    assert module._head_graph(repo, SOURCE_TREE_GRAPH) == ({}, []), \
+        "the lenient read still shrugs"
 
     report = analyze(repo, base, head=head, ratchet=True)
     assert report["coverage_base_unreadable"] is True, report
@@ -849,7 +857,8 @@ def test_a_surface_whose_name_is_not_utf8_is_spelled_the_same_by_both_readers(tm
     graph stops matching the branch's for that surface — a `coverage_stale` with no
     edit an author could make to clear it.
     """
-    from rig_workbench.eval.affected import _graph, _graph_at
+    from rig_workbench.eval.affected import _graph_at, _head_graph
+    from rig_workbench.eval.source_graph import SOURCE_TREE_GRAPH
 
     repo, _root = _repo(tmp_path)
     _touch(repo, RECIPE, WIRED)
@@ -859,10 +868,12 @@ def test_a_surface_whose_name_is_not_utf8_is_spelled_the_same_by_both_readers(tm
     with open(target, "wb") as handle:
         handle.write(b"---\nname: reviewer\n---\n")
     head = _commit(repo, "a surface whose name is not utf-8")
-    assert os.fsdecode(name) in _graph(repo)[0], "the head reader sees it"
+    assert os.fsdecode(name) in _head_graph(repo, SOURCE_TREE_GRAPH)[0], \
+        "the head reader sees it"
 
     at_head = _graph_at(repo, head)
-    assert at_head is not None and sorted(at_head[0]) == sorted(_graph(repo)[0])
+    assert at_head is not None and sorted(at_head[0]) == sorted(
+        _head_graph(repo, SOURCE_TREE_GRAPH)[0])
 
 
 def test_an_engine_document_with_no_bricks_under_it_is_not_an_unreadable_graph(tmp_path):

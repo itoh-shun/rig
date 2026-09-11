@@ -47,8 +47,10 @@ from .affected_run import run_affected
 from .cases import EvalCaseError, canonical_json, validate_case
 from .compare import compare_results, validate_result
 from .gate import evaluate_gate
+from .pack_layout import PACK_CASE_DIR
 from .promote import promote_case
 from .runner import adapter_cwd, make_judge_adapter, read_only_workspace, run_case
+from .source_graph import SOURCE_TREE_GRAPH
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -438,7 +440,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
             current = _read_result(args.current, clock=clock, env=env)
             output, _case = promote_case(
                 args.repo, args.draft_id, baseline, current, into=args.into,
-                clock=clock, env=env,
+                clock=clock, env=env, pack_case_dir=PACK_CASE_DIR,
             )
             out.out(str(output))
             if args.into is not None:
@@ -448,7 +450,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
             report = analyze_affected(
                 args.repo, base=args.base, head=args.head,
                 require_cases=args.require_cases, ratchet=args.ratchet,
-                evidence_dir=args.evidence_dir, proc=proc,
+                evidence_dir=args.evidence_dir, proc=proc, graph=SOURCE_TREE_GRAPH,
             )
             _emit_document(out, canonical_json(report))
             # `debt` exits 0 on purpose: it is a number to carry, not a wall. Only
@@ -460,6 +462,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                 evidence_dir=args.evidence_dir, provider=args.provider, model=args.model,
                 judge_provider=args.judge_provider, judge_model=args.judge_model,
                 ratchet=args.ratchet, proc=proc, env=env, clock=clock,
+                graph=SOURCE_TREE_GRAPH,
             )
             _emit_document(out, canonical_json(report))
             return exit_code
@@ -470,6 +473,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None,
                 judge_model=args.judge_model, provider_command=args.provider_command,
                 judge_command=args.judge_command, timeout_s=args.timeout,
                 ratchet=args.ratchet, proc=proc, env=env, clock=clock,
+                graph=SOURCE_TREE_GRAPH,
             )
             output = dict(report)
             output["result_dir"] = str(destination) if destination is not None else None

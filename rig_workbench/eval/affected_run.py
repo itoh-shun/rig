@@ -11,13 +11,14 @@ import tempfile
 
 from ..ports import Clock, Env, ProcessRunner
 from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
-from .affected import analyze_affected, prompt_surface_digests
+from .affected import BrickGraphSource, analyze_affected, prompt_surface_digests
 from .cases import EvalCaseError
 # Where this run files what it measured. Defined by the gate rather than here,
 # because the gate now reads that path literally to decide what a measurement has
 # to beat: one writer and one ratchet, both naming the same constant.
 from .gate import EVIDENCE_REL, evaluate_gate
 from .runner import adapter_cwd, make_judge_adapter, read_only_workspace, run_case
+from .source_graph import SOURCE_TREE_GRAPH
 
 
 def _rev_parse(root: pathlib.Path, revision: str, *,
@@ -66,6 +67,7 @@ def run_affected(
     judge_provider: str, judge_model: str, provider_command: str | None = None,
     judge_command: str | None = None, timeout_s: float = 30, ratchet: bool = False,
     proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
+    graph: BrickGraphSource = SOURCE_TREE_GRAPH,
 ) -> tuple[dict, int, pathlib.Path | None]:
     """`ratchet` has to reach here too, or the CI gate's ratchet buys nothing.
 
@@ -82,11 +84,12 @@ def run_affected(
         raise EvalCaseError("affected-run forbids mock provider and mock judge")
     root = pathlib.Path(repo).resolve()
     affected = analyze_affected(root, base=base, head=head,
-                                require_cases=not ratchet, ratchet=ratchet, proc=proc)
+                                require_cases=not ratchet, ratchet=ratchet, proc=proc,
+                                graph=graph)
     if affected["status"] == "noop":
         report, code = evaluate_gate(root, base=base, head=head,
                                      evidence_dir=root / ".rig" / "none", ratchet=ratchet,
-                                     proc=proc, env=env, clock=clock)
+                                     proc=proc, env=env, clock=clock, graph=graph)
         return report, code, None
     if affected["status"] == "uncovered":
         # Every way `uncovered` can be reached, named. Listing only the paths left
@@ -110,7 +113,7 @@ def run_affected(
         # empty run that would report a destination holding no evidence.
         report, code = evaluate_gate(root, base=base, head=head,
                                      evidence_dir=root / ".rig" / "none", ratchet=ratchet,
-                                     proc=proc, env=env, clock=clock)
+                                     proc=proc, env=env, clock=clock, graph=graph)
         return report, code, None
     cases: dict[str, dict] = {}
     for case_id in affected["affected_cases"]:
@@ -192,7 +195,7 @@ def run_affected(
         report, code = evaluate_gate(
             root, base=base, head=head, evidence_dir=staging, provider=provider,
             model=model, judge_provider=judge_provider, judge_model=judge_model,
-            ratchet=ratchet, proc=proc, env=env, clock=clock,
+            ratchet=ratchet, proc=proc, env=env, clock=clock, graph=graph,
         )
         if code != 0:
             return report, code, None

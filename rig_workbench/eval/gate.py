@@ -13,7 +13,7 @@ from rig_workbench import __version__
 
 from ..ports import Clock, Env, ProcessRunner
 from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
-from .affected import analyze_affected
+from .affected import BrickGraphSource, analyze_affected
 from .cases import (
     EvalCaseError,
     canonical_json,
@@ -23,6 +23,7 @@ from .cases import (
 )
 from .compare import validate_result
 from .execution import execution_diff_sha256
+from .source_graph import SOURCE_TREE_GRAPH
 
 # Where a measurement lands once it is committed. `evals/` is where the cases and
 # the surface registry already live and is not a prompt-surface root, so evidence
@@ -527,6 +528,7 @@ def evaluate_gate(
     model: str | None = None, judge_provider: str | None = None,
     judge_model: str | None = None, ratchet: bool = False,
     proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
+    graph: BrickGraphSource = SOURCE_TREE_GRAPH,
 ) -> tuple[dict, int]:
     """`ratchet` is the same direction CI drives with `eval affected --ratchet`.
 
@@ -545,7 +547,7 @@ def evaluate_gate(
     root = pathlib.Path(repo).resolve()
     affected = analyze_affected(
         root, base=base, head=head, require_cases=not ratchet, ratchet=ratchet,
-        evidence_dir=evidence_dir, proc=proc,
+        evidence_dir=evidence_dir, proc=proc, graph=graph,
     )
     debt = affected["coverage_debt"]
     if affected["status"] == "noop":
