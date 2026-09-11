@@ -252,9 +252,9 @@ class BrickGraphSource(Protocol):
 
 
 def _graphable(path: str) -> bool:
-    """Whether `_graph`'s adapter would turn `path` into a node.
+    """Whether the graph source's adapter would turn `path` into a node.
 
-    The adapter is the only reader the temporary tree ever gets — `_graph`'s other
+    The adapter is the only reader the temporary tree ever gets — the source's other
     branch is for the rig checkout itself and a `TemporaryDirectory` is never that
     — so writing a file it cannot use is work that cannot change the answer. Wider
     than the adapter would be wrong in a second way as well: `_surface` also calls
@@ -276,7 +276,7 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path, *
                  proc: ProcessRunner = SUBPROCESS) -> int | None:
     """Write `revision`'s graphable prompt surfaces into `destination`; count them.
 
-    `_graph` reads frontmatter off the filesystem, so answering "what did the
+    The graph source reads frontmatter off the filesystem, so answering "what did the
     graph look like at that commit" means putting that commit's surfaces on a
     filesystem. `git ls-tree -r` to name them and one `git cat-file --batch` to
     read them, which is what `prompt_surface_digests` and `_coverage_at` already
@@ -296,14 +296,14 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path, *
     is not a rendering of the tree; it is the tree.
 
     Entries are filtered here rather than written wholesale: only regular files
-    (`ls-tree` calls a symlink a blob as well), only paths `_graph`'s adapter
+    (`ls-tree` calls a symlink a blob as well), only paths the graph source's adapter
     would make a node of, and no path that climbs out of the destination. A blob
     the batch cannot produce — a blobless clone answers `missing` — is None, not
     a skip: skipping is precisely the shrunken graph this function exists to stop
     being possible.
 
     Paths are decoded `surrogateescape` because they are used to *write files* the
-    other reader then has to recognise. `_graph` walks the result with `rglob`, so
+    other reader then has to recognise. The graph source walks the result with `rglob`, so
     a filename whose bytes are not UTF-8 comes back to it through `os.listdir`'s
     surrogateescape; decoding it as U+FFFD here would write a name that reader
     spells differently, and the branch's own graph would stop matching the base
@@ -393,7 +393,7 @@ def _graph_at(root: pathlib.Path, revision: str, *,
 
     Both facts are therefore taken where they happen. Whether git could answer is
     `_surfaces_at`'s exit codes and its parse of the batch; whether the tree could
-    be read is `strict=True`, which makes the adapter raise instead of shrugging.
+    be read is `strict=True`, which makes the supplied graph refuse instead of shrugging.
     Neither is inferred from how much came back. Counting was the earlier answer
     and it was wrong in both directions at once: it could not see a tree that was
     read but rendered (`git archive` and `export-ignore`), and it called a tree
@@ -440,7 +440,7 @@ def _landing_graph(
     branch's own push would ask for a moment later.
 
     The two revisions are read by the same reader, which is what makes the
-    subtraction safe: `_graph` describes the rig repository itself through
+    subtraction safe: the graph source describes the rig repository itself through
     `build_brick_graph` and every other tree through its adapter, and the two do
     not agree edge for edge. Any such difference is present in `base` and in `fork`
     alike and cancels; what survives is only what the base branch genuinely added.
