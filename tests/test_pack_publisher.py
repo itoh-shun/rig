@@ -411,7 +411,7 @@ def _write_signature(pack, manifest, private, *, issued_at, engine_release=None)
 
 
 def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
-    from rig_workbench.packs import installer, publisher
+    from rig_workbench.packs import installer, publisher, signature
     from rig_workbench.packs.doctor import diagnose
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.lock import read_lock, validate_lock_root
@@ -425,7 +425,7 @@ def test_ed25519_sign_install_lock_and_doctor_end_to_end(tmp_path, monkeypatch):
         pack, private_key_path=key_path, key_id="test-2026",
         signer="Rig Test Publisher", quality_status=installer.local_quality_status,
     )
-    monkeypatch.setattr(publisher, "load_trust_roots", lambda: roots)
+    monkeypatch.setattr(signature, "load_trust_roots", lambda: roots)
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
     verified = publisher.verify_publisher_signature(pack, manifest)
     assert verified["key_id"] == "test-2026"
@@ -574,7 +574,7 @@ def test_signing_refuses_dirty_source_and_non_green_quality(tmp_path, monkeypatc
 def test_valid_publisher_signature_cannot_upgrade_mock_or_non_green_quality(
     tmp_path, monkeypatch,
 ):
-    from rig_workbench.packs import installer, publisher
+    from rig_workbench.packs import installer, signature
     from rig_workbench.packs.manifest import read_json_yaml
     from rig_workbench.packs.model import PackError
 
@@ -585,7 +585,7 @@ def test_valid_publisher_signature_cannot_upgrade_mock_or_non_green_quality(
         pack, manifest, private,
         issued_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     )
-    monkeypatch.setattr(publisher, "load_trust_roots", lambda: roots)
+    monkeypatch.setattr(signature, "load_trust_roots", lambda: roots)
     monkeypatch.setattr(
         installer, "local_quality_status", lambda *_args, **_kwargs: "unverified",
     )
@@ -613,7 +613,7 @@ def test_signing_refuses_legacy_prompt_case_without_composition_or_durable_evide
 def test_prompt_pack_with_composition_distinct_expectations_and_green_evidence_signs(
     tmp_path, monkeypatch,
 ):
-    from rig_workbench.packs import installer, publisher
+    from rig_workbench.packs import installer, publisher, signature
     from rig_workbench.packs.manifest import read_json_yaml
 
     repository = tmp_path / "quality-repository"
@@ -634,7 +634,7 @@ def test_prompt_pack_with_composition_distinct_expectations_and_green_evidence_s
     ]
     monkeypatch.delenv("RIG_EVAL_ATTESTATION_KEY", raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "clean-state"))
-    monkeypatch.setattr(publisher, "load_trust_roots", lambda: roots)
+    monkeypatch.setattr(signature, "load_trust_roots", lambda: roots)
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
     status, verified = installer.verification_status(pack, manifest)
     assert status == "verified-publisher" and verified["key_id"] == "test-2026"

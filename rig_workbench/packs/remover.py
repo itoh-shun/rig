@@ -5,11 +5,11 @@ import pathlib
 import shutil
 import tempfile
 
+from . import signature
 from .installer import scope_root
 from .lock import (LOCK_SCHEMA_VERSION, lock_path, read_lock, validate_lock_root, write_lock,
                    write_lock_bytes)
 from .model import PackError
-from .publisher import verify_publisher_signature
 from .resolver import core_reference_ids, pack_roots
 from .validation import validate_pack
 
@@ -24,7 +24,7 @@ def remove_pack(
         root=pathlib.Path(root) if root is not None else None,
     )
     entries = validate_lock_root(destination_root,
-                                 verify_publisher=verify_publisher_signature,
+                                 verify_publisher=signature.verify_publisher_signature,
                                  core_ids=core_reference_ids())
     owned = next((item for item in entries if item["id"] == pack_id), None)
     if owned is None:

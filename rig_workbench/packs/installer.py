@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from rig_workbench.eval.gate import quality_result_failures
 from rig_workbench.eval.compare import validate_result
 
+from . import signature
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
                    make_source, resolve_dependencies, validate_lock_root, write_lock)
 from .manifest import read_json_yaml
@@ -288,9 +289,7 @@ def local_quality_status(
 
 def verification_status(pack: pathlib.Path, manifest: dict) -> tuple[str, dict | None]:
     """Return publisher trust independently from local structural/quality evidence."""
-    from .publisher import verify_publisher_signature
-
-    publisher = verify_publisher_signature(pack, manifest)
+    publisher = signature.verify_publisher_signature(pack, manifest)
     quality = local_quality_status(pack, manifest, publisher_verified=publisher is not None)
     if publisher is not None:
         if quality != "verified-local":
@@ -365,8 +364,8 @@ def install_pack(
     # The verifier is handed down, not imported by `lock` (`lock.PublisherVerifier`):
     # this module already owns the publisher check at install time, so it is the one
     # that says what "still signed by that key" means here too.
-    from .publisher import verify_publisher_signature
-    validate_lock_root(destination_root, verify_publisher=verify_publisher_signature,
+    validate_lock_root(destination_root,
+                       verify_publisher=signature.verify_publisher_signature,
                        core_ids=core_reference_ids(), expected_scope=scope)
     unmanaged = [item.name for item in destination_root.iterdir() if item.is_dir()
                  and not item.name.startswith(".pack-")]

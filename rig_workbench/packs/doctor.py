@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pathlib
+
+from . import signature
 from .resolver import catalog, core_reference_ids, pack_roots
 from .lock import lock_path, validate_lock_root
 from .validation import validate_pack, validate_tiered_collection
@@ -21,9 +23,8 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
                                  "detail": "validated legacy packs; migrate with pack install",
                                  "scope": tier, "severity": "warning"})
             try:
-                from .publisher import verify_publisher_signature
                 validate_lock_root(
-                    pack_root, verify_publisher=verify_publisher_signature,
+                    pack_root, verify_publisher=signature.verify_publisher_signature,
                     core_ids=core_reference_ids(),
                     expected_scope=tier if tier in {"project", "user", "org"} else None,
                 )
@@ -46,8 +47,7 @@ def diagnose(path: pathlib.Path | str | None = None, *, project: pathlib.Path | 
         try:
             manifest = validate_pack(root, core_ids=core_reference_ids())
             if (root / "pack.sig.json").is_file():
-                from .publisher import verify_publisher_signature
-                if verify_publisher_signature(root, manifest) is None:
+                if signature.verify_publisher_signature(root, manifest) is None:
                     raise ValueError("publisher signature disappeared during verification")
             manifests[manifest["id"]] = manifest
             entries.append((tier_by_path.get(root.resolve(), "selected"), root))

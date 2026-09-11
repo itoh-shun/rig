@@ -234,10 +234,12 @@ def validate_lock_root(
 
     `verify_publisher` is required and has no default, which is the point rather than an
     inconvenience (`PublisherVerifier`): a default would be the very import this signature
-    exists to remove. Passing `None` is therefore a caller's explicit statement that it is
-    not re-running the cryptography — every other drift check still runs, and the publisher
-    fields are still validated structurally. `packs.resolver` is the one shipped caller that
-    passes it, and says there why brick resolution is not the place for that work.
+    exists to remove. Passing `None` is a caller's explicit statement that it is not
+    re-running the cryptography — every other drift check still runs, and the publisher
+    fields are still validated structurally, but `verified-publisher` is then taken on the
+    lock file's word. No shipped caller passes `None`: `installer`, `remover`, `doctor` and
+    `resolver` all hand over `signature.verify_publisher_signature`, because the structural
+    checks cannot see a tampered `pack.sig.json` — it is not in `manifest["hashes"]`.
 
     `core_ids` is passed straight through to `validate_pack`
     (`validation.CoreReferenceIds`), and is taken as an argument here for the same reason
