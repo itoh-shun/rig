@@ -8,14 +8,10 @@ import pathlib
 import subprocess
 import threading
 
-try:
-    import yaml
-except ImportError:
-    # Don't kill importers (pytest collection, library use) at import time —
-    # fail with the CLI hint on first actual use instead (parse_frontmatter).
-    yaml = None
-
+from ..ports import Presenter
+from ..ports.local import CONSOLE
 from . import config
+from .yaml_adapter import PyYAMLMissing, require_yaml
 
 # ── Project-recipe trust gate ─────────────────────────────────────────────────
 # A repository can ship `.rig/recipes/*.md` that overlays a shipped recipe of
@@ -100,7 +96,7 @@ def _is_project_recipe(path: pathlib.Path) -> bool:
         return False
 
 
-def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
+def ensure_recipe_trusted(path: pathlib.Path, *, out: Presenter = CONSOLE) -> pathlib.Path:
     """Consent gate for project-local recipe overlays. Returns path if allowed, exits otherwise."""
     if not _is_project_recipe(path):
         return path
@@ -113,16 +109,16 @@ def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
                or os.environ.get("RIG_ALLOW_PROJECT_RECIPES") == "1")
     if allowed:
         _record_trust(resolved, digest)
-        print(f"[trust] project recipe allowed and recorded: {resolved}")
+        out.out(f"[trust] project recipe allowed and recorded: {resolved}")
         return path
-    print(f"[ERROR] untrusted project-local recipe: {resolved}\n"
-          f"  Recipes under <cwd>/.rig/recipes/ come from the repository you are working\n"
-          f"  on, and their `checks:` lines execute as shell commands. First use requires\n"
-          f"  explicit consent:\n"
-          f"    re-run with --allow-project-recipes   (records a content hash; silent next time)\n"
-          f"    or set RIG_ALLOW_PROJECT_RECIPES=1\n"
-          f"  Review the file first: {resolved}\n"
-          f"  Trust store: {_trust_store_path()}")
+    out.out(f"[ERROR] untrusted project-local recipe: {resolved}\n"
+            f"  Recipes under <cwd>/.rig/recipes/ come from the repository you are working\n"
+            f"  on, and their `checks:` lines execute as shell commands. First use requires\n"
+            f"  explicit consent:\n"
+            f"    re-run with --allow-project-recipes   (records a content hash; silent next time)\n"
+            f"    or set RIG_ALLOW_PROJECT_RECIPES=1\n"
+            f"  Review the file first: {resolved}\n"
+            f"  Trust store: {_trust_store_path()}")
     sys.exit(2)
 
 
@@ -138,7 +134,8 @@ def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
 _warned_manifests: set[tuple[str, str]] = set()
 
 
-def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
+def ensure_manifest_trusted(path: pathlib.Path, require: bool = False, *,
+                            out: Presenter = CONSOLE) -> bool:
     """Consent gate for the project manifest `.claude/rig.md`. True = usable.
 
     Mirrors ensure_recipe_trusted (same trust store, hash-recorded consent via
@@ -179,31 +176,34 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
                or os.environ.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
     if allowed:
         _record_trust(resolved, digest)
-        print(f"[trust] project manifest allowed and recorded: {resolved}", file=sys.stderr)
+        out.err(f"[trust] project manifest allowed and recorded: {resolved}")
         return True
     if require:
-        print(f"[ERROR] untrusted project manifest: {resolved}\n"
-              f"  The manifest comes from the repository you are working on and drives\n"
-              f"  recipe search paths, default flags/personas, and the git hooks'\n"
-              f"  lint/build/test commands. First use requires explicit consent:\n"
-              f"    re-run with --allow-project-manifest   (records a content hash; silent next time)\n"
-              f"    or set RIG_ALLOW_PROJECT_MANIFEST=1\n"
-              f"  Review the file first: {resolved}\n"
-              f"  Trust store: {_trust_store_path()}", file=sys.stderr)
+        out.err(f"[ERROR] untrusted project manifest: {resolved}\n"
+                f"  The manifest comes from the repository you are working on and drives\n"
+                f"  recipe search paths, default flags/personas, and the git hooks'\n"
+                f"  lint/build/test commands. First use requires explicit consent:\n"
+                f"    re-run with --allow-project-manifest   (records a content hash; silent next time)\n"
+                f"    or set RIG_ALLOW_PROJECT_MANIFEST=1\n"
+                f"  Review the file first: {resolved}\n"
+                f"  Trust store: {_trust_store_path()}")
         sys.exit(2)
     key = (str(resolved), digest)
     if key not in _warned_manifests:
         _warned_manifests.add(key)
-        print(f"[WARN] untrusted project manifest ignored: {resolved} "
-              f"(consent: --allow-project-manifest or RIG_ALLOW_PROJECT_MANIFEST=1)",
-              file=sys.stderr)
+        out.err(f"[WARN] untrusted project manifest ignored: {resolved} "
+                f"(consent: --allow-project-manifest or RIG_ALLOW_PROJECT_MANIFEST=1)")
     return False
 
 
 # ── Recipe loading ────────────────────────────────────────────────────────────
-def parse_frontmatter(path: pathlib.Path) -> dict:
-    if yaml is None:
-        print("[ERROR] PyYAML not found. `pip install pyyaml`.")
+def parse_frontmatter(path: pathlib.Path, *, out: Presenter = CONSOLE) -> dict:
+    try:
+        yaml = require_yaml()
+    except PyYAMLMissing as missing:
+        # Same line, same stream, same status as the `yaml is None` branch this replaces;
+        # the difference is that the decision is now made somewhere a caller can see it.
+        out.out(f"[ERROR] {missing}")
         sys.exit(1)
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
@@ -920,13 +920,13 @@ def suggest_recipe_names(name: str, bases: list[pathlib.Path]) -> list[tuple[str
     return [(stem, tier) for _kind, _rank, _index, stem, tier in scored[:_SUGGEST_LIMIT]]
 
 
-def resolve_recipe(name: str) -> pathlib.Path:
+def resolve_recipe(name: str, *, out: Presenter = CONSOLE) -> pathlib.Path:
     """Resolve a recipe.
     Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/engine/recipes/<name>.md (built-in).
     An overlay with the same name as a built-in wins, so project-specific recipes can override."""
     p = pathlib.Path(name)
     if p.exists():
-        return ensure_recipe_trusted(p)
+        return ensure_recipe_trusted(p, out=out)
     from rig_workbench.packs.resolver import resolve_asset
     from rig_workbench.packs.trust import ensure_asset_trusted
     resolved = resolve_asset("recipe", name.removesuffix(".md"),
@@ -942,13 +942,13 @@ def resolve_recipe(name: str) -> pathlib.Path:
     for base in bases:
         cand = base / fname
         if cand.exists():
-            return ensure_recipe_trusted(cand)
+            return ensure_recipe_trusted(cand, out=out)
     lines = [f"[ERROR] recipe not found: {name}"]
     suggestions = suggest_recipe_names(name.removesuffix(".md"), bases)
     if suggestions:
         lines.append("  もしかして: " + ", ".join(f"{stem} [{tier}]" for stem, tier in suggestions))
     lines.append("  searched: " + ", ".join(str(b / fname) for b in bases))
-    print("\n".join(lines))
+    out.out("\n".join(lines))
     sys.exit(1)
 
 

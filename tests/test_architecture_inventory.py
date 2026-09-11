@@ -234,15 +234,35 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # for. The `COMMANDS` dict itself is untouched: `tests/test_capability_registry_vs_cli.py`
     # parses this file with `ast` and a computed dict would be unreadable to it.
     #
-    # The 20 left are the judgement layer, and they are pass 2's: `commands.py`'s
-    # `_require_executable_recipe`, `_refuse_blocked_state`, `_locked_secure_state_mutation`
-    # and `_print_auto_route_regret` (13), and `recipes.py`'s trust and frontmatter
-    # warnings (7). Measured with the ledger line lifted in a scratch copy, ruff's T201
-    # also reads 20 — the two instruments agree for the first time, because the one site
-    # they disagreed about was the `file=<conditional>` print that is now a stream choice.
-    # So the `pyproject.toml` line stays until those twenty move.
+    # 20 -> 0 closes the judgement layer's words, and it is two shapes rather than one.
+    # `_print_auto_route_regret` (9) and `recipes.py`'s trust gates and recipe-not-found
+    # (6) took `*, out: Presenter = CONSOLE` and are forwarded where a command function
+    # holds one — `resolve_recipe` deliberately is **not** one of those call sites, because
+    # `packs/cli.py` substitutes `commands.resolve_recipe` with a one-argument lambda at
+    # runtime and an added keyword would stop that silently.
+    #
+    # The other four accompanied a `sys.exit` and follow `validation`'s precedent instead:
+    # `_require_executable_recipe` (2), `_refuse_blocked_state` (1) and the output-lock
+    # guard inside `_locked_secure_state_mutation` (1) raise `Refusal`, and one decorator
+    # — `_reports_refusals`, applied outside the lock guard so the lock is released on the
+    # way out — reports it through the presenter the command was handed and re-raises the
+    # same `SystemExit`. Eight commands carry it: init, run, ab, check, resume, verdict,
+    # next, approve. `packs/cli.py` and `selftest.py` call three of those positionally with
+    # no `out=`, so the reporter falls back to `CONSOLE` and they print what they printed.
+    #
+    # The last was `recipes.py`'s PyYAML guard, and like `validation`'s it did not become a
+    # `Presenter` call where it stood: the third-party import and the guard moved to
+    # `orchestrate/yaml_adapter.py`, `require_yaml()` raises `PyYAMLMissing`, and
+    # `parse_frontmatter` reports it. The branch it replaces — `if yaml is None` behind a
+    # module global bound once at import — was unreachable from a running process with
+    # PyYAML installed, so no test had ever executed it;
+    # `tests/test_orchestrate_yaml_guard.py` executes the new one, and asserts the
+    # `None`-in-`sys.modules` trap really raises before relying on it.
+    #
+    # Measured with the ledger line lifted in a scratch copy, ruff's T201 reads 0 too, so
+    # the `pyproject.toml` line is narrowed to `["TID251"]` in the same commit.
     "orchestrate": {
-        "print": 20,
+        "print": 0,
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,

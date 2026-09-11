@@ -115,15 +115,63 @@ def render_plan(recipe: str, steps: list[dict], execution: dict | None = None) -
     return "\n".join(lines)
 
 
+class Refusal(Exception):
+    """A refusal decided here and reported by the command the caller invoked.
+
+    The `validation` pillar's shape, for the same reason it was adopted there. Three
+    judgement helpers below — `_require_executable_recipe`, `_refuse_blocked_state` and
+    the lock guard in `_locked_secure_state_mutation` — used to `print` and then
+    `raise SystemExit`, which is a decision about a user's stdout taken where no caller
+    can see it, let alone intercept it. They raise this instead; `_reports_refusals`
+    turns it back into the same lines on the same stream and the same exit status, at
+    the one place that holds the `Presenter` the shell built.
+
+    `lines` is a list rather than one string because `_require_executable_recipe` emits
+    a heading and then one line per structural error, and `Presenter.out` is a line at a
+    time. `code` travels with the refusal because the exit status is part of what is
+    being refused, not a property of whoever catches it.
+    """
+
+    def __init__(self, lines, code: int = 2) -> None:
+        self.lines = list(lines)
+        self.code = code
+        super().__init__(self.lines[0] if self.lines else "")
+
+
+def _reports_refusals(command):
+    """Report a `Refusal` through this command's `Presenter`, then exit as before.
+
+    Applied outside `_locked_secure_state_mutation` so that the lock guard's own refusal
+    is reported too, and so the lock is released on the way out — the guard's `finally`
+    runs while the exception is still travelling.
+
+    `kwargs.get("out", CONSOLE)` rather than a required parameter: `packs/cli.py` calls
+    `commands.cmd_run([...])` positionally and `selftest.py` calls `cmd_resume` /
+    `cmd_runs` the same way, and both must keep printing exactly what they printed.
+    """
+    @wraps(command)
+    def reporting(args, **kwargs):
+        try:
+            return command(args, **kwargs)
+        except Refusal as refusal:
+            reporter: Presenter = kwargs.get("out") or CONSOLE
+            for line in refusal.lines:
+                reporter.out(line)
+            raise SystemExit(refusal.code) from refusal
+
+    return reporting
+
+
 def _require_executable_recipe(fm: dict, label: str) -> dict:
     execution = validate_executable_recipe(fm)
     if execution["orchestratable"]:
         return execution
     prefix = "[ERROR]" if execution["errors"] else "[BLOCKED]"
-    print(f"{prefix} recipe {label} is computationally nonexecutable: {execution['reason']}")
-    for error in execution["errors"]:
-        print(f"[ERROR] {error}")
-    raise SystemExit(2)
+    raise Refusal(
+        [f"{prefix} recipe {label} is computationally nonexecutable: {execution['reason']}",
+         *(f"[ERROR] {error}" for error in execution["errors"])],
+        code=2,
+    )
 
 
 def cmd_plan(args, *, out: Presenter = CONSOLE):
@@ -182,8 +230,7 @@ def _locked_secure_state_mutation(path_from_args):
             try:
                 descriptor = acquire_output_lock(state_path)
             except OSError as error:
-                print(f"[BLOCKED] {error}")
-                raise SystemExit(2) from error
+                raise Refusal([f"[BLOCKED] {error}"], code=2) from error
             try:
                 # Reload after locking: another short mutation may have completed
                 # between the optimistic first read and our successful lock.
@@ -195,9 +242,10 @@ def _locked_secure_state_mutation(path_from_args):
     return decorate
 
 
+@_reports_refusals
 def cmd_init(args, *, out: Presenter = CONSOLE):
     path = resolve_recipe(args[0])
-    fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
     execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
     goal = None
@@ -234,8 +282,10 @@ def _current_running(state: dict):
 def _refuse_blocked_state(state: dict) -> None:
     stopped = state.get("stopped") or {}
     if stopped.get("kind") == "BLOCKED":
-        print(f"[BLOCKED] {stopped.get('reason', 'run-state is computationally nonexecutable')}")
-        raise SystemExit(2)
+        raise Refusal(
+            [f"[BLOCKED] {stopped.get('reason', 'run-state is computationally nonexecutable')}"],
+            code=2,
+        )
 
 
 def _run_checks(checks: list[str]) -> list[dict]:
@@ -253,6 +303,7 @@ def _run_checks(checks: list[str]) -> list[dict]:
     return results
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
 def cmd_check(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
@@ -288,6 +339,7 @@ def _fmt_duration(seconds: float) -> str:
     return f"{mins}m"
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
 def cmd_resume(args, *, out: Presenter = CONSOLE):
     """Verify-first resume ritual (session-startup ritual for long-running agents).
@@ -367,6 +419,7 @@ def cmd_resume(args, *, out: Presenter = CONSOLE):
         sys.exit(3)
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
 def cmd_verdict(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
@@ -435,6 +488,7 @@ def cmd_verdict(args, *, out: Presenter = CONSOLE):
     out.out(f"verdict recorded: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}. Proceed with `next`.")
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
 def cmd_next(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
@@ -505,6 +559,7 @@ def _approve_state_path(args) -> pathlib.Path | None:
     return _state_path(positional)
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_approve_state_path)
 def cmd_approve(args, *, out: Presenter = CONSOLE):
     """Cast a human-gate decision on a step of a run (v2.1).
@@ -603,6 +658,7 @@ def _git_head() -> str | None:
                           cwd=str(config.INVOCATION_CWD))
     return proc.stdout.strip() or None if proc.returncode == 0 else None
 
+@_reports_refusals
 def cmd_run(args, *, out: Presenter = CONSOLE):
     if not args:
         out.out("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
@@ -619,7 +675,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE):
                 "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     path = resolve_recipe(args[0])
-    fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
     artifact_stdout = fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
 
     def diagnostic(text: str = "") -> None:
@@ -1092,6 +1148,7 @@ def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: 
     }
 
 
+@_reports_refusals
 def cmd_ab(args, *, out: Presenter = CONSOLE):
     """Run the same goal through multiple recipe variants concurrently and compare
     speed/retries/results (#291).
@@ -1177,7 +1234,7 @@ def cmd_ab(args, *, out: Presenter = CONSOLE):
         variants = [(p, m, lbl, pathlib.Path(f"ab-{p.stem}-state.json")) for p, m, lbl, _ in variants]
         title = " vs ".join(recipes)
     for path, _manifest, _label, _out_path in variants:
-        fm, _warns = resolve_extends(parse_frontmatter(path), path)
+        fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
         _require_executable_recipe(fm, fm.get("name", path.stem))
     results: list[dict | None] = [None] * len(variants)
     out.out(f"◈ A/B experiment: {title} (provider={gen} / {len(variants)} concurrent variants)\n")
@@ -1401,28 +1458,28 @@ def collect_auto_route_regret(rows: list) -> list[dict]:
     return report
 
 
-def _print_auto_route_regret(rows: list) -> None:
+def _print_auto_route_regret(rows: list, *, out: Presenter = CONSOLE) -> None:
     report = collect_auto_route_regret(rows)
     if not report:
-        print("No auto-routed steps recorded yet. This report reads `auto_route` / `learned_route`\n"
-              "entries appended by runs that used cost-tier routing; until one runs there is\n"
-              "nothing to second-guess.")
+        out.out("No auto-routed steps recorded yet. This report reads `auto_route` / `learned_route`\n"
+                "entries appended by runs that used cost-tier routing; until one runs there is\n"
+                "nothing to second-guess.")
         return
-    print(f"## rig runs --auto-route-regret ({len(report)} routed step(s) across {len(rows)} runs)\n")
+    out.out(f"## rig runs --auto-route-regret ({len(report)} routed step(s) across {len(rows)} runs)\n")
     for entry in report:
-        print(f"  {entry['recipe']}.{entry['step']}")
-        print(f"    {'model':28s} {'n':>4s} {'PASS':>5s} {'PASS%':>7s}")
+        out.out(f"  {entry['recipe']}.{entry['step']}")
+        out.out(f"    {'model':28s} {'n':>4s} {'PASS':>5s} {'PASS%':>7s}")
         for item in entry["models"]:
             mark = "*" if item["chosen"] else " "
             rate = "—" if item["pass_rate"] is None else f"{item['pass_rate'] * 100:6.0f}%"
-            print(f"  {mark} {item['model']:28s} {item['n']:4d} {item['passed']:5d} {rate:>7s}")
+            out.out(f"  {mark} {item['model']:28s} {item['n']:4d} {item['passed']:5d} {rate:>7s}")
         if entry["insufficient"]:
-            print("    (too few observations to compare — routing is still guessing)")
+            out.out("    (too few observations to compare — routing is still guessing)")
         for regret in entry["regrets"]:
-            print(f"    possible regret: {regret['chosen']} was chosen but {regret['better']} "
-                  f"passes more often on this step — the cheaper tier may be costing rework")
-        print()
-    print("  * = routed to at least once. Read-only: this reports recorded runs and changes no routing.")
+            out.out(f"    possible regret: {regret['chosen']} was chosen but {regret['better']} "
+                    f"passes more often on this step — the cheaper tier may be costing rework")
+        out.out()
+    out.out("  * = routed to at least once. Read-only: this reports recorded runs and changes no routing.")
 
 
 # `--personas` counts anything that produced a verdict, but not everything that produces a
@@ -1804,7 +1861,7 @@ def cmd_runs(args, *, out: Presenter = CONSOLE):
         return
 
     if regret_mode:
-        _print_auto_route_regret(rows)
+        _print_auto_route_regret(rows, out=out)
         return
 
     if cost_mode:

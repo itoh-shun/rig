@@ -206,13 +206,16 @@ extend-select = [
 # validation も同じで、行があるうちは `--select` を付けても検査されていなかった。移行前の
 # 木でこの行だけを外して測ると 13 print / 3 banned ちょうど —— packs と違い、行に書かれて
 # いた数字は古くなっていなかった。移行後は同じ測り方で 0 / 0。
-# orchestrate の print は 211 -> 20。第 5 の柱の pass 1 で、7 ファイルの **コマンド関数**
-# だけがシェルの組み立てる Presenter を受け取った（残る 20 は判定層で、pass 2 の仕事）。
-# この行がまだ生きているのはそのため —— T201 が 0 になるまで per-file-ignores は外せない。
-# 同時に、この行と tests/test_architecture_inventory.py の食い違いも消えた: 差の 1 件は
-# commands.py の `print(..., file=<条件式>)` 1 つで、T201 はそれを数えなかった。今は
-# その地点が `out.err` / `out.out` の選択になったので、両方が 20 で一致する（実測）。
-"rig_workbench/orchestrate/**" = ["T201", "TID251"]  # 20 print, 47 banned
+# orchestrate の print は 211 -> 20 -> 0。pass 1 で 7 ファイルの **コマンド関数** が
+# シェルの組み立てる Presenter を受け取り、pass 2 で残る 20 —— 判定層 —— が移った。
+# その 20 の内訳: commands.py の 13（`_print_auto_route_regret` の 9 は `out=` 追加で
+# 素通し、`_require_executable_recipe` / `_refuse_blocked_state` / secure ロック保護の
+# 4 は `Refusal` を投げ、`_reports_refusals` が同じ行・同じ stream・同じ終了コードに
+# 戻す —— validation の PyYAML ガードと同じ形）と、recipes.py の 7（trust ゲート 5 と
+# recipe not found 1 は `out=` 追加、PyYAML ガード 1 は orchestrate/yaml_adapter.py へ）。
+# T201 が 0 になったので、この行は TID251 だけに絞る。行そのものが消えるのは
+# banned も 0 になったとき。件数は ruff 0.15.8 の実測値。
+"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 47 banned
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を
