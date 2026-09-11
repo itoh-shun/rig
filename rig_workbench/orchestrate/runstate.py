@@ -2,15 +2,14 @@
 
 import os
 import json
-import datetime
 import pathlib
 import hashlib
 import re
 import secrets
 import stat
 
-from ..ports import Env
-from ..ports.local import OS_ENV
+from ..ports import Clock, Env
+from ..ports.local import OS_ENV, SYSTEM_CLOCK
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
 from .secure_runtime import JAPANESE_WRITING_RECIPES
@@ -38,9 +37,17 @@ from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as rea
 RUN_ID_RE = re.compile(r"^orc-\d{8}-\d{6}-[a-z0-9-]{1,32}-[0-9a-f]{6}$")
 
 
-def make_run_id(recipe: str) -> str:
-    """A stable, sortable, collision-resistant id for one orchestrate run."""
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+def make_run_id(recipe: str, *, clock: Clock = SYSTEM_CLOCK) -> str:
+    """A stable, sortable, collision-resistant id for one orchestrate run.
+
+    The clock is asked for the moment and the format is applied here. `Clock.stamp()` is
+    the other way round and is the right shape for a record; this is a filename-safe,
+    fixed-width prefix whose only job is to sort, so a `strftime` wrapper on the port
+    would be a second formatting decision living where the first one already is. What
+    makes the id collision-resistant is `secrets.token_hex(3)`, not the clock — which is
+    why a substituted clock can be frozen here without two runs colliding.
+    """
+    stamp = clock.now().strftime("%Y%m%d-%H%M%S")
     words = re.findall(r"[A-Za-z0-9]+", recipe or "")
     slug = "-".join(word.lower() for word in words)[:32].strip("-") or "run"
     return f"orc-{stamp}-{slug}-{secrets.token_hex(3)}"
@@ -331,7 +338,7 @@ def classify_failure(state: dict) -> str | None:
 
 
 def telemetry_append(state: dict, final: str, *, caller_record: dict | None = None,
-                     env: Env = OS_ENV) -> None:
+                     env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK) -> None:
     """Append a one-line JSON summary of a single RUN to .rig/runs.jsonl (run telemetry).
 
     An execution log on par with run-state.json, not the knowledge layer (no approval needed;
@@ -361,7 +368,7 @@ def telemetry_append(state: dict, final: str, *, caller_record: dict | None = No
                     {k: v for k, v in h.items() if k not in ("action", "step")} |
                     {"kind": "refusal" if h["action"] == "FABLE_REFUSAL" else "fallback"})  # #297
         rec = {
-            "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ts": clock.stamp(),
             # Absent, not null, for a state written before run ids existed: this log is read
             # by aggregation that treats a present key as a measured fact, and `None` would
             # claim the run was identified as nothing.

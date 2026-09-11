@@ -288,7 +288,26 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         # replaces rather than extends, and a site that passed a partial dict would have been a
         # rewrite, not a swap. It was measured to be the only one.
         "env": 3,
-        "clock": 6,
+        # 6 -> 2, and **nothing was added to `Clock`**. Four sites fit the port as it already
+        # stands: `runstate.py`'s telemetry `ts` is character for character what `stamp()`
+        # returns; `runstate.make_run_id` and `isolate.setup_isolation` take `now()` and apply
+        # `%Y%m%d-%H%M%S` at the call, because a `strftime` wrapper on the port would be a
+        # second formatting decision living where the first one already is — and once
+        # formatting goes in there is no boundary left; and `cmd_resume`'s mtime gap is
+        # `now().timestamp() - sp.stat().st_mtime`, the clock half through the port and the
+        # filesystem half staying where `pyproject.toml`'s note on `fromtimestamp` says it
+        # belongs.
+        #
+        # The 2 that remain are both `time.time_ns()`, and each is a floor with a reason
+        # written at the site. `commands.py`'s builds a secure-run artifact filename, where
+        # the clock is the *uniqueness* source rather than the answer to what time it is: a
+        # port method there is one a frozen clock turns into a collision on a path that is
+        # then exclusively locked. `providers.py`'s writes `started_ns` into the benchmark
+        # call journal, an integer field nothing in this tree reads back — `stamp()` would
+        # change that record and a `now_ns()` grown for one unread field would be a method
+        # written from a name instead of from a call site, which is what
+        # `rig_workbench/ports/__init__.py` says it will not do.
+        "clock": 2,
     },
     # The third pillar behind the ports (§7 stage 3). Five kinds are zero because every
     # site moved onto one: 51 `print` to the `Presenter` the shell builds (50 stdout, one

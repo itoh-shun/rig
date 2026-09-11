@@ -1,10 +1,11 @@
 """orchestrate isolate: worktree isolation (split from scripts/orchestrate.py)."""
 
 import re
-import datetime
 import pathlib
 import subprocess
 
+from ..ports import Clock
+from ..ports.local import SYSTEM_CLOCK
 from . import config
 
 # ── Isolated worktree runs (--isolate) ───────────────────────────────────────
@@ -16,13 +17,13 @@ from . import config
 _ISO_SEQ = 0
 
 
-def setup_isolation(recipe_name: str) -> dict:
+def setup_isolation(recipe_name: str, *, clock: Clock = SYSTEM_CLOCK) -> dict:
     r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
                        capture_output=True, text=True, cwd=str(config.INVOCATION_CWD))
     if r.returncode != 0:
         raise SystemExit("[ERROR] --isolate can only be used inside a git repository")
     root = r.stdout.strip()
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    ts = clock.now().strftime("%Y%m%d-%H%M%S")
     safe = re.sub(r"[^a-zA-Z0-9_-]", "-", recipe_name)
     # Add a sequence number so back-to-back runs within the same second do not collide (in-process counter + avoids existing branches)
     global _ISO_SEQ

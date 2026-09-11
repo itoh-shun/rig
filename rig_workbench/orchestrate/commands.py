@@ -13,8 +13,8 @@ from collections import Counter
 from functools import wraps
 
 from .. import repo_paths
-from ..ports import Env, Presenter
-from ..ports.local import CONSOLE, OS_ENV
+from ..ports import Clock, Env, Presenter
+from ..ports.local import CONSOLE, OS_ENV, SYSTEM_CLOCK
 from . import config
 from . import otel
 from . import perf
@@ -341,7 +341,7 @@ def _fmt_duration(seconds: float) -> str:
 
 @_reports_refusals
 @_locked_secure_state_mutation(_state_path)
-def cmd_resume(args, *, out: Presenter = CONSOLE):
+def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
     """Verify-first resume ritual (session-startup ritual for long-running agents).
 
     Re-verifies the world before continuing a persisted run: prints a compact digest,
@@ -376,7 +376,7 @@ def cmd_resume(args, *, out: Presenter = CONSOLE):
 
     # ── mtime gap (informational only) ───────────────────────────────────────
     try:
-        gap = time.time() - sp.stat().st_mtime
+        gap = clock.now().timestamp() - sp.stat().st_mtime
     except OSError:
         gap = 0.0
     if gap >= 3600:
@@ -959,6 +959,14 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
             )
             raise SystemExit(2)
         if not out_explicit:
+            # Not a `Clock` read, and deliberately still not one. The clock is the
+            # *uniqueness source* here — pid plus nanoseconds is what keeps two secure runs
+            # from naming the same sealed artifact, which is then exclusively locked. A port
+            # method for this is one a substituted or frozen clock turns into a collision,
+            # which is the opposite of what a port is for. `runstate.make_run_id` shows the
+            # shape that does belong on the port: the clock for ordering, `secrets` for
+            # uniqueness — and adopting it here would change this filename, which is a
+            # decision about an artifact path and not a migration.
             out_path = pathlib.Path(".rig") / "secure-runs" / (
                 f"run-{time.time_ns()}-{os.getpid()}.json"
             )

@@ -215,10 +215,14 @@ extend-select = [
 # recipe not found 1 は `out=` 追加、PyYAML ガード 1 は orchestrate/yaml_adapter.py へ）。
 # T201 が 0 になったので、この行は TID251 だけに絞る。行そのものが消えるのは
 # banned も 0 になったとき。件数は ruff 0.15.8 の実測値。
-# banned は 47 -> 31: os.environ 19 件のうち 16 件が Env ポートへ移った。残る 3 件は
-# orchestrate/config.py の import 時読み取りで、あれは判定ではなく配線である
-# （移すと「いつ解決するか」が変わる）。
-"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 31 banned
+# banned は 47 -> 31 -> 27: os.environ 19 件のうち 16 件が Env ポートへ、壁時計 6 件の
+# うち 4 件が Clock ポートへ移った。残る env 3 件は orchestrate/config.py の import 時
+# 読み取りで、あれは判定ではなく配線である（移すと「いつ解決するか」が変わる）。残る
+# 壁時計 2 件はどちらも time.time_ns() で、理由は各地点にコメントで書いてある ——
+# 一方は一意性の源（凍結した Clock は衝突になる）、もう一方は誰も読み返さない
+# ベンチマーク台帳の整数フィールドで、そのために now_ns() を生やすのは呼び出し地点
+# ではなく名前から書いたポートになる。**Clock には何も足していない。**
+"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 27 banned
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を

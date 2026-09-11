@@ -404,6 +404,10 @@ def _record_benchmark_provider_call(
             "persona": persona,
             "step_id": step_id,
             "pid": os.getpid(),
+            # Not a `Clock` read either. `started_ns` is an integer field of a benchmark
+            # journal that nothing in this tree reads back; `Clock.stamp()` would change
+            # the record `bench_providers` writes, and a `now_ns()` grown for one unread
+            # field is a port method written from a name rather than from a call site.
             "started_ns": time.time_ns(),
         },
         ensure_ascii=True,

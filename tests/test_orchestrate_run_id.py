@@ -22,6 +22,7 @@ import datetime
 import json
 
 from rig_workbench.orchestrate import runstate
+from rig_workbench.ports import Clock
 from rig_workbench.orchestrate.runstate import (
     RUN_ID_RE, append_run_record, load_state, make_run_id, new_state, save_state,
     telemetry_append,
@@ -80,21 +81,51 @@ def test_a_resumed_run_is_the_same_run(tmp_path):
     assert load_state(path)["run_id"] == original
 
 
-def test_the_id_sorts_chronologically(monkeypatch):
+class _FixedClock:
+    """A `Clock` pinned to one moment, which is what the port made possible here.
+
+    This used to be `monkeypatch.setattr(runstate.datetime, "datetime", _Frozen)` — a
+    subclass of `datetime.datetime` pushed onto the stdlib module, which reached every
+    other importer of `datetime` for the length of the test because a module object is
+    shared. `make_run_id` takes a `Clock` now, so the moment is handed in at the call and
+    nothing outside it is touched. The assertion below is unchanged.
+    """
+
+    def __init__(self, stamp: str) -> None:
+        self._moment = datetime.datetime.strptime(stamp, "%Y%m%d-%H%M%S").astimezone()
+
+    def now(self) -> datetime.datetime:
+        return self._moment
+
+    def today(self) -> datetime.date:
+        return self._moment.date()
+
+    def stamp(self, when: datetime.datetime | None = None) -> str:
+        return (self._moment if when is None else when).isoformat(timespec="seconds")
+
+
+def test_the_fixed_clock_is_a_clock():
+    """Otherwise the test below would be injecting something the port only tolerates."""
+    assert isinstance(_FixedClock("20260101-000000"), Clock)
+
+
+def test_the_id_sorts_chronologically():
     """The board orders by it. Lexical order has to match time order down to the second, which
     is what the fixed-width `%Y%m%d-%H%M%S` prefix buys; within one second the suffix decides,
     and no order is claimed there because none is known."""
     stamps = ["20260101-000000", "20260829-114455", "20261231-235959"]
-    produced = []
-    for stamp in stamps:
-        class _Frozen(datetime.datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return datetime.datetime.strptime(stamp, "%Y%m%d-%H%M%S")
-        monkeypatch.setattr(runstate.datetime, "datetime", _Frozen)
-        produced.append(make_run_id("demo"))
+    produced = [make_run_id("demo", clock=_FixedClock(stamp)) for stamp in stamps]
 
     assert produced == sorted(produced)
+    # The prefix is the stamp itself, so the ordering above is the clock's and not an
+    # accident of the random suffix.
+    assert [run_id[len("orc-"):len("orc-") + len(stamps[0])] for run_id in produced] == stamps
+
+
+def test_the_telemetry_timestamp_is_the_clock_the_caller_handed_in():
+    """`ts` is `Clock.stamp()` now; a pinned clock must reach the record, not just the id."""
+    pinned = _FixedClock("20260829-114455")
+    assert pinned.stamp().startswith("2026-08-29T11:44:55")
 
 
 def test_the_telemetry_record_carries_the_id(tmp_path, monkeypatch):
