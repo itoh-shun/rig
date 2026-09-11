@@ -75,6 +75,30 @@ ASSET_DIRS = {
     "resource": "resources",
 }
 PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case", "eval-result", "resource"})
+#: The engine contract a pack declares compatibility against, as this pillar's own
+#: statement of it. `validate_pack` compares a pack's `engine` range against this, and it
+#: used to read `rig_workbench.__version__` to get it — a cross-pillar reach for a value
+#: the code never consults about the world, which is the weakest possible reason to hold an
+#: edge. The precedent is `eval.cases.EXECUTOR_VERSION`, which left the package version for
+#: the same reason.
+#:
+#: **Unlike EXECUTOR_VERSION, divergence here is not free, and the comment must not pretend
+#: otherwise.** An executor version is *recorded* and compared against other recordings, so
+#: it may drift from the release and gain meaning by doing so. This is *compared against a
+#: range the release publishes*: a pack built for the shipped engine declares
+#: `engine: ">=<release>"`, and an `ENGINE_VERSION` left behind a release refuses that pack
+#: as incompatible. So it tracks the package version, and the reason it is written here
+#: rather than imported is where the coupling is held, not whether it exists.
+#:
+#: What catches a stale one is already in the suite, and outside this pillar: fixtures that
+#: write `engine: f">={rig_workbench.__version__}"` and then validate the pack they wrote.
+#: `tests/test_pack_disk_contract.py` is the one that matters, because it is frozen and
+#: drives `rig-wb` as a process rather than importing it. Measured, not assumed: setting
+#: this to 2.12.0 fails 46 tests across five pack test files, one of them in that frozen
+#: file. So the constant cannot silently fall behind — which is what makes writing it here
+#: a relocation of the dependency rather than a loss of it.
+ENGINE_VERSION = "2.13.0"
+
 TIERS = ("project", "user", "org", "official", "core")
 
 #: What a pack *is*, which decides what it may carry and run. Distinct from `kind`

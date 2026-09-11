@@ -3,19 +3,61 @@ from __future__ import annotations
 import pathlib
 import re
 from collections.abc import Collection
+from typing import Any, Protocol, runtime_checkable
 
-from rig_workbench import __version__
-from rig_workbench.eval.cases import validate_case
-from rig_workbench.eval.safety import unsafe_text_reason
-from rig_workbench.orchestrate.gates import validate_executable_recipe
-from rig_workbench.workbench.destructive import scan_file as destructive_scan_file
-from rig_workbench.workbench.injection import scan_file as injection_scan_file
-
-from .manifest import (canonical, digest, parse_frontmatter_subset, read_json_yaml, safe_relative,
+from .eval_bridge import EVALUATION
+from .manifest import (MANIFEST_TEXT_SAFETY, TextSafety, canonical, digest,
+                       parse_frontmatter_subset, read_json_yaml, safe_relative,
                        validate_compatibility, validate_manifest_shape)
-from .model import (ASSET_DIRS, PROMPT_KINDS, RECIPE_CHECKS_TYPES, CapabilityRefused,
-                    EngineIncompatible, PackError)
+from .model import (ASSET_DIRS, ENGINE_VERSION, PROMPT_KINDS, RECIPE_CHECKS_TYPES,
+                    CapabilityRefused, EngineIncompatible, PackError)
 from .resources import validate_resource
+from .scanners import DESTRUCTIVE_FILE_SCANNER, INJECTION_FILE_SCANNER, RECIPE_GATE
+
+
+class FileScanner(Protocol):
+    """A sensor that reads a whole file and reports what it found in it.
+
+    `manifest.LineScanner`'s sibling, and separate because a pack asset is scanned as a
+    file while a manifest value is scanned as one line. Validation keeps *two* of these
+    rather than one combined sensor, unlike `manifest.py`: the refusal it raises names
+    which sensor objected — "injection marker in asset" and "destructive content in asset"
+    are different things to tell an author — and a combined scanner could only report that
+    something did.
+    """
+
+    def __call__(self, path: pathlib.Path, rel: str | None = None) -> list[dict]:
+        ...
+
+
+class RecipeGate(Protocol):
+    """Whether a recipe's steps are ones the orchestrator would agree to run.
+
+    A pack's `checks:` entries are shell commands executed on the host, and this is the one
+    thing in a pack that runs rather than being read. What is executable is the
+    orchestrator's rule, not this pillar's, and a copy of it here would be a second answer
+    to "may this step run" that only the pack path consults — free to drift from the one
+    that actually runs the step, and wrong in the direction of permitting more.
+    """
+
+    def __call__(self, recipe: object) -> dict:
+        ...
+
+
+@runtime_checkable
+class CaseCheck(Protocol):
+    """Whether a document in a pack's `evals/cases/` is a well-formed evaluation case.
+
+    The narrowest of the three declarations this pillar makes about evaluation —
+    `evidence.EvalEvidence` asks five questions and `tester.CaseRunner` five more — and all
+    three are satisfied by the same `packs/eval_bridge.py` value. Validating a pack does
+    not need to know what a measurement is; it needs to know that the case the pack ships
+    is one, by the same definition the harness that runs it uses.
+    """
+
+    def validate_case(self, case: Any) -> dict:
+        """The case, checked; raises if it is not one."""
+        ...
 
 
 _CHECKS_KEY = re.compile(r"^(\s*)checks:(.*)$")
@@ -65,7 +107,7 @@ def _version(value: str) -> tuple[int, int, int]:
     return tuple(map(int, match.groups())) if match else (0, 0, 0)
 
 
-def _compatible(spec: str, version: str = __version__) -> bool:
+def _compatible(spec: str, version: str = ENGINE_VERSION) -> bool:
     if spec == "*":
         return True
     current = _version(version)
@@ -137,7 +179,12 @@ CoreReferenceIds = Collection[tuple[str, str]]
 
 
 def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
-                  require_evaluation: bool = True) -> dict:
+                  require_evaluation: bool = True,
+                  safety: TextSafety = MANIFEST_TEXT_SAFETY,
+                  injection_scan: FileScanner = INJECTION_FILE_SCANNER,
+                  destructive_scan: FileScanner = DESTRUCTIVE_FILE_SCANNER,
+                  recipe_gate: RecipeGate = RECIPE_GATE,
+                  evaluation: CaseCheck = EVALUATION) -> dict:
     """Validate a pack. `require_evaluation=False` drops exactly one rule, for exactly one
     caller.
 
@@ -177,7 +224,7 @@ def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
     if compat_raw != canonical(compatibility):
         raise PackError("compatibility.yaml is not canonical")
     if not _compatible(manifest["engine"]):
-        raise EngineIncompatible(f"pack is incompatible with engine {__version__}")
+        raise EngineIncompatible(f"pack is incompatible with engine {ENGINE_VERSION}")
     declared = {item for paths in manifest["assets"].values() for item in paths}
     actual = {
         asset.relative_to(root).as_posix() for asset in root.rglob("*")
@@ -227,11 +274,11 @@ def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
                 asset_text = asset.read_text(encoding="utf-8")
             except (OSError, UnicodeError) as exc:
                 raise PackError(f"asset is not readable UTF-8: {item}") from exc
-            if unsafe_text_reason(asset_text):
+            if safety.text_reason(asset_text):
                 raise PackError(f"unsafe text in asset: {item}")
-            if injection_scan_file(asset, item):
+            if injection_scan(asset, item):
                 raise PackError(f"injection marker in asset: {item}")
-            if destructive_scan_file(asset, item):
+            if destructive_scan(asset, item):
                 raise PackError(f"destructive content in asset: {item}")
     if prompt_ids and not manifest["assets"]["eval-case"]:
         if require_evaluation:
@@ -245,7 +292,7 @@ def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
         for item in paths:
             if kind == "recipe":
                 parsed = parse_frontmatter_subset(root / item)
-                execution = validate_executable_recipe(parsed)
+                execution = recipe_gate(parsed)
                 if execution["errors"]:
                     raise PackError(execution["errors"][0])
             for ref in _frontmatter_refs(root / item):
@@ -274,7 +321,7 @@ def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
     eval_surfaces: set[str] = set()
     for item in manifest["assets"]["eval-case"]:
         _raw, case = read_json_yaml(root / item)
-        validate_case(case)
+        evaluation.validate_case(case)
         if case["status"] != "approved":
             raise PackError(f"pack evaluation case must be promoted/approved: {item}")
         bound = set(case.get("prompt_surfaces", []))
