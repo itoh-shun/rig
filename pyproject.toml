@@ -125,7 +125,7 @@ extend-select = [
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "os.environ".msg = "read the environment through the Env port -- rig_workbench.ports.Env.get / .snapshot, adapter rig_workbench.ports.local.OS_ENV. The port has no setter on purpose."
 "os.getenv".msg = "read the environment through the Env port -- rig_workbench.ports.Env.get, adapter rig_workbench.ports.local.OS_ENV."
-"subprocess.run".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, adapter rig_workbench.ports.local.SUBPROCESS. It captures as text and returns the same CompletedProcess."
+"subprocess.run".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, adapter rig_workbench.ports.local.SUBPROCESS. It always captures, and returns the same CompletedProcess: text by default (encoding=utf-8, and errors= if your site names a handler), bytes with text=False."
 "subprocess.call".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .returncode; adapter rig_workbench.ports.local.SUBPROCESS."
 "subprocess.check_call".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .returncode; the port never raises on a non-zero status."
 "subprocess.check_output".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .stdout; the port always captures."
@@ -183,9 +183,13 @@ extend-select = [
 # **追加してはならない。** ここに新しい経路が増えるということは、ポートの外に新しい効果
 # 地点を書いたということで、それは第 3 段が止めようとしているもの。
 # 並び順は移行順: 残りの柱を小さい順、最後に root 直下のモジュールと scripts/。
-# 先頭にあった `rig_workbench/govern/**`（68 print, 12 banned）はもう無い。第 3 段で
-# 最初に移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである
+# 先頭にあった `rig_workbench/govern/**`（68 print, 12 banned）と
+# `rig_workbench/eval/**`（16 print, 31 banned）はもう無い。第 3 段で最初と 2 番目に
+# 移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである
 # （tests/test_layering_contract.py の MIGRATED と対になる）。
+# eval の行を消した時点で ruff が eval/ を実際に検査するようになる。行があるうちは
+# `--select TID251` を付けても per-file-ignores は外れないので、あの緑は何も測って
+# いなかった —— 消す前に、禁止呼び出しを 1 つ戻して規則が鳴ることを確かめてある。
 # 件数は d84a4c9 で ruff 0.15.8 が報告した実測値（推定ではない）。T201 は
 # `print(..., file=x)`（x が sys.stdout/sys.stderr でないもの）を数えないため、
 # tests/test_architecture_inventory.py が AST で凍結した数よりわずかに小さく出る。
@@ -193,7 +197,6 @@ extend-select = [
 # 前の表が見えていなかった既存の呼び出し）: orchestrate 45 -> 47（time.time_ns が 2)、
 # validation 2 -> 3（datetime.date.today が 1）、tests 674 -> 682。他は変わらない。
 "rig_workbench/validation/**" = ["T201", "TID251"]   # 13 print, 3 banned
-"rig_workbench/eval/**" = ["T201", "TID251"]         # 16 print, 31 banned
 "rig_workbench/packs/**" = ["T201", "TID251"]        # 54 print, 18 banned
 "rig_workbench/orchestrate/**" = ["T201", "TID251"]  # 211 print, 47 banned
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned

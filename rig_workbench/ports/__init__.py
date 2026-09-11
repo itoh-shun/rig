@@ -4,9 +4,11 @@
 `print` sites, 98 `subprocess`, 53 `write_text` and 17 `open(w,a)`, 68 `os.environ`, git asked
 three different ways in three modules, and freshness rules that read the clock where they are
 standing. Those are the AST walk in `tests/test_architecture_inventory.py` run over the tree as
-it stood before the first pillar moved; run over the tree today, with `govern` behind these
-ports, the same walk counts 1,005 / 96 / 53 / 16 / 65 outside `ports/` itself, which is what
-`BASELINE_EFFECT_SITES` freezes as a ceiling. The discipline the brief settles on is a single
+it stood before the first pillar moved; run over the tree today, with `govern` and `eval`
+behind these ports, the same walk counts 989 / 72 / 53 / 16 / 62 outside `ports/` itself, which
+is what `BASELINE_EFFECT_SITES` freezes as a ceiling. (`write_text` has not moved at all yet:
+`govern`'s six are four shell writes plus two port calls the walk counts by attribute name,
+and `eval`'s one is a real `write_bytes` into a temporary tree — see that file's comment.) The discipline the brief settles on is a single
 sentence — *a judgement module may import these six and nothing else that touches the outside*
 — and the point of writing them down here is that the sentence becomes checkable by an import
 rule instead of staying prose.

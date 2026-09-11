@@ -139,13 +139,31 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 26,
         "clock": 11,
     },
+    # The second pillar behind the ports (§7 stage 3). Five kinds are zero because every
+    # site moved onto one: 16 `print` to the `Presenter` the shell builds, 24
+    # `subprocess.run` to `ProcessRunner` (three of them in bytes mode, one naming
+    # `errors="surrogateescape"`, which is why the port grew the parameter), 3 `os.environ`
+    # to `Env` and 4 wall-clock reads to `Clock` — each rendered `.astimezone(utc)` at the
+    # call, because eval writes UTC into records the gate parses and the port reads the
+    # moment through the local offset.
+    #
+    # The sixth is **not** the counting artefact `govern`'s 6 are. There, four are the
+    # shell's own `pathlib` writes and two are `files.write_text(...)` port calls this walk
+    # counts by attribute name because it never resolves a receiver. Here the one site is
+    # `affected.py`'s `target.write_bytes(...)`, a real `pathlib` write of a blob into the
+    # `TemporaryDirectory` `_graph_at` reads a revision through — counted under the
+    # `write_text` kind because the walk buckets `write_bytes` with it. `FileStore` has no
+    # `write_bytes`, and growing one for a single caller writing scratch files it then
+    # deletes would be a port method written from a name rather than from a call site,
+    # which is the thing `ports/__init__.py` says it will not do. So 1 is the floor until
+    # that write has a reason to be a port call.
     "eval": {
-        "print": 16,
-        "subprocess": 24,
+        "print": 0,
+        "subprocess": 0,
         "open_write": 0,
         "write_text": 1,
-        "env": 3,
-        "clock": 4,
+        "env": 0,
+        "clock": 0,
     },
     # The first pillar behind the ports (§7 stage 3). Five kinds are zero because every
     # site moved onto a port — `clock` last, and it is the only one of the five whose zero

@@ -69,9 +69,9 @@ exception, and an exception that has to be typed out with a justification next t
 Proving the rule on more than the tree it happens to be run against
 -------------------------------------------------------------------
 
-`MIGRATED` names `govern`, and one pillar of seven is not much of a scan: six are still
-outside the rule, and `govern` passes it today, so the real-tree check can only ever say
-that nothing has regressed. A check that passes because it found nothing keeps passing if
+`MIGRATED` names `govern` and `eval`, and two pillars of seven is not much of a scan: five
+are still outside the rule, and both of them pass it today, so the real-tree check can only
+ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
 the checker is written backwards — which is exactly how a check comes to exist without
 ever having been checked, and it was the whole of this file's evidence for the stage in
 which `MIGRATED` was still empty. So the corpus below runs the real checker over
@@ -121,7 +121,19 @@ PORT_NAMES = ("Presenter", "ProcessRunner", "FileStore", "Env", "GitRepo", "Cloc
 #: states what it needs of the records as a protocol of its own (`RunRecords`) and takes
 #: them as an argument, because it scores run evidence and does not go and get it; the
 #: shell (`govern/cli.py`) and `evidence.py` pass `read_all_tasks` in.
-MIGRATED: tuple[str, ...] = ("govern",)
+#:
+#: `eval` is the second, and it needed the same move three times over rather than once.
+#: `affected.py` reached `orchestrate.config`, `orchestrate.graph` and
+#: `orchestrate.recipes` for the brick graph, and `promote.py` reached `packs.model` for
+#: the directory a pack keeps evaluation cases in — every one of them a *function-local*
+#: import, which is how a cross-pillar edge stays invisible while looking like it was
+#: fixed. Each is now a protocol this pillar declares (`BrickGraphSource`, `PackCaseDir`)
+#: and an adapter that satisfies it (`eval/source_graph.py`, `eval/pack_layout.py`), with
+#: the callers handing the real one in. The fifth edge was `rig_workbench.__version__`,
+#: imported by `gate.py` and `runner.py` to stamp and compare an executor version; that
+#: one became `eval.cases.EXECUTOR_VERSION`, this pillar's own constant, because a value
+#: the code only ever records is the weakest possible reason to hold an edge.
+MIGRATED: tuple[str, ...] = ("govern", "eval")
 
 #: The shell of each pillar: modules that wire, not modules that judge. Closed list —
 #: everything else in a migrated pillar is judgement. Every entry states why, because
@@ -1279,13 +1291,14 @@ def test_the_walk_checks_the_right_files(tmp_path: pathlib.Path) -> None:
 
 
 def test_a_migrated_pillar_imports_nothing_but_the_ports() -> None:
-    """The contract itself, and no longer vacuous: `govern` is behind the ports.
+    """The contract itself, and no longer vacuous: `govern` and `eval` are behind the ports.
 
-    It passes, which is the only thing a green contract can mean — `govern/conformance.py`'s
-    last edge into `workbench` was inverted rather than hidden, and `govern/cli.py` is the
-    declared shell. What it cannot mean is that the rule is right: one compliant pillar
-    exercises almost none of the checker, which is what the corpus above is for. The skip
-    below is kept for the case `MIGRATED` is ever emptied to take a pillar back out.
+    Both pass, which is the only thing a green contract can mean — every edge either became
+    a port call or was inverted into a protocol the pillar declares, and each pillar's
+    wiring is named in `SHELL_MODULES`. What it cannot mean is that the rule is right: two
+    compliant pillars exercise almost none of the checker, which is what the corpus above is
+    for. The skip below is kept for the case `MIGRATED` is ever emptied to take a pillar
+    back out.
     """
     layout = real_layout()
     if not layout.migrated:
