@@ -9,12 +9,12 @@ import re
 import tempfile
 from typing import Any
 
-from rig_workbench import __version__
 from rig_workbench.ports import Clock
 from rig_workbench.ports.local import SYSTEM_CLOCK
 
-from .manifest import PACK_ID, VERSION, canonical, digest
-from .model import PackError
+from .manifest import PACK_ID, VERSION, LineScanner, canonical, digest
+from .model import ENGINE_VERSION, PackError
+from .scanners import CREDENTIAL_LINE_SCANNER
 from .validation import CoreReferenceIds, validate_pack
 
 LOCK_NAME = "pack.lock.json"
@@ -69,7 +69,8 @@ def write_lock(root: pathlib.Path, value: dict[str, Any]) -> None:
     write_lock_bytes(root, canonical(value).encode("utf-8"))
 
 
-def refuse_credentials(payload: bytes, *, where: str) -> None:
+def refuse_credentials(payload: bytes, *, where: str,
+                       scan_line: LineScanner = CREDENTIAL_LINE_SCANNER) -> None:
     """Refuse to persist anything credential-shaped.
 
     The rule that rig never stores a credential is enforced at the one place that writes,
@@ -78,15 +79,20 @@ def refuse_credentials(payload: bytes, *, where: str) -> None:
     thought about — and a rule that depends on nobody making that mistake is a wish. The
     sensor is the same one `rig-wb wb scan-secrets` runs, so what the gate refuses and what
     the scanner reports cannot drift apart.
-    """
-    from rig_workbench.workbench.secrets import scan_line
 
+    It is the same `LineScanner` `manifest.py` declares, and it used to arrive as an import
+    of `workbench.secrets` written inside this function — which the layering rule counts
+    exactly as it counts a module-level one, because deferring an import hides a dependency
+    rather than removing it. `packs/scanners.py` binds `skip_entropy=True` behind it: that
+    setting has always been this call's, and a lock file of machine-written hex digests is
+    the one input where entropy scoring produces findings rather than catches them.
+    """
     try:
         text = payload.decode("utf-8")
     except UnicodeError:
         return
     for number, line in enumerate(text.splitlines(), 1):
-        findings = scan_line(line, where, number, skip_entropy=True)
+        findings = scan_line(line, where, number)
         if findings:
             kinds = sorted({str(item.get("kind")) for item in findings})
             # The finding itself is not echoed: reporting a secret to complain about it
@@ -195,7 +201,7 @@ def make_entry(
         "source": source,
         "manifest_sha256": digest(pack / "pack.yaml"),
         "asset_hashes": dict(sorted(manifest["hashes"].items())),
-        "engine_version": __version__, "installed_at": timestamp,
+        "engine_version": ENGINE_VERSION, "installed_at": timestamp,
         "dependencies": manifest["dependencies"],
         "dependency_resolution": dependency_resolution or [],
         "eval_case_hashes": {

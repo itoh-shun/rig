@@ -149,11 +149,35 @@ def _legacy_assets(project: pathlib.Path,
                                     tier, f"legacy:{directory}", None)
 
 
-def _core_assets() -> Iterable[ResolvedAsset]:
-    # The engine skill's directory name is resolved (not hardcoded) so a pre-rename
-    # `skills/rig/` install still resolves — same rule as orchestrate.config.
-    from rig_workbench.orchestrate.config import _skill_root
+#: The engine skill's directory name, most-current first. `rig` is the pre-rename layout,
+#: kept so a plugin directory installed before the rename still resolves — the pip package
+#: and the plugin can be at different versions. The same two names `orchestrate.config`
+#: keeps, and deliberately a second statement of them rather than a shared one: see
+#: `_skill_root` below for why this pillar states its own.
+SKILL_DIR_NAMES = ("engine", "rig")
 
+
+def _skill_root(base: pathlib.Path) -> pathlib.Path | None:
+    """The engine skill's directory inside `base`, or None if `base` is not a rig home.
+
+    Moved here rather than inverted, which is the opposite call from the rest of this
+    pillar's stage-3 work — and the reason is what it was reaching for. `packs/resolver.py`
+    imported `orchestrate.config._skill_root`, inside a function: a *private* name in
+    another pillar. An inversion would have had this module declare a protocol and an
+    adapter hold the import, which is three new pieces of machinery to keep borrowing three
+    lines and an underscore. A protocol is worth declaring when the collaborator is
+    something the other pillar owns and this one only consumes; a two-name existence check
+    on a directory is not that. So it is stated here, and `orchestrate.config` keeps its
+    own — two copies of a two-element tuple, which is cheaper to keep true than an adapter
+    is, and honest about the fact that neither pillar owns the layout.
+    """
+    for name in SKILL_DIR_NAMES:
+        if (base / "skills" / name / "SKILL.md").exists():
+            return base / "skills" / name
+    return None
+
+
+def _core_assets() -> Iterable[ResolvedAsset]:
     rig = _rig_home()
     skills = _skill_root(rig) or rig / "skills" / "engine"
     facets = skills / "facets"
