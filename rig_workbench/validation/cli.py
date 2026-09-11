@@ -16,7 +16,8 @@ This module is `validation`'s **shell**, and stage 3 of
 
 **Words leave through the `Presenter` port.** No function here calls `print`. `cmd_validate`
 takes an `out: Presenter`, the adapter is built once at the process boundary in `main()`,
-and it is forwarded to every call below whose signature declares one. A module-level
+and it is forwarded to every call below whose signature declares one — today that is
+`run_selftest`. A module-level
 instance reached for from inside would be the same global under a different name, and the
 point of the port is that a caller (a test, an embedding harness) can hand in a different
 one.
@@ -66,7 +67,7 @@ def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter()) -> int
     if argv and argv[0] == "selftest":
         # `run_selftest` ends in `sys.exit` itself and the codes are contract; the
         # `return` below is unreachable and is here so the signature stays honest.
-        run_selftest()
+        run_selftest(out=out)
         return 0
 
     recipe_files = sorted(RECIPES.glob("*.md"))
