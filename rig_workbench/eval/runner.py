@@ -19,6 +19,8 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from rig_workbench import __version__
+from ..ports import ProcessRunner
+from ..ports.local import SUBPROCESS
 from .attestation import sign_result_attestation
 from .cases import (
     ISOLATION_RANK,
@@ -192,14 +194,12 @@ def _iso(now: dt.datetime | None) -> str:
 
 
 def _git_identity(
-    repo: pathlib.Path, execution_base: str | None = None,
+    repo: pathlib.Path, execution_base: str | None = None, *,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> tuple[str | None, str | None, str]:
     def git(*args: str) -> str | None:
         try:
-            completed = subprocess.run(
-                ["git", *args], cwd=repo, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=5, shell=False,
-            )
+            completed = proc.run(["git", *args], cwd=repo, timeout=5)
         except (OSError, subprocess.SubprocessError):
             return None
         value = (completed.stdout or "").strip()
@@ -214,10 +214,8 @@ def _git_identity(
         if base is None or commit is None:
             raise EvalCaseError("execution base revision cannot be resolved")
         try:
-            ancestor = subprocess.run(
-                ["git", "merge-base", "--is-ancestor", base, commit], cwd=repo,
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=5, shell=False,
+            ancestor = proc.run(
+                ["git", "merge-base", "--is-ancestor", base, commit], cwd=repo, timeout=5,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise EvalCaseError("execution base ancestry cannot be verified") from exc
@@ -272,6 +270,7 @@ def _execute(
     *, provider: str, model: str, payload: str, phase: str, kind: str, index: int,
     repeat: int, repo: pathlib.Path, command: str | None, timeout_s: float,
     readable_root: pathlib.Path | None = None,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> tuple[int, str, str, str | None]:
     if provider == "mock":
         failures = math.ceil(repeat * 2 / 3)
@@ -302,11 +301,8 @@ def _execute(
         environment_values["RIG_EVAL_INPUT"] = payload
     environment = _child_environment(provider, **environment_values)
     try:
-        completed = subprocess.run(
-            argv, cwd=repo, env=environment,
-            input=payload, capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=timeout_s,
-            shell=False,
+        completed = proc.run(
+            argv, cwd=repo, env=environment, input=payload, timeout=timeout_s,
         )
         infra = (
             "provider_error"
@@ -365,6 +361,7 @@ def _normalize_judge(value: Any, expected_ids: list[str]) -> dict:
 def make_judge_adapter(
     *, provider: str, model: str, repo: pathlib.Path | str,
     command: str | None = None, timeout_s: float = 30,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> JudgeAdapter:
     """Build a bounded, shell-free semantic judge adapter."""
     if provider not in {"mock", "command", "claude", "codex"}:
@@ -406,11 +403,8 @@ def make_judge_adapter(
             {} if provider in {"claude", "codex"} else {"RIG_EVAL_JUDGE_INPUT": prompt}
         ))
         try:
-            completed = subprocess.run(
-                selected, cwd=root, env=environment,
-                input=prompt,
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=timeout_s, shell=False,
+            completed = proc.run(
+                selected, cwd=root, env=environment, input=prompt, timeout=timeout_s,
             )
         except (OSError, subprocess.SubprocessError):
             return {"status": "error", "criteria": []}
@@ -436,6 +430,7 @@ def _sample(
     repeat: int, repo: pathlib.Path, command: str | None, timeout_s: float,
     judge_adapter: JudgeAdapter | None, prompt_prefix: str | None,
     execution_cwd: pathlib.Path, readable_root: pathlib.Path | None = None,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> dict:
     inputs = case["target_inputs"] if kind == "target" else case["clean_controls"]
     input_payload = canonical_json(inputs).rstrip("\n")
@@ -444,7 +439,7 @@ def _sample(
     returncode, stdout, stderr, infra = _execute(
         provider=provider, model=model, payload=payload, phase=phase, kind=kind,
         index=index, repeat=repeat, repo=execution_cwd, command=command, timeout_s=timeout_s,
-        readable_root=readable_root,
+        readable_root=readable_root, proc=proc,
     )
     expectations = case.get(
         "target_expectations" if kind == "target" else "clean_expectations",
@@ -506,6 +501,7 @@ def run_case(
     prompt_surface_digests: dict[str, str] | None = None,
     execution_cwd: pathlib.Path | str | None = None,
     readable_root: pathlib.Path | str | None = None,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> tuple[pathlib.Path, dict]:
     validate_case(case)
     if phase not in {"baseline", "current"}:
@@ -595,8 +591,8 @@ def run_case(
             f"{below_floor[0].replace('_', ' ')} violates case provider policy"
         )
     execution_commit, execution_base_commit, execution_status = (
-        _git_identity(root) if execution_base is None
-        else _git_identity(root, execution_base)
+        _git_identity(root, proc=proc) if execution_base is None
+        else _git_identity(root, execution_base, proc=proc)
     )
     if execution_head is not None and not re.fullmatch(r"[0-9a-f]{40}", execution_head):
         raise EvalCaseError("execution head must be a resolved commit")
@@ -609,6 +605,7 @@ def run_case(
         execution_diff_sha256(
             root, base=execution_base_commit,
             head=execution_head if execution_head is not None else "working",
+            proc=proc,
         )
         if execution_status == "available" and execution_base_commit is not None
         else hashlib.sha256(b"rig-eval-execution-unavailable-v1").hexdigest()
@@ -618,13 +615,13 @@ def run_case(
                       index=index, repeat=repeat, repo=root, command=command,
                       timeout_s=timeout_s, judge_adapter=judge_adapter,
                       prompt_prefix=prompt_prefix, execution_cwd=execution_root,
-                      readable_root=readable)
+                      readable_root=readable, proc=proc)
               for index in range(1, repeat + 1)]
     clean = [_sample(case, provider=provider, model=model, phase=phase, kind="clean",
                      index=index, repeat=repeat, repo=root, command=command,
                      timeout_s=timeout_s, judge_adapter=judge_adapter,
                      prompt_prefix=prompt_prefix, execution_cwd=execution_root,
-                     readable_root=readable)
+                     readable_root=readable, proc=proc)
              for index in range(1, repeat + 1)]
     target_pass = sum(row["outcome"] == "pass" for row in target)
     clean_pass = sum(row["outcome"] == "pass" for row in clean)

@@ -523,7 +523,7 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
             [selected, "--model", model, "-"], "os-enforced"),
     )
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: ("a" * 40, "b" * 40, "available"))
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
 
     def fake_run(argv, **kwargs):
@@ -537,7 +537,11 @@ def test_real_provider_reuses_adapter_argv_with_shell_false(monkeypatch, tmp_pat
     )
 
     assert all(row["outcome"] == "pass" for row in result["target"])
-    assert seen and all(kwargs["shell"] is False for _argv, kwargs in seen)
+    # `shell=` is not a parameter of `ProcessRunner` at all, so the strongest thing
+    # there is to say here is that nothing asked for one — and `subprocess.run` with no
+    # `shell` keyword does not use a shell. The port's own side is
+    # `tests/test_process_runner_shapes.py`.
+    assert seen and all("shell" not in kwargs for _argv, kwargs in seen)
     assert all(argv[0] == provider for argv, _kwargs in seen)
     assert all(isinstance(kwargs["input"], str) and kwargs["input"]
                for _argv, kwargs in seen)
@@ -591,7 +595,7 @@ def run_with_fake_provider(monkeypatch, tmp_path, provider, *, stdout="ok", judg
     case["provider_policy"] = {"mode": "any", "allowed": []}
     seen = []
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: ("a" * 40, "b" * 40, "available"))
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
 
     def fake_run(argv, **kwargs):
@@ -632,7 +636,8 @@ def test_claude_eval_records_agent_policy_isolation_and_denies_write_tools(
     assert result["provider_isolation"] == "agent-policy"
     assert result["judge_isolation"] == "none"
     for argv, kwargs in seen:
-        assert argv[0] == "claude" and kwargs["shell"] is False
+        # No `shell` keyword reaches `subprocess.run`: the port has no such parameter.
+        assert argv[0] == "claude" and "shell" not in kwargs
         # Structured output belongs to the judge only; a subject must answer in prose.
         assert "--json-schema" not in argv
         assert "--safe-mode" in argv and "--strict-mcp-config" in argv
@@ -699,7 +704,7 @@ def test_claude_judge_reports_agent_policy_isolation_into_the_result(monkeypatch
     case["provider_policy"] = {"mode": "any", "allowed": []}
     case["semantic_rubric"] = [{"id": "correct", "description": "Correct", "weight": 1.0}]
     seen = []
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: ("a" * 40, "b" * 40, "available"))
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
 
     def fake_run(argv, **kwargs):
@@ -753,7 +758,7 @@ def test_case_demanding_os_enforced_isolation_refuses_claude_subject_and_judge(
     case = draft_case()
     case["provider_policy"] = {"mode": "any", "allowed": [], "min_isolation": "os-enforced"}
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: ("a" * 40, "b" * 40, "available"))
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
     monkeypatch.setattr(
         runner.subprocess, "run",
@@ -832,7 +837,7 @@ def test_a_floor_binds_the_judge_only_when_a_judge_actually_ran(monkeypatch, tmp
     case["provider_policy"] = {"mode": "any", "allowed": [], "min_isolation": "os-enforced"}
     assert not case["semantic_rubric"], "a rubric-free case is the one that needs no judge"
     monkeypatch.setattr(runner.shutil, "which", lambda executable: f"/bin/{executable}")
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: ("a" * 40, "b" * 40, "available"))
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_a, **_k: "c" * 64)
     monkeypatch.setattr(
         runner.subprocess, "run",
@@ -995,7 +1000,7 @@ def test_codex_eval_uses_external_read_only_workspace_and_source_is_never_cwd(
     case = draft_case()
     case["provider_policy"] = {"mode": "any", "allowed": []}
     seen = []
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: ("a" * 40, "b" * 40, "available"))
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
     monkeypatch.setattr(runner.shutil, "which", lambda _name: "/bin/codex")
 
@@ -1009,7 +1014,10 @@ def test_codex_eval_uses_external_read_only_workspace_and_source_is_never_cwd(
         phase="current", now=NOW, execution_cwd=workspace,
         result_root=tmp_path / "external-results",
     )
-    assert seen and all(cwd == workspace for _argv, cwd in seen)
+    # `str(workspace)`, not the `Path`: the adapter stringifies `cwd` so that every
+    # caller of the port hands `subprocess` one shape. Same directory either way —
+    # `subprocess` accepts both — and the port's docstring names the choice.
+    assert seen and all(cwd == str(workspace) for _argv, cwd in seen)
     assert all("read-only" in argv and str(workspace) in argv for argv, _cwd in seen)
     assert workspace.stat().st_mode & 0o222 == 0
     assert not marker.exists()
@@ -1317,7 +1325,7 @@ def test_real_provider_nonzero_is_infrastructure_failure(monkeypatch, tmp_path):
 
     case = draft_case()
     case["provider_policy"] = {"mode": "any", "allowed": []}
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: ("a" * 40, "b" * 40, "available"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: ("a" * 40, "b" * 40, "available"))
     monkeypatch.setattr(runner, "execution_diff_sha256", lambda *_args, **_kwargs: "c" * 64)
     monkeypatch.setattr(runner.shutil, "which", lambda _executable: "/bin/codex")
     monkeypatch.setattr(
@@ -1340,7 +1348,7 @@ def test_non_git_execution_cannot_be_compared_or_promoted(monkeypatch, tmp_path)
     from rig_workbench.eval.compare import compare_results
 
     case = draft_case()
-    monkeypatch.setattr(runner, "_git_identity", lambda _repo: (None, None, "unavailable"))
+    monkeypatch.setattr(runner, "_git_identity", lambda _repo, *_a, **_k: (None, None, "unavailable"))
     _p, baseline = runner.run_case(
         case, repo=tmp_path, provider="mock", model="fixture", repeat=3,
         phase="baseline", now=NOW,
@@ -1376,7 +1384,7 @@ def test_command_judge_is_shell_free_bounded_and_fail_closed(monkeypatch, tmp_pa
         provider="command", model="fixture", repo=tmp_path, command="python3 judge.py"
     )
     assert judge(case, "input", "output")["status"] == "measured"
-    assert seen[0][1]["shell"] is False
+    assert "shell" not in seen[0][1]
     monkeypatch.setattr(
         runner.subprocess, "run",
         lambda argv, **_kwargs: subprocess.CompletedProcess(

@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 from typing import Any
 
+from ..ports import ProcessRunner
+from ..ports.local import SUBPROCESS
 from .cases import EvalCaseError, canonical_json, validate_case
 from .execution import GIT_DETERMINISTIC
 
@@ -68,7 +70,8 @@ def prompt_surface_registry() -> dict:
     }
 
 
-def _merge_base(root: pathlib.Path, base: str, head: str) -> str:
+def _merge_base(root: pathlib.Path, base: str, head: str, *,
+                proc: ProcessRunner = SUBPROCESS) -> str:
     """The commit this branch actually forked from.
 
     Diffing against the base *tip* attributes everything the base branch did
@@ -80,11 +83,7 @@ def _merge_base(root: pathlib.Path, base: str, head: str) -> str:
     """
     revision = "HEAD" if head == "working" else head
     try:
-        completed = subprocess.run(
-            ["git", "merge-base", base, revision], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15, shell=False,
-        )
+        completed = proc.run(["git", "merge-base", base, revision], cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return base
     value = completed.stdout.strip()
@@ -93,7 +92,8 @@ def _merge_base(root: pathlib.Path, base: str, head: str) -> str:
     return value
 
 
-def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
+def _changed_files(root: pathlib.Path, base: str, head: str, *,
+                   proc: ProcessRunner = SUBPROCESS) -> list[str]:
     for value, label in ((base, "base"), (head, "head")):
         if not isinstance(value, str) or not value or "\n" in value or "\x00" in value:
             raise EvalCaseError(f"affected {label} revision is invalid")
@@ -103,26 +103,21 @@ def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     # non-ASCII path arrives in a form any surface prefix can match.
     args = ["git", *GIT_DETERMINISTIC,
             "diff", "--name-only", "--relative", "--no-ext-diff", "--no-textconv",
-            _merge_base(root, base, head)]
+            _merge_base(root, base, head, proc=proc)]
     if head != "working":
         args.append(head)
     args.append("--")
     try:
-        completed = subprocess.run(
-            args, cwd=root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=15, shell=False,
-        )
+        completed = proc.run(args, cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot compute affected git diff") from exc
     if completed.returncode != 0:
         raise EvalCaseError("cannot compute affected git diff")
     paths = set(completed.stdout.splitlines())
     if head == "working":
-        untracked = subprocess.run(
+        untracked = proc.run(
             ["git", *GIT_DETERMINISTIC, "ls-files", "--others", "--exclude-standard"],
-            cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15, shell=False,
+            cwd=root, timeout=15,
         )
         if untracked.returncode != 0:
             raise EvalCaseError("cannot enumerate untracked affected files")
@@ -131,13 +126,12 @@ def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     return sorted(safe)
 
 
-def _resolved_head(root: pathlib.Path, head: str) -> str:
+def _resolved_head(root: pathlib.Path, head: str, *,
+                   proc: ProcessRunner = SUBPROCESS) -> str:
     revision = "HEAD" if head == "working" else head
     try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=10, shell=False,
+        completed = proc.run(
+            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"], cwd=root, timeout=10,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot resolve affected head revision") from exc
@@ -174,7 +168,8 @@ def _surface(path: str) -> dict | None:
     return None
 
 
-def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
+def prompt_surface_digests(root: pathlib.Path, revision: str, *,
+                           proc: ProcessRunner = SUBPROCESS) -> dict[str, str]:
     """Every prompt surface in `revision`'s tree, mapped to its git object id.
 
     Signed into the evidence so that "has this measurement's tree moved?" can be
@@ -194,10 +189,7 @@ def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
     measured.
     """
     try:
-        completed = subprocess.run(
-            ["git", "ls-tree", "-r", "-z", revision], cwd=root, capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=30, shell=False,
-        )
+        completed = proc.run(["git", "ls-tree", "-r", "-z", revision], cwd=root, timeout=30)
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot read prompt surface digests") from exc
     if completed.returncode != 0:
@@ -340,7 +332,8 @@ def _graphable(path: str) -> bool:
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
 
 
-def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -> int | None:
+def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path, *,
+                 proc: ProcessRunner = SUBPROCESS) -> int | None:
     """Write `revision`'s graphable prompt surfaces into `destination`; count them.
 
     `_graph` reads frontmatter off the filesystem, so answering "what did the
@@ -378,10 +371,9 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     it only ever uses the path as a key.
     """
     try:
-        listing = subprocess.run(
-            ["git", "ls-tree", "-r", "-z", revision, "--"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8",
-            errors="surrogateescape", timeout=30, shell=False,
+        listing = proc.run(
+            ["git", "ls-tree", "-r", "-z", revision, "--"], cwd=root, timeout=30,
+            errors="surrogateescape",
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -409,10 +401,10 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     if not wanted:
         return 0
     try:
-        batch = subprocess.run(
+        batch = proc.run(
             ["git", "cat-file", "--batch"], cwd=root,
             input="".join(f"{oid}\n" for oid, _ in wanted).encode("ascii"),
-            capture_output=True, timeout=30, shell=False,
+            timeout=30, text=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -449,7 +441,8 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     return written
 
 
-def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[dict]] | None:
+def _graph_at(root: pathlib.Path, revision: str, *,
+              proc: ProcessRunner = SUBPROCESS) -> tuple[dict[str, dict], list[dict]] | None:
     """The brick graph as it stands in `revision`'s tree, or None if unreadable.
 
     None rather than an empty graph, and the distinction is the whole point: the
@@ -468,7 +461,7 @@ def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[
     """
     with tempfile.TemporaryDirectory(prefix="rig-eval-graph-") as directory:
         tree = pathlib.Path(directory)
-        if _surfaces_at(root, revision, tree) is None:
+        if _surfaces_at(root, revision, tree, proc=proc) is None:
             return None
         try:
             return _graph(tree, strict=True)
@@ -593,7 +586,8 @@ def _reachable_recipes(
 
 
 def _surface_commits(
-    root: pathlib.Path, merge_base: str, head: str, paths: list[str],
+    root: pathlib.Path, merge_base: str, head: str, paths: list[str], *,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> dict[str, list[str]]:
     """Which commits touched each uncovered path, newest first.
 
@@ -608,11 +602,10 @@ def _surface_commits(
     result: dict[str, list[str]] = {}
     for path in sorted(set(paths)):
         try:
-            completed = subprocess.run(
+            completed = proc.run(
                 ["git", "log", "--format=%h", "--max-count=5",
                  f"{merge_base}..{revision}", "--", path],
-                cwd=root, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=15, shell=False,
+                cwd=root, timeout=15,
             )
         except (OSError, subprocess.SubprocessError):
             continue
@@ -623,18 +616,15 @@ def _surface_commits(
     return result
 
 
-def _registry_at(root: pathlib.Path, revision: str) -> dict[str, dict] | None:
+def _registry_at(root: pathlib.Path, revision: str, *,
+                 proc: ProcessRunner = SUBPROCESS) -> dict[str, dict] | None:
     """prefix → its declared root at `revision`, or None if unreadable.
 
     Same stance as `_coverage_at`: None means the question could not be answered,
     and the caller then declines to accuse the change of anything.
     """
     try:
-        blob = subprocess.run(
-            ["git", "show", f"{revision}:{REGISTRY_REL}"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15, shell=False,
-        )
+        blob = proc.run(["git", "show", f"{revision}:{REGISTRY_REL}"], cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return None
     if blob.returncode != 0:
@@ -685,7 +675,8 @@ def _registry_narrowings(before: dict[str, dict] | None, after: dict) -> list[st
     return lost
 
 
-def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | None:
+def _coverage_at(root: pathlib.Path, revision: str, *,
+                 proc: ProcessRunner = SUBPROCESS) -> dict[str, set[str]] | None:
     """case id → the prompt surfaces it covered at `revision`, or None if unreadable.
 
     Read from the git tree rather than the working copy, and read at two revisions:
@@ -700,10 +691,9 @@ def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | Non
     between a stale fork and an unmeasured prompt surface.
     """
     try:
-        listing = subprocess.run(
+        listing = proc.run(
             ["git", "ls-tree", "-r", "--name-only", revision, "--", "evals/cases/"],
-            cwd=root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=15, shell=False,
+            cwd=root, timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -714,10 +704,7 @@ def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | Non
         if not path.endswith("/case.json"):
             continue
         try:
-            blob = subprocess.run(
-                ["git", "show", f"{revision}:{path}"], cwd=root, capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=15, shell=False,
-            )
+            blob = proc.run(["git", "show", f"{revision}:{path}"], cwd=root, timeout=15)
         except (OSError, subprocess.SubprocessError):
             return None
         if blob.returncode != 0:
@@ -904,6 +891,7 @@ def analyze_affected(
     repo: pathlib.Path | str, *, base: str, head: str = "working",
     require_cases: bool = False, ratchet: bool = False,
     evidence_dir: pathlib.Path | str | None = None,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> dict:
     """Which prompt surfaces a change touches, and whether cases cover them.
 
@@ -956,9 +944,9 @@ def analyze_affected(
         root = pathlib.Path(repo).resolve()
     except OSError as exc:
         raise EvalCaseError("cannot resolve affected repository") from exc
-    changed = _changed_files(root, base, head)
-    resolved_head = _resolved_head(root, head)
-    merge_base = _merge_base(root, base, head)
+    changed = _changed_files(root, base, head, proc=proc)
+    resolved_head = _resolved_head(root, head, proc=proc)
+    merge_base = _merge_base(root, base, head, proc=proc)
     surfaces = [surface for path in changed if (surface := _surface(path)) is not None]
     head_graph = _graph(root)
     recipes_by_surface = _reachable_recipes(head_graph, surfaces)
@@ -975,9 +963,10 @@ def analyze_affected(
     # Only under the ratchet. Strict mode already fails every affected surface this
     # branch does not cover, whatever the base branch says about it, so it has
     # nothing to gain from the landing view and keeps its exact old meaning.
-    base_coverage = _coverage_at(root, base) if ratchet else None
+    base_coverage = _coverage_at(root, base, proc=proc) if ratchet else None
     landing_coverage = (
-        _landing_coverage(head_coverage, base_coverage, _coverage_at(root, merge_base))
+        _landing_coverage(head_coverage, base_coverage,
+                          _coverage_at(root, merge_base, proc=proc))
         if ratchet else None
     )
     # Both arguments of "is this covered?" get the same correction, or the fix is
@@ -992,7 +981,8 @@ def analyze_affected(
     # must not fire in.
     needs_landing_graph = bool(ratchet and surfaces)
     landing_graph = (
-        _landing_graph(head_graph, _graph_at(root, base), _graph_at(root, merge_base))
+        _landing_graph(head_graph, _graph_at(root, base, proc=proc),
+                       _graph_at(root, merge_base, proc=proc))
         if needs_landing_graph else None
     )
     landing_by_surface = (_reachable_recipes(landing_graph, surfaces)
@@ -1070,11 +1060,11 @@ def analyze_affected(
     # The registry is monotonic too, in both modes. Widening what the gate can see
     # is the direction it is meant to move; narrowing it is coverage going down.
     registry_changed = REGISTRY_REL in changed
-    base_registry = _registry_at(root, base) if registry_changed else None
+    base_registry = _registry_at(root, base, proc=proc) if registry_changed else None
     registry_narrowings = (
         _registry_narrowings(base_registry,
                              _landing_registry(prompt_surface_registry(), base_registry,
-                                               _registry_at(root, merge_base)))
+                                               _registry_at(root, merge_base, proc=proc)))
         if registry_changed else []
     )
     evidence: dict[str, str] = {}
@@ -1128,6 +1118,7 @@ def analyze_affected(
         "coverage_base_unreadable": coverage_unreadable,
         "evidence_status": evidence,
         "surface_commits": _surface_commits(root, merge_base, head,
-                                            [*uncovered, *debt, *sorted(stale_by_path)]),
+                                            [*uncovered, *debt, *sorted(stale_by_path)],
+                                            proc=proc),
         "status": status,
     }

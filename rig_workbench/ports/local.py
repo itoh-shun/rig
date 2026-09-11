@@ -66,13 +66,20 @@ class SubprocessRunner:
     repository holds a path or an author name in another encoding. With `text=False` nothing
     is decoded and `stdout`/`stderr` come back as the `bytes` the process wrote, which is what
     `eval/execution.py:43`, `eval/gate.py:45` and `eval/affected.py:412` need.
+
+    `errors` names the handler and defaults to the one those 25 sites spell; `eval/affected.py`
+    asks for `surrogateescape` on the one read whose output is turned back into filenames.
+    It is refused with `text=False` rather than dropped, because `subprocess.run` reads
+    `errors=` as a request for text mode: passing it through in the bytes arm would silently
+    decode a stream the caller asked for raw, and dropping it silently would let a caller
+    believe a decoding it named had been applied to bytes that were never decoded.
     """
 
     @overload
     def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = ...,
             env: Mapping[str, str] | None = ..., timeout: float | None = ...,
             input: str | bytes | None = ...,
-            text: Literal[True] = ...) -> subprocess.CompletedProcess[str]:
+            text: Literal[True] = ..., errors: str = ...) -> subprocess.CompletedProcess[str]:
         ...
 
     @overload
@@ -84,13 +91,19 @@ class SubprocessRunner:
 
     def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = None,
             env: Mapping[str, str] | None = None, timeout: float | None = None,
-            input: str | bytes | None = None, text: bool = True,
+            input: str | bytes | None = None, text: bool = True, errors: str = "replace",
             ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        if not text and errors != "replace":
+            raise ValueError(
+                "ProcessRunner.run: errors= names a decoding and text=False does not decode. "
+                "Drop one of the two; the overloads in rig_workbench/ports/__init__.py say "
+                "which combinations exist."
+            )
         # `encoding` implies text mode to `subprocess`, so the two kwargs are the whole of the
         # switch; passing `text=True` alongside them would add nothing and passing it in the
         # bytes arm would undo the arm. `input=None` is what `subprocess.run` sees when a
         # caller omits it, so there is no second call shape for the no-stdin case.
-        decoding: dict[str, str] = {"encoding": "utf-8", "errors": "replace"} if text else {}
+        decoding: dict[str, str] = {"encoding": "utf-8", "errors": errors} if text else {}
         return subprocess.run(list(argv), cwd=None if cwd is None else str(cwd),
                               env=None if env is None else dict(env), timeout=timeout,
                               input=input, capture_output=True, **decoding)

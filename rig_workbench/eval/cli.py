@@ -37,8 +37,8 @@ import json
 import pathlib
 import sys
 
-from rig_workbench.ports import Presenter
-from rig_workbench.ports.local import ConsolePresenter
+from rig_workbench.ports import Presenter, ProcessRunner
+from rig_workbench.ports.local import ConsolePresenter, SubprocessRunner
 
 from .capture import capture_case
 from .affected import analyze_affected
@@ -318,7 +318,8 @@ def _case_for_result(root: pathlib.Path, result: dict) -> dict:
     return matches[0]
 
 
-def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
+def cmd_eval(argv: list[str], *, out: Presenter | None = None,
+             proc: ProcessRunner | None = None) -> int:
     """Parse, run the command, and return its exit status.
 
     The presenter is a parameter with a default rather than a module-level instance the
@@ -330,6 +331,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     out = ConsolePresenter() if out is None else out
+    proc = SubprocessRunner() if proc is None else proc
     try:
         if args.command == "validate":
             return _validate_command(args.path, out)
@@ -359,6 +361,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
                         provider=args.judge_provider, model=args.judge_model,
                         repo=adapter_cwd(args.judge_provider, workspace, root),
                         command=args.judge_command, timeout_s=args.judge_timeout,
+                        proc=proc,
                     ) if args.judge_provider else None
                 )
                 output, result = run_case(
@@ -367,7 +370,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
                     command=args.provider_command, timeout_s=args.timeout,
                     judge_adapter=judge_adapter, execution_base=args.execution_base,
                     execution_cwd=adapter_cwd(args.provider, workspace, root),
-                    readable_root=root,
+                    readable_root=root, proc=proc,
                 )
             out.out(str(output))
             dev_probe_only = args.provider == "mock" or args.judge_provider == "mock"
@@ -401,6 +404,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
                         provider=args.judge_provider, model=args.judge_model,
                         repo=adapter_cwd(args.judge_provider, workspace, root),
                         command=args.judge_command, timeout_s=args.judge_timeout,
+                        proc=proc,
                     )
                     if args.judge_provider else None
                 )
@@ -412,7 +416,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
                         timeout_s=args.timeout, judge_adapter=judge_adapter,
                         execution_base=args.execution_base,
                         execution_cwd=adapter_cwd(args.provider, workspace, root),
-                        readable_root=root,
+                        readable_root=root, proc=proc,
                     )
                     out.out(str(output))
             return 0
@@ -438,7 +442,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
             report = analyze_affected(
                 args.repo, base=args.base, head=args.head,
                 require_cases=args.require_cases, ratchet=args.ratchet,
-                evidence_dir=args.evidence_dir,
+                evidence_dir=args.evidence_dir, proc=proc,
             )
             _emit_document(out, canonical_json(report))
             # `debt` exits 0 on purpose: it is a number to carry, not a wall. Only
@@ -449,7 +453,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
                 args.repo, base=args.base, head=args.head,
                 evidence_dir=args.evidence_dir, provider=args.provider, model=args.model,
                 judge_provider=args.judge_provider, judge_model=args.judge_model,
-                ratchet=args.ratchet,
+                ratchet=args.ratchet, proc=proc,
             )
             _emit_document(out, canonical_json(report))
             return exit_code
@@ -459,7 +463,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
                 model=args.model, judge_provider=args.judge_provider,
                 judge_model=args.judge_model, provider_command=args.provider_command,
                 judge_command=args.judge_command, timeout_s=args.timeout,
-                ratchet=args.ratchet,
+                ratchet=args.ratchet, proc=proc,
             )
             output = dict(report)
             output["result_dir"] = str(destination) if destination is not None else None
@@ -477,7 +481,7 @@ def cmd_eval(argv: list[str], *, out: Presenter | None = None) -> int:
 
 
 def main() -> None:
-    sys.exit(cmd_eval(sys.argv[1:], out=ConsolePresenter()))
+    sys.exit(cmd_eval(sys.argv[1:], out=ConsolePresenter(), proc=SubprocessRunner()))
 
 
 if __name__ == "__main__":

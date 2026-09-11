@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
+from ..ports import ProcessRunner
+from ..ports.local import SUBPROCESS
 from .affected import analyze_affected, prompt_surface_digests
 from .cases import EvalCaseError
 # Where this run files what it measured. Defined by the gate rather than here,
@@ -18,12 +20,11 @@ from .gate import EVIDENCE_REL, evaluate_gate
 from .runner import adapter_cwd, make_judge_adapter, read_only_workspace, run_case
 
 
-def _rev_parse(root: pathlib.Path, revision: str) -> str:
+def _rev_parse(root: pathlib.Path, revision: str, *,
+               proc: ProcessRunner = SUBPROCESS) -> str:
     try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15, shell=False,
+        completed = proc.run(
+            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"], cwd=root, timeout=15,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot resolve affected-run revision") from exc
@@ -33,7 +34,7 @@ def _rev_parse(root: pathlib.Path, revision: str) -> str:
     return value
 
 
-def _dirty_paths(root: pathlib.Path) -> list[str]:
+def _dirty_paths(root: pathlib.Path, *, proc: ProcessRunner = SUBPROCESS) -> list[str]:
     """Working-tree entries that would make the measurement unreproducible.
 
     The signed diff is taken tree-to-tree at the resolved head, so anything
@@ -42,10 +43,7 @@ def _dirty_paths(root: pathlib.Path) -> list[str]:
     earlier run is exempt: it is the output of this command, not an input to it.
     """
     try:
-        completed = subprocess.run(
-            ["git", "status", "--porcelain", "-z"], cwd=root, capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=15, shell=False,
-        )
+        completed = proc.run(["git", "status", "--porcelain", "-z"], cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot read working tree status") from exc
     if completed.returncode != 0:
@@ -67,6 +65,7 @@ def run_affected(
     repo: pathlib.Path | str, *, base: str, head: str, provider: str, model: str,
     judge_provider: str, judge_model: str, provider_command: str | None = None,
     judge_command: str | None = None, timeout_s: float = 30, ratchet: bool = False,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> tuple[dict, int, pathlib.Path | None]:
     """`ratchet` has to reach here too, or the CI gate's ratchet buys nothing.
 
@@ -83,10 +82,11 @@ def run_affected(
         raise EvalCaseError("affected-run forbids mock provider and mock judge")
     root = pathlib.Path(repo).resolve()
     affected = analyze_affected(root, base=base, head=head,
-                                require_cases=not ratchet, ratchet=ratchet)
+                                require_cases=not ratchet, ratchet=ratchet, proc=proc)
     if affected["status"] == "noop":
         report, code = evaluate_gate(root, base=base, head=head,
-                                     evidence_dir=root / ".rig" / "none", ratchet=ratchet)
+                                     evidence_dir=root / ".rig" / "none", ratchet=ratchet,
+                                     proc=proc)
         return report, code, None
     if affected["status"] == "uncovered":
         # Every way `uncovered` can be reached, named. Listing only the paths left
@@ -109,7 +109,8 @@ def run_affected(
         # debt, so there is nothing to measure. Same answer as `noop` rather than an
         # empty run that would report a destination holding no evidence.
         report, code = evaluate_gate(root, base=base, head=head,
-                                     evidence_dir=root / ".rig" / "none", ratchet=ratchet)
+                                     evidence_dir=root / ".rig" / "none", ratchet=ratchet,
+                                     proc=proc)
         return report, code, None
     cases: dict[str, dict] = {}
     for case_id in affected["affected_cases"]:
@@ -121,13 +122,13 @@ def run_affected(
     # The provider only ever sees the checked-out tree, so evidence describing a
     # different head would claim a tree nobody measured — and, since the gate now
     # recomputes the diff at the commit the evidence names, that claim would verify.
-    checked_out = _rev_parse(root, "HEAD")
+    checked_out = _rev_parse(root, "HEAD", proc=proc)
     if affected["resolved_head"] != checked_out:
         raise EvalCaseError(
             f"affected-run measures the checked-out tree; --head resolves to "
             f"{affected['resolved_head'][:12]} but HEAD is {checked_out[:12]}"
         )
-    dirty = _dirty_paths(root)
+    dirty = _dirty_paths(root, proc=proc)
     if dirty:
         raise EvalCaseError(
             "affected-run requires a clean working tree; uncommitted: "
@@ -149,12 +150,12 @@ def run_affected(
         # result: this is what lets the gate ask "has the prompt this was measured
         # against moved?" from content rather than from ancestry, and content is the
         # only form of that question a squash or rebase merge leaves answerable.
-        digests = prompt_surface_digests(root, affected["resolved_head"])
+        digests = prompt_surface_digests(root, affected["resolved_head"], proc=proc)
         with read_only_workspace(root) as workspace:
             judge = make_judge_adapter(
                 provider=judge_provider, model=judge_model,
                 repo=adapter_cwd(judge_provider, workspace, root),
-                command=judge_command, timeout_s=timeout_s,
+                command=judge_command, timeout_s=timeout_s, proc=proc,
             )
             for case_id in sorted(cases):
                 path, result = run_case(
@@ -164,7 +165,7 @@ def run_affected(
                     execution_base=base, execution_head=affected["resolved_head"],
                     result_root=staging, prompt_surface_digests=digests,
                     execution_cwd=adapter_cwd(provider, workspace, root),
-                    readable_root=root,
+                    readable_root=root, proc=proc,
                 )
                 produced[case_id] = path
                 if any(row["infra_status"] is not None
@@ -191,7 +192,7 @@ def run_affected(
         report, code = evaluate_gate(
             root, base=base, head=head, evidence_dir=staging, provider=provider,
             model=model, judge_provider=judge_provider, judge_model=judge_model,
-            ratchet=ratchet,
+            ratchet=ratchet, proc=proc,
         )
         if code != 0:
             return report, code, None

@@ -1,4 +1,4 @@
-"""The five call shapes `ProcessRunner` has to serve, each against the real call it replaces.
+"""The six call shapes `ProcessRunner` has to serve, each against the real call it replaces.
 
 `tests/test_ports.py` already holds the adapter to `subprocess.run` for the shape govern
 brought (捕捉されたテキスト, `cwd`, `env`, `timeout`). Stage 3's second pillar
@@ -14,7 +14,13 @@ measured over the AST before anything moved and recorded in the design brief's
   and one of them frames binary by length, so decoding destroys the value rather than
   cosmetically altering it;
 * 3 sites pass `input=`, two as `str` (`eval/runner.py:305`, `:409`) and one as `bytes`
-  (`eval/affected.py:412`).
+  (`eval/affected.py:412`);
+* 1 site decodes with another error handler — `eval/affected.py:381` reads `git ls-tree -z`
+  with `surrogateescape` because the paths it gets back are written to disk and re-read, so
+  U+FFFD would be a different filename rather than a cosmetic substitution. That is why
+  `errors=` is a parameter rather than a fixed `"replace"`, and why it exists only in text
+  mode: `subprocess.run` reads `errors=` as a request for text mode, so an adapter that
+  forwarded it in the bytes arm would decode a stream the caller asked for raw.
 
 **Every test below launches a real process**, and asserts the adapter's `CompletedProcess`
 equals what `subprocess.run` spelled the way that pillar spells it today returns — same
@@ -84,6 +90,12 @@ def _raw_pillar_text(argv, **kwargs):
     """The 25 text sites, e.g. `eval/gate.py:55` and `packs/publisher.py:423`."""
     return subprocess.run(argv, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", **kwargs)
+
+
+def _raw_surrogateescape(argv, **kwargs):
+    """`eval/affected.py:381`: the same pair, with the handler that keeps undecodable bytes."""
+    return subprocess.run(argv, capture_output=True, text=True,
+                          encoding="utf-8", errors="surrogateescape", **kwargs)
 
 
 def _raw_bytes(argv, **kwargs):
@@ -170,7 +182,49 @@ def test_the_mode_switch_is_real_and_not_a_no_op():
     assert b"\xff" in as_bytes and "�" not in as_bytes.decode("utf-8", "surrogateescape")
 
 
-# ── shape 4: input= as str ───────────────────────────────────────────────────
+# ── shape 4: text with another error handler ─────────────────────────────────
+
+
+def test_surrogateescape_returns_what_the_ls_tree_reader_returns():
+    """The one site that names a handler of its own, against the call it replaces.
+
+    `surrogateescape` maps each undecodable byte to a lone surrogate that `str.encode(...,
+    "surrogateescape")` turns back into that exact byte — which is what makes a path read
+    here and written to disk come back the same path. `replace` cannot: U+FFFD is a
+    character, and three different bad bytes all become it.
+    """
+    argv = _argv(_SPEAK_INVALID)
+    got = SUBPROCESS.run(argv, errors="surrogateescape")
+    raw = _raw_surrogateescape(argv)
+    _same(got, raw)
+    # Round-trips to the bytes the process wrote; the default handler does not.
+    assert got.stdout.encode("utf-8", "surrogateescape") == SUBPROCESS.run(argv, text=False).stdout
+    assert got.stdout != SUBPROCESS.run(argv).stdout
+    assert "\udcff" in got.stdout and "\ufffd" not in got.stdout
+
+
+def test_the_default_handler_is_the_one_the_other_sites_spell():
+    """Non-vacuous: the parameter has a default, and the default is `replace`."""
+    argv = _argv(_SPEAK_INVALID)
+    _same(SUBPROCESS.run(argv), SUBPROCESS.run(argv, errors="replace"))
+    _same(SUBPROCESS.run(argv), _raw_pillar_text(argv))
+
+
+def test_a_handler_named_for_a_call_that_decodes_nothing_is_refused():
+    """`errors=` with `text=False` describes nothing, and is not quietly dropped.
+
+    `subprocess.run` treats `errors=` as a request for text mode, so the two readings of a
+    silent adapter are "your bytes were decoded after all" and "your handler was ignored".
+    Both are wrong answers to a call that cannot be served, so it raises instead.
+    """
+    argv = _argv(_SPEAK_INVALID)
+    with pytest.raises(ValueError, match="does not decode"):
+        SUBPROCESS.run(argv, text=False, errors="surrogateescape")
+    # And the contradiction is the only thing refused: bytes mode still works next to it.
+    assert SUBPROCESS.run(argv, text=False).stdout == b"head\xff mid \xe3\x81 tail \xe6\x97\xa5"
+
+
+# ── shape 5: input= as str ───────────────────────────────────────────────────
 
 
 def test_input_as_str_matches_the_shape_eval_runner_uses():
@@ -188,7 +242,7 @@ def test_input_none_is_the_same_call_as_no_input_at_all():
     _same(SUBPROCESS.run(argv, input=None), _raw_pillar_text(argv))
 
 
-# ── shape 5: input= as bytes ─────────────────────────────────────────────────
+# ── shape 6: input= as bytes ─────────────────────────────────────────────────
 
 
 def test_input_as_bytes_matches_the_shape_eval_affected_uses():
@@ -242,6 +296,10 @@ def test_text_mode_hands_subprocess_the_decoding_the_sites_spell(monkeypatch):
     assert "text" not in seen[-1] and seen[-1]["capture_output"] is True
     assert isinstance(text_result.stdout, str)
 
+    escaped_result = SUBPROCESS.run(argv, errors="surrogateescape")
+    assert seen[-1]["encoding"] == "utf-8" and seen[-1]["errors"] == "surrogateescape"
+    assert isinstance(escaped_result.stdout, str)
+
     bytes_result = SUBPROCESS.run(argv, text=False)
     assert not {"encoding", "errors", "text"} & set(seen[-1])
     assert isinstance(bytes_result.stdout, bytes)
@@ -257,7 +315,8 @@ def test_the_protocol_and_the_adapter_declare_the_same_run():
     assert inspect.signature(ProcessRunner.run) == inspect.signature(SUBPROCESS.run.__func__)
     parameters = inspect.signature(ProcessRunner.run).parameters
     assert [p.name for p in parameters.values()] == [
-        "self", "argv", "cwd", "env", "timeout", "input", "text"]
+        "self", "argv", "cwd", "env", "timeout", "input", "text", "errors"]
     assert parameters["text"].default is True and parameters["input"].default is None
+    assert parameters["errors"].default == "replace"
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY
                for name, p in parameters.items() if name not in ("self", "argv"))

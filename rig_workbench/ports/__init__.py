@@ -102,23 +102,36 @@ class ProcessRunner(Protocol):
     ids as `bytes`. Hence `str | bytes`, and hence matching it to `text` is the caller's
     business, exactly as `subprocess.run` leaves it.
 
+    **`errors=` is a parameter for the same reason `input=` is: a caller brought one.**
+    `eval/affected.py:381` decodes `git ls-tree -z` with `surrogateescape`, and it is not a
+    preference. The paths it reads are used to *write files* that `_graph`'s adapter then
+    re-reads through `rglob`, which spells an undecodable name with surrogates; decoding it
+    as U+FFFD here would write a name that reader spells differently, and the branch's graph
+    would stop matching the base branch's for that surface. That is a wrong answer, not a
+    cosmetic one. The alternative was to leave one `subprocess.run` outside the port with a
+    comment — which keeps the pillar's ledger line alive for a single call and puts an
+    exemption where the whole point is that there are none — so the port takes the parameter
+    and the default stays `"replace"`, which is what the other 24 sites spell.
+
+    It belongs to text mode alone, and the overloads say so by omitting it from the bytes
+    arm: `errors=` on a call that decodes nothing describes nothing, and an adapter that
+    passed it through would be worse than useless — `subprocess.run` treats `errors=` as a
+    request for text mode, so forwarding it in the bytes arm would undo the arm.
+
     `check=` is absent because no site uses it: `identity` wraps the call in `try/except` and
     reads `stdout`, `gitroot` reads `returncode`, and the four sites that could pass it
     (`packs/publisher.py:44`, `:423`, `:431`, `:436`) all pass `check=False`. An
     exception-raising variant would give every one of them a second failure mode to handle.
     `shell=` is absent on purpose — the tree holds three `shell=True` calls
     (`orchestrate/providers.py:2314` and `:2787`, and `orchestrate/commands.py:248`) and none
-    of them is coming through here. `errors=` is absent, and one site pays for it:
-    `eval/affected.py:381` decodes `git ls-tree -z` with `surrogateescape` so that an
-    undecodable path keeps a spelling both sides of a comparison agree on. Whether that becomes
-    a parameter or that call stays outside the port is a decision for the commit that moves it.
+    of them is coming through here.
     """
 
     @overload
     def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = ...,
             env: Mapping[str, str] | None = ..., timeout: float | None = ...,
             input: str | bytes | None = ...,
-            text: Literal[True] = ...) -> subprocess.CompletedProcess[str]:
+            text: Literal[True] = ..., errors: str = ...) -> subprocess.CompletedProcess[str]:
         ...
 
     @overload
@@ -130,17 +143,19 @@ class ProcessRunner(Protocol):
 
     def run(self, argv: Sequence[str], *, cwd: str | pathlib.Path | None = None,
             env: Mapping[str, str] | None = None, timeout: float | None = None,
-            input: str | bytes | None = None, text: bool = True,
+            input: str | bytes | None = None, text: bool = True, errors: str = "replace",
             ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
         """Run `argv` to completion with its output captured.
 
         Returns what `subprocess.run(..., capture_output=True)` returns, with the decoding the
-        call sites already ask for: `encoding="utf-8", errors="replace"` when `text` is on, and
-        no decoding at all when it is off. That is what today's callers already read
-        (`proc.stdout.strip()`, `proc.returncode`, and `bytes` at the three sites above), so
-        the migration stays a swap rather than a rewrite. `env` replaces the environment rather
-        than adding to it, as `subprocess` does; `input` is written to the process's stdin and
-        has to be `str` in text mode and `bytes` out of it, again as `subprocess` has it.
+        call sites already ask for: `encoding="utf-8"` and the error handler they name when
+        `text` is on, and no decoding at all when it is off. That is what today's callers
+        already read (`proc.stdout.strip()`, `proc.returncode`, and `bytes` at the three sites
+        above), so the migration stays a swap rather than a rewrite. `env` replaces the
+        environment rather than adding to it, as `subprocess` does; `input` is written to the
+        process's stdin and has to be `str` in text mode and `bytes` out of it, again as
+        `subprocess` has it. `errors` with `text=False` is a contradiction and is refused
+        rather than ignored.
         """
         ...
 
