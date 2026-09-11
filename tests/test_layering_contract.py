@@ -69,9 +69,9 @@ exception, and an exception that has to be typed out with a justification next t
 Proving the rule on more than the tree it happens to be run against
 -------------------------------------------------------------------
 
-`MIGRATED` names `govern`, `eval` and `packs`, and three pillars of seven is not much of a
-scan: four are still outside the rule, and all three of them pass it today, so the real-tree
-check can only ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
+`MIGRATED` names `govern`, `eval`, `packs` and `validation`, and four pillars of seven is
+not much of a scan: three are still outside the rule, and all four of them pass it today, so
+the real-tree check can only ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
 the checker is written backwards — which is exactly how a check comes to exist without
 ever having been checked, and it was the whole of this file's evidence for the stage in
 which `MIGRATED` was still empty. So the corpus below runs the real checker over
@@ -156,7 +156,39 @@ PORT_NAMES = ("Presenter", "ProcessRunner", "FileStore", "Env", "GitRepo", "Cloc
 #: does not have. And `orchestrate.config._skill_root` was copied into `packs/resolver.py`,
 #: because an inversion would have been a protocol plus an adapter plus a binding to keep
 #: borrowing three lines and a private name.
-MIGRATED: tuple[str, ...] = ("govern", "eval", "packs")
+#:
+#: `validation` is the fourth, and the one where the borrowing was the point rather than an
+#: accident. This pillar is the repository's own CI check, and every rule it applies asks
+#: the same question — does a shipped document still agree with the code that runs it —
+#: which cannot be answered without holding the code's answer beside the document's. So it
+#: reached `orchestrate.gates` for what a gate is, `workbench.config` for the task types and
+#: gate presets, `workbench.capabilities` for the route selector, `workbench.cli` for the
+#: subcommand list, `workbench.stale_refs`, `orchestrate.mcp_scan`, `govern.stage` and
+#: `packs.resolver`: eight collaborators, eleven edges, five of them function-local.
+#:
+#: Every one is inverted onto a single adapter, `validation/rig_surfaces.py`, with each
+#: caller declaring the narrow thing it needs — `RecipeGate`, `RuntimeGateTest`,
+#: `HumanGateParser`, `TaskRouter`, `StaleRefScanner`, `McpScanner`, `AssetResolver`,
+#: `ParserSource`. One adapter rather than the three `packs` needed, and that is a
+#: measurement rather than a preference: `packs` split because a single bridge closed a new
+#: ten-module runtime cycle, and no cycle is reachable here because nothing in
+#: `rig_workbench` imports `rig_workbench.validation.*` at all — the pillar is a sink,
+#: entered by path from `scripts/validate.py` and `rig_workbench/cli.py`.
+#:
+#: Two of the inversions say something the earlier pillars did not. `HumanGateParser`
+#: answers `(rule, error)` instead of raising, because `recipes.py` used to catch
+#: `govern.stage.StageConfigError` — a class named in an `except` clause is a cross-pillar
+#: edge exactly as much as a function named in a call. And `TaskRouter` needed the
+#: *construction* to move, not just the call: `routes.py` built
+#: `workbench.capabilities.LocalRecipe` values to feed the selector, and a judgement module
+#: that builds another pillar's dataclass holds the edge whatever the call looks like.
+#:
+#: Nothing was copied. `GATE_PRESETS`, `TASK_TYPES` and `ROUTE_PRODUCERS` arrive as the
+#: workbench's own objects handed in as data, which is the opposite of the move `packs` made
+#: with `_skill_root`: there, a copy ended an edge nobody measured against; here the drift
+#: between the code and the document *is the measurement*, and a checker holding its own
+#: copy of the vocabulary would drift alongside the document it audits and report nothing.
+MIGRATED: tuple[str, ...] = ("govern", "eval", "packs", "validation")
 
 #: The shell of each pillar: modules that wire, not modules that judge. Closed list —
 #: everything else in a migrated pillar is judgement. Every entry states why, because
@@ -215,6 +247,40 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
             "eval.runner._git_identity, a private name, and the bridge republishes it as "
             "git_identity so that reach-in stops here instead of appearing in signatures "
             "the judgement layer writes."
+        ),
+    },
+    "validation": {
+        f"{PACKAGE}.validation.cli": (
+            "The command shell: the argv-taking half of `scripts/validate.py`, the four "
+            "adapters it builds once at the process boundary and forwards, and the mapping "
+            "from the FAIL tally to an exit code. It is where the twenty-two checks get "
+            "called from, so it is allowed to know about all of them. `main()` still takes "
+            "no arguments and still ends in `sys.exit`, because `rig_workbench/cli.py`'s "
+            "`_run_validate` swaps `sys.argv` and calls it, and "
+            "tests/test_capability_registry_vs_cli.py freezes that dispatch shape."
+        ),
+        f"{PACKAGE}.validation.rig_surfaces": (
+            "This pillar's one adapter, here for the reason PORT_ADAPTERS gives for "
+            "ports/local.py: an adapter exists precisely to hold what the protocol may "
+            "not. It holds all eight surfaces the validator checks shipped documents "
+            "against — orchestrate.gates, orchestrate.mcp_scan, govern.stage, "
+            "workbench.cli, workbench.config, workbench.capabilities, "
+            "workbench.stale_refs and packs.resolver — behind the shapes catalog.py, "
+            "drill.py, manifest.py, mcp_scan.py, recipes.py, routes.py and stale_refs.py "
+            "declare. One module rather than the three `packs` needed, because the cycle "
+            "that forced that split cannot occur here: nothing in rig_workbench imports "
+            "rig_workbench.validation, so no collaborator's closure comes back through "
+            "it. It imports no judgement module, so the inverted edges stay one-way."
+        ),
+        f"{PACKAGE}.validation.yaml_adapter": (
+            "The pillar's one optional dependency, behind a call. PyYAML is third-party "
+            "and a judgement module may not import it, which is the rule working rather "
+            "than an inconvenience: this used to be a bare `import yaml` in state.py that "
+            "printed and called sys.exit during the import itself, so importing any module "
+            "in the pillar could kill the caller's interpreter. The import and the guard "
+            "live here and the guard raises PyYAMLMissing, which cli.py reports through "
+            "the Presenter it built. Holding this module to the rule would forbid the one "
+            "import the whole pillar is built on."
         ),
     },
     "eval": {
@@ -1409,15 +1475,17 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     """The one thing the corpus cannot prove: that the walk reads rig_workbench/.
 
     Applied to every pillar as if it had migrated and with no shell exempt, the rule must
-    object to something — four of the seven pillars are still 未着手, and the three that are
+    object to something — three of the seven pillars are still 未着手, and the four that are
     not answer here through their shells and adapters: the shell wires and the adapter holds
     what a protocol may not, so with the exemptions dropped `govern/cli.py`'s imports of
     `gitroot` and `workbench.reporting` are findings, and so are `packs/scanners.py`'s
-    sensors and `packs/eval_bridge.py`'s evaluation imports. (What no longer appears is the
-    judgement layer of any of the three: `conformance.py`, `affected.py`, `promote.py`,
-    `manifest.py`, `validation.py`, `evidence.py`, `installer.py`, `tester.py`, `lock.py`
-    and `resolver.py` have each had their cross-pillar import inverted into a protocol they
-    declare. Those are the edges `MIGRATED` was waiting on.) A scan that found nothing here
+    sensors, `packs/eval_bridge.py`'s evaluation imports and every one of the eight surfaces
+    `validation/rig_surfaces.py` holds. (What no longer appears is the judgement layer of any
+    of the four: `conformance.py`, `affected.py`, `promote.py`, `manifest.py`,
+    `validation.py`, `evidence.py`, `installer.py`, `tester.py`, `lock.py`, `resolver.py`,
+    and validation's `catalog.py`, `drill.py`, `manifest.py`, `mcp_scan.py`, `recipes.py`,
+    `routes.py` and `stale_refs.py` have each had their cross-pillar import inverted into a
+    protocol they declare. Those are the edges `MIGRATED` was waiting on.) A scan that found nothing here
     would mean the walk read no files, and every check above it would be passing on air.
     When the last pillar migrates this test starts failing, and deleting it is the correct
     response: it will have run out of work.
