@@ -109,12 +109,20 @@ def test_run_usage_discovers_config_and_all_direct_pin_flags(capsys):
 def test_rig_wb_main_forwards_goal_stdin_without_parent_argv_goal(monkeypatch):
     from rig_workbench import cli
     from rig_workbench.orchestrate import cli as orchestrate_cli
+    from rig_workbench.ports import Presenter
 
     received = []
+    handed: dict = {}
+    # The stub takes `out` because the shell hands it one: `main()` builds a
+    # `ConsolePresenter` at the process boundary and dispatches
+    # `COMMANDS[cmd](rest, out=out)`. A stub that accepted `args` alone stopped
+    # standing in for the real command the moment that keyword appeared, so it
+    # records the presenter and the assertions below check it arrived — a
+    # substitute for a command has to have the command's signature.
     monkeypatch.setitem(
         orchestrate_cli.COMMANDS,
         "run",
-        lambda args: received.extend(args),
+        lambda args, **kwargs: (received.extend(args), handed.update(kwargs)),
     )
     monkeypatch.setattr(orchestrate_cli, "advise_gh", lambda _context: None)
     monkeypatch.setattr(
@@ -139,6 +147,7 @@ def test_rig_wb_main_forwards_goal_stdin_without_parent_argv_goal(monkeypatch):
         "--goal-stdin",
     ]
     assert "--goal" not in received
+    assert isinstance(handed["out"], Presenter)
 
 
 def test_secure_run_rejects_parent_argv_goal_before_provider_or_state(
