@@ -119,12 +119,24 @@ class TestNoCallables:
 
     @pytest.mark.parametrize(
         "field",
-        ["id", "parent", "verb", "intent", "effect_line", "effect_class", "network",
+        ["id", "parent", "verb", "intent", "summary", "effect_line", "effect_class", "network",
          "output_schema"],
     )
     def test_scalar_field_refuses_a_function(self, field):
         with pytest.raises(TypeError, match="callable"):
             capability(**{field: self.handler})
+
+    def test_every_capability_field_is_covered_by_the_sweep(self):
+        """`Flag`'s sweep is derived from the dataclass; this is the same for `Capability`.
+
+        The list above is by hand and `summary` was added to it by hand, which is the moment
+        the omission would have been easy: a new field with a callable in it passes every
+        other test in the file. So the fields are read off the dataclass here, and one that
+        arrives without anybody remembering is covered from the moment it exists.
+        """
+        for field in dataclasses.fields(Capability):
+            with pytest.raises(TypeError, match="callable"):
+                capability(**{field.name: self.handler})
 
     def test_tuple_field_refuses_a_function_inside_it(self):
         # The check is recursive: a callable smuggled into a tuple is still a callable.
@@ -243,6 +255,33 @@ class TestShape:
         with pytest.raises(ValueError, match="one line"):
             capability(**{field: "does a thing\nand then another"})
 
+    def test_the_help_line_is_the_intent_when_no_summary_is_written(self):
+        entry = capability()
+        assert entry.summary is None
+        assert entry.help_line == entry.intent
+
+    def test_a_written_summary_is_the_line_the_cli_prints(self):
+        entry = capability(summary="run the gate and say what is missing")
+        assert entry.help_line == "run the gate and say what is missing"
+        assert entry.intent != entry.help_line, "the intent is left alone"
+
+    def test_a_summary_that_merely_repeats_the_intent_is_refused(self):
+        """Optional in the way `Flag.dest` is: a written one has to mean something.
+
+        Allowed to repeat, `summary` would become a second copy of `intent` on every entry
+        somebody filled in dutifully — a second place to make the same edit, and a field a
+        reader can no longer take as a statement that the two audiences really do differ.
+        """
+        with pytest.raises(ValueError, match="repeats the intent"):
+            capability(summary=capability().intent)
+        with pytest.raises(ValueError, match="repeats the intent"):
+            capability(summary=f"  {capability().intent}  ")
+
+    def test_an_empty_summary_is_refused_rather_than_read_as_absent(self):
+        # `None` means "intent is the help line"; a blank string is somebody having started.
+        with pytest.raises(ValueError, match="empty"):
+            capability(summary="   ")
+
     def test_preconditions_are_never_empty(self):
         with pytest.raises(ValueError, match="preconditions"):
             capability(preconditions=())
@@ -289,6 +328,12 @@ class TestShape:
         # Both axes reach the projections; a surface reading only one would under-warn.
         assert record["effect_class"] == "writes-state"
         assert record["network"] == "never"
+        # The help line is carried resolved as well as declared, so a projection that only
+        # wants "the line to print" does not re-derive the fallback and get it wrong.
+        assert record["summary"] is None
+        assert record["help_line"] == record["intent"]
+        written = capability(summary="run the gate").as_dict()
+        assert (written["summary"], written["help_line"]) == ("run the gate", "run the gate")
 
     def test_a_flag_knows_whether_it_is_positional(self):
         assert Flag(name="task_id", type="string", help="the task").positional
@@ -601,8 +646,19 @@ JAPANESE = re.compile(r"[぀-ヿ㐀-鿿！-｠　-〿]")
 #: against it and `parser.py` hands it to `add_parser(help=...)` — so it is English and the
 #: conversation reads English there. If that ever stops being acceptable, the fix is a second
 #: field for the spoken line, not a Japanese `intent`.
+#:
+#: `Capability.summary` is that second field, arriving for the other reason the row above
+#: anticipated. The two readers of `intent` turned out to want different *sentences* before
+#: they wanted different languages: making govern's parser a projection printed ten intents
+#: where ten terse help lines had been, and `govern can` lost the exit codes a script is
+#: written against. So the CLI's line moved into its own optional field and `intent` was left
+#: alone — which is the same answer, applied to divergence in content rather than in script.
+#: It is swept for Japanese here exactly as `Flag.help` is, because `parser.py` prints it;
+#: `intent` stays in the sweep too, since it is still what prints wherever no summary is
+#: written (129 of the 139 capabilities today).
 AUDIENCE = {
     ("Capability", "intent"): "the conversation and the shipped CLI",
+    ("Capability", "summary"): "the shipped CLI, where `intent` is not the line it wants",
     ("Capability", "effect_line"): "the conversation (talk-loop.md), which speaks Japanese",
     ("Flag", "help"): "the shipped CLI",
 }
@@ -644,7 +700,10 @@ def cli_facing_strings():
     for owner, field in sorted(projected_prose_fields()):
         for entry in CAPABILITIES:
             if owner == "Capability":
-                yield entry.id, f"{owner}.{field}", getattr(entry, field)
+                # An optional field (`summary`) is absent on most entries, and absent means
+                # the CLI prints the other one — there is no string to hold to a language.
+                if (value := getattr(entry, field)) is not None:
+                    yield entry.id, f"{owner}.{field}", value
             else:
                 for flag in entry.flags:
                     yield f"{entry.id} {flag.name}", f"{owner}.{field}", getattr(flag, field)
@@ -667,7 +726,11 @@ class TestWhichAudienceReadsWhichField:
 
     def test_the_projection_reaches_exactly_the_fields_this_file_knows_about(self):
         projected = projected_prose_fields()
-        assert projected == {("Flag", "help"), ("Capability", "intent")}, (
+        assert projected == {
+            ("Flag", "help"),
+            ("Capability", "intent"),
+            ("Capability", "summary"),
+        }, (
             f"registry/parser.py now prints {sorted(projected)} to CLI users. Every field "
             "here is swept for Japanese below, so add it to AUDIENCE — and if the new one "
             "is a field the conversation owns (effect_line), the projection is the bug: a "

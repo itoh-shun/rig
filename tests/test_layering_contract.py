@@ -66,14 +66,17 @@ a written sentence is the point. A contributor who hits this rule will want to a
 exception, and an exception that has to be typed out with a justification next to
 `govern/cli.py`'s is one they will usually decide not to want.
 
-Proving the rule while nothing is migrated
-------------------------------------------
+Proving the rule on more than the tree it happens to be run against
+-------------------------------------------------------------------
 
-`MIGRATED` is empty: no pillar has moved behind the ports yet, and `govern` joins it in a
-later task once its effects are behind them. An empty scan passes vacuously, and a
-vacuous pass would keep passing if the checker were written backwards — which is exactly
-how a check comes to exist without ever having been checked. So the corpus below runs the
-real checker over constructed modules: `REJECTED` covers every violation the rule
+`MIGRATED` names `govern`, and one pillar of seven is not much of a scan: six are still
+outside the rule, and `govern` passes it today, so the real-tree check can only ever say
+that nothing has regressed. A check that passes because it found nothing keeps passing if
+the checker is written backwards — which is exactly how a check comes to exist without
+ever having been checked, and it was the whole of this file's evidence for the stage in
+which `MIGRATED` was still empty. So the corpus below runs the real checker over
+constructed modules, and it stays the load-bearing half however many pillars migrate:
+`REJECTED` covers every violation the rule
 distinguishes (and `test_every_violation_kind_has_a_negative_case` fails if a new kind
 arrives without one), and `ACCEPTED` covers the compliant shapes *including several that
 are one character from a violation* — a `..` that climbs out of a module and lands back
@@ -1159,9 +1162,10 @@ def test_a_compliant_module_is_accepted(case: Case) -> None:
 def test_every_violation_kind_has_a_negative_case() -> None:
     """The guard against a rule that grows a branch nobody ever triggered.
 
-    `MIGRATED` is empty, so the scan over the real tree proves nothing about the rule.
-    This does: every kind the checker can emit must be produced by a constructed module
-    above. A new kind without a case fails here, in the same commit that adds it.
+    The scan over the real tree exercises whatever `govern` happens to do, which is a
+    fraction of the rule and shrinks as the pillar gets tidier. This does the rest: every
+    kind the checker can emit must be produced by a constructed module above. A new kind
+    without a case fails here, in the same commit that adds it.
     """
     exercised = {v.kind for case in REJECTED for v in _run(case)}
     missing = sorted(set(VIOLATION_KINDS) - exercised)
@@ -1247,17 +1251,20 @@ def test_the_walk_checks_the_right_files(tmp_path: pathlib.Path) -> None:
 
 
 def test_a_migrated_pillar_imports_nothing_but_the_ports() -> None:
-    """The contract itself.
+    """The contract itself, and no longer vacuous: `govern` is behind the ports.
 
-    Vacuous while `MIGRATED` is empty — stage 3 is 未着手 and no pillar has moved yet.
-    That vacuity is the reason for the corpus above; `test_every_violation_kind_has_a_
-    negative_case` is what keeps this file honest until a pillar arrives.
+    It passes, which is the only thing a green contract can mean — `govern/conformance.py`'s
+    last edge into `workbench` was inverted rather than hidden, and `govern/cli.py` is the
+    declared shell. What it cannot mean is that the rule is right: one compliant pillar
+    exercises almost none of the checker, which is what the corpus above is for. The skip
+    below is kept for the case `MIGRATED` is ever emptied to take a pillar back out.
     """
     layout = real_layout()
     if not layout.migrated:
         pytest.skip(
-            "No pillar has migrated yet (MIGRATED is empty, design brief §7 stage 3). "
-            "The rule itself is proved against the constructed corpus in this file."
+            "MIGRATED is empty, so there is no migrated pillar to scan (design brief §7 "
+            "stage 3). `govern` was the first and emptying the tuple takes it back out; "
+            "the rule itself is proved against the constructed corpus in this file."
         )
     found = [v for v in scan(PACKAGE_ROOT, layout) if not _is_port_module(v.module)]
     if found:
@@ -1292,11 +1299,16 @@ def test_the_ports_import_nothing_from_the_package_but_exitcodes() -> None:
 def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     """The one thing the corpus cannot prove: that the walk reads rig_workbench/.
 
-    Applied to every pillar as if it had migrated, the rule must object to something —
-    the tree is 未着手, `govern/conformance.py` alone reaches into `workbench`. A scan
-    that found nothing here would mean the walk read no files, and every check above it
-    would be passing on air. When the last pillar migrates this test starts failing, and
-    deleting it is the correct response: it will have run out of work.
+    Applied to every pillar as if it had migrated and with no shell exempt, the rule must
+    object to something — six of the seven pillars are still 未着手, and even `govern`, which
+    is not, answers here through `govern/cli.py`: the shell wires, so with the exemption
+    dropped its imports of `gitroot` and `workbench.reporting` are findings. (They are the
+    only four `govern` produces. `conformance.py` no longer appears: the import it used to
+    make into `workbench` was inverted into the `RunRecords` protocol it takes as an
+    argument, which is the edge `MIGRATED` was waiting on.) A scan that found nothing here
+    would mean the walk read no files, and every check above it would be passing on air.
+    When the last pillar migrates this test starts failing, and deleting it is the correct
+    response: it will have run out of work.
     """
     layout = real_layout()
     everything = dataclasses.replace(layout, migrated=layout.pillars, shell=frozenset())
@@ -1304,8 +1316,8 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     assert found, (
         "Scanning rig_workbench/ with every pillar treated as migrated produced no "
         "findings at all. Before celebrating, check that _module_name and scan() are "
-        "still reading the package: 181 files that all obey a rule nobody has started "
-        "applying is the less likely explanation."
+        "still reading the package: 182 files that all obey a rule one pillar of seven has "
+        "started applying is the less likely explanation."
     )
 
 

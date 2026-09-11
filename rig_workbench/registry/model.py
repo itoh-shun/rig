@@ -392,6 +392,11 @@ class Capability:
     #: would have had to read the docs to use. Present tense, one sentence, no trailing full
     #: stop needed. Where two capabilities would honestly get the same intent line, that is
     #: a finding about the surface, not a licence to copy the line.
+    #:
+    #: This is also what `--help` prints beside the verb, because for most of the table one
+    #: line honestly serves both readers. Where it does not — where the help column wants
+    #: something shorter, or operational detail a conversation has no use for — the answer is
+    #: `summary` below, never a compromised `intent`.
     intent: str
 
     #: What a machine can check holds before this runs, as stable kebab-case check names —
@@ -458,6 +463,36 @@ class Capability:
     #: restriction is ever lifted, that entry changes with it.
     network: str
 
+    #: The one terse line `--help` prints beside the verb, when `intent` is not that line.
+    #:
+    #: Optional, and `intent` stands in when it is absent (`help_line`). It sits down here
+    #: rather than beside `intent` only because it carries a default; read the two together.
+    #:
+    #: **Why a second field rather than a reworded `intent`.** §9 makes intent the source of
+    #: truth and the CLI a projection, and a projection is allowed to project *something*
+    #: without being allowed to redefine what it projects. The two readers want genuinely
+    #: different sentences. `intent` is matched against an utterance, so it is written in the
+    #: words a person would say — 「これ承認しておいて」 finds "sign off on somebody's change,
+    #: or find out what sign-off it is still waiting for and from whom", and its own docs
+    #: forbid the mechanism (no flag names, no file paths) that makes such a line useless to
+    #: a conversation. A `--help` column wants the opposite: the shortest line that tells
+    #: somebody already holding the manual which verb to type, and it may carry operational
+    #: detail a conversation has no use for — `govern can`'s shipped line ended "(exit 0
+    #: allowed / 3 denied)", which is the whole reason a script calls it. Folding the two
+    #: produces a line that is too long for the column and too specific for the utterance.
+    #:
+    #: **Optional in the way `Flag.dest` is optional, and for the same reason.** Declaring a
+    #: `summary` equal to the `intent` is refused below, so a written one is never a second
+    #: copy of a line that already exists: it is a statement that these two readers really do
+    #: want different sentences here, and it reads as one. Where one line honestly serves
+    #: both — which is most of the table — nothing is written and `intent` keeps printing.
+    #:
+    #: English, like `Flag.help` and unlike `effect_line`: this is printed by
+    #: `rig-wb <group> --help`. `tests/test_capability_registry.py`'s AUDIENCE table names it,
+    #: and its Japanese sweep covers it because `registry/parser.py` puts it in front of a
+    #: CLI user.
+    summary: str | None = None
+
     #: What the caller may pass. Order is the order a projection shows them in; positionals
     #: are the ones whose `name` has no leading dashes, so declare them first.
     flags: tuple[Flag, ...] = ()
@@ -484,6 +519,7 @@ class Capability:
                 "(kebab-case, or two such words where the surface nests)"
             )
         _line("Capability", "intent", self.intent)
+        self._check_summary()
         _line("Capability", "effect_line", self.effect_line)
         if self.effect_class not in EFFECT_CLASSES:
             raise ValueError(
@@ -543,6 +579,28 @@ class Capability:
         if len(set(seen)) != len(seen):
             raise ValueError(f"{self.id}: the same exit code is declared twice")
 
+    def _check_summary(self) -> None:
+        if self.summary is None:
+            return
+        _line("Capability", "summary", self.summary)
+        if self.summary.strip() == self.intent.strip():
+            raise ValueError(
+                f"{self.id}: summary repeats the intent verbatim, so declaring it says "
+                "nothing and is a second place to make the same edit. Leave it out — "
+                "`intent` prints when no summary is declared — and write one only where "
+                "the `--help` line and the line a conversation matches really differ."
+            )
+
+    @property
+    def help_line(self) -> str:
+        """The line `--help` prints beside this verb: the `summary`, or the `intent`.
+
+        The one thing a CLI projection should ask. Nothing outside this class should
+        re-derive the fallback — two copies of "summary or intent" is how one projection
+        comes to print a line another does not.
+        """
+        return self.intent if self.summary is None else self.summary
+
     @property
     def command_path(self) -> tuple[str, ...]:
         """The words typed, in order: `("wb", "gate")`, `("pack", "install")`, `("usage",)`."""
@@ -597,6 +655,11 @@ class Capability:
             "verb": self.verb,
             "command_path": list(self.command_path),
             "intent": self.intent,
+            # Written out even when unset, like `Flag.dest`: a projection reading this
+            # record has to be able to tell "no separate help line was written" from
+            # "this key does not exist here".
+            "summary": self.summary,
+            "help_line": self.help_line,
             "preconditions": list(self.preconditions),
             "effect_line": self.effect_line,
             "effect_class": self.effect_class,

@@ -52,6 +52,21 @@ that answer is printed (`rig.effective-policy/v1` from `govern policy --json`) o
 (`rig.org/v2` from `govern init`, `rig.policy/v2` from `govern migrate`, `rig.waivers/v2`
 from `govern waiver grant`), because a caller has to parse it either way.
 
+**`govern` is the only group here that writes `summary`, and all ten of its verbs do.** It is
+the only group whose parser is a projection today, so it is the only one where the question
+has actually been put: `add_parser(help=...)` now prints the table, and printing `intent`
+rewrote all ten lines a person met in `rig-wb govern --help`. The two lines are different in
+kind, verb by verb. `intent` answers 「これ、まだ承認おりてない?」 and is forbidden by its own
+field docs from naming mechanism; the help column wants the shortest line that picks a verb
+out of ten, and it may carry operational detail no conversation needs — `can`'s shipped line
+ends "(exit 0 allowed / 3 denied)", which is the entire reason CI calls it, and `migrate`'s
+names the two v1 files it folds, which is how somebody recognises their own situation. So the
+ten shipped lines are declared here as `summary` and the ten `intent` lines are left alone.
+The other groups declare no `summary`: their parsers are still hand-written, and writing one
+now would be guessing at a divergence nobody has met. When a group migrates, its verbs face
+this question one at a time, and a verb whose one line honestly serves both readers writes
+nothing — `model.Capability` refuses a `summary` that merely repeats the `intent`.
+
 Exit codes are what the source returns, and `govern` is the odd one: it defines
 `EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT = 0, 1, 3` and `_err` returns 1, so a govern refusal
 lands on the code `exitcodes.py` reserves for a verdict. That is recorded here as it is, not
@@ -99,6 +114,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="init",
         intent="start holding this repository to a shared standard, with something to edit "
                "rather than a blank page",
+        summary="bind this repository to an org/team and scaffold a starter policy",
         preconditions=("git-repo", "org-binding-absent"),
         effect_line=".rig/org.json と starter policy (.rig/policy/org.json) を書き出し、"
                     "監査台帳に policy.init を追記します",
@@ -125,6 +141,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="migrate",
         intent="carry the access and gate settings this team already tuned into the new "
                "shape instead of retyping them",
+        summary="fold v1 .rig/access.json / .rig/gates.json into a policy layer",
         preconditions=("git-repo", "legacy-access-or-gates-file", "org-known"),
         effect_line="v1 の .rig/access.json と .rig/gates.json を畳んだ policy 文書を "
                     ".rig/policy/<id>.json に書き出します（元のファイルはそのまま動きます）",
@@ -154,6 +171,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="policy",
         intent="see which rules are actually in force here, and whether the layers they "
                "come from stack without any of them loosening the one before it",
+        summary="show or lint the policy in effect",
         preconditions=("git-repo", "policy-layers-resolvable"),
         effect_line="有効な policy を読み出して表示します。lint も層を検証するだけで、"
                     "何も書き換えません",
@@ -180,6 +198,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="whoami",
         intent="find out what I am allowed to do in this repository, and which roles are "
                "giving me that",
+        summary="the roles and permissions of the current actor",
         preconditions=("git-repo", "policy-layers-resolvable", "actor-identity"),
         effect_line="現在の actor の role と permission を読み出して表示します",
         effect_class="read-only",
@@ -197,6 +216,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="can",
         intent="get a yes or no on one specific thing before something else depends on the "
                "answer",
+        summary="check a single permission (exit 0 allowed / 3 denied)",
         preconditions=("git-repo", "policy-layers-resolvable", "actor-identity",
                        "known-permission"),
         effect_line="permission を 1 件だけ判定して結果を表示します（何も書き換えません）",
@@ -220,6 +240,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="approve",
         intent="sign off on somebody's change, or find out what sign-off it is still "
                "waiting for and from whom",
+        summary="grant/deny an approval, or show a task's approval status",
         preconditions=("git-repo", "task-exists", "actor-identity", "permission-approve"),
         effect_line="grant と deny は承認の決定を記録し、監査台帳にも追記します。"
                     "status は読み出すだけです",
@@ -246,6 +267,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="waiver",
         intent="let one named rule slide for a stated reason and a fixed period, or take "
                "that exception back before it lapses",
+        summary="grant, list or revoke time-boxed exceptions",
         preconditions=("git-repo", "policy-layers-resolvable", "actor-identity",
                        "permission-waiver", "waiver-criterion-named"),
         effect_line="grant は .rig/waivers.json に免除を追記し、revoke はそれを失効させます"
@@ -280,6 +302,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="audit",
         intent="read the record of who changed what, and show that nobody has edited that "
                "record afterwards",
+        summary="read, verify or export the tamper-evident ledger",
         preconditions=("git-repo", "audit-ledger", "permission-audit-export"),
         effect_line="log と verify は台帳を読むだけです。export は台帳を書き出したうえで、"
                     "その書き出し自体を台帳に追記します",
@@ -315,6 +338,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="conformance",
         intent="find out whether this repository actually clears the standard it says it "
                "follows, and by how much",
+        summary="measure this repository against its effective policy",
         preconditions=("git-repo", "org-binding", "policy-layers-resolvable"),
         effect_line="この repository を有効な policy に照らして採点し、"
                     "検査ごとの結果を表示します（何も書き換えません）",
@@ -338,6 +362,7 @@ GOVERN: tuple[Capability, ...] = (
         verb="rollup",
         intent="see how several projects are doing against the same standard, side by side "
                "in one table",
+        summary="aggregate several projects into the org/team view",
         preconditions=("project-paths-exist", "org-binding"),
         effect_line="指定した repository をそれぞれローカルに読み取り、org / team 単位に"
                     "集計して表示します（ネットワークには出ません）",

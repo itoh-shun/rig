@@ -81,6 +81,20 @@ no field could express, and `model.Flag` grew a field for each:
 
 Neither is projected into an approximation: what the declaration says is what the parser
 gets, and where it says nothing argparse's own default stands.
+
+Which line goes beside the verb
+-------------------------------
+
+`add_parser(help=...)` takes `capability.summary or capability.intent` — the same fallback
+`Capability.help_line` states, spelled out here so the AST sweep in
+`tests/test_capability_registry.py` can see both declared field names and hold both to
+English. A third thing this projection found is why `summary` exists at all: making govern's
+parser a projection replaced its ten `add_parser(help=...)` lines with ten `intent` strings,
+and `govern can` went from "check a single permission (exit 0 allowed / 3 denied)" to a line
+with no exit codes in it. Those are two different sentences for two different readers, not
+one sentence written badly, so the table grew the second field instead of surrendering the
+first. `tests/test_generated_parser_equivalence.py`'s help-surface comparison is what makes
+the next such swap a decision rather than a silent rewrite.
 """
 
 from __future__ import annotations
@@ -203,7 +217,11 @@ def add_capability(
                 if isinstance(action, argparse._SubParsersAction)
             )
 
-    leaf = parent.add_parser(words[-1], help=capability.intent)
+    # `summary or intent`, spelled out rather than reached for through `help_line`, so that
+    # the AST scan in `tests/test_capability_registry.py` can see *which declared fields*
+    # this module puts in front of a CLI user — a derived property would hide both names
+    # from the sweep that holds CLI-facing prose to English.
+    leaf = parent.add_parser(words[-1], help=capability.summary or capability.intent)
     for flag in capability.flags:
         add_flag(leaf, flag)
     return leaf

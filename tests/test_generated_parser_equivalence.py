@@ -26,17 +26,19 @@ somebody has to write down rather than a difference that passes.
 
 ## What "equivalent" is asserted to mean
 
-Three layers, each strictly stronger than the one above it, because each of the first two can
-pass while the parser still behaves differently:
+Four layers. The first two can each pass while the parser still behaves differently, and the
+first, second and fourth can all pass while it says something different:
 
 1. **The verb sets are equal** — the set of sub-parsers, both read out of argparse at run
    time, never from a list written down here.
 2. **Action for action**, per verb: `option_strings`, `dest`, `nargs`, `const`, `default`,
    `choices`, `required` and `metavar`, in order, including argparse's own `-h`. Read off
-   `parser._actions` rather than compared as help text, which is formatting: two parsers can
-   render the same help and disagree about `nargs`, and two that agree about everything here
-   can render differently because one line wrapped.
-3. **Real argument vectors parsed through both**, namespaces compared field by field, plus
+   `parser._actions` and not from help text, because the two answer different questions:
+   two parsers can render the same help and disagree about `nargs`, and two that agree about
+   every attribute here can still put different words in front of a person.
+3. **The help surface**, which is that second question and is layer 2's blind spot — see
+   below.
+4. **Real argument vectors parsed through both**, namespaces compared field by field, plus
    the error paths — a missing required argument, an unknown flag, a bad choice, a bare
    group, an unknown verb — compared on exit status *and* on the stderr argparse writes
    itself. This is the layer that catches what structure cannot: `govern audit`'s generated
@@ -45,10 +47,45 @@ pass while the parser still behaves differently:
    still run, asserting the opposite now
    (`test_audit_verify_keeps_both_the_positional_and_the_filter`).
 
-The vectors are **derived from the capabilities**, not listed: for each verb, the smallest
-vector its required flags allow, the widest vector its flags allow, one per value of every
-`choice` flag, and one error vector per required flag, per choice flag, and per verb. Listing
-a few by hand would test the flags somebody remembered.
+## The help surface, and why it needed its own layer
+
+Layers 1, 2 and 4 all passed while the swap silently rewrote eight screens' worth of prose.
+`_actions` does not carry the verb summaries at all — `add_parser(help=…)` lands on the
+sub-parsers action's `_choices_actions`, not on any leaf — so all ten lines of
+`rig-wb govern --help` changed under a comparison that could not see them, and `can`'s
+"(exit 0 allowed / 3 denied)" left the surface without a single test noticing. `help=` on the
+leaf actions was excluded from `ACTION_FIELDS` for a good reason (it is not what `nargs` is),
+so the other seven argument lines — six of them arguments the shipped parser explained not at
+all — moved under the same blind spot.
+
+**How it is guarded, and what was rejected.** Not a golden file. A stored `--help` dump
+fails whenever argparse's formatter or the terminal width changes rather than when the
+surface does, and its failure mode is "re-record it" — a chore, where this has to be a
+decision. Not a list of invariants either ("every flag has help", "`can` mentions its exit
+codes"): that is prose about prose, and it would have caught at most one of the eight.
+
+What is here instead is the technique this file already uses for structure, pointed at
+words: the parser govern shipped is transcribed above, so it can be *rendered*, and the
+rendered screens are compared against the ones that ship. `expected_parser()` is the shipped
+parser with exactly the changes `HELP_CHANGES` records applied to it, and
+`test_every_screen_renders_exactly_as_the_recorded_surface_does` demands that all eleven
+screens — the group and each of the ten verbs — come out byte for byte. Because both sides
+are formatted by the same argparse in the same process, the formatter and the width cancel;
+because the expectation is a parser and not a string, a recorded change is applied as the
+one help string it is, and everything else stays pinned. Metavars, choice lists, usage
+lines, the group description and the verb summaries are all inside that comparison without
+being enumerated.
+
+`HELP_CHANGES` works like `DIVERGENCES`: a change that is not recorded fails, and a recorded
+one that has silently gone away fails too. Each entry carries the argument for keeping it.
+The comparison runs against `govern.cli.build_parser()` — the parser a person actually meets,
+description and all — rather than against `generated()`, whose `description` is a test
+fixture; layer 1 already proves the two are the same object built the same way.
+
+Layer 4's vectors are **derived from the capabilities**, not listed: for each verb, the
+smallest vector its required flags allow, the widest vector its flags allow, one per value of
+every `choice` flag, and one error vector per required flag, per choice flag, and per verb.
+Listing a few by hand would test the flags somebody remembered.
 
 ## The one thing not compared
 
@@ -462,6 +499,274 @@ def test_the_only_differences_anywhere_in_govern_are_the_documented_ones() -> No
     assert found == {
         (d.verb, d.option, d.shipped_dest, d.generated_dest) for d in DIVERGENCES
     }
+
+
+# ── 2b. the help surface ─────────────────────────────────────────────────────
+@dataclasses.dataclass(frozen=True)
+class HelpChange:
+    """One line of prose the projection prints where the shipped parser printed another.
+
+    The counterpart of `Divergence` for words rather than structure, and recorded for the
+    same reason: `rig-wb govern --help` is a surface people read and scripts are written
+    against, so a change to it is a decision somebody made, not a diff nobody saw. Each entry
+    has to be true in both directions — `shipped` must still be what the transcribed parser
+    says, and `generated` must still be what ships — so neither half can rot into a claim
+    about a surface that has moved on.
+    """
+
+    verb: str
+    #: An option string (`--scope`) or, for a positional, its dest (`permission`).
+    target: str
+    shipped: str | None
+    generated: str
+    judgement: str
+
+    @property
+    def where(self) -> str:
+        return f"govern {self.verb} {self.target}"
+
+
+#: The help lines that changed when govern's parser became a projection, and are kept.
+#:
+#: **Not the verb summaries.** Those changed too — all ten of them, because
+#: `add_parser(help=capability.intent)` replaced the lines govern shipped — and that one was
+#: reversed rather than recorded: `model.Capability` grew `summary`, the ten shipped lines are
+#: declared there, and `rig-wb govern --help` reads as it always did. An `intent` is written
+#: for a conversation to match an utterance against and is forbidden from naming mechanism;
+#: a help column wants the shortest line that picks one verb out of ten. Neither reader was
+#: asked to give way.
+#:
+#: What is left is seven flag lines, in two groups, and both are kept because the new line is
+#: the better one for the person reading it.
+HELP_CHANGES: tuple[HelpChange, ...] = (
+    HelpChange(
+        verb="can",
+        target="permission",
+        shipped=f"one of: {', '.join(PERMISSIONS)}",
+        generated="the permission to check",
+        judgement=(
+            "The shipped line interpolated the live PERMISSIONS tuple; a declaration cannot, "
+            "because the registry is data read without importing govern. Recorded as a "
+            "surface change when the swap landed (8724b4c). Declaring `permission` as a "
+            "`choice` flag would put the list back, and would also move the refusal of an "
+            "unknown name from govern's exit 1 to argparse's exit 2 — a caller-visible "
+            "contract, so the list is the cheaper thing to lose."
+        ),
+    ),
+    *(
+        HelpChange(
+            verb=verb,
+            target="action",
+            shipped=None,
+            generated=generated_help,
+            judgement=(
+                "The shipped parser gave this positional no help at all, so `--help` showed a "
+                "bare choice list and left the reader to infer what the words mean. "
+                "`Flag.help` is not optional and should not become so: 580 flags with a "
+                "nullable help field is how a blank one stops being noticed. Gained, not lost."
+            ),
+        )
+        for verb, generated_help in (
+            ("policy", "show the policy in effect, or lint the layers"),
+            ("approve", "show the approval status, or grant or deny it"),
+            ("waiver", "list the waivers, or grant or revoke one"),
+            ("audit", "read the ledger, verify its chain, or export it"),
+        )
+    ),
+    HelpChange(
+        verb="migrate",
+        target="--scope",
+        shipped=None,
+        generated="the scope this layer applies at",
+        judgement=(
+            "As above: `--scope {org,team,project}` with no help beside it. The one flag "
+            "whose whole meaning is which of three tiers a policy layer binds to is the last "
+            "one to leave unexplained."
+        ),
+    ),
+    HelpChange(
+        verb="rollup",
+        target="--since-days",
+        shipped=None,
+        generated="run window for the measured checks",
+        judgement=(
+            "`govern conformance` shipped this exact line for the same flag and `rollup` did "
+            "not; the registry declares the flag once, so the two agree now. A person "
+            "comparing the two screens was previously told what the window was on one of "
+            "them."
+        ),
+    ),
+)
+
+
+def shipping_parser() -> argparse.ArgumentParser:
+    """The parser a person actually meets: `rig-wb govern`'s, description and all.
+
+    `generated()` is deliberately not used for the help comparison. It is handed
+    `description="generated"` because prog and description are the caller's business, and a
+    comparison of rendered screens has to include the real one — the group screen's first
+    paragraph is part of the surface. Layer 1 already proves this is the generated parser.
+    """
+    return govern_cli.build_parser()
+
+
+def verb_summaries(parser: argparse.ArgumentParser) -> dict[str, str | None]:
+    """The one line shown beside each verb on the group screen.
+
+    These live on the sub-parsers action's `_choices_actions` — the pseudo-actions argparse
+    invents to render the choice list — and on no leaf parser's `_actions`, which is exactly
+    why `signatures()` could not see all ten of them change.
+    """
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return {choice.dest: choice.help for choice in action._choices_actions}
+    raise AssertionError(f"{parser.prog} has no sub-parsers")
+
+
+def help_lines(parser: argparse.ArgumentParser) -> dict[str, str | None]:
+    """Every argument's help on one verb's parser, keyed the way `HelpChange` names them."""
+    return {
+        (action.option_strings[0] if action.option_strings else action.dest): action.help
+        for action in parser._actions
+    }
+
+
+def _action_named(parser: argparse.ArgumentParser, target: str) -> argparse.Action:
+    for action in parser._actions:
+        if target in action.option_strings:
+            return action
+        if not action.option_strings and action.dest == target:
+            return action
+    raise AssertionError(f"{parser.prog} has no argument {target!r}")
+
+
+def expected_parser() -> argparse.ArgumentParser:
+    """The recorded surface plus exactly the changes `HELP_CHANGES` argues for, and nothing else.
+
+    Built by mutating the transcribed parser rather than by writing out expected text, so the
+    expectation stays a parser: argparse renders it, the same argparse renders what ships, and
+    everything neither transcribed nor recorded — every metavar, choice list, usage line and
+    default — is pinned without being enumerated here.
+    """
+    parser = shipped_parser()
+    leaves = subcommands(parser)
+    for change in HELP_CHANGES:
+        _action_named(leaves[change.verb], change.target).help = change.generated
+    return parser
+
+
+def screens(parser: argparse.ArgumentParser) -> dict[str, str]:
+    """Every `--help` screen this parser can print, by the words that reach it."""
+    return {"govern": parser.format_help()} | {
+        f"govern {verb}": leaf.format_help() for verb, leaf in subcommands(parser).items()
+    }
+
+
+def test_every_verb_summary_line_is_the_one_govern_shipped() -> None:
+    """The change nothing could see: ten lines on one screen, none of them in `_actions`.
+
+    Kept as its own test beside the rendered comparison because this is the failure whose
+    diagnosis matters most — a wall of rendered text would say *that* the group screen moved,
+    and this says which verb and which sentence.
+
+    It admits no exceptions, and `HelpChange` cannot express one: an entry names an argument
+    inside a verb, and `expected_parser` applies it to a leaf. So a verb's `--help` line has
+    no escape hatch in this file at all. The place to change one is `Capability.summary`,
+    which is a line in the table and a diff a reviewer of a CLI change can read.
+    """
+    mine, theirs = verb_summaries(shipping_parser()), verb_summaries(shipped_parser())
+    differing = {
+        verb: (theirs[verb], mine.get(verb)) for verb in theirs if theirs[verb] != mine.get(verb)
+    }
+    assert not differing, "\n".join(
+        [
+            "`rig-wb govern --help` no longer says what govern shipped. These lines are the "
+            "whole of what a person sees before they pick a verb:",
+            *(
+                f"  {verb}:\n    shipped:   {was!r}\n    now:       {now!r}"
+                for verb, (was, now) in sorted(differing.items())
+            ),
+            "",
+            "If the registry's `intent` is what changed: `intent` is matched against an "
+            "utterance and `Capability.summary` is the `--help` line. Declare the summary "
+            "rather than bending the intent into a help string (registry/model.py says why). "
+            "If the new line is genuinely the better one, record it in HELP_CHANGES with the "
+            "argument for it.",
+        ]
+    )
+
+
+@pytest.mark.parametrize("verb", VERBS)
+def test_every_argument_help_line_is_the_one_govern_shipped(verb: str) -> None:
+    mine = help_lines(subcommands(shipping_parser())[verb])
+    theirs = help_lines(subcommands(expected_parser())[verb])
+    differing = {
+        target: (theirs[target], mine.get(target))
+        for target in theirs
+        if theirs[target] != mine.get(target)
+    }
+    assert not differing, "\n".join(
+        [
+            f"govern {verb}: the help a person is shown differs from the recorded surface, "
+            "and nothing in HELP_CHANGES says why:",
+            *(
+                f"  {target}:\n    expected: {was!r}\n    ships:    {now!r}"
+                for target, (was, now) in sorted(differing.items())
+            ),
+        ]
+    )
+
+
+def test_every_screen_renders_exactly_as_the_recorded_surface_does() -> None:
+    """All eleven screens, byte for byte, against the transcription plus its recorded changes.
+
+    The catch-all. Anything that reaches a person and is not a help string — a metavar, a
+    choice list, the usage line, the group description, the order the verbs are listed in —
+    is inside this and nowhere else in the file.
+    """
+    mine, theirs = screens(shipping_parser()), screens(expected_parser())
+    assert sorted(mine) == sorted(theirs)
+    differing = sorted(name for name in theirs if mine[name] != theirs[name])
+    assert not differing, "\n\n".join(
+        [f"These `--help` screens no longer render as the recorded surface: {differing}"]
+        + [
+            f"── {name} ──\nexpected:\n{theirs[name]}\nships:\n{mine[name]}"
+            for name in differing
+        ]
+    )
+
+
+def test_every_recorded_help_change_is_still_a_real_change() -> None:
+    """The converse, so a help line that has quietly gone back cannot leave its excuse behind.
+
+    Each entry claims two things about today's tree: that the transcribed parser still says
+    `shipped`, and that what ships still says `generated`. Both are checked, because an entry
+    that is true of neither is an argument for a surface nobody meets any more.
+    """
+    shipped, shipping = subcommands(shipped_parser()), subcommands(shipping_parser())
+    problems: list[str] = []
+    for change in HELP_CHANGES:
+        was = _action_named(shipped[change.verb], change.target).help
+        now = _action_named(shipping[change.verb], change.target).help
+        if was != change.shipped:
+            problems.append(
+                f"{change.where}: HELP_CHANGES records the shipped line as "
+                f"{change.shipped!r}, but the transcription says {was!r}"
+            )
+        if now != change.generated:
+            problems.append(
+                f"{change.where}: HELP_CHANGES records {change.generated!r} as what ships, "
+                f"but what ships is {now!r}"
+            )
+        if was == now:
+            problems.append(
+                f"{change.where}: recorded as a change, but both sides now say {now!r}. "
+                "A documented difference that has gone away is a reason to delete the "
+                "entry, not to leave it standing."
+            )
+        if len(change.judgement.split()) < 12:
+            problems.append(f"{change.where}: the judgement is too short to be an argument")
+    assert not problems, "\n".join(problems)
 
 
 # ── 3a. real vectors, real namespaces ────────────────────────────────────────
