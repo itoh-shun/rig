@@ -6,12 +6,9 @@ import os
 import pathlib
 import shutil
 import tempfile
+from typing import Any, Protocol, runtime_checkable
 
-from rig_workbench.eval.cases import EvalCaseError, canonical_json, validate_case
-from rig_workbench.eval.execution import execution_diff_sha256
-from rig_workbench.eval.gate import quality_result_failures
-from rig_workbench.eval.runner import _git_identity
-
+from .eval_bridge import EVALUATION
 from .manifest import canonical, digest, read_json_yaml
 from .lock import tree_hash
 from .model import PackError
@@ -20,9 +17,59 @@ from .tester import compose_case_prompt, prompt_binding_sha256
 from .validation import validate_pack
 
 
+@runtime_checkable
+class EvalEvidence(Protocol):
+    """What importing staged evidence needs to know about evaluation, stated here.
+
+    Five questions, and not one of them is this module's to answer. Whether a document is
+    a well-formed case and what its canonical bytes are belong to whoever defines the case
+    schema; what commit, base and diff a measurement ran against belongs to whoever runs
+    measurements; and whether a result clears release policy belongs to the gate that
+    decides that everywhere else. Answering any of them again here would give the pack
+    installer a second opinion, and a second opinion that is never exercised is the one
+    that goes stale.
+
+    Stated as a protocol rather than imported because the import is what the layering rule
+    forbids a judgement module (`tests/test_layering_contract.py`): the standard library,
+    its own pillar and the six ports, and `eval` is none of the three. `packs/eval_bridge.py`
+    satisfies it and the shell hands it in. One of the five is the reason this is worth
+    saying out loud: the identity of an execution used to arrive here as
+    `eval.runner._git_identity` — a private name in another pillar, which is a dependency on
+    its internals rather than on anything it published. `git_identity` is the public name the
+    bridge gives it, so the reach-in stops at the adapter.
+    """
+
+    #: The error the case and result machinery raises, so a caller can catch it without
+    #: naming the class.
+    CaseError: type[Exception]
+
+    def validate_case(self, case: Any) -> dict:
+        """The case, checked; raises `CaseError` if it is not one."""
+        ...
+
+    def canonical_json(self, value: Any) -> str:
+        """The one serialisation a stored case is compared against."""
+        ...
+
+    def git_identity(self, repo: pathlib.Path) -> tuple[str | None, str | None, str]:
+        """Commit, base commit and availability for the tree as it stands."""
+        ...
+
+    def execution_diff(self, repo: pathlib.Path, *, base: str,
+                       ignored_untracked_prefixes: tuple[str, ...] = ()) -> str:
+        """A digest of the working tree against `base`."""
+        ...
+
+    def result_failures(self, result: dict, case: dict, *, expected_commit: str | None = None,
+                        expected_base: str | None = None, expected_diff: str | None = None,
+                        verify_attestation: bool = True) -> list[str]:
+        """Why the result does not clear release policy, empty when it does."""
+        ...
+
+
 def import_results(
     value: pathlib.Path | str, *, staged: pathlib.Path | str,
-    project: pathlib.Path | str,
+    project: pathlib.Path | str, evaluation: EvalEvidence = EVALUATION,
 ) -> list[str]:
     """Validate all staged results, then replace the pack directory as one transaction."""
     project_root = pathlib.Path(project).resolve()
@@ -60,8 +107,8 @@ def import_results(
     try:
         for relative in manifest["assets"]["eval-case"]:
             raw, case = read_json_yaml(pack / relative)
-            validate_case(case)
-            if raw != canonical_json(case):
+            evaluation.validate_case(case)
+            if raw != evaluation.canonical_json(case):
                 raise PackError(f"evaluation case is not canonical: {relative}")
             required = {"prompt_entrypoint", "prompt_composition",
                         "target_expectations", "clean_expectations"}
@@ -73,7 +120,7 @@ def import_results(
             if case["id"] in cases:
                 raise PackError(f"duplicate owned evaluation case id: {case['id']}")
             cases[case["id"]] = case
-    except (EvalCaseError, OSError, UnicodeError) as exc:
+    except (evaluation.CaseError, OSError, UnicodeError) as exc:
         raise PackError(f"invalid owned evaluation case: {exc}") from exc
 
     if any(path.is_symlink() for path in stage_root.rglob("*")):
@@ -94,10 +141,10 @@ def import_results(
         ):
             raise PackError("mock/command evidence is dev-only and cannot be imported")
 
-    execution_commit, execution_base, execution_status = _git_identity(project_root)
+    execution_commit, execution_base, execution_status = evaluation.git_identity(project_root)
     if execution_status != "available" or execution_commit is None or execution_base is None:
         raise PackError("current execution git identity is unavailable")
-    execution_diff = execution_diff_sha256(project_root, base=execution_base)
+    execution_diff = evaluation.execution_diff(project_root, base=execution_base)
 
     imports: list[tuple[pathlib.Path, str, dict]] = []
     destinations: set[str] = set()
@@ -113,11 +160,11 @@ def import_results(
                 raise PackError(f"staged result is not bound to an owned case: {source.name}")
             composed = compose_case_prompt(pack, manifest, case, project=project_root)
             binding = prompt_binding_sha256(manifest, case, composed)
-            failures = quality_result_failures(
+            failures = evaluation.result_failures(
                 result, case, expected_commit=execution_commit,
                 expected_base=execution_base, expected_diff=execution_diff,
             )
-        except (EvalCaseError, PackError, OSError, UnicodeError) as exc:
+        except (evaluation.CaseError, PackError, OSError, UnicodeError) as exc:
             raise PackError(f"invalid staged evaluation result {source.name}: {exc}") from exc
         if result["provider"] in {"mock", "command"} or result["judge_provider"] in {
             "mock", "command",
@@ -166,13 +213,13 @@ def import_results(
         validate_pack(temporary, core_ids=core_reference_ids())
         if tree_hash(pack) != source_tree:
             raise PackError("source pack changed during evidence import")
-        current_commit, current_base, current_status = _git_identity(project_root)
+        current_commit, current_base, current_status = evaluation.git_identity(project_root)
         ignored = ()
         try:
             ignored = (temporary.relative_to(project_root).as_posix(),)
         except ValueError:
             pass
-        current_diff = execution_diff_sha256(
+        current_diff = evaluation.execution_diff(
             project_root, base=execution_base,
             ignored_untracked_prefixes=ignored,
         )

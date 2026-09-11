@@ -768,6 +768,7 @@ def test_import_results_validates_every_staged_file_and_is_atomic(
 def test_import_results_rejects_stale_prompt_binding_and_unsafe_stage_paths(
     tmp_path, monkeypatch,
 ):
+    from rig_workbench.packs.eval_bridge import EVALUATION
     from rig_workbench.packs.evidence import import_results
     from rig_workbench.packs.lock import tree_hash
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
@@ -792,26 +793,39 @@ def test_import_results_rejects_stale_prompt_binding_and_unsafe_stage_paths(
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     before = tree_hash(pack)
 
-    monkeypatch.setattr(
-        "rig_workbench.packs.evidence._git_identity",
-        lambda _root: (result["execution_commit"], result["execution_base_commit"], "available"),
-    )
-    monkeypatch.setattr(
-        "rig_workbench.packs.evidence.execution_diff_sha256",
-        lambda *_args, **_kwargs: result["execution_diff_sha256"],
-    )
+    # The two facts this test has to pin — which commit the repository is at, and what the
+    # tree differs by — now arrive through the `EvalEvidence` collaborator `import_results`
+    # declares, rather than through two module-level names it happened to import. Passed in
+    # rather than monkeypatched, which is the seam doing its job: every other question the
+    # collaborator answers still goes to the real machinery, so the rules under test run
+    # against it and not against a stub. The two pinned facts are unchanged.
+    class _PinnedIdentity:
+        CaseError = EVALUATION.CaseError
+        validate_case = staticmethod(EVALUATION.validate_case)
+        canonical_json = staticmethod(EVALUATION.canonical_json)
+        result_failures = staticmethod(EVALUATION.result_failures)
+
+        @staticmethod
+        def git_identity(_root):
+            return (result["execution_commit"], result["execution_base_commit"], "available")
+
+        @staticmethod
+        def execution_diff(*_args, **_kwargs):
+            return result["execution_diff_sha256"]
+
+    pinned = _PinnedIdentity()
     with pytest.raises(PackError, match="prompt/asset binding is stale"):
-        import_results(pack, staged=staged, project=repository)
+        import_results(pack, staged=staged, project=repository, evaluation=pinned)
     assert tree_hash(pack) == before
 
     inside = repository / "staged"
     shutil.copytree(staged, inside)
     with pytest.raises(PackError, match="outside the project"):
-        import_results(pack, staged=inside, project=repository)
+        import_results(pack, staged=inside, project=repository, evaluation=pinned)
     linked = tmp_path / "linked-stage"
     linked.symlink_to(staged, target_is_directory=True)
     with pytest.raises(PackError, match="symlink"):
-        import_results(pack, staged=linked, project=repository)
+        import_results(pack, staged=linked, project=repository, evaluation=pinned)
 
 
 def test_pack_cli_requires_paid_opt_in_before_codex_execution(tmp_path, monkeypatch, capsys):
