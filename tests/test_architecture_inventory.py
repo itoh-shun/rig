@@ -198,8 +198,18 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # `clock` re-measured, not raised: 4 -> 6. The two new sites are `time.time_ns()` in
     # `commands.py` and `providers.py`, which the narrow walk never matched because it
     # looked for the attribute `time` and nothing else on the module. Neither is new code.
+    #
+    # The fifth pillar, and it is moving in passes rather than in one go: `print` comes
+    # down as each file's *command* functions take the `Presenter` the shell builds, and
+    # the other five kinds are pass 2. 212 -> 96 is `commands.py`'s fifteen `cmd_*`, whose
+    # 116 sites became `out.out(...)` — 115 of them one for one, and the sixteenth the
+    # `diagnostic()` closure in `cmd_run`, which chose its stream with
+    # `file=sys.stderr if artifact_stdout else sys.stdout` and now chooses between
+    # `out.err` and `out.out`. That last one is also why this number and ruff's disagree:
+    # T201 does not count a `print` whose `file=` is a conditional expression, so the
+    # ledger line in `pyproject.toml` said 211 where this said 212.
     "orchestrate": {
-        "print": 212,
+        "print": 96,
         "subprocess": 21,
         "open_write": 4,
         "write_text": 10,
