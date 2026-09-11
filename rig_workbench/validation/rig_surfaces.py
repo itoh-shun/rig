@@ -34,7 +34,7 @@ sink in the import graph, reached only from `scripts/validate.py` and `rig_workb
 by path — so no collaborator's closure can come back through this module, and splitting it
 would give three files that each hold two imports and say nothing one file does not.
 
-**The one import that stays inside a method.** `workbench.cli` pulls 107 modules behind it,
+**The one import that stays inside a method.** `workbench.cli` pulls 101 rig_workbench modules behind it,
 because building the parser means registering every subcommand the workbench has. Two
 checks need it and the other twenty do not, so it is imported where it is used rather than
 at module level — which is exactly why `catalog.py` had it function-local before this
@@ -48,6 +48,7 @@ The arrow stays one-way: this module imports no `validation` judgement module. I
 
 from __future__ import annotations
 
+import argparse
 import pathlib
 from collections.abc import Mapping, Sequence
 
@@ -187,9 +188,9 @@ class _ParserSource:
     """
 
     @staticmethod
-    def build():
+    def build() -> argparse.ArgumentParser:
         # Method-local on purpose: building the parser registers every workbench
-        # subcommand, which drags 107 modules behind it. Twenty of the twenty-two checks
+        # subcommand, which drags 101 rig_workbench modules behind it. Twenty of the twenty-two checks
         # never ask for it, and a validate run that does not reach these two should not pay
         # for them at import time.
         from ..workbench.cli import build_parser

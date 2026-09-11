@@ -5,12 +5,37 @@ import json
 import pathlib
 import re
 import sys
+from typing import Protocol, runtime_checkable
 
 from rig_workbench.ports import Clock, Env, ProcessRunner
 from rig_workbench.ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 
 from .config import AGENTS, FACETS, ROOT, SKILLS
+from .rig_surfaces import PARSER_SOURCE
 from .state import _emit, parse_frontmatter
+
+
+@runtime_checkable
+class ParserSource(Protocol):
+    """The built `workbench.py` parser — the list of subcommands rig really has.
+
+    Two checks below compare a shipped document against it: `commands/go.md`'s route table
+    and `SKILL.md` §2's brick catalogue. Both exist because a surface went missing from a
+    document three times (#395, #470, and the nine #470's fix found still unlisted) and a
+    person noticed rather than this repository. The whole value of either check is that the
+    left-hand side is the real argparse tree and not a list somebody maintains, so it is
+    borrowed, and borrowing it is the edge `tests/test_layering_contract.py` forbids.
+
+    Inverted: this says what it needs — something that hands back a built parser — and
+    `rig_surfaces.PARSER_SOURCE` satisfies it. That module keeps the `workbench.cli` import
+    inside `build()` for the reason this file used to keep it inside these two functions:
+    registering every workbench subcommand drags 101 rig_workbench modules
+    behind it, and twenty of the
+    twenty-two checks in a validate run never ask for the parser.
+    """
+
+    def build(self) -> argparse.ArgumentParser:
+        ...
 
 
 # ── §2 catalog drift (mechanical implementation of validate.md (4)) ──────────
@@ -360,12 +385,11 @@ def workbench_routing(parser, go_md: str, ops_md: str) -> tuple[list, list, list
     return unrouted, stale, blind
 
 
-def check_workbench_routing() -> None:
+def check_workbench_routing(*, parsers: ParserSource = PARSER_SOURCE) -> None:
     """`workbench.py`'s user-facing subcommands against `commands/go.md`'s route table."""
-    from rig_workbench.workbench.cli import build_parser
     go_md = (ROOT / "commands" / "go.md").read_text(encoding="utf-8")
     ops_md = (FACETS / "instructions" / "workbench-ops.md").read_text(encoding="utf-8")
-    parser = build_parser()
+    parser = parsers.build()
     unrouted, stale, blind = workbench_routing(parser, go_md, ops_md)
 
     for why in blind:
@@ -473,7 +497,7 @@ def workbench_catalog(parser, skill_md: str) -> tuple[list, list, list]:
     return uncatalogued, stale, blind
 
 
-def check_workbench_catalog() -> None:
+def check_workbench_catalog(*, parsers: ParserSource = PARSER_SOURCE) -> None:
     """`workbench.py`'s user-facing subcommands against SKILL.md §2's brick catalog.
 
     §2 is what a session reads to find out what rig has, and a surface missing from it does
@@ -481,9 +505,8 @@ def check_workbench_catalog() -> None:
     subcommands #470's fix found still unlisted), each time noticed by a person rather than by
     this repository's own checks.
     """
-    from rig_workbench.workbench.cli import build_parser
     skill_md = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
-    parser = build_parser()
+    parser = parsers.build()
     uncatalogued, stale, blind = workbench_catalog(parser, skill_md)
 
     for why in blind:
